@@ -1,0 +1,229 @@
+export const brokerSource = String.raw`
+public static partial class HoliOwnedProcess {
+  static void BrokerSend(Stream output,string json,long deadline) {
+    byte[] bytes=Encode(json);
+    try {
+      AwaitIo(Task.Run(()=>output.Write(bytes,0,bytes.Length)),deadline);
+      sendSeq++;
+    } catch { throw Fail("controlFailure"); }
+  }
+  static void DrainWithGuard(IntPtr job,IntPtr guard) {
+    // Try BOTH operations, even when one fails. The drain has its own budget
+    // and does not depend on a live parent, a working pipe or source slots.
+    for(;;) {
+      bool armed=false;
+      try { SetKillOnClose(guard,true); armed=true; } catch {}
+      try {
+        DrainJob(job,job,Clock.ElapsedMilliseconds+CleanupMs);
+        return;
+      } catch {
+        // No zero receipt. The verified guard still protects the tree on
+        // last close. If neither operation proved safety, retain both handles
+        // and retry; exiting would abandon an unguarded Job.
+        if(armed) throw;
+        Thread.Sleep(PollMs);
+      }
+    }
+  }
+  static void ObserveCommit(Stream input,Stream output,string binding,IntPtr job,IntPtr guard,long deadline) {
+    try {
+      if(!ParentAlive()) throw Fail("parentUnavailable");
+      if(!KillOnCloseArmed(guard)) throw Fail("nativeQueryFailure");
+      SetKillOnClose(guard,false);
+      BrokerSend(output,"{\"type\":\"committed\""+binding,deadline);
+      var observed=ReadAvailable(deadline,input);
+      // OBSERVED uses the acknowledge record on this one broker transcript.
+      // Its MAC binds direction, sequence and the fresh launch/Job/guard IDs.
+      if(!Exact(observed,"type") || !Object.Equals(observed["type"],"acknowledge")) throw Fail("protocolFailure");
+      if(Clock.ElapsedMilliseconds>=deadline) throw Fail("controlFailure");
+      if(!ParentAlive()) throw Fail("parentUnavailable");
+      // Native decision: the held parent was alive with authenticated evidence
+      // of the guard clear, and had a provider owner before granting release.
+    } catch {
+      if(failure==null) failure="helperFailure";
+      try { DrainWithGuard(job,guard); } catch {} // Preserve the first failure, not an EMPTY receipt.
+      throw;
+    }
+  }
+  static IntPtr OpenRecoveryJob(string id) {
+    const uint QueryAndTerminate=0x4|0x8;
+    IntPtr job=OpenJobObjectW(QueryAndTerminate,false,JobName(id));
+    if(job==IntPtr.Zero && Marshal.GetLastWin32Error()!=2) // ERROR_FILE_NOT_FOUND alone proves absence.
+      throw Fail("nativeQueryFailure");
+    return job;
+  }
+  sealed class JobMatches {
+    public IntPtr JobSlot, GuardSlot;
+    public int JobCount, GuardCount;
+  }
+  static void ScanBudget(long deadline) {
+    if(!ParentAlive()) throw Fail("parentUnavailable");
+    if(Clock.ElapsedMilliseconds>=deadline) throw Fail("nativeQueryFailure");
+  }
+  static bool SameKernelObject(IntPtr left,IntPtr right) {
+    // .NET Framework does not clear last error before a SetLastError P/Invoke.
+    SetLastError(0);
+    if(CompareObjectHandles(left,right)) return true;
+    int error=Marshal.GetLastWin32Error();
+    if(error==0 || error==1656) return false; // Definite mismatch / ERROR_NOT_SAME_OBJECT.
+    throw Fail("nativeQueryFailure");
+  }
+  static JobMatches ScanParentJobs(IntPtr job,IntPtr guard,long deadline) {
+    const int ProcessHandleInformation=51;
+    const int LengthMismatch=unchecked((int)0xc0000004), BufferTooSmall=unchecked((int)0xc0000023), BufferOverflow=unchecked((int)0x80000005);
+    const uint MaxBytes=16*1024*1024;
+    // PROCESS_HANDLE_SNAPSHOT_INFORMATION: two ULONG_PTRs, then entries (40 bytes on x64).
+    int header=2*IntPtr.Size, stride=Marshal.SizeOf(typeof(HandleSnapshotEntry));
+    for(uint size=4096;size<=MaxBytes;) {
+      ScanBudget(deadline);
+      var buffer=Marshal.AllocHGlobal((int)size);
+      try {
+        uint used;
+        int status=NtQueryInformationProcess(parent,ProcessHandleInformation,buffer,size,out used);
+        if(status!=0) {
+          if(status!=LengthMismatch && status!=BufferTooSmall && status!=BufferOverflow) throw Fail("nativeQueryFailure");
+          size=Math.Max(size*2,used);
+          continue;
+        }
+        if(used<header || used>size) throw Fail("nativeQueryFailure");
+        long count=Marshal.ReadIntPtr(buffer).ToInt64();
+        if(count<0 || count>(used-header)/stride) throw Fail("nativeQueryFailure");
+        var result=new JobMatches();
+        if(job!=IntPtr.Zero || guard!=IntPtr.Zero) {
+          var self=GetCurrentProcess();
+          for(int i=0;i<count;i++) {
+            ScanBudget(deadline);
+            // HandleValue is the first field in each entry. Compare local copies,
+            // not an ObjectTypeIndex, name, or unpinned numeric value.
+            var slot=Marshal.ReadIntPtr(buffer,header+i*stride);
+            if(slot.ToInt64()<=0) throw Fail("nativeQueryFailure");
+            IntPtr copy;
+            if(!DuplicateHandle(parent,slot,self,out copy,0,false,2)) {
+              if(Marshal.GetLastWin32Error()==6) continue; // Unrelated slot vanished; ours cannot.
+              throw Fail("nativeQueryFailure");
+            }
+            try {
+              if(job!=IntPtr.Zero && SameKernelObject(copy,job)) {
+                result.JobSlot=slot; result.JobCount++;
+              }
+              if(guard!=IntPtr.Zero && SameKernelObject(copy,guard)) {
+                result.GuardSlot=slot; result.GuardCount++;
+              }
+            } finally { Close(copy); }
+          }
+        }
+        ScanBudget(deadline);
+        return result;
+      } finally { Free(buffer); }
+    }
+    throw Fail("nativeQueryFailure");
+  }
+  static void RecoveryEvidence(Record receipt,string prefix,IntPtr reference,int before,int after,uint? activeBefore,uint? activeAfter) {
+    bool absent=reference==IntPtr.Zero;
+    receipt[prefix+"State"]=absent ? "absent" : "closed-zero";
+    receipt[prefix+"Before"]=absent ? null : (object)before;
+    receipt[prefix+"After"]=absent ? null : (object)after;
+    receipt[prefix+"ActiveBefore"]=activeBefore;
+    receipt[prefix+"ActiveAfter"]=activeAfter;
+  }
+  static void RecoverPending(Stream output,string jobId,string guardId,int pid,string birth,long deadline) {
+    IntPtr job=IntPtr.Zero, guard=IntPtr.Zero;
+    try {
+      // Node has frozen adoption and joined the producer's physical exit. A
+      // missing named object now means no reference survived, not a zero query.
+      job=OpenRecoveryJob(jobId);
+      guard=OpenRecoveryJob(guardId);
+      var before=ScanParentJobs(job,guard,deadline);
+      if(before.JobCount!=(job==IntPtr.Zero ? 0 : 1) || before.GuardCount!=(guard==IntPtr.Zero ? 0 : 1) ||
+         (job!=IntPtr.Zero && before.JobSlot==before.GuardSlot)) throw Fail("nativeQueryFailure");
+      uint? jobActive=job==IntPtr.Zero ? (uint?)null : ActiveProcesses(job);
+      uint? guardActive=guard==IntPtr.Zero ? (uint?)null : ActiveProcesses(guard);
+      uint? jobZero=job==IntPtr.Zero ? (uint?)null : DrainJob(job,job,deadline);
+      uint? guardZero=guard==IntPtr.Zero ? (uint?)null : DrainJob(guard,guard,deadline);
+      ScanBudget(deadline);
+      // Only this frozen lease can close these matched slots; the producer is
+      // gone and the held parent cannot change epoch. Other slots can churn.
+      // CLOSE_SOURCE can consume on FALSE. Never retry (even after lost proof).
+      try { if(job!=IntPtr.Zero) CloseSource(before.JobSlot); }
+      finally { if(guard!=IntPtr.Zero) CloseSource(before.GuardSlot); }
+      var after=job==IntPtr.Zero && guard==IntPtr.Zero ? before : ScanParentJobs(job,guard,deadline);
+      if(after.JobCount!=0 || after.GuardCount!=0) throw Fail("nativeQueryFailure");
+      var receipt=new Record{{"type","recovered"},{"action","recover"},{"jobId",jobId},{"commitGuardId",guardId},
+        {"parentPid",pid},{"parentBirth",birth}};
+      RecoveryEvidence(receipt,"job",job,before.JobCount,after.JobCount,jobActive,jobZero);
+      RecoveryEvidence(receipt,"guard",guard,before.GuardCount,after.GuardCount,guardActive,guardZero);
+      BrokerSend(output,Json.Serialize(receipt),deadline);
+    } finally { Close(guard); Close(job); }
+  }
+  public static int RunBroker() {
+    IntPtr job=IntPtr.Zero, guard=IntPtr.Zero;
+    Stream output=null;
+    try {
+      var data=(Record)Json.DeserializeObject(ReadSpec());
+      launchId=(string)data["launchId"]; secret=DecodeBase64((string)data["secret"]);
+      string jobId=Guid.ParseExact((string)data["jobId"],"D").ToString("D");
+      string guardId=Guid.ParseExact((string)data["commitGuardId"],"D").ToString("D");
+      string action=(string)data["action"];
+      bool pending=action=="recover";
+      if(jobId==guardId || (!pending && action!="release" && action!="revoke")) throw Fail("protocolFailure");
+      string binding=",\"jobId\":\""+jobId+"\",\"commitGuardId\":\""+guardId+"\"}";
+      int pid=(int)data["parentPid"];
+      string expectedBirth=(string)data["parentBirth"];
+      // SYNCHRONIZE | DUP_HANDLE | (QUERY_INFORMATION for class 51; otherwise LIMITED_INFORMATION).
+      parent=OpenProcess(pending ? 0x00100440u : 0x00101040u,false,pid);
+      long birth, ignored;
+      if(secret.Length!=32 || pid<=0 || parent==IntPtr.Zero || !ParentAlive() || GetProcessId(parent)!=(uint)pid ||
+         !GetProcessTimes(parent,out birth,out ignored,out ignored,out ignored) ||
+         birth.ToString(CultureInfo.InvariantCulture)!=expectedBirth)
+        throw Fail("parentUnavailable");
+      IntPtr source=IntPtr.Zero, guardSource=IntPtr.Zero;
+      if(pending) {
+        if(data.ContainsKey("jobHandle") || data.ContainsKey("commitGuardHandle")) throw Fail("protocolFailure");
+      } else {
+        source=RemoteHandle((string)data["jobHandle"]);
+        guardSource=RemoteHandle((string)data["commitGuardHandle"]);
+        if(source==guardSource || source==IntPtr.Zero || guardSource==IntPtr.Zero) throw Fail("protocolFailure");
+        var self=GetCurrentProcess();
+        Check(DuplicateHandle(parent,source,self,out job,0,false,2));
+        Check(DuplicateHandle(parent,guardSource,self,out guard,0,false,2));
+      }
+      var input=Console.OpenStandardInput();
+      output=Console.OpenStandardOutput();
+      long setup=Clock.ElapsedMilliseconds+SetupMs;
+      BrokerSend(output,"{\"type\":\"brokerReady\""+binding,setup);
+      var grant=ReadAvailable(setup,input);
+      if(!Exact(grant,"type","action","jobId","commitGuardId") || !Object.Equals(grant["type"],"grant") ||
+         !Object.Equals(grant["jobId"],jobId) || !Object.Equals(grant["commitGuardId"],guardId) ||
+         !Object.Equals(grant["action"],action)) throw Fail("protocolFailure");
+      long deadline=Clock.ElapsedMilliseconds+CleanupMs;
+      if(pending) {
+        RecoverPending(output,jobId,guardId,pid,expectedBirth,deadline);
+        return 0;
+      }
+      if(action=="release") {
+        ObserveCommit(input,output,binding,job,guard,deadline);
+        // Past the decision, loss of the parent no longer revokes the provider.
+        // Keep its original slots intact until it learns the decision and then
+        // explicitly authorizes close. This is housekeeping, not another vote.
+        BrokerSend(output,"{\"type\":\"phase\",\"phase\":\"commit-observed\",\"rootPid\":null,\"state\":\"clear\"}",deadline);
+        var close=ReadAvailable(deadline,input);
+        if(!Exact(close,"type","jobId","commitGuardId") || !Object.Equals(close["type"],"closeSources") ||
+           !Object.Equals(close["jobId"],jobId) || !Object.Equals(close["commitGuardId"],guardId)) throw Fail("protocolFailure");
+      } else if(action=="revoke") DrainWithGuard(job,guard);
+      else throw Fail("protocolFailure");
+      // Even if the first close fails, attempt the other original slot once.
+      try { CloseSource(source); } finally { CloseSource(guardSource); }
+      Close(guard); guard=IntPtr.Zero;
+      Close(job); job=IntPtr.Zero;
+      BrokerSend(output,"{\"type\":\""+(action=="revoke"?"drained":"released")+"\""+binding,deadline);
+      return 0;
+    } catch {
+      if(output!=null) {
+        try { BrokerSend(output,"{\"type\":\"error\",\"code\":\""+(failure??"helperFailure")+"\"}",Clock.ElapsedMilliseconds+PollMs*5); }
+        catch {}
+      }
+      return 125;
+    } finally { Close(guard); Close(job); Close(parent); }
+  }
+}
+`

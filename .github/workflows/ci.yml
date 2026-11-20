@@ -205,12 +205,31 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Run native Windows launch and caller regressions
+      - name: Stage native Windows launch and caller evidence
+        id: native-proof
         shell: pwsh
         run: |
-          pnpm --filter @holi/desktop exec vitest run test/launch.test.ts test/tool-lookup.test.ts test/owned-process.test.ts src/plugins/agent/test/windows-agents.test.ts src/plugins/agent/test/agent-runtime.test.ts --project node --reporter=verbose --reporter=json --outputFile="$env:RUNNER_TEMP/windows-agent-tests.json"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/desktop/scripts/check-windows-launch-results.cjs "$env:RUNNER_TEMP/windows-agent-tests.json"
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:GITHUB_SHA) { throw 'Checkout does not match GITHUB_SHA' }
+          $run = Join-Path $env:RUNNER_TEMP "windows-agent-$($env:GITHUB_SHA)-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
+          New-Item -ItemType Directory -Path $run -ErrorAction Stop | Out-Null
+          "HOLI_WINDOWS_AGENT_RUN_DIR=$run" >> $env:GITHUB_ENV
+          $proofs = Join-Path $run 'proof-workspace'
+          New-Item -ItemType Directory -Path $proofs -ErrorAction Stop | Out-Null
+          try {
+            $env:HOLI_WINDOWS_OWNED_PROCESS_PROOFS = Join-Path $proofs 'native'
+            New-Item -ItemType Directory -Path $env:HOLI_WINDOWS_OWNED_PROCESS_PROOFS -ErrorAction Stop | Out-Null
+            $runLog = Join-Path $proofs 'vitest.log'
+            pnpm --filter @holi/desktop exec vitest run test/launch.test.ts test/tool-lookup.test.ts test/owned-process.test.ts test/owned-process-protocol.test.ts test/owned-process-completion.test.ts test/owned-process-launch.test.ts test/owned-process-broker.test.ts test/owned-program-lifetime.test.ts test/windows-owned-process-witness.test.ts test/windows-owned-process-lifecycle.test.ts test/windows-owned-process-control.test.ts test/windows-owned-process-status.test.ts src/plugins/agent/test/windows-agents.test.ts src/plugins/agent/test/agent-runtime.test.ts src/plugins/agent/test/owned-program-host.test.ts --project node --reporter=verbose --reporter=json --outputFile="$proofs/vitest.json" | Tee-Object -FilePath $runLog
+            if ($LASTEXITCODE -ne 0) { throw "Native Windows regressions failed ($LASTEXITCODE)" }
+            $preparedHash = node apps/desktop/scripts/check-windows-launch-results.cjs prepare "$run"
+            if ($LASTEXITCODE -ne 0 -or $preparedHash -cnotmatch '^[0-9a-f]{64}$') { throw 'Native proof preparation failed' }
+          } finally {
+            Remove-Item -LiteralPath $proofs -Recurse -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $proofs -ErrorAction Stop) { throw 'Proof workspace still exists' }
+            'workspace-removed=true' >> $env:GITHUB_OUTPUT
+          }
+          "prepared-hash=$preparedHash" >> $env:GITHUB_OUTPUT
 
       - name: Install Electron
         run: node apps/desktop/node_modules/electron/install.js
@@ -236,23 +255,101 @@ jobs:
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP 'holi-qa372-windows-package'
+          if (Test-Path -LiteralPath $output -ErrorAction Stop) { throw 'Unpacked app output already exists' }
           pnpm --filter @holi/desktop exec electron-builder --win --dir --publish never --config electron-builder.yml --config.directories.output="$output" --config.npmRebuild=false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify packaged Windows Node runtime
-        run: node apps/desktop/scripts/check-packaged-windows-node.cjs "${{ runner.temp }}/holi-qa372-windows-package" "${{ runner.temp }}/windows-agent-evidence/packaged-node.json"
+      - name: Verify Node from the unpacked Windows app
+        id: packaged-node
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'holi-qa372-windows-package'
+          $raw = Join-Path $env:HOLI_WINDOWS_AGENT_RUN_DIR 'packaged-node-raw.json'
+          node apps/desktop/scripts/check-packaged-windows-node.cjs "$output" "$raw"
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Windows Node verification failed' }
+          $runtime = Get-Content -LiteralPath $raw -Raw | ConvertFrom-Json
+          $release = node -p "require('node:os').release()"
+          if ($LASTEXITCODE -ne 0 -or -not $release) { throw 'Could not determine Windows release' }
+          @{
+            runtime = 'unpacked-app-node'
+            platform = 'win32'
+            platformVersion = $release
+            gitSha = $env:GITHUB_SHA
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            version = $runtime.version
+            optionalDependencyVersion = $runtime.optionalDependencyVersion
+            sha256 = $runtime.sha256
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:HOLI_WINDOWS_AGENT_RUN_DIR 'packaged-node.json')
 
-      - name: Exercise disposable Electron and real ConPTY lifecycle
-        run: pnpm --filter @holi/desktop exec node scripts/run-windows-agent-smoke.mjs "${{ runner.temp }}/windows-agent-evidence"
+      - name: Exercise dependency Electron and real ConPTY lifecycle
+        id: dependency-smoke
+        run: pnpm --filter @holi/desktop exec node scripts/run-windows-agent-smoke.mjs "$env:HOLI_WINDOWS_AGENT_RUN_DIR"
 
-      - name: Upload native execution evidence
-        if: always()
+      - name: Upload unpacked-app Node runtime evidence
+        if: success()
         uses: actions/upload-artifact@v6
         with:
-          name: windows-agent-launch-evidence
-          path: |
-            ${{ runner.temp }}/windows-agent-tests.json
-            ${{ runner.temp }}/windows-agent-evidence/
+          name: windows-packaged-node-runtime-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/packaged-node.json
+          if-no-files-found: error
+
+      - name: Upload dependency Electron and real ConPTY smoke evidence
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-dependency-electron-conpty-smoke-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/dependency-electron-smoke.json
+          if-no-files-found: error
+
+      - name: Publish finalized Windows ownership verdict
+        id: finalize-proof
+        shell: pwsh
+        env:
+          WORKSPACE_REMOVED: ${{ steps.native-proof.outputs.workspace-removed }}
+          PREPARED_HASH: ${{ steps.native-proof.outputs.prepared-hash }}
+        run: |
+          if ($env:WORKSPACE_REMOVED -cne 'true') { throw 'Proof workspace removal was not confirmed' }
+          node apps/desktop/scripts/check-windows-launch-results.cjs finalize "$env:HOLI_WINDOWS_AGENT_RUN_DIR" "$env:PREPARED_HASH"
+          if ($LASTEXITCODE -ne 0) { throw 'Native proof publication failed' }
+
+      - name: Upload finalized native Windows ownership proof
+        if: success() && steps.finalize-proof.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-owned-process-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/owned-process-proof.json
+          if-no-files-found: error
+
+      - name: Write sanitized Windows failure diagnostics
+        id: failure-diagnostics
+        if: failure() && env.HOLI_WINDOWS_AGENT_RUN_DIR != ''
+        shell: pwsh
+        env:
+          NATIVE_OUTCOME: ${{ steps.native-proof.outcome }}
+          WORKSPACE_REMOVED: ${{ steps.native-proof.outputs.workspace-removed }}
+          PACKAGED_OUTCOME: ${{ steps.packaged-node.outcome }}
+          SMOKE_OUTCOME: ${{ steps.dependency-smoke.outcome }}
+          FINALIZE_OUTCOME: ${{ steps.finalize-proof.outcome }}
+        run: |
+          @{
+            verdict = 'failure'
+            gitSha = $env:GITHUB_SHA
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            nativeProof = $env:NATIVE_OUTCOME
+            workspaceRemovalConfirmed = ($env:WORKSPACE_REMOVED -ceq 'true')
+            packagedNode = $env:PACKAGED_OUTCOME
+            dependencyElectron = $env:SMOKE_OUTCOME
+            finalize = $env:FINALIZE_OUTCOME
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:HOLI_WINDOWS_AGENT_RUN_DIR 'failure.json')
+
+      - name: Upload sanitized Windows failure diagnostics
+        if: failure() && steps.failure-diagnostics.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-agent-launch-failure-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/failure.json
           if-no-files-found: error
 
   windows-helpers:

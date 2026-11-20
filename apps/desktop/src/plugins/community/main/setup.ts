@@ -10,7 +10,13 @@
 import { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { killChildTree, spawnOwnedProgram, toolPath, withPath } from '../../../main/plugin-api'
+import {
+  joinOwnedProgram,
+  killChildTree,
+  spawnOwnedProgram,
+  toolPath,
+  withPath,
+} from '../../../main/plugin-api'
 
 /** What a command's `{file}`, `{vault}` and `{port}` stand for. */
 export interface CommandValues {
@@ -55,54 +61,71 @@ export async function runSetup(args: {
 }): Promise<boolean> {
   await mkdir(dirname(args.logPath), { recursive: true })
   const log = createWriteStream(args.logPath)
+  const closed = new Promise<void>((resolve) => log.once('close', resolve))
+  let logFailed = false
+  log.on('error', () => {
+    logFailed = true
+  })
   const [command, ...rest] = args.argv
-  return new Promise((resolve) => {
-    if (args.signal?.aborted) {
-      log.end(() => resolve(false))
-      return
-    }
+  const lines = splitLines(args.onLine)
+  const take = (chunk: Buffer) => {
+    log.write(chunk)
+    lines.push(chunk.toString('utf8'))
+  }
+  const report = (line: string) => {
+    log.write(`${line}\n`)
+    args.onLine(line)
+  }
+  let detach = () => {}
+  let ok = false
+  try {
+    if (args.signal?.aborted) return false
+    const platform = process.platform
     const child = spawnOwnedProgram(command!, rest, {
       cwd: args.cwd,
       env: pluginEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     })
-    const lines = splitLines(args.onLine)
-    const take = (chunk: Buffer) => {
-      log.write(chunk)
-      lines.push(chunk.toString('utf8'))
-    }
-    child.stdout!.on('data', take)
-    child.stderr!.on('data', take)
-    let done = false
-    const finish = (ok: boolean, why?: string) => {
-      if (done) return
-      done = true
-      args.signal?.removeEventListener('abort', stop)
-      if (why !== undefined) {
-        log.write(`${why}\n`)
-        args.onLine(why)
-      }
-      lines.flush()
-      log.end(() => resolve(ok))
-    }
+    const joined = joinOwnedProgram(child, platform)
+    child.stdout?.on('data', take)
+    child.stderr?.on('data', take)
     const stop = () => {
-      // POSIX descendants can keep the output pipes open after their group
-      // leader exits. Probe before signalling the group so a recycled leader
-      // pid is never targeted. On Windows the owned launcher drains its Job
-      // Object before close; while live, its kill channel terminates that job.
-      if (process.platform === 'win32') {
+      // POSIX descendants can keep the pipes open after the leader exits.
+      // Probe before signalling the group; Windows uses the exact Job channel.
+      if (platform === 'win32') {
         if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
       } else if (!killChildTree(child, 'SIGKILL') && child.exitCode === null) {
         child.kill('SIGKILL')
       }
     }
     args.signal?.addEventListener('abort', stop, { once: true })
-    child.once('error', (err) => finish(false, `could not run ${command}: ${err.message}`))
-    child.once('close', (code) =>
-      finish(code === 0 && !args.signal?.aborted, code === 0 ? undefined : `exited with ${code}`),
-    )
-  })
+    detach = () => {
+      args.signal?.removeEventListener('abort', stop)
+      child.stdout?.off('data', take)
+      child.stderr?.off('data', take)
+    }
+    let result
+    try {
+      result = await joined
+    } catch (error) {
+      report(String(error))
+      // A failed receipt doesn't wait for held child pipes. Still close our log
+      // and preserve the typed proof failure even if log output also fails.
+      throw error
+    }
+    if (result.error) report(`could not run ${command}: ${result.error.message}`)
+    else if (result.ownership === 'not-started') report(`could not start ${command}`)
+    else if (result.code !== 0) report(`exited with ${result.code}`)
+    ok = result.code === 0 && result.error === null
+  } finally {
+    detach()
+    lines.flush()
+    log.end()
+    // Even a log write error cannot substitute for closing its file handle.
+    await closed
+  }
+  return ok && !logFailed && !args.signal?.aborted
 }
 
 /** How long a plugin's `check` may take before it counts as failed. */
@@ -113,49 +136,56 @@ const CHECK_TIMEOUT_MS = 10_000
  * code 0 within `timeoutMs`; a check still running then, or when `signal`
  * aborts, is killed, with anything it started, and fails.
  */
-export function runCheck(args: {
+export async function runCheck(args: {
   argv: readonly string[]
   cwd: string
   timeoutMs?: number
   signal?: AbortSignal
 }): Promise<boolean> {
+  if (args.signal?.aborted) return false
+  const platform = process.platform
   const [command, ...rest] = args.argv
+  // Its own process group, so a kill stops what it started too.
+  const child = spawnOwnedProgram(command!, rest, {
+    cwd: args.cwd,
+    env: pluginEnv(),
+    stdio: 'ignore',
+    detached: true,
+  })
+  if (platform === 'win32') {
+    const joined = joinOwnedProgram(child, platform)
+    let stopped = false
+    const stop = () => {
+      if (stopped) return
+      stopped = true
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    }
+    const timer = setTimeout(stop, args.timeoutMs ?? CHECK_TIMEOUT_MS)
+    args.signal?.addEventListener('abort', stop, { once: true })
+    return joined
+      .then(({ code, error }) => !stopped && code === 0 && error === null)
+      .finally(() => {
+        clearTimeout(timer)
+        args.signal?.removeEventListener('abort', stop)
+      })
+  }
+  // Preserve the POSIX check's group signal and immediate timeout answer.
   return new Promise((resolve) => {
-    if (args.signal?.aborted) return resolve(false)
-    // Its own process group, so a kill stops what it started too.
-    const child = spawnOwnedProgram(command!, rest, {
-      cwd: args.cwd,
-      env: pluginEnv(),
-      stdio: 'ignore',
-      detached: true,
-    })
-    let done = false
     const finish = (ok: boolean) => {
-      if (done) return
-      done = true
       clearTimeout(timer)
       args.signal?.removeEventListener('abort', stop)
       resolve(ok)
     }
-    // Not exited, so not reaped: its pid is still ours, and leads its group.
-    let stopped = false
     const stop = () => {
-      stopped = true
       if (child.exitCode === null && child.signalCode === null) {
-        if (process.platform === 'win32' || !killChildTree(child, 'SIGKILL')) child.kill('SIGKILL')
-      }
-      // On Windows the ownership helper waits for its whole Job Object to be
-      // empty before `close`, so a caller removing the check's folder finds
-      // nothing holding it.
-      if (process.platform === 'win32' && child.exitCode === null) {
-        return
+        if (!killChildTree(child, 'SIGKILL')) child.kill('SIGKILL')
       }
       finish(false)
     }
     const timer = setTimeout(stop, args.timeoutMs ?? CHECK_TIMEOUT_MS)
     args.signal?.addEventListener('abort', stop, { once: true })
     child.once('error', () => finish(false))
-    child.once('close', (code) => finish(!stopped && code === 0))
+    child.once('close', (code) => finish(code === 0))
   })
 }
 

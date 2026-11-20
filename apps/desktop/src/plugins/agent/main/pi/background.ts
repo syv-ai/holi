@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { UnconfirmedOwnedProgramError } from '../../../../main/plugin-api'
 import { buildPiEnv } from './env'
 import type { SessionSummary } from '../claude/listing'
 import { PiRpcRun, type PiRunResult } from './rpc'
@@ -40,11 +41,14 @@ interface PiJob {
   keep: boolean
   reply?: string
   close?: Promise<void>
+  retirement?: Promise<void>
+  followUpRejection?: Promise<never>
 }
 
 interface PiTurn {
   begin: Promise<void>
-  finalized?: Promise<void>
+  finalization?: Promise<void>
+  finalized: boolean
   promise: Promise<void>
   statsUpdated: boolean
   usage?: SessionSummary['usage']
@@ -70,6 +74,8 @@ export interface PiBackgroundDeps {
   binDir?: () => string
   env?: (binDir: string | undefined) => Record<string, string>
   spawn?: ConstructorParameters<typeof PiRpcRun>[0]['spawn']
+  /** Owning activation platform, captured independently of ambient test state. */
+  platform?: NodeJS.Platform
 }
 
 /** Owns one activation's RPC processes and joins every admitted turn at leave. */
@@ -77,6 +83,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
   let remote: string | null = null
   let root: string | null = null
   let invalidated = deps.activationSignal?.aborted ?? false
+  const platform = deps.platform ?? process.platform
   const jobs = new Map<string, PiJob>()
   const owned = new Set<PiJob>()
   const work = new Set<Promise<unknown>>()
@@ -109,26 +116,44 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     )
 
   function finalize(job: PiJob, turn: PiTurn, edge: 'end' | 'forget'): Promise<void> {
-    if (turn.finalized) return turn.finalized
-    turn.finalized = turn.begin.then(async () => {
+    return (turn.finalization ??= turn.begin.then(async () => {
       const finalEdge = edge === 'end' && invalidated ? 'forget' : edge
-      await deps.bracket(job.id, finalEdge)
-    })
-    turn.finalized = turn.finalized.catch((error) => {
-      recordFailure(error)
-    })
-    return turn.finalized
+      try {
+        await deps.bracket(job.id, finalEdge)
+      } catch (error) {
+        recordFailure(error)
+      } finally {
+        turn.finalized = true
+      }
+    }))
+  }
+
+  function clearRetention(job: PiJob): void {
+    clearTimeout(job.retentionTimer)
+    job.retentionTimer = undefined
   }
 
   function close(job: PiJob): Promise<void> {
     if (!job.close) {
-      job.close = job.run.close().catch((error) => {
-        recordFailure(error)
-        throw error
-      })
-      void job.close.catch(() => {})
+      // Revoke admission before requesting stop. The drain promise and any
+      // failure (including its cleanup lease) always belong to this launch.
+      job.close = job.run.drained
+      clearRetention(job)
+      void job.run.close()
     }
     return job.close
+  }
+
+  function retire(job: PiJob): Promise<void> {
+    job.retirement ??= job.run.drained.then(async () => {
+      await Promise.all([...job.turns].map((turn) => turn.promise))
+      const hadRow = jobs.get(job.id) === job
+      if (hadRow) jobs.delete(job.id)
+      owned.delete(job)
+      if (hadRow) changed()
+    })
+    void close(job)
+    return job.retirement
   }
 
   async function runTurn(job: PiJob, turn: PiTurn, prompt: string): Promise<void> {
@@ -141,18 +166,20 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     try {
       result = await job.run.prompt(prompt)
     } catch (error) {
-      result = { status: 'failed', output: '', error: String(error) }
-    }
-    if (invalidated || jobs.get(job.id) !== job) {
-      await finalize(job, turn, 'forget')
-      if (job.currentTurn === turn) job.busy = false
-      return
+      result = {
+        status: 'failed',
+        output: '',
+        error:
+          error instanceof UnconfirmedOwnedProgramError
+            ? (error.commandError?.message ?? error.message)
+            : String(error),
+      }
     }
     if (result.status !== 'completed') {
       try {
         await close(job)
       } catch {
-        /* retained for leave */
+        /* Stop and leave observe the original failure on this owner. */
       }
     }
     if (invalidated || jobs.get(job.id) !== job) {
@@ -175,23 +202,11 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     changed()
     if (result.status === 'completed') {
       job.reply = result.output
-      if (job.keep) return
+      if (job.keep || job.close) return
       job.retentionTimer = setTimeout(() => {
         if (jobs.get(job.id) !== job || job.busy || invalidated) return
-        const expiry = track(
-          (async () => {
-            try {
-              await close(job)
-            } finally {
-              if (jobs.get(job.id) === job) {
-                jobs.delete(job.id)
-                owned.delete(job)
-                changed()
-              }
-            }
-          })(),
-        )
-        void expiry.catch(recordFailure)
+        // A failed expiry keeps its owner, row and rejection for Stop/leave.
+        void retire(job).catch(() => undefined)
       }, RETAIN_MS)
       job.retentionTimer.unref()
     }
@@ -212,6 +227,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
   function begin(job: PiJob): PiTurn {
     const turn: PiTurn = {
       begin: Promise.resolve(),
+      finalized: false,
       promise: Promise.resolve(),
       statsUpdated: false,
     }
@@ -244,6 +260,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       if (invalidated) return { ok: false as const, message: 'No vault is open.' }
       run = new PiRpcRun({
         bin,
+        platform,
         cwd,
         env: (deps.env ?? ((binDir) => buildPiEnv(process.env, { binDir })))(deps.binDir?.()),
         onStats: (stats) => {
@@ -265,10 +282,6 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     } catch (error) {
       return { ok: false as const, message: `Could not start Pi: ${String(error)}` }
     }
-    if (invalidated) {
-      void run.close().catch(recordFailure)
-      return { ok: false as const, message: 'No vault is open.' }
-    }
     job = {
       id,
       remote: owner,
@@ -280,69 +293,55 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       keep: args.keep === true,
       turns: new Set(),
     }
-    jobs.set(id, job)
     owned.add(job)
+    if (invalidated) {
+      // A synchronous launch adapter can invalidate before the owner is registered.
+      await retire(job).catch(recordFailure)
+      return { ok: false as const, message: 'No vault is open.' }
+    }
+    if (run.startup) {
+      const error = await run.startup
+      if (error) {
+        await retire(job)
+        return { ok: false as const, message: `Could not start Pi: ${String(error)}` }
+      }
+      if (invalidated || remote !== owner || root !== cwd) {
+        await retire(job)
+        return { ok: false as const, message: 'No vault is open.' }
+      }
+    }
+    jobs.set(id, job)
     const turn = begin(job)
     changed()
     turn.promise = track(ownTurn(job, turn, args.prompt))
     return { ok: true as const, sessionId: id }
   }
 
-  function invalidate() {
-    if (invalidated) return leave()
-    invalidated = true
-    remote = null
-    root = null
-    return leave()
-  }
   function leave(): Promise<void> {
     if (leavePromise) return leavePromise
     invalidated = true
-    remote = null
+    // Keep the original remote only for Stop on an owner still retiring.
     root = null
-    const closing = [...owned]
-    for (const job of closing) {
-      if (job.retentionTimer) clearTimeout(job.retentionTimer)
-      job.retentionTimer = undefined
-      if (jobs.get(job.id) === job) jobs.delete(job.id)
-    }
+    deps.activationSignal?.removeEventListener('abort', onAbort)
     leavePromise = (async () => {
-      const cleanup = await Promise.allSettled(
-        closing.map(async (job) => {
-          try {
-            await close(job)
-          } catch {
-            /* retain and continue */
-          }
-          try {
-            await Promise.allSettled([...job.turns].map((turn) => turn.promise))
-          } catch (error) {
-            recordFailure(error)
-          }
-          await Promise.all([...job.turns].map((turn) => finalize(job, turn, 'forget')))
-        }),
-      )
+      const cleanup = await Promise.allSettled([...owned].map(retire))
       cleanup.forEach((result) => {
         if (result.status === 'rejected') recordFailure(result.reason)
       })
       while (work.size) await Promise.allSettled([...work])
-      const errors = failures.splice(0)
-      if (errors.length) throw new AggregateError(errors, 'Pi background runs failed to drain.')
+      if (failures.length === 1 && failures[0] instanceof UnconfirmedOwnedProgramError)
+        throw failures[0]
+      if (failures.length) throw new AggregateError(failures, 'Pi background runs failed to drain.')
     })()
     return leavePromise
   }
 
-  if (deps.activationSignal) {
-    if (deps.activationSignal.aborted) void invalidate().catch(recordFailure)
-    else
-      deps.activationSignal.addEventListener(
-        'abort',
-        () => {
-          void invalidate().catch(recordFailure)
-        },
-        { once: true },
-      )
+  function onAbort() {
+    // The activation host also joins leave; observe without replacing its error.
+    void leave().catch(() => undefined)
   }
+  if (deps.activationSignal?.aborted) onAbort()
+  else deps.activationSignal?.addEventListener('abort', onAbort, { once: true })
 
   return {
     setVault(nextRemote: string, nextRoot: string) {
@@ -361,48 +360,33 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       const job = jobs.get(id)
       if (!job || job.remote !== remote || job.outcome === 'failed' || job.outcome === 'aborted')
         throw new Error(`no running Pi session ${id}`)
-      const operation = (async () => {
-        if (invalidated || jobs.get(id) !== job) throw new Error(`no running Pi session ${id}`)
-        if (job.busy) job.run.followUp(text)
-        else {
-          if (!job.run.isAlive) {
-            if (job.retentionTimer) clearTimeout(job.retentionTimer)
-            job.retentionTimer = undefined
-            jobs.delete(job.id)
-            owned.delete(job)
-            changed()
-            await close(job)
-            await Promise.all([...job.turns].map((turn) => finalize(job, turn, 'forget')))
-            throw new Error('Pi RPC process exited before the follow-up')
-          }
-          if (job.retentionTimer) clearTimeout(job.retentionTimer)
-          job.retentionTimer = undefined
-          const turn = begin(job)
-          turn.promise = track(ownTurn(job, turn, text))
+      if (job.close || !job.run.isAlive) {
+        const message = 'Pi RPC process exited before the follow-up'
+        // Exit ends admission, not a buffered or finalizing turn. The set also
+        // tracks finalized turns until their bookkeeping unwinds, so membership
+        // alone doesn't mean the owner is still working.
+        if (!job.close && [...job.turns].some((turn) => !turn.finalized)) {
+          throw new Error(message)
         }
-      })()
-      return track(operation)
+        // Retirement joins the original drain. Only the admission promise gets
+        // a generic error, and only after successful retirement.
+        return (job.followUpRejection ??= retire(job).then(() => {
+          throw new Error(message)
+        }))
+      }
+      if (job.busy) job.run.followUp(text)
+      else {
+        clearRetention(job)
+        const turn = begin(job)
+        turn.promise = track(ownTurn(job, turn, text))
+      }
     },
     async stop(id: string) {
-      if (invalidated) return { ok: false as const, message: 'That session has ended.' }
       const job = jobs.get(id)
       if (!job || job.remote !== remote)
         return { ok: false as const, message: 'That session has ended.' }
-      const operation = (async () => {
-        if (job.retentionTimer) clearTimeout(job.retentionTimer)
-        job.retentionTimer = undefined
-        try {
-          await close(job)
-        } finally {
-          await Promise.allSettled([...job.turns].map((turn) => turn.promise))
-          await Promise.all([...job.turns].map((turn) => finalize(job, turn, 'forget')))
-          if (jobs.get(job.id) === job) jobs.delete(job.id)
-          owned.delete(job)
-          if (!invalidated) changed()
-        }
-        return { ok: true as const }
-      })()
-      return track(operation)
+      await retire(job)
+      return { ok: true as const }
     },
     leave,
   }

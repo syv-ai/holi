@@ -9,8 +9,8 @@
  *   own (`<userData>/agent-scratch/<vault-key>/jobs/<id>/`), copies in the
  *   files the job may read, at their vault paths, and runs the agent there. What bounds it is
  *   what it writes back, not what it reads: Codex's sandbox keeps writes to
- *   the folder but can read the disk. When it succeeds, its process group is
- *   killed, then only the regular files it wrote that match its write scope
+ *   the folder but can read the disk. When it succeeds, its processes are
+ *   drained, then only the regular files it wrote that match its write scope
  *   and are the vault's shared content (`isSharedContentPath`: nothing
  *   hidden, local, secret, on the agent surface or named
  *   `AGENTS.md`/`CLAUDE.md`) are copied back, each checked as a vault path
@@ -18,7 +18,7 @@
  *   finished marker lands after its page. What it left out it names in its
  *   message. Past `MAX_COPY_FILES` or `MAX_COPY_BYTES` nothing is copied and
  *   it fails. A failed or stopped job copies nothing back, and a Stop during
- *   the copy stops it there. The folder is deleted either way. A new folder
+ *   the copy stops it there. The folder is deleted after safe finalization. A new folder
  *   is never written over: a `folder/**` in the write scope (Create vault
  *   app's `<name>.app`) must not be in the vault when the run starts, and at
  *   each copy everything in it must be what this run wrote there; when sync
@@ -38,11 +38,11 @@
  * the provider takes back what it keeps of the person's there
  * (`AgentProvider.release`), and it goes with the job.
  *
- * Either way, what a turn's process left running in its group is killed when
- * it exits. Beside the scratch folders is `<id>.pid`, the running turn's pid
- * and the folder it runs in, outside what any job may write: a crash leaves
- * it behind, and the next start kills that group (when it still leads one and
- * its command names that folder) before the folders go.
+ * On POSIX each turn leads its own process group, killed after root close.
+ * A crash leaves `<id>.pid` for a guarded group sweep. On Windows the exact
+ * launch is stopped through its own handle and joined through its receipt and
+ * output, not helper close or a pid. A pre-launch marker retains an unproven
+ * turn's scratch namespace across restarts.
  *
  * **It is a session in the one list**, named by Holi's id (`j` and twelve hex
  * digits): working while a turn runs, then idle with its `outcome` (and why,
@@ -54,12 +54,9 @@
  * thread (`resume`): queued while a turn runs, sent when it ends. The agent
  * has no way to take a message mid-turn from Holi.
  *
- * The process leads its own group and is stopped by group, after asking what
- * the pid is right now, as the PTY's kill path does (`pty.ts`).
- *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import { execFileSync, type ChildProcess } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
@@ -81,16 +78,20 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import {
   CapabilityError,
   defaultProbePid,
+  joinOwnedProgram,
   killChildTree,
   killTree,
   readableOrNull,
   spawnOwnedProgram,
+  type ManagedOwnedChild,
+  UnconfirmedOwnedProgramError,
   type PidState,
 } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
 import type { JobRun, JobsProvider, VaultRef } from '../provider'
 import { bounded } from './bounded'
 import type { ActionResult } from './sessions'
+import { createWindowsJobRecovery } from './windows-job-recovery'
 
 /**
  * Holi's id for a job: never a background job id or a PTY session's.
@@ -124,11 +125,9 @@ type SpawnJob = (
   bin: string,
   args: string[],
   opts: { cwd: string; env: Record<string, string> },
-) => ChildProcess
+) => ManagedOwnedChild
 
-/** Its own group, so a stop reaches what it started too. (On Windows the
- *  child is not detached, which would only open a console window for what it
- *  starts; `killTree` stops its tree by the root pid.) */
+/** An owned Job Object on Windows, a detached process group on POSIX. */
 const defaultSpawnJob: SpawnJob = (bin, args, { cwd, env }) =>
   spawnOwnedProgram(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
 
@@ -141,9 +140,9 @@ export interface JobsDeps {
    *  turn is recorded. */
   bracket?(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<unknown>
   spawn?: SpawnJob
-  probePid?: (pid: number) => PidState
-  /** A live process's command line, or null: the sweep's check that a pid
-   *  left behind is still a job's. */
+  probePid?: (
+    pid: number,
+  ) => PidState /** POSIX recovery only: check that a reused pid still names the job. */
   commandOf?: (pid: number) => string | null
   /** SIGTERM, then this long, then SIGKILL. */
   killGraceMs?: number
@@ -152,6 +151,8 @@ export interface JobsDeps {
   /** The longest a turn runs before it is stopped. */
   maxMs?: number
   log?: (msg: string) => void
+  /** Owning activation platform, captured independently of test ambient state. */
+  platform?: NodeJS.Platform
   /** Revokes admission synchronously when this vault activation is invalidated. */
   activationSignal?: AbortSignal
   /** Called after the first hash check: tests inject a concurrent vault edit. */
@@ -170,7 +171,7 @@ export interface Jobs {
    *  running one ends. Throws a `CapabilityError` when it cannot take one. */
   message(id: string, text: string): void
   stop(id: string): Promise<ActionResult>
-  /** Stop every job and delete every scratch folder. */
+  /** Revoke admission, stop every job, and only clean up after drain is confirmed. */
   leave(): Promise<void>
   /** Copy back what `dir` holds inside `write`, as a job's success does:
    *  a session fenced to a folder of Holi's (`fenced.ts`) at each turn's end.
@@ -210,7 +211,7 @@ interface Job {
   state: string
   /** What a scratch job was given and wrote (`Made`). */
   made: Made
-  child: ChildProcess | null
+  child: ManagedOwnedChild | null
   /** A turn is under way: running, or its writes being copied back. */
   busy: boolean
   /** Admission is revoked before asynchronous retirement begins. */
@@ -227,13 +228,17 @@ interface Job {
   /** Follow-ups waiting for the running turn to end. */
   queue: string[]
   tokens: number
-  /** Resolves after release, copy-back, bracket completion and owned cleanup. */
-  exited: Promise<void>
+  /** One observed settlement for admission, process ownership and finalization. */
+  turnSettled: Promise<void>
+  bracketBegin?: Promise<unknown>
+  /** End the host's wait without authorizing finalization of an unproven launch. */
+  abandonNativeWait?: (failure: unknown) => void
+  stopOperation?: Promise<void>
+  marker?: string
   pidWrite?: Promise<void>
   finalizationError?: Error
   dropTimer?: ReturnType<typeof setTimeout>
   retirement?: Promise<void>
-  bracketBegin?: Promise<void>
 }
 
 /** A write scope entry matches a path exactly, or as `folder/**` anything
@@ -532,6 +537,8 @@ const MAX_QUEUE = 20
 export function createJobs(deps: JobsDeps): Jobs {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-jobs] ${msg}`))
   const spawnJob = deps.spawn ?? defaultSpawnJob
+  const platform = deps.platform ?? process.platform
+  const windowsRecovery = platform === 'win32' ? createWindowsJobRecovery(deps.scratchRoot) : null
   const probePid = deps.probePid ?? defaultProbePid
   const commandOf = deps.commandOf ?? defaultCommandOf
   const killGraceMs = deps.killGraceMs ?? 2_000
@@ -572,10 +579,10 @@ export function createJobs(deps: JobsDeps): Jobs {
    */
   function signal(job: Job, sig: 'SIGTERM' | 'SIGKILL'): void {
     const child = job.child
-    if (child === null || child.pid === undefined) return
-    if (process.platform === 'win32') {
-      // This ChildProcess is the ownership helper itself. Killing its process
-      // handle closes the Job Object; never target a Windows pid after a probe.
+    if (child === null) return
+    if (platform === 'win32') {
+      // The launch adapter requests drain through its original control channel
+      // and stable handle. Neither a missing pid nor helper close is proof.
       try {
         child.kill(sig)
       } catch {
@@ -583,10 +590,10 @@ export function createJobs(deps: JobsDeps): Jobs {
       }
       return
     }
+    if (child.pid === undefined) return
     switch (probePid(child.pid)) {
       case 'group-leader':
-        // Reaped between the probe and here is a no-op; on Windows a child that
-        // has exited is not stopped by pid, which may be another program's.
+        // Reaped between the probe and here is a no-op.
         killChildTree(child, sig)
         return
       case 'alive':
@@ -606,34 +613,31 @@ export function createJobs(deps: JobsDeps): Jobs {
       if (job.finalizationError !== undefined) throw job.finalizationError
       return
     }
-    // Set first: a copy back under way reads it, after the process is gone.
-    job.stopped ??= why
+    if (job.stopOperation !== undefined) return job.stopOperation
+    // Revoke admission and copy-back synchronously. Install one deadline and
+    // one reaction on the turn, even when Stop, abort, and leave overlap.
+    job.stopped = why
     job.queue = []
-    job.copyController?.abort()
-    if (job.child !== null) signal(job, 'SIGTERM')
-    const timer = setTimeout(() => signal(job, 'SIGKILL'), killGraceMs)
-    let timeoutTimer: ReturnType<typeof setTimeout> | undefined
-    const timeout = new Promise<never>((_, reject) => {
-      timeoutTimer = setTimeout(
-        () => reject(new Error(`Could not finalize job ${job.id} before teardown timed out.`)),
-        killGraceMs + 5_000,
-      )
+    const settlement = job.turnSettled
+    job.stopOperation = Promise.resolve().then(async () => {
+      signal(job, 'SIGTERM')
+      const escalation =
+        platform === 'win32' ? undefined : setTimeout(() => signal(job, 'SIGKILL'), killGraceMs)
+      try {
+        await bounded(settlement, `Finalization of job ${job.id}`, killGraceMs + 5_000)
+      } finally {
+        clearTimeout(escalation)
+      }
     })
-    try {
-      await Promise.race([job.exited, timeout])
-      if (job.finalizationError !== undefined) throw job.finalizationError
-    } finally {
-      clearTimeout(timer)
-      if (timeoutTimer !== undefined) clearTimeout(timeoutTimer)
-    }
+    job.copyController?.abort()
+    return job.stopOperation
   }
 
   /** Kill whatever the job's process left running in its group, so nothing
    *  changes the folder while it is copied back or the vault after its turn. */
   function killGroup(job: Job): void {
-    // The Windows ownership helper closes only after its Job Object is empty.
-    // POSIX still needs the group sweep after the root closes.
-    if (process.platform !== 'win32' && job.child) {
+    // Only POSIX needs the group sweep after the root closes.
+    if (platform !== 'win32' && job.child) {
       try {
         killChildTree(job.child, 'SIGKILL')
       } catch (err) {
@@ -828,7 +832,7 @@ export function createJobs(deps: JobsDeps): Jobs {
   const pidFile = (id: string): string => join(deps.scratchRoot, `${id}.pid`)
 
   /** The job leaves the list, and its agent's state goes with it. */
-  async function drop(job: Job): Promise<void> {
+  async function retire(job: Job): Promise<void> {
     // Revoke admission before the first asynchronous filesystem operation.
     job.retiring = true
     job.queue = []
@@ -836,7 +840,7 @@ export function createJobs(deps: JobsDeps): Jobs {
     if (job.finalizationError !== undefined) throw job.finalizationError
     if (job.retirement === undefined) {
       const retirement = (async () => {
-        await job.exited
+        await job.turnSettled
         if (job.finalizationError !== undefined) throw job.finalizationError
         await job.pidWrite
         await rm(job.state, { recursive: true, force: true })
@@ -850,7 +854,11 @@ export function createJobs(deps: JobsDeps): Jobs {
         if (job.retirement === retirement) job.retirement = undefined
       })
     }
-    await bounded(job.retirement, `Cleanup of job ${job.id}`)
+    await job.retirement
+  }
+
+  function drop(job: Job): Promise<void> {
+    return bounded(retire(job), `Cleanup of job ${job.id}`)
   }
 
   /** The job's turn ended: its outcome stands until a follow-up starts
@@ -865,10 +873,14 @@ export function createJobs(deps: JobsDeps): Jobs {
     else job.message = message
     job.child = null
     const cleanups = [
-      (async () => {
-        await job.pidWrite
-        await rm(pidFile(job.id), { force: true })
-      })(),
+      ...(platform === 'win32'
+        ? []
+        : [
+            (async () => {
+              await job.pidWrite
+              await rm(pidFile(job.id), { force: true })
+            })(),
+          ]),
       // A failed provider release still owns this state. Retain both folders
       // with the captured job rather than destroying what could not be drained.
       ...(job.dir === null || job.finalizationError !== undefined
@@ -883,7 +895,10 @@ export function createJobs(deps: JobsDeps): Jobs {
       result.status === 'rejected' ? [result.reason] : [],
     )
     if (errors.length > 0) {
-      job.finalizationError = new AggregateError(errors, `Could not clean up job ${job.id}.`)
+      job.finalizationError = new AggregateError(
+        [job.finalizationError, ...errors].filter(Boolean),
+        `Could not clean up job ${job.id}.`,
+      )
       job.outcome = 'failed'
       job.message = job.finalizationError.message
     }
@@ -891,69 +906,116 @@ export function createJobs(deps: JobsDeps): Jobs {
     push()
   }
 
-  /**
-   * Run one turn of `job`: spawn it, read its events, and settle it when the
-   * process closes. Copies back a scratch job's writes on success; ends a
-   * vault job's turn bracket either way; sends what was queued meanwhile.
-   */
+  /** One turn owns everything from pre-spawn admission through finalization.
+   * Start waits for admission; Stop also joins the work behind it. */
   function runTurn(
     job: Job,
     run: JobRun,
     write: readonly string[],
-  ): { ok: true } | { ok: false; message: string } {
-    let command: ReturnType<JobsProvider['capabilities']['jobs']['command']>
-    try {
-      command = job.provider.capabilities.jobs.command(run)
-    } catch (err) {
-      return { ok: false, message: (err as Error).message }
-    }
-    if (command === null) return { ok: false, message: job.provider.notInstalled }
-    let child: ChildProcess
-    try {
-      child = spawnJob(command.bin, command.args, { cwd: run.cwd, env: command.env })
-    } catch (err) {
-      return {
-        ok: false,
-        message: `${job.provider.label} did not start: ${(err as Error).message}`,
-      }
-    }
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
     const { id, provider } = job
-    let exitedResolve!: () => void
-    job.exited = new Promise<void>((r) => (exitedResolve = r))
-    job.child = child
     job.busy = true
-    delete job.stopped
-    delete job.finalizationError
-    if (child.pid !== undefined) {
-      const line = `${child.pid}\n${run.cwd}\n`
-      job.pidWrite = mkdir(deps.scratchRoot, { recursive: true }).then(() =>
-        writeFile(pidFile(id), line),
-      )
-      void job.pidWrite.catch(() => {})
-    }
+    delete job.stopOperation
     clearTimeout(job.dropTimer)
-    if (job.place !== null) {
-      job.bracketBegin = Promise.resolve()
-        .then(() => deps.bracket?.(id, 'begin'))
-        .then(() => undefined)
-        .catch((err) => {
-          job.finalizationError = new Error(`Could not begin job turn: ${String(err)}`)
-        })
+    let admit!: (result: { ok: true } | { ok: false; message: string }) => void
+    const admission = new Promise<{ ok: true } | { ok: false; message: string }>((resolve) => {
+      admit = resolve
+    })
+    const revoked = () =>
+      closing ||
+      deps.activationSignal?.aborted === true ||
+      job.retiring ||
+      job.stopped !== undefined
+    const gone = 'The vault was left before the job started.'
+    const refused = async (message: string) => {
+      // Command preparation may already own provider state, even with no child.
+      // The first POSIX refusal retains its existing cleanup semantics.
+      job.finalizing = true
+      if (platform === 'win32' || run.resume !== undefined) {
+        try {
+          await provider.release?.(job.state)
+        } catch (err) {
+          job.finalizationError = new Error(`Could not release agent state: ${String(err)}`)
+        }
+      }
+      await finish(job, 'failed', message)
+      if (run.resume === undefined && job.finalizationError === undefined && job.dir === null)
+        await rm(job.state, { recursive: true, force: true })
+      await windowsRecovery?.removeMarker(job)
+      job.queue = []
+      job.busy = false
+      job.finalizing = false
+      if (run.resume === undefined && job.finalizationError === undefined) jobs.delete(id)
+      else scheduleDrop(job)
+      admit({ ok: false, message })
+      if (job.finalizationError !== undefined) throw job.finalizationError
+      push()
     }
+    const turn = async () => {
+      if (revoked()) return refused(job.stopped ?? gone)
+      let command: ReturnType<JobsProvider['capabilities']['jobs']['command']>
+      try {
+        command = provider.capabilities.jobs.command(run)
+      } catch (err) {
+        return refused((err as Error).message)
+      }
+      if (command === null) return refused(provider.notInstalled)
+      if (windowsRecovery !== null) {
+        push()
+        if (revoked()) return refused(job.stopped ?? gone)
+        try {
+          await windowsRecovery.publishMarker(job)
+        } catch (err) {
+          return refused(`Could not publish Windows job recovery marker: ${String(err)}`)
+        }
+      }
+      // No await (or call out to observers) between the final check and spawn.
+      if (revoked()) return refused(job.stopped ?? gone)
+      let child: ManagedOwnedChild
+      try {
+        child = spawnJob(command.bin, command.args, { cwd: run.cwd, env: command.env })
+      } catch (err) {
+        if (platform === 'win32') {
+          // Definitive no-helper failures use the adapter's not-started result.
+          throw err instanceof UnconfirmedOwnedProgramError
+            ? err
+            : new UnconfirmedOwnedProgramError(err)
+        }
+        return refused(`${provider.label} did not start: ${(err as Error).message}`)
+      }
+      // Subscribe before any branch: even the local no-helper child emits error.
+      const joined = joinOwnedProgram(child, platform)
+      job.child = child
+      if (platform !== 'win32' && child.pid !== undefined) {
+        const line = `${child.pid}\n${run.cwd}\n`
+        job.pidWrite = mkdir(deps.scratchRoot, { recursive: true }).then(() =>
+          writeFile(pidFile(id), line),
+        )
+        void job.pidWrite.catch(() => {})
+      }
+      const bracketBegin =
+        job.place === null
+          ? undefined
+          : Promise.resolve()
+              .then(() => deps.bracket?.(id, 'begin'))
+              .catch((err) => {
+                job.finalizationError ??= new Error(`Could not begin job turn: ${String(err)}`)
+              })
+      if (bracketBegin !== undefined) job.bracketBegin = bracketBegin
 
-    let completed = false
-    let failure: string | null = null
-    let error: string | null = null
-    let stderr = ''
-    if (child.stdout !== null) {
-      createInterface({ input: child.stdout }).on('line', (line) => {
+      let completed = false
+      let failure: string | null = null
+      let error: string | null = null
+      let stderr = ''
+      const lines = child.stdout === null ? undefined : createInterface({ input: child.stdout })
+      // Readline forwards stdin errors; the shared join records the raw error.
+      lines?.on('error', () => {})
+      lines?.on('line', (line) => {
         const event = provider.capabilities.jobs.event(line)
         if (event === null) return
         if (event.kind === 'thread') {
           job.thread ??= event.id
           log(`${id}: thread ${event.id}`)
-        } else if (event.kind === 'turn-started') {
-          // usage.total is cumulative: keep it until Codex reports a newer total.
         } else if (event.kind === 'turn-completed') {
           completed = true
           if (event.tokens !== undefined) {
@@ -963,60 +1025,37 @@ export function createJobs(deps: JobsDeps): Jobs {
         } else if (event.kind === 'turn-failed') failure = event.message
         else if (event.kind === 'error') error = event.message
       })
-    }
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr = (stderr + chunk.toString('utf8')).slice(-4_000)
-    })
-    const tooLong = setTimeout(() => {
-      const pending = kill(job, 'The job ran too long and was stopped.')
-      void pending.catch((err: unknown) => {
-        job.finalizationError = new AggregateError(
-          [job.finalizationError, err].filter(Boolean),
-          `Could not stop job ${job.id}.`,
-        )
-      })
-    }, maxMs)
-    tooLong.unref?.()
-
-    let settled = false
-    const settle = async (code: number | null, sig: NodeJS.Signals | null): Promise<void> => {
-      if (settled) return
-      settled = true
-      clearTimeout(tooLong)
-      // Whatever it left running dies with it, before anything is read.
-      killGroup(job)
-      if (jobs.get(id) !== job) {
-        await job.bracketBegin
-        if (job.place !== null) {
-          try {
-            await deps.bracket?.(id, 'forget')
-          } catch (err) {
-            job.finalizationError = new Error(`Could not close job turn: ${String(err)}`)
-          }
-        }
-        const cleanup = await Promise.allSettled([
-          Promise.resolve().then(() => provider.release?.(job.state)),
-          rm(pidFile(id), { force: true }),
-          rm(job.state, { recursive: true, force: true }),
-          ...(job.dir === null ? [] : [rm(job.dir, { recursive: true, force: true })]),
-        ])
-        const cleanupErrors = cleanup.flatMap((result) =>
-          result.status === 'rejected' ? [result.reason] : [],
-        )
-        if (cleanupErrors.length > 0) {
-          job.finalizationError = new AggregateError(
-            [job.finalizationError, ...cleanupErrors].filter(Boolean),
-            `Could not clean up job ${id}.`,
-          )
-        }
-        exitedResolve()
-        return
+      const collectStderr = (chunk: Buffer) => {
+        stderr = (stderr + chunk.toString('utf8')).slice(-4_000)
       }
-      // Exited: a Stop from here on signals nothing, since its pid may
-      // already be another process's. The whole turn remains busy through
-      // bracket persistence and cleanup, not just process close.
+      child.stderr?.on('data', collectStderr)
+      const tooLong = setTimeout(() => {
+        void kill(job, 'The job ran too long and was stopped.').catch((err: unknown) => {
+          log(`${id}: could not stop: ${String(err)}`)
+        })
+      }, maxMs)
+      tooLong.unref?.()
+      admit({ ok: true })
+      let result
+      try {
+        push()
+        if (platform === 'win32') {
+          const abandoned = new Promise<never>((_, reject) => {
+            job.abandonNativeWait = reject
+          })
+          result = await Promise.race([joined, abandoned])
+        } else result = await joined
+      } finally {
+        delete job.abandonNativeWait
+        clearTimeout(tooLong)
+        lines?.close()
+        lines?.removeAllListeners('line')
+        child.stderr?.off('data', collectStderr)
+      }
+      const { code, signal: sig, error: commandError, ownership } = result
+      killGroup(job)
       job.child = null
-      await job.bracketBegin
+      await bracketBegin
       let releaseFailure: string | undefined
       try {
         await provider.release?.(job.state)
@@ -1035,7 +1074,13 @@ export function createJobs(deps: JobsDeps): Jobs {
       } else if (releaseFailure !== undefined) {
         outcome = 'failed'
         why = releaseFailure
-      } else if (completed && failure === null && code === 0) {
+      } else if (
+        completed &&
+        failure === null &&
+        commandError === null &&
+        code === 0 &&
+        ownership !== 'not-started'
+      ) {
         outcome = 'completed'
         if (job.dir !== null) {
           try {
@@ -1067,8 +1112,17 @@ export function createJobs(deps: JobsDeps): Jobs {
       } else {
         outcome = 'failed'
         why =
+          (platform === 'win32' && commandError !== null
+            ? ownership === 'not-started'
+              ? `${provider.label} did not start: ${commandError.message}`
+              : commandError.message
+            : null) ??
           failure ??
           error ??
+          (commandError === null
+            ? null
+            : `${provider.label} did not start: ${commandError.message}`) ??
+          (ownership === 'not-started' ? `${provider.label} did not start.` : null) ??
           (sig !== null
             ? `${provider.label} was stopped (${sig}).`
             : `${provider.label} exited with code ${code ?? '?'}${lastLine(stderr) === '' ? '.' : `: ${lastLine(stderr)}`}`)
@@ -1076,49 +1130,52 @@ export function createJobs(deps: JobsDeps): Jobs {
       }
       job.finalizing = true
       await finish(job, outcome, why)
-      // The outcome is on the row before the bracket's end is told. `busy`
-      // remains true until its persistence and the remaining owned cleanup.
+      // The outcome is on the row before the bracket's end is told. Stop
+      // joins its persistence and marker removal as part of this turn.
       if (job.place !== null) {
         try {
           await deps.bracket?.(id, 'end')
         } catch (err) {
           job.finalizationError = new Error(`Could not finalize job turn: ${String(err)}`)
-          job.outcome = 'failed'
-          job.message = job.finalizationError.message
         }
       }
-      if (job.stopped !== undefined && job.finalizationError === undefined) {
+      await windowsRecovery?.removeMarker(job)
+      if (job.finalizationError !== undefined) throw job.finalizationError
+      if (job.stopped !== undefined) {
         job.outcome = 'failed'
         job.message = job.stopped
       }
+      if (ownership === 'not-started') job.queue = []
       job.finalizing = false
       job.busy = false
       scheduleDrop(job)
       push()
-      // A stopped or failed job takes nothing more, whatever was queued.
-      if (
-        !closing &&
-        !job.retiring &&
-        job.stopped === undefined &&
-        job.finalizationError === undefined &&
-        job.queue.length > 0
-      )
-        followUp(job)
-      exitedResolve()
+      followUp(job)
     }
-    // `close` waits for the output to be read to its end; `error` is a
-    // process that never ran.
-    child.on('close', (code, sig) => void settle(code, sig))
-    child.on('error', (err) => {
-      error ??= `${provider.label} did not start: ${err.message}`
-      void settle(null, null)
-    })
-    push()
-    return { ok: true }
+    // Install the settlement before running command preparation or notifying
+    // observers; either may synchronously revoke admission.
+    job.turnSettled = Promise.resolve()
+      .then(turn)
+      .catch((err: unknown) => {
+        // Preserve the shared join's exact failure and its launch-specific lease.
+        // A late close cannot turn this rejection into permission to clean up.
+        const failure = err instanceof Error ? err : new Error(String(err))
+        job.finalizationError = failure
+        job.outcome = 'failed'
+        job.message = failure.message
+        job.busy = false
+        job.finalizing = false
+        job.queue = []
+        admit({ ok: false, message: failure.message })
+        push()
+        throw failure
+      })
+    void job.turnSettled.catch(() => {})
+    return admission
   }
 
   function scheduleDrop(job: Job): void {
-    if (job.finalizationError !== undefined || job.retiring) return
+    if (closing || job.finalizationError !== undefined || job.retiring) return
     clearTimeout(job.dropTimer)
     job.dropTimer = setTimeout(() => {
       if (jobs.get(job.id) === job) {
@@ -1133,6 +1190,7 @@ export function createJobs(deps: JobsDeps): Jobs {
     const place = job.place
     if (
       closing ||
+      job.busy ||
       job.retiring ||
       job.stopped !== undefined ||
       job.finalizationError !== undefined ||
@@ -1141,11 +1199,9 @@ export function createJobs(deps: JobsDeps): Jobs {
       job.queue.length === 0
     )
       return
-    delete job.stopped
-    job.busy = true
     const text = job.queue.join('\n\n')
     job.queue = []
-    const started = runTurn(
+    void runTurn(
       job,
       {
         cwd: place.cwd,
@@ -1159,29 +1215,6 @@ export function createJobs(deps: JobsDeps): Jobs {
       },
       [],
     )
-    if (!started.ok) {
-      // No process was spawned, but command preparation may still own state.
-      // This turn gets its own settlement marker; never reuse the last turn's.
-      job.finalizing = true
-      job.exited = (async () => {
-        try {
-          await job.provider.release?.(job.state)
-        } catch (err) {
-          job.finalizationError = new Error(`Could not release agent state: ${String(err)}`)
-        }
-        try {
-          await finish(job, 'failed', started.message)
-        } catch (err) {
-          job.finalizationError = new Error(`Could not finalize job turn: ${String(err)}`)
-        } finally {
-          job.finalizing = false
-          job.busy = false
-          job.queue = []
-          scheduleDrop(job)
-          push()
-        }
-      })()
-    }
   }
 
   /** The vault folders a job may write, made where missing, each checked to
@@ -1204,7 +1237,7 @@ export function createJobs(deps: JobsDeps): Jobs {
   // first, when its pid still leads a group whose command names the folder
   // it ran in (a pid is reused); then the folders go. A job starts once
   // they are gone.
-  async function sweep(): Promise<void> {
+  async function sweepPosix(): Promise<void> {
     const names = await readdir(deps.scratchRoot).catch(() => [] as string[])
     for (const name of names) {
       const id = name.endsWith('.pid') ? name.slice(0, -4) : null
@@ -1220,26 +1253,34 @@ export function createJobs(deps: JobsDeps): Jobs {
     }
     await rm(deps.scratchRoot, { recursive: true, force: true })
   }
-  const sweeping = sweep()
+  const sweeping = windowsRecovery === null ? sweepPosix() : windowsRecovery.verifyScratch()
   const swept = bounded(sweeping, 'Agent job state sweep')
   void swept.catch(() => {})
 
-  /** Leaving the vault bumps it: a start that began before sees it changed
-   *  and spawns nothing. */
-  let generation = 0
   let closing = deps.activationSignal?.aborted === true
-  /** Starts getting ready (folders, copies): `leave` waits for them. */
+  let cancelAdmission!: () => void
+  const revokedAdmission = new Promise<void>((resolve) => {
+    cancelAdmission = resolve
+  })
+  // Starts queued at recovery have no workspace ownership yet. Wake them on
+  // revocation without waiting for recovery (or any running job) to finish.
+  const ready = Promise.race([swept, revokedAdmission])
+  void ready.catch(() => {})
+  function closeAdmission(): void {
+    closing = true
+    cancelAdmission()
+  }
+  /** FS work admitted before the first turn takes ownership. */
   const starting = new Set<Promise<JobResult>>()
   deps.activationSignal?.addEventListener(
     'abort',
     () => {
-      closing = true
-      generation += 1
+      closeAdmission()
       for (const job of jobs.values()) {
         job.queue = []
-        const pending = kill(job, 'Stopped.')
-        void pending.catch((err: unknown) => {
-          job.finalizationError = new Error(String(err))
+        clearTimeout(job.dropTimer)
+        void kill(job, 'Stopped.').catch((err: unknown) => {
+          log(`${job.id}: could not stop: ${String(err)}`)
         })
       }
     },
@@ -1248,10 +1289,8 @@ export function createJobs(deps: JobsDeps): Jobs {
 
   /** A job's start, up to its first turn's spawn. Between its awaits the
    *  vault may be left; it then stops there, before anything runs. */
-  async function begin(spec: JobSpec): Promise<JobResult> {
+  async function begin(spec: JobSpec, onTurn: () => void): Promise<JobResult> {
     const { provider, name, prompt, system, model } = spec
-    if (closing) return { ok: false, message: 'The vault is closing.' }
-    const began = generation
     const id = `j${randomBytes(6).toString('hex')}`
     const job: Job = {
       id,
@@ -1267,122 +1306,141 @@ export function createJobs(deps: JobsDeps): Jobs {
       busy: false,
       queue: [],
       tokens: 0,
-      exited: Promise.resolve(),
+      turnSettled: Promise.resolve(),
     }
 
-    try {
-      await swept
-    } catch (err) {
-      return { ok: false, message: `Could not sweep agent job state: ${String(err)}` }
+    const gone = { ok: false, message: 'The vault was left before the job started.' } as const
+    const base = {
+      root: deps.vault.root,
+      state: job.state,
+      ...(model === undefined ? {} : { model }),
     }
-    // Left while it got ready: it never spawns against the closed vault.
-    const left = (): boolean => generation !== began
-    const gone = 'The vault was left before the job started.'
-    if (left()) return { ok: false, message: gone }
-    await mkdir(job.state, { recursive: true, mode: 0o700 })
-    if ('allow' in spec) {
-      const sandbox = vaultSandbox(spec.allow)
-      if (!sandbox.ok) {
-        await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
-        return sandbox
-      }
-      const place = left() ? gone : await placeIn(sandbox.write)
-      if (typeof place === 'string' || left()) {
-        await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
-        return { ok: false, message: typeof place === 'string' ? place : gone }
-      }
-      job.place = place
-      // The agent runs in a folder of the vault, or reads it all: every
-      // path it is given is the vault's.
-      const where = `The vault is ${deps.vault.root}. Every vault path named here is relative to it.`
-      jobs.set(id, job)
-      const started = runTurn(
-        job,
-        {
+    let run: JobRun
+    let write: readonly string[]
+    let transferred = false
+    try {
+      await mkdir(job.state, { recursive: true, mode: 0o700 })
+      if (closing) return gone
+      if ('allow' in spec) {
+        const sandbox = vaultSandbox(spec.allow)
+        if (!sandbox.ok) return sandbox
+        const place = await placeIn(sandbox.write)
+        if (typeof place === 'string') return { ok: false, message: place }
+        job.place = place
+        // Every path a vault job is given is relative to this vault.
+        const where = `The vault is ${deps.vault.root}. Every vault path named here is relative to it.`
+        run = {
+          ...base,
           cwd: place.cwd,
-          root: deps.vault.root,
           prompt: [system, where, prompt].filter((p) => p !== undefined).join('\n\n'),
           writable: place.writable,
           readOnly: place.readOnly,
-          state: job.state,
-          ...(model === undefined ? {} : { model }),
-        },
-        [],
-      )
-      if (!started.ok) {
-        await drop(job)
-        return started
+        }
+        write = []
+      } else {
+        const { scope } = spec
+        const taken = await takenDestination(deps.vault.root, scope.write)
+        if (taken !== null) return { ok: false, message: takenMessage(taken) }
+        if (closing) return gone
+        const dir = (job.dir = join(deps.scratchRoot, id))
+        await mkdir(dir, { recursive: true })
+        if (closing) return gone
+        const unread = await copyIn(deps.vault.root, dir, scope.read, job.made)
+        if (unread !== null) return { ok: false, message: unread }
+        run = {
+          ...base,
+          cwd: dir,
+          prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
+        }
+        write = scope.write
       }
-      return { ok: true, sessionId: id }
+      if (closing) return gone
+      // No await between preparation and the turn taking ownership.
+      jobs.set(id, job)
+      transferred = true
+      onTurn()
+      const started = await runTurn(job, run, write)
+      return started.ok ? { ok: true, sessionId: id } : started
+    } finally {
+      if (!transferred) {
+        // These paths never reached a turn, so no provider or child owns them.
+        await Promise.allSettled(
+          [job.state, ...(job.dir === null ? [] : [job.dir])].map((path) =>
+            rm(path, { recursive: true, force: true }),
+          ),
+        )
+      }
     }
-
-    const { scope } = spec
-    const dir = join(deps.scratchRoot, id)
-    const fail = async (message: string): Promise<JobResult> => {
-      await rm(dir, { recursive: true, force: true }).catch(() => undefined)
-      await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
-      await rm(pidFile(id), { force: true }).catch(() => undefined)
-      return { ok: false, message }
-    }
-    const taken = await takenDestination(deps.vault.root, scope.write)
-    if (taken !== null) return fail(takenMessage(taken))
-    await mkdir(dir, { recursive: true })
-    const unread = await copyIn(deps.vault.root, dir, scope.read, job.made)
-    if (unread !== null) return fail(unread)
-    if (left()) return fail(gone)
-    job.dir = dir
-    jobs.set(id, job)
-    const started = runTurn(
-      job,
-      {
-        cwd: dir,
-        root: deps.vault.root,
-        prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
-        state: job.state,
-        ...(model === undefined ? {} : { model }),
-      },
-      scope.write,
-    )
-    if (!started.ok) {
-      jobs.delete(id)
-      return fail(started.message)
-    }
-    return { ok: true, sessionId: id }
   }
 
   let leaving: Promise<void> | undefined
   let rootRetirement: Promise<void> | undefined
   let drained = false
 
-  async function leave(): Promise<void> {
-    closing = true
-    generation += 1
-    // The startup deadline may have expired while the actual sweep or a start
-    // is still mutating disk. Neither can outlive a successful teardown.
-    await bounded(sweeping, 'Agent job state sweep')
-    await bounded(Promise.all([...starting]), 'Agent job starts')
+  async function drain(): Promise<void> {
     const all = [...jobs.values()]
+    const preparing = Promise.allSettled(starting)
     for (const job of all) {
       job.retiring = true
       job.queue = []
       clearTimeout(job.dropTimer)
     }
-    const results = await Promise.allSettled(all.map((job) => kill(job, 'Stopped.')))
-    const failures = results.flatMap((result) =>
+    const stopFailures = windowsRecovery?.stopFailures()
+    const stopping = Promise.allSettled(
+      all.map(async (job) => {
+        try {
+          await kill(job, 'Stopped.')
+        } catch (failure) {
+          stopFailures?.record(failure)
+          // A timed-out Windows launch may still be alive. The native join
+          // keeps observing it; late proof cannot start new host finalizers.
+          job.abandonNativeWait?.(failure)
+          throw failure
+        }
+      }),
+    )
+    const hostWork =
+      platform === 'win32'
+        ? Promise.allSettled(
+            all.flatMap((job) => [job.turnSettled, job.bracketBegin, job.retirement]),
+          )
+        : undefined
+    const [stops, [recovery, starts, host]] = await Promise.all([
+      stopping,
+      Promise.allSettled([
+        bounded(sweeping, 'Agent job state sweep'),
+        platform === 'win32' ? preparing : bounded(preparing, 'Agent job starts'),
+        hostWork,
+      ] as const),
+    ])
+    const failures = stops.flatMap((result) =>
       result.status === 'rejected' ? [result.reason] : [],
     )
-    if (failures.length > 0) {
+    // A failed Stop is not a barrier: all host work above must settle first.
+    stopFailures?.throwFirst()
+    if (failures.length > 0)
       throw new AggregateError(failures, 'One or more agent jobs did not drain.')
+    if (recovery.status === 'rejected') throw recovery.reason
+    for (const phase of [starts, host]) {
+      if (phase.status === 'rejected') throw phase.reason
+      const failure = phase.value?.find((result) => result.status === 'rejected')
+      if (failure !== undefined) throw failure.reason
     }
-    await Promise.all(all.map((job) => drop(job)))
+    const retired = await Promise.allSettled(all.map(platform === 'win32' ? retire : drop))
+    const failure = retired.find((result) => result.status === 'rejected')
+    if (failure !== undefined) throw failure.reason
     if (rootRetirement === undefined) {
-      const retirement = rm(deps.scratchRoot, { recursive: true, force: true })
+      const retirement =
+        windowsRecovery === null
+          ? rm(deps.scratchRoot, { recursive: true, force: true })
+          : windowsRecovery.removeEmptyRoot()
       rootRetirement = retirement
       void retirement.catch(() => {
         if (rootRetirement === retirement) rootRetirement = undefined
       })
     }
-    await bounded(rootRetirement, 'Agent job root cleanup')
+    if (platform === 'win32') await rootRetirement
+    else await bounded(rootRetirement, 'Agent job root cleanup')
     drained = true
     push()
   }
@@ -1393,7 +1451,13 @@ export function createJobs(deps: JobsDeps): Jobs {
 
     async start(spec) {
       if (closing) return { ok: false, message: 'The vault is closing.' }
-      const begun = begin(spec)
+      try {
+        await ready
+      } catch (err) {
+        return { ok: false, message: `Could not sweep agent job state: ${String(err)}` }
+      }
+      if (closing) return { ok: false, message: 'The vault was left before the job started.' }
+      const begun = begin(spec, () => starting.delete(begun))
       starting.add(begun)
       try {
         return await begun
@@ -1442,8 +1506,8 @@ export function createJobs(deps: JobsDeps): Jobs {
       // A finished one leaves the list.
       else {
         if (job.finalizationError !== undefined) throw job.finalizationError
-        clearTimeout(job.dropTimer)
-        await drop(job)
+        // Leave owns cleanup now; don't start another retirement behind its join.
+        if (platform !== 'win32' || !closing || job.retirement !== undefined) await drop(job)
         push()
       }
       return { ok: true }
@@ -1452,9 +1516,17 @@ export function createJobs(deps: JobsDeps): Jobs {
     async leave() {
       if (drained) return
       if (leaving === undefined) {
-        leaving = leave().finally(() => {
+        closeAdmission()
+        // Publish the join before stopping turns: abort handlers can reenter leave.
+        let resolve!: () => void
+        let reject!: (reason: unknown) => void
+        leaving = new Promise<void>((res, rej) => {
+          resolve = res
+          reject = rej
+        }).finally(() => {
           leaving = undefined
         })
+        void drain().then(resolve, reject)
       }
       await leaving
     },

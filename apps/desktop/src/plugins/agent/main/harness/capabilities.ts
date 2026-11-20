@@ -11,6 +11,7 @@
  */
 import {
   cap,
+  joinOwnedProgram,
   killChildTree,
   CapabilityError,
   noParams,
@@ -19,6 +20,7 @@ import {
   stringParam,
 } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
+import type { AgentProbeOwner } from '../probe-owner'
 import { hasBackground, hasJobs } from '../provider'
 import { readHarness, type Harness } from './record'
 import type { HarnessRegistry } from './registry'
@@ -62,6 +64,7 @@ export type HarnessTestResult =
 interface TestRun {
   code: number | null
   output: string
+  error?: string
   /** Still running at the time limit, and stopped. */
   timedOut: boolean
   /** It printed more than Test reads, and was stopped. */
@@ -70,6 +73,7 @@ interface TestRun {
 
 export interface HarnessCapabilitiesDeps {
   registry: HarnessRegistry
+  probes: AgentProbeOwner
   /** The file the harnesses are kept in, to name in Settings. */
   file: string
   /** The open vault's clone: where Test runs, as a session would. */
@@ -89,63 +93,68 @@ export interface HarnessCapabilitiesDeps {
  * limit, or once it printed too much) stops whatever it started too: TERM to
  * the group, then KILL after a grace.
  */
-function defaultRun(
+async function defaultRun(
   bin: string,
   args: string[],
   opts: { cwd: string; env: Record<string, string>; timeoutMs: number },
 ): Promise<TestRun> {
-  return new Promise((resolve) => {
-    // A test reads nothing: its input is closed from the start.
-    const child = spawnOwnedProgram(bin, args, {
-      cwd: opts.cwd,
-      env: opts.env,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const chunks: Buffer[] = []
-    let read = 0
-    let stopped: 'timeout' | 'over' | null = null
-    let kill: NodeJS.Timeout | null = null
-    // The group may be gone already: then there is nothing to do.
-    const signal = (sig: NodeJS.Signals): void => {
-      if (process.platform === 'win32') {
-        child.kill(sig)
-        return
-      }
-      killChildTree(child, sig)
-    }
-    const stop = (why: 'timeout' | 'over'): void => {
-      if (stopped !== null) return
-      stopped = why
-      signal('SIGTERM')
-      kill = setTimeout(() => signal('SIGKILL'), TEST_KILL_GRACE_MS)
-    }
-    const take = (chunk: Buffer): void => {
-      if (read >= TEST_READ_MAX) return
-      chunks.push(chunk)
-      read += chunk.length
-      if (read >= TEST_READ_MAX) stop('over')
-    }
-    child.stdout?.on('data', take)
-    child.stderr?.on('data', take)
-    const timer = setTimeout(() => stop('timeout'), opts.timeoutMs)
-    const done = (run: TestRun): void => {
-      clearTimeout(timer)
-      if (kill !== null) clearTimeout(kill)
-      resolve(run)
-    }
-    child.on('error', (err) =>
-      done({ code: null, output: err.message, timedOut: false, overLimit: false }),
-    )
-    child.on('close', (code) =>
-      done({
+  // A test reads nothing: its input is closed from the start.
+  const platform = process.platform
+  const child = spawnOwnedProgram(bin, args, {
+    cwd: opts.cwd,
+    env: opts.env,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const joined = joinOwnedProgram(child, platform)
+  const chunks: Buffer[] = []
+  let read = 0
+  let stopped: 'timeout' | 'over' | null = null
+  let kill: NodeJS.Timeout | undefined
+  const signal = (sig: NodeJS.Signals): void => {
+    if (platform === 'win32') child.kill(sig)
+    else killChildTree(child, sig)
+  }
+  const stop = (why: 'timeout' | 'over'): void => {
+    if (stopped !== null) return
+    stopped = why
+    signal('SIGTERM')
+    kill = setTimeout(() => signal('SIGKILL'), TEST_KILL_GRACE_MS)
+  }
+  const take = (chunk: Buffer): void => {
+    if (read >= TEST_READ_MAX) return
+    chunks.push(chunk)
+    read += chunk.length
+    if (read >= TEST_READ_MAX) stop('over')
+  }
+  child.stdout?.on('data', take)
+  child.stderr?.on('data', take)
+  const timer = setTimeout(() => stop('timeout'), opts.timeoutMs)
+  return joined
+    .then(({ code, error, ownership }) => {
+      const output = Buffer.concat(chunks).toString('utf8')
+      if (ownership === 'not-started')
+        return {
+          code,
+          output,
+          error: error?.message ?? 'The program could not be started.',
+          timedOut: false,
+          overLimit: false,
+        }
+      return {
         code,
-        output: Buffer.concat(chunks).toString('utf8'),
+        output,
+        ...(error === null ? {} : { error: error.message }),
         timedOut: stopped === 'timeout',
         overLimit: stopped === 'over',
-      }),
-    )
-  })
+      }
+    })
+    .finally(() => {
+      clearTimeout(timer)
+      clearTimeout(kill)
+      child.stdout?.off('data', take)
+      child.stderr?.off('data', take)
+    })
 }
 
 const harnessParams = (raw: unknown): { harness: Harness; create: boolean } => {
@@ -226,41 +235,43 @@ export const harnessCapabilities = (deps: HarnessCapabilitiesDeps) => {
     'agent.harnessTest': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (_ctx, { id }): Promise<HarnessTestResult> => {
-        const h = deps.registry.get(id)
-        if (h === undefined) return { ok: false, message: `There is no agent ${id}.`, output: '' }
-        const bin = deps.registry.resolve(id)
-        if (bin === null) {
-          const provider = deps.registry.providers().find((p) => p.id === id)
-          return { ok: false, message: provider?.notInstalled ?? 'Not found.', output: '' }
-        }
-        const root = deps.root()
-        if (root === null) return { ok: false, message: 'Open a vault first.', output: '' }
-        const env = { ...buildAgentEnv(process.env), ...h.env }
-        const res = await run(bin, h.test ?? ['--version'], {
-          cwd: root,
-          env,
-          timeoutMs: TEST_TIMEOUT_MS,
-        })
-        const output = res.output.slice(0, TEST_OUTPUT_MAX)
-        if (res.timedOut) {
-          return {
-            ok: false,
-            message: 'It was still running after 5 seconds, so Holi stopped it.',
-            output,
+      run: (_ctx, { id }) =>
+        deps.probes.run(async (): Promise<HarnessTestResult> => {
+          const h = deps.registry.get(id)
+          if (h === undefined) return { ok: false, message: `There is no agent ${id}.`, output: '' }
+          const bin = deps.registry.resolve(id)
+          if (bin === null) {
+            const provider = deps.registry.providers().find((p) => p.id === id)
+            return { ok: false, message: provider?.notInstalled ?? 'Not found.', output: '' }
           }
-        }
-        if (res.overLimit) {
-          return {
-            ok: false,
-            message: `It printed more than ${TEST_READ_MAX / 1024} KB, so Holi stopped it.`,
-            output,
+          const root = deps.root()
+          if (root === null) return { ok: false, message: 'Open a vault first.', output: '' }
+          const env = { ...buildAgentEnv(process.env), ...h.env }
+          const res = await run(bin, h.test ?? ['--version'], {
+            cwd: root,
+            env,
+            timeoutMs: TEST_TIMEOUT_MS,
+          })
+          const output = res.output.slice(0, TEST_OUTPUT_MAX)
+          if (res.timedOut) {
+            return {
+              ok: false,
+              message: 'It was still running after 5 seconds, so Holi stopped it.',
+              output,
+            }
           }
-        }
-        return res.code === 0
-          ? { ok: true, output }
-          : { ok: false, message: `It exited with ${res.code ?? 'a signal'}.`, output }
-      },
+          if (res.overLimit) {
+            return {
+              ok: false,
+              message: `It printed more than ${TEST_READ_MAX / 1024} KB, so Holi stopped it.`,
+              output,
+            }
+          }
+          if (res.error !== undefined) return { ok: false, message: res.error, output }
+          return res.code === 0
+            ? { ok: true, output }
+            : { ok: false, message: `It exited with ${res.code ?? 'a signal'}.`, output }
+        }),
     }),
   }
 }

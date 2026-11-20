@@ -1,7 +1,7 @@
-import { ChildProcess, type SpawnOptions } from 'node:child_process'
-import { PassThrough } from 'node:stream'
+import type { SpawnOptions } from 'node:child_process'
 import { launchPlan, spawnProgram } from './launch'
-import { spawnOwnedLaunch } from './owned-process-launch'
+import { notStartedOwnedChild, spawnOwnedLaunch } from './owned-process-launch'
+import type { ManagedOwnedChild } from './owned-program-lifetime'
 
 /**
  * Start a managed program whose lifetime includes every descendant it creates.
@@ -13,9 +13,9 @@ export function spawnOwnedProgram(
   args: readonly string[],
   options: SpawnOptions,
   parentPid = process.pid,
-): ChildProcess {
+): ManagedOwnedChild {
   if (process.platform !== 'win32') {
-    return spawnProgram(bin, [...args], { ...options, detached: true })
+    return spawnProgram(bin, args, { ...options, detached: true })
   }
   const launchEnv = { ...(options.env ?? process.env) }
   const planningEnv = { ...launchEnv }
@@ -30,22 +30,7 @@ export function spawnOwnedProgram(
       cwd: typeof options.cwd === 'string' ? options.cwd : process.cwd(),
     })
   } catch (failure) {
-    const failed = new ChildProcess()
-    const input = new PassThrough()
-    const output = new PassThrough()
-    const errors = new PassThrough()
-    input.on('error', () => undefined)
-    failed.stdin = input
-    failed.stdout = output
-    failed.stderr = errors
-    process.nextTick(() => {
-      failed.emit('error', failure as Error)
-      input.destroy()
-      output.end()
-      errors.end()
-      failed.emit('close', null, null)
-    })
-    return failed
+    return notStartedOwnedChild(failure)
   }
   return spawnOwnedLaunch(plan, options, parentPid)
 }

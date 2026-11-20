@@ -7,14 +7,14 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { lstat, mkdir, realpath, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   isCommunityPluginId,
+  isPluginId,
   isPluginPath,
   isRepoName,
-  servedFile,
   parsePluginPin,
   PLUGIN_PINS_DIR,
   pluginPinPath,
@@ -24,7 +24,6 @@ import {
   type PluginManifest,
   type PluginPin,
 } from '@holi/shared'
-import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   cap,
   CapabilityError,
@@ -36,12 +35,13 @@ import {
   withFileLock,
   stringParam,
   toolPath,
+  UnconfirmedOwnedProgramError,
+  type CapabilityContext,
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { Checks, CheckResult } from './checks'
 import type { ConsentStore } from './consent'
 import {
-  fetchRelease,
   listReleases,
   listVersions,
   newestFirst,
@@ -64,9 +64,17 @@ import {
 } from './skill-release'
 import { COMMUNITY_INFO } from '../info'
 import { linkCommands, linkedIn, unlinkCommands, type LinkedCommands } from './commands'
-import { expandCommand, pluginEnv, runSetup } from './setup'
+import { installCommit, installOf, installTransactions } from './install-transactions'
+import { serverAuthorization } from './server-authorization'
+import {
+  assertInstallLaunchable,
+  assertInstallProgramDrained,
+  installIsReserved,
+  installProgramFailure,
+  retainInstallProgramFailure,
+} from './owner'
 import type { Install, InstallStore } from './store'
-import type { ServerState, Supervisor } from './supervisor'
+import type { Supervisor } from './supervisor'
 import { resolveVerb, type RunningPlugin, type VerbAnswer } from './verbs'
 
 export const COMMUNITY_NAMESPACES = ['community', 'plugin'] as const
@@ -121,8 +129,8 @@ export interface PluginRow {
   /** Running, which of its commands the agent did not get and why, as the
    *  vault's last rebuild left them; null when it has them all. */
   commandsNote: string | null
-  /** Running, its readiness check's last answer (`checks.ts`); null when it
-   *  has none or it has not been asked. A failing one does not stop it. */
+  /** The readiness check's last answer (`checks.ts`), or a retained cleanup
+   *  failure. Null when there is nothing to report. */
   check: CheckResult | null
 }
 
@@ -142,11 +150,14 @@ export interface CommunityDeps {
   scratch: string
   /** The plugins' readiness checks' last answers. */
   checks: Checks
-  /** Serialize machine-wide install, consent, setup and removal transitions. */
+  /** Serialize machine mutations and then notify attachments. */
   mutate<T>(work: () => Promise<T>): Promise<T>
   /** Serialize resource reads with machine-wide mutations. */
   admit?<T>(work: () => Promise<T>): Promise<T>
-  /** Attachment lifetime, supplied by the main-process owner; omitted by focused tests. */
+  forgetChecks?(id: string): Promise<void>
+  notifyMutation?(): Promise<void>
+  context?: { root: string; remote: string }
+  /** The admitting attachment's lifetime, including host activation revocation. */
   signal?: AbortSignal
   live?: () => boolean
   run?<T>(work: () => Promise<T>): Promise<T>
@@ -157,13 +168,23 @@ export interface CommunityDeps {
   searchPath?(): string
 }
 
+export interface AttachmentAdmission {
+  admit: NonNullable<CommunityDeps['admit']>
+  ensureContext(ctx: CapabilityContext): void
+  /** The original attachment's activation, even if the vault is later reopened. */
+  signal?: AbortSignal
+}
+
+const pinIds = (root: string) => readdir(join(root, PLUGIN_PINS_DIR)).catch(() => [] as string[])
+
 /** The vault's pins, by id; an unreadable one is left out. */
 async function readPinRecords(
   root: string,
+  only?: string,
 ): Promise<Map<string, { pin: PluginPin; text: string }>> {
   const pins = new Map<string, { pin: PluginPin; text: string }>()
-  const dirs = await readdir(join(root, PLUGIN_PINS_DIR)).catch(() => [] as string[])
-  for (const id of dirs) {
+  const ids = only === undefined ? await pinIds(root) : isPluginId(only) ? [only] : []
+  for (const id of ids) {
     const text = await readBoundedRegularText(join(root, pluginPinPath(id)), 'plugin pin').catch(
       () => null,
     )
@@ -177,8 +198,6 @@ async function readPinRecords(
   }
   return pins
 }
-
-const installCommit = (i: Install) => (i.source.kind === 'release' ? i.source.commit : null)
 
 async function statusOf(
   install: Install | null,
@@ -271,22 +290,30 @@ function commandsNote(id: string, linked: LinkedCommands | null): string | null 
   return mine.map((r) => `${r.name} is not on the agent's PATH: ${r.reason}.`).join(' ')
 }
 
+export type ReadPluginEntries = typeof pluginEntries
+
 /** Pair each authorized row with the install snapshot it describes. */
 async function pluginEntries(
   root: string,
   deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },
+  only?: string,
 ) {
   const [pinRecords, installs, settings] = await Promise.all([
-    readPinRecords(root),
-    deps.store.list(),
+    readPinRecords(root, only),
+    only === undefined ? deps.store.list() : deps.store.get(only).then((i) => (i ? [i] : [])),
     readVaultSettings(root),
   ])
-  const pins = new Map([...pinRecords].map(([id, record]) => [id, record.pin]))
-  const ids = [...new Set([...pins.keys(), ...installs.map((i) => i.id)])].sort()
+  const communityOn = resolvePlugins(settings.plugins, [COMMUNITY_INFO]).running.has(
+    COMMUNITY_INFO.id,
+  )
+  const byId = new Map<string, Install>()
+  for (const install of installs) if (!byId.has(install.id)) byId.set(install.id, install)
+  const ids = [...new Set([...pinRecords.keys(), ...byId.keys()])].sort()
+  const localOff = new Set(settings.plugins.localOff)
   return Promise.all(
     ids.map(async (id) => {
-      const install = installs.find((i) => i.id === id) ?? null
-      const pin = pins.get(id) ?? null
+      const install = byId.get(id) ?? null
+      const pin = pinRecords.get(id)?.pin ?? null
       const status = await statusOf(install, pin, deps.consent)
       const on = settings.plugins.vault[id] === true
       const check = deps.checks?.get(root, id) ?? null
@@ -298,9 +325,25 @@ async function pluginEntries(
               .update(pinRecords.get(id)!.text)
               .digest('hex')
           : undefined
-      return {
-        row: rowOf(root, id, install, pin, status, on, linkedIn(root), check, folderAdoptionToken),
+      const row = rowOf(
+        root,
+        id,
         install,
+        pin,
+        status,
+        on,
+        linkedIn(root),
+        check,
+        folderAdoptionToken,
+      )
+      const cleanupError = installProgramFailure(deps.store, id)
+      if (cleanupError) row.check = { ok: false, hint: cleanupError.message }
+      return {
+        row,
+        install,
+        pin,
+        // Keep the settings UI's row semantics distinct from launch authority.
+        enabled: communityOn && on && !localOff.has(id),
       }
     }),
   )
@@ -321,15 +364,12 @@ const pathParam = (raw: unknown): { path: string } => ({
   path: vaultRelPath(stringParam(paramsObject(raw), 'path')),
 })
 
-/** The server key: one per vault, plugin and file. */
 const assertSafeVaultPath = assertSafePublicationPath
 
 function insidePath(root: string, path: string): boolean {
   const rel = relative(root, path)
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
 }
-
-const serverKey = (root: string, id: string, path: string) => `${root}\0${id}\0${path}`
 
 const repoParam = (p: Record<string, unknown>): string => {
   const repo = stringParam(p, 'repo')
@@ -440,35 +480,29 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     { at: number; releases: { path: string; version: string }[] }
   >()
 
-  /** Each acquire's server key, by the lease it returned: a release names
-   *  its lease, so it drops exactly what its acquire took, whatever has
-   *  changed about the plugin since. */
-  const leases = new Map<string, () => Promise<void>>()
-
   const admit = deps.admit ?? (<T>(work: () => Promise<T>) => work())
 
+  const signal = deps.signal
   const ensureLive = () => {
-    if (deps.live?.() === false || deps.signal?.aborted)
+    if (deps.live?.() === false || signal?.aborted)
       throw new CapabilityError('FORBIDDEN', 'community attachment is closed')
   }
 
-  const installOf = async (id: string): Promise<Install> => {
-    const install = await deps.store.get(id)
-    if (install === null) throw new CapabilityError('NOT_FOUND', `${id} is not installed here`)
-    return install
+  const ensureContext = (ctx: CapabilityContext) => {
+    ensureLive()
+    ctx.assertCurrent?.()
+    if (deps.context && (ctx.root !== deps.context.root || ctx.remote !== deps.context.remote))
+      throw new CapabilityError('FORBIDDEN', 'community attachment does not own this vault')
   }
 
-  const claimFirstParty = (id: string) => {
-    if (!isCommunityPluginId(id, deps.firstPartyIds()))
-      throw new CapabilityError('BAD_REQUEST', `${id} is the name of a plugin built into Holi`)
-  }
-
-  /** Set up afresh: what its check said before no longer holds. Asked now
-   *  when it runs in the vault; otherwise once it is turned on there. */
-  const checkAfterSetup = async (root: string, id: string) => {
-    await deps.checks.forget(root, id)
-    await runChecks(root, deps, { ids: [id], fresh: true })
-  }
+  const admission = { admit, ensureContext, signal }
+  const installs = installTransactions(deps, admission, {
+    listPlugins,
+    linkRunningCommands,
+    seedRunningApps,
+    runChecks,
+  })
+  const servers = serverAuthorization(deps, admission, { pluginEntries, listPlugins })
 
   const table = {
     'community.list': cap({
@@ -535,35 +569,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         if (p.expectId !== undefined) params.expectId = stringParam(p, 'expectId')
         return params
       },
-      run: async (ctx, { repo, path, version, expectId }) =>
-        deps.mutate(async () => {
-          const fetched = await fetchRelease(
-            {
-              repo,
-              path,
-              version,
-              ...(expectId === undefined ? {} : { expectId }),
-              scratch: deps.scratch,
-              releaseDir: deps.store.releaseDir,
-            },
-            deps.git,
-          )
-          ensureLive()
-          claimFirstParty(fetched.manifest.id)
-          await deps.supervisor.stopAll((key) => parseServerKey(key).id === fetched.manifest.id)
-          await deps.store.put({
-            id: fetched.manifest.id,
-            source: { kind: 'release', repo, path, tag: fetched.tag, commit: fetched.commit },
-            manifest: fetched.manifest,
-            setup: 'none',
-          })
-          await deps.checks.forget(ctx.root, fetched.manifest.id)
-          // A new release of a running plugin waits for consent: its commands go
-          // until then.
-          await linkRunningCommands(ctx.root, deps)
-          const rows = await listPlugins(ctx.root, deps)
-          return rows.find((r) => r.id === fetched.manifest.id)!
-        }),
+      run: (ctx, params) => installs.install(ctx, params),
     }),
 
     // A folder the person works on, used in place: their own code, so no
@@ -571,22 +577,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.installFolder': cap({
       doors: ['ui'],
       params: (raw: unknown) => ({ folder: stringParam(paramsObject(raw), 'folder') }),
-      run: async (ctx, { folder }) =>
-        deps.mutate(async () => {
-          const manifest = await readManifest(folder)
-          claimFirstParty(manifest.id)
-          await deps.supervisor.stopAll((key) => parseServerKey(key).id === manifest.id)
-          await deps.store.put({
-            id: manifest.id,
-            source: { kind: 'dev', folder },
-            manifest,
-            setup: 'none',
-          })
-          await deps.checks.forget(ctx.root, manifest.id)
-          await linkRunningCommands(ctx.root, deps)
-          const rows = await listPlugins(ctx.root, deps)
-          return rows.find((r) => r.id === manifest.id)!
-        }),
+      run: (ctx, { folder }) => installs.installFolder(ctx, folder),
     }),
 
     'community.consent': cap({
@@ -595,61 +586,14 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         const p = paramsObject(raw)
         return { id: stringParam(p, 'id'), commit: stringParam(p, 'commit') }
       },
-      run: async (_ctx, { id, commit }) =>
-        deps.mutate(async () => {
-          const install = await installOf(id)
-          // The commit the dialog showed: a re-fetch in between asks again.
-          if (installCommit(install) !== commit)
-            throw new CapabilityError('BAD_REQUEST', `${id} changed since it was shown; look again`)
-          ensureLive()
-          await deps.consent.grant(id, commit)
-        }),
+      run: (ctx, { id, commit }) => installs.consent(ctx, id, commit),
     }),
 
     // Run the manifest's setup, its output streaming as `setup-log` events.
     'community.setup': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) =>
-        deps.mutate(async () => {
-          const install = await installOf(id)
-          const commit = installCommit(install)
-          if (commit !== null && !(await deps.consent.has(id, commit)))
-            throw new CapabilityError('FORBIDDEN', `nobody here has agreed to run ${id} ${commit}`)
-          ensureLive()
-          await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
-          if (install.manifest.setup === undefined) {
-            await deps.store.setSetup(id, 'ok')
-            await seedRunningApps(ctx.root, { ...deps, signal: deps.signal, live: deps.live })
-            await linkRunningCommands(ctx.root, deps)
-            await checkAfterSetup(ctx.root, id)
-            return true
-          }
-          // Setup can partially change machine state before failing or being
-          // cancelled. Invalidate shared readiness before starting it.
-          await deps.store.setSetup(id, 'failed')
-          deps.emit(ctx.remote, 'setup-log', { id, line: null })
-          const ok = await runSetup({
-            argv: expandCommand(install.manifest.setup, { vault: ctx.root }),
-            signal: deps.signal,
-            cwd: deps.store.codeDir(install),
-            logPath: deps.store.setupLog(id),
-            onLine: (line) => {
-              if (deps.live?.() !== false) deps.emit(ctx.remote, 'setup-log', { id, line })
-            },
-          })
-          // Persist the outcome even if this attachment closed while setup ran:
-          // the install state is machine-wide and other vaults must see failure.
-          await deps.store.setSetup(id, ok ? 'ok' : 'failed')
-          // Set up in a vault that runs it: its apps and commands arrive now, not
-          // at the next open.
-          if (ok) {
-            await seedRunningApps(ctx.root, { ...deps, signal: deps.signal, live: deps.live })
-            await linkRunningCommands(ctx.root, deps)
-            await checkAfterSetup(ctx.root, id)
-          }
-          return ok
-        }),
+      run: (ctx, { id }) => installs.setup(ctx, id),
     }),
 
     // Ask a running plugin's readiness check again, for its settings row and
@@ -657,14 +601,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.check': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) =>
-        admit(async () => {
-          ensureLive()
-          await runChecks(ctx.root, deps, { ids: [id], fresh: true })
-          const row = (await listPlugins(ctx.root, deps)).find((r) => r.id === id)
-          if (row === undefined) throw new CapabilityError('NOT_FOUND', `${id} is not here`)
-          return row
-        }),
+      run: (ctx, { id }) => checkPlugin(ctx, id, deps, admission),
     }),
 
     'community.setupLog': cap({
@@ -683,7 +620,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       run: async (ctx, { id }) =>
         admit(async () => {
           ensureLive()
-          const install = await installOf(id)
+          const install = await installOf(deps.store, id)
           if (install.source.kind !== 'release')
             throw new CapabilityError(
               'BAD_REQUEST',
@@ -765,7 +702,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       run: async (ctx, { id, token }) =>
         admit(async () => {
           ensureLive()
-          const install = await installOf(id)
+          const install = await installOf(deps.store, id)
           if (install.source.kind !== 'dev')
             throw new CapabilityError('FORBIDDEN', `${id} is not a folder installation`)
           const pinPath = join(ctx.root, pluginPinPath(id))
@@ -868,7 +805,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       run: async (ctx, { id }) =>
         admit(async () => {
           ensureLive()
-          const install = await installOf(id)
+          const install = await installOf(deps.store, id)
           if (install.source.kind !== 'dev')
             throw new CapabilityError('FORBIDDEN', `${id} is not a folder installation`)
           const codeDir = deps.store.codeDir(install)
@@ -1114,10 +1051,17 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       },
       run: async (ctx, { argv }): Promise<VerbAnswer> =>
         admit(async () => {
-          ensureLive()
+          ensureContext(ctx)
+          const id = isPluginId(argv[0]) ? argv[0] : undefined
+          // Admission alone is not enough: an install keeps its reservation
+          // while waiting for native drain outside the queue.
+          if (id !== undefined) assertInstallLaunchable(deps.store, id)
+          const entries = await pluginEntries(ctx.root, deps)
+          ensureContext(ctx)
+          if (id !== undefined) assertInstallLaunchable(deps.store, id)
           const running: RunningPlugin[] = []
-          for (const { row, install } of await pluginEntries(ctx.root, deps)) {
-            if (!row.running || install === null) continue
+          for (const { row, install } of entries) {
+            if ((id !== undefined && row.id !== id) || !row.running || install === null) continue
             running.push({
               id: row.id,
               name: row.name,
@@ -1148,121 +1092,29 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.remove': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) =>
-        deps.mutate(async () => {
-          // Its servers first: their code is about to go.
-          await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
-          ensureLive()
-          const install = await deps.store.remove(id)
-          await deps.consent.forget(id)
-          await deps.checks.forget(ctx.root, id)
-          await linkRunningCommands(ctx.root, deps)
-          if (install?.source.kind === 'release')
-            await rm(join(deps.store.releaseDir(id, install.source.commit), '..'), {
-              recursive: true,
-              force: true,
-            })
-        }),
+      run: (ctx, { id }) => installs.remove(ctx, id),
     }),
 
     // The server for a file a plugin opens, started if none is up. Resolves
     // with its port once it answers, and a lease that holds it until
-    // `release` returns it. A failed acquire holds nothing.
+    // `release` returns it. A rejected publication drops only its own reference.
     'community.acquire': cap({
       doors: ['ui'],
       params: pathParam,
-      run: async (ctx, { path }) => {
-        const admitted = await admit(async () => {
-          ensureLive()
-          const entries = await pluginEntries(ctx.root, deps)
-          ensureLive()
-          const entry = entries.find(({ row }) => row.on && servedFile(row, path) !== null)
-          if (entry === undefined) throw new CapabilityError('NOT_FOUND', `no plugin opens ${path}`)
-          if (!entry.row.running)
-            throw new CapabilityError(
-              'FORBIDDEN',
-              `${entry.row.name} is not ready on this machine (${entry.row.status})`,
-            )
-          if (entry.install === null)
-            throw new CapabilityError('NOT_FOUND', `${entry.row.id} is not installed here`)
-          const { row, install } = entry
-          const file = await resolveRelative(ctx.root, servedFile(row, path)!)
-          const key = serverKey(ctx.root, row.id, path)
-          const bridge = deps.bridgeScript()
-          const cwd = deps.store.codeDir(install)
-          // Path canonicalization can yield while this attachment is closed.
-          // Do not acquire a server after close's stopAll sweep has passed.
-          ensureLive()
-          const start = deps.supervisor.acquire(key, {
-            cwd,
-            argv: (port) => expandCommand(install.manifest.serve!, { file, vault: ctx.root, port }),
-            env: (port) =>
-              pluginEnv({
-                HOLI_VAULT_ROOT: ctx.root,
-                HOLI_FILE: file,
-                HOLI_PORT: String(port),
-                ...(bridge === null ? {} : { HOLI_BRIDGE_SCRIPT: bridge }),
-              }),
-          })
-          return { row, install, start }
-        })
-        // Keep readiness outside the FIFO so a remove/update can stop this start.
-        const acquired = await admitted.start
-        try {
-          return await admit(async () => {
-            ensureLive()
-            const current = await deps.store.get(admitted.row.id)
-            const same =
-              current !== null &&
-              current.source.kind === admitted.install.source.kind &&
-              JSON.stringify(current.source) === JSON.stringify(admitted.install.source) &&
-              current.manifest.version === admitted.install.manifest.version &&
-              deps.store.codeDir(current) === deps.store.codeDir(admitted.install)
-            if (
-              !same ||
-              !acquired.isCurrentAndRunning() ||
-              deps.live?.() === false ||
-              deps.signal?.aborted
-            ) {
-              throw new CapabilityError(
-                'FORBIDDEN',
-                'community installation changed while starting',
-              )
-            }
-            const lease = randomUUID()
-            leases.set(lease, acquired.release)
-            return { id: admitted.row.id, port: acquired.port, lease }
-          })
-        } catch (error) {
-          await acquired.release()
-          throw error
-        }
-      },
+      run: (ctx, { path }) => servers.acquire(ctx, path),
     }),
 
     'community.release': cap({
       doors: ['ui'],
       params: (raw: unknown) => ({ lease: stringParam(paramsObject(raw), 'lease') }),
-      run: async (_ctx, { lease }) => {
-        const release = leases.get(lease)
-        if (release === undefined) return
-        leases.delete(lease)
-        await release()
-      },
+      run: (_ctx, { lease }) => servers.release(lease),
     }),
 
     // What the file's server is doing, for a tab that mounts while it starts.
     'community.server': cap({
       doors: ['ui'],
       params: pathParam,
-      run: async (ctx, { path }): Promise<ServerState | null> => {
-        const rows = await listPlugins(ctx.root, deps)
-        for (const row of rows.filter((r) => servedFile(r, path) !== null)) {
-          const state = deps.supervisor.state(serverKey(ctx.root, row.id, path))
-          if (state !== null) return state
-        }
-        return null
-      },
+      run: (ctx, { path }) => servers.state(ctx, path),
     }),
   } satisfies CapabilityTable
   for (const capability of Object.values(table)) {
@@ -1274,19 +1126,14 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       try {
         return await (deps.run ? deps.run(() => run(ctx, params)) : run(ctx, params))
       } catch (error) {
-        if (deps.signal?.aborted || deps.live?.() === false)
+        if (error instanceof UnconfirmedOwnedProgramError) throw error
+        if (signal?.aborted || deps.live?.() === false)
           throw new CapabilityError('FORBIDDEN', 'community attachment is closed')
         throw error
       }
     }
   }
   return table
-}
-
-/** The vault a server key belongs to, and its file, for events. */
-function parseServerKey(key: string): { root: string; id: string; path: string } {
-  const [root, id, path] = key.split('\0')
-  return { root: root!, id: id!, path: path! }
 }
 
 /**
@@ -1340,36 +1187,156 @@ export async function seedRunningApps(
   return written
 }
 
+function readinessSpec({
+  install,
+  pin,
+  enabled,
+  row,
+}: Awaited<ReturnType<typeof pluginEntries>>[number]) {
+  const check = install?.manifest.check
+  if (!enabled || !row.running || install === null || check === undefined) return null
+  return { install, check, fingerprint: canonicalJson({ install, pin }) }
+}
+
+/** An explicit request must return a current answer, not just join a drain. */
+async function checkPlugin(
+  ctx: CapabilityContext,
+  id: string,
+  deps: Pick<CommunityDeps, 'store' | 'consent' | 'checks'>,
+  { admit, ensureContext }: AttachmentAdmission,
+): Promise<PluginRow> {
+  const { root } = ctx
+  let joined: Awaited<ReturnType<Checks['run']>> | undefined
+  const assertAdmission = () => {
+    ensureContext(ctx)
+    assertInstallLaunchable(deps.store, id)
+  }
+  try {
+    for (;;) {
+      const attempt = await admit(async () => {
+        assertAdmission()
+        const [entry] = await pluginEntries(root, deps, id)
+        assertAdmission()
+        const spec = entry === undefined ? null : readinessSpec(entry)
+        if (entry === undefined || spec === null) {
+          const completion = deps.checks.invalidate(root, id)
+          if (completion !== undefined) return { completion }
+          if (entry === undefined) throw new CapabilityError('NOT_FOUND', `${id} is not here`)
+          const { row, enabled } = entry
+          return {
+            row: {
+              ...row,
+              running: enabled && row.running,
+              commandsNote: enabled ? row.commandsNote : null,
+              check: null,
+            },
+          }
+        }
+        if (joined?.kind === 'stopped')
+          throw new CapabilityError('FORBIDDEN', 'community readiness checks are closed')
+        const answer = joined?.answerSince(spec.fingerprint)
+        if (answer != null) return { row: { ...entry.row, check: answer } }
+        // Spawn and publish the owned join in this admission turn, but never
+        // hold the machine queue while the exact native process drains.
+        const { install, check, fingerprint } = spec
+        return {
+          completion: deps.checks.run(root, id, check, deps.store.codeDir(install), fingerprint),
+        }
+      })
+      if (attempt.row !== undefined) return attempt.row
+      joined = await attempt.completion
+      // Re-enter with the original attachment; neither EMPTY nor a completed
+      // readiness answer authorizes a launch or publication on its own.
+    }
+  } catch (error) {
+    retainInstallProgramFailure(deps.store, id, error)
+    throw error
+  }
+}
+
+type CheckOptions = {
+  intent?: 'refresh'
+  ids?: readonly string[]
+  fresh?: boolean
+  passive?: boolean
+}
+
 /**
  * Run the readiness check of every plugin that runs in the vault at `root`
  * and has one (`checks.ts`), or only of `ids`: those not asked yet, or all of
  * them with `fresh`. A plugin that does not run has its answer forgotten.
- * Resolves true when any was asked. Never throws.
+ * Resolves true when a row was asked or has a retained cleanup failure to show.
+ * Refreshes skip reserved installs even when scoped to particular `ids`.
+ * Passive refresh also invalidates old answers and reports unconfirmed cleanup
+ * per row. Explicit requests go through checkPlugin, not this catalogue refresh.
  */
 export async function runChecks(
   root: string,
-  deps: Pick<CommunityDeps, 'store' | 'consent' | 'checks'>,
-  opts: { ids?: readonly string[]; fresh?: boolean } = {},
+  deps: Pick<CommunityDeps, 'store' | 'consent' | 'checks' | 'admit' | 'signal'>,
+  opts: CheckOptions = {},
 ): Promise<boolean> {
+  const { ids: targets, fresh, passive } = opts
+  const admit = deps.admit ?? (<T>(work: () => Promise<T>) => work())
+  const { signal } = deps
+  if (signal?.aborted) return false
   try {
-    const asked = []
-    for (const row of await listPlugins(root, deps)) {
-      // Turned off, or no longer ready: what its check said no longer holds,
-      // so turning it on again asks afresh.
-      if (!row.running) {
-        await deps.checks.forget(root, row.id)
-        continue
-      }
-      if (opts.ids !== undefined && !opts.ids.includes(row.id)) continue
-      if (!opts.fresh && deps.checks.get(root, row.id) !== null) continue
-      const install = await deps.store.get(row.id)
-      const check = install?.manifest.check
-      if (install === null || check === undefined) continue
-      asked.push(deps.checks.run(root, row.id, check, deps.store.codeDir(install)))
+    // Discover candidates without inspecting every pin up front. Their
+    // settings, pin and install are read fresh at their own admission turn.
+    let ids = targets
+    if (ids === undefined) {
+      const [pins, installs] = await Promise.all([pinIds(root), deps.store.list()])
+      ids = [
+        ...new Set([...pins.filter(isPluginId), ...installs.map((install) => install.id)]),
+      ].sort()
     }
-    await Promise.all(asked)
-    return asked.length > 0
+    const answers = await Promise.allSettled(
+      ids.map(async (id) => {
+        try {
+          if (passive) {
+            const { forgotten } = await admit(async () => ({
+              forgotten:
+                signal?.aborted || installIsReserved(deps.store, id)
+                  ? undefined
+                  : deps.checks.forget(root, id),
+            }))
+            await forgotten
+          }
+          const { completion, ran } = await admit(async () => {
+            if (signal?.aborted || installIsReserved(deps.store, id)) return {}
+            const [entry] = await pluginEntries(root, deps, id)
+            if (signal?.aborted) return {}
+            if (!entry?.enabled || !entry.row.running)
+              return { completion: deps.checks.forget(root, id) }
+            if (!passive && !fresh && deps.checks.get(root, id) !== null) return {}
+            const spec = readinessSpec(entry)
+            if (spec === null) return {}
+            const { install, check, fingerprint } = spec
+            assertInstallProgramDrained(deps.store, id)
+            const cwd = deps.store.codeDir(install)
+            // The check runner calls spawn synchronously. Do not yield after
+            // testing the original attachment's activation here.
+            if (signal?.aborted) return {}
+            return {
+              completion: deps.checks.run(root, id, check, cwd, fingerprint),
+              ran: true,
+            }
+          })
+          await completion
+          return ran === true
+        } catch (error) {
+          retainInstallProgramFailure(deps.store, id, error)
+          if (passive && error instanceof UnconfirmedOwnedProgramError) return true
+          throw error
+        }
+      }),
+    )
+    for (const answer of answers)
+      if (answer.status === 'rejected' && answer.reason instanceof UnconfirmedOwnedProgramError)
+        throw answer.reason
+    for (const answer of answers) if (answer.status === 'rejected') throw answer.reason
+    return answers.some((answer) => answer.status === 'fulfilled' && answer.value)
   } catch (err) {
+    if (err instanceof UnconfirmedOwnedProgramError) throw err
     console.error('[community] checks:', err)
     return false
   }

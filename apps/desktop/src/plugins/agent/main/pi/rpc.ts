@@ -1,6 +1,10 @@
-import { type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnOwnedProgram } from '../../../../main/plugin-api'
-import type { Readable, Writable } from 'node:stream'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  joinOwnedProgram,
+  spawnOwnedProgram,
+  type ManagedOwnedChild,
+  type UnconfirmedOwnedProgramError,
+} from '../../../../main/plugin-api'
 
 type PiRunStatus = 'completed' | 'failed' | 'aborted'
 export interface PiRunResult {
@@ -22,6 +26,8 @@ export interface PiRpcOptions {
   noTools?: boolean
   maxOutputBytes?: number
   maxLineBytes?: number
+  /** Captured activation platform, overridable by controlled adapters in tests. */
+  platform?: NodeJS.Platform
   onStats?: (stats: {
     usage?: { input?: number; output?: number; total?: number; cost?: number }
     contextPercent?: number
@@ -32,16 +38,9 @@ export interface PiRpcOptions {
     options: { cwd: string; env?: NodeJS.ProcessEnv; stdio: 'pipe' },
   ) => PiChild
 }
-export interface PiChild {
-  pid?: number
-  stdin: Writable
-  stdout: Readable
-  stderr: Readable
-  once(event: 'error', listener: (error: Error) => void): this
-  once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
-  once(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
-  kill(signal?: NodeJS.Signals): boolean
-}
+/** @public also used by the native Pi producer test */
+export type PiChild = ManagedOwnedChild &
+  Pick<ChildProcessWithoutNullStreams, 'stdin' | 'stdout' | 'stderr'>
 
 /**
  * Pi's flags for a run that can only answer (`PiRpcOptions.noTools`): every
@@ -62,13 +61,18 @@ export const NO_TOOLS = [
 
 /** One stock Pi RPC process per managed run; messages are JSON records, never shell text. */
 export class PiRpcRun {
-  private readonly child: PiChild
+  private readonly child: ManagedOwnedChild
   private readonly onStats?: PiRpcOptions['onStats']
   private readonly processGroup: boolean
+  private readonly platform: NodeJS.Platform
   private exited = false
   private killTimer?: ReturnType<typeof setTimeout>
   private statsTimer?: ReturnType<typeof setTimeout>
   private statsPending?: PiRunResult
+  private readonly exitPublications: (() => void)[] = []
+  private exitSettlementQueued = false
+  private exitVerified = false
+  private exitError?: string
   private readonly configuredModel?: { provider: string; modelId: string }
   private modelSet = false
   private pending = ''
@@ -80,25 +84,35 @@ export class PiRpcRun {
   private requestId = 0
   private readonly maxOutputBytes: number
   private readonly maxLineBytes: number
-  private completion?: (result: PiRunResult) => void
-  private resultPromise?: Promise<PiRunResult>
+  private completion?: {
+    resolve(result: PiRunResult): void
+    reject(error: UnconfirmedOwnedProgramError): void
+  }
   private closed = false
   private model?: unknown
   private usage?: unknown
   private lastError?: string
   private phase: 'prompt' | 'setting-model' | 'idle' = 'idle'
   private readonly commands = new Map<string, { type: string; streamingBehavior?: unknown }>()
+  /** Present for Windows launches without a helper PID, which need classification before use. */
+  readonly startup?: Promise<Error | null>
+  /** Only unknown ownership rejects; command and output failures are turn/launch errors. */
   readonly drained: Promise<void>
-  private resolveDrained!: () => void
+
+  private get windowsExitKnown(): boolean {
+    // Node sets these before emitting exit, so an earlier listener can flush
+    // stdout before our own synchronous exit listener runs.
+    return (
+      this.platform === 'win32' &&
+      (this.exited || this.child.exitCode != null || this.child.signalCode != null)
+    )
+  }
 
   get isAlive(): boolean {
-    return !this.exited && !this.closed
+    return !this.exited && !this.closed && !this.windowsExitKnown
   }
 
   constructor(options: PiRpcOptions) {
-    this.drained = new Promise((resolve) => {
-      this.resolveDrained = resolve
-    })
     this.maxOutputBytes = options.maxOutputBytes ?? 1024 * 1024
     this.maxLineBytes = options.maxLineBytes ?? 1024 * 1024
     this.onStats = options.onStats
@@ -112,49 +126,105 @@ export class PiRpcRun {
         modelId: options.model.slice(slash + 1),
       }
     }
-    this.processGroup = options.spawn === undefined && process.platform !== 'win32'
-    const spawn =
-      options.spawn ??
-      ((bin, args, opts) =>
-        spawnOwnedProgram(bin, args, {
-          ...opts,
-          detached: this.processGroup,
-        }) as ChildProcessWithoutNullStreams)
+    this.platform = options.platform ?? process.platform
+    this.processGroup = options.spawn === undefined && this.platform !== 'win32'
     const args = ['--mode', 'rpc']
     if (options.noTools === true) args.push(...NO_TOOLS)
     if (options.system !== undefined) args.push('--append-system-prompt', options.system)
-    this.child = spawn(options.bin, args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: 'pipe',
-    })
-    this.child.stdout.setEncoding('utf8')
-    this.child.stdout.on('data', (chunk: string) => this.consume(chunk))
-    this.child.stderr.setEncoding('utf8')
-    this.child.stderr.on('data', () => {})
-    this.child.stdin.on('error', (error: Error) => this.fail(error.message))
-    this.child.once('error', (error) => {
-      this.finish({ status: 'failed', output: this.output, error: error.message })
-      this.kill()
-    })
-    this.child.once('close', () => {
+    this.child = options.spawn
+      ? options.spawn(options.bin, args, { cwd: options.cwd, env: options.env, stdio: 'pipe' })
+      : spawnOwnedProgram(options.bin, args, {
+          cwd: options.cwd,
+          env: options.env,
+          stdio: 'pipe',
+          detached: this.processGroup,
+        })
+    const child = this.child
+    const windows = this.platform === 'win32'
+    const joined = joinOwnedProgram(child, this.platform)
+    const sources = new Set([child, child.stdin, child.stdout, child.stderr])
+    const onError = (error: Error) => this.fail(error.message)
+    const onData = (chunk: string) => {
+      if (!this.closed) this.consume(chunk)
+    }
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
       this.exited = true
-      if (this.killTimer) clearTimeout(this.killTimer)
-      this.killTimer = undefined
-      this.resolveDrained()
-    })
-    this.child.once('exit', (code, signal) => {
-      this.exited = true
-      // Pi can exit while a tool it started still holds the process group.
-      // Keep the escalation timer for the entire group, not just its leader.
-      if (this.killTimer && !this.processGroup) clearTimeout(this.killTimer)
-      if (!this.settled)
+      // Pi can exit while a tool holds the POSIX group. Preserve escalation
+      // until child close. On Windows the join classifies the exit and output.
+      if (!this.processGroup) clearTimeout(this.killTimer)
+      if (windows) this.clearStatsTimer()
+      else
         this.finish({
           status: 'failed',
           output: this.output,
           error: `Pi RPC exited (${code ?? signal ?? 'unknown'})`,
         })
-    })
+    }
+    const onClose = () => {
+      this.exited = true
+      if (windows) this.clearStatsTimer()
+    }
+    for (const source of sources) source?.on('error', onError)
+    child.once('exit', onExit)
+    child.once('close', onClose)
+    child.stdout?.setEncoding('utf8').on('data', onData)
+    child.stderr?.resume()
+
+    const release = () => {
+      this.exited = true
+      clearTimeout(this.killTimer)
+      this.killTimer = undefined
+      child.off('exit', onExit)
+      child.off('close', onClose)
+      child.stdout?.off('data', onData)
+      // Discard late output without retaining the RPC parser. The shared join
+      // keeps late error events handled even when receipt failure came first.
+      child.stdout?.resume()
+      for (const source of sources) source?.off('error', onError)
+      this.commands.clear()
+      this.exitPublications.length = 0
+      this.pending = ''
+    }
+    this.drained = joined.then(
+      ({ code, signal, error, ownership }) => {
+        this.exited = true
+        if (windows && !this.closed && ownership === 'empty' && code === 0 && signal === null) {
+          // EMPTY alone does not verify the pipes. Only the full join can
+          // authorize a buffered event or acknowledgement to complete a turn.
+          child.stdout?.off('data', onData)
+          if (!error && this.pending.length) this.exitError ??= 'Incomplete Pi RPC record at exit'
+          if (!error && this.exitError === undefined) {
+            this.exitVerified = true
+            this.flushExitPublications()
+          }
+        }
+        this.finish({
+          status: 'failed',
+          output: this.output,
+          error:
+            error?.message ?? this.exitError ?? `Pi RPC exited (${code ?? signal ?? 'unknown'})`,
+        })
+        release()
+      },
+      (failure: UnconfirmedOwnedProgramError) => {
+        this.settle()?.reject(failure)
+        if (!this.closed) {
+          this.closed = true
+          this.kill()
+        }
+        release()
+        throw failure
+      },
+    )
+    void this.drained.catch(() => undefined)
+    // A missing PID only tells us to wait for the producer's classification.
+    // Install the child and stdio observers above even for this launch path.
+    if (windows && child.pid === undefined) {
+      this.startup = joined.then(({ ownership, error }) =>
+        ownership === 'not-started' ? (error ?? new Error('Pi RPC did not start')) : null,
+      )
+      void this.startup.catch(() => undefined)
+    }
   }
 
   prompt(message: string): Promise<PiRunResult> {
@@ -164,11 +234,13 @@ export class PiRpcRun {
     this.active = true
     this.started = false
     this.lastError = undefined
+    // A late acknowledgement for the last turn cannot settle this one.
+    this.commands.clear()
     // Each turn's result is that turn's answer, not every answer so far.
     this.output = ''
     this.phase = this.configuredModel === undefined || this.modelSet ? 'prompt' : 'setting-model'
-    this.resultPromise = new Promise((resolve) => {
-      this.completion = resolve
+    const result = new Promise<PiRunResult>((resolve, reject) => {
+      this.completion = { resolve, reject }
     })
     try {
       if (this.configuredModel && !this.modelSet) {
@@ -178,7 +250,7 @@ export class PiRpcRun {
     } catch (error) {
       this.fail(String(error))
     }
-    return this.resultPromise
+    return result
   }
 
   private pendingPrompt?: string
@@ -199,7 +271,7 @@ export class PiRpcRun {
   cancel(): Promise<void> {
     if (this.closed) return this.drained
     try {
-      this.send({ type: 'abort' })
+      if (!this.windowsExitKnown) this.send({ type: 'abort' })
     } catch {
       /* process may already be closing */
     }
@@ -218,6 +290,17 @@ export class PiRpcRun {
   }
 
   private kill(): void {
+    if (this.platform === 'win32') {
+      // The native launch owns stop escalation and can act only on its own launch.
+      if (!this.windowsExitKnown && this.child.pid !== undefined) {
+        try {
+          this.child.kill('SIGTERM')
+        } catch {
+          /* the shared join reports whether ownership was confirmed */
+        }
+      }
+      return
+    }
     const signal = (name: NodeJS.Signals) => {
       if (this.exited && !this.processGroup) return
       try {
@@ -238,19 +321,21 @@ export class PiRpcRun {
   }
 
   private requireActive(): void {
-    if (this.exited || this.closed) throw new Error('Pi RPC process exited before the follow-up')
+    if (!this.isAlive) throw new Error('Pi RPC process exited before the follow-up')
     if (!this.active || this.settled) throw new Error('Pi RPC run is not active')
   }
 
   private send(command: Record<string, unknown>): string {
     const id = `holi-${++this.requestId}`
+    const stdin = this.child.stdin
+    if (!stdin) throw new Error('Pi RPC stdin is unavailable')
     this.commands.set(id, {
       type: String(command.type),
       ...(command.streamingBehavior === undefined
         ? {}
         : { streamingBehavior: command.streamingBehavior }),
     })
-    this.child.stdin.write(`${JSON.stringify({ id, ...command })}\n`, (error?: Error | null) => {
+    stdin.write(`${JSON.stringify({ id, ...command })}\n`, (error?: Error | null) => {
       if (error) this.fail(error.message)
     })
     return id
@@ -277,7 +362,9 @@ export class PiRpcRun {
         continue
       }
       try {
-        this.onRecord(JSON.parse(line) as Record<string, unknown>)
+        const record = JSON.parse(line) as Record<string, unknown>
+        if (this.windowsExitKnown && typeof record?.type !== 'string') this.badRecord()
+        else this.onRecord(record)
       } catch {
         this.badRecord()
       }
@@ -285,7 +372,8 @@ export class PiRpcRun {
   }
 
   private badRecord(): void {
-    if (++this.parseErrors >= 10) this.fail('Too many malformed Pi RPC records')
+    if (this.windowsExitKnown) this.fail('Malformed Pi RPC record at exit')
+    else if (++this.parseErrors >= 10) this.fail('Too many malformed Pi RPC records')
   }
 
   private onRecord(record: Record<string, unknown>): void {
@@ -296,22 +384,8 @@ export class PiRpcRun {
       this.commands.delete(id)
       const command = request.type
       if (command === 'get_session_stats') {
-        if (record.success === true && record.data && typeof record.data === 'object') {
-          const data = record.data as Record<string, unknown>
-          const tokens = data.tokens as Record<string, unknown> | undefined
-          const context = data.contextUsage as Record<string, unknown> | undefined
-          const usage = {
-            ...(typeof tokens?.input === 'number' ? { input: tokens.input } : {}),
-            ...(typeof tokens?.output === 'number' ? { output: tokens.output } : {}),
-            ...(typeof tokens?.total === 'number' ? { total: tokens.total } : {}),
-            ...(typeof data.cost === 'number' ? { cost: data.cost } : {}),
-          }
-          this.onStats?.({
-            ...(Object.keys(usage).length ? { usage } : {}),
-            ...(typeof context?.percent === 'number' ? { contextPercent: context.percent } : {}),
-          })
-        }
-        if (this.statsPending) this.finish(this.statsPending)
+        // Even an unsuccessful stats response releases a pending settlement.
+        this.publish(() => this.onStatsResponse(record))
         return
       }
       if (record.success === false) {
@@ -319,6 +393,7 @@ export class PiRpcRun {
         return
       }
       if (command === 'set_model') {
+        if (this.windowsExitKnown) return
         this.modelSet = true
         if (this.phase === 'setting-model' && this.pendingPrompt !== undefined) {
           const prompt = this.pendingPrompt
@@ -339,7 +414,13 @@ export class PiRpcRun {
           // Pi's handled disposition means an extension consumed this prompt;
           // no agent_start or agent_settled will follow. Queued steer/follow-up
           // prompts must never complete the active run.
-          this.finish({ status: 'completed', output: this.output })
+          const result: PiRunResult = {
+            status: 'completed',
+            output: this.output,
+            model: this.model,
+            usage: this.usage,
+          }
+          this.publish(() => this.finish(result))
         }
       }
       return
@@ -368,7 +449,7 @@ export class PiRpcRun {
       }
     }
     if (record.type === 'agent_settled') {
-      if (this.settled || this.statsPending) return
+      if (this.settled || this.statsPending || this.exitSettlementQueued) return
       const result: PiRunResult = {
         status: record.aborted === true ? 'aborted' : this.lastError ? 'failed' : 'completed',
         output: this.output,
@@ -376,21 +457,72 @@ export class PiRpcRun {
         model: this.model,
         usage: this.usage,
       }
-      if (!this.closed && this.onStats) {
-        try {
-          this.statsPending = result
-          const id = this.send({ type: 'get_session_stats' })
-          this.statsTimer = setTimeout(() => {
-            this.commands.delete(id)
-            this.finish(result)
-          }, 1000)
-          return
-        } catch {
-          // Completion does not depend on optional usage data.
-        }
-      }
-      this.finish(result)
+      this.exitSettlementQueued = this.windowsExitKnown
+      this.publish(() => this.onAgentSettled(result))
     }
+  }
+
+  private publish(publication: () => void): void {
+    // Snapshot terminal events at their original position in the stream and
+    // consume response IDs on arrival. Progress can continue while these wait.
+    if (this.exitError !== undefined) return
+    if (this.windowsExitKnown && !this.exitVerified) this.exitPublications.push(publication)
+    else publication()
+  }
+
+  private flushExitPublications(): void {
+    for (const publication of this.exitPublications) {
+      if (this.closed) return
+      try {
+        publication()
+      } catch {
+        this.badRecord()
+        return
+      }
+    }
+    // A live settlement may have been waiting for optional stats when Pi exited.
+    if (this.statsPending && this.exitError === undefined) this.finish(this.statsPending)
+  }
+
+  private onAgentSettled(result: PiRunResult): void {
+    if (this.settled) return
+    if (!this.closed && !this.windowsExitKnown && this.onStats) {
+      try {
+        this.statsPending = result
+        const id = this.send({ type: 'get_session_stats' })
+        if (this.statsPending !== result || this.windowsExitKnown) return
+        this.statsTimer = setTimeout(() => {
+          this.statsTimer = undefined
+          if (this.windowsExitKnown) return
+          this.commands.delete(id)
+          this.finish(result)
+        }, 1000)
+        return
+      } catch {
+        // Completion does not depend on optional usage data.
+      }
+    }
+    this.publish(() => this.finish(result))
+  }
+
+  private onStatsResponse(record: Record<string, unknown>): void {
+    if (record.success === true && record.data && typeof record.data === 'object') {
+      const data = record.data as Record<string, unknown>
+      const tokens = data.tokens as Record<string, unknown> | undefined
+      const context = data.contextUsage as Record<string, unknown> | undefined
+      const usage = {
+        ...(typeof tokens?.input === 'number' ? { input: tokens.input } : {}),
+        ...(typeof tokens?.output === 'number' ? { output: tokens.output } : {}),
+        ...(typeof tokens?.total === 'number' ? { total: tokens.total } : {}),
+        ...(typeof data.cost === 'number' ? { cost: data.cost } : {}),
+      }
+      this.onStats?.({
+        ...(Object.keys(usage).length ? { usage } : {}),
+        ...(typeof context?.percent === 'number' ? { contextPercent: context.percent } : {}),
+      })
+    }
+    const result = this.statsPending
+    if (result) this.publish(() => this.finish(result))
   }
 
   private append(text: string): void {
@@ -399,15 +531,27 @@ export class PiRpcRun {
   }
 
   private fail(error: string): void {
+    if (this.closed) return
+    if (this.windowsExitKnown) {
+      // Retain the first turn error, but let an unconfirmed join reject the
+      // pending prompt with the original ownership failure and cleanup lease.
+      this.exitError ??= error
+      this.exitPublications.length = 0
+      return
+    }
     this.finish({ status: 'failed', output: this.output, error })
     this.closed = true
     this.kill()
   }
 
-  private finish(result: PiRunResult): void {
-    if (this.settled) return
-    if (this.statsTimer) clearTimeout(this.statsTimer)
+  private clearStatsTimer(): void {
+    clearTimeout(this.statsTimer)
     this.statsTimer = undefined
+  }
+
+  private settle() {
+    if (this.settled) return
+    this.clearStatsTimer()
     this.statsPending = undefined
     this.settled = true
     this.active = false
@@ -415,7 +559,11 @@ export class PiRpcRun {
     this.pendingPrompt = undefined
     const completion = this.completion
     this.completion = undefined
-    completion?.({
+    return completion
+  }
+
+  private finish(result: PiRunResult): void {
+    this.settle()?.resolve({
       ...result,
       model: result.model ?? this.model,
       usage: result.usage ?? this.usage,

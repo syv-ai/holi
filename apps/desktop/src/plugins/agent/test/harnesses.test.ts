@@ -22,6 +22,7 @@ import {
 } from '../main/harness/registry'
 import { readSignal, SIGNAL_SCRIPT } from '../main/harness/signal'
 import { agentCapabilities } from '../main/host/capabilities'
+import { createAgentProbeOwner } from '../main/probe-owner'
 import type { AgentProvider } from '../main/provider'
 import { delimiter } from 'node:path'
 
@@ -588,6 +589,7 @@ describe('editing harnesses', () => {
   it('opens only the UI door: no agent session or app can add a program to run', async () => {
     const caps = harnessCapabilities({
       registry: await registry(),
+      probes: createAgentProbeOwner(new AbortController().signal),
       file: '/data/agent-harnesses.json',
       root: () => '/v',
       changed: () => {},
@@ -607,6 +609,7 @@ describe('editing harnesses', () => {
     const runs: unknown[] = []
     const caps = harnessCapabilities({
       registry: reg,
+      probes: createAgentProbeOwner(new AbortController().signal),
       file: '/data/agent-harnesses.json',
       root: () => '/v',
       changed: () => {},
@@ -639,6 +642,7 @@ describe('editing harnesses', () => {
     let answer = { code: null as number | null, output: 'y\n', timedOut: false, overLimit: true }
     const caps = harnessCapabilities({
       registry: reg,
+      probes: createAgentProbeOwner(new AbortController().signal),
       file: '/data/agent-harnesses.json',
       root: () => '/v',
       changed: () => {},

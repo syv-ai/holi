@@ -417,6 +417,14 @@ export { jsonFileStore, type JsonFileStore } from './json-file-store'
 export { delimiterFor, isRunnable, nodeFallbackDir, resolveBin, toolPath, withPath } from './bin'
 export { execProgram, spawnProgram } from './launch'
 export { spawnOwnedProgram } from './owned-process'
+export {
+  joinOwnedProgram,
+  UnconfirmedOwnedProgramError,
+  type ManagedOwnedChild,
+  type OwnedCompletion,
+  type OwnedProgramCleanupLease,
+  type OwnedProgramResult,
+} from './owned-program-lifetime'
 export { defaultProbePid, killChildTree, killTree, type PidState } from './process-group'
 export { writeScreenshot } from './screenshot-files'
 export {

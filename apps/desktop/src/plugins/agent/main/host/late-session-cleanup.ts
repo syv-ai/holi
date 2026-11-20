@@ -1,38 +1,35 @@
-import type { VaultCliTarget } from '../claude/cli'
+import type { OwnedProgramCleanupLease } from '../../../../main/plugin-api'
 
-/** Owns stops started after admission closes and retains failures for teardown. */
-export function createLateSessionCleanup(
-  stop: (target: VaultCliTarget, id: string) => Promise<void>,
-) {
+/** Join cleanup on the original launch, never on a pid or a listing row. Keep
+ * the first failure for the activation even if another path asks to drain it. */
+export function createLateSessionCleanup() {
   const pending = new Set<Promise<unknown>>()
-  const failures: unknown[] = []
+  const failures = new Set<unknown>()
+  const revocations = new Map<OwnedProgramCleanupLease, Promise<void>>()
 
-  function track<T>(work: Promise<T>): Promise<T> {
-    const tracked = work
-      .catch((error: unknown) => {
-        failures.push(error)
-        throw error
-      })
+  function track<T>(work: () => Promise<T>): Promise<T> {
+    const tracked = Promise.resolve()
+      .then(work)
       .finally(() => pending.delete(tracked))
     pending.add(tracked)
     return tracked
   }
 
   return {
-    get size() {
-      return pending.size
-    },
     get pending() {
       return [...pending]
     },
+    track,
     recordFailure(error: unknown): void {
-      failures.push(error)
+      failures.add(error)
     },
-    stop(target: VaultCliTarget, id: string): Promise<void> {
-      return track(stop(target, id))
+    revoke(lease: OwnedProgramCleanupLease): Promise<void> {
+      const existing = revocations.get(lease)
+      if (existing) return existing
+      const revoking = track(() => lease.revoke())
+      revocations.set(lease, revoking)
+      return revoking
     },
-    takeFailures(): unknown[] {
-      return failures.splice(0)
-    },
+    failures: () => [...failures],
   }
 }

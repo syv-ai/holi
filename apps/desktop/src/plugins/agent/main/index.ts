@@ -49,6 +49,7 @@ import { watchNeedsYou } from './inbox/needs-you'
 import { INBOX_FILE, parseInbox } from './inbox/rules'
 import { sweepAgentMemory, SWEEP_EVERY_MS } from './memory/sweep'
 import type { SessionSummary } from './claude/listing'
+import { createAgentProbeOwner } from './probe-owner'
 import { hasBackground } from './provider'
 import { versionCapabilities } from './version'
 
@@ -111,7 +112,11 @@ export const agentMain: MainPlugin = {
       if (ownedFailures.length > 0)
         throw new AggregateError(ownedFailures.splice(0), 'agent callbacks failed to drain')
     }
-    const activationOwners: Array<() => unknown | Promise<unknown>> = [() => harnesses.dispose()]
+    const probes = createAgentProbeOwner(ctx.activationSignal)
+    const activationOwners: Array<() => unknown | Promise<unknown>> = [
+      probes.stop,
+      () => harnesses.dispose(),
+    ]
     const assertActive = (): void => {
       if (ctx.activationSignal.aborted)
         throw new Error(`agent activation for ${ctx.remote} was cancelled`)
@@ -289,11 +294,12 @@ export const agentMain: MainPlugin = {
         ...inboxCapabilities({ inbox, liveRemote }),
         ...harnessCapabilities({
           registry: harnesses,
+          probes,
           file: harnessFile,
           root: () => ctx.root,
           changed: () => ctx.emit(ctx.remote, 'providers', null),
         }),
-        ...versionCapabilities({ holi: app.getVersion() }),
+        ...versionCapabilities({ holi: app.getVersion(), probes }),
       })
       const unwatchNeedsYou = watchNeedsYou({
         sessions: started,
@@ -458,6 +464,7 @@ export const agentMain: MainPlugin = {
         // sessions' leave ends.
         const failures: unknown[] = []
         for (const cleanup of [
+          probes.stop,
           stopNeedsYou,
           () => sweeping,
           () => fenced.closing(),
