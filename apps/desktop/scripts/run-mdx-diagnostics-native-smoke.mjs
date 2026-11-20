@@ -345,7 +345,18 @@ try {
   assert.equal(nativeScenarios.recovery.crashRejected, true)
   assert.equal(nativeScenarios.recovery.timeoutRejected, true)
   assert.equal(nativeScenarios.recovery.recovered, true)
-  assert.equal(nativeScenarios.stale.length, 6)
+  assert.deepEqual(
+    nativeScenarios.stale.map((item) => item.name).sort(),
+    [
+      'queued ownership revocation and in-flight release',
+      'source generation cancellation',
+      'view release',
+      'trust revoke and reapproval',
+      'account A–B–A',
+      'vault A–B–A',
+      'native filesystem replacement watcher',
+    ].sort(),
+  )
   checks.push(
     'real guest policy denies network, files, app URLs, popup, permission, media, navigation and download traffic',
     'real guest compiled output was not evaluated and storage was cleared',

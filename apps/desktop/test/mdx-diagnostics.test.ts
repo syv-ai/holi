@@ -18,27 +18,53 @@ const gate = <T = void>() => {
   return { promise, resolve }
 }
 async function fixture(
-  overrides: { root?: () => Promise<string>; trusted?: () => Promise<boolean> } = {},
+  overrides: {
+    root?: () => Promise<string>
+    trusted?: () => Promise<boolean>
+    context?: () => typeof identity | null
+    authorize?: (candidate: typeof identity) => boolean
+    retireResourceOwner?: (owner: object) => void
+  } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'holi-mdx-diagnostics-'))
   roots.push(root)
   await mkdir(join(root, 'docs'))
   await writeFile(join(root, 'docs/page.mdx'), '# Page')
   let allowed = true
+  let ownerCurrent: (() => Promise<boolean>) | undefined
   const diagnostics = createMdxDiagnostics({
-    authorize: () => allowed,
-    context: () => identity,
+    authorize: overrides.authorize ?? (() => allowed),
+    context: overrides.context ?? (() => identity),
     root: overrides.root ?? (async () => root),
     trusted: overrides.trusted ?? (async () => true),
+    createResourceOwner: (isCurrent) => {
+      ownerCurrent = isCurrent
+      return {}
+    },
+    retireResourceOwner: overrides.retireResourceOwner ?? (() => {}),
     compile: async () => [],
   })
-  return { diagnostics, root, revoke: () => (allowed = false) }
+  return { diagnostics, root, revoke: () => (allowed = false), ownerCurrent: () => ownerCurrent }
 }
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe('MDX diagnostics lease acquisition', () => {
+  test('resource owners recheck file identity without waiting for the watcher', async () => {
+    const { diagnostics, root, ownerCurrent } = await fixture()
+    const { lease } = await diagnostics.acquire({
+      remote: identity.remote,
+      path: 'docs/page.mdx',
+      context: 'token',
+    })
+    await writeFile(join(root, 'docs/page.mdx'), '# Replaced')
+    const isCurrent = ownerCurrent()
+    expect(isCurrent).toBeDefined()
+    await expect(isCurrent!()).resolves.toBe(false)
+    diagnostics.release({ lease })
+    diagnostics.close()
+  })
   test('invalidate cancels an acquisition awaiting its root', async () => {
     const rootGate = gate<string>()
     const { diagnostics, root } = await fixture({ root: () => rootGate.promise })
@@ -184,19 +210,56 @@ describe('MDX diagnostics lease acquisition', () => {
     diagnostics.close()
   })
 
-  test('replacement of the leased file fails closed', async () => {
-    const { diagnostics, root } = await fixture()
+  test('an A-B-A account and vault transition cannot revive an old lease', async () => {
+    let activeIdentity = identity
+    const { diagnostics } = await fixture({
+      context: () => activeIdentity,
+      authorize: (candidate) => candidate === activeIdentity,
+    })
     const lease = await diagnostics.acquire({
       remote: identity.remote,
       path: 'docs/page.mdx',
       context: 'token',
     })
+    activeIdentity = {
+      ...identity,
+      accountGeneration: 2,
+      accountId: 'other',
+      remote: 'other/vault',
+    }
+    activeIdentity = { ...identity, accountGeneration: 3 }
+    await expect(
+      diagnostics.compile({ lease: lease.lease, generation: 1, source: '# stale' }),
+    ).rejects.toThrow(/cancelled|unavailable/i)
+    diagnostics.close()
+  })
+
+  test('replacement during the compile path check fails closed as a context change', async () => {
+    const trustGate = gate<boolean>()
+    let trustedCalls = 0
+    let signalRetired!: () => void
+    const retired = new Promise<void>((resolve) => (signalRetired = resolve))
+    const { diagnostics, root } = await fixture({
+      trusted: async () => {
+        trustedCalls += 1
+        if (trustedCalls === 7) return trustGate.promise
+        return true
+      },
+      retireResourceOwner: signalRetired,
+    })
+    const lease = await diagnostics.acquire({
+      remote: identity.remote,
+      path: 'docs/page.mdx',
+      context: 'token',
+    })
+    const compiling = diagnostics.compile({ lease: lease.lease, generation: 1, source: '# page' })
+    while (trustedCalls < 7) await new Promise((resolve) => setImmediate(resolve))
     const replacement = join(root, 'docs/replacement.mdx')
     await writeFile(replacement, '# Page')
     await rename(replacement, join(root, 'docs/page.mdx'))
-    await expect(
-      diagnostics.compile({ lease: lease.lease, generation: 1, source: '# page' }),
-    ).rejects.toThrow('MDX context changed')
+    await retired
+    trustGate.resolve(true)
+    await expect(compiling).rejects.toThrow('MDX context changed')
     diagnostics.close()
   })
 

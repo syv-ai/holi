@@ -65,6 +65,7 @@ import type { GitHubSession } from './github/session'
 import type { MdxTrustStore } from './mdx-trust'
 import { canonicalGitHubRemote } from './mdx-trust'
 import { createMdxDiagnostics } from './mdx-diagnostics'
+import type { MdxResources } from './mdx-resources'
 import type { ActiveVault, SyncInfo, SyncState, VaultHost } from './vault/active-vault'
 import type { ActivityEntry, ActivityLog } from './activity/log'
 import type { AppLog, AppLogEntry } from './logs/app-log'
@@ -153,11 +154,7 @@ export interface RouterDeps {
   onMdxDiagnosticsInvalidate?: (invalidate: () => void) => void
   /** Main permanently closes view leases when the app quits. */
   onMdxDiagnosticsClose?: (close: () => void) => void
-  mdxCompiler?: {
-    compile(source: string, signal?: AbortSignal): Promise<import('@holi/shared').MdxDiagnostic[]>
-    invalidate(): void
-    close(): void
-  }
+  mdxCompiler?: MdxResources
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /**
@@ -1218,7 +1215,9 @@ export function createRouter(deps: RouterDeps) {
     trusted: (identity) =>
       deps.mdxTrust?.status({ accountId: identity.accountId, remote: identity.remote }) ??
       Promise.resolve(false),
-    compile: (source, signal) => deps.mdxCompiler!.compile(source, signal),
+    createResourceOwner: (isCurrent) => deps.mdxCompiler!.createOwner(isCurrent),
+    retireResourceOwner: (owner) => deps.mdxCompiler!.retireOwner(owner),
+    compile: (owner, source, signal) => deps.mdxCompiler!.compile(owner, source, signal),
   })
   function beginMdxTrustTransition(): () => void {
     mdxTrustTransition += 1

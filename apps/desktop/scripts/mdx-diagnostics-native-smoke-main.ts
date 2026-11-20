@@ -3,7 +3,7 @@ import { app, BrowserWindow, ipcMain, session, type WebContents } from 'electron
 import { createGuestProbes } from './mdx-compiler-guest-probes'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { createMdxCompiler } from '../src/main/mdx-compiler'
+import { createMdxResources } from '../src/main/mdx-resources'
 import { createMdxDiagnostics } from '../src/main/mdx-diagnostics'
 import { createMdxTrustStore } from '../src/main/mdx-trust'
 
@@ -33,7 +33,7 @@ let installedSessionPolicy = false
 const blockedRequests: string[] = []
 const guestProbes: Array<{ url: string; result: Record<string, unknown> }> = []
 let adversaries: Awaited<ReturnType<typeof createGuestProbes>> | null = null
-const compiler = createMdxCompiler(join(app.getAppPath(), 'out/mdx-compiler'))
+const compiler = createMdxResources(join(app.getAppPath(), 'out/mdx-compiler'))
 const trustStore = createMdxTrustStore(join(profile, 'mdx-trust.json'))
 const owner = () => ({ accountId: identity.accountId, remote })
 const diagnostics = createMdxDiagnostics({
@@ -44,9 +44,11 @@ const diagnostics = createMdxDiagnostics({
     return vault
   },
   trusted: async (candidate) => candidate === identity && trustStore.status(owner()),
-  compile: (source, signal) => {
+  createResourceOwner: (isCurrent) => compiler.createOwner(isCurrent),
+  retireResourceOwner: (resourceOwner) => compiler.retireOwner(resourceOwner),
+  compile: (resourceOwner, source, signal) => {
     compileSources += 1
-    return compiler.compile(source, signal)
+    return compiler.compile(resourceOwner, source, signal)
   },
 })
 
@@ -153,6 +155,39 @@ invoke('smoke:scenarios', async () => {
       diagnostics.release(fresh)
     }
   }
+  const activeOwner = await diagnostics.acquire({ remote, path: 'notes/fixture.mdx', context })
+  const activeReady = probes.hold()
+  const activeResult = diagnostics
+    .compile({ lease: activeOwner.lease, generation: 1, source: '# queued ownership owner\n' })
+    .then(
+      () => false,
+      () => true,
+    )
+  await activeReady
+  const queuedOwner = await diagnostics.acquire({ remote, path: 'notes/fixture.mdx', context })
+  const compileCount = compileSources
+  const queuedResult = diagnostics
+    .compile({ lease: queuedOwner.lease, generation: 1, source: '# revoked while queued\n' })
+    .then(
+      () => false,
+      () => true,
+    )
+  for (let attempt = 0; attempt < 100 && compileSources === compileCount; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  diagnostics.release({ lease: queuedOwner.lease })
+  assert.equal(
+    await queuedResult,
+    true,
+    'revoking a diagnostics owner must cancel its queued compile',
+  )
+  diagnostics.release({ lease: activeOwner.lease })
+  assert.equal(
+    await activeResult,
+    true,
+    'releasing the active diagnostics owner must cancel in-flight work',
+  )
+  stale.push({ name: 'queued ownership revocation and in-flight release', rejected: 'cancelled' })
+
   await heldChange(
     'source generation cancellation',
     (lease) => {

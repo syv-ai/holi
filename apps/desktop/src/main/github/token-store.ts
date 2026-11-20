@@ -12,8 +12,10 @@
  *     all read as `null`, because "sign in again" is a recovery a user can
  *     perform and a bricked app is not.
  */
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rm } from 'node:fs/promises'
+import { renameSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 /**
  * Everything sign-in produced, kept together and encrypted as one blob.
@@ -49,19 +51,54 @@ export interface SafeStorageLike {
   isEncryptionAvailable(): boolean
   encryptString(plain: string): Buffer
   decryptString(encrypted: Buffer): string
+  getSelectedStorageBackend?(): string
 }
 
 /** The platform has no keychain to encrypt with. The message is advice — the
  * user can often fix this (install a keyring, unlock the login keychain) — so
  * it deserves its own type rather than a generic failure.
- * @public exported for its test
  */
-export class EncryptionUnavailableError extends Error {
-  constructor() {
+type TokenStoragePhase = 'availability' | 'encryption' | 'directory' | 'write' | 'replace'
+
+const BACKENDS = new Set([
+  'gnome_libsecret',
+  'kwallet',
+  'kwallet5',
+  'kwallet6',
+  'basic_text',
+  'unknown',
+])
+
+/** Safe, bounded diagnostics: never expose native error text or credential data. */
+class TokenStorageError extends Error {
+  readonly phase: TokenStoragePhase
+  readonly backend: string
+
+  constructor(phase: TokenStoragePhase, backend: string) {
+    const safeBackend = BACKENDS.has(backend) ? backend : 'unknown'
+    const linuxBackend = safeBackend === 'gnome_libsecret' || safeBackend.startsWith('kwallet')
+    const advice =
+      phase === 'availability'
+        ? linuxBackend
+          ? 'Ensure a Linux keyring is installed, running and unlocked, and that the session bus is available, then retry sign-in.'
+          : 'Ensure the operating system credential store is available, then retry sign-in.'
+        : phase === 'encryption'
+          ? linuxBackend
+            ? 'Ensure a Linux login keyring and session bus are running and available, and that the keyring is unlocked, then retry sign-in.'
+            : 'Ensure the operating system credential store is available, then retry sign-in.'
+          : 'Check that Holi can write its user-data folder, then retry sign-in.'
     super(
-      'the OS keychain is unavailable, so the GitHub token cannot be stored securely — ' +
-        'Holi will not write it to disk unencrypted',
+      `Holi could not securely save the GitHub sign-in (${phase}; backend: ${safeBackend}). ${advice} No plaintext fallback was used.`,
     )
+    this.name = phase === 'availability' ? 'EncryptionUnavailableError' : 'TokenStorageError'
+    this.phase = phase
+    this.backend = safeBackend
+  }
+}
+
+class EncryptionUnavailableError extends TokenStorageError {
+  constructor(backend = 'unknown') {
+    super('availability', backend)
     this.name = 'EncryptionUnavailableError'
   }
 }
@@ -75,6 +112,42 @@ interface Envelope {
   /** base64 of the ciphertext, so the file stays valid JSON and stays greppable
    * as *not* containing a token. */
   data: string
+}
+
+/** A staged encrypted replacement: publish is synchronous, and discard cleans only its staging file. */
+export interface PreparedTokenWrite {
+  publish(): void
+  discard(): Promise<void>
+}
+
+class PreparedTokenReplacement implements PreparedTokenWrite {
+  #target: string
+  #staged: string | null
+
+  #backend: string
+
+  constructor(target: string, staged: string, backend: string) {
+    this.#target = target
+    this.#staged = staged
+    this.#backend = backend
+  }
+
+  publish(): void {
+    const staged = this.#staged
+    if (staged === null) throw new Error('Prepared token write already consumed')
+    try {
+      renameSync(staged, this.#target)
+      this.#staged = null
+    } catch {
+      throw new TokenStorageError('replace', this.#backend)
+    }
+  }
+
+  async discard(): Promise<void> {
+    const staged = this.#staged
+    this.#staged = null
+    if (staged !== null) await rm(staged, { force: true }).catch(() => {})
+  }
 }
 
 export class TokenStore {
@@ -101,22 +174,66 @@ export class TokenStore {
     }
   }
 
-  async write(auth: StoredAuth): Promise<void> {
-    // Checked before anything touches the filesystem, so a refusal leaves no
-    // half-written file behind to be read as a corrupt one later.
-    if (!this.#storage.isEncryptionAvailable()) throw new EncryptionUnavailableError()
-
-    const envelope: Envelope = {
-      v: VERSION,
-      data: this.#storage.encryptString(JSON.stringify(auth)).toString('base64'),
+  async prepare(auth: StoredAuth): Promise<PreparedTokenWrite> {
+    const backend = this.#backend()
+    // Never allow Electron's basic_text backend, even if it reports availability.
+    if (backend === 'basic_text') throw new EncryptionUnavailableError(backend)
+    try {
+      if (!this.#storage.isEncryptionAvailable()) throw new EncryptionUnavailableError(backend)
+    } catch (error) {
+      if (error instanceof EncryptionUnavailableError) throw error
+      throw new TokenStorageError('availability', backend)
     }
 
-    await mkdir(dirname(this.#file), { recursive: true })
+    let encrypted: Buffer
+    try {
+      encrypted = this.#storage.encryptString(JSON.stringify(auth))
+    } catch {
+      throw new TokenStorageError('encryption', backend)
+    }
+    const envelope: Envelope = { v: VERSION, data: encrypted.toString('base64') }
+
+    try {
+      await mkdir(dirname(this.#file), { recursive: true })
+    } catch {
+      throw new TokenStorageError('directory', backend)
+    }
     // Write-then-rename: a crash mid-write must not leave a truncated file that
-    // reads as a sign-out on next launch.
-    const tmp = `${this.#file}.tmp`
-    await writeFile(tmp, JSON.stringify(envelope), { mode: 0o600 })
-    await rename(tmp, this.#file)
+    // reads as a sign-out on next launch. The prior file remains until rename.
+    const tmp = `${this.#file}.${randomUUID()}.tmp`
+    let owned = false
+    try {
+      const handle = await open(tmp, 'wx', 0o600)
+      owned = true
+      try {
+        await handle.writeFile(JSON.stringify(envelope), 'utf8')
+      } finally {
+        await handle.close()
+      }
+    } catch {
+      if (owned) await rm(tmp, { force: true }).catch(() => {})
+      throw new TokenStorageError('write', backend)
+    }
+    return new PreparedTokenReplacement(this.#file, tmp, backend)
+  }
+
+  async write(auth: StoredAuth): Promise<void> {
+    const prepared = await this.prepare(auth)
+    try {
+      prepared.publish()
+    } catch (error) {
+      await prepared.discard()
+      throw error
+    }
+  }
+
+  #backend(): string {
+    try {
+      const backend = this.#storage.getSelectedStorageBackend?.()
+      return typeof backend === 'string' && BACKENDS.has(backend) ? backend : 'unknown'
+    } catch {
+      return 'unknown'
+    }
   }
 
   async clear(): Promise<void> {
