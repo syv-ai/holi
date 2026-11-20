@@ -199,6 +199,7 @@ interface Job {
   /** Resolves after release, copy-back, bracket completion and owned cleanup. */
   exited: Promise<void>
   finalizationError?: Error
+  secondaryPhysicalFailure?: { cause: unknown }
   dropTimer?: ReturnType<typeof setTimeout>
   retirement?: Promise<void>
 }
@@ -474,7 +475,9 @@ export function createJobs(deps: JobsDeps): Jobs {
       id: j.id,
       provider: j.provider.id,
       name: j.name,
-      state: j.busy && !j.finalizing ? 'working' : 'idle',
+      // The end bracket can notify observers before it persists the turn.
+      // An idle job must already have its terminal outcome at that point.
+      state: j.busy ? 'working' : 'idle',
       startedAt: j.startedAt,
       ...(j.model === undefined ? {} : { model: j.model }),
       ...(j.tokens > 0 ? { usage: { total: j.tokens } } : {}),
@@ -494,7 +497,12 @@ export function createJobs(deps: JobsDeps): Jobs {
     deps.onChange(next)
   }
 
-  function rememberFailure(job: Job, receipt: JobTurnReceipt, error: unknown): Error {
+  function rememberFailure(
+    job: Job,
+    receipt: JobTurnReceipt,
+    error: unknown,
+    phase?: 'physical',
+  ): Error {
     if (job.finalizationError === undefined) {
       job.finalizationError = error instanceof Error ? error : new Error(String(error))
       try {
@@ -502,6 +510,9 @@ export function createJobs(deps: JobsDeps): Jobs {
       } catch (recordError) {
         log(`${job.id}: could not persist ownership failure: ${String(recordError)}`)
       }
+    } else if (error !== job.finalizationError) {
+      if (phase === 'physical') job.secondaryPhysicalFailure ??= { cause: error }
+      log(`${job.id}: additional finalization failure: ${String(error)}`)
     }
     return job.finalizationError
   }
@@ -533,6 +544,7 @@ export function createJobs(deps: JobsDeps): Jobs {
     const hold = await mkdtemp(join(dirname(abs), '.holi-copy-'))
     const previous = join(hold, 'previous')
     let moved = false
+    let restored = false
     let keep = false
     try {
       if (stopped()) throw new CopyBackCancelled()
@@ -542,6 +554,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       if (old === null || hashOf(old) !== before) throw new Error(collision(rel))
       deadline?.throwIfAborted()
       await deps.beforePublish?.(rel)
+      deadline?.throwIfAborted()
       // Check an open descriptor's write before publishing the replacement.
       // A write after this check is the residual race the vault accepts.
       const after = await readRegular(previous)
@@ -549,12 +562,12 @@ export function createJobs(deps: JobsDeps): Jobs {
       if (stopped()) throw new CopyBackCancelled()
       if (!(await createExclusive(abs, data, stopped, deadline))) throw new Error(collision(rel))
     } catch (err) {
-      deadline?.throwIfAborted()
       if (moved) {
         try {
-          // Restore independently of reads: even an unreadable original must
-          // survive. A newly arrived file owns the name and is never replaced.
+          // Rollback, unlike publication, remains owed after the deadline.
+          // Restore even an unreadable original, but never replace a new file.
           await link(previous, abs)
+          restored = true
         } catch (restore) {
           if ((restore as NodeJS.ErrnoException).code !== 'EEXIST') {
             keep = true
@@ -566,8 +579,10 @@ export function createJobs(deps: JobsDeps): Jobs {
           // close failure must not let finally delete the preserved original.
           keep = true
           try {
-            const old = await readRegular(previous)
-            keep = old === null || hashOf(old) !== before
+            if (!deadline?.aborted) {
+              const old = await readRegular(previous)
+              keep = old === null || hashOf(old) !== before
+            }
           } catch (inspect) {
             throw new CopyBackFinalizationError(
               `${String(err)} Could not verify restoration: ${String(inspect)}. The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
@@ -575,6 +590,7 @@ export function createJobs(deps: JobsDeps): Jobs {
           }
         }
       }
+      if (moved && !restored && deadline?.aborted) keep = true
       if (keep) {
         throw new CopyBackFinalizationError(
           `${String(err)} The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
@@ -582,8 +598,9 @@ export function createJobs(deps: JobsDeps): Jobs {
       }
       throw err
     } finally {
-      deadline?.throwIfAborted()
-      if (!keep) {
+      // After a timeout, only clean up the hold if no original was moved
+      // or it was safely linked back. Never remove the competing name.
+      if (!keep && (!deadline?.aborted || !moved || restored)) {
         try {
           await rm(hold, { recursive: true, force: true })
         } catch (err) {
@@ -743,7 +760,7 @@ export function createJobs(deps: JobsDeps): Jobs {
     job.busy = true
     delete job.stopped
     clearTimeout(job.dropTimer)
-    const fail = (error: unknown) => rememberFailure(job, receipt, error)
+    const fail = (error: unknown, phase?: 'physical') => rememberFailure(job, receipt, error, phase)
     const tooLong = setTimeout(() => {
       void kill(job, 'The job ran too long and was stopped.').catch((error: unknown) =>
         log(`${id}: could not stop: ${String(error)}`),
@@ -784,17 +801,16 @@ export function createJobs(deps: JobsDeps): Jobs {
         const controller = new AbortController()
         const { signal } = controller
         job.finalizing = true
-        push()
         const finish = async () => {
           await bracketBegin
           signal.throwIfAborted()
           // Physical/output failure never reaches release. A failed bracket
           // still needs its end attempted, but cannot publish or delete scratch.
           try {
-            await provider.release?.(job.state)
+            await provider.release?.(job.state, signal)
           } catch (error) {
-            signal.throwIfAborted()
             fail(error)
+            signal.throwIfAborted()
           }
           signal.throwIfAborted()
           let outcome: 'completed' | 'failed' = 'failed'
@@ -815,10 +831,10 @@ export function createJobs(deps: JobsDeps): Jobs {
                 log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
                 why = leftOutMessage(skipped)
               } catch (error) {
+                if (error instanceof CopyBackFinalizationError) fail(error)
                 signal.throwIfAborted()
                 outcome = 'failed'
                 why = error instanceof Error ? error.message : String(error)
-                if (error instanceof CopyBackFinalizationError) fail(error)
               }
             } else log(`${id}: turn done`)
           } else {
@@ -829,8 +845,8 @@ export function createJobs(deps: JobsDeps): Jobs {
             try {
               await deps.bracket?.(id, 'end')
             } catch (error) {
-              signal.throwIfAborted()
               fail(error)
+              signal.throwIfAborted()
             }
           }
           signal.throwIfAborted()
@@ -1089,9 +1105,11 @@ export function createJobs(deps: JobsDeps): Jobs {
       clearTimeout(job.dropTimer)
     }
     const results = await Promise.allSettled(all.map((job) => kill(job, 'Stopped.')))
-    const failures = results.flatMap((result) =>
-      result.status === 'rejected' ? [result.reason] : [],
-    )
+    const failures = results.flatMap((result, i) => {
+      if (result.status !== 'rejected') return []
+      const secondary = all[i]?.secondaryPhysicalFailure
+      return secondary ? [result.reason, secondary.cause] : [result.reason]
+    })
     if (failures.length > 0) {
       throw new AggregateError(failures, 'One or more agent jobs did not drain.')
     }

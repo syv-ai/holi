@@ -29,7 +29,7 @@ interface TurnOptions {
     event: { kind: 'thread'; id: string } | { kind: 'turn-completed'; tokens?: number },
   ): void
   onDraining(): void
-  rememberFailure(error: unknown): Error
+  rememberFailure(error: unknown, phase?: 'physical'): Error
 }
 
 interface Output {
@@ -107,6 +107,7 @@ export function startJobTurn({
   const stdout = child?.stdout
   let stdoutEnded = stdout == null
   let stdoutFailure: Error | undefined
+  let outputFailureRecorded = false
   let execObserved = false
   let childClose: { code: number | null; signal: NodeJS.Signals | null } | undefined
   let resolveClose!: () => void
@@ -121,8 +122,15 @@ export function startJobTurn({
     if (stdoutFailure !== undefined && !typed) {
       // Before exec, let the core report a typed non-admission before native
       // close. A pipe failure does not poison a proven pre-GO cancellation.
-      if (childClose !== undefined || (execObserved && (!windows || group)))
-        rejectClose(stdoutFailure)
+      if (
+        !outputFailureRecorded &&
+        (childClose !== undefined || (execObserved && (!windows || group)))
+      ) {
+        // Record the first cause now, not after the retained lease settles.
+        // Drain still joins that lease, even if output is already lost.
+        outputFailureRecorded = true
+        rejectClose(rememberFailure(stdoutFailure))
+      }
     } else if (childClose !== undefined && (stdoutEnded || typed)) resolveClose()
   }
   function failStdout(error: Error) {
@@ -179,9 +187,13 @@ export function startJobTurn({
         throw new Error(`Job ${id} has no POSIX launch lease; its owner is unresolved.`)
       // Invoke the lease synchronously: a pre-GO Stop must close admission
       // before any startup continuation can admit the provider.
-      if (group) await group.drain()
-      await (typed?.cleanup ?? cleanup)
-      if (!windows && child === undefined && invoked && !typed) throw launchError
+      try {
+        if (group) await group.drain()
+        await (typed?.cleanup ?? cleanup)
+        if (!windows && child === undefined && invoked && !typed) throw launchError
+      } catch (error) {
+        throw rememberFailure(error, 'physical')
+      }
       // Only positive physical proof starts the output deadline. An already
       // known physical error never waits for the pipes or a caller callback.
       try {
