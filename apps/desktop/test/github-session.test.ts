@@ -90,8 +90,12 @@ const stored = (over: Partial<StoredAuth> = {}): StoredAuth => ({
 })
 
 /** A session over a real TokenStore in a tmpdir and a scripted network. */
-async function session(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
-  const store = new TokenStore(join(await scratch(), 'github-auth.enc'), storage)
+async function session(
+  routes: Record<string, Scripted[]>,
+  seed?: StoredAuth,
+  storageAdapter: SafeStorageLike = storage,
+) {
+  const store = new TokenStore(join(await scratch(), 'github-auth.enc'), storageAdapter)
   if (seed) await store.write(seed)
 
   const net = fakeNet(routes)
@@ -156,6 +160,180 @@ describe('GitHubSession', () => {
     expect((await t.store.read())?.scopes).toEqual(['repo', 'read:user', 'read:org'])
   })
 
+  it('discards staged encrypted output when sign-out wins before publication', async () => {
+    const t = await session(SIGN_IN_ROUTES)
+    const originalPrepare = t.store.prepare.bind(t.store)
+    let staged!: () => void
+    let release!: () => void
+    const stagedPromise = new Promise<void>((resolve) => (staged = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    vi.spyOn(t.store, 'prepare').mockImplementation(async (auth) => {
+      const prepared = await originalPrepare(auth)
+      staged()
+      await gate
+      return prepared
+    })
+    const flow = await t.s.signIn()
+    const pending = flow.wait()
+    await stagedPromise
+    const signingOut = t.s.signOut()
+    release()
+    await signingOut
+    await expect(pending).resolves.toEqual({ kind: 'cancelled' })
+    expect(t.s.token()).toBeNull()
+    expect(await t.store.read()).toBeNull()
+  })
+
+  it('preserves the current credential when the latest replacement fails', async () => {
+    const previous = stored({ token: 'old-credential', accountId: 42, login: 'old-account' })
+    const t = await session(SIGN_IN_ROUTES, previous)
+    const originalPrepare = t.store.prepare.bind(t.store)
+    vi.spyOn(t.store, 'prepare').mockImplementation(async (auth) => {
+      const prepared = await originalPrepare(auth)
+      return {
+        publish: () => {
+          throw new Error('replace failed')
+        },
+        discard: () => prepared.discard(),
+      }
+    })
+    await expect((await t.s.signIn()).wait()).rejects.toThrow('replace failed')
+    expect(t.s.token()).toBe('old-credential')
+    expect(t.s.viewer?.accountId).toBe(42)
+    expect((await t.store.read())?.token).toBe('old-credential')
+  })
+
+  it('does not adopt a credential when encrypted persistence fails and can retry', async () => {
+    let available = true
+    const adapter: SafeStorageLike = {
+      ...storage,
+      isEncryptionAvailable: () => available,
+    }
+    const previous = stored({ token: 'old-credential', accountId: 42, login: 'old-account' })
+    const t = await session(SIGN_IN_ROUTES, previous, adapter)
+    const previousFile = await t.store.read()
+    const changes: (string | null)[] = []
+    t.s.onChange((viewer) => changes.push(viewer?.login ?? null))
+    available = false
+
+    await expect((await t.s.signIn()).wait()).rejects.toMatchObject({
+      name: 'EncryptionUnavailableError',
+      phase: 'availability',
+    })
+    expect(t.s.token()).toBe('old-credential')
+    expect(t.s.viewer?.accountId).toBe(42)
+    expect(await t.store.read()).toEqual(previousFile)
+    expect(changes).toEqual([])
+
+    available = true
+    await expect((await t.s.signIn()).wait()).resolves.toMatchObject({ kind: 'granted' })
+    expect(t.s.token()).toBe(TOKEN)
+    expect(t.s.viewer?.accountId).toBe(583231)
+    expect(changes).toEqual(['nthomsencph'])
+  })
+
+  it('does not adopt a failed first credential', async () => {
+    const unavailable: SafeStorageLike = { ...storage, isEncryptionAvailable: () => false }
+    const t = await session(SIGN_IN_ROUTES, undefined, unavailable)
+    await expect((await t.s.signIn()).wait()).rejects.toMatchObject({ phase: 'availability' })
+    expect(t.s.token()).toBeNull()
+    expect(t.s.viewer).toBeNull()
+    expect(await t.store.read()).toBeNull()
+  })
+
+  it('does not adopt a stale viewer result after sign-out', async () => {
+    let markViewerEntered!: () => void
+    const viewerEntered = new Promise<void>((resolve) => (markViewerEntered = resolve))
+    let resolveViewer!: (response: Response) => void
+    const viewerResponse = new Promise<Response>((resolve) => {
+      resolveViewer = resolve
+    })
+    const scripted = fakeNet({
+      '/login/device/code': [{ body: CODE }],
+      '/login/oauth/access_token': [{ body: GRANT }],
+    })
+    const fetch = (async (input: unknown) => {
+      if (new URL(String(input)).pathname === '/user') {
+        markViewerEntered()
+        return viewerResponse
+      }
+      return scripted.fetch(input)
+    }) as typeof globalThis.fetch
+    const store = new TokenStore(join(await scratch(), 'github-auth.enc'), storage)
+    const s = await GitHubSession.load({ store, fetch, sleep: async () => {} })
+    const flow = await s.signIn()
+    const pendingAdoption = flow.wait()
+    await viewerEntered
+
+    await s.signOut()
+    resolveViewer(
+      new Response(JSON.stringify(VIEWER), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    await expect(pendingAdoption).resolves.toEqual({ kind: 'cancelled' })
+
+    expect(s.token()).toBeNull()
+    expect(s.viewer).toBeNull()
+    expect(await store.read()).toBeNull()
+  })
+
+  it('memoizes the complete wait promise', async () => {
+    const t = await session(SIGN_IN_ROUTES)
+    const flow = await t.s.signIn()
+    const first = flow.wait()
+    expect(flow.wait()).toBe(first)
+    await expect(first).resolves.toMatchObject({ kind: 'granted' })
+  })
+
+  it('cancels a grant when sign-out happens before polling starts', async () => {
+    const t = await session(SIGN_IN_ROUTES)
+    const flow = await t.s.signIn()
+    await t.s.signOut()
+    await expect(flow.wait()).resolves.toEqual({ kind: 'cancelled' })
+    expect(t.s.token()).toBeNull()
+    expect(await t.store.read()).toBeNull()
+  })
+
+  it('cancels the previous sign-in when a newer attempt begins', async () => {
+    const t = await session(SIGN_IN_ROUTES)
+    const old = await t.s.signIn()
+    const newer = t.s.signIn()
+    await expect(old.wait()).resolves.toEqual({ kind: 'cancelled' })
+    await expect((await newer).wait()).resolves.toMatchObject({ kind: 'granted' })
+  })
+
+  it('does not adopt a viewer after its attempt is cancelled in flight', async () => {
+    let markViewerEntered!: () => void
+    const viewerEntered = new Promise<void>((resolve) => (markViewerEntered = resolve))
+    let resolveViewer!: (response: Response) => void
+    const viewerResponse = new Promise<Response>((resolve) => (resolveViewer = resolve))
+    const scripted = fakeNet({
+      '/login/device/code': [{ body: CODE }],
+      '/login/oauth/access_token': [{ body: GRANT }],
+    })
+    const fetch = (async (input: unknown) => {
+      if (new URL(String(input)).pathname === '/user') {
+        markViewerEntered()
+        return viewerResponse
+      }
+      return scripted.fetch(input)
+    }) as typeof globalThis.fetch
+    const store = new TokenStore(join(await scratch(), 'github-auth.enc'), storage)
+    const s = await GitHubSession.load({ store, fetch, sleep: async () => {} })
+    const flow = await s.signIn()
+    const pending = flow.wait()
+    await viewerEntered
+    flow.cancel()
+    resolveViewer(
+      new Response(JSON.stringify(VIEWER), { headers: { 'content-type': 'application/json' } }),
+    )
+    await expect(pending).resolves.toEqual({ kind: 'cancelled' })
+    expect(s.token()).toBeNull()
+    expect(await store.read()).toBeNull()
+  })
+
   it('leaves the session signed out on denied', async () => {
     const t = await session({
       ...SIGN_IN_ROUTES,
@@ -207,6 +385,97 @@ describe('GitHubSession', () => {
     expect(t.s.token()).toBeNull()
     expect(t.s.viewer).toBeNull()
     expect(await t.store.read()).toBeNull()
+  })
+
+  it('does not let an old credential 401 sign out a newly adopted credential', async () => {
+    let resolveResponse!: (response: Response) => void
+    const staleResponse = new Promise<Response>((resolve) => (resolveResponse = resolve))
+    const scripted = fakeNet({
+      ...SIGN_IN_ROUTES,
+      '/user/repos': [{ status: 200, body: [] }],
+    })
+    const fetch = (async (input: unknown) =>
+      new URL(String(input)).pathname === '/user/repos'
+        ? staleResponse
+        : scripted.fetch(input)) as typeof globalThis.fetch
+    const store = new TokenStore(join(await scratch(), 'github-auth.enc'), storage)
+    await store.write(stored({ token: 'old-credential' }))
+    const s = await GitHubSession.load({ store, fetch, sleep: async () => {} })
+    const pendingRequest = s.api.repos()
+    await (await s.signIn()).wait()
+    resolveResponse(new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 }))
+    await expect(pendingRequest).rejects.toMatchObject({ kind: 'unauthorized' })
+    expect(s.token()).toBe(TOKEN)
+    expect(await store.read()).toMatchObject({ token: TOKEN })
+  })
+
+  it('does not let an old same-token request sign out a revalidated session', async () => {
+    let resolveResponse!: (response: Response) => void
+    const staleResponse = new Promise<Response>((resolve) => (resolveResponse = resolve))
+    const scripted = fakeNet({
+      ...SIGN_IN_ROUTES,
+      '/user/repos': [{ status: 200, body: [] }],
+    })
+    const fetch = (async (input: unknown) =>
+      new URL(String(input)).pathname === '/user/repos'
+        ? staleResponse
+        : scripted.fetch(input)) as typeof globalThis.fetch
+    const store = new TokenStore(join(await scratch(), 'github-auth.enc'), storage)
+    await store.write(stored())
+    const s = await GitHubSession.load({ store, fetch, sleep: async () => {} })
+    const pendingRequest = s.api.repos()
+
+    // The same bearer can be validated again and adopted as a new credential
+    // instance; a delayed 401 from its earlier use must not erase that result.
+    await expect((await s.signIn()).wait()).resolves.toMatchObject({ kind: 'granted' })
+    resolveResponse(new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 }))
+    await expect(pendingRequest).rejects.toMatchObject({ kind: 'unauthorized' })
+    expect(s.token()).toBe(TOKEN)
+    expect(s.viewer?.accountId).toBe(583231)
+    expect(await store.read()).toMatchObject({ token: TOKEN, accountId: 583231 })
+  })
+
+  it('does not cancel an independent replacement candidate on the old credential 401', async () => {
+    let resolveViewer!: (response: Response) => void
+    const viewerResponse = new Promise<Response>((resolve) => (resolveViewer = resolve))
+    let resolveUnauthorized!: (response: Response) => void
+    const unauthorizedResponse = new Promise<Response>((resolve) => (resolveUnauthorized = resolve))
+    const scripted = fakeNet(SIGN_IN_ROUTES)
+    const fetch = (async (input: unknown) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/user/repos') return unauthorizedResponse
+      if (path === '/user') return viewerResponse
+      return scripted.fetch(input)
+    }) as typeof globalThis.fetch
+    const store = new TokenStore(join(await scratch(), 'github-auth.enc'), storage)
+    await store.write(stored({ token: 'old-credential' }))
+    const originalPrepare = store.prepare.bind(store)
+    let staged!: () => void
+    let release!: () => void
+    const stagedPromise = new Promise<void>((resolve) => (staged = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    vi.spyOn(store, 'prepare').mockImplementation(async (auth) => {
+      const prepared = await originalPrepare(auth)
+      staged()
+      await gate
+      return prepared
+    })
+    const s = await GitHubSession.load({ store, fetch, sleep: async () => {} })
+    const oldRequest = s.api.repos()
+    const candidate = (await s.signIn()).wait()
+    await Promise.resolve()
+    resolveViewer(
+      new Response(JSON.stringify(VIEWER), { headers: { 'content-type': 'application/json' } }),
+    )
+    await stagedPromise
+    resolveUnauthorized(
+      new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 }),
+    )
+    release()
+    await expect(oldRequest).rejects.toMatchObject({ kind: 'unauthorized' })
+    await expect(candidate).resolves.toMatchObject({ kind: 'granted' })
+    expect(s.token()).toBe(TOKEN)
+    expect(await store.read()).toMatchObject({ token: TOKEN })
   })
 
   it('does NOT sign the session out on a 403 from the api', async () => {
