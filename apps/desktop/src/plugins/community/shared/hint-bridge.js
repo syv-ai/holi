@@ -31,13 +31,23 @@
     let node = document.activeElement
     while (node) {
       if (isEditable(node)) return true
-      // A focused custom-element host may conceal an editor in a closed root.
-      if (node instanceof Element && node.localName.includes('-') && !node.shadowRoot) return true
+      // Closed roots hide their editor; only elements allowed to host author
+      // shadow roots need conservative handling when their root is inaccessible.
+      if (closedShadowHost(node)) return true
       const root = node.shadowRoot
       if (!root?.activeElement) break
       node = root.activeElement
     }
     return false
+  }
+  const closedShadowHost = (element) => {
+    if (!(element instanceof Element) || element === document.body || element.shadowRoot)
+      return false
+    const tag = element.localName
+    return (
+      tag.includes('-') ||
+      /^(article|aside|blockquote|body|div|footer|h[1-6]|header|main|nav|p|section|span)$/.test(tag)
+    )
   }
   const visiblyActive = (element) => {
     if (!element.isConnected || element.closest('[hidden],[inert],[aria-hidden="true"]'))

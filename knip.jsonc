@@ -34,9 +34,9 @@
         // Vite's disposable Electron smoke entry is selected by a filesystem path.
         "scripts/windows-agent-smoke.ts",
         "scripts/browser-display-smoke.ts",
+        "scripts/browser-frame-addressing-smoke.ts",
         "scripts/code-captions-smoke-main.ts",
         "scripts/code-captions-smoke-renderer.tsx",
-        // The optional toolbar smoke bundles its HTML and loads these by filesystem path.
         "scripts/browser-display-fixture/index.html",
         "scripts/browser-display-fixture/entry.tsx",
         "scripts/browser-display-fixture/preload.cjs",
@@ -71,6 +71,8 @@
         "scripts/mdx-diagnostics-native-smoke-main.ts",
         "scripts/mdx-diagnostics-native-smoke.tsx",
         "scripts/mdx-diagnostics-smoke-trpc.ts",
+        // Native GitHub safeStorage entry is built as an Electron SSR fixture.
+        "scripts/github-storage-native-smoke-main.ts",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",

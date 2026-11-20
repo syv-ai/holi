@@ -91,6 +91,24 @@ describe('GitHubApi requests', () => {
     expect(t.requests[0].headers.Authorization).toBeUndefined()
   })
 
+  it('associates a 401 with the credential that issued the request', async () => {
+    let resolveResponse!: (response: Response) => void
+    const response = new Promise<Response>((resolve) => (resolveResponse = resolve))
+    let current: string | null = 'old-credential'
+    const onUnauthorized = vi.fn()
+    const client = new GitHubApi({
+      token: () => current,
+      onUnauthorized,
+      fetch: (async () => response) as typeof globalThis.fetch,
+      baseUrl: BASE,
+    })
+    const pending = client.repos()
+    current = 'new-credential'
+    resolveResponse(new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 }))
+    await expect(pending).rejects.toMatchObject({ kind: 'unauthorized' })
+    expect(onUnauthorized).toHaveBeenCalledWith('old-credential')
+  })
+
   it('reads the token lazily on every request', async () => {
     // This is what makes a sign-out take effect on the next call rather than
     // the next restart — the same reason GitDeps.token is a getter.

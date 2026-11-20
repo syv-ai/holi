@@ -112,10 +112,16 @@ export const agentMain: MainPlugin = {
       if (ownedFailures.length > 0)
         throw new AggregateError(ownedFailures.splice(0), 'agent callbacks failed to drain')
     }
+    const trackMutation = <T>(work: () => Promise<T>): Promise<T> => {
+      if (ctx.activationSignal.aborted)
+        return Promise.reject(new Error(`agent activation for ${ctx.remote} was cancelled`))
+      return trackOwned(work())
+    }
     const probes = createAgentProbeOwner(ctx.activationSignal)
     const activationOwners: Array<() => unknown | Promise<unknown>> = [
       probes.stop,
       () => harnesses.dispose(),
+      () => drainOwned(),
     ]
     const assertActive = (): void => {
       if (ctx.activationSignal.aborted)
@@ -272,8 +278,13 @@ export const agentMain: MainPlugin = {
       // vault's inbox, and a banner while Holi is out of sight.
       const inbox = createInbox({
         store: jsonFileStore(join(ctx.root, INBOX_FILE), parseInbox),
-        notify: (notice) => ctx.notify(notice),
-        changed: (view) => ctx.emit(ctx.remote, 'inbox', view),
+        notify: (notice) => {
+          if (!ctx.activationSignal.aborted) return ctx.notify(notice)
+          return false
+        },
+        changed: (view) => {
+          if (!ctx.activationSignal.aborted) ctx.emit(ctx.remote, 'inbox', view)
+        },
       })
       const unproviders = harnesses.subscribe(() => ctx.emit(ctx.remote, 'providers', null))
       activationOwners.push(() => unproviders())
@@ -288,10 +299,12 @@ export const agentMain: MainPlugin = {
           terminals,
           liveRemote,
           commitNow: () => ctx.commitNow(),
+          trackMutation,
+          captureFinalization: () => ctx.captureFinalization(),
           pi: piBackground,
           defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
         }),
-        ...inboxCapabilities({ inbox, liveRemote }),
+        ...inboxCapabilities({ inbox, liveRemote, trackMutation }),
         ...harnessCapabilities({
           registry: harnesses,
           probes,

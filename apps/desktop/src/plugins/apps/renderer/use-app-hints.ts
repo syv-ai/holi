@@ -3,7 +3,33 @@ import { useAtomValue } from 'jotai'
 import { registerHostHintAdapter } from '@/plugin-api'
 import { activeRemoteAtom, vimCodeEditingAtom } from '@/plugin-api'
 import { createAppHintAdapter } from './app-hints'
+
 type FrameLease = { nonce: string; token: string }
+
+function appFramePaneFocused(frame: HTMLIFrameElement): boolean {
+  const pane = frame.closest<HTMLElement>('[data-pane]')
+  if (!pane) return false
+  const visiblePanes = [...document.querySelectorAll<HTMLElement>('[data-pane]')].filter(
+    (candidate) => {
+      if (candidate.hidden || candidate.closest('[hidden],[inert],[aria-hidden="true"]'))
+        return false
+      for (let node: HTMLElement | null = candidate; node; node = node.parentElement) {
+        const style = getComputedStyle(node)
+        if (
+          style.display === 'none' ||
+          style.visibility === 'hidden' ||
+          (style.opacity !== '' && Number(style.opacity) === 0)
+        )
+          return false
+      }
+      return true
+    },
+  )
+  return (
+    visiblePanes.includes(pane) &&
+    (visiblePanes.length <= 1 || pane.getAttribute('data-pane-focused') === 'true')
+  )
+}
 
 export function useAppHints({
   frame,
@@ -48,7 +74,7 @@ export function useAppHints({
               frame.isConnected &&
               frame.getAttribute('aria-hidden') !== 'true' &&
               frame.ownerDocument.activeElement === frame &&
-              frame.closest<HTMLElement>('[data-pane]')?.matches('[data-pane-focused]') === true,
+              appFramePaneFocused(frame),
             authorize: () => authorizeRef.current(),
           })
         : null
@@ -63,7 +89,7 @@ export function useAppHints({
         document.hasFocus() &&
         frame?.isConnected &&
         frame.ownerDocument.activeElement === frame &&
-        frame.closest<HTMLElement>('[data-pane]')?.matches('[data-pane-focused]') === true,
+        appFramePaneFocused(frame),
       )
     const config = () =>
       frame?.contentWindow?.postMessage(

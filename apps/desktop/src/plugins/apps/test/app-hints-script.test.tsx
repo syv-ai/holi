@@ -47,7 +47,12 @@ const messages = () => {
   return seen
 }
 const key = (init: KeyboardEventInit, target: EventTarget = win!) => {
-  const event = new win!.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+  const event = new win!.KeyboardEvent('keydown', {
+    bubbles: true,
+    composed: true,
+    cancelable: true,
+    ...init,
+  })
   const immediate = vi.spyOn(event, 'stopImmediatePropagation')
   target.dispatchEvent(event)
   return { event, immediate }
@@ -72,7 +77,7 @@ test('only enabled unmodified non-editable f requests hints; active keys are sco
   guest.document.body.append(input)
   input.focus()
   expect(key({ key: 'f' }, input).event.defaultPrevented).toBe(false)
-  guest.document.body.focus()
+  input.remove()
   const start = key({ key: 'f' })
   expect(start.event.defaultPrevented).toBe(true)
   expect(start.immediate).toHaveBeenCalledOnce()
@@ -88,6 +93,50 @@ test('only enabled unmodified non-editable f requests hints; active keys are sco
   expect(sent).toContainEqual(
     expect.objectContaining({ type: 'invalidate', requestId: 'r1', nonce }),
   )
+})
+
+test('preserves f and active hint keys for open and closed shadow-root editors', () => {
+  const guest = boot()
+  const sent = messages()
+  receive({ type: 'holi:vim-app-config', enabled: true })
+
+  const openHost = guest.document.createElement('div')
+  const openRoot = openHost.attachShadow({ mode: 'open' })
+  const openInput = guest.document.createElement('input')
+  openRoot.append(openInput)
+  guest.document.body.append(openHost)
+  openInput.focus()
+  expect(key({ key: 'f' }, openInput).event.defaultPrevented).toBe(false)
+  expect(sent).not.toContainEqual(expect.objectContaining({ type: 'request' }))
+
+  const closedHost = guest.document.createElement('div')
+  const closedRoot = closedHost.attachShadow({ mode: 'closed' })
+  const closedInput = guest.document.createElement('input')
+  closedRoot.append(closedInput)
+  guest.document.body.append(closedHost)
+  closedInput.focus()
+  expect(key({ key: 'f' }, closedInput).event.defaultPrevented).toBe(false)
+  expect(sent).not.toContainEqual(expect.objectContaining({ type: 'request' }))
+
+  const outerHost = guest.document.createElement('div')
+  const outerRoot = outerHost.attachShadow({ mode: 'open' })
+  const innerHost = guest.document.createElement('div')
+  const innerRoot = innerHost.attachShadow({ mode: 'closed' })
+  const nestedInput = guest.document.createElement('input')
+  innerRoot.append(nestedInput)
+  outerRoot.append(innerHost)
+  guest.document.body.append(outerHost)
+  nestedInput.focus()
+  expect(key({ key: 'f' }, nestedInput).event.defaultPrevented).toBe(false)
+  expect(sent).not.toContainEqual(expect.objectContaining({ type: 'request' }))
+
+  receive({ type: 'holi:vim-app-hints', requestId: 'shadow-editor' })
+  const activeKey = key({ key: 'a' }, nestedInput)
+  expect(activeKey.event.defaultPrevented).toBe(false)
+  expect(sent).toContainEqual(
+    expect.objectContaining({ type: 'invalidate', requestId: 'shadow-editor', nonce }),
+  )
+  expect(sent).not.toContainEqual(expect.objectContaining({ type: 'key' }))
 })
 
 test('authenticates source and nonce, discovers clipped visible supported controls within overlay', () => {

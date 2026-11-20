@@ -52,10 +52,14 @@ export interface ApiDeps {
    * Called on a **401 and nothing else**. A 403 is a repo you lack access to,
    * a rate limit, or SAML: none of them mean the token is dead.
    *
-   * Awaited before the error is thrown, so a caller handling the rejection
-   * always sees a session that already reflects the sign-out.
+   * Receives the exact credential that issued the refused request, and its
+   * captured identity when `credentialIdentity` is configured. Awaited before
+   * the error is thrown, so a caller handling the rejection sees any
+   * applicable sign-out already reflected.
    */
-  onUnauthorized?: () => void | Promise<void>
+  /** Opaque identity for the currently validated credential instance. */
+  credentialIdentity?: () => object | null
+  onUnauthorized?: (credential: string, identity?: object | null) => void | Promise<void>
   fetch?: typeof globalThis.fetch
   baseUrl?: string
 }
@@ -279,6 +283,7 @@ export class GitHubApi {
 
   async #send(url: string, init?: RequestInit): Promise<Response> {
     const token = this.#deps.token()
+    const credentialIdentity = this.#deps.credentialIdentity?.()
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
       // Pinned so a future default cannot quietly reshape a response.
@@ -302,7 +307,10 @@ export class GitHubApi {
     const message = typeof body.message === 'string' ? body.message : res.statusText
     const err = classify(res, message)
 
-    if (err.kind === 'unauthorized') await this.#deps.onUnauthorized?.()
+    if (err.kind === 'unauthorized' && token !== null) {
+      if (credentialIdentity === undefined) await this.#deps.onUnauthorized?.(token)
+      else await this.#deps.onUnauthorized?.(token, credentialIdentity)
+    }
     throw err
   }
 }
