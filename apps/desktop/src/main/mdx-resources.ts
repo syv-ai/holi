@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { BrowserWindow, session as electronSession } from 'electron'
+import { BrowserWindow, session as electronSession, webContents } from 'electron'
 import type { Session } from 'electron'
 import type { MdxDiagnostic } from '@holi/shared'
 
@@ -17,13 +17,18 @@ const HTML_URL = `${ORIGIN}/guest.html`
 const SCRIPT_URL = `${ORIGIN}/guest.js`
 const CSP = `default-src 'none'; script-src ${SCRIPT_URL}; connect-src 'none'; img-src 'none'; style-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none';`
 
-export interface MdxCompiler {
-  compile(source: string, signal?: AbortSignal): Promise<MdxDiagnostic[]>
+export type MdxResourceOwner = object
+
+export interface MdxResources {
+  createOwner(isCurrent: () => Promise<boolean>): MdxResourceOwner
+  retireOwner(owner: MdxResourceOwner): void
+  compile(owner: MdxResourceOwner, source: string, signal?: AbortSignal): Promise<MdxDiagnostic[]>
   invalidate(): void
   close(): void
 }
 
 interface Request {
+  owner: MdxResourceOwner
   source: string
   signal?: AbortSignal
   epoch: number
@@ -33,33 +38,23 @@ interface Request {
   timer?: ReturnType<typeof setTimeout>
   abort?: () => void
   cancel?: (error: Error) => void
+  cleanup?: () => void
   cancellation: Promise<void>
   cancelRun(): void
 }
 
 /** Compile MDX in a fresh, offline, sandboxed renderer; never evaluate its output. */
-export function createMdxCompiler(assetDirectory: string): MdxCompiler {
+export function createMdxResources(assetDirectory: string): MdxResources {
   let closed = false
   let epoch = 0
   let active = false
-  let guestSession: Session | undefined
+  const owners = new Map<MdxResourceOwner, () => Promise<boolean>>()
+  const sessionCleanup = new Map<Session, () => void>()
+  const sessionGuestIds = new Map<Session, (id: number) => void>()
   let pumpScheduled = false
   const queue: Request[] = []
   const running = new Set<Request>()
   const guests = new Set<BrowserWindow>()
-  let downloadListener: ((event: Electron.Event) => void) | undefined
-  let webRequestListener:
-    | ((
-        details: Electron.OnBeforeRequestListenerDetails,
-        callback: (response: Electron.CallbackResponse) => void,
-      ) => void)
-    | undefined
-  let headersListener:
-    | ((
-        details: Electron.OnHeadersReceivedListenerDetails,
-        callback: (response: Electron.HeadersReceivedResponse) => void,
-      ) => void)
-    | undefined
 
   function makeError(message: string): Error {
     return new Error(message.slice(0, MAX_MESSAGE))
@@ -76,23 +71,80 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
     else request.resolve(diagnostics ?? [])
   }
 
-  function assertCurrent(request: Request): void {
+  async function assertCurrent(request: Request): Promise<void> {
     if (closed) throw makeError('MDX compiler is unavailable')
     if (request.signal?.aborted) throw makeError('MDX compilation cancelled')
     if (request.epoch !== epoch) throw makeError('MDX compilation invalidated')
     if (request.settled) throw makeError('MDX compilation cancelled')
+    const isCurrent = owners.get(request.owner)
+    if (isCurrent === undefined) throw makeError('MDX resource owner unavailable')
+    const ownerIsCurrent = await isCurrent()
+    if (closed || request.signal?.aborted || request.epoch !== epoch || request.settled)
+      throw makeError('MDX compilation cancelled')
+    if (!ownerIsCurrent || owners.get(request.owner) !== isCurrent)
+      throw makeError('MDX resource owner unavailable')
   }
 
-  function installSessionPolicy(session: Session): void {
-    webRequestListener = (details, callback) => {
+  function installSessionPolicy(session: Session, request: Request): void {
+    let guestId: number | null = null
+    let documentConsumed = false
+    let scriptConsumed = false
+    const live = async () => {
+      try {
+        await assertCurrent(request)
+        return true
+      } catch {
+        return false
+      }
+    }
+    const webRequestListener = async (
+      details: Electron.OnBeforeRequestListenerDetails,
+      callback: (response: Electron.CallbackResponse) => void,
+    ) => {
       const url = details.url
-      const permitted =
-        details.method === 'GET' &&
-        (url === HTML_URL || url === SCRIPT_URL) &&
-        !details.uploadData?.length
+      const contents =
+        typeof details.webContentsId === 'number'
+          ? webContents.fromId(details.webContentsId)
+          : undefined
+      const frame = details.frame
+      let mainFrame = false
+      if (contents !== undefined && !contents.isDestroyed() && frame != null) {
+        try {
+          mainFrame = frame.frameTreeNodeId === contents.mainFrame.frameTreeNodeId
+        } catch {
+          mainFrame = false
+        }
+      }
+      // A URL allowlist alone is not ownership: only the active compiler guest
+      // may fetch the document, and its one script must be a script subresource.
+      let permitted = false
+      try {
+        permitted =
+          (await live()) &&
+          details.webContentsId === guestId &&
+          details.method === 'GET' &&
+          !details.uploadData?.length &&
+          ((url === HTML_URL &&
+            details.resourceType === 'mainFrame' &&
+            mainFrame &&
+            !documentConsumed) ||
+            (url === SCRIPT_URL &&
+              details.resourceType === 'script' &&
+              mainFrame &&
+              !scriptConsumed))
+      } catch {
+        permitted = false
+      }
+      if (permitted) {
+        if (url === HTML_URL) documentConsumed = true
+        else scriptConsumed = true
+      }
       callback({ cancel: !permitted })
     }
-    headersListener = (details, callback) =>
+    const headersListener = (
+      details: Electron.OnHeadersReceivedListenerDetails,
+      callback: (response: Electron.HeadersReceivedResponse) => void,
+    ) =>
       callback({
         responseHeaders: {
           'Content-Type': [
@@ -110,12 +162,13 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
     session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
     session.setPermissionCheckHandler(() => false)
     session.setDisplayMediaRequestHandler((_request, callback) => callback({}))
-    downloadListener = (event) => event.preventDefault()
+    const downloadListener = (event: Electron.Event) => event.preventDefault()
     session.on('will-download', downloadListener)
-    session.protocol.handle('https', async (request) => {
-      const url = new URL(request.url)
+    session.protocol.handle('https', async (protocolRequest) => {
+      const url = new URL(protocolRequest.url)
       if (
-        request.method !== 'GET' ||
+        !(await live()) ||
+        protocolRequest.method !== 'GET' ||
         url.protocol !== 'https:' ||
         url.hostname !== 'mdx-compiler.invalid' ||
         url.port !== '' ||
@@ -130,6 +183,7 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
         const bytes = await readFile(
           join(assetDirectory, url.pathname === '/guest.html' ? 'guest.html' : 'guest.js'),
         )
+        if (!(await live())) return new Response('Not found', { status: 404 })
         return new Response(bytes, {
           headers: {
             'Content-Type':
@@ -145,22 +199,36 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
         return new Response('Not found', { status: 404 })
       }
     })
+    sessionGuestIds.set(session, (id) => {
+      guestId = id
+    })
+    sessionCleanup.set(session, () => {
+      session.webRequest.onBeforeRequest(null as never)
+      session.webRequest.onHeadersReceived(null as never)
+      session.removeListener('will-download', downloadListener)
+      session.setPermissionRequestHandler(null as never)
+      session.setPermissionCheckHandler(null as never)
+      session.setDisplayMediaRequestHandler(null as never)
+      session.protocol.unhandle('https')
+      request.cleanup = undefined
+      sessionCleanup.delete(session)
+      sessionGuestIds.delete(session)
+    })
+    request.cleanup = sessionCleanup.get(session)
   }
 
   async function getSession(request: Request): Promise<Session> {
-    assertCurrent(request)
-    if (!guestSession) {
-      guestSession = electronSession.fromPartition(`mdx-compiler-${randomUUID()}`, { cache: false })
-      installSessionPolicy(guestSession)
-    }
-    return guestSession
+    await assertCurrent(request)
+    const session = electronSession.fromPartition(`mdx-compiler-${randomUUID()}`, { cache: false })
+    installSessionPolicy(session, request)
+    return session
   }
 
-  async function clearSession(session: Session, request: Request): Promise<void> {
+  async function clearSession(session: Session, request?: Request): Promise<void> {
     await session.clearStorageData()
-    assertCurrent(request)
+    if (request) await assertCurrent(request)
     await session.clearCache()
-    assertCurrent(request)
+    if (request) await assertCurrent(request)
   }
 
   function cleanDiagnostics(value: unknown): MdxDiagnostic[] {
@@ -186,41 +254,54 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
   }
 
   async function compileOne(request: Request): Promise<void> {
+    await assertCurrent(request)
     let guest: BrowserWindow | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
     let pollTimer: ReturnType<typeof setTimeout> | undefined
     let initialNavigation = true
     let finishing = false
-    const session = await getSession(request)
-    assertCurrent(request)
-    await clearSession(session, request)
-    assertCurrent(request)
     const [html, script] = await Promise.all([
       readFile(join(assetDirectory, 'guest.html')),
       readFile(join(assetDirectory, 'guest.js')),
     ])
-    assertCurrent(request)
+    await assertCurrent(request)
     if (html.byteLength > 16 * 1024 || script.byteLength > 2 * 1024 * 1024)
       throw makeError('MDX compiler assets exceed their size limits')
+    const session = await getSession(request)
+    try {
+      await clearSession(session, request)
+      await assertCurrent(request)
+    } catch (error) {
+      sessionCleanup.get(session)?.()
+      throw error
+    }
 
-    guest = new BrowserWindow({
-      show: false,
-      width: 1,
-      height: 1,
-      webPreferences: {
-        session,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        nodeIntegrationInSubFrames: false,
-        webSecurity: true,
-        allowRunningInsecureContent: false,
-        webviewTag: false,
-        backgroundThrottling: false,
-      },
-    })
+    try {
+      guest = new BrowserWindow({
+        show: false,
+        width: 1,
+        height: 1,
+        webPreferences: {
+          session,
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+          nodeIntegrationInSubFrames: false,
+          webSecurity: true,
+          allowRunningInsecureContent: false,
+          webviewTag: false,
+          backgroundThrottling: false,
+        },
+      })
+    } catch (error) {
+      sessionCleanup.get(session)?.()
+      throw error
+    }
     guests.add(guest)
+    sessionGuestIds.get(session)?.(guest.webContents.id)
     guest.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    guest.webContents.on('will-redirect', (event) => event.preventDefault())
+    guest.webContents.on('will-attach-webview', (event) => event.preventDefault())
     guest.webContents.on('will-navigate', (event, url) => {
       if (initialNavigation && url === HTML_URL) initialNavigation = false
       else event.preventDefault()
@@ -237,7 +318,7 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
       guests.delete(guest!)
       if (guest && !guest.isDestroyed()) guest.destroy()
       try {
-        await clearSession(session, request)
+        await clearSession(session)
         if (error) settle(request, error)
         else settle(request, undefined, result)
       } catch (cleanupError) {
@@ -249,6 +330,7 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
               : makeError('MDX compiler cleanup failed')),
         )
       } finally {
+        sessionCleanup.get(session)?.()
         request.cancelRun()
       }
     }
@@ -269,21 +351,21 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
     try {
       const loading = guest.loadURL(HTML_URL)
       await loading
-      assertCurrent(request)
+      await assertCurrent(request)
       initialNavigation = false
       const id = randomUUID()
       const payload = Buffer.from(JSON.stringify({ id, source: request.source }), 'utf8').toString(
         'base64',
       )
       await guest.webContents.executeJavaScript(`window.__holiMdxReceive('${payload}')`)
-      assertCurrent(request)
+      await assertCurrent(request)
       const deadline = Date.now() + COMPILE_TIMEOUT_MS
       while (!finishing) {
-        assertCurrent(request)
+        await assertCurrent(request)
         const result = (await guest.webContents.executeJavaScript(
           'window.__holiMdxTakeResult()',
         )) as unknown
-        assertCurrent(request)
+        await assertCurrent(request)
         if (result !== null && result !== undefined) {
           const serialized = JSON.stringify(result)
           if (Buffer.byteLength(serialized, 'utf8') > MAX_RESULT_BYTES)
@@ -323,6 +405,7 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
       running.add(request)
       if (request.timer) clearTimeout(request.timer)
       request.cancel = (error) => {
+        request.cleanup?.()
         settle(request, error)
         request.cancelRun()
       }
@@ -347,8 +430,33 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
     })
   }
 
-  function compile(source: string, signal?: AbortSignal): Promise<MdxDiagnostic[]> {
+  function createOwner(isCurrent: () => Promise<boolean>): MdxResourceOwner {
+    if (closed) throw makeError('MDX compiler is unavailable')
+    if (typeof isCurrent !== 'function') throw makeError('MDX resource owner unavailable')
+    const owner = Object.freeze(Object.create(null)) as MdxResourceOwner
+    owners.set(owner, isCurrent)
+    return owner
+  }
+
+  function retireOwner(owner: MdxResourceOwner): void {
+    owners.delete(owner)
+    for (const request of [...queue]) {
+      if (request.owner !== owner) continue
+      queue.splice(queue.indexOf(request), 1)
+      settle(request, makeError('MDX resource owner unavailable'))
+    }
+    for (const request of running)
+      if (request.owner === owner) request.cancel?.(makeError('MDX resource owner unavailable'))
+    schedule()
+  }
+
+  function compile(
+    owner: MdxResourceOwner,
+    source: string,
+    signal?: AbortSignal,
+  ): Promise<MdxDiagnostic[]> {
     if (closed) return Promise.reject(makeError('MDX compiler is unavailable'))
+    if (!owners.has(owner)) return Promise.reject(makeError('MDX resource owner unavailable'))
     if (typeof source !== 'string' || Buffer.byteLength(source, 'utf8') > MAX_SOURCE_BYTES)
       return Promise.reject(makeError('MDX source exceeds 256 KiB'))
     if (signal?.aborted) return Promise.reject(makeError('MDX compilation cancelled'))
@@ -360,6 +468,7 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
         cancelRun = resolveCancellation
       })
       const request: Request = {
+        owner,
         source,
         signal,
         epoch,
@@ -391,25 +500,14 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
     })
   }
 
-  function removeSessionPolicy(): void {
-    if (!guestSession) return
-    if (webRequestListener) guestSession.webRequest.onBeforeRequest(null as never)
-    if (headersListener) guestSession.webRequest.onHeadersReceived(null as never)
-    if (downloadListener) guestSession.removeListener('will-download', downloadListener)
-    guestSession.setPermissionRequestHandler(null as never)
-    guestSession.setPermissionCheckHandler(null as never)
-    guestSession.setDisplayMediaRequestHandler(null as never)
-    guestSession.protocol.unhandle('https')
-    webRequestListener = undefined
-    headersListener = undefined
-    downloadListener = undefined
-  }
-
   return {
+    createOwner,
+    retireOwner,
     compile,
     invalidate() {
       if (closed) return
       epoch++
+      owners.clear()
       const error = makeError('MDX compilation invalidated')
       for (const request of [...queue]) settle(request, error)
       queue.length = 0
@@ -422,6 +520,7 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
     close() {
       if (closed) return
       closed = true
+      owners.clear()
       for (const request of [...queue]) settle(request, makeError('MDX compiler is unavailable'))
       queue.length = 0
       for (const request of running) {
@@ -432,7 +531,6 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
       }
       for (const guest of guests) if (!guest.isDestroyed()) guest.destroy()
       guests.clear()
-      removeSessionPolicy()
     },
   }
 }

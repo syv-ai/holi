@@ -7,6 +7,7 @@
 
 #let doc(notePath, meta: (:), assets: "") = {
   let title = meta.at("title", default: none)
+  let client = meta.at("client", default: none)
   let subtitle = meta.at("subtitle", default: none)
   let d = meta.at("date", default: none)
 
@@ -19,6 +20,7 @@
       #image("../_brand/logo.png", height: 1.6cm)
       #v(1.2cm)
       #if title != none { text(size: 30pt, weight: 800, fill: ink)[#title] }
+      #if client != none { v(0.4cm); text(size: 12pt, fill: muted)[#client] }
       #if subtitle != none { v(0.4cm); text(size: 15pt, fill: muted)[#subtitle] }
       #if d != none { v(0.8cm); text(size: 11pt, fill: muted)[#dato(d)] }
     ]

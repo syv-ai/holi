@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   fromPartition: vi.fn(),
   hangLoadNext: false,
   failLoadNext: false,
+  destroyedContentsId: -2,
 }))
 
 class FakeSession extends EventEmitter {
@@ -25,8 +26,11 @@ class FakeSession extends EventEmitter {
   }
 }
 
+let nextGuestId = 1
+
 class FakeGuest extends EventEmitter {
   webContents = Object.assign(new EventEmitter(), {
+    id: nextGuestId++,
     setWindowOpenHandler: vi.fn(),
     executeJavaScript: vi.fn(async (script: string) => {
       if (script.startsWith('window.__holiMdxReceive(')) {
@@ -78,13 +82,23 @@ class FakeGuest extends EventEmitter {
 vi.mock('electron', () => ({
   BrowserWindow: state.BrowserWindow,
   session: { fromPartition: state.fromPartition },
+  webContents: {
+    fromId: vi.fn((id: number) =>
+      id === -1
+        ? undefined
+        : {
+            isDestroyed: () => id === state.destroyedContentsId,
+            mainFrame: { frameTreeNodeId: id },
+          },
+    ),
+  },
 }))
 vi.mock('node:fs/promises', () => ({
   readFile: (path: string) => state.reads(path),
 }))
 
 import { session } from 'electron'
-import { createMdxCompiler } from '../src/main/mdx-compiler'
+import { createMdxResources } from '../src/main/mdx-resources'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -92,6 +106,8 @@ beforeEach(() => {
   state.guests.length = 0
   state.hangLoadNext = false
   state.failLoadNext = false
+  state.destroyedContentsId = -2
+  nextGuestId = 1
   state.BrowserWindow.mockImplementation(function (options: Record<string, unknown>) {
     return new FakeGuest(options)
   })
@@ -104,21 +120,61 @@ beforeEach(() => {
 })
 
 describe('isolated MDX compiler policy', () => {
+  it('rechecks owner freshness when queued work starts', async () => {
+    let current = true
+    let releaseAssets!: (value: Buffer) => void
+    const assetGate = new Promise<Buffer>((resolve) => (releaseAssets = resolve))
+    state.reads.mockImplementation(async (path: string) => {
+      if (path.endsWith('guest.html')) return assetGate
+      if (path.endsWith('guest.js')) return Buffer.from('fixed guest')
+      throw new Error(`unexpected asset ${path}`)
+    })
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => current)
+    const first = compiler.compile(owner, '# first')
+    const second = compiler.compile(owner, '# queued')
+    await Promise.resolve()
+    current = false
+    releaseAssets(Buffer.from('<html></html>'))
+    await expect(first).rejects.toThrow(/owner unavailable/)
+    await expect(second).rejects.toThrow(/owner unavailable/)
+    expect(state.guests).toHaveLength(0)
+    compiler.close()
+  })
+
   it('rejects oversized or already-cancelled work before creating a guest session', async () => {
-    const compiler = createMdxCompiler('/assets')
-    await expect(compiler.compile('x'.repeat(256 * 1024 + 1))).rejects.toThrow(/256 KiB/)
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => true)
+    await expect(compiler.compile(owner, 'x'.repeat(256 * 1024 + 1))).rejects.toThrow(/256 KiB/)
     const controller = new AbortController()
     controller.abort()
-    await expect(compiler.compile('# no guest', controller.signal)).rejects.toThrow(/cancelled/)
+    await expect(compiler.compile(owner, '# no guest', controller.signal)).rejects.toThrow(
+      /cancelled/,
+    )
     expect(session.fromPartition).not.toHaveBeenCalled()
     expect(state.guests).toHaveLength(0)
     compiler.close()
   })
 
+  it('rejects forged and synchronously retired resource capabilities', async () => {
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => true)
+    await expect(compiler.compile({}, '# forged', new AbortController().signal)).rejects.toThrow(
+      /owner unavailable/i,
+    )
+    compiler.retireOwner(owner)
+    await expect(
+      compiler.compile(owner, '# retired', new AbortController().signal),
+    ).rejects.toThrow(/owner unavailable/i)
+    expect(session.fromPartition).not.toHaveBeenCalled()
+    compiler.close()
+  })
+
   it('does not deliver source when the fixed guest fails to initialize', async () => {
-    const compiler = createMdxCompiler('/assets')
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => true)
     state.failLoadNext = true
-    await expect(compiler.compile('# must not reach guest')).rejects.toThrow(
+    await expect(compiler.compile(owner, '# must not reach guest')).rejects.toThrow(
       /initialization denied/,
     )
     expect(state.guests[0].receivedSource).toBe(false)
@@ -127,8 +183,9 @@ describe('isolated MDX compiler policy', () => {
   })
 
   it('loads the fixed guest before delivering Unicode source through JSON data', async () => {
-    const compiler = createMdxCompiler('/assets')
-    await expect(compiler.compile('# héllo 🌱')).resolves.toEqual([])
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => true)
+    await expect(compiler.compile(owner, '# héllo 🌱')).resolves.toEqual([])
     const guest = state.guests[0]
     expect(guest.loadURL).toHaveBeenCalledWith('https://mdx-compiler.invalid/guest.html')
     expect(guest.receivedSource).toBe(true)
@@ -148,39 +205,84 @@ describe('isolated MDX compiler policy', () => {
     compiler.close()
   })
 
-  it('reuses one private session while creating and cleaning a fresh guest per request', async () => {
-    const compiler = createMdxCompiler('/assets')
-    await compiler.compile('# one')
-    await compiler.compile('# two')
-    expect(session.fromPartition).toHaveBeenCalledTimes(1)
+  it('isolates each guest in a fresh private session and cleans it up', async () => {
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => true)
+    await compiler.compile(owner, '# one')
+    await compiler.compile(owner, '# two')
+    expect(session.fromPartition).toHaveBeenCalledTimes(2)
     expect(session.fromPartition).toHaveBeenCalledWith(expect.stringMatching(/^mdx-compiler-/), {
       cache: false,
     })
     expect(state.guests).toHaveLength(2)
     expect(state.guests.every((guest) => guest.destroyed)).toBe(true)
-    const privateSession = state.sessions[0]
-    expect(privateSession.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1)
+    const privateSession = state.sessions[1]
+    expect(privateSession.webRequest.onBeforeRequest).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Function),
+    )
     const beforeRequest = privateSession.webRequest.onBeforeRequest.mock.calls[0][0] as (
-      details: { url: string; method: string; uploadData?: unknown[] },
+      details: {
+        url: string
+        method: string
+        resourceType: string
+        webContentsId: number
+        uploadData?: unknown[]
+        frame?: { frameTreeNodeId: number }
+      },
       callback: (result: { cancel: boolean }) => void,
     ) => void
-    for (const [url, method, cancelled] of [
-      ['https://mdx-compiler.invalid/guest.html', 'GET', false],
-      ['https://mdx-compiler.invalid/guest.html?x=1', 'GET', true],
-      ['https://example.com/', 'GET', true],
-      ['https://mdx-compiler.invalid/guest.js', 'POST', true],
+    const guestId = state.guests[1].webContents.id
+    for (const [url, method, resourceType, webContentsId, cancelled] of [
+      ['https://mdx-compiler.invalid/guest.html', 'GET', 'mainFrame', guestId, true],
+      ['https://mdx-compiler.invalid/guest.js', 'GET', 'script', guestId, true],
+      ['https://mdx-compiler.invalid/guest.js', 'GET', 'script', guestId, true],
+      ['https://mdx-compiler.invalid/guest.html?x=1', 'GET', 'mainFrame', guestId, true],
+      ['https://example.com/', 'GET', 'mainFrame', guestId, true],
+      ['https://mdx-compiler.invalid/guest.js', 'POST', 'script', guestId, true],
+      ['https://mdx-compiler.invalid/guest.js', 'GET', 'image', guestId, true],
+      ['https://mdx-compiler.invalid/guest.js', 'GET', 'script', guestId + 1, true],
+      ['https://mdx-compiler.invalid/guest.html', 'GET', 'subFrame', guestId, true],
+      ['https://mdx-compiler.invalid/guest.js', 'GET', 'script', -1, true],
+      ['https://mdx-compiler.invalid/guest.js', 'GET', 'script', -2, true],
     ] as const) {
       const callback = vi.fn()
-      beforeRequest({ url, method }, callback)
+      await beforeRequest(
+        {
+          url,
+          method,
+          resourceType,
+          webContentsId,
+          ...(['script', 'mainFrame'].includes(resourceType)
+            ? { frame: { frameTreeNodeId: guestId } }
+            : {}),
+        },
+        callback,
+      )
       expect(callback).toHaveBeenCalledWith({ cancel: cancelled })
     }
+    state.destroyedContentsId = guestId
+    const destroyedCallback = vi.fn()
+    await beforeRequest(
+      {
+        url: 'https://mdx-compiler.invalid/guest.html',
+        method: 'GET',
+        resourceType: 'mainFrame',
+        webContentsId: guestId,
+        frame: { frameTreeNodeId: guestId },
+      },
+      destroyedCallback,
+    )
+    expect(destroyedCallback).toHaveBeenCalledWith({ cancel: true })
+    state.destroyedContentsId = -2
+    expect(privateSession.webRequest.onBeforeRequest).toHaveBeenCalledTimes(2)
+    expect(privateSession.webRequest.onBeforeRequest).toHaveBeenNthCalledWith(2, null)
     expect(privateSession.protocol.handle).toHaveBeenCalledWith('https', expect.any(Function))
     const handler = privateSession.protocol.handle.mock.calls[0][1] as (
       request: Request,
     ) => Promise<Response>
     const asset = await handler(new Request('https://mdx-compiler.invalid/guest.js'))
-    expect(asset.status).toBe(200)
-    expect(await asset.text()).toBe('fixed guest')
+    expect(asset.status).toBe(404)
     for (const url of [
       'https://mdx-compiler.invalid/other.js',
       'https://mdx-compiler.invalid/guest.js?x=1',
@@ -192,8 +294,99 @@ describe('isolated MDX compiler policy', () => {
     expect(privateSession.protocol.unhandle).toHaveBeenCalledWith('https')
   })
 
+  it('consumes the single main-frame bootstrap pair only while its owner is live', async () => {
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => true)
+    state.hangLoadNext = true
+    const compiling = compiler.compile(owner, '# held')
+    await vi.waitFor(() => expect(state.guests).toHaveLength(1))
+    const privateSession = state.sessions[0]
+    const gate = privateSession.webRequest.onBeforeRequest.mock.calls[0][0] as (
+      details: {
+        url: string
+        method: string
+        resourceType: string
+        webContentsId: number
+        frame?: { frameTreeNodeId: number }
+      },
+      callback: (result: { cancel: boolean }) => void,
+    ) => void
+    const guestId = state.guests[0].webContents.id
+    const request = async (
+      url: string,
+      resourceType: string,
+      details: Partial<{
+        method: string
+        webContentsId: number
+        frame: { frameTreeNodeId: number }
+      }> = {},
+    ) => {
+      const callback = vi.fn()
+      await gate(
+        {
+          url,
+          method: 'GET',
+          resourceType,
+          webContentsId: guestId,
+          frame: { frameTreeNodeId: guestId },
+          ...details,
+        },
+        callback,
+      )
+      return callback.mock.calls[0][0] as { cancel: boolean }
+    }
+    await expect(request('https://mdx-compiler.invalid/guest.html', 'mainFrame')).resolves.toEqual({
+      cancel: false,
+    })
+    await expect(request('https://mdx-compiler.invalid/guest.js', 'script')).resolves.toEqual({
+      cancel: false,
+    })
+    await expect(request('https://mdx-compiler.invalid/guest.js', 'script')).resolves.toEqual({
+      cancel: true,
+    })
+    await expect(
+      request('https://mdx-compiler.invalid/guest.js', 'script', { method: 'POST' }),
+    ).resolves.toEqual({
+      cancel: true,
+    })
+    await expect(request('https://mdx-compiler.invalid/guest.js', 'image')).resolves.toEqual({
+      cancel: true,
+    })
+    await expect(
+      request('https://mdx-compiler.invalid/guest.js', 'script', { webContentsId: guestId + 1 }),
+    ).resolves.toEqual({ cancel: true })
+    await expect(
+      request('https://mdx-compiler.invalid/guest.js', 'script', {
+        frame: { frameTreeNodeId: guestId + 100 },
+      }),
+    ).resolves.toEqual({ cancel: true })
+    const handler = privateSession.protocol.handle.mock.calls[0][1] as (
+      request: Request,
+    ) => Promise<Response>
+    let releaseAsset!: (value: Buffer) => void
+    let assetReadEntered!: () => void
+    const readEntered = new Promise<void>((resolve) => {
+      assetReadEntered = resolve
+    })
+    state.reads.mockImplementationOnce(
+      () =>
+        new Promise<Buffer>((resolve) => {
+          releaseAsset = resolve
+          assetReadEntered()
+        }),
+    )
+    const inFlightAsset = handler(new Request('https://mdx-compiler.invalid/guest.js'))
+    await readEntered
+    compiler.retireOwner(owner)
+    releaseAsset(Buffer.from('revoked'))
+    expect((await inFlightAsset).status).toBe(404)
+    await expect(compiling).rejects.toThrow(/owner unavailable/i)
+    compiler.close()
+  })
+
   it('cancels queued work immediately and invalidation permits a subsequent compile', async () => {
-    const compiler = createMdxCompiler('/assets')
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => true)
     let releaseRead: (() => void) | undefined
     state.reads.mockImplementation(async (path: string) => {
       if (path.endsWith('guest.html')) {
@@ -204,10 +397,10 @@ describe('isolated MDX compiler policy', () => {
       }
       return Buffer.from('fixed guest')
     })
-    const first = compiler.compile('# active')
+    const first = compiler.compile(owner, '# active')
     await vi.waitFor(() => expect(releaseRead).toBeDefined())
     const controller = new AbortController()
-    const queued = compiler.compile('# queued', controller.signal)
+    const queued = compiler.compile(owner, '# queued', controller.signal)
     controller.abort()
     await expect(queued).rejects.toThrow(/cancelled/)
     compiler.invalidate()
@@ -216,48 +409,51 @@ describe('isolated MDX compiler policy', () => {
     state.reads.mockImplementation(async (path: string) =>
       Buffer.from(path.endsWith('guest.html') ? '<html></html>' : 'fixed guest'),
     )
-    await expect(compiler.compile('# latest')).resolves.toEqual([])
+    const nextOwner = compiler.createOwner(async () => true)
+    await expect(compiler.compile(nextOwner, '# latest')).resolves.toEqual([])
     compiler.close()
   })
 
   it('recovers from renderer crashes and a hung guest load', async () => {
-    const compiler = createMdxCompiler('/assets')
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => true)
     state.hangLoadNext = true
-    const crashed = expect(compiler.compile('# crash')).rejects.toThrow(/crashed/)
+    const crashed = expect(compiler.compile(owner, '# crash')).rejects.toThrow(/crashed/)
     await vi.waitFor(() => expect(state.guests).toHaveLength(1))
     state.guests[0].webContents.emit('render-process-gone')
     await crashed
 
     state.hangLoadNext = true
     const controller = new AbortController()
-    const hung = compiler.compile('# hang', controller.signal)
+    const hung = compiler.compile(owner, '# hang', controller.signal)
     await vi.waitFor(() => expect(state.guests).toHaveLength(2))
     controller.abort()
     await expect(hung).rejects.toThrow(/cancelled/)
-    await expect(compiler.compile('# recovered')).resolves.toEqual([])
+    await expect(compiler.compile(owner, '# recovered')).resolves.toEqual([])
 
     state.hangLoadNext = true
-    const timedOut = compiler.compile('# timeout')
+    const timedOut = compiler.compile(owner, '# timeout')
     await vi.waitFor(() => expect(state.guests).toHaveLength(4))
     await expect(timedOut).rejects.toThrow(/timed out/)
-    await expect(compiler.compile('# recovered after timeout')).resolves.toEqual([])
+    await expect(compiler.compile(owner, '# recovered after timeout')).resolves.toEqual([])
     compiler.close()
   }, 10_000)
 
   it('enforces the four-request bound and permanently rejects work after close', async () => {
-    const compiler = createMdxCompiler('/assets')
+    const compiler = createMdxResources('/assets')
+    const owner = compiler.createOwner(async () => true)
     const gate = vi.fn()
     state.reads.mockImplementation(async (path: string) => {
       await new Promise<void>((resolve) => gate.mockImplementation(resolve))
       return Buffer.from(path.endsWith('guest.html') ? '<html></html>' : 'fixed guest')
     })
     const requests = [
-      compiler.compile('1'),
-      compiler.compile('2'),
-      compiler.compile('3'),
-      compiler.compile('4'),
+      compiler.compile(owner, '1'),
+      compiler.compile(owner, '2'),
+      compiler.compile(owner, '3'),
+      compiler.compile(owner, '4'),
     ]
-    await expect(compiler.compile('5')).rejects.toThrow(/queue is full/)
+    await expect(compiler.compile(owner, '5')).rejects.toThrow(/queue is full/)
     compiler.close()
     await expect(Promise.all(requests)).rejects.toThrow()
     expect(gate).not.toHaveBeenCalled()

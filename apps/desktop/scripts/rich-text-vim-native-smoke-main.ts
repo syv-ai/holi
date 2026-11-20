@@ -32,8 +32,9 @@ type NativeState = {
   markdown: string
   selectedText: string
   json: { content: NativeNode[] }
-  selection: { from: number; to: number }
+  selection: { from: number; to: number; anchor: number; head: number }
   editable: boolean
+  mode: string
 }
 const checks: string[] = []
 const nativeResults: Record<string, unknown>[] = []
@@ -267,10 +268,6 @@ async function run() {
       await new Promise((resolve) => setTimeout(resolve, 80))
     }
     throw new Error(`Timed out waiting for autosave: ${includes}`)
-  }
-  const capture = async (name: string) => {
-    const image = await win.webContents.capturePage()
-    await writeFile(join(evidence, name), image.toPNG())
   }
   await wait(`document.querySelector('[role="textbox"]')?.editor`, 'production DocumentView editor')
   await evaluate(`document.querySelector('[role="textbox"]').editor.commands.focus()`)
@@ -1152,16 +1149,245 @@ async function run() {
     `window.richTextVimFixture.setup('<p>alpha beta</p>',1);window.richTextVimFixture.focus('primary')`,
   )
   await key('Escape')
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha</p><p>beta</p><p>gamma</p>',1)`)
+  await key('v')
+  assert((await evaluate<string>('document.body.innerText')).includes('Vim Visual'))
+  await key('G', ['shift'])
+  assert((await state()).selectedText.includes('gamma'))
+  await key('d')
+  assert.equal((await state()).markdown, '', 'native vGd deletes the displayed selection')
+  mark('native-visual-mode-and-vGd-use-the-visible-selection')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha</p><p>beta</p><p>gamma</p>',1)`)
+  await key('V', ['shift'])
+  assert((await evaluate<string>('document.body.innerText')).includes('Vim Visual Line'))
+  await key('G', ['shift'])
+  assert((await state()).selectedText.includes('gamma'))
+  await key('d')
+  assert.equal((await state()).markdown, '', 'native VG deletes the displayed linewise selection')
+  mark('native-visual-line-mode-and-VG-use-the-visible-selection')
+
+  await evaluate(
+    `window.richTextVimFixture.setup('<p>outside</p><ul><li><p>inside</p></li></ul>',1)`,
+  )
+  const listBeforeX = (await state()).markdown
+  await evaluate(
+    `(()=>{const e=document.querySelector('[role="textbox"]').editor;const positions=[];e.state.doc.descendants((n,p)=>{if(n.isText&&n.text==='outside')positions.push(p);if(n.isText&&n.text==='inside')positions.push(p)});e.commands.setTextSelection({from:positions[0],to:positions[1]+2});e.commands.focus()})()`,
+  )
+  await key('x')
+  assert.equal((await state()).markdown, listBeforeX, 'x refuses a selection crossing into a list')
+  await wait(
+    `document.body.innerText.includes(${JSON.stringify('Vim selection crosses a list or table; no text was changed')})`,
+    'native guarded x feedback',
+  )
+  mark('native-x-rejects-unsupported-structural-selection')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>abcd</p>',1)`)
+  await evaluate(`window.richTextVimFixture.flush()`)
+  await key('Escape')
+  await key('v')
+  await key('l')
+  await evaluate(`window.richTextVimFixture.externalRead('aXbcd','visual-reload')`)
+  await wait(
+    `window.richTextVimFixture.state().markdown === 'aXbcd'`,
+    'external reload applies the changed document',
+  )
+  await wait(
+    `window.richTextVimFixture.state().selectedText === 'aXb'`,
+    'external reload preserves the mapped visual range',
+  )
+  await key('d')
+  assert.equal((await state()).markdown, 'cd', 'delete removes the displayed mapped visual range')
+  assert.equal((await state()).selectedText, '')
+  assert(!(await state()).mode.includes('Vim Visual'))
+  mark('native-external-reload-preserves-displayed-range-for-delete')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  await key('y')
+  await key('w')
+  await evaluate(`window.richTextVimFixture.atText('beta')`)
+  await key('v')
+  await key('l')
+  await key('P', ['shift'])
+  assert.equal(
+    (await state()).textContent,
+    'alpha alpha ta',
+    'visual put replaces the actual selection',
+  )
+  assert(!(await state()).mode.includes('Vim Visual'), 'visual put exits visual mode')
+  await key('x')
+  assert.equal(
+    (await state()).textContent,
+    'alpha lpha ta',
+    'the next operator starts at the post-put caret',
+  )
+  mark('native-visual-put-replaces-selection-and-clears-mode')
+
+  const longNote = Array.from({ length: 120 }, (_, index) => `<p>long line ${index}</p>`).join('')
+  const longNoteGeometry = (position: 'first' | 'last') =>
+    evaluate<{
+      visible: boolean
+      scrollTop: number
+      mode: string | null
+      head: number
+      expectedHead: number
+      expectedFirst: number
+      expectedLastCursor: number
+    }>(
+      `(()=>{const editor=document.querySelector('[data-fixture-editor="primary"] [role="textbox"]').editor;const view=editor.view;const selection=view.state.selection;let expectedHead=-1;let expectedFirst=-1;let expectedLastCursor=-1;view.state.doc.descendants((node,pos)=>{if(node.isText&&node.text==='long line 0'){expectedFirst=pos;${position === 'first' ? 'expectedHead=pos;' : ''}}if(node.isText&&node.text==='long line 119'){expectedLastCursor=pos+1;${position === 'last' ? 'expectedHead=pos+node.text.length;' : ''}}});const head=view.coordsAtPos(selection.head);let scroller=view.dom.parentElement;while(scroller){const style=getComputedStyle(scroller);if((style.overflowY==='auto'||style.overflowY==='scroll')&&scroller.scrollHeight>scroller.clientHeight)break;scroller=scroller.parentElement}if(!scroller)throw Error('Editor has no scrollable viewport');const bounds=scroller.getBoundingClientRect();const top=bounds.top+scroller.clientTop;const bottom=top+scroller.clientHeight;return{visible:head.top>=top&&head.bottom<=bottom,scrollTop:scroller.scrollTop,mode:view.dom.getAttribute('data-vim-mode'),head:selection.head,expectedHead,expectedFirst,expectedLastCursor}})()`,
+    )
+  await evaluate(`window.richTextVimFixture.setup(${JSON.stringify(longNote)},1)`)
+  await key('Escape')
+  await key('v')
+  await key('G', ['shift'])
+  const visualLastLine = await state()
+  const visualLastGeometry = await longNoteGeometry('last')
+  assert.equal(visualLastGeometry.mode, 'visual', 'vG remains in characterwise visual mode')
+  assert.equal(
+    visualLastLine.selectedText,
+    Array.from({ length: 120 }, (_, index) => `long line ${index}`).join(''),
+    'vG selects exactly from the first through final line',
+  )
+  assert.equal(
+    visualLastLine.selection.anchor,
+    visualLastGeometry.expectedFirst,
+    'vG begins at the first text position',
+  )
+  assert.equal(
+    visualLastGeometry.head,
+    visualLastGeometry.expectedHead,
+    'vG active head reaches the final text position',
+  )
+  assert(
+    visualLastGeometry.visible,
+    'vG scrolls the final visual-selection head into the editor viewport',
+  )
+  assert(visualLastGeometry.scrollTop > 0, 'vG scrolls the long note to its final line')
+  await evaluate(`window.richTextVimFixture.setup(${JSON.stringify(longNote)},0)`)
+  await key('Escape')
+  await key('V', ['shift'])
+  assert.equal(
+    await evaluate<string | null>(
+      `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]').getAttribute('data-vim-mode')`,
+    ),
+    'visual-line',
+    'V enters linewise visual mode',
+  )
+  await key('G', ['shift'])
+  const linewiseLastLine = await state()
+  const linewiseLastGeometry = await longNoteGeometry('last')
+  assert.equal(linewiseLastGeometry.mode, 'visual-line', 'VG remains in linewise visual mode')
+  assert.equal(
+    linewiseLastLine.selectedText,
+    Array.from({ length: 120 }, (_, index) => `long line ${index}`).join(''),
+    'VG selects exactly through the final line',
+  )
+  assert.equal(
+    linewiseLastLine.selection.anchor,
+    linewiseLastGeometry.expectedFirst,
+    'VG begins at the first text position',
+  )
+  assert.equal(
+    linewiseLastGeometry.head,
+    linewiseLastGeometry.expectedHead,
+    'VG active head reaches the final text position',
+  )
+  assert(
+    linewiseLastGeometry.visible,
+    'VG scrolls the final selection head into the editor viewport',
+  )
+  await evaluate(
+    `window.richTextVimFixture.setup(${JSON.stringify(longNote)},1);window.richTextVimFixture.atText('long line 119')`,
+  )
+  await key('Escape')
+  await key('v')
+  await key('g')
+  await key('g')
+  const visualFirstLine = await state()
+  const visualFirstGeometry = await longNoteGeometry('first')
+  assert.equal(visualFirstGeometry.mode, 'visual', 'vgg remains in characterwise visual mode')
+  assert(
+    visualFirstLine.selectedText.includes('long line 0'),
+    'vgg selects back through the first line',
+  )
+  assert.equal(
+    visualFirstLine.selection.anchor,
+    visualFirstGeometry.expectedLastCursor,
+    'vgg begins at the final line cursor position',
+  )
+  assert.equal(
+    visualFirstGeometry.head,
+    visualFirstGeometry.expectedHead,
+    'vgg active head reaches the first text position',
+  )
+  assert(
+    visualFirstGeometry.visible,
+    'vgg scrolls the first selection head into the editor viewport',
+  )
+  nativeResults.push({
+    scenario: 'long-note native visual traversal',
+    vG: {
+      mode: visualLastGeometry.mode,
+      selection: visualLastLine.selection,
+      selectedText: visualLastLine.selectedText,
+      geometry: visualLastGeometry,
+    },
+    VG: {
+      mode: linewiseLastGeometry.mode,
+      selection: linewiseLastLine.selection,
+      selectedText: linewiseLastLine.selectedText,
+      geometry: linewiseLastGeometry,
+    },
+    vgg: {
+      mode: visualFirstGeometry.mode,
+      selection: visualFirstLine.selection,
+      selectedText: visualFirstLine.selectedText,
+      geometry: visualFirstGeometry,
+    },
+  })
+  mark('native-long-note-visual-G-VG-and-vgg-scroll-and-select')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
   await key('v')
   await key('l')
   const visualEvidence = await state()
   assert.equal(visualEvidence.markdown, 'alpha beta')
   assert(visualEvidence.selectedText.length > 0, 'screenshot shows a real native visual selection')
-  await capture('light.png')
+  await evaluate(
+    `document.documentElement.dataset.theme='light';document.documentElement.classList.remove('dark')`,
+  )
+  await evaluate<void>(
+    'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  )
+  const lightTheme = await evaluate<{ background: string; foreground: string }>(
+    `(()=>{const style=getComputedStyle(document.documentElement);return{background:style.getPropertyValue('--background').trim(),foreground:style.getPropertyValue('--foreground').trim()}})()`,
+  )
+  assert(lightTheme.background && lightTheme.foreground, 'light theme tokens are computed')
+  const lightImage = await win.webContents.capturePage()
+  await writeFile(join(evidence, 'light.png'), lightImage.toPNG())
   await evaluate(
     `document.documentElement.dataset.theme='dark';document.documentElement.classList.add('dark')`,
   )
-  await capture('dark.png')
+  await evaluate<void>(
+    'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  )
+  const darkTheme = await evaluate<{ background: string; foreground: string }>(
+    `(()=>{const style=getComputedStyle(document.documentElement);return{background:style.getPropertyValue('--background').trim(),foreground:style.getPropertyValue('--foreground').trim()}})()`,
+  )
+  assert(darkTheme.background && darkTheme.foreground, 'dark theme tokens are computed')
+  assert.notEqual(
+    darkTheme.background,
+    lightTheme.background,
+    'theme transition changes background',
+  )
+  assert.notEqual(
+    darkTheme.foreground,
+    lightTheme.foreground,
+    'theme transition changes foreground',
+  )
+  const darkImage = await win.webContents.capturePage()
+  await writeFile(join(evidence, 'dark.png'), darkImage.toPNG())
+  assert.notDeepEqual(darkImage.toPNG(), lightImage.toPNG(), 'light and dark screenshots differ')
   assert.deepEqual(
     rendererErrors,
     [],
@@ -1177,6 +1403,10 @@ async function run() {
       selectedText: visualEvidence.selectedText,
       screenshots: ['light.png', 'dark.png'],
       themes: ['light', 'dark'],
+      themeTokens: {
+        light: lightTheme,
+        dark: darkTheme,
+      },
     },
     writes,
     evidence: ['light.png', 'dark.png', 'interaction.mp4'],
