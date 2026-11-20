@@ -9,6 +9,7 @@ import {
   readdir,
   readFile,
   realpath,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -338,8 +339,10 @@ it.each(['missing', 'malformed', 'failure', 'unlinked'] as const)(
         const record = old.allocate('fenced', id)
         if (kind === 'failure') {
           record.nonLaunch()
-          record.fail(new Error('original caller failure'))
+          const cause = new Error('original caller failure')
+          record.fail(cause)
           record.fail(new Error('must not replace first failure'))
+          expect(() => record.retire()).toThrow(cause)
         }
         if (kind === 'malformed') {
           const nativePath = record.ownershipRecordPath!
@@ -469,7 +472,13 @@ const journalIdentities = (text: string) =>
     role === 'ANCHOR' ? [Number(value)] : [Number(value), -Number(value)],
   )
 
-it.each(['never drained', 'interrupted drain', 'native settled', 'caller settled'] as const)(
+it.each([
+  'never drained',
+  'interrupted drain',
+  'native settled',
+  'caller settled',
+  'retired',
+] as const)(
   'cold-recovers a real Pi lease only with sufficient caller evidence (%s)',
   async (phase) => {
     const data = await realpath(await mkdtemp(join(tmpdir(), 'holi-cold-pi-phase-')))
@@ -500,7 +509,7 @@ it.each(['never drained', 'interrupted drain', 'native settled', 'caller settled
       await launch.bind(child.pid!)
       identities = journalIdentities(await readFile(join(path, 'journal'), 'utf8'))
       expect(identities).toHaveLength(5)
-      if (phase === 'interrupted drain' || phase === 'caller settled')
+      if (phase === 'interrupted drain' || phase === 'caller settled' || phase === 'retired')
         record.beginCallerFinalization()
       if (phase === 'never drained' || phase === 'interrupted drain') {
         // Main disappears before it can record physical settlement. The
@@ -509,7 +518,7 @@ it.each(['never drained', 'interrupted drain', 'native settled', 'caller settled
         for (const fd of native.fds) closeSync(fd)
       } else {
         await launch.drain()
-        if (phase === 'caller settled') record.settleCaller()
+        if (phase === 'caller settled' || phase === 'retired') record.settleCaller()
       }
       controller.abort()
       await exited
@@ -521,7 +530,23 @@ it.each(['never drained', 'interrupted drain', 'native settled', 'caller settled
         proof: lostController ? 'kernel-absence' : 'settled',
       })
       const next = activationOwnership(data, vault, signal())!
-      if (phase === 'interrupted drain' || phase === 'native settled') {
+      if (phase === 'retired') {
+        // Crash after rename, with both phases durable and no remaining writer.
+        const entry = dirname(dirname(path))
+        await writeFile(join(entry, 'settled'), `HOLI-AGENT-1 ${basename(entry)}\nSETTLED\n`, {
+          mode: 0o600,
+        })
+        const retired = `${entry}.retired`
+        await rename(entry, retired)
+        const probe = vi.spyOn(process, 'kill')
+        try {
+          next.recover('pi')
+          expect(probe).not.toHaveBeenCalled()
+        } finally {
+          probe.mockRestore()
+        }
+        await expect(access(retired)).rejects.toMatchObject({ code: 'ENOENT' })
+      } else if (phase === 'interrupted drain' || phase === 'native settled') {
         expect(() => next.recover('pi')).toThrow(/Pi.*(pending|settlement)/)
         await access(path)
       } else {
@@ -677,3 +702,54 @@ it.each(
   },
   15_000,
 )
+
+it.each([
+  'missing link',
+  'missing settlement',
+  'malformed settlement',
+  'partial failure',
+  'partial native',
+] as const)('retains an interrupted retired record with %s', async (fault) => {
+  const data = await mkdtemp(join(tmpdir(), 'holi-retired-partial-'))
+  const probe = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw new Error('A retired receipt must not reach the kernel')
+  })
+  try {
+    const vault = { root: data, remote: 'fixture/retired' }
+    const controller = new AbortController()
+    const registry = activationOwnership(data, vault, controller.signal)!
+    registry.recover('fenced')
+    const record = registry.allocate('fenced', 'partial')
+    if (fault !== 'partial native') record.nonLaunch()
+    else {
+      record.beginCallerFinalization()
+      record.settleCaller()
+    }
+    const path = record.ownershipRecordPath!
+    const entry = dirname(dirname(path))
+    const retired = `${entry}.retired`
+    const header = `HOLI-AGENT-1 ${basename(entry)}\n`
+    if (fault !== 'missing settlement') {
+      await writeFile(
+        join(entry, 'settled'),
+        header + (fault === 'malformed settlement' ? 'SET' : 'SETTLED\n'),
+        {
+          mode: 0o600,
+        },
+      )
+    }
+    if (fault === 'missing link') await rm(join(entry, 'link'))
+    if (fault === 'partial failure')
+      await writeFile(join(entry, 'failed.tmp'), header, { mode: 0o600 })
+    if (fault === 'partial native') await mkdir(path, { mode: 0o700 })
+    controller.abort()
+    await rename(entry, retired)
+    const next = activationOwnership(data, vault, signal())!
+    expect(() => next.recover('fenced')).toThrow(/Retaining/)
+    await access(retired)
+    expect(probe).not.toHaveBeenCalled()
+  } finally {
+    probe.mockRestore()
+    await rm(data, { recursive: true, force: true })
+  }
+})

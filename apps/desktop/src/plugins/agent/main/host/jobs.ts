@@ -521,15 +521,19 @@ export function createJobs(deps: JobsDeps): Jobs {
     return job.finalizationError
   }
 
+  function requestStop(job: Job, why: string): void {
+    job.stopped ??= why
+    job.queue = []
+    job.copyController?.abort()
+    job.turn?.stop()
+  }
+
   async function kill(job: Job, why: string): Promise<void> {
     if (!job.busy) {
       if (job.finalizationError !== undefined) throw job.finalizationError
       return
     }
-    job.stopped ??= why
-    job.queue = []
-    job.copyController?.abort()
-    job.turn?.stop()
+    requestStop(job, why)
     // Stop joins the natural owner's deadline, which only starts after drain.
     await job.exited
   }
@@ -780,6 +784,10 @@ export function createJobs(deps: JobsDeps): Jobs {
       },
     })
     job.turn = turn
+    // A synchronous spawn adapter can revoke this activation before it
+    // returns the new lease. Close that lease in this stack, independent of
+    // any earlier Stop that saw only the previous turn's exit promise.
+    if (process.platform !== 'win32' && closing) requestStop(job, 'Stopped.')
     const bracket = turn.bracket && job.place !== null
     let managed: ManagedTurn | undefined
     if (bracket && deps.beginManagedTurn !== undefined) {
@@ -993,6 +1001,8 @@ export function createJobs(deps: JobsDeps): Jobs {
       generation += 1
       for (const job of jobs.values()) {
         job.queue = []
+        // runTurn closes a registering POSIX turn before it returns.
+        if (process.platform !== 'win32' && job.busy && job.turn === undefined) continue
         const pending = kill(job, 'Stopped.')
         void pending.catch((err: unknown) => log(`${job.id}: could not stop: ${String(err)}`))
       }

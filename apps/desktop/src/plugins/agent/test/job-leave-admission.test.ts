@@ -16,6 +16,7 @@ import type { JobsProvider } from '../main/provider'
 
 const gates = vi.hoisted(() => ({
   root: '',
+  goAttempts: 0,
   descriptors: new Map<number, string>(),
   hold: undefined as 'S' | 'G' | undefined,
   reached: undefined as (() => void) | undefined,
@@ -49,25 +50,27 @@ vi.mock('node:fs', async (original) => {
       gates.descriptors.delete(fd)
     },
     writeSync: (fd: number, bytes: Buffer, offset: number, length: number) => {
-      if (
-        gates.hold &&
-        gates.descriptors.get(fd)?.endsWith('/control') &&
-        length === 1 &&
-        bytes.toString('utf8', offset, offset + length) === gates.hold
-      ) {
-        gates.reached?.()
-        return 0
+      if (gates.descriptors.get(fd)?.endsWith('/control') && length === 1) {
+        const command = bytes.toString('utf8', offset, offset + length)
+        if (command === 'G') gates.goAttempts++
+        if (command === gates.hold) {
+          gates.reached?.()
+          return 0
+        }
       }
       return fs.writeSync(fd, bytes, offset, length)
     },
   }
 })
 
-it.skipIf(process.platform === 'win32').each(['S', 'G', 'after GO', 'registering'] as const)(
-  'direct jobs leave closes native admission with the sweep join held: %s',
+it
+  .skipIf(process.platform === 'win32')
+  .each(['S', 'G', 'after GO', 'registering', 'activation abort'] as const)(
+  'jobs teardown closes native admission with the sweep join held: %s',
   async (phase) => {
     const ledger = await posixFixtureLedger('holi-job-leave-')
     gates.root = ledger.root
+    gates.goAttempts = 0
     const vault = { remote: 'fixture/vault', root: join(ledger.root, 'vault') }
     const scratchRoot = join(ledger.root, 'jobs')
     const marker = join(vault.root, 'body-entered')
@@ -96,6 +99,9 @@ it.skipIf(process.platform === 'win32').each(['S', 'G', 'after GO', 'registering
     })
     gates.reached = reached
     if (phase === 'S' || phase === 'G') gates.hold = phase
+    if (phase === 'activation abort') gates.hold = 'G'
+    const activation = new AbortController()
+    let drainAtFirstPublish: number | undefined
     let leaving: Promise<void> | undefined
     const provider: JobsProvider = {
       id: 'codex',
@@ -129,7 +135,11 @@ it.skipIf(process.platform === 'win32').each(['S', 'G', 'after GO', 'registering
     const jobs = createJobs({
       vault,
       scratchRoot,
-      onChange: () => {},
+      activationSignal: activation.signal,
+      onChange: (rows) => {
+        if (activation.signal.aborted && rows.length)
+          drainAtFirstPublish ??= drain.mock.calls.length
+      },
       log: () => {},
       spawn: (bin, args, opts) => {
         const child = spawnOwnedProgram(bin, args, { ...opts, posixGroupLease: true })
@@ -152,6 +162,10 @@ it.skipIf(process.platform === 'win32').each(['S', 'G', 'after GO', 'registering
           leaving = jobs.leave()
           void leaving.catch(() => {})
         }
+        if (phase === 'activation abort') {
+          gates.sweep = sweep
+          activation.abort()
+        }
         return child
       },
     })
@@ -159,9 +173,15 @@ it.skipIf(process.platform === 'win32').each(['S', 'G', 'after GO', 'registering
       const started = await jobs.start({ provider, name: 'direct leave', prompt: 'go', allow: [] })
       if (!started.ok) throw new Error(started.message)
       if (phase === 'after GO') await vi.waitFor(() => access(marker))
-      else if (phase !== 'registering') await bounded(atGate, 'queued native command', 2000)
+      else if (phase === 'activation abort') {
+        // Neither the disposer nor a later microtask may be needed to fence GO.
+        expect(drainAtFirstPublish).toBe(1)
+        expect(drain).toHaveBeenCalledOnce()
+        gates.hold = undefined
+        await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      } else if (phase !== 'registering') await bounded(atGate, 'queued native command', 2000)
 
-      if (phase !== 'registering') {
+      if (phase !== 'registering' && phase !== 'activation abort') {
         capture()
         expect(ids.has(rootPid!)).toBe(true)
       }
@@ -184,6 +204,7 @@ it.skipIf(process.platform === 'win32').each(['S', 'G', 'after GO', 'registering
       expect(drain).toHaveBeenCalledOnce()
       if (phase !== 'after GO')
         await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      if (phase === 'activation abort') expect(gates.goAttempts).toBe(0)
       expect(jobs.sessions()).toEqual([])
       await expect(access(scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {

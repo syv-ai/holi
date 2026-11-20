@@ -67,9 +67,33 @@ vi.mock('node:fs', async (original) => {
   const fs = await original<typeof import('node:fs')>()
   return {
     ...fs,
+    openSync: (...args: Parameters<typeof fs.openSync>) => {
+      const fd = fs.openSync(...args)
+      native.fixture?.trackDescriptor(String(args[0]), fd)
+      return fd
+    },
+    closeSync: (fd: number) => {
+      fs.closeSync(fd)
+      native.fixture?.untrackDescriptor(fd)
+    },
     renameSync: (...args: Parameters<typeof fs.renameSync>) => {
       native.fixture?.beforeRetirement(String(args[1]))
-      return fs.renameSync(...args)
+      fs.renameSync(...args)
+      native.fixture?.afterRetirementRename(String(args[1]))
+    },
+    fsyncSync: (fd: number) => {
+      native.fixture?.beforeRetirementSync()
+      fs.fsyncSync(fd)
+    },
+    rmSync: (...args: Parameters<typeof fs.rmSync>) => {
+      const path = String(args[0])
+      const error = native.fixture?.retirementRemovalError(path)
+      if (error) {
+        // Recursive removal may already have unlinked part of the receipt.
+        fs.unlinkSync(join(path, 'link'))
+        throw error
+      }
+      fs.rmSync(...args)
     },
   }
 })
@@ -388,14 +412,44 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
   const runs: ReturnType<typeof newRun>[] = []
   let next: Plan | undefined
   const filesystem = new Set<Promise<unknown>>()
+  const descriptors = new Set<number>()
   const retirements = new Map<string, () => void>()
+  let retirementFault: { path: string; phase: 'sync' | 'remove'; error: Error } | undefined
+  let syncingRetirement = false
   const stagedCopies = new Map<string, ReturnType<typeof gate>>()
   const readDirs = new Map<string, ReturnType<typeof gate>>()
   const fixture = {
     directory: ledger.root,
     runs,
+    trackDescriptor(path: string, fd: number) {
+      if (path.startsWith(`${ledger.root}/holi-launch-`)) descriptors.add(fd)
+    },
+    untrackDescriptor(fd: number) {
+      descriptors.delete(fd)
+    },
     beforeRetirement(path: string) {
       retirements.get(path)?.()
+    },
+    failRetirementAfterRename(path: string, phase: 'sync' | 'remove', error: Error) {
+      retirementFault = { path: `${path}.retired`, phase, error }
+    },
+    afterRetirementRename(path: string) {
+      if (retirementFault?.path === path && retirementFault.phase === 'sync')
+        syncingRetirement = true
+    },
+    beforeRetirementSync() {
+      // No other filesystem operation runs between rename and the parent sync.
+      if (!syncingRetirement) return
+      const error = retirementFault!.error
+      syncingRetirement = false
+      retirementFault = undefined
+      throw error
+    },
+    retirementRemovalError(path: string) {
+      if (retirementFault?.path !== path || retirementFault.phase !== 'remove') return
+      const error = retirementFault.error
+      retirementFault = undefined
+      return error
     },
     observeRetirement(path: string, callback: () => void) {
       retirements.set(`${path}.retired`, callback)
@@ -575,6 +629,7 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
         run.absent()
       }
       while (filesystem.size) await Promise.allSettled([...filesystem])
+      expect(descriptors.size).toBe(0)
       expect(
         (await readdir(ledger.root)).filter((name) => name.startsWith('holi-launch-')),
       ).toEqual([])
