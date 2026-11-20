@@ -3,12 +3,16 @@ import { createHmac, randomBytes } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join, resolve, win32 } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import { spawnOwnedProgram } from '../../src/main/owned-process'
+import { gzipSync } from 'node:zlib'
 import type { PrivateCompletion } from '../../src/main/owned-process-completion'
-import { ownedLaunchControl, spawnOwnedLaunch } from '../../src/main/owned-process-launch'
+import {
+  launchOwned,
+  ownedLaunchControl,
+  windowsAdapterLaunch,
+} from '../../src/main/owned-process-launch'
 import { UnconfirmedOwnedProgramError } from '../../src/main/owned-program-lifetime'
 import { FixtureDeadlineError, fixtureResult, pollFixture, within } from './fixture-deadline'
 import {
@@ -179,7 +183,7 @@ export class ControlTap {
     return frames
   }
 
-  disarm(): void {
+  private disarm(): void {
     this.attack = undefined
     this.auth?.fill(0)
     this.auth = undefined
@@ -283,23 +287,12 @@ function boolean(record: Record<string, unknown>, key: string): boolean {
 export class ControlFixture {
   private readonly dir = mkdtempSync(join(tmpdir(), 'holi-native-control-'))
   private readonly nonce = fixtureNonce()
-  private readonly systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
-  private readonly powershell = win32.join(
-    this.systemRoot,
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe',
-  )
-  private readonly env = {
-    SystemRoot: this.systemRoot,
-    WINDIR: this.systemRoot,
-    TEMP: tmpdir(),
-    TMP: tmpdir(),
-  }
+  private readonly powershell = windowsAdapterLaunch(process.env).file
   private readonly rootImage = resolve(process.execPath)
   private witness?: WindowsOwnedProcessWitness
   private identity?: WitnessProcess
+  private heldHelper?: WitnessProcess
+  private nativeHelperBirth?: string
   private helper?: ReturnType<typeof observe> & { stderr: () => string }
   private native?: ReturnType<typeof observe>
   private nativeReply = 1 // First complete line is the readiness marker.
@@ -317,33 +310,35 @@ export class ControlFixture {
     // Readiness prewarms compilation; the test runner is not a cleanup target.
   }
 
-  async prepareNative(loadWin32 = true): Promise<void> {
+  async prepareNative(): Promise<void> {
     if (this.native) return
     const source = readFileSync(
       new URL('./windows-owned-process-control-native.ps1', import.meta.url),
       'utf8',
     )
+    const bundled = gzipSync(source).toString('base64')
+    const bootstrap = `$b=[Convert]::FromBase64String('${bundled}');$m=[IO.MemoryStream]::new($b);$g=[IO.Compression.GzipStream]::new($m,[IO.Compression.CompressionMode]::Decompress);$r=[IO.StreamReader]::new($g,[Text.Encoding]::UTF8);& ([ScriptBlock]::Create($r.ReadToEnd()))`
     const child = spawn(
       this.powershell,
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-EncodedCommand',
-        Buffer.from(`$loadWin32 = $${loadWin32}\n${source}`, 'utf16le').toString('base64'),
-      ],
-      { env: this.env, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true },
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', bootstrap],
+      { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
     )
-    child.on('error', () => undefined)
+    let spawnError: NodeJS.ErrnoException | undefined
+    child.on('error', (error) => (spawnError = error))
     child.stdin.on('error', () => undefined)
     const native = (this.native = observe(child))
-    if (!child.pid || child.pid === process.pid)
-      throw new Error('native fixture lacks a distinct process')
+    const stderr = capture(child.stderr)
     await until(
       () => {
+        if (spawnError) throw spawnError
         if (/^ready\r?\n/.test(native.stdout())) return true
+        // Do not report the encoded bootstrap or a raw PowerShell error record.
+        const compilerId = /\bCS\d{4}\b/.exec(stderr())?.[0]
+        if (compilerId) throw new Error(`native fixture compile failed (${compilerId})`)
         if (child.exitCode !== null || child.signalCode !== null)
-          throw new Error('native fixture exited before readiness')
+          throw new Error(
+            `native fixture exited before readiness (${child.exitCode ?? child.signalCode})`,
+          )
       },
       15_000,
       'native fixture readiness',
@@ -357,18 +352,27 @@ export class ControlFixture {
     const args = [rootScript, this.dir, this.nonce, mode]
     const options: SpawnOptions = {
       cwd: this.dir,
-      env: this.env,
       stdio: [mode === 'inspect' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     }
     this.retained = session === 'retained'
-    const child = this.retained
-      ? spawnOwnedLaunch(
-          { file: this.rootImage, args, verbatim: false },
-          options,
-          process.pid,
-          true,
-        )
-      : spawnOwnedProgram(this.rootImage, args, options)
+    if (!this.witness && !this.native) throw new Error('prepare a stable helper observer first')
+    const child = launchOwned(
+      { file: this.rootImage, args, verbatim: false },
+      options,
+      process.pid,
+      this.retained,
+      undefined,
+      {
+        pauseAuth: async ({ pid, birth }) => {
+          if (pid !== child.pid) throw new Error('HELLO did not name the launched helper')
+          if (this.witness) {
+            this.heldHelper = await this.witness.pin({ pid, expectedImage: this.powershell, birth })
+            if (await this.witness.exited(this.heldHelper.id))
+              throw new Error('HELPER exited before AUTH')
+          } else await this.holdNativeHelper(pid, birth)
+        },
+      },
+    )
     child.on('error', () => undefined)
     this.helper = { ...observe(child), stderr: capture(child.stderr) }
     this.control = ownedLaunchControl(child)
@@ -386,17 +390,27 @@ export class ControlFixture {
     const parentPid = this.helper.child.pid
     const { control } = this
     const helperIdentity = await within(control.identity, 15_000, 'authenticated helper HELLO')
-    if (helperIdentity.pid !== parentPid) throw new Error('helper HELLO identity mismatch')
+    if (helperIdentity.pid !== parentPid || this.heldHelper?.birth !== helperIdentity.birth)
+      throw new Error('helper HELLO did not match the pre-AUTH held process')
     const pid = await until(
       () => {
         if (this.status.state !== 'pending')
           throw new Error('completion settled before root readiness')
         const ready = this.rootMarker('root-ready')
-        if (ready !== undefined && control.diagnostics().rootPid === ready) return ready
+        const { rootPid, helperLastPhase, rootState } = control.diagnostics()
+        if (
+          ready !== undefined &&
+          rootPid === ready &&
+          helperLastPhase === 'after-root-resume' &&
+          rootState === 'running'
+        )
+          return ready
       },
       12_000,
       'root readiness',
     )
+    if (!this.tap.registered || this.tap.parentConnections !== 1)
+      throw new Error('authenticated root lacked its original parent registration')
     if (this.rootMarker('root-started') !== pid) throw new Error('missing root start marker')
     this.identity = await this.witness.pin({
       pid,
@@ -467,6 +481,8 @@ export class ControlFixture {
   async result() {
     if (!this.completion || !this.helper) throw new Error('no owned completion')
     const verdict = await within(this.completion, 8_000, 'original owned completion')
+    if (!this.control) throw new Error('missing original owned control')
+    await within(this.control.joinControlClose(), 3_000, 'original control close')
     const exit = await within(this.helper.closed, 8_000, 'owned helper close')
     if (!this.helper.exited()) throw new Error('no native helper exit observed')
     return { verdict, exit }
@@ -483,17 +499,40 @@ export class ControlFixture {
     return verdict.error
   }
 
+  async injectedOnSocket() {
+    if (!this.completion) throw new Error('no original control completion')
+    const failureBeforeWrite = this.completion.then((verdict) => {
+      if (this.tap.injected === 0) {
+        if (verdict.state === 'rejected') throw verdict.error
+        throw new Error('original completion settled before the injection')
+      }
+    })
+    // Do not let a setup or HELLO failure masquerade as a write deadline. Once
+    // injected, the actual write callback is still required for evidence.
+    const write = this.tap.injectedOnSocket()
+    await Promise.race([write, failureBeforeWrite.then(() => write)])
+  }
+
   async wrongAuthClosure() {
     if (!this.control || !this.helper) throw new Error('no owned helper')
     // Authenticate the single greeting with the original launch's verifier, not
     // the raw frame counter or the process exit code.
     const hello = await within(this.control.identity, 3_000, 'wrong AUTH helper HELLO')
-    if (hello.pid !== this.helper.child.pid || this.tap.registered)
+    if (
+      hello.pid !== this.helper.child.pid ||
+      this.nativeHelperBirth !== hello.birth ||
+      this.tap.registered
+    )
       throw new Error('unexpected admission on the wrong AUTH socket')
     return this.tap.wrongAuthClosure()
   }
 
   async compete(op: 'first' | 'second'): Promise<Peer> {
+    if (op === 'first') {
+      const pid = this.helper?.child.pid
+      if (!pid) throw new Error('missing launched helper for first-client observation')
+      await this.holdNativeHelper(pid) // No HELLO is possible before a rejected peer.
+    }
     const record = await this.probe({ op, target: this.tap.leaf() })
     const clientPid = integer(record, 'clientPid')
     if (clientPid === process.pid || clientPid !== this.native?.child.pid)
@@ -545,8 +584,25 @@ export class ControlFixture {
     }
   }
 
+  private async holdNativeHelper(pid: number, expectedBirth?: string) {
+    const { birth } = await this.probe({
+      op: 'hold-helper',
+      pid,
+      expectedBirth,
+      parentPid: process.pid,
+      image: this.powershell,
+    })
+    if (
+      typeof birth !== 'string' ||
+      !/^\d{1,20}$/.test(birth) ||
+      (expectedBirth && birth !== expectedBirth)
+    )
+      throw new Error('invalid native held helper birth')
+    this.nativeHelperBirth = birth
+  }
+
   private async rootSnapshot(): Promise<number[]> {
-    await this.prepareNative(false)
+    await this.prepareNative()
     const { pids } = await this.probe({
       op: 'snapshot',
       image: this.rootImage,
@@ -614,7 +670,6 @@ export class ControlFixture {
         throw new Error('native fixture exit was not clean')
       nativeFixtureClosed = true
     }
-    this.tap.disarm()
     // Only the handle scan can hold duplicated root handles. Close that inspector
     // before verifying exit. An unpinned launch still needs its read-only snapshot.
     if (this.identity) await cleanup(closeNative)
@@ -626,10 +681,12 @@ export class ControlFixture {
       helperClosed = true
     })
     await cleanup(() => this.tap.close())
+    if (this.control)
+      await cleanup(() => within(this.control!.joinControlClose(), 3_000, 'original control close'))
     await cleanup(async () => {
-      // For retained launches, REGISTERED is sent only after registering the
-      // original handle locally. Never manufacture a cleanup lease for pre-auth.
-      if (!this.retained || !this.tap.registered || !this.control) return
+      // Also join the original lease for a failure before REGISTERED: AUTH can
+      // already have allowed the helper to duplicate a parent Job handle.
+      if (!this.retained || !this.control) return
       await within(this.control.lease.revoke(), 22_000, 'original Job lease drain')
       jobLeaseRevoked = true
     })
@@ -671,22 +728,35 @@ export class ControlFixture {
             nonce: this.nonce,
           })
           await witness.terminate(root.id)
+          await pollFixture(
+            async () => (await witness.exited(root.id)) || undefined,
+            performance.now() + 3_000,
+            'snapshot root exit',
+            20,
+          )
           throw new Error('nonce-bearing root survived helper exit')
         }
         if (this.rootStarted()) throw new Error('started root was not pinned for exit verification')
+        if (!this.nativeHelperBirth || this.tap.registered)
+          throw new Error('missing pre-admission helper identity')
+        const helperExit = await this.probe({ op: 'helper-exit' })
+        if (integer(helperExit, 'code') !== (await this.helper.closed).code)
+          throw new Error('held helper DWORD disagrees with observed close')
         rootExit = 'absent-after-helper-exit'
       }
     })
     if (!this.identity) await cleanup(closeNative)
     await cleanup(async () => {
+      if (this.heldHelper && this.witness && !(await this.witness.exited(this.heldHelper.id)))
+        throw new Error('held helper still running after close')
+    })
+    await cleanup(async () => {
       if (!this.witness) return
       await within(this.witness.close(), 22_000, 'process witness close')
       witnessClosed = true
     })
-    await cleanup(() =>
-      rmSync(this.dir, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 }),
-    )
     if (errors.length) throw new AggregateError(errors, 'native control fixture cleanup unverified')
+    rmSync(this.dir, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 })
     return {
       rootExit,
       helperClosed,

@@ -105,20 +105,19 @@ public static partial class HoliOwnedProcess {
       return message;
     } catch { throw Fail("protocolFailure"); }
   }
-  static Record ReadAvailable(long deadline=0,Stream input=null) {
-    if(input==null) input=control;
+  static Record ReadAvailable(long deadline=0,Func<Task<int>> beginRead=null) {
     while(true) {
       if(partialUntil!=0 && Clock.ElapsedMilliseconds>=partialUntil) throw Fail("protocolFailure");
       if(readOffset==readLength) {
         try {
           if(pendingRead==null)
-            pendingRead=Task<int>.Factory.FromAsync(input.BeginRead,input.EndRead,readBuffer,0,readBuffer.Length,null);
+            pendingRead=beginRead!=null ? beginRead() : Task<int>.Factory.FromAsync(control.BeginRead,control.EndRead,readBuffer,0,readBuffer.Length,null);
           if(deadline!=0) AwaitIo(pendingRead,partialUntil==0 ? deadline : Math.Min(deadline,partialUntil));
           if(!pendingRead.IsCompleted) return null;
           readLength=pendingRead.GetAwaiter().GetResult();
           pendingRead=null;
           readOffset=0;
-        } catch { throw Fail("controlFailure"); }
+        } catch(Exception e) { if(beginRead!=null) RememberBrokerFailure(e); throw Fail("controlFailure"); }
         if(readLength==0) throw Fail(frameLength==0 ? "controlFailure" : "protocolFailure");
         Account(readLength);
       }
@@ -196,9 +195,10 @@ public static partial class HoliOwnedProcess {
        !Object.Equals(auth["mode"],retained ? "retained" : "ordinary")) throw Fail("protocolFailure");
     authenticated=true;
   }
-  static string ReadSpec() {
-    var input=Console.OpenStandardInput(); var b=new MemoryStream(); int v;
-    while((v=input.ReadByte())!=-1 && v!=10) { if(b.Length>=1048576) throw new Exception("launch specification too large"); b.WriteByte((byte)v); }
+  static string ReadSpec() { return ReadSpec(Console.OpenStandardInput().ReadByte); }
+  static string ReadSpec(Func<int> readByte) {
+    var b=new MemoryStream(); int v;
+    while((v=readByte())!=-1 && v!=10) { if(b.Length>=1048576) throw new Exception("launch specification too large"); b.WriteByte((byte)v); }
     if(v==-1) throw new Exception("missing launch specification");
     return Utf8.GetString(b.ToArray()).TrimEnd('\r');
   }

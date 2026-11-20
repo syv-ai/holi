@@ -54,8 +54,9 @@ export function ownedJobLease({
         signal?.throwIfAborted()
         if (!handedOff || !adopted || stopped || revoke)
           throw new Error('owned handoff is not available to commit')
+        let release: Promise<void> | undefined
         try {
-          await broker(
+          release = broker(
             adopted,
             'release',
             () => {
@@ -72,9 +73,12 @@ export function ownedJobLease({
             undefined,
             signal,
           )
+          await release
           if (!committed) throw new Error('owned Job broker did not prove native commit')
         } catch (error) {
           if (!committed) {
+            const diagnostic = release && brokerFailureDiagnostic(release)
+            if (diagnostic) brokerFailureDiagnostics.set(commit!, diagnostic)
             // Without a proved decision we never authorized closeSources. Join
             // the broker and preserve the first cause even if rollback fails.
             if (grantMayBeSent) void lease.revoke().catch(() => undefined)
@@ -97,8 +101,16 @@ export function ownedJobLease({
         if (commit) await commit.catch(() => undefined)
         if (committed) throw new Error('owned handoff was already committed')
         if (!empty) await joinProducer()
-        if (ticket) await broker(ticket, action, () => true)
-        else if (!empty && !prepared) throw new Error('no registered native Job cleanup handle')
+        if (ticket) {
+          const cleanup = broker(ticket, action, () => true)
+          try {
+            await cleanup
+          } catch (error) {
+            const diagnostic = brokerFailureDiagnostic(cleanup)
+            if (diagnostic) brokerFailureDiagnostics.set(revoke!, diagnostic)
+            throw error
+          }
+        } else if (!empty && !prepared) throw new Error('no registered native Job cleanup handle')
         // Retained but never bound for AUTH: no duplicate or Root was possible.
       })
       // Cleanup may start before an owner joins it. Keep the original rejection
@@ -148,6 +160,23 @@ export function ownedJobLease({
 
 type CleanupReceipt = Extract<OwnedProcessMessage, { type: 'recovered' }> | { type: 'drained' }
 
+const failurePhases =
+  'open-pipes|read-spec|open-parent|validate-parent|open-jobs|send-ready|read-grant|scan-objects|drain-jobs|clear-guard|send-committed|read-observed|send-decision|read-close|close-sources|rescan-objects|send-terminal'
+const brokerDiagnostic = new RegExp(
+  `^HOLI_BROKER_FAILURE (${failurePhases}) (0|[1-9][0-9]{0,9})\\r?$`,
+)
+type BrokerFailureDiagnostic = Readonly<{ phase: string; code: number }>
+// A rejection cause can be shared across operations or be a Proxy. Key diagnostics
+// by the original operation promises instead, without inspecting or changing causes.
+const brokerFailureDiagnostics = new WeakMap<Promise<void>, BrokerFailureDiagnostic>()
+
+/** Bounded stderr metadata on a rejected broker or cached lease operation, never ownership proof. @public */
+export function brokerFailureDiagnostic(
+  operation: Promise<void>,
+): BrokerFailureDiagnostic | undefined {
+  return brokerFailureDiagnostics.get(operation)
+}
+
 /** The optional instrumentation is private to the native fixture. @public */
 export function runBroker(
   ticket: BoundJob | AdoptedJob,
@@ -171,7 +200,7 @@ export function runBroker(
   const launchId = `${ticket.launchId}:${jobId}:${commitGuardId}:${randomUUID()}`
   const protocol = createOwnedProtocol({ launchId, secret: ticket.secret, role: 'parent' })
   const adapter = win32Adapter('RunBroker', process.env, fixture?.transformSource)
-  return new Promise((resolve, reject) => {
+  const operation = new Promise<void>((resolve, reject) => {
     const child = spawn(adapter.file, adapter.args, {
       cwd: adapter.cwd,
       env: adapter.env,
@@ -179,43 +208,84 @@ export function runBroker(
       // broker during a guard-clear/OBSERVED race. Keep the child and pipes referenced.
       detached: true,
       windowsHide: true,
-      stdio: ['pipe', 'pipe', 'ignore'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
+    // EMFILE/ENFILE can return a child without stdio before emitting the
+    // actual spawn error. Observe it without sending a spec or granting work.
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      let cause: unknown
+      child.on('error', (error) => (cause ??= error))
+      child.once('close', () => reject(cause ?? new Error('owned Job broker has no pipes')))
+      return
+    }
+    // Node's ChildProcess 'close' joins the readable stdio pipes, not stdin.
+    const inputClosed = new Promise<void>((resolve) => child.stdin.once('close', resolve))
     let stage: 'preparing' | 'granted' | 'observing' | 'closing' | 'proved' = 'preparing'
     let closed = false
     let receipt: CleanupReceipt | null = null
     let failure: { cause: unknown } | undefined
-    let timer = setTimeout(
-      () => fail(new Error('owned Job broker setup timed out')),
-      15_000,
-    ).unref()
+    const noProof = new Error('owned Job broker ended without proof')
+    let diagnostic: BrokerFailureDiagnostic | undefined
+    let line: string | undefined = ''
+    let awaitingNativeClose = false
+    let timer = setTimeout(() => {
+      if (awaitingNativeClose) terminatePreparation()
+      else fail(new Error('owned Job broker setup timed out'))
+    }, 15_000).unref()
+    function terminatePreparation() {
+      // Once a grant may have reached native code, EOF is the abort signal.
+      // Don't kill the process that might own the only rollback handles.
+      if (stage !== 'preparing') return
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* EOF still aborts preparation */
+      }
+    }
     function fail(cause: unknown) {
       if (closed || failure) return
       failure = { cause }
       clearTimeout(timer)
       child.stdin.destroy()
       child.stdout.destroy()
-      // Once a grant may have reached native code, EOF is the abort signal.
-      // Don't kill the process that might own the only rollback handles.
-      if (stage === 'preparing') {
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          /* EOF still aborts preparation */
+      terminatePreparation()
+    }
+    child.stderr.on('error', () => undefined) // Diagnostics are never proof.
+    child.stderr.on('data', (chunk: Buffer) => {
+      for (const byte of chunk) {
+        if (diagnostic) break
+        if (byte === 10) {
+          const match = line === undefined ? null : brokerDiagnostic.exec(line)
+          if (match && Number(match[2]) <= 0xffffffff)
+            diagnostic = { phase: match[1]!, code: Number(match[2]) }
+          line = ''
+        } else if (line !== undefined) {
+          line = byte < 128 && line.length < 80 ? line + String.fromCharCode(byte) : undefined
         }
       }
-    }
+    })
     child.on('error', fail)
     child.stdin.on('error', fail)
     child.stdout.on('error', fail)
+    function nativeEnded(error: Error) {
+      // Preserve the first cause, but let native diagnostics and the process
+      // close arrive. An error or EOF cannot prove rollback or source close.
+      if (failure) return
+      awaitingNativeClose = true
+      failure = { cause: error }
+      child.stdin.destroy()
+    }
     child.stdout.on('end', () => {
-      if (stage !== 'proved') fail(new Error('owned Job broker ended without proof'))
+      if (stage !== 'proved') nativeEnded(noProof)
     })
     child.stdout.on('data', (chunk: Buffer) => {
       if (failure) return
       try {
         for (const message of protocol.push(chunk)) {
-          if (message.type === 'error') throw new Error(`owned Job broker reported ${message.code}`)
+          if (message.type === 'error') {
+            nativeEnded(new Error(`owned Job broker reported ${message.code}`))
+            return
+          }
           if (
             stage === 'observing' &&
             message.type === 'phase' &&
@@ -279,19 +349,20 @@ export function runBroker(
       closed = true
       clearTimeout(timer)
       abortListener?.[Symbol.dispose]()
-      fixture?.closed({ code, signal, eof: child.stdout.readableEnded, receipt })
-      if (failure) {
-        reject(failure.cause)
-        return
-      }
-      try {
-        protocol.finish()
-        if (stage !== 'proved' || code !== 0 || signal !== null || !child.stdout.readableEnded)
-          throw new Error('owned Job broker exited without proof')
-        resolve()
-      } catch (error) {
-        reject(error)
-      }
+      child.stdin.destroy()
+      void inputClosed.then(() => {
+        try {
+          fixture?.closed({ code, signal, eof: child.stdout.readableEnded, receipt })
+          if (failure) throw failure.cause
+          protocol.finish()
+          if (stage !== 'proved' || code !== 0 || signal !== null || !child.stdout.readableEnded)
+            throw new Error('owned Job broker exited without proof')
+          resolve()
+        } catch (error) {
+          if (diagnostic) brokerFailureDiagnostics.set(operation, Object.freeze(diagnostic))
+          reject(failure ? failure.cause : error)
+        }
+      })
     })
     const abort = () => {
       if (stage === 'preparing') fail(admission!.reason)
@@ -301,14 +372,20 @@ export function runBroker(
       abort()
       return
     }
-    child.stdin.write(
-      JSON.stringify({
-        ...ticket,
-        ...(fixture ? { fixtureDirectory: fixture.directory } : {}),
-        action,
-        launchId,
-        secret: ticket.secret.toString('base64'),
-      }) + '\n',
-    )
+    const sendSpec = () => {
+      if (failure) return
+      child.stdin.write(
+        JSON.stringify({
+          ...ticket,
+          ...(fixture ? { fixtureDirectory: fixture.directory } : {}),
+          action,
+          launchId,
+          secret: ticket.secret.toString('base64'),
+        }) + '\n',
+      )
+    }
+    if (child.pid) sendSpec()
+    else child.once('spawn', sendSpec)
   })
+  return operation
 }

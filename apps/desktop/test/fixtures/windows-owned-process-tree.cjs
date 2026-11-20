@@ -21,6 +21,8 @@ setInterval(() => {
   if (!descendant && existsSync(join(dir, 'start-grandchild'))) {
     descendant = spawn(process.execPath, [__filename, 'grandchild', dir, nonce, stdio], {
       stdio,
+      // Inherit Holi's Jobs, but do not add Root's libuv kill-on-close Job.
+      detached: true,
       windowsHide: true,
     })
     descendant.on('error', () => process.exit(3))

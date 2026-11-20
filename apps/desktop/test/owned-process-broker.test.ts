@@ -1,7 +1,7 @@
 import { EventEmitter, once } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
-import { ownedJobLease } from '../src/main/owned-process-broker'
+import { brokerFailureDiagnostic, ownedJobLease } from '../src/main/owned-process-broker'
 import { createOwnedProtocol, type OwnedProcessMessage } from '../src/main/owned-process-protocol'
 
 const spawnBroker = vi.hoisted(() => vi.fn())
@@ -165,10 +165,12 @@ describe('retained native Job lease', () => {
 
 // The real parent controller talks to real authenticated frames. These children
 // model transport failure only; kernel rollback is covered by the Windows fixture.
-function wireChild() {
+function wireChild(stdin = new PassThrough()) {
   const child = Object.assign(new EventEmitter(), {
-    stdin: new PassThrough(),
+    pid: 6,
+    stdin,
     stdout: new PassThrough(),
+    stderr: new PassThrough(),
     kill: vi.fn(),
   })
   let spec!: Omit<typeof ticket, 'secret'> & { secret: string; action: Parameters<Broker>[1] }
@@ -238,7 +240,7 @@ async function preparingWireLease(signal?: AbortSignal) {
   expect(spawnBroker.mock.calls[0]?.[2]).toMatchObject({
     detached: true,
     windowsHide: true,
-    stdio: ['pipe', 'pipe', 'ignore'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   })
   return { job, commit, outcome, release, cleanup, recoveryStarted }
 }
@@ -312,6 +314,94 @@ describe('native commit observation protocol', () => {
       cleanup.child.emit('close', 0, null)
       await revoke
       expect(spawnBroker).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it.each(['ordinary error', 'hostile proxy'] as const)(
+    'keeps concurrent broker diagnostics separate for a shared abort reason (%s)',
+    async (kind) => {
+      const underlying = new Error('stop requested')
+      const target = Object.assign(new Error('activation revoked', { cause: underlying }), {
+        code: 'ABORT_ERR',
+      })
+      const trap = vi.fn(() => {
+        target.code = 'CORRUPTED'
+        target.message = 'changed by a proxy trap'
+        target.cause = undefined
+        throw new Error('abort reason must not be inspected')
+      })
+      const reason =
+        kind === 'hostile proxy'
+          ? new Proxy(target, {
+              get: trap,
+              has: trap,
+              getPrototypeOf: trap,
+              getOwnPropertyDescriptor: trap,
+              defineProperty: trap,
+              set: trap,
+              isExtensible: trap,
+              preventExtensions: trap,
+            })
+          : target
+      const owner = new AbortController()
+      const diagnostics = [
+        { phase: 'open-jobs', code: 5 },
+        { phase: 'scan-objects', code: 3221225506 },
+        undefined,
+      ]
+      const children = diagnostics.map(() => ({ release: wireChild(), cleanup: wireChild() }))
+      spawnBroker.mockReset()
+      for (const { release } of children) spawnBroker.mockReturnValueOnce(release.child)
+      for (const { cleanup } of children) spawnBroker.mockReturnValueOnce(cleanup.child)
+      const operations = children.map((wire) => {
+        const job = adoptedLease()
+        job.handedOff()
+        const commit = job.lease.commit(owner.signal)
+        // Compare identity in the rejection handler, without inspecting the
+        // reason or returning it as a potential thenable.
+        const rejected = commit.then(
+          () => false,
+          (error: unknown) => error === reason,
+        )
+        return { ...wire, job, commit, rejected }
+      })
+      await Promise.resolve()
+      expect(spawnBroker).toHaveBeenCalledTimes(operations.length)
+      owner.abort(reason)
+      const revokes = operations.map(({ job }) => job.lease.revoke())
+      for (const [i, { release, commit, rejected, cleanup }] of operations.entries()) {
+        expect(release.commands).toEqual([])
+        expect(release.child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL')
+        expect(brokerFailureDiagnostic(commit)).toBeUndefined()
+        const diagnostic = diagnostics[i]
+        const stderrClosed = once(release.child.stderr, 'close')
+        release.child.stderr.end(
+          diagnostic ? `HOLI_BROKER_FAILURE ${diagnostic.phase} ${diagnostic.code}\n` : '',
+        )
+        await stderrClosed
+        release.child.emit('close', null, 'SIGKILL')
+        expect(await rejected).toBe(true)
+        expect(brokerFailureDiagnostic(commit)).toStrictEqual(diagnostic)
+        await vi.waitFor(() => expect(cleanup.spec?.action).toBe('revoke'))
+        cleanup.ready()
+        cleanup.drained()
+        await cleanup.eof()
+        cleanup.child.emit('close', 0, null)
+        await revokes[i]
+      }
+      for (const [i, { job, commit }] of operations.entries()) {
+        expect(job.lease.commit()).toBe(commit)
+        expect(await job.lease.commit().catch((error: unknown) => error === reason)).toBe(true)
+        expect(brokerFailureDiagnostic(commit)).toStrictEqual(diagnostics[i])
+        const revoke = job.lease.revoke()
+        expect(revoke).toBe(revokes[i])
+        expect(brokerFailureDiagnostic(revoke)).toBeUndefined()
+      }
+      expect(trap).not.toHaveBeenCalled()
+      expect(target).toMatchObject({ message: 'activation revoked', code: 'ABORT_ERR' })
+      expect(target.cause).toBe(underlying)
+      expect(target).not.toHaveProperty('nativeFailure')
+      expect(spawnBroker).toHaveBeenCalledTimes(2 * operations.length)
     },
   )
 
@@ -456,8 +546,8 @@ const recovery = {
   guardActiveAfter: null,
 } as const
 
-async function pendingWire() {
-  const native = wireChild()
+async function pendingWire(stdin?: PassThrough) {
+  const native = wireChild(stdin)
   spawnBroker.mockReset().mockReturnValueOnce(native.child)
   let exited!: () => void
   const exit = new Promise<void>((resolve) => {
@@ -484,6 +574,76 @@ async function pendingWire() {
 }
 
 describe('pending recovery proof', () => {
+  it.each([
+    ['diagnostic before stdout EOF', 'EOF', true],
+    ['EPIPE before diagnostic and stdout close', 'EPIPE', true],
+    ['frozen EPIPE before diagnostic and stdout close', 'frozen EPIPE', true],
+    ['malformed and oversized diagnostics after EPIPE', 'EPIPE', false],
+  ] as const)(
+    'joins physical close and preserves the first cause: %s',
+    async (_case, transport, valid) => {
+      let finishClose!: () => void
+      const stdin = new PassThrough({
+        destroy(error, done) {
+          finishClose = () => done(error)
+        },
+      })
+      const { native, job, revoke, outcome } = await pendingWire(stdin)
+      const settled = vi.fn()
+      void outcome.then(settled)
+      const inputClose = new Promise<void>((resolve) => stdin.once('close', resolve))
+      const readableClose = Promise.all([
+        once(native.child.stdout, 'close'),
+        once(native.child.stderr, 'close'),
+      ])
+      const underlying = new Error('write failed')
+      const first = Object.assign(new Error('write EPIPE', { cause: underlying }), {
+        code: 'EPIPE',
+      })
+      if (transport === 'frozen EPIPE') Object.freeze(first)
+      if (transport !== 'EOF') {
+        // Queue EOF, then make the transport error win before the 'end' event.
+        native.child.stdout.end()
+        expect(native.child.stdout.readableEnded).toBe(false)
+        stdin.emit('error', first)
+      }
+      native.child.stderr.write(`untrusted diagnostic: ${JSON.stringify(native.spec)}\n`)
+      if (valid) {
+        native.child.stderr.write('HOLI_BROKER_FAILURE scan-objects ')
+        native.child.stderr.end('3221225506\n')
+      } else {
+        native.child.stderr.write(`HOLI_BROKER_FAILURE ${ticket.jobId} 5\n`)
+        native.child.stderr.write('HOLI_BROKER_FAILURE scan-objects 4294967296\n')
+        native.child.stderr.write(`HOLI_BROKER_FAILURE scan-objects ${'9'.repeat(100)}\n`)
+        native.child.stderr.end(`HOLI_BROKER_FAILURE scan-objects 5 ${ticket.jobHandle}\n`)
+      }
+      if (transport === 'EOF') await native.eof()
+      await readableClose
+      expect(settled).not.toHaveBeenCalled()
+      expect(native.child.kill).not.toHaveBeenCalled()
+      native.child.emit('close', 125, null)
+      await Promise.resolve()
+      expect(settled).not.toHaveBeenCalled() // ChildProcess close does not join stdin.
+      expect(brokerFailureDiagnostic(revoke)).toBeUndefined()
+      finishClose()
+      await inputClose
+      const cause = await outcome
+      if (transport === 'EOF')
+        expect(cause).toMatchObject({ message: 'owned Job broker ended without proof' })
+      else {
+        expect(cause).toBe(first)
+        expect(first).toMatchObject({ message: 'write EPIPE', code: 'EPIPE' })
+        expect(first.cause).toBe(underlying)
+      }
+      const metadata = valid ? { phase: 'scan-objects', code: 3221225506 } : undefined
+      expect(brokerFailureDiagnostic(revoke)).toStrictEqual(metadata)
+      expect(cause).not.toHaveProperty('nativeFailure')
+      expect(job.lease.revoke()).toBe(revoke)
+      await expect(job.lease.revoke()).rejects.toBe(cause)
+      expect(spawnBroker).toHaveBeenCalledTimes(1)
+    },
+  )
+
   it.each([
     [
       'both absent',

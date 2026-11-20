@@ -58,6 +58,9 @@ vi.mock('../../../main/plugin-api', async (load) => {
 vi.mock('electron', () => ({
   app: { getVersion: () => 'test' },
   nativeTheme: { shouldUseDarkColors: false },
+  // Holis imports these when it activates, even when no run asks for attention.
+  BrowserWindow: { getAllWindows: () => [] },
+  Notification: { isSupported: () => false },
 }))
 
 function unexpectedPidOperation(): never {
@@ -248,8 +251,10 @@ function onlyFailure(error: unknown, message: string): unknown {
   return group.errors[0]
 }
 
-function hostFailure(error: unknown) {
-  return onlyFailure(onlyFailure(error, 'plugin agent teardown failed'), 'agent teardown failed')
+function vaultStopCause(error: unknown, remote: Remote): unknown {
+  const plugin = onlyFailure(error, `plugins in ${remote} failed to stop`)
+  const agent = onlyFailure(plugin, 'plugin agent teardown failed')
+  return onlyFailure(agent, 'agent teardown failed')
 }
 
 function expectProof(error: unknown, expected: NonNullable<FakeNativeChild['failure']>) {
@@ -389,16 +394,21 @@ async function rig() {
       ).value,
   })
   cleanups.push(async () => {
-    const expected = native.children.flatMap((child) => (child.failure ? [child.failure] : []))
-    if (expected.length === 0) await host.stopAll()
-    else {
-      const error = await rejected(host.stopAll())
-      expect(expected).toHaveLength(1)
-      expectProof(
-        hostFailure(onlyFailure(error, 'one or more plugin lifetimes failed to stop')),
-        expected[0]!,
-      )
+    const failures = native.children.flatMap((child) =>
+      child.failure ? [{ cwd: child.cwd, proof: child.failure }] : [],
+    )
+    if (failures.length === 0) {
+      await host.stopAll()
+      return
     }
+    const error = await rejected(host.stopAll())
+    expect(failures).toHaveLength(1)
+    const { cwd, proof } = failures[0]!
+    const remote = remotes.find((remote) => dirname(cwd) === scratch[remote])
+    if (remote === undefined) throw new Error('Failed receipt has no originating vault')
+    const scoped = onlyFailure(error, 'one or more plugin lifetimes failed to stop')
+    expectProof(vaultStopCause(scoped, remote), proof)
+    expect(await rejected(host.stop(remote))).toBe(scoped)
   })
   await host.reconcile(vaults[A], 'open')
   await host.reconcile(vaults[B], 'open')
@@ -480,10 +490,16 @@ function httpCall(bridge: BridgeServer, token: string, argv: string[]) {
   })
 }
 
-async function cliRefuses(f: Fixture, remote: Remote, verb: string, ...args: string[]) {
-  const reply = await f.http(remote, 'agent', verb, ...args)
+async function cliRefuses(
+  f: Fixture,
+  remote: Remote,
+  namespace: string,
+  verb: string,
+  ...args: string[]
+) {
+  const reply = await f.http(remote, namespace, verb, ...args)
   expect(reply.status).toBe(400)
-  expect(reply.body.split('\n')[0]).toBe(`holi: no such command: agent ${verb}`)
+  expect(reply.body.split('\n')[0]).toBe(`holi: no such command: ${namespace} ${verb}`)
 }
 
 async function httpRows(f: Fixture, remote: Remote) {
@@ -602,7 +618,7 @@ describe.skipIf(process.platform !== 'win32')(
       ])
       safeArgs(child.args)
       for (const remote of remotes)
-        await cliRefuses(f, remote, 'launch', 'CLI must not launch', 'answer')
+        await cliRefuses(f, remote, 'agent', 'launch', 'CLI must not launch', 'answer')
       expect(native.children).toHaveLength(1)
     })
 
@@ -629,7 +645,7 @@ describe.skipIf(process.platform !== 'win32')(
           }),
         ])
         expect(job.child.cwd).toBe(join(f.scratch[job.remote], job.id))
-        await cliRefuses(f, job.remote, 'job', 'owned job', 'run')
+        await cliRefuses(f, job.remote, 'agent', 'job', 'owned job', 'run')
       }
       expect(native.children).toHaveLength(2)
       for (const job of [a, b]) {
@@ -764,13 +780,15 @@ describe.skipIf(process.platform !== 'win32')(
       expect(child.stopRequests).toBe(1)
       expect(child.closed).toBe(false)
       expect(child.stdout.writableEnded || child.stderr.writableEnded).toBe(false)
-      expect(await f.rows(A)).toEqual([
+      const failedRows = [
         expect.objectContaining({ id, state: 'idle', outcome: 'failed', error: proofMessage }),
-      ])
+      ]
+      expect(await f.rows(A)).toEqual(failedRows)
       child.endOutput()
       child.close()
       child.releaseResources()
       expect(await rejected(f.call(A, 'agent.stop', { id }))).toBe(original)
+      expect(await f.rows(A)).toEqual(failedRows)
     })
 
     it('retains a receipt failure through repeated stop and blocked restart while the other vault remains usable', async () => {
@@ -792,11 +810,20 @@ describe.skipIf(process.platform !== 'win32')(
       const stop = () => rejected(f.call(A, 'agent.stop', { id: job.id }))
       const original = expectProof(await stop(), expected)
       expect(await stop()).toBe(original)
-      const error = await rejected(f.host.stop(A))
-      const sticky = onlyFailure(error, `plugins in ${A} failed to stop`)
-      expect(hostFailure(sticky)).toBe(original)
-      expect(await rejected(f.host.reconcile(f.vaults[A], 'open'))).toBe(sticky)
-      expect(await rejected(f.host.stop(A))).toBe(sticky)
+      expect(await httpRows(f, A)).toEqual([
+        expect.objectContaining({
+          id: job.id,
+          state: 'idle',
+          outcome: 'failed',
+          error: proofMessage,
+        }),
+      ])
+      // Scope stop caches the outer error. The still-open job's stop returned
+      // the original typed error, which must remain inside that wrapper.
+      const scoped = await rejected(f.host.stop(A))
+      expect(expectProof(vaultStopCause(scoped, A), expected)).toBe(original)
+      expect(await rejected(f.host.reconcile(f.vaults[A], 'open'))).toBe(scoped)
+      expect(await rejected(f.host.stop(A))).toBe(scoped)
       await expect(f.call(A, 'agent.sessions')).rejects.toThrow('no such method: agent.sessions')
       await expect(
         f.call(A, 'agent.job', {
@@ -806,7 +833,7 @@ describe.skipIf(process.platform !== 'win32')(
           scope: { read: [], write: ['same.md'] },
         }),
       ).rejects.toThrow('no such method: agent.job')
-      await cliRefuses(f, A, 'sessions', '--json')
+      await cliRefuses(f, A, 'agent', 'sessions', '--json')
       expect(native.children).toHaveLength(1)
       expect(job.child.resourcesReleased).toBe(false)
 
@@ -833,21 +860,26 @@ describe.skipIf(process.platform !== 'win32')(
         [B, 'B'],
       ] as const) {
         await writeFile(join(f.vaults[remote].root, 'same.md'), `document ${label}`)
-        definitions.set(
-          remote,
-          await f.call<HoliSummary>(remote, 'holis.create', {
-            name: 'Fixture reviewer',
-            allow: ['Read(same.md)'],
-          }),
-        )
+        const definition = await f.call<HoliSummary>(remote, 'holis.create', {
+          name: 'Fixture reviewer',
+          allow: ['Read(same.md)'],
+        })
+        expect(definition).toMatchObject({ status: 'new', provider: 'claude' })
+        definitions.set(remote, definition)
+        const { id, fingerprint } = definition
+        if (fingerprint === undefined) throw new Error('Created Holi has no approval fingerprint')
+        await cliRefuses(f, remote, 'holis', 'create', 'Fixture reviewer')
+        await cliRefuses(f, remote, 'holis', 'approve', id, fingerprint)
+        await cliRefuses(f, remote, 'holis', 'send', id, 'same.md')
       }
-      const send = (remote: Remote) =>
-        f.call(remote, 'holis.send', { holi: definitions.get(remote)!.id, path: 'same.md' })
+      const send = (remote: Remote, path = 'same.md') =>
+        f.call(remote, 'holis.send', { holi: definitions.get(remote)!.id, path })
       const approve = (remote: Remote) => {
         const { id, fingerprint } = definitions.get(remote)!
         return f.call(remote, 'holis.approve', { holi: id, fingerprint })
       }
       expect(definitions.get(A)!.path).toBe(definitions.get(B)!.path)
+      expect(definitions.get(A)!.fingerprint).toBe(definitions.get(B)!.fingerprint)
       await expect(send(A)).rejects.toThrow('not approved on this machine yet')
       expect(await approve(A)).toMatchObject({ status: 'approved', provider: 'claude' })
       await expect(send(B)).rejects.toThrow('not approved on this machine yet')
@@ -857,38 +889,46 @@ describe.skipIf(process.platform !== 'win32')(
       // Distinct document names make a leaked same-id row observable in HTTP JSON.
       await writeFile(join(f.vaults[B].root, 'other.md'), 'document B')
       expect(await send(A)).toEqual({ sessionId: claudeId })
-      expect(
-        await f.call(B, 'holis.send', { holi: definitions.get(B)!.id, path: 'other.md' }),
-      ).toEqual({ sessionId: claudeId })
+      expect(await send(B, 'other.md')).toEqual({ sessionId: claudeId })
       const launches = native.claude.filter(({ args }) => args[0] === '--bg')
       expect(launches).toHaveLength(2)
       const persisted = JSON.parse(
         await readFile(join(f.userData, 'holis.json'), 'utf8'),
       ) as unknown
+      const configFor = (remote: Remote) =>
+        join(f.userData, 'agent-config', agentConfigSlug(remote))
+      const claudeRows = (name: string): SessionSummary[] => [
+        { id: claudeId, provider: 'claude', name, state: 'idle', conversationId: threadId },
+      ]
       for (const [remote, path, name] of [
         [A, 'same.md', 'Fixture reviewer · same'],
         [B, 'other.md', 'Fixture reviewer · other'],
       ] as const) {
         const root = f.vaults[remote].root
-        const config = join(f.userData, 'agent-config', agentConfigSlug(remote))
-        const [launch] = launches.filter(({ cwd }) => cwd === root)
-        expect(launch?.config).toBe(config)
-        expect(launch?.args).toContain('--allowedTools=Read(same.md)')
-        expect(launch?.args.slice(-2)).toEqual(['--', expect.stringContaining(path)])
-        safeArgs(launch!.args)
-        expect(await httpRows(f, remote)).toEqual([
-          { id: claudeId, provider: 'claude', name, state: 'idle', conversationId: threadId },
-        ])
+        const scopedLaunches = launches.filter(({ cwd }) => cwd === root)
+        expect(scopedLaunches).toHaveLength(1)
+        const launch = scopedLaunches[0]!
+        expect(launch.config).toBe(configFor(remote))
+        expect(launch.args).toContain('--allowedTools=Read(same.md)')
+        expect(launch.args.slice(-2)).toEqual(['--', `Work on ${path}.`])
+        safeArgs(launch.args)
+        expect(await httpRows(f, remote)).toEqual(claudeRows(name))
+        await cliRefuses(f, remote, 'agent', 'stop', claudeId)
         expect(persisted).toHaveProperty([remote, definitions.get(remote)!.path], {
           approved: definitions.get(remote)!.fingerprint,
           runs: [expect.objectContaining({ jobId: claudeId, path })],
         })
       }
       await f.host.stop(A)
+      expect(native.claude.filter(({ args }) => args[0] === 'stop')).toEqual([
+        { args: ['stop', claudeId], cwd: f.vaults[A].root, config: configFor(A) },
+      ])
       expect(native.background.has(f.vaults[A].root)).toBe(false)
       expect(native.background.has(f.vaults[B].root)).toBe(true)
+      await cliRefuses(f, A, 'agent', 'sessions', '--json')
       await f.host.reconcile(f.vaults[A], 'open')
       expect(await httpRows(f, A)).toEqual([])
+      expect(await httpRows(f, B)).toEqual(claudeRows('Fixture reviewer · other'))
       expect(await f.call(A, 'holis.list')).toEqual([
         expect.objectContaining({
           status: 'approved',

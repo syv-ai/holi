@@ -88,8 +88,9 @@ describe.skipIf(process.platform !== 'win32')('Windows owned-process native cont
   )
 
   acceptance('rejects wrong-secret AUTH on the private pipe', 'wrong-auth', async (fixture) => {
+    await fixture.prepareNative()
     fixture.launch()
-    await fixture.tap.injectedOnSocket()
+    await fixture.injectedOnSocket()
     const result = await fixture.result()
     fixture.originalUnconfirmed(result.verdict)
     const helperFrames = await fixture.wrongAuthClosure()
@@ -115,7 +116,7 @@ describe.skipIf(process.platform !== 'win32')('Windows owned-process native cont
     expect(fixture.current()).toBe('pending')
     expect(fixture.tap.injected).toBe(0)
     expect(fixture.stop()).toBe(true)
-    await fixture.tap.injectedOnSocket()
+    await fixture.injectedOnSocket()
     const result = await fixture.result()
     expect(fixture.tap.parentConnections).toBe(1)
     expect(fixture.tap.injected).toBe(1)

@@ -334,7 +334,18 @@ try {
       [Console]::Out.WriteLine((@{error=$failure.Message} | ConvertTo-Json -Compress))
     }
   }
-} catch { [HoliWitness]::Stop('command-failure'); [Console]::Error.WriteLine($_.Exception.Message) }
+} catch {
+  # Publish the bounded command failure before waking the native cleanup owner,
+  # which may finish the drain and exit this process immediately.
+  $stage = [string]$r.op
+  if ($stage -cnotmatch '^[a-z][a-z-]{2,30}$') { $stage = 'unknown-op' }
+  $errorCode = $_.Exception.GetBaseException().Message
+  if ($errorCode -cnotmatch '^[a-z][a-z-]{2,40}(:[0-9]+)?$') { $errorCode = 'native-command-failed' }
+  try {
+    [Console]::Error.WriteLine("witness-command-failure:$($stage):$errorCode")
+    [Console]::Error.Flush()
+  } finally { [HoliWitness]::Stop('command-failure') }
+}
 finally {
   [HoliWitness]::Stop('command-failure')
   [void][HoliWitness]::JoinCleanup()
@@ -405,6 +416,7 @@ class WitnessClient implements WindowsOwnedProcessWitness {
   private buffer = ''
   private stderrBuffer = ''
   private diagnostics = ''
+  private nativeCommandFailure?: Error
   private readonly nativeUndrained: string[] = []
   private queue: Promise<unknown> = Promise.resolve()
   private closing?: Promise<void>
@@ -438,7 +450,9 @@ class WitnessClient implements WindowsOwnedProcessWitness {
       // Unexpected death must reject any current command, but an expected
       // native close is not a new client error.
       if ((!this.closing && !this.joining) || this.pending || !this.ready.current)
-        this.fail(new Error(`witness closed (${code ?? signal ?? 'unknown'})`))
+        this.fail(
+          this.nativeCommandFailure ?? new Error(`witness closed (${code ?? signal ?? 'unknown'})`),
+        )
     })
   }
 
@@ -479,6 +493,9 @@ class WitnessClient implements WindowsOwnedProcessWitness {
       const line = this.stderrBuffer.slice(0, end).trim()
       this.stderrBuffer = this.stderrBuffer.slice(end + 1)
       if (line.startsWith('witness-undrained:')) this.nativeUndrained.push(line)
+      const command = /^witness-command-failure:([a-z-]+):([a-z-]+(?::\d+)?)$/.exec(line)
+      if (command)
+        this.nativeCommandFailure ??= new Error(`witness ${command[1]} failed (${command[2]})`)
       const match = /^witness-cleanup:([a-z-]+):(drained|failed)$/.exec(line)
       if (match && !this.nativeCleanup) {
         this.nativeCleanup = { reason: match[1]!, drained: match[2] === 'drained' }

@@ -1,11 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-if ($loadWin32) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
@@ -32,6 +32,9 @@ public static class ControlFixture {
   [DllImport("kernel32.dll", SetLastError=true)] static extern SafeWaitHandle OpenProcess(uint rights, bool inherit, int pid);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(SafeWaitHandle process, out long birth, out long exit, out long kernel, out long user);
   [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(SafeWaitHandle process, uint ms);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+  static extern bool QueryFullProcessImageNameW(SafeWaitHandle process, uint flags, StringBuilder path, ref uint size);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(SafeWaitHandle process, out uint code);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsProcessInJob(SafeWaitHandle process, IntPtr job, out bool member);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool DuplicateHandle(SafeWaitHandle process, IntPtr source, IntPtr self, out IntPtr duplicate, uint access, bool inherit, uint options);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
@@ -127,6 +130,33 @@ public static class ControlFixture {
     Require(GetProcessTimes(process,out created,out exit,out kernel,out user),"creation-time");
     return created.ToString(CultureInfo.InvariantCulture);
   }
+  static SafeWaitHandle helper;
+  public static string HoldHelper(int helperPid, string image, string expectedBirth) {
+    Require(helper==null,"helper-already-held");
+    // SYNCHRONIZE | QUERY_LIMITED_INFORMATION. The competing client can
+    // observe the helper's birth/exit but has no termination authority.
+    var candidate=OpenProcess(0x101000,false,helperPid);
+    try {
+      Require(!candidate.IsInvalid,"open-helper");
+      var path=new StringBuilder(32768); uint size=(uint)path.Capacity;
+      Require(QueryFullProcessImageNameW(candidate,0,path,ref size),"helper-image-query");
+      Require(String.Equals(path.ToString(),image,StringComparison.OrdinalIgnoreCase),"helper-image-mismatch");
+      string birth=BirthOf(candidate);
+      Require(String.IsNullOrEmpty(expectedBirth) || birth==expectedBirth,"helper-birth-mismatch");
+      Require(WaitForSingleObject(candidate,0)==WaitTimeout,"helper-not-live");
+      helper=candidate; candidate=null;
+      return birth;
+    } finally { if(candidate!=null) candidate.Dispose(); }
+  }
+  public static uint HelperExit() {
+    Require(helper!=null && WaitForSingleObject(helper,0)==0,"helper-not-exited");
+    uint code;
+    Require(GetExitCodeProcess(helper,out code),"helper-exit-query");
+    return code;
+  }
+  public static void CloseHelper() {
+    if(helper!=null) { helper.Dispose(); helper=null; }
+  }
   public static HandleResult Inspect(int rootPid, string birth, string target, string positive) {
     string wanted=Device+Target(target);
     Require(Regex.IsMatch(positive,"^holi-test-probe-[a-f0-9]{32}$"),"invalid-positive-control");
@@ -175,7 +205,6 @@ public static class ControlFixture {
   }
 }
 '@
-}
 
 function Find-Root([string]$image, [string]$nonce, [int]$helper) {
   if (![IO.Path]::IsPathRooted($image) -or $nonce -cnotmatch '^[0-9a-f]{32}$' -or $helper -le 0) { throw 'invalid-root-query' }
@@ -196,10 +225,17 @@ function Find-Root([string]$image, [string]$nonce, [int]$helper) {
 [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 [Console]::Out.WriteLine('ready')
-while (($line = [Console]::In.ReadLine()) -ne $null) {
-  try {
+try {
+  while (($line = [Console]::In.ReadLine()) -ne $null) {
     $request = ConvertFrom-Json -InputObject $line
     $result = switch ($request.op) {
+      'hold-helper' {
+        $birth = [ControlFixture]::HoldHelper([int]$request.pid, [string]$request.image, [string]$request.expectedBirth)
+        $candidate = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $([int]$request.pid)" -ErrorAction Stop
+        if (!$candidate -or $candidate.ParentProcessId -ne [int]$request.parentPid) { throw 'helper-parent-mismatch' }
+        @{birth=$birth}
+      }
+      'helper-exit' { @{code=[ControlFixture]::HelperExit()} }
       'snapshot' { Find-Root ([string]$request.image) ([string]$request.nonce) ([int]$request.helperPid) }
       'first' { [ControlFixture]::Compete([string]$request.target, $true) }
       'second' { [ControlFixture]::Compete([string]$request.target, $false) }
@@ -207,10 +243,12 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
       default { throw 'invalid-op' }
     }
     [Console]::Out.WriteLine((ConvertTo-Json -InputObject $result -Compress))
-  } catch {
-    $code = $_.Exception.GetBaseException().Message
-    if ($code -notmatch '^[a-z][a-z0-9-]{2,40}$') { $code = 'native-fixture-failed' }
-    [Console]::Out.WriteLine((ConvertTo-Json -InputObject @{error=$code} -Compress))
-    exit 1
   }
+} catch {
+  $code = $_.Exception.GetBaseException().Message
+  if ($code -notmatch '^[a-z][a-z0-9-]{2,40}$') { $code = 'native-fixture-failed' }
+  [Console]::Out.WriteLine((ConvertTo-Json -InputObject @{error=$code} -Compress))
+  exit 1
+} finally {
+  [ControlFixture]::CloseHelper()
 }

@@ -68,10 +68,11 @@ function fixture(
         { platform: 'win32', resolve: () => null },
       ) as ReturnType<typeof spawnOwnedLaunch>)
     : spawnOwnedLaunch(plan, options, process.pid, retained)
-  const spec = JSON.parse(String(child.stdin.read()))
+  const input = child.stdin.read()
+  const spec = input === null ? undefined : JSON.parse(String(input))
   const helper = createOwnedProtocol({
-    launchId: spec.launchId,
-    secret: Buffer.from(spec.secret, 'base64'),
+    launchId: spec?.launchId ?? 'unstarted',
+    secret: spec ? Buffer.from(spec.secret, 'base64') : Buffer.alloc(32),
     role: 'helper',
   })
   function send(message: OwnedProcessMessage) {
@@ -363,6 +364,9 @@ describe('owned spawn timeout', () => {
   it('clears the timeout on definitive async spawn failure', async () => {
     const f = fixture({ timeout: 100_000 }, false, null)
     const [helperFile] = vi.mocked(spawn).mock.calls[0]!
+    // Node can expose a stdin wrapper for a failed spawn. Writing to it can
+    // report EPIPE first and mask the actual asynchronous ENOENT at the join.
+    expect(f.spec === undefined).toBe(true)
     const error = Object.assign(new Error('failed to spawn'), {
       code: 'ENOENT',
       syscall: `spawn ${helperFile}`,
@@ -467,8 +471,10 @@ it('strips AbortSignal, sends cooperative STOP, and still accepts native EMPTY',
 
 function observeCleanup() {
   const child = Object.assign(new ChildProcess(), {
+    pid: 43,
     stdin: new PassThrough(),
     stdout: new PassThrough(),
+    stderr: new PassThrough(),
   })
   vi.mocked(spawn).mockReturnValueOnce(child)
   return () => JSON.parse(String(child.stdin.read()))
@@ -478,8 +484,10 @@ describe('retained EMPTY resource join', () => {
   it.each([false, true])('joins actual broker close in exec (lost receipt: %s)', async (lost) => {
     const f = fixture({}, true, hello.helperPid, undefined, true)
     const broker = Object.assign(new ChildProcess(), {
+      pid: 43,
       stdin: new PassThrough(),
       stdout: new PassThrough(),
+      stderr: new PassThrough(),
     })
     vi.mocked(spawn).mockReturnValueOnce(broker)
     const control = ownedLaunchControl(f.launched)!

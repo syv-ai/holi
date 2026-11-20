@@ -63,11 +63,18 @@ public static partial class HoliOwnedProcess {
   [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
-  [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int which);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GetStdHandle(int which);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern uint GetFileType(IntPtr handle);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern bool ReadFile(IntPtr handle,[Out] byte[] bytes,int count,out int read,IntPtr overlapped);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern bool WriteFile(IntPtr handle,byte[] bytes,int count,out int written,IntPtr overlapped);
   [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
   [DllImport("kernel32.dll",SetLastError=true)] static extern bool DuplicateHandle(IntPtr source,IntPtr handle,IntPtr target,out IntPtr duplicate,uint access,bool inherit,uint options);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
   static void Check(bool ok) { if (!ok) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); }
+  static Exception NativeQueryFailure(int code) {
+    Fail("nativeQueryFailure");
+    return new System.ComponentModel.Win32Exception(code);
+  }
   static string JobName(string id) { return @"Local\holi-owned-job-"+id; }
   static IntPtr NewJob(string name=null) {
     SetLastError(0);
@@ -91,7 +98,7 @@ public static partial class HoliOwnedProcess {
   static bool KillOnCloseArmed(IntPtr job) {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
     if(!QueryLimits(job,9,out limits,(uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)),IntPtr.Zero))
-      throw Fail("nativeQueryFailure");
+      throw NativeQueryFailure(Marshal.GetLastWin32Error());
     return (limits.BasicLimitInformation.LimitFlags&KillOnJobClose)!=0;
   }
   static string RemoteHandleToken(IntPtr handle) {
@@ -104,7 +111,8 @@ public static partial class HoliOwnedProcess {
   static void CloseSource(IntPtr source) {
     IntPtr temporary;
     // DUPLICATE_CLOSE_SOURCE closes even on failure. Never try the same slot twice.
-    Check(DuplicateHandle(parent,source,GetCurrentProcess(),out temporary,0,false,3));
+    try { Check(DuplicateHandle(parent,source,GetCurrentProcess(),out temporary,0,false,3)); }
+    catch(Exception e) { RememberBrokerFailure(e); throw; }
     Close(temporary);
   }
   static void Free(IntPtr ptr) { if(ptr!=IntPtr.Zero) Marshal.FreeHGlobal(ptr); }
@@ -117,7 +125,7 @@ public static partial class HoliOwnedProcess {
   static uint ActiveProcesses(IntPtr job) {
     JOBOBJECT_BASIC_ACCOUNTING_INFORMATION counts;
     if(!QueryInformationJobObject(job,1,out counts,(uint)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION)),IntPtr.Zero))
-      throw Fail("nativeQueryFailure");
+      throw NativeQueryFailure(Marshal.GetLastWin32Error());
     return counts.ActiveProcesses;
   }
   static uint DrainJob(IntPtr job,IntPtr queryHandle,long deadline) {

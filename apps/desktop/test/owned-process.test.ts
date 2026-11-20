@@ -1,15 +1,19 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve, sep } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { getSystemErrorName, promisify } from 'node:util'
 import { describe, expect, it, onTestFailed } from 'vitest'
 import { launchPlan } from '../src/main/launch'
 import { spawnOwnedProgram } from '../src/main/owned-process'
-import { ownedLaunchControl, spawnOwnedLaunch } from '../src/main/owned-process-launch'
+import {
+  ownedLaunchControl,
+  spawnOwnedLaunch,
+  windowsAdapterLaunch,
+} from '../src/main/owned-process-launch'
 import {
   spawnOwnedLaunchWithHandoffFault,
   spawnOwnedLaunchWithNativeQueryFault,
@@ -345,35 +349,58 @@ describe('spawnOwnedProgram', () => {
     const previousSystemRoot = process.env.SystemRoot
     process.env.SystemRoot = dir
     let child: ReturnType<typeof spawnOwnedProgram> | undefined
-    let childErrors = 0
+    let spawnEvents = 0
+    const spawnErrors: Error[] = []
+    const observedErrors: Error[] = []
     let stdinErrors = 0
     try {
+      const helper = windowsAdapterLaunch(process.env)
+      expect(helper.file).toBe(join(dir, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'))
+      // Keep the actual helper cwd valid: ENOENT must be for the missing image,
+      // not a stale cwd or an error produced during Root planning.
+      await mkdir(dirname(helper.file), { recursive: true })
+      await expect(lstat(helper.file)).rejects.toMatchObject({ code: 'ENOENT' })
       child = spawnOwnedProgram(process.execPath, ['-e', 'process.exit(0)'], {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env },
       })
-      child.on('error', () => childErrors++)
-      child.stdin!.on('error', () => stdinErrors++)
+      child.on('spawn', () => spawnEvents++)
+      child.on('error', (error) => {
+        spawnErrors.push(error)
+        observedErrors.push(error)
+      })
+      for (const stream of [child.stdin, child.stdout, child.stderr]) {
+        stream!.on('error', (error) => {
+          if (stream === child!.stdin) stdinErrors++
+          observedErrors.push(error)
+        })
+      }
       const original = child.ownedCompletion
       const joined = joinOwnedProgram(child, 'win32')
-      await expect(completion(child)).rejects.toMatchObject({ code: 'ENOENT' })
+      const missingImage = { code: 'ENOENT', syscall: `spawn ${helper.file}`, path: helper.file }
+      await expect(completion(child)).rejects.toMatchObject(missingImage)
       const code = await fixtureChild(child).join(teardownMs, 'missing helper')
       expect(getSystemErrorName(code!)).toBe('ENOENT')
+      expect(spawnEvents).toBe(0)
+      expect(spawnErrors).toHaveLength(1)
+      expect(spawnErrors[0]).toMatchObject(missingImage)
       expect(original).toBeDefined()
       expect(child.ownedCompletion).toBe(original)
       expect(await within(original!, teardownMs, 'definitive missing helper receipt')).toBe(
         'not-started',
       )
-      expect(await within(joined, teardownMs, 'missing helper join')).toMatchObject({
-        ownership: 'not-started',
-        code: null,
-        signal: null,
-        error: { code: 'ENOENT' },
+      const result = await within(joined, teardownMs, 'missing helper join')
+      expect(result).toMatchObject({ ownership: 'not-started', code: null, signal: null })
+      // Join preserves the first command/stdio error. Windows can deliver a
+      // real stdin EPIPE before the OS spawn error; it cannot certify no-create.
+      expect(result.error).toBe(observedErrors[0])
+      expect(result.error).toMatchObject({
+        code: result.error === spawnErrors[0] ? 'ENOENT' : 'EPIPE',
       })
       const previousStdinErrors = stdinErrors
       child.stdin!.emit('error', Object.assign(new Error('test input failure'), { code: 'EPIPE' }))
       expect(stdinErrors).toBe(previousStdinErrors + 1)
-      expect(childErrors).toBe(1)
+      expect(spawnErrors).toHaveLength(1)
     } finally {
       if (previousSystemRoot === undefined) delete process.env.SystemRoot
       else process.env.SystemRoot = previousSystemRoot

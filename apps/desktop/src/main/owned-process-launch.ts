@@ -489,10 +489,16 @@ export function launchOwned(
     // Stdin is not the control transcript. Request cooperative stop on the private channel.
     child.kill('SIGTERM')
   })
-  child.stdin?.write(`${spec}\n`)
   const keepsStdinOpen =
     options.stdio === 'pipe' || (Array.isArray(options.stdio) && options.stdio[0] === 'pipe')
-  if (!keepsStdinOpen) child.stdin?.end()
+  const sendSpec = () => {
+    child.stdin?.write(`${spec}\n`)
+    if (!keepsStdinOpen) child.stdin?.end()
+  }
+  // Failed Windows spawns can still expose a stdin wrapper. Do not write to
+  // it before admission and let a speculative EPIPE mask the actual spawn error.
+  if (child.pid) sendSpec()
+  else child.once('spawn', sendSpec)
   transport.connect()
   return child as PrivateOwnedChild
 }

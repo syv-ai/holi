@@ -1,11 +1,55 @@
 export const brokerSource = String.raw`
 public static partial class HoliOwnedProcess {
-  static void BrokerSend(Stream output,string json,long deadline) {
+  static string brokerPhase="open-pipes", brokerFailurePhase;
+  static uint brokerFailureCode;
+  static void RememberBrokerFailure(Exception error) {
+    if(brokerFailurePhase!=null) return;
+    brokerFailurePhase=brokerPhase;
+    var native=error as System.ComponentModel.Win32Exception;
+    if(native!=null) brokerFailureCode=unchecked((uint)native.NativeErrorCode);
+  }
+  static IntPtr BrokerPipe(int which) {
+    var pipe=GetStdHandle(which);
+    if(pipe==new IntPtr(-1)) Check(false);
+    if(pipe==IntPtr.Zero) throw Fail("controlFailure");
+    uint type=GetFileType(pipe);
+    if(type==0) Check(false);
+    if(type!=3) throw Fail("controlFailure"); // FILE_TYPE_PIPE only.
+    return pipe;
+  }
+  static int BrokerReadBytes(IntPtr pipe,byte[] bytes) {
+    int read;
+    if(ReadFile(pipe,bytes,bytes.Length,out read,IntPtr.Zero)) return read;
+    int error=Marshal.GetLastWin32Error();
+    if(error==109 || error==232) return 0; // EOF on the synchronous pipe.
+    throw new System.ComponentModel.Win32Exception(error);
+  }
+  static void BrokerWriteBytes(IntPtr pipe,byte[] bytes) {
+    int written;
+    Check(WriteFile(pipe,bytes,bytes.Length,out written,IntPtr.Zero));
+    if(written!=bytes.Length) throw new IOException("short broker write");
+  }
+  static void ReportBrokerFailure() {
+    // Never forward PowerShell output, exception text, or transcript bytes.
+    // This is a bounded diagnostic, not an authenticated ownership receipt.
+    var bytes=Utf8.GetBytes("HOLI_BROKER_FAILURE "+brokerFailurePhase+" "+brokerFailureCode.ToString(CultureInfo.InvariantCulture)+"\n");
+    try { Task.Run(()=>BrokerWriteBytes(BrokerPipe(-12),bytes)).Wait(PollMs*5); } catch {}
+  }
+  static Record BrokerRead(IntPtr input,long deadline) {
+    return ReadAvailable(deadline,()=>Task.Run(()=>BrokerReadBytes(input,readBuffer)));
+  }
+  static void BrokerSend(IntPtr output,string json,long deadline) {
     byte[] bytes=Encode(json);
     try {
-      AwaitIo(Task.Run(()=>output.Write(bytes,0,bytes.Length)),deadline);
+      AwaitIo(Task.Run(()=>BrokerWriteBytes(output,bytes)),deadline);
       sendSeq++;
-    } catch { throw Fail("controlFailure"); }
+    } catch(Exception e) { RememberBrokerFailure(e); throw Fail("controlFailure"); }
+  }
+  static uint DrainBrokerJob(IntPtr job,long deadline) {
+    // With the producer joined there is no new admission. A successful native
+    // zero query makes terminating an already terminated Job unnecessary.
+    if(Clock.ElapsedMilliseconds>=deadline) throw Fail("nativeQueryFailure");
+    return ActiveProcesses(job)==0 ? 0 : DrainJob(job,job,deadline);
   }
   static void DrainWithGuard(IntPtr job,IntPtr guard) {
     // Try BOTH operations, even when one fails. The drain has its own budget
@@ -14,7 +58,7 @@ public static partial class HoliOwnedProcess {
       bool armed=false;
       try { SetKillOnClose(guard,true); armed=true; } catch {}
       try {
-        DrainJob(job,job,Clock.ElapsedMilliseconds+CleanupMs);
+        DrainBrokerJob(job,Clock.ElapsedMilliseconds+CleanupMs);
         return;
       } catch {
         // No zero receipt. The verified guard still protects the tree on
@@ -25,13 +69,16 @@ public static partial class HoliOwnedProcess {
       }
     }
   }
-  static void ObserveCommit(Stream input,Stream output,string binding,IntPtr job,IntPtr guard,long deadline) {
+  static void ObserveCommit(IntPtr input,IntPtr output,string binding,IntPtr job,IntPtr guard,long deadline) {
     try {
+      brokerPhase="clear-guard";
       if(!ParentAlive()) throw Fail("parentUnavailable");
       if(!KillOnCloseArmed(guard)) throw Fail("nativeQueryFailure");
       SetKillOnClose(guard,false);
+      brokerPhase="send-committed";
       BrokerSend(output,"{\"type\":\"committed\""+binding,deadline);
-      var observed=ReadAvailable(deadline,input);
+      brokerPhase="read-observed";
+      var observed=BrokerRead(input,deadline);
       // OBSERVED uses the acknowledge record on this one broker transcript.
       // Its MAC binds direction, sequence and the fresh launch/Job/guard IDs.
       if(!Exact(observed,"type") || !Object.Equals(observed["type"],"acknowledge")) throw Fail("protocolFailure");
@@ -39,7 +86,8 @@ public static partial class HoliOwnedProcess {
       if(!ParentAlive()) throw Fail("parentUnavailable");
       // Native decision: the held parent was alive with authenticated evidence
       // of the guard clear, and had a provider owner before granting release.
-    } catch {
+    } catch(Exception e) {
+      RememberBrokerFailure(e);
       if(failure==null) failure="helperFailure";
       try { DrainWithGuard(job,guard); } catch {} // Preserve the first failure, not an EMPTY receipt.
       throw;
@@ -48,9 +96,10 @@ public static partial class HoliOwnedProcess {
   static IntPtr OpenRecoveryJob(string id) {
     const uint QueryAndTerminate=0x4|0x8;
     IntPtr job=OpenJobObjectW(QueryAndTerminate,false,JobName(id));
-    if(job==IntPtr.Zero && Marshal.GetLastWin32Error()!=2) // ERROR_FILE_NOT_FOUND alone proves absence.
-      throw Fail("nativeQueryFailure");
-    return job;
+    if(job!=IntPtr.Zero) return job;
+    int error=Marshal.GetLastWin32Error();
+    if(error==2) return IntPtr.Zero; // ERROR_FILE_NOT_FOUND alone proves absence.
+    throw NativeQueryFailure(error);
   }
   sealed class JobMatches {
     public IntPtr JobSlot, GuardSlot;
@@ -66,7 +115,7 @@ public static partial class HoliOwnedProcess {
     if(CompareObjectHandles(left,right)) return true;
     int error=Marshal.GetLastWin32Error();
     if(error==0 || error==1656) return false; // Definite mismatch / ERROR_NOT_SAME_OBJECT.
-    throw Fail("nativeQueryFailure");
+    throw NativeQueryFailure(error);
   }
   static JobMatches ScanParentJobs(IntPtr job,IntPtr guard,long deadline) {
     const int ProcessHandleInformation=51;
@@ -81,7 +130,8 @@ public static partial class HoliOwnedProcess {
         uint used;
         int status=NtQueryInformationProcess(parent,ProcessHandleInformation,buffer,size,out used);
         if(status!=0) {
-          if(status!=LengthMismatch && status!=BufferTooSmall && status!=BufferOverflow) throw Fail("nativeQueryFailure");
+          if(status!=LengthMismatch && status!=BufferTooSmall && status!=BufferOverflow)
+            throw NativeQueryFailure(status);
           size=Math.Max(size*2,used);
           continue;
         }
@@ -99,8 +149,9 @@ public static partial class HoliOwnedProcess {
             if(slot.ToInt64()<=0) throw Fail("nativeQueryFailure");
             IntPtr copy;
             if(!DuplicateHandle(parent,slot,self,out copy,0,false,2)) {
-              if(Marshal.GetLastWin32Error()==6) continue; // Unrelated slot vanished; ours cannot.
-              throw Fail("nativeQueryFailure");
+              int error=Marshal.GetLastWin32Error();
+              if(error==6) continue; // Unrelated slot vanished; ours cannot.
+              throw NativeQueryFailure(error);
             }
             try {
               if(job!=IntPtr.Zero && SameKernelObject(copy,job)) {
@@ -126,40 +177,53 @@ public static partial class HoliOwnedProcess {
     receipt[prefix+"ActiveBefore"]=activeBefore;
     receipt[prefix+"ActiveAfter"]=activeAfter;
   }
-  static void RecoverPending(Stream output,string jobId,string guardId,int pid,string birth,long deadline) {
+  static void RecoverPending(IntPtr output,string jobId,string guardId,int pid,string birth,long deadline) {
     IntPtr job=IntPtr.Zero, guard=IntPtr.Zero;
     try {
       // Node has frozen adoption and joined the producer's physical exit. A
       // missing named object now means no reference survived, not a zero query.
+      brokerPhase="open-jobs";
       job=OpenRecoveryJob(jobId);
       guard=OpenRecoveryJob(guardId);
+      brokerPhase="scan-objects";
       var before=ScanParentJobs(job,guard,deadline);
       if(before.JobCount!=(job==IntPtr.Zero ? 0 : 1) || before.GuardCount!=(guard==IntPtr.Zero ? 0 : 1) ||
          (job!=IntPtr.Zero && before.JobSlot==before.GuardSlot)) throw Fail("nativeQueryFailure");
+      brokerPhase="drain-jobs";
       uint? jobActive=job==IntPtr.Zero ? (uint?)null : ActiveProcesses(job);
       uint? guardActive=guard==IntPtr.Zero ? (uint?)null : ActiveProcesses(guard);
-      uint? jobZero=job==IntPtr.Zero ? (uint?)null : DrainJob(job,job,deadline);
-      uint? guardZero=guard==IntPtr.Zero ? (uint?)null : DrainJob(guard,guard,deadline);
+      uint? jobZero=job==IntPtr.Zero ? (uint?)null : DrainBrokerJob(job,deadline);
+      uint? guardZero=guard==IntPtr.Zero ? (uint?)null : DrainBrokerJob(guard,deadline);
       ScanBudget(deadline);
       // Only this frozen lease can close these matched slots; the producer is
       // gone and the held parent cannot change epoch. Other slots can churn.
       // CLOSE_SOURCE can consume on FALSE. Never retry (even after lost proof).
+      brokerPhase="close-sources";
       try { if(job!=IntPtr.Zero) CloseSource(before.JobSlot); }
       finally { if(guard!=IntPtr.Zero) CloseSource(before.GuardSlot); }
-      var after=job==IntPtr.Zero && guard==IntPtr.Zero ? before : ScanParentJobs(job,guard,deadline);
+      brokerPhase="rescan-objects";
+      var after=ScanParentJobs(job,guard,deadline);
       if(after.JobCount!=0 || after.GuardCount!=0) throw Fail("nativeQueryFailure");
       var receipt=new Record{{"type","recovered"},{"action","recover"},{"jobId",jobId},{"commitGuardId",guardId},
         {"parentPid",pid},{"parentBirth",birth}};
       RecoveryEvidence(receipt,"job",job,before.JobCount,after.JobCount,jobActive,jobZero);
       RecoveryEvidence(receipt,"guard",guard,before.GuardCount,after.GuardCount,guardActive,guardZero);
+      brokerPhase="send-terminal";
       BrokerSend(output,Json.Serialize(receipt),deadline);
     } finally { Close(guard); Close(job); }
   }
   public static int RunBroker() {
-    IntPtr job=IntPtr.Zero, guard=IntPtr.Zero;
-    Stream output=null;
+    IntPtr job=IntPtr.Zero, guard=IntPtr.Zero, output=IntPtr.Zero;
+    bool canSendError=false;
     try {
-      var data=(Record)Json.DeserializeObject(ReadSpec());
+      // libuv gives the detached broker synchronous byte pipes. Use the handles
+      // directly: .NET console wrappers may substitute Stream.Null or silently
+      // report success on a broken pipe, neither of which proves a frame write.
+      var input=BrokerPipe(-10);
+      output=BrokerPipe(-11);
+      brokerPhase="read-spec";
+      var one=new byte[1]; // No read-ahead across the spec/frame boundary.
+      var data=(Record)Json.DeserializeObject(ReadSpec(()=>BrokerReadBytes(input,one)==0 ? -1 : one[0]));
       launchId=(string)data["launchId"]; secret=DecodeBase64((string)data["secret"]);
       string jobId=Guid.ParseExact((string)data["jobId"],"D").ToString("D");
       string guardId=Guid.ParseExact((string)data["commitGuardId"],"D").ToString("D");
@@ -170,12 +234,20 @@ public static partial class HoliOwnedProcess {
       int pid=(int)data["parentPid"];
       string expectedBirth=(string)data["parentBirth"];
       // SYNCHRONIZE | DUP_HANDLE | (QUERY_INFORMATION for class 51; otherwise LIMITED_INFORMATION).
+      brokerPhase="open-parent";
+      if(secret.Length!=32 || pid<=0) throw Fail("protocolFailure");
       parent=OpenProcess(pending ? 0x00100440u : 0x00101040u,false,pid);
+      if(parent==IntPtr.Zero) Check(false);
+      brokerPhase="validate-parent";
       long birth, ignored;
-      if(secret.Length!=32 || pid<=0 || parent==IntPtr.Zero || !ParentAlive() || GetProcessId(parent)!=(uint)pid ||
-         !GetProcessTimes(parent,out birth,out ignored,out ignored,out ignored) ||
-         birth.ToString(CultureInfo.InvariantCulture)!=expectedBirth)
+      if(!ParentAlive()) throw Fail("parentUnavailable");
+      uint heldPid=GetProcessId(parent);
+      if(heldPid==0) Check(false);
+      Check(GetProcessTimes(parent,out birth,out ignored,out ignored,out ignored));
+      if(heldPid!=(uint)pid || birth.ToString(CultureInfo.InvariantCulture)!=expectedBirth)
         throw Fail("parentUnavailable");
+      canSendError=true;
+      brokerPhase="open-jobs";
       IntPtr source=IntPtr.Zero, guardSource=IntPtr.Zero;
       if(pending) {
         if(data.ContainsKey("jobHandle") || data.ContainsKey("commitGuardHandle")) throw Fail("protocolFailure");
@@ -187,11 +259,11 @@ public static partial class HoliOwnedProcess {
         Check(DuplicateHandle(parent,source,self,out job,0,false,2));
         Check(DuplicateHandle(parent,guardSource,self,out guard,0,false,2));
       }
-      var input=Console.OpenStandardInput();
-      output=Console.OpenStandardOutput();
       long setup=Clock.ElapsedMilliseconds+SetupMs;
+      brokerPhase="send-ready";
       BrokerSend(output,"{\"type\":\"brokerReady\""+binding,setup);
-      var grant=ReadAvailable(setup,input);
+      brokerPhase="read-grant";
+      var grant=BrokerRead(input,setup);
       if(!Exact(grant,"type","action","jobId","commitGuardId") || !Object.Equals(grant["type"],"grant") ||
          !Object.Equals(grant["jobId"],jobId) || !Object.Equals(grant["commitGuardId"],guardId) ||
          !Object.Equals(grant["action"],action)) throw Fail("protocolFailure");
@@ -205,20 +277,28 @@ public static partial class HoliOwnedProcess {
         // Past the decision, loss of the parent no longer revokes the provider.
         // Keep its original slots intact until it learns the decision and then
         // explicitly authorizes close. This is housekeeping, not another vote.
+        brokerPhase="send-decision";
         BrokerSend(output,"{\"type\":\"phase\",\"phase\":\"commit-observed\",\"rootPid\":null,\"state\":\"clear\"}",deadline);
-        var close=ReadAvailable(deadline,input);
+        brokerPhase="read-close";
+        var close=BrokerRead(input,deadline);
         if(!Exact(close,"type","jobId","commitGuardId") || !Object.Equals(close["type"],"closeSources") ||
            !Object.Equals(close["jobId"],jobId) || !Object.Equals(close["commitGuardId"],guardId)) throw Fail("protocolFailure");
-      } else if(action=="revoke") DrainWithGuard(job,guard);
-      else throw Fail("protocolFailure");
+      } else if(action=="revoke") {
+        brokerPhase="drain-jobs";
+        DrainWithGuard(job,guard);
+      } else throw Fail("protocolFailure");
       // Even if the first close fails, attempt the other original slot once.
+      brokerPhase="close-sources";
       try { CloseSource(source); } finally { CloseSource(guardSource); }
       Close(guard); guard=IntPtr.Zero;
       Close(job); job=IntPtr.Zero;
+      brokerPhase="send-terminal";
       BrokerSend(output,"{\"type\":\""+(action=="revoke"?"drained":"released")+"\""+binding,deadline);
       return 0;
-    } catch {
-      if(output!=null) {
+    } catch(Exception e) {
+      RememberBrokerFailure(e);
+      ReportBrokerFailure();
+      if(canSendError) {
         try { BrokerSend(output,"{\"type\":\"error\",\"code\":\""+(failure??"helperFailure")+"\"}",Clock.ElapsedMilliseconds+PollMs*5); }
         catch {}
       }
