@@ -32,7 +32,9 @@
     "smoke:community-hints:native": "node scripts/run-community-hints-native-smoke.mjs",
     "smoke:github-storage:native": "node scripts/run-github-storage-native-smoke.mjs",
     "smoke:github-storage:typecheck": "tsc --noEmit --project tsconfig.github-storage-native-smoke.json",
-    "smoke:community-hints:typecheck": "tsc --noEmit --project tsconfig.native-smoke.json"
+    "smoke:community-hints:typecheck": "tsc --noEmit --project tsconfig.native-smoke.json",
+    "smoke:browser-frame-addressing:native": "node scripts/run-browser-frame-addressing-smoke.mjs",
+    "smoke:browser-frame-addressing:typecheck": "tsc --noEmit --project tsconfig.browser-frame-addressing-smoke.json"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
