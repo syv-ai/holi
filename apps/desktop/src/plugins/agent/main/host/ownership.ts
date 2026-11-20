@@ -100,12 +100,14 @@ export interface LaunchOwnership {
   retire(): void
 }
 
-export interface FencedOwnership extends LaunchOwnership {
+export interface CallerOwnership extends LaunchOwnership {
   /** Finalization has started, but output, copy-back or provider release may be pending. */
   beginCallerFinalization(): void
   /** After physical proof and successful caller work, before deleting its source. */
   settleCaller(): void
 }
+
+export type FencedOwnership = CallerOwnership
 
 interface RecoveryScratch {
   root: string
@@ -139,14 +141,18 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
     rmSync(path, { recursive: true, force: true })
   }
 
-  // Fenced caller receipts are deliberately not offered to other consumers.
-  function allocate(kind: 'fenced', id: string, proof?: 'native' | 'explicit'): FencedOwnership
+  // Only these consumers publish a separate phase for caller settlement.
+  function allocate(
+    kind: 'fenced' | 'pi',
+    id: string,
+    proof?: 'native' | 'explicit',
+  ): CallerOwnership
   function allocate(kind: Consumer, id: string, proof?: 'native' | 'explicit'): LaunchOwnership
   function allocate(
     kind: Consumer,
     id: string,
     proof: 'native' | 'explicit' = 'native',
-  ): FencedOwnership {
+  ): CallerOwnership {
     signal.throwIfAborted()
     if (!ready.has(kind)) throw new Error(`Recover ${kind} ownership before allocating.`)
     if (!label.test(id)) throw new Error('Invalid agent ownership consumer ID.')
@@ -165,6 +171,7 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
     let done = false
     let finalizing = false
     let callerSettled = false
+    const phased = kind === 'fenced' || kind === 'pi'
     return {
       ownershipRecordPath: proof === 'native' ? join(native, name) : undefined,
       nonLaunch() {
@@ -178,13 +185,13 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
         publish(path, 'failed', header + Buffer.from(String(error)).subarray(0, 1500).toString())
       },
       beginCallerFinalization() {
-        if (kind !== 'fenced' || done) throw new Error('Cannot begin fenced finalization.')
+        if (!phased || done) throw new Error(`Cannot begin ${kind} finalization.`)
         if (finalizing || failed) return
         publish(path, 'caller-finalizing', header + 'FINALIZING\n')
         finalizing = true
       },
       settleCaller() {
-        if (!finalizing || failed || done) throw new Error('Cannot settle fenced finalization.')
+        if (!finalizing || failed || done) throw new Error(`Cannot settle ${kind} finalization.`)
         if (callerSettled) return
         publish(path, 'caller-settled', header + 'SETTLED\n')
         callerSettled = true
@@ -192,8 +199,8 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
       retire() {
         if (done) return
         if (failed) throw new Error('Cannot retire failed agent ownership.')
-        if (kind === 'fenced' && !callerSettled && !(nonLaunch && !finalizing))
-          throw new Error('Cannot retire fenced ownership without caller settlement.')
+        if (phased && !callerSettled && !(nonLaunch && !finalizing))
+          throw new Error(`Cannot retire ${kind} ownership without caller settlement.`)
         publish(path, 'settled', header + 'SETTLED\n')
         retire(parent, name)
         done = true
@@ -235,10 +242,12 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
         if (!matchLink) throw new Error(`Retaining ${vault.remote} ${kind}: invalid link ${path}.`)
         const [, previous, proof, id] = matchLink
         if (previous === generation) retain(name, 'Current activation.')
+        const phased = kind === 'fenced' || kind === 'pi'
+        const consumer = kind === 'pi' ? 'Pi' : kind === 'fenced' ? 'Fenced' : kind
         for (const file of readdirSync(path)) {
           if (
             !['link', 'settled', 'nonlaunch', 'failed', 'native'].includes(file) &&
-            !(kind === 'fenced' && ['caller-finalizing', 'caller-settled'].includes(file))
+            !(phased && ['caller-finalizing', 'caller-settled'].includes(file))
           )
             retain(name, 'Unknown or partial ownership evidence.')
         }
@@ -250,14 +259,14 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
           retain(name, 'Invalid caller settlement.')
         if (preflight !== undefined && preflight !== header + 'NONLAUNCH\n')
           retain(name, 'Invalid non-launch evidence.')
-        const finalizing = kind === 'fenced' ? read(path, 'caller-finalizing') : undefined
-        const caller = kind === 'fenced' ? read(path, 'caller-settled') : undefined
+        const finalizing = phased ? read(path, 'caller-finalizing') : undefined
+        const caller = phased ? read(path, 'caller-settled') : undefined
         if (finalizing !== undefined && finalizing !== header + 'FINALIZING\n')
-          retain(name, 'Invalid fenced finalization phase.')
+          retain(name, `Invalid ${consumer} finalization phase.`)
         if (caller !== undefined && (caller !== header + 'SETTLED\n' || finalizing === undefined))
-          retain(name, 'Invalid fenced caller settlement.')
+          retain(name, `Invalid ${consumer} caller settlement.`)
         if (finalizing !== undefined && caller === undefined)
-          retain(name, 'Fenced caller finalization is pending.')
+          retain(name, `${consumer} caller finalization is pending.`)
         if (settled === undefined && preflight === undefined) {
           if (proof === 'native') {
             const result = inspectPosixOwnership(join(path, 'native', name))
@@ -265,11 +274,13 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
             // Native SETTLED proves physical absence only. The distinct cold
             // kernel-absence path still works if caller finalization never began.
             if (result.state === 'confirmed' && result.proof === 'settled') {
-              if (kind === 'pi') retain(name, 'Missing Pi output and caller settlement.')
+              if (kind === 'pi' && caller === undefined)
+                retain(name, 'Missing Pi output and caller settlement.')
               if (kind === 'fenced' && caller === undefined)
                 retain(name, 'Missing fenced output and caller settlement.')
             }
-          } else retain(name, 'No explicit physical settlement.')
+          } else if (!(kind === 'pi' && caller !== undefined))
+            retain(name, 'No explicit physical settlement.')
         }
         links.add(id!)
         confirmed.push(name)

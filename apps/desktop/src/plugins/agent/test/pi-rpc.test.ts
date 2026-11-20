@@ -600,6 +600,55 @@ describe('PiRpcRun', () => {
     },
   )
 
+  it.skipIf(process.platform === 'win32')(
+    'bounds stdout-first EOF while the root stays live',
+    async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const rpc = fake(false)
+      let rejectPhysical!: (cause: Error) => void
+      const drain = vi.fn(
+        () =>
+          new Promise<void>((_, reject) => {
+            rejectPhysical = reject
+          }),
+      )
+      const failure = vi.fn()
+      const run = new PiRpcRun({
+        bin: 'pi',
+        cwd: '/v',
+        onStats: vi.fn(),
+        onDrainFailure: failure,
+        spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: { drain } }),
+      })
+      const done = vi.fn()
+      void run.prompt('go').then(done, done)
+      rpc.stdout.end('{"type":"agent_settled"}\n')
+      await tick()
+      expect(rpc.commands.map(({ type }) => type)).toEqual(['prompt', 'get_session_stats'])
+      await vi.advanceTimersByTimeAsync(4999)
+      expect(drain).not.toHaveBeenCalled()
+      expect(done).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      const cause: unknown = failure.mock.calls[0]?.[0]
+      expect(cause).toMatchObject({
+        message: expect.stringMatching(/timed out waiting for root exit/),
+      })
+      expect(done).toHaveBeenCalledExactlyOnceWith(cause)
+      expect(drain).toHaveBeenCalledOnce()
+      await expect(run.prompt('late')).rejects.toThrow('not available')
+      const settle = vi.fn()
+      void run.drained.then(settle, settle)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(settle).not.toHaveBeenCalled() // Native still owns its physical deadline.
+      const physicalFailure = new Error('no physical proof')
+      rejectPhysical(physicalFailure)
+      await expect(run.physicalDrain).rejects.toBe(physicalFailure)
+      await expect(run.close()).rejects.toBe(cause)
+      expect(drain).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
   it('does not retroactively fail a completed live turn for an idle malformed tail', async () => {
     const rpc = fake(false)
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => rpc.child })

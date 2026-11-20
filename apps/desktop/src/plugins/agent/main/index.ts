@@ -265,6 +265,7 @@ export const agentMain: MainPlugin = {
         terminals,
         // Its turns pause sync and are recorded like a background session's.
         bracket: (id, edge) => sessions.bracket(id, edge),
+        protectPtyTurn: sessions.protectPtyTurn,
         binDir: ctx.binDir,
         onChange: (list) => {
           own = list
