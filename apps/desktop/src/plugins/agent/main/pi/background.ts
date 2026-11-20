@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { buildPiEnv } from './env'
 import type { SessionSummary } from '../claude/listing'
-import type { LaunchOwnership } from '../host/ownership'
+import type { CallerOwnership } from '../host/ownership'
 import type { ManagedTurn } from '../host/turn-coordinator'
 import { posixLaunchNonAdmission } from '../../../../main/plugin-api'
 import { PiRpcConfigurationError, PiRpcRun, type PiRunResult } from './rpc'
@@ -48,7 +48,7 @@ interface PiJob {
 }
 
 interface PiOwnership {
-  record?: LaunchOwnership
+  record?: CallerOwnership
   failure?: { cause: unknown }
 }
 
@@ -83,7 +83,7 @@ export interface PiBackgroundDeps {
   binDir?: () => string
   env?: (binDir: string | undefined) => Record<string, string>
   /** Publishes the activation's durable link before spawn. Injected children require explicit proof. */
-  allocateOwnership?: (id: string, proof: 'native' | 'explicit') => LaunchOwnership
+  allocateOwnership?: (id: string, proof: 'native' | 'explicit') => CallerOwnership
   spawn?: ConstructorParameters<typeof PiRpcRun>[0]['spawn']
 }
 
@@ -217,6 +217,8 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         await job.run.physicalDrain
       }
       await joinTurns(job)
+      if (job.run.wasNotAdmitted) owner.record?.nonLaunch()
+      owner.record?.settleCaller()
       owner.record?.retire()
     } catch (error) {
       throw failOwnership(owner, error)
@@ -229,7 +231,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     clearRetention(job)
     if (job.removal) return job.removal
     job.removal = Promise.resolve().then(async () => {
-      void job.run.close()
+      if (process.platform === 'win32') void job.run.close()
       await job.settlement
       if (jobs.get(job.id) === job) {
         jobs.delete(job.id)
@@ -240,6 +242,9 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         }
       }
     })
+    // Store the removal first: synchronous process callbacks must see the
+    // stopped owner. POSIX must close the GO gate before startup can resume.
+    if (process.platform !== 'win32') void job.run.close()
     void job.removal.catch(recordFailure)
     return job.removal
   }
@@ -379,6 +384,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         ownershipRecordPath: ownership.record?.ownershipRecordPath,
         activationSignal: deps.activationSignal,
         onDrainFailure: (error) => failOwnership(ownership, error),
+        beforeDrain: () => ownership.record?.beginCallerFinalization(),
         bin,
         cwd,
         env,
@@ -440,7 +446,10 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     }
     void job.settlement.catch(() => {})
     jobs.set(id, job)
-    if (invalidated) return { ok: false as const, message: 'No vault is open.' }
+    if (invalidated) {
+      if (process.platform !== 'win32') void retire(job)
+      return { ok: false as const, message: 'No vault is open.' }
+    }
     // A child without a receipt is already closed to RPC admission, but its
     // job stays indexed so teardown can surface that same failure.
     if (!run.isAlive) await run.drained
@@ -460,14 +469,15 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     invalidated = true
     remote = null
     root = null
-    // Close admission now, then let a synchronous spawn interrupted by abort
-    // finish registering its child (or failed-start receipt) before scanning.
+    // The deferred pass also joins registration interrupted by a reentrant
+    // invalidation. It is not the POSIX stop edge for known owners.
     leavePromise = Promise.resolve().then(async () => {
       await Promise.allSettled([...jobs.values()].map(retire))
       while (work.size) await Promise.allSettled([...work])
       throwFailures(failures)
     })
     void leavePromise.catch(() => {})
+    if (process.platform !== 'win32') for (const job of jobs.values()) void retire(job)
     return leavePromise
   }
 

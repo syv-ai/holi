@@ -103,6 +103,8 @@ export interface PtySessionsDeps {
   terminals: Pick<AgentTerminals, 'open' | 'close' | 'paste' | 'list'>
   /** The vault's turn bracket: sync pauses and the turn is recorded. */
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<unknown>
+  /** Keep an ordinary open POSIX turn until its PTY proves physical absence. */
+  protectPtyTurn?(id: string): (() => void) | undefined
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
   /** The list changed. */
@@ -208,6 +210,8 @@ interface Session {
   copying?: boolean
   draining?: boolean
   forgetTurn?: boolean
+  protectTurn: boolean
+  forgetWithProof?: () => void
   exitWork?: Promise<void>
   closeWork?: Promise<void>
 }
@@ -354,6 +358,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     if (s.draining) return
     s.draining = true
     s.forgetTurn = s.signals.inTurn
+    if (s.forgetTurn && s.protectTurn) s.forgetWithProof = deps.protectPtyTurn?.(s.id)
     s.signals.dispose()
   }
 
@@ -575,8 +580,18 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       ...(rows === undefined ? {} : { rows }),
       ...(notice === undefined ? {} : { notice }),
       ...(onStartupCleanup === undefined ? {} : { onStartupCleanup }),
-      onDraining: () => {
-        if (session !== null) fenceAdmission(session)
+      onDraining: (physical) => {
+        const s = session
+        if (s === null) return
+        fenceAdmission(s)
+        if (s.forgetWithProof && physical) {
+          // Output or its callbacks can still fail. The process receipt alone
+          // permits forgetting, never recording a successful turn.
+          void trackFinalizer(
+            owner,
+            physical.then(s.forgetWithProof, () => {}),
+          )
+        }
       },
       onInput: (data) => {
         // A sign-in's turns are Claude Code's own: nothing typed is read.
@@ -600,7 +615,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         if (s.exitWork !== undefined) return s.exitWork
         fenceAdmission(s)
         const forget = () => {
-          if (!s.forgetTurn) return
+          if (!s.forgetTurn || s.forgetWithProof) return
           s.forgetTurn = false
           runBracket(owner, id, 'forget')
         }
@@ -715,6 +730,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       persistConversation: resume !== 'pick' && fence === undefined,
       attention: false,
       signals,
+      protectTurn: process.platform !== 'win32' && fence === undefined,
     }
     sessions.set(id, session)
     // A session started on a prompt is in its first turn already.

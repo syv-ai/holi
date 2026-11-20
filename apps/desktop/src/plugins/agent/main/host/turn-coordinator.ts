@@ -24,7 +24,8 @@
  *
  * A session leaves the set on `Stop`, on a confirmed registry `idle`, on exit,
  * or on its own safety cap. The cap is a backstop: escaping a permission prompt
- * fires no `Stop` hook at all. A managed turn leaves only on its owner's proof.
+ * fires no `Stop` hook at all. A managed turn or a PTY turn being drained
+ * leaves only on its owner's proof.
  *
  * NOTE: no runtime `electron` import — this loads under vitest like the rest of
  * `agent/`.
@@ -146,6 +147,8 @@ export interface TurnCoordinator {
   /** The session died. It leaves the set at once and records nothing: a turn
    *  killed part-way has no end of its own. */
   forget(sessionId: string): void
+  /** Protect only the open PTY turn. The returned handle requires physical proof. */
+  protectPtyTurn(sessionId: string): (() => void) | undefined
   /** Wait for turn records and settle commits already entered by this vault. */
   drain(): Promise<void>
   /** The sessions currently mid-turn. A snapshot; mutating it changes nothing. */
@@ -163,6 +166,7 @@ interface Turn {
    *  start of it rather than racing it. */
   basePending: Promise<void>
   managed: boolean
+  ptyDraining?: true
   history?: {
     signal?: AbortSignal
     resolve(record: TurnRecord): void
@@ -444,7 +448,8 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     },
 
     end(sessionId) {
-      return turns.get(sessionId)?.managed ? Promise.resolve(null) : leave(sessionId, true)
+      const turn = turns.get(sessionId)
+      return turn?.managed || turn?.ptyDraining ? Promise.resolve(null) : leave(sessionId, true)
     },
 
     noteBusy(sessionId) {
@@ -454,7 +459,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
 
     noteIdle(sessionId) {
       const turn = turns.get(sessionId)
-      if (turn === undefined || turn.managed) return
+      if (turn === undefined || turn.managed || turn.ptyDraining) return
       const at = now()
       if (turn.idleSince === null) {
         turn.idleSince = at
@@ -466,8 +471,20 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     },
 
     forget(sessionId) {
-      // Session-host teardown cannot discard a managed writer without proof.
-      if (!turns.get(sessionId)?.managed) void leave(sessionId, false)
+      // Session-host teardown cannot discard a writer that now requires proof.
+      const turn = turns.get(sessionId)
+      if (!turn?.managed && !turn?.ptyDraining) void leave(sessionId, false)
+    },
+
+    protectPtyTurn(sessionId) {
+      const turn = turns.get(sessionId)
+      if (!turn || turn.managed || turn.ptyDraining) return
+      turn.ptyDraining = true
+      if (turn.safety !== null) clearTimeout(turn.safety)
+      turn.safety = null
+      return () => {
+        if (turns.get(sessionId) === turn) void leave(sessionId, false)
+      }
     },
 
     async drain() {

@@ -125,7 +125,7 @@ export function ptyLaunchCleanup(error: unknown): Promise<unknown> | undefined {
 export class AgentRuntime {
   private pty: PtyProcess | null = null
   private dataCbs: Array<(data: string) => void> = []
-  private drainingCbs: Array<() => void> = []
+  private drainingCbs: Array<(physical?: Promise<void>) => void> = []
   private draining = false
   private drainingErrors: unknown[] = []
   private exitCbs: Array<(e: AgentExit, signal?: AbortSignal) => void | Promise<void>> = []
@@ -182,7 +182,7 @@ export class AgentRuntime {
   }
 
   /** Stop admitting turn work now. Output and ownership can still be live. */
-  onDraining(cb: () => void): void {
+  onDraining(cb: (physical?: Promise<void>) => void): void {
     this.drainingCbs.push(cb)
   }
 
@@ -396,7 +396,7 @@ export class AgentRuntime {
     }
     for (const cb of this.drainingCbs) {
       try {
-        cb()
+        cb(this.physicalDrain)
       } catch (error) {
         this.drainingErrors.push(error)
         this.failed(error)

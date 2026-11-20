@@ -18,6 +18,7 @@ export interface PiRunResult {
 type PiTurnOutcome = Omit<PiRunResult, 'output' | 'model' | 'usage'>
 type PiStats = Parameters<NonNullable<PiRpcOptions['onStats']>>[0]
 const OUTPUT_DRAIN_MS = 5000
+const ROOT_EXIT_MS = 5000
 
 export class PiRpcConfigurationError extends Error {}
 
@@ -30,6 +31,8 @@ export interface PiRpcOptions {
   activationSignal?: AbortSignal
   /** Reports the first drainage failure even while physical cleanup is still pending. */
   onDrainFailure?: (error: unknown) => void
+  /** Publish the caller phase synchronously before POSIX physical drain. */
+  beforeDrain?: () => void
   model?: string
   system?: string
   /** A run with no tools at all, and nothing from the folder that could
@@ -83,6 +86,7 @@ export class PiRpcRun {
   private readonly child: PiChild
   private readonly onStats?: PiRpcOptions['onStats']
   private readonly onDrainFailure?: PiRpcOptions['onDrainFailure']
+  private readonly beforeDrain?: PiRpcOptions['beforeDrain']
   private drainFailure?: { cause: unknown }
   private readonly supervision?: ProcessGroupSupervision
   private closeSeen = false
@@ -92,6 +96,8 @@ export class PiRpcRun {
   private resolvePhysical!: () => void
   private rejectPhysical!: (error: unknown) => void
   private physicalComplete = false
+  private rootExitTimer?: ReturnType<typeof setTimeout>
+  private notAdmitted = false
   private outputTimer?: ReturnType<typeof setTimeout>
   private windowsStopTimer?: ReturnType<typeof setTimeout>
   private outputError?: Error
@@ -129,6 +135,11 @@ export class PiRpcRun {
     return !this.exited && !this.closed && !this.outputEnded
   }
 
+  /** The native adapter reported positive pre-GO non-admission. */
+  get wasNotAdmitted(): boolean {
+    return this.notAdmitted
+  }
+
   constructor(options: PiRpcOptions) {
     this.physicalDrain = new Promise((resolve, reject) => {
       this.resolvePhysical = resolve
@@ -147,6 +158,7 @@ export class PiRpcRun {
     this.maxLineBytes = options.maxLineBytes ?? 1024 * 1024
     this.onStats = options.onStats
     this.onDrainFailure = options.onDrainFailure
+    this.beforeDrain = options.beforeDrain
     if (options.model !== undefined) {
       const slash = options.model.indexOf('/')
       if (slash <= 0 || slash === options.model.length - 1) {
@@ -210,6 +222,13 @@ export class PiRpcRun {
         this.pendingStats = undefined
       }
       this.finishExitedTurn()
+      if (process.platform !== 'win32' && !this.exited && this.active) {
+        // No stats response can arrive after EOF. Give the root its own
+        // exit deadline, independent of the later native drain budget.
+        this.rootExitTimer = setTimeout(() => {
+          this.failOutput(new Error('Pi RPC timed out waiting for root exit after stdout end.'))
+        }, ROOT_EXIT_MS)
+      }
       this.settleOutputDrain()
     })
     this.child.stdout.once('close', () => {
@@ -226,10 +245,12 @@ export class PiRpcRun {
     this.child.stderr.on('error', () => {})
     this.child.stdin.on('error', (error: Error) => this.failInput(error))
     this.child.once('error', (error) => {
-      if (this.exited || this.closed) return
       const refusal = options.spawn === undefined ? posixLaunchNonAdmission(error) : undefined
-      if (refusal) this.startDrain(refusal.cleanup)
-      this.fail(error.message)
+      if (refusal) {
+        this.notAdmitted = true
+        this.startDrain(refusal.cleanup)
+      }
+      if (!this.exited && !this.closed) this.fail(error.message)
     })
     this.child.once('close', (code, signal) => {
       this.closeSeen = true
@@ -304,6 +325,8 @@ export class PiRpcRun {
 
   private rootExited(code: number | null, signal: NodeJS.Signals | null): void {
     this.exited = true
+    clearTimeout(this.rootExitTimer)
+    this.rootExitTimer = undefined
     clearTimeout(this.windowsStopTimer)
     this.windowsStopTimer = undefined
     this.exitError ??= `Pi RPC exited (${code ?? signal ?? 'unknown'})`
@@ -317,7 +340,8 @@ export class PiRpcRun {
 
   private finishExitedTurn(): void {
     if (!this.exited || !this.outputEnded || !this.active) return
-    this.finish(this.pendingOutcome ?? { status: 'failed', error: this.exitError })
+    if (this.drainFailure) this.takeCompletion()?.reject(this.drainFailure.cause)
+    else this.finish(this.pendingOutcome ?? { status: 'failed', error: this.exitError })
   }
 
   private settleOutputDrain(): void {
@@ -327,7 +351,8 @@ export class PiRpcRun {
     } else if (this.closeSeen && this.outputEnded) {
       clearTimeout(this.outputTimer)
       this.outputTimer = undefined
-      this.resolveDrained()
+      if (this.drainFailure) this.failDrain(this.drainFailure.cause)
+      else this.resolveDrained()
     } else {
       // Native owns the physical deadline. This budget is only for the
       // output events that can lag behind its successful receipt.
@@ -341,6 +366,15 @@ export class PiRpcRun {
   private startDrain(nonAdmissionCleanup?: Promise<void>): void {
     if (this.drainStarted) return
     this.drainStarted = true
+    if (process.platform !== 'win32') {
+      try {
+        this.beforeDrain?.()
+      } catch (error) {
+        // Record the caller fault, but never let it keep native admission
+        // open or stand in for the independent physical receipt.
+        this.rememberDrainFailure(error)
+      }
+    }
     try {
       const physical = nonAdmissionCleanup ?? this.supervision?.drain()
       if (physical) {
@@ -419,7 +453,8 @@ export class PiRpcRun {
   }
 
   private requireActive(): void {
-    if (this.exited || this.closed) throw new Error('Pi RPC process exited before the follow-up')
+    if (this.exited || this.closed || (process.platform !== 'win32' && this.outputEnded))
+      throw new Error('Pi RPC process exited before the follow-up')
     if (!this.active || this.settled) throw new Error('Pi RPC run is not active')
   }
 
@@ -633,6 +668,8 @@ export class PiRpcRun {
 
   private takeCompletion() {
     if (this.settled) return
+    clearTimeout(this.rootExitTimer)
+    this.rootExitTimer = undefined
     if (this.statsTimer) clearTimeout(this.statsTimer)
     this.statsTimer = undefined
     this.pendingOutcome = undefined

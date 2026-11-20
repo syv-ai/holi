@@ -1,7 +1,7 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { closeSync } from 'node:fs'
+import { closeSync, readFileSync } from 'node:fs'
 import {
   access,
   mkdir,
@@ -16,14 +16,28 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { expect, test, vi } from 'vitest'
 import { buildLeaseForTests } from '../../../../test/fixtures/posix-native-build'
-import { inspectPosixOwnership, preparePosixLaunch } from '../../../main/plugin-api'
+import {
+  inspectPosixOwnership,
+  ownedProcessDrain,
+  preparePosixLaunch,
+} from '../../../main/plugin-api'
+import { createPiBackground } from '../main/pi/background'
 import { activationOwnership } from '../main/host/ownership'
 import { agentScratchRoots } from '../main/host/scratch-roots'
 import { recoverFencedScratch } from '../main/host/fenced'
 import { PRESETS } from '../main/harness/record'
 import { activationHosts } from './fixtures/activation-hosts'
 
-const native = vi.hoisted(() => ({ helper: '', parent: '', fds: new Set<number>() }))
+const native = vi.hoisted(() => ({
+  helper: '',
+  parent: '',
+  fds: new Set<number>(),
+  onRead: undefined as ((value: string) => void) | undefined,
+  holdWrite: undefined as ((value: string) => boolean) | undefined,
+  onSpawn: undefined as
+    | ((child: ChildProcess & { [ownedProcessDrain]?: { drain(): Promise<void> } }) => void)
+    | undefined,
+}))
 vi.mock('electron', () => ({
   app: { getVersion: () => 'test' },
   nativeTheme: { shouldUseDarkColors: false },
@@ -31,6 +45,17 @@ vi.mock('electron', () => ({
 vi.mock('../../../main/posix-lease-executable', () => ({
   posixLeaseExecutable: () => native.helper,
 }))
+vi.mock('../../../main/plugin-api', async (original) => {
+  const api = await original<typeof import('../../../main/plugin-api')>()
+  return {
+    ...api,
+    spawnOwnedProgram: (...args: Parameters<typeof api.spawnOwnedProgram>) => {
+      const child = api.spawnOwnedProgram(...args)
+      native.onSpawn?.(child)
+      return child
+    },
+  }
+})
 vi.mock('node:fs', async (original) => {
   const fs = await original<typeof import('node:fs')>()
   return {
@@ -40,6 +65,21 @@ vi.mock('node:fs', async (original) => {
       if (native.parent && String(args[0]).startsWith(native.parent + '/holi-launch-'))
         native.fds.add(fd)
       return fd
+    },
+    readSync: (fd: number, buffer: Buffer, offset: number, length: number, position: null) => {
+      const read = fs.readSync(fd, buffer, offset, length, position)
+      if (read && native.fds.has(fd))
+        native.onRead?.(buffer.toString('utf8', offset, offset + read))
+      return read
+    },
+    writeSync: (fd: number, buffer: Buffer, offset: number, length: number) => {
+      if (
+        length === 1 &&
+        native.fds.has(fd) &&
+        native.holdWrite?.(buffer.toString('utf8', offset, offset + length))
+      )
+        return 0
+      return fs.writeSync(fd, buffer, offset, length)
     },
     closeSync: (fd: number) => {
       native.fds.delete(fd)
@@ -423,3 +463,217 @@ it('links a real Pi RPC process before provider entry and retires after Stop', a
     if (!stopped.ok) throw stopped.error
   }
 }, 15000)
+
+const journalIdentities = (text: string) =>
+  [...text.matchAll(/^(ROOT|REAPER|ANCHOR) (\d+)$/gm)].flatMap(([, role, value]) =>
+    role === 'ANCHOR' ? [Number(value)] : [Number(value), -Number(value)],
+  )
+
+it.each(['never drained', 'interrupted drain', 'native settled', 'caller settled'] as const)(
+  'cold-recovers a real Pi lease only with sufficient caller evidence (%s)',
+  async (phase) => {
+    const data = await realpath(await mkdtemp(join(tmpdir(), 'holi-cold-pi-phase-')))
+    const helper = buildLeaseForTests()
+    native.helper = helper.binary
+    native.parent = data
+    const vault = { root: data, remote: 'fixture/pi-phase' }
+    const controller = new AbortController()
+    const old = activationOwnership(data, vault, controller.signal)!
+    old.recover('pi')
+    const record = old.allocate('pi', 'test')
+    const path = record.ownershipRecordPath!
+    const launch = preparePosixLaunch('/bin/true', [], {
+      cwd: data,
+      directory: data,
+      ownershipRecordPath: path,
+      graceMs: 25,
+      stdio: 'ignore',
+    })
+    let child: ChildProcess | undefined
+    let exited: Promise<unknown> | undefined
+    let identities: number[] = []
+    let lostController = false
+    try {
+      child = spawn(launch.executable, launch.args, launch.options)
+      exited = once(child, 'exit')
+      void exited.catch(() => {})
+      await launch.bind(child.pid!)
+      identities = journalIdentities(await readFile(join(path, 'journal'), 'utf8'))
+      expect(identities).toHaveLength(5)
+      if (phase === 'interrupted drain' || phase === 'caller settled')
+        record.beginCallerFinalization()
+      if (phase === 'never drained' || phase === 'interrupted drain') {
+        // Main disappears before it can record physical settlement. The
+        // native anchor still owns EOF teardown; do not reconstruct signals.
+        lostController = true
+        for (const fd of native.fds) closeSync(fd)
+      } else {
+        await launch.drain()
+        if (phase === 'caller settled') record.settleCaller()
+      }
+      controller.abort()
+      await exited
+      await vi.waitFor(() => {
+        for (const pid of identities) absent(pid)
+      })
+      expect(inspectPosixOwnership(path)).toEqual({
+        state: 'confirmed',
+        proof: lostController ? 'kernel-absence' : 'settled',
+      })
+      const next = activationOwnership(data, vault, signal())!
+      if (phase === 'interrupted drain' || phase === 'native settled') {
+        expect(() => next.recover('pi')).toThrow(/Pi.*(pending|settlement)/)
+        await access(path)
+      } else {
+        next.recover('pi')
+        await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+    } finally {
+      if (!lostController) {
+        if (child?.pid !== undefined) await launch.drain()
+        else await launch.cancel('possibly-launched')
+      }
+      await exited
+      if (identities.length === 0) {
+        identities = journalIdentities(await readFile(join(path, 'journal'), 'utf8'))
+        if (child?.pid) identities.push(child.pid, -child.pid)
+      }
+      await vi.waitFor(() => {
+        for (const pid of identities) absent(pid)
+      })
+      expect(native.fds.size).toBe(0)
+      native.parent = ''
+      await rm(data, { recursive: true, force: true })
+      await rm(helper.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+it.each(
+  (['stop', 'leave'] as const).flatMap((route) =>
+    (['held START', 'held GO', 'queued GO'] as const).map((gate) => ({ route, gate })),
+  ),
+)(
+  'direct Pi $route revokes native admission at $gate',
+  async ({ route, gate }) => {
+    const data = await realpath(await mkdtemp(join(tmpdir(), 'holi-pi-gate-')))
+    const helper = buildLeaseForTests()
+    native.helper = helper.binary
+    native.parent = data
+    vi.stubEnv('TMPDIR', data)
+    const vault = { root: data, remote: 'fixture/pi-gate' }
+    const registry = activationOwnership(data, vault, signal())!
+    registry.recover('pi')
+    const marker = join(data, 'provider-ran')
+    const executable = join(data, 'fixture-pi')
+    let recordPath: string | undefined
+    let childPID: number | undefined
+    let nativeDrain: (() => Promise<void>) | undefined
+    let outputClosed: Promise<unknown> | undefined
+    let identities: number[] = []
+    const nonLaunch = vi.fn()
+    let goWrites = 0
+    let phaseAtDrain: string | undefined
+    const manager = createPiBackground({
+      // Direct Stop/leave: deliberately no activation-signal invalidation.
+      bin: () => executable,
+      allocateOwnership: (id, proof) => {
+        const record = registry.allocate('pi', id, proof)
+        recordPath = record.ownershipRecordPath!
+        return {
+          ...record,
+          nonLaunch: () => {
+            record.nonLaunch()
+            nonLaunch()
+          },
+        }
+      },
+      bracket: vi.fn(),
+      changed() {},
+    })
+    manager.setVault(vault.remote, vault.root)
+    try {
+      await writeFile(executable, `#!/bin/sh\nprintf ran > "${marker}"\n`, { mode: 0o700 })
+      native.onSpawn = (child) => {
+        childPID = child.pid
+        const supervision = child[ownedProcessDrain]
+        nativeDrain = supervision?.drain
+        if (supervision) {
+          const drain = supervision.drain
+          child[ownedProcessDrain] = {
+            drain: () => {
+              try {
+                phaseAtDrain = readFileSync(
+                  join(dirname(dirname(recordPath!)), 'caller-finalizing'),
+                  'utf8',
+                )
+              } catch {
+                // Assert after cleanup rather than throwing ahead of revocation.
+              }
+              return drain()
+            },
+          }
+        }
+        outputClosed = new Promise((resolve) => child.once('close', resolve))
+      }
+      let id: string | undefined
+      let snapped = false
+      let stopped!: (result: unknown) => void
+      let failed!: (error: unknown) => void
+      const stopping = new Promise<unknown>((resolve, reject) => {
+        stopped = resolve
+        failed = reject
+      })
+      void stopping.catch(() => {})
+      const scheduleStop = () => {
+        if (snapped) return
+        snapped = true
+        identities = journalIdentities(readFileSync(join(recordPath!, 'journal'), 'utf8'))
+        queueMicrotask(() => {
+          const result = route === 'stop' ? manager.stop(id!) : manager.leave()
+          result.then(stopped, failed)
+        })
+      }
+      native.onRead = (value) => {
+        // Resolving the START wait queues the startup continuation behind the
+        // Stop call, but ahead of any work deferred by Stop itself.
+        if (gate === 'queued GO' && value.split('\n').includes('START')) scheduleStop()
+      }
+      native.holdWrite = (value) => {
+        if ((gate === 'held START' && value === 'S') || (gate === 'held GO' && value === 'G')) {
+          scheduleStop()
+          return true
+        }
+        if (value === 'G') goWrites++
+        return false
+      }
+      const result = await manager.launch({ name: 'gate', prompt: 'go' })
+      expect(result).toMatchObject({ ok: true })
+      id = result.ok ? result.sessionId : undefined
+      await expect(stopping).resolves.toEqual(route === 'stop' ? { ok: true } : undefined)
+      expect(goWrites).toBe(0)
+      expect(phaseAtDrain).toMatch(/\nFINALIZING\n$/)
+      expect(nonLaunch).toHaveBeenCalledOnce()
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(access(recordPath!)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(identities).toHaveLength(5)
+    } finally {
+      native.onRead = native.holdWrite = native.onSpawn = undefined
+      await manager.leave().catch(() => {})
+      if (childPID !== undefined) {
+        if (!nativeDrain) throw new Error('Missing native drain authority for gate fixture')
+        await nativeDrain()
+        await outputClosed
+        if (!identities.length && recordPath)
+          identities = journalIdentities(await readFile(join(recordPath, 'journal'), 'utf8'))
+        for (const pid of new Set([childPID, -childPID, ...identities])) absent(pid)
+      }
+      expect(native.fds.size).toBe(0)
+      vi.unstubAllEnvs()
+      native.parent = ''
+      await rm(data, { recursive: true, force: true })
+      await rm(helper.directory, { recursive: true, force: true })
+    }
+  },
+  15_000,
+)

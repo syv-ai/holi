@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -303,6 +311,45 @@ describe.skipIf(process.platform === 'win32')('Pi durable ownership', () => {
       }
     },
   )
+
+  it('still closes native admission if it cannot record the caller phase', async () => {
+    const scope = piOwnership()
+    const rpc = fake()
+    const nativeDrain = rpc.child[ownedProcessDrain]!.drain
+    const drain = vi.fn(async () => {
+      const [entry] = scope.entries()
+      expect(existsSync(join(entry!, 'failed'))).toBe(true)
+      await nativeDrain()
+    })
+    rpc.child[ownedProcessDrain] = { drain }
+    const manager = createPiBackground({
+      bin: () => 'pi',
+      spawn: () => rpc.child,
+      bracket: vi.fn(),
+      changed() {},
+      allocateOwnership: (id, proof) => scope.registry.allocate('pi', id, proof),
+    })
+    manager.setVault(scope.vault.remote, scope.vault.root)
+    try {
+      const result = await manager.launch({ name: 'failed journal', prompt: 'go' })
+      if (!result.ok) throw new Error(result.message)
+      const [entry] = scope.entries()
+      writeFileSync(join(entry!, 'caller-finalizing.tmp'), 'partial write', { mode: 0o600 })
+      const stop = manager.stop(result.sessionId)
+      expect(drain).toHaveBeenCalledOnce()
+      const cause: unknown = await stop.catch((error: unknown) => error)
+      expect(cause).toMatchObject({ code: 'EEXIST' })
+      expect(rpc.wasKilled()).toBe(true)
+      await expect(manager.stop(result.sessionId)).rejects.toBe(cause)
+      await expect(manager.leave()).rejects.toBe(cause)
+      expect(existsSync(join(entry!, 'caller-settled'))).toBe(false)
+      expect(scope.recover).toThrow(/retaining/i)
+    } finally {
+      await manager.leave().catch(() => {})
+      rpc.dispose()
+      scope.remove()
+    }
+  })
 
   it('retires verified pre-native refusal only after cleanup proves non-launch', async () => {
     const scope = piOwnership()
@@ -936,6 +983,8 @@ describe('Pi background runs', () => {
     const allocateOwnership = vi.fn(() => ({
       ownershipRecordPath: undefined,
       nonLaunch: vi.fn(),
+      beginCallerFinalization: vi.fn(),
+      settleCaller: vi.fn(),
       fail: vi.fn(),
       retire: vi.fn(),
     }))
@@ -968,6 +1017,8 @@ describe('Pi background runs', () => {
         allocateOwnership: () => ({
           ownershipRecordPath: path,
           nonLaunch: vi.fn(),
+          beginCallerFinalization: vi.fn(),
+          settleCaller: vi.fn(),
           fail: vi.fn(),
           retire: vi.fn(),
         }),
@@ -1382,6 +1433,8 @@ describe('Pi background runs', () => {
     const record = {
       ownershipRecordPath: undefined,
       nonLaunch: vi.fn(),
+      beginCallerFinalization: vi.fn(),
+      settleCaller: vi.fn(),
       fail: vi.fn(),
       retire: vi.fn(),
     }

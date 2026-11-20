@@ -340,6 +340,35 @@ it('gives each managed turn its own receipt in the final flush', async () => {
 })
 
 describe('the safety cap', () => {
+  it('guards only the draining PTY turn against the cap, listing, and teardown', async () => {
+    vi.useFakeTimers()
+    try {
+      const r = rig({ turnSafetyMs: 50, idleConfirmMs: 10, withLog: false })
+      const c = r.coordinator
+      expect(c.protectPtyTurn('idle PTY')).toBeUndefined()
+      c.begin('a')
+      c.begin('b')
+      const proved = c.protectPtyTurn('a')!
+      c.forget('a')
+      await expect(c.end('a')).resolves.toBeNull()
+      c.noteIdle('a')
+      r.tick(15)
+      c.noteIdle('a')
+      await vi.advanceTimersByTimeAsync(50)
+      await c.drain()
+      expect([...c.working]).toEqual(['a'])
+      expect(r.resumes()).toBe(0)
+      proved()
+      proved()
+      expect([...c.working]).toEqual([])
+      expect(r.resumes()).toBe(1)
+      expect(r.appended).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('caps each session on its own clock and still resumes the vault once', async () => {
     vi.useFakeTimers()
     try {

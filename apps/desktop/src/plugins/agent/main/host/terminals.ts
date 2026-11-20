@@ -62,8 +62,8 @@ export interface OpenArgs {
   onInput?(data: string): void
   /** What the program printed. */
   onOutput?(data: string): void
-  /** Synchronously close turn admission on root exit or a stop request. */
-  onDraining?(): void
+  /** Synchronously close turn admission, with a receipt independent of output. */
+  onDraining?(physical?: Promise<void>): void
   /** A failed native launch still has a retained cleanup operation. */
   onStartupCleanup?(work: Promise<void>): void
   /** Physical drain and PTY output settled. A deadline aborts retirement, not running work. */
@@ -254,10 +254,10 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
         pushList(remote)
       })
       let hasOutput = false
-      runtime.onDraining(() => {
+      runtime.onDraining((physical) => {
         t.draining = true
         stopInput(t)
-        onDraining?.()
+        onDraining?.(physical)
       })
       runtime.onData((data) => {
         hasOutput = true

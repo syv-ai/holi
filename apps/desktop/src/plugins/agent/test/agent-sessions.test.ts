@@ -17,7 +17,8 @@ import { createAgentSessions, type AgentVault } from '../main/host/sessions'
 import { ownedProcessDrain } from '../../../main/plugin-api'
 import { createManagedTurnBrackets } from '../main/host/turn-coordinator'
 import { createPiBackground } from '../main/pi/background'
-import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
+import { createAgentTerminals, type AgentTerminals, type OpenArgs } from '../main/host/terminals'
+import { createPtySessions } from '../main/host/pty-sessions'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
 const REMOTE = 'syv/vault'
@@ -257,6 +258,87 @@ it
     stderr.destroy()
   }
 })
+
+it.skipIf(process.platform === 'win32')(
+  'forgets an ordinary PTY turn on physical proof despite output failure',
+  async () => {
+    const append = vi.fn(async () => {})
+    const { sessions, terminals, vault, attach } = setup([], undefined, ROOT, undefined, () => ({
+      list: async () => [],
+      append,
+    }))
+    const resume = vi.fn()
+    vault.pauseSync = vi.fn(() => resume)
+    const failure = new Error('failed exit output notification')
+    let prove!: () => void
+    const proof = new Promise<void>((resolve) => {
+      prove = resolve
+    })
+    let publicExit!: (event: { exitCode: number }) => void
+    Object.assign(
+      terminals,
+      createAgentTerminals({
+        emit: (_remote, name) => {
+          if (name === 'pty-exit') throw failure
+        },
+        spawnPty: () => ({
+          pid: 2, // Synthetic; this adapter only uses the receipt below, never OS calls.
+          onExit: (fn) => {
+            publicExit = fn
+          },
+          onData() {},
+          write() {},
+          resize() {},
+          kill: () => {
+            throw new Error('must use explicit supervision')
+          },
+        }),
+        superviseGroup: () => ({ drain: () => proof }),
+      }),
+    )
+    const ptys = createPtySessions({
+      vault,
+      providers: () => [
+        {
+          id: 'codex',
+          label: 'Fixture',
+          notInstalled: 'unused',
+          installed: () => true,
+          configure: async () => ({ dir: '/fixture' }),
+          terminal: () => ({ bin: 'fixture', args: [], env: {} }),
+          capabilities: {},
+        },
+      ],
+      terminals,
+      bracket: sessions.bracket,
+      protectPtyTurn: sessions.protectPtyTurn,
+      binDir: () => null,
+      onChange() {},
+    })
+    await attach()
+    const started = await ptys.start('codex', { prompt: 'go' })
+    if (!started.ok) throw new Error(started.message)
+    const stopped = ptys.stop(started.sessionId)
+    void stopped.catch(() => {})
+    try {
+      sessions.bracket(started.sessionId, 'forget') // Generic traffic is not a proof.
+      expect(resume).not.toHaveBeenCalled()
+      publicExit({ exitCode: 0 })
+      prove()
+      await expect(stopped).rejects.toBe(failure)
+      await expect(ptys.stop(started.sessionId)).rejects.toBe(failure)
+      expect(resume).toHaveBeenCalledOnce()
+      expect(append).not.toHaveBeenCalled()
+      expect(terminals.list()).toContainEqual(expect.objectContaining({ id: started.terminalId }))
+      await expect(sessions.leave()).rejects.toMatchObject({ errors: [failure] })
+    } finally {
+      publicExit({ exitCode: 0 })
+      prove()
+      await ptys.leave().catch(() => {})
+      await sessions.leave().catch(() => {})
+    }
+  },
+)
 
 describe('agent sessions', () => {
   it('propagates a malformed native launch receipt without speculative stop or terminal attach', async () => {

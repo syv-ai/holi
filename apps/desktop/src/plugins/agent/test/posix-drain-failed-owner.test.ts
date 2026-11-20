@@ -11,13 +11,14 @@ import {
 } from './fixtures/drain-activation'
 
 const it = test.runIf(process.platform !== 'win32')
-const families = ['pi', 'pty', 'fenced', 'job'] as const
+const families = ['pi', 'pty', 'fenced', 'job', 'direct PTY stop'] as const
 const nested = (error: unknown): unknown[] =>
   error instanceof AggregateError ? error.errors.flatMap(nested) : [error]
 
 it.each(families)(
   '%s retains original failure without waiting for inherited stdio close',
-  async (kind) => {
+  async (route) => {
+    const kind = route === 'direct PTY stop' ? 'pty' : route
     await withDrainActivation(async (f) => {
       const a = await f.start(f.A, kind, 'inherit', 7)
       const b = await f.start(f.B, kind, 'ignore', 0, 'reply')
@@ -26,11 +27,22 @@ it.each(families)(
         expect(f.syncHeld(f.A)).toBe(true)
         expect(f.syncHeld(f.B)).toBe(false)
       }
+      if (kind === 'pty') {
+        expect(f.syncHeld(f.A)).toBe(true)
+        expect(f.syncHeld(f.B)).toBe(true)
+      }
       const cause = new Error(`${kind}: owned proof unavailable`)
       a.drain.hold()
       a.close.hold()
+      const explicit =
+        route === 'direct PTY stop' ? f.call(f.A, 'agent.stop', { id: a.sessionId }) : undefined
+      if (explicit) {
+        pending(explicit)
+        await bounded(a.drain.entered, 'direct stop starts drain before root exit')
+        a.live()
+      }
       a.exit()
-      await bounded(a.drain.entered, 'natural exit starts drain')
+      await bounded(a.drain.entered, 'drain begun')
       expect(await bounded(a.exited.promise, 'failed A root exit')).toBe(7)
       const noPhysicalReceipt = pending(a.proven.promise)
       a.drain.reject(cause)
@@ -42,6 +54,13 @@ it.each(families)(
         await expect(
           bounded(f.call(f.A, 'agent.stop', { id: a.sessionId }), 'session stop'),
         ).rejects.toBe(cause)
+      }
+      if (explicit) await expect(explicit).rejects.toBe(cause)
+      if (kind === 'pty') {
+        expect(f.syncHeld(f.A)).toBe(true)
+        expect(await f.call(f.A, 'agent.terminals')).toContainEqual(
+          expect.objectContaining({ id: a.terminalId, launchedFor: a.sessionId }),
+        )
       }
       const failure = await bounded(
         f.stop(f.A).catch((error: unknown) => error),
@@ -80,6 +99,10 @@ it.each(families)(
       expect(await bounded(b.exited.promise, 'B root exit')).toBe(0)
       await physical(b.proven.promise, 'B drains while A failed')
       b.absent()
+      if (kind === 'pty') {
+        await vi.waitFor(() => expect(f.syncHeld(f.B)).toBe(false))
+        expect(f.syncHeld(f.A)).toBe(true)
+      }
       if (kind === 'job' || kind === 'fenced') {
         await vi.waitFor(async () =>
           expect(await f.rows(f.B)).toEqual(
@@ -113,7 +136,7 @@ it.each(families)(
       await expect(f.stop(f.A)).rejects.toBe(failure)
       await expect(f.enter(f.A)).rejects.toBe(failure)
       expect(a.release.hit).toBe(false)
-      if (kind === 'pi') expect(f.syncHeld(f.A)).toBe(true)
+      if (kind === 'pi' || kind === 'pty') expect(f.syncHeld(f.A)).toBe(true)
     })
   },
   15_000,
