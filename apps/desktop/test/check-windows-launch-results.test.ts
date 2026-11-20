@@ -47,7 +47,7 @@ type RecordFixture = {
 function controlRecord(
   caseName: string,
   proof: RecordFixture['proof'],
-  { nativeFixture = false, preAuth = false, revoked = false } = {},
+  { nativeFixture = true, preAuth = false, revoked = false } = {},
 ): RecordFixture {
   return {
     caseName,

@@ -138,7 +138,7 @@ const replayFailure = {
   exitCode: 125,
 }
 
-function controlCase(proof, nativeFixtureClosed = false) {
+function controlCase(proof, nativeFixtureClosed = true) {
   const preAuth = proof.rootStarted === false
   return {
     proof,
