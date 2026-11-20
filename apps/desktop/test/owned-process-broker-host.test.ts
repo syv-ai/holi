@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,8 +18,20 @@ const env =
     ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR }
     : {}
 
-function host(native: Parameters<typeof brokerHostPlan>[1]) {
+function host(native: Parameters<typeof brokerHostPlan>[1], observeNativeEof = false) {
   const plan = brokerHostPlan(node, native)
+  if (observeNativeEof) {
+    // The host keeps its own outputs open until the join. Observe EOF on the
+    // actual inner pipes without changing the relay or adding a live handle.
+    plan.args[1] += `
+      let ended = 0;
+      for (const pipe of [native.stdout, native.stderr]) {
+        pipe.once('end', () => {
+          if (++ended === 2) require('node:fs').writeFileSync('native-output-ended', '');
+        });
+      }
+    `
+  }
   const child = spawn(plan.file, plan.args, {
     cwd: plan.cwd,
     env,
@@ -37,8 +50,8 @@ function host(native: Parameters<typeof brokerHostPlan>[1]) {
   return { ...plan, child, closed }
 }
 
-function nodeHost(source: string, cwd = process.cwd()) {
-  return host({ file: node, args: ['-e', source], cwd })
+function nodeHost(source: string, cwd = process.cwd(), observeNativeEof = false) {
+  return host({ file: node, args: ['-e', source], cwd }, observeNativeEof)
 }
 
 async function collect(stream: Readable, slow = false): Promise<Buffer> {
@@ -87,27 +100,35 @@ describe('owned Job broker host', () => {
     onTestFinished(() => rm(cwd, { recursive: true, force: true }))
     const { child, closed } = nodeHost(
       `
-        const { closeSync, writeFileSync, writeSync } = require('node:fs');
-        writeSync(1, 'terminal\\n');
-        closeSync(1);
-        closeSync(2);
-        process.stdin.once('data', () => {
-          process.stdin.destroy();
-          process.on('exit', () => writeFileSync('native-finished', 'done'));
-          setTimeout(() => {}, 75);
+        const { writeFileSync } = require('node:fs');
+        let command = '';
+        process.stdin.setEncoding('utf8').on('data', (chunk) => {
+          command += chunk;
+          if (command !== 'finish') return;
+          process.once('exit', () => writeFileSync('native-finished', 'done'));
+          process.exit(0);
         });
+        // Let Node shut down the pipes; raw fd closes allow lazy libuv setup
+        // to reuse fd 1 or 2 and abort on macOS.
+        process.stdout.end('terminal\\n');
+        process.stderr.end();
       `,
       cwd,
+      true,
     )
+    const stdout = collect(child.stdout)
     const stderr = collect(child.stderr)
-    const [terminal] = await once(child.stdout, 'data')
-    expect(terminal.toString()).toBe('terminal\n')
+    const finished = join(cwd, 'native-finished')
+    await expect.poll(() => existsSync(join(cwd, 'native-output-ended'))).toBe(true)
+    expect(existsSync(finished)).toBe(false)
     expect(child.exitCode).toBeNull()
-    child.stdout.resume()
-    child.stdin.write('finish') // Leave the original parent pipe open.
-    expect(await closed).toEqual([0, null])
-    expect(await readFile(join(cwd, 'native-finished'), 'utf8')).toBe('done')
-    expect(await stderr).toHaveLength(0)
+    expect(child.signalCode).toBeNull()
+    child.stdin.write('finish') // Release the inner process without sending parent EOF.
+    const [status, output, errors] = await Promise.all([closed, stdout, stderr])
+    expect(status).toEqual([0, null])
+    expect(await readFile(finished, 'utf8')).toBe('done')
+    expect(output.toString()).toBe('terminal\n')
+    expect(errors).toHaveLength(0)
   })
 
   it('waits for both readable pipes when a descendant still holds them after inner exit', async () => {
