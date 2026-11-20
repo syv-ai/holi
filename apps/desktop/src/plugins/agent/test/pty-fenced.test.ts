@@ -19,7 +19,30 @@ const native = vi.hoisted(() => ({
   prepare: vi.fn(),
   helper: '',
   directory: '',
+  phaseWriteError: undefined as Error | undefined,
+  drain: undefined as (() => Promise<void>) | undefined,
+  fds: new Set<number>(),
 }))
+vi.mock('node:fs', async (original) => {
+  const fs = await original<typeof import('node:fs')>()
+  return {
+    ...fs,
+    openSync: (...args: Parameters<typeof fs.openSync>) => {
+      const fd = fs.openSync(...args)
+      if (native.directory && String(args[0]).startsWith(join(native.directory, 'holi-launch-')))
+        native.fds.add(fd)
+      return fd
+    },
+    closeSync: (fd: number) => {
+      fs.closeSync(fd)
+      native.fds.delete(fd)
+    },
+    renameSync: (from: string, to: string) => {
+      if (native.phaseWriteError && to.endsWith('/caller-finalizing')) throw native.phaseWriteError
+      fs.renameSync(from, to)
+    },
+  }
+})
 vi.mock('../../../main/posix-lease-executable', () => ({
   posixLeaseExecutable: () => native.helper,
 }))
@@ -30,12 +53,14 @@ vi.mock('../../../main/plugin-api', async (original) => {
     defaultSpawnPty: Object.assign(native.spawn, { preload: native.preload }),
     preparePosixLaunch: (...[bin, args, opts]: Parameters<typeof core.preparePosixLaunch>) => {
       native.prepare()
-      return core.preparePosixLaunch(bin, args, {
+      const launch = core.preparePosixLaunch(bin, args, {
         ...opts,
         directory: native.directory,
         graceMs: 75,
         timeoutMs: 1000,
       })
+      native.drain = launch.drain
+      return launch
     },
   }
 })
@@ -45,6 +70,9 @@ afterEach(() => {
   native.spawn.mockReset()
   native.preload.mockReset()
   native.prepare.mockReset()
+  native.phaseWriteError = undefined
+  native.drain = undefined
+  native.directory = ''
 })
 
 function deferred<T>() {
@@ -440,6 +468,174 @@ it.skipIf(process.platform === 'win32').each(['open', 'copying'] as const)(
   },
 )
 
+it.skipIf(process.platform === 'win32')(
+  'preserves a natural fenced phase-write error through physical rejection, Stop and leave',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-pty-fenced-'))
+    const physical = deferred<void>()
+    const first = new Error('caller phase write failed')
+    const later = new Error('physical proof failed')
+    const proof = vi.fn(() => physical.promise)
+    const ended = vi.fn()
+    const resume = vi.fn()
+    const coordinator = createTurnCoordinator({
+      vault: () => ({
+        root,
+        pauseSync: () => resume,
+        head: async () => '',
+        commitNow: async () => null,
+      }),
+      onTurnEnd: ended,
+    })
+    const pty = {
+      _boundClose: false,
+      pid: 999_999,
+      kill: vi.fn(),
+      write() {},
+      resize() {},
+      onData() {},
+      onExit() {},
+    }
+    const t = rig(
+      root,
+      { spawnPty: () => pty, superviseGroup: () => ({ drain: proof }) },
+      undefined,
+      undefined,
+      100,
+      coordinator,
+    )
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const run = await t.start()
+      if (!run.ok) throw new Error(run.message)
+      const [key] = await readdir(join(root, 'agent-ownership'))
+      const parent = join(root, 'agent-ownership', key!, 'fenced')
+      const [id] = await readdir(parent)
+      const record = join(parent, id!)
+      native.phaseWriteError = first
+      pty._boundClose = true
+      expect(proof).toHaveBeenCalledOnce()
+      expect(await readFile(join(record, 'failed'), 'utf8')).toContain(String(first))
+      t.sessions.noteTurn(run.sessionId, false)
+      t.sessions.noteTurn(run.sessionId, true)
+      physical.reject(later)
+      // Let natural settlement run unattended before Stop joins it. Vitest
+      // reports any unhandled rejection from the physical or caller phase.
+      await vi.advanceTimersByTimeAsync(1000)
+      await expect(t.sessions.stop(run.sessionId)).rejects.toBe(first)
+      await expect(t.terminals.closeAll()).rejects.toBe(first)
+      await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [first] })
+      expect(await readFile(join(record, 'failed'), 'utf8')).not.toContain(String(later))
+      expect(diagnostics).toHaveBeenCalledWith(expect.any(String), later)
+      expect(t.copyBack).not.toHaveBeenCalled()
+      expect(t.release).not.toHaveBeenCalled()
+      expect(ended).not.toHaveBeenCalled()
+      expect(resume).not.toHaveBeenCalled()
+      expect(coordinator.working.has(run.sessionId)).toBe(true)
+      expect(pty.kill).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      physical.resolve()
+      await t.sessions.leave().catch(() => {})
+      await t.fenced.leave().catch(() => {})
+      vi.useRealTimers()
+      diagnostics.mockRestore()
+      // Paired fake PTY and proof; no kernel identity was created.
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
+it.skipIf(process.platform === 'win32')(
+  'keeps a drain notification error through missing output and still notifies protection',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-pty-fenced-'))
+    const physical = deferred<void>()
+    const first = new Error('drain notification failed')
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let exit!: (event: { exitCode: number }) => void
+    const pty = {
+      _boundClose: false,
+      pid: 999_999,
+      kill: vi.fn(),
+      write() {},
+      resize() {},
+      onData() {},
+      onExit: (cb: typeof exit) => {
+        exit = cb
+      },
+    }
+    const proof = vi.fn(() => physical.promise)
+    const runtime = new AgentRuntime({
+      spawnPty: () => pty,
+      superviseGroup: () => ({ drain: proof }),
+    })
+    const protect = vi.fn()
+    const forget = vi.fn()
+    const finalize = vi.fn()
+    runtime.onDraining(() => {
+      throw first
+    })
+    runtime.onDraining(protect)
+    runtime.onExitAbandoned(forget)
+    runtime.onExit(finalize)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const registry = activationOwnership(
+        root,
+        { root, remote: 'test/vault' },
+        new AbortController().signal,
+      )!
+      registry.recover('fenced')
+      const fence = registry.allocate('fenced', 'notify', 'explicit')
+      const [key] = await readdir(join(root, 'agent-ownership'))
+      const parent = join(root, 'agent-ownership', key!, 'fenced')
+      const [id] = await readdir(parent)
+      const record = join(parent, id!)
+      withPtyOwnership({ cwd: root, fence, allocate: () => fence }, () =>
+        runtime.start({ cwd: root, bin: 'fake', args: [], env: {} }),
+      )
+      pty._boundClose = true
+      expect(protect).toHaveBeenCalledOnce()
+      expect(protect).toHaveBeenCalledWith(expect.any(Promise))
+      expect(proof).toHaveBeenCalledOnce()
+      expect(await readFile(join(record, 'failed'), 'utf8')).toContain(String(first))
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(diagnostics).not.toHaveBeenCalled()
+      expect(forget).not.toHaveBeenCalled()
+      physical.resolve()
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(forget).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(forget).toHaveBeenCalledOnce()
+      expect(diagnostics).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          message: expect.stringContaining('did not report process exit'),
+        }),
+      )
+      await expect(runtime.kill()).rejects.toBe(first)
+      exit({ exitCode: 0 })
+      expect(finalize).not.toHaveBeenCalled()
+      expect(await readFile(join(record, 'failed'), 'utf8')).not.toContain(
+        'did not report process exit',
+      )
+      await expect(access(join(record, 'caller-settled'))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(pty.kill).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      physical.resolve()
+      exit?.({ exitCode: 0 })
+      await vi.advanceTimersByTimeAsync(5000)
+      await runtime.kill().catch(() => {})
+      vi.useRealTimers()
+      diagnostics.mockRestore()
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
 it.each(['copy', 'release'] as const)(
   'preserves fenced %s failure through terminal close, repeat Stop and leave',
   async (failure) => {
@@ -556,8 +752,10 @@ it.skipIf(process.platform === 'win32')(
   },
 )
 
-it.skipIf(process.platform === 'win32').each(['cancelled startup', 'held final copy'] as const)(
-  'settles a real named fenced PTY lease with %s',
+it
+  .skipIf(process.platform === 'win32')
+  .each(['cancelled startup', 'failed phase before GO', 'held final copy'] as const)(
+  'drains a real named fenced PTY lease with %s',
   async (phase) => {
     const helper = buildLeaseForTests()
     const root = await mkdtemp(join(tmpdir(), 'holi-pty-fenced-'))
@@ -609,9 +807,9 @@ it.skipIf(process.platform === 'win32').each(['cancelled startup', 'held final c
       root,
       {},
       undefined,
-      phase === 'cancelled startup'
-        ? { bin: '/usr/bin/touch', args: [marker] }
-        : { bin: '/bin/sh', args: ['-c', 'printf only-copy > output'] },
+      phase === 'held final copy'
+        ? { bin: '/bin/sh', args: ['-c', 'printf only-copy > output'] }
+        : { bin: '/usr/bin/touch', args: [marker] },
       10_000, // Let this fixture reach the exit copy, not idle-triggered turn copy.
     )
     t.copyBack.mockImplementationOnce((dir) => {
@@ -639,17 +837,30 @@ it.skipIf(process.platform === 'win32').each(['cancelled startup', 'held final c
         expect(t.release).not.toHaveBeenCalled()
         copy.resolve({ written: 0, skipped: [] })
       }
-      await expect(t.sessions.stop(run.sessionId)).resolves.toEqual({ ok: true })
+      if (phase === 'failed phase before GO') {
+        const first = new Error('could not mark finalization before GO')
+        native.phaseWriteError = first
+        await expect(t.sessions.stop(run.sessionId)).rejects.toBe(first)
+        const record = dirname(dirname(dirname(journal!)))
+        expect(await readFile(join(record, 'failed'), 'utf8')).toContain(String(first))
+        expect(await readFile(join(dirname(journal!), 'settled'), 'utf8')).toMatch(/SETTLED\n$/)
+        await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [first] })
+        expect(await readdir(t.scratchRoot)).toHaveLength(2)
+      } else {
+        await expect(t.sessions.stop(run.sessionId)).resolves.toEqual({ ok: true })
+        expect(t.sessions.has(run.sessionId)).toBe(false)
+        await t.fenced.leave()
+        await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
       await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
-      expect(t.sessions.has(run.sessionId)).toBe(false)
       expect(t.copyBack).toHaveBeenCalledTimes(phase === 'held final copy' ? 1 : 0)
       expect(t.release).toHaveBeenCalledTimes(phase === 'held final copy' ? 1 : 0)
-      await t.fenced.leave()
-      await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       copy.resolve({ written: 0, skipped: [] })
       await t.terminals.closeAll().catch(() => {})
       if (pid !== undefined) {
+        if (!native.drain) throw new Error('Missing native PTY drain authority')
+        await native.drain()
         await reaped.promise
         const evidence = await evidenceRead!
         const ids = new Set([pid])
@@ -660,7 +871,8 @@ it.skipIf(process.platform === 'win32').each(['cancelled startup', 'held final c
             expect(() => process.kill(p, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
         }
       }
-      // Retain the fixture unless caller proof and independent probes agree.
+      // Retain the fixture unless native proof and independent probes agree.
+      expect(native.fds.size).toBe(0)
       expect(await readdir(leases)).toEqual([])
       await rm(root, { recursive: true, force: true })
       await rm(helper.directory, { recursive: true, force: true })

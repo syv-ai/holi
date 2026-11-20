@@ -127,7 +127,7 @@ export class AgentRuntime {
   private dataCbs: Array<(data: string) => void> = []
   private drainingCbs: Array<(physical?: Promise<void>) => void> = []
   private draining = false
-  private drainingErrors: unknown[] = []
+  private exitFailure?: { cause: unknown }
   private exitCbs: Array<(e: AgentExit, signal?: AbortSignal) => void | Promise<void>> = []
   private closedCb?: () => void
   private abandonedCb?: () => void
@@ -221,7 +221,7 @@ export class AgentRuntime {
     this.supervision = undefined
     this.settlement = null
     this.draining = false
-    this.drainingErrors = []
+    this.exitFailure = undefined
     this.exitReported = false
     this.outputExpired = false
     this.callbackSettlement = undefined
@@ -266,7 +266,7 @@ export class AgentRuntime {
           prepared !== undefined,
         )
       pty.onData((data) => {
-        if (this.pty !== pty) return
+        if (this.pty !== pty || this.exitFailure) return
         for (const cb of this.dataCbs) cb(data)
       })
       pty.onExit((e) => {
@@ -281,8 +281,7 @@ export class AgentRuntime {
         }
         this.callbackSettlement = (async () => {
           if (this.physicalDrain) await this.physicalDrain
-          if (this.drainingErrors.length)
-            throw new AggregateError(this.drainingErrors, 'PTY drain notification failed.')
+          if (this.exitFailure) throw this.exitFailure.cause
           const controller = new AbortController()
           const event: AgentExit = { exitCode: e.exitCode, signal: e.signal }
           if (binding) {
@@ -318,7 +317,9 @@ export class AgentRuntime {
           this.ownership?.retire()
           this.pty = null
           this.closedCb?.()
-        })()
+        })().catch((error: unknown) => {
+          throw this.rememberExitFailure(error)
+        })
         if (this.supervision && this.platform !== 'win32') {
           // This is only the callback phase. The shared owner joins it; it
           // must not join the owner (which is also waiting for public exit).
@@ -392,14 +393,27 @@ export class AgentRuntime {
     void work.catch((error: unknown) => this.failed(error))
   }
 
-  private observeExit(work: Promise<void>): void {
-    void work.catch((error: unknown) => {
+  private rememberExitFailure(error: unknown): unknown {
+    if (!this.exitFailure) {
+      this.exitFailure = { cause: error }
       this.failed(error)
+    } else if (!Object.is(this.exitFailure.cause, error)) {
+      console.error('[agent-pty] Additional teardown failure:', error)
+    }
+    return this.exitFailure.cause
+  }
+
+  private observeExit(work: Promise<void>): void {
+    void work.catch(() => {
       const notify = this.abandonedCb
       if (!notify || !this.physicalDrain) return
       this.abandonedCb = undefined
       // Observation cannot replace the exit failure or infer proof from it.
-      void this.physicalDrain.then(notify, () => {}).catch((error: unknown) => this.failed(error))
+      void this.physicalDrain
+        .then(notify, () => {})
+        .catch((error: unknown) => {
+          this.rememberExitFailure(error)
+        })
     })
   }
 
@@ -409,25 +423,25 @@ export class AgentRuntime {
     try {
       this.fence?.beginCallerFinalization()
     } catch (error) {
-      this.drainingErrors.push(error)
-      this.failed(error)
+      this.rememberExitFailure(error)
     }
-    // Call into the lease now, before notifying callers. Before GO this
-    // synchronously closes the native admission channel; after GO it drains.
+    // Call into the lease now, even after a caller failure. Before GO this
+    // synchronously closes admission. A rejection cannot stand in for proof.
     if (this.supervision) {
       try {
-        this.physicalDrain = this.supervision.drain()
+        this.physicalDrain = this.supervision.drain().catch((error: unknown) => {
+          throw this.rememberExitFailure(error)
+        })
       } catch (error) {
-        this.physicalDrain = Promise.reject(error)
+        this.physicalDrain = Promise.reject(this.rememberExitFailure(error))
       }
-      this.observe(this.physicalDrain)
+      void this.physicalDrain.catch(() => {})
     }
     for (const cb of this.drainingCbs) {
       try {
         cb(this.physicalDrain)
       } catch (error) {
-        this.drainingErrors.push(error)
-        this.failed(error)
+        this.rememberExitFailure(error)
       }
     }
   }
@@ -469,8 +483,8 @@ export class AgentRuntime {
   }
 
   private async waitForExit(pty: PtyProcess): Promise<void> {
-    // The lease owns the physical deadline and its original failure. A PTY
-    // output timer never runs while that proof is still pending.
+    // The lease owns the physical deadline. A PTY output timer never runs
+    // while that proof is pending, even if the caller phase already failed.
     if (this.physicalDrain) await this.physicalDrain
     if (this.callbackSettlement) return this.callbackSettlement
 
@@ -479,8 +493,11 @@ export class AgentRuntime {
       this.exitBackstop = setTimeout(() => {
         // A late output edge must not retire a failed POSIX owner. Legacy
         // unsupervised terminals can still present their eventual exit.
+        const error = new Error(
+          `PTY ${pty.pid} did not report process exit before teardown timed out.`,
+        )
         if (this.supervision) this.outputExpired = true
-        reject(new Error(`PTY ${pty.pid} did not report process exit before teardown timed out.`))
+        reject(this.supervision || this.exitFailure ? this.rememberExitFailure(error) : error)
       }, this.killBackstopMs)
     })
     try {
