@@ -234,6 +234,21 @@ export const APP_HINTS_JS = `(() => {
   let targets = new Map(), activeRequest = '', enabled = false, sequence = 0, raf = 0, composing = false, activating = false
   const send = (message) => parent.postMessage({ ...message, nonce }, '*')
   const editable = (el) => el instanceof Element && !!el.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')
+  const closedShadowHost = (element) => {
+    if (!(element instanceof Element) || element === document.body || element.shadowRoot) return false
+    const tag = element.localName
+    return tag.includes('-') || /^(article|aside|blockquote|body|div|footer|h[1-6]|header|main|nav|p|section|span)$/.test(tag)
+  }
+  const editableKeyTarget = (event) => {
+    const path = event.composedPath()
+    if (path.some(editable)) return true
+    let focused = document.activeElement
+    while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement
+    if (editable(focused)) return true
+    // Closed shadow roots hide their editor from composedPath and activeElement.
+    // Only elements allowed to host author shadow roots need conservative handling.
+    return closedShadowHost(focused)
+  }
   const invalidate = () => {
     if (!activeRequest) return
     const requestId = activeRequest
@@ -274,7 +289,7 @@ export const APP_HINTS_JS = `(() => {
     const init={bubbles:true,cancelable:true,clientX:p.x,clientY:p.y,button:0,buttons:1},ptr={...init,pointerId:1,pointerType:'mouse',isPrimary:true};activating=true
     try{const down=hit.dispatchEvent(new PointerEvent('pointerdown',ptr));if(!el.isConnected)return;let mouseDown=true;if(down){mouseDown=hit.dispatchEvent(new MouseEvent('mousedown',init));if(!el.isConnected)return;if(mouseDown&&(el instanceof HTMLElement||el instanceof SVGElement))el.focus({preventScroll:true});if(!el.isConnected)return}hit.dispatchEvent(new PointerEvent('pointerup',{...init,buttons:0,pointerId:1,pointerType:'mouse',isPrimary:true}));if(!el.isConnected)return;hit.dispatchEvent(new MouseEvent('mouseup',{...init,buttons:0}));if(el.isConnected)hit.dispatchEvent(new MouseEvent('click',{...init,buttons:0}))}finally{activating=false}
   })
-  addEventListener('keydown',(e)=>{const modified=e.ctrlKey||e.altKey||e.metaKey;if(!activeRequest){if(enabled&&e.key.toLowerCase()==='f'&&!modified&&!e.shiftKey&&!e.repeat&&!e.isComposing&&!composing&&!editable(e.target)){e.preventDefault();e.stopImmediatePropagation();send({type:'request'})}return}const requestId=activeRequest;if(modified||e.shiftKey||e.isComposing||composing||editable(e.target)){invalidate();return}if(!/^[asdfghjklqwertyuiopzxcvbnm]$/.test(e.key)&&e.key!=='Backspace'&&e.key!=='Escape'){invalidate();return}e.preventDefault();e.stopImmediatePropagation();send({type:'key',requestId,key:e.key,shift:e.shiftKey,repeat:e.repeat,composing:e.isComposing||composing,modified})},true)
+  addEventListener('keydown',(e)=>{const modified=e.ctrlKey||e.altKey||e.metaKey;if(!activeRequest){if(enabled&&e.key.toLowerCase()==='f'&&!modified&&!e.shiftKey&&!e.repeat&&!e.isComposing&&!composing&&!editableKeyTarget(e)){e.preventDefault();e.stopImmediatePropagation();send({type:'request'})}return}const requestId=activeRequest;if(modified||e.shiftKey||e.isComposing||composing||editableKeyTarget(e)){invalidate();return}if(!/^[asdfghjklqwertyuiopzxcvbnm]$/.test(e.key)&&e.key!=='Backspace'&&e.key!=='Escape'){invalidate();return}e.preventDefault();e.stopImmediatePropagation();send({type:'key',requestId,key:e.key,shift:e.shiftKey,repeat:e.repeat,composing:e.isComposing||composing,modified})},true)
   addEventListener('keyup',(e)=>{if(activeRequest&&(e.shiftKey||e.ctrlKey||e.altKey||e.metaKey))invalidate()},true)
   addEventListener('compositionstart',()=>{composing=true;invalidate()},true);addEventListener('compositionend',()=>{composing=false},true)
   addEventListener('pointerdown',()=>{if(!activating)invalidate()},true);addEventListener('scroll',invalidate,true);addEventListener('resize',invalidate);addEventListener('blur',invalidate);addEventListener('focusin',()=>{if(!activating)invalidate()},true);addEventListener('pagehide',invalidate)

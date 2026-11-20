@@ -64,15 +64,13 @@ describe('owned process lifecycle', () => {
          const child = spawn(process.execPath, ['-e', "const fs = require('node:fs'); process.on('SIGTERM', () => { process.stdout.write('DESCENDANT_TERM\\\\n') }); fs.writeSync(3, 'DESCENDANT_READY'); setInterval(() => {}, 1000)"], { stdio: ['ignore', 'inherit', 'ignore', 'pipe'] });
          child.stdio[3].on('data', (chunk) => {
            if (chunk.toString().includes('DESCENDANT_READY')) {
-             process.stdout.write('DESCENDANT_READY\\\\n');
-             process.stdout.write('LEADER_EXITING\\\\n');
-             process.exit(0);
+             process.stdout.write('DESCENDANT_READY\\\\nLEADER_EXITING\\\\n', () => process.exit(0));
            }
          });`,
       ])
       const leaderExited = new Promise((resolve) => record.child.once('exit', resolve))
       const deadline = Date.now() + 5000
-      while (!record.output.includes('DESCENDANT_READY') && Date.now() < deadline)
+      while (!record.output.includes('LEADER_EXITING') && Date.now() < deadline)
         await new Promise((resolve) => setTimeout(resolve, 10))
       expect(record.output).toContain('DESCENDANT_READY')
       expect(record.output).toContain('LEADER_EXITING')

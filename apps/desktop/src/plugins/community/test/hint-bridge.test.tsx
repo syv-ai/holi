@@ -229,7 +229,7 @@ describe('community frame hint protocol', () => {
     expect(click).not.toHaveBeenCalled()
   })
 
-  it('does not steal f from shadow-root editors or closed custom hosts', () => {
+  it('does not steal f from editors in open, closed, or nested shadow roots', () => {
     setup()
     init()
     const hostElement = document.createElement('x-editor')
@@ -266,14 +266,69 @@ describe('community frame hint protocol', () => {
 
     input.blur()
     editable.blur()
-    const closedHost = document.createElement('x-closed-editor')
-    closedHost.tabIndex = -1
+    const closedHost = document.createElement('div')
     document.body.append(closedHost)
-    closedHost.focus()
-    const closedF = new KeyboardEvent('keydown', { key: 'f', cancelable: true })
-    window.dispatchEvent(closedF)
+    const closedRoot = closedHost.attachShadow({ mode: 'closed' })
+    const closedInput = document.createElement('input')
+    closedRoot.append(closedInput)
+    closedInput.focus()
+    const closedF = new KeyboardEvent('keydown', {
+      key: 'f',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    })
+    closedInput.dispatchEvent(closedF)
     expect(closedF.defaultPrevented).toBe(false)
     expect(sent('holi-hints:start')).toHaveLength(0)
+
+    const outerHost = document.createElement('div')
+    const outerRoot = outerHost.attachShadow({ mode: 'open' })
+    const innerHost = document.createElement('div')
+    const innerRoot = innerHost.attachShadow({ mode: 'closed' })
+    const nestedInput = document.createElement('input')
+    innerRoot.append(nestedInput)
+    outerRoot.append(innerHost)
+    document.body.append(outerHost)
+    nestedInput.focus()
+    const nestedF = new KeyboardEvent('keydown', {
+      key: 'f',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    })
+    nestedInput.dispatchEvent(nestedF)
+    expect(nestedF.defaultPrevented).toBe(false)
+    expect(sent('holi-hints:start')).toHaveLength(0)
+  })
+
+  it('starts hints from focused native buttons and links after repeated activations', () => {
+    setup()
+    init()
+    const button = document.querySelector('button')!
+    const link = document.querySelector('a')!
+    const clicks = vi.fn(() => link.focus())
+    link.addEventListener('click', clicks)
+
+    button.focus()
+    const buttonF = new KeyboardEvent('keydown', { key: 'f', cancelable: true })
+    window.dispatchEvent(buttonF)
+    expect(buttonF.defaultPrevented).toBe(true)
+    expect(sent('holi-hints:start')).toHaveLength(1)
+
+    let snapshot = sent('holi-hints:snapshot').at(-1)!
+    activate(snapshot.revision, snapshot.targets.find((item) => item.kind === 'link')!.id)
+    expect(clicks).toHaveBeenCalledTimes(1)
+    expect(document.activeElement).toBe(link)
+
+    const linkF = new KeyboardEvent('keydown', { key: 'f', cancelable: true })
+    window.dispatchEvent(linkF)
+    expect(linkF.defaultPrevented).toBe(true)
+    expect(sent('holi-hints:start')).toHaveLength(2)
+
+    snapshot = sent('holi-hints:snapshot').at(-1)!
+    activate(snapshot.revision, snapshot.targets.find((item) => item.kind === 'link')!.id)
+    expect(clicks).toHaveBeenCalledTimes(2)
   })
 
   it('rearms a fresh snapshot after each mutation-free activation', () => {
