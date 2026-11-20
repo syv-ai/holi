@@ -193,6 +193,95 @@ it.each(['ignore', 'inherit'] as const)(
   15000,
 )
 
+it.each(['output', 'settled', 'failed'] as const)(
+  'recovers native-settled fenced scratch only after positive caller proof (%s)',
+  async (phase) => {
+    const data = await realpath(await mkdtemp(join(tmpdir(), 'holi-cold-fenced-caller-')))
+    const helper = buildLeaseForTests()
+    native.helper = helper.binary
+    const controller = new AbortController()
+    const vault = { root: data, remote: 'fixture/caller' }
+    const { fenced } = await agentScratchRoots(data, vault)
+    const old = activationOwnership(data, vault, controller.signal)!
+    recoverFencedScratch(old, fenced)
+    const id = 'ad012345abcd'
+    const linked = old.allocate('fenced', id)
+    const path = linked.ownershipRecordPath!
+    const cwd = join(fenced, id)
+    const context = join(fenced, `${id}.agent`)
+    await mkdir(cwd, { recursive: true })
+    await mkdir(context)
+    await writeFile(join(context, 'private'), 'fixture context')
+    const launch = preparePosixLaunch('/bin/sh', ['-c', 'printf only-copy > output'], {
+      cwd,
+      ownershipRecordPath: path,
+      directory: data,
+      graceMs: 25,
+    })
+    const child = spawn(launch.executable, launch.args, {
+      ...launch.options,
+      stdio: 'ignore',
+    })
+    const exited = once(child, 'exit')
+    const probe = vi.spyOn(process, 'kill')
+    let identities: number[] = []
+    try {
+      await launch.bind(child.pid!)
+      await exited
+      if (phase !== 'output') linked.beginCallerFinalization()
+      await launch.drain()
+      const text = await readFile(join(path, 'journal'), 'utf8')
+      identities = [...text.matchAll(/^(ROOT|REAPER|ANCHOR) (\d+)$/gm)].flatMap(
+        ([, role, value]) =>
+          role === 'ANCHOR' ? [Number(value)] : [Number(value), -Number(value)],
+      )
+      expect(identities).toHaveLength(5)
+      expect(inspectPosixOwnership(path)).toEqual({ state: 'confirmed', proof: 'settled' })
+      expect(await readFile(join(cwd, 'output'), 'utf8')).toBe('only-copy')
+      if (phase === 'settled') {
+        // Emulate the crash after copy/release and their durable receipt, but
+        // before the caller could delete its two source directories.
+        await writeFile(join(data, 'published'), await readFile(join(cwd, 'output')))
+        linked.settleCaller()
+      } else if (phase === 'failed') {
+        linked.fail(new Error('first copy failure'))
+        linked.fail(new Error('secondary failure'))
+      }
+      controller.abort() // Virtual Main death: the stale caller never gets its output/copy back.
+      probe.mockClear()
+      const next = activationOwnership(data, vault, signal())!
+      if (phase === 'settled') {
+        recoverFencedScratch(next, fenced)
+        await expect(access(cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readFile(join(data, 'published'), 'utf8')).toBe('only-copy')
+      } else {
+        expect(() => recoverFencedScratch(next, fenced)).toThrow(
+          phase === 'failed' ? /first copy failure/ : /fenced.*(settlement|pending)/i,
+        )
+        expect(await readFile(join(cwd, 'output'), 'utf8')).toBe('only-copy')
+        expect(await readFile(join(context, 'private'), 'utf8')).toBe('fixture context')
+        await access(path)
+      }
+      expect(probe).not.toHaveBeenCalled()
+    } finally {
+      probe.mockRestore()
+      await exited
+      await launch.drain()
+      if (identities.length === 0) {
+        const text = await readFile(join(path, 'journal'), 'utf8')
+        identities = [...text.matchAll(/^(ROOT|REAPER|ANCHOR) (\d+)$/gm)].flatMap(
+          ([, role, value]) =>
+            role === 'ANCHOR' ? [Number(value)] : [Number(value), -Number(value)],
+        )
+      }
+      for (const pid of identities) absent(pid)
+      await rm(data, { recursive: true, force: true })
+      await rm(helper.directory, { recursive: true, force: true })
+    }
+  },
+)
+
 it.each(['missing', 'malformed', 'failure', 'unlinked'] as const)(
   'keeps fenced scratch with %s evidence and never signals from a record',
   async (kind) => {

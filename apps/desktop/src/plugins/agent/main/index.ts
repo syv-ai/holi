@@ -142,6 +142,7 @@ export const agentMain: MainPlugin = {
       )
       assertActive()
       const terminals = createAgentTerminals({
+        activationSignal: ctx.activationSignal,
         emit(remote, name, payload) {
           if (!ctx.activationSignal.aborted) ctx.emit(remote, name, payload)
         },
@@ -496,8 +497,8 @@ export const agentMain: MainPlugin = {
         for (const cleanup of [
           stopNeedsYou,
           () => sweeping,
-          // Invalidation already closed admission. Join uncertain native starts
-          // before the fenced module waits for its non-native startup work.
+          // Invalidation already revoked native PTY admission and started drain.
+          // Join uncertain starts before waiting for fenced staging to finish.
           () => terminals.joinFailedStarts(),
           () => fenced.closing(),
           () => ptySessions.leave(),

@@ -100,6 +100,13 @@ export interface LaunchOwnership {
   retire(): void
 }
 
+export interface FencedOwnership extends LaunchOwnership {
+  /** Finalization has started, but output, copy-back or provider release may be pending. */
+  beginCallerFinalization(): void
+  /** After physical proof and successful caller work, before deleting its source. */
+  settleCaller(): void
+}
+
 interface RecoveryScratch {
   root: string
   /** Map each top-level scratch entry to its durable consumer ID. No match means retain. */
@@ -130,6 +137,68 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
     renameSync(join(parent, name), path)
     syncDir(parent)
     rmSync(path, { recursive: true, force: true })
+  }
+
+  // Fenced caller receipts are deliberately not offered to other consumers.
+  function allocate(kind: 'fenced', id: string, proof?: 'native' | 'explicit'): FencedOwnership
+  function allocate(kind: Consumer, id: string, proof?: 'native' | 'explicit'): LaunchOwnership
+  function allocate(
+    kind: Consumer,
+    id: string,
+    proof: 'native' | 'explicit' = 'native',
+  ): FencedOwnership {
+    signal.throwIfAborted()
+    if (!ready.has(kind)) throw new Error(`Recover ${kind} ownership before allocating.`)
+    if (!label.test(id)) throw new Error('Invalid agent ownership consumer ID.')
+    used.add(kind)
+    const name = randomUUID()
+    const parent = join(scope, kind)
+    const path = join(parent, name)
+    mkdirSync(path, { mode: 0o700 })
+    const native = join(path, 'native')
+    if (proof === 'native') mkdirSync(native, { mode: 0o700 })
+    const header = `HOLI-AGENT-1 ${name}\n`
+    publish(path, 'link', `${header}${generation} ${proof} ${id}\n`)
+    syncDir(parent)
+    let nonLaunch = false
+    let failed = false
+    let done = false
+    let finalizing = false
+    let callerSettled = false
+    return {
+      ownershipRecordPath: proof === 'native' ? join(native, name) : undefined,
+      nonLaunch() {
+        if (nonLaunch || failed || done) return
+        publish(path, 'nonlaunch', header + 'NONLAUNCH\n')
+        nonLaunch = true
+      },
+      fail(error) {
+        if (failed || done) return
+        failed = true
+        publish(path, 'failed', header + Buffer.from(String(error)).subarray(0, 1500).toString())
+      },
+      beginCallerFinalization() {
+        if (kind !== 'fenced' || done) throw new Error('Cannot begin fenced finalization.')
+        if (finalizing || failed) return
+        publish(path, 'caller-finalizing', header + 'FINALIZING\n')
+        finalizing = true
+      },
+      settleCaller() {
+        if (!finalizing || failed || done) throw new Error('Cannot settle fenced finalization.')
+        if (callerSettled) return
+        publish(path, 'caller-settled', header + 'SETTLED\n')
+        callerSettled = true
+      },
+      retire() {
+        if (done) return
+        if (failed) throw new Error('Cannot retire failed agent ownership.')
+        if (kind === 'fenced' && !callerSettled && !(nonLaunch && !finalizing))
+          throw new Error('Cannot retire fenced ownership without caller settlement.')
+        publish(path, 'settled', header + 'SETTLED\n')
+        retire(parent, name)
+        done = true
+      },
+    }
   }
 
   return {
@@ -167,7 +236,10 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
         const [, previous, proof, id] = matchLink
         if (previous === generation) retain(name, 'Current activation.')
         for (const file of readdirSync(path)) {
-          if (!['link', 'settled', 'nonlaunch', 'failed', 'native'].includes(file))
+          if (
+            !['link', 'settled', 'nonlaunch', 'failed', 'native'].includes(file) &&
+            !(kind === 'fenced' && ['caller-finalizing', 'caller-settled'].includes(file))
+          )
             retain(name, 'Unknown or partial ownership evidence.')
         }
         const failed = read(path, 'failed')
@@ -178,14 +250,26 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
           retain(name, 'Invalid caller settlement.')
         if (preflight !== undefined && preflight !== header + 'NONLAUNCH\n')
           retain(name, 'Invalid non-launch evidence.')
+        const finalizing = kind === 'fenced' ? read(path, 'caller-finalizing') : undefined
+        const caller = kind === 'fenced' ? read(path, 'caller-settled') : undefined
+        if (finalizing !== undefined && finalizing !== header + 'FINALIZING\n')
+          retain(name, 'Invalid fenced finalization phase.')
+        if (caller !== undefined && (caller !== header + 'SETTLED\n' || finalizing === undefined))
+          retain(name, 'Invalid fenced caller settlement.')
+        if (finalizing !== undefined && caller === undefined)
+          retain(name, 'Fenced caller finalization is pending.')
         if (settled === undefined && preflight === undefined) {
-          if (proof !== 'native') retain(name, 'No explicit physical settlement.')
-          const result = inspectPosixOwnership(join(path, 'native', name))
-          if (result.state === 'retain') retain(name, result.reason)
-          // Pi can still fail clean EOF or turn finalization after native
-          // SETTLED. Its background caller must affirm retirement separately.
-          if (kind === 'pi' && result.state === 'confirmed' && result.proof === 'settled')
-            retain(name, 'Missing Pi output and caller settlement.')
+          if (proof === 'native') {
+            const result = inspectPosixOwnership(join(path, 'native', name))
+            if (result.state === 'retain') retain(name, result.reason)
+            // Native SETTLED proves physical absence only. The distinct cold
+            // kernel-absence path still works if caller finalization never began.
+            if (result.state === 'confirmed' && result.proof === 'settled') {
+              if (kind === 'pi') retain(name, 'Missing Pi output and caller settlement.')
+              if (kind === 'fenced' && caller === undefined)
+                retain(name, 'Missing fenced output and caller settlement.')
+            }
+          } else retain(name, 'No explicit physical settlement.')
         }
         links.add(id!)
         confirmed.push(name)
@@ -206,44 +290,7 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
 
     /** Publish a unique consumer link before starting work. The default is a
      * native journal; explicit adapters can only settle via their own promise. */
-    allocate(kind: Consumer, id: string, proof: 'native' | 'explicit' = 'native'): LaunchOwnership {
-      signal.throwIfAborted()
-      if (!ready.has(kind)) throw new Error(`Recover ${kind} ownership before allocating.`)
-      if (!label.test(id)) throw new Error('Invalid agent ownership consumer ID.')
-      used.add(kind)
-      const name = randomUUID()
-      const parent = join(scope, kind)
-      const path = join(parent, name)
-      mkdirSync(path, { mode: 0o700 })
-      const native = join(path, 'native')
-      if (proof === 'native') mkdirSync(native, { mode: 0o700 })
-      const header = `HOLI-AGENT-1 ${name}\n`
-      publish(path, 'link', `${header}${generation} ${proof} ${id}\n`)
-      syncDir(parent)
-      let nonLaunch = false
-      let failed = false
-      let done = false
-      return {
-        ownershipRecordPath: proof === 'native' ? join(native, name) : undefined,
-        nonLaunch() {
-          if (nonLaunch || failed || done) return
-          publish(path, 'nonlaunch', header + 'NONLAUNCH\n')
-          nonLaunch = true
-        },
-        fail(error) {
-          if (failed || done) return
-          failed = true
-          publish(path, 'failed', header + Buffer.from(String(error)).subarray(0, 1500).toString())
-        },
-        retire() {
-          if (done) return
-          if (failed) throw new Error('Cannot retire failed agent ownership.')
-          publish(path, 'settled', header + 'SETTLED\n')
-          retire(parent, name)
-          done = true
-        },
-      }
-    },
+    allocate,
   }
 }
 

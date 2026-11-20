@@ -21,13 +21,13 @@ import {
   type SpawnPty,
 } from '../../../../main/plugin-api'
 import { bounded } from './bounded'
-import type { LaunchOwnership } from './ownership'
+import type { FencedOwnership, LaunchOwnership } from './ownership'
 
 interface PtyOwnership {
   cwd: string
   allocate(proof: 'native' | 'explicit'): LaunchOwnership
   /** A fence has already linked scratch even if terminal preflight refuses. */
-  fence?: LaunchOwnership
+  fence?: FencedOwnership
 }
 const ptyOwnership = new AsyncLocalStorage<PtyOwnership>()
 
@@ -66,6 +66,7 @@ export interface AgentRuntimeDeps {
   killBackstopMs?: number
   /** Test adapter for native process-group ownership; never inferred from a fake pid. */
   superviseGroup?: (pid: number) => ProcessGroupSupervision
+  activationSignal?: AbortSignal
 }
 
 export interface StartArgs {
@@ -80,6 +81,15 @@ export interface StartArgs {
 export interface AgentExit {
   exitCode: number
   signal?: number
+  /** Native startup was cancelled before GO; no provider ran. */
+  nonAdmission?: true
+}
+
+/** A closed activation refused entry before invoking a PTY adapter. */
+class PtyAdmissionClosed extends Error {
+  constructor() {
+    super('The vault was left before the terminal opened.')
+  }
 }
 
 /** node-pty 1.1.0's UnixTerminal sets this own field in the native exit
@@ -129,8 +139,10 @@ export class AgentRuntime {
   private readonly killGraceMs: number
   private readonly killBackstopMs: number
   private readonly superviseGroup?: (pid: number) => ProcessGroupSupervision
+  private readonly activationSignal: AbortSignal | undefined
   private supervision?: ProcessGroupSupervision
   private ownership?: LaunchOwnership
+  private fence?: FencedOwnership
   private startupCleanup?: Promise<void>
   private exitSettlement?: Promise<void>
   private physicalDrain?: Promise<void>
@@ -146,6 +158,7 @@ export class AgentRuntime {
     this.killGraceMs = deps.killGraceMs ?? 2_000
     this.killBackstopMs = deps.killBackstopMs ?? 5_000
     this.superviseGroup = deps.superviseGroup
+    this.activationSignal = deps.activationSignal
   }
 
   get isRunning(): boolean {
@@ -191,7 +204,8 @@ export class AgentRuntime {
     let preparingLease = false
     const scope = this.platform !== 'win32' ? ptyOwnership.getStore() : undefined
     const ownership = scope?.cwd === cwd ? scope : undefined
-    this.ownership = ownership?.fence
+    this.fence = this.ownership = ownership?.fence
+    this.supervision = undefined
     this.killPromise = null
     this.draining = false
     this.drainingErrors = []
@@ -199,14 +213,21 @@ export class AgentRuntime {
     this.outputExpired = false
     this.exitSettlement = undefined
     this.physicalDrain = undefined
+    let binding: Promise<ProcessGroupSupervision> | undefined
+    const assertAdmission = () => {
+      if (this.activationSignal?.aborted) throw new PtyAdmissionClosed()
+    }
     try {
+      assertAdmission()
       const useLease = this.spawnPty === defaultSpawnPty && this.platform !== 'win32'
       const native = this.spawnPty === defaultSpawnPty ? defaultSpawnPty.preload?.() : undefined
       const preflight = native?.(bin, args, { cwd, env, cols, rows })
       if (ownership && !useLease && !this.superviseGroup)
         throw new Error('An owned PTY adapter must provide explicit physical proof.')
+      assertAdmission()
       if (ownership) this.ownership = ownership.allocate(useLease ? 'native' : 'explicit')
       if (useLease) {
+        assertAdmission()
         preparingLease = true
         prepared = preparePosixLaunch(bin, args, {
           cwd,
@@ -219,6 +240,7 @@ export class AgentRuntime {
       const argv = prepared?.args ?? args
       const options = { cwd, env: prepared?.options.env ?? env, cols, rows }
       const invoke = prepared ? native?.(executable, argv, options) : preflight
+      assertAdmission()
       invoked = true
       const pty = invoke ? invoke() : this.spawnPty(executable, argv, options)
       this.supervision = prepared ? { drain: prepared.drain } : this.superviseGroup?.(pty.pid)
@@ -242,7 +264,18 @@ export class AgentRuntime {
           if (this.drainingErrors.length)
             throw new AggregateError(this.drainingErrors, 'PTY drain notification failed.')
           const controller = new AbortController()
-          const event = { exitCode: e.exitCode, signal: e.signal }
+          const event: AgentExit = { exitCode: e.exitCode, signal: e.signal }
+          if (binding) {
+            try {
+              await binding
+            } catch (error) {
+              const refusal = posixLaunchNonAdmission(error)
+              if (!refusal) throw error
+              await refusal.cleanup
+              this.ownership?.nonLaunch()
+              event.nonAdmission = true
+            }
+          }
           const finish = (from: number): void | Promise<void> => {
             for (let i = from; i < this.exitCbs.length; i++) {
               const completion = this.exitCbs[i]!(event, controller.signal)
@@ -268,8 +301,15 @@ export class AgentRuntime {
         this.observe(this.exitSettlement)
         this.notifyPublicExit?.()
       })
-      if (prepared) void prepared.bind(pty.pid).catch(() => {})
+      if (prepared) {
+        binding = prepared.bind(pty.pid)
+        void binding.catch(() => {})
+      }
       this.pty = pty
+      // Invalidation can reenter a synchronous adapter before the terminal is
+      // indexed. Bind first, then revoke in this turn, before startup can GO.
+      if (this.platform !== 'win32' && this.activationSignal?.aborted)
+        void this.kill().catch(() => {})
     } catch (error) {
       const refusal = preparingLease ? posixLaunchNonAdmission(error) : undefined
       const cleanup = [refusal?.cleanup ?? ptyLaunchCleanup(error)]
@@ -278,7 +318,11 @@ export class AgentRuntime {
       if (prepared) cleanup.push(prepared.cancel(invoked ? 'possibly-launched' : 'unlaunched'))
       else if (invoked && this.supervision)
         cleanup.push(Promise.resolve().then(this.supervision.drain))
-      const noLaunch = !invoked && (!preparingLease || refusal !== undefined)
+      // A prepared lease that never bound cannot write GO, even when the
+      // native invocation created a root before throwing. Join cleanup first.
+      const noLaunch =
+        (prepared !== undefined && binding === undefined) ||
+        (!invoked && (!preparingLease || refusal !== undefined))
       const finish = () => {
         if (noLaunch) this.ownership?.nonLaunch()
         // The fenced caller still has to remove its source and provider state.
@@ -326,6 +370,22 @@ export class AgentRuntime {
   private beginDrain(): void {
     if (this.draining) return
     this.draining = true
+    try {
+      this.fence?.beginCallerFinalization()
+    } catch (error) {
+      this.drainingErrors.push(error)
+      this.failed(error)
+    }
+    // Call into the lease now, before notifying callers. Before GO this
+    // synchronously closes the native admission channel; after GO it drains.
+    if (this.supervision) {
+      try {
+        this.physicalDrain = this.supervision.drain()
+      } catch (error) {
+        this.physicalDrain = Promise.reject(error)
+      }
+      this.observe(this.physicalDrain)
+    }
     for (const cb of this.drainingCbs) {
       try {
         cb()
@@ -334,13 +394,6 @@ export class AgentRuntime {
         this.failed(error)
       }
     }
-    if (!this.supervision) return
-    try {
-      this.physicalDrain = this.supervision.drain()
-    } catch (error) {
-      this.physicalDrain = Promise.reject(error)
-    }
-    this.observe(this.physicalDrain)
   }
 
   write(data: string): void {
