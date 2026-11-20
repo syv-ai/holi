@@ -100,7 +100,7 @@ describe('owned Job broker host', () => {
     onTestFinished(() => rm(cwd, { recursive: true, force: true }))
     const { child, closed } = nodeHost(
       `
-        const { writeFileSync } = require('node:fs');
+        const { closeSync, writeFileSync, writeSync } = require('node:fs');
         let command = '';
         process.stdin.setEncoding('utf8').on('data', (chunk) => {
           command += chunk;
@@ -108,10 +108,16 @@ describe('owned Job broker host', () => {
           process.once('exit', () => writeFileSync('native-finished', 'done'));
           process.exit(0);
         });
-        // Let Node shut down the pipes; raw fd closes allow lazy libuv setup
-        // to reuse fd 1 or 2 and abort on macOS.
-        process.stdout.end('terminal\\n');
-        process.stderr.end();
+        // Windows named pipes need actual handle closure to produce EOF.
+        // Keep raw fd closes off macOS, where lazy libuv setup can reuse them.
+        if (process.platform === 'win32') {
+          writeSync(1, 'terminal\\n');
+          closeSync(1);
+          closeSync(2);
+        } else {
+          process.stdout.end('terminal\\n');
+          process.stderr.end();
+        }
       `,
       cwd,
       true,
@@ -119,16 +125,21 @@ describe('owned Job broker host', () => {
     const stdout = collect(child.stdout)
     const stderr = collect(child.stderr)
     const finished = join(cwd, 'native-finished')
-    await expect.poll(() => existsSync(join(cwd, 'native-output-ended'))).toBe(true)
-    expect(existsSync(finished)).toBe(false)
-    expect(child.exitCode).toBeNull()
-    expect(child.signalCode).toBeNull()
-    child.stdin.write('finish') // Release the inner process without sending parent EOF.
-    const [status, output, errors] = await Promise.all([closed, stdout, stderr])
-    expect(status).toEqual([0, null])
-    expect(await readFile(finished, 'utf8')).toBe('done')
-    expect(output.toString()).toBe('terminal\n')
-    expect(errors).toHaveLength(0)
+    try {
+      await expect.poll(() => existsSync(join(cwd, 'native-output-ended'))).toBe(true)
+      expect(existsSync(finished)).toBe(false)
+      expect(child.exitCode).toBeNull()
+      expect(child.signalCode).toBeNull()
+      child.stdin.write('finish') // Release the inner process without sending parent EOF.
+      const [status, output, errors] = await Promise.all([closed, stdout, stderr])
+      expect(status).toEqual([0, null])
+      expect(await readFile(finished, 'utf8')).toBe('done')
+      expect(output.toString()).toBe('terminal\n')
+      expect(errors).toHaveLength(0)
+    } finally {
+      if (!child.stdin.destroyed) child.stdin.end('finish')
+      await closed // Release a failed barrier before its cwd cleanup hook runs.
+    }
   })
 
   it('waits for both readable pipes when a descendant still holds them after inner exit', async () => {
