@@ -22,6 +22,10 @@ it.each(families)(
       const a = await f.start(f.A, kind, 'inherit', 7)
       const b = await f.start(f.B, kind, 'ignore', 0, 'reply')
       expect(b.sessionId).toBe(a.sessionId)
+      if (kind === 'pi') {
+        expect(f.syncHeld(f.A)).toBe(true)
+        expect(f.syncHeld(f.B)).toBe(false)
+      }
       const cause = new Error(`${kind}: owned proof unavailable`)
       a.drain.hold()
       a.close.hold()
@@ -58,6 +62,13 @@ it.each(families)(
       await expect(f.enter(f.A)).rejects.toBe(failure)
       expect((await f.hook(f.A, a.sessionId)).status).toBe(404)
       await f.work(f.B, b, 'a-failed', 41)
+      if (kind === 'pi') {
+        expect(f.syncHeld(f.A)).toBe(true)
+        expect(f.syncHeld(f.B)).toBe(false)
+        expect(f.publications).not.toContainEqual(
+          expect.objectContaining({ remote: f.A, name: 'turn-end' }),
+        )
+      }
       if (kind === 'pty') {
         const thread = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
         expect((await f.hook(f.B, b.sessionId, thread)).status).toBe(204)
@@ -102,6 +113,7 @@ it.each(families)(
       await expect(f.stop(f.A)).rejects.toBe(failure)
       await expect(f.enter(f.A)).rejects.toBe(failure)
       expect(a.release.hit).toBe(false)
+      if (kind === 'pi') expect(f.syncHeld(f.A)).toBe(true)
     })
   },
   15_000,

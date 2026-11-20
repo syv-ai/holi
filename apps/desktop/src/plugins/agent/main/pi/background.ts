@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { buildPiEnv } from './env'
 import type { SessionSummary } from '../claude/listing'
 import type { LaunchOwnership } from '../host/ownership'
+import type { ManagedTurn } from '../host/turn-coordinator'
 import { posixLaunchNonAdmission } from '../../../../main/plugin-api'
 import { PiRpcConfigurationError, PiRpcRun, type PiRunResult } from './rpc'
 
@@ -52,6 +53,7 @@ interface PiOwnership {
 }
 
 interface PiTurn {
+  managed?: { handle: ManagedTurn; deadline: AbortController }
   begin: Promise<void>
   finalized?: Promise<void>
   promise: Promise<void>
@@ -75,6 +77,7 @@ export interface PiLaunch {
 export interface PiBackgroundDeps {
   bin(): string | null
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): Promise<unknown> | unknown
+  beginManagedTurn?: (id: string) => ManagedTurn
   changed(): void
   activationSignal?: AbortSignal
   binDir?: () => string
@@ -148,8 +151,21 @@ export function createPiBackground(deps: PiBackgroundDeps) {
   function finalize(job: PiJob, turn: PiTurn, edge: 'end' | 'forget'): Promise<void> {
     if (turn.finalized) return turn.finalized
     turn.finalized = turn.begin.then(async () => {
-      const finalEdge = edge === 'end' && invalidated ? 'forget' : edge
-      await deps.bracket(job.id, finalEdge)
+      let finalEdge = invalidated || job.removal ? 'forget' : edge
+      if (process.platform !== 'win32' && (finalEdge === 'forget' || !job.run.isAlive)) {
+        // The combined receipt can fail for output alone. Only separate,
+        // positive physical proof authorizes releasing a stopped turn.
+        try {
+          await job.run.close()
+        } catch {
+          finalEdge = 'forget'
+        }
+        if (invalidated || job.removal) finalEdge = 'forget'
+        if (finalEdge === 'forget') await job.run.physicalDrain
+      }
+      if (turn.managed === undefined) await deps.bracket(job.id, finalEdge)
+      else if (finalEdge === 'forget') turn.managed.handle.forget()
+      else await turn.managed.handle.end(turn.managed.deadline.signal)
     })
     turn.finalized = turn.finalized.catch((error) => {
       failOwnership(job.ownership, error)
@@ -170,7 +186,11 @@ export function createPiBackground(deps: PiBackgroundDeps) {
           Promise.allSettled([...job.turns].map((turn) => turn.promise)),
           new Promise<void>((resolve) => {
             timer = setTimeout(() => {
-              failOwnership(job.ownership, new Error('Pi turn finalization timed out.'))
+              const cause = failOwnership(
+                job.ownership,
+                new Error('Pi turn finalization timed out.'),
+              )
+              for (const turn of job.turns) turn.managed?.deadline.abort(cause)
               resolve()
             }, TURN_DRAIN_MS)
           }),
@@ -187,7 +207,15 @@ export function createPiBackground(deps: PiBackgroundDeps) {
   async function settle(job: PiJob): Promise<void> {
     const owner = job.ownership
     try {
-      await job.run.drained
+      try {
+        await job.run.drained
+      } catch (error) {
+        failOwnership(owner, error)
+        if (process.platform === 'win32') throw error
+        // A broken output stream still owes the turn's guarded forget once
+        // the writer is gone. Unknown physical state must leave it open.
+        await job.run.physicalDrain
+      }
       await joinTurns(job)
       owner.record?.retire()
     } catch (error) {
@@ -223,7 +251,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     job.error = undefined
     changed()
     let result: PiRunResult = { status: 'aborted', output: '' }
-    if (!invalidated && !job.removal) {
+    if (!invalidated && !job.removal && !job.ownership.failure) {
       try {
         result = await job.run.prompt(prompt)
       } catch (error) {
@@ -247,24 +275,18 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       return
     }
     const isCurrent = () => job.currentTurn === turn && !invalidated && !job.removal
-    if (isCurrent()) {
-      job.model = typeof result.model === 'string' ? result.model : job.model
-      job.usage = turn.statsUpdated ? turn.usage : (summarizeUsage(result.usage) ?? job.usage)
-      job.contextPercent = turn.contextPercent ?? job.contextPercent
-      job.busy = false
-      job.state = 'idle'
-      job.outcome = result.status
-      job.error = result.error
-    }
+    if (isCurrent()) job.busy = false
     await finalize(job, turn, result.status === 'completed' ? 'end' : 'forget')
     // A live turn can finish parsing, then exit while the finalizer is pending.
     // Before exposing its reply, join the now-required output receipt as well.
     if (!closing && !job.run.isAlive && isCurrent()) await job.run.drained.catch(() => {})
     if (!isCurrent()) return
-    if (job.ownership.failure) {
-      job.outcome = 'failed'
-      job.error = String(job.ownership.failure.cause)
-    }
+    job.model = typeof result.model === 'string' ? result.model : job.model
+    job.usage = turn.statsUpdated ? turn.usage : (summarizeUsage(result.usage) ?? job.usage)
+    job.contextPercent = turn.contextPercent ?? job.contextPercent
+    job.state = 'idle'
+    job.outcome = job.ownership.failure ? 'failed' : result.status
+    job.error = job.ownership.failure ? String(job.ownership.failure.cause) : result.error
     changed()
     if (job.outcome === 'completed') {
       job.reply = result.output
@@ -295,14 +317,24 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       promise: Promise.resolve(),
       statsUpdated: false,
     }
-    turn.begin = Promise.resolve()
-      .then(() => deps.bracket(job.id, 'begin'))
-      .then(
-        () => {},
-        (error) => {
-          failOwnership(job.ownership, error)
-        },
-      )
+    if (deps.beginManagedTurn !== undefined) {
+      // Claim synchronously before sending a prompt. Generic host teardown
+      // cannot forget this handle even when the physical receipt rejects.
+      try {
+        turn.managed = { handle: deps.beginManagedTurn(job.id), deadline: new AbortController() }
+      } catch (error) {
+        failOwnership(job.ownership, error)
+      }
+    } else {
+      turn.begin = Promise.resolve()
+        .then(() => deps.bracket(job.id, 'begin'))
+        .then(
+          () => {},
+          (error) => {
+            failOwnership(job.ownership, error)
+          },
+        )
+    }
     job.turns.add(turn)
     job.currentTurn = turn
     return turn

@@ -1,3 +1,6 @@
+import { ChildProcess } from 'node:child_process'
+import { PassThrough } from 'node:stream'
+import { setImmediate as tick } from 'node:timers/promises'
 import { describe, expect, it, vi } from 'vitest'
 import { fakeClaudeCommand } from './fake-claude-command'
 import type { ClaudeCli } from '../main/claude/cli'
@@ -11,6 +14,9 @@ import {
 } from '../main/claude/listing'
 import type { SessionChannel } from '../main/claude/messaging'
 import { createAgentSessions, type AgentVault } from '../main/host/sessions'
+import { ownedProcessDrain } from '../../../main/plugin-api'
+import { createManagedTurnBrackets } from '../main/host/turn-coordinator'
+import { createPiBackground } from '../main/pi/background'
 import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
@@ -34,6 +40,7 @@ function setup(
   nativeCli?: ClaudeCli,
   root = ROOT,
   activationSignal?: AbortSignal,
+  turnLogFor?: Parameters<typeof createAgentSessions>[0]['turnLogFor'],
 ) {
   let listing: Row[] = initial
   const cli = {
@@ -106,6 +113,7 @@ function setup(
     },
   }
   const sessions = createAgentSessions({
+    turnLogFor,
     ...(activationSignal === undefined ? {} : { activationSignal }),
     emit: (_remote: string, name: string, payload: unknown) => sent.push([name, payload]),
     provider: {
@@ -140,6 +148,7 @@ function setup(
   return {
     running,
     sessions,
+    vault,
     cli,
     opened,
     pastes,
@@ -155,6 +164,99 @@ function setup(
     notifyWatch: () => watched(),
   }
 }
+
+it
+  .runIf(process.platform !== 'win32')
+  .each([
+    'unknown physical proof',
+    'positive proof after output failure',
+    'live semantic end',
+  ] as const)('honors the Pi hold through SessionHost with %s', async (mode) => {
+  const append = vi.fn(async () => {})
+  const { sessions, vault, attach } = setup([], undefined, ROOT, undefined, () => ({
+    list: async () => [],
+    append,
+  }))
+  const resume = vi.fn()
+  vault.pauseSync = vi.fn(() => resume)
+  const managed = createManagedTurnBrackets()
+  vault.claimManagedTurn = managed.claimManagedTurn
+  await attach()
+  const stdin = new PassThrough()
+  const stdout = new PassThrough()
+  const stderr = new PassThrough()
+  const failure = new Error('physical proof unavailable')
+  const broken = new Error('output failed')
+  const child = Object.assign(new ChildProcess(), {
+    stdin,
+    stdout,
+    stderr,
+    [ownedProcessDrain]: {
+      drain: vi.fn(async () => {
+        if (mode === 'unknown physical proof') throw failure
+        if (mode === 'live semantic end') {
+          const eof = new Promise<void>((resolve) => stdout.once('end', resolve))
+          stdout.end()
+          child.emit('exit', 0, null)
+          await eof
+          child.emit('close', 0, null)
+        }
+      }),
+    },
+  })
+  const pi = createPiBackground({
+    bin: () => 'pi',
+    spawn: () => child,
+    bracket: sessions.bracket,
+    changed: () => {},
+    beginManagedTurn: (id) => managed.begin(id, sessions.bracket),
+  })
+  pi.setVault(vault.remote, vault.root)
+  try {
+    const launched = await pi.launch({ name: 'fixture', prompt: 'go', keep: true })
+    if (!launched.ok) throw new Error(launched.message)
+    const id = launched.sessionId
+    expect(vault.pauseSync).toHaveBeenCalledOnce()
+    expect(resume).not.toHaveBeenCalled()
+    if (mode === 'live semantic end') {
+      stdout.write(
+        '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"live"}}\n',
+      )
+      stdout.write('{"type":"agent_settled"}\n')
+      const command = stdin
+        .read()!
+        .toString()
+        .trim()
+        .split('\n')
+        .map((line: string) => JSON.parse(line))
+        .at(-1)
+      expect(command.type).toBe('get_session_stats')
+      stdout.write(`${JSON.stringify({ type: 'response', id: command.id, success: false })}\n`)
+      await vi.waitFor(() => expect(pi.reply(id)).toBe('live'))
+      expect(child[ownedProcessDrain].drain).not.toHaveBeenCalled()
+      expect(append).toHaveBeenCalledOnce()
+    } else {
+      if (mode === 'positive proof after output failure') {
+        stdout.destroy(broken)
+        await tick()
+      }
+      const cause = mode === 'unknown physical proof' ? failure : broken
+      await expect(pi.stop(id)).rejects.toBe(cause)
+      await expect(pi.leave()).rejects.toBe(cause)
+      expect(append).not.toHaveBeenCalled()
+      expect(pi.reply(id)).toBeNull()
+    }
+    await sessions.leave()
+    if (mode === 'unknown physical proof') expect(resume).not.toHaveBeenCalled()
+    else expect(resume).toHaveBeenCalledOnce()
+  } finally {
+    await pi.leave().catch(() => {})
+    await sessions.leave()
+    stdin.destroy()
+    stdout.destroy()
+    stderr.destroy()
+  }
+})
 
 describe('agent sessions', () => {
   it('propagates a malformed native launch receipt without speculative stop or terminal attach', async () => {

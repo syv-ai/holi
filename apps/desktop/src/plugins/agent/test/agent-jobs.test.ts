@@ -35,6 +35,7 @@ import {
   vaultSandbox,
   type JobScope,
 } from '../main/host/jobs'
+import { createManagedTurnBrackets, createTurnCoordinator } from '../main/host/turn-coordinator'
 import type { SessionSummary } from '../main/claude/listing'
 import type { AgentProvider, JobRun, JobsProvider } from '../main/provider'
 import { trackedJobProcesses } from './fixtures/tracked-job-processes'
@@ -1270,6 +1271,105 @@ describe('a job in the vault', () => {
         vi.useRealTimers()
         // Leave owns final scratch deletion only on success; the fixture
         // never had a real child and afterEach removes the exact temp paths.
+      }
+    },
+  )
+
+  it.each(['timeout', 'stop joins timeout', 'rejection'] as const)(
+    'retains natural managed history %s',
+    async (mode) => {
+      const root = await temp('holi-job-vault-')
+      const userData = await temp('holi-job-data-')
+      const scratchRoot = join(userData, 'jobs')
+      const vault = { remote: 'fixture/vault', root }
+      const ownership = activationOwnership(userData, vault, new AbortController().signal)
+      const stdout = new PassThrough()
+      const drain = vi.fn(async () => {})
+      const child = Object.assign(new ChildProcess(), { stdout, [ownedProcessDrain]: { drain } })
+      const managed = createManagedTurnBrackets()
+      const historyError = new Error('original history rejection')
+      let releaseHistory!: () => void
+      let startedHistory!: () => void
+      const entered = new Promise<void>((resolve) => (startedHistory = resolve))
+      const hold = new Promise<void>((resolve) => (releaseHistory = resolve))
+      const onTurnEnd = vi.fn()
+      const coordinator = createTurnCoordinator({
+        vault: () => ({
+          root,
+          head: async () => 'base',
+          commitNow: async () => 'end',
+          pauseSync: () => () => {},
+          claimManagedTurn: managed.claimManagedTurn,
+        }),
+        turnLogFor: () => ({
+          list: async () => [],
+          append: async () => {
+            startedHistory()
+            await hold
+            if (mode === 'rejection') throw historyError
+          },
+        }),
+        onTurnEnd,
+        log: () => {},
+      })
+      const jobs = createJobs({
+        vault,
+        scratchRoot,
+        ...(ownership && { ownership }),
+        spawn: () => child,
+        beginManagedTurn: (id) => managed.begin(id, (id, edge) => coordinator[edge](id)),
+        onChange: () => {},
+        log: () => {},
+      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const started = await jobs.start({
+          provider: scripted('/fixture/job'),
+          name: 'fixture',
+          prompt: 'go',
+          allow: [],
+        })
+        if (!started.ok) throw new Error(started.message)
+        const id = started.sessionId
+        const eof = new Promise<void>((resolve) => stdout.once('end', resolve))
+        stdout.end('{"type":"turn.completed"}\n')
+        await eof
+        child.emit('exit', 0, null)
+        child.emit('close', 0, null)
+        await entered
+        await vi.advanceTimersByTimeAsync(4_999)
+        expect(jobs.sessions()[0]).toMatchObject({ state: 'working' })
+        const stopping =
+          mode === 'stop joins timeout' ? jobs.stop(id).catch((error: unknown) => error) : undefined
+        if (mode === 'rejection') releaseHistory()
+        await vi.advanceTimersByTimeAsync(1)
+        const message =
+          mode === 'rejection' ? historyError.message : /Finalization of job.*timed out/
+        expect(jobs.sessions()[0]).toMatchObject({
+          state: 'idle',
+          outcome: 'failed',
+          error: expect.stringMatching(message),
+        })
+        const failure = await jobs.stop(id).catch((error: unknown) => error)
+        if (stopping !== undefined) expect(await stopping).toBe(failure)
+        if (mode === 'rejection') expect(failure).toBe(historyError)
+        await expect(jobs.stop(id)).rejects.toBe(failure)
+        await expect(jobs.leave()).rejects.toMatchObject({ errors: [failure] })
+        releaseHistory()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(onTurnEnd).not.toHaveBeenCalled()
+        expect(jobs.sessions()[0]).toMatchObject({ id, outcome: 'failed' })
+        if (ownership)
+          expect(await readFile(join(scratchRoot, `${id}.turn`), 'utf8')).toContain('FINALIZING')
+        await expect(jobs.stop(id)).rejects.toBe(failure)
+        await expect(jobs.leave()).rejects.toMatchObject({ errors: [failure] })
+      } finally {
+        releaseHistory()
+        stdout.destroy()
+        await vi.advanceTimersByTimeAsync(0)
+        await jobs.leave().catch(() => {})
+        await coordinator.drain().catch(() => {})
+        vi.useRealTimers()
       }
     },
   )

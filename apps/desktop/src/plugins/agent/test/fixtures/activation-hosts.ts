@@ -21,6 +21,7 @@ export function activationHosts(
   const B: Remote = 'fixture/b'
   const events: PluginEvent[] = []
   const publications: PluginEvent[] = []
+  const syncHolds = new Set<Remote>()
   const pending = new Set<Promise<unknown>>()
   const registry = createCapabilityRegistry()
   const agentListeners = new Set<(message: unknown) => void>()
@@ -110,8 +111,8 @@ export function activationHosts(
       {
         remote,
         root: roots[remote],
-        pause: () => {},
-        resume: () => {},
+        pause: () => void syncHolds.add(remote),
+        resume: () => void syncHolds.delete(remote),
         drainSync: async () => {},
         commitNow: async () => {
           commit?.(roots[remote])
@@ -138,6 +139,7 @@ export function activationHosts(
   const rows = async (remote: Remote) => (await call(remote, 'agent.sessions')) as SessionSummary[]
   return {
     roots,
+    syncHeld: (remote: Remote) => syncHolds.has(remote),
     A,
     B,
     host,

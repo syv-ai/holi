@@ -87,6 +87,10 @@ export class PiRpcRun {
   private readonly supervision?: ProcessGroupSupervision
   private closeSeen = false
   private drainStarted = false
+  /** POSIX lease receipt, independent of output. Windows uses child close. */
+  readonly physicalDrain: Promise<void>
+  private resolvePhysical!: () => void
+  private rejectPhysical!: (error: unknown) => void
   private physicalComplete = false
   private outputTimer?: ReturnType<typeof setTimeout>
   private windowsStopTimer?: ReturnType<typeof setTimeout>
@@ -101,6 +105,7 @@ export class PiRpcRun {
   private readonly configuredModel?: { provider: string; modelId: string }
   private modelSet = false
   private pending = ''
+  private oversizedWhitespace = false
   private output = ''
   private parseErrors = 0
   private settled = false
@@ -121,10 +126,16 @@ export class PiRpcRun {
   private resolveDrained!: () => void
 
   get isAlive(): boolean {
-    return !this.exited && !this.closed
+    return !this.exited && !this.closed && !this.outputEnded
   }
 
   constructor(options: PiRpcOptions) {
+    this.physicalDrain = new Promise((resolve, reject) => {
+      this.resolvePhysical = resolve
+      this.rejectPhysical = reject
+    })
+    // Reading this receipt never starts a drain; only the owner or root exit can.
+    void this.physicalDrain.catch(() => {})
     this.drained = new Promise((resolve, reject) => {
       this.resolveDrained = resolve
       this.rejectDrained = reject
@@ -169,10 +180,12 @@ export class PiRpcRun {
     })
     this.supervision = this.child[ownedProcessDrain]
     if (!this.supervision) {
-      if (options.spawn === undefined && process.platform === 'win32') this.physicalComplete = true
-      else {
+      if (options.spawn === undefined && process.platform === 'win32') {
+        // Windows uses the helper's exit/output join, not a POSIX lease.
+        this.physicalComplete = true
+      } else {
         this.drainStarted = true
-        this.failDrain(new Error('Pi RPC process group has no retained ownership proof.'))
+        this.failPhysical(new Error('Pi RPC process group has no retained ownership proof.'))
       }
     }
     this.child.stdout.setEncoding('utf8')
@@ -182,9 +195,11 @@ export class PiRpcRun {
       this.outputEnded = true
       const tail = this.pending
       this.pending = ''
-      // A clean stream END can still cut off a record. Do not publish an
-      // exiting turn until its final non-whitespace record parses.
-      if (tail.trim() !== '') this.readRecord(tail, this.exited && this.active)
+      clearTimeout(this.statsTimer)
+      this.statsTimer = undefined
+      // END and EXIT can arrive in either order. An active turn cannot
+      // succeed on a truncated final record, even with a pending outcome.
+      if (tail.trim() !== '') this.readRecord(tail, this.active)
       if (this.outputError) return
       if (this.pendingStats) {
         try {
@@ -218,6 +233,7 @@ export class PiRpcRun {
     })
     this.child.once('close', (code, signal) => {
       this.closeSeen = true
+      if (this.supervision === undefined && this.physicalComplete) this.resolvePhysical()
       this.rootExited(code, signal)
       this.settleOutputDrain()
     })
@@ -329,16 +345,26 @@ export class PiRpcRun {
       const physical = nonAdmissionCleanup ?? this.supervision?.drain()
       if (physical) {
         void physical.then(() => {
-          this.physicalComplete = true
+          this.markPhysicalComplete()
           this.settleOutputDrain()
-        }, this.failDrain)
+        }, this.failPhysical)
       } else {
         this.stopWindowsHelper()
         this.settleOutputDrain()
       }
     } catch (error) {
-      this.failDrain(error)
+      this.failPhysical(error)
     }
+  }
+
+  private markPhysicalComplete(): void {
+    this.physicalComplete = true
+    this.resolvePhysical()
+  }
+
+  private failPhysical = (error: unknown): void => {
+    this.rejectPhysical(error)
+    this.failDrain(error)
   }
 
   private stopWindowsHelper(): void {
@@ -419,30 +445,43 @@ export class PiRpcRun {
   private consume(chunk: string): void {
     if (this.outputError || (this.settled && this.closed)) return
     this.pending += chunk
-    if (Buffer.byteLength(this.pending) > this.maxLineBytes && !this.pending.includes('\n')) {
-      this.pending = ''
-      this.fail('Pi RPC emitted an oversized record')
-      return
-    }
     let newline: number
-    while ((newline = this.pending.indexOf('\n')) >= 0) {
+    while (!this.outputError && (newline = this.pending.indexOf('\n')) >= 0) {
       const line = this.pending.slice(0, newline)
       this.pending = this.pending.slice(newline + 1)
-      this.readRecord(line)
+      if (this.oversizedWhitespace) this.badRecord()
+      else this.readRecord(line)
+      this.oversizedWhitespace = false
+    }
+    if (this.outputError) return
+    if (this.oversizedWhitespace || Buffer.byteLength(this.pending) > this.maxLineBytes) {
+      const whitespace = this.pending.trim() === ''
+      this.pending = ''
+      // Bound even a stream of blank bytes, without treating whitespace at EOF as a record.
+      this.oversizedWhitespace = whitespace
+      if (!whitespace) {
+        if (this.active) this.failOutput(new Error('Pi RPC emitted an oversized record'))
+        else this.fail('Pi RPC emitted an oversized record')
+      }
     }
   }
 
-  private readRecord(line: string, exitingTail = false): void {
+  private readRecord(line: string, activeTail = false): void {
+    const malformed = (error: unknown) => {
+      if (activeTail && error instanceof Error) this.failOutput(error)
+      else this.badRecord()
+    }
     if (Buffer.byteLength(line) > this.maxLineBytes) {
-      this.badRecord()
+      malformed(new Error('Pi RPC emitted an oversized record'))
       return
     }
     let record: Record<string, unknown>
     try {
       record = JSON.parse(line) as Record<string, unknown>
+      if (activeTail && (record === null || typeof record !== 'object' || Array.isArray(record)))
+        throw new SyntaxError('Invalid Pi RPC record at stdout end')
     } catch (error) {
-      if (exitingTail && error instanceof SyntaxError) this.failOutput(error)
-      else this.badRecord()
+      malformed(error)
       return
     }
     try {
@@ -579,7 +618,7 @@ export class PiRpcRun {
 
   private finishNaturally(outcome: PiTurnOutcome): void {
     if (this.settled) return
-    if (this.exited && !this.outputEnded) this.pendingOutcome = outcome
+    if (this.exited !== this.outputEnded) this.pendingOutcome = outcome
     else this.finish(outcome)
   }
 

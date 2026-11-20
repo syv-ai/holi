@@ -24,6 +24,13 @@ posix.each(cells)(
       const a = await f.start(f.A, kind, 'ignore', 7)
       const b = await f.start(f.B, kind, stdio, code, 'reply')
       const notExitedB = pending(b.exited.promise)
+      if (kind === 'pi') {
+        expect(f.syncHeld(f.A)).toBe(true)
+        expect(f.syncHeld(f.B)).toBe(false)
+        expect(await f.call(f.B, 'agent.turns')).toEqual(
+          expect.arrayContaining([expect.objectContaining({ sessionId: b.sessionId })]),
+        )
+      }
       expect(a.ownershipPath).not.toBe(b.ownershipPath)
       expect(a.sessionId).toBe(b.sessionId)
       const approvalA = await f.approval(f.A)
@@ -219,6 +226,7 @@ posix.each(cells)(
         })
       }
       const noPiResult = async () => {
+        expect(f.syncHeld(f.B)).toBe(true)
         expect(await f.call(f.B, 'agent.reply', { session: b.sessionId })).toEqual({
           output: lastLiveB,
         })
@@ -252,6 +260,7 @@ posix.each(cells)(
           output: lastLiveB,
         })
         await access(b.ownershipPath)
+        expect(f.syncHeld(f.B)).toBe(true)
         notClosedB()
       }
       await bounded(b.nativeClosed.promise, 'B real pipes closed')
@@ -294,6 +303,7 @@ posix.each(cells)(
           })
           await missing(dirname(dirname(b.ownershipPath)))
         })
+        expect(f.syncHeld(f.B)).toBe(false)
       }
       if (kind === 'job' || kind === 'fenced') {
         await bounded(b.release.entered, 'B provider release')

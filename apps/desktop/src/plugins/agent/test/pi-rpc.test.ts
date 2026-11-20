@@ -241,7 +241,7 @@ describe('PiRpcRun', () => {
     expect(() => run.followUp('second')).toThrow(/process exited/)
   })
 
-  it('bounds output and returns failed on malformed input limit', async () => {
+  it('bounds output and rejects an oversized partial record', async () => {
     const fakeProcess = fake()
     const run = new PiRpcRun({
       bin: 'pi',
@@ -254,8 +254,12 @@ describe('PiRpcRun', () => {
     fakeProcess.stdout.write(
       '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"long"}}\n',
     )
+    fakeProcess.stdout.write('{"type":"agent_settled"}\n')
+    await expect(result).resolves.toMatchObject({ status: 'completed', output: 'lon' })
+    const next = run.prompt('next')
     fakeProcess.stdout.write('1'.repeat(129))
-    await expect(result).resolves.toMatchObject({ status: 'failed', output: 'lon' })
+    await expect(next).rejects.toThrow('oversized record')
+    await expect(run.drained).rejects.toThrow('oversized record')
   })
 
   it('fails after repeated malformed records without treating one bad line as settlement', async () => {
@@ -522,6 +526,38 @@ describe('PiRpcRun', () => {
     },
   )
 
+  it.each([
+    { exitFirst: true, oversized: false },
+    { exitFirst: false, oversized: false },
+    { exitFirst: true, oversized: true },
+    { exitFirst: false, oversized: true },
+  ])(
+    'rejects an active invalid tail (exit first: $exitFirst, oversized: $oversized)',
+    async ({ exitFirst, oversized }) => {
+      const rpc = fake(false)
+      const drain = vi.fn(async () => {})
+      const run = new PiRpcRun({
+        bin: 'pi',
+        cwd: '/v',
+        maxLineBytes: 64,
+        onStats: vi.fn(),
+        spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: { drain } }),
+      })
+      const result = run.prompt('go').catch((error: unknown) => error)
+      if (exitFirst) rpc.rootExit()
+      rpc.stdout.end(
+        `{"type":"agent_settled"}\n${oversized ? '"' + 'x'.repeat(64) + '"' : '{"type":'}`,
+      )
+      await tick()
+      if (!exitFirst) rpc.rootExit()
+      rpc.close()
+      const cause = await result
+      expect(cause).toEqual(expect.any(oversized ? Error : SyntaxError))
+      await expect(run.drained).rejects.toBe(cause)
+      expect(drain).toHaveBeenCalledOnce()
+    },
+  )
+
   it('accepts whitespace after the last complete record of an exiting turn', async () => {
     const rpc = fake(false)
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => rpc.child })
@@ -531,6 +567,51 @@ describe('PiRpcRun', () => {
     rpc.close()
     await expect(result).resolves.toMatchObject({ status: 'completed' })
     await run.drained
+  })
+
+  it.each(['json', 'whitespace'] as const)(
+    'accepts stdout-first EOF with a %s tail',
+    async (tail) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const rpc = fake(false)
+      const run = new PiRpcRun({
+        bin: 'pi',
+        cwd: '/v',
+        spawn: () => rpc.child,
+        onStats: vi.fn(),
+        maxLineBytes: 64,
+      })
+      const result = run.prompt('go')
+      const done = vi.fn()
+      void result.then(done, done)
+      if (tail === 'json') rpc.stdout.end('{"type":"agent_settled"}')
+      else {
+        rpc.stdout.write('{"type":"agent_settled"}\n')
+        rpc.stdout.write(' '.repeat(130))
+        rpc.stdout.end('\t')
+      }
+      await tick()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(done).not.toHaveBeenCalled()
+      rpc.rootExit()
+      rpc.close()
+      await expect(result).resolves.toMatchObject({ status: 'completed' })
+      await expect(run.drained).resolves.toBeUndefined()
+    },
+  )
+
+  it('does not retroactively fail a completed live turn for an idle malformed tail', async () => {
+    const rpc = fake(false)
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => rpc.child })
+    const result = run.prompt('go')
+    rpc.stdout.write('{"type":"agent_settled"}\n')
+    await expect(result).resolves.toMatchObject({ status: 'completed' })
+    expect(run.isAlive).toBe(true)
+    rpc.stdout.end('{"type":')
+    await tick()
+    rpc.rootExit()
+    rpc.close()
+    await expect(run.drained).resolves.toBeUndefined()
   })
 
   it('starts physical drain on root exit but reads buffered final RPC records', async () => {

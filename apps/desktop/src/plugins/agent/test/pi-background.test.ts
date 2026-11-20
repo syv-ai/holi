@@ -623,8 +623,7 @@ describe('Pi background runs', () => {
     const started = await manager.launch({ name: 'x', prompt: 'first' })
     if (!started.ok) throw new Error(started.message)
     rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(0)
     expect(manager.sessions()[0]?.outcome).toBe('completed')
     expect(manager.sessions()).toHaveLength(1)
 
@@ -632,8 +631,7 @@ describe('Pi background runs', () => {
     await Promise.resolve()
     expect(rpc.commands.filter((command) => command.type === 'prompt')).toHaveLength(2)
     rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(0)
     expect(manager.sessions()[0]?.outcome).toBe('completed')
     await vi.advanceTimersByTimeAsync(30_000)
     expect(rpc.wasKilled()).toBe(true)
@@ -1445,17 +1443,21 @@ describe('Pi background runs', () => {
     if (!launched.ok) throw new Error(launched.message)
     const id = launched.sessionId
     rpc.rootExit()
-    await vi.waitFor(() =>
-      expect(bracket.mock.calls).toEqual([
-        [id, 'begin'],
-        [id, 'forget'],
-      ]),
-    )
+    await tick()
     rpc.stdout.write('{"type":"agent_settled"}\n')
     expect(manager.reply(id)).toBeNull()
     for (let i = 0; i < 2; i++) await expect(manager.stop(id)).rejects.toBe(failure)
     await expect(manager.leave()).rejects.toBe(failure)
+    expect(bracket.mock.calls).toEqual(
+      process.platform === 'win32'
+        ? [
+            [id, 'begin'],
+            [id, 'forget'],
+          ]
+        : [[id, 'begin']],
+    )
     expect(drain).toHaveBeenCalledOnce()
+    rpc.dispose()
   })
 
   it('suppresses late stats and completion after activation abort', async () => {

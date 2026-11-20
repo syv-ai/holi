@@ -39,9 +39,10 @@ export type TurnVault = Pick<PluginCtx, 'root' | 'pauseSync' | 'commitNow' | 'he
   }
 
 export interface ManagedTurn {
-  /** After output and physical proof: resolves only after this turn's record
-   *  was written; rejects with the persistence failure. */
-  end(): Promise<TurnRecord>
+  /** After the owner proves the turn is no longer writing: resolves only
+   *  after its record was written. The owner's deadline can revoke a queued
+   *  write or its publication, but cannot undo an append already in flight. */
+  end(signal?: AbortSignal): Promise<TurnRecord>
   /** After physical proof without a usable end: release without recording. */
   forget(): void
 }
@@ -76,9 +77,9 @@ export function createManagedTurnBrackets() {
         bracket(id, 'forget')
       }
       return {
-        end: () => {
+        end: (signal) => {
           unregister()
-          return turn.end()
+          return turn.end(signal)
         },
         forget: () => {
           unregister()
@@ -162,7 +163,11 @@ interface Turn {
    *  start of it rather than racing it. */
   basePending: Promise<void>
   managed: boolean
-  history?: { resolve(record: TurnRecord): void; reject(error: unknown): void }
+  history?: {
+    signal?: AbortSignal
+    resolve(record: TurnRecord): void
+    reject(error: unknown): void
+  }
   overlapped: boolean
   safety: ReturnType<typeof setTimeout> | null
   /** When the listing first read this session `idle`, for the confirmation.
@@ -217,7 +222,10 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       overlapped: turn.overlapped,
     }
     const turnLog = deps.turnLogFor(vault.root)
-    const next = writing.then(() => turnLog.append(record))
+    const next = writing.then(() => {
+      turn.history?.signal?.throwIfAborted()
+      return turnLog.append(record)
+    })
     writing = next.catch(() => {}) // keep serializing after a failed append
     await next
     return record
@@ -227,6 +235,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     try {
       const record = await work()
       if (turn.history !== undefined) {
+        turn.history.signal?.throwIfAborted()
         if (record === null) throw new Error(`No turn history was written for ${turn.sessionId}.`)
         turn.history.resolve(record)
       }
@@ -345,15 +354,16 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     const { sessionId } = turn
     let ending: Promise<TurnRecord> | undefined
     return {
-      end() {
+      end(signal) {
         if (ending !== undefined) return ending
         if (turns.get(sessionId) !== turn)
           return Promise.reject(new Error(`The managed turn for ${sessionId} is no longer open.`))
         const persisted = new Promise<TurnRecord>((resolve, reject) => {
-          turn.history = { resolve, reject }
+          turn.history = { signal, resolve, reject }
         })
         ending = track(
           persisted.then((record) => {
+            signal?.throwIfAborted()
             deps.onTurnEnd?.(sessionId)
             return record
           }),
