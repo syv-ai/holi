@@ -144,7 +144,8 @@ function prepare(
   let deadlineLimit = stagingDeadline
   let canceled = false
   let goWritten = false
-  let abortClosedGate = false
+  const startupStop = new Error('POSIX launch was cancelled before start.')
+  const startupWake = new AbortController()
   let term = false
   let kill = false
   let requestedStop: Promise<void> | undefined
@@ -211,8 +212,6 @@ function prepare(
     if (phase === 'committed') return receipts.execution()
   }
 
-  const pause = (deadline: number) =>
-    delay(Math.min(poll, Math.max(0, deadline - performance.now())))
   async function wait<T>(
     deadline: number,
     label: string,
@@ -221,14 +220,23 @@ function prepare(
     startupCheck = false,
   ): Promise<T> {
     for (;;) {
-      if (startupCheck && canceled) throw new Error('POSIX launch was cancelled before start.')
+      if (startupCheck && canceled) throw startupStop
       collect()
       if (!ignoreError && firstError) throw firstError
       const value = test()
       if (value !== undefined) return value
       const end = startupCheck ? Math.min(deadline, deadlineLimit) : deadline
       if (performance.now() >= end) throw new Error(`Timed out ${label}.`)
-      await pause(end)
+      try {
+        await delay(
+          Math.min(poll, Math.max(0, end - performance.now())),
+          undefined,
+          startupCheck ? { signal: startupWake.signal } : undefined,
+        )
+      } catch (error) {
+        if (startupCheck && (error as Error | undefined)?.cause === startupStop) throw startupStop
+        throw error
+      }
     }
   }
 
@@ -295,6 +303,9 @@ function prepare(
   function drain(): Promise<void> {
     if (cancelling) return cancelling
     if (!startup) throw new Error('Bind or cancel the POSIX launch before draining it.')
+    // A physical stop before the GO write closes admission in this turn,
+    // rather than waiting for startup to admit the provider and then sending T.
+    if (!goWritten) return cancel('possibly-launched')
     return (drainPromise ??= (async () => {
       const deadline = performance.now() + timeout
       deadlineLimit = Math.min(deadlineLimit, deadline)
@@ -311,9 +322,9 @@ function prepare(
           })
         }
       } catch (error) {
-        if (!canceled) note(error, 'drain')
+        note(error, 'drain')
       }
-      await finish(deadline, !canceled)
+      await finish(deadline, true)
     })())
   }
 
@@ -334,6 +345,7 @@ function prepare(
       note(error, 'cancel')
     }
     closeControl()
+    startupWake.abort(startupStop)
   }
 
   function cancel(state: CancelState): Promise<void> {
@@ -354,7 +366,12 @@ function prepare(
       }
       // Never infer absence from a missing startup receipt. A native call
       // that threw may already have forked, or not even have entered exec.
-      await finish(performance.now() + timeout, false)
+      const deadline = performance.now() + timeout
+      // Join the interrupted startup before inspecting absence, so an actual
+      // staging error that raced the stop stays sticky. This is the raw startup
+      // promise, not bind's result, which may itself wait for this cleanup.
+      if (!goWritten) await startup?.catch(() => {})
+      await finish(deadline, false)
     })())
   }
 
@@ -417,27 +434,33 @@ function prepare(
         )
         await send('committing POSIX exec', 'G', 'go-sent')
         await stage('waiting for POSIX launch commit', () => phase === 'committed' || undefined)
-      })()
-      const binding = startup.then(() => ({ drain }))
-      void binding.catch((error) => {
-        if (canceled) return
-        note(error)
-        void drain().catch(() => {})
+      })().catch((error: unknown) => {
+        if (error !== startupStop) note(error)
+        throw error
       })
+      const binding = startup.then(
+        () => ({ drain }),
+        async (error: unknown) => {
+          const cleanup = drain()
+          void cleanup.catch(() => {})
+          if (error === startupStop && !goWritten) {
+            await cleanup
+            markPosixNonAdmission(error, cleanup)
+          }
+          throw error
+        },
+      )
+      void binding.catch(() => {})
       return binding
     },
     drain,
     cancel,
     abortBeforeCommit(): boolean {
-      if (goWritten || abortClosedGate) return false
-      abortClosedGate = true
-      // A stop queued behind startup would first let GO through. Latch and close
-      // now, even if an owner has already joined drain; no T is sent before GO.
-      closeAdmission()
-      void cancel('possibly-launched').catch(() => {})
+      if (goWritten) return false
+      void drain().catch(() => {})
       return true
     },
-    abortClosedGate: () => abortClosedGate,
+    canceledBeforeCommit: () => canceled && !goWritten,
     failExecution(error: unknown): Promise<void> {
       note(error)
       // Cancellation may race an owner already joining drain. Wake the
@@ -485,6 +508,7 @@ function prepare(
       })
       if (command) requestedStop = sent
       void sent.catch((error: unknown) => {
+        if (error === startupStop) return
         note(error)
         void drain().catch(() => {})
       })

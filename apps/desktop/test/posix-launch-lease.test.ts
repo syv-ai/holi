@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { preparePosixLaunch, type PosixLaunch } from '../src/main/posix-launch-lease'
-import { inspectPosixOwnership } from '../src/main/posix-ownership-journal'
+import { inspectPosixOwnership, posixLaunchNonAdmission } from '../src/main/posix-ownership-journal'
 import { buildLeaseForTests, buildPosixTestHelper } from './fixtures/posix-native-build'
 
 const { nativePath, fault } = vi.hoisted(() => ({
@@ -22,7 +22,8 @@ const { nativePath, fault } = vi.hoisted(() => ({
     rack: undefined as (() => 'block' | 'reject') | undefined,
     beforeRemove: undefined as ((path: string) => void) | undefined,
     beforeCreate: undefined as ((path: string) => void) | undefined,
-    beforeWrite: undefined as ((command: string) => void) | undefined,
+    beforeWrite: undefined as ((command: string, fd: number) => void) | undefined,
+    holdWrite: undefined as 'S' | 'G' | undefined,
   },
 }))
 vi.mock('../src/main/posix-lease-executable', () => ({
@@ -50,7 +51,10 @@ vi.mock('node:fs', async (importOriginal) => {
     writeSync: (fd: number, payload: Buffer, offset: number, length: number) => {
       fault.io?.()
       const command = payload.length === 1 ? payload.toString() : ''
-      if (command) fault.beforeWrite?.(command)
+      if (command) {
+        fault.beforeWrite?.(command, fd)
+        if (command === fault.holdWrite) return 0
+      }
       if (fault.command && command === 'S') return fs.writeSync(fd, Buffer.from('X'))
       if (fault.rack && command === 'A') {
         if (fault.rack() === 'block') return 0
@@ -450,6 +454,78 @@ describe.runIf(process.platform !== 'win32')('POSIX launch lease', () => {
         await prepared.cancel('possibly-launched').catch(() => {})
       }
     }))
+
+  it.each(['S', 'G'] as const)('stops the named PTY lease at the held %s gate', (gate) =>
+    tracked(async (directory, track) => {
+      const marker = join(directory, 'provider-ran')
+      const ownershipRecordPath = join(directory, randomUUID())
+      const prepared = preparePosixLaunch('/usr/bin/touch', [marker], {
+        directory,
+        ownershipRecordPath,
+        graceMs: 20,
+        stdio: 'ignore',
+      })
+      const helpers = observeHelpers()
+      fault.holdWrite = gate
+      const commands: string[] = []
+      let controller: ReturnType<typeof spawn> | undefined
+      let controllerExit: Promise<unknown[]> | undefined
+      fault.beforeWrite = (command, fd) => {
+        commands.push(command)
+        if (gate !== 'G' || command !== 'G' || controller) return
+        // An independent controller holds a copy of the control writer. After
+        // local drain closes ours, OS closure on its exit must wake the anchor.
+        controller = spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
+          stdio: ['pipe', 'ignore', 'ignore', fd],
+        })
+        if (controller.pid !== undefined) track(controller.pid)
+        controllerExit = once(controller, 'exit')
+      }
+      const root = launch(prepared)
+      track(root.pid)
+      const binding = prepared.bind(root.pid).catch((error: unknown) => error)
+      try {
+        await vi.waitFor(() => expect(commands).toContain(gate), { timeout: 2000 })
+        const attempts = commands.length
+        track(helpers.reaper())
+        track(helpers.anchor())
+        const [lease] = await paths(directory)
+        fault.beforeRemove = (path) => {
+          if (path === join(directory, lease!))
+            helpersAbsent(root.pid, helpers.reaper(), helpers.anchor())
+        }
+        const cleanup = prepared.drain()
+        fault.holdWrite = undefined
+        const fromRootExit = root.exit.then(() => prepared.drain() === cleanup)
+        if (controller) {
+          expect(inspectPosixOwnership(ownershipRecordPath).state).toBe('retain')
+          expect(pidExists(root.pid)).toBe(true)
+          controller.stdin!.end()
+          expect(await controllerExit).toEqual([0, null])
+        }
+        await cleanup
+        expect(await fromRootExit).toBe(true)
+        expect(commands).toHaveLength(attempts)
+        expect(posixLaunchNonAdmission(await binding)?.cleanup).toBe(cleanup)
+        expect(await paths(directory)).toEqual([])
+        expect(inspectPosixOwnership(ownershipRecordPath)).toEqual({
+          state: 'confirmed',
+          proof: 'settled',
+        })
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        controller?.stdin?.end()
+        await controllerExit?.catch(() => {})
+        fault.beforeWrite = fault.beforeRemove = undefined
+        const cleanup = prepared.drain()
+        fault.holdWrite = undefined
+        await cleanup.catch(() => {})
+        if (helpers.reaper() > 1) track(helpers.reaper())
+        if (helpers.anchor() > 1) track(helpers.anchor())
+        fault.observe = undefined
+      }
+    }),
+  )
 
   it('waits for the native START acknowledgement instead of believing a write', () =>
     tracked(async (directory, track) => {
