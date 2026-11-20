@@ -106,6 +106,8 @@ function fake(autoClose = true, autoStats = true) {
   }
 }
 
+vi.mock('node:fs', { spy: true })
+
 afterEach(() => vi.useRealTimers())
 
 function piOwnership() {
@@ -132,6 +134,203 @@ function piOwnership() {
 }
 
 describe.skipIf(process.platform === 'win32')('Pi durable ownership', () => {
+  it.each(['success', 'settleCaller', 'retire'] as const)(
+    'joins history and both durable operations before publishing an exiting result (%s)',
+    async (mode) => {
+      const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
+      vi.useFakeTimers()
+      const scope = piOwnership()
+      const rpc = fake(false)
+      const drain = vi.fn(async () => {})
+      const original = new Error(`failed to ${mode}`)
+      let finishHistory!: () => void
+      const history = new Promise<void>((resolve) => {
+        finishHistory = resolve
+      })
+      const bracket = vi.fn((_id, edge) => (edge === 'end' ? history : undefined))
+      const observations: unknown[] = []
+      const published: string[] = []
+      let id = ''
+      const manager = createPiBackground({
+        bin: () => 'fixture-pi',
+        bracket,
+        spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: { drain } }),
+        changed() {
+          if (manager.sessions()[0]?.outcome === 'completed') published.push(manager.reply(id)!)
+        },
+        allocateOwnership(runId, proof) {
+          const record = scope.registry.allocate('pi', runId, proof)
+          return {
+            ...record,
+            settleCaller() {
+              observations.push(['settleCaller', manager.sessions()[0]?.outcome, manager.reply(id)])
+              if (mode === 'settleCaller') throw original
+              record.settleCaller()
+            },
+            retire() {
+              observations.push(['retire', manager.sessions()[0]?.outcome, manager.reply(id)])
+              record.retire()
+            },
+          }
+        },
+      })
+      manager.setVault(scope.vault.remote, scope.vault.root)
+      try {
+        const run = await manager.launch({ name: 'x', prompt: 'go' })
+        if (!run.ok) throw new Error(run.message)
+        id = run.sessionId
+        const [entry] = scope.entries()
+        const retired = `${entry}.retired`
+        if (mode === 'retire') {
+          // Fail the real operation after the ownership directory moved.
+          vi.mocked(rmSync).mockImplementation((path, options) => {
+            if (path === retired) throw original
+            fs.rmSync(path, options)
+          })
+        }
+        rpc.rootExit()
+        rpc.stdout.write(
+          '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"staged"}}\n',
+        )
+        rpc.stdout.end('{"type":"agent_settled"}')
+        await tick()
+        rpc.close()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(bracket).toHaveBeenCalledWith(id, 'end')
+        expect(observations).toEqual([])
+        expect(manager.reply(id)).toBeNull()
+        expect(manager.sessions()[0]?.outcome).toBeUndefined()
+        finishHistory()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(observations).toEqual([
+          ['settleCaller', undefined, null],
+          ...(mode === 'settleCaller' ? [] : [['retire', undefined, null]]),
+        ])
+        if (mode === 'success') {
+          expect(manager.reply(id)).toBe('staged')
+          expect(published).toEqual(['staged'])
+          expect(scope.entries()).toEqual([])
+          drain.mockClear()
+          await vi.advanceTimersByTimeAsync(30_000)
+          expect(drain).not.toHaveBeenCalled()
+          expect(manager.sessions()).toEqual([])
+          await manager.leave()
+        } else {
+          expect(published).toEqual([])
+          expect(manager.reply(id)).toBeNull()
+          expect(manager.sessions()[0]?.outcome).not.toBe('completed')
+          const retained = mode === 'retire' ? retired : entry!
+          expect(scope.entries()).toEqual([retained])
+          expect(readFileSync(join(retained, 'failed'), 'utf8')).toContain(String(original))
+          expect(existsSync(join(retained, 'caller-settled'))).toBe(mode === 'retire')
+          await expect(manager.stop(id)).rejects.toBe(original)
+          await expect(manager.stop(id)).rejects.toBe(original)
+          await expect(manager.leave()).rejects.toBe(original)
+          expect(scope.recover).toThrow(`Caller failure: ${String(original)}`)
+        }
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        finishHistory()
+        rpc.close()
+        try {
+          await manager.leave().catch(() => {})
+        } finally {
+          vi.mocked(rmSync).mockRestore()
+          rpc.dispose()
+          scope.remove()
+        }
+      }
+    },
+  )
+
+  it.each(['exit', 'deadline', 'stop', 'leave'] as const)(
+    'joins EOF during pending live history with %s',
+    async (mode) => {
+      vi.useFakeTimers()
+      const scope = piOwnership()
+      const rpc = fake(false)
+      let finishPhysical!: () => void
+      const physical = new Promise<void>((resolve) => {
+        finishPhysical = resolve
+      })
+      const drain = vi.fn(() => physical)
+      let finishHistory!: () => void
+      const history = new Promise<void>((resolve) => {
+        finishHistory = resolve
+      })
+      const bracket = vi.fn((_id, edge) => (edge === 'end' ? history : undefined))
+      const manager = createPiBackground({
+        bin: () => 'fixture-pi',
+        allocateOwnership: (id, proof) => scope.registry.allocate('pi', id, proof),
+        spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: { drain } }),
+        bracket,
+        changed() {},
+      })
+      manager.setVault(scope.vault.remote, scope.vault.root)
+      try {
+        const result = await manager.launch({ name: 'x', prompt: 'go', keep: true })
+        if (!result.ok) throw new Error(result.message)
+        const id = result.sessionId
+        const [entry] = scope.entries()
+        rpc.stdout.write('{"type":"agent_settled"}\n')
+        await vi.advanceTimersByTimeAsync(0)
+        expect(bracket).toHaveBeenCalledWith(id, 'end')
+        expect(manager.reply(id)).toBeNull()
+        rpc.stdout.end('\t  ')
+        await tick()
+        await vi.advanceTimersByTimeAsync(4999)
+        expect(drain).not.toHaveBeenCalled()
+        const removed =
+          mode === 'stop' ? manager.stop(id) : mode === 'leave' ? manager.leave() : undefined
+        if (mode === 'deadline') {
+          await vi.advanceTimersByTimeAsync(1)
+          expect(readFileSync(join(entry!, 'failed'), 'utf8')).toContain('waiting for root exit')
+        } else if (mode === 'exit') rpc.rootExit()
+        expect(drain).toHaveBeenCalledOnce()
+        finishHistory()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(manager.reply(id)).toBeNull()
+        const outcome = vi.fn()
+        if (removed) void removed.then(outcome, outcome)
+        await vi.advanceTimersByTimeAsync(14_999)
+        expect(outcome).not.toHaveBeenCalled()
+        expect(manager.reply(id)).toBeNull()
+        expect(scope.entries()).toEqual([entry])
+        if (mode === 'deadline') {
+          const stop = manager.stop(id)
+          void stop.then(outcome, outcome)
+          await vi.advanceTimersByTimeAsync(0)
+          expect(outcome).not.toHaveBeenCalled()
+          finishPhysical()
+          const cause: unknown = await stop.catch((error: unknown) => error)
+          expect(cause).toMatchObject({ message: expect.stringContaining('waiting for root exit') })
+          await expect(manager.stop(id)).rejects.toBe(cause)
+          await expect(manager.leave()).rejects.toBe(cause)
+          expect(scope.recover).toThrow(`Caller failure: ${String(cause)}`)
+        } else {
+          rpc.close()
+          finishPhysical()
+          await removed
+          await vi.advanceTimersByTimeAsync(0)
+          expect(manager.reply(id)).toBe(mode === 'exit' ? '' : null)
+          expect(scope.entries()).toEqual([])
+        }
+        expect(drain).toHaveBeenCalledOnce()
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        finishHistory()
+        finishPhysical()
+        rpc.close()
+        try {
+          await manager.leave().catch(() => {})
+        } finally {
+          rpc.dispose()
+          scope.remove()
+        }
+      }
+    },
+  )
+
   it.each(['expiry', 'leave'] as const)(
     'retires after full settlement, before %s can touch a reused PID',
     async (route) => {
@@ -920,6 +1119,10 @@ describe('Pi background runs', () => {
       if (route === 'follow-up') await expect(manager.message(id, 'again')).rejects.toBe(failure)
       if (route === 'expiry') await vi.advanceTimersByTimeAsync(30_000)
       expect(manager.sessions()).toMatchObject([{ id, provider: 'pi' }])
+      if (route !== 'stop') {
+        expect(manager.sessions()[0]?.outcome).toBe('completed')
+        expect(manager.reply(id)).toBe('')
+      }
       manager.setVault('other/vault', '/other')
       expect(manager.reply(id)).toBeNull()
       await expect(manager.stop(id)).resolves.toMatchObject({ ok: false })

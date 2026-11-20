@@ -600,9 +600,9 @@ describe('PiRpcRun', () => {
     },
   )
 
-  it.skipIf(process.platform === 'win32')(
-    'bounds stdout-first EOF while the root stays live',
-    async () => {
+  it.skipIf(process.platform === 'win32').each(['active', 'completed', 'idle'] as const)(
+    'bounds stdout-first EOF while the root stays live (%s)',
+    async (mode) => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
       const rpc = fake(false)
       let rejectPhysical!: (cause: Error) => void
@@ -621,10 +621,22 @@ describe('PiRpcRun', () => {
         spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: { drain } }),
       })
       const done = vi.fn()
-      void run.prompt('go').then(done, done)
-      rpc.stdout.end('{"type":"agent_settled"}\n')
+      if (mode !== 'idle') {
+        void run.prompt('go').then(done, done)
+        rpc.stdout.write('{"type":"agent_settled"}\n')
+        expect(rpc.commands.map(({ type }) => type)).toEqual(['prompt', 'get_session_stats'])
+        if (mode === 'completed') {
+          await vi.advanceTimersByTimeAsync(1000)
+          expect(done).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ status: 'completed' }),
+          )
+          done.mockClear()
+          await vi.advanceTimersByTimeAsync(10 * 60_000)
+          expect(run.isAlive).toBe(true)
+        }
+      }
+      rpc.stdout.end()
       await tick()
-      expect(rpc.commands.map(({ type }) => type)).toEqual(['prompt', 'get_session_stats'])
       await vi.advanceTimersByTimeAsync(4999)
       expect(drain).not.toHaveBeenCalled()
       expect(done).not.toHaveBeenCalled()
@@ -633,7 +645,8 @@ describe('PiRpcRun', () => {
       expect(cause).toMatchObject({
         message: expect.stringMatching(/timed out waiting for root exit/),
       })
-      expect(done).toHaveBeenCalledExactlyOnceWith(cause)
+      if (mode === 'active') expect(done).toHaveBeenCalledExactlyOnceWith(cause)
+      else expect(done).not.toHaveBeenCalled()
       expect(drain).toHaveBeenCalledOnce()
       await expect(run.prompt('late')).rejects.toThrow('not available')
       const settle = vi.fn()
@@ -649,19 +662,29 @@ describe('PiRpcRun', () => {
     },
   )
 
-  it('does not retroactively fail a completed live turn for an idle malformed tail', async () => {
-    const rpc = fake(false)
-    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => rpc.child })
-    const result = run.prompt('go')
-    rpc.stdout.write('{"type":"agent_settled"}\n')
-    await expect(result).resolves.toMatchObject({ status: 'completed' })
-    expect(run.isAlive).toBe(true)
-    rpc.stdout.end('{"type":')
-    await tick()
-    rpc.rootExit()
-    rpc.close()
-    await expect(run.drained).resolves.toBeUndefined()
-  })
+  it.each([
+    { exitFirst: true, oversized: false },
+    { exitFirst: false, oversized: false },
+    { exitFirst: true, oversized: true },
+    { exitFirst: false, oversized: true },
+  ])(
+    'rejects invalid output without rolling back a completed live turn (exit first: $exitFirst, oversized: $oversized)',
+    async ({ exitFirst, oversized }) => {
+      const rpc = fake(false)
+      const run = new PiRpcRun({ bin: 'pi', cwd: '/v', maxLineBytes: 64, spawn: () => rpc.child })
+      const result = run.prompt('go')
+      rpc.stdout.write('{"type":"agent_settled"}\n')
+      await expect(result).resolves.toMatchObject({ status: 'completed' })
+      expect(run.isAlive).toBe(true)
+      if (exitFirst) rpc.rootExit()
+      rpc.stdout.end(oversized ? '"' + 'x'.repeat(64) + '"' : '{"type":')
+      await tick()
+      if (!exitFirst) rpc.rootExit()
+      rpc.close()
+      await expect(run.drained).rejects.toThrow(oversized ? /oversized record/ : SyntaxError)
+      await expect(result).resolves.toMatchObject({ status: 'completed' })
+    },
+  )
 
   it('starts physical drain on root exit but reads buffered final RPC records', async () => {
     const rpc = fake(false)
