@@ -10,9 +10,11 @@ if (process.platform === 'darwin' || process.platform === 'linux') {
   const staging = mkdtempSync(join(output, '.build-'))
   try {
     const binary = join(staging, 'holi-posix-lease')
+    // Match Electron's macOS floor, not the build machine or SDK version.
+    const deployment = process.platform === 'darwin' ? ['-mmacosx-version-min=12.0'] : []
     execFileSync(
       process.env.CC || 'cc',
-      ['-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', source, '-o', binary],
+      [...deployment, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', source, '-o', binary],
       {
         stdio: 'inherit',
         timeout: 30_000,

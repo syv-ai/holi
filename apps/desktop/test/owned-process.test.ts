@@ -710,15 +710,74 @@ it.skipIf(windows)(
     }),
 )
 
-it.skipIf(windows).each(['already aborted', 'S', 'G'])(
-  'closes admission before forwarding AbortError (%s)',
+it.skipIf(windows).each(['S', 'G'])(
+  'closes admission on a direct owner drain before %s, without AbortSignal',
   (gate) =>
+    trackedLaunch(async (dir, retain, track) => {
+      const marker = join(dir, 'provider-ran')
+      const ownershipRecordPath = join(dir, randomUUID())
+      const commands: string[] = []
+      let held = false
+      let blocked = true
+      helper.holdCommand = (command) => {
+        commands.push(command)
+        if (command !== gate || !blocked) return false
+        held = true
+        return true
+      }
+      const child = spawnOwnedProgram('/usr/bin/touch', [marker], {
+        posixGroupLease: true,
+        ownershipRecordPath,
+      })
+      track(child.pid!)
+      const timeline: string[] = []
+      for (const event of ['spawn', 'error', 'exit', 'close'])
+        child.on(event, () => timeline.push(event))
+      let error: unknown
+      let proofAtCallback: ReturnType<typeof inspectPosixOwnership> | undefined
+      child.on('error', (failure) => {
+        error = failure
+        proofAtCallback = inspectPosixOwnership(ownershipRecordPath)
+      })
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+      try {
+        await vi.waitFor(() => expect(held).toBe(true), { timeout: 2000 })
+        const attempts = commands.length
+        const cleanup = drain(child)!
+        retain(cleanup)
+        blocked = false
+        await cleanup
+        await closed
+        expect(commands).toHaveLength(attempts)
+        expect(timeline).toEqual(['error', 'close'])
+        expect(error).toMatchObject({ message: 'POSIX launch was cancelled before start.' })
+        expect(posixLaunchNonAdmission(error)?.cleanup).toBe(cleanup)
+        expect(drain(child)).toBe(cleanup)
+        expect(proofAtCallback).toEqual({ state: 'confirmed', proof: 'settled' })
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        blocked = false
+        const cleanup = drain(child)!
+        retain(cleanup)
+        await cleanup.catch(() => {})
+      }
+    }),
+)
+
+it.skipIf(windows).each(['already aborted', 'S', 'G', 'G with proof fault'])(
+  'closes admission before forwarding AbortError (%s)',
+  (scenario) =>
     trackedLaunch(async (dir, retain, track) => {
       const marker = join(dir, 'provider-ran')
       const ownershipRecordPath = join(dir, randomUUID())
       const controller = new AbortController()
       const timeline: string[] = []
       let held = false
+      const firstError =
+        scenario === 'G with proof fault'
+          ? new Error('report read failed during cancellation')
+          : undefined
+      const gate = firstError ? 'G' : scenario
       const commands: string[] = []
       helper.holdCommand = (command) => {
         commands.push(command)
@@ -754,89 +813,138 @@ it.skipIf(windows).each(['already aborted', 'S', 'G'])(
           resolve()
         }),
       )
-      // Exercise joining drain before the AbortSignal fires, not just after it.
-      const cleanup = drain(child)!
-      retain(cleanup)
       try {
         if (gate !== 'already aborted') {
           await vi.waitFor(() => expect(held).toBe(true), { timeout: 2000 })
+          if (firstError) {
+            helper.holdReport = () => {
+              helper.holdReport = undefined
+              throw firstError
+            }
+          }
           controller.abort('fixture')
-          expect(timeline).toEqual(['error'])
+          expect(timeline).toEqual([]) // Only report non-admission after physical proof.
         }
-        await cleanup
+        const cleanup = drain(child)!
+        retain(cleanup)
+        if (firstError) await expect(cleanup).rejects.toBe(firstError)
+        else await cleanup
         await closed
         expect(timeline).toEqual(['error', 'close'])
-        expect(failure).toMatchObject({ code: 'ABORT_ERR', name: 'AbortError', cause: 'fixture' })
-        expect(posixLaunchNonAdmission(failure)?.cleanup).toBe(cleanup)
+        if (firstError) {
+          expect(failure).toBe(firstError)
+          expect(posixLaunchNonAdmission(failure)).toBeUndefined()
+          expect(inspectPosixOwnership(ownershipRecordPath).state).toBe('retain')
+        } else {
+          expect(failure).toMatchObject({ code: 'ABORT_ERR', name: 'AbortError', cause: 'fixture' })
+          expect(posixLaunchNonAdmission(failure)?.cleanup).toBe(cleanup)
+          expect(inspectPosixOwnership(ownershipRecordPath)).toEqual({
+            state: 'confirmed',
+            proof: 'settled',
+          })
+        }
+        if (gate === 'already aborted') expect(child.exitCode).toBe(125)
         expect(drain(child)).toBe(cleanup)
         expect(commands).not.toContain('T')
-        expect(inspectPosixOwnership(ownershipRecordPath)).toEqual({
-          state: 'confirmed',
-          proof: 'settled',
-        })
         await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
       } finally {
-        if (!controller.signal.aborted) controller.abort('fixture emergency close')
+        const cleanup = drain(child)!
+        retain(cleanup)
         await cleanup.catch(() => {})
       }
     }),
 )
 
-it.skipIf(windows)('treats abort after writing GO as post-admission even before the ACK', () =>
-  trackedLaunch(async (dir, retain, track) => {
-    const ready = join(dir, 'provider-ready')
-    const controller = new AbortController()
-    let go = false
-    helper.holdCommand = (command) => {
-      if (command === 'G') go = true
-      return false
-    }
-    helper.holdReport = () => go
-    const child = spawnOwnedProgram(
-      process.execPath,
-      [
-        '-e',
-        `
+it.skipIf(windows).each(['abort', 'drain'] as const)(
+  'treats %s after writing GO as post-admission even before the ACK',
+  (mode) =>
+    trackedLaunch(async (dir, retain, track) => {
+      const ready = join(dir, 'provider-ready')
+      const controller = new AbortController()
+      let go = false
+      const commands: string[] = []
+      helper.holdCommand = (command) => {
+        commands.push(command)
+        if (command === 'G') go = true
+        return false
+      }
+      helper.holdReport = () => go
+      const child = spawnOwnedProgram(
+        process.execPath,
+        [
+          '-e',
+          `
       process.on('SIGTERM', () => process.stdout.write('term', () => process.exit(0)));
       require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready');
       setInterval(() => {}, 1000);
     `,
-      ],
-      { posixGroupLease: true, signal: controller.signal },
-    )
-    track(child.pid!)
-    const timeline: string[] = []
-    let abortError: unknown
-    child.on('error', (error) => {
-      timeline.push('error')
-      abortError ??= error
-    })
-    child.on('spawn', () => timeline.push('spawn'))
-    child.stdout!.on('data', () => timeline.push('data'))
-    child.on('exit', () => timeline.push('exit'))
-    const closed = new Promise<void>((resolve) =>
-      child.once('close', () => {
-        timeline.push('close')
-        resolve()
-      }),
-    )
-    try {
-      await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready'), {
-        timeout: 2000,
+        ],
+        { posixGroupLease: true, signal: mode === 'abort' ? controller.signal : undefined },
+      )
+      track(child.pid!)
+      const timeline: string[] = []
+      let abortError: unknown
+      child.on('error', (error) => {
+        timeline.push('error')
+        abortError ??= error
       })
-      controller.abort('post-admission')
-      expect(timeline).toEqual([])
-      helper.holdReport = undefined
+      child.on('spawn', () => timeline.push('spawn'))
+      child.stdout!.on('data', () => timeline.push('data'))
+      child.on('exit', () => timeline.push('exit'))
+      const closed = new Promise<void>((resolve) =>
+        child.once('close', () => {
+          timeline.push('close')
+          resolve()
+        }),
+      )
+      try {
+        await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready'), {
+          timeout: 2000,
+        })
+        if (mode === 'abort') controller.abort('post-admission')
+        const cleanup = drain(child)!
+        retain(cleanup)
+        expect(timeline).toEqual([])
+        helper.holdReport = undefined
+        await cleanup
+        await closed
+        expect(commands.slice(-2)).toEqual(['G', 'T'])
+        if (mode === 'abort') {
+          expect(timeline).toEqual(['spawn', 'error', 'data', 'exit', 'close'])
+          expect(abortError).toMatchObject({ code: 'ABORT_ERR', cause: 'post-admission' })
+        } else {
+          expect(timeline).toEqual(['spawn', 'data', 'exit', 'close'])
+          expect(abortError).toBeUndefined()
+        }
+        expect(posixLaunchNonAdmission(abortError)).toBeUndefined()
+      } finally {
+        helper.holdReport = undefined
+        await drain(child)!.catch(() => {})
+      }
+    }),
+)
+
+it.skipIf(windows)('drains an admitted provider from its natural root exit callback', () =>
+  trackedLaunch(async (dir, retain, track) => {
+    const marker = join(dir, 'provider-ran')
+    const child = spawnOwnedProgram('/usr/bin/touch', [marker], { posixGroupLease: true })
+    track(child.pid!)
+    const done = completion(child)
+    let fromExit: Promise<void> | undefined
+    child.once('exit', () => {
+      fromExit = drain(child)!
+      retain(fromExit)
+    })
+    try {
+      expect(await done).toBe(0)
+      expect(fromExit).toBe(drain(child))
+      await fromExit
+      expect(helper.receipts).toMatch(/^GO\nTERM\nKILL\n$/m)
+      expect(await readFile(marker, 'utf8')).toBe('')
+    } finally {
       const cleanup = drain(child)!
       retain(cleanup)
-      await cleanup
-      await closed
-      expect(timeline).toEqual(['spawn', 'error', 'data', 'exit', 'close'])
-      expect(abortError).toMatchObject({ code: 'ABORT_ERR', cause: 'post-admission' })
-      expect(posixLaunchNonAdmission(abortError)).toBeUndefined()
-    } finally {
-      helper.holdReport = undefined
-      await drain(child)!.catch(() => {})
+      await cleanup.catch(() => {})
     }
   }),
 )

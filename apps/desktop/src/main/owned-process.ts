@@ -7,7 +7,7 @@ import { launchPlan, spawnProgram } from './launch'
 import { spawnOwnedLaunch } from './owned-process-launch'
 import type { ProcessGroupSupervision } from './owned-process-supervision'
 import { preparePosixSpawn, refusePosixSpawnPreparation } from './posix-launch-lease'
-import { markPosixNonAdmission } from './posix-ownership-journal'
+import { markPosixNonAdmission, posixLaunchNonAdmission } from './posix-ownership-journal'
 
 export const ownedProcessDrain = Symbol('ownedProcessDrain')
 
@@ -233,9 +233,7 @@ function spawnLeased(
         code: 'ERR_UNKNOWN_SIGNAL',
       })
     const preCommitAbort =
-      options.signal?.aborted &&
-      !abortKillAcknowledged &&
-      (launch.abortClosedGate() || launch.abortBeforeCommit())
+      options.signal?.aborted && !abortKillAcknowledged && launch.abortBeforeCommit()
     if (preCommitAbort) abortKillAcknowledged = true
     else {
       if (child.exitCode !== null || child.signalCode !== null) return false
@@ -265,15 +263,25 @@ function adaptExecEvents(
   const restorePipes: Array<() => void> = []
 
   function fail(error: unknown, errno?: number) {
-    // Node's scheduled AbortError is authoritative after deliberate gate closure.
-    if (state !== 'pending' || launch.abortClosedGate()) return
+    if (state !== 'pending') return
     state = 'failed'
     failureCode = errno
-    const cleanup = errno === undefined ? launch.failExecution(error) : launch.drain()
-    void cleanup.catch(() => {})
+    if (launch.canceledBeforeCommit()) {
+      // Only substitute Node's AbortError for a proven pre-admission stop,
+      // never for a real startup or cleanup failure.
+      const refusal = posixLaunchNonAdmission(error)
+      if (refusal && abortError !== undefined) {
+        markPosixNonAdmission(abortError, refusal.cleanup)
+        error = abortError
+      }
+    } else {
+      const cleanup = errno === undefined ? launch.failExecution(error) : launch.drain()
+      void cleanup.catch(() => {})
+      error = abortError ?? error
+    }
     // Return normally to Node's onexit/onread, including its native close
     // accounting. Notify the consumer before forwarding a pending close.
-    process.nextTick(() => reportFailure(abortError ?? error))
+    process.nextTick(() => reportFailure(error))
   }
 
   function reportFailure(error: unknown) {
@@ -320,7 +328,7 @@ function adaptExecEvents(
   }
 
   function probe(providerIO: boolean) {
-    if (state !== 'pending') return
+    if (state !== 'pending' || launch.canceledBeforeCommit()) return
     let result: number | null | undefined
     try {
       result = launch.execution()
@@ -351,13 +359,11 @@ function adaptExecEvents(
   child.emit = (event: string | symbol, ...args: unknown[]) => {
     if (event === 'spawn') return false
     if (event === 'error' && (args[0] as NodeJS.ErrnoException)?.code === 'ABORT_ERR') {
-      if (launch.abortClosedGate()) {
-        // Keep the actual AbortError Node constructed (including its cause).
-        // The gate was closed synchronously by kill(), before users see it.
+      if (launch.canceledBeforeCommit()) {
+        // Keep Node's AbortError (including its cause), but report it only
+        // once the no-admission path has proved physical cleanup.
         abortError ??= args[0]
-        markPosixNonAdmission(abortError, launch.drain())
-        state = 'failed'
-        return reportFailure(abortError)
+        return false
       }
       if (state !== 'spawned') {
         // GO was written. A delayed ACK may still precede a successful exec.
