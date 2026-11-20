@@ -30,7 +30,9 @@
     "package:mac": "pnpm build && electron-builder --mac --publish never",
     "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\"",
     "smoke:community-hints:native": "node scripts/run-community-hints-native-smoke.mjs",
-    "smoke:community-hints:typecheck": "tsc --noEmit --project tsconfig.native-smoke.json"
+    "smoke:community-hints:typecheck": "tsc --noEmit --project tsconfig.native-smoke.json",
+    "smoke:browser-frame-addressing:native": "node scripts/run-browser-frame-addressing-smoke.mjs",
+    "smoke:browser-frame-addressing:typecheck": "tsc --noEmit --project tsconfig.browser-frame-addressing-smoke.json"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

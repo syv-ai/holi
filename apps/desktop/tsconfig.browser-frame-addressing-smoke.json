@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["scripts/browser-frame-addressing.ts", "scripts/browser-frame-addressing-smoke.ts"]
+}
