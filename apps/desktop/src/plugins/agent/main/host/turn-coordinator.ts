@@ -414,8 +414,13 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
             }),
         )
       }
-      // The pause belongs to the vault, so only the first session in takes it.
-      if (wasEmpty && vault !== null) release = vault.pauseSync('the assistant is working')
+      // Only the first session takes the vault's hold. Protect it on POSIX
+      // even if that session is unmanaged: a managed writer can join later.
+      // If teardown cannot prove that writer is gone, core must not resume.
+      if (wasEmpty && vault !== null)
+        release = vault.pauseSync('the assistant is working', {
+          retainOnFailure: process.platform !== 'win32',
+        })
       turns.set(sessionId, turn)
       turn.managed = vault?.claimManagedTurn?.(sessionId, managedTurn(turn)) ?? false
       // A cap or listing sample is not proof that a managed writer is gone.
