@@ -89,7 +89,7 @@ function registrationBrokerSource(source: string, loseReceipt: boolean) {
   source = substitute(
     source,
     'const int ProcessHandleInformation=51;',
-    'fixtureSweeps++; const int ProcessHandleInformation=51;',
+    'if(process==parent) fixtureSweeps++; const int ProcessHandleInformation=51;',
   )
   source = substitute(
     source,
