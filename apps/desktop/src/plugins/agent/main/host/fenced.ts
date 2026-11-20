@@ -37,7 +37,8 @@ import {
   type Made,
 } from './jobs'
 import { bounded } from './bounded'
-import { ptyLaunchCleanup } from './pty'
+import { scratchEntries, type ActivationOwnership } from './ownership'
+import { ptyLaunchCleanup, withPtyOwnership } from './pty'
 import type { FenceCopy, PtySessions } from './pty-sessions'
 import type { Geometry, StartResult } from './sessions'
 
@@ -50,6 +51,8 @@ export interface FencedSessionsDeps {
   log?: (msg: string) => void
   /** Revokes admission synchronously when this vault activation is invalidated. */
   activationSignal?: AbortSignal
+  /** POSIX registry already recovered for this scratch root, before admission. */
+  ownership?: ActivationOwnership
 }
 
 export interface FencedSessions {
@@ -72,6 +75,13 @@ export interface FencedSessions {
   leave(): Promise<void>
 }
 
+export function recoverFencedScratch(ownership: ActivationOwnership, root: string): void {
+  ownership.recover('fenced', {
+    root,
+    consumerId: (entry) => /^([0-9a-f]{12})(?:\.agent)?$/.exec(entry)?.[1],
+  })
+}
+
 export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-fenced] ${msg}`))
   const copies = new Set<Promise<unknown>>()
@@ -81,8 +91,13 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   const cancellations = new Set<AbortController>()
   const drainErrors = new Set<unknown>()
   let retirement: Promise<void> | undefined
-  // Retire scratch left by an earlier activation, before admitting any start.
-  const swept = rm(deps.scratchRoot, { recursive: true, force: true }).catch((err: unknown) => {
+  // The production POSIX caller already inspected this scope before creating
+  // its owners. Never sweep an unlinked directory on POSIX.
+  const swept = (async () => {
+    if (process.platform === 'win32') await rm(deps.scratchRoot, { recursive: true, force: true })
+    else if (!deps.ownership && scratchEntries(deps.scratchRoot).length !== 0)
+      throw new Error(`Retaining unlinked fenced scratch: ${deps.scratchRoot}`)
+  })().catch((err: unknown) => {
     drainErrors.add(err)
     throw err
   })
@@ -128,6 +143,17 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     const id = randomBytes(6).toString('hex')
     const dir = join(deps.scratchRoot, id)
     const state = join(deps.scratchRoot, `${id}.agent`)
+    // Link before even creating the scratch. A crash in staging is an
+    // unknown intent until it has an explicit refusal or physical proof.
+    const ownership = deps.ownership?.allocate('fenced', id)
+    const recordFailure = (error: unknown): void => {
+      drainErrors.add(error)
+      try {
+        ownership?.fail(error)
+      } catch (recordError) {
+        drainErrors.add(recordError)
+      }
+    }
     const controller = new AbortController()
     cancellations.add(controller)
     let sessionId: string | null = null
@@ -142,11 +168,21 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
         throw err
       }
     }
+    const discard = async (unlaunched: boolean): Promise<void> => {
+      try {
+        if (unlaunched) ownership?.nonLaunch()
+        await drop()
+        ownership?.retire()
+      } catch (error) {
+        recordFailure(error)
+        throw error
+      }
+    }
     try {
       await mkdir(dir, { recursive: true })
       await mkdir(state, { recursive: true, mode: 0o700 })
     } catch (err) {
-      drainErrors.add(err)
+      recordFailure(err)
       throw err
     }
     // What it was given and what it wrote, each written again only while
@@ -157,7 +193,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     try {
       unread = await copyIn(deps.vault.root, dir, scope.read, made)
     } catch (err) {
-      drainErrors.add(err)
+      recordFailure(err)
       try {
         await drop()
       } catch (cleanupError) {
@@ -166,7 +202,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
       throw err
     }
     if (unread !== null) {
-      await drop()
+      await discard(true)
       return { ok: false, message: unread }
     }
 
@@ -190,7 +226,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
           // any moved destination is restored. An aborted signal alone says
           // nothing about whether a real mutation or cleanup failed.
           if (err instanceof CopyBackCancelled) return {}
-          drainErrors.add(err)
+          recordFailure(err)
           log(`${name}: ${(err as Error).message}`)
           throw err
         }
@@ -208,55 +244,64 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     }
 
     if (left()) {
-      await drop()
+      await discard(true)
       return gone
     }
     if (failedStarts.size > 0) {
-      await drop()
+      await discard(true)
       return blocked
     }
     let launchCleanup: Promise<void> | undefined
     let startFailure: { error: unknown } | undefined
     let started: StartResult
     try {
-      started = await deps.own.start(provider.id, {
-        name,
-        prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
-        ...(cols === undefined ? {} : { cols }),
-        ...(rows === undefined ? {} : { rows }),
-        onStartupCleanup: (work) => {
-          launchCleanup = work
-          failedStarts.set(id, work)
-        },
-        fence: {
-          dir,
-          state,
-          canLaunch: () => !left() && failedStarts.size === 0,
-          turnEnded: copy,
-          exited: () => {
-            const finalizer = copy()
-              .then(async (result) => {
-                try {
-                  await provider.release?.(state)
-                  return result
-                } catch (err) {
-                  drainErrors.add(err)
-                  throw err
-                }
-              })
-              .then(async (result) => {
-                await drop()
-                return result
-              })
-            finalizers.add(finalizer)
-            void finalizer.then(
-              () => finalizers.delete(finalizer),
-              () => finalizers.delete(finalizer),
-            )
-            return finalizer
+      const launch = () =>
+        deps.own.start(provider.id, {
+          name,
+          prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
+          ...(cols === undefined ? {} : { cols }),
+          ...(rows === undefined ? {} : { rows }),
+          onStartupCleanup: (work) => {
+            launchCleanup = work
+            failedStarts.set(id, work)
           },
-        },
-      })
+          fence: {
+            dir,
+            state,
+            canLaunch: () => !left() && failedStarts.size === 0,
+            turnEnded: copy,
+            exited: () => {
+              const finalizer = copy()
+                .then(async (result) => {
+                  try {
+                    await provider.release?.(state)
+                    return result
+                  } catch (err) {
+                    recordFailure(err)
+                    throw err
+                  }
+                })
+                .then(async (result) => {
+                  try {
+                    await drop()
+                    return result
+                  } catch (error) {
+                    recordFailure(error)
+                    throw error
+                  }
+                })
+              finalizers.add(finalizer)
+              void finalizer.then(
+                () => finalizers.delete(finalizer),
+                () => finalizers.delete(finalizer),
+              )
+              return finalizer
+            },
+          },
+        })
+      started = await (ownership
+        ? withPtyOwnership({ cwd: dir, fence: ownership, allocate: () => ownership }, launch)
+        : launch())
     } catch (error) {
       startFailure = { error }
       started = { ok: false, message: String(error) }
@@ -280,7 +325,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
           await launchCleanup
         } catch (error) {
           failedStarts.set(id, error)
-          drainErrors.add(error)
+          recordFailure(error)
           throw error
         }
       } else if (startFailure !== undefined || started.cleanupUnconfirmed) {
@@ -288,9 +333,12 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
         // to verify cleanup, never drop this source or permit replacement.
         const error = startFailure ? startFailure.error : new Error(started.message)
         failedStarts.set(id, error)
+        recordFailure(error)
         throw error
       }
-      await drop()
+      // A structured refusal without pending cleanup comes from before
+      // native entry. A returned cleanup receipt still has to be joined.
+      await discard(launchCleanup === undefined)
       failedStarts.delete(id)
       if (startFailure !== undefined) throw startFailure.error
     } else {
