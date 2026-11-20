@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
   ownedProcessDrain,
+  posixLaunchNonAdmission,
   spawnOwnedProgram,
   type ProcessGroupSupervision,
 } from '../../../../main/plugin-api'
@@ -15,11 +16,18 @@ export interface PiRunResult {
   model?: unknown
 }
 type PiTurnOutcome = Omit<PiRunResult, 'output' | 'model' | 'usage'>
+type PiStats = Parameters<NonNullable<PiRpcOptions['onStats']>>[0]
+const OUTPUT_DRAIN_MS = 5000
+
+export class PiRpcConfigurationError extends Error {}
 
 export interface PiRpcOptions {
   bin: string
   cwd: string
   env?: NodeJS.ProcessEnv
+  /** A fresh record path under a trusted private parent, used only by native POSIX spawn. */
+  ownershipRecordPath?: string
+  activationSignal?: AbortSignal
   model?: string
   system?: string
   /** A run with no tools at all, and nothing from the folder that could
@@ -75,13 +83,16 @@ export class PiRpcRun {
   private readonly supervision?: ProcessGroupSupervision
   private closeSeen = false
   private drainStarted = false
-  private drainComplete = false
+  private physicalComplete = false
+  private outputTimer?: ReturnType<typeof setTimeout>
+  private outputError?: Error
   private rejectDrained!: (error: unknown) => void
   private exited = false
   private exitError?: string
   private outputEnded = false
   private statsTimer?: ReturnType<typeof setTimeout>
   private pendingOutcome?: PiTurnOutcome
+  private pendingStats?: PiStats
   private readonly configuredModel?: { provider: string; modelId: string }
   private modelSet = false
   private pending = ''
@@ -122,7 +133,7 @@ export class PiRpcRun {
     if (options.model !== undefined) {
       const slash = options.model.indexOf('/')
       if (slash <= 0 || slash === options.model.length - 1) {
-        throw new Error('Pi model must be specified as provider/model-id')
+        throw new PiRpcConfigurationError('Pi model must be specified as provider/model-id')
       }
       this.configuredModel = {
         provider: options.model.slice(0, slash),
@@ -135,6 +146,12 @@ export class PiRpcRun {
         spawnOwnedProgram(bin, args, {
           ...opts,
           posixGroupLease: true,
+          ...(process.platform === 'win32'
+            ? {}
+            : {
+                ownershipRecordPath: options.ownershipRecordPath,
+                signal: options.activationSignal,
+              }),
         }) as ChildProcessWithoutNullStreams)
     const args = ['--mode', 'rpc']
     if (options.noTools === true) args.push(...NO_TOOLS)
@@ -146,7 +163,7 @@ export class PiRpcRun {
     })
     this.supervision = this.child[ownedProcessDrain]
     if (!this.supervision) {
-      if (options.spawn === undefined && process.platform === 'win32') this.drainComplete = true
+      if (options.spawn === undefined && process.platform === 'win32') this.physicalComplete = true
       else {
         this.drainStarted = true
         this.closed = true
@@ -155,27 +172,46 @@ export class PiRpcRun {
     }
     this.child.stdout.setEncoding('utf8')
     this.child.stdout.on('data', (chunk: string) => this.consume(chunk))
-    const endOutput = () => {
-      if (this.outputEnded) return
+    this.child.stdout.once('end', () => {
+      if (this.outputError) return
       this.outputEnded = true
       const tail = this.pending
       this.pending = ''
       if (tail !== '') this.readRecord(tail)
+      if (this.pendingStats) {
+        try {
+          this.onStats?.(this.pendingStats)
+        } catch {
+          this.badRecord()
+        }
+        this.pendingStats = undefined
+      }
       this.finishExitedTurn()
-    }
-    this.child.stdout.once('end', endOutput)
-    this.child.stdout.once('close', endOutput)
+      this.settleOutputDrain()
+    })
+    this.child.stdout.once('close', () => {
+      if (!this.outputEnded && !this.outputError)
+        this.failOutput(new Error('Pi RPC stdout closed before end.'))
+    })
+    // A destroy(error) emits error before close. Keep listening even after
+    // failure; the later close (or another error) must not replace its cause.
+    this.child.stdout.on('error', (error: Error) => {
+      if (!this.outputEnded) this.failOutput(error)
+    })
     this.child.stderr.setEncoding('utf8')
     this.child.stderr.on('data', () => {})
+    this.child.stderr.on('error', () => {})
     this.child.stdin.on('error', (error: Error) => this.failInput(error))
     this.child.once('error', (error) => {
-      if (!this.exited) this.fail(error.message)
+      if (this.exited || this.closed) return
+      const refusal = options.spawn === undefined ? posixLaunchNonAdmission(error) : undefined
+      if (refusal) this.startDrain(refusal.cleanup)
+      this.fail(error.message)
     })
     this.child.once('close', (code, signal) => {
       this.closeSeen = true
       this.rootExited(code, signal)
-      endOutput()
-      this.settleDrained()
+      this.settleOutputDrain()
     })
     this.child.once('exit', (code, signal) => this.rootExited(code, signal))
   }
@@ -258,27 +294,58 @@ export class PiRpcRun {
     this.finish(this.pendingOutcome ?? { status: 'failed', error: this.exitError })
   }
 
-  private settleDrained(): void {
-    if (this.closeSeen && this.drainComplete) this.resolveDrained()
+  private settleOutputDrain(): void {
+    if (!this.drainStarted || !this.physicalComplete) return
+    if (this.outputError) {
+      this.failDrain(this.outputError)
+    } else if (this.closeSeen && this.outputEnded) {
+      clearTimeout(this.outputTimer)
+      this.outputTimer = undefined
+      this.resolveDrained()
+    } else {
+      // Native owns the physical deadline. This budget is only for the
+      // output events that can lag behind its successful receipt.
+      this.outputTimer ??= setTimeout(() => {
+        const missing = !this.outputEnded ? 'stdout end' : 'child close'
+        this.failOutput(new Error(`Pi RPC output drain timed out waiting for ${missing}.`))
+      }, OUTPUT_DRAIN_MS)
+    }
   }
 
-  private startDrain(): void {
+  private startDrain(nonAdmissionCleanup?: Promise<void>): void {
     if (this.drainStarted) return
     this.drainStarted = true
     try {
-      if (this.supervision) {
-        void this.supervision.drain().then(() => {
-          this.drainComplete = true
-          this.settleDrained()
+      const physical = nonAdmissionCleanup ?? this.supervision?.drain()
+      if (physical) {
+        void physical.then(() => {
+          this.physicalComplete = true
+          this.settleOutputDrain()
         }, this.failDrain)
-      } else if (!this.exited) this.child.kill('SIGTERM')
+      } else {
+        if (!this.exited) this.child.kill('SIGTERM')
+        this.settleOutputDrain()
+      }
     } catch (error) {
       this.failDrain(error)
     }
   }
 
+  private failOutput(error: Error): void {
+    if (this.outputError) return
+    this.outputError = error
+    this.pending = ''
+    this.closed = true
+    this.takeCompletion()?.reject(error)
+    this.startDrain()
+    this.settleOutputDrain()
+  }
+
   private failDrain = (error: unknown): void => {
     this.closed = true
+    this.pending = ''
+    clearTimeout(this.outputTimer)
+    this.outputTimer = undefined
     this.rejectDrained(error)
     // A failed physical receipt can leave stdout open forever. Reject the
     // turn with that same reason rather than waiting for a natural outcome.
@@ -310,6 +377,7 @@ export class PiRpcRun {
   }
 
   private consume(chunk: string): void {
+    if (this.outputError || (this.settled && this.closed)) return
     this.pending += chunk
     if (Buffer.byteLength(this.pending) > this.maxLineBytes && !this.pending.includes('\n')) {
       this.pending = ''
@@ -345,8 +413,8 @@ export class PiRpcRun {
       const id = typeof record.id === 'string' ? record.id : undefined
       const request = id === undefined ? undefined : this.commands.get(id)
       if (id === undefined || request === undefined) return
-      this.commands.delete(id)
       const command = request.type
+      this.commands.delete(id)
       if (command === 'get_session_stats') {
         if (record.success === true && record.data && typeof record.data === 'object') {
           const data = record.data as Record<string, unknown>
@@ -358,10 +426,12 @@ export class PiRpcRun {
             ...(typeof tokens?.total === 'number' ? { total: tokens.total } : {}),
             ...(typeof data.cost === 'number' ? { cost: data.cost } : {}),
           }
-          this.onStats?.({
+          const stats = {
             ...(Object.keys(usage).length ? { usage } : {}),
             ...(typeof context?.percent === 'number' ? { contextPercent: context.percent } : {}),
-          })
+          }
+          if (this.exited && !this.outputEnded) this.pendingStats = stats
+          else this.onStats?.(stats)
         }
         if (this.pendingOutcome) this.finishNaturally(this.pendingOutcome)
         return
@@ -479,6 +549,7 @@ export class PiRpcRun {
     if (this.statsTimer) clearTimeout(this.statsTimer)
     this.statsTimer = undefined
     this.pendingOutcome = undefined
+    this.pendingStats = undefined
     this.settled = true
     this.active = false
     this.phase = 'idle'

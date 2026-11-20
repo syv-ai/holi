@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { buildPiEnv } from './env'
 import type { SessionSummary } from '../claude/listing'
-import { PiRpcRun, type PiRunResult } from './rpc'
+import { posixLaunchNonAdmission } from '../../../../main/plugin-api'
+import { PiRpcConfigurationError, PiRpcRun, type PiRunResult } from './rpc'
 
 function summarizeUsage(raw: unknown): SessionSummary['usage'] | undefined {
   if (!raw || typeof raw !== 'object') return undefined
@@ -35,7 +36,7 @@ interface PiJob {
   contextPercent?: number
   busy: boolean
   turns: Set<PiTurn>
-  failures: Set<unknown>
+  turnFailure?: { cause: unknown }
   currentTurn?: PiTurn
   retentionTimer?: ReturnType<typeof setTimeout>
   keep: boolean
@@ -53,6 +54,7 @@ interface PiTurn {
 }
 
 const RETAIN_MS = 30_000
+const TURN_DRAIN_MS = 5000
 
 export interface PiLaunch {
   name: string
@@ -70,6 +72,8 @@ export interface PiBackgroundDeps {
   activationSignal?: AbortSignal
   binDir?: () => string
   env?: (binDir: string | undefined) => Record<string, string>
+  /** Supplies the owner's fresh POSIX journal path before native launch. */
+  ownershipRecordPath?: (id: string) => string | undefined
   spawn?: ConstructorParameters<typeof PiRpcRun>[0]['spawn']
 }
 
@@ -85,8 +89,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
 
   const recordFailure = (error: unknown) => failures.add(error)
   function recordTurnFailure(job: PiJob, error: unknown) {
-    job.failures.add(error)
-    recordFailure(error)
+    job.turnFailure ??= { cause: error }
   }
   function throwFailures(reasons: Set<unknown>): void {
     const errors = [...reasons]
@@ -134,29 +137,44 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     job.retentionTimer = undefined
   }
 
+  async function joinTurns(job: PiJob): Promise<void> {
+    if (job.turns.size) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          Promise.allSettled([...job.turns].map((turn) => turn.promise)),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(() => {
+              recordTurnFailure(job, new Error('Pi turn finalization timed out.'))
+              resolve()
+            }, TURN_DRAIN_MS)
+          }),
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    if (job.turnFailure) throw job.turnFailure.cause
+  }
+
   // All removal paths join this receipt. A rejected job must remain routable
   // to its original owner, with the same rejection on every subsequent Stop.
   function retire(job: PiJob): Promise<void> {
     clearRetention(job)
-    job.removal ??= track(
-      Promise.resolve().then(async () => {
+    if (job.removal) return job.removal
+    job.removal = Promise.resolve().then(async () => {
+      await job.run.close()
+      await joinTurns(job)
+      if (jobs.get(job.id) === job) {
+        jobs.delete(job.id)
         try {
-          await job.run.close()
+          changed()
         } catch (error) {
-          job.failures.add(error)
+          recordFailure(error)
         }
-        await Promise.allSettled([...job.turns].map((turn) => turn.promise))
-        throwFailures(job.failures)
-        if (jobs.get(job.id) === job) {
-          jobs.delete(job.id)
-          try {
-            changed()
-          } catch (error) {
-            recordFailure(error)
-          }
-        }
-      }),
-    )
+      }
+    })
+    void job.removal.catch(recordFailure)
     return job.removal
   }
 
@@ -174,11 +192,13 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         result = { status: 'failed', output: '', error: String(error) }
       }
     }
-    if (invalidated || job.removal || result.status !== 'completed') {
+    if (invalidated || job.removal || !job.run.isAlive || result.status !== 'completed') {
       try {
         await job.run.close()
-      } catch {
-        // The original rejection is already observed on run.drained.
+      } catch (error) {
+        // Exiting turns may have parsed a complete reply before physical and
+        // output drainage settles. Only a successful receipt can publish it.
+        result = { status: 'failed', output: '', error: String(error) }
       }
     }
     if (invalidated || job.removal) {
@@ -204,7 +224,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       if (job.keep) return
       job.retentionTimer = setTimeout(() => {
         if (job.busy || invalidated) return
-        void retire(job).catch(recordFailure)
+        void retire(job)
       }, RETAIN_MS)
       job.retentionTimer.unref()
     }
@@ -251,12 +271,26 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     let id = randomUUID().replaceAll('-', '').slice(0, 8)
     while (jobs.has(id)) id = randomUUID().replaceAll('-', '').slice(0, 8)
     let job!: PiJob
-    let run: PiRpcRun
+    const refused = (error: unknown) => ({
+      ok: false as const,
+      message: `Could not start Pi: ${String(error)}`,
+    })
+    let env: NodeJS.ProcessEnv
     try {
       if (invalidated) return { ok: false as const, message: 'No vault is open.' }
-      const env = (deps.env ?? ((binDir) => buildPiEnv(process.env, { binDir })))(deps.binDir?.())
+      env = (deps.env ?? ((binDir) => buildPiEnv(process.env, { binDir })))(deps.binDir?.())
+    } catch (error) {
+      return refused(error)
+    }
+    if (invalidated) return { ok: false as const, message: 'No vault is open.' }
+    let run: PiRpcRun
+    try {
+      const ownershipRecordPath =
+        deps.spawn || process.platform === 'win32' ? undefined : deps.ownershipRecordPath?.(id)
       if (invalidated) return { ok: false as const, message: 'No vault is open.' }
       run = new PiRpcRun({
+        ownershipRecordPath,
+        activationSignal: deps.activationSignal,
         bin,
         cwd,
         env,
@@ -276,22 +310,24 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         ...(deps.spawn ? { spawn: deps.spawn } : {}),
       })
     } catch (error) {
-      // A spawn that throws can still have a prepared lease to drain. Adopt
-      // its receipt before returning the original launch error.
-      const failed = error as { cleanupPromise?: Promise<void>; cleanup?: Promise<void> } | null
-      const receipt = failed?.cleanupPromise ?? failed?.cleanup
-      if (receipt) {
-        track(
-          Promise.resolve(receipt).catch((failure: unknown) => {
-            recordFailure(error)
-            recordFailure(failure)
-          }),
-        )
-        throw error
-      }
-      return { ok: false as const, message: `Could not start Pi: ${String(error)}` }
+      if (error instanceof PiRpcConfigurationError) return refused(error)
+      const nonAdmission = deps.spawn ? undefined : posixLaunchNonAdmission(error)
+      // A possibly launched native child can throw with a physical cleanup
+      // receipt. Joining it does not reclassify that throw as non-admission.
+      const cleanup =
+        nonAdmission?.cleanup ?? (error as { cleanup?: Promise<void> } | null)?.cleanup
+      if (cleanup) {
+        try {
+          await cleanup
+          if (nonAdmission) return refused(error)
+          if (deps.spawn) recordFailure(error) // A fake throw is not a typed child receipt.
+        } catch (failure) {
+          recordFailure(error)
+          recordFailure(failure)
+        }
+      } else recordFailure(error)
+      throw error
     }
-    void run.drained.catch(recordFailure)
     job = {
       id,
       remote: owner,
@@ -302,7 +338,6 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       busy: false,
       keep: args.keep === true,
       turns: new Set(),
-      failures: new Set(),
     }
     jobs.set(id, job)
     if (invalidated) return { ok: false as const, message: 'No vault is open.' }
@@ -315,7 +350,9 @@ export function createPiBackground(deps: PiBackgroundDeps) {
 
   function startTurn(job: PiJob, prompt: string): void {
     const turn = begin(job)
-    turn.promise = track(ownTurn(job, turn, prompt))
+    // Only retire joins turns. Tracking the raw promise in activation work
+    // would let leave wait indefinitely after the bounded join has rejected.
+    turn.promise = ownTurn(job, turn, prompt)
   }
 
   function leave(): Promise<void> {

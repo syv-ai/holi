@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream'
 import { setImmediate as tick } from 'node:timers/promises'
 import { posixFixtureLedger } from '../../../../test/fixtures/posix-fixture-ledger'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PiRpcRun, type PiChild } from '../main/pi/rpc'
 import { ownedProcessDrain, spawnOwnedProgram } from '../../../main/plugin-api'
 
@@ -22,6 +22,13 @@ function fake(autoClose = true) {
     exited = true
     exit?.(code, signal)
   }
+  function closeWithOutput(code: number | null, signal: NodeJS.Signals | null) {
+    if (stdout.readableEnded || stdout.destroyed) close?.(code, signal)
+    else {
+      stdout.once('end', () => close?.(code, signal))
+      stdout.end()
+    }
+  }
   const child: PiChild = {
     [ownedProcessDrain]: {
       drain: async () => {
@@ -41,7 +48,7 @@ function fake(autoClose = true) {
     },
     kill() {
       rootExit(null, 'SIGTERM')
-      if (autoClose) close?.(null, 'SIGTERM')
+      if (autoClose) closeWithOutput(null, 'SIGTERM')
       return true
     },
   }
@@ -51,15 +58,88 @@ function fake(autoClose = true) {
     commands,
     exit: () => {
       rootExit(1, null)
-      close?.(1, null)
+      closeWithOutput(1, null)
     },
     rootExit: () => rootExit(1, null),
     error: (error: Error) => childError?.(error),
-    close: () => close?.(null, null),
+    close: () => closeWithOutput(null, null),
+    childCloseOnly: () => close?.(null, null),
   }
 }
 
+afterEach(() => vi.useRealTimers())
+
 describe('PiRpcRun', () => {
+  it.each(['missing close', 'missing end', 'output before proof'] as const)(
+    'starts the output deadline only after physical proof: %s',
+    async (mode) => {
+      vi.useFakeTimers()
+      const rpc = fake(false)
+      const drain = vi.fn(() => new Promise<void>((resolve) => setTimeout(resolve, 9000)))
+      const child = Object.assign(rpc.child, { [ownedProcessDrain]: { drain } })
+      const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => child })
+      const drained = vi.fn()
+      const turn = vi.fn()
+      void run.drained.then(() => drained('ok'), drained)
+      if (mode === 'missing end') void run.prompt('go').then(() => turn('ok'), turn)
+      rpc.rootExit()
+      if (mode === 'missing end') rpc.stdout.write('{"type":"agent_settled"}')
+      if (mode !== 'missing end') {
+        rpc.stdout.end()
+        await tick()
+      }
+      if (mode === 'missing end') rpc.childCloseOnly()
+      if (mode === 'output before proof') rpc.close()
+      await vi.advanceTimersByTimeAsync(8999)
+      expect(drained).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      if (mode === 'output before proof') {
+        expect(drained).toHaveBeenCalledExactlyOnceWith('ok')
+      } else {
+        await vi.advanceTimersByTimeAsync(4999)
+        expect(drained).not.toHaveBeenCalled()
+        expect(turn).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+        expect(drained).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ message: expect.stringMatching(/Pi RPC output.*timed out/i) }),
+        )
+        const failure: unknown = drained.mock.calls[0]?.[0]
+        if (mode === 'missing end') expect(turn).toHaveBeenCalledExactlyOnceWith(failure)
+        rpc.stdout.end()
+        await tick()
+        rpc.close()
+        await expect(run.close()).rejects.toBe(failure)
+        await expect(run.cancel()).rejects.toBe(failure)
+      }
+      expect(drain).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
+  it.each(['destroy', 'error'] as const)('rejects truncated stdout after %s', async (mode) => {
+    const rpc = fake(false)
+    const onStats = vi.fn()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => rpc.child, onStats })
+    const turn = vi.fn()
+    void run.prompt('go').then(() => turn('success'), turn)
+    rpc.stdout.write('{"type":"agent_settled"}\n')
+    const request = rpc.commands.at(-1)
+    expect(request?.type).toBe('get_session_stats')
+    rpc.rootExit()
+    rpc.stdout.write(JSON.stringify({ type: 'response', id: request?.id, success: true, data: {} }))
+    const cause = mode === 'error' ? new Error('broken stdout') : undefined
+    rpc.stdout.destroy(cause)
+    await tick()
+    expect(turn).toHaveBeenCalledExactlyOnceWith(
+      cause ?? expect.objectContaining({ message: expect.stringMatching(/stdout.*before.*end/i) }),
+    )
+    expect(onStats).not.toHaveBeenCalled()
+    const failure: unknown = turn.mock.calls[0]?.[0]
+    rpc.stdout.emit('error', new Error('later stdout error'))
+    rpc.close()
+    await expect(run.drained).rejects.toBe(failure)
+    await expect(run.close()).rejects.toBe(failure)
+  })
   it('uses one RPC process, frames commands and waits for agent_settled', async () => {
     const fakeProcess = fake()
     const run = new PiRpcRun({
@@ -488,7 +568,7 @@ describe('PiRpcRun', () => {
       }) + (newline ? '\n' : ''),
     )
     await tick()
-    expect(onStats).toHaveBeenCalledTimes(newline ? 1 : 0)
+    expect(onStats).not.toHaveBeenCalled()
     expect(completed).not.toHaveBeenCalled()
     rpc.stdout.end()
     await expect(result).resolves.toMatchObject({ status: 'failed', error: 'native model failed' })
