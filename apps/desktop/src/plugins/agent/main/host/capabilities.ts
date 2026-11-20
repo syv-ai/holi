@@ -122,6 +122,8 @@ export interface AgentCapabilitiesDeps {
   liveRemote(): string | null
   /** Commit the open vault now. */
   commitNow(): Promise<unknown>
+  trackMutation?<T>(work: () => Promise<T>): Promise<T>
+  captureFinalization?: () => <T>(work: () => Promise<T>) => Promise<T>
   /** Pi's per-job RPC supervisor; unlike Claude it is managed by Holi. */
   pi?: {
     sessions(): SessionSummary[]
@@ -907,29 +909,60 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, args): Promise<{ ok: true }> => {
         if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
         const rel = relPath(args.path)
-        if ('delete' in args) {
-          await withFileLocks(ctx.root, [rel], () => removeDocFile(ctx.root, rel))
-        } else {
-          const { text, base } = args
-          const abs = await writableFile(ctx, rel)
-          await withFileLock(abs, async () => {
-            // A file the turn deleted is absent on disk and empty in the review.
-            const current = (await readFile(abs, 'utf8').catch(() => null)) ?? ''
-            let next = text
-            if (base !== undefined && current !== base) {
-              const merged = merge3(base, text, current)
-              if (merged.kind === 'conflict') {
-                throw new CapabilityError(
-                  'CONFLICT',
-                  `${rel} has changed since this turn, where you are changing it. Nothing was written: open the file to see what changed.`,
+        // Bind the commit to the admitting activation before revocation or any
+        // lock wait, not to whichever vault is displayed when it eventually runs.
+        const finalize = deps.captureFinalization?.() ?? (<T>(work: () => Promise<T>) => work())
+        const mutation = async (): Promise<{ ok: true } | { refusal: CapabilityError }> => {
+          let mutationStarted = false
+          try {
+            if ('delete' in args) {
+              await writableFile(ctx, rel)
+              await withFileLocks(ctx.root, [rel], () => {
+                mutationStarted = true
+                return removeDocFile(ctx.root, rel)
+              })
+            } else {
+              const { text, base } = args
+              const abs = await writableFile(ctx, rel)
+              let conflict = false
+              await withFileLock(abs, async () => {
+                // A file the turn deleted is absent on disk and empty in the review.
+                const current = await readFile(abs, 'utf8').catch(
+                  (error: NodeJS.ErrnoException) => {
+                    if (error.code === 'ENOENT') return ''
+                    throw error
+                  },
                 )
+                let next = text
+                if (base !== undefined && current !== base) {
+                  const merged = merge3(base, text, current)
+                  if (merged.kind === 'conflict') {
+                    conflict = true
+                    return
+                  }
+                  next = merged.text
+                }
+                mutationStarted = true
+                await writeAtomic(ctx.root, rel, next)
+              })
+              if (conflict) {
+                return {
+                  refusal: new CapabilityError(
+                    'CONFLICT',
+                    `${rel} has changed since this turn, where you are changing it. Nothing was written: open the file to see what changed.`,
+                  ),
+                }
               }
-              next = merged.text
             }
-            await writeAtomic(ctx.root, rel, next)
-          })
+            await finalize(() => deps.commitNow().then(() => undefined))
+            return { ok: true }
+          } catch (error) {
+            if (!mutationStarted && error instanceof CapabilityError) return { refusal: error }
+            throw error
+          }
         }
-        await deps.commitNow()
+        const result = await (deps.trackMutation?.(mutation) ?? mutation())
+        if ('refusal' in result) throw result.refusal
         return { ok: true }
       },
     }),
