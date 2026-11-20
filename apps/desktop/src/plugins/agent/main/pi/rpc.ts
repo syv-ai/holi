@@ -132,7 +132,7 @@ export class PiRpcRun {
   private resolveDrained!: () => void
 
   get isAlive(): boolean {
-    return !this.exited && !this.closed && !this.outputEnded
+    return !this.exited && !this.closed && !this.outputEnded && !this.drainStarted
   }
 
   /** The native adapter reported positive pre-GO non-admission. */
@@ -209,9 +209,9 @@ export class PiRpcRun {
       this.pending = ''
       clearTimeout(this.statsTimer)
       this.statsTimer = undefined
-      // END and EXIT can arrive in either order. An active turn cannot
-      // succeed on a truncated final record, even with a pending outcome.
-      if (tail.trim() !== '') this.readRecord(tail, this.active)
+      // END and EXIT can arrive in either order. An incomplete final
+      // record invalidates the output receipt, even between turns.
+      if (tail.trim() !== '') this.readRecord(tail, true)
       if (this.outputError) return
       if (this.pendingStats) {
         try {
@@ -222,9 +222,9 @@ export class PiRpcRun {
         this.pendingStats = undefined
       }
       this.finishExitedTurn()
-      if (process.platform !== 'win32' && !this.exited && this.active) {
-        // No stats response can arrive after EOF. Give the root its own
-        // exit deadline, independent of the later native drain budget.
+      if (process.platform !== 'win32' && !this.exited && !this.drainStarted) {
+        // EOF ends admission for the whole run, including between turns or
+        // while history is pending. An existing drain owns its own deadline.
         this.rootExitTimer = setTimeout(() => {
           this.failOutput(new Error('Pi RPC timed out waiting for root exit after stdout end.'))
         }, ROOT_EXIT_MS)
@@ -325,8 +325,6 @@ export class PiRpcRun {
 
   private rootExited(code: number | null, signal: NodeJS.Signals | null): void {
     this.exited = true
-    clearTimeout(this.rootExitTimer)
-    this.rootExitTimer = undefined
     clearTimeout(this.windowsStopTimer)
     this.windowsStopTimer = undefined
     this.exitError ??= `Pi RPC exited (${code ?? signal ?? 'unknown'})`
@@ -366,6 +364,8 @@ export class PiRpcRun {
   private startDrain(nonAdmissionCleanup?: Promise<void>): void {
     if (this.drainStarted) return
     this.drainStarted = true
+    clearTimeout(this.rootExitTimer)
+    this.rootExitTimer = undefined
     if (process.platform !== 'win32') {
       try {
         this.beforeDrain?.()
@@ -424,9 +424,9 @@ export class PiRpcRun {
   private failOutput(error: Error): void {
     if (this.outputError) return
     this.outputError = error
-    const cause = this.rememberDrainFailure(error)
     this.pending = ''
     this.closed = true
+    const cause = this.rememberDrainFailure(error)
     this.takeCompletion()?.reject(cause)
     this.startDrain()
     this.settleOutputDrain()
@@ -494,16 +494,13 @@ export class PiRpcRun {
       this.pending = ''
       // Bound even a stream of blank bytes, without treating whitespace at EOF as a record.
       this.oversizedWhitespace = whitespace
-      if (!whitespace) {
-        if (this.active) this.failOutput(new Error('Pi RPC emitted an oversized record'))
-        else this.fail('Pi RPC emitted an oversized record')
-      }
+      if (!whitespace) this.failOutput(new Error('Pi RPC emitted an oversized record'))
     }
   }
 
-  private readRecord(line: string, activeTail = false): void {
+  private readRecord(line: string, tail = false): void {
     const malformed = (error: unknown) => {
-      if (activeTail && error instanceof Error) this.failOutput(error)
+      if (tail && error instanceof Error) this.failOutput(error)
       else this.badRecord()
     }
     if (Buffer.byteLength(line) > this.maxLineBytes) {
@@ -513,7 +510,7 @@ export class PiRpcRun {
     let record: Record<string, unknown>
     try {
       record = JSON.parse(line) as Record<string, unknown>
-      if (activeTail && (record === null || typeof record !== 'object' || Array.isArray(record)))
+      if (tail && (record === null || typeof record !== 'object' || Array.isArray(record)))
         throw new SyntaxError('Invalid Pi RPC record at stdout end')
     } catch (error) {
       malformed(error)
@@ -668,8 +665,6 @@ export class PiRpcRun {
 
   private takeCompletion() {
     if (this.settled) return
-    clearTimeout(this.rootExitTimer)
-    this.rootExitTimer = undefined
     if (this.statsTimer) clearTimeout(this.statsTimer)
     this.statsTimer = undefined
     this.pendingOutcome = undefined

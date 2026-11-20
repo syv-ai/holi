@@ -41,6 +41,7 @@ interface PiJob {
   ownership: PiOwnership
   settlement: Promise<void>
   currentTurn?: PiTurn
+  staged?: { turn: PiTurn; result: PiRunResult }
   retentionTimer?: ReturnType<typeof setTimeout>
   keep: boolean
   reply?: string
@@ -153,10 +154,12 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     turn.finalized = turn.begin.then(async () => {
       let finalEdge = invalidated || job.removal ? 'forget' : edge
       if (process.platform !== 'win32' && (finalEdge === 'forget' || !job.run.isAlive)) {
-        // The combined receipt can fail for output alone. Only separate,
-        // positive physical proof authorizes releasing a stopped turn.
+        if (finalEdge === 'forget' && job.run.isAlive) void job.run.close()
+        // Natural EOF can precede root exit. Observe its receipt without
+        // converting it to an explicit stop. Only positive physical proof
+        // authorizes releasing a stopped turn when the combined receipt fails.
         try {
-          await job.run.close()
+          await job.run.drained
         } catch {
           finalEdge = 'forget'
         }
@@ -202,8 +205,38 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     if (job.ownership.failure) throw job.ownership.failure.cause
   }
 
-  // Successful drainage starts the finalization budget even on natural exit.
-  // The durable record and the retained reply have independent lifetimes.
+  const canPublish = (job: PiJob) => !invalidated && !job.removal
+
+  function publish(job: PiJob, turn: PiTurn | undefined, result: PiRunResult): void {
+    if (!canPublish(job)) return
+    if (turn) {
+      job.model = typeof result.model === 'string' ? result.model : job.model
+      job.usage = turn.statsUpdated ? turn.usage : (summarizeUsage(result.usage) ?? job.usage)
+      job.contextPercent = turn.contextPercent ?? job.contextPercent
+    }
+    job.busy = false
+    job.state = 'idle'
+    job.outcome = result.status
+    job.error = result.error
+    // A failed turn doesn't replace an answer already published live.
+    if (result.status === 'completed') job.reply = result.output
+    if (result.status === 'completed' && !job.keep) {
+      job.retentionTimer = setTimeout(() => {
+        if (job.busy || invalidated) return
+        void retire(job)
+      }, RETAIN_MS)
+      job.retentionTimer.unref()
+    }
+    try {
+      changed()
+    } catch (error) {
+      recordFailure(error)
+    }
+  }
+
+  // The owner joins history, not publication. Once drainage and that bounded
+  // join succeed, durable caller settlement and retirement commit the result
+  // of an exiting run. A previously published live turn is not rolled back.
   async function settle(job: PiJob): Promise<void> {
     const owner = job.ownership
     try {
@@ -221,8 +254,15 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       owner.record?.settleCaller()
       owner.record?.retire()
     } catch (error) {
-      throw failOwnership(owner, error)
+      const cause = failOwnership(owner, error)
+      job.staged = undefined
+      if (job.state === 'working')
+        publish(job, undefined, { status: 'failed', output: '', error: String(cause) })
+      throw cause
     }
+    const staged = job.staged
+    job.staged = undefined
+    if (staged) publish(job, staged.turn, staged.result)
   }
 
   // All removal paths join the same settlement. A rejected job stays routable
@@ -263,45 +303,29 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         result = { status: 'failed', output: '', error: String(error) }
       }
     }
-    const closing =
-      invalidated || job.removal !== undefined || !job.run.isAlive || result.status !== 'completed'
-    if (closing) {
+    if (result.status !== 'completed' && job.run.isAlive && canPublish(job)) void job.run.close()
+    if (!job.run.isAlive || !canPublish(job)) {
       try {
-        await job.run.close()
+        await job.run.drained
       } catch (error) {
-        // Exiting turns may have parsed a complete reply before physical and
-        // output drainage settles. Only a successful receipt can publish it.
         result = { status: 'failed', output: '', error: String(error) }
       }
     }
-    if (invalidated || job.removal) {
-      await finalize(job, turn, 'forget')
-      if (job.currentTurn === turn) job.busy = false
-      return
-    }
-    const isCurrent = () => job.currentTurn === turn && !invalidated && !job.removal
+    const isCurrent = () => job.currentTurn === turn && canPublish(job)
     if (isCurrent()) job.busy = false
     await finalize(job, turn, result.status === 'completed' ? 'end' : 'forget')
-    // A live turn can finish parsing, then exit while the finalizer is pending.
-    // Before exposing its reply, join the now-required output receipt as well.
-    if (!closing && !job.run.isAlive && isCurrent()) await job.run.drained.catch(() => {})
     if (!isCurrent()) return
-    job.model = typeof result.model === 'string' ? result.model : job.model
-    job.usage = turn.statsUpdated ? turn.usage : (summarizeUsage(result.usage) ?? job.usage)
-    job.contextPercent = turn.contextPercent ?? job.contextPercent
-    job.state = 'idle'
-    job.outcome = job.ownership.failure ? 'failed' : result.status
-    job.error = job.ownership.failure ? String(job.ownership.failure.cause) : result.error
-    changed()
-    if (job.outcome === 'completed') {
-      job.reply = result.output
-      if (job.keep) return
-      job.retentionTimer = setTimeout(() => {
-        if (job.busy || invalidated) return
-        void retire(job)
-      }, RETAIN_MS)
-      job.retentionTimer.unref()
-    }
+    // This is the live-publication edge. Recheck the observed phase after
+    // history, even when the semantic result arrived while stdout was open.
+    // No await between this decision and either publication or staging.
+    const failure = job.ownership.failure
+    if (job.run.isAlive) {
+      publish(
+        job,
+        turn,
+        failure ? { status: 'failed', output: '', error: String(failure.cause) } : result,
+      )
+    } else if (!failure) job.staged = { turn, result }
   }
 
   async function ownTurn(job: PiJob, turn: PiTurn, prompt: string): Promise<void> {
@@ -459,7 +483,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
 
   function startTurn(job: PiJob, prompt: string): void {
     const turn = begin(job)
-    // Only retire joins turns. Tracking the raw promise in activation work
+    // Only owner settlement joins turns. Tracking the raw promise in activation work
     // would let leave wait indefinitely after the bounded join has rejected.
     turn.promise = ownTurn(job, turn, prompt)
   }

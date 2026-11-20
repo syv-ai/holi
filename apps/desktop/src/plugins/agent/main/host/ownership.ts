@@ -134,9 +134,10 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
   privateDir(scope, true)
   syncDir(base)
 
-  function retire(parent: string, name: string): void {
+  function retire(parent: string, name: string, renamed?: (path: string) => void): void {
     const path = join(parent, `${name}.retired`)
     renameSync(join(parent, name), path)
+    renamed?.(path)
     syncDir(parent)
     rmSync(path, { recursive: true, force: true })
   }
@@ -171,6 +172,7 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
     let done = false
     let finalizing = false
     let callerSettled = false
+    let failurePath = path
     const phased = kind === 'fenced' || kind === 'pi'
     return {
       ownershipRecordPath: proof === 'native' ? join(native, name) : undefined,
@@ -182,7 +184,11 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
       fail(error) {
         if (failed || done) return
         failed = true
-        publish(path, 'failed', header + Buffer.from(String(error)).subarray(0, 1500).toString())
+        publish(
+          failurePath,
+          'failed',
+          header + Buffer.from(String(error)).subarray(0, 1500).toString(),
+        )
       },
       beginCallerFinalization() {
         if (!phased || done) throw new Error(`Cannot begin ${kind} finalization.`)
@@ -202,7 +208,15 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
         if (phased && !callerSettled && !(nonLaunch && !finalizing))
           throw new Error(`Cannot retire ${kind} ownership without caller settlement.`)
         publish(path, 'settled', header + 'SETTLED\n')
-        retire(parent, name)
+        retire(
+          parent,
+          name,
+          kind === 'pi'
+            ? (renamed) => {
+                failurePath = renamed
+              }
+            : undefined,
+        )
         done = true
       },
     }
@@ -229,6 +243,15 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
         const path = join(parent, name)
         privateDir(path)
         if (match?.[2]) {
+          // A Pi retirement can fail after rename (sync or removal). Its
+          // recorded fault still belongs to the original activation.
+          if (kind === 'pi') {
+            const header = `HOLI-AGENT-1 ${match[1]}\n`
+            const failed = read(path, 'failed')
+            if (failed !== undefined) retain(name, `Caller failure: ${failed.slice(header.length)}`)
+            if (read(path, 'failed.tmp') !== undefined)
+              retain(name, 'Partial Pi caller failure evidence.')
+          }
           retired.push(path)
           continue
         }
