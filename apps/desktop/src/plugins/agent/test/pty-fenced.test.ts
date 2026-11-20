@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { buildLeaseForTests } from '../../../../test/fixtures/posix-native-build'
 import { nativeLoadHint, preloadNativePty } from '../../../main/terminal/pty'
@@ -32,6 +32,7 @@ vi.mock('../../../main/plugin-api', async (original) => {
       return core.preparePosixLaunch(bin, args, {
         ...opts,
         directory: native.directory,
+        graceMs: 75,
         timeoutMs: 1000,
       })
     },
@@ -58,8 +59,9 @@ function deferred<T>() {
 function rig(
   root: string,
   runtime: Partial<AgentTerminalsDeps>,
-  release = vi.fn(async (_state: string) => {}),
+  release = vi.fn(async (_state: string, _signal?: AbortSignal) => {}),
   command = { bin: '/bin/sh', args: ['-c', 'exit 91'] },
+  idleMs = 100,
 ) {
   const vault = { root, remote: 'test/vault' }
   const emit = vi.fn()
@@ -85,7 +87,7 @@ function rig(
     bracket,
     binDir: () => null,
     onChange: () => {},
-    idleMs: 100,
+    idleMs,
   })
   const copyBack = vi.fn(async (..._args: unknown[]) => ({ written: 0, skipped: [] }))
   const scratchRoot = join(root, 'fenced')
@@ -224,6 +226,27 @@ it.skipIf(process.platform === 'win32')(
     expect(native.prepare).not.toHaveBeenCalled()
     expect(spawn).not.toHaveBeenCalled()
     expect(probePid).not.toHaveBeenCalled()
+  },
+)
+
+it.skipIf(process.platform === 'win32')(
+  'refuses an unpublished PTY invalidated during native preflight without allocating a lease',
+  () => {
+    const controller = new AbortController()
+    const allocate = vi.fn()
+    native.preload.mockReturnValue(() => {
+      controller.abort()
+      return native.spawn
+    })
+    const runtime = new AgentRuntime({ activationSignal: controller.signal })
+    const opts = { bin: '/bin/sh', args: [], cwd: '/tmp', env: {} }
+    expect(() => withPtyOwnership({ cwd: opts.cwd, allocate }, () => runtime.start(opts))).toThrow(
+      'The vault was left before the terminal opened.',
+    )
+    expect(runtime.failedLaunchCleanup).toBeUndefined()
+    expect(allocate).not.toHaveBeenCalled()
+    expect(native.prepare).not.toHaveBeenCalled()
+    expect(native.spawn).not.toHaveBeenCalled()
   },
 )
 
@@ -393,7 +416,8 @@ it.skipIf(process.platform === 'win32')(
     const t = rig(
       root,
       { spawnPty: () => pty, superviseGroup: () => ({ drain: proof }) },
-      vi.fn((state: string) => {
+      vi.fn((state: string, signal?: AbortSignal) => {
+        expect(signal).toBeInstanceOf(AbortSignal)
         entered.resolve(state)
         return release.promise
       }),
@@ -408,9 +432,13 @@ it.skipIf(process.platform === 'win32')(
       const [scope] = await readdir(join(root, 'agent-ownership'))
       const registry = join(root, 'agent-ownership', scope!, 'fenced')
       const [link] = await readdir(registry)
+      const record = join(registry, link!)
+      expect(await readFile(join(record, 'caller-finalizing'), 'utf8')).toMatch(/FINALIZING\n$/)
+      await expect(access(join(record, 'caller-settled'))).rejects.toMatchObject({ code: 'ENOENT' })
       await vi.advanceTimersByTimeAsync(5_000)
       const failure = await t.sessions.stop(run.sessionId).catch((error: unknown) => error)
       expect(failure).toMatchObject({ message: expect.stringMatching(/exit callbacks.*timed out/) })
+      expect(t.release.mock.calls[0]?.[1]?.reason).toBe(failure)
       release.resolve()
       await vi.advanceTimersByTimeAsync(0)
       await expect(t.sessions.stop(run.sessionId)).rejects.toBe(failure)
@@ -435,9 +463,9 @@ it.skipIf(process.platform === 'win32')(
   },
 )
 
-it.skipIf(process.platform === 'win32')(
-  'stops the native fenced lease before the provider body can run',
-  async () => {
+it.skipIf(process.platform === 'win32').each(['cancelled startup', 'held final copy'] as const)(
+  'settles a real named fenced PTY lease with %s',
+  async (phase) => {
     const helper = buildLeaseForTests()
     const root = await mkdtemp(join(tmpdir(), 'holi-pty-fenced-'))
     const leases = join(root, 'receipts')
@@ -447,7 +475,7 @@ it.skipIf(process.platform === 'win32')(
     const marker = join(root, 'provider-entered')
     let pid: number | undefined
     let journal: string | undefined
-    let proof: string | undefined
+    let evidenceRead: Promise<string> | undefined
     const reaped = deferred<void>()
     void reaped.promise.catch(() => {})
     native.spawn.mockImplementationOnce((file, args, opts) => {
@@ -474,33 +502,63 @@ it.skipIf(process.platform === 'win32')(
         kill: vi.fn(),
       }
       child.once('exit', (code) => {
+        evidenceRead = readFile(journal!, 'utf8')
+        void evidenceRead.catch(() => {})
         reaped.resolve()
         pty._boundClose = true
         onExit?.({ exitCode: code ?? 1 })
       })
       return pty
     })
+    const copy = deferred<{ written: number; skipped: [] }>()
+    const copying = deferred<string>()
     const t = rig(
       root,
       {},
-      vi.fn(async () => {
-        proof = await readFile(journal!, 'utf8')
-      }),
-      { bin: '/usr/bin/touch', args: [marker] },
+      undefined,
+      phase === 'cancelled startup'
+        ? { bin: '/usr/bin/touch', args: [marker] }
+        : { bin: '/bin/sh', args: ['-c', 'printf only-copy > output'] },
+      10_000, // Let this fixture reach the exit copy, not idle-triggered turn copy.
     )
+    t.copyBack.mockImplementationOnce((dir) => {
+      copying.resolve(String(dir))
+      return copy.promise
+    })
     try {
       const run = await t.start()
       if (!run.ok) throw new Error(run.message)
+      if (phase === 'held final copy') {
+        const scratch = await copying.promise
+        const record = dirname(dirname(dirname(journal!)))
+        expect(await readFile(join(dirname(journal!), 'settled'), 'utf8')).toMatch(/SETTLED\n$/)
+        expect(await readFile(join(record, 'caller-finalizing'), 'utf8')).toMatch(/FINALIZING\n$/)
+        await expect(access(join(record, 'caller-settled'))).rejects.toMatchObject({
+          code: 'ENOENT',
+        })
+        // At a virtual controller death there is no further output/copy/release
+        // progress. Independently recover against exactly that durable state.
+        const next = activationOwnership(root, t.vault, new AbortController().signal)!
+        expect(() => recoverFencedScratch(next, t.scratchRoot)).toThrow(
+          /caller finalization is pending/,
+        )
+        expect(await readFile(join(scratch, 'output'), 'utf8')).toBe('only-copy')
+        expect(t.release).not.toHaveBeenCalled()
+        copy.resolve({ written: 0, skipped: [] })
+      }
       await expect(t.sessions.stop(run.sessionId)).resolves.toEqual({ ok: true })
       await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
       expect(t.sessions.has(run.sessionId)).toBe(false)
+      expect(t.copyBack).toHaveBeenCalledTimes(phase === 'held final copy' ? 1 : 0)
+      expect(t.release).toHaveBeenCalledTimes(phase === 'held final copy' ? 1 : 0)
       await t.fenced.leave()
       await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
+      copy.resolve({ written: 0, skipped: [] })
       await t.terminals.closeAll().catch(() => {})
       if (pid !== undefined) {
         await reaped.promise
-        const evidence = proof ?? (await readFile(journal!, 'utf8'))
+        const evidence = await evidenceRead!
         const ids = new Set([pid])
         for (const [, found] of evidence.matchAll(/^(?:ROOT|REAPER|ANCHOR) (\d+)$/gm))
           ids.add(Number(found))

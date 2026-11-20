@@ -139,6 +139,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     await swept
     if (left()) return gone
     const taken = await takenDestination(deps.vault.root, scope.write)
+    if (left()) return gone
     if (taken !== null) return { ok: false, message: takenMessage(taken) }
     const id = randomBytes(6).toString('hex')
     const dir = join(deps.scratchRoot, id)
@@ -275,13 +276,22 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
             state,
             canLaunch: () => !left() && failedStarts.size === 0,
             turnEnded,
+            retire: async (signal) => {
+              try {
+                signal?.throwIfAborted()
+                ownership?.settleCaller()
+                await drop(signal)
+              } catch (error) {
+                throw recordFailure(signal?.aborted ? signal.reason : error)
+              }
+            },
             exited: (signal) => {
               const work = (async () => {
                 try {
                   const result = await copy(signal)
                   signal?.throwIfAborted()
-                  await provider.release?.(state)
-                  await drop(signal)
+                  await provider.release?.(state, signal)
+                  signal?.throwIfAborted()
                   return result
                 } catch (error) {
                   throw recordFailure(signal?.aborted ? signal.reason : error)

@@ -67,7 +67,7 @@ export interface OpenArgs {
   /** A failed native launch still has a retained cleanup operation. */
   onStartupCleanup?(work: Promise<void>): void
   /** Physical drain and PTY output settled. A deadline aborts retirement, not running work. */
-  onExit?(title?: string, signal?: AbortSignal): void | Promise<void>
+  onExit?(title?: string, signal?: AbortSignal, nonAdmission?: true): void | Promise<void>
   cols?: number
   rows?: number
   /** Written into the record before the program's first byte (the sign-in
@@ -78,6 +78,7 @@ export interface OpenArgs {
 export interface AgentTerminalsDeps {
   /** Tell the renderer `name` about the vault `remote`. */
   emit(remote: string, name: string, payload: unknown): void
+  activationSignal?: AbortSignal
   spawnPty?: SpawnPty
   /** Liveness probe before every signal. Tests must inject one: a fake PTY's
    *  pid may belong to a real process on the machine running them. */
@@ -146,6 +147,16 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
   /** Insertion-ordered: the order they were opened. */
   const terminals = new Map<string, Terminal>()
   const failedStarts = new Map<string | null, Promise<void>>()
+  deps.activationSignal?.addEventListener(
+    'abort',
+    () => {
+      if (process.platform === 'win32') return
+      // Do not wait for the disposer or drop any terminal from the index. Its
+      // later close joins the same drain/output/caller operation.
+      for (const t of terminals.values()) void t.runtime.kill().catch(() => {})
+    },
+    { once: true },
+  )
   let lastPushed = ''
 
   const rows = (published = false): TerminalSummary[] =>
@@ -198,6 +209,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       rows,
       notice,
     }) {
+      if (deps.activationSignal?.aborted)
+        return { ok: false, message: 'The vault was left before the terminal opened.' }
       if (command === null) return { ok: false, message: notInstalled }
       const key = attach ?? null
       const failed = failedStarts.get(key)
@@ -211,6 +224,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       const mirror = new TerminalMirror(cols ?? 80, rows ?? 24)
       if (notice !== undefined) mirror.write(notice)
       const runtime = new AgentRuntime({
+        ...(deps.activationSignal && { activationSignal: deps.activationSignal }),
         ...(deps.spawnPty === undefined ? {} : { spawnPty: deps.spawnPty }),
         ...(deps.superviseGroup === undefined ? {} : { superviseGroup: deps.superviseGroup }),
         ...(deps.probePid === undefined ? {} : { probePid: deps.probePid }),
@@ -261,6 +275,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       runtime.onExit((e, signal) => {
         const finish = () => {
           signal?.throwIfAborted()
+          if (e.nonAdmission) t.retainOnExit = false
           log(`terminal ${id} exited (code ${e.exitCode})`)
           // Notify while still indexed. A failing notification must not let
           // close/reopen miss this terminal or retire its session underneath it.
@@ -274,7 +289,9 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
             signal?.throwIfAborted()
             if (!t.retainOnExit) terminals.delete(t.id)
           }
-          const completion = onExit?.(t.title, signal)
+          const completion = e.nonAdmission
+            ? onExit?.(t.title, signal, true)
+            : onExit?.(t.title, signal)
           if (completion !== undefined) return completion.then(retire)
           retire()
         }
@@ -305,7 +322,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
         }
         return { ok: false, message: err instanceof Error ? err.message : String(err) }
       }
-      t.timers.push(setTimeout(() => markReady(t), backstopMs))
+      if (!t.draining) t.timers.push(setTimeout(() => markReady(t), backstopMs))
       terminals.set(id, t)
       pushList(remote)
       return { ok: true, id }

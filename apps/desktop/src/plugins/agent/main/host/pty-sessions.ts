@@ -134,6 +134,8 @@ export interface Fence {
   turnEnded(): Promise<FenceCopy>
   /** The session's process exited; report its final copy before losing the row. */
   exited(signal?: AbortSignal): Promise<FenceCopy>
+  /** Publish caller proof before removing scratch. Also used for a clean non-admission. */
+  retire?(signal?: AbortSignal): Promise<void>
 }
 
 export interface PtySessions {
@@ -592,7 +594,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       onOutput: (data) => {
         if (!signIn) session?.signals.output(data)
       },
-      onExit: (lastTitle, signal) => {
+      onExit: (lastTitle, signal, nonAdmission) => {
         const s = session
         if (s === null || sessions.get(id) !== s) return
         if (s.exitWork !== undefined) return s.exitWork
@@ -603,6 +605,17 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           runBracket(owner, id, 'forget')
         }
         const finish = async () => {
+          if (nonAdmission) {
+            s.persistConversation = false
+            forget()
+            await joinFinalizers(owner)
+            assertFinalized(owner)
+            signal?.throwIfAborted()
+            await fence?.retire?.(signal)
+            signal?.throwIfAborted()
+            retire(s)
+            return
+          }
           if (s.provider === 'pi' && fence === undefined) {
             forget()
             if (s.name === null && lastTitle !== undefined) s.name = nameOf(lastTitle)
@@ -636,6 +649,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
             forget()
             await joinFinalizers(owner)
             assertFinalized(owner)
+            signal?.throwIfAborted()
+            await fence.retire?.(signal)
           } catch (error) {
             signal?.throwIfAborted()
             forget()
@@ -703,7 +718,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     }
     sessions.set(id, session)
     // A session started on a prompt is in its first turn already.
-    if (prompt !== undefined && prompt.trim() !== '') signals.begin()
+    if (left) fenceAdmission(session)
+    else if (prompt !== undefined && prompt.trim() !== '') signals.begin()
     push()
     return { ok: true, sessionId: id, terminalId: opened.id }
   }
