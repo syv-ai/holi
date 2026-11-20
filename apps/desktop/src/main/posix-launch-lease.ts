@@ -6,6 +6,14 @@ import { posixLeaseExecutable } from './posix-lease-executable'
 import type { ProcessGroupSupervision } from './owned-process-supervision'
 import { environmentFrame, invalidReceipt, leaseReceipts, receiptPid } from './posix-lease-protocol'
 import { leaseEnvironment, openLeaseTransport } from './posix-lease-transport'
+import {
+  markPosixNonAdmission,
+  openPosixOwnershipJournal,
+  posixAbsent as absent,
+  posixLaunchNonAdmission,
+} from './posix-ownership-journal'
+
+type OwnershipRecord = ReturnType<typeof openPosixOwnershipJournal>
 
 type LaunchOptions = SpawnOptions & {
   startupTimeoutMs?: number
@@ -13,6 +21,7 @@ type LaunchOptions = SpawnOptions & {
   timeoutMs?: number
   pollMs?: number
   directory?: string
+  ownershipRecordPath?: string
 }
 type CancelState = 'unlaunched' | 'possibly-launched'
 type StartupPhase =
@@ -27,15 +36,26 @@ type StartupPhase =
   | 'go-sent'
   | 'committed'
 
-const code = (error: unknown) => (error as NodeJS.ErrnoException).code
-
-function absent(pid: number): boolean {
+function prepareOwned<T>(path: string | undefined, build: (record: OwnershipRecord) => T): T {
+  let record: OwnershipRecord
   try {
-    process.kill(pid, 0)
-    return false
+    record = openPosixOwnershipJournal(path)
+    return build(record)
   } catch (error) {
-    if (code(error) === 'ESRCH') return true
-    if (code(error) === 'EPERM') return false
+    const cleanup = Promise.resolve(posixLaunchNonAdmission(error)?.cleanup)
+      .then(async () => {
+        if (path !== undefined && !record) throw error
+        record?.settle()
+      })
+      .catch((failure: unknown) => {
+        try {
+          record?.fail('preparation')
+        } catch {
+          /* preserve the cleanup failure */
+        }
+        throw failure
+      })
+    markPosixNonAdmission(error, cleanup)
     throw error
   }
 }
@@ -65,7 +85,7 @@ export function preparePosixLaunch(
     bind,
     cancel,
     drain,
-  } = prepare(file, args, options)
+  } = prepareOwned(options.ownershipRecordPath, (record) => prepare(file, args, options, record))
   return { executable, args: argv, options: launchOptions, bind, cancel, drain }
 }
 
@@ -73,16 +93,27 @@ export function preparePosixLaunch(
 export function preparePosixSpawn(
   file: string,
   args: string[],
-  options: SpawnOptions,
+  options: LaunchOptions,
   stdio: NonNullable<Exclude<SpawnOptions['stdio'], string>>,
 ) {
-  return prepare(file, args, options, stdio)
+  return prepareOwned(options.ownershipRecordPath, (record) =>
+    prepare(file, args, options, record, stdio),
+  )
+}
+
+export function refusePosixSpawnPreparation(path: string | undefined, error: unknown): never {
+  markPosixNonAdmission(
+    error,
+    Promise.resolve().then(() => openPosixOwnershipJournal(path)?.settle()),
+  )
+  throw error
 }
 
 function prepare(
   file: string,
   args: string[],
   options: LaunchOptions,
+  record: OwnershipRecord,
   stdio?: NonNullable<Exclude<SpawnOptions['stdio'], string>>,
 ) {
   if (process.platform !== 'darwin' && process.platform !== 'linux')
@@ -100,7 +131,7 @@ function prepare(
   const timeout = milliseconds((stdio ? undefined : options.timeoutMs) ?? 15_000)
   const poll = milliseconds(options.pollMs ?? 10)
   let payload: Buffer | undefined = environmentFrame(options, stdio !== undefined)
-  const transport = openLeaseTransport(options.directory, stdio !== undefined)
+  const transport = openLeaseTransport(options.directory, stdio !== undefined, record?.journal)
   const receipts = leaseReceipts(transport)
 
   const stagingDeadline = performance.now() + startupMs
@@ -112,6 +143,8 @@ function prepare(
   let phase: StartupPhase = 'root'
   let deadlineLimit = stagingDeadline
   let canceled = false
+  let goWritten = false
+  let abortClosedGate = false
   let term = false
   let kill = false
   let requestedStop: Promise<void> | undefined
@@ -121,8 +154,17 @@ function prepare(
   let startup: Promise<void> | undefined
   let drainPromise: Promise<void> | undefined
   let cancelling: Promise<void> | undefined
-  const note = (error: unknown) => {
-    firstError ??= error
+  const note = (
+    error: unknown,
+    stage: 'protocol' | 'drain' | 'cancel' | 'settlement' = 'protocol',
+  ) => {
+    if (firstError !== undefined) return
+    firstError = error
+    try {
+      record?.fail(stage)
+    } catch {
+      // Preserve the original live failure; a partial disk record is not proof.
+    }
   }
 
   const collect = () =>
@@ -211,15 +253,20 @@ function prepare(
     if (collect()) return true
   }
 
+  function settle() {
+    record?.settle()
+    transport.remove()
+  }
+
   async function finish(deadline: number, checkReceipts: boolean) {
     try {
       await wait(deadline, 'proving the POSIX launch absent', proveAbsent)
       if (firstError) throw firstError
       if (checkReceipts && (!kill || (!term && acceptedStop !== 'K')))
         throw new Error('POSIX launch group vanished without the expected teardown receipts.')
-      transport.remove()
+      settle()
     } catch (error) {
-      note(error)
+      note(error, 'drain')
       // EOF is an independent wakeup, not a replacement for the first error.
       try {
         closeControl()
@@ -264,9 +311,9 @@ function prepare(
           })
         }
       } catch (error) {
-        note(error)
+        if (!canceled) note(error, 'drain')
       }
-      await finish(deadline, true)
+      await finish(deadline, !canceled)
     })())
   }
 
@@ -274,8 +321,19 @@ function prepare(
     try {
       transport.closeControl()
     } catch (error) {
-      note(error)
+      note(error, 'cancel')
     }
+  }
+
+  function closeAdmission() {
+    canceled = true
+    payload = undefined
+    try {
+      transport.dropMapped()
+    } catch (error) {
+      note(error, 'cancel')
+    }
+    closeControl()
   }
 
   function cancel(state: CancelState): Promise<void> {
@@ -283,17 +341,15 @@ function prepare(
     return (cancelling ??= (async () => {
       if (startup && state === 'unlaunched')
         throw new Error('Cannot cancel a bound launch as unlaunched.')
-      canceled = true
-      payload = undefined
-      try {
-        transport.dropMapped()
-      } catch (error) {
-        note(error)
-      }
-      closeControl()
+      closeAdmission()
       if (state === 'unlaunched') {
-        transport.remove()
         if (firstError) throw firstError
+        try {
+          settle()
+        } catch (error) {
+          note(error, 'settlement')
+          throw error
+        }
         return
       }
       // Never infer absence from a missing startup receipt. A native call
@@ -309,6 +365,7 @@ function prepare(
       stdio ? '-' : transport.directory,
       String(startupMs),
       String(grace),
+      record ? (stdio ? '1' : record.journal) : '0',
       file,
       options.argv0 ?? file,
       ...args,
@@ -343,6 +400,9 @@ function prepare(
           const frame = Buffer.from(byte)
           return stage(label, () => {
             if (transport.post(frame) !== 1) return
+            // Writing GO, not reading its acknowledgement, is the admission
+            // linearization point: the anchor may open exec as soon as it reads G.
+            if (next === 'go-sent') goWritten = true
             phase = next
             return true
           })
@@ -368,6 +428,16 @@ function prepare(
     },
     drain,
     cancel,
+    abortBeforeCommit(): boolean {
+      if (goWritten || abortClosedGate) return false
+      abortClosedGate = true
+      // A stop queued behind startup would first let GO through. Latch and close
+      // now, even if an owner has already joined drain; no T is sent before GO.
+      closeAdmission()
+      void cancel('possibly-launched').catch(() => {})
+      return true
+    },
+    abortClosedGate: () => abortClosedGate,
     failExecution(error: unknown): Promise<void> {
       note(error)
       // Cancellation may race an owner already joining drain. Wake the

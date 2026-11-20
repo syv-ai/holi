@@ -7,13 +7,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
 /* Only anchor() signals. Once the controller acknowledges the reaper PID,
  * the reaper moves to a second group so it can wait for the killed anchor. */
-static int control, report, result;
+static int control, report, result, journal = -1;
 static int64_t grace;
 
 static int64_t now(void) {
@@ -27,9 +28,29 @@ static int receipt(const char *line) {
     return write(report, line, len) == (ssize_t)len;
 }
 
+/* One bounded append per record; no provider argv or environment goes here.
+ * A short write leaves invalid framing, never a complete ownership proof. */
+static int record(const char *line) {
+    if (journal < 0) return 1;
+    size_t len = strlen(line);
+    ssize_t n;
+    do n = write(journal, line, len); while (n < 0 && errno == EINTR);
+    if (n != (ssize_t)len) return 0;
+    int synced;
+    do synced = fsync(journal); while (synced < 0 && errno == EINTR);
+    return synced == 0;
+}
+
+static int record_pid(const char *kind) {
+    char line[64];
+    snprintf(line, sizeof line, "%s %ld\n", kind, (long)getpid());
+    return record(line);
+}
+
 static void failure(const char *phase, int error) {
     char line[128];
     snprintf(line, sizeof line, "ERROR %s %d\n", phase, error);
+    record(line); /* Persist the fault before any fallback or report to main. */
     receipt(line);
 }
 
@@ -69,9 +90,18 @@ static void terminate(int sig) {
 }
 
 static void anchor(pid_t group, int startup, int64_t deadline) {
+    if (!record_pid("ANCHOR")) {
+        failure("journal-anchor", EIO);
+        _exit(125);
+    }
     int membership = setpgid(0, group) < 0 ? errno : 0;
     if (membership || getpgrp() != group || getsid(0) != group) {
         failure("membership", membership ? membership : EINVAL);
+        _exit(125);
+    }
+    /* No more identities can appear after COMPLETE. Only then allow GO. */
+    if (!record("COMPLETE\n")) {
+        failure("journal-complete", EIO);
         _exit(125);
     }
     char line[64], command;
@@ -130,6 +160,10 @@ static void join_child(pid_t child) {
 }
 
 static void reaper(pid_t group, int startup, int64_t deadline, int fd_limit) {
+    if (!record_pid("REAPER")) {
+        failure("journal-reaper", EIO);
+        _exit(125);
+    }
     /* Block rather than ignore to preserve signal defaults in the exec root. */
     sigset_t mask;
     sigfillset(&mask);
@@ -138,7 +172,7 @@ static void reaper(pid_t group, int startup, int64_t deadline, int fd_limit) {
         _exit(125);
     }
     for (int fd = 0; fd < fd_limit; fd++)
-        if (fd != control && fd != report && fd != startup) close(fd);
+        if (fd != control && fd != report && fd != startup && fd != journal) close(fd);
 
     /* Until RACK, even controller loss leaves this child in the root group.
      * There is no anchor or provider to signal if this handoff fails. */
@@ -212,10 +246,19 @@ static char **environment(int64_t deadline, int *error) {
 extern char **environ;
 
 int main(int argc, char **argv) {
-    if (argc < 7) return 125;
+    if (argc < 8) return 125;
     int base = atoi(argv[1]);
     int64_t deadline = now() + atoi(argv[3]);
     grace = atoi(argv[4]);
+    if (strcmp(argv[5], "0")) {
+        if (base >= 3 && !strcmp(argv[5], "1")) journal = base + 3;
+        else if (base < 3 && argv[5][0] == '/')
+            journal = open(argv[5], O_WRONLY | O_APPEND | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+        struct stat stat;
+        if (journal < 0 || fstat(journal, &stat) < 0 || !S_ISREG(stat.st_mode) ||
+            stat.st_nlink != 1 || (stat.st_mode & 077) ||
+            fcntl(journal, F_SETFD, FD_CLOEXEC) < 0 || !record_pid("ROOT")) return 125;
+    }
     if (base >= 3) {
         control = base;
         report = base + 1;
@@ -264,7 +307,7 @@ int main(int argc, char **argv) {
     }
     close(report);
     environ = env;
-    execvp(argv[5], argv + 6);
+    execvp(argv[6], argv + 7);
     int exec_error = errno;
     snprintf(line, sizeof line, "%d\n", exec_error);
     (void)write(result, line, strlen(line));

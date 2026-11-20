@@ -418,6 +418,12 @@ export { delimiterFor, isRunnable, nodeFallbackDir, resolveBin, toolPath, withPa
 export { execProgram, spawnProgram } from './launch'
 export { spawnOwnedProgram, ownedProcessDrain } from './owned-process'
 export { preparePosixLaunch, type PosixLaunch } from './posix-launch-lease'
+/** @public Node-only POSIX ownership seam for Provider owners. */
+export {
+  inspectPosixOwnership,
+  posixLaunchNonAdmission,
+  type PosixOwnershipInspection,
+} from './posix-ownership-journal'
 export type { ProcessGroupSupervision } from './owned-process-supervision'
 export { defaultProbePid, killChildTree, killTree, type PidState } from './process-group'
 export { writeScreenshot } from './screenshot-files'
