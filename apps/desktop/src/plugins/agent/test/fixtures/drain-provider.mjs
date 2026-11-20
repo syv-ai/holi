@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { closeSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -42,20 +43,31 @@ for (let i = 0; ; i++) {
 const send = (event) => process.stdout.write(`${JSON.stringify(event)}\n`)
 process.stdout.write('fixture-ready\n')
 const lines = createInterface({ input: process.stdin })
+let outputClosed = false
 for await (const line of lines) {
-  if (line === 'ping') {
+  if (line.startsWith('probe:')) {
+    const [, phase, tokens] = line.split(':')
     if (kind === 'pty') await writeFile('pty-turn.md', input)
-    process.stdout.write(`fixture-ping:${input}\n`)
+    process.stdout.write(`fixture-work:${input}:${phase}\n`)
+    if (kind === 'job')
+      send({ type: 'turn.completed', usage: { input_tokens: Number(tokens), output_tokens: 0 } })
+    continue
+  }
+  if (line === 'close-output') {
+    await new Promise((resolve) => process.stdout.write(tail, resolve))
+    // Node's process.stdout wrapper deliberately does not close fd 1 on destroy.
+    closeSync(1)
+    outputClosed = true
     continue
   }
   if (line === 'exit') {
-    if (stdio === 'ignore') {
+    if (stdio === 'ignore' && !outputClosed) {
       process.stdout.write(kind === 'pi' ? piTail : tail)
     }
     if (kind === 'job' || kind === 'fenced') await writeFile('output.md', input)
     if (kind === 'job')
       send({ type: 'turn.completed', usage: { input_tokens: 7, output_tokens: 5 } })
-    await new Promise((resolve) => process.stdout.write('', resolve))
+    if (!outputClosed) await new Promise((resolve) => process.stdout.write('', resolve))
     process.exit(Number(code))
   }
   if (kind !== 'pi') continue
@@ -82,9 +94,11 @@ for await (const line of lines) {
     await writeFile(`${receipt}.payload`, piTail)
     continue
   }
-  if (request.message !== 'reply') continue
+  if (request.message !== 'reply' && !request.message.startsWith('probe:')) continue
+  const answer =
+    request.message === 'reply' ? input : `fixture-work:${input}:${request.message.slice(6)}`
   send({ type: 'response', command: request.type, id: request.id, success: true })
   send({ type: 'agent_start' })
-  send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: input } })
+  send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: answer } })
   send({ type: 'agent_settled' })
 }

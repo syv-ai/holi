@@ -3,30 +3,23 @@ import type { PtyProcess } from '../../main/host/pty'
 
 const DESTROY_OUTPUT_MS = 200
 
-/** Model the pinned node-pty Unix output socket with the real stdout pipe.
- * The root edge is synchronous; public exit belongs to the socket close,
- * including a close caused by node-pty's 200 ms destroy backstop. */
-export function leasedPty(child: ChildProcess, deliver: () => Promise<void>) {
+/** node-pty 1.1.0 UnixTerminal's own fields and both paths through its native
+ * exit callback, using the real stdout pipe in place of the tty socket. */
+export function leasedPty(
+  child: ChildProcess,
+  dispatch: (fire: () => void) => void = (fire) => fire(),
+) {
   const output = child.stdout!
-  let outputClosed = false
-  let rootExit: { exitCode: number } | undefined
   let listener: ((event: { exitCode: number }) => void) | undefined
+  let onSocketClose: (() => void) | undefined
   let backstop: ReturnType<typeof setTimeout> | undefined
-  let path: 'output' | 'backstop' = 'output'
+  let path: 'already-closed' | 'output' | 'backstop' | undefined
   let settled!: () => void
   const outputSettled = new Promise<void>((resolve) => (settled = resolve))
-  const publish = () => {
-    if (!rootExit || !outputClosed) return
-    const event = rootExit
-    rootExit = undefined
-    void deliver().then(() => {
-      listener?.(event)
-      settled()
-    })
-  }
-  const pty: PtyProcess & { _boundClose: boolean } = {
+  const pty: PtyProcess & { _boundClose: boolean; _emittedClose: boolean } = {
     pid: child.pid!,
     _boundClose: false,
+    _emittedClose: false,
     onData: (cb) => output.on('data', (bytes: Buffer) => cb(bytes.toString())),
     onExit: (cb) => {
       listener = cb
@@ -40,23 +33,32 @@ export function leasedPty(child: ChildProcess, deliver: () => Promise<void>) {
     },
   }
   output.once('close', () => {
-    outputClosed = true
-    clearTimeout(backstop)
-    backstop = undefined
-    publish()
+    pty._emittedClose = true
+    onSocketClose?.()
   })
   child.once('exit', (code) => {
-    rootExit = { exitCode: code ?? -1 }
-    // Set the pinned own field even if the surrogate pipe already closed:
-    // Runtime's root-exit observer must run before public exit can dispatch.
+    const publish = () =>
+      dispatch(() => {
+        listener?.({ exitCode: code ?? -1 })
+        settled()
+      })
+    if (pty._emittedClose) {
+      path = 'already-closed'
+      publish()
+      return
+    }
+    if (pty._boundClose) return
     pty._boundClose = true
-    if (outputClosed) publish()
-    else {
-      backstop = setTimeout(() => {
-        backstop = undefined
-        path = 'backstop'
-        output.destroy()
-      }, DESTROY_OUTPUT_MS)
+    backstop = setTimeout(() => {
+      backstop = undefined
+      path = 'backstop'
+      output.destroy()
+    }, DESTROY_OUTPUT_MS)
+    onSocketClose = () => {
+      clearTimeout(backstop)
+      backstop = undefined
+      path ??= 'output'
+      publish()
     }
   })
   return { pty, outputSettled, path: () => path, timerPending: () => backstop !== undefined }
