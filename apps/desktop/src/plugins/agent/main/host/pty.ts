@@ -129,6 +129,7 @@ export class AgentRuntime {
   private draining = false
   private drainingErrors: unknown[] = []
   private exitCbs: Array<(e: AgentExit, signal?: AbortSignal) => void | Promise<void>> = []
+  private closedCb?: () => void
   private notifyPublicExit?: () => void
   private killTimer: ReturnType<typeof setTimeout> | null = null
   private killPromise: Promise<void> | null = null
@@ -192,6 +193,12 @@ export class AgentRuntime {
 
   onExit(cb: (e: AgentExit, signal?: AbortSignal) => void | Promise<void>): void {
     this.exitCbs.push(cb)
+  }
+
+  /** The terminal owner's synchronous index update, only after full closure.
+   * Unlike onExit, this notification does no fallible work. */
+  onClosed(cb: () => void): void {
+    this.closedCb = cb
   }
 
   start({ bin, args, cwd, env, cols, rows }: StartArgs): void {
@@ -297,6 +304,7 @@ export class AgentRuntime {
           }
           this.ownership?.retire()
           this.pty = null
+          this.closedCb?.()
         })()
         this.observe(this.exitSettlement)
         this.notifyPublicExit?.()

@@ -182,7 +182,10 @@ export class PiRpcRun {
       this.outputEnded = true
       const tail = this.pending
       this.pending = ''
-      if (tail !== '') this.readRecord(tail)
+      // A clean stream END can still cut off a record. Do not publish an
+      // exiting turn until its final non-whitespace record parses.
+      if (tail.trim() !== '') this.readRecord(tail, this.exited && this.active)
+      if (this.outputError) return
       if (this.pendingStats) {
         try {
           this.onStats?.(this.pendingStats)
@@ -429,13 +432,21 @@ export class PiRpcRun {
     }
   }
 
-  private readRecord(line: string): void {
+  private readRecord(line: string, exitingTail = false): void {
     if (Buffer.byteLength(line) > this.maxLineBytes) {
       this.badRecord()
       return
     }
+    let record: Record<string, unknown>
     try {
-      this.onRecord(JSON.parse(line) as Record<string, unknown>)
+      record = JSON.parse(line) as Record<string, unknown>
+    } catch (error) {
+      if (exitingTail && error instanceof SyntaxError) this.failOutput(error)
+      else this.badRecord()
+      return
+    }
+    try {
+      this.onRecord(record)
     } catch {
       this.badRecord()
     }

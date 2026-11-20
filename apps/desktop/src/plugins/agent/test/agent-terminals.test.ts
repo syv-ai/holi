@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PtyProcess } from '../main/host/pty'
+import { withPtyOwnership, type PtyProcess } from '../main/host/pty'
 import { terminalCommand } from '../main/claude/cli'
 import { createAgentTerminals } from '../main/host/terminals'
 import { delimiter } from 'node:path'
@@ -108,6 +108,86 @@ describe('agent terminals', () => {
       await closing
     }
   })
+
+  it.skipIf(process.platform === 'win32').each(['success', 'failure'] as const)(
+    'keeps the terminal indexed through ownership retirement: %s',
+    async (mode) => {
+      const pty = new FakePty()
+      const activation = new AbortController()
+      const cause = new Error('ownership retirement failed')
+      const proof = vi.fn(async () => {})
+      const spawnPty = vi.fn(() => pty)
+      const terminals = createAgentTerminals({
+        emit: () => {},
+        activationSignal: activation.signal,
+        spawnPty,
+        superviseGroup: () => ({ drain: proof }),
+        log: () => {},
+      })
+      let finishCallback!: () => void
+      let enterCallback!: () => void
+      const callback = new Promise<void>((resolve) => {
+        finishCallback = resolve
+      })
+      const entered = new Promise<void>((resolve) => {
+        enterCallback = resolve
+      })
+      const onExit = vi.fn(() => {
+        enterCallback()
+        return callback
+      })
+      const slot = 'same-session'
+      const atRetirement = vi.fn()
+      const ownership = {
+        ownershipRecordPath: undefined,
+        nonLaunch: vi.fn(),
+        fail: vi.fn(),
+        retire: vi.fn(() => {
+          atRetirement(terminals.launchedFor(slot))
+          if (mode === 'failure') throw cause
+        }),
+      }
+      const allocate = vi.fn(() => ownership)
+      const opened = withPtyOwnership({ cwd: TARGET.root, allocate }, () =>
+        terminals.open({ ...on(slot), onExit }),
+      )
+      if (!opened.ok) throw new Error(opened.message)
+      pty.exit()
+      try {
+        await entered
+        expect(allocate).toHaveBeenCalledExactlyOnceWith('explicit')
+        expect(terminals.launchedFor(slot)).toBe(opened.id)
+        expect(terminals.open(on(slot)).ok).toBe(false)
+        expect(ownership.retire).not.toHaveBeenCalled()
+      } finally {
+        finishCallback()
+      }
+      // Let natural exit finish before Stop or the activation disposer joins it.
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(onExit).toHaveBeenCalledOnce()
+      expect(atRetirement).toHaveBeenCalledExactlyOnceWith(opened.id)
+      expect(proof).toHaveBeenCalledOnce()
+      expect(pty.kills).toEqual([])
+      if (mode === 'failure') {
+        expect(ownership.fail).toHaveBeenCalledWith(cause)
+        expect(terminals.launchedFor(slot)).toBe(opened.id)
+        expect(terminals.open(on(slot)).ok).toBe(false)
+        expect(spawnPty).toHaveBeenCalledOnce()
+        await expect(terminals.close(opened.id)).rejects.toBe(cause)
+        await expect(terminals.close(opened.id)).rejects.toBe(cause)
+        activation.abort()
+        await expect(terminals.closeAll()).rejects.toBe(cause)
+        await expect(terminals.closeAll()).rejects.toBe(cause)
+      } else {
+        expect(ownership.fail).not.toHaveBeenCalled()
+        expect(terminals.launchedFor(slot)).toBeNull()
+        expect(terminals.open(on(slot)).ok).toBe(true)
+        pty.exit()
+        await terminals.closeAll()
+        expect(terminals.list()).toEqual([])
+      }
+    },
+  )
 
   it('retains the terminal and original failure when exit notification throws', async () => {
     const pty = new FakePty()

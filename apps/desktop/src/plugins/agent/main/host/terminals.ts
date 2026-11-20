@@ -285,18 +285,14 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
             pushList(remote)
             mirror.dispose()
           }
-          const retire = () => {
-            signal?.throwIfAborted()
-            if (!t.retainOnExit) terminals.delete(t.id)
-          }
-          const completion = e.nonAdmission
-            ? onExit?.(t.title, signal, true)
-            : onExit?.(t.title, signal)
-          if (completion !== undefined) return completion.then(retire)
-          retire()
+          return e.nonAdmission ? onExit?.(t.title, signal, true) : onExit?.(t.title, signal)
         }
         // node-pty delivered the last data, but xterm may still be parsing it.
         return hasOutput ? mirror.serialize().then(finish) : finish()
+      })
+      runtime.onClosed(() => {
+        // A hidden terminal still owns its slot until durable retirement succeeds.
+        if (!t.retainOnExit) terminals.delete(t.id)
       })
       try {
         runtime.start({
