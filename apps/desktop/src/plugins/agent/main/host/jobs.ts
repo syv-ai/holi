@@ -503,7 +503,7 @@ export function createJobs(deps: JobsDeps): Jobs {
 
   function rememberFailure(
     job: Job,
-    receipt: JobTurnReceipt,
+    receipt: Pick<JobTurnReceipt, 'fail'>,
     error: unknown,
     phase?: 'physical',
   ): Error {
@@ -724,22 +724,37 @@ export function createJobs(deps: JobsDeps): Jobs {
     clearTimeout(job.dropTimer)
     if (job.finalizationError !== undefined) throw job.finalizationError
     if (job.retirement === undefined) {
+      const label = `Cleanup of job ${job.id}`
+      const timeoutMs = 5_000
+      const deadline = performance.now() + timeoutMs
+      const controller = new AbortController()
+      const check = () => {
+        controller.signal.throwIfAborted()
+        if (performance.now() >= deadline)
+          throw new Error(`${label} did not finish before teardown timed out.`)
+      }
       const retirement = (async () => {
         await job.exited
-        if (job.finalizationError !== undefined) throw job.finalizationError
+        check()
         await rm(job.state, { recursive: true, force: true })
-        await job.files.retire()
+        check()
+        await job.files.retire(check)
+        check()
         if (jobs.get(job.id) === job) jobs.delete(job.id)
         push()
       })()
-      job.retirement = retirement
-      // Only a settled failure permits another attempt. A timed-out deletion
-      // still owns the namespace and every retry joins that same operation.
-      void retirement.catch(() => {
-        if (job.retirement === retirement) job.retirement = undefined
+      // One deadline and one terminal result for the owner, including TTL.
+      // A filesystem operation already in flight may finish, but not advance.
+      job.retirement = bounded(retirement, label, timeoutMs).catch((error: unknown) => {
+        controller.abort(error)
+        const failure = rememberFailure(job, job.files, error)
+        job.outcome = 'failed'
+        job.message = failure.message
+        push()
+        throw failure
       })
     }
-    await bounded(job.retirement, `Cleanup of job ${job.id}`)
+    await job.retirement
   }
 
   function runTurn(
@@ -764,6 +779,16 @@ export function createJobs(deps: JobsDeps): Jobs {
     }, maxMs)
     tooLong.unref?.()
 
+    // Stop can re-enter from the spawn adapter. Publish the new settlement
+    // before invoking it, even though the lease is not yet available to stop.
+    let resolveExited!: () => void
+    let rejectExited!: (error: unknown) => void
+    job.exited = new Promise<void>((resolve, reject) => {
+      resolveExited = resolve
+      rejectExited = reject
+    })
+    void job.exited.catch(() => {})
+    const began = generation
     const turn = startJobTurn({
       id,
       provider,
@@ -784,11 +809,14 @@ export function createJobs(deps: JobsDeps): Jobs {
       },
     })
     job.turn = turn
-    // A synchronous spawn adapter can revoke this activation before it
-    // returns the new lease. Close that lease in this stack, independent of
-    // any earlier Stop that saw only the previous turn's exit promise.
-    if (process.platform !== 'win32' && closing) requestStop(job, 'Stopped.')
-    const bracket = turn.bracket && job.place !== null
+    // No await or publication may intervene between registering the lease
+    // and honoring a Stop or activation revocation while it was being made.
+    const revoked = closing || generation !== began || deps.activationSignal?.aborted === true
+    const posix = process.platform !== 'win32'
+    if (posix && (revoked || job.stopped !== undefined)) requestStop(job, 'Stopped.')
+    // The session host already closed admission on revocation. Do not try to
+    // claim a new bracket there; the retained lease still owes physical proof.
+    const bracket = turn.bracket && job.place !== null && !(posix && revoked)
     let managed: ManagedTurn | undefined
     if (bracket && deps.beginManagedTurn !== undefined) {
       try {
@@ -803,7 +831,7 @@ export function createJobs(deps: JobsDeps): Jobs {
           .then(() => deps.bracket?.(id, 'begin'))
           .catch(fail)
       : undefined
-    job.exited = (async () => {
+    void (async () => {
       let safeToForget = false
       try {
         const output = await turn.output.catch((error: unknown) => {
@@ -872,7 +900,7 @@ export function createJobs(deps: JobsDeps): Jobs {
             await rm(job.state, { recursive: true, force: true })
           }
           signal.throwIfAborted()
-          if (managed !== undefined && job.finalizationError === undefined)
+          if (managed !== undefined && job.finalizationError === undefined && !receipt.didNotLaunch)
             await managed.end(signal)
           signal.throwIfAborted()
           return { outcome, why }
@@ -891,8 +919,8 @@ export function createJobs(deps: JobsDeps): Jobs {
         fail(error)
       } finally {
         if (managed !== undefined && safeToForget) {
-          // No-op if end already consumed the bracket. Otherwise output or
-          // finalization was abandoned after proof and must not record an end.
+          // No-op if end already consumed the bracket. Otherwise we proved
+          // non-admission or abandoned settlement after physical proof.
           try {
             managed.forget()
           } catch (error) {
@@ -914,8 +942,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       }
       if (job.finalizationError !== undefined) throw job.finalizationError
       followUp(job)
-    })()
-    void job.exited.catch(() => {})
+    })().then(resolveExited, rejectExited)
     if (turn.refusal !== undefined) return { ok: false, message: turn.refusal }
     push()
     return { ok: true }
@@ -1001,8 +1028,6 @@ export function createJobs(deps: JobsDeps): Jobs {
       generation += 1
       for (const job of jobs.values()) {
         job.queue = []
-        // runTurn closes a registering POSIX turn before it returns.
-        if (process.platform !== 'win32' && job.busy && job.turn === undefined) continue
         const pending = kill(job, 'Stopped.')
         void pending.catch((err: unknown) => log(`${job.id}: could not stop: ${String(err)}`))
       }
@@ -1133,18 +1158,9 @@ export function createJobs(deps: JobsDeps): Jobs {
         job.queue = []
         clearTimeout(job.dropTimer)
       }
-      // Close every installed lease before scheduling even the registration
-      // retry. kill invokes native drain before its first await.
-      const stopping = all.map((job) =>
-        process.platform !== 'win32' && job.busy && job.turn === undefined
-          ? undefined
-          : kill(job, 'Stopped.'),
-      )
-      // Re-entry during registration: join the turn once the current stack
-      // has installed its native receipt. Observe every result while sweeping.
-      const results = Promise.allSettled(
-        all.map((job, i) => stopping[i] ?? Promise.resolve().then(() => kill(job, 'Stopped.'))),
-      )
+      // Close installed leases before awaiting anything. In-flight registration
+      // already has a settlement promise, and will close its lease on return.
+      const results = Promise.allSettled(all.map((job) => kill(job, 'Stopped.')))
       return { all, results }
     }
     let sweepFailure: { reason: unknown } | undefined

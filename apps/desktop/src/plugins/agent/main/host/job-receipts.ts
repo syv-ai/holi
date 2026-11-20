@@ -179,7 +179,11 @@ export function jobScratch({
       return {
         turn() {
           let record: LaunchOwnership | undefined
+          let didNotLaunch = false
           return {
+            get didNotLaunch() {
+              return didNotLaunch
+            },
             prepare(explicit: boolean) {
               record = registry?.allocate('jobs', id, explicit ? 'explicit' : 'native')
               if (record) {
@@ -205,18 +209,38 @@ export function jobScratch({
             },
             nonLaunch() {
               record?.nonLaunch()
+              didNotLaunch = true
             },
             fail(error: unknown) {
               record?.fail(error)
             },
           }
         },
-        async retire() {
+        fail(error: unknown) {
+          const failures: unknown[] = []
+          for (const turn of turns) {
+            try {
+              turn.fail(error)
+            } catch (recordError) {
+              failures.push(recordError)
+            }
+          }
+          if (failures.length)
+            throw new AggregateError(failures, 'Could not mark job receipts failed.')
+        },
+        async retire(check: () => void) {
+          check()
           await rm(pid, { force: true })
+          check()
           if (turns.length) {
             await rm(caller, { force: true })
+            check()
             syncDir(root)
-            for (const turn of turns) turn.retire()
+            for (const turn of turns) {
+              check()
+              turn.retire()
+            }
+            check()
             turns.length = 0
           }
         },
