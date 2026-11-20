@@ -215,13 +215,16 @@ public static class ControlFixture {
             throw new InvalidOperationException("duplicate-root-file:"+Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture));
           try {
             uint fileType=GetFileType(copy);
-            Require(fileType!=0,"query-file-type");
-            if(fileType==FileTypePipe) {
+            // PIPE includes sockets; UNKNOWN can be a valid device. Neither
+            // alone identifies a named pipe. Require its actual kernel name.
+            if(fileType!=1 && fileType!=2) { // Not a positively classified disk or character file.
               string name=ObjectText(copy,ObjectNameInformation,"query-pipe-name");
-              Require(name.StartsWith(Device,StringComparison.OrdinalIgnoreCase),"unknown-pipe-device");
-              result.namedPipes++;
-              if(String.Equals(name,wanted,StringComparison.OrdinalIgnoreCase)) result.controlPipeMatches++;
-              if(String.Equals(name,known,StringComparison.OrdinalIgnoreCase)) result.positivePipeMatches++;
+              Require(name.StartsWith(@"\",StringComparison.Ordinal),"unknown-file-device");
+              if(name.StartsWith(Device,StringComparison.OrdinalIgnoreCase)) {
+                result.namedPipes++;
+                if(String.Equals(name,wanted,StringComparison.OrdinalIgnoreCase)) result.controlPipeMatches++;
+                if(String.Equals(name,known,StringComparison.OrdinalIgnoreCase)) result.positivePipeMatches++;
+              }
             }
           } finally { Require(CloseHandle(copy),"close-duplicate"); }
         }
