@@ -219,6 +219,10 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   commitNow(): Promise<string | null | 'busy'>
   /** The checked-out commit, or null on an unborn branch. */
   head(): Promise<string | null>
+  /** Capture a narrowly scoped authority for an already-admitted operation to
+   * finish its vault finalization after this activation is revoked. The returned
+   * runner is bound to this exact activation and only permits finalization APIs. */
+  captureFinalization(): <T>(work: () => Promise<T>) => Promise<T>
   /** Hear what the renderer reports the person is looking at in this vault. */
   onReport(cb: (report: UiReport) => void): () => void
   /**

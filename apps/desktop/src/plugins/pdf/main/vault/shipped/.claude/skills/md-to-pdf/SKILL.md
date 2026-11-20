@@ -28,7 +28,8 @@ List them with `ls .holi/document-templates/`, and read a template's
   - `@@SIG:syv.ai ApS|ACME A/S@@` — a signature block, one column per `|`-separated party.
   - `@@FIG:agent-flow@@` / `@@FIG:custom-arkitektur@@` — an embedded syv architecture diagram.
 - `report` — a branded long-form report/whitepaper: cover page, table of contents, running header.
-  Fields: `title`, `subtitle`, `date`.
+  Fields: `title`, `client`, `subtitle`, `date`. When `client` is omitted, Holi infers it from a
+  `kunder/<client>/...` note path; an explicit frontmatter value takes precedence.
 - `letter` — a branded letter: letterhead, recipient block, closing + signature. Fields:
   `recipient`, `date`, `closing`, `sender`.
 - `memo` — a branded internal memo: a To/From/Date/Re header, no letterhead. Fields: `to`, `from`,
@@ -46,6 +47,9 @@ templates are Danish and `plain` is English until that key says otherwise.
 Change it in the manifest when a user wants a template in another language;
 there is no flag for it. Field defaults are manifest text too: switching the
 letter to `en` also means changing its `closing` default ("Med venlig hilsen").
+
+Shipped skills update from Settings → Update skills or `holi skills update`; vaults can also opt
+in to automatic updates on open with `autoUpdateSkills`. Changes never overwrite customized copies.
 
 Each `template.json` field has a `key`, `label`, `type`, and optional `required`,
 `default`, and `options`. Give a field as `--<key> <value>`. A field you leave

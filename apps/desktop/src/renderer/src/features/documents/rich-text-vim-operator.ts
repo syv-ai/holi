@@ -222,6 +222,7 @@ function registerFor(
 ): VimRegister {
   return {
     content: state.doc.slice(from, to),
+    schema: state.schema,
     linewise,
     linewiseTextblock: textblock,
     linewiseContainer: container,
@@ -605,7 +606,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         state,
         operator,
         { from, to },
-        { content: fragment, linewise, linewiseTextblock: undefined },
+        { content: fragment, schema: state.schema, linewise, linewiseTextblock: undefined },
         mutation,
         operator === 'y' ? origin : from,
         { kind: 'textblocks', container: containerAt(state, low.from) },

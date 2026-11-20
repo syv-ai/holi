@@ -1,11 +1,11 @@
 import { Extension } from '@tiptap/react'
-import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import { NodeSelection, Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import type { EditorState } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { closeHistory, undo, redo } from '@tiptap/pm/history'
 import { requestHostHints } from '@/lib/host-hints'
 import { clearExtraSelections } from './multi-cursor'
-import { pasteVimRegister } from './rich-text-vim-register'
+import { pasteVimRegister, replaceVimRegisterSelection } from './rich-text-vim-register'
 import type { VimRegister } from './rich-text-vim-register'
 import { planVimOperator, resolveVimMotion, resolveVimVisualRange } from './rich-text-vim-operator'
 import type { VimOperatorRequest } from './rich-text-vim-operator'
@@ -21,7 +21,7 @@ import {
   textBlocks as blocks,
 } from './rich-text-vim-range'
 
-export type RichTextVimMode = 'normal' | 'insert' | ''
+export type RichTextVimMode = 'normal' | 'insert' | 'visual' | 'visual-line' | ''
 
 type VimSettings = {
   enabled: boolean
@@ -125,6 +125,48 @@ function crossesContainerMotion(state: EditorState, origin: number, direction: -
   return startContainer?.pos !== endContainer?.pos || startContainer?.type !== endContainer?.type
 }
 
+function visualLineDestination(
+  state: EditorState,
+  oneBasedLine: number,
+  defaultLast = true,
+  endOfLine = false,
+) {
+  const all = blocks(state).flatMap((block) => logicalLines(block))
+  const index = oneBasedLine ? oneBasedLine - 1 : defaultLast ? all.length - 1 : 0
+  const line = all[Math.min(all.length - 1, Math.max(0, index))]
+  if (!line || !endOfLine) return line?.from ?? 0
+  const positions = graphemeBoundaries(state, line.from, line.to)
+  return positions.length > 1 ? positions.at(-2)! : (positions.at(-1) ?? line.from)
+}
+
+function moveVisualSelection(
+  view: EditorView,
+  settings: VimSettings,
+  current: VimState,
+  destination: number,
+) {
+  const range = resolveVimVisualRange(
+    view.state,
+    current.visualAnchor!,
+    destination,
+    current.visualLinewise,
+  )
+  if (!range || !safeRange(view.state, range.from, range.to)) {
+    clearTransient(view)
+    settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
+    return false
+  }
+  view.dispatch(
+    view.state.tr
+      .setSelection(TextSelection.create(view.state.doc, range.anchor, range.head))
+      .setMeta(KEY, { ...current, visualCursor: destination, prefix: false, count: 0 })
+      .setMeta('vimSelection', true)
+      .setMeta('addToHistory', false)
+      .scrollIntoView(),
+  )
+  return true
+}
+
 function setVisualSelection(view: EditorView, anchor: number, head: number, linewise: boolean) {
   const range = resolveVimVisualRange(view.state, anchor, head, linewise)
   if (!range) return false
@@ -147,19 +189,28 @@ function move(view: EditorView, motion: Motion, count = 1) {
   select(view, resolveVimMotion(view.state, view.state.selection.head, motion, count))
 }
 
-function deleteChar(view: EditorView) {
+function deleteChar(view: EditorView, onFeedback?: (message: string) => void) {
   if (!view.editable) return
   const { state } = view
   if (!state.selection.empty) {
-    if (state.selection instanceof TextSelection) {
+    if (
+      state.selection instanceof TextSelection &&
+      safeRange(state, state.selection.from, state.selection.to)
+    ) {
       view.dispatch(state.tr.deleteSelection())
       return
     }
     const selected = state.selection
-    if ('node' in selected) {
+    if (
+      selected instanceof NodeSelection &&
+      selected.node.isInline &&
+      safeRange(state, selected.from, selected.to)
+    ) {
       view.dispatch(state.tr.delete(selected.from, selected.to))
       return
     }
+    onFeedback?.('Vim selection crosses a list or table; no text was changed')
+    return
   }
   const line = lineAt(state, state.selection.head)
   if (!line || state.selection.head >= line.to) return
@@ -357,11 +408,32 @@ function handleNormal(
   )
     return false
   if (!plain) return false
-  clearExtraSelections(view)
-  const update = (patch: Partial<VimState>) =>
-    view.dispatch(
-      view.state.tr.setMeta(KEY, { ...current, ...patch }).setMeta('addToHistory', false),
+  if (current.visualAnchor !== null) {
+    const range = resolveVimVisualRange(
+      view.state,
+      current.visualAnchor,
+      current.visualCursor ?? current.visualAnchor,
+      current.visualLinewise,
     )
+    if (
+      !(view.state.selection instanceof TextSelection) ||
+      !range ||
+      view.state.selection.anchor !== range.anchor ||
+      view.state.selection.head !== range.head
+    ) {
+      clearTransient(view)
+      settings.onFeedback?.('Vim selection changed externally; no text was changed')
+      event.preventDefault()
+      return true
+    }
+  }
+  clearExtraSelections(view)
+  const update = (patch: Partial<VimState>) => {
+    const latest = KEY.getState(view.state) ?? current
+    view.dispatch(
+      view.state.tr.setMeta(KEY, { ...latest, ...patch }).setMeta('addToHistory', false),
+    )
+  }
   if (current.visualAnchor !== null && /^[0-9]$/.test(key) && (current.count > 0 || key !== '0')) {
     update({ count: Math.min(999, current.count * 10 + Number(key)) })
     event.preventDefault()
@@ -378,7 +450,8 @@ function handleNormal(
       key === 'e' ||
       key === '0' ||
       key === '^' ||
-      key === '$')
+      key === '$' ||
+      key === 'G')
   ) {
     const visualOrigin = current.visualCursor ?? current.visualAnchor
     const count = cappedCount(current.count)
@@ -391,34 +464,22 @@ function handleNormal(
       event.preventDefault()
       return true
     }
-    const visualDestination = resolveVimMotion(view.state, visualOrigin, key as Motion, count)
-    const visualRangePreview = resolveVimVisualRange(
-      view.state,
-      current.visualAnchor,
-      visualDestination,
-      current.visualLinewise,
-    )
-    if (
-      !visualRangePreview ||
-      !safeRange(view.state, visualRangePreview.from, visualRangePreview.to)
-    ) {
-      clearTransient(view)
-      settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
-      event.preventDefault()
-      return true
-    }
-    view.dispatch(
-      view.state.tr
-        .setMeta(KEY, { ...current, visualCursor: visualDestination, count: 0 })
-        .setMeta('addToHistory', false),
-    )
-    setVisualSelection(view, current.visualAnchor, visualDestination, current.visualLinewise)
+    const visualDestination =
+      key === 'G'
+        ? visualLineDestination(view.state, current.count, true, true)
+        : resolveVimMotion(view.state, visualOrigin, key as Motion, count)
+    moveVisualSelection(view, settings, current, visualDestination)
     event.preventDefault()
     return true
   }
   if (current.prefix && key === 'g') {
-    select(view, 0)
-    setMode(view, 'normal')
+    const destination = visualLineDestination(view.state, current.count, false)
+    if (current.visualAnchor !== null) {
+      moveVisualSelection(view, settings, current, destination)
+    } else {
+      select(view, destination)
+      setMode(view, 'normal')
+    }
     event.preventDefault()
     return true
   }
@@ -492,6 +553,54 @@ function handleNormal(
         target: { kind: 'motion', origin, motion: key as Motion, count },
       })
     else update({ ...resetTransient(current) })
+    event.preventDefault()
+    return true
+  }
+  if (current.visualAnchor !== null && (key === 'p' || key === 'P') && current.register) {
+    const plan = planVimOperator(view.state, {
+      operator: 'y',
+      target: {
+        kind: 'visual',
+        anchor: current.visualAnchor,
+        cursor: current.visualCursor ?? current.visualAnchor,
+        linewise: current.visualLinewise,
+      },
+    })
+    const range = resolveVimVisualRange(
+      view.state,
+      current.visualAnchor,
+      current.visualCursor ?? current.visualAnchor,
+      current.visualLinewise,
+    )
+    if (plan.kind === 'ready' && range && safeRange(view.state, range.from, range.to)) {
+      const replaced = replaceVimRegisterSelection(
+        view,
+        range.from,
+        range.to,
+        current.register,
+        current.count,
+        () => closeHistoryBoundary(view),
+      )
+      if (replaced) {
+        const latest = KEY.getState(view.state) ?? current
+        view.dispatch(
+          view.state.tr
+            .setMeta(KEY, {
+              ...resetTransient(latest),
+              mode: 'normal',
+              register: plan.register,
+              count: 0,
+            })
+            .setMeta('addToHistory', false),
+        )
+      } else {
+        clearTransient(view)
+        settings.onFeedback?.('Vim register does not fit at this position; no text was changed')
+      }
+    } else {
+      clearTransient(view)
+      settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
+    }
     event.preventDefault()
     return true
   }
@@ -584,16 +693,13 @@ function handleNormal(
     return true
   }
   if (key === 'G') {
-    const last = blocks(view.state).at(-1)
-    const line = last ? lineAt(view.state, last.to) : null
-    const positions = line ? graphemeBoundaries(view.state, line.from, line.to) : []
-    select(view, positions.length > 1 ? positions.at(-2)! : (positions.at(-1) ?? 0))
+    select(view, visualLineDestination(view.state, current.count, true, true))
     if (current.count) update({ count: 0 })
     event.preventDefault()
     return true
   }
   if (key === 'x') {
-    if (settings.editable()) deleteChar(view)
+    if (settings.editable()) deleteChar(view, settings.onFeedback)
     if (current.count) update({ count: 0 })
     event.preventDefault()
     return true
@@ -668,16 +774,23 @@ export const RichTextVim = Extension.create<VimSettings>({
               }
             }
             if (!transaction.docChanged) return value
-            const mapPosition = (position: number | null) => {
+            const mapPosition = (position: number | null, association: -1 | 1 = -1) => {
               if (position === null) return { position: null, invalid: false }
-              const mapped = transaction.mapping.mapResult(position, -1)
+              const mapped = transaction.mapping.mapResult(position, association)
               return {
                 position: mapped.pos,
                 invalid: mapped.deleted || mapped.pos > transaction.doc.content.size,
               }
             }
-            const visual = mapPosition(value.visualAnchor)
-            const cursor = mapPosition(value.visualCursor)
+            const anchorAssociation =
+              value.visualAnchor !== null &&
+              value.visualCursor !== null &&
+              value.visualAnchor > value.visualCursor
+                ? 1
+                : -1
+            const cursorAssociation = anchorAssociation === -1 ? 1 : -1
+            const visual = mapPosition(value.visualAnchor, anchorAssociation)
+            const cursor = mapPosition(value.visualCursor, cursorAssociation)
             const operator =
               value.operatorAnchor === null
                 ? { position: null, invalid: false }
@@ -728,10 +841,17 @@ export const RichTextVim = Extension.create<VimSettings>({
         },
         view(view) {
           const update = () => {
-            const mode = KEY.getState(view.state)?.mode ?? ''
-            if (mode) view.dom.dataset.vimMode = mode
+            const vim = KEY.getState(view.state)
+            const mode = vim?.mode ?? ''
+            const reportedMode =
+              vim?.visualAnchor !== null && vim?.visualAnchor !== undefined
+                ? vim.visualLinewise
+                  ? 'visual-line'
+                  : 'visual'
+                : mode
+            if (reportedMode) view.dom.dataset.vimMode = reportedMode
             else delete view.dom.dataset.vimMode
-            options.onModeChange?.(mode)
+            options.onModeChange?.(reportedMode)
           }
           update()
           return {

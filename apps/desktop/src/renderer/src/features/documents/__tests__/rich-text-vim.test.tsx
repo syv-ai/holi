@@ -249,6 +249,267 @@ describe('rich-text Vim extension', () => {
     expect(ed.state.selection.empty).toBe(true)
   })
 
+  it('keeps visual selections and operators aligned through G and gg motions', () => {
+    const ed = open('<p>alpha</p><p>beta</p><p>gamma</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    expect(ed.view.dom.dataset.vimMode).toBe('visual')
+    key(ed, 'G')
+    expect(ed.view.dom.dataset.vimMode).toBe('visual')
+    expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe(
+      'alphabetagamma',
+    )
+    key(ed, 'd')
+    expect(text(ed)).toBe('')
+
+    ed.commands.setContent('<p>alpha</p><p>beta</p><p>gamma</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'V')
+    expect(ed.view.dom.dataset.vimMode).toBe('visual-line')
+    key(ed, 'G')
+    expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toContain(
+      'gamma',
+    )
+    key(ed, 'd')
+    expect(text(ed)).toBe('')
+
+    ed.commands.setContent('<p>one</p><p>two</p><p>three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    key(ed, 'V')
+    key(ed, '2')
+    key(ed, 'G')
+    expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe('onetwo')
+    key(ed, 'g')
+    key(ed, 'g')
+    expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe('one')
+    key(ed, 'd')
+    expect(text(ed)).toBe('twothree')
+    ed.commands.setContent('<p>one</p><p>two</p><p>three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    key(ed, 'G')
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(text(ed)).toBe('onethree')
+    key(ed, 'Escape')
+    expect(ed.view.dom.dataset.vimMode).toBe('normal')
+  })
+
+  it('scrolls visual G and gg selection transactions into view', () => {
+    const paragraphs = Array.from({ length: 120 }, (_, index) => `<p>line ${index}</p>`).join('')
+    const ed = open(paragraphs)
+    const dispatch = ed.view.dispatch.bind(ed.view)
+    const dispatched = vi.spyOn(ed.view, 'dispatch').mockImplementation((tr) => dispatch(tr))
+
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    dispatched.mockClear()
+    key(ed, 'G')
+    expect(dispatched.mock.calls.some(([tr]) => tr.scrolledIntoView)).toBe(true)
+
+    ed.commands.setTextSelection(ed.state.doc.content.size - 1)
+    key(ed, 'v')
+    key(ed, 'g')
+    dispatched.mockClear()
+    key(ed, 'g')
+    expect(dispatched.mock.calls.some(([tr]) => tr.scrolledIntoView)).toBe(true)
+  })
+
+  it('keeps visual operations aligned with the displayed selection after external edits', () => {
+    const cases = [
+      {
+        name: 'forward lower edge',
+        backward: false,
+        insert: (ed: Editor) => ed.state.tr.insertText('X', 1),
+      },
+      {
+        name: 'forward upper edge',
+        backward: false,
+        insert: (ed: Editor) => ed.state.tr.insertText('X', 3),
+      },
+      {
+        name: 'both edges',
+        backward: false,
+        insert: (ed: Editor) => ed.state.tr.insertText('X', 1).insertText('Y', 4),
+      },
+      { name: 'interior', backward: false, insert: (ed: Editor) => ed.state.tr.insertText('X', 2) },
+      {
+        name: 'backward lower edge',
+        backward: true,
+        insert: (ed: Editor) => ed.state.tr.insertText('X', 1),
+      },
+      {
+        name: 'backward upper edge',
+        backward: true,
+        insert: (ed: Editor) => ed.state.tr.insertText('X', 3),
+      },
+    ]
+    for (const scenario of cases) {
+      const feedback = vi.fn()
+      const ed = open('<p>abcd</p>', true, feedback)
+      ed.commands.setTextSelection(scenario.backward ? 3 : 1)
+      key(ed, 'v')
+      key(ed, scenario.backward ? 'h' : 'l')
+      expect(ed.view.dom.dataset.vimMode, `${scenario.name} before edit`).toBe('visual')
+      ed.view.dispatch(scenario.insert(ed).setMeta('externalDocumentReload', true))
+      const displayedFrom = ed.state.selection.from
+      const displayedTo = ed.state.selection.to
+      const displayedText = ed.state.doc.textBetween(displayedFrom, displayedTo)
+      const selectionWasDisplayed = !ed.state.selection.empty
+      const modeBeforeOperator = ed.view.dom.dataset.vimMode
+      expect(modeBeforeOperator === 'visual' || modeBeforeOperator === 'normal').toBe(true)
+      if (modeBeforeOperator === 'normal') expect(selectionWasDisplayed).toBe(false)
+      if (scenario.name === 'interior') expect(displayedText).toBe('aXb')
+      const before = ed.state.doc
+      key(ed, 'd')
+      expect(ed.state.selection.empty, scenario.name).toBe(true)
+      expect(ed.view.dom.dataset.vimMode, scenario.name).toBe('normal')
+      if (!selectionWasDisplayed || ed.state.doc.eq(before)) {
+        expect(ed.state.doc.eq(before), scenario.name).toBe(true)
+        if (modeBeforeOperator === 'visual') {
+          expect(feedback).toHaveBeenCalledWith(
+            'Vim selection changed externally; no text was changed',
+          )
+        } else {
+          expect(feedback).not.toHaveBeenCalledWith(
+            'Vim selection changed externally; no text was changed',
+          )
+        }
+      } else {
+        expect(ed.state.doc.eq(before), scenario.name).toBe(false)
+        expect(text(ed), `${scenario.name} deletes precisely the displayed range`).toBe(
+          before.textBetween(0, displayedFrom) +
+            before.textBetween(displayedTo, before.content.size),
+        )
+        expect(feedback).not.toHaveBeenCalledWith(
+          'Vim selection changed externally; no text was changed',
+        )
+        expect(displayedText.length).toBeGreaterThan(0)
+      }
+      ed.destroy()
+      editors.delete(ed)
+    }
+  })
+
+  it('replaces the actual visual selection on put and clears visual mode', () => {
+    const ed = open('<p>alpha beta</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'y')
+    key(ed, 'w')
+    ed.commands.setTextSelection(7)
+    key(ed, 'v')
+    key(ed, 'l')
+    expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe('be')
+    key(ed, 'P')
+    expect(text(ed)).toBe('alpha alpha ta')
+    expect(ed.state.selection.empty).toBe(true)
+    expect(ed.view.dom.dataset.vimMode).toBe('normal')
+    key(ed, 'x')
+    expect(text(ed)).toBe('alpha lpha ta')
+  })
+
+  it('repeats visual puts for both directions and clears the count', () => {
+    for (const keyName of ['p', 'P'] as const) {
+      const ed = open('<p>alpha beta</p>')
+      ed.commands.setTextSelection(1)
+      key(ed, 'y')
+      key(ed, 'w')
+      ed.commands.setTextSelection(7)
+      key(ed, 'v')
+      key(ed, 'l')
+      key(ed, '2')
+      key(ed, keyName)
+      expect(text(ed), keyName).toBe('alpha alpha alpha ta')
+      expect(ed.state.selection.empty, keyName).toBe(true)
+      expect(ed.view.dom.dataset.vimMode, keyName).toBe('normal')
+      key(ed, 'x')
+      expect(text(ed), keyName).toBe('alpha lpha alpha ta')
+      ed.destroy()
+      editors.delete(ed)
+    }
+  })
+
+  it('repeats counted visual puts with code and hard-break line separators', () => {
+    const code = open('<pre><code>first&#10;second&#10;third</code></pre>')
+    code.commands.setTextSelection(1)
+    key(code, 'V')
+    key(code, 'y')
+    key(code, 'Escape')
+    key(code, 'V')
+    key(code, '2')
+    key(code, 'p')
+    expect(code.state.doc.firstChild?.textContent).toBe('first\nfirst\nsecond\nthird')
+    expect(code.getHTML().match(/<pre>/g)).toHaveLength(1)
+    expect(code.view.dom.dataset.vimMode).toBe('normal')
+
+    const breaks = open('<p>first<br>second<br>third</p>')
+    breaks.commands.setTextSelection(1)
+    key(breaks, 'V')
+    key(breaks, 'y')
+    key(breaks, 'Escape')
+    key(breaks, 'V')
+    key(breaks, '2')
+    key(breaks, 'p')
+    expect(breaks.getHTML()).toBe('<p>first<br>first<br>second<br>third</p>')
+    expect(breaks.view.dom.dataset.vimMode).toBe('normal')
+  })
+
+  it('guards mouse selections and block selections from structural x deletion', () => {
+    const feedback = vi.fn()
+    const ed = openTable(feedback)
+    ed.commands.setContent('<p>outside</p><ul><li><p>inside</p></li></ul><p>tail</p>')
+    const beforeList = ed.state.doc
+    let insideTextEnd = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'inside') insideTextEnd = pos + node.nodeSize
+    })
+    ed.commands.setTextSelection({ from: 1, to: insideTextEnd })
+    key(ed, 'x')
+    expect(ed.state.doc.eq(beforeList)).toBe(true)
+    expect(feedback).toHaveBeenCalledWith(
+      'Vim selection crosses a list or table; no text was changed',
+    )
+
+    ed.commands.setContent(
+      '<table><tbody><tr><td><p>left</p></td><td><p>right</p></td></tr></tbody></table>',
+    )
+    let left = 0
+    let right = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'left') left = pos
+      if (node.isText && node.text === 'right') right = pos
+    })
+    const beforeTable = ed.state.doc
+    ed.commands.setTextSelection({ from: left, to: right + 2 })
+    key(ed, 'x')
+    expect(ed.state.doc.eq(beforeTable)).toBe(true)
+
+    ed.commands.setContent('<p>outside</p><ul><li><p>inside</p></li></ul>')
+    const beforeBlock = ed.state.doc
+    const listPos = ed.state.doc.child(0).nodeSize
+    ed.view.dispatch(ed.state.tr.setSelection(NodeSelection.create(ed.state.doc, listPos)))
+    key(ed, 'x')
+    expect(ed.state.doc.eq(beforeBlock)).toBe(true)
+  })
+
+  it('rejects visual G ranges that cross structural containers without editing', () => {
+    const feedback = vi.fn()
+    const ed = openTable(feedback)
+    ed.commands.setContent(
+      '<p>outside</p><table><tbody><tr><td><p>inside</p></td></tr></tbody></table>',
+    )
+    ed.commands.setTextSelection(1)
+    const before = ed.state.doc
+    key(ed, 'v')
+    key(ed, 'G')
+    expect(ed.state.doc.eq(before)).toBe(true)
+    expect(feedback).toHaveBeenCalledWith(
+      'Vim selection crosses a list or table; no text was changed',
+    )
+    expect(ed.view.dom.dataset.vimMode).toBe('normal')
+  })
+
   it('yanks and deletes a whole logical line with doubled operators', () => {
     const ed = open('<p>first</p><p>second</p>')
     ed.commands.setTextSelection(1)
@@ -1554,6 +1815,41 @@ describe('rich-text Vim extension', () => {
       expect(ed.getHTML(), `${html} :: ${sequence.join('')} undo`).toBe(html)
       key(ed, 'r', { ctrlKey: true })
       expect(ed.getHTML(), `${html} :: ${sequence.join('')} redo`).toBe(expected)
+    }
+  })
+
+  it('repeats code-block registers as structured slices and repeats empty logical lines', () => {
+    const code = open('<pre><code class="language-typescript">first</code></pre>')
+    code.commands.setTextSelection(1)
+    key(code, 'y')
+    key(code, 'y')
+    code.commands.setContent('<p>target</p>')
+    code.commands.setTextSelection(1)
+    key(code, '2')
+    key(code, 'p')
+    expect(code.state.doc.child(1).type.name).toBe('codeBlock')
+    expect(code.state.doc.child(1).attrs.language).toBe('typescript')
+    expect(code.state.doc.child(1).textContent).toBe('first')
+    expect(code.state.doc.child(2).type.name).toBe('codeBlock')
+    expect(code.state.doc.child(2).attrs.language).toBe('typescript')
+    expect(code.state.doc.child(2).textContent).toBe('first')
+    expect(code.state.doc.check()).toBeUndefined()
+
+    for (const [markup, expected] of [
+      ['<pre><code>\nnext</code></pre>', '\nnext\n\n'],
+      ['<p><br>next</p>', '<p><br>next<br><br></p>'],
+    ] as const) {
+      const ed = open(markup)
+      ed.commands.setTextSelection(1)
+      key(ed, 'y')
+      key(ed, 'y')
+      key(ed, 'j')
+      key(ed, '2')
+      key(ed, 'p')
+      expect(markup.startsWith('<pre>') ? ed.state.doc.firstChild?.textContent : ed.getHTML()).toBe(
+        expected,
+      )
+      expect(ed.state.doc.check()).toBeUndefined()
     }
   })
 
