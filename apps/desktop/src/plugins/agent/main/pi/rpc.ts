@@ -28,6 +28,8 @@ export interface PiRpcOptions {
   /** A fresh record path under a trusted private parent, used only by native POSIX spawn. */
   ownershipRecordPath?: string
   activationSignal?: AbortSignal
+  /** Reports the first drainage failure even while physical cleanup is still pending. */
+  onDrainFailure?: (error: unknown) => void
   model?: string
   system?: string
   /** A run with no tools at all, and nothing from the folder that could
@@ -80,6 +82,8 @@ export const NO_TOOLS = [
 export class PiRpcRun {
   private readonly child: PiChild
   private readonly onStats?: PiRpcOptions['onStats']
+  private readonly onDrainFailure?: PiRpcOptions['onDrainFailure']
+  private drainFailure?: { cause: unknown }
   private readonly supervision?: ProcessGroupSupervision
   private closeSeen = false
   private drainStarted = false
@@ -130,6 +134,7 @@ export class PiRpcRun {
     this.maxOutputBytes = options.maxOutputBytes ?? 1024 * 1024
     this.maxLineBytes = options.maxLineBytes ?? 1024 * 1024
     this.onStats = options.onStats
+    this.onDrainFailure = options.onDrainFailure
     if (options.model !== undefined) {
       const slash = options.model.indexOf('/')
       if (slash <= 0 || slash === options.model.length - 1) {
@@ -166,8 +171,7 @@ export class PiRpcRun {
       if (options.spawn === undefined && process.platform === 'win32') this.physicalComplete = true
       else {
         this.drainStarted = true
-        this.closed = true
-        this.rejectDrained(new Error('Pi RPC process group has no retained ownership proof.'))
+        this.failDrain(new Error('Pi RPC process group has no retained ownership proof.'))
       }
     }
     this.child.stdout.setEncoding('utf8')
@@ -334,22 +338,32 @@ export class PiRpcRun {
   private failOutput(error: Error): void {
     if (this.outputError) return
     this.outputError = error
+    const cause = this.rememberDrainFailure(error)
     this.pending = ''
     this.closed = true
-    this.takeCompletion()?.reject(error)
+    this.takeCompletion()?.reject(cause)
     this.startDrain()
     this.settleOutputDrain()
   }
 
+  private rememberDrainFailure(error: unknown): unknown {
+    if (!this.drainFailure) {
+      this.drainFailure = { cause: error }
+      this.onDrainFailure?.(error)
+    }
+    return this.drainFailure.cause
+  }
+
   private failDrain = (error: unknown): void => {
+    const cause = this.rememberDrainFailure(error)
     this.closed = true
     this.pending = ''
     clearTimeout(this.outputTimer)
     this.outputTimer = undefined
-    this.rejectDrained(error)
+    this.rejectDrained(cause)
     // A failed physical receipt can leave stdout open forever. Reject the
     // turn with that same reason rather than waiting for a natural outcome.
-    this.takeCompletion()?.reject(error)
+    this.takeCompletion()?.reject(cause)
   }
 
   private requireActive(): void {
