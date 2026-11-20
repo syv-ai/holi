@@ -1973,6 +1973,7 @@ rl.on('line', (line) => {
   }
   let stopping: Promise<unknown> | undefined
   let pidA: number | undefined
+  let pidB: number | undefined
   let releaseRename: ReturnType<typeof deferred> | undefined
   const releasePath = join(roots[A], 'pi-fixture-release')
   const reply = async (remote: typeof A | typeof B, session: string) => {
@@ -1989,11 +1990,18 @@ rl.on('line', (line) => {
       { method: 'POST' },
     )
   const realSetTimeout = globalThis.setTimeout
+  let retentionTimer: ReturnType<typeof setTimeout> | undefined
+  let expireRetention: (() => void) | undefined
   const retentionClock = vi
     .spyOn(globalThis, 'setTimeout')
-    .mockImplementation((callback, delay, ...args) =>
-      realSetTimeout(callback, delay === 30_000 ? 1_000 : delay, ...args),
-    )
+    .mockImplementation((callback, delay, ...args) => {
+      const timer = realSetTimeout(callback, delay, ...args)
+      if (delay === 30_000 && typeof callback === 'function') {
+        retentionTimer = timer
+        expireRetention = () => callback(...args)
+      }
+      return timer
+    })
   try {
     await enter(A)
     await enter(B)
@@ -2012,7 +2020,21 @@ rl.on('line', (line) => {
     expect(await reply(A, piA.sessionId)).toBe('A-reply')
     expect(await reply(B, piB.sessionId)).toBe('B-reply')
     pidA = Number(await waitForFile(join(roots[A], 'pi-fixture-pid')))
-    const priorARecords = await openTurnLog(roots[A]).list()
+    pidB = Number(await waitForFile(join(roots[B], 'pi-fixture-pid')))
+    const waitForInitialTurn = async (remote: typeof A | typeof B, sessionId: string) => {
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const records = await openTurnLog(roots[remote]).list()
+        if (records.some((record) => record.sessionId === sessionId)) return records
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      throw new Error(`Initial Pi turn was not durable for ${remote}`)
+    }
+    const [priorARecords, priorBRecords] = await Promise.all([
+      waitForInitialTurn(A, piA.sessionId),
+      waitForInitialTurn(B, piB.sessionId),
+    ])
+    expect(expireRetention).toBeDefined()
+    expect(retentionTimer).toBeDefined()
 
     const durableFailure = new Error('A turn record rename failed')
     expectFailedDrain()
@@ -2025,25 +2047,18 @@ rl.on('line', (line) => {
       error: durableFailure,
     }
     expect((await post(A, '/turn/start', piA.sessionId)).status).toBe(204)
-    expect((await post(B, '/turn/start', piB.sessionId)).status).toBe(204)
     const endingA = post(A, '/turn/end', piA.sessionId)
     await enteredRename.promise
+
+    expect((await post(B, '/turn/start', piB.sessionId)).status).toBe(204)
     const endingB = post(B, '/turn/end', piB.sessionId)
-    releaseRename.resolve()
-    expect((await endingA).status).toBe(204)
     expect((await endingB).status).toBe(200)
+    const afterBRecords = await openTurnLog(roots[B]).list()
+    expect(afterBRecords).toHaveLength(priorBRecords.length + 1)
+    expect(afterBRecords).toContainEqual(expect.objectContaining({ sessionId: piB.sessionId }))
     expect(await openTurnLog(roots[A]).list()).toEqual(priorARecords)
-    expect(await openTurnLog(roots[B]).list()).toEqual([
-      expect.objectContaining({ sessionId: piB.sessionId }),
-    ])
-    retentionClock.mockRestore()
 
-    await waitForFile(join(roots[A], 'pi-fixture-sigterm'))
-    expect(await reply(B, piB.sessionId)).toBe('B-reply')
-    await expect(
-      call(B, 'agent.message', { session: piB.sessionId, text: 'still live' }),
-    ).resolves.toEqual({ ok: true })
-
+    expireRetention!()
     let stopSettled = false
     stopping = host.stop(A).then(
       () => {
@@ -2055,6 +2070,10 @@ rl.on('line', (line) => {
         return error
       },
     )
+    await waitForFile(join(roots[A], 'pi-fixture-sigterm'))
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(await reply(B, piB.sessionId)).toBe('B-reply')
+    expect(() => process.kill(pidB!, 0)).not.toThrow()
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(stopSettled).toBe(false)
     await expect(call(A, 'agent.reply', { session: piA.sessionId })).rejects.toThrow(
@@ -2063,6 +2082,8 @@ rl.on('line', (line) => {
     expect(await reply(B, piB.sessionId)).toBe('B-reply')
 
     await writeFile(releasePath, 'release')
+    releaseRename.resolve()
+    expect((await endingA).status).toBe(204)
     const failure = await stopping
     await waitForGone(pidA)
     expect(failure).toBeInstanceOf(Error)
@@ -2070,14 +2091,18 @@ rl.on('line', (line) => {
     await expect(host.stop(A)).rejects.toBe(failure)
     await expect(enter(A)).rejects.toBe(failure)
     await expect(call(A, 'agent.sessions')).rejects.toThrow(/no such method/)
+    expect(await openTurnLog(roots[A]).list()).toEqual(priorARecords)
+    expect(await openTurnLog(roots[B]).list()).toEqual(afterBRecords)
     expect(await reply(B, piB.sessionId)).toBe('B-reply')
   } finally {
+    if (retentionTimer !== undefined) clearTimeout(retentionTimer)
     retentionClock.mockRestore()
     releaseRename?.resolve()
     await writeFile(releasePath, 'release').catch(() => {})
     await stopping?.catch(() => {})
     if (pidA !== undefined) await waitForGone(pidA).catch(() => {})
     await host.stopAll().catch(() => {})
+    if (pidB !== undefined) await waitForGone(pidB).catch(() => {})
   }
 })
 
