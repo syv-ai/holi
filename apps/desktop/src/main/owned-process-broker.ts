@@ -352,6 +352,10 @@ export function runBroker(
       child.stdin.destroy()
       void inputClosed.then(() => {
         try {
+          Object.defineProperty(noProof, 'brokerExit', {
+            value: Object.freeze({ code, signal }),
+            enumerable: true,
+          })
           fixture?.closed({ code, signal, eof: child.stdout.readableEnded, receipt })
           if (failure) throw failure.cause
           protocol.finish()
@@ -359,7 +363,12 @@ export function runBroker(
             throw new Error('owned Job broker exited without proof')
           resolve()
         } catch (error) {
-          if (diagnostic) brokerFailureDiagnostics.set(operation, Object.freeze(diagnostic))
+          if (diagnostic) {
+            const metadata = Object.freeze(diagnostic)
+            brokerFailureDiagnostics.set(operation, metadata)
+            // This error belongs only to this operation. Caller-owned causes stay untouched.
+            Object.defineProperty(noProof, 'nativeFailure', { value: metadata, enumerable: true })
+          }
           reject(failure ? failure.cause : error)
         }
       })

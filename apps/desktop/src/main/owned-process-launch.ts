@@ -275,7 +275,8 @@ export function launchOwned(
   let stopped = false
   let handedOff = false
   let acknowledged = false
-  let proofFailed = false
+  let ownershipFailure: UnconfirmedOwnedProgramError | undefined
+  let ordinaryRevoke: Promise<void> | undefined
   let commandError: Error | null = null
   let helperLastPhase = 'helper-spawned'
   let rootPid: number | null = null
@@ -289,15 +290,24 @@ export function launchOwned(
     revoke: () => {
       clearRuntimeTimer()
       removeAbortListener()
-      return job.lease.revoke()
+      if (retainDescendantsOnSuccess) return job.lease.revoke()
+      if (!ordinaryRevoke) {
+        // Ordinary launches have no parent Job ticket. Join the producer, but
+        // keep the original proof failure rather than reporting missing cleanup authority.
+        ordinaryRevoke = job.lease.revoke().catch((error: unknown) => {
+          throw ownershipFailure ?? error
+        })
+        void ordinaryRevoke.catch(() => undefined)
+      }
+      return ordinaryRevoke
     },
   }
   const rejectCompletion = (error: Error) => {
-    proofFailed = true
+    if (ownershipFailure) return
+    ownershipFailure = new UnconfirmedOwnedProgramError(error, lease, commandError)
     if (job.authMayHaveBeenSent && (rootPid === null || stopped)) lease.revoke()
-    const failure = new UnconfirmedOwnedProgramError(error, lease, commandError)
-    rejectIdentity(failure)
-    rawReject(failure)
+    rejectIdentity(ownershipFailure)
+    rawReject(ownershipFailure)
   }
   const privateLaunch: PrivateLaunch = {
     lease,
@@ -465,7 +475,7 @@ export function launchOwned(
     if (!job.markStop()) return false
     clearRuntimeTimer()
     stopped = true
-    if (handedOff || (proofFailed && job.authMayHaveBeenSent)) {
+    if (handedOff || (ownershipFailure && job.authMayHaveBeenSent)) {
       lease.revoke()
       return true
     }

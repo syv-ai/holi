@@ -11,7 +11,7 @@ using System.Threading;
 using Microsoft.Win32.SafeHandles;
 
 public static class ControlFixture {
-  const int ProcessHandleInformation = 51, ObjectNameInformation = 1, ObjectTypeInformation = 2;
+  const int ProcessHandleInformation = 51, ObjectNameInformation = 1;
   const int LengthMismatch = unchecked((int)0xc0000004), BufferTooSmall = unchecked((int)0xc0000023), BufferOverflow = unchecked((int)0x80000005);
   const int FileNotFound = 2, BrokenPipe = 109, PipeBusy = 231, PipeClosing = 232, PipeNotConnected = 233;
   const uint WaitTimeout = 258, FileTypePipe = 3;
@@ -29,6 +29,9 @@ public static class ControlFixture {
   [DllImport("ntdll.dll")] static extern int NtQueryObject(IntPtr handle, int cls, IntPtr data, uint length, out uint used);
   [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
   [DllImport("kernel32.dll")] static extern uint GetCurrentProcessId();
+  [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr GetStdHandle(int handle);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+  static extern SafeWaitHandle CreateJobObjectW(IntPtr attrs, string name);
   [DllImport("kernel32.dll", SetLastError=true)] static extern SafeWaitHandle OpenProcess(uint rights, bool inherit, int pid);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(SafeWaitHandle process, out long birth, out long exit, out long kernel, out long user);
   [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(SafeWaitHandle process, uint ms);
@@ -157,6 +160,27 @@ public static class ControlFixture {
   public static void CloseHelper() {
     if(helper!=null) { helper.Dispose(); helper=null; }
   }
+  static HandleEntry[] HandleTable(SafeWaitHandle process) {
+    return InspectBuffer<HandleEntry[]>(
+      delegate(IntPtr data,uint size,out uint used) { return NtQueryInformationProcess(process,ProcessHandleInformation,data,size,out used); },
+      delegate(IntPtr data,uint used) {
+        int header=2*IntPtr.Size, stride=Marshal.SizeOf(typeof(HandleEntry));
+        Require(used>=header,"handle-table-header");
+        long count=Marshal.ReadIntPtr(data).ToInt64();
+        Require(count>0 && count<=(used-header)/stride,"handle-table-count");
+        var entries=new HandleEntry[(int)count];
+        for(int i=0;i<entries.Length;i++) {
+          var entry=(HandleEntry)Marshal.PtrToStructure(IntPtr.Add(data,header+i*stride),typeof(HandleEntry));
+          Require(entry.HandleValue!=IntPtr.Zero && entry.ObjectTypeIndex!=0,"invalid-handle-entry");
+          entries[i]=entry;
+        }
+        return entries;
+      },"query-handle-table");
+  }
+  static uint TypeIndex(HandleEntry[] entries, IntPtr knownHandle) {
+    foreach(var entry in entries) if(entry.HandleValue==knownHandle) return entry.ObjectTypeIndex;
+    throw new InvalidOperationException("missing-reference-handle");
+  }
   public static HandleResult Inspect(int rootPid, string birth, string target, string positive) {
     string wanted=Device+Target(target);
     Require(Regex.IsMatch(positive,"^holi-test-probe-[a-f0-9]{32}$"),"invalid-positive-control");
@@ -168,37 +192,41 @@ public static class ControlFixture {
       Require(WaitForSingleObject(root,0)==WaitTimeout,"root-not-live");
       bool member;
       Require(IsProcessInJob(root,IntPtr.Zero,out member),"job-membership-query");
-      var result=InspectBuffer<HandleResult>(
-        delegate(IntPtr data,uint size,out uint used) { return NtQueryInformationProcess(root,ProcessHandleInformation,data,size,out used); },
-        delegate(IntPtr data,uint used) {
-          int header=2*IntPtr.Size, stride=Marshal.SizeOf(typeof(HandleEntry));
-          Require(used>=header,"handle-table-header");
-          long count=Marshal.ReadIntPtr(data).ToInt64();
-          Require(count>0 && count<=(used-header)/stride,"handle-table-count");
-          var counts=new HandleResult{handles=(int)count,jobMember=member};
-          for (int i=0;i<count;i++) {
-            var entry=(HandleEntry)Marshal.PtrToStructure(IntPtr.Add(data,header+i*stride),typeof(HandleEntry));
-            IntPtr copy;
-            Require(DuplicateHandle(root,entry.HandleValue,GetCurrentProcess(),out copy,0,false,2),"duplicate-root-handle");
-            try {
-              string type=ObjectText(copy,ObjectTypeInformation,"query-handle-type");
-              if (type=="Job") counts.jobHandles++;
-              if (type=="File") {
-                uint fileType=GetFileType(copy);
-                Require(fileType!=0,"query-file-type");
-                if (fileType==FileTypePipe) {
-                  string name=ObjectText(copy,ObjectNameInformation,"query-pipe-name");
-                  Require(name.StartsWith(Device,StringComparison.OrdinalIgnoreCase),"unknown-pipe-device");
-                  counts.namedPipes++;
-                  if (String.Equals(name,wanted,StringComparison.OrdinalIgnoreCase)) counts.controlPipeMatches++;
-                  if (String.Equals(name,known,StringComparison.OrdinalIgnoreCase)) counts.positivePipeMatches++;
-                }
-              }
-              counts.inspected++;
-            } finally { Require(CloseHandle(copy),"close-duplicate"); }
-          }
-          return counts;
-        },"query-handle-table");
+      uint fileIndex,jobIndex;
+      var stdout=GetStdHandle(-11); // The inspector's own redirected output pipe.
+      Require(GetFileType(stdout)==FileTypePipe,"reference-pipe-type");
+      using(var self=new SafeWaitHandle(GetCurrentProcess(),false))
+      using(var referenceJob=CreateJobObjectW(IntPtr.Zero,null)) {
+        Require(!referenceJob.IsInvalid,"create-reference-job");
+        var references=HandleTable(self);
+        fileIndex=TypeIndex(references,stdout);
+        jobIndex=TypeIndex(references,referenceJob.DangerousGetHandle());
+      }
+      Require(fileIndex!=jobIndex,"reference-types-conflict");
+      var entries=HandleTable(root);
+      var result=new HandleResult{handles=entries.Length,jobMember=member};
+      foreach(var entry in entries) {
+        // Type indices are kernel-wide. Read them for every entry rather than
+        // duplicating unrelated objects (e.g. nonduplicable I/O completion ports).
+        if(entry.ObjectTypeIndex==jobIndex) result.jobHandles++;
+        if(entry.ObjectTypeIndex==fileIndex) {
+          IntPtr copy;
+          if(!DuplicateHandle(root,entry.HandleValue,GetCurrentProcess(),out copy,0,false,2))
+            throw new InvalidOperationException("duplicate-root-file:"+Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture));
+          try {
+            uint fileType=GetFileType(copy);
+            Require(fileType!=0,"query-file-type");
+            if(fileType==FileTypePipe) {
+              string name=ObjectText(copy,ObjectNameInformation,"query-pipe-name");
+              Require(name.StartsWith(Device,StringComparison.OrdinalIgnoreCase),"unknown-pipe-device");
+              result.namedPipes++;
+              if(String.Equals(name,wanted,StringComparison.OrdinalIgnoreCase)) result.controlPipeMatches++;
+              if(String.Equals(name,known,StringComparison.OrdinalIgnoreCase)) result.positivePipeMatches++;
+            }
+          } finally { Require(CloseHandle(copy),"close-duplicate"); }
+        }
+        result.inspected++;
+      }
       Require(WaitForSingleObject(root,0)==WaitTimeout,"root-exited-during-query");
       return result;
     }
@@ -246,7 +274,7 @@ try {
   }
 } catch {
   $code = $_.Exception.GetBaseException().Message
-  if ($code -notmatch '^[a-z][a-z0-9-]{2,40}$') { $code = 'native-fixture-failed' }
+  if ($code -cnotmatch '^[a-z][a-z0-9-]{2,40}(?::[0-9]{1,10})?$') { $code = 'native-fixture-failed' }
   [Console]::Out.WriteLine((ConvertTo-Json -InputObject @{error=$code} -Compress))
   exit 1
 } finally {

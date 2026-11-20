@@ -19,7 +19,7 @@ public static partial class HoliWitness {
   [StructLayout(LayoutKind.Sequential)] struct SnapshotEntry {
     public IntPtr Slot;
     public UIntPtr Handles, Pointers;
-    public uint Access, Type, Attributes, Reserved;
+    public uint Access, ObjectTypeIndex, Attributes, Reserved;
   }
   public sealed class JobObservation {
     public int Matches;
@@ -79,21 +79,20 @@ public static partial class HoliWitness {
     }
     return result;
   }
-  static IntPtr CopyParentSlot(IntPtr slot) {
+  static IntPtr CopyParentSlot(IntPtr slot,bool allowMissing=true) {
     IntPtr copy;
     if(DuplicateHandle(inspectionParent,slot,GetCurrentProcess(),out copy,0,false,2)) return copy;
-    if(Marshal.GetLastWin32Error()==6) return IntPtr.Zero;
+    if(allowMissing && Marshal.GetLastWin32Error()==6) return IntPtr.Zero;
     throw Error("inspection-slot-copy");
   }
-  static void InspectTable(List<IntPtr> main, List<IntPtr> guard) {
+  static void VisitInspectionTable(IntPtr process,Stopwatch clock,Action<SnapshotEntry> visit) {
     int header=2*IntPtr.Size, stride=Marshal.SizeOf(typeof(SnapshotEntry));
-    var clock=Stopwatch.StartNew();
     for(uint size=4096;size<=16*1024*1024;) {
       Need(InspectionParentAlive() && clock.ElapsedMilliseconds<DrainMs,"inspection-table-budget");
       IntPtr memory=Marshal.AllocHGlobal((int)size);
       try {
         uint used;
-        int status=NtQueryInformationProcess(inspectionParent,51,memory,size,out used);
+        int status=NtQueryInformationProcess(process,51,memory,size,out used);
         if(status==unchecked((int)0xc0000004) || status==unchecked((int)0xc0000023) || status==unchecked((int)0x80000005)) {
           size=Math.Max(size*2,used); continue;
         }
@@ -102,19 +101,45 @@ public static partial class HoliWitness {
         Need(count>=0 && count<=(used-header)/stride,"inspection-table-layout");
         for(int i=0;i<count;i++) {
           Need(clock.ElapsedMilliseconds<DrainMs,"inspection-slot-budget");
-          IntPtr slot=Marshal.ReadIntPtr(memory,header+i*stride);
-          Need(slot.ToInt64()>0,"inspection-slot-layout");
-          IntPtr copy=CopyParentSlot(slot);
-          if(copy==IntPtr.Zero) continue; // Transient unrelated handles may disappear.
-          try {
-            if(inspectMain!=IntPtr.Zero && SameObject(copy,inspectMain)) main.Add(slot);
-            if(inspectGuard!=IntPtr.Zero && SameObject(copy,inspectGuard)) guard.Add(slot);
-          } finally { CloseInspection(copy); }
+          var entry=Marshal.PtrToStructure<SnapshotEntry>(IntPtr.Add(memory,header+i*stride));
+          Need(entry.Slot.ToInt64()>0 && entry.ObjectTypeIndex!=0,"inspection-slot-layout");
+          visit(entry);
         }
         Need(InspectionParentAlive(),"inspection-parent-exited"); return;
       } finally { Marshal.FreeHGlobal(memory); }
     }
     throw Error("inspection-table-limit");
+  }
+  static uint InspectionJobType(Stopwatch clock) {
+    if(inspectMain==IntPtr.Zero && inspectGuard==IntPtr.Zero) return 0; // Neither named Job was opened.
+    uint mainType=0, guardType=0;
+    VisitInspectionTable(GetCurrentProcess(),clock,entry=> {
+      if(entry.Slot==inspectMain) {
+        Need(mainType==0,"inspection-main-type-duplicate");
+        mainType=entry.ObjectTypeIndex;
+      }
+      if(entry.Slot==inspectGuard) {
+        Need(guardType==0,"inspection-guard-type-duplicate");
+        guardType=entry.ObjectTypeIndex;
+      }
+    });
+    Need(inspectMain==IntPtr.Zero || mainType!=0,"inspection-main-type-missing");
+    Need(inspectGuard==IntPtr.Zero || guardType!=0,"inspection-guard-type-missing");
+    Need(mainType==0 || guardType==0 || mainType==guardType,"inspection-job-type-mismatch");
+    return mainType!=0 ? mainType : guardType;
+  }
+  static void InspectTable(List<IntPtr> main, List<IntPtr> guard) {
+    var clock=Stopwatch.StartNew();
+    uint jobType=InspectionJobType(clock);
+    VisitInspectionTable(inspectionParent,clock,entry=> {
+      // Filter before copying, then compare the exact objects, not their type.
+      if(entry.ObjectTypeIndex!=jobType) return;
+      IntPtr copy=CopyParentSlot(entry.Slot,allowMissing:false);
+      try {
+        if(inspectMain!=IntPtr.Zero && SameObject(copy,inspectMain)) main.Add(entry.Slot);
+        if(inspectGuard!=IntPtr.Zero && SameObject(copy,inspectGuard)) guard.Add(entry.Slot);
+      } finally { CloseInspection(copy); }
+    });
   }
   static IntPtr Token(string value) { return new IntPtr(unchecked((int)Convert.ToUInt32(value,16))); }
   public static JobSnapshot SurveyRegistration(string helper,string mainId,string guardId,string mainToken,string guardToken) {

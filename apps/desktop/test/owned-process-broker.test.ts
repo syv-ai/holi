@@ -576,6 +576,7 @@ async function pendingWire(stdin?: PassThrough) {
 describe('pending recovery proof', () => {
   it.each([
     ['diagnostic before stdout EOF', 'EOF', true],
+    ['malformed diagnostics before stdout EOF', 'EOF', false],
     ['EPIPE before diagnostic and stdout close', 'EPIPE', true],
     ['frozen EPIPE before diagnostic and stdout close', 'frozen EPIPE', true],
     ['malformed and oversized diagnostics after EPIPE', 'EPIPE', false],
@@ -637,7 +638,14 @@ describe('pending recovery proof', () => {
       }
       const metadata = valid ? { phase: 'scan-objects', code: 3221225506 } : undefined
       expect(brokerFailureDiagnostic(revoke)).toStrictEqual(metadata)
-      expect(cause).not.toHaveProperty('nativeFailure')
+      if (transport === 'EOF') {
+        expect(cause).toHaveProperty('brokerExit', { code: 125, signal: null })
+        if (metadata) expect(cause).toHaveProperty('nativeFailure', metadata)
+        else expect(cause).not.toHaveProperty('nativeFailure')
+      } else {
+        expect(cause).not.toHaveProperty('nativeFailure')
+        expect(cause).not.toHaveProperty('brokerExit')
+      }
       expect(job.lease.revoke()).toBe(revoke)
       await expect(job.lease.revoke()).rejects.toBe(cause)
       expect(spawnBroker).toHaveBeenCalledTimes(1)

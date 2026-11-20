@@ -126,6 +126,7 @@ describe.skipIf(process.platform !== 'win32')('Windows owned-process native cont
     if (!(cause instanceof Error) || cause.message !== 'owned helper reported protocolFailure')
       throw new Error('original completion lacks authenticated replay failure', { cause })
     expect(result.exit).toEqual({ code: 125, signal: null })
+    expect(await fixture.helperExitCode()).toBe(125)
     return {
       injected: fixture.tap.injected,
       pendingWithRootAlive: true,

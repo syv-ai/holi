@@ -117,7 +117,7 @@ public static partial class HoliOwnedProcess {
     if(error==0 || error==1656) return false; // Definite mismatch / ERROR_NOT_SAME_OBJECT.
     throw NativeQueryFailure(error);
   }
-  static JobMatches ScanParentJobs(IntPtr job,IntPtr guard,long deadline) {
+  static void VisitBrokerHandleTable(IntPtr process,long deadline,Action<HandleSnapshotEntry> visit) {
     const int ProcessHandleInformation=51;
     const int LengthMismatch=unchecked((int)0xc0000004), BufferTooSmall=unchecked((int)0xc0000023), BufferOverflow=unchecked((int)0x80000005);
     const uint MaxBytes=16*1024*1024;
@@ -128,7 +128,7 @@ public static partial class HoliOwnedProcess {
       var buffer=Marshal.AllocHGlobal((int)size);
       try {
         uint used;
-        int status=NtQueryInformationProcess(parent,ProcessHandleInformation,buffer,size,out used);
+        int status=NtQueryInformationProcess(process,ProcessHandleInformation,buffer,size,out used);
         if(status!=0) {
           if(status!=LengthMismatch && status!=BufferTooSmall && status!=BufferOverflow)
             throw NativeQueryFailure(status);
@@ -138,36 +138,59 @@ public static partial class HoliOwnedProcess {
         if(used<header || used>size) throw Fail("nativeQueryFailure");
         long count=Marshal.ReadIntPtr(buffer).ToInt64();
         if(count<0 || count>(used-header)/stride) throw Fail("nativeQueryFailure");
-        var result=new JobMatches();
-        if(job!=IntPtr.Zero || guard!=IntPtr.Zero) {
-          var self=GetCurrentProcess();
-          for(int i=0;i<count;i++) {
-            ScanBudget(deadline);
-            // HandleValue is the first field in each entry. Compare local copies,
-            // not an ObjectTypeIndex, name, or unpinned numeric value.
-            var slot=Marshal.ReadIntPtr(buffer,header+i*stride);
-            if(slot.ToInt64()<=0) throw Fail("nativeQueryFailure");
-            IntPtr copy;
-            if(!DuplicateHandle(parent,slot,self,out copy,0,false,2)) {
-              int error=Marshal.GetLastWin32Error();
-              if(error==6) continue; // Unrelated slot vanished; ours cannot.
-              throw NativeQueryFailure(error);
-            }
-            try {
-              if(job!=IntPtr.Zero && SameKernelObject(copy,job)) {
-                result.JobSlot=slot; result.JobCount++;
-              }
-              if(guard!=IntPtr.Zero && SameKernelObject(copy,guard)) {
-                result.GuardSlot=slot; result.GuardCount++;
-              }
-            } finally { Close(copy); }
-          }
+        for(int i=0;i<count;i++) {
+          ScanBudget(deadline);
+          var entry=Marshal.PtrToStructure<HandleSnapshotEntry>(IntPtr.Add(buffer,header+i*stride));
+          if(entry.HandleValue.ToInt64()<=0 || entry.ObjectTypeIndex==0) throw Fail("nativeQueryFailure");
+          visit(entry);
         }
         ScanBudget(deadline);
-        return result;
+        return;
       } finally { Free(buffer); }
     }
     throw Fail("nativeQueryFailure");
+  }
+  static uint BrokerJobType(IntPtr self,IntPtr job,IntPtr guard,long deadline) {
+    if(job==IntPtr.Zero && guard==IntPtr.Zero) return 0; // Neither named Job was opened.
+    uint jobType=0, guardType=0;
+    // These local slots are held throughout recovery. Get both indices from
+    // the same native snapshot, never from an assumed kernel type number.
+    VisitBrokerHandleTable(self,deadline,entry=> {
+      if(entry.HandleValue==job) {
+        if(jobType!=0) throw Fail("nativeQueryFailure");
+        jobType=entry.ObjectTypeIndex;
+      }
+      if(entry.HandleValue==guard) {
+        if(guardType!=0) throw Fail("nativeQueryFailure");
+        guardType=entry.ObjectTypeIndex;
+      }
+    });
+    if((job!=IntPtr.Zero && jobType==0) || (guard!=IntPtr.Zero && guardType==0) ||
+       (jobType!=0 && guardType!=0 && jobType!=guardType)) throw Fail("nativeQueryFailure");
+    return jobType!=0 ? jobType : guardType;
+  }
+  static JobMatches ScanParentJobs(IntPtr job,IntPtr guard,long deadline) {
+    var self=GetCurrentProcess();
+    uint jobType=BrokerJobType(self,job,guard,deadline);
+    var result=new JobMatches();
+    VisitBrokerHandleTable(parent,deadline,entry=> {
+      // Non-Job objects may not be duplicable. The type only selects
+      // candidates; exact identity still requires comparing local copies.
+      if(entry.ObjectTypeIndex!=jobType) return;
+      var slot=entry.HandleValue;
+      IntPtr copy;
+      if(!DuplicateHandle(parent,slot,self,out copy,0,false,2))
+        throw NativeQueryFailure(Marshal.GetLastWin32Error());
+      try {
+        if(job!=IntPtr.Zero && SameKernelObject(copy,job)) {
+          result.JobSlot=slot; result.JobCount++;
+        }
+        if(guard!=IntPtr.Zero && SameKernelObject(copy,guard)) {
+          result.GuardSlot=slot; result.GuardCount++;
+        }
+      } finally { Close(copy); }
+    });
+    return result;
   }
   static void RecoveryEvidence(Record receipt,string prefix,IntPtr reference,int before,int after,uint? activeBefore,uint? activeAfter) {
     bool absent=reference==IntPtr.Zero;

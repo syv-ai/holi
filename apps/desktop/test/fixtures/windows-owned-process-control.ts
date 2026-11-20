@@ -162,6 +162,10 @@ export class ControlTap {
     return this.target
   }
 
+  replayInjected(): boolean {
+    return this.replayArmed && this.injected === 1
+  }
+
   armReplay(): void {
     if (this.attack !== 'replay-auth' && this.attack !== 'replay-stop') return
     if (!this.auth || !this.registered || this.injected !== 0)
@@ -236,12 +240,13 @@ function observe(child: ChildProcess) {
   const closed = new Promise<Exit>((resolve) =>
     child.once('close', (code, signal) => resolve({ code, signal })),
   )
-  let exited = false
-  child.once('exit', () => (exited = true))
+  const exit = fixtureResult<void>()
+  child.once('exit', () => exit.settle({ value: undefined }))
   return {
     child,
     closed,
-    exited: () => exited,
+    exit,
+    exited: () => exit.current !== undefined,
     stdout: capture(child.stdout),
   }
 }
@@ -371,6 +376,19 @@ export class ControlFixture {
               throw new Error('HELPER exited before AUTH')
           } else await this.holdNativeHelper(pid, birth)
         },
+        beforeJoin: async () => {
+          if (!this.tap.replayInjected() || !this.helper) return
+          // On authenticated ERROR the retained lease immediately starts its
+          // producer join. Let the Helper finish its own rejection before that
+          // join disconnects and kills it; the controller's stop watchdog stays armed.
+          try {
+            await this.helper.exit.wait(5_000, 'replay helper native exit')
+          } catch (error) {
+            if (!(error instanceof FixtureDeadlineError)) throw error
+            // If it failed to exit, let the original join force cleanup. The
+            // assertion still requires unforced exit 125, not fallback termination.
+          }
+        },
       },
     )
     child.on('error', () => undefined)
@@ -486,6 +504,11 @@ export class ControlFixture {
     const exit = await within(this.helper.closed, 8_000, 'owned helper close')
     if (!this.helper.exited()) throw new Error('no native helper exit observed')
     return { verdict, exit }
+  }
+
+  helperExitCode(): Promise<number> {
+    if (!this.heldHelper || !this.witness) throw new Error('helper identity is not pinned')
+    return this.witness.exitCode(this.heldHelper.id)
   }
 
   originalUnconfirmed(verdict: Verdict): UnconfirmedOwnedProgramError {
@@ -630,7 +653,10 @@ export class ControlFixture {
         const lines = native.stdout().split(/\r?\n/)
         if (lines.length > reply + 1) {
           const record = parseLine(lines[reply]!)
-          if (typeof record.error === 'string' && /^[a-z][a-z0-9-]{2,40}$/.test(record.error))
+          if (
+            typeof record.error === 'string' &&
+            /^[a-z][a-z0-9-]{2,40}(?::\d{1,10})?$/.test(record.error)
+          )
             throw new Error(`native fixture failed: ${record.error}`)
           return record
         }

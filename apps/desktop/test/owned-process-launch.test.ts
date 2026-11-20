@@ -10,6 +10,7 @@ import {
   spawnOwnedLaunch,
 } from '../src/main/owned-process-launch'
 import { createOwnedProtocol, type OwnedProcessMessage } from '../src/main/owned-process-protocol'
+import { UnconfirmedOwnedProgramError } from '../src/main/owned-program-lifetime'
 
 vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:child_process')>()),
@@ -150,6 +151,43 @@ describe('owned launch facade', () => {
     expect(candidate.destroyed).toBe(true)
     expect(launched.ownedCompletion).toBe(receipt)
     await expect(receipt).rejects.toBe(first)
+  })
+
+  it('keeps the original ordinary query failure when its lease joins the producer', async () => {
+    const f = fixture()
+    const receipt = f.launched.ownedCompletion
+    const { lease } = ownedLaunchControl(f.launched)!
+    f.setup()
+    f.send({ type: 'root-created', rootPid })
+    f.send({ type: 'root-exit', rootPid, rootExitCode: 0 })
+    f.send({ type: 'error', code: 'nativeQueryFailure' })
+    const failure = await receipt.catch((error: unknown) => error)
+    if (!(failure instanceof UnconfirmedOwnedProgramError))
+      throw new Error('expected typed ownership failure', { cause: failure })
+    const cause = failure.cause
+    expect(cause).toBeInstanceOf(Error)
+    expect(cause).toHaveProperty('message', 'owned helper reported nativeQueryFailure')
+    expect(failure.lease).toBe(lease)
+
+    const controlClosed = once(f.candidate, 'close')
+    const revoke = lease.revoke()
+    const settled = vi.fn()
+    void revoke.then(settled, settled)
+    expect(lease.revoke()).toBe(revoke)
+    await controlClosed
+    expect(f.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL')
+    f.child.emit('close', 125, null) // Stdio and control close do not prove helper exit.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(settled).not.toHaveBeenCalled()
+
+    f.child.emit('exit', 125, null)
+    await expect(revoke).rejects.toBe(failure)
+    expect(lease.revoke()).toBe(revoke)
+    await expect(lease.revoke()).rejects.toBe(failure)
+    expect(f.launched.ownedCompletion).toBe(receipt)
+    await expect(receipt).rejects.toBe(failure)
+    expect(failure.cause).toBe(cause)
+    expect(failure.lease).toBe(lease)
   })
 
   it('never transfers a socket or authenticates a late connection after the deadline', async () => {
