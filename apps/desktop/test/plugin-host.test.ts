@@ -1965,12 +1965,20 @@ describe('activation cancellation and teardown failures', () => {
       (err: unknown) => err,
     )
     release()
-    expect(await firstResult).toBeInstanceOf(AggregateError)
-    expect(await secondResult).toBeInstanceOf(AggregateError)
-    await expect(host.reconcile(openVault('A', root), 'open')).rejects.toMatchObject({
-      message: 'plugin fake teardown failed',
-      errors: [expect.objectContaining({ message: 'cleanup failed' })],
+    const failure = await firstResult
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect(failure).toMatchObject({
+      message: 'plugins in A failed to stop',
+      errors: [
+        expect.objectContaining({
+          message: 'plugin fake teardown failed',
+          errors: [expect.objectContaining({ message: 'cleanup failed' })],
+        }),
+      ],
     })
+    expect(await secondResult).toBe(failure)
+    await expect(host.stop('A')).rejects.toBe(failure)
+    await expect(host.reconcile(openVault('A', root), 'open')).rejects.toBe(failure)
     expect(starts).toBe(1)
   })
 })

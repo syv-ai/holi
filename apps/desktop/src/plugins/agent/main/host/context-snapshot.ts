@@ -32,11 +32,15 @@ interface ContextFile {
   updatedAt: string
 }
 
+class SnapshotRevoked extends Error {}
+
 export class ContextSnapshot {
   private focus: FocusInput = { focusedPath: null, openPaths: [] }
   private timer: ReturnType<typeof setTimeout> | null = null
-  private pending: Promise<void> | null = null
+  private pending: Promise<void> = Promise.resolve()
   private stopped = false
+  private stopWork: Promise<void> | null = null
+  private readonly failures: unknown[] = []
   private readonly debounceMs: number
   private readonly log: (msg: string) => void
 
@@ -60,14 +64,21 @@ export class ContextSnapshot {
     }
     await this.pending // don't race an in-flight write
     if (this.stopped) return
-    this.pending = this.write()
+    this.pending = this.pending.then(() => this.write())
     await this.pending
   }
 
-  stop(): void {
+  stop(): Promise<void> {
+    if (this.stopWork !== null) return this.stopWork
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
+    this.stopWork = (async () => {
+      await this.pending
+      if (this.failures.length > 0)
+        throw new AggregateError([...this.failures], 'Could not write agent context snapshot.')
+    })()
+    return this.stopWork
   }
 
   private schedule(): void {
@@ -75,11 +86,18 @@ export class ContextSnapshot {
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
       this.timer = null
-      this.pending = this.write().catch((err) => this.log(`snapshot write failed: ${err}`))
+      this.pending = this.pending
+        .then(() => this.write())
+        .catch((err: unknown) => {
+          if (err instanceof SnapshotRevoked) return
+          this.failures.push(err)
+          this.log(`snapshot write failed: ${err}`)
+        })
     }, this.debounceMs)
   }
 
   private async write(): Promise<void> {
+    if (this.stopped) return
     const { focusedPath } = this.focus
     const secret = focusedPath !== null && isSecretPath(focusedPath)
     const context: ContextFile = {
@@ -88,10 +106,18 @@ export class ContextSnapshot {
       openPaths: this.focus.openPaths.filter((path) => !isSecretPath(path)),
       updatedAt: new Date().toISOString(),
     }
-    await writeAtomic(
-      this.deps.workRoot,
-      vaultRelPath(CONTEXT_FILE),
-      `${JSON.stringify(context, null, 2)}\n`,
-    )
+    try {
+      await writeAtomic(
+        this.deps.workRoot,
+        vaultRelPath(CONTEXT_FILE),
+        `${JSON.stringify(context, null, 2)}\n`,
+        () => {
+          if (this.stopped) throw new SnapshotRevoked('context snapshot activation was cancelled')
+        },
+      )
+    } catch (error) {
+      if (error instanceof SnapshotRevoked) return
+      throw error
+    }
   }
 }

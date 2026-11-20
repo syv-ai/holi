@@ -62,7 +62,7 @@ export function claudeProvider(deps: ClaudeProviderDeps): BackgroundProvider {
         isLive,
         summarise,
         watch: watchConfigDir,
-        message: postToSession,
+        message: (channel, text, signal) => postToSession(channel, text, undefined, signal),
       },
       turns: { routes: registerAgentRoutes },
       status: { contextPercent: readContextPercent, model: readModelName },

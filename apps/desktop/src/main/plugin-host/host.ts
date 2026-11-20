@@ -281,6 +281,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     state: VaultRun
     ownerLease: Started['lease']
     active: boolean
+    allowCalls?: boolean
   }
   const finalizationOperations = new AsyncLocalStorage<FinalizationOperation>()
   const eventListeners = new Set<{
@@ -513,7 +514,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         operation.remote === remote &&
         operation.root === root &&
         operation.state === state &&
-        operation.ownerLease.phase === 'draining' &&
+        (operation.ownerLease.phase === 'active' || operation.ownerLease.phase === 'draining') &&
         state.leases.has(operation.ownerLease) &&
         state.parked &&
         runsByRemote.get(remote) === state &&
@@ -653,6 +654,32 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           throw new Error(`${remote} plugin context is no longer active`)
         return vault.repo.head()
       },
+      captureFinalization: () => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+        const operation: FinalizationOperation = {
+          remote,
+          root,
+          state,
+          ownerLease: lease,
+          active: false,
+          allowCalls: false,
+        }
+        return async <T>(work: () => Promise<T>): Promise<T> => {
+          if (
+            operation.ownerLease.phase === 'closed' ||
+            !state.leases.has(operation.ownerLease) ||
+            runsByRemote.get(remote) !== state ||
+            (!valid() && !operation.ownerLease.established)
+          )
+            throw new Error(`${remote} plugin context is no longer active`)
+          operation.active = true
+          try {
+            return await finalizationOperations.run(operation, work)
+          } finally {
+            operation.active = false
+          }
+        }
+      },
       onReport: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const entry = {
@@ -667,11 +694,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       call: async (name, params) => {
         if (deps.call === undefined) throw new Error(`no capability calls here: ${name}`)
-        const inFinalization = finalizing()
+        const inherited = finalizationOperations.getStore()
+        const inFinalization = finalizing() && inherited?.allowCalls !== false
         const admittedDuringDrain = draining() || inFinalization
         if ((!valid() && !admittedDuringDrain) || !eventsLive)
           throw new Error(`${remote} plugin context is no longer active`)
-        const inherited = finalizationOperations.getStore()
         const operation =
           inherited !== undefined && inFinalization
             ? inherited
@@ -690,7 +717,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
                 operation.remote !== remote ||
                 operation.root !== root ||
                 operation.state !== state ||
-                operation.ownerLease.phase !== 'draining' ||
+                (operation.ownerLease.phase !== 'draining' &&
+                  !(operation.ownerLease.phase === 'active' && state.parked)) ||
                 !state.leases.has(operation.ownerLease) ||
                 !state.parked ||
                 runsByRemote.get(remote) !== state ||
@@ -1183,7 +1211,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       if (state.teardownFailure !== null) throw state.teardownFailure
       if (state.stopPromise !== null) return state.stopPromise
       const stopping = queued(state, () => stopNow(remote, state)).catch((err) => {
-        state.teardownFailure ??= err
+        state.teardownFailure = err
         throw err
       })
       state.stopPromise = stopping
@@ -1207,7 +1235,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           if (state.teardownFailure !== null) throw state.teardownFailure
           if (state.stopPromise !== null) return state.stopPromise
           const stopping = queued(state, () => stopNow(remote, state)).catch((err) => {
-            state.teardownFailure ??= err
+            state.teardownFailure = err
             throw err
           })
           state.stopPromise = stopping

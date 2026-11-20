@@ -33,7 +33,8 @@ import type { PluginCtx } from '../../../../main/plugin-api'
 import type { TurnLog, TurnRecord } from './turn-log'
 
 /** What the coordinator needs of the vault its sessions run in. */
-export type TurnVault = Pick<PluginCtx, 'root' | 'pauseSync' | 'commitNow' | 'head'>
+export type TurnVault = Pick<PluginCtx, 'root' | 'pauseSync' | 'commitNow' | 'head'> &
+  Partial<Pick<PluginCtx, 'captureFinalization'>>
 
 export interface TurnCoordinatorDeps {
   /** The vault these sessions run in, or null when none is attached. Read per
@@ -100,7 +101,10 @@ export interface TurnCoordinator {
 /** One session's open turn. */
 interface Turn {
   sessionId: string
+  /** Vault admitted with this turn; never resolve ownership at settlement time. */
+  vault: TurnVault | null
   base: string | null
+  finalize: ReturnType<PluginCtx['captureFinalization']>
   /** `head()` is async and `begin` is not, so the end of the turn waits on the
    *  start of it rather than racing it. */
   basePending: Promise<void>
@@ -131,6 +135,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
   let writeFailure: unknown
   const pending = new Set<Promise<unknown>>()
   const finalizationFailures = new Set<unknown>()
+  let closed = false
   function track<T>(promise: Promise<T>): Promise<T> {
     pending.add(promise)
     void promise.then(
@@ -162,7 +167,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     if (deps.turnLogFor === undefined) return
     await turn.basePending
     if (turn.base === null) return
-    const end = (await deps.snapshot?.(vault.root)) ?? (await vault.head())
+    const end = (await deps.snapshot?.(vault.root)) ?? (await turn.finalize(() => vault.head()))
     if (end === null) return
     await write(vault, [
       {
@@ -204,13 +209,15 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     // runs, answering `'busy'` with the turn's work still uncommitted. So that
     // is asked again once the pull has had a moment; a null (a clean tree) is
     // not, so the Stop hook waiting on a turn that only read is not held.
-    let asked = await vault.commitNow()
-    if (asked === 'busy') {
-      await new Promise((r) => setTimeout(r, deps.settleRetryMs ?? 1_000))
-      asked = await vault.commitNow()
-    }
-    const commit = asked === 'busy' ? null : asked
-    const end = commit ?? (await vault.head())
+    const { commit, end } = await batch[0]!.finalize(async () => {
+      let asked = await vault.commitNow()
+      if (asked === 'busy') {
+        await new Promise((r) => setTimeout(r, deps.settleRetryMs ?? 1_000))
+        asked = await vault.commitNow()
+      }
+      const commit = asked === 'busy' ? null : asked
+      return { commit, end: commit ?? (await vault.head()) }
+    })
     if (end === null) return null
     const at = new Date().toISOString()
     // One `end` for all of them: that sha IS what "they shared a settle commit"
@@ -241,7 +248,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     // turn released by the safety cap must not resume the vault under a session
     // that is still working), and this one is recorded against the working tree
     // now, or, with no snapshot to take, waits for that settle commit.
-    const vault = deps.vault()
+    const vault = turn.vault
     if (record && turns.size > 0 && deps.snapshot !== undefined) {
       if (vault !== null) {
         void track(recordNow(vault, turn)).catch((err: unknown) =>
@@ -277,6 +284,9 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
 
   return {
     begin(sessionId) {
+      // Teardown closes admission synchronously; already-open turns may still
+      // finish and settle against the vault they captured at begin.
+      if (closed) return
       // A second `UserPromptSubmit` without a `Stop` between them is the same
       // turn continuing, not a new one: it must not re-capture the base or push
       // the safety cap out.
@@ -290,18 +300,25 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
 
       const turn: Turn = {
         sessionId,
+        vault,
         base: null,
+        finalize:
+          typeof vault?.captureFinalization === 'function'
+            ? vault.captureFinalization()
+            : async (work) => work(),
         basePending: Promise.resolve(),
         overlapped: !wasEmpty,
         safety: null,
         idleSince: null,
       }
       // Captured BEFORE the pause: the base is the tree the turn started
-      // against. Skipped with no log to record into.
+      // against. A hook admitted before stop may still be waiting for this read
+      // after its activation is revoked, so use the same narrow authority as
+      // settle finalization. Skipped with no log to record into.
       if (vault !== null && deps.turnLogFor !== undefined) {
         turn.basePending = track(
-          vault
-            .head()
+          turn
+            .finalize(() => vault.head())
             .then((sha) => {
               turn.base = sha
             })
@@ -347,6 +364,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     },
 
     async drain() {
+      closed = true
       let timer: ReturnType<typeof setTimeout> | undefined
       const bounded = new Promise<never>((_, reject) => {
         timer = setTimeout(
