@@ -39,6 +39,19 @@ import type { SessionSummary } from '../main/claude/listing'
 import type { AgentProvider, JobRun, JobsProvider } from '../main/provider'
 import { trackedJobProcesses } from './fixtures/tracked-job-processes'
 
+// Hold a queued publication without holding compensating links from `previous`.
+let queuePublication: ((publish: () => Promise<void>) => Promise<void>) | undefined
+vi.mock('node:fs/promises', async (original) => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return {
+    ...fs,
+    link: (...args: Parameters<typeof fs.link>) =>
+      queuePublication && String(args[0]).includes('/.holi-tmp-')
+        ? queuePublication(() => fs.link(...args))
+        : fs.link(...args),
+  }
+})
+
 const dirs: string[] = []
 const owned: Array<{
   jobs: ReturnType<typeof createJobs>
@@ -236,7 +249,9 @@ describe('a job', () => {
     // Scratch and provider state are gone; the settled receipt follows the row.
     const scratch = join(userData, 'agent-jobs')
     const retained = await readdir(scratch)
-    expect(retained.filter((entry) => entry === id || entry === `${id}.agent`)).toEqual([])
+    expect(retained).not.toContain(id)
+    expect(retained).not.toContain(`${id}.agent`)
+    expect(retained).not.toContain(`${id}.pid`)
     await jobs.stop(id)
     expect(await readdir(scratch)).toEqual([])
   })
@@ -738,6 +753,89 @@ describe('agent.job', () => {
 })
 
 describe('job settlement without Stop', () => {
+  it.each(['new file', 'replacement'] as const)(
+    'does not let a queued publication change a %s after Stop times out',
+    async (mode) => {
+      const root = await temp('holi-job-vault-')
+      const scratchRoot = await temp('holi-job-data-')
+      const target = join(root, 'note.md')
+      const read = mode === 'replacement' ? ['note.md'] : []
+      if (read.length) await writeFile(target, 'original')
+      const stdout = new PassThrough()
+      const child = Object.assign(new ChildProcess(), {
+        stdout,
+        [ownedProcessDrain]: { drain: async () => {} },
+      })
+      let enterCommit!: () => void
+      let resumeCopy!: () => void
+      const atCommit = new Promise<void>((resolve) => (enterCommit = resolve))
+      const resumed = new Promise<void>((resolve) => (resumeCopy = resolve))
+      let queued: Promise<void> | undefined
+      queuePublication = (publish) => {
+        enterCommit()
+        return (queued = resumed.then(publish))
+      }
+      const jobs = createJobs({
+        vault: { remote: 'fixture/vault', root },
+        scratchRoot,
+        spawn: () => child,
+        onChange: () => {},
+        afterWrite: () => {
+          enterCommit()
+          return resumed
+        },
+        log: () => {},
+      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const started = await jobs.start({
+          provider: scripted('/fixture/job'),
+          name: 'fixture',
+          prompt: 'go',
+          scope: { read, write: ['note.md', 'zzz.md'] },
+        })
+        if (!started.ok) throw new Error(started.message)
+        const id = started.sessionId
+        await writeFile(join(scratchRoot, id, 'note.md'), 'agent output')
+        await writeFile(join(scratchRoot, id, 'zzz.md'), 'later output')
+        const closed = new Promise<void>((resolve) => stdout.once('close', resolve))
+        stdout.end('{"type":"turn.completed"}\n')
+        await closed
+        child.emit('close', 0, null)
+        await atCommit
+        const stopping = jobs.stop(id).catch((error: unknown) => error)
+        await vi.advanceTimersByTimeAsync(5_000)
+        const timeout = await stopping
+        expect(timeout).toMatchObject({
+          message: expect.stringMatching(/Finalization of job.*timed out/),
+        })
+        const bytes = () =>
+          readFile(target, 'utf8').catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error
+            return null
+          })
+        const atStop = await bytes()
+        resumeCopy()
+        await queued
+        expect(await bytes()).toBe(atStop)
+        expect(atStop).toBe('agent output') // The commit preceded the deadline.
+        await expect(jobs.stop(id)).rejects.toBe(timeout)
+        await expect(jobs.leave()).rejects.toMatchObject({ errors: [timeout] })
+        expect(await readdir(root)).toEqual(['note.md'])
+      } finally {
+        resumeCopy()
+        await queued?.catch(() => {})
+        queuePublication = undefined
+        stdout.destroy()
+        child.emit('close', 0, null)
+        const leaving = jobs.leave().catch(() => {})
+        await vi.advanceTimersByTimeAsync(20_000)
+        await leaving
+        vi.useRealTimers()
+      }
+    },
+  )
+
   it.each(['free path', 'competing file'] as const)(
     'rolls back a timed-out replacement with a %s',
     async (mode) => {
@@ -803,7 +901,10 @@ describe('job settlement without Stop', () => {
           await vi.waitFor(async () => expect(await readdir(root)).toEqual(['note.md']))
           expect(await readFile(target, 'utf8')).toBe('original')
         } else {
-          await vi.waitFor(() => expect(log).toHaveBeenCalledWith(expect.stringContaining(backup)))
+          await vi.waitFor(async () => {
+            expect(log).toHaveBeenCalledWith(expect.stringContaining(backup))
+            expect((await readdir(root)).sort()).toEqual([backup, 'note.md'])
+          })
         }
         activation.abort()
         await expect(jobs.stop(id)).rejects.toBe(timeout)

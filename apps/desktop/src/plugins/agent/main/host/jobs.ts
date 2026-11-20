@@ -55,7 +55,7 @@
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import { createHash, randomBytes } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, linkSync, renameSync } from 'node:fs'
 import {
   link,
   lstat,
@@ -64,7 +64,6 @@ import {
   open,
   readdir,
   readFile,
-  rename,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -398,35 +397,39 @@ export class CopyBackCancelled extends Error {
 /** A copy still owns preserved files or temporary state after failed cleanup. */
 class CopyBackFinalizationError extends Error {}
 
-/**
- * Write `data` at `abs` only if nothing is there: a file beside it, linked
- * into place, which fails when the name is taken (on a case-blind disk too)
- * however late that name came, then unlinked. False when it was taken.
- */
-async function createExclusive(
+/** Prepare the bytes off the event loop. Cleanup is owed even after cancellation. */
+async function withStagedCopy(
   abs: string,
   data: Buffer,
-  stopped: () => boolean,
-  deadline?: AbortSignal,
-): Promise<boolean> {
+  check: () => void,
+  publish: (tmp: string) => void | Promise<void>,
+): Promise<void> {
+  check()
   await mkdir(dirname(abs), { recursive: true })
-  if (stopped()) throw new CopyBackCancelled()
+  check()
   const tmp = join(dirname(abs), `.holi-tmp-${randomBytes(6).toString('hex')}`)
   try {
     await writeFile(tmp, data)
-    if (stopped()) throw new CopyBackCancelled()
-    await link(tmp, abs)
-    return true
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false
-    throw err
+    check()
+    await publish(tmp)
   } finally {
-    deadline?.throwIfAborted()
     try {
       await rm(tmp, { force: true })
     } catch (err) {
       throw new CopyBackFinalizationError(`Could not clean up copy-back: ${String(err)}`)
     }
+  }
+}
+
+/** Check cancellation and commit exclusively without yielding between them.
+ * Only the link is synchronous here, not copying the staged bytes. */
+function publishCopy(tmp: string, abs: string, rel: string, check: () => void): void {
+  check()
+  try {
+    linkSync(tmp, abs)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(collision(rel))
+    throw err
   }
 }
 
@@ -546,71 +549,50 @@ export function createJobs(deps: JobsDeps): Jobs {
   async function replaceKnown(
     abs: string,
     rel: VaultRelPath,
-    data: Buffer,
+    tmp: string,
     before: string,
-    stopped: () => boolean,
-    deadline?: AbortSignal,
+    check: () => void,
   ) {
     const hold = await mkdtemp(join(dirname(abs), '.holi-copy-'))
     const previous = join(hold, 'previous')
     let moved = false
-    let restored = false
     let keep = false
     try {
-      if (stopped()) throw new CopyBackCancelled()
-      await rename(abs, previous)
+      check()
+      renameSync(abs, previous)
       moved = true
       const old = await readRegular(previous)
       if (old === null || hashOf(old) !== before) throw new Error(collision(rel))
-      deadline?.throwIfAborted()
+      check()
       await deps.beforePublish?.(rel)
-      deadline?.throwIfAborted()
+      check()
       // Check an open descriptor's write before publishing the replacement.
       // A write after this check is the residual race the vault accepts.
       const after = await readRegular(previous)
       if (after === null || hashOf(after) !== before) throw new Error(collision(rel))
-      if (stopped()) throw new CopyBackCancelled()
-      if (!(await createExclusive(abs, data, stopped, deadline))) throw new Error(collision(rel))
+      publishCopy(tmp, abs, rel, check)
     } catch (err) {
       if (moved) {
         try {
-          // Rollback, unlike publication, remains owed after the deadline.
-          // Restore even an unreadable original, but never replace a new file.
+          // Rollback remains owed after the deadline. Never replace a new file.
           await link(previous, abs)
-          restored = true
         } catch (restore) {
-          if ((restore as NodeJS.ErrnoException).code !== 'EEXIST') {
-            keep = true
-            throw new CopyBackFinalizationError(
-              `${String(err)} Restoration failed: ${String(restore)}. The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
-            )
-          }
-          // Until comparison succeeds, both versions remain owned. A read or
-          // close failure must not let finally delete the preserved original.
           keep = true
-          try {
-            if (!deadline?.aborted) {
-              const old = await readRegular(previous)
-              keep = old === null || hashOf(old) !== before
-            }
-          } catch (inspect) {
-            throw new CopyBackFinalizationError(
-              `${String(err)} Could not verify restoration: ${String(inspect)}. The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
-            )
-          }
+          const failure =
+            (restore as NodeJS.ErrnoException).code === 'EEXIST'
+              ? ''
+              : ` Restoration failed: ${String(restore)}.`
+          throw new CopyBackFinalizationError(
+            `${String(err)}${failure} The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
+            { cause: err },
+          )
         }
-      }
-      if (moved && !restored && deadline?.aborted) keep = true
-      if (keep) {
-        throw new CopyBackFinalizationError(
-          `${String(err)} The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
-        )
       }
       throw err
     } finally {
-      // After a timeout, only clean up the hold if no original was moved
-      // or it was safely linked back. Never remove the competing name.
-      if (!keep && (!deadline?.aborted || !moved || restored)) {
+      // A committed replacement or successful rollback no longer needs the hold.
+      // In particular, a deadline during cleanup cannot undo a committed link.
+      if (!keep) {
         try {
           await rm(hold, { recursive: true, force: true })
         } catch (err) {
@@ -635,6 +617,10 @@ export function createJobs(deps: JobsDeps): Jobs {
   ): Promise<{ written: number; skipped: string[] }> {
     const stopped = (): boolean =>
       job.stopped !== undefined || job.signal?.aborted === true || deadline?.aborted === true
+    const check = (): void => {
+      deadline?.throwIfAborted()
+      if (stopped()) throw new CopyBackCancelled()
+    }
     const skipped: string[] = []
     const allowed: { path: string; rel: VaultRelPath }[] = []
     let bytes = 0
@@ -711,7 +697,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         // A new file: written only where nothing is, even something that
         // arrived after the checks above (a sync bringing the same app).
         if (stopped()) break
-        if (!(await createExclusive(abs, data, stopped, deadline))) throw new Error(collision(rel))
+        await withStagedCopy(abs, data, check, (tmp) => publishCopy(tmp, abs, rel, check))
       } else {
         // What this run was given or wrote before: written over only while
         // the vault still holds exactly that, read again just before.
@@ -724,7 +710,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         deadline?.throwIfAborted()
         await deps.beforeReplace?.(rel)
         if (stopped()) break
-        await replaceKnown(abs, rel, data, before, stopped, deadline)
+        await withStagedCopy(abs, data, check, (tmp) => replaceKnown(abs, rel, tmp, before, check))
       }
       made.set(rel, hash)
       written += 1
@@ -895,9 +881,9 @@ export function createJobs(deps: JobsDeps): Jobs {
             historyStarted?.()
             await managed.end()
           }
-          // Persist caller settlement before publishing the row. As with vault
-          // jobs, the link is retired when the job leaves the list.
-          if (job.finalizationError === undefined) receipt.phase('SETTLED')
+          // Persist caller settlement and clear a scoped job's diagnostic PID
+          // before making its outcome visible. The link follows row retirement.
+          if (job.finalizationError === undefined) receipt.settle(job.dir !== null)
           job.outcome = job.stopped === undefined ? outcome : 'failed'
           job.message = job.finalizationError?.message ?? job.stopped ?? why
         } catch (error) {

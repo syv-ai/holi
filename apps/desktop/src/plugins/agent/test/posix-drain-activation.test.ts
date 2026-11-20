@@ -327,7 +327,12 @@ posix.each(cells)(
         if (kind === 'job' && code !== 0) await missing(join(f.roots[f.B], 'output.md'))
         else expect(await readFile(join(f.roots[f.B], 'output.md'), 'utf8')).toBe(f.B)
         await missing(b.cwd)
-        if (kind === 'job') await missing(b.pidFile)
+        if (kind === 'job') {
+          await missing(b.pidFile)
+          expect(await readFile(join(dirname(b.pidFile), `${b.sessionId}.turn`), 'utf8')).toBe(
+            `HOLI-JOB-1 ${b.sessionId}\nSETTLED\n`,
+          )
+        }
       }
       await missing(join(f.roots[f.A], 'output.md'))
       fresh.exit()
