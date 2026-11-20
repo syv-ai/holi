@@ -1,4 +1,6 @@
-import { mkdtemp, mkdir, readFile, readdir, lstat, rm, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { lstatSync } from 'node:fs'
+import { mkdtemp, mkdir, readFile, realpath, lstat, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
@@ -6,6 +8,7 @@ import {
   producerCommandFailure,
   runProducerCommand,
 } from './producer-command.mjs'
+import { privateDirectory, readFinalSettlement, readPrivate } from './producer-settlement.mjs'
 
 const VERSION = '0.169.0'
 const MAX_OUTPUT = 2 * 1024 * 1024
@@ -13,6 +16,31 @@ const MAX_EVIDENCE = 1024 * 1024
 const TOTAL_TIMEOUT = 180_000
 const TEST_TIMEOUT = 100_000
 const scenarioNames = ['initial-turn', 'follow-up', 'http-400', 'stall-stop', 'stall-leave']
+
+const leaseRoles = [
+  'initial-turn-version',
+  'initial-turn',
+  'follow-up',
+  'follow-up-resume',
+  ...scenarioNames.slice(2),
+]
+
+// The worker joins caller finalization and the fixture, then attests to every
+// drain. Read the cached native terminal markers too; never probe their PIDs.
+function hasFinalSettlement(root, identity, workerTmp) {
+  const receipt = readFinalSettlement(root, identity, leaseRoles)
+  if (!receipt || receipt.leases.length !== leaseRoles.length) return false
+  const exists = (path) => lstatSync(path, { throwIfNoEntry: false }) !== undefined
+  if (scenarioNames.some((name) => exists(join(workerTmp, name)))) return false
+  return receipt.leases.every(({ id, proof }) => {
+    const path = join(root, 'ownership', id)
+    return (
+      proof === 'settled' &&
+      !['failed', 'failed.tmp', 'settled.tmp'].some((name) => exists(join(path, name))) &&
+      readPrivate(join(path, 'settled'), 1024).toString('utf8') === `HOLI-POSIX-1 ${id}\nSETTLED\n`
+    )
+  })
+}
 
 function cleanEnvironment(home, extra = {}) {
   return {
@@ -224,7 +252,7 @@ export async function runProducerProof({
   testEnv = {},
   adapter,
 } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'holi-codex-exec-proof-'))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-codex-exec-proof-')))
   const deadline = Date.now() + timeout
   const proofPath = join(root, 'native-evidence.json')
   const ledgerPath = join(root, 'native-processes.jsonl')
@@ -349,7 +377,10 @@ export async function runProducerProof({
       evidence.diagnostics = version.stderr.slice(-8000)
       return result
     }
-    const workerTmp = join(home, 'tmp')
+    const workerTmp = join(root, 'worker-tmp')
+    const identity = { runId: randomUUID(), nonce: randomUUID() }
+    for (const dir of [workerTmp, join(root, 'admissions'), join(root, 'ownership')])
+      await mkdir(dir, { mode: 0o700 })
     const test = await run(
       'Vitest runner',
       pnpm,
@@ -374,6 +405,8 @@ export async function runProducerProof({
           TEMP: workerTmp,
           HOLI_CODEX_BIN: bin,
           HOLI_CODEX_PROOF_OUTPUT: proofPath,
+          HOLI_CODEX_PROOF_RUN_ID: identity.runId,
+          HOLI_CODEX_PROOF_NONCE: identity.nonce,
           HOLI_CODEX_PROCESS_LEDGER: ledgerPath,
         }),
         timeout: TEST_TIMEOUT,
@@ -390,11 +423,17 @@ export async function runProducerProof({
       stdout: test.stdout.slice(-12000),
       stderr: test.stderr.slice(-8000),
     }
+    if (!test.cleanupError && !test.notStarted) {
+      try {
+        if (hasFinalSettlement(root, identity, workerTmp)) unsettled = undefined
+      } catch {
+        // Keep the worker's root and the original runner/probe failure.
+      }
+    }
     let proof
     try {
-      if ((await stat(proofPath)).size > MAX_EVIDENCE)
-        throw new Error('native proof artifact exceeds size limit')
-      proof = JSON.parse(await readFile(proofPath, 'utf8'))
+      privateDirectory(root)
+      proof = JSON.parse(readPrivate(proofPath, MAX_EVIDENCE))
     } catch (error) {
       evidence.classification = 'incomplete-proof'
       evidence.detail = runnerFailure ?? `native evidence unavailable: ${String(error)}`
@@ -412,29 +451,6 @@ export async function runProducerProof({
       /\b5 passed\b/.test(test.stdout) &&
       !/\b[1-9]\d* skipped\b/.test(test.stdout)
     const scenarios = Array.isArray(proof?.scenarios) ? proof.scenarios : []
-    // The last scenario's afterEach joins the retained leases and removes its
-    // private root. Earlier snapshots can still contain earlier cleanup flags.
-    if (
-      testsPassed &&
-      !test.cleanupError &&
-      proof?.schema === 'holi.codex-exec-producer.v1' &&
-      proof.bin === bin &&
-      proof.cleanup?.rootsRemoved === true &&
-      proof.cleanup.nativeGroupsDrained === true &&
-      scenarios.length === scenarioNames.length &&
-      scenarioNames.every((name) =>
-        scenarios.some((row) => row?.name === name && row.status === 'pass'),
-      )
-    ) {
-      try {
-        const entries = await readdir(workerTmp)
-        if (entries.some((entry) => entry.startsWith('holi-native-codex-')))
-          unsettled = 'Worker temporary directory still contains fixture evidence'
-        else unsettled = undefined
-      } catch (error) {
-        unsettled = `Could not verify worker temporary directory: ${String(error)}`
-      }
-    }
     const credibleAttempt = (scenario) =>
       Array.isArray(scenario?.rawProcesses) &&
       scenario.rawProcesses.some(

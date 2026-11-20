@@ -1,33 +1,226 @@
-import { afterEach, describe, expect, it, onTestFailed } from 'vitest'
-import { appendFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs'
-import { ownedProcessDrain, spawnOwnedProgram } from '../../../main/plugin-api'
-import { createServer, type Server } from 'node:http'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import type { SpawnOptions } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
+import { afterAll, afterEach, describe, expect, it, onTestFailed } from 'vitest'
+import {
+  appendFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  writeFileSync,
+  renameSync,
+  rmSync,
+} from 'node:fs'
+import {
+  inspectPosixOwnership,
+  ownedProcessDrain,
+  posixLaunchNonAdmission,
+  spawnOwnedProgram,
+} from '../../../main/plugin-api'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import {
-  kernelGroupAbsent,
-  posixFixtureLedger,
-} from '../../../../test/fixtures/posix-fixture-ledger'
 import { gunzipSync } from 'node:zlib'
 import { codexProvider } from '../main/codex/index'
 import { createJobs } from '../main/host/jobs'
 
 const version = '0.169.0'
 const bin = process.env.HOLI_CODEX_BIN
-const roots: string[] = []
-const ledgers = new Map<string, Awaited<ReturnType<typeof posixFixtureLedger>>>()
-const servers: Server[] = []
+const scenarioNames = [
+  'initial-turn',
+  'follow-up',
+  'http-400',
+  'stall-stop',
+  'stall-leave',
+] as const
+type ScenarioName = (typeof scenarioNames)[number]
+const leasePlan: Record<ScenarioName, readonly string[]> = {
+  'initial-turn': ['initial-turn-version', 'initial-turn'],
+  'follow-up': ['follow-up', 'follow-up-resume'],
+  'http-400': ['http-400'],
+  'stall-stop': ['stall-stop'],
+  'stall-leave': ['stall-leave'],
+}
+const leaseRoles = scenarioNames.flatMap((name) => leasePlan[name])
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const privateFile = { mode: 0o600, flag: 'wx' } as const
+
+// The challenge is for this worker only. Neither the challenge nor the lease
+// registry is passed to a provider child. Each intent exists before native launch.
+function claimWorker(root: string, runId: string, nonce: string) {
+  const workerTmp = join(root, 'worker-tmp')
+  const admissions = join(root, 'admissions')
+  const ownership = join(root, 'ownership')
+  if (!uuid.test(runId) || !uuid.test(nonce))
+    throw new Error('Invalid private Codex worker challenge')
+  for (const path of [root, workerTmp, admissions, ownership]) {
+    const stat = lstatSync(path)
+    if (
+      realpathSync(path) !== path ||
+      !stat.isDirectory() ||
+      stat.uid !== process.getuid?.() ||
+      stat.mode & 0o077
+    )
+      throw new Error('Invalid private Codex worker directory')
+  }
+  const identity = { version: 1, runId, nonce, workerPid: process.pid }
+  writeFileSync(join(root, 'worker.json'), JSON.stringify(identity), privateFile)
+  type Lease = { role: string; id: string; proof: 'settled' }
+  const attempts: {
+    name: ScenarioName
+    id: string
+    role: string
+    join?: () => Promise<void>
+    settled?: Lease
+  }[] = []
+  const work = new Map<ScenarioName, string>()
+  const scenarios = new Map<ScenarioName, Promise<void>>()
+  let admissionClosed = false
+  return {
+    createWork(name: ScenarioName) {
+      if (admissionClosed || scenarios.has(name) || work.has(name))
+        throw new Error('Unexpected Codex fixture admission')
+      const path = join(workerTmp, name)
+      mkdirSync(path, { mode: 0o700 })
+      work.set(name, path)
+      return path
+    },
+    launch(
+      name: ScenarioName,
+      role: string,
+      bin: string,
+      args: readonly string[],
+      options: SpawnOptions,
+    ) {
+      const count = attempts.filter((attempt) => attempt.name === name).length
+      if (
+        !work.has(name) ||
+        admissionClosed ||
+        scenarios.has(name) ||
+        role !== leasePlan[name][count]
+      )
+        throw new Error('Unexpected Codex worker lease admission')
+      const id = randomUUID()
+      const path = join(ownership, id)
+      const attempt: (typeof attempts)[number] = { name, id, role }
+      attempts.push(attempt)
+      mkdirSync(join(admissions, `${role}-${id}`), { mode: 0o700 })
+      try {
+        const child = spawnOwnedProgram(bin, args, {
+          ...options,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          posixGroupLease: true,
+          ownershipRecordPath: path,
+        })
+        const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+        let outputError: Error | undefined
+        for (const stream of [child.stdout, child.stderr])
+          stream?.on('error', (error: Error) => {
+            outputError ??= error
+          })
+        const drain = child[ownedProcessDrain]?.drain
+        attempt.join = async () => {
+          if (!drain) throw new Error('Missing retained Codex worker lease')
+          await drain()
+          await closed
+          if (outputError) throw outputError
+          if (!child.stdout?.readableEnded || !child.stderr?.readableEnded)
+            throw new Error('Codex worker output did not reach EOF')
+        }
+        return child
+      } catch (error) {
+        const cleanup =
+          posixLaunchNonAdmission(error)?.cleanup ??
+          (error as { cleanup?: Promise<void> } | null)?.cleanup
+        if (cleanup) attempt.join = () => cleanup
+        throw error
+      }
+    },
+    settleScenario(
+      name: ScenarioName,
+      joinCaller: () => Promise<void>,
+      joinServer: () => Promise<void>,
+    ) {
+      if (admissionClosed || scenarios.has(name))
+        throw new Error('Unexpected Codex fixture settlement')
+      const settling = Promise.resolve().then(async () => {
+        const outcomes = await Promise.allSettled([
+          Promise.resolve().then(joinCaller),
+          ...attempts
+            .filter((attempt) => attempt.name === name)
+            .map(async (attempt) => {
+              const { id, role, join: joinLease } = attempt
+              if (!joinLease) throw new Error('Missing Codex worker launch settlement')
+              await joinLease()
+              const inspection = inspectPosixOwnership(join(ownership, id))
+              if (inspection.state !== 'confirmed') throw new Error(inspection.reason)
+              if (inspection.proof !== 'settled')
+                throw new Error('Missing durable Codex lease settlement')
+              attempt.settled = { id, role, proof: inspection.proof }
+            }),
+        ])
+        outcomes.push(...(await Promise.allSettled([Promise.resolve().then(joinServer)])))
+        const failures = outcomes.flatMap((result) =>
+          result.status === 'rejected' ? [result.reason] : [],
+        )
+        if (failures.length) throw new AggregateError(failures, 'Codex producer cleanup failed')
+        const path = work.get(name)
+        if (path) await rm(path, { recursive: true })
+      })
+      scenarios.set(name, settling)
+      return settling
+    },
+    async finish() {
+      admissionClosed = true
+      if (
+        !scenarioNames.every((name) => scenarios.has(name)) ||
+        attempts.length !== leaseRoles.length ||
+        !attempts.every(({ role }, i) => role === leaseRoles[i])
+      )
+        return
+      const outcomes = await Promise.allSettled(scenarios.values())
+      if (outcomes.some((result) => result.status === 'rejected')) return
+      const leases = attempts.map(({ settled }) => settled)
+      if (leases.some((lease) => lease === undefined)) return
+      const staging = join(root, 'settlement.tmp')
+      await writeFile(
+        staging,
+        JSON.stringify({ ...identity, state: 'final', admission: 'leases-settled', leases }),
+        privateFile,
+      )
+      await rename(staging, join(root, 'settlement.json'))
+    },
+  }
+}
+
+const output = process.env.HOLI_CODEX_PROOF_OUTPUT
+const worker =
+  bin && output && output === join(dirname(output), 'native-evidence.json')
+    ? claimWorker(
+        dirname(output),
+        process.env.HOLI_CODEX_PROOF_RUN_ID ?? '',
+        process.env.HOLI_CODEX_PROOF_NONCE ?? '',
+      )
+    : undefined
+const servers: (() => Promise<void>)[] = []
 const jobsList: ReturnType<typeof createJobs>[] = []
 const bracketGateReleases: Array<() => void> = []
-const nativePids: number[] = []
 function persistProof() {
-  const output = process.env.HOLI_CODEX_PROOF_OUTPUT
-  if (!output) return
-  mkdirSync(dirname(output), { recursive: true })
+  if (!worker || !output) return
   const temporary = `${output}.${process.pid}.tmp`
   try {
-    writeFileSync(temporary, `${JSON.stringify(proof, null, 2)}\n`)
+    writeFileSync(temporary, `${JSON.stringify(proof, null, 2)}\n`, privateFile)
     renameSync(temporary, output)
   } catch {
     try {
@@ -35,7 +228,7 @@ function persistProof() {
     } catch {}
   }
 }
-function beginScenario(name: string): ScenarioEvidence {
+function beginScenario(name: ScenarioName): ScenarioEvidence {
   const scenario: ScenarioEvidence = { name, stage: 'setup', status: 'pending' }
   proof.scenarios.push(scenario)
   persistProof()
@@ -96,7 +289,7 @@ function captureScenarioFailure(title: string, error: unknown) {
 type Stage = 'setup' | 'native-launch' | 'native-contract' | 'host-lifecycle' | 'cleanup'
 type Status = 'pending' | 'pass' | 'unverified' | 'mismatch'
 type ScenarioEvidence = {
-  name: string
+  name: ScenarioName
   stage: Stage
   status: Status
   failureKind?: 'setup' | 'timeout' | 'contract'
@@ -112,13 +305,12 @@ const proof = {
   scenarios: [] as ScenarioEvidence[],
   cleanup: { nativeGroupsDrained: false, rootsRemoved: false },
 }
-async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayBracketEnd = false) {
-  if (!bin) throw new Error('HOLI_CODEX_BIN is required for native producer verification')
-  const ledger =
-    process.platform === 'win32' ? undefined : await posixFixtureLedger('holi-native-codex-')
-  const root = ledger?.root ?? (await mkdtemp(join(tmpdir(), 'holi-native-codex-')))
-  if (ledger) ledgers.set(root, ledger)
-  roots.push(root)
+async function fixture(
+  name: ScenarioName,
+  mode: 'success' | 'failure' | 'stall' = 'success',
+  delayBracketEnd = false,
+) {
+  const root = worker!.createWork(name)
   const home = join(root, 'home')
   const person = join(root, 'person')
   const xdg = join(root, 'xdg')
@@ -170,7 +362,7 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayB
   })
   let releaseStall: (() => void) | undefined
   const stalled = new Promise<void>((resolve) => (releaseStall = resolve))
-  const server = createServer(async (req, res) => {
+  const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     if (req.method !== 'POST' || req.url !== '/v1/responses') {
       res.writeHead(400)
       res.end('{"error":"unexpected method or path"}')
@@ -270,10 +462,32 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayB
     ])
       res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
     res.end()
+  }
+  const pendingRequests = new Set<Promise<void>>()
+  const server = createServer((req, res) => {
+    const request = handleRequest(req, res)
+      .catch(() => res.destroy())
+      .then(() => {})
+    pendingRequests.add(request)
+    void request.then(() => pendingRequests.delete(request))
   })
   server.requestTimeout = 15_000
-  servers.push(server)
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  servers.push(async () => {
+    releaseStall?.()
+    const closed = new Promise<void>((resolve, reject) =>
+      server.close((error) => {
+        if (!error || (error as NodeJS.ErrnoException).code === 'ERR_SERVER_NOT_RUNNING') resolve()
+        else reject(error)
+      }),
+    )
+    server.closeAllConnections()
+    await closed
+    await Promise.all(pendingRequests)
+  })
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('fixture server did not bind')
   const env: NodeJS.ProcessEnv = {
@@ -322,22 +536,9 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayB
       brackets.push({ id, edge })
     },
     spawn: (command, args, opts) => {
-      const child = spawnOwnedProgram(command, args, {
-        ...opts,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        posixGroupLease: true,
-      })
+      const role = name === 'follow-up' && processes.length === 1 ? 'follow-up-resume' : name
+      const child = worker!.launch(name, role, command, args, opts)
       if (child.pid) {
-        if (ledger) {
-          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
-          const ancestry = ledger.retain(
-            ledger.record(child),
-            child[ownedProcessDrain]!.drain,
-            closed,
-            'job owned-process descriptor',
-          )
-          child.once('spawn', ancestry)
-        }
         const processRecord: Record<string, unknown> = {
           pid: child.pid,
           bin: command,
@@ -362,13 +563,12 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayB
           codeHome: opts.env.CODEX_HOME,
         })
         rawProcesses.push(processRecord)
-        nativePids.push(child.pid)
         const externalLedger = process.env.HOLI_CODEX_PROCESS_LEDGER
         if (externalLedger) {
-          mkdirSync(dirname(externalLedger), { recursive: true })
           appendFileSync(
             externalLedger,
-            `${JSON.stringify({ pid: child.pid, group: process.platform === 'win32' ? child.pid : -child.pid, bin: command, cwd: opts.cwd, ownedRoot: root })}\n`,
+            `${JSON.stringify({ pid: child.pid, group: -child.pid, bin: command, cwd: opts.cwd, ownedRoot: root })}\n`,
+            { mode: 0o600 },
           )
         }
         let rawBytes = 0
@@ -390,7 +590,6 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayB
             try {
               const lease = child[ownedProcessDrain]
               if (lease) void lease.drain().catch(() => {})
-              else child.kill('SIGTERM')
             } catch {}
           }
         }
@@ -438,11 +637,7 @@ async function nativeVersion(
   ownedRoot: string,
 ) {
   const cwd = process.cwd()
-  const child = spawnOwnedProgram(bin!, ['--version'], {
-    env,
-    posixGroupLease: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  const child = worker!.launch(scenario.name, 'initial-turn-version', bin!, ['--version'], { env })
   const record: Record<string, unknown> = {
     pid: child.pid ?? null,
     bin,
@@ -471,26 +666,13 @@ async function nativeVersion(
       resolve()
     })
   })
-  if (child.pid) {
-    const owned = ledgers.get(ownedRoot)
-    if (owned) {
-      const ancestry = owned.retain(
-        owned.record(child),
-        child[ownedProcessDrain]!.drain,
-        closed,
-        'version owned-process descriptor',
-      )
-      child.once('spawn', ancestry)
-    }
-    nativePids.push(child.pid)
-    const ledger = process.env.HOLI_CODEX_PROCESS_LEDGER
-    if (ledger) {
-      mkdirSync(dirname(ledger), { recursive: true })
-      appendFileSync(
-        ledger,
-        `${JSON.stringify({ pid: child.pid, group: process.platform === 'win32' ? child.pid : -child.pid, bin, cwd, ownedRoot })}\n`,
-      )
-    }
+  const ledger = process.env.HOLI_CODEX_PROCESS_LEDGER
+  if (child.pid && ledger) {
+    appendFileSync(
+      ledger,
+      `${JSON.stringify({ pid: child.pid, group: -child.pid, bin, cwd, ownedRoot })}\n`,
+      { mode: 0o600 },
+    )
   }
   let stdout = '',
     stderr = '',
@@ -499,10 +681,6 @@ async function nativeVersion(
   const stop = () => {
     const lease = child[ownedProcessDrain]
     if (lease) return lease.drain()
-    if (process.platform === 'win32') {
-      child.kill('SIGTERM')
-      return Promise.resolve()
-    }
     return Promise.reject(new Error('Missing Codex version lease'))
   }
   const terminate = () => {
@@ -530,13 +708,12 @@ async function nativeVersion(
   let code: number | null
   try {
     await Promise.race([exited, closed])
-    if (process.platform !== 'win32') await stop()
+    await stop()
     code = await closed
     if (record.spawnError) throw new Error(String(record.spawnError))
   } finally {
     clearTimeout(timeout)
   }
-  if (child.pid && process.platform !== 'win32') kernelGroupAbsent(child.pid)
   const groupDrained = true
   return { code, stdout, timedOut, limited, groupDrained }
 }
@@ -559,66 +736,49 @@ async function ended(
   throw new Error('native job did not settle')
 }
 
-afterEach(async () => {
+async function joinAll(joins: (() => Promise<void>)[]) {
+  const results = await Promise.allSettled(joins.map((join) => Promise.resolve().then(join)))
+  const failures = results.flatMap((result) =>
+    result.status === 'rejected' ? [result.reason] : [],
+  )
+  if (failures.length) throw new AggregateError(failures)
+}
+
+async function settleCurrentScenario() {
+  const scenario = proof.scenarios.at(-1)
+  if (!scenario) return
   proof.cleanup.nativeGroupsDrained = false
   proof.cleanup.rootsRemoved = false
-  // Unblock bracket persistence before draining jobs, even when an assertion or
-  // native call failed while a turn was held at the test gate.
   for (const release of bracketGateReleases.splice(0)) release()
-  // Vitest runs afterEach before onTestFailed. Clean up first; the callback
-  // replaces incomplete-capture fallback evidence with the actual failure.
-  const results = await Promise.allSettled([
-    ...jobsList.splice(0).map((jobs) => jobs.leave()),
-    ...Array.from(ledgers.values(), (ledger) => ledger.reap()),
-  ])
-  for (const server of servers.splice(0)) {
-    server.closeAllConnections()
-    await new Promise<void>((resolve) => server.close(() => resolve()))
+  try {
+    await worker!.settleScenario(
+      scenario.name,
+      () => joinAll(jobsList.splice(0).map((jobs) => () => jobs.leave())),
+      () => joinAll(servers.splice(0)),
+    )
+    proof.cleanup.nativeGroupsDrained = true
+    proof.cleanup.rootsRemoved = true
+  } finally {
+    for (const scenario of proof.scenarios) {
+      if (scenario.status === 'pending') {
+        scenario.status = 'unverified'
+        scenario.failureKind = 'setup'
+        scenario.failure ??= 'native evidence was not fully captured'
+      }
+    }
+    persistProof()
   }
-  const cleanupFailures = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []))
-  if (cleanupFailures.length)
-    throw new AggregateError(cleanupFailures, 'Codex producer cleanup failed')
-  proof.cleanup.nativeGroupsDrained = nativePids.every((pid) => {
-    if (process.platform !== 'win32') {
-      kernelGroupAbsent(pid)
-      return true
-    }
-    try {
-      process.kill(pid, 0)
-      return false
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === 'ESRCH'
-    }
-  })
-  nativePids.length = 0
-  let rootsRemoved = true
-  for (const root of roots.splice(0)) {
-    try {
-      const ledger = ledgers.get(root)
-      if (ledger) await ledger.remove()
-      else await rm(root, { recursive: true, force: true })
-    } catch {
-      rootsRemoved = false
-    }
-  }
-  ledgers.clear()
-  proof.cleanup.rootsRemoved = rootsRemoved
-  for (const scenario of proof.scenarios) {
-    if (scenario.status === 'pending') {
-      scenario.status = 'unverified'
-      scenario.failureKind = 'setup'
-      scenario.failure ??= 'native evidence was not fully captured'
-    }
-  }
-  persistProof()
-})
+}
 
 if (bin) {
   describe('native Codex exec producer → real jobs host', () => {
+    if (!worker) throw new Error('Native Codex proof requires a private runner challenge')
+    afterEach(settleCurrentScenario)
+    afterAll(() => worker.finish())
     it('consumes the pinned CLI version and native initial-turn events', async () => {
       const scenario = beginScenario('initial-turn')
       onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
-      const f = await fixture()
+      const f = await fixture(scenario.name)
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
       scenario.jsonl = f.jsonl
@@ -686,7 +846,7 @@ if (bin) {
     it('resumes the native thread and reports the cumulative usage total', async () => {
       const scenario = beginScenario('follow-up')
       onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
-      const f = await fixture('success', true)
+      const f = await fixture(scenario.name, 'success', true)
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
       scenario.jsonl = f.jsonl
@@ -806,7 +966,7 @@ if (bin) {
     it('marks a genuine model error failed, never completed', async () => {
       const scenario = beginScenario('http-400')
       onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
-      const f = await fixture('failure')
+      const f = await fixture(scenario.name, 'failure')
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
       scenario.jsonl = f.jsonl
@@ -848,7 +1008,7 @@ if (bin) {
     it('stops a stalled native run and drains its state and process', async () => {
       const scenario = beginScenario('stall-stop')
       onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
-      const f = await fixture('stall')
+      const f = await fixture(scenario.name, 'stall')
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
       scenario.jsonl = f.jsonl
@@ -898,7 +1058,7 @@ if (bin) {
     it('leave drains a stalled native run and clears all job sessions', async () => {
       const scenario = beginScenario('stall-leave')
       onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
-      const f = await fixture('stall')
+      const f = await fixture(scenario.name, 'stall')
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
       scenario.jsonl = f.jsonl
@@ -944,3 +1104,110 @@ if (bin) {
     it('requires the native CLI', () => {})
   })
 }
+
+if (process.platform !== 'win32' && !bin && process.env.HOLI_CODEX_SETTLEMENT_FIXTURE === '1')
+  it('joins the last caller and fixture resource before publishing synthetic Codex settlement', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-codex-settlement-fixture-')))
+    const ownership = join(root, 'ownership')
+    const admissions = join(root, 'admissions')
+    const settlementPath = join(root, 'settlement.json')
+    for (const path of [join(root, 'worker-tmp'), admissions, ownership])
+      await mkdir(path, { mode: 0o700 })
+    const runId = randomUUID()
+    const nonce = randomUUID()
+    const worker = claimWorker(root, runId, nonce)
+    const gate = () => {
+      let resolve!: () => void
+      const promise = new Promise<void>((done) => (resolve = done))
+      return { promise, resolve }
+    }
+    const caller = gate()
+    const server = gate()
+    const serverEntered = gate()
+    let finalScenario: Promise<void> | undefined
+    let finish: Promise<void> | undefined
+    try {
+      for (const name of scenarioNames) {
+        const work = worker.createWork(name)
+        try {
+          for (const role of leasePlan[name]) {
+            const child = worker.launch(name, role, '/bin/sh', ['-c', 'printf synthetic'], {
+              cwd: work,
+              env: { PATH: '/usr/bin:/bin', HOME: work },
+            })
+            child.stdout!.resume()
+            child.stderr!.resume()
+            await once(child, 'exit', { signal: AbortSignal.timeout(5_000) })
+          }
+        } finally {
+          if (name !== 'stall-leave')
+            await worker.settleScenario(
+              name,
+              async () => {},
+              async () => {},
+            )
+          else {
+            finalScenario = worker.settleScenario(
+              name,
+              () => caller.promise,
+              () => {
+                serverEntered.resolve()
+                return server.promise
+              },
+            )
+            void finalScenario.catch(() => {})
+          }
+        }
+      }
+      finish = worker.finish()
+      void finish.catch(() => {})
+      expect(existsSync(settlementPath)).toBe(false)
+      caller.resolve()
+      await serverEntered.promise
+      const ids = await readdir(ownership)
+      expect(ids).toHaveLength(leaseRoles.length)
+      for (const id of ids) {
+        expect(inspectPosixOwnership(join(ownership, id))).toEqual({
+          state: 'confirmed',
+          proof: 'settled',
+        })
+      }
+      expect(existsSync(settlementPath)).toBe(false)
+      expect(existsSync(join(root, 'worker-tmp', 'stall-leave'))).toBe(true)
+      server.resolve()
+      await finish
+      await finalScenario
+      const registrations = new Map(
+        (await readdir(admissions)).map((entry) => [entry.slice(0, -37), entry.slice(-36)]),
+      )
+      expect(JSON.parse(await readFile(settlementPath, 'utf8'))).toEqual({
+        version: 1,
+        runId,
+        nonce,
+        workerPid: process.pid,
+        state: 'final',
+        admission: 'leases-settled',
+        leases: leaseRoles.map((role) => ({
+          role,
+          id: registrations.get(role),
+          proof: 'settled',
+        })),
+      })
+      expect(await readdir(join(root, 'worker-tmp'))).toEqual([])
+    } finally {
+      caller.resolve()
+      server.resolve()
+      await finalScenario?.catch(() => {})
+      await finish?.catch(() => {})
+      const ids = await readdir(ownership)
+      const markers = await Promise.all(
+        ids.map((id) => readFile(join(ownership, id, 'settled'), 'utf8').catch(() => undefined)),
+      )
+      if (
+        ids.length !== (await readdir(admissions)).length ||
+        !ids.every((id, i) => markers[i] === `HOLI-POSIX-1 ${id}\nSETTLED\n`)
+      )
+        throw new Error(`Retained synthetic Codex settlement fixture at ${root}`)
+      await rm(root, { recursive: true })
+    }
+  }, 20_000)

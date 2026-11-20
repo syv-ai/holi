@@ -26,7 +26,13 @@ async function runFakeProof(t, params) {
       processes.push({ child, closed: new Promise((resolve) => child.once('close', resolve)) })
       return child
     },
-    probePresence: (pid) => process.kill(pid, 0),
+    probePresence(pid) {
+      assert.ok(
+        processes.some(({ child }) => child.pid === Math.abs(pid)),
+        'not a fixture handle',
+      )
+      return process.kill(pid, 0)
+    },
   }
   const result = await runProducerProof({ ...proofOptions, adapter })
   const retained = result.evidence.cleanup.retainedRoot
@@ -205,7 +211,7 @@ test('all native contract failures are classified from explicit scenario evidenc
     }
     const pnpm = await pnpmFixture(
       root,
-      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; for (const scenario of proof.scenarios) scenario.rawProcesses[0].bin = proof.bin; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('5 failed')`,
+      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; for (const scenario of proof.scenarios) scenario.rawProcesses[0].bin = proof.bin; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof), { mode: 0o600 }); process.stdout.write('5 failed')`,
     )
     const result = await runFakeProof(t, { npm, pnpm })
     assert.equal(result.evidence.classification, 'incomplete-proof')
@@ -243,7 +249,7 @@ test('preserves a late setup failure when worker cleanup is incomplete', async (
     }
     const pnpm = await pnpmFixture(
       root,
-      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('1 passed 4 failed')`,
+      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof), { mode: 0o600 }); process.stdout.write('1 passed 4 failed')`,
     )
     const result = await runFakeProof(t, { npm, pnpm })
     assert.equal(result.evidence.classification, 'incomplete-proof')
@@ -264,7 +270,7 @@ test('malformed, partial, oversized and unknown native proof are rejected', asyn
     ]) {
       const pnpm = await pnpmFixture(
         root,
-        `import { writeFile } from 'node:fs/promises'; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, ${JSON.stringify(payload)}); process.stdout.write("5 passed")`,
+        `import { writeFile } from 'node:fs/promises'; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, ${JSON.stringify(payload)}, { mode: 0o600 }); process.stdout.write("5 passed")`,
       )
       const result = await runFakeProof(t, { npm, pnpm })
       assert.equal(result.failed, true)
@@ -382,7 +388,7 @@ test('timeout scenario evidence remains incomplete instead of a contract mismatc
     }
     const pnpm = await pnpmFixture(
       root,
-      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('1 failed')`,
+      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof), { mode: 0o600 }); process.stdout.write('1 failed')`,
     )
     const result = await runFakeProof(t, { npm, pnpm })
     assert.equal(result.evidence.classification, 'incomplete-proof')
@@ -421,7 +427,7 @@ test('bounded-out raw native evidence stays incomplete despite a mismatch artifa
     }
     const pnpm = await pnpmFixture(
       root,
-      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('1 failed')`,
+      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof), { mode: 0o600 }); process.stdout.write('1 failed')`,
     )
     const result = await runFakeProof(t, { npm, pnpm })
     assert.equal(result.evidence.classification, 'incomplete-proof')
@@ -455,38 +461,199 @@ test('output cap and deadline preserve the initiating failure and retain the roo
   }
 })
 
-test('Codex only removes the root after the final worker lease settlement receipt', async (t) => {
+test('passing counts, scenario names and flags cannot authorize Codex cleanup', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-final-receipt-'))
   try {
     const npm = await installFixture(root)
-    for (const mode of ['pending', 'leftover', 'finished']) {
+    const pnpm = await pnpmFixture(
+      root,
+      `
+      import { writeFile } from 'node:fs/promises'
+      const proof = {
+        schema: 'holi.codex-exec-producer.v1', bin: process.env.HOLI_CODEX_BIN,
+        scenarios: ['initial-turn', 'follow-up', 'http-400', 'stall-stop', 'stall-leave']
+          .map((name) => ({ name, status: 'pass' })),
+        cleanup: { rootsRemoved: true, nativeGroupsDrained: true, fixtureServerClosed: true },
+      }
+      await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof), { mode: 0o600 })
+      console.log('5 passed')
+    `,
+    )
+    const { evidence } = await runFakeProof(t, { npm, pnpm })
+    assert.equal(evidence.classification, 'incomplete-proof')
+    assert.match(evidence.detail, /native evidence identity/)
+    assert.equal(evidence.cleanup.status, 'incomplete')
+    assert.equal(evidence.cleanup.processesDrained, false)
+    assert.equal(evidence.cleanup.rootRemoved, false)
+    assert.ok(existsSync(evidence.cleanup.retainedRoot))
+  } finally {
+    await rm(root, { recursive: true })
+  }
+})
+
+function completeProbe(bin, work) {
+  const names = ['initial-turn', 'follow-up', 'http-400', 'stall-stop', 'stall-leave']
+  const scenarios = names.map((name) => {
+    const sessionId = 'j0123456789ab'
+    const thread = 'thread-fixture'
+    const tokens = name === 'follow-up' ? 26 : 13
+    const error = name === 'http-400' ? 'fixture rejected request' : 'Stopped.'
+    const event =
+      name === 'http-400' ? { kind: 'error', message: error } : { kind: 'turn-completed', tokens }
+    const line = JSON.stringify(event)
+    const outcome =
+      name === 'stall-leave'
+        ? 'left'
+        : ['http-400', 'stall-stop'].includes(name)
+          ? 'failed'
+          : 'completed'
+    const brackets = ['begin', 'end', ...(name === 'follow-up' ? ['begin', 'end'] : [])].map(
+      (edge) => ({ id: sessionId, edge }),
+    )
+    const processes = Array.from({ length: name === 'follow-up' ? 2 : 1 }, (_, i) => ({
+      pid: 1_900_000_000 + i,
+      bin,
+      cwd: work,
+      codeHome: work,
+      args: ['exec', '--json', work, ...(i ? ['resume', thread] : [])],
+    }))
+    const rawProcesses = processes.map((process) => ({
+      ...process,
+      stdout: line,
+      stderr: '',
+      stdoutBytes: Buffer.byteLength(line),
+      stderrBytes: 0,
+      outputLimited: false,
+      exitCode: 0,
+      signal: null,
+      lineLimit: 2000,
+      byteLimit: 262144,
+      outputLines: 0,
+    }))
+    return {
+      name,
+      stage: 'cleanup',
+      status: 'pass',
+      sessionId,
+      outcome,
+      thread,
+      error,
+      tokens,
+      brackets,
+      processes,
+      rawProcesses,
+      requests: [{ url: '/v1/responses' }],
+      host: [{ id: sessionId, outcome, tokens, error }],
+      jsonl: [{ line, event }],
+      sessionsAfterLeave: 0,
+      hasAfterLeave: false,
+    }
+  })
+  return {
+    schema: 'holi.codex-exec-producer.v1',
+    package: '@openai/codex',
+    expectedVersion: '0.169.0',
+    version: 'codex-cli 0.169.0',
+    bin,
+    scenarios,
+    cleanup: { nativeGroupsDrained: true, rootsRemoved: true },
+  }
+}
+
+const settlementFixture = `
+  import { randomUUID } from 'node:crypto'
+  import { mkdir, writeFile } from 'node:fs/promises'
+  import { dirname, join } from 'node:path'
+  const { TMPDIR, HOLI_CODEX_PROOF_OUTPUT: output, HOLI_CODEX_BIN: bin, HOLI_CODEX_PROOF_RUN_ID: runId, HOLI_CODEX_PROOF_NONCE: nonce } = process.env
+  const root = dirname(output)
+  const completeProbe = ${completeProbe.toString()}
+  const roles = ['initial-turn-version', 'initial-turn', 'follow-up', 'follow-up-resume', 'http-400', 'stall-stop', 'stall-leave']
+  const leases = roles.map((role) => ({ id: randomUUID(), role, proof: 'settled' }))
+  const identity = { version: 1, runId, nonce, workerPid: process.pid }
+  const file = { mode: 0o600 }
+  for (const { id, role } of leases) {
+    if (mode === 'unregistered' && role === 'stall-leave') continue
+    await mkdir(join(root, 'admissions', role + '-' + id), { mode: 0o700 })
+    await mkdir(join(root, 'ownership', id), { mode: 0o700 })
+    if (!(mode === 'no-native-terminal' && role === 'stall-leave'))
+      await writeFile(join(root, 'ownership', id, 'settled'), 'HOLI-POSIX-1 ' + id + '\\nSETTLED\\n', file)
+  }
+  if (mode === 'extra-registration') await mkdir(join(root, 'admissions', 'stall-leave-' + randomUUID()), { mode: 0o700 })
+  const claim = mode === 'wrong-run' ? { ...identity, runId: randomUUID() } : identity
+  if (mode !== 'no-claim') await writeFile(join(root, 'worker.json'), JSON.stringify(claim), file)
+  const receipt = { ...claim, state: 'final', admission: 'leases-settled', leases }
+  if (mode === 'pending') receipt.state = 'pending'
+  if (mode === 'wrong-version') receipt.version = 2
+  if (mode === 'wrong-nonce') receipt.nonce = randomUUID()
+  if (mode === 'wrong-worker') receipt.workerPid = 1900000000
+  if (mode === 'wrong-role') [leases[0].role, leases[1].role] = [leases[1].role, leases[0].role]
+  if (mode === 'bool-proof') leases[0].proof = true
+  if (mode === 'omitted') leases.pop()
+  if (mode === 'unfinished') await mkdir(join(TMPDIR, 'stall-leave'), { mode: 0o700 })
+  if (mode === 'staging') await writeFile(join(root, 'settlement.tmp'), '{', file)
+  if (mode !== 'missing') await writeFile(join(root, 'settlement.json'), mode === 'malformed' ? '{' : JSON.stringify(receipt), file)
+  const proof = mode === 'probe-refused' ? { schema: 'wrong' } : completeProbe(bin, TMPDIR)
+  if (mode === 'provider-error') Object.assign(proof.scenarios[0], { status: 'mismatch', failureKind: 'contract', failure: 'original provider error' })
+  if (mode !== 'no-probe') await writeFile(output, JSON.stringify(proof), file)
+  console.log('5 passed')
+  if (mode === 'bad-runner') process.exitCode = 7
+`
+
+test('Codex checks the final worker claim and every ordered pre-launch lease', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-producer-settlement-'))
+  try {
+    const npm = await installFixture(root)
+    for (const mode of [
+      'missing',
+      'malformed',
+      'staging',
+      'pending',
+      'wrong-version',
+      'wrong-run',
+      'wrong-nonce',
+      'wrong-worker',
+      'no-claim',
+      'wrong-role',
+      'bool-proof',
+      'unregistered',
+      'no-native-terminal',
+      'omitted',
+      'extra-registration',
+      'unfinished',
+      'valid',
+      'probe-refused',
+      'no-probe',
+      'bad-runner',
+      'provider-error',
+    ]) {
       const pnpm = await pnpmFixture(
         root,
-        `
-        import { mkdir, writeFile } from 'node:fs/promises'
-        import { join } from 'node:path'
-        const mode = ${JSON.stringify(mode)}
-        const proof = {
-          schema: 'holi.codex-exec-producer.v1', bin: process.env.HOLI_CODEX_BIN,
-          scenarios: ['initial-turn', 'follow-up', 'http-400', 'stall-stop', 'stall-leave']
-            .map((name) => ({ name, status: mode === 'pending' && name === 'stall-leave' ? 'pending' : 'pass' })),
-          cleanup: { rootsRemoved: true, nativeGroupsDrained: true },
-        }
-        if (mode === 'leftover') await mkdir(join(process.env.TMPDIR, 'holi-native-codex-leftover'))
-        await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof))
-        console.log('5 passed')
-      `,
+        `const mode = ${JSON.stringify(mode)};\n${settlementFixture}`,
       )
-      const { evidence } = await runFakeProof(t, { npm, pnpm })
-      assert.equal(evidence.cleanup.rootRemoved, mode === 'finished', mode)
-      if (mode !== 'finished') assert.ok(existsSync(evidence.cleanup.retainedRoot))
-      assert.equal(
-        evidence.classification,
-        'incomplete-proof',
-        'receipt is not native contract proof',
-      )
+      const { evidence, failed } = await runFakeProof(t, { npm, pnpm })
+      const settled = [
+        'valid',
+        'probe-refused',
+        'no-probe',
+        'bad-runner',
+        'provider-error',
+      ].includes(mode)
+      assert.equal(failed, mode !== 'valid', mode)
+      assert.equal(evidence.cleanup.rootRemoved, settled, mode)
+      assert.equal(evidence.cleanup.processesDrained, settled, mode)
+      if (!settled) {
+        assert.equal(evidence.cleanup.status, 'incomplete', mode)
+        assert.ok(existsSync(evidence.cleanup.retainedRoot), mode)
+      }
+      if (mode === 'bad-runner') assert.match(evidence.detail, /Vitest runner exited 7/)
+      if (mode === 'probe-refused') assert.match(evidence.detail, /native evidence identity/)
+      if (mode === 'no-probe') assert.match(evidence.detail, /native evidence unavailable/)
+      if (mode === 'provider-error') {
+        assert.equal(evidence.classification, 'observed-contract-error')
+        assert.equal(evidence.native.scenarios[0].failure, 'original provider error')
+      }
     }
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true })
   }
 })
