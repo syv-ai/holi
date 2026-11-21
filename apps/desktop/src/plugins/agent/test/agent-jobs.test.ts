@@ -5,6 +5,7 @@
  * a small node script that prints the JSONL `codex exec --json` does.
  */
 import {
+  access,
   chmod,
   mkdir,
   mkdtemp,
@@ -15,27 +16,53 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
+import { ChildProcess } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ownedProcessDrain } from '../../../main/plugin-api'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
+import { markPosixNonAdmission } from '../../../main/posix-ownership-journal'
 import { codexProvider, fenceArgs, jobArgs, readJobEvent } from '../main/codex'
 import { createFencedSessions } from '../main/host/fenced'
+import { activationOwnership } from '../main/host/ownership'
 import type { Fence } from '../main/host/pty-sessions'
 import { agentCapabilities, scopeRules } from '../main/host/capabilities'
 import {
   createJobs,
   inWriteScope,
-  JOB_SESSION_ID,
   takenMessage,
   vaultSandbox,
   type JobScope,
 } from '../main/host/jobs'
+import { createManagedTurnBrackets, createTurnCoordinator } from '../main/host/turn-coordinator'
 import type { SessionSummary } from '../main/claude/listing'
 import type { AgentProvider, JobRun, JobsProvider } from '../main/provider'
+import { trackedJobProcesses } from './fixtures/tracked-job-processes'
+
+// Hold a queued publication without holding compensating links from `previous`.
+let queuePublication: ((publish: () => Promise<void>) => Promise<void>) | undefined
+vi.mock('node:fs/promises', async (original) => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return {
+    ...fs,
+    link: (...args: Parameters<typeof fs.link>) =>
+      queuePublication && String(args[0]).includes('/.holi-tmp-')
+        ? queuePublication(() => fs.link(...args))
+        : fs.link(...args),
+  }
+})
 
 const dirs: string[] = []
+const owned: Array<{
+  jobs: ReturnType<typeof createJobs>
+  tracked: ReturnType<typeof trackedJobProcesses>
+}> = []
 afterEach(async () => {
+  const entries = owned.splice(0)
+  await Promise.all(entries.map(({ tracked }) => tracked.drain()))
+  await Promise.allSettled(entries.map(({ jobs }) => jobs.leave()))
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
@@ -160,15 +187,18 @@ async function rig(
   const script = join(userData, 'fake-codex.js')
   await writeFile(script, body)
   const lists: SessionSummary[][] = []
+  const tracked = trackedJobProcesses(userData)
   const jobs = createJobs({
     vault: { remote: 'syv/vault', root },
     scratchRoot: opts.scratchRoot ?? join(userData, 'agent-jobs'),
     onChange: (list) => lists.push(list),
     killGraceMs: 200,
+    spawn: tracked.spawn,
     log: () => {},
     ...(opts.bracket === undefined ? {} : { bracket: opts.bracket }),
     ...opts,
   })
+  owned.push({ jobs, tracked })
   const ended = (id: string) =>
     vi.waitFor(
       () => {
@@ -202,7 +232,7 @@ describe('a job', () => {
     })
     expect(started.ok).toBe(true)
     const id = (started as { sessionId: string }).sessionId
-    expect(id).toMatch(JOB_SESSION_ID)
+    expect(id).toMatch(/^j[0-9a-f]{12}$/)
     expect(jobs.sessions()[0]).toMatchObject({ id, provider: 'codex', state: 'working' })
 
     const row = await ended(id)
@@ -218,8 +248,14 @@ describe('a job', () => {
       expect(await exists(join(root, 'notes/Plan.app', name))).toBe(false)
       expect(row.message).toContain(`notes/Plan.app/${name}`)
     }
-    // The scratch folder is gone.
-    await vi.waitFor(async () => expect(await readdir(join(userData, 'agent-jobs'))).toEqual([]))
+    // Scratch and provider state are gone; the settled receipt follows the row.
+    const scratch = join(userData, 'agent-jobs')
+    const retained = await readdir(scratch)
+    expect(retained).not.toContain(id)
+    expect(retained).not.toContain(`${id}.agent`)
+    expect(retained).not.toContain(`${id}.pid`)
+    await jobs.stop(id)
+    expect(await readdir(scratch)).toEqual([])
   })
 
   it('fails with the turn’s own reason, and writes nothing', async () => {
@@ -294,12 +330,17 @@ describe('a job', () => {
   })
 
   it('is stopped by Stop, and by leaving the vault', async () => {
-    const { userData, jobs, provider, ended } = await rig(HANG)
+    const entered =
+      "require('node:fs').writeFileSync(require('node:path').join(__dirname, 'entered'), 'yes')"
+    const { userData, jobs, provider, ended } = await rig(`${entered}\n${HANG}`)
     const a = await jobs.start({ provider, name: 'a', prompt: 'go', scope: SCOPE })
     const aId = (a as { sessionId: string }).sessionId
-    await vi.waitFor(() => expect(jobs.sessions()[0]?.state).toBe('working'))
+    // Stop immediately after publication, without yielding to startup polling.
     expect(await jobs.stop(aId)).toEqual({ ok: true })
     expect(await ended(aId)).toMatchObject({ outcome: 'failed', error: 'Stopped.' })
+    if (process.platform !== 'win32') {
+      await expect(readFile(join(userData, 'entered'))).rejects.toMatchObject({ code: 'ENOENT' })
+    }
 
     const b = await jobs.start({ provider, name: 'b', prompt: 'go', scope: SCOPE })
     expect(b.ok).toBe(true)
@@ -713,6 +754,381 @@ describe('agent.job', () => {
   })
 })
 
+describe('job settlement without Stop', () => {
+  it.each(['new file', 'replacement'] as const)(
+    'does not let a queued publication change a %s after Stop times out',
+    async (mode) => {
+      const root = await temp('holi-job-vault-')
+      const scratchRoot = await temp('holi-job-data-')
+      const target = join(root, 'note.md')
+      const read = mode === 'replacement' ? ['note.md'] : []
+      if (read.length) await writeFile(target, 'original')
+      const stdout = new PassThrough()
+      const child = Object.assign(new ChildProcess(), {
+        stdout,
+        [ownedProcessDrain]: { drain: async () => {} },
+      })
+      let enterCommit!: () => void
+      let resumeCopy!: () => void
+      const atCommit = new Promise<void>((resolve) => (enterCommit = resolve))
+      const resumed = new Promise<void>((resolve) => (resumeCopy = resolve))
+      let queued: Promise<void> | undefined
+      queuePublication = (publish) => {
+        enterCommit()
+        return (queued = resumed.then(publish))
+      }
+      const jobs = createJobs({
+        vault: { remote: 'fixture/vault', root },
+        scratchRoot,
+        spawn: () => child,
+        onChange: () => {},
+        afterWrite: () => {
+          enterCommit()
+          return resumed
+        },
+        log: () => {},
+      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const started = await jobs.start({
+          provider: scripted('/fixture/job'),
+          name: 'fixture',
+          prompt: 'go',
+          scope: { read, write: ['note.md', 'zzz.md'] },
+        })
+        if (!started.ok) throw new Error(started.message)
+        const id = started.sessionId
+        await writeFile(join(scratchRoot, id, 'note.md'), 'agent output')
+        await writeFile(join(scratchRoot, id, 'zzz.md'), 'later output')
+        const closed = new Promise<void>((resolve) => stdout.once('close', resolve))
+        stdout.end('{"type":"turn.completed"}\n')
+        await closed
+        child.emit('close', 0, null)
+        await atCommit
+        const stopping = jobs.stop(id).catch((error: unknown) => error)
+        await vi.advanceTimersByTimeAsync(5_000)
+        const timeout = await stopping
+        expect(timeout).toMatchObject({
+          message: expect.stringMatching(/Finalization of job.*timed out/),
+        })
+        const bytes = () =>
+          readFile(target, 'utf8').catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error
+            return null
+          })
+        const atStop = await bytes()
+        resumeCopy()
+        await queued
+        expect(await bytes()).toBe(atStop)
+        expect(atStop).toBe('agent output') // The commit preceded the deadline.
+        await expect(jobs.stop(id)).rejects.toBe(timeout)
+        await expect(jobs.leave()).rejects.toMatchObject({ errors: [timeout] })
+        expect(await readdir(root)).toEqual(['note.md'])
+      } finally {
+        resumeCopy()
+        await queued?.catch(() => {})
+        queuePublication = undefined
+        stdout.destroy()
+        child.emit('close', 0, null)
+        const leaving = jobs.leave().catch(() => {})
+        await vi.advanceTimersByTimeAsync(20_000)
+        await leaving
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it.each(['free path', 'competing file'] as const)(
+    'rolls back a timed-out replacement with a %s',
+    async (mode) => {
+      const root = await temp('holi-job-vault-')
+      const userData = await temp('holi-job-data-')
+      const vault = { remote: 'fixture/vault', root }
+      const scratchRoot = join(userData, 'jobs')
+      const activation = new AbortController()
+      const ownership = activationOwnership(userData, vault, activation.signal)
+      const stdout = new PassThrough()
+      const child = Object.assign(new ChildProcess(), {
+        stdout,
+        [ownedProcessDrain]: { drain: async () => {} },
+      })
+      const target = join(root, 'note.md')
+      await writeFile(target, 'original')
+      let enter!: () => void
+      let publish!: () => void
+      const entered = new Promise<void>((resolve) => (enter = resolve))
+      const publishGate = new Promise<void>((resolve) => (publish = resolve))
+      const log = vi.fn()
+      const jobs = createJobs({
+        vault,
+        scratchRoot,
+        ...(ownership && { ownership }),
+        activationSignal: activation.signal,
+        spawn: () => child,
+        onChange: () => {},
+        beforePublish: () => {
+          enter()
+          return publishGate
+        },
+        log,
+      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const started = await jobs.start({
+          provider: scripted('/fixture/job'),
+          name: 'fixture',
+          prompt: 'go',
+          scope: { read: ['note.md'], write: ['note.md', 'zzz.md'] },
+        })
+        if (!started.ok) throw new Error(started.message)
+        const id = started.sessionId
+        await writeFile(join(scratchRoot, id, 'note.md'), 'agent output')
+        await writeFile(join(scratchRoot, id, 'zzz.md'), 'later output')
+        const closed = new Promise<void>((resolve) => stdout.once('close', resolve))
+        stdout.end('{"type":"turn.completed"}\n')
+        await closed
+        child.emit('close', 0, null)
+        await entered
+        await expect(readFile(target)).rejects.toMatchObject({ code: 'ENOENT' })
+        const backup = (await readdir(root)).find((name) => name.startsWith('.holi-copy-'))!
+        expect(await readFile(join(root, backup, 'previous'), 'utf8')).toBe('original')
+        await vi.advanceTimersByTimeAsync(5_000)
+        const timeout = await jobs.stop(id).catch((error: unknown) => error)
+        expect(timeout).toMatchObject({
+          message: expect.stringMatching(/Finalization of job.*timed out/),
+        })
+        if (mode === 'competing file') await writeFile(target, 'competing version')
+        publish()
+        if (mode === 'free path') {
+          await vi.waitFor(async () => expect(await readdir(root)).toEqual(['note.md']))
+          expect(await readFile(target, 'utf8')).toBe('original')
+        } else {
+          await vi.waitFor(async () => {
+            expect(log).toHaveBeenCalledWith(expect.stringContaining(backup))
+            expect((await readdir(root)).sort()).toEqual([backup, 'note.md'])
+          })
+        }
+        activation.abort()
+        await expect(jobs.stop(id)).rejects.toBe(timeout)
+        await expect(jobs.leave()).rejects.toMatchObject({ errors: [timeout] })
+        if (ownership) {
+          const recovered = createJobs({
+            vault,
+            scratchRoot,
+            ownership: activationOwnership(userData, vault, new AbortController().signal)!,
+            spawn: () => {
+              throw new Error('recovery must not spawn')
+            },
+            onChange: () => {},
+            log: () => {},
+          })
+          await expect(recovered.leave()).rejects.toThrow(/Caller failure: .*timed out/)
+          expect(await readFile(join(scratchRoot, `${id}.turn`), 'utf8')).toContain('FINALIZING')
+        }
+        if (mode === 'competing file') {
+          expect(await readFile(target, 'utf8')).toBe('competing version')
+          expect(await readFile(join(root, backup, 'previous'), 'utf8')).toBe('original')
+        }
+        expect(await readFile(join(scratchRoot, id, 'note.md'), 'utf8')).toBe('agent output')
+        expect(await readFile(join(scratchRoot, id, 'zzz.md'), 'utf8')).toBe('later output')
+        await expect(readFile(join(root, 'zzz.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        publish()
+        stdout.destroy()
+        child.emit('close', 0, null)
+        const leaving = jobs.leave()
+        void leaving.catch(() => {})
+        await vi.advanceTimersByTimeAsync(20_000)
+        await leaving.catch(() => {})
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'does not turn a proven pre-GO pipe closure into a job failure',
+    async () => {
+      const root = await temp('holi-job-vault-')
+      const scratchRoot = await temp('holi-job-data-')
+      const stdout = new PassThrough()
+      const drain = vi.fn(async () => {})
+      const child = Object.assign(new ChildProcess(), { stdout, [ownedProcessDrain]: { drain } })
+      const jobs = createJobs({
+        vault: { remote: 'fixture/vault', root },
+        scratchRoot,
+        spawn: () => child,
+        onChange: () => {},
+        log: () => {},
+      })
+      const started = await jobs.start({
+        provider: scripted('/fixture/job'),
+        name: 'fixture',
+        prompt: 'go',
+        allow: [],
+      })
+      if (!started.ok) throw new Error(started.message)
+      const stop = jobs.stop(started.sessionId)
+      const closed = new Promise<void>((resolve) => stdout.once('close', resolve))
+      stdout.destroy(new Error('pipe closed before provider exec'))
+      await closed
+      const refusal = new Error('not admitted')
+      markPosixNonAdmission(refusal, Promise.resolve())
+      child.emit('error', refusal)
+      child.emit('close', null, null)
+      await expect(stop).resolves.toEqual({ ok: true })
+      expect(drain).toHaveBeenCalledOnce()
+      await jobs.leave()
+    },
+  )
+
+  it.each([
+    'missing close',
+    'missing end',
+    'release',
+    'bracket',
+    'destroyed stdout',
+    'stdout error',
+    'stdout error before rejected proof',
+    'clean tail',
+  ] as const)('requires independent physical, output and caller proof: %s', async (mode) => {
+    const root = await temp('holi-job-vault-')
+    const userData = await temp('holi-job-data-')
+    const scratchRoot = join(userData, 'jobs')
+    const vault = { remote: 'fixture/vault', root }
+    const ownership = activationOwnership(userData, vault, new AbortController().signal)
+    const stdout = new PassThrough()
+    // Explicit proof only: this child has no PID or native launch authority.
+    const proofError = new Error('physical receipt rejected')
+    let rejectProof!: (error: Error) => void
+    const proof = new Promise<void>((_, reject) => (rejectProof = reject))
+    void proof.catch(() => {})
+    const drain = vi.fn(async () => {
+      if (mode === 'stdout error before rejected proof') await proof
+    })
+    const child = Object.assign(new ChildProcess(), { stdout, [ownedProcessDrain]: { drain } })
+    const provider = scripted('/fixture/job')
+    const cause = new Error('original stdout error')
+    const log = vi.fn()
+    let resume!: () => void
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const release = vi.fn(async (_state: string, _signal?: AbortSignal) => {
+      if (mode === 'release') await gate
+    })
+    provider.release = release
+    const bracket = vi.fn(async (_id: string, edge: string) => {
+      if (mode === 'bracket' && edge === 'end') await gate
+    })
+    const lists: SessionSummary[][] = []
+    const jobs = createJobs({
+      vault,
+      scratchRoot,
+      ...(ownership && { ownership }),
+      spawn: () => child,
+      bracket,
+      onChange: (rows) => lists.push(rows),
+      log,
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const inVault = mode === 'bracket'
+      const started = await jobs.start({
+        provider,
+        name: 'fixture',
+        prompt: 'go',
+        ...(inVault ? { allow: [] } : { scope: { read: [], write: ['note.md'] } }),
+      })
+      if (!started.ok) throw new Error(started.message)
+      const id = started.sessionId
+      if (!inVault) await writeFile(join(scratchRoot, id, 'note.md'), 'scratch edit')
+      const json = JSON.stringify({ type: 'turn.completed' })
+      const readClosed = new Promise<void>((resolve) => stdout.once('close', resolve))
+      if (mode === 'destroyed stdout' || mode.startsWith('stdout error')) {
+        child.emit('spawn')
+        stdout.write(`${json}\n`)
+        stdout.destroy(mode === 'destroyed stdout' ? undefined : cause)
+      } else if (mode === 'missing end') stdout.write(`${json}\n`)
+      else stdout.end(mode === 'clean tail' ? json : `${json}\n`)
+      if (mode !== 'missing end') await readClosed
+      child.emit('exit', 0, null)
+      await vi.advanceTimersByTimeAsync(0)
+      if (mode === 'release' || mode === 'bracket') await vi.advanceTimersByTimeAsync(4_999)
+      if (mode !== 'missing close') child.emit('close', 0, null)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(drain).toHaveBeenCalledOnce()
+      if (mode === 'stdout error before rejected proof') {
+        expect(jobs.sessions()[0]?.outcome).toBeUndefined()
+        expect(release).not.toHaveBeenCalled()
+        rejectProof(proofError)
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      if (mode === 'clean tail') {
+        await vi.waitFor(() => expect(jobs.sessions()[0]?.outcome).toBe('completed'))
+        expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('scratch edit')
+        await jobs.leave()
+        return
+      }
+      const timeout = !mode.includes('stdout')
+      if (timeout) {
+        if (mode === 'release') expect(release).toHaveBeenCalledOnce()
+        if (mode === 'bracket') expect(bracket).toHaveBeenCalledWith(id, 'end')
+        await vi.advanceTimersByTimeAsync(4_999)
+        expect(jobs.sessions()[0]?.outcome).toBeUndefined()
+        expect(lists.flat().some((row) => row.outcome === 'completed')).toBe(false)
+        await vi.advanceTimersByTimeAsync(1)
+      }
+      expect(jobs.sessions()[0]?.outcome).toBe('failed')
+      const failure = await jobs.stop(id).catch((error: unknown) => error)
+      if (mode.startsWith('stdout error')) expect(failure).toBe(cause)
+      else
+        expect(failure).toMatchObject({
+          message: expect.stringMatching(
+            mode === 'destroyed stdout'
+              ? /stdout closed before end/
+              : mode === 'missing close' || mode === 'missing end'
+                ? /Output of job.*timed out/
+                : /Finalization of job.*timed out/,
+          ),
+        })
+      if (mode === 'release') expect(release.mock.calls[0]?.[1]?.reason).toBe(failure)
+      if (mode === 'stdout error before rejected proof') {
+        expect(log).toHaveBeenCalledWith(expect.stringContaining(proofError.message))
+      }
+      // A late callback or close cannot replace the outcome or retire the owner.
+      resume()
+      child.emit('close', 0, null)
+      if (mode === 'missing end') stdout.end()
+      if (mode === 'stdout error') stdout.emit('error', new Error('second stdout error'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(lists.flat().some((row) => row.outcome === 'completed')).toBe(false)
+      await expect(jobs.stop(id)).rejects.toBe(failure)
+      const expectedErrors =
+        mode === 'stdout error before rejected proof' ? [cause, proofError] : [failure]
+      await expect(jobs.leave()).rejects.toMatchObject({ errors: expectedErrors })
+      expect(await readdir(scratchRoot)).toContain(`${id}.agent`)
+      if (ownership)
+        expect(await readFile(join(scratchRoot, `${id}.turn`), 'utf8')).toContain('FINALIZING')
+      if (!inVault)
+        expect(await readFile(join(scratchRoot, id, 'note.md'), 'utf8')).toBe('scratch edit')
+      expect(await exists(join(root, 'note.md'))).toBe(false)
+      if (mode !== 'release' && mode !== 'bracket') expect(release).not.toHaveBeenCalled()
+    } finally {
+      rejectProof(proofError)
+      resume()
+      stdout.destroy()
+      child.emit('close', 0, null)
+      // All work is fake; settle leftovers without giving them a real timer.
+      const leaving = jobs.leave()
+      void leaving.catch(() => {})
+      await vi.advanceTimersByTimeAsync(20_000)
+      await leaving.catch(() => {})
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('a job in the vault', () => {
   /** A provider whose turns are `node <script>`, the first and each
    *  follow-up its own, with what each was asked kept. */
@@ -766,16 +1182,198 @@ describe('a job in the vault', () => {
     await writeFile(first, WRITES)
     await writeFile(next, followUp)
     const edges: string[] = []
+    const tracked = trackedJobProcesses(userData)
     const jobs = createJobs({
       vault: { remote: 'syv/vault', root },
       scratchRoot: join(userData, 'agent-jobs'),
       onChange: () => {},
       bracket: bracket ?? ((id, edge) => edges.push(`${edge}:${id}`)),
       killGraceMs: 200,
+      spawn: tracked.spawn,
       log: () => {},
     })
+    owned.push({ jobs, tracked })
     return { root, jobs, edges, ...turns(first, next) }
   }
+
+  it.each(['success', 'proof failure', 'missing close', 'provider hang'] as const)(
+    'uses the job stop deadline only after leased proof: %s',
+    async (mode) => {
+      // A ChildProcess-shaped emitter only: no native spawn, pid, or signal.
+      const root = await temp('holi-job-vault-')
+      const scratchRoot = await temp('holi-job-data-')
+      const cause = new Error('original job proof failure')
+      let settleProof!: () => void
+      const physical = new Promise<void>((resolve, reject) => {
+        settleProof = () => (mode === 'proof failure' ? reject(cause) : resolve())
+      })
+      const drain = vi.fn(() => physical)
+      const child = Object.assign(new ChildProcess(), { [ownedProcessDrain]: { drain } })
+      const { provider } = turns('/fixture/first', '/fixture/next')
+      let release!: () => void
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      provider.release = vi.fn(() => (mode === 'provider hang' ? released : Promise.resolve()))
+      const jobs = createJobs({
+        vault: { remote: 'syv/vault', root },
+        scratchRoot,
+        onChange: () => {},
+        spawn: () => child,
+        log: () => {},
+      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const result = await jobs.start({
+          provider,
+          name: 'deadline',
+          prompt: 'go',
+          allow: ['Write(tilbud/**)'],
+        })
+        if (!result.ok) throw new Error(result.message)
+        const id = result.sessionId
+        const stop = jobs.stop(id).catch((error: unknown) => error)
+        const stopped = vi.fn()
+        void stop.then(stopped)
+        if (mode === 'success' || mode === 'provider hang') child.emit('close', 0, null)
+        await vi.advanceTimersByTimeAsync(12_000)
+        expect(stopped).not.toHaveBeenCalled()
+        expect(drain).toHaveBeenCalledOnce()
+        expect(provider.release).not.toHaveBeenCalled()
+        settleProof()
+        if (mode === 'missing close' || mode === 'provider hang') {
+          await vi.advanceTimersByTimeAsync(4_999)
+          expect(stopped).not.toHaveBeenCalled()
+          await vi.advanceTimersByTimeAsync(1)
+        }
+        if (mode === 'success') {
+          expect(await stop).toEqual({ ok: true })
+          await jobs.leave()
+          expect(jobs.has(id)).toBe(false)
+        } else {
+          const failure = await stop
+          if (mode === 'proof failure') expect(failure).toBe(cause)
+          else
+            expect(failure).toMatchObject({
+              message: expect.stringMatching(
+                mode === 'missing close'
+                  ? /Output of job.*timed out/
+                  : /Finalization of job.*timed out/,
+              ),
+            })
+          await expect(jobs.stop(id)).rejects.toBe(failure)
+          await expect(jobs.leave()).rejects.toMatchObject({ errors: [failure] })
+          expect(jobs.has(id)).toBe(true)
+        }
+      } finally {
+        settleProof()
+        child.emit('close', 0, null)
+        release()
+        vi.useRealTimers()
+        // Leave owns final scratch deletion only on success; the fixture
+        // never had a real child and afterEach removes the exact temp paths.
+      }
+    },
+  )
+
+  it.each(['timeout', 'stop joins timeout', 'rejection'] as const)(
+    'retains natural managed history %s',
+    async (mode) => {
+      const root = await temp('holi-job-vault-')
+      const userData = await temp('holi-job-data-')
+      const scratchRoot = join(userData, 'jobs')
+      const vault = { remote: 'fixture/vault', root }
+      const ownership = activationOwnership(userData, vault, new AbortController().signal)
+      const stdout = new PassThrough()
+      const drain = vi.fn(async () => {})
+      const child = Object.assign(new ChildProcess(), { stdout, [ownedProcessDrain]: { drain } })
+      const managed = createManagedTurnBrackets()
+      const historyError = new Error('original history rejection')
+      let releaseHistory!: () => void
+      let startedHistory!: () => void
+      const entered = new Promise<void>((resolve) => (startedHistory = resolve))
+      const hold = new Promise<void>((resolve) => (releaseHistory = resolve))
+      const onTurnEnd = vi.fn()
+      const coordinator = createTurnCoordinator({
+        vault: () => ({
+          root,
+          head: async () => 'base',
+          commitNow: async () => 'end',
+          pauseSync: () => () => {},
+          claimManagedTurn: managed.claimManagedTurn,
+        }),
+        turnLogFor: () => ({
+          list: async () => [],
+          append: async () => {
+            startedHistory()
+            await hold
+            if (mode === 'rejection') throw historyError
+          },
+        }),
+        onTurnEnd,
+        log: () => {},
+      })
+      const jobs = createJobs({
+        vault,
+        scratchRoot,
+        ...(ownership && { ownership }),
+        spawn: () => child,
+        beginManagedTurn: (id) => managed.begin(id, (id, edge) => coordinator[edge](id)),
+        onChange: () => {},
+        log: () => {},
+      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const started = await jobs.start({
+          provider: scripted('/fixture/job'),
+          name: 'fixture',
+          prompt: 'go',
+          allow: [],
+        })
+        if (!started.ok) throw new Error(started.message)
+        const id = started.sessionId
+        const eof = new Promise<void>((resolve) => stdout.once('end', resolve))
+        stdout.end('{"type":"turn.completed"}\n')
+        await eof
+        child.emit('exit', 0, null)
+        child.emit('close', 0, null)
+        await entered
+        await vi.advanceTimersByTimeAsync(4_999)
+        expect(jobs.sessions()[0]).toMatchObject({ state: 'working' })
+        const stopping =
+          mode === 'stop joins timeout' ? jobs.stop(id).catch((error: unknown) => error) : undefined
+        if (mode === 'rejection') releaseHistory()
+        await vi.advanceTimersByTimeAsync(1)
+        const message =
+          mode === 'rejection' ? historyError.message : /Finalization of job.*timed out/
+        expect(jobs.sessions()[0]).toMatchObject({
+          state: 'idle',
+          outcome: 'failed',
+          error: expect.stringMatching(message),
+        })
+        const failure = await jobs.stop(id).catch((error: unknown) => error)
+        if (stopping !== undefined) expect(await stopping).toBe(failure)
+        if (mode === 'rejection') expect(failure).toBe(historyError)
+        await expect(jobs.stop(id)).rejects.toBe(failure)
+        await expect(jobs.leave()).rejects.toMatchObject({ errors: [failure] })
+        releaseHistory()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(onTurnEnd).not.toHaveBeenCalled()
+        expect(jobs.sessions()[0]).toMatchObject({ id, outcome: 'failed' })
+        if (ownership)
+          expect(await readFile(join(scratchRoot, `${id}.turn`), 'utf8')).toContain('FINALIZING')
+        await expect(jobs.stop(id)).rejects.toBe(failure)
+        await expect(jobs.leave()).rejects.toMatchObject({ errors: [failure] })
+      } finally {
+        releaseHistory()
+        stdout.destroy()
+        await vi.advanceTimersByTimeAsync(0)
+        await jobs.leave().catch(() => {})
+        await coordinator.drain().catch(() => {})
+        vi.useRealTimers()
+      }
+    },
+  )
 
   it('keeps stop draining through bracket persistence after process close', async () => {
     let reachEnd!: () => void
@@ -799,10 +1397,15 @@ describe('a job in the vault', () => {
     await reachedEnd
     let stopped = false
     const stopping = jobs.stop(id).then(() => (stopped = true))
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(stopped).toBe(false)
-    expect(jobs.sessions().find((row) => row.id === id)).toMatchObject({ state: 'idle' })
-    finishEnd()
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(stopped).toBe(false)
+      const row = jobs.sessions().find((row) => row.id === id)
+      expect(row?.state).toBe('working')
+      expect(row?.outcome).toBeUndefined()
+    } finally {
+      finishEnd()
+    }
     await stopping
     await jobs.leave()
   })
@@ -816,17 +1419,19 @@ describe('a job in the vault', () => {
       allow: ['Write(tilbud/**)'],
     })
     if (!started.ok) throw new Error(started.message)
-    await vi.waitFor(() => {
-      const row = jobs.sessions().find((session) => session.id === started.sessionId)
-      if (row?.outcome === undefined) throw new Error('still running')
-    })
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await vi.waitFor(
+      () => {
+        const row = jobs.sessions().find((session) => session.id === started.sessionId)
+        if (row?.outcome === undefined) throw new Error('still running')
+      },
+      { timeout: 5_000 },
+    )
     await jobs.stop(started.sessionId)
     expect(() => jobs.message(started.sessionId, 'too late')).toThrow('That job has ended.')
     await jobs.leave()
   })
 
-  it('preserves failed leave ownership and retries after a late bracket close', async () => {
+  it('retains the original leave failure after a late bracket close', async () => {
     let reachEnd!: () => void
     let finishEnd!: () => void
     const reachedEnd = new Promise<void>((resolve) => (reachEnd = resolve))
@@ -845,12 +1450,26 @@ describe('a job in the vault', () => {
     })
     if (!started.ok) throw new Error(started.message)
     await reachedEnd
-    await expect(jobs.leave()).rejects.toThrow('did not drain')
-    expect(jobs.has(started.sessionId)).toBe(true)
-    finishEnd()
+    let cause: unknown
+    try {
+      const failure = await jobs.leave().catch((error: unknown) => error)
+      expect(failure).toBeInstanceOf(AggregateError)
+      expect((failure as AggregateError).errors).toHaveLength(1)
+      cause = (failure as AggregateError).errors[0]
+      expect(cause).toMatchObject({
+        message: expect.stringMatching(/Finalization of job.*timed out/),
+      })
+      expect(jobs.has(started.sessionId)).toBe(true)
+    } finally {
+      finishEnd()
+    }
     await vi.waitFor(() => expect(jobs.sessions()[0]?.state).toBe('idle'))
-    await jobs.leave()
-    expect(jobs.has(started.sessionId)).toBe(false)
+    await expect(jobs.stop(started.sessionId)).rejects.toBe(cause)
+    const retry = await jobs.leave().catch((error: unknown) => error)
+    expect(retry).toBeInstanceOf(AggregateError)
+    expect((retry as AggregateError).errors).toHaveLength(1)
+    expect((retry as AggregateError).errors[0]).toBe(cause)
+    expect(jobs.has(started.sessionId)).toBe(true)
   })
 
   it('writes only named folders and reports the latest cumulative usage total', async () => {
@@ -1388,11 +2007,17 @@ describe('a fenced session', () => {
     expect(await exists(join(root, 'notes/Plan.app/.env'))).toBe(false)
     expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Ship it\n')
 
-    // A later turn's change, then the session exits: copied, and the folder goes.
+    // Exit copies the last change; only the caller retires the scratch and state.
     await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Shipped</h1>')
-    fence.exited()
-    await vi.waitFor(() => expect(exists(join(fence.dir, 'notes/Plan.md'))).resolves.toBe(false))
+    await fence.exited()
     expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Shipped</h1>')
+    expect(await readFile(join(fence.dir, 'notes/Plan.app/index.html'), 'utf8')).toBe(
+      '<h1>Shipped</h1>',
+    )
+    await expect(readdir(fence.state)).resolves.toEqual([])
+    await fence.retire?.()
+    await expect(access(fence.dir)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(fence.state)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('never writes over an app that lands in the vault meanwhile', async () => {
@@ -1402,7 +2027,7 @@ describe('a fenced session', () => {
     await writeFile(join(fence.dir, 'notes/Plan.app/app.yaml'), 'description: The plan\n')
     await mkdir(join(root, 'notes/Plan.app'), { recursive: true })
     await writeFile(join(root, 'notes/Plan.app/app.yaml'), 'description: Theirs\n')
-    await fence.turnEnded()
+    await expect(fence.turnEnded()).rejects.toThrow('did not copy back notes/Plan.app')
     expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
       'description: Theirs\n',
     )
@@ -1427,7 +2052,7 @@ describe('a fenced session', () => {
     // Now the agent changes what was edited: nothing of the turn is written.
     await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Three</h1>')
     await writeFile(join(fence.dir, 'notes/Plan.app/app.yaml'), 'description: Mine\n')
-    await fence.turnEnded()
+    await expect(fence.turnEnded()).rejects.toThrow('notes/Plan.app/app.yaml changed')
     expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Two</h1>')
     expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
       'description: Theirs\n',
@@ -1449,8 +2074,7 @@ describe('a fenced session', () => {
     await fence.turnEnded()
     await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Second</h1>')
     inject = true
-    const result = await fence.turnEnded()
-    expect(result.error).toMatch(/did not copy back notes\/Plan.app\/index.html/)
+    await expect(fence.turnEnded()).rejects.toThrow('did not copy back notes/Plan.app/index.html')
     expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Theirs</h1>')
     expect((await readdir(join(root, 'notes/Plan.app'))).sort()).toEqual(['app.yaml', 'index.html'])
   })
@@ -1471,8 +2095,7 @@ describe('a fenced session', () => {
     try {
       await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Second</h1>')
       inject = true
-      const result = await fence.turnEnded()
-      expect(result.error).toMatch(/did not copy back notes\/Plan.app\/index.html/)
+      await expect(fence.turnEnded()).rejects.toThrow('did not copy back notes/Plan.app/index.html')
       expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe(
         '<h1>Theirs</h1>',
       )
@@ -1492,7 +2115,7 @@ describe('a fenced session', () => {
     expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Theirs\n')
     // The next turn changes its copy: still not written over theirs.
     await writeFile(join(fence.dir, 'notes/Plan.md'), 'Mine\n')
-    await fence.turnEnded()
+    await expect(fence.turnEnded()).rejects.toThrow('notes/Plan.md changed')
     expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Theirs\n')
   })
 
@@ -1516,18 +2139,24 @@ describe('a fenced session', () => {
     const { fence } = await fencedRig(release)
     expect(fence.state).toBe(`${fence.dir}.agent`)
     expect((await readdir(fence.state)).length).toBe(0)
-    fence.exited()
-    await vi.waitFor(() => expect(release).toHaveBeenCalledWith(fence.state))
-    await vi.waitFor(() => expect(readdir(fence.state)).rejects.toThrow())
+    await fence.exited()
+    expect(release).toHaveBeenCalledWith(fence.state, undefined)
+    await expect(readdir(fence.state)).resolves.toEqual([])
+    expect(fence.retire).toBeTypeOf('function')
+    await fence.retire?.()
+    await expect(readdir(fence.state)).rejects.toThrow()
   })
 
   it('fails its drain and retains ownership when provider state release fails', async () => {
+    const cause = new Error('provider state is busy')
     const release = vi.fn(async () => {
-      throw new Error('provider state is busy')
+      throw cause
     })
     const { fenced, fence } = await fencedRig(release)
-    await expect(fence.exited()).rejects.toThrow(/Could not release agent state/)
-    await expect(fenced.leave()).rejects.toThrow(/Fenced PTYs did not exit/)
+    await expect(fence.exited()).rejects.toBe(cause)
+    await expect(fenced.leave()).rejects.toMatchObject({ errors: [cause] })
+    await expect(readdir(fence.state)).resolves.toEqual([])
+    expect(release).toHaveBeenCalledOnce()
   })
 
   it('opens no session once the vault is being left', async () => {
@@ -1548,7 +2177,9 @@ describe('a fenced session', () => {
   })
 
   it('says why when its session does not start', async () => {
-    const { fenced, own, fence } = await fencedRig()
+    const { fenced, own, fence, userData } = await fencedRig()
+    const scratchRoot = join(userData, 'agent-fenced')
+    const originalEntries = (await readdir(scratchRoot)).sort()
     own.start.mockResolvedValueOnce({ ok: false, message: 'Codex is not installed.' } as never)
     const res = await fenced.start({
       provider: { id: 'codex' } as never,
@@ -1557,7 +2188,11 @@ describe('a fenced session', () => {
       scope: SCOPE,
     })
     expect(res).toEqual({ ok: false, message: 'Codex is not installed.' })
+    // The non-launch discarded only its own folders; the first caller still owns its fence.
     await fence.exited()
+    expect((await readdir(scratchRoot)).sort()).toEqual(originalEntries)
+    await fence.retire?.()
     await fenced.leave()
+    await expect(access(scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

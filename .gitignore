@@ -9,3 +9,5 @@ release/
 .tmp/
 .dash/
 .brainstorm/
+
+/apps/desktop/build/native/

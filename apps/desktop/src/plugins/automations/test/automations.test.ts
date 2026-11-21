@@ -8,12 +8,16 @@
  * run closes when it is done and not before. The timing rules and the file's
  * grammar are `packages/shared`'s tests.
  */
+import { ChildProcess } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyVaultSnapshot, type AgentProviderId } from '@holi/shared'
-import { jsonFileStore } from '../../../main/plugin-api'
+import { jsonFileStore, ownedProcessDrain } from '../../../main/plugin-api'
+import { readJobEvent } from '../../agent/main/codex'
+import { createJobs } from '../../agent/main/host/jobs'
 import { scheduleCapabilities } from '../main/capabilities'
 import {
   createScheduler,
@@ -58,7 +62,7 @@ let workLog: string[]
 
 const vault = () => ({ remote: REMOTE, root })
 
-function make(): Scheduler {
+function make(sessions?: Partial<SchedulerDeps['sessions']>): Scheduler {
   const deps: SchedulerDeps = {
     store: jsonFileStore(join(data, 'schedules.json'), parseSchedulesFile),
     provider: async () => selectedProvider,
@@ -83,6 +87,7 @@ function make(): Scheduler {
           turnEnd = null
         }
       },
+      ...sessions,
     },
     emit: (_remote, name) => emitted.push(name),
     holi: async (_vault, id) => {
@@ -98,7 +103,7 @@ function make(): Scheduler {
     // The tests tick by hand.
     tickMs: 1_000_000_000,
     firstTickMs: 1_000_000_000,
-    closePollMs: 0,
+    closePollMs: sessions ? 20 : 0,
     log: () => {},
   }
   return createScheduler(deps)
@@ -498,6 +503,107 @@ describe('closing a run when it is done', () => {
     expect(workLog.join('\n')).toContain('failed: Codex exited with code 1: sandbox denied')
     expect(workLog.join('\n')).not.toMatch(/: done/)
   })
+
+  it.each([
+    ['failed exit', 3, { type: 'turn.completed' }, 'Codex exited with code 3.'],
+    [
+      'failed JSONL',
+      0,
+      { type: 'turn.failed', error: { message: 'sandbox denied' } },
+      'sandbox denied',
+    ],
+  ] as const)(
+    'records %s as failed after the Codex end bracket settles',
+    async (_mode, code, event, error) => {
+      selectedProvider = 'codex'
+      const stdout = new PassThrough()
+      const child = Object.assign(new ChildProcess(), {
+        stdout,
+        [ownedProcessDrain]: { drain: async () => {} },
+      })
+      let finishEnd!: () => void
+      let observe!: (rows: SessionSummary[]) => void
+      const persistEnd = new Promise<void>((resolve) => (finishEnd = resolve))
+      const firstLook = new Promise<SessionSummary[]>((resolve) => (observe = resolve))
+      let endEmitted = false
+      const jobs = createJobs({
+        vault: vault(),
+        scratchRoot: join(data, 'jobs'),
+        spawn: () => child,
+        onChange: () => {},
+        log: () => {},
+        bracket(id, edge) {
+          if (edge !== 'end') return
+          endEmitted = true
+          turnEnd!(id, 0)
+          return persistEnd
+        },
+      })
+      scheduler.dispose()
+      scheduler = make({
+        launch: (args) =>
+          jobs.start({
+            name: args.name,
+            prompt: args.prompt,
+            allow: args.allow ?? [],
+            provider: {
+              id: 'codex',
+              label: 'Codex',
+              notInstalled: 'missing',
+              installed: () => true,
+              configure: async () => ({ dir: data }),
+              terminal: () => null,
+              capabilities: {
+                jobs: {
+                  command: () => ({ bin: 'never-spawned', args: [], env: {} }),
+                  event: readJobEvent,
+                },
+              },
+            },
+          }),
+        sessions() {
+          const rows = jobs.sessions()
+          if (endEmitted) observe(rows)
+          return rows
+        },
+        async stop(id) {
+          stopped.push(id)
+          return jobs.stop(id)
+        },
+      })
+      scheduler.attach(vault())
+      try {
+        const id = await started()
+        expect(id).toBeDefined()
+        const closed = new Promise<void>((resolve) => stdout.once('close', resolve))
+        stdout.end(`${JSON.stringify(event)}\n`)
+        await closed
+        child.emit('close', code, null)
+        const [first] = await firstLook
+        expect(first).toMatchObject({ id, state: 'working' })
+        expect(first?.outcome).toBeUndefined()
+        expect(stopped).toEqual([])
+        expect(await latest()).toMatchObject({ outcome: 'started' })
+        finishEnd()
+        await vi.waitFor(async () => {
+          expect(await latest()).toMatchObject({
+            jobId: id,
+            outcome: 'failed',
+            message: error,
+            finishedAt: expect.any(String),
+          })
+          expect(stopped).toEqual([id])
+          expect(workLog.join('\n')).toContain(`failed: ${error}`)
+          expect(workLog.join('\n')).not.toMatch(/: done/)
+        })
+      } finally {
+        finishEnd()
+        stdout.destroy()
+        child.emit('close', code, null)
+        await jobs.leave()
+      }
+    },
+  )
 
   it('leaves a run its Stop says is paused on background work, until a Stop with none', async () => {
     const id = await started()

@@ -114,7 +114,7 @@ jobs:
           cache: pnpm
       - name: Install project dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Run pinned native producer and host proof
+      - name: Build the POSIX launch helper and run pinned producer and host proof
         env:
           HOLI_CODEX_EVIDENCE: ${{ runner.temp }}/codex-exec-producer/evidence.json
         run: node scripts/codex-exec-producer.mjs
@@ -148,7 +148,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/pi-install"
           npm install --prefix "$RUNNER_TEMP/pi-install" --ignore-scripts --no-audit --no-fund '@earendil-works/pi-coding-agent@1.5.2'
-      - name: Run native producer probe
+      - name: Build the POSIX launch helper and run native producer probe
         run: |
           mkdir -p "$RUNNER_TEMP/pi-native-evidence"
           node scripts/pi-rpc-producer.mjs "$RUNNER_TEMP/pi-install/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" 1.5.2 > "$RUNNER_TEMP/pi-native-evidence/result.json"

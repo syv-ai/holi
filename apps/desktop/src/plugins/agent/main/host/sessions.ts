@@ -204,7 +204,10 @@ interface Current {
   seeded: boolean
 }
 
-export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
+export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
+  /** Reserve an open PTY turn until its own physical proof, not the listing. */
+  protectPtyTurn(id: string): (() => void) | undefined
+} {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
   const provider = deps.provider
   const bg = provider.capabilities.background
@@ -1148,9 +1151,20 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const operations = createOwnedOperationTracker(
     () => !admissionClosed && !deps.activationSignal?.aborted && leaving === null,
   )
-  return admitAgentSessions(
-    api,
-    operations,
-    () => admissionClosed || deps.activationSignal?.aborted === true,
-  )
+  return {
+    ...admitAgentSessions(
+      api,
+      operations,
+      () => admissionClosed || deps.activationSignal?.aborted === true,
+    ),
+    protectPtyTurn(id) {
+      if (!bracketed.has(id)) return
+      const release = coordinator.protectPtyTurn(id)
+      if (!release) return
+      return () => {
+        bracketed.delete(id)
+        release()
+      }
+    },
+  }
 }

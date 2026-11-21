@@ -12,6 +12,7 @@
  * Electron loads inside `activate`, so the plugin stays importable under
  * plain Node in the tests.
  */
+import { randomUUID } from 'node:crypto'
 import { copyFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
@@ -33,12 +34,16 @@ import { isIntegration, parseHarnessFile } from './harness/record'
 import { acquireHarnessRegistry, withPreset } from './harness/registry'
 import { installSignalCommand, registerSignalRoute } from './harness/signal'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
+import { bounded } from './host/bounded'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
-import { createFencedSessions } from './host/fenced'
+import { createFencedSessions, recoverFencedScratch } from './host/fenced'
+import { activationOwnership } from './host/ownership'
+import { withPtyOwnership } from './host/pty'
 import { agentScratchRoots } from './host/scratch-roots'
 import { createJobs } from './host/jobs'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
+import { createManagedTurnBrackets } from './host/turn-coordinator'
 import { openTurnLog } from './host/turn-log'
 import { createSessionLog } from './host/session-log'
 import { worktreeEnd } from './host/worktree-end'
@@ -59,6 +64,17 @@ export const agentMain: MainPlugin = {
     const { app, nativeTheme } = await import('electron')
     if (ctx.activationSignal.aborted)
       throw new Error(`agent activation for ${ctx.remote} was cancelled`)
+    const vault = { remote: ctx.remote, root: ctx.root }
+    const scratchRoots = await agentScratchRoots(ctx.userData, vault)
+    // Single Main excludes another controller; PluginHost serializes replacement
+    // of this Vault's generation and never replaces one with failed live drain.
+    // Check before exposing capabilities or instantiating hosts that sweep.
+    const ownership = activationOwnership(ctx.userData, vault, ctx.activationSignal)
+    if (ownership) {
+      ownership.recover('pty')
+      ownership.recover('pi')
+      recoverFencedScratch(ownership, scratchRoots.fenced)
+    }
     // This machine's agents: the built-in three, each reading its preset as
     // it runs, and the ones a person added in Settings
     // (docs/features/agent-sessions.md, Harnesses).
@@ -134,7 +150,23 @@ export const agentMain: MainPlugin = {
         console.error('[agent] holi-signal:', err),
       )
       assertActive()
-      const terminals = createAgentTerminals({ emit: ctx.emit })
+      const terminals = createAgentTerminals({
+        activationSignal: ctx.activationSignal,
+        emit(remote, name, payload) {
+          if (!ctx.activationSignal.aborted) ctx.emit(remote, name, payload)
+        },
+      })
+      if (ownership) {
+        const open = terminals.open
+        terminals.open = (args) =>
+          withPtyOwnership(
+            {
+              cwd: args.cwd,
+              allocate: (proof) => ownership.allocate('pty', args.attach ?? randomUUID(), proof),
+            },
+            () => open(args),
+          )
+      }
       activationOwners.push(() => terminals.closeAll())
       const sessionLog = createSessionLog(ctx.log)
       // Capabilities and provider hooks belong to this activation's vault, not
@@ -162,6 +194,7 @@ export const agentMain: MainPlugin = {
         sessionLog.sessions(all)
       }
 
+      const managedTurns = createManagedTurnBrackets()
       const sessions = createAgentSessions({
         activationSignal: ctx.activationSignal,
         emit: (remote, name, payload) => {
@@ -192,7 +225,7 @@ export const agentMain: MainPlugin = {
       activationOwners.push(() => sessions.leave({ stopSessions: false }))
       // Fix the session host to this activation's vault before exposing any
       // provider hook routes; early hook reports queue against this owner.
-      await sessions.ensure(ctx)
+      await sessions.ensure({ ...ctx, claimManagedTurn: managedTurns.claimManagedTurn })
       assertActive()
       // Pi's RPC runs find `pi` and its environment as its terminals do: the
       // preset's program and variables, its arguments being a terminal's alone.
@@ -200,19 +233,23 @@ export const agentMain: MainPlugin = {
         resolveBin: () => harnesses.resolve('pi'),
         env: () => harnesses.get('pi')?.env ?? {},
       })
-      const piBackground = createPiBackground({
+      const pi = createPiBackground({
         bin: piRuns.bin,
         env: piRuns.env,
         binDir: ctx.binDir,
         activationSignal: ctx.activationSignal,
+        ...(ownership && { allocateOwnership: (id, proof) => ownership.allocate('pi', id, proof) }),
         bracket: (id, edge) => sessions.bracket(id, edge),
+        ...(process.platform !== 'win32' && {
+          beginManagedTurn: (id: string) => managedTurns.begin(id, sessions.bracket),
+        }),
         changed: () => {
-          piSessions = piBackground.sessions()
+          piSessions = pi.sessions()
           pushSessions()
         },
       })
-      piBackground.setVault(ctx.remote, ctx.root)
-      activationOwners.push(() => piBackground.leave())
+      pi.setVault(ctx.remote, ctx.root)
+      activationOwners.push(() => pi.leave())
       const ptyHistory = jsonFileStore(join(ctx.userData, 'agent-pty-history.json'), parsePastFile)
       const ptySessions = createPtySessions({
         vault: { remote: ctx.remote, root: ctx.root },
@@ -228,6 +265,7 @@ export const agentMain: MainPlugin = {
         terminals,
         // Its turns pause sync and are recorded like a background session's.
         bracket: (id, edge) => sessions.bracket(id, edge),
+        protectPtyTurn: sessions.protectPtyTurn,
         binDir: ctx.binDir,
         onChange: (list) => {
           own = list
@@ -246,14 +284,19 @@ export const agentMain: MainPlugin = {
       // folder of their own, or in the vault, whose turns pause sync and are
       // recorded like a session's. Scratch is private to this canonical vault
       // context, so startup recovery and leave cannot reach another vault.
-      const vault = { remote: ctx.remote, root: ctx.root }
-      const scratchRoots = await agentScratchRoots(ctx.userData, vault)
       assertActive()
+      // The job host must recover('jobs', ...) before any POSIX startup sweep
+      // when it takes up this registry, then link each individual launch.
       const jobs = createJobs({
         vault,
         scratchRoot: scratchRoots.jobs,
+        ...(ownership && { ownership }),
         activationSignal: ctx.activationSignal,
-        bracket: (id, edge) => sessions.bracket(id, edge),
+        // Windows retains the legacy edge-only, best-effort history bracket.
+        bracket: sessions.bracket,
+        ...(process.platform !== 'win32' && {
+          beginManagedTurn: (id: string) => managedTurns.begin(id, sessions.bracket),
+        }),
         onChange: (list) => {
           jobRows = list
           pushSessions()
@@ -265,11 +308,15 @@ export const agentMain: MainPlugin = {
       const fenced = createFencedSessions({
         vault,
         scratchRoot: scratchRoots.fenced,
+        ...(ownership && { ownership }),
         own: ptySessions,
         activationSignal: ctx.activationSignal,
         copyBack: jobs.copyBack,
       })
-      activationOwners.unshift(() => fenced.closing())
+      activationOwners.unshift(
+        () => terminals.joinFailedStarts(),
+        () => fenced.closing(),
+      )
       activationOwners.push(() => fenced.leave())
       // What the agent and Holi want the person to see: an entry in the
       // vault's inbox, and a banner while Holi is out of sight.
@@ -298,7 +345,7 @@ export const agentMain: MainPlugin = {
           commitNow: () => ctx.commitNow(),
           trackMutation,
           captureFinalization: () => ctx.captureFinalization(),
-          pi: piBackground,
+          pi,
           defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
         }),
         ...inboxCapabilities({ inbox, liveRemote, trackMutation }),
@@ -419,7 +466,7 @@ export const agentMain: MainPlugin = {
       ctx.guardQuit(() => {
         const busy = [
           ...sessions.sessions(),
-          ...piBackground.sessions(),
+          ...pi.sessions(),
           ...ptySessions.sessions(),
           ...jobs.sessions(),
         ].filter((s) => s.state !== 'idle')
@@ -475,15 +522,18 @@ export const agentMain: MainPlugin = {
         for (const cleanup of [
           stopNeedsYou,
           () => sweeping,
+          // Invalidation already revoked native PTY admission and started drain.
+          // Join uncertain starts before waiting for fenced staging to finish.
+          () => terminals.joinFailedStarts(),
           () => fenced.closing(),
           () => ptySessions.leave(),
-          () => piBackground.leave(),
+          () => pi.leave(),
           () => fenced.leave(),
           () => jobs.leave(),
           () => sessions.leave(),
           () => terminals.closeAll(),
           () => harnesses.dispose(),
-          () => drainOwned(),
+          () => bounded(drainOwned(), 'Agent callbacks'),
         ]) {
           try {
             await cleanup()

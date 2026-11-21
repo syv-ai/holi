@@ -361,7 +361,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): JobsProvider {
         env,
       }
     },
-    release: (state) => releaseCodexHome(state, person()),
+    release: (state, signal) => releaseCodexHome(state, person(), signal),
     capabilities: {
       turns: { routes: registerCodexRoutes },
       fenced: 'sandbox',

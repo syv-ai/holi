@@ -192,14 +192,14 @@ interface Started {
     phase: 'active' | 'draining' | 'closed'
     established: boolean
     superseded: boolean
+    drainFailed: boolean
     events: ReturnType<typeof pluginEvents>
     cancel: () => void
   }
   establish(): void
   closeEvents(): void
-  /** What it registered through its context and has not undone yet,
-   *  undone after its disposer. */
-  undos: Set<() => void>
+  /** Outstanding undos and whether they must be retained on owner failure. */
+  undos: Map<() => void, boolean>
   cancel: () => void
 }
 
@@ -222,7 +222,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     generation: number
     /** Supersedes configuration work synchronously, before settings reads. */
     configuration: number
-    holds: { reasons: Map<symbol, string> } | null
+    holds: { reasons: Map<() => void, string> } | null
     stopping: Map<string, boolean>
     invalidated: Set<string>
     leases: Set<Started['lease']>
@@ -439,19 +439,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     }
   }
 
-  function pauseSync(vault: OpenVault, state: VaultRun, reason: string): () => void {
-    const remote = vault.remote
-    const mine = (state.holds ??= { reasons: new Map() })
-    const key = Symbol(reason)
-    mine.reasons.set(key, reason)
-    vault.pause(reason)
-    return () => {
-      if (!mine.reasons.delete(key)) return
-      if (state.holds !== mine || runsByRemote.get(remote) !== state) return
-      const still = [...mine.reasons.values()].at(-1)
-      if (still === undefined) vault.resume()
-      else vault.pause(still)
-    }
+  function latchTeardownFailure(state: VaultRun, error: unknown): unknown {
+    return (state.teardownFailure ??=
+      error ?? new Error('plugin teardown failed', { cause: error }))
   }
 
   /** What runs in the vault, providers before what requires them; otherwise
@@ -491,6 +481,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       phase: 'active',
       established: false,
       superseded: false,
+      drainFailed: false,
       events: events(id, remote, root, () => lease.phase !== 'closed'),
       cancel: () => {
         // Cancellation revokes ordinary work once. A later stop must not
@@ -522,23 +513,37 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         (lease.phase === 'active' || (operation.ownerLease === lease && lease.phase === 'draining'))
       )
     }
-    const undos = new Set<() => void>()
-    // Each undo runs once, and leaves the set when it does: a sync hold taken
+    const undos = new Map<() => void, boolean>()
+    // Each undo runs once, and leaves the map when it does: a sync hold taken
     // every turn must not pile up for the life of the vault.
-    const keep = (undo: () => void): (() => void) => {
+    const keep = (undo: () => void, retainOnFailure = false): (() => void) => {
       const once = (): void => {
         if (!undos.delete(once)) return
         undo()
       }
-      undos.add(once)
+      undos.set(once, retainOnFailure)
       return once
+    }
+    const holdSync = (reason: string, retainOnFailure?: boolean): (() => void) => {
+      const mine = (state.holds ??= { reasons: new Map() })
+      const release = keep(() => {
+        if (!mine.reasons.delete(release)) return
+        if (state.holds !== mine || runsByRemote.get(remote) !== state) return
+        const still = [...mine.reasons.values()].at(-1)
+        if (still === undefined) vault.resume()
+        else vault.pause(still)
+      }, retainOnFailure)
+      mine.reasons.set(release, reason)
+      vault.pause(reason)
+      return release
     }
     const ctx: PluginCtx = {
       activationSignal: controller.signal,
       invalidateActivation: lease.cancel,
       reportDrainFailure: (failure) => {
+        lease.drainFailed = true
+        latchTeardownFailure(state, failure)
         lease.cancel()
-        state.teardownFailure ??= failure
       },
       remote,
       root,
@@ -628,16 +633,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(deps.frameOrigin(origin))
       },
-      pauseSync: (reason) => {
+      pauseSync: (reason, options) => {
         if (!valid()) throw new Error(`${remote} plugin context is no longer active`)
-        return keep(pauseSync(vault, state, reason))
+        return holdSync(reason, options?.retainOnFailure)
       },
-      pauseSyncAndDrain: async (reason) => {
+      pauseSyncAndDrain: async (reason, options) => {
         if (!valid()) throw new Error(`${remote} plugin context is no longer active`)
-        const release = keep(pauseSync(vault, state, reason))
+        // A pending acquisition cannot have admitted a writer. Protect the
+        // hold only once the drain succeeded and the owner can use the release.
+        const release = holdSync(reason)
         try {
           await vault.drainSync()
           if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+          if (options?.retainOnFailure) undos.set(release, true)
           return release
         } catch (error) {
           release()
@@ -919,15 +927,15 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           plugin: id,
         })
       }
-      const cleanupFailures = undoAll(id, undos)
-      if (cleanupFailures.length > 0) {
-        const failure = new AggregateError(
-          [err, ...cleanupFailures],
-          `plugin ${id} activation cleanup failed`,
+      const cleanupFailures = undoAll(id, undos, true)
+      if (cleanupFailures.length > 0)
+        throw latchTeardownFailure(
+          state,
+          new AggregateError([err, ...cleanupFailures], `plugin ${id} activation cleanup failed`),
         )
-        state.teardownFailure ??= failure
-        throw failure
-      }
+      // A protected writer hold still outstanding after failed startup is
+      // unproven, not a recoverable configuration failure.
+      if (undos.size > 0) throw latchTeardownFailure(state, err)
       if (state.teardownFailure !== null) throw state.teardownFailure
       return null
     }
@@ -942,9 +950,14 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     }
   }
 
-  function undoAll(id: string, undos: ReadonlySet<() => void>): unknown[] {
+  function undoAll(
+    id: string,
+    undos: ReadonlyMap<() => void, boolean>,
+    ownerFailed: boolean,
+  ): unknown[] {
     const failures: unknown[] = []
-    for (const undo of [...undos].reverse()) {
+    for (const [undo, retainOnFailure] of [...undos].reverse()) {
+      if (ownerFailed && retainOnFailure) continue
       try {
         undo()
       } catch (err) {
@@ -961,10 +974,14 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     s.lease.cancel()
     s.lease.phase = 'draining'
     const failures: unknown[] = []
+    let disposerFailed = false
     try {
       try {
+        // Join the owner's phase deadlines. An outer race here would latch a
+        // generic error before the disposer can report native teardown proof.
         await Promise.resolve().then(s.dispose)
       } catch (err) {
+        disposerFailed = true
         failures.push(err)
         console.error(`[plugins] ${s.id} stop failed:`, err)
       }
@@ -977,16 +994,21 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       s.lease.phase = 'closed'
       s.lease.events.cancelPending()
       s.closeEvents()
-      failures.push(...undoAll(s.id, s.undos))
+      failures.push(...undoAll(s.id, s.undos, disposerFailed || s.lease.drainFailed))
       state.leases.delete(s.lease)
       state.stopping.delete(s.id)
     }
-    if (failures.length > 0) {
-      const failure = new AggregateError(failures, `plugin ${s.id} teardown failed`)
-      state.teardownFailure ??= failure
-      throw failure
-    }
+    if (s.lease.drainFailed) throw state.teardownFailure
+    if (failures.length > 0) throw new AggregateError(failures, `plugin ${s.id} teardown failed`)
     state.invalidated.delete(s.id)
+  }
+
+  async function stopDuringReconcile(s: Started, state: VaultRun): Promise<void> {
+    try {
+      await stopOne(s, state)
+    } catch (error) {
+      throw latchTeardownFailure(state, error)
+    }
   }
 
   async function stopNow(remote: string, state: VaultRun): Promise<void> {
@@ -1013,10 +1035,12 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     for (const entry of eventListeners) if (entry.remote === remote) eventListeners.delete(entry)
     for (const key of heard.keys()) if (key.startsWith(`${remote}/`)) heard.delete(key)
     snapshots.delete(remote)
-    state.holds = null
+    if (state.teardownFailure !== null) throw state.teardownFailure
     if (failures.length > 0)
       throw new AggregateError(failures, `plugins in ${remote} failed to stop`)
-    if (state.teardownFailure !== null) throw state.teardownFailure
+    // The hold stack and release handles belong to this lifetime while a
+    // failure is sticky. Only a completed stop can discard the stack.
+    state.holds = null
   }
 
   async function reconcileNow(
@@ -1030,11 +1054,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     if (state === undefined) {
       state = makeRun(vault)
       runsByRemote.set(remote, state)
-    } else {
-      state.vault = vault
     }
     if (state.generation !== scheduledGeneration || state.configuration !== configuration) return
     if (state.teardownFailure !== null) throw state.teardownFailure
+    state.vault = vault
     if (why === 'open') {
       // This job is behind the prior stop in the remote's queue. Only an
       // explicit open can begin a new lifetime after cleanup is proven.
@@ -1059,7 +1082,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     for (const s of [...state.started].reverse()) {
       if (want.has(s.id) && !state.invalidated.has(s.id)) continue
       state.started = state.started.filter((x) => x !== s)
-      await stopOne(s, state)
+      await stopDuringReconcile(s, state)
     }
     if (state.closed || state.configuration !== configuration || state.generation !== activation)
       return
@@ -1098,7 +1121,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         state.parked ||
         (s !== null && state.invalidated.has(id))
       ) {
-        if (s !== null) await stopOne(s, state)
+        if (s !== null) await stopDuringReconcile(s, state)
         // Another reconcile may have cancelled established dependencies while
         // this startup yielded. Their disposers still own finalization authority.
         if (
@@ -1165,8 +1188,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     reconcile: async (vault, why) => {
       const state = runsByRemote.get(vault.remote) ?? makeRun(vault)
       runsByRemote.set(vault.remote, state)
-      state.vault = vault
       if (why !== 'open' && state.closed) return
+      if (state.teardownFailure !== null) throw state.teardownFailure
+      state.vault = vault
       const scheduledGeneration = state.generation
       // Admission, not the queued read, supersedes old joining work. Pending
       // startups cannot keep ordinary authority while the new read is blocked.
@@ -1211,8 +1235,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       if (state.teardownFailure !== null) throw state.teardownFailure
       if (state.stopPromise !== null) return state.stopPromise
       const stopping = queued(state, () => stopNow(remote, state)).catch((err) => {
-        state.teardownFailure = err
-        throw err
+        throw latchTeardownFailure(state, err)
       })
       state.stopPromise = stopping
       try {
@@ -1235,8 +1258,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           if (state.teardownFailure !== null) throw state.teardownFailure
           if (state.stopPromise !== null) return state.stopPromise
           const stopping = queued(state, () => stopNow(remote, state)).catch((err) => {
-            state.teardownFailure = err
-            throw err
+            throw latchTeardownFailure(state, err)
           })
           state.stopPromise = stopping
           try {
