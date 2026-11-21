@@ -111,11 +111,19 @@ export async function reconcile(report, adapter) {
     const previous = tracked ? parseIssue(tracked) : null
     if (previous && previous.runNumber > normalized.runNumber) continue
 
-    const body = renderBody(normalized)
+    const body = renderBody(normalized, failures)
     const mismatches = normalized.checks.filter((check) => check.outcome === 'mismatch')
-    const allPass =
-      normalized.checks.length > 0 && normalized.checks.every((check) => check.outcome === 'pass')
-    if (!tracked && mismatches.length === 0) continue
+    const missingFailureNames = normalized.checks.some((check) => check.outcome === 'unverified')
+    const reportedFailures = new Set(mismatches.map(({ name }) => name))
+    const priorFailures = new Set(previous?.failures ?? [])
+    // Unverified coverage cannot erase earlier evidence. Explicit pass does.
+    for (const name of priorFailures) {
+      if (normalized.checks.some((check) => check.name === name && check.outcome === 'pass')) continue
+      if (!normalized.checks.some((check) => check.name === name)) reportedFailures.add(name)
+      else if (normalized.checks.find((check) => check.name === name)?.outcome === 'unverified') reportedFailures.add(name)
+    }
+    const failures = [...reportedFailures].sort()
+    if (!tracked && failures.length === 0) continue
     if (!tracked) {
       await adapter.createIssue({
         title: `${provider.name} compatibility: ${provider.version}`,
@@ -124,7 +132,7 @@ export async function reconcile(report, adapter) {
       })
       continue
     }
-    const changed = !previous || previous.reportKey !== reportKey(normalized)
+    const changed = previous ? previous.reportKey !== reportKey({ ...normalized, failures }) : failures.length > 0
     const sameRelease = previous?.version === provider.version
     const currentRun = normalized.runNumber >= (previous?.runNumber ?? 0)
     if (changed || currentRun) {
@@ -138,13 +146,10 @@ export async function reconcile(report, adapter) {
 
     // Reconcile state independently of content changes so a failed state mutation
     // can be retried after the body edit has already succeeded.
-    if (mismatches.length > 0) {
+    if (failures.length > 0) {
       if (tracked.state === 'closed') await adapter.reopenIssue(tracked.number)
-    } else if (allPass && currentRun) {
+    } else if (failures.length === 0 && currentRun) {
       if (tracked.state !== 'closed') await adapter.closeIssue(tracked.number)
-    } else if (tracked.state === 'closed') {
-      // A passing report for a newly observed release cannot inherit old checks.
-      await adapter.reopenIssue(tracked.number)
     }
 
     if (changed) {
@@ -160,7 +165,8 @@ function parseIssue(issue) {
   const version = issue.body.match(/^Observed npm latest: `([^`]+)`$/m)?.[1]
   const runNumber = Number(issue.body.match(/<!-- holi-harness-run:(\d+) -->/)?.[1] || 0)
   const reportKey = issue.body.match(/<!-- holi-harness-report:([^>]+) -->/)?.[1] || ''
-  return { version, runNumber, reportKey }
+  const failures = issue.body.match(/<!-- holi-harness-failures:([^>]*) -->/)?.[1].split(',').filter(Boolean) ?? []
+  return { version, runNumber, reportKey, failures }
 }
 
 function reportKey(report) {
@@ -172,12 +178,13 @@ function reportKey(report) {
       const right = JSON.stringify([nameB, outcomeB, detailB])
       return left < right ? -1 : left > right ? 1 : 0
     })
-  return `v3-${createHash('sha256')
-    .update(JSON.stringify(checks))
+  const fingerprint = report.failures ?? checks
+  return `v4-${createHash('sha256')
+    .update(JSON.stringify(fingerprint))
     .digest('hex')}`
 }
 
-function renderBody(report) {
+function renderBody(report, failures = report.checks.filter(({ outcome }) => outcome === 'mismatch').map(({ name }) => name)) {
   const checkLines = report.checks.map(
     (check) => `- **${check.name}: ${check.outcome}**${check.detail ? ` — ${check.detail}` : ''}`,
   )
@@ -199,7 +206,8 @@ function renderBody(report) {
     '',
     issueMarker(report.id),
     runMarker(report.runNumber),
-    `<!-- holi-harness-report:${reportKey(report)} -->`,
+    `<!-- holi-harness-failures:${failures.join(',')} -->`,
+    `<!-- holi-harness-report:${reportKey({ ...report, failures })} -->`,
   ].join('\n')
 }
 

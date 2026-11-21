@@ -12,7 +12,7 @@ function boundedDiagnostic(value) {
   return text.length > maxDiagnosticChars ? `${text.slice(0, maxDiagnosticChars)}…` : text
 }
 
-const knownHelpWarning = /^Warning: No models available\. Use \/login to log into a provider via OAuth or API key\. See:\nhttps:\/\/pi\.dev\/guide\/models\nhttps:\/\/pi\.dev\/guide\/providers$/
+const knownHelpWarning = /^Warning: No models available\. Use \/login to log into a provider via OAuth or API key\. See:\r?\n[ \t]*\/[^\r\n]*\/node_modules\/@earendil-works\/pi-coding-agent\/docs\/providers\.md\r?\n[ \t]*\/[^\r\n]*\/node_modules\/@earendil-works\/pi-coding-agent\/docs\/models\.md$/
 
 function run(bin, args, options) {
   const result = spawnSync(bin, args, {

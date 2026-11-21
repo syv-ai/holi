@@ -156,7 +156,7 @@ test('Codex report coverage keeps CLI surface and fixture consumers distinct', (
   )
 })
 
-test('creates one explicitly unverified issue per provider on first observation', async () => {
+test('does not create tracking issues for healthy or unverified first observations', async () => {
   const adapter = fakeAdapter()
   await reconcile(
     {
@@ -167,7 +167,7 @@ test('creates one explicitly unverified issue per provider on first observation'
     },
     adapter,
   )
-  assert.equal(adapter.issues.size, 3)
+  assert.equal(adapter.issues.size, 0)
   for (const issue of adapter.issues.values()) {
     assert.match(issue.body, /Monitoring-only/)
     if (issue.label === 'harness-pi') {
