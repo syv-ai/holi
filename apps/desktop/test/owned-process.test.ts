@@ -148,16 +148,38 @@ function drain(child: ChildProcess): Promise<void> | undefined {
 
 let buildDirectory: string | undefined
 let oracle: string
-beforeAll(() => {
-  if (!windows) {
-    const build = buildLeaseForTests()
-    buildDirectory = build.directory
-    helper.path = build.binary
-    oracle = buildPosixTestHelper(
-      build.directory,
-      new URL('./fixtures/posix-kernel-fixture.c', import.meta.url),
-    )
+beforeAll(async () => {
+  if (windows) {
+    const child = spawnOwnedProgram(process.execPath, ['-e', 'process.exit(0)'], {
+      stdio: 'ignore',
+    })
+    // Subscribe before awaiting anything so even a fast exit or spawn failure is observed.
+    const done = completion(child)
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error('Windows process readiness setup timed out after 60s')),
+        60_000,
+      )
+    })
+    try {
+      const code = await Promise.race([done, timeout])
+      if (code !== 0) throw new Error(`Windows process readiness setup exited with code ${code}`)
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+      await drain(child)
+      await cleanup(child)
+    }
+    return
   }
+
+  const build = buildLeaseForTests()
+  buildDirectory = build.directory
+  helper.path = build.binary
+  oracle = buildPosixTestHelper(
+    build.directory,
+    new URL('./fixtures/posix-kernel-fixture.c', import.meta.url),
+  )
 })
 afterAll(async () => {
   if (buildDirectory) await rm(buildDirectory, { recursive: true, force: true })
