@@ -264,6 +264,44 @@ function readJoinMarker(cwd: string, name: string, maxBytes: number): string | u
   }
 }
 
+function joinCompileMs(cwd: string): number | undefined {
+  try {
+    const start = statSync(join(cwd, 'compile-start'))
+    const done = statSync(join(cwd, 'compile-done'))
+    if (!start.isFile() || !done.isFile() || start.size !== 0 || done.size !== 0) return
+    const duration = done.mtimeMs - start.mtimeMs
+    if (start.mtimeMs > 0 && Number.isFinite(duration) && duration >= 0) return Math.round(duration)
+  } catch {
+    // Missing marker times are not a measurement.
+  }
+}
+
+// Bounding the assertion does not cancel the work or substitute for physical close in teardown.
+async function withinJoinPhase<T>(
+  pending: Promise<T>,
+  startedAt: number,
+  timeoutMs: number,
+  phase: string,
+): Promise<T> {
+  const deadline = startedAt + timeoutMs
+  const expired = () => new Error(`Broker ${phase} exceeded ${timeoutMs} ms`)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => {
+        const remaining = Math.max(0, Math.ceil(deadline - performance.now()))
+        timer = setTimeout(() => reject(expired()), remaining)
+      }),
+    ])
+    // Even if the event loop services the result before an overdue timer, don't accept it late.
+    if (performance.now() >= deadline) throw expired()
+    return result
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function collect(
   stream: Readable,
   slow = false,
@@ -374,14 +412,23 @@ describe('owned Job broker host', () => {
     expect(script.includes('ReadFile(input, one, 1, out count, IntPtr.Zero)')).toBe(true)
   })
 
-  it('waits past the terminal frame for physical exit without requiring parent EOF', async () => {
+  it(
+    'waits past the terminal frame for physical exit without requiring parent EOF',
+    // Windows headroom covers cold fixture startup plus the EOF, join and teardown phases.
+    { timeout: process.platform === 'win32' ? 60_000 : 20_000 },
+    verifyPhysicalJoin,
+  )
+
+  async function verifyPhysicalJoin() {
     const started = performance.now()
     const elapsed = () => Math.round(performance.now() - started)
     let phase = 'prepare'
     const phaseMs: Record<string, number> = { prepare: 0 }
     function enter(next: string) {
+      const now = performance.now()
       phase = next
-      phaseMs[next] = elapsed()
+      phaseMs[next] = Math.round(now - started)
+      return now
     }
     let reported = false
     let inspectFixture: (() => object) | undefined
@@ -507,35 +554,53 @@ describe('owned Job broker host', () => {
       }
     }
     try {
-      // PowerShell compilation is startup, not part of the inner-pipe EOF barrier.
-      enter('terminal')
-      expect(await startup).toBe(true)
+      // Cold Add-Type in the Windows fixture is startup, not part of the join proof.
+      const startupStarted = enter('terminal')
+      const seen = await (native
+        ? withinJoinPhase(startup, startupStarted, 45_000, 'fixture startup')
+        : startup)
+      expect(seen).toBe(true)
       enter('inner-eof')
       await expect.poll(() => existsSync(innerEof)).toBe(true)
       enter('pre-release-assertions')
       expect(existsSync(finished)).toBe(false)
       expect(child.exitCode).toBeNull()
       expect(child.signalCode).toBeNull()
-      enter('finish-submit')
+      const finishSubmitted = enter('finish-submit')
       child.stdin.write('finish', (error) => {
         phaseMs.finishWrite = elapsed()
         finishWriteOk = !error
       }) // Release the inner process without sending parent EOF.
       enter('physical-join')
-      const [status, output, errors] = await Promise.all([closed, stdout, stderr])
+      const [status, output, errors] = await withinJoinPhase(
+        Promise.all([closed, stdout, stderr]),
+        finishSubmitted,
+        2_000,
+        'physical join',
+      )
       enter('joined-assertions')
       expect(status).toEqual([0, null])
       expect(await readFile(finished, 'utf8')).toBe('done')
       expect(output.toString()).toBe('terminal\n')
       expect(errors).toHaveLength(0)
+      if (native) {
+        console.info(
+          'HOLI_BROKER_JOIN_TIMING ' +
+            JSON.stringify({
+              startupMs: phaseMs.firstFrame - phaseMs.terminal,
+              compileMs: joinCompileMs(cwd),
+              joinMs: phaseMs.hostClose - phaseMs['finish-submit'],
+            }),
+        )
+      }
     } catch (error) {
       reportFailure() // An ordinary failure must be captured before finally releases input.
       throw error
     } finally {
       if (!child.stdin.destroyed) child.stdin.end('finish')
-      await closed // Release a failed barrier before its cwd cleanup hook runs.
+      await closed // Require physical close even after a phase deadline, before cwd removal.
     }
-  })
+  }
 
   it('waits for both readable pipes when a descendant still holds them after inner exit', async () => {
     const { child, closed } = nodeHost(`
