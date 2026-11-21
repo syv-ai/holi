@@ -149,29 +149,7 @@ function drain(child: ChildProcess): Promise<void> | undefined {
 let buildDirectory: string | undefined
 let oracle: string
 beforeAll(async () => {
-  if (windows) {
-    const child = spawnOwnedProgram(process.execPath, ['-e', 'process.exit(0)'], {
-      stdio: 'ignore',
-    })
-    // Subscribe before awaiting anything so even a fast exit or spawn failure is observed.
-    const done = completion(child)
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-    const timeout = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(
-        () => reject(new Error('Windows process readiness setup timed out after 60s')),
-        60_000,
-      )
-    })
-    try {
-      const code = await Promise.race([done, timeout])
-      if (code !== 0) throw new Error(`Windows process readiness setup exited with code ${code}`)
-    } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle)
-      await cleanup(child)
-      await drain(child)
-    }
-    return
-  }
+  if (windows) return
 
   const build = buildLeaseForTests()
   buildDirectory = build.directory
@@ -185,7 +163,7 @@ afterAll(async () => {
   if (buildDirectory) await rm(buildDirectory, { recursive: true, force: true })
 })
 
-describe('spawnOwnedProgram', () => {
+describe.skipIf(windows)('spawnOwnedProgram', () => {
   it.skipIf(windows).each(['throw', 'no pid'] as const)(
     'cancels unused POSIX preparation when native spawn fails with %s',
     async (mode) => {

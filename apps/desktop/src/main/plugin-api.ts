@@ -434,6 +434,14 @@ export {
   type PosixOwnershipInspection,
 } from './posix-ownership-journal'
 export type { ProcessGroupSupervision } from './owned-process-supervision'
+export {
+  joinOwnedProgram,
+  UnconfirmedOwnedProgramError,
+  type ManagedOwnedChild,
+  type OwnedCompletion,
+  type OwnedProgramCleanupLease,
+  type OwnedProgramResult,
+} from './owned-program-lifetime'
 export { defaultProbePid, killChildTree, killTree, type PidState } from './process-group'
 export { writeScreenshot } from './screenshot-files'
 export {

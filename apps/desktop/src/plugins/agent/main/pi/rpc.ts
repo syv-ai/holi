@@ -1,9 +1,11 @@
+import { WindowsPiRpcRun } from './windows-rpc'
 import { type ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
   ownedProcessDrain,
   posixLaunchNonAdmission,
   spawnOwnedProgram,
   type ProcessGroupSupervision,
+  type ManagedOwnedChild,
 } from '../../../../main/plugin-api'
 import type { Readable, Writable } from 'node:stream'
 
@@ -23,6 +25,7 @@ const ROOT_EXIT_MS = 5000
 export class PiRpcConfigurationError extends Error {}
 
 export interface PiRpcOptions {
+  platform?: NodeJS.Platform
   bin: string
   cwd: string
   env?: NodeJS.ProcessEnv
@@ -52,6 +55,7 @@ export interface PiRpcOptions {
   ) => PiChild
 }
 export interface PiChild {
+  readonly ownedCompletion?: ManagedOwnedChild['ownedCompletion']
   pid?: number
   /** Spawn adapters must provide their own drain receipt; stdio close is not proof. */
   [ownedProcessDrain]?: ProcessGroupSupervision
@@ -81,8 +85,50 @@ export const NO_TOOLS = [
   '--no-approve',
 ] as const
 
-/** One stock Pi RPC process per managed run; messages are JSON records, never shell text. */
+/** One RPC interface; each native adapter owns its physical proof and output join. */
 export class PiRpcRun {
+  private readonly run: PosixPiRpcRun | WindowsPiRpcRun
+
+  constructor(options: PiRpcOptions) {
+    this.run =
+      (options.platform ?? process.platform) === 'win32'
+        ? new WindowsPiRpcRun(options)
+        : new PosixPiRpcRun(options)
+  }
+  get isAlive() {
+    return this.run.isAlive
+  }
+  get wasNotAdmitted() {
+    return this.run.wasNotAdmitted
+  }
+  get physicalDrain() {
+    return this.run.physicalDrain
+  }
+  get drained() {
+    return this.run.drained
+  }
+  get startup() {
+    return this.run.startup
+  }
+  prompt(message: string) {
+    return this.run.prompt(message)
+  }
+  steer(message: string) {
+    return this.run.steer(message)
+  }
+  followUp(message: string) {
+    return this.run.followUp(message)
+  }
+  cancel() {
+    return this.run.cancel()
+  }
+  close() {
+    return this.run.close()
+  }
+}
+
+/** One stock Pi RPC process per managed run; messages are JSON records, never shell text. */
+class PosixPiRpcRun {
   private readonly child: PiChild
   private readonly onStats?: PiRpcOptions['onStats']
   private readonly onDrainFailure?: PiRpcOptions['onDrainFailure']
@@ -91,7 +137,7 @@ export class PiRpcRun {
   private readonly supervision?: ProcessGroupSupervision
   private closeSeen = false
   private drainStarted = false
-  /** POSIX lease receipt, independent of output. Windows uses child close. */
+  /** POSIX lease receipt, independent of output. */
   readonly physicalDrain: Promise<void>
   private resolvePhysical!: () => void
   private rejectPhysical!: (error: unknown) => void
@@ -128,6 +174,7 @@ export class PiRpcRun {
   private lastError?: string
   private phase: 'prompt' | 'setting-model' | 'idle' = 'idle'
   private readonly commands = new Map<string, { type: string; streamingBehavior?: unknown }>()
+  readonly startup?: Promise<Error | null>
   readonly drained: Promise<void>
   private resolveDrained!: () => void
 

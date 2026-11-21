@@ -1,4 +1,6 @@
+import { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import {
   access,
   mkdir,
@@ -11,8 +13,14 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { setImmediate as tick } from 'node:timers/promises'
 import { afterEach, expect, it, vi } from 'vitest'
+import {
+  UnconfirmedOwnedProgramError,
+  type ManagedOwnedChild,
+  type OwnedCompletion,
+} from '../../../main/plugin-api'
 import { readJobEvent } from '../main/codex'
 import { CopyBackCancelled, createJobs, type Jobs, type JobsDeps } from '../main/host/jobs'
 import { createPtySessions } from '../main/host/pty-sessions'
@@ -63,7 +71,25 @@ vi.mock('node:fs/promises', async (original) => {
     link: wrap('link'),
     open: async (...args: Parameters<typeof fs.open>) => {
       const handle = await fs.open(...args)
-      if (basename(String(args[0])) === 'previous' && native.previousFailure !== null) {
+      const path = String(args[0])
+      if (path.endsWith('.owned')) {
+        for (const operation of ['sync', 'close'] as const) {
+          const action = handle[operation].bind(handle)
+          handle[operation] = async () => {
+            const gate = native.gates.find(
+              (g) => g.method === `marker-${operation}` && g.matches([path]),
+            )
+            if (gate) {
+              gate.entered()
+              await gate.wait
+              if (gate.error && operation === 'sync') throw gate.error
+            }
+            await action()
+            if (gate?.error) throw gate.error
+          }
+        }
+      }
+      if (basename(path) === 'previous' && native.previousFailure !== null) {
         const failure = native.previousFailure
         native.previousFailure = null
         if (failure.method === 'readFile') {
@@ -135,10 +161,11 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-const SCRIPT = [
-  'console.log(JSON.stringify({type:"thread.started",thread_id:"123e4567-e89b-42d3-a456-426614174000"}))',
-  'console.log(JSON.stringify({type:"turn.completed"}))',
-].join(';')
+const SCRIPT_EVENTS = [
+  '{"type":"thread.started","thread_id":"123e4567-e89b-42d3-a456-426614174000"}',
+  '{"type":"turn.completed"}',
+].join('\n')
+const SCRIPT = `console.log(${JSON.stringify(SCRIPT_EVENTS)})`
 
 async function rig(options: Partial<JobsDeps> = {}, durableOwnership = false) {
   // Copy-back uses canonical paths. Match those even when TMPDIR is a symlink.
@@ -428,6 +455,370 @@ it('bounds admitted mkdir startup and retains its pending owner through retry', 
   await retry
   await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(t.tracked.count).toBe(0)
+})
+
+function windowsChild() {
+  let prove!: (value: OwnedCompletion) => void
+  let reject!: (reason: Error) => void
+  const ownedCompletion = new Promise<OwnedCompletion>((res, rej) => {
+    prove = res
+    reject = rej
+  })
+  const kill = vi.fn(() => true)
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    stdin: null,
+    kill,
+    ownedCompletion,
+  })
+  const finish = (proof: OwnedCompletion = 'empty') => {
+    child.stdout.end(`${SCRIPT_EVENTS}\n`)
+    child.stderr.end()
+    child.emit('close', 0, null)
+    prove(proof)
+  }
+  drains.push(async () => finish())
+  return {
+    child: child as unknown as ManagedOwnedChild,
+    stdout: child.stdout,
+    kill,
+    finish,
+    reject,
+  }
+}
+
+it('joins every admitted input copy after a known Stop failure without blocking another vault', async () => {
+  const a = windowsChild()
+  const spawn = vi.fn(() => a.child)
+  const t = await rig({ platform: 'win32', spawn })
+  const release = vi.fn()
+  t.provider.release = release
+  const start = (name: string, read: string[], write: string[] = []) =>
+    t.jobs.start({ provider: t.provider, name, prompt: 'go', scope: { read, write } })
+  const started = await start('uncertain', [], ['result.md'])
+  if (!started.ok) throw new Error(started.message)
+  const { sessionId: id } = started
+  const state = join(t.scratchRoot, `${id}.agent`, 'provider-resource')
+  const scratch = join(t.scratchRoot, id, 'result.md')
+  await writeFile(state, 'owned provider state')
+  await writeFile(scratch, 'unconfirmed output')
+  a.stdout.write(`${SCRIPT_EVENTS}\n`)
+  const owned = (await readdir(t.scratchRoot)).sort()
+
+  const input = 'input.md'
+  const competing = 'competing.md'
+  for (const name of [input, competing]) await writeFile(join(t.root, name), 'input copy')
+  const gate = hold('writeFile', ([path]) => basename(String(path)) === input)
+  const secondary = hold('writeFile', ([path]) => basename(String(path)) === competing)
+  const b = start('copying', [input])
+  const b2 = start('copying with error', [competing]).catch((err: unknown) => err)
+  await Promise.all([gate.entered, secondary.entered])
+
+  const lease = { revoke: vi.fn(async () => {}) }
+  const failure = new UnconfirmedOwnedProgramError(new Error('native query rejected'), lease)
+  let pendingAtRejection: number | undefined
+  const leave = t.jobs.leave().catch((err: unknown) => {
+    pendingAtRejection = native.operations.size
+    return err
+  })
+  await expect(start('closed', [input])).resolves.toMatchObject({ ok: false })
+  const stop = expect(t.jobs.stop(id)).rejects.toBe(failure)
+  a.reject(failure)
+  await stop
+  expect(a.kill).toHaveBeenCalledTimes(1)
+  await tick()
+  expect(pendingAtRejection).toBeUndefined()
+
+  const prepFailure = new Error('input scratch write rejected')
+  secondary.fail(prepFailure)
+  expect(await b2).toBe(prepFailure)
+  await tick()
+  expect(pendingAtRejection).toBeUndefined()
+
+  const c = windowsChild()
+  const third = await rig({ platform: 'win32', spawn: () => c.child })
+  await third.start()
+  c.finish()
+  await third.idle()
+  await third.jobs.leave()
+  expect(pendingAtRejection).toBeUndefined()
+
+  gate.release()
+  await expect(b).resolves.toMatchObject({ ok: false })
+  expect(await leave).toBe(failure)
+  expect(pendingAtRejection).toBe(0)
+  await tick()
+  expect(native.operations.size).toBe(0)
+  expect(spawn).toHaveBeenCalledTimes(1)
+  expect(release).not.toHaveBeenCalled()
+  expect(lease.revoke).not.toHaveBeenCalled()
+  expect(a.child.pid).toBeUndefined()
+  expect(t.jobs.sessions()).toEqual([expect.objectContaining({ id, outcome: 'failed' })])
+  expect((await readdir(t.scratchRoot)).sort()).toEqual(owned)
+  expect(await readFile(state, 'utf8')).toBe('owned provider state')
+  expect(await readFile(scratch, 'utf8')).toBe('unconfirmed output')
+  await expect(access(join(t.root, 'result.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(t.jobs.stop(id)).rejects.toBe(failure)
+  await expect(t.jobs.leave()).rejects.toBe(failure)
+})
+
+it('cancels starts queued before recovery admits them without touching scratch', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'holi-queued-jobs-'))
+  roots.push(dir)
+  const scratchRoot = join(dir, 'queued-jobs')
+  await mkdir(scratchRoot)
+  const recovery = hold('readdir', ([path]) => path === scratchRoot)
+  const mkdirState = hold('mkdir', ([path]) => String(path).endsWith('.agent'))
+  const spawn = vi.fn(() => {
+    throw new Error('queued start spawned')
+  })
+  const t = await rig({ scratchRoot, platform: 'win32', spawn })
+  await recovery.entered
+  const starts = Array.from({ length: 10 }, () =>
+    t.jobs.start({
+      provider: t.provider,
+      name: 'queued',
+      prompt: 'go',
+      scope: { read: [], write: [] },
+    }),
+  )
+  const leave = t.jobs.leave()
+  void leave.catch(() => {})
+  for (const result of await Promise.all(starts)) expect(result).toMatchObject({ ok: false })
+  expect(mkdirState.calls()).toBe(0)
+  expect(spawn).not.toHaveBeenCalled()
+  recovery.release()
+  await leave
+  await expect(access(scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('joins an admitted JSONL turn finalizer despite a sibling Stop rejection', async () => {
+  const a = windowsChild()
+  const b = windowsChild()
+  const finalizer = deferred()
+  const entered = deferred()
+  drains.push(async () => finalizer.resolve())
+  const spawn = vi.fn().mockReturnValueOnce(a.child).mockReturnValueOnce(b.child)
+  const t = await rig({
+    platform: 'win32',
+    spawn,
+    bracket: async (_id, edge) => {
+      if (edge !== 'end') return
+      entered.resolve()
+      await finalizer.promise
+      await writeFile(join(t.root, 'turn.log'), 'settled output')
+    },
+  })
+  const aId = await t.start()
+  const bId = await t.start()
+  b.finish()
+  await entered.promise
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  let left = false
+  const leave = t.jobs.leave().catch((err: unknown) => {
+    left = true
+    return err
+  })
+  const failure = new UnconfirmedOwnedProgramError(new Error('proof failed'))
+  const stop = expect(t.jobs.stop(aId)).rejects.toBe(failure)
+  a.reject(failure)
+  await stop
+  await vi.advanceTimersByTimeAsync(5_002)
+  expect(left).toBe(false)
+  finalizer.resolve()
+  expect(await leave).toBe(failure)
+  expect(await readFile(join(t.root, 'turn.log'), 'utf8')).toBe('settled output')
+  expect(await readdir(t.scratchRoot)).toContainEqual(
+    expect.stringMatching(`^${aId}\\..*\\.owned$`),
+  )
+  expect(
+    (await readdir(t.scratchRoot)).some(
+      (name) => name.startsWith(`${bId}.`) && name.endsWith('.owned'),
+    ),
+  ).toBe(false)
+})
+
+it('joins host work but not an unresponsive Windows child after the Stop deadline', async () => {
+  const a = windowsChild()
+  const gate = deferred()
+  const entered = deferred()
+  drains.push(async () => gate.resolve())
+  const bracket = vi.fn(async (_id, edge) => {
+    if (edge !== 'begin') return
+    entered.resolve()
+    await gate.promise
+  })
+  const t = await rig({ platform: 'win32', spawn: () => a.child, bracket })
+  const release = vi.fn()
+  t.provider.release = release
+  const id = await t.start()
+  await entered.promise
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  let left = false
+  const leave = t.jobs.leave().catch((err: unknown) => {
+    left = true
+    return err
+  })
+  const stop = t.jobs.stop(id).catch((err: unknown) => err)
+  await vi.advanceTimersByTimeAsync(5_002)
+  const failure = await stop
+  expect(failure).toMatchObject({ message: expect.stringContaining('timed out') })
+  expect(left).toBe(false)
+  gate.resolve()
+  expect(await leave).toBe(failure)
+  // Actual proof and EOF may come later, but this retired host must not write.
+  a.finish()
+  await tick()
+  expect(a.kill).toHaveBeenCalledTimes(1)
+  expect(bracket.mock.calls.map(([, edge]) => edge)).toEqual(['begin'])
+  expect(release).not.toHaveBeenCalled()
+  expect(t.jobs.has(id)).toBe(true)
+  expect(await readdir(t.scratchRoot)).toContainEqual(expect.stringMatching(/\.owned$/))
+  await expect(t.jobs.stop(id)).rejects.toBe(failure)
+})
+
+it.each(['stop', 'activation', 'leave'] as const)(
+  'revokes Windows spawn on %s during marker close, and bounds the same Stop for all waiters',
+  async (kind) => {
+    const activation = new AbortController()
+    const spawn = vi.fn(() => {
+      throw new Error('spawn after revocation')
+    })
+    const t = await rig({ platform: 'win32', spawn, activationSignal: activation.signal })
+    const sync = hold('marker-sync', () => true)
+    const close = hold('marker-close', () => true)
+    const started = t.jobs.start({
+      provider: t.provider,
+      name: 'marker',
+      prompt: 'go',
+      scope: { read: [], write: [] },
+    })
+    await sync.entered
+    expect(spawn).not.toHaveBeenCalled()
+    const id = t.jobs.sessions()[0]!.id
+    const marker = (await readdir(t.scratchRoot)).find((name) => name.endsWith('.owned'))!
+    expect(await readFile(join(t.scratchRoot, marker), 'utf8')).toBe(
+      'pending Windows job ownership\n',
+    )
+    sync.release()
+    await close.entered
+    expect(spawn).not.toHaveBeenCalled()
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let left = false
+    const leaving =
+      kind === 'leave'
+        ? t.jobs.leave().catch((err: unknown) => {
+            left = true
+            return err
+          })
+        : undefined
+    if (kind === 'activation') activation.abort()
+    const results = Promise.allSettled(Array.from({ length: 20 }, () => t.jobs.stop(id)))
+    await tick()
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(5_002)
+    const [first, ...others] = await results
+    expect(first).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ message: expect.stringContaining('timed out') }),
+    })
+    if (first?.status !== 'rejected') throw new Error('Stop unexpectedly settled')
+    for (const result of others) {
+      expect(result.status).toBe('rejected')
+      if (result.status === 'rejected') expect(result.reason).toBe(first.reason)
+    }
+    expect(left).toBe(false)
+    await expect(t.jobs.stop(id)).rejects.toBe(first.reason)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(await readdir(t.scratchRoot)).toContain(marker)
+    close.release()
+    await expect(started).resolves.toMatchObject({ ok: false })
+    if (leaving !== undefined) expect(await leaving).toBe(first.reason)
+    expect(spawn).not.toHaveBeenCalled()
+    expect(t.jobs.sessions()).toEqual([])
+    await t.jobs.leave()
+    await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  },
+)
+
+it('publishes a fresh Windows marker for a follow-up and refuses to spawn when syncing it fails', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    pid: 9001,
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    stdin: null,
+    kill: vi.fn(),
+    ownedCompletion: Promise.resolve('empty' as const),
+  })
+  const spawn = vi.fn(() => child as unknown as ChildProcess)
+  const t = await rig({ platform: 'win32', spawn })
+  let firstPath: unknown
+  const first = hold('marker-sync', ([path]) => {
+    firstPath ??= path
+    return path === firstPath
+  })
+  const launching = t.start()
+  try {
+    await first.entered
+    expect(spawn).not.toHaveBeenCalled()
+    const previous = (await readdir(t.scratchRoot)).find((name) => name.endsWith('.owned'))
+    first.release()
+    const id = await launching
+    child.stdout.end(`${SCRIPT_EVENTS}\n`)
+    child.stderr.end()
+    child.emit('close', 0, null)
+    await t.idle()
+
+    const next = hold('marker-sync', ([path]) => basename(String(path)) !== previous)
+    // The idle outcome is published before marker removal. A follow-up can
+    // be admitted only after that finalization has actually completed.
+    await vi.waitFor(() => t.jobs.message(id, 'follow up'))
+    await next.entered
+    const names = await readdir(t.scratchRoot)
+    expect(names).not.toContain(previous)
+    expect(names.filter((name) => name.endsWith('.owned'))).toHaveLength(1)
+    next.fail(new Error('could not flush marker'))
+    await vi.waitFor(async () => {
+      expect(t.jobs.sessions()[0]).toMatchObject({
+        state: 'idle',
+        outcome: 'failed',
+        error: expect.stringContaining('could not flush marker'),
+      })
+      expect((await readdir(t.scratchRoot)).filter((name) => name.endsWith('.owned'))).toEqual([])
+    })
+    expect(spawn).toHaveBeenCalledTimes(1)
+    await t.jobs.leave()
+  } finally {
+    first.release()
+    // Settle fake output and control even if a preceding assertion failed.
+    await launching.catch(() => {})
+    child.stdout.end()
+    child.stderr.end()
+    child.emit('close', 0, null)
+  }
+})
+
+it('refuses an unreadable Windows scratch namespace without deleting its contents', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'holi-unreadable-jobs-'))
+  roots.push(dir)
+  const scratchRoot = join(dir, 'jobs')
+  await mkdir(scratchRoot)
+  const path = join(scratchRoot, 'retained')
+  await writeFile(path, 'not safe to sweep')
+  const listing = hold('readdir', ([path]) => path === scratchRoot)
+  const spawn = vi.fn(() => {
+    throw new Error('spawned against unverified scratch')
+  })
+  const t = await rig({ scratchRoot, spawn, platform: 'win32' })
+  await listing.entered
+  const denied = new Error('cannot list jobs')
+  listing.fail(denied)
+  await expect(t.start()).rejects.toThrow('cannot list jobs')
+  await expect(t.jobs.leave()).rejects.toBe(denied)
+  expect(spawn).not.toHaveBeenCalled()
+  expect(await readFile(path, 'utf8')).toBe('not safe to sweep')
 })
 
 it('bounds final root deletion and joins the underlying operation on retry', async () => {

@@ -100,8 +100,6 @@ async function fixture(dir: string, name: string, options: Partial<JobsDeps> = {
       vault,
       scratchRoot,
       platform: 'win32',
-      probePid,
-      commandOf,
       onChange: () => {},
       log: () => {},
       bracket,
@@ -335,3 +333,46 @@ it.each(['j000000000001.pid', 'j000000000001.000000000001.owned', 'unknown.agent
     expect(f.commandOf).not.toHaveBeenCalled()
   },
 )
+
+it('persists a Windows managed turn before publishing its outcome or removing its marker', async () => {
+  let releaseHistory!: () => void
+  let enteredHistory!: () => void
+  const history = new Promise<void>((resolve) => {
+    releaseHistory = resolve
+  })
+  const entered = new Promise<void>((resolve) => {
+    enteredHistory = resolve
+  })
+  const end = vi.fn(async () => {
+    enteredHistory()
+    await history
+    return { base: 'before', end: 'after', at: '2026-01-01T00:00:00.000Z' }
+  })
+  const forget = vi.fn()
+  const f = await fixture(await temp(), 'managed', {
+    beginManagedTurn: () => ({ end, forget }),
+  })
+  try {
+    const started = await f.jobs.start({
+      provider: f.spec.provider,
+      name: 'managed',
+      prompt: 'go',
+      allow: [],
+    })
+    if (!started.ok) throw new Error(started.message)
+    f.adapter.complete()
+    f.adapter.endOutput()
+    f.adapter.close()
+    f.adapter.prove('empty')
+    await entered
+    expect(f.jobs.sessions()[0]?.outcome).toBeUndefined()
+    expect((await readdir(f.scratchRoot)).some((name) => name.endsWith('.owned'))).toBe(true)
+    releaseHistory()
+    await vi.waitFor(() => expect(f.jobs.sessions()[0]?.outcome).toBe('completed'))
+    expect(end).toHaveBeenCalledOnce()
+    expect(forget).not.toHaveBeenCalled()
+    await f.jobs.leave()
+  } finally {
+    releaseHistory()
+  }
+})
