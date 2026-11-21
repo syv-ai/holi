@@ -293,14 +293,16 @@ describe('resolveClaudeBin', () => {
 describe('AgentRuntime', () => {
   const spawnArgs = { bin: '/bin/claude', args: ['--x'], cwd: '/work', env: { PATH: '/usr/bin' } }
 
-  it('forwards data and exit, clearing state before it emits exit', async () => {
+  it('forwards data and exit, retaining ownership through exit callbacks', async () => {
     const { spawn, spawns } = fakeSpawn()
     const data: string[] = []
     const exits: Array<{ exitCode: number; running: boolean }> = []
     const runtime = new AgentRuntime({ spawnPty: spawn })
     runtime.onData((d) => data.push(d))
-    // the old child-wait rule: session state is gone by the time exit lands
-    runtime.onExit((e) => exits.push({ exitCode: e.exitCode, running: runtime.isRunning }))
+    // The owner remains indexed until the exit callback returns.
+    runtime.onExit((e) => {
+      exits.push({ exitCode: e.exitCode, running: runtime.isRunning })
+    })
 
     runtime.start(spawnArgs)
     expect(runtime.isRunning).toBe(true)
@@ -312,8 +314,179 @@ describe('AgentRuntime', () => {
     expect(data).toEqual(['hello'])
 
     spawns[0]!.pty.exit(3)
-    expect(exits).toEqual([{ exitCode: 3, running: false }])
+    expect(exits).toEqual([{ exitCode: 3, running: true }])
     expect(runtime.isRunning).toBe(false)
+  })
+
+  it.each([false, true])('joins natural exit and callbacks, retaining failure=%s', async (fail) => {
+    const { spawn, spawns } = fakeSpawn(4242)
+    let physical!: () => void
+    const drain = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          physical = resolve
+        }),
+    )
+    const probePid = vi.fn(() => 'alive' as const)
+    const runtime = new AgentRuntime({
+      spawnPty: spawn,
+      superviseGroup: () => ({ drain }),
+      probePid,
+    })
+    const cause = new Error('callback persistence failed')
+    let complete!: () => void
+    let entered!: () => void
+    const entry = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const callback = vi.fn(async () => {
+      entered()
+      await new Promise<void>((resolve) => {
+        complete = resolve
+      })
+      if (fail) throw cause
+    })
+    runtime.onExit(callback)
+    runtime.start(spawnArgs)
+    spawns[0]!.pty.exit(7)
+    const kill = runtime.kill()
+    expect(runtime.kill()).toBe(kill)
+    let settled = false
+    void kill.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    try {
+      expect(callback).not.toHaveBeenCalled()
+      expect(() => runtime.start(spawnArgs)).toThrow(/already running/i)
+      physical()
+      await entry
+      expect(settled).toBe(false)
+      expect(() => runtime.start(spawnArgs)).toThrow(/already running/i)
+      complete()
+      if (fail) {
+        await expect(kill).rejects.toBe(cause)
+        await expect(runtime.kill()).rejects.toBe(cause)
+        expect(() => runtime.start(spawnArgs)).toThrow(/already running/i)
+      } else {
+        await kill
+        expect(runtime.kill()).toBe(kill)
+        runtime.start(spawnArgs)
+      }
+      expect(drain).toHaveBeenCalledTimes(1)
+      expect(probePid).not.toHaveBeenCalled()
+      expect(spawns[0]!.pty.kills).toEqual([])
+    } finally {
+      physical()
+      complete?.()
+      await kill.catch(() => {})
+    }
+  })
+
+  it('separates native root exit from tail output and public exit', async () => {
+    const pty = Object.assign(new FakePty(), { _boundClose: false })
+    let physical!: () => void
+    const proof = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          physical = resolve
+        }),
+    )
+    const runtime = new AgentRuntime({
+      spawnPty: () => pty,
+      platform: 'linux',
+      superviseGroup: () => ({ drain: proof }),
+    })
+    const draining = vi.fn()
+    const tail = vi.fn()
+    const callback = vi.fn()
+    runtime.onDraining(draining)
+    runtime.onData(tail)
+    runtime.onExit(callback)
+    runtime.start(spawnArgs)
+
+    // node-pty 1.1.0's Unix onexit sets this flag before waiting for socket close.
+    pty._boundClose = true
+    expect(draining).toHaveBeenCalledOnce()
+    expect(proof).toHaveBeenCalledOnce()
+    physical()
+    const closed = runtime.kill()
+    await Promise.resolve()
+    expect(runtime.isRunning).toBe(true)
+    expect(callback).not.toHaveBeenCalled()
+    pty.emit('tail')
+    expect(tail).toHaveBeenCalledWith('tail')
+    pty.exit()
+    await closed
+    expect(callback).toHaveBeenCalledOnce()
+    expect(proof).toHaveBeenCalledOnce()
+  })
+
+  it('bounds missing public exit after proof and keeps a late POSIX exit from retiring the owner', async () => {
+    vi.useFakeTimers()
+    const { spawn, spawns } = fakeSpawn()
+    const runtime = new AgentRuntime({
+      spawnPty: spawn,
+      superviseGroup: () => ({
+        drain: () => new Promise((resolve) => setTimeout(resolve, 12_000)),
+      }),
+    })
+    const callback = vi.fn()
+    runtime.onExit(callback)
+    runtime.start(spawnArgs)
+    const stop = runtime.kill()
+    const observed = vi.fn()
+    void stop.catch(observed)
+    try {
+      await vi.advanceTimersByTimeAsync(16_999)
+      expect(observed).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(observed).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringMatching(/did not report process exit/) }),
+      )
+      spawns[0]!.pty.exit()
+      expect(callback).not.toHaveBeenCalled()
+      expect(runtime.isRunning).toBe(true)
+      expect(runtime.kill()).toBe(stop)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds a stuck exit callback only after proof and public exit', async () => {
+    vi.useFakeTimers()
+    const { spawn, spawns } = fakeSpawn()
+    const runtime = new AgentRuntime({
+      spawnPty: spawn,
+      superviseGroup: () => ({
+        drain: () => new Promise((resolve) => setTimeout(resolve, 12_000)),
+      }),
+    })
+    const callback = vi.fn(() => new Promise<void>(() => {}))
+    runtime.onExit(callback)
+    runtime.start(spawnArgs)
+    const stop = runtime.kill().catch((error: unknown) => error)
+    const observed = vi.fn()
+    void stop.then(observed)
+    spawns[0]!.pty.exit()
+    try {
+      await vi.advanceTimersByTimeAsync(11_999)
+      expect(callback).not.toHaveBeenCalled()
+      expect(observed).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(5_001)
+      expect(callback).toHaveBeenCalledOnce()
+      expect(observed).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringMatching(/exit callbacks.*timed out/i) }),
+      )
+      await expect(runtime.kill()).rejects.toBe(await stop)
+      expect(runtime.isRunning).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('rejects a second start while running, and forwards writes/resizes', () => {

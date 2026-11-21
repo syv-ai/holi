@@ -3,12 +3,24 @@
  * settings and nothing else, and a refreshed sign-in handed back.
  */
 import { realpathSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parse } from 'smol-toml'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { prepareCodexHome, releaseCodexHome, runConfig } from '../main/codex/home'
+
+const stage = vi.hoisted(() => ({ afterWrite: undefined as (() => Promise<void>) | undefined }))
+vi.mock('node:fs/promises', async (original) => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return {
+    ...fs,
+    async writeFile(...args: Parameters<typeof fs.writeFile>) {
+      await fs.writeFile(...args)
+      if (String(args[0]).includes('.auth.json.holi-')) await stage.afterWrite?.()
+    },
+  }
+})
 
 const dirs: string[] = []
 afterEach(async () => {
@@ -116,6 +128,48 @@ describe("a Codex run's folder", () => {
     await releaseCodexHome(state, { CODEX_HOME: person })
     expect(await readFile(join(person, 'auth.json'), 'utf8')).toBe(AUTH)
   })
+
+  it.each(['deadline', 'newer auth'] as const)(
+    'rechecks %s after staging a refresh',
+    async (race) => {
+      const person = await temp()
+      const state = await temp()
+      const env = { CODEX_HOME: person }
+      const target = join(person, 'auth.json')
+      await writeFile(target, AUTH)
+      const home = prepareCodexHome(state, [], env)
+      await writeFile(join(home, 'auth.json'), REFRESHED)
+      const controller = new AbortController()
+      const timeout = new Error('original teardown deadline')
+      let staged!: () => void
+      const entered = new Promise<void>((resolve) => (staged = resolve))
+      let unstage!: () => void
+      const gate = new Promise<void>((resolve) => (unstage = resolve))
+      stage.afterWrite = () => {
+        staged()
+        return gate
+      }
+      const releasing = releaseCodexHome(state, env, controller.signal)
+      void releasing.catch(() => {})
+      const current = race === 'deadline' ? AUTH : '{"tokens":{"access_token":"newer"}}'
+      try {
+        await entered
+        if (race === 'deadline') controller.abort(timeout)
+        else await writeFile(target, current)
+        unstage()
+        if (race === 'deadline') await expect(releasing).rejects.toBe(timeout)
+        else await expect(releasing).resolves.toBeUndefined()
+        expect(await readFile(target, 'utf8')).toBe(current)
+        expect(await readFile(join(state, 'codex-auth.given.json'), 'utf8')).toBe(AUTH)
+        expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe(REFRESHED)
+        expect(await readdir(person)).toEqual(['auth.json'])
+      } finally {
+        unstage()
+        await releasing.catch(() => {})
+        stage.afterWrite = undefined
+      }
+    },
+  )
 
   it('never writes to the person’s folder but for a refreshed sign-in', async () => {
     const person = await temp()

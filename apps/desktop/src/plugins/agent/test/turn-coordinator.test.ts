@@ -7,7 +7,11 @@
  * and which of them are told they overlapped another session.
  */
 import { describe, expect, it, vi } from 'vitest'
-import { createTurnCoordinator, type TurnVault } from '../main/host/turn-coordinator'
+import {
+  createManagedTurnBrackets,
+  createTurnCoordinator,
+  type TurnVault,
+} from '../main/host/turn-coordinator'
 import type { TurnRecord } from '../main/host/turn-log'
 
 const VAULT = 'owner/repo'
@@ -287,7 +291,84 @@ describe('the working set', () => {
   })
 })
 
+it('gives each managed turn its own receipt in the final flush', async () => {
+  const managed = createManagedTurnBrackets()
+  const firstFailure = new Error('first turn log append failed')
+  let allowWrite!: () => void
+  let enterWrite!: () => void
+  const writing = new Promise<void>((resolve) => (enterWrite = resolve))
+  const writeGate = new Promise<void>((resolve) => (allowWrite = resolve))
+  const commitNow = vi.fn(async () => 'settled')
+  const onTurnEnd = vi.fn()
+  const append = vi.fn(async (record: TurnRecord) => {
+    if (record.sessionId === 'first') throw firstFailure
+    enterWrite()
+    await writeGate
+  })
+  const coordinator = createTurnCoordinator({
+    vault: () => ({
+      root: '/work',
+      head: async () => 'base',
+      commitNow,
+      pauseSync: () => () => {},
+      claimManagedTurn: managed.claimManagedTurn,
+    }),
+    turnLogFor: () => ({ list: async () => [], append }),
+    onTurnEnd,
+    log: () => {},
+  })
+  const begin = (id: string) => managed.begin(id, (id, edge) => coordinator[edge](id))
+  const first = begin('first')
+  const second = begin('second')
+  const failed = expect(first.end()).rejects.toBe(firstFailure)
+  expect(commitNow).not.toHaveBeenCalled()
+  const receipt = second.end()
+  const settled = vi.fn()
+  void receipt.then(settled, settled)
+  await writing
+  try {
+    await failed
+    expect(commitNow).toHaveBeenCalledOnce()
+    expect(settled).not.toHaveBeenCalled()
+    expect(onTurnEnd).not.toHaveBeenCalled()
+  } finally {
+    allowWrite()
+  }
+  await expect(receipt).resolves.toMatchObject({ sessionId: 'second', end: 'settled' })
+  expect(onTurnEnd.mock.calls).toEqual([['second']])
+  await expect(coordinator.drain()).rejects.toMatchObject({ errors: [firstFailure] })
+})
+
 describe('the safety cap', () => {
+  it('guards only the draining PTY turn against the cap, listing, and teardown', async () => {
+    vi.useFakeTimers()
+    try {
+      const r = rig({ turnSafetyMs: 50, idleConfirmMs: 10, withLog: false })
+      const c = r.coordinator
+      expect(c.protectPtyTurn('idle PTY')).toBeUndefined()
+      c.begin('a')
+      c.begin('b')
+      const proved = c.protectPtyTurn('a')!
+      c.forget('a')
+      await expect(c.end('a')).resolves.toBeNull()
+      c.noteIdle('a')
+      r.tick(15)
+      c.noteIdle('a')
+      await vi.advanceTimersByTimeAsync(50)
+      await c.drain()
+      expect([...c.working]).toEqual(['a'])
+      expect(r.resumes()).toBe(0)
+      proved()
+      proved()
+      expect([...c.working]).toEqual([])
+      expect(r.resumes()).toBe(1)
+      expect(r.appended).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('caps each session on its own clock and still resumes the vault once', async () => {
     vi.useFakeTimers()
     try {
