@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
+import { gunzipSync, gzipSync } from 'node:zlib'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { brokerHostPlan } from '../src/main/owned-process-broker-host'
 import { win32Adapter } from '../src/main/owned-process-win32'
@@ -72,7 +73,7 @@ function nodeHost(source: string, cwd = process.cwd(), observeNativeEof = false)
   return host({ file: node, args: ['-e', source], cwd }, observeNativeEof)
 }
 
-function windowsJoinFixture(cwd: string) {
+function windowsJoinAdapter(cwd: string) {
   // Add-Type's CodeDOM compiler needs writable temp space, not the parent's environment.
   const adapter = win32Adapter('RunBroker', { ...env, TEMP: cwd, TMP: cwd }, (source) => {
     // Keep the real broker body compiling, but run only the fixture entry.
@@ -164,6 +165,39 @@ ${visitSelf}
   return { ...adapter, cwd }
 }
 
+const joinCompile =
+  "Add-Type -TypeDefinition $source -ReferencedAssemblies @('System.Web.Extensions','System.Core');"
+const joinPhaseMarker = (name: 'powershell-start' | 'compile-start' | 'compile-done') =>
+  `try { [IO.File]::WriteAllText('${name}', '') } catch {};`
+
+const joinPayload = /(?<=\[Convert\]::FromBase64String\(')[A-Za-z0-9+/]+={0,2}(?='\))/g
+
+function decodeJoinBootstrap(args: string[]) {
+  const bootstrap = args.at(-1) ?? ''
+  const payloads = bootstrap.match(joinPayload)
+  if (args.at(-2) !== '-Command' || payloads?.length !== 1)
+    throw new Error('Expected one literal gzip payload in the PowerShell command')
+  return { bootstrap, script: gunzipSync(Buffer.from(payloads[0], 'base64')).toString('utf8') }
+}
+
+function windowsJoinFixture(cwd: string) {
+  const adapter = windowsJoinAdapter(cwd)
+  const { bootstrap, script } = decodeJoinBootstrap(adapter.args)
+  if (
+    script.split(joinCompile).length !== 2 ||
+    !script.endsWith(`\n'@\n${joinCompile}exit [HoliOwnedProcess]::RunBroker()`)
+  )
+    throw new Error('Expected one Add-Type statement before the native broker entry')
+  const marked = script.replace(
+    joinCompile,
+    `${joinPhaseMarker('compile-start')}${joinCompile}${joinPhaseMarker('compile-done')}`,
+  )
+  const encoded = gzipSync(Buffer.from(marked)).toString('base64')
+  adapter.args[adapter.args.length - 1] =
+    joinPhaseMarker('powershell-start') + bootstrap.replace(joinPayload, encoded)
+  return adapter
+}
+
 // These fixture files are written only by the test, with fixed-size records.
 function readJoinMarker(cwd: string, name: string, maxBytes: number): string | undefined {
   try {
@@ -219,6 +253,25 @@ describe('owned Job broker host', () => {
     expect(status).toEqual([0, null])
     expect(stdout.equals(expected)).toBe(true)
     expect(stderr.equals(expectedErr)).toBe(true)
+  })
+
+  it('prepares Windows join phase markers without spawning', () => {
+    const cwd = 'fixture-cwd'
+    const original = decodeJoinBootstrap(windowsJoinAdapter(cwd).args)
+    const fixture = windowsJoinFixture(cwd)
+    const { bootstrap, script } = decodeJoinBootstrap(brokerHostPlan(node, fixture).args)
+    const start = joinPhaseMarker('compile-start')
+    const done = joinPhaseMarker('compile-done')
+    // Compare as booleans so a regression does not print the command or generated source.
+    expect(
+      bootstrap.replace(joinPayload, '') ===
+        joinPhaseMarker('powershell-start') + original.bootstrap.replace(joinPayload, ''),
+    ).toBe(true)
+    expect(
+      script.endsWith(`${start}${joinCompile}${done}exit [HoliOwnedProcess]::RunBroker()`),
+    ).toBe(true)
+    expect(script.replace(start, '').replace(done, '') === original.script).toBe(true)
+    expect(script.includes('ReadFile(input, one, 1, out count, IntPtr.Zero)')).toBe(true)
   })
 
   it('waits past the terminal frame for physical exit without requiring parent EOF', async () => {
@@ -333,6 +386,9 @@ describe('owned Job broker host', () => {
       return {
         terminalSeen,
         innerEof: existsSync(innerEof),
+        powerShellEntered: existsSync(join(cwd, 'powershell-start')),
+        compileStarted: existsSync(join(cwd, 'compile-start')),
+        compileFinished: existsSync(join(cwd, 'compile-done')),
         nativeEntered: existsSync(join(cwd, 'native-entered')),
         nativeHandlesClosed: counts !== undefined && /^\d{1,9},\d{1,9}$/.test(counts),
         nativeAliasCounts:
