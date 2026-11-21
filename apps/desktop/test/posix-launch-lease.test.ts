@@ -486,7 +486,6 @@ describe.runIf(process.platform !== 'win32')('POSIX launch lease', () => {
       const binding = prepared.bind(root.pid).catch((error: unknown) => error)
       try {
         await vi.waitFor(() => expect(commands).toContain(gate), { timeout: 2000 })
-        const attempts = commands.length
         track(helpers.reaper())
         track(helpers.anchor())
         const [lease] = await paths(directory)
@@ -494,6 +493,9 @@ describe.runIf(process.platform !== 'win32')('POSIX launch lease', () => {
           if (path === join(directory, lease!))
             helpersAbsent(root.pid, helpers.reaper(), helpers.anchor())
         }
+        // The held write can retry while paths() is in flight. Count only
+        // attempts after the synchronous drain has actually closed the gate.
+        const attempts = commands.length
         const cleanup = prepared.drain()
         fault.holdWrite = undefined
         const fromRootExit = root.exit.then(() => prepared.drain() === cleanup)

@@ -1,8 +1,9 @@
 import { ChildProcess, execFile, spawn, spawnSync, type SpawnOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
-import { tmpdir } from 'node:os'
+import { constants, tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getSystemErrorName, promisify } from 'node:util'
@@ -218,6 +219,7 @@ describe('spawnOwnedProgram', () => {
     ['gid', 2 ** 32, 'ERR_INVALID_ARG_TYPE'],
     ['signal', null, 'ERR_INVALID_ARG_TYPE'],
     ['killSignal', 'INVALID', 'ERR_UNKNOWN_SIGNAL'],
+    ['killSignal', 0, 'ERR_UNKNOWN_SIGNAL'],
     ['stdio', ['ipc', 'ipc'], 'ERR_IPC_ONE_PIPE'],
     ['stdio', ['nonsense'], 'ERR_INVALID_SYNC_FORK_INPUT'],
   ])('rejects invalid %s before entering native spawn', async (name, value, code) => {
@@ -764,6 +766,169 @@ it.skipIf(windows).each(['S', 'G'])(
     }),
 )
 
+const { SIGTERM, SIGKILL, SIGCONT, SIGINT } = constants.signals
+
+it.skipIf(windows).each([
+  { gate: 'S', signal: 'sigterm' },
+  { gate: 'G', signal: 'SIGKILL' },
+  { gate: 'G', signal: SIGTERM },
+  { gate: 'S', signal: SIGKILL },
+  { gate: 'G', signal: undefined },
+  { gate: 'G', signal: SIGINT, proofFault: true },
+  { gate: 'G', timeout: 700, signal: 'sigkill' },
+  { gate: 'G', timeout: 700, signal: SIGTERM },
+  { gate: 'G', timeout: 700, signal: undefined },
+] as const)(
+  'cancels pre-GO signals at $gate (timeout=$timeout, signal=$signal, proof fault=$proofFault)',
+  ({ gate, signal, ...timing }) =>
+    trackedLaunch(async (dir, retain, track) => {
+      const marker = join(dir, 'provider-ran')
+      const ownershipRecordPath = join(dir, randomUUID())
+      const timeline: string[] = []
+      const commands: string[] = []
+      let blocked = true
+      const proofFault =
+        'proofFault' in timing ? new Error('cancellation report read failed') : undefined
+      helper.holdCommand = (command) => {
+        commands.push(command)
+        if (command === gate) return blocked
+        // On the regression path only, don't let a queued signal mask exec
+        // by beating the provider to its first instruction.
+        return (command === 'T' || command === 'K') && !existsSync(marker)
+      }
+      const child = spawnOwnedProgram('/usr/bin/touch', [marker], {
+        posixGroupLease: true,
+        ownershipRecordPath,
+        ...('timeout' in timing ? { timeout: timing.timeout, killSignal: signal } : {}),
+      })
+      track(child.pid!)
+      let failure: unknown
+      let proofAtError: ReturnType<typeof inspectPosixOwnership> | undefined
+      child.on('error', (error) => {
+        timeline.push('error')
+        failure = error
+        proofAtError = inspectPosixOwnership(ownershipRecordPath)
+      })
+      for (const event of ['spawn', 'exit', 'close']) child.on(event, () => timeline.push(event))
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+      let fired: Promise<{ accepted: boolean; held: boolean; attempts: number }> | undefined
+      const kill = child.kill
+      if ('timeout' in timing) {
+        fired = new Promise((resolve) => {
+          // Observe Node's actual timer calling the public method, not a test timer.
+          child.kill = (sig) => {
+            const accepted = kill(sig)
+            resolve({
+              accepted,
+              held: commands.includes(gate) && blocked,
+              attempts: commands.length,
+            })
+            return accepted
+          }
+        })
+      }
+      try {
+        await vi.waitFor(() => expect(commands).toContain(gate), { timeout: 2000 })
+        let attempts = commands.length
+        if (fired) {
+          const result = await fired
+          expect(result).toMatchObject({ accepted: true, held: true })
+          attempts = result.attempts
+        } else {
+          if (proofFault) {
+            helper.holdReport = () => {
+              helper.holdReport = undefined
+              throw proofFault
+            }
+          }
+          expect(child.kill(signal)).toBe(true)
+        }
+        expect(child.killed).toBe(true)
+        expect(timeline).toEqual([])
+        blocked = false
+        await closed
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(commands).toHaveLength(attempts)
+        expect(timeline).toEqual(['error', 'close'])
+        expect(child.kill(signal)).toBe(false)
+        const cleanup = drain(child)!
+        retain(cleanup)
+        expect(drain(child)).toBe(cleanup)
+        if (proofFault) {
+          await expect(cleanup).rejects.toBe(proofFault)
+          expect(failure).toBe(proofFault)
+          expect(posixLaunchNonAdmission(failure)).toBeUndefined()
+          expect(proofAtError).toMatchObject({ state: 'retain' })
+        } else {
+          expect(failure).toMatchObject({ message: 'POSIX launch was cancelled before start.' })
+          expect(posixLaunchNonAdmission(failure)?.cleanup).toBe(cleanup)
+          await cleanup
+          expect(proofAtError).toEqual({ state: 'confirmed', proof: 'settled' })
+        }
+      } finally {
+        const cleanup = drain(child)!
+        retain(cleanup)
+        blocked = false
+        await cleanup.catch(() => {})
+      }
+    }),
+)
+
+it.skipIf(windows)('does not close the pre-GO gate for signal zero or SIGCONT', () =>
+  trackedLaunch(async (dir, retain, track) => {
+    const marker = join(dir, 'provider-ran')
+    let blocked = true
+    let held = false
+    helper.holdCommand = (command) => {
+      if (command !== 'G' || !blocked) return false
+      return (held = true)
+    }
+    const child = spawnOwnedProgram('/usr/bin/touch', [marker], { posixGroupLease: true })
+    track(child.pid!)
+    const done = completion(child)
+    void done.catch(() => {})
+    try {
+      await vi.waitFor(() => expect(held).toBe(true), { timeout: 2000 })
+      expect(child.kill(0)).toBe(true)
+      expect(child.kill('SIGCONT')).toBe(true)
+      blocked = false
+      expect(await done).toBe(0)
+      expect(await readFile(marker, 'utf8')).toBe('')
+      await vi.waitFor(() => expect(helper.receipts).toContain(`SIGNAL ${SIGCONT}\n`))
+    } finally {
+      const cleanup = drain(child)!
+      retain(cleanup)
+      blocked = false
+      await cleanup
+    }
+  }),
+)
+
+it.skipIf(windows)('clears the native timeout when a manual pre-GO stop hides exit', () =>
+  trackedLaunch(async (_dir, retain, track) => {
+    const timeout = 1000
+    helper.holdCommand = (command) => command === 'S'
+    const child = spawnOwnedProgram('/bin/true', [], { posixGroupLease: true, timeout })
+    track(child.pid!)
+    child.on('error', () => {})
+    const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+    const exited = vi.fn()
+    child.on('exit', exited)
+    const kill = vi.spyOn(child, 'kill')
+    try {
+      expect(child.kill()).toBe(true)
+      await closed
+      await new Promise((resolve) => setTimeout(resolve, timeout))
+      expect(kill).toHaveBeenCalledOnce()
+      expect(exited).not.toHaveBeenCalled()
+    } finally {
+      const cleanup = drain(child)!
+      retain(cleanup)
+      await cleanup
+    }
+  }),
+)
+
 it.skipIf(windows).each(['already aborted', 'S', 'G', 'G with proof fault'])(
   'closes admission before forwarding AbortError (%s)',
   (scenario) =>
@@ -855,7 +1020,7 @@ it.skipIf(windows).each(['already aborted', 'S', 'G', 'G with proof fault'])(
     }),
 )
 
-it.skipIf(windows).each(['abort', 'drain'] as const)(
+it.skipIf(windows).each(['abort', 'drain', 'kill'] as const)(
   'treats %s after writing GO as post-admission even before the ACK',
   (mode) =>
     trackedLaunch(async (dir, retain, track) => {
@@ -902,6 +1067,7 @@ it.skipIf(windows).each(['abort', 'drain'] as const)(
           timeout: 2000,
         })
         if (mode === 'abort') controller.abort('post-admission')
+        if (mode === 'kill') expect(child.kill()).toBe(true)
         const cleanup = drain(child)!
         retain(cleanup)
         expect(timeline).toEqual([])
