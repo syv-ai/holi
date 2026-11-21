@@ -73,9 +73,43 @@ function nodeHost(source: string, cwd = process.cwd(), observeNativeEof = false)
   return host({ file: node, args: ['-e', source], cwd }, observeNativeEof)
 }
 
+const windowsCompilerEnvKeys = new Set([
+  // Windows and compiler dependency lookup; Node and PowerShell use absolute images.
+  'systemroot',
+  'windir',
+  'systemdrive',
+  'path',
+  'comspec',
+  'pathext',
+  // Framework installation and configuration paths.
+  'programfiles',
+  'programfiles(x86)',
+  'programw6432',
+  'programdata',
+  'userprofile',
+  'appdata',
+  'localappdata',
+  'homedrive',
+  'homepath',
+])
+
+function safeWindowsCompilerEnv(source: NodeJS.ProcessEnv, cwd: string): NodeJS.ProcessEnv {
+  return {
+    ...Object.fromEntries(
+      Object.entries(source).filter(
+        ([key, value]) => value !== undefined && windowsCompilerEnvKeys.has(key.toLowerCase()),
+      ),
+    ),
+    // CodeDOM's temporary files belong to the fixture, never the user's temp directory.
+    TEMP: cwd,
+    TMP: cwd,
+  }
+}
+
 function windowsJoinAdapter(cwd: string) {
-  // Add-Type's CodeDOM compiler needs writable temp space, not the parent's environment.
-  const adapter = win32Adapter('RunBroker', { ...env, TEMP: cwd, TMP: cwd }, (source) => {
+  // The Node host receives this environment and PowerShell inherits it from the host.
+  const compilerEnv = safeWindowsCompilerEnv(process.env, cwd)
+  const adapter = win32Adapter('RunBroker', compilerEnv, (source) => {
     // Keep the real broker body compiling, but run only the fixture entry.
     const entry = 'public static int RunBroker()'
     if (source.split(entry).length !== 2) throw new Error('Expected one native broker entry')
@@ -253,6 +287,44 @@ describe('owned Job broker host', () => {
     expect(status).toEqual([0, null])
     expect(stdout.equals(expected)).toBe(true)
     expect(stderr.equals(expectedErr)).toBe(true)
+  })
+
+  it('allowlists Windows compiler paths without inheriting Node options or credentials', () => {
+    const paths = {
+      sYsTeMrOoT: 'C:\\Windows',
+      WINDIR: 'C:\\Windows',
+      SystemDrive: 'C:',
+      Path: 'C:\\Windows\\System32',
+      ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      pAtHeXt: '.COM;.EXE;.BAT;.CMD',
+      ProgramFiles: 'C:\\Program Files',
+      'programfiles(X86)': 'C:\\Program Files (x86)',
+      ProgramW6432: 'C:\\Program Files',
+      ProgramData: 'C:\\ProgramData',
+      USERPROFILE: 'C:\\Users\\fixture',
+      APPDATA: 'C:\\Users\\fixture\\AppData\\Roaming',
+      LocalAppData: 'C:\\Users\\fixture\\AppData\\Local',
+      HOMEDRIVE: 'C:',
+      HOMEPATH: '\\Users\\fixture',
+    }
+    const cwd = 'C:\\private-fixture'
+    expect(
+      safeWindowsCompilerEnv(
+        {
+          ...paths,
+          Temp: 'C:\\inherited-temp',
+          tMp: 'C:\\inherited-temp',
+          NoDe_OpTiOnS: '--require injected.cjs',
+          GiThUb_ToKeN: 'synthetic-token',
+          OPENAI_API_KEY: 'synthetic-key',
+          AWS_SECRET_ACCESS_KEY: 'synthetic-secret',
+          SSH_AUTH_SOCK: 'synthetic-socket',
+          GITHUB_WORKSPACE: 'C:\\unrelated-checkout',
+          DOTNET_ROOT: 'C:\\unrelated-runtime',
+        },
+        cwd,
+      ),
+    ).toEqual({ ...paths, TEMP: cwd, TMP: cwd })
   })
 
   it('prepares Windows join phase markers without spawning', () => {
