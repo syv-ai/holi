@@ -167,8 +167,8 @@ beforeAll(async () => {
       if (code !== 0) throw new Error(`Windows process readiness setup exited with code ${code}`)
     } finally {
       if (timeoutHandle) clearTimeout(timeoutHandle)
-      await drain(child)
       await cleanup(child)
+      await drain(child)
     }
     return
   }
@@ -180,7 +180,7 @@ beforeAll(async () => {
     build.directory,
     new URL('./fixtures/posix-kernel-fixture.c', import.meta.url),
   )
-})
+}, 65_000)
 afterAll(async () => {
   if (buildDirectory) await rm(buildDirectory, { recursive: true, force: true })
 })

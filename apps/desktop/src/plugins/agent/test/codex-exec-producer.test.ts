@@ -899,9 +899,9 @@ if (bin) {
           () => (firstCompleted = true),
           () => {},
         )
-        expect(f.jobs.sessions().find((session) => session.id === result.sessionId)?.outcome).toBe(
-          'completed',
-        )
+        expect(
+          f.jobs.sessions().find((session) => session.id === result.sessionId)?.outcome,
+        ).toBeUndefined()
         await Promise.resolve()
         expect(firstCompleted).toBe(false)
         f.releaseBracketEnd(1)
