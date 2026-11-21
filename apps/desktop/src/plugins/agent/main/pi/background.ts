@@ -36,7 +36,7 @@ interface PiJob {
   model?: string
   usage?: SessionSummary['usage']
   contextPercent?: number
-  busy: boolean
+  followUps: PiFollowUp[]
   turns: Set<PiTurn>
   ownership: PiOwnership
   settlement: Promise<void>
@@ -53,7 +53,14 @@ interface PiOwnership {
   failure?: { cause: unknown }
 }
 
+interface PiFollowUp {
+  text: string
+  resolve(): void
+  reject(error: unknown): void
+}
+
 interface PiTurn {
+  acceptingFollowUps: boolean
   managed?: { handle: ManagedTurn; deadline: AbortController }
   begin: Promise<void>
   finalized?: Promise<void>
@@ -214,7 +221,6 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       job.usage = turn.statsUpdated ? turn.usage : (summarizeUsage(result.usage) ?? job.usage)
       job.contextPercent = turn.contextPercent ?? job.contextPercent
     }
-    job.busy = false
     job.state = 'idle'
     job.outcome = result.status
     job.error = result.error
@@ -222,7 +228,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     if (result.status === 'completed') job.reply = result.output
     if (result.status === 'completed' && !job.keep) {
       job.retentionTimer = setTimeout(() => {
-        if (job.busy || invalidated) return
+        if (job.currentTurn || invalidated) return
         void retire(job)
       }, RETAIN_MS)
       job.retentionTimer.unref()
@@ -253,16 +259,17 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       if (job.run.wasNotAdmitted) owner.record?.nonLaunch()
       owner.record?.settleCaller()
       owner.record?.retire()
+      if (job.staged) publish(job, job.staged.turn, job.staged.result)
     } catch (error) {
       const cause = failOwnership(owner, error)
-      job.staged = undefined
       if (job.state === 'working')
         publish(job, undefined, { status: 'failed', output: '', error: String(cause) })
       throw cause
+    } finally {
+      job.staged = undefined
+      job.currentTurn = undefined
+      rejectFollowUps(job)
     }
-    const staged = job.staged
-    job.staged = undefined
-    if (staged) publish(job, staged.turn, staged.result)
   }
 
   // All removal paths join the same settlement. A rejected job stays routable
@@ -290,19 +297,20 @@ export function createPiBackground(deps: PiBackgroundDeps) {
   }
 
   async function runTurn(job: PiJob, turn: PiTurn, prompt: string): Promise<void> {
-    job.busy = true
     job.state = 'working'
     job.outcome = undefined
     job.error = undefined
     changed()
     let result: PiRunResult = { status: 'aborted', output: '' }
-    if (!invalidated && !job.removal && !job.ownership.failure) {
+    if (canPublish(job) && job.run.isAlive && !job.ownership.failure) {
       try {
+        turn.acceptingFollowUps = true
         result = await job.run.prompt(prompt)
       } catch (error) {
         result = { status: 'failed', output: '', error: String(error) }
       }
     }
+    turn.acceptingFollowUps = false
     if (result.status !== 'completed' && job.run.isAlive && canPublish(job)) void job.run.close()
     if (!job.run.isAlive || !canPublish(job)) {
       try {
@@ -312,7 +320,6 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       }
     }
     const isCurrent = () => job.currentTurn === turn && canPublish(job)
-    if (isCurrent()) job.busy = false
     await finalize(job, turn, result.status === 'completed' ? 'end' : 'forget')
     if (!isCurrent()) return
     // This is the live-publication edge. Recheck the observed phase after
@@ -336,16 +343,24 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     } finally {
       await finalize(job, turn, 'forget')
       job.turns.delete(turn)
-      if (job.currentTurn === turn) job.currentTurn = undefined
+      // Exiting turns remain current through durable owner settlement. Their
+      // history promise must finish first so settlement can join it.
+      if (job.currentTurn === turn && job.run.isAlive && canPublish(job)) {
+        job.currentTurn = undefined
+        advanceFollowUps(job)
+      }
     }
   }
 
   function begin(job: PiJob): PiTurn {
     const turn: PiTurn = {
+      acceptingFollowUps: false,
       begin: Promise.resolve(),
       promise: Promise.resolve(),
       statsUpdated: false,
     }
+    job.turns.add(turn)
+    job.currentTurn = turn
     if (deps.beginManagedTurn !== undefined) {
       // Claim synchronously before sending a prompt. Generic host teardown
       // cannot forget this handle even when the physical receipt rejects.
@@ -364,8 +379,6 @@ export function createPiBackground(deps: PiBackgroundDeps) {
           },
         )
     }
-    job.turns.add(turn)
-    job.currentTurn = turn
     return turn
   }
 
@@ -461,7 +474,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       startedAt: Date.now(),
       run,
       state: 'working',
-      busy: false,
+      followUps: [],
       keep: args.keep === true,
       turns: new Set(),
       ownership,
@@ -481,11 +494,32 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     return { ok: true as const, sessionId: id }
   }
 
-  function startTurn(job: PiJob, prompt: string): void {
+  function startTurn(job: PiJob, prompt: string): PiOwnership['failure'] {
+    clearRetention(job)
     const turn = begin(job)
     // Only owner settlement joins turns. Tracking the raw promise in activation work
     // would let leave wait indefinitely after the bounded join has rejected.
     turn.promise = ownTurn(job, turn, prompt)
+    return job.ownership.failure
+  }
+
+  function rejectFollowUps(job: PiJob): void {
+    if (!job.followUps.length) return
+    const failure = job.ownership.failure
+    const cause = failure ? failure.cause : new Error('Pi RPC process exited before the follow-up')
+    for (const next of job.followUps.splice(0)) next.reject(cause)
+  }
+
+  function advanceFollowUps(job: PiJob): void {
+    if (job.ownership.failure || job.remote !== remote) {
+      rejectFollowUps(job)
+      return
+    }
+    const next = job.followUps.shift()
+    if (!next) return
+    const refused = startTurn(job, next.text)
+    if (refused) next.reject(refused.cause)
+    else next.resolve()
   }
 
   function leave(): Promise<void> {
@@ -532,6 +566,23 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       const job = jobs.get(id)
       if (!job || job.remote !== remote) throw new Error(`no running Pi session ${id}`)
       if (job.ownership.failure) throw job.ownership.failure.cause
+      const turn = job.currentTurn
+      if (turn && !job.removal) {
+        if (turn.acceptingFollowUps && job.run.isAlive && job.followUps.length === 0) {
+          try {
+            job.run.followUp(text)
+            return
+          } catch (error) {
+            // RPC can resolve its result synchronously before the awaiting
+            // turn resumes to close admission. Only that refusal is queued.
+            if (!(error instanceof Error) || error.message !== 'Pi RPC run is not active')
+              throw error
+          }
+        }
+        // Acknowledge when dispatched, not when the next reply completes.
+        // Until then the prior turn owns both publication and any failure.
+        return new Promise<void>((resolve, reject) => job.followUps.push({ text, resolve, reject }))
+      }
       if (!job.removal && (job.outcome === 'failed' || job.outcome === 'aborted')) {
         await job.run.drained
         throw new Error(`no running Pi session ${id}`)
@@ -540,11 +591,8 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         await retire(job)
         throw new Error('Pi RPC process exited before the follow-up')
       }
-      if (job.busy) job.run.followUp(text)
-      else {
-        clearRetention(job)
-        startTurn(job, text)
-      }
+      const refused = startTurn(job, text)
+      if (refused) throw refused.cause
     },
     async stop(id: string) {
       if (invalidated) return { ok: false as const, message: 'That session has ended.' }

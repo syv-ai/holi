@@ -99,6 +99,19 @@ function nativeJournalSnapshot(path: string): string | undefined {
   }
 }
 
+// Cached kernel absence is only valid for the full, ordered native identity set.
+function completeJournal(text: string, nonce: string): boolean {
+  const [header, root, reaper, anchor, complete, end, ...extra] = text.split('\n')
+  if (header !== `HOLI-POSIX-1 ${nonce}` || complete !== 'COMPLETE' || end !== '' || extra.length)
+    return false
+  const identities = [
+    /^ROOT ([1-9]\d{0,9})$/.exec(root ?? '')?.[1],
+    /^REAPER ([1-9]\d{0,9})$/.exec(reaper ?? '')?.[1],
+    /^ANCHOR ([1-9]\d{0,9})$/.exec(anchor ?? '')?.[1],
+  ].map(Number)
+  return new Set(identities).size === 3 && identities.every((pid) => pid > 1 && pid <= 0x7fffffff)
+}
+
 export interface LaunchOwnership {
   /** Fresh path for native core, not pre-created. Absent for an explicit fake. */
   readonly ownershipRecordPath: string | undefined
@@ -260,7 +273,8 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
         const match = entryName.exec(name)
         if (!match)
           throw new Error(`Retaining ${vault.remote} ${kind}: unknown ownership entry ${name}.`)
-        const [, nonce, suffix] = match
+        const nonce = match[1]!
+        const suffix = match[2]
         const path = join(parent, name)
         privateDir(path)
         const header = `HOLI-AGENT-1 ${nonce}\n`
@@ -304,13 +318,14 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
         if (finalizing !== undefined && caller === undefined)
           retain(name, `${consumer} caller finalization is pending.`)
         const native = join(path, 'native')
-        const journal = join(native, nonce!)
+        const journal = join(native, nonce)
         const discard = read(path, 'cold-discard')
         const discardReceipt = () => {
           // Bind the receipt to the exact owner and full native proof inspected
           // while no writer remained. Neither a name nor a PID is authority.
           const current = nativeJournalSnapshot(journal)
-          if (current === undefined) retain(name, 'Missing cold-discard journal.')
+          if (current === undefined || !completeJournal(current, nonce))
+            retain(name, 'Missing or invalid cold-discard journal.')
           const failed = read(journal, 'failed')
           if (failed !== undefined) retain(name, `Native failure: ${failed}`)
           if (
@@ -333,45 +348,57 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
             discard !== discardReceipt().text
           )
             retain(name, 'Invalid cold-discard receipt.')
-        } else if (suffix) {
-          if (settled === undefined || (phased && caller === undefined && preflight === undefined))
-            retain(name, 'Missing retired caller settlement.')
-          if (proof === 'native') {
+        } else {
+          if (suffix && settled === undefined) retain(name, 'Missing retired settlement.')
+          if (proof === 'explicit') {
+            // Only paired explicit adapters can settle without a native journal.
+            if (readdirSync(path).includes('native')) retain(name, 'Unexpected native evidence.')
+            if (preflight === undefined && (phased ? caller === undefined : settled === undefined))
+              retain(name, 'Missing explicit physical or caller settlement.')
+          } else {
             privateDir(native)
             const entries = readdirSync(native)
             if (entries.some((entry) => entry !== nonce))
-              retain(name, 'Unexpected retired native evidence.')
-            if (entries.length !== 0) {
+              retain(name, 'Unexpected native evidence.')
+            if (entries.length === 0) {
+              // The positive, nonce-bound non-launch receipt covers a refusal
+              // before native claimed its path. An outer marker never does.
+              if (preflight === undefined) retain(name, 'Missing native receipt.')
+            } else {
               privateDir(journal)
-              if (readdirSync(journal).some((file) => !['journal', 'settled'].includes(file)))
-                retain(name, 'Unknown or partial retired native evidence.')
-              // No PID probing for retired receipts. Only an intact cached
-              // native settlement can validate a previously launched owner.
-              if (read(journal, 'settled') === undefined)
-                retain(name, 'Missing retired native settlement.')
+              if (
+                readdirSync(journal).some(
+                  (file) => !['journal', 'settled', 'failed'].includes(file),
+                )
+              )
+                retain(name, 'Unknown or partial native evidence.')
+              const snapshot = read(journal, 'journal')
+              const nativeSettled = read(journal, 'settled')
+              // Same check on either side of rename. A retirement or refusal
+              // receipt may only consume cached native proof, never re-probe.
+              if (
+                nativeSettled === undefined &&
+                (settled !== undefined || preflight !== undefined || suffix)
+              )
+                retain(name, 'Missing native settlement.')
               const result = inspectPosixOwnership(journal)
               if (result.state === 'retain') retain(name, result.reason)
-            } else if (preflight === undefined) retain(name, 'Missing retired native receipt.')
-          } else if (readdirSync(path).includes('native'))
-            retain(name, 'Unexpected retired native evidence.')
-        } else if (settled === undefined && preflight === undefined) {
-          if (proof === 'native') {
-            const snapshot = nativeJournalSnapshot(journal)
-            const result = inspectPosixOwnership(journal)
-            if (result.state === 'retain') retain(name, result.reason)
-            if (result.state === 'confirmed' && result.proof === 'kernel-absence') {
-              if (finalizing !== undefined)
-                retain(name, 'Missing native settlement for caller finalization.')
-              const receipt = discardReceipt()
-              if (receipt.current !== snapshot) retain(name, 'Cold-discard journal changed.')
-              discardReceipts.push(() => publish(path, 'cold-discard', receipt.text))
-              coldDiscard = true
-            } else if (phased && caller === undefined) {
-              // Native SETTLED proves physical absence only, not caller success.
-              retain(name, `Missing ${consumer} output and caller settlement.`)
+              if (result.state === 'confirmed' && result.proof === 'kernel-absence') {
+                if (finalizing !== undefined)
+                  retain(name, 'Missing native settlement for caller finalization.')
+                const receipt = discardReceipt()
+                if (receipt.current !== snapshot) retain(name, 'Cold-discard journal changed.')
+                discardReceipts.push(() => publish(path, 'cold-discard', receipt.text))
+                coldDiscard = true
+              } else if (
+                preflight === undefined &&
+                (snapshot === undefined || !completeJournal(snapshot, nonce))
+              )
+                retain(name, 'Incomplete native settlement without non-launch evidence.')
             }
-          } else if (!(kind === 'pi' && caller !== undefined))
-            retain(name, 'No explicit physical settlement.')
+            if (!coldDiscard && phased && caller === undefined && preflight === undefined)
+              retain(name, `Missing ${consumer} output and caller settlement.`)
+          }
         }
         if (!suffix) links.add(id!)
         const retired = suffix ? path : `${path}.retired`

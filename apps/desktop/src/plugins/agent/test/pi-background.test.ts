@@ -1755,62 +1755,142 @@ describe('Pi background runs', () => {
     expect(manager.sessions()).toEqual([])
   })
 
-  it('isolates overlapping turn finalizers and stop drains the superseded turn', async () => {
-    vi.useFakeTimers()
-    const rpc = fake()
-    let releaseFirst!: () => void
-    let enteredFirst!: () => void
-    const firstEntered = new Promise<void>((resolve) => {
-      enteredFirst = resolve
-    })
-    const firstFinalizer = new Promise<void>((resolve) => {
-      releaseFirst = resolve
-    })
-    let ends = 0
-    const manager = createPiBackground({
-      bin: () => '/usr/bin/pi',
-      spawn: () => rpc.child,
-      bracket: async (_id, edge) => {
-        if (edge !== 'end') return
-        ends++
-        if (ends === 1) {
-          enteredFirst()
-          await firstFinalizer
+  it.each(['success', 'failure', 'exit'] as const)(
+    'queues follow-ups behind the managed history commit (%s)',
+    async (mode) => {
+      const rpc = fake(true, false)
+      const failure = new Error('first managed history commit failed')
+      let enterHistory!: () => void
+      const entered = new Promise<void>((resolve) => {
+        enterHistory = resolve
+      })
+      let releaseHistory!: () => void
+      let rejectHistory!: (error: Error) => void
+      const history = new Promise<void>((resolve, reject) => {
+        releaseHistory = resolve
+        rejectHistory = reject
+      })
+      const committed: number[] = []
+      const published: unknown[] = []
+      let begun = 0
+      let id = ''
+      const manager = createPiBackground({
+        bin: () => '/usr/bin/pi',
+        spawn: () => rpc.child,
+        bracket: vi.fn(),
+        beginManagedTurn: () => {
+          const turn = ++begun
+          return {
+            end: async () => {
+              if (turn === 1) {
+                enterHistory()
+                await history
+              }
+              committed.push(turn)
+              return {
+                base: `commit-${turn - 1}`,
+                end: `commit-${turn}`,
+                at: new Date().toISOString(),
+              }
+            },
+            forget: vi.fn(),
+          }
+        },
+        changed: () => {
+          const row = manager.sessions()[0]
+          if (row?.outcome === 'completed') published.push([manager.reply(id), row.usage])
+        },
+      })
+      const commands = () => rpc.commands.filter((command) => command.type === 'prompt')
+      const answer = (text: string, total: number) => {
+        rpc.stdout.write(
+          `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":${JSON.stringify(text)}}}\n{"type":"agent_settled","aborted":false}\n`,
+        )
+        const stats = rpc.commands.at(-1)
+        expect(stats?.type).toBe('get_session_stats')
+        rpc.stdout.write(
+          JSON.stringify({
+            type: 'response',
+            id: stats!.id,
+            success: true,
+            data: { tokens: { total } },
+          }) + '\n',
+        )
+      }
+      try {
+        manager.setVault('owner/vault', '/vault')
+        const launched = await manager.launch({ name: 'x', prompt: 'first', keep: true })
+        if (!launched.ok) throw new Error(launched.message)
+        id = launched.sessionId
+        answer('first reply', 10)
+        // In success, send at the synchronous RPC result edge; the other
+        // cases enter after background has already started waiting on history.
+        if (mode !== 'success') await entered
+        const ack = vi.fn()
+        const followUp = manager.message(id, 'second')
+        void followUp.then(
+          () => ack(),
+          () => {},
+        )
+        await entered
+        const later = mode === 'success' ? manager.message(id, 'third') : undefined
+        void later?.catch(() => {})
+        await tick()
+        expect(ack).not.toHaveBeenCalled()
+        expect(begun).toBe(1)
+        expect(commands().map(({ message }) => message)).toEqual(['first'])
+        expect(manager.sessions()[0]?.state).toBe('working')
+        expect(manager.reply(id)).toBeNull()
+
+        if (mode === 'failure') {
+          rejectHistory(failure)
+          await expect(followUp).rejects.toBe(failure)
+          expect(manager.sessions()[0]).toMatchObject({ outcome: 'failed', error: String(failure) })
+          await expect(manager.message(id, 'retry')).rejects.toBe(failure)
+          await expect(manager.stop(id)).rejects.toBe(failure)
+          expect(manager.sessions()[0]?.id).toBe(id)
+          expect(begun).toBe(1)
+          expect(published).toEqual([])
+        } else {
+          if (mode === 'exit') rpc.exit()
+          releaseHistory()
+          if (mode === 'exit') {
+            await expect(followUp).rejects.toThrow(/process exited/)
+            expect(begun).toBe(1)
+            expect(committed).toEqual([1])
+            expect(published).toEqual([['first reply', { total: 10 }]])
+          } else {
+            await expect(followUp).resolves.toBeUndefined()
+            expect(ack).toHaveBeenCalledOnce()
+            expect(begun).toBe(2)
+            expect(commands().map(({ message }) => message)).toEqual(['first', 'second'])
+            expect(manager.reply(id)).toBe('first reply')
+            expect(committed).toEqual([1])
+            expect(published).toEqual([['first reply', { total: 10 }]])
+            answer('second reply', 20)
+            await expect(later).resolves.toBeUndefined()
+            expect(commands().map(({ message }) => message)).toEqual(['first', 'second', 'third'])
+            expect(manager.reply(id)).toBe('second reply')
+            answer('third reply', 30)
+            await tick()
+            expect(committed).toEqual([1, 2, 3])
+            expect(published).toEqual([
+              ['first reply', { total: 10 }],
+              ['second reply', { total: 20 }],
+              ['third reply', { total: 30 }],
+            ])
+          }
         }
-      },
-      changed: () => {},
-    })
-    manager.setVault('owner/vault', '/vault')
-    const launched = await manager.launch({ name: 'x', prompt: 'first' })
-    if (!launched.ok) throw new Error(launched.message)
-    const answer = (text: string) =>
-      rpc.stdout.write(
-        `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":${JSON.stringify(text)}}}\n{"type":"agent_settled","aborted":false}\n`,
-      )
-
-    answer('old reply')
-    await vi.advanceTimersByTimeAsync(0)
-    await firstEntered
-    await expect(manager.message(launched.sessionId, 'second')).resolves.toBeUndefined()
-    answer('new reply')
-    await vi.advanceTimersByTimeAsync(0)
-    expect(manager.reply(launched.sessionId)).toBe('new reply')
-    expect(manager.sessions()[0]?.outcome).toBe('completed')
-    await vi.advanceTimersByTimeAsync(29_999)
-    expect(manager.sessions()).toHaveLength(1)
-
-    let stopped = false
-    const stopping = manager.stop(launched.sessionId).then(() => {
-      stopped = true
-    })
-    await vi.advanceTimersByTimeAsync(0)
-    expect(stopped).toBe(false)
-    releaseFirst()
-    await stopping
-    expect(stopped).toBe(true)
-    expect(ends).toBe(2)
-    await manager.leave()
-  })
+      } finally {
+        releaseHistory()
+        try {
+          await manager.leave().catch((error: unknown) => expect(error).toBe(failure))
+        } finally {
+          rpc.dispose()
+        }
+      }
+    },
+  )
 
   it('retains a failed finalizer without contaminating another job', async () => {
     const children = [fake(), fake()]
