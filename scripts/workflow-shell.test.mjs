@@ -39,3 +39,14 @@ test('every workflow run block has valid bash syntax', () => {
     assert.equal(result.status, 0, `workflow run block ${index + 1}: ${result.stderr}`)
   }
 })
+
+test('Pi and Codex consumer jobs build the native helper, never the Electron PTY', () => {
+  for (const job of ['pi-compatibility', 'codex-check']) {
+    const block = workflow.split(`  ${job}:`)[1].split(/\n  [a-z-]+:/)[0]
+    assert.match(block, /node scripts\/build-posix-lease\.mjs/)
+    assert.doesNotMatch(block, /rebuild:natives/)
+    assert.match(block, /native\.outcome/)
+  }
+  assert.match(workflow, /GITHUB_STEP_SUMMARY/)
+  assert.match(workflow, /name: harness-monitor-report/)
+})

@@ -156,122 +156,6 @@ test('Codex report coverage keeps CLI surface and fixture consumers distinct', (
   )
 })
 
-test('does not create tracking issues for healthy or unverified first observations', async () => {
-  const adapter = fakeAdapter()
-  await reconcile(
-    {
-      sha: 'abc',
-      runNumber: 1,
-      runUrl: 'url',
-      providers: providers.map((item) => observation(item.id)),
-    },
-    adapter,
-  )
-  assert.equal(adapter.issues.size, 0)
-  for (const issue of adapter.issues.values()) {
-    assert.match(issue.body, /Monitoring-only/)
-    if (issue.label === 'harness-pi') {
-      assert.match(issue.body, /cli-contract: unverified/)
-      assert.match(issue.body, /rpc-consumer: unverified/)
-      assert.match(issue.body, /rpc-producer: unverified/)
-    } else {
-      assert.match(issue.body, /compatibility: unverified/)
-    }
-    assert.match(issue.body, /<!-- holi-harness-monitor:/)
-    assert.equal(issue.state, 'open')
-  }
-})
-
-test('Pi help details containing angle-bracket arguments keep stable report markers', async () => {
-  const adapter = fakeAdapter()
-  const first = report('pi')
-  await reconcile(first, adapter)
-  const second = structuredClone(first)
-  second.runNumber = 2
-  second.sha = 'sha-2'
-  second.runUrl = 'https://example.test/runs/2'
-  second.providers[0].checks = [
-    {
-      name: 'cli-contract',
-      outcome: 'pass',
-      detail: 'Usage: pi --model <model> [--session <path>]',
-    },
-    { name: 'rpc-consumer', outcome: 'pass', detail: 'consumer fixtures passed' },
-    { name: 'rpc-producer', outcome: 'pass', detail: 'producer fixture passed' },
-  ]
-  await reconcile(second, adapter)
-  const third = structuredClone(second)
-  third.runNumber = 3
-  third.sha = 'sha-3'
-  third.runUrl = 'https://example.test/runs/3'
-  await reconcile(third, adapter)
-  const issue = [...adapter.issues.values()][0]
-  assert.equal(adapter.issues.size, 1)
-  assert.equal(adapter.comments.length, 1)
-  assert.match(adapter.comments[0].body, /<!-- holi-harness-report:v2-[a-f0-9]{64} -->/)
-  assert.match(issue.body, /<model>/)
-  assert.match(issue.body, /<!-- holi-harness-run:3 -->/)
-})
-
-test('version changes update the existing provider issue without duplicate issues', async () => {
-  const adapter = fakeAdapter()
-  await reconcile(report('pi'), adapter)
-  await reconcile(report('pi', '1.1.0', 2), adapter)
-  assert.equal(adapter.issues.size, 1)
-  assert.match([...adapter.issues.values()][0].body, /Observed npm latest: `1.1.0`/)
-  assert.equal(adapter.comments.length, 1)
-})
-
-test('unchanged observations persist newest metadata without comments and reject delayed runs', async () => {
-  const adapter = fakeAdapter()
-  await reconcile(report('codex', '1.0.0', 1), adapter)
-  const latest = report('codex', '1.0.0', 3)
-  latest.sha = 'newest-sha'
-  await reconcile(latest, adapter)
-  await reconcile(report('codex', '1.0.0', 2, 'pass'), adapter)
-  const issue = [...adapter.issues.values()][0]
-  assert.equal(adapter.issues.size, 1)
-  assert.equal(adapter.comments.length, 0)
-  assert.match(issue.body, /<!-- holi-harness-run:3 -->/)
-  assert.match(issue.body, /Holi commit: newest-sha/)
-  assert.equal(issue.state, 'open')
-})
-
-test('mismatches stay open and update the tracking issue', async () => {
-  const adapter = fakeAdapter()
-  await reconcile(report('claude-code'), adapter)
-  await reconcile(report('claude-code', '1.0.0', 2, 'mismatch'), adapter)
-  const issue = [...adapter.issues.values()][0]
-  assert.equal(issue.state, 'open')
-  assert.match(issue.body, /compatibility: mismatch/)
-})
-
-test('only a current all-pass report closes; later release reopens the same issue', async () => {
-  const adapter = fakeAdapter()
-  await reconcile(report('pi'), adapter)
-  const passingPi = report('pi', '1.0.0', 2, 'pass')
-  passingPi.providers[0].checks.push(
-    { name: 'cli-contract', outcome: 'pass' },
-    { name: 'rpc-consumer', outcome: 'pass' },
-    { name: 'rpc-producer', outcome: 'pass' },
-  )
-  await reconcile(passingPi, adapter)
-  const issue = [...adapter.issues.values()][0]
-  assert.equal(issue.state, 'closed')
-  await reconcile(report('pi', '2.0.0', 3), adapter)
-  assert.equal(adapter.issues.size, 1)
-  assert.equal(issue.state, 'open')
-})
-
-test('a mixed report cannot close an issue even when one check passes', async () => {
-  const adapter = fakeAdapter()
-  await reconcile(report('pi'), adapter)
-  const pass = observation('pi', '1.0.0', 2, 'pass')
-  pass.checks.push({ name: 'platform coverage', outcome: 'unverified' })
-  await reconcile({ ...report('pi', '1.0.0', 2), providers: [pass] }, adapter)
-  assert.equal([...adapter.issues.values()][0].state, 'open')
-})
-
 test('Claude merge preserves Codex and missing Claude coverage remains unverified', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'holi-monitor-merge-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
@@ -308,37 +192,7 @@ test('Claude merge preserves Codex and missing Claude coverage remains unverifie
     { ...result, providers: [result.providers.find((p) => p.id === 'claude-code')] },
     adapter,
   )
-  assert.equal([...adapter.issues.values()][0].state, 'open')
-})
-
-test('fixture and CLI passes cannot close while Claude signals remain unverified', async () => {
-  const adapter = fakeAdapter()
-  const checks = [
-    { name: 'CLI surface', outcome: 'pass' },
-    {
-      name: 'fixture consumers',
-      outcome: 'pass',
-      detail: 'Constructed attributed fixtures replayed.',
-    },
-    { name: 'historical-session inclusion', outcome: 'unverified' },
-    { name: 'actual hook emission', outcome: 'unverified' },
-    { name: 'permissions', outcome: 'unverified' },
-    { name: 'messaging', outcome: 'unverified' },
-  ]
-  await reconcile(
-    {
-      ...report('claude-code', '2.1.319', 1),
-      providers: [{ ...observation('claude-code', '2.1.319', 1), checks }],
-    },
-    adapter,
-  )
-  const issue = [...adapter.issues.values()][0]
-  assert.equal(issue.state, 'open')
-  assert.match(issue.body, /CLI surface: pass/)
-  assert.match(issue.body, /fixture consumers: pass/)
-  assert.match(issue.body, /actual hook emission: unverified/)
-  assert.match(issue.body, /exact npm CLI surface/)
-  assert.doesNotMatch(issue.body, /No provider harness was installed or executed/)
+  assert.equal(adapter.issues.size, 0)
 })
 
 test('Pi producer outcomes propagate through workflow projection without issue writes', async (t) => {
@@ -390,7 +244,7 @@ test('Pi producer outcomes propagate through workflow projection without issue w
     },
     adapter,
   )
-  assert.equal([...adapter.issues.values()][0].state, 'open')
+  assert.equal(adapter.issues.size, 0)
 })
 
 test('missing Pi checker results remain unverified and cannot close an issue', async (t) => {
@@ -418,12 +272,7 @@ test('missing Pi checker results remain unverified and cannot close an issue', a
   assert.equal(merged.status, 0, merged.stderr)
   const adapter = fakeAdapter()
   await reconcile(JSON.parse(merged.stdout), adapter)
-  const issue = [...adapter.issues.values()][0]
-  assert.equal(issue.state, 'open')
-  assert.match(issue.body, /cli-contract: unverified/)
-  assert.match(issue.body, /rpc-consumer: unverified/)
-  assert.match(issue.body, /rpc-producer: unverified/)
-  assert.match(issue.body, /Checker failed or produced no result/)
+  assert.equal(adapter.issues.size, 0)
 })
 
 test('malformed runner checks cannot become a pass', () => {
@@ -440,83 +289,97 @@ test('malformed runner checks cannot become a pass', () => {
   }
 })
 
-test('missing required checks are unverified and cannot close an issue', async () => {
+function evidence(checks, runNumber = 1, version = '1.0.0') {
+  const value = report('pi', version, runNumber)
+  value.providers[0].checks = checks
+  return value
+}
+const failure = [{ name: 'rpc-consumer', outcome: 'mismatch', detail: 'broken' }]
+const passing = [{ name: 'rpc-consumer', outcome: 'pass' }]
+
+test('healthy and unverified observations stay quiet', async () => {
   const adapter = fakeAdapter()
   await reconcile(report('pi'), adapter)
-  const omitted = report('pi', '1.0.0', 2, 'pass')
-  omitted.providers[0].checks = []
-  await reconcile(omitted, adapter)
-  const issue = [...adapter.issues.values()][0]
-  assert.equal(issue.state, 'open')
-  assert.match(issue.body, /cli-contract: unverified/)
-  assert.match(issue.body, /rpc-consumer: unverified/)
-  assert.match(issue.body, /rpc-producer: unverified/)
+  await reconcile(evidence(passing, 2), adapter)
+  assert.equal(adapter.issues.size, 0)
 })
 
-test('failed reopening is retried even after report body succeeds', async () => {
+test('version and detail churn stay quiet, new failing checks alert', async () => {
   const adapter = fakeAdapter()
-  await reconcile(report('codex', '1.0.0', 1), adapter)
-  await reconcile(report('codex', '1.0.0', 2, 'pass'), adapter)
-  const issue = [...adapter.issues.values()][0]
-  assert.equal(issue.state, 'closed')
-  const reopenIssue = adapter.reopenIssue
-  let failOnce = true
-  adapter.reopenIssue = async (number) => {
-    if (failOnce) {
-      failOnce = false
-      throw new Error('reopen failed')
-    }
-    return reopenIssue(number)
-  }
-  await assert.rejects(reconcile(report('codex', '1.0.0', 3, 'mismatch'), adapter), /reopen failed/)
-  assert.match(issue.body, /<!-- holi-harness-run:3 -->/)
-  await reconcile(report('codex', '1.0.0', 3, 'mismatch'), adapter)
-  assert.equal(issue.state, 'open')
-})
-
-test('closed unverified issues reopen even when report content is unchanged', async () => {
-  const adapter = fakeAdapter()
-  await reconcile(report('codex'), adapter)
-  const issue = [...adapter.issues.values()][0]
-  issue.state = 'closed'
-  await reconcile(report('codex'), adapter)
-  assert.equal(issue.state, 'open')
-})
-
-test('close failures surface instead of claiming a completed pass', async () => {
-  const adapter = fakeAdapter()
-  await reconcile(report('codex'), adapter)
-  const closeIssue = adapter.closeIssue
-  let failOnce = true
-  adapter.closeIssue = async (number) => {
-    if (failOnce) {
-      failOnce = false
-      throw new Error('GitHub issue update failed')
-    }
-    return closeIssue(number)
-  }
-  await assert.rejects(
-    reconcile(report('codex', '1.0.0', 2, 'pass'), adapter),
-    /GitHub issue update failed/,
-  )
-  await reconcile(report('codex', '1.0.0', 2, 'pass'), adapter)
-  assert.equal([...adapter.issues.values()][0].state, 'closed')
-})
-
-test('stale reports cannot overwrite or close a newer observation', async () => {
-  const adapter = fakeAdapter()
-  await reconcile(report('codex', '2.0.0', 9), adapter)
-  await reconcile(report('codex', '1.0.0', 8, 'pass'), adapter)
-  const issue = [...adapter.issues.values()][0]
-  assert.match(issue.body, /Observed npm latest: `2.0.0`/)
-  assert.equal(issue.state, 'open')
+  await reconcile(evidence(failure), adapter)
+  await reconcile(evidence([{ ...failure[0], detail: 'changed path' }], 2, '2.0.0'), adapter)
   assert.equal(adapter.comments.length, 0)
+  await reconcile(evidence([...failure, { name: 'cli-contract', outcome: 'mismatch' }], 3), adapter)
+  assert.equal(adapter.comments.length, 1)
+  assert.match(adapter.comments[0].body, /cli-contract/)
 })
 
-test('issue adapter failures propagate without being mistaken for success', async () => {
+test('unverified checks retain failure evidence; explicit pass resolves despite coverage gaps', async () => {
   const adapter = fakeAdapter()
-  adapter.findTrackingIssue = async () => {
-    throw new Error('GitHub API unavailable')
+  await reconcile(evidence(failure), adapter)
+  await reconcile(evidence([], 2), adapter)
+  await reconcile(evidence([{ name: 'rpc-consumer', outcome: 'unverified' }], 3), adapter)
+  assert.equal(adapter.issues.get(1).state, 'open')
+  assert.match(adapter.issues.get(1).body, /retained until explicitly passing.*rpc-consumer/)
+  assert.equal(adapter.comments.length, 0)
+  await reconcile(evidence(passing, 4), adapter)
+  assert.equal(adapter.issues.get(1).state, 'closed')
+  await reconcile(evidence([], 5, '3.0.0'), adapter)
+  assert.equal(adapter.issues.get(1).state, 'closed')
+  await reconcile(evidence(failure, 6), adapter)
+  assert.equal(adapter.issues.get(1).state, 'open')
+  assert.equal(adapter.comments.length, 1)
+  await reconcile(evidence(passing, 7), adapter)
+  await reconcile(evidence(failure, 8), adapter)
+  assert.equal(adapter.comments.length, 2)
+})
+
+test('legacy informational trackers close silently, legacy mismatch evidence persists', async () => {
+  for (const mismatch of [false, true]) {
+    const adapter = fakeAdapter()
+    await adapter.createIssue({
+      title: 'legacy',
+      label: 'harness-pi',
+      body:
+        '- **rpc-consumer: ' +
+        (mismatch ? 'mismatch' : 'unverified') +
+        '**\n<!-- holi-harness-monitor:pi -->\n<!-- holi-harness-run:1 -->',
+    })
+    await reconcile(evidence([], 2), adapter)
+    assert.equal(adapter.issues.get(1).state, mismatch ? 'open' : 'closed')
+    assert.equal(adapter.comments.length, 0)
   }
-  await assert.rejects(reconcile(report('pi'), adapter), /GitHub API unavailable/)
+})
+
+test('stale reports cannot overwrite or close newer evidence', async () => {
+  const adapter = fakeAdapter()
+  await reconcile(evidence(failure, 9), adapter)
+  const body = adapter.issues.get(1).body
+  await reconcile(evidence(passing, 8), adapter)
+  assert.equal(adapter.issues.get(1).body, body)
+  assert.equal(adapter.issues.get(1).state, 'open')
+})
+
+test('partial state mutations and alert writes retry without duplicate comments', async () => {
+  for (const method of ['reopenIssue', 'commentIssue', 'closeIssue']) {
+    const adapter = fakeAdapter()
+    await reconcile(evidence(failure), adapter)
+    await reconcile(evidence(passing, 2), adapter)
+    const original = adapter[method]
+    let once = true
+    adapter[method] = async (...args) => {
+      if (once) {
+        once = false
+        throw new Error('failed write')
+      }
+      return original(...args)
+    }
+    if (method === 'closeIssue') await reconcile(evidence(failure, 3), adapter)
+    const current = evidence(method === 'closeIssue' ? passing : failure, 4)
+    await assert.rejects(reconcile(current, adapter), /failed write/)
+    await reconcile(current, adapter)
+    await reconcile(current, adapter)
+    assert.equal(adapter.issues.get(1).state, method === 'closeIssue' ? 'closed' : 'open')
+    assert.equal(adapter.comments.length, 1)
+  }
 })
