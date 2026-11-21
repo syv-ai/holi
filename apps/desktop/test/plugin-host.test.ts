@@ -22,6 +22,14 @@ import { install } from '../src/main/plugin-host/installed'
 import { coreSeed } from '../src/main/vault/seed/core'
 import { readSeedState } from '../src/main/vault/seed/state'
 import { readVaultSettings, writeVaultSettings } from '../src/main/vault/settings'
+import { createPtySessions } from '../src/plugins/agent/main/host/pty-sessions'
+import { createAgentTerminals } from '../src/plugins/agent/main/host/terminals'
+import {
+  createManagedTurnBrackets,
+  createTurnCoordinator,
+} from '../src/plugins/agent/main/host/turn-coordinator'
+import { openTurnLog } from '../src/plugins/agent/main/host/turn-log'
+import type { AgentProvider } from '../src/plugins/agent/main/provider'
 
 const SKILL = '.claude/skills/fake/SKILL.md'
 const dirs: string[] = []
@@ -1638,7 +1646,7 @@ describe('the lifecycle', () => {
     const draining = new Promise<void>((resolve) => (finish = resolve))
     const { host, enter } = rig({ plugins })
     await enter(openVault('o/r', root, log, () => draining))
-    const holding = ctx!.pauseSyncAndDrain('pending')
+    const holding = ctx!.pauseSyncAndDrain('pending', { retainOnFailure: true })
     await Promise.resolve()
     await host.stop('o/r')
     finish()
@@ -1882,6 +1890,103 @@ describe('an owned prefix', () => {
 })
 
 describe('activation cancellation and teardown failures', () => {
+  it.each(['success', 'proof failure'] as const)(
+    'keeps plugin shutdown joined to the original PTY proof past 10 seconds: %s',
+    async (mode) => {
+      const root = await tempDir()
+      const vault = openVault('A', root)
+      const proof = repairGate()
+      const cause = new Error('original PTY proof failure')
+      const drain = vi.fn(async () => {
+        await proof.promise
+        if (mode === 'proof failure') throw cause
+      })
+      let exit!: (event: { exitCode: number }) => void
+      const pty = {
+        pid: 999_999,
+        onData: () => {},
+        onExit: (cb: typeof exit) => {
+          exit = cb
+        },
+        write: () => {},
+        resize: () => {},
+        kill: vi.fn(),
+      }
+      const terminals = createAgentTerminals({
+        emit: () => {},
+        log: () => {},
+        spawnPty: () => pty,
+        superviseGroup: () => ({ drain }),
+      })
+      const provider: AgentProvider = {
+        id: 'codex',
+        label: 'Codex',
+        notInstalled: 'not installed',
+        installed: () => true,
+        configure: async () => ({ dir: root }),
+        terminal: () => ({ bin: 'fixture', args: [], env: {} }),
+        capabilities: {},
+      }
+      const dispose = vi.fn()
+      const sessions = createPtySessions({
+        vault,
+        terminals,
+        providers: () => [provider],
+        bracket: () => {},
+        binDir: () => null,
+        onChange: () => {},
+      })
+      const { host } = rig({
+        plugins: [
+          {
+            info: { id: 'fake', label: 'Fake', default: true },
+            activate: () => () => {
+              dispose()
+              return sessions.leave()
+            },
+          },
+        ],
+      })
+      await host.reconcile(vault, 'open')
+      const started = await sessions.start('codex', {})
+      if (!started.ok) throw new Error(started.message)
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const first = host.stop('A').catch((error: unknown) => error)
+        const second = host.stop('A').catch((error: unknown) => error)
+        const settled = vi.fn()
+        void first.then(settled)
+        await vi.advanceTimersByTimeAsync(12_000)
+        expect(settled).not.toHaveBeenCalled()
+        expect(drain).toHaveBeenCalledOnce()
+        expect(sessions.has(started.sessionId)).toBe(true)
+        proof.resolve()
+        if (mode === 'success') {
+          exit({ exitCode: 0 })
+          await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
+          expect(sessions.has(started.sessionId)).toBe(false)
+        } else {
+          // No public exit: known physical failure must win immediately.
+          await vi.advanceTimersByTimeAsync(0)
+          expect(settled).toHaveBeenCalledOnce()
+          const failure = await first
+          expect(failure).toMatchObject({ errors: [{ errors: [{ errors: [cause] }] }] })
+          expect(await second).toBe(failure)
+          await expect(host.stop('A')).rejects.toBe(failure)
+          await expect(host.reconcile(vault, 'open')).rejects.toBe(failure)
+          expect(sessions.has(started.sessionId)).toBe(true)
+          expect(terminals.launchedFor(started.sessionId)).toBe(started.terminalId)
+        }
+        expect(dispose).toHaveBeenCalledOnce()
+        expect(pty.kill).not.toHaveBeenCalled()
+      } finally {
+        proof.resolve()
+        exit({ exitCode: 0 })
+        vi.useRealTimers()
+      }
+    },
+  )
+
   it('aborts a settings-disabled activation before its queued cleanup can begin', async () => {
     let context: PluginCtx | undefined
     let entered!: () => void
@@ -2713,6 +2818,210 @@ describe('stopped lifetimes and superseded configuration admission', () => {
       await Promise.allSettled(pending)
       await h.host.stopAll()
     }
+  })
+})
+
+describe('agent turn sync holds', () => {
+  // The native adapter supplies an explicit physical receipt. No PIDs or OS
+  // processes stand in for proof in these host/coordinator integration tests.
+  function openWriter(ctx: PluginCtx) {
+    const brackets = createManagedTurnBrackets()
+    const coordinator = createTurnCoordinator({
+      vault: () => ({ ...ctx, claimManagedTurn: brackets.claimManagedTurn }),
+      turnLogFor: openTurnLog,
+    })
+    const turn = brackets.begin('writer', (id, edge) => coordinator[edge](id))
+    return {
+      async forget(physical: () => Promise<void>) {
+        await physical()
+        turn.forget()
+      },
+      async drain(physical: () => Promise<void>, output: () => void = () => {}) {
+        try {
+          await physical()
+          try {
+            output()
+          } catch (error) {
+            turn.forget()
+            throw error
+          }
+          await turn.end()
+        } finally {
+          await coordinator.drain()
+        }
+      },
+    }
+  }
+
+  it.skipIf(process.platform === 'win32').each(['throws', 'reports'] as const)(
+    'keeps the original sync hold and stop failure when an unproven writer %s',
+    async (mode) => {
+      const roots = { A: await tempDir(), B: await tempDir() }
+      const aSync: string[] = []
+      const bSync: string[] = []
+      const cause = new Error('physical writer proof unavailable')
+      const allowProof = repairGate()
+      const contexts = new Map<string, PluginCtx>()
+      const starts: string[] = []
+      let forgetA!: ReturnType<typeof openWriter>['forget']
+      const agent: MainPlugin = {
+        info: { id: 'fake', label: 'Agent fixture', default: true },
+        activate(ctx) {
+          starts.push(ctx.remote)
+          contexts.set(ctx.remote, ctx)
+          if (ctx.remote !== 'A') return () => {}
+          ctx.register(['fake'], {
+            'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => 'started' }),
+          })
+          const writer = openWriter(ctx)
+          forgetA = writer.forget
+          ctx.pauseSync('ordinary hold on the same activation')
+          return () =>
+            writer
+              .drain(async () => {
+                await allowProof.promise
+                throw cause
+              })
+              .catch((error: unknown) => {
+                if (mode === 'throws') throw error
+                ctx.reportDrainFailure(error)
+                ctx.reportDrainFailure(new Error('secondary drain failure'))
+              })
+        },
+      }
+      const { host, registry } = rig({ plugins: [agent], roots })
+      const a = openVault('A', roots.A, aSync)
+      await host.reconcile(a, 'open')
+      await host.reconcile(openVault('B', roots.B, bSync), 'open')
+      const stopping = host.stop('A').catch((error: unknown) => error)
+      allowProof.resolve()
+      const failure = await stopping
+      if (mode === 'reports') expect(failure).toBe(cause)
+      else expect(failure).toMatchObject({ errors: [expect.objectContaining({ errors: [cause] })] })
+      // Cleanup drops the ordinary hold and restores the surviving reason.
+      expect(aSync).toEqual([
+        'pause the assistant is working',
+        'pause ordinary hold on the same activation',
+        'pause the assistant is working',
+      ])
+      expect(registry.has('fake.ping', 'A')).toBe(false)
+      expect(await openTurnLog(roots.A).list()).toEqual([])
+      await expect(host.stop('A')).rejects.toBe(failure)
+      await expect(host.reconcile(a, 'open')).rejects.toBe(failure)
+      expect(starts).toEqual(['A', 'B'])
+      expect(aSync).toHaveLength(3)
+
+      const writerB = openWriter(contexts.get('B')!)
+      await writerB.drain(async () => {})
+      await host.stop('B')
+      expect(bSync).toEqual(['pause the assistant is working', 'resume'])
+      expect(await openTurnLog(roots.B).list()).toMatchObject([{ sessionId: 'writer' }])
+      expect(aSync).toHaveLength(3)
+
+      // If the owner later obtains positive proof, its release still works
+      // against the same hold stack without reopening the failed activation.
+      await forgetA(async () => {})
+      await forgetA(async () => {})
+      expect(aSync.slice(3)).toEqual(['resume'])
+      await expect(host.stop('A')).rejects.toBe(failure)
+      expect(await openTurnLog(roots.A).list()).toEqual([])
+    },
+  )
+
+  it.each(['output failure', 'success'] as const)(
+    'releases after positive physical proof with %s',
+    async (result) => {
+      const root = await tempDir()
+      const sync: string[] = []
+      const outputFailure = new Error('output could not be collected')
+      const plugin: MainPlugin = {
+        info: { id: 'fake', label: 'Agent fixture', default: true },
+        activate(ctx) {
+          const writer = openWriter(ctx)
+          return () =>
+            writer.drain(
+              async () => {},
+              () => {
+                if (result === 'output failure') throw outputFailure
+              },
+            )
+        },
+      }
+      const { host } = rig({ plugins: [plugin] })
+      const vault = openVault('A', root, sync)
+      await host.reconcile(vault, 'open')
+      expect(sync).toEqual(['pause the assistant is working'])
+      const stopping = host.stop('A')
+      if (result === 'output failure') {
+        await expect(stopping).rejects.toMatchObject({
+          errors: [expect.objectContaining({ errors: [outputFailure] })],
+        })
+        expect(await openTurnLog(root).list()).toEqual([])
+      } else {
+        await stopping
+        expect(await openTurnLog(root).list()).toMatchObject([{ sessionId: 'writer' }])
+      }
+      expect(sync).toEqual(['pause the assistant is working', 'resume'])
+    },
+  )
+
+  it.skipIf(process.platform === 'win32').each(['unknown', 'positive'] as const)(
+    'handles failed activation with %s physical proof',
+    async (proof) => {
+      const root = await tempDir()
+      const sync: string[] = []
+      const cause = new Error('activation left an unproven writer')
+      const plugin: MainPlugin = {
+        info: { id: 'fake', label: 'Agent fixture', default: true },
+        async activate(ctx) {
+          const writer = openWriter(ctx)
+          await writer.drain(
+            async () => {
+              if (proof === 'unknown') throw cause
+            },
+            () => {
+              throw cause
+            },
+          )
+          return () => {}
+        },
+      }
+      const { host } = rig({ plugins: [plugin] })
+      const vault = openVault('A', root, sync)
+      if (proof === 'unknown') {
+        await expect(host.reconcile(vault, 'open')).rejects.toBe(cause)
+        await expect(host.stop('A')).rejects.toBe(cause)
+        await expect(host.reconcile(vault, 'open')).rejects.toBe(cause)
+        expect(sync).toEqual(['pause the assistant is working'])
+      } else {
+        await host.reconcile(vault, 'open')
+        expect(host.failures('A')).toEqual({ fake: cause.message })
+        await host.stop('A')
+        expect(sync).toEqual(['pause the assistant is working', 'resume'])
+      }
+      expect(await openTurnLog(root).list()).toEqual([])
+    },
+  )
+
+  it('still undoes an ordinary plugin hold when its disposer throws', async () => {
+    const root = await tempDir()
+    const sync: string[] = []
+    const failure = new Error('ordinary cleanup failed')
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Ordinary plugin', default: true },
+      activate(ctx) {
+        ctx.pauseSync('ordinary hold')
+        return () => {
+          throw failure
+        }
+      },
+    }
+    const { host } = rig({ plugins: [plugin] })
+    await host.reconcile(openVault('A', root, sync), 'open')
+    await expect(host.stop('A')).rejects.toMatchObject({
+      errors: [expect.objectContaining({ errors: [failure] })],
+    })
+    expect(sync).toEqual(['pause ordinary hold', 'resume'])
   })
 })
 

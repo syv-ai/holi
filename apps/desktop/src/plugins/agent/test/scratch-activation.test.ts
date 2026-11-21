@@ -1,49 +1,44 @@
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { access, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { expect, it, vi } from 'vitest'
-import { createCapabilityHost } from '../../../main/capabilities/dispatch'
-import { createCapabilityRegistry } from '../../../main/capabilities/registry'
-import { noCoreServices } from '../../../main/capabilities/services'
-import type { PluginEvent } from '../../../main/plugin-host/events'
-import { createPluginHost } from '../../../main/plugin-host/host'
+import { expect, it as test, onTestFinished, vi } from 'vitest'
 import { defaultProbePid } from '../../../main/process-group'
 import type { SpawnPty } from '../main/host/pty'
 import { agentScratchRoots } from '../main/host/scratch-roots'
-import { agentMain } from '../main/index'
-import { PRESETS } from '../main/harness/record'
+import { activationHosts } from './fixtures/activation-hosts'
 import type { SessionSummary } from '../main/claude/listing'
+import { PRESETS } from '../main/harness/record'
+import { posixFixtureLedger } from '../../../../test/fixtures/posix-fixture-ledger'
+import { leasedPty } from './fixtures/leased-pty'
+
+const it = test.runIf(process.platform !== 'win32')
+
+type ProviderPlan = {
+  kind: 'job' | 'fenced' | 'pty'
+  bin: string
+  args: readonly string[]
+  cwd: string
+  home: string
+}
 
 const native = vi.hoisted(() => ({
   heldRelease: null as null | { state: string; entered: () => void; wait: Promise<void> },
   released: [] as { state: string; outcome: 'resolved' | 'rejected' }[],
   heldFs: [] as {
-    method: 'link' | 'rename' | 'writeFile'
     matches: (args: string[]) => boolean
     entered: () => void
     wait: Promise<void>
   }[],
   operations: new Set<Promise<unknown>>(),
-  start: null as
+  recordChild: null as
     | null
     | ((
-        kind: 'job' | 'fenced' | 'pty',
-        bin: string,
-        args: readonly string[],
-        cwd: string,
-        env: NodeJS.ProcessEnv,
-      ) => ChildProcess),
+        plan: ProviderPlan,
+        child: ChildProcess,
+        drain: () => Promise<void>,
+        control: string,
+      ) => void),
   removals: [] as { path: string; done: Promise<void> }[],
   heldExit: null as null | { cwd: string; entered: () => void; wait: Promise<void> },
   heldConfigure: null as null | { root: string; entered: () => void; wait: Promise<void> },
@@ -133,14 +128,8 @@ vi.mock('node:crypto', async (original) => {
 // so the fixture never removes its parent while a host is still writing to it.
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
-  const gated = async <T>(
-    method: 'link' | 'rename' | 'writeFile',
-    args: unknown[],
-    run: () => Promise<T>,
-  ): Promise<T> => {
-    const hold = native.heldFs.find(
-      (gate) => gate.method === method && gate.matches(args.map(String)),
-    )
+  const gated = async <T>(args: unknown[], run: () => Promise<T>): Promise<T> => {
+    const hold = native.heldFs.find((gate) => gate.matches(args.map(String)))
     const work = (async () => {
       if (hold !== undefined) {
         native.heldFs.splice(native.heldFs.indexOf(hold), 1)
@@ -158,15 +147,26 @@ vi.mock('node:fs/promises', async (original) => {
   }
   return {
     ...fs,
-    link: (...args: Parameters<typeof fs.link>) => gated('link', args, () => fs.link(...args)),
-    rename: (...args: Parameters<typeof fs.rename>) =>
-      gated('rename', args, () => fs.rename(...args)),
     writeFile: (...args: Parameters<typeof fs.writeFile>) =>
-      gated('writeFile', args, () => fs.writeFile(...args)),
+      gated(args, () => fs.writeFile(...args)),
     rm: (...args: Parameters<typeof fs.rm>) => {
       const done = fs.rm(...args)
       native.removals.push({ path: String(args[0]), done })
       return done
+    },
+  }
+})
+vi.mock('../../../main/posix-launch-lease', async (original) => {
+  const lease = await original<typeof import('../../../main/posix-launch-lease')>()
+  return {
+    ...lease,
+    preparePosixLaunch: (...[bin, args, opts]: Parameters<typeof lease.preparePosixLaunch>) =>
+      lease.preparePosixLaunch(bin, args, { ...opts, graceMs: 100 }),
+    preparePosixSpawn: (
+      ...[bin, args, opts, stdio]: Parameters<typeof lease.preparePosixSpawn>
+    ) => {
+      const fixtureOpts = { ...opts, graceMs: 100 }
+      return lease.preparePosixSpawn(bin, args, fixtureOpts, stdio)
     },
   }
 })
@@ -175,49 +175,103 @@ vi.mock('node:fs/promises', async (original) => {
 // plugin activation/teardown are production implementations.
 vi.mock('../../../main/plugin-api', async (original) => {
   const api = await original<typeof import('../../../main/plugin-api')>()
+  const preparedPtys = new WeakMap<
+    string[],
+    { provider: ProviderPlan; launch: ReturnType<typeof api.preparePosixLaunch> }
+  >()
   const defaultSpawnPty: SpawnPty = (bin, args, opts) => {
-    const child = native.start!(
-      opts.env.CODEX_HOME === undefined ? 'pty' : 'fenced',
-      bin,
-      args,
-      opts.cwd,
-      opts.env,
-    )
-    return {
-      pid: child.pid!,
-      onData: (cb) => {
-        child.stdout!.on('data', (bytes: Buffer) => cb(bytes.toString()))
-      },
-      onExit: (cb) => {
-        child.on('close', async (code) => {
-          const hold = native.heldExit
-          if (hold !== null && hold.cwd === opts.cwd) {
-            native.heldExit = null
-            hold.entered()
-            await hold.wait
-          }
-          cb({ exitCode: code ?? -1 })
-        })
-      },
-      write: (data) => {
-        child.stdin!.write(data)
-      },
-      resize: () => {},
-      kill: () => {
-        child.kill()
-      },
-    }
+    const { provider, launch } = preparedPtys.get(args)!
+    expect(bin).toBe(launch.executable)
+    expect(opts.cwd).toBe(provider.cwd)
+    expect(opts.env).toBe(launch.options.env)
+    preparedPtys.delete(args)
+    const child = spawn(bin, args, launch.options)
+    native.recordChild!(provider, child, launch.drain, launch.args[1]!)
+    return leasedPty(child, (fire) => {
+      const hold = native.heldExit
+      if (hold !== null && hold.cwd === opts.cwd) {
+        native.heldExit = null
+        hold.entered()
+        void hold.wait.then(fire)
+      } else fire()
+    }).pty
   }
   return {
     ...api,
     defaultSpawnPty,
-    spawnOwnedProgram: ((bin, args, opts) => {
-      if (bin === process.execPath && args.includes('exec') && args.includes('--sandbox'))
-        return native.start!('job', bin, args, String(opts.cwd), opts.env ?? {})
-      return api.spawnOwnedProgram(bin, args, opts)
+    preparePosixLaunch: ((bin, args, opts) => {
+      const env = opts.env ?? {}
+      const provider = providerPlan(ptyKind(env), bin, args, String(opts.cwd), env)
+      const launch = api.preparePosixLaunch(process.execPath, fixtureArgs(provider), {
+        ...opts,
+        ...fixtureOptions(provider),
+      })
+      preparedPtys.set(launch.args, { provider, launch })
+      return launch
+    }) as typeof api.preparePosixLaunch,
+    spawnOwnedProgram: ((bin, args, opts, parentPid) => {
+      const provider = providerPlan('job', bin, args, String(opts.cwd), opts.env ?? {})
+      const child = api.spawnOwnedProgram(
+        process.execPath,
+        fixtureArgs(provider),
+        { ...opts, ...fixtureOptions(provider), posixGroupLease: true },
+        parentPid,
+      )
+      native.recordChild!(
+        provider,
+        child,
+        child[api.ownedProcessDrain]!.drain,
+        'owned-process descriptor',
+      )
+      return child
     }) as typeof api.spawnOwnedProgram,
   }
 })
+
+function ptyKind(env: NodeJS.ProcessEnv): 'pty' | 'fenced' {
+  return env.CODEX_HOME === undefined ? 'pty' : 'fenced'
+}
+
+function providerPlan(
+  kind: ProviderPlan['kind'],
+  bin: string,
+  args: readonly string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): ProviderPlan {
+  expect(bin).toBe(process.execPath)
+  if (kind !== 'pty') {
+    expect(args).toContain(cwd)
+    expect(env.CODEX_HOME).toBeTypeOf('string')
+    expect(args.slice(args.indexOf('--sandbox'), args.indexOf('--sandbox') + 2)).toEqual([
+      '--sandbox',
+      'workspace-write',
+    ])
+    expect(args).toContain(
+      kind === 'job' ? 'approval_policy="never"' : 'approval_policy="on-request"',
+    )
+    expect(args).toContain('sandbox_workspace_write.network_access=false')
+    if (kind === 'job') expect(args).toContain('exec')
+  }
+  return { kind, bin, args, cwd, home: env.CODEX_HOME ?? '' }
+}
+
+function fixtureArgs({ kind, cwd }: ProviderPlan): string[] {
+  // Keep cwd on the command line so the real startup PID check can identify it.
+  return [fileURLToPath(new URL('./fixtures/scratch-provider.mjs', import.meta.url)), kind, cwd]
+}
+
+function fixtureOptions({ cwd, home }: ProviderPlan): SpawnOptions {
+  return {
+    cwd,
+    // No credentials or user configuration. Only the wrapper needs system tools.
+    env: {
+      CODEX_HOME: home || undefined,
+      PATH: '/usr/bin:/bin',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -250,11 +304,11 @@ function within<T>(work: Promise<T>): Promise<T> {
 }
 
 async function createScratchFixture() {
-  const userData = await realpath(await mkdtemp(join(tmpdir(), 'holi-scratch-activation-')))
-  const roots = { 'fixture/a': join(userData, 'vault-a'), 'fixture/b': join(userData, 'vault-b') }
+  const ledger = await posixFixtureLedger('holi-scratch-activation-')
+  const userData = ledger.root
+  const { roots, A, B, host, call, stop, quiet, enter, rows, pending, events, publications } =
+    activationHosts(userData)
   type Remote = keyof typeof roots
-  const A: Remote = 'fixture/a'
-  const B: Remote = 'fixture/b'
   const children: {
     kind: 'job' | 'fenced' | 'pty'
     bin: string
@@ -267,7 +321,6 @@ async function createScratchFixture() {
     output: string
     errors: string
   }[] = []
-  const fixture = fileURLToPath(new URL('./fixtures/scratch-provider.mjs', import.meta.url))
   native.removals.length = 0
   native.heldExit = null
   native.heldConfigure = null
@@ -298,39 +351,18 @@ async function createScratchFixture() {
     native.heldRelease = { state, entered: entered.resolve, wait: gate.promise }
     return { gate, entered: within(entered.promise) }
   }
-  const holdFs = (
-    method: 'link' | 'rename' | 'writeFile',
-    matches: (args: string[]) => boolean,
-  ) => {
+  const holdFs = (matches: (args: string[]) => boolean) => {
     const gate = deferred<void>()
     const entered = deferred<void>()
     releases.push(gate.resolve)
-    native.heldFs.push({ method, matches, entered: entered.resolve, wait: gate.promise })
+    native.heldFs.push({ matches, entered: entered.resolve, wait: gate.promise })
     return { gate, entered: within(entered.promise) }
   }
-  native.start = (kind, bin, args, cwd, env) => {
-    // Never execute a real provider or inherit keys/config from this machine.
-    expect(bin).toBe(process.execPath)
-    if (kind !== 'pty') {
-      expect(args).toContain(cwd)
-      expect(env.CODEX_HOME).toBeTypeOf('string')
-    }
-    // Include cwd in the command line, as Codex does, so the real startup
-    // PID ownership check can identify this process if shared roots regress.
-    const child = spawn(process.execPath, [fixture, kind, cwd], {
-      cwd,
-      env: { CODEX_HOME: env.CODEX_HOME },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: kind === 'job' && process.platform !== 'win32',
-    })
+  native.recordChild = (provider, child, drain, control) => {
     const ready = deferred<void>()
     const closed = deferred<number | null>()
     const entry = {
-      kind,
-      bin,
-      args,
-      cwd,
-      home: env.CODEX_HOME ?? '',
+      ...provider,
       child,
       ready: ready.promise,
       closed: closed.promise,
@@ -338,6 +370,9 @@ async function createScratchFixture() {
       errors: '',
     }
     children.push(entry)
+    const ancestry = ledger.retain(ledger.record(child), drain, closed.promise, control)
+    void ready.promise.catch(() => {})
+    child.stdin!.on('error', () => {})
     child.stdout!.on('data', (bytes: Buffer) => {
       entry.output += bytes.toString()
       if (entry.output.includes('fixture-ready\n')) ready.resolve()
@@ -350,112 +385,10 @@ async function createScratchFixture() {
       closed.resolve(code)
       if (!entry.output.includes('fixture-ready\n')) ready.reject(new Error(entry.errors))
     })
-    return child
+    entry.ready = ready.promise.then(ancestry)
+    void entry.ready.catch(() => {})
   }
 
-  const events: PluginEvent[] = []
-  const publications: PluginEvent[] = []
-  const pending = new Set<Promise<unknown>>()
-  const registry = createCapabilityRegistry()
-  const host = createPluginHost({
-    plugins: [
-      agentMain,
-      {
-        info: {
-          id: 'fixture-observer',
-          label: 'Fixture observer',
-          description: 'Records agent publication',
-          default: true,
-          builtIn: true,
-          requires: ['agent'],
-        },
-        activate(ctx) {
-          for (const name of ['sessions', 'turn-end'])
-            ctx.hear('agent', name, (payload) =>
-              publications.push({ remote: ctx.remote, name, payload }),
-            )
-          return () => {}
-        },
-      },
-    ],
-    registry,
-    userData,
-    coreSeeds: [],
-    active: () => null,
-    rootFor: async (remote) => roots[remote as Remote] ?? null,
-    events: {
-      send: (_channel, event) => events.push(event),
-      listen: () => () => {},
-      liveRemote: () => host.displayed(),
-    },
-    openAppDoor: () => {
-      throw new Error('unused')
-    },
-    route: () => () => {},
-    binDir: () => userData,
-    githubToken: () => null,
-    frameOrigin: () => () => {},
-    notify: () => false,
-    focused: () => false,
-    call: async (remote, name, params, beforeInvoke) =>
-      (await capabilities.dispatch({ door: 'ui', remote, name, params, beforeInvoke })).value,
-  })
-  const capabilities = createCapabilityHost({
-    registry,
-    rootFor: async (remote) => roots[remote as Remote] ?? null,
-    active: () => null,
-    core: noCoreServices,
-    pluginEnabled: async (plugin, root) => (await host.serving(root)).has(plugin),
-    claims: (root) => host.scanClaimsFor(root),
-  })
-  const call = async (remote: Remote, name: string, params: unknown = {}) => {
-    const work = capabilities.dispatch({ door: 'ui', remote, name, params })
-    pending.add(work)
-    try {
-      return (await work).value
-    } finally {
-      pending.delete(work)
-    }
-  }
-  const stop = (remote: Remote) => {
-    const work = host.stop(remote)
-    pending.add(work)
-    void work.then(
-      () => pending.delete(work),
-      () => pending.delete(work),
-    )
-    return work
-  }
-  const quiet = (remote: Remote) => {
-    const sent = events.filter((event) => event.remote === remote)
-    const published = publications.filter((event) => event.remote === remote)
-    return () => {
-      expect(events.filter((event) => event.remote === remote)).toEqual(sent)
-      expect(publications.filter((event) => event.remote === remote)).toEqual(published)
-    }
-  }
-  const enter = (remote: Remote) =>
-    host.reconcile(
-      {
-        remote,
-        root: roots[remote],
-        pause: () => {},
-        resume: () => {},
-        drainSync: async () => {},
-        commitNow: async () =>
-          execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
-            encoding: 'utf8',
-          }).trim(),
-        repo: {
-          head: async () =>
-            execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
-              encoding: 'utf8',
-            }).trim(),
-        },
-      },
-      'open',
-    )
-  const rows = async (remote: Remote) => (await call(remote, 'agent.sessions')) as SessionSummary[]
   const removed = async (path: string) => {
     await vi.waitFor(() => expect(native.removals.some((entry) => entry.path === path)).toBe(true))
     await Promise.all(
@@ -567,11 +500,7 @@ async function createScratchFixture() {
       // A failed stop must not let the fixture delete a parent while a
       // dispatched start is still releasing its scratch state.
       await Promise.allSettled([...pending])
-      for (const entry of children) {
-        if (entry.child.exitCode === null && entry.child.signalCode === null)
-          entry.child.kill('SIGKILL')
-      }
-      await Promise.all(children.map((entry) => entry.closed))
+      await within(ledger.reap())
       while (native.operations.size > 0) await Promise.allSettled([...native.operations])
       const failedRoots =
         failedRemote === undefined
@@ -592,18 +521,8 @@ async function createScratchFixture() {
         if (result.status === 'rejected') failures.push(result.reason)
       const deletions = await Promise.allSettled(native.removals.map((entry) => entry.done))
       for (const result of deletions) if (result.status === 'rejected') failures.push(result.reason)
-      try {
-        expect(
-          children.every(
-            (entry) => entry.child.exitCode !== null || entry.child.signalCode !== null,
-          ),
-        ).toBe(true)
-        for (const entry of children) expect(defaultProbePid(entry.child.pid!)).toBe('gone')
-      } finally {
-        await rm(userData, { recursive: true, force: true })
-        native.start = null
-      }
-      await expect(access(userData)).rejects.toMatchObject({ code: 'ENOENT' })
+      native.recordChild = null
+      await ledger.remove()
     }
     if (failures.length > 0) throw new AggregateError(failures, 'scratch fixture cleanup failed')
   }
@@ -636,7 +555,7 @@ async function createScratchFixture() {
       },
     })
   } catch (err) {
-    await dispose()
+    onTestFinished(() => dispose())
     throw err
   }
   return {
@@ -710,7 +629,7 @@ it('keeps live job and fenced data planes independent through another vault star
     expect(bFence.entry.home).toBe(join(`${bFence.entry.cwd}.agent`, 'codex-home'))
     expect(aJob.entry.home).not.toBe(bJob.entry.home)
     expect(aFence.entry.home).not.toBe(bFence.entry.home)
-    // Hold A's real PTY exit callback after the operating-system child closes.
+    // Hold A's real PTY exit callback after the operating-system root exits.
     // Teardown must keep waiting for the production finalizer, while B's same-id
     // job and fenced session remain operational.
     const { heldExit, exitEntered } = holdExit(aFence.entry.cwd)
@@ -755,10 +674,12 @@ it('keeps live job and fenced data planes independent through another vault star
     await settle(B, bFence)
     expect(await readFile(join(roots[A], 'job.md'), 'utf8')).toBe(`${A}:job:finished`)
     await expect(access(join(roots[A], 'fenced.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-    await removed(join(b.jobs, `${bJob.sessionId}.pid`))
+    await expect(access(join(b.jobs, `${bJob.sessionId}.pid`))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
     expect(children).toHaveLength(5)
   } finally {
-    await fixture.dispose()
+    onTestFinished(() => fixture.dispose())
   }
 })
 
@@ -897,11 +818,13 @@ it.each(['success', 'rejection'] as const)(
     } finally {
       // dispose releases configuration/exit gates and reaps owned children even
       // when stop fails; always also join the dispatched start and stop.
-      try {
-        await fixture.dispose()
-      } finally {
-        await Promise.allSettled([starting, stopping])
-      }
+      onTestFinished(async () => {
+        try {
+          await fixture.dispose()
+        } finally {
+          await Promise.allSettled([starting, stopping])
+        }
+      })
     }
   },
 )
@@ -987,37 +910,39 @@ for (const kind of ['job', 'fenced'] as const) {
         await f.settle(f.B, bFence)
         if (failed) quiet()
       } finally {
-        await f.dispose(failed ? f.A : undefined)
+        onTestFinished(() => f.dispose(failed ? f.A : undefined))
       }
     },
   )
 
-  it.each(['link', 'rename'] as const)(
-    `joins admitted ${kind} copy-back %s before vault a stop and cancels future publications`,
-    async (method) => {
+  it.each(['new file', 'replacement'] as const)(
+    `joins admitted ${kind} copy-back staging for a %s and cancels publication on stop`,
+    async (mode) => {
       const f = await createScratchFixture()
-      let failed = false
+      const replacement = mode === 'replacement'
       try {
         const target = join(f.roots[f.A], `${kind}.md`)
-        if (method === 'rename') await writeFile(target, 'original file')
+        if (replacement) await writeFile(target, 'original file')
         const a = await f.start(f.A, kind, {
-          read: ['input.md', ...(method === 'rename' ? [`${kind}.md`] : [])],
+          read: ['input.md', ...(replacement ? [`${kind}.md`] : [])],
           write: [`${kind}.md`, 'z-cancelled.md'],
         })
         await writeFile(join(a.entry.cwd, 'z-cancelled.md'), 'must never publish')
         await f.enter(f.B)
         const bJob = await f.start(f.B, 'job')
         const bFence = await f.start(f.B, 'fenced')
-        const hold = f.holdFs(method, (args) =>
-          method === 'link'
-            ? args[1] === target
-            : args[0] === target && basename(args[1]!) === 'previous',
+        // Publication and the move to `previous` are synchronous. Hold the
+        // preceding temporary-file write, the last async preparation shared
+        // by both copy paths, without moving their cancellation check.
+        const hold = f.holdFs(
+          ([path]) =>
+            path !== undefined &&
+            dirname(path) === f.roots[f.A] &&
+            basename(path).startsWith('.holi-tmp-'),
         )
         await f.finish(a.entry)
         await hold.entered
-        // Simulate a newer sync write after production's last hash check but
-        // before the admitted native rename actually moves the file aside.
-        if (method === 'rename') await writeFile(target, 'newer sync file')
+        if (replacement) await writeFile(target, 'newer sync file')
         let stopped = false
         const stopping = f.stop(f.A).then(() => {
           stopped = true
@@ -1029,16 +954,10 @@ for (const kind of ['job', 'fenced'] as const) {
         await f.intact(f.B, bFence.entry)
         expect(stopped).toBe(false)
         hold.gate.resolve()
-        if (kind === 'fenced' && method === 'rename') {
-          // A fenced copy error is sticky and must be an explicit drain failure.
-          await expect(stopping).rejects.toThrow(`plugins in ${f.A} failed to stop`)
-          failed = true
-          await expect(f.enter(f.A)).rejects.toThrow()
-        } else await stopping
+        await stopping
         quiet()
-        expect(await readFile(target, 'utf8')).toBe(
-          method === 'rename' ? 'newer sync file' : `${f.A}:${kind}:finished`,
-        )
+        if (replacement) expect(await readFile(target, 'utf8')).toBe('newer sync file')
+        else await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
         await expect(access(join(f.roots[f.A], 'z-cancelled.md'))).rejects.toMatchObject({
           code: 'ENOENT',
         })
@@ -1050,19 +969,16 @@ for (const kind of ['job', 'fenced'] as const) {
         await f.settle(f.B, bJob)
         await f.settle(f.B, bFence)
         quiet()
-        // The held original native operation completed; no old mutation can
-        // arrive in a subsequent generation of the same vault.
-        if (!failed) {
-          await f.enter(f.A)
-          const fresh = await f.start(f.A, 'job', {
-            read: ['input.md', ...(kind === 'job' ? ['job.md'] : [])],
-            write: ['job.md'],
-          })
-          await f.settle(f.A, fresh)
-          await f.stop(f.A)
-        }
+        // No old mutation can arrive in a subsequent generation of this vault.
+        await f.enter(f.A)
+        const fresh = await f.start(f.A, 'job', {
+          read: ['input.md', ...(kind === 'job' && replacement ? ['job.md'] : [])],
+          write: ['job.md'],
+        })
+        await f.settle(f.A, fresh)
+        await f.stop(f.A)
       } finally {
-        await f.dispose(failed ? f.A : undefined)
+        onTestFinished(() => f.dispose())
       }
     },
   )
@@ -1104,7 +1020,6 @@ it('drains retained pty conversation history publication before restarting vault
     ])
     expect(await history()).toEqual(before)
     const hold = f.holdFs(
-      'writeFile',
       (args) => args[0] === `${historyPath}.tmp` && args[1]!.includes('retained a'),
     )
     let stopped = false
@@ -1153,6 +1068,6 @@ it('drains retained pty conversation history publication before restarting vault
     expect(native.operations.size).toBe(0)
     await expect(access(`${historyPath}.tmp`)).rejects.toMatchObject({ code: 'ENOENT' })
   } finally {
-    await f.dispose()
+    onTestFinished(() => f.dispose())
   }
 })

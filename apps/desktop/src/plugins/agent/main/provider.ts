@@ -215,9 +215,9 @@ export interface AgentProvider {
   /** What the provider writes into a vault. */
   seed?: SeedContribution
   /** A process Holi ran on one of its state folders (a job's, a fenced
-   *  session's) has exited: take back what the agent keeps of the person's,
-   *  such as a sign-in it refreshed there. Never throws. */
-  release?(state: string): Promise<void>
+   *  session's) has exited: take back what the agent keeps of the person's,   * such as a sign-in it refreshed there. Best effort except on deadline:
+   * after abort, do not begin another mutation and reject with signal.reason. */
+  release?(state: string, signal?: AbortSignal): Promise<void>
   /** Why a terminal cannot open on `opts`, in words, or null when it can:
    *  a harness a person added that was given no way to start on a message
    *  or to pick up a conversation. Absent: it takes every option. */

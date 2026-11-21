@@ -1,223 +1,277 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { ChildProcess, execFile, spawn, spawnSync, type SpawnOptions } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { copyFile, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve, sep } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { once } from 'node:events'
+import { constants, tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getSystemErrorName, promisify } from 'node:util'
-import { describe, expect, it, onTestFailed } from 'vitest'
-import { launchPlan } from '../src/main/launch'
-import { spawnOwnedProgram } from '../src/main/owned-process'
-import {
-  ownedLaunchControl,
-  spawnOwnedLaunch,
-  windowsAdapterLaunch,
-} from '../src/main/owned-process-launch'
-import {
-  spawnOwnedLaunchWithHandoffFault,
-  spawnOwnedLaunchWithNativeQueryFault,
-} from './owned-process-test-adapter'
-import { joinOwnedProgram } from '../src/main/owned-program-lifetime'
-import {
-  fixtureChild,
-  fixtureChildAlive,
-  fixtureResult,
-  pollFixture,
-  stopFixtureChild,
-  withFixtureCleanup,
-  within,
-} from './fixtures/fixture-deadline'
-import {
-  startRawProducer,
-  withRawProducer,
-  type RawCleanup,
-  type RawProducer,
-} from './fixtures/windows-owned-process-producer'
-import {
-  fixtureNonce,
-  startWitness,
-  type WindowsOwnedProcessWitness,
-} from './fixtures/windows-owned-process-witness'
-import {
-  rejectedStatusReceipt,
-  statusCaseMs,
-  statusWaitMs,
-  withStatusProducer,
-  type StatusCleanup,
-} from './fixtures/windows-owned-process-status'
+import { afterAll, beforeAll, describe, expect, it, onTestFailed, vi } from 'vitest'
+import { ownedProcessDrain, spawnOwnedProgram } from '../src/main/owned-process'
+import type { ProcessGroupSupervision } from '../src/main/owned-process-supervision'
+import { inspectPosixOwnership, posixLaunchNonAdmission } from '../src/main/posix-ownership-journal'
+
+import { buildLeaseForTests, buildPosixTestHelper } from './fixtures/posix-native-build'
+
+const helper = vi.hoisted(() => ({
+  path: '',
+  readExec: undefined as (() => 'defer' | 'malformed' | void) | undefined,
+  holdReport: undefined as (() => boolean) | undefined,
+  deferPoll: undefined as Promise<void> | undefined,
+  receipts: '',
+  beforeRemove: undefined as ((directory: string) => void) | undefined,
+  afterNativeSpawn: undefined as ((child: ChildProcess) => void) | undefined,
+  holdCommand: undefined as ((command: string) => boolean) | undefined,
+  beforeNativeSpawn: undefined as (() => void) | undefined,
+}))
+vi.mock('../src/main/launch', async (importOriginal) => {
+  const launch = await importOriginal<typeof import('../src/main/launch')>()
+  return {
+    ...launch,
+    spawnProgram: (...args: Parameters<typeof launch.spawnProgram>) => {
+      helper.beforeNativeSpawn?.()
+      const child = launch.spawnProgram(...args)
+      helper.afterNativeSpawn?.(child)
+      return child
+    },
+  }
+})
+vi.mock('../src/main/posix-lease-executable', () => ({ posixLeaseExecutable: () => helper.path }))
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>()
+  const readers = new Map<number, string>()
+  return {
+    ...fs,
+    openSync: (path: string, flags: number, mode?: number) => {
+      const fd = fs.openSync(path, flags, mode)
+      if (!(flags & fs.constants.O_WRONLY)) readers.set(fd, path)
+      return fd
+    },
+    closeSync: (fd: number) => {
+      readers.delete(fd)
+      fs.closeSync(fd)
+    },
+    readSync: (fd: number, buffer: Buffer, offset: number, length: number, pos: null) => {
+      const path = readers.get(fd)
+      if (path?.endsWith('/exec')) {
+        const fault = helper.readExec?.()
+        if (fault === 'defer') throw Object.assign(new Error('injected EAGAIN'), { code: 'EAGAIN' })
+        if (fault === 'malformed') return buffer.write('invalid\n', offset, length, 'utf8')
+      }
+      if (path?.endsWith('/report') && helper.holdReport?.())
+        throw Object.assign(new Error('injected report EAGAIN'), { code: 'EAGAIN' })
+      const bytes = fs.readSync(fd, buffer, offset, length, pos)
+      if (path?.endsWith('/report'))
+        helper.receipts += buffer.toString('utf8', offset, offset + bytes)
+      return bytes
+    },
+    writeSync: (fd: number, buffer: Buffer, offset: number, length: number) => {
+      if (length === 1 && helper.holdCommand?.(buffer.toString())) return 0
+      return fs.writeSync(fd, buffer, offset, length)
+    },
+    rmSync: (path: string, options: Parameters<typeof fs.rmSync>[1]) => {
+      helper.beforeRemove?.(path)
+      fs.rmSync(path, options)
+    },
+  }
+})
+vi.mock('node:timers/promises', async (importOriginal) => {
+  const timers = await importOriginal<typeof import('node:timers/promises')>()
+  return {
+    ...timers,
+    setTimeout: (ms: number) => {
+      const deferred = helper.deferPoll
+      helper.deferPoll = undefined
+      return deferred ?? timers.setTimeout(ms)
+    },
+  }
+})
 
 const windows = process.platform === 'win32'
 
-const teardownMs = 5_000
-const nodeImage = resolve(process.execPath)
-
-function waitForFile(file: string) {
-  return pollFixture(
-    () =>
-      readFile(file, 'utf8').catch((error) => {
-        if (error.code !== 'ENOENT') throw error
-        return undefined
-      }),
-    performance.now() + 10_000,
-    `fixture handshake at ${file}`,
-    20,
-  )
+async function waitForFile(file: string): Promise<string> {
+  const deadline = Date.now() + 10_000
+  while (true) {
+    try {
+      return await readFile(file, 'utf8')
+    } catch {
+      if (Date.now() >= deadline) throw new Error(`No handshake at ${file}`)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
 }
 
 function diagnostics(child: ReturnType<typeof spawnOwnedProgram>): void {
-  fixtureChild(child)
-  child.stderr?.resume()
-  onTestFailed(() => {
+  let lastPhase = 'none'
+  child.stderr?.on('data', (chunk: Buffer | string) => {
+    const text = String(chunk)
+    const phases = [...text.matchAll(/phase=([^\s]+)/g)]
+    if (phases.length) lastPhase = phases[phases.length - 1][1]
+  })
+  onTestFailed(async () => {
     console.error(
-      `[owned-process test failure] pid=${child.pid ?? 'none'} exitCode=${child.exitCode} signalCode=${child.signalCode} lastPhase=${ownedLaunchControl(child)?.diagnostics().helperLastPhase ?? 'none'}`,
+      `[owned-process test failure] pid=${child.pid ?? 'none'} exitCode=${child.exitCode} signalCode=${child.signalCode} lastPhase=${lastPhase}`,
     )
+    await cleanup(child)
   })
 }
 
-async function cleanup(
-  child: ChildProcess & { ownedCompletion?: Promise<unknown> },
-  proof: 'empty' | 'expected-launch-failure' = 'empty',
-): Promise<void> {
-  const observed = fixtureChild(child)
-  await withFixtureCleanup(
-    async () => {
-      if (fixtureChildAlive(child)) child.kill('SIGKILL')
-      // Ordinary Windows launches must prove absence with their authenticated
-      // receipt. The negative launch cases expect no such receipt and still
-      // must observe actual helper exit and close.
-      if (windows && proof === 'empty') {
-        if (!child.ownedCompletion) throw new Error('missing owned cleanup receipt')
-        expect(await within(child.ownedCompletion, teardownMs, 'managed cleanup receipt')).toBe(
-          'empty',
-        )
-      }
-      await observed.join(teardownMs, 'owned helper')
-    },
-    async () => {
-      if (fixtureChildAlive(child))
-        await stopFixtureChild(child, teardownMs, 'owned helper after stable-handle termination')
-      else await observed.join(teardownMs, 'owned helper')
-    },
-  )
+async function cleanup(child: ReturnType<typeof spawnOwnedProgram>): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  child.kill()
+  await Promise.race([
+    completion(child).catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, 500)),
+  ])
+  if (child.exitCode === null && child.signalCode === null) {
+    ChildProcess.prototype.kill.call(child, 'SIGKILL')
+    await Promise.race([
+      completion(child).catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ])
+  }
 }
 
-function completion(child: ChildProcess) {
-  const done = fixtureChild(child).completion.wait(20_000, 'child completion')
-  void done.catch(() => undefined) // Some cases await the receipt before awaiting completion.
-  return done
+function completion(child: ReturnType<typeof spawnOwnedProgram>): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', (code) => resolve(code))
+  })
 }
 
-async function withWitness(body: (witness: WindowsOwnedProcessWitness) => Promise<void>) {
-  const witness = await startWitness()
-  await withFixtureCleanup(
-    () => body(witness),
-    () => witness.close(),
-  )
+function drain(child: ChildProcess): Promise<void> | undefined {
+  return (child as ChildProcess & { [ownedProcessDrain]?: ProcessGroupSupervision })[
+    ownedProcessDrain
+  ]?.drain()
 }
+
+let buildDirectory: string | undefined
+let oracle: string
+beforeAll(async () => {
+  if (windows) {
+    const child = spawnOwnedProgram(process.execPath, ['-e', 'process.exit(0)'], {
+      stdio: 'ignore',
+    })
+    // Subscribe before awaiting anything so even a fast exit or spawn failure is observed.
+    const done = completion(child)
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error('Windows process readiness setup timed out after 60s')),
+        60_000,
+      )
+    })
+    try {
+      const code = await Promise.race([done, timeout])
+      if (code !== 0) throw new Error(`Windows process readiness setup exited with code ${code}`)
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+      await cleanup(child)
+      await drain(child)
+    }
+    return
+  }
+
+  const build = buildLeaseForTests()
+  buildDirectory = build.directory
+  helper.path = build.binary
+  oracle = buildPosixTestHelper(
+    build.directory,
+    new URL('./fixtures/posix-kernel-fixture.c', import.meta.url),
+  )
+}, 65_000)
+afterAll(async () => {
+  if (buildDirectory) await rm(buildDirectory, { recursive: true, force: true })
+})
 
 describe('spawnOwnedProgram', () => {
-  const queryFaultCase = 'fails closed when the native job query handle is invalid'
-  it.skipIf(!windows)(
-    queryFaultCase,
-    async () => {
-      const { proof, cleanup } = await withStatusProducer({ tree: true }, async (fixture) => {
-        const { child, control, original } = fixture.start(() =>
-          spawnOwnedLaunchWithNativeQueryFault(
-            launchPlan(fixture.nodeImage, fixture.treeArgs, { platform: 'win32' }),
-            { cwd: fixture.dir, stdio: ['ignore', 'pipe', 'pipe'] },
-            process.pid,
-          ),
+  it.skipIf(windows).each(['throw', 'no pid'] as const)(
+    'cancels unused POSIX preparation when native spawn fails with %s',
+    async (mode) => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-owned-failed-spawn-'))
+      const marker = join(dir, 'provider-ran')
+      vi.stubEnv('TMPDIR', dir)
+      const start = (cwd: string) =>
+        spawnOwnedProgram(
+          process.execPath,
+          ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`],
+          { cwd, stdio: 'ignore', posixGroupLease: true },
         )
-        await fixture.holdRoot()
-        const rootAliveBeforeRelease = !(await fixture.exited('root'))
-        const grandchildAliveBeforeRelease = !(await fixture.exited('grandchild'))
-        expect(rootAliveBeforeRelease && grandchildAliveBeforeRelease).toBe(true)
-        await fixture.mark('release-0')
-        const { receipt, error, sameReceipt, sameLease } = await rejectedStatusReceipt(
-          child,
-          original,
-        )
-        if (!(error.cause instanceof Error)) throw new Error('missing authenticated query cause')
-        expect(error.cause.message).toBe('owned helper reported nativeQueryFailure')
-        const nativeError = error.cause.message.slice('owned helper reported '.length)
-        const { helperExitCode } = await fixture.helperStatus()
-        const rootExitCode = await fixture.exitCode('root')
-        const grandchildExitCode = await fixture.exitCode('grandchild')
-        expect(helperExitCode).toBe(125)
-        expect(rootExitCode).toBe(0)
-        expect(grandchildExitCode).toBe(1)
-        // No registered duplicate in ordinary mode. Physical fixture exits must
-        // not replace the failed native query or upgrade the original lease.
-        const revokeRejectedWithOriginalFailure = await within(
-          control.lease.revoke().then(
-            () => false,
-            (failure: unknown) => failure === error,
-          ),
-          statusWaitMs,
-          'original query-fault lease',
-        )
-        expect(revokeRejectedWithOriginalFailure).toBe(true)
-        return {
-          kind: 'query-fault' as const,
-          receipt,
-          sameReceipt,
-          sameLease,
-          nativeError,
-          helperExitCode,
-          rootExitCode,
-          grandchildExitCode,
-          rootAliveBeforeRelease,
-          grandchildAliveBeforeRelease,
-          revokeRejectedWithOriginalFailure,
+      try {
+        if (mode === 'throw') {
+          expect(() => start(`${dir}\0`)).toThrow(
+            expect.objectContaining({ code: 'ERR_INVALID_ARG_VALUE' }),
+          )
+          await vi.waitFor(async () => expect(await readdir(dir)).toEqual([]))
+        } else {
+          const child = start(join(dir, 'nonexistent'))
+          const closed = new Promise<number | null>((resolve) => child.once('close', resolve))
+          const failed = completion(child)
+          expect(child.pid).toBeUndefined()
+          const cleanup = drain(child)
+          expect(cleanup).toBeInstanceOf(Promise)
+          expect(drain(child)).toBe(cleanup)
+          await expect(failed).rejects.toMatchObject({ code: 'ENOENT' })
+          await closed
+          await cleanup
+          expect(await readdir(dir)).toEqual([])
         }
-      })
-      producerProof(queryFaultCase, proof, cleanup)
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        vi.unstubAllEnvs()
+        await rm(dir, { recursive: true, force: true })
+      }
     },
-    statusCaseMs,
   )
 
-  it.skipIf(!windows)('authenticates empty completion for a successful root', async () => {
-    const child = spawnOwnedProgram(
-      process.execPath,
-      ['-e', 'process.stdout.write("native-empty")'],
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    )
-    diagnostics(child)
-    const done = completion(child)
-    let output = ''
-    child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
+  it.skipIf(windows).each([
+    ['detached', 'true', 'ERR_INVALID_ARG_TYPE'],
+    ['shell', 1, 'ERR_INVALID_ARG_TYPE'],
+    ['shell', '/bin/sh\0', 'ERR_INVALID_ARG_VALUE'],
+    ['argv0', 17, 'ERR_INVALID_ARG_TYPE'],
+    ['argv0', 'x\0', 'ERR_INVALID_ARG_VALUE'],
+    ['stdio', 'ipc', 'ERR_INVALID_ARG_VALUE'],
+    ['timeout', -1, 'ERR_OUT_OF_RANGE'],
+    ['serialization', 'binary', 'ERR_INVALID_ARG_VALUE'],
+    ['serialization', null, 'ERR_INVALID_ARG_VALUE'],
+    ['windowsHide', 'true', 'ERR_INVALID_ARG_TYPE'],
+    ['windowsVerbatimArguments', 1, 'ERR_INVALID_ARG_TYPE'],
+    ['uid', 0.5, 'ERR_INVALID_ARG_TYPE'],
+    ['gid', 2 ** 32, 'ERR_INVALID_ARG_TYPE'],
+    ['signal', null, 'ERR_INVALID_ARG_TYPE'],
+    ['killSignal', 'INVALID', 'ERR_UNKNOWN_SIGNAL'],
+    ['killSignal', 0, 'ERR_UNKNOWN_SIGNAL'],
+    ['stdio', ['ipc', 'ipc'], 'ERR_IPC_ONE_PIPE'],
+    ['stdio', ['nonsense'], 'ERR_INVALID_SYNC_FORK_INPUT'],
+  ])('rejects invalid %s before entering native spawn', async (name, value, code) => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-invalid-option-'))
+    vi.stubEnv('TMPDIR', dir)
+    const nativeCalled = vi.fn()
+    helper.beforeNativeSpawn = nativeCalled
+    const opts = { [name]: value } as SpawnOptions
+    let child: ChildProcess | undefined
     try {
-      expect(child.ownedCompletion).toBeDefined()
-      await expect(within(child.ownedCompletion!, teardownMs, 'empty receipt')).resolves.toBe(
-        'empty',
-      )
-      expect(await done).toBe(0) // `close` joins output, the owned receipt alone does not.
-      expect(output).toBe('native-empty')
-    } finally {
-      await cleanup(child)
-    }
-  })
-
-  it.skipIf(!windows)('settles ordinary roots only after empty owned completion', async () => {
-    for (const exitCode of [0, 37]) {
-      const child = spawnOwnedProgram(process.execPath, [`-e`, `process.exit(${exitCode})`], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-      diagnostics(child)
-      const done = completion(child)
-      const receipt = child.ownedCompletion
+      expect(() => spawn('/bin/true', [], opts)).toThrow(expect.objectContaining({ code }))
+      let failure: unknown
       try {
-        expect(receipt).toBeDefined()
-        expect(await within(receipt!, teardownMs, 'ordinary root empty receipt')).toBe('empty')
-        expect(child.ownedCompletion).toBe(receipt)
-        expect(await receipt).toBe('empty')
-        expect(await done).toBe(exitCode)
-      } finally {
-        await cleanup(child)
+        child = spawnOwnedProgram('/bin/true', [], { ...opts, posixGroupLease: true })
+      } catch (error) {
+        failure = error
       }
+      expect(nativeCalled).not.toHaveBeenCalled()
+      expect(failure).toMatchObject({ code })
+      const refusal = posixLaunchNonAdmission(failure)
+      expect(refusal?.cleanup).toBeInstanceOf(Promise)
+      await refusal!.cleanup
+      expect(nativeCalled).not.toHaveBeenCalled()
+      expect(await readdir(dir)).toEqual([])
+    } finally {
+      helper.beforeNativeSpawn = undefined
+      vi.unstubAllEnvs()
+      if (child) await drain(child)
+      // Do not remove an unconfirmed launch receipt if validation regresses.
+      if ((await readdir(dir)).length === 0) await rm(dir, { recursive: true, force: true })
     }
   })
 
@@ -248,55 +302,41 @@ describe('spawnOwnedProgram', () => {
         expect(await done, error).toBe(0)
         expect(JSON.parse(output)).toEqual({ args, cwd: process.cwd() })
       } finally {
+        await drain(child)
         await cleanup(child)
       }
     }
   })
 
   it.skipIf(!windows)('creates a console root without a visible console', async () => {
-    await withWitness(async (witness) => {
-      const nonce = fixtureNonce()
-      const child = spawnOwnedProgram(
-        nodeImage,
-        ['-e', 'console.log(process.pid);setInterval(()=>0,1000)', nonce],
-        { stdio: ['ignore', 'pipe', 'pipe'] },
+    const child = spawnOwnedProgram(
+      process.execPath,
+      ['-e', 'console.log(process.pid);setInterval(()=>0,1000)'],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    try {
+      const pid = await new Promise<number>((resolve) =>
+        child.stdout!.once('data', (data: Buffer) => resolve(Number(String(data).trim()))),
       )
-      fixtureChild(child)
-      await withFixtureCleanup(
-        async () => {
-          let output = ''
-          child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
-          child.stderr!.resume()
-          const pid = await pollFixture(
-            () => {
-              const match = /^(\d+)\r?\n/.exec(output)
-              if (match) return Number(match[1])
-            },
-            performance.now() + 10_000,
-            'console root PID',
-            20,
-          )
-          await witness.pin({ pid, expectedImage: nodeImage, nonce, parentPid: child.pid })
-          const probe = [
-            'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; public static class HoliConsoleProbe { [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AttachConsole(uint pid); }\'',
-            `[HoliConsoleProbe]::AttachConsole(${pid})`,
-          ].join('; ')
-          const { stdout } = await promisify(execFile)(
-            join(
-              process.env.SystemRoot ?? process.env.WINDIR!,
-              'System32',
-              'WindowsPowerShell',
-              'v1.0',
-              'powershell.exe',
-            ),
-            ['-NoProfile', '-NonInteractive', '-Command', probe],
-            { windowsHide: true, encoding: 'utf8', timeout: teardownMs },
-          )
-          expect(stdout.trim()).toBe('False')
-        },
-        () => cleanup(child),
+      const probe = [
+        'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; public static class HoliConsoleProbe { [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AttachConsole(uint pid); }\'',
+        `[HoliConsoleProbe]::AttachConsole(${pid})`,
+      ].join('; ')
+      const { stdout } = await promisify(execFile)(
+        join(
+          process.env.SystemRoot ?? process.env.WINDIR!,
+          'System32',
+          'WindowsPowerShell',
+          'v1.0',
+          'powershell.exe',
+        ),
+        ['-NoProfile', '-NonInteractive', '-Command', probe],
+        { windowsHide: true, encoding: 'utf8' },
       )
-    })
+      expect(stdout.trim()).toBe('False')
+    } finally {
+      await cleanup(child)
+    }
   })
 
   it.skipIf(!windows)('resolves a relative executable against the requested cwd', async () => {
@@ -349,88 +389,74 @@ describe('spawnOwnedProgram', () => {
     const previousSystemRoot = process.env.SystemRoot
     process.env.SystemRoot = dir
     let child: ReturnType<typeof spawnOwnedProgram> | undefined
-    let spawnEvents = 0
-    const spawnErrors: Error[] = []
-    const observedErrors: Error[] = []
+    let childErrors = 0
     let stdinErrors = 0
     try {
-      const helper = windowsAdapterLaunch(process.env)
-      expect(helper.file).toBe(join(dir, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'))
-      // Keep the actual helper cwd valid: ENOENT must be for the missing image,
-      // not a stale cwd or an error produced during Root planning.
-      await mkdir(dirname(helper.file), { recursive: true })
-      await expect(lstat(helper.file)).rejects.toMatchObject({ code: 'ENOENT' })
       child = spawnOwnedProgram(process.execPath, ['-e', 'process.exit(0)'], {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env },
       })
-      child.on('spawn', () => spawnEvents++)
-      child.on('error', (error) => {
-        spawnErrors.push(error)
-        observedErrors.push(error)
-      })
-      for (const stream of [child.stdin, child.stdout, child.stderr]) {
-        stream!.on('error', (error) => {
-          if (stream === child!.stdin) stdinErrors++
-          observedErrors.push(error)
-        })
-      }
-      const original = child.ownedCompletion
-      const joined = joinOwnedProgram(child, 'win32')
-      const missingImage = { code: 'ENOENT', syscall: `spawn ${helper.file}`, path: helper.file }
-      await expect(completion(child)).rejects.toMatchObject(missingImage)
-      const code = await fixtureChild(child).join(teardownMs, 'missing helper')
+      child.on('error', () => childErrors++)
+      child.stdin!.on('error', () => stdinErrors++)
+      const closed = new Promise<number | null>((resolve) => child!.once('close', resolve))
+      await expect(completion(child)).rejects.toMatchObject({ code: 'ENOENT' })
+      const code = await closed
       expect(getSystemErrorName(code!)).toBe('ENOENT')
-      expect(spawnEvents).toBe(0)
-      expect(spawnErrors).toHaveLength(1)
-      expect(spawnErrors[0]).toMatchObject(missingImage)
-      expect(original).toBeDefined()
-      expect(child.ownedCompletion).toBe(original)
-      expect(await within(original!, teardownMs, 'definitive missing helper receipt')).toBe(
-        'not-started',
-      )
-      const result = await within(joined, teardownMs, 'missing helper join')
-      expect(result).toMatchObject({ ownership: 'not-started', code: null, signal: null })
-      // Join preserves the first command/stdio error. Windows can deliver a
-      // real stdin EPIPE before the OS spawn error; it cannot certify no-create.
-      expect(result.error).toBe(observedErrors[0])
-      expect(result.error).toMatchObject({
-        code: result.error === spawnErrors[0] ? 'ENOENT' : 'EPIPE',
-      })
       const previousStdinErrors = stdinErrors
       child.stdin!.emit('error', Object.assign(new Error('test input failure'), { code: 'EPIPE' }))
       expect(stdinErrors).toBe(previousStdinErrors + 1)
-      expect(spawnErrors).toHaveLength(1)
+      expect(childErrors).toBe(1)
     } finally {
       if (previousSystemRoot === undefined) delete process.env.SystemRoot
       else process.env.SystemRoot = previousSystemRoot
-      await withFixtureCleanup(
-        async () => {
-          if (child) await cleanup(child, 'expected-launch-failure')
-        },
-        () => rm(dir, { recursive: true, force: true }),
-      )
+      if (child) await cleanup(child)
+      await rm(dir, { recursive: true, force: true })
     }
   })
 
   it.skipIf(!windows).each([false, true])(
     'terminates descendants before reporting root exit (pipes: %s)',
     async (pipes) => {
-      await withOwnedTree(pipes, async ({ child, dir, expectExited }) => {
-        const done = completion(child)
-        await writeFile(join(dir, 'exit-root'), '')
-        expect(await done).toBe(23)
-        await expectExited()
-      })
+      const dir = await mkdtemp(join(tmpdir(), 'holi-owned-'))
+      const pidFile = join(dir, 'descendant-pid')
+      let child: ReturnType<typeof spawnOwnedProgram> | undefined
+      try {
+        const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.stdout.write('ready\\n');setInterval(()=>0,1000)`
+        const root = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','pipe',${pipes ? "'inherit'" : "'ignore'"}],windowsHide:true});c.stdout.once('data',()=>process.exit(23))`
+        child = spawnOwnedProgram(process.execPath, ['-e', root], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, ...(windows ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
+        })
+        let error = ''
+        child.stderr!.setEncoding('utf8').on('data', (chunk: string) => (error += chunk))
+        diagnostics(child)
+        expect(await completion(child), error).toBe(23)
+        const pid = Number(await readFile(pidFile, 'utf8'))
+        expect(pid).toBeGreaterThan(1)
+        expect(() => process.kill(pid, 0)).toThrow()
+      } finally {
+        if (child) await cleanup(child)
+        await rm(dir, { recursive: true, force: true })
+      }
     },
-    45_000,
   )
 
   it.skipIf(!windows).each([false, true])(
     'stops the entire owned job and leaves no stop artifact (stdin failure: %s)',
     async (stdinFailure) => {
-      await withOwnedTree(false, async ({ child, expectExited }) => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-owned-stop-'))
+      const pidFile = join(dir, 'descendant-pid')
+      let child: ReturnType<typeof spawnOwnedProgram> | undefined
+      try {
+        const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
+        const root = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});setInterval(()=>0,1000)`
+        child = spawnOwnedProgram(process.execPath, ['-e', root], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, ...(windows ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
+        })
+        diagnostics(child)
         const done = completion(child)
+        const pid = Number(await waitForFile(pidFile))
         if (stdinFailure) {
           child.stdin!.emit(
             'error',
@@ -441,63 +467,12 @@ describe('spawnOwnedProgram', () => {
           expect(child.kill('SIGKILL')).toBe(true)
         }
         expect(await done).toBe(1)
-        await expectExited()
-      })
+        expect(() => process.kill(pid, 0)).toThrow()
+      } finally {
+        if (child) await cleanup(child)
+        await rm(dir, { recursive: true, force: true })
+      }
     },
-    45_000,
-  )
-
-  const timeoutCase = 'authenticates EMPTY when a spawn timeout stops a live native tree'
-  it.skipIf(!windows)(
-    timeoutCase,
-    async () => {
-      // Include cold PowerShell/Add-Type setup and both witness pins in the caller budget.
-      const timeout = 25_000
-      const { proof, cleanup } = await withStatusProducer({ tree: true }, async (fixture) => {
-        const { child, control, original } = fixture.start(() =>
-          spawnOwnedProgram(fixture.nodeImage, fixture.treeArgs, {
-            cwd: fixture.dir,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            timeout,
-          }),
-        )
-        const lease = control.lease
-        const joined = joinOwnedProgram(child, 'win32')
-        await fixture.holdRoot()
-        const rootAliveBeforeTimeout = !(await fixture.exited('root'))
-        const grandchildAliveBeforeTimeout = !(await fixture.exited('grandchild'))
-        expect(rootAliveBeforeTimeout && grandchildAliveBeforeTimeout).toBe(true)
-        expect(control.stopped).toBe(false)
-        // The timer is the only STOP source on this path. Physical exits are
-        // corroboration, not substitutes for this launch's EMPTY receipt.
-        const receipt = await within(original, timeout + statusWaitMs, 'spawn timeout EMPTY')
-        expect(receipt).toBe('empty')
-        const sameReceipt = child.ownedCompletion === original
-        const sameLease = ownedLaunchControl(child)?.lease === lease
-        expect(sameReceipt && sameLease).toBe(true)
-        const { helperExitCode } = await fixture.helperStatus()
-        const rootExitCode = await fixture.exitCode('root')
-        const grandchildExitCode = await fixture.exitCode('grandchild')
-        expect([helperExitCode, rootExitCode, grandchildExitCode]).toEqual([1, 1, 1])
-        const result = await within(joined, statusWaitMs, 'spawn timeout join')
-        expect(result).toEqual({ ownership: 'empty', code: 1, signal: null, error: null })
-        await within(lease.revoke(), statusWaitMs, 'original empty lease')
-        return {
-          kind: 'spawn-timeout' as const,
-          receipt,
-          sameReceipt,
-          sameLease,
-          rootAliveBeforeTimeout,
-          grandchildAliveBeforeTimeout,
-          helperExitCode,
-          rootExitCode,
-          grandchildExitCode,
-          joinOwnership: result.ownership,
-        }
-      })
-      producerProof(timeoutCase, proof, cleanup)
-    },
-    statusCaseMs,
   )
 
   it.skipIf(!windows)('fails closed when its parent is gone', async () => {
@@ -518,662 +493,828 @@ describe('spawnOwnedProgram', () => {
       expect(await completion(child)).toBe(125)
       await expect(readFile(sentinel)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
-      if (child) await cleanup(child, 'expected-launch-failure')
+      if (child) await cleanup(child)
       await rm(dir, { recursive: true, force: true })
     }
   })
 })
 
-async function withOwnedTree(
-  pipes: boolean,
-  body: (tree: {
-    child: ReturnType<typeof spawnOwnedProgram>
-    dir: string
-    expectExited: () => Promise<void>
-  }) => Promise<void>,
-) {
-  await withWitness(async (witness) => {
-    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-tree-'))
-    await withFixtureCleanup(
-      async () => {
-        const nonce = fixtureNonce()
-        const rootPidFile = join(dir, 'root-pid')
-        const descendantPidFile = join(dir, 'descendant-pid')
-        const descendant = `const fs=require('node:fs');const file=${JSON.stringify(descendantPidFile)};fs.writeFileSync(file+'.tmp',String(process.pid));fs.renameSync(file+'.tmp',file);process.stdout.write('ready\\n');setInterval(()=>0,1000)`
-        // Don't let the root exit or create a descendant before its own HANDLE is held.
-        const root = `const fs=require('node:fs');const file=${JSON.stringify(rootPidFile)};fs.writeFileSync(file+'.tmp',String(process.pid));fs.renameSync(file+'.tmp',file);let c;setInterval(()=>{if(!c&&fs.existsSync(${JSON.stringify(join(dir, 'start-descendant'))})){c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)},${JSON.stringify(nonce)}],{stdio:['ignore','pipe',${pipes ? "'inherit'" : "'ignore'"}],windowsHide:true});c.stdout.resume()}if(fs.existsSync(${JSON.stringify(join(dir, 'exit-root'))}))process.exit(23)},20)`
-        const child = spawnOwnedProgram(nodeImage, ['-e', root, nonce], {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, HOLI_OWNED_PROCESS_TRACE: '1' },
-        })
-        diagnostics(child)
-        child.stdout!.resume()
-        await withFixtureCleanup(
-          async () => {
-            const pin = async (file: string, parentPid: number | undefined) => {
-              const pid = Number(await waitForFile(file))
-              return witness.pin({ pid, expectedImage: nodeImage, nonce, parentPid })
-            }
-            const rootIdentity = await pin(rootPidFile, child.pid)
-            await writeFile(join(dir, 'start-descendant'), '')
-            const descendantIdentity = await pin(descendantPidFile, rootIdentity.pid)
-            expect(await witness.exited(descendantIdentity.id)).toBe(false)
-            await body({
-              child,
-              dir,
-              async expectExited() {
-                expect(await witness.exited(rootIdentity.id)).toBe(true)
-                expect(await witness.exited(descendantIdentity.id)).toBe(true)
-              },
-            })
-          },
-          () => cleanup(child),
-        )
-      },
-      () => rm(dir, { recursive: true, force: true }),
-    )
-  })
-}
-
-const nativeSetupMs = 15_000
-const nativePartialMs = 5_000
-const rawCaseMs = 100_000
-const readyParentLine = 'test-parent-handle-held\n'
-
-function producerProof(
-  caseName: string,
-  proof: {
-    kind:
-      | 'auth-timeout'
-      | 'create-process-failure'
-      | 'stop-ack'
-      | 'schema-rejection'
-      | 'parent-before-connect'
-      | 'query-fault'
-      | 'handoff-fault'
-      | 'blocked-stderr'
-      | 'spawn-timeout'
-  } & Record<string, unknown>,
-  cleanup: (RawCleanup & { witnessClosed: true | null; parentClosed: true | null }) | StatusCleanup,
-) {
-  console.log(`HOLI_WINDOWS_OWNED_PRODUCER_PROOF ${JSON.stringify({ caseName, proof, cleanup })}`)
-}
-
-describe.skipIf(!windows)('native owned control producer', () => {
-  it(
-    'rejects a local pipe client whose PID does not match the held parent',
-    async () => {
-      const parent = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
-        stdio: 'ignore',
-      })
-      fixtureChild(parent)
-      await withFixtureCleanup(
-        async () => {
-          const producer = startRawProducer({ parentPid: parent.pid! })
-          await withFixtureCleanup(
-            async () => {
-              await producer.open()
-              await producer.exit(125)
-              expect(producer.records).toEqual([])
-              expect(producer.stdout()).toBe('')
-            },
-            () => producer.cleanup(),
-          )
-        },
-        () => stopFixtureChild(parent, teardownMs, 'raw fixture parent'),
-      )
-    },
-    rawCaseMs,
+it.skipIf(windows)('keeps default pipes for a non-leased POSIX command', async () => {
+  const child = spawnOwnedProgram(
+    process.execPath,
+    ['-e', 'process.stdin.pipe(process.stdout)'],
+    {},
   )
-
-  const preconnectCase = 'exits when the held parent dies before the pipe connects'
-  it(
-    preconnectCase,
-    async () => {
-      const parent = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
-        stdio: 'ignore',
-      })
-      const observedParent = fixtureChild(parent)
-      let cleanup!: RawCleanup
-      const proof = await withFixtureCleanup(
-        async () => {
-          const producer = startRawProducer({ parentPid: parent.pid!, parentBarrier: true })
-          return withFixtureCleanup(
-            async () => {
-              // The stdout barrier is readiness only: native code has opened the parent
-              // HANDLE. Never dial the control pipe, even on the cleanup path.
-              await expect.poll(producer.stdout, { timeout: 8_000 }).toBe(readyParentLine)
-              expect(fixtureChildAlive(parent)).toBe(true)
-              expect(producer.helperAlive()).toBe(true)
-              const at = performance.now()
-              expect(parent.kill('SIGKILL')).toBe(true)
-              expect(await observedParent.join(3_000, 'disposable native parent')).toBeNull()
-              const parentExitSignal = parent.signalCode
-              expect(parentExitSignal).toBe('SIGKILL')
-              const { helperExitCode, at: exitedAt } = await producer.exit(125, 3_000)
-              const parentKillToHelperExitMs = exitedAt - at
-              expect(parentKillToHelperExitMs).toBeGreaterThanOrEqual(0)
-              expect(parentKillToHelperExitMs).toBeLessThan(3_000)
-              const controlConnectAttempts = producer.connectAttempts()
-              expect(controlConnectAttempts).toBe(0)
-              expect(producer.records).toEqual([])
-              const parentHandleReady = producer.stdout() === readyParentLine
-              expect(parentHandleReady).toBe(true)
-              return {
-                kind: 'parent-before-connect' as const,
-                parentHandleReady,
-                parentExitSignal,
-                helperExitCode,
-                parentKillToHelperExitMs,
-                controlConnectAttempts,
-              }
-            },
-            async () => {
-              cleanup = await producer.cleanup()
-            },
-          )
-        },
-        () => stopFixtureChild(parent, teardownMs, 'raw fixture parent'),
-      )
-      producerProof(preconnectCase, proof, { ...cleanup, witnessClosed: null, parentClosed: true })
-    },
-    rawCaseMs,
-  )
-
-  const silentCase = 'bounds authentication when the genuine parent connects but sends nothing'
-  it(
-    silentCase,
-    async () => {
-      const { proof, cleanup } = await withRawProducer(async (producer, witness) => {
-        const hello = await producer.hello(witness)
-        const { helperExitCode, at } = await producer.exit(125, nativeSetupMs + 1_000)
-        const helloToHelperExitMs = at - producer.receivedAt(hello)
-        expect(helloToHelperExitMs).toBeGreaterThanOrEqual(nativeSetupMs - 3_000)
-        expect(helloToHelperExitMs).toBeLessThanOrEqual(nativeSetupMs + 1_000)
-        const helperRecords = producer.records.map(({ type }) => type)
-        expect(helperRecords).toEqual(['hello'])
-        const controlBytesWritten = producer.bytesWritten()
-        expect(controlBytesWritten).toBe(0)
-        const rootOutputSeen = producer.stdout() !== ''
-        expect(rootOutputSeen).toBe(false)
-        return {
-          kind: 'auth-timeout' as const,
-          helperExitCode,
-          helloToHelperExitMs,
-          helperRecords,
-          controlBytesWritten,
-          rootOutputSeen,
-        }
-      })
-      producerProof(silentCase, proof, cleanup)
-    },
-    rawCaseMs,
-  )
-
-  const createFailureCase = 'reports a missing executable separately from authenticated EMPTY'
-  it(
-    createFailureCase,
-    async () => {
-      const dir = await mkdtemp(join(tmpdir(), 'holi-raw-missing-'))
-      const missingExecutable = join(dir, 'missing.exe')
-      const { proof, cleanup } = await withFixtureCleanup(
-        () =>
-          withRawProducer(
-            async (producer, witness) => {
-              const { mode } = await producer.auth(witness)
-              const { helperExitCode } = await producer.exit(125)
-              const helperRecords = producer.records.map(({ type }) => type)
-              expect(helperRecords).toEqual(['hello', 'setup', 'empty'])
-              const empty = producer.records.at(-1)
-              if (empty?.type !== 'empty') throw new Error('missing signed native EMPTY')
-              // The native helper sends this terminal only after DrainJob has
-              // queried zero; stderr is checked separately after stream close.
-              expect(empty).toEqual({
-                type: 'empty',
-                reason: 'launch-failed',
-                exitCode: 125,
-                rootPid: null,
-                rootExitCode: null,
-                outputFailed: false,
-              })
-              expect(producer.stdout() === '').toBe(true)
-              const stderr = producer.stderr()
-              const diagnostic =
-                /^CreateProcess failed \(Win32 error (\d+)\): ([^\r\n]+)\r?\n$/u.exec(stderr)
-              const diagnosticDelivered =
-                diagnostic?.[0] === stderr &&
-                !!diagnostic[2]?.trim() &&
-                diagnostic[2].length <= 256 &&
-                !stderr.includes('missing.exe')
-              expect(diagnosticDelivered).toBe(true)
-              const nativeErrorCode = Number(diagnostic?.[1])
-              expect(nativeErrorCode).toBe(2) // ERROR_FILE_NOT_FOUND, independent of message locale.
-              return {
-                kind: 'create-process-failure' as const,
-                mode,
-                helperExitCode,
-                helperRecords,
-                empty,
-                nativeErrorCode,
-                diagnosticDelivered,
-              }
-            },
-            undefined,
-            missingExecutable,
-          ),
-        () => rm(dir, { recursive: true, force: true }),
-      )
-      producerProof(createFailureCase, proof, cleanup)
-    },
-    rawCaseMs,
-  )
-
-  function assertRejected(producer: RawProducer) {
-    const helperRecords = producer.records
-      .filter(({ type }) => type !== 'phase' && type !== 'root-created' && type !== 'root-exit')
-      .map(({ type }) => type)
-    expect(helperRecords).toEqual(['hello', 'setup', 'error']) // In particular: no EMPTY or HANDOFF.
-    const error = producer.records.at(-1)
-    if (error?.type !== 'error') throw new Error('missing native terminal error')
-    expect(error.code).toBe('protocolFailure')
-    return { error, helperRecords }
-  }
-
-  it.each(['EOF', 'early ACK', 'replay', 'fractional sequence', 'invalid UTF-8'] as const)(
-    'fails closed on post-auth %s',
-    async (failure) => {
-      await withRawProducer(async (producer, witness) => {
-        await producer.auth(witness)
-        await producer.holdRoot(witness)
-        switch (failure) {
-          case 'EOF':
-            producer.closeParentEnd()
-            break
-          case 'early ACK':
-            await producer.send(producer.encode({ type: 'acknowledge' }))
-            break
-          case 'replay': {
-            const stop = producer.encode({ type: 'stop', signal: 'SIGTERM' })
-            await producer.send(Buffer.concat([stop, stop]))
-            break
-          }
-          case 'fractional sequence': {
-            const stop = producer.encode({ type: 'stop', signal: 'SIGTERM' })
-            await producer.send(Buffer.from(String(stop).replace('"seq":2,', '"seq":2.25,')))
-            break
-          }
-          case 'invalid UTF-8': {
-            const payload = Buffer.concat([
-              Buffer.from('{"type":"stop","signal":"SIGTERM"'),
-              Buffer.from([0xff, 0x7d]),
-            ])
-            await producer.send(producer.rawPayload(payload, 2))
-            break
-          }
-        }
-        await producer.exit(125)
-        if (failure !== 'EOF') assertRejected(producer)
-        else
-          expect(producer.records.some(({ type }) => type === 'empty' || type === 'handoff')).toBe(
-            false,
-          )
-      })
-    },
-    rawCaseMs,
-  )
-
-  function schemaRejection<T extends Record<string, unknown>>(
-    caseName: string,
-    malformed: 'duplicate-decoded-key' | 'noncanonical-uint' | 'partial-frame',
-    inject: (producer: RawProducer) => Promise<(errorAt: number) => T>,
-  ) {
-    it(
-      caseName,
-      async () => {
-        const { proof, cleanup } = await withRawProducer(async (producer, witness) => {
-          const { mode } = await producer.auth(witness)
-          const root = await producer.holdRoot(witness)
-          const rootAliveBeforeWrite = !(await root.exited())
-          expect(rootAliveBeforeWrite).toBe(true)
-          const before = producer.writes()
-          expect(before).toBe(2) // AUTH + REGISTERED; the Root confirms REGISTERED was accepted.
-          const checkInjection = await inject(producer)
-          const { helperExitCode } = await producer.exit(125)
-          const { error, helperRecords } = assertRejected(producer)
-          const commandWrites = producer.writes() - before
-          expect(commandWrites).toBe(malformed === 'partial-frame' ? 3 : 1)
-          return {
-            kind: 'schema-rejection' as const,
-            malformed,
-            mode,
-            helperExitCode,
-            helperRecords,
-            nativeError: error.code,
-            rootAliveBeforeWrite,
-            commandWrites,
-            ...checkInjection(producer.receivedAt(error)),
-          }
-        })
-        producerProof(caseName, proof, cleanup)
-      },
-      rawCaseMs,
-    )
-  }
-
-  schemaRejection(
-    'rejects duplicate decoded keys after registration',
-    'duplicate-decoded-key',
-    async (producer) => {
-      const payload = Buffer.from(
-        String.raw`{"type":"stop","signal":"SIGTERM","\u0073ignal":"SIGTERM"}`,
-      )
-      // A permissive decoder would get a legitimate STOP with two spellings of
-      // the same key. Sign those exact UTF-8 bytes, not their decoded object.
-      await producer.send(producer.rawPayload(payload, 2))
-      return () => ({})
-    },
-  )
-
-  schemaRejection(
-    'rejects noncanonical uint tokens after registration',
-    'noncanonical-uint',
-    async (producer) => {
-      const stop = producer.encode({ type: 'stop', signal: 'SIGTERM' }).toString()
-      expect(stop.includes('"seq":2,')).toBe(true)
-      // Keep the MAC for numeric sequence 2. Only the token spelling changes.
-      await producer.send(Buffer.from(stop.replace('"seq":2,', '"seq":2e0,')))
-      return () => ({})
-    },
-  )
-
-  schemaRejection(
-    'bounds a partial native control frame from its first byte',
-    'partial-frame',
-    async (producer) => {
-      const valid = producer.encode({ type: 'stop', signal: 'SIGTERM' })
-      const prefix = valid.subarray(0, 3)
-      expect(prefix.includes(10)).toBe(false)
-      const first = await producer.send(prefix.subarray(0, 1))
-      await delay(Math.max(0, first + 2_000 - performance.now()))
-      await producer.send(prefix.subarray(1, 2))
-      await delay(Math.max(0, first + 4_000 - performance.now()))
-      const last = await producer.send(prefix.subarray(2, 3))
-      // No EOF and no LF. A deadline renewed by the last byte would run nearly
-      // 9 s from the first byte; the authenticated error must arrive near 5 s.
-      return (errorAt) => {
-        const firstByteToErrorMs = errorAt - first
-        const lastByteToErrorMs = errorAt - last
-        expect(firstByteToErrorMs).toBeGreaterThanOrEqual(nativePartialMs - 100)
-        expect(firstByteToErrorMs).toBeLessThanOrEqual(nativePartialMs + 1_500)
-        expect(lastByteToErrorMs).toBeGreaterThan(0)
-        expect(lastByteToErrorMs).toBeLessThan(3_000)
-        return { firstByteToErrorMs, lastByteToErrorMs }
-      }
-    },
-  )
-
-  it(
-    'reports the actual root exit code after stopping a still-running job',
-    async () => {
-      await withRawProducer(async (producer, witness) => {
-        await producer.auth(witness)
-        const root = await producer.holdRoot(witness)
-        await producer.send(producer.encode({ type: 'stop', signal: 'SIGTERM' }))
-        await producer.exit(1)
-        expect(producer.records.at(-1)).toMatchObject({
-          type: 'empty',
-          exitCode: 1,
-          rootExitCode: 1,
-          rootPid: root.pid,
-        })
-      })
-    },
-    rawCaseMs,
-  )
-
-  for (const ackFirst of [true, false]) {
-    const caseName = `gives coalesced STOP priority over READY ACK (ACK first: ${ackFirst})`
-    it(
-      caseName,
-      async () => {
-        const dir = await mkdtemp(join(tmpdir(), 'holi-raw-owned-'))
-        const gate = join(dir, 'exit-root')
-        const { proof, cleanup } = await withFixtureCleanup(
-          () =>
-            withRawProducer(async (producer, witness) => {
-              const { mode } = await producer.auth(witness)
-              const root = await producer.holdRoot(witness)
-              const grandchild = await producer.holdGrandchild(witness, root.pid)
-              await writeFile(gate, '')
-              await producer.record('ready')
-              const rootExitedAtReady = await root.exited()
-              const grandchildAliveAtReady = !(await grandchild.exited())
-              expect(rootExitedAtReady).toBe(true)
-              expect(grandchildAliveAtReady).toBe(true)
-              const ack = { type: 'acknowledge' } as const
-              const stop = { type: 'stop', signal: 'SIGTERM' } as const
-              const commands = ackFirst ? [ack, stop] : [stop, ack]
-              const frames = commands.map((message) => producer.encode(message))
-              const commandSeqs = frames.map(
-                (frame) => (JSON.parse(frame.toString()) as { seq: number }).seq,
-              )
-              expect(commandSeqs).toEqual([2, 3])
-              const before = producer.writes()
-              await producer.send(Buffer.concat(frames))
-              const coalescedWrites = producer.writes() - before
-              expect(coalescedWrites).toBe(1)
-              const { helperExitCode } = await producer.exit(1)
-              const helperRecords = producer.records
-                .filter(
-                  ({ type }) => type !== 'phase' && type !== 'root-created' && type !== 'root-exit',
-                )
-                .map(({ type }) => type)
-              expect(helperRecords).toEqual(['hello', 'setup', 'ready', 'empty'])
-              const empty = producer.records.at(-1)
-              if (empty?.type !== 'empty') throw new Error('missing native EMPTY')
-              expect(producer.records.filter(({ type }) => type === 'root-exit')).toEqual([
-                { type: 'root-exit', rootPid: root.pid, rootExitCode: 0 },
-              ])
-              expect(empty.rootPid).toBe(root.pid)
-              const { reason, exitCode, rootExitCode, outputFailed } = empty
-              expect({
-                reason,
-                exitCode,
-                rootExitCode,
-                outputFailed,
-                rootPid: empty.rootPid,
-              }).toEqual({
-                reason: 'stopped',
-                exitCode: 1,
-                rootExitCode: 0,
-                outputFailed: false,
-                rootPid: root.pid,
-              })
-              expect(await grandchild.exited()).toBe(true) // Before the broker can close the duplicate.
-              producer.releaseVerifiedEmpty(empty)
-              return {
-                kind: 'stop-ack' as const,
-                mode,
-                helperExitCode,
-                helperRecords,
-                commandOrder: commands.map(({ type }) => type),
-                commandSeqs,
-                coalescedWrites,
-                rootExitedAtReady,
-                grandchildAliveAtReady,
-                empty: { reason, exitCode, rootExitCode, outputFailed },
-              }
-            }, gate),
-          () => rm(dir, { recursive: true, force: true }),
-        )
-        producerProof(caseName, proof, cleanup)
-      },
-      rawCaseMs,
-    )
+  const done = completion(child)
+  const lease = drain(child)
+  try {
+    expect(lease).toBeUndefined()
+    let output = ''
+    child.stdout!.on('data', (chunk: Buffer) => (output += chunk.toString()))
+    child.stdin!.end('original bytes')
+    expect(await done).toBe(0)
+    expect(output).toBe('original bytes')
+  } finally {
+    if (lease) await lease
+    else await cleanup(child)
   }
 })
 
-describe.skipIf(!windows)('retained native Job across helper death', () => {
-  for (const point of ['before-clear', 'after-clear'] as const) {
-    const caseName = `revokes the original Job when the helper dies ${point}`
-    it(
-      caseName,
-      async () => {
-        const { proof, cleanup } = await withStatusProducer(
-          { tree: true, retained: true },
-          async (fixture) => {
-            const { child, control, original } = fixture.start(() =>
-              spawnOwnedLaunchWithHandoffFault(
-                launchPlan(fixture.nodeImage, fixture.treeArgs, { platform: 'win32' }),
-                { cwd: fixture.dir, stdio: ['ignore', 'pipe', 'pipe'] },
-                point,
-              ),
-            )
-            const ready = fixtureResult<true>()
-            control.onReady = () => ready.settle({ value: true })
-            await fixture.holdRoot()
-            expect(await fixture.exited('grandchild')).toBe(false)
-            await fixture.mark('release-0')
-            const readyReceived = await ready.wait(statusWaitMs, 'authenticated retained READY')
-            const rootExitCode = await fixture.exitCode('root')
-            expect(rootExitCode).toBe(0)
-            expect(await fixture.exited('grandchild')).toBe(false)
-            const acknowledged = control.acknowledge()
-            expect(acknowledged).toBe(true)
-            const { receipt, sameReceipt, sameLease } = await rejectedStatusReceipt(child, original)
-            const { helperExitCode } = await fixture.helperStatus()
-            expect(helperExitCode).toBe(125)
-            // The guard has had its last handle closed. In the after-clear gap the
-            // GC must still be live at this point, before any cleanup request.
-            const grandchildExitedBeforeRevoke =
-              point === 'before-clear'
-                ? await fixture.waitForExit('grandchild')
-                : await fixture.exited('grandchild')
-            expect(grandchildExitedBeforeRevoke).toBe(point === 'before-clear')
-            const revoke = control.lease.revoke()
-            const revokeIdempotent = control.lease.revoke() === revoke
-            expect(revokeIdempotent).toBe(true)
-            // The real broker's revoke only resolves after native ActiveProcesses=0.
-            await within(revoke, 22_000, 'broker drain of original Job')
-            const grandchildExitedAfterRevoke = await fixture.waitForExit('grandchild')
-            return {
-              kind: 'handoff-fault' as const,
-              point,
-              receipt,
-              sameReceipt,
-              sameLease,
-              readyReceived,
-              acknowledged,
-              helperExitCode,
-              rootExitCode,
-              grandchildExitedBeforeRevoke,
-              revokeIdempotent,
-              grandchildExitedAfterRevoke,
-            }
-          },
-        )
-        producerProof(caseName, proof, cleanup)
-      },
-      statusCaseMs,
-    )
+async function observe(child: ChildProcess, input?: string) {
+  const chunks: Buffer[] = []
+  const errors: Buffer[] = []
+  const events: string[] = []
+  const failure: NodeJS.ErrnoException[] = []
+  child.on('spawn', () => events.push('spawn'))
+  child.on('error', (error) => {
+    events.push('error')
+    failure.push(error)
+  })
+  child.on('exit', () => events.push('exit'))
+  child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk))
+  child.stderr?.on('data', (chunk: Buffer) => errors.push(chunk))
+  if (input !== undefined) child.stdin!.end(input)
+  const status = await new Promise((resolve) => child.on('close', (...status) => resolve(status)))
+  return {
+    status,
+    events,
+    stdout: Buffer.concat(chunks).toString(),
+    stderr: Buffer.concat(errors).toString(),
+    failure: failure.map(({ errno, code, syscall, message, ...rest }) => ({
+      errno,
+      code,
+      syscall,
+      message,
+      ...rest,
+    })),
   }
+}
 
-  const blockedStderrCase =
-    'proves EMPTY without waiting for blocked provider stderr or its retained relay'
-  it(
-    blockedStderrCase,
-    async () => {
-      const { proof, cleanup } = await withStatusProducer(
-        { retained: true, pauseStderr: true },
-        async (fixture) => {
-          const script = `
-        const fs = require('node:fs')
-        const nonce = process.argv[1]
-        // A Windows stdio stream can write synchronously. Keep the control
-        // thread responsive by using fs.write on the worker pool instead.
-        const bytes = Buffer.alloc(8 * 1024 * 1024, 0x78)
-        let offset = 0
-        function writeStderr() {
-          fs.write(2, bytes, offset, bytes.length - offset, null, (error, written) => {
-            if (error || written === 0 || (offset += written) === bytes.length) {
-              fs.writeFileSync('stderr-settled', '')
-            } else writeStderr()
+async function compareLeased(file: string, args: string[], opts: SpawnOptions, input?: string) {
+  const direct = await observe(spawn(file, args, { ...opts, detached: true }), input)
+  const child = spawnOwnedProgram(file, args, { ...opts, posixGroupLease: true })
+  const pid = child.pid
+  try {
+    expect(await observe(child, input)).toEqual(direct)
+  } finally {
+    await drain(child)
+    if (pid !== undefined)
+      expect(() => process.kill(-pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+  }
+}
+
+it.skipIf(windows)(
+  'matches original spawn bytes, argv0, cwd, env and default stdio when leased',
+  async () => {
+    const argv = ['spaces and tab\t', '', 'one\r\ntwo', '☃', 'quote"\\', 'x'.repeat(12_000)]
+    const src = `process.stderr.write('stderr'); console.log(JSON.stringify([process.argv0,process.cwd(),process.env,process.argv.slice(1)])); process.stdin.pipe(process.stdout)`
+    await compareLeased(
+      process.execPath,
+      ['-e', src, '--', ...argv],
+      {
+        argv0: 'original argv zero',
+        cwd: pathToFileURL(process.cwd() + sep),
+        env: {
+          SHLVL: '31',
+          PWD: 'preserved',
+          _: 'exact',
+          SECRET_FIXTURE: 'quotes $x\n\n☃'.repeat(4000),
+        },
+        uid: process.getuid!(),
+        gid: process.getgid!(),
+      },
+      'original stdin',
+    )
+  },
+)
+
+it.skipIf(windows)('matches native ENOENT and EACCES, not a shell exit code', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'holi-exec-errors-'))
+  try {
+    const blocked = join(dir, 'blocked')
+    await writeFile(blocked, '#!/bin/sh\nexit 0\n', { mode: 0o600 })
+    await compareLeased('./missing', ['one', 'two'], { cwd: dir, env: {} })
+    await compareLeased('./blocked', [], { cwd: dir, env: {} })
+    await compareLeased('missing-for-holi-test', [], { cwd: dir, env: { PATH: dir } })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+it.skipIf(windows)('keeps real nonzero and signal exits, and the shell option', async () => {
+  await compareLeased(process.execPath, ['-e', 'process.exit(7)'], {})
+  await compareLeased(process.execPath, ['-e', "process.kill(process.pid, 'SIGTERM')"], {})
+  await compareLeased('printf', ["'%s'", "'some bytes'"], { shell: '/bin/sh', env: {} })
+})
+
+it.skipIf(windows)(
+  'keeps advanced IPC, original extra descriptors and timeout killSignal',
+  async () => {
+    const child = spawnOwnedProgram(
+      process.execPath,
+      [
+        '-e',
+        `process.on('message', b => {
+    require('node:fs').writeSync(4, 'fd4'); process.send(b); process.disconnect()
+  }); setInterval(() => {}, 1000)`,
+      ],
+      {
+        posixGroupLease: true,
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc', 'pipe'],
+        serialization: 'advanced',
+        timeout: 500,
+        killSignal: 'SIGUSR2',
+      },
+    )
+    const status = once(child, 'exit')
+    const message = once(child, 'message')
+    const pipe = once(child.stdio[4]!, 'data')
+    try {
+      expect(child.stdio).toHaveLength(5)
+      child.send(Buffer.from('original IPC bytes'))
+      expect((await message)[0]).toEqual(Buffer.from('original IPC bytes'))
+      expect(await pipe).toEqual([Buffer.from('fd4')])
+      expect(await status).toEqual([null, 'SIGUSR2'])
+    } finally {
+      await drain(child)
+    }
+  },
+)
+
+async function trackedLaunch(
+  run: (
+    dir: string,
+    retain: (p: Promise<void>) => void,
+    pid: (id: number) => void,
+  ) => Promise<void>,
+) {
+  const dir = await mkdtemp(join(tmpdir(), 'owned-process-review2-'))
+  const ids = new Set<number>()
+  const cleanups: Promise<void>[] = []
+  helper.receipts = ''
+  vi.stubEnv('TMPDIR', dir)
+  function absent() {
+    for (const match of helper.receipts.matchAll(/^(?:ROOT|REAPER|READY) (\d+)(?: (\d+))?$/gm)) {
+      ids.add(Number(match[1]))
+      if (match[2]) ids.add(Number(match[2]))
+    }
+    for (const id of ids) {
+      expect(id).toBeGreaterThan(1)
+      for (const probe of ['probe-pid', 'probe']) {
+        const result = spawnSync(oracle, [probe, String(id)], { timeout: 1000 })
+        expect(result.error).toBeUndefined()
+        expect(result.status, `${probe} ${id}`).toBe(1)
+      }
+    }
+  }
+  let removal: unknown
+  let removed = false
+  helper.beforeRemove = (path) => {
+    if (!path.startsWith(join(dir, 'holi-launch-'))) return
+    removed = true
+    try {
+      absent()
+    } catch (error) {
+      removal = error
+    }
+  }
+  try {
+    await run(
+      dir,
+      (p) => cleanups.push(p),
+      (id) => ids.add(id),
+    )
+    expect(removed).toBe(true)
+    if (removal) throw removal
+    expect((await readdir(dir)).filter((name) => name.startsWith('holi-launch-'))).toEqual([])
+  } finally {
+    helper.holdCommand = helper.holdReport = undefined
+    helper.beforeRemove = helper.readExec = helper.deferPoll = helper.afterNativeSpawn = undefined
+    vi.unstubAllEnvs()
+    await Promise.allSettled(cleanups)
+    try {
+      await vi.waitFor(absent, { timeout: 4000 })
+      await rm(dir, { recursive: true, force: true })
+    } catch (error) {
+      console.error('Retained test launch ledger', dir, [...ids], error)
+      throw error
+    }
+  }
+}
+
+it.skipIf(windows)(
+  'joins the real native launch when spawn throws before returning its child',
+  () =>
+    trackedLaunch(async (dir, retain, track) => {
+      // An exception code does not tell us where Node threw.
+      const failure = Object.assign(new TypeError('parent setup failed after native spawn'), {
+        code: 'ERR_INVALID_ARG_VALUE',
+        cleanup: undefined as Promise<void> | undefined,
+      })
+      let exit: Promise<unknown[]> | undefined
+      helper.afterNativeSpawn = (child) => {
+        track(child.pid!)
+        exit = once(child, 'exit')
+        throw failure
+      }
+      const marker = join(dir, 'provider-ran')
+      expect(() =>
+        spawnOwnedProgram('/usr/bin/touch', [marker], { stdio: 'ignore', posixGroupLease: true }),
+      ).toThrow(failure)
+      expect(posixLaunchNonAdmission(failure)).toBeUndefined()
+      const cleanup = failure.cleanup!
+      expect(cleanup).toBeInstanceOf(Promise)
+      retain(cleanup)
+      await cleanup
+      expect(failure.cleanup).toBe(cleanup)
+      await failure.cleanup
+      expect(await exit).toEqual([125, null])
+      expect(helper.receipts).toMatch(/^ROOT \d+\n$/)
+      await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    }),
+)
+
+it.skipIf(windows).each(['S', 'G'])(
+  'closes admission on a direct owner drain before %s, without AbortSignal',
+  (gate) =>
+    trackedLaunch(async (dir, retain, track) => {
+      const marker = join(dir, 'provider-ran')
+      const ownershipRecordPath = join(dir, randomUUID())
+      const commands: string[] = []
+      let held = false
+      let blocked = true
+      helper.holdCommand = (command) => {
+        commands.push(command)
+        if (command !== gate || !blocked) return false
+        held = true
+        return true
+      }
+      const child = spawnOwnedProgram('/usr/bin/touch', [marker], {
+        posixGroupLease: true,
+        ownershipRecordPath,
+      })
+      track(child.pid!)
+      const timeline: string[] = []
+      for (const event of ['spawn', 'error', 'exit', 'close'])
+        child.on(event, () => timeline.push(event))
+      let error: unknown
+      let proofAtCallback: ReturnType<typeof inspectPosixOwnership> | undefined
+      child.on('error', (failure) => {
+        error = failure
+        proofAtCallback = inspectPosixOwnership(ownershipRecordPath)
+      })
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+      try {
+        await vi.waitFor(() => expect(held).toBe(true), { timeout: 2000 })
+        const attempts = commands.length
+        const cleanup = drain(child)!
+        retain(cleanup)
+        blocked = false
+        await cleanup
+        await closed
+        expect(commands).toHaveLength(attempts)
+        expect(timeline).toEqual(['error', 'close'])
+        expect(error).toMatchObject({ message: 'POSIX launch was cancelled before start.' })
+        expect(posixLaunchNonAdmission(error)?.cleanup).toBe(cleanup)
+        expect(drain(child)).toBe(cleanup)
+        expect(proofAtCallback).toEqual({ state: 'confirmed', proof: 'settled' })
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        blocked = false
+        const cleanup = drain(child)!
+        retain(cleanup)
+        await cleanup.catch(() => {})
+      }
+    }),
+)
+
+const { SIGTERM, SIGKILL, SIGCONT, SIGINT } = constants.signals
+
+it.skipIf(windows).each([
+  { gate: 'S', signal: 'sigterm' },
+  { gate: 'G', signal: 'SIGKILL' },
+  { gate: 'G', signal: SIGTERM },
+  { gate: 'S', signal: SIGKILL },
+  { gate: 'G', signal: undefined },
+  { gate: 'G', signal: SIGINT, proofFault: true },
+  { gate: 'G', timeout: 700, signal: 'sigkill' },
+  { gate: 'G', timeout: 700, signal: SIGTERM },
+  { gate: 'G', timeout: 700, signal: undefined },
+] as const)(
+  'cancels pre-GO signals at $gate (timeout=$timeout, signal=$signal, proof fault=$proofFault)',
+  ({ gate, signal, ...timing }) =>
+    trackedLaunch(async (dir, retain, track) => {
+      const marker = join(dir, 'provider-ran')
+      const ownershipRecordPath = join(dir, randomUUID())
+      const timeline: string[] = []
+      const commands: string[] = []
+      let blocked = true
+      const proofFault =
+        'proofFault' in timing ? new Error('cancellation report read failed') : undefined
+      helper.holdCommand = (command) => {
+        commands.push(command)
+        if (command === gate) return blocked
+        // On the regression path only, don't let a queued signal mask exec
+        // by beating the provider to its first instruction.
+        return (command === 'T' || command === 'K') && !existsSync(marker)
+      }
+      const child = spawnOwnedProgram('/usr/bin/touch', [marker], {
+        posixGroupLease: true,
+        ownershipRecordPath,
+        ...('timeout' in timing ? { timeout: timing.timeout, killSignal: signal } : {}),
+      })
+      track(child.pid!)
+      let failure: unknown
+      let proofAtError: ReturnType<typeof inspectPosixOwnership> | undefined
+      child.on('error', (error) => {
+        timeline.push('error')
+        failure = error
+        proofAtError = inspectPosixOwnership(ownershipRecordPath)
+      })
+      for (const event of ['spawn', 'exit', 'close']) child.on(event, () => timeline.push(event))
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+      let fired: Promise<{ accepted: boolean; held: boolean; attempts: number }> | undefined
+      const kill = child.kill
+      if ('timeout' in timing) {
+        fired = new Promise((resolve) => {
+          // Observe Node's actual timer calling the public method, not a test timer.
+          child.kill = (sig) => {
+            const accepted = kill(sig)
+            resolve({
+              accepted,
+              held: commands.includes(gate) && blocked,
+              attempts: commands.length,
+            })
+            return accepted
+          }
+        })
+      }
+      try {
+        await vi.waitFor(() => expect(commands).toContain(gate), { timeout: 2000 })
+        let attempts = commands.length
+        if (fired) {
+          const result = await fired
+          expect(result).toMatchObject({ accepted: true, held: true })
+          attempts = result.attempts
+        } else {
+          if (proofFault) {
+            helper.holdReport = () => {
+              helper.holdReport = undefined
+              throw proofFault
+            }
+          }
+          expect(child.kill(signal)).toBe(true)
+        }
+        expect(child.killed).toBe(true)
+        expect(timeline).toEqual([])
+        blocked = false
+        await closed
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(commands).toHaveLength(attempts)
+        expect(timeline).toEqual(['error', 'close'])
+        expect(child.kill(signal)).toBe(false)
+        const cleanup = drain(child)!
+        retain(cleanup)
+        expect(drain(child)).toBe(cleanup)
+        if (proofFault) {
+          await expect(cleanup).rejects.toBe(proofFault)
+          expect(failure).toBe(proofFault)
+          expect(posixLaunchNonAdmission(failure)).toBeUndefined()
+          expect(proofAtError).toMatchObject({ state: 'retain' })
+        } else {
+          expect(failure).toMatchObject({ message: 'POSIX launch was cancelled before start.' })
+          expect(posixLaunchNonAdmission(failure)?.cleanup).toBe(cleanup)
+          await cleanup
+          expect(proofAtError).toEqual({ state: 'confirmed', proof: 'settled' })
+        }
+      } finally {
+        const cleanup = drain(child)!
+        retain(cleanup)
+        blocked = false
+        await cleanup.catch(() => {})
+      }
+    }),
+)
+
+it.skipIf(windows)('does not close the pre-GO gate for signal zero or SIGCONT', () =>
+  trackedLaunch(async (dir, retain, track) => {
+    const marker = join(dir, 'provider-ran')
+    let blocked = true
+    let held = false
+    helper.holdCommand = (command) => {
+      if (command !== 'G' || !blocked) return false
+      return (held = true)
+    }
+    const child = spawnOwnedProgram('/usr/bin/touch', [marker], { posixGroupLease: true })
+    track(child.pid!)
+    const done = completion(child)
+    void done.catch(() => {})
+    try {
+      await vi.waitFor(() => expect(held).toBe(true), { timeout: 2000 })
+      expect(child.kill(0)).toBe(true)
+      expect(child.kill('SIGCONT')).toBe(true)
+      blocked = false
+      expect(await done).toBe(0)
+      expect(await readFile(marker, 'utf8')).toBe('')
+      await vi.waitFor(() => expect(helper.receipts).toContain(`SIGNAL ${SIGCONT}\n`))
+    } finally {
+      const cleanup = drain(child)!
+      retain(cleanup)
+      blocked = false
+      await cleanup
+    }
+  }),
+)
+
+it.skipIf(windows)('clears the native timeout when a manual pre-GO stop hides exit', () =>
+  trackedLaunch(async (_dir, retain, track) => {
+    const timeout = 1000
+    helper.holdCommand = (command) => command === 'S'
+    const child = spawnOwnedProgram('/bin/true', [], { posixGroupLease: true, timeout })
+    track(child.pid!)
+    child.on('error', () => {})
+    const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+    const exited = vi.fn()
+    child.on('exit', exited)
+    const kill = vi.spyOn(child, 'kill')
+    try {
+      expect(child.kill()).toBe(true)
+      await closed
+      await new Promise((resolve) => setTimeout(resolve, timeout))
+      expect(kill).toHaveBeenCalledOnce()
+      expect(exited).not.toHaveBeenCalled()
+    } finally {
+      const cleanup = drain(child)!
+      retain(cleanup)
+      await cleanup
+    }
+  }),
+)
+
+it.skipIf(windows).each(['already aborted', 'S', 'G', 'G with proof fault'])(
+  'closes admission before forwarding AbortError (%s)',
+  (scenario) =>
+    trackedLaunch(async (dir, retain, track) => {
+      const marker = join(dir, 'provider-ran')
+      const ownershipRecordPath = join(dir, randomUUID())
+      const controller = new AbortController()
+      const timeline: string[] = []
+      let held = false
+      const firstError =
+        scenario === 'G with proof fault'
+          ? new Error('report read failed during cancellation')
+          : undefined
+      const gate = firstError ? 'G' : scenario
+      const commands: string[] = []
+      helper.holdCommand = (command) => {
+        commands.push(command)
+        if (command !== gate) return false
+        held = true
+        return true
+      }
+      if (gate === 'already aborted') controller.abort('fixture')
+      const child = spawnOwnedProgram(
+        process.execPath,
+        [
+          '-e',
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'bad'); console.log('bad')`,
+        ],
+        {
+          posixGroupLease: true,
+          signal: controller.signal,
+          ownershipRecordPath,
+        },
+      )
+      track(child.pid!)
+      let failure: unknown
+      child.on('error', (error) => {
+        timeline.push('error')
+        failure ??= error
+      })
+      child.on('spawn', () => timeline.push('spawn'))
+      child.on('exit', () => timeline.push('exit'))
+      child.stdout!.on('data', () => timeline.push('data'))
+      const closed = new Promise<void>((resolve) =>
+        child.once('close', () => {
+          timeline.push('close')
+          resolve()
+        }),
+      )
+      try {
+        if (gate !== 'already aborted') {
+          await vi.waitFor(() => expect(held).toBe(true), { timeout: 2000 })
+          if (firstError) {
+            helper.holdReport = () => {
+              helper.holdReport = undefined
+              throw firstError
+            }
+          }
+          controller.abort('fixture')
+          expect(timeline).toEqual([]) // Only report non-admission after physical proof.
+        }
+        const cleanup = drain(child)!
+        retain(cleanup)
+        if (firstError) await expect(cleanup).rejects.toBe(firstError)
+        else await cleanup
+        await closed
+        expect(timeline).toEqual(['error', 'close'])
+        if (firstError) {
+          expect(failure).toBe(firstError)
+          expect(posixLaunchNonAdmission(failure)).toBeUndefined()
+          expect(inspectPosixOwnership(ownershipRecordPath).state).toBe('retain')
+        } else {
+          expect(failure).toMatchObject({ code: 'ABORT_ERR', name: 'AbortError', cause: 'fixture' })
+          expect(posixLaunchNonAdmission(failure)?.cleanup).toBe(cleanup)
+          expect(inspectPosixOwnership(ownershipRecordPath)).toEqual({
+            state: 'confirmed',
+            proof: 'settled',
           })
         }
-        writeStderr()
-        fs.writeFileSync('root.tmp', JSON.stringify({ pid: process.pid, nonce }))
-        fs.renameSync('root.tmp', 'root.json')
-        const expires = performance.now() + 45000
-        setInterval(() => { if (performance.now() >= expires || fs.existsSync('abort')) process.exit(2) }, 20)
-      `
-          const { child, control, original } = fixture.start(() =>
-            spawnOwnedLaunch(
-              launchPlan(fixture.nodeImage, ['-e', script, fixture.nonce], { platform: 'win32' }),
-              {
-                cwd: fixture.dir,
-                env: { ...process.env, HOLI_OWNED_PROCESS_TRACE: '1' },
-                stdio: ['ignore', 'pipe', 'pipe'],
-              },
-              process.pid,
-              true,
-            ),
-          )
-          const relayError = fixtureResult<Error>()
-          control.onOutputFailure = (error) => relayError.settle({ value: error })
-          const stdoutClose = fixtureResult<true>()
-          const stderrClose = fixtureResult<true>()
-          child.stdout!.once('close', () => stdoutClose.settle({ value: true }))
-          child.stderr!.once('close', () => stderrClose.settle({ value: true }))
-          await fixture.holdRoot()
-          const stderrRelayBackpressured = await pollFixture(
-            () => {
-              const relay = child.stderr!
-              if (!relay.readableFlowing && relay.readableLength >= relay.readableHighWaterMark)
-                return true
-            },
-            performance.now() + statusWaitMs,
-            'paused parent stderr relay filled',
-            20,
-          )
-          const rootAliveBeforeStop = !(await fixture.exited('root'))
-          expect(rootAliveBeforeStop).toBe(true)
-          const stderrWritePending = !existsSync(join(fixture.dir, 'stderr-settled'))
-          expect(stderrWritePending).toBe(true)
-          const stopAccepted = child.kill()
-          expect(stopAccepted).toBe(true)
-          const receipt = await within(
-            original,
-            statusWaitMs,
-            'original EMPTY while relay is blocked',
-          )
-          const sameReceipt = child.ownedCompletion === original
-          expect(receipt).toBe('empty')
-          expect(sameReceipt).toBe(true)
-          // This callback is invoked only for an authenticated EMPTY with outputFailed.
-          const outputFailure = await relayError.wait(statusWaitMs, 'authenticated output failure')
-          const outputFailed = outputFailure.message === 'owned output relay failed to settle'
-          expect(outputFailed).toBe(true)
-          const { helperExitCode } = await fixture.helperStatus()
-          expect(helperExitCode).toBe(1)
-          const stdoutRelayClosed = await stdoutClose.wait(statusWaitMs, 'stdout relay close')
-          const stderrRelayClosed = await stderrClose.wait(statusWaitMs, 'stderr relay close')
-          return {
-            kind: 'blocked-stderr' as const,
-            receipt,
-            sameReceipt,
-            outputFailed,
-            stderrWritePending,
-            stderrRelayBackpressured,
-            rootAliveBeforeStop,
-            stopAccepted,
-            helperExitCode,
-            stdoutRelayClosed,
-            stderrRelayClosed,
-          }
+        if (gate === 'already aborted') expect(child.exitCode).toBe(125)
+        expect(drain(child)).toBe(cleanup)
+        expect(commands).not.toContain('T')
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        const cleanup = drain(child)!
+        retain(cleanup)
+        await cleanup.catch(() => {})
+      }
+    }),
+)
+
+it.skipIf(windows).each(['abort', 'drain', 'kill'] as const)(
+  'treats %s after writing GO as post-admission even before the ACK',
+  (mode) =>
+    trackedLaunch(async (dir, retain, track) => {
+      const ready = join(dir, 'provider-ready')
+      const controller = new AbortController()
+      let go = false
+      const commands: string[] = []
+      helper.holdCommand = (command) => {
+        commands.push(command)
+        if (command === 'G') go = true
+        return false
+      }
+      helper.holdReport = () => go
+      const child = spawnOwnedProgram(
+        process.execPath,
+        [
+          '-e',
+          `
+      process.on('SIGTERM', () => process.stdout.write('term', () => process.exit(0)));
+      require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready');
+      setInterval(() => {}, 1000);
+    `,
+        ],
+        { posixGroupLease: true, signal: mode === 'abort' ? controller.signal : undefined },
+      )
+      track(child.pid!)
+      const timeline: string[] = []
+      let abortError: unknown
+      child.on('error', (error) => {
+        timeline.push('error')
+        abortError ??= error
+      })
+      child.on('spawn', () => timeline.push('spawn'))
+      child.stdout!.on('data', () => timeline.push('data'))
+      child.on('exit', () => timeline.push('exit'))
+      const closed = new Promise<void>((resolve) =>
+        child.once('close', () => {
+          timeline.push('close')
+          resolve()
+        }),
+      )
+      try {
+        await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready'), {
+          timeout: 2000,
+        })
+        if (mode === 'abort') controller.abort('post-admission')
+        if (mode === 'kill') expect(child.kill()).toBe(true)
+        const cleanup = drain(child)!
+        retain(cleanup)
+        expect(timeline).toEqual([])
+        helper.holdReport = undefined
+        await cleanup
+        await closed
+        expect(commands.slice(-2)).toEqual(['G', 'T'])
+        if (mode === 'abort') {
+          expect(timeline).toEqual(['spawn', 'error', 'data', 'exit', 'close'])
+          expect(abortError).toMatchObject({ code: 'ABORT_ERR', cause: 'post-admission' })
+        } else {
+          expect(timeline).toEqual(['spawn', 'data', 'exit', 'close'])
+          expect(abortError).toBeUndefined()
+        }
+        expect(posixLaunchNonAdmission(abortError)).toBeUndefined()
+      } finally {
+        helper.holdReport = undefined
+        await drain(child)!.catch(() => {})
+      }
+    }),
+)
+
+it.skipIf(windows)('drains an admitted provider from its natural root exit callback', () =>
+  trackedLaunch(async (dir, retain, track) => {
+    const marker = join(dir, 'provider-ran')
+    const child = spawnOwnedProgram('/usr/bin/touch', [marker], { posixGroupLease: true })
+    track(child.pid!)
+    const done = completion(child)
+    let fromExit: Promise<void> | undefined
+    child.once('exit', () => {
+      fromExit = drain(child)!
+      retain(fromExit)
+    })
+    try {
+      expect(await done).toBe(0)
+      expect(fromExit).toBe(drain(child))
+      await fromExit
+      expect(helper.receipts).toMatch(/^GO\nTERM\nKILL\n$/m)
+      expect(await readFile(marker, 'utf8')).toBe('')
+    } finally {
+      const cleanup = drain(child)!
+      retain(cleanup)
+      await cleanup.catch(() => {})
+    }
+  }),
+)
+
+it.skipIf(windows)(
+  'settles the durable intent on a definite NUL refusal without replacing the error',
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-nul-'))
+    const ownershipRecordPath = join(dir, randomUUID())
+    const original = new Error('original argv validation failure')
+    const arg = {
+      includes: () => {
+        throw original
+      },
+    } as unknown as string
+    try {
+      for (const value of ['x\0y', arg]) {
+        const record = value === arg ? join(dir, randomUUID()) : ownershipRecordPath
+        let error: unknown
+        try {
+          spawnOwnedProgram('/bin/true', [value], {
+            posixGroupLease: true,
+            ownershipRecordPath: record,
+          })
+        } catch (failure) {
+          error = failure
+        }
+        if (value === arg) expect(error).toBe(original)
+        else expect(error).toMatchObject({ message: expect.stringContaining('NUL') })
+        const refusal = posixLaunchNonAdmission(error)
+        expect(refusal?.cleanup).toBeInstanceOf(Promise)
+        await refusal!.cleanup
+        expect(inspectPosixOwnership(record)).toEqual({ state: 'confirmed', proof: 'settled' })
+      }
+    } finally {
+      // Both commands were rejected before the native call or transport creation.
+      await rm(dir, { recursive: true, force: true })
+    }
+  },
+)
+
+function deferExecPoll(): () => void {
+  let release!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  helper.readExec = () => {
+    helper.readExec = undefined
+    helper.deferPoll = held
+    return 'defer'
+  }
+  return release
+}
+
+it.skipIf(windows).each(['stdout', 'stderr', 'message'] as const)(
+  'emits spawn before immediately ready %s and preserves all tails',
+  (first) =>
+    trackedLaunch(async (_dir, retain, track) => {
+      const release = deferExecPoll()
+      const child = spawnOwnedProgram(
+        process.execPath,
+        [
+          '-e',
+          `
+      const start = { stdout: () => process.stdout.write('first out'),
+        stderr: () => process.stderr.write('first err'), message: () => process.send(Buffer.from('first ipc')) };
+      start[${JSON.stringify(first)}]();
+      process.on('message', () => {
+        for (const key of Object.keys(start)) if (key !== ${JSON.stringify(first)}) start[key]();
+        process.stdout.write('x'.repeat(256 * 1024) + 'stdout tail');
+        process.stderr.write('stderr tail');
+        process.send(Buffer.from('ipc tail'), () => process.disconnect());
+      });`,
+        ],
+        {
+          posixGroupLease: true,
+          stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+          serialization: 'advanced',
         },
       )
-      producerProof(blockedStderrCase, proof, cleanup)
-    },
-    statusCaseMs,
-  )
-})
+      track(child.pid!)
+      const timeline: string[] = []
+      const done = completion(child)
+      const messages: Buffer[] = []
+      let out = '',
+        err = ''
+      let acknowledged = false
+      const acknowledge = () => {
+        if (acknowledged) return
+        acknowledged = true
+        release()
+        child.send('continue')
+      }
+      child.on('spawn', () => timeline.push('spawn'))
+      child.stdout!.setEncoding('utf8').on('data', (chunk: string) => {
+        timeline.push('stdout')
+        out += chunk
+        acknowledge()
+      })
+      child.stderr!.setEncoding('utf8').on('data', (chunk: string) => {
+        timeline.push('stderr')
+        err += chunk
+        acknowledge()
+      })
+      child.on('message', (msg: Buffer) => {
+        timeline.push('message')
+        messages.push(msg)
+        acknowledge()
+      })
+      child.on('exit', () => timeline.push('exit'))
+      child.on('close', () => timeline.push('close'))
+      try {
+        expect(await done).toBe(0)
+        expect(timeline.slice(0, 2)).toEqual(['spawn', first])
+        expect(timeline.at(-1)).toBe('close')
+        expect(timeline.filter((entry) => entry === 'exit')).toEqual(['exit'])
+        expect(out).toBe('first out' + 'x'.repeat(256 * 1024) + 'stdout tail')
+        expect(err).toBe('first errstderr tail')
+        expect(messages).toEqual([Buffer.from('first ipc'), Buffer.from('ipc tail')])
+      } finally {
+        release()
+        const cleanup = drain(child)!
+        retain(cleanup)
+        await cleanup
+      }
+    }),
+)
+
+it.skipIf(windows).each(['read', 'protocol'] as const)(
+  'retains an exec receipt %s fault inside a native exit callback',
+  (kind) =>
+    trackedLaunch(async (_dir, retain, track) => {
+      const release = deferExecPoll()
+      const failure = Object.assign(new Error('exec receipt read failed'), { code: 'EIO' })
+      const child = spawnOwnedProgram('/bin/true', [], { posixGroupLease: true, stdio: 'ignore' })
+      track(child.pid!)
+      const done = completion(child).catch((error: unknown) => error)
+      const timeline: string[] = []
+      for (const event of ['spawn', 'error', 'exit', 'close'])
+        child.on(event, () => timeline.push(event))
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+      const nativeEmit = child.emit.bind(child)
+      let insideExit: unknown
+      let sawNativeExit!: () => void
+      const nativeExit = new Promise<void>((resolve) => {
+        sawNativeExit = resolve
+      })
+      child.emit = (event: string | symbol, ...args: unknown[]) => {
+        if (event !== 'exit') return nativeEmit(event, ...args)
+        helper.readExec = () => {
+          if (kind === 'protocol') return 'malformed'
+          throw failure
+        }
+        try {
+          return nativeEmit(event, ...args)
+        } catch (error) {
+          insideExit = error
+          return false
+        } finally {
+          helper.readExec = undefined
+          release()
+          sawNativeExit()
+        }
+      }
+      try {
+        await nativeExit
+        expect(insideExit).toBeUndefined()
+        const error = await done
+        if (kind === 'read') expect(error).toBe(failure)
+        else expect(error).toMatchObject({ message: 'Invalid POSIX exec receipt.' })
+        await closed
+        const cleanup = drain(child)!
+        expect(drain(child)).toBe(cleanup)
+        await expect(cleanup).rejects.toBe(error)
+        await expect(drain(child)).rejects.toBe(error)
+        expect(timeline).toEqual(['error', 'close'])
+        expect(helper.receipts).toMatch(/^READY \d+ \d+$/m)
+      } finally {
+        release()
+        const cleanup = drain(child)!
+        retain(cleanup)
+        await cleanup.catch(() => {})
+      }
+    }),
+)

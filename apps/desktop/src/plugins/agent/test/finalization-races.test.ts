@@ -1,25 +1,28 @@
-import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { EventEmitter } from 'node:events'
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { PassThrough } from 'node:stream'
 import { setImmediate as tick } from 'node:timers/promises'
 import { afterEach, expect, it, vi } from 'vitest'
-import {
-  UnconfirmedOwnedProgramError,
-  type ManagedOwnedChild,
-  type OwnedCompletion,
-} from '../../../main/plugin-api'
 import { readJobEvent } from '../main/codex'
-import { createJobs, type Jobs, type JobsDeps } from '../main/host/jobs'
+import { CopyBackCancelled, createJobs, type Jobs, type JobsDeps } from '../main/host/jobs'
 import { createPtySessions } from '../main/host/pty-sessions'
 import { createFencedSessions } from '../main/host/fenced'
 import { bounded } from '../main/host/bounded'
+import { activationOwnership } from '../main/host/ownership'
 import type { OpenArgs } from '../main/host/terminals'
 import type { SessionSummary } from '../main/claude/listing'
 import type { AgentProvider, JobsProvider } from '../main/provider'
+import { trackedJobProcesses } from './fixtures/tracked-job-processes'
 
 const native = vi.hoisted(() => ({
   gates: [] as Array<{
@@ -31,7 +34,7 @@ const native = vi.hoisted(() => ({
     error?: Error
   }>,
   operations: new Set<Promise<unknown>>(),
-  previousFailure: null as { method: 'readFile' | 'close'; error: Error } | null,
+  previousFailure: null as { method: 'readFile' | 'close'; fail(): never } | null,
 }))
 
 vi.mock('node:fs/promises', async (original) => {
@@ -60,36 +63,16 @@ vi.mock('node:fs/promises', async (original) => {
     link: wrap('link'),
     open: async (...args: Parameters<typeof fs.open>) => {
       const handle = await fs.open(...args)
-      const path = String(args[0])
-      if (path.endsWith('.owned')) {
-        for (const operation of ['sync', 'close'] as const) {
-          const action = handle[operation].bind(handle)
-          handle[operation] = async () => {
-            const gate = native.gates.find(
-              (g) => g.method === `marker-${operation}` && g.matches([path]),
-            )
-            if (gate) {
-              gate.entered()
-              await gate.wait
-              if (gate.error && operation === 'sync') throw gate.error
-            }
-            await action()
-            if (gate?.error) throw gate.error
-          }
-        }
-      }
-      if (basename(path) === 'previous' && native.previousFailure !== null) {
+      if (basename(String(args[0])) === 'previous' && native.previousFailure !== null) {
         const failure = native.previousFailure
         native.previousFailure = null
         if (failure.method === 'readFile') {
-          handle.readFile = async () => {
-            throw failure.error
-          }
+          handle.readFile = async () => failure.fail()
         } else {
           const close = handle.close.bind(handle)
           handle.close = async () => {
             await close()
-            throw failure.error
+            failure.fail()
           }
         }
       }
@@ -139,33 +122,32 @@ function hold(method: string, matches: (args: unknown[]) => boolean) {
 const roots: string[] = []
 const drains: Array<() => Promise<void>> = []
 const owners: Jobs[] = []
-const children: Array<{ child: ChildProcess; closed: Promise<void> }> = []
+const processes: Array<ReturnType<typeof trackedJobProcesses>> = []
 afterEach(async () => {
   for (const gate of native.gates) gate.release()
   native.gates.length = 0
   native.previousFailure = null
   vi.useRealTimers()
-  for (const { child } of children) {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-  }
-  await Promise.all(children.splice(0).map(({ closed }) => closed))
+  await Promise.all(processes.splice(0).map((tracked) => tracked.drain()))
   for (const drain of drains.splice(0)) await drain().catch(() => {})
   await Promise.allSettled(owners.splice(0).map((jobs) => jobs.leave()))
   while (native.operations.size > 0) await Promise.allSettled([...native.operations])
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-const SCRIPT_EVENTS = [
-  '{"type":"thread.started","thread_id":"123e4567-e89b-42d3-a456-426614174000"}',
-  '{"type":"turn.completed"}',
-].join('\n')
-const SCRIPT = `console.log(${JSON.stringify(SCRIPT_EVENTS)})`
+const SCRIPT = [
+  'console.log(JSON.stringify({type:"thread.started",thread_id:"123e4567-e89b-42d3-a456-426614174000"}))',
+  'console.log(JSON.stringify({type:"turn.completed"}))',
+].join(';')
 
-async function rig(options: Partial<JobsDeps> = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'holi-finalization-'))
+async function rig(options: Partial<JobsDeps> = {}, durableOwnership = false) {
+  // Copy-back uses canonical paths. Match those even when TMPDIR is a symlink.
+  const dir = await mkdtemp(join(await realpath(tmpdir()), 'holi-finalization-'))
   roots.push(dir)
   const root = join(dir, 'vault')
   const scratchRoot = join(dir, 'jobs')
+  const tracked = trackedJobProcesses(dir)
+  processes.push(tracked)
   await mkdir(root)
   const provider: JobsProvider = {
     id: 'codex',
@@ -182,9 +164,14 @@ async function rig(options: Partial<JobsDeps> = {}) {
     },
   }
   let endedTurns = 0
+  const vault = { remote: 'fixture/vault', root }
+  const ownership = durableOwnership
+    ? activationOwnership(dir, vault, new AbortController().signal)
+    : undefined
   const jobs = createJobs({
-    vault: { remote: `fixture/${basename(dir)}`, root },
+    vault,
     scratchRoot,
+    ...(ownership && { ownership }),
     onChange: () => {},
     log: () => {},
     bracket: (_id, edge) => {
@@ -192,16 +179,7 @@ async function rig(options: Partial<JobsDeps> = {}) {
     },
     keepMs: 600_000,
     killGraceMs: 1,
-    spawn: (bin, args, opts) => {
-      const child = spawn(bin, args, {
-        ...opts,
-        detached: process.platform !== 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
-      children.push({ child, closed })
-      return child
-    },
+    spawn: (...args) => tracked.spawn(...args),
     ...options,
   })
   owners.push(jobs)
@@ -211,14 +189,17 @@ async function rig(options: Partial<JobsDeps> = {}) {
     return result.sessionId
   }
   const idle = async (scratch = false) => {
-    if (!scratch) await vi.waitFor(() => expect(endedTurns).toBeGreaterThan(0))
-    await vi.waitFor(() =>
-      expect(jobs.sessions()[0]).toMatchObject({ state: 'idle', outcome: expect.any(String) }),
+    // The real lease runs its TERM-to-KILL grace before a turn can settle.
+    if (!scratch) await vi.waitFor(() => expect(endedTurns).toBeGreaterThan(0), { timeout: 5_000 })
+    await vi.waitFor(
+      () =>
+        expect(jobs.sessions()[0]).toMatchObject({ state: 'idle', outcome: expect.any(String) }),
+      { timeout: 5_000 },
     )
     // The row precedes the last settlement microtasks.
     await tick()
   }
-  return { jobs, provider, root, scratchRoot, start, idle, dir }
+  return { jobs, provider, root, scratchRoot, start, idle, dir, tracked }
 }
 
 it.each(['scratch', 'vault'] as const)(
@@ -251,29 +232,46 @@ it.each(['scratch', 'vault'] as const)(
   },
 )
 
-it('joins the same underlying retirement after each timeout without overlapping deletion', async () => {
-  const t = await rig()
+it('keeps the first retirement timeout after late deletion without unindexing or retiring evidence', async () => {
+  const t = await rig({}, true)
   const id = await t.start()
   await t.idle()
   const state = join(t.scratchRoot, `${id}.agent`)
   const gate = hold('rm', (args) => args[0] === state)
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-  const first = t.jobs.stop(id)
-  const failedFirst = expect(first).rejects.toThrow('timed out')
+  const first = t.jobs.stop(id).catch((error: unknown) => error)
   await gate.entered
+  const concurrent = t.jobs.stop(id).catch((error: unknown) => error)
   await vi.advanceTimersByTimeAsync(5_001)
-  await failedFirst
-  const second = t.jobs.stop(id)
-  const failedSecond = expect(second).rejects.toThrow('timed out')
-  await vi.advanceTimersByTimeAsync(5_001)
-  await failedSecond
+  const timeout = await first
+  expect(timeout).toBeInstanceOf(Error)
+  expect(timeout).toHaveProperty('message', expect.stringContaining('timed out'))
+  expect(await concurrent).toBe(timeout)
+  await expect(t.jobs.stop(id)).rejects.toBe(timeout)
+  await access(state)
+
+  // The in-flight removal can finish. It must not proceed to the PID or
+  // caller receipts, retire the durable ownership link, or remove the row.
+  gate.release()
+  await Promise.all([...native.operations])
+  await tick()
+  await expect(access(state)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(gate.calls()).toBe(1)
   expect(t.jobs.has(id)).toBe(true)
-  const third = t.jobs.stop(id)
-  gate.release()
-  await third
-  expect(gate.calls()).toBe(1)
-  expect(t.jobs.has(id)).toBe(false)
+  if (process.platform !== 'win32') {
+    await access(join(t.scratchRoot, `${id}.pid`))
+    expect(await readFile(join(t.scratchRoot, `${id}.turn`), 'utf8')).toBe(
+      `HOLI-JOB-1 ${id}\nSETTLED\n`,
+    )
+    const owners = join(t.dir, 'agent-ownership')
+    const [scope] = await readdir(owners)
+    const jobs = join(owners, scope!, 'jobs')
+    const [link] = await readdir(jobs)
+    expect(link).toMatch(/^[\da-f-]{36}$/)
+    expect(await readFile(join(jobs, link!, 'failed'), 'utf8')).toContain('timed out')
+  }
+  await expect(t.jobs.stop(id)).rejects.toBe(timeout)
+  await expect(t.jobs.leave()).rejects.toMatchObject({ errors: [timeout] })
 })
 
 it('keeps a delayed startup sweep owned across timeout and repeated leave', async () => {
@@ -336,28 +334,23 @@ it.each(['new', 'known', 'competing'] as const)(
 )
 
 it.each(['null', 'throw', 'spawn'] as const)(
-  'settles refused follow-up %s through its own awaited finalizer',
+  'classifies follow-up refusal from %s before retiring its owner',
   async (mode) => {
-    let spawns = 0
-    const t = await rig(
-      mode === 'spawn'
-        ? {
-            spawn: () => {
-              spawns += 1
-              if (spawns > 1) throw new Error('spawn refused')
-              const child = spawn(process.execPath, ['-e', SCRIPT], {
-                detached: process.platform !== 'win32',
-                stdio: ['ignore', 'pipe', 'pipe'],
-              })
-              children.push({
-                child,
-                closed: new Promise<void>((resolve) => child.once('close', () => resolve())),
-              })
-              return child
-            },
-          }
-        : {},
-    )
+    const t = await rig()
+    const cleanup = deferred()
+    const spawnError = Object.assign(new Error('spawn refused without a launch receipt'), {
+      cleanup: cleanup.promise,
+    })
+    drains.push(async () => cleanup.resolve())
+    if (mode === 'spawn') {
+      const original = t.tracked.spawn
+      // Use the real leased adapter for the first turn only. The follow-up
+      // simulates a native spawn refusal (with no started child).
+      const refused = vi.spyOn(t.tracked, 'spawn').mockImplementationOnce(original)
+      refused.mockImplementation(() => {
+        throw spawnError
+      })
+    }
     const id = await t.start()
     await t.idle()
     if (mode !== 'spawn')
@@ -367,11 +360,37 @@ it.each(['null', 'throw', 'spawn'] as const)(
       }
     const gate = deferred()
     const entered = deferred()
-    t.provider.release = async () => {
+    const release = vi.fn(async () => {
       entered.resolve()
       await gate.promise
-    }
+    })
+    t.provider.release = release
+    drains.push(async () => gate.resolve())
     t.jobs.message(id, 'follow up')
+    if (process.platform === 'win32') cleanup.resolve()
+    if (mode === 'spawn' && process.platform !== 'win32') {
+      // Joining cancellation is necessary, but the synchronous adapter throw
+      // never proved nonlaunch. A successful cancellation is not a launch receipt.
+      const stopping = t.jobs.stop(id)
+      const settled = vi.fn()
+      void stopping.then(settled, settled)
+      await tick()
+      expect(settled).not.toHaveBeenCalled()
+      expect(release).not.toHaveBeenCalled()
+      cleanup.resolve()
+      await expect(stopping).rejects.toBe(spawnError)
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(t.jobs.stop(id)).rejects.toBe(spawnError)
+        await expect(t.jobs.leave()).rejects.toMatchObject({ errors: [spawnError] })
+      }
+      expect(release).not.toHaveBeenCalled()
+      expect(t.jobs.has(id)).toBe(true)
+      await access(join(t.scratchRoot, `${id}.agent`))
+      await expect(access(join(t.scratchRoot, `${id}.pid`))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      return
+    }
     await entered.promise
     let stopped = false
     const stop = t.jobs.stop(id).then(() => {
@@ -403,376 +422,12 @@ it('bounds admitted mkdir startup and retains its pending owner through retry', 
   })
   await tick()
   expect(done).toBe(false)
-  expect(children).toHaveLength(0)
+  expect(t.tracked.count).toBe(0)
   gate.release()
   expect(await start).toBeInstanceOf(Error)
   await retry
   await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
-  expect(children).toHaveLength(0)
-})
-
-function windowsChild() {
-  let prove!: (value: OwnedCompletion) => void
-  let reject!: (reason: Error) => void
-  const ownedCompletion = new Promise<OwnedCompletion>((res, rej) => {
-    prove = res
-    reject = rej
-  })
-  const kill = vi.fn(() => true)
-  const child = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    stdin: null,
-    kill,
-    ownedCompletion,
-  })
-  const finish = (proof: OwnedCompletion = 'empty') => {
-    child.stdout.end(`${SCRIPT_EVENTS}\n`)
-    child.stderr.end()
-    child.emit('close', 0, null)
-    prove(proof)
-  }
-  drains.push(async () => finish())
-  return {
-    child: child as unknown as ManagedOwnedChild,
-    stdout: child.stdout,
-    kill,
-    finish,
-    reject,
-  }
-}
-
-it('joins every admitted input copy after a known Stop failure without blocking another vault', async () => {
-  const a = windowsChild()
-  const spawn = vi.fn(() => a.child)
-  const t = await rig({ platform: 'win32', spawn })
-  const release = vi.fn()
-  t.provider.release = release
-  const start = (name: string, read: string[], write: string[] = []) =>
-    t.jobs.start({ provider: t.provider, name, prompt: 'go', scope: { read, write } })
-  const started = await start('uncertain', [], ['result.md'])
-  if (!started.ok) throw new Error(started.message)
-  const { sessionId: id } = started
-  const state = join(t.scratchRoot, `${id}.agent`, 'provider-resource')
-  const scratch = join(t.scratchRoot, id, 'result.md')
-  await writeFile(state, 'owned provider state')
-  await writeFile(scratch, 'unconfirmed output')
-  a.stdout.write(`${SCRIPT_EVENTS}\n`)
-  const owned = (await readdir(t.scratchRoot)).sort()
-
-  const input = 'input.md'
-  const competing = 'competing.md'
-  for (const name of [input, competing]) await writeFile(join(t.root, name), 'input copy')
-  const gate = hold('writeFile', ([path]) => basename(String(path)) === input)
-  const secondary = hold('writeFile', ([path]) => basename(String(path)) === competing)
-  const b = start('copying', [input])
-  const b2 = start('copying with error', [competing]).catch((err: unknown) => err)
-  await Promise.all([gate.entered, secondary.entered])
-
-  const lease = { revoke: vi.fn(async () => {}) }
-  const failure = new UnconfirmedOwnedProgramError(new Error('native query rejected'), lease)
-  let pendingAtRejection: number | undefined
-  const leave = t.jobs.leave().catch((err: unknown) => {
-    pendingAtRejection = native.operations.size
-    return err
-  })
-  await expect(start('closed', [input])).resolves.toMatchObject({ ok: false })
-  const stop = expect(t.jobs.stop(id)).rejects.toBe(failure)
-  a.reject(failure)
-  await stop
-  expect(a.kill).toHaveBeenCalledTimes(1)
-  await tick()
-  expect(pendingAtRejection).toBeUndefined()
-
-  const prepFailure = new Error('input scratch write rejected')
-  secondary.fail(prepFailure)
-  expect(await b2).toBe(prepFailure)
-  await tick()
-  expect(pendingAtRejection).toBeUndefined()
-
-  const c = windowsChild()
-  const third = await rig({ platform: 'win32', spawn: () => c.child })
-  await third.start()
-  c.finish()
-  await third.idle()
-  await third.jobs.leave()
-  expect(pendingAtRejection).toBeUndefined()
-
-  gate.release()
-  await expect(b).resolves.toMatchObject({ ok: false })
-  expect(await leave).toBe(failure)
-  expect(pendingAtRejection).toBe(0)
-  await tick()
-  expect(native.operations.size).toBe(0)
-  expect(spawn).toHaveBeenCalledTimes(1)
-  expect(release).not.toHaveBeenCalled()
-  expect(lease.revoke).not.toHaveBeenCalled()
-  expect(a.child.pid).toBeUndefined()
-  expect(t.jobs.sessions()).toEqual([expect.objectContaining({ id, outcome: 'failed' })])
-  expect((await readdir(t.scratchRoot)).sort()).toEqual(owned)
-  expect(await readFile(state, 'utf8')).toBe('owned provider state')
-  expect(await readFile(scratch, 'utf8')).toBe('unconfirmed output')
-  await expect(access(join(t.root, 'result.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-  await expect(t.jobs.stop(id)).rejects.toBe(failure)
-  await expect(t.jobs.leave()).rejects.toBe(failure)
-})
-
-it('cancels starts queued before recovery admits them without touching scratch', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'holi-queued-jobs-'))
-  roots.push(dir)
-  const scratchRoot = join(dir, 'queued-jobs')
-  await mkdir(scratchRoot)
-  const recovery = hold('readdir', ([path]) => path === scratchRoot)
-  const mkdirState = hold('mkdir', ([path]) => String(path).endsWith('.agent'))
-  const spawn = vi.fn(() => {
-    throw new Error('queued start spawned')
-  })
-  const t = await rig({ scratchRoot, platform: 'win32', spawn })
-  await recovery.entered
-  const starts = Array.from({ length: 10 }, () =>
-    t.jobs.start({
-      provider: t.provider,
-      name: 'queued',
-      prompt: 'go',
-      scope: { read: [], write: [] },
-    }),
-  )
-  const leave = t.jobs.leave()
-  void leave.catch(() => {})
-  for (const result of await Promise.all(starts)) expect(result).toMatchObject({ ok: false })
-  expect(mkdirState.calls()).toBe(0)
-  expect(spawn).not.toHaveBeenCalled()
-  recovery.release()
-  await leave
-  await expect(access(scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
-})
-
-it('joins an admitted JSONL turn finalizer despite a sibling Stop rejection', async () => {
-  const a = windowsChild()
-  const b = windowsChild()
-  const finalizer = deferred()
-  const entered = deferred()
-  drains.push(async () => finalizer.resolve())
-  const spawn = vi.fn().mockReturnValueOnce(a.child).mockReturnValueOnce(b.child)
-  const t = await rig({
-    platform: 'win32',
-    spawn,
-    bracket: async (_id, edge) => {
-      if (edge !== 'end') return
-      entered.resolve()
-      await finalizer.promise
-      await writeFile(join(t.root, 'turn.log'), 'settled output')
-    },
-  })
-  const aId = await t.start()
-  const bId = await t.start()
-  b.finish()
-  await entered.promise
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-  let left = false
-  const leave = t.jobs.leave().catch((err: unknown) => {
-    left = true
-    return err
-  })
-  const failure = new UnconfirmedOwnedProgramError(new Error('proof failed'))
-  const stop = expect(t.jobs.stop(aId)).rejects.toBe(failure)
-  a.reject(failure)
-  await stop
-  await vi.advanceTimersByTimeAsync(5_002)
-  expect(left).toBe(false)
-  finalizer.resolve()
-  expect(await leave).toBe(failure)
-  expect(await readFile(join(t.root, 'turn.log'), 'utf8')).toBe('settled output')
-  expect(await readdir(t.scratchRoot)).toContainEqual(
-    expect.stringMatching(`^${aId}\\..*\\.owned$`),
-  )
-  expect(
-    (await readdir(t.scratchRoot)).some(
-      (name) => name.startsWith(`${bId}.`) && name.endsWith('.owned'),
-    ),
-  ).toBe(false)
-})
-
-it('joins host work but not an unresponsive Windows child after the Stop deadline', async () => {
-  const a = windowsChild()
-  const gate = deferred()
-  const entered = deferred()
-  drains.push(async () => gate.resolve())
-  const bracket = vi.fn(async (_id, edge) => {
-    if (edge !== 'begin') return
-    entered.resolve()
-    await gate.promise
-  })
-  const t = await rig({ platform: 'win32', spawn: () => a.child, bracket })
-  const release = vi.fn()
-  t.provider.release = release
-  const id = await t.start()
-  await entered.promise
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-  let left = false
-  const leave = t.jobs.leave().catch((err: unknown) => {
-    left = true
-    return err
-  })
-  const stop = t.jobs.stop(id).catch((err: unknown) => err)
-  await vi.advanceTimersByTimeAsync(5_002)
-  const failure = await stop
-  expect(failure).toMatchObject({ message: expect.stringContaining('timed out') })
-  expect(left).toBe(false)
-  gate.resolve()
-  expect(await leave).toBe(failure)
-  // Actual proof and EOF may come later, but this retired host must not write.
-  a.finish()
-  await tick()
-  expect(a.kill).toHaveBeenCalledTimes(1)
-  expect(bracket.mock.calls.map(([, edge]) => edge)).toEqual(['begin'])
-  expect(release).not.toHaveBeenCalled()
-  expect(t.jobs.has(id)).toBe(true)
-  expect(await readdir(t.scratchRoot)).toContainEqual(expect.stringMatching(/\.owned$/))
-  await expect(t.jobs.stop(id)).rejects.toBe(failure)
-})
-
-it.each(['stop', 'activation', 'leave'] as const)(
-  'revokes Windows spawn on %s during marker close, and bounds the same Stop for all waiters',
-  async (kind) => {
-    const activation = new AbortController()
-    const spawn = vi.fn(() => {
-      throw new Error('spawn after revocation')
-    })
-    const t = await rig({ platform: 'win32', spawn, activationSignal: activation.signal })
-    const sync = hold('marker-sync', () => true)
-    const close = hold('marker-close', () => true)
-    const started = t.jobs.start({
-      provider: t.provider,
-      name: 'marker',
-      prompt: 'go',
-      scope: { read: [], write: [] },
-    })
-    await sync.entered
-    expect(spawn).not.toHaveBeenCalled()
-    const id = t.jobs.sessions()[0]!.id
-    const marker = (await readdir(t.scratchRoot)).find((name) => name.endsWith('.owned'))!
-    expect(await readFile(join(t.scratchRoot, marker), 'utf8')).toBe(
-      'pending Windows job ownership\n',
-    )
-    sync.release()
-    await close.entered
-    expect(spawn).not.toHaveBeenCalled()
-
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    let left = false
-    const leaving =
-      kind === 'leave'
-        ? t.jobs.leave().catch((err: unknown) => {
-            left = true
-            return err
-          })
-        : undefined
-    if (kind === 'activation') activation.abort()
-    const results = Promise.allSettled(Array.from({ length: 20 }, () => t.jobs.stop(id)))
-    await tick()
-    expect(vi.getTimerCount()).toBe(1)
-    await vi.advanceTimersByTimeAsync(5_002)
-    const [first, ...others] = await results
-    expect(first).toMatchObject({
-      status: 'rejected',
-      reason: expect.objectContaining({ message: expect.stringContaining('timed out') }),
-    })
-    if (first?.status !== 'rejected') throw new Error('Stop unexpectedly settled')
-    for (const result of others) {
-      expect(result.status).toBe('rejected')
-      if (result.status === 'rejected') expect(result.reason).toBe(first.reason)
-    }
-    expect(left).toBe(false)
-    await expect(t.jobs.stop(id)).rejects.toBe(first.reason)
-    expect(vi.getTimerCount()).toBe(0)
-    expect(await readdir(t.scratchRoot)).toContain(marker)
-    close.release()
-    await expect(started).resolves.toMatchObject({ ok: false })
-    if (leaving !== undefined) expect(await leaving).toBe(first.reason)
-    expect(spawn).not.toHaveBeenCalled()
-    expect(t.jobs.sessions()).toEqual([])
-    await t.jobs.leave()
-    await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
-  },
-)
-
-it('publishes a fresh Windows marker for a follow-up and refuses to spawn when syncing it fails', async () => {
-  const child = Object.assign(new EventEmitter(), {
-    pid: 9001,
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    stdin: null,
-    kill: vi.fn(),
-    ownedCompletion: Promise.resolve('empty' as const),
-  })
-  const spawn = vi.fn(() => child as unknown as ChildProcess)
-  const t = await rig({ platform: 'win32', spawn })
-  let firstPath: unknown
-  const first = hold('marker-sync', ([path]) => {
-    firstPath ??= path
-    return path === firstPath
-  })
-  const launching = t.start()
-  try {
-    await first.entered
-    expect(spawn).not.toHaveBeenCalled()
-    const previous = (await readdir(t.scratchRoot)).find((name) => name.endsWith('.owned'))
-    first.release()
-    const id = await launching
-    child.stdout.end(`${SCRIPT_EVENTS}\n`)
-    child.stderr.end()
-    child.emit('close', 0, null)
-    await t.idle()
-
-    const next = hold('marker-sync', ([path]) => basename(String(path)) !== previous)
-    // The idle outcome is published before marker removal. A follow-up can
-    // be admitted only after that finalization has actually completed.
-    await vi.waitFor(() => t.jobs.message(id, 'follow up'))
-    await next.entered
-    const names = await readdir(t.scratchRoot)
-    expect(names).not.toContain(previous)
-    expect(names.filter((name) => name.endsWith('.owned'))).toHaveLength(1)
-    next.fail(new Error('could not flush marker'))
-    await vi.waitFor(async () => {
-      expect(t.jobs.sessions()[0]).toMatchObject({
-        state: 'idle',
-        outcome: 'failed',
-        error: expect.stringContaining('could not flush marker'),
-      })
-      expect((await readdir(t.scratchRoot)).filter((name) => name.endsWith('.owned'))).toEqual([])
-    })
-    expect(spawn).toHaveBeenCalledTimes(1)
-    await t.jobs.leave()
-  } finally {
-    first.release()
-    // Settle fake output and control even if a preceding assertion failed.
-    await launching.catch(() => {})
-    child.stdout.end()
-    child.stderr.end()
-    child.emit('close', 0, null)
-  }
-})
-
-it('refuses an unreadable Windows scratch namespace without deleting its contents', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'holi-unreadable-jobs-'))
-  roots.push(dir)
-  const scratchRoot = join(dir, 'jobs')
-  await mkdir(scratchRoot)
-  const path = join(scratchRoot, 'retained')
-  await writeFile(path, 'not safe to sweep')
-  const listing = hold('readdir', ([path]) => path === scratchRoot)
-  const spawn = vi.fn(() => {
-    throw new Error('spawned against unverified scratch')
-  })
-  const t = await rig({ scratchRoot, spawn, platform: 'win32' })
-  await listing.entered
-  const denied = new Error('cannot list jobs')
-  listing.fail(denied)
-  await expect(t.start()).rejects.toThrow('cannot list jobs')
-  await expect(t.jobs.leave()).rejects.toBe(denied)
-  expect(spawn).not.toHaveBeenCalled()
-  expect(await readFile(path, 'utf8')).toBe('not safe to sweep')
+  expect(t.tracked.count).toBe(0)
 })
 
 it('bounds final root deletion and joins the underlying operation on retry', async () => {
@@ -802,12 +457,18 @@ it('bounds final root deletion and joins the underlying operation on retry', asy
   expect(await readFile(join(t.scratchRoot, 'replacement'), 'utf8')).toBe('safe')
 })
 
+function finishExit(args: OpenArgs | undefined, title?: string) {
+  if (!args) return
+  return Promise.resolve(args.onExit?.(title)).then(() => args.onRetired?.())
+}
+
 async function ptyRig() {
   const dir = await mkdtemp(join(tmpdir(), 'holi-history-race-'))
   roots.push(dir)
   const history = join(dir, 'history.json')
   await writeFile(history, '[]')
   let failWrites = 0
+  const historyFailure = new Error('history unavailable')
   const provider: AgentProvider = {
     id: 'codex',
     label: 'Codex',
@@ -833,7 +494,7 @@ async function ptyRig() {
       write: async (rows) => {
         if (failWrites > 0) {
           failWrites -= 1
-          throw new Error('history unavailable')
+          throw historyFailure
         }
         await writeFile(history, JSON.stringify(rows))
       },
@@ -846,8 +507,8 @@ async function ptyRig() {
       close: async (id) => {
         closeCalls += 1
         if (closeError) throw closeError
-        opened[Number(id.split('-')[1]) - 1]?.onExit?.()
         await closeWait
+        await finishExit(opened[Number(id.split('-')[1]) - 1])
       },
       paste: () => true,
       list: () => [],
@@ -858,6 +519,7 @@ async function ptyRig() {
     opened,
     provider,
     history,
+    historyFailure,
     fail: (count: number) => {
       failWrites = count
     },
@@ -885,7 +547,7 @@ it('never replays a failed reopen removal after the newer close append', async (
   t.fail(1)
   await expect(t.sessions.reopen(old.id, {})).rejects.toThrow('history unavailable')
   t.sessions.noteConversation(old.id, { conversationId: '123e4567-e89b-42d3-a456-426614174001' })
-  t.opened[0]!.onExit?.()
+  finishExit(t.opened[0])
   await t.sessions.leave()
   expect(JSON.parse(await readFile(t.history, 'utf8'))).toEqual([
     expect.objectContaining({ id: old.id, conversationId: '123e4567-e89b-42d3-a456-426614174001' }),
@@ -903,14 +565,15 @@ it('preserves an older failed append when an unrelated conversation saves succes
     })
   }
   t.fail(1)
-  t.opened[0]!.onExit?.()
+  await expect(finishExit(t.opened[0])).rejects.toBe(t.historyFailure)
   await t.sessions.past()
   expect(JSON.parse(await readFile(t.history, 'utf8'))).toEqual([])
-  t.opened[1]!.onExit?.()
+  await finishExit(t.opened[1])
   await t.sessions.past()
   const rows = JSON.parse(await readFile(t.history, 'utf8')) as SessionSummary[]
   expect(rows.map((row) => row.id)).toEqual([second.sessionId, first.sessionId])
-  await t.sessions.leave()
+  await expect(t.sessions.stop(first.sessionId)).rejects.toBe(t.historyFailure)
+  await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [t.historyFailure] })
 })
 
 it.each(['session', 'sign-in'] as const)(
@@ -934,7 +597,8 @@ it.each(['session', 'sign-in'] as const)(
       >
     const starting = t.sessions.start('fixture-other', kind === 'sign-in' ? { login: true } : {})
     await entered.promise
-    t.closeFails(new Error('close refused'))
+    const cause = new Error('close refused')
+    t.closeFails(cause)
     const unhandled: unknown[] = []
     const onUnhandled = (err: unknown) => {
       unhandled.push(err)
@@ -953,7 +617,9 @@ it.each(['session', 'sign-in'] as const)(
       expect(unhandled).toEqual([])
       expect(t.sessions.has(started.sessionId)).toBe(true)
       t.closeFails()
-      await t.sessions.leave()
+      await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
+      await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [cause] })
+      expect(t.closeCalls()).toBe(1)
     } finally {
       gate.resolve()
       process.off('unhandledRejection', onUnhandled)
@@ -961,7 +627,7 @@ it.each(['session', 'sign-in'] as const)(
   },
 )
 
-it('retains a pending PTY close across timeout even after its exit removed the session', async () => {
+it('joins an owned PTY close beyond the old session deadline', async () => {
   const t = await ptyRig()
   const started = await t.sessions.start('codex', {})
   if (!started.ok) throw new Error(started.message)
@@ -970,11 +636,12 @@ it('retains a pending PTY close across timeout even after its exit removed the s
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   try {
     const leaving = t.sessions.leave()
-    const failed = expect(leaving).rejects.toThrow('did not drain')
+    const settled = vi.fn()
+    void leaving.then(settled, settled)
     await tick()
-    expect(t.sessions.has(started.sessionId)).toBe(false)
+    expect(t.sessions.has(started.sessionId)).toBe(true)
     await vi.advanceTimersByTimeAsync(5_001)
-    await failed
+    expect(settled).not.toHaveBeenCalled()
     let left = false
     const retry = t.sessions.leave().then(() => {
       left = true
@@ -983,27 +650,28 @@ it('retains a pending PTY close across timeout even after its exit removed the s
     expect(left).toBe(false)
     expect(t.closeCalls()).toBe(1)
     gate.resolve()
-    await retry
+    await Promise.all([leaving, retry])
   } finally {
     gate.resolve()
   }
 })
 
-it('retains the close owner when its exit callback precedes a close rejection', async () => {
+it('does not acknowledge or retry a terminal close rejected before public exit', async () => {
   const t = await ptyRig()
   const started = await t.sessions.start('codex', {})
   if (!started.ok) throw new Error(started.message)
-  t.holdClose(Promise.reject(new Error('close failed after exit')))
-  await expect(t.sessions.leave()).rejects.toThrow('did not drain')
-  expect(t.sessions.has(started.sessionId)).toBe(false)
-  expect(t.closeCalls()).toBe(1)
+  const cause = new Error('close failed before public exit')
+  t.holdClose(Promise.reject(cause))
+  await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
+  expect(t.sessions.has(started.sessionId)).toBe(true)
   t.holdClose(Promise.resolve())
-  await t.sessions.leave()
-  expect(t.closeCalls()).toBe(2)
+  await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
+  await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [cause] })
+  expect(t.closeCalls()).toBe(1)
 })
 
-async function fencedRig() {
-  const t = await rig()
+async function fencedRig(options: Pick<JobsDeps, 'beforePublish'> = {}) {
+  const t = await rig(options)
   // Use the real copy-back rules, without leaving a job process alive.
   await t.jobs.leave()
   const scratchRoot = join(t.dir, 'fenced')
@@ -1027,7 +695,7 @@ async function fencedRig() {
         return { ok: true, id: `terminal-${opened.length}` }
       },
       close: async (id) => {
-        opened[Number(id.split('-')[1]) - 1]?.onExit?.()
+        await finishExit(opened[Number(id.split('-')[1]) - 1])
       },
       paste: () => true,
       list: () => [],
@@ -1093,13 +761,14 @@ it('bounds fenced root removal, joins retries and never removes a replacement na
 
 it('rejects stop and leave on fenced provider release failure without losing its state owner', async () => {
   const t = await fencedRig()
+  const cause = new Error('release refused')
   const release = vi.fn(async () => {
-    throw new Error('release refused')
+    throw cause
   })
   t.provider.release = release
   const run = await t.start()
   await writeFile(join(run.state, 'owned'), 'provider resource')
-  await expect(t.sessions.stop(run.sessionId)).rejects.toThrow('finalization failed')
+  await expect(t.sessions.stop(run.sessionId)).rejects.toBe(cause)
   expect(t.sessions.sessions()).toEqual([
     expect.objectContaining({
       id: run.sessionId,
@@ -1109,8 +778,9 @@ it('rejects stop and leave on fenced provider release failure without losing its
     }),
   ])
   for (let i = 0; i < 2; i++) {
-    await expect(t.sessions.leave()).rejects.toThrow('did not drain')
-    await expect(t.fenced.leave()).rejects.toThrow()
+    await expect(t.sessions.stop(run.sessionId)).rejects.toBe(cause)
+    await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [cause] })
+    await expect(t.fenced.leave()).rejects.toMatchObject({ errors: [cause] })
     expect(await readFile(join(run.state, 'owned'), 'utf8')).toBe('provider resource')
   }
   expect(release).toHaveBeenCalledTimes(1)
@@ -1140,35 +810,72 @@ it.each(['new', 'known'] as const)(
   },
 )
 
+const stagedCopy = ([path]: unknown[]) => basename(String(path)).startsWith('.holi-tmp-')
+
+function holdCopyBack(afterMove: boolean) {
+  const staged = afterMove ? undefined : hold('writeFile', stagedCopy)
+  const moved = deferred()
+  const beforePublish = vi.fn((_rel: string) => moved.promise)
+  return {
+    beforePublish,
+    async wait() {
+      // Fail at the missing seam instead of awaiting an unreachable gate indefinitely.
+      await vi.waitFor(
+        () => {
+          if (staged) expect(staged.calls()).toBe(1)
+          else expect(beforePublish).toHaveBeenCalledExactlyOnceWith('note.md')
+        },
+        { timeout: 5_000 },
+      )
+    },
+    release() {
+      staged?.release()
+      moved.resolve()
+    },
+  }
+}
+
+function failCopyBack(kind: 'rollback' | 'temporary cleanup', target: string) {
+  const fault =
+    kind === 'rollback'
+      ? hold('link', ([from, to]) => basename(String(from)) === 'previous' && to === target)
+      : hold('rm', stagedCopy)
+  fault.fail(new Error(`${kind} refused`))
+  return fault
+}
+
 it.each(['rollback', 'temporary cleanup'] as const)(
   'retains real fenced %s failure even when cancellation was requested',
   async (kind) => {
-    const t = await fencedRig()
+    const prep = holdCopyBack(kind === 'rollback')
+    const t = await fencedRig({ beforePublish: prep.beforePublish })
     const target = join(t.root, 'note.md')
     await writeFile(target, 'original')
     const run = await t.start(['note.md'], ['note.md'])
     await writeFile(join(run.entry.cwd, 'note.md'), 'agent version')
-    const prep = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
-    const failure =
-      kind === 'rollback'
-        ? hold(
-            'link',
-            (args) =>
-              basename(String(args[0])) === 'previous' && basename(String(args[1])) === 'note.md',
-          )
-        : hold('rm', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
-    t.sessions.noteTurn(run.sessionId, false)
-    await prep.entered
-    t.activation.abort()
-    prep.release()
-    await failure.entered
-    failure.fail(new Error(`${kind} refused`))
-    await t.sessions.stop(run.sessionId)
-    await t.sessions.leave()
+    const fault = failCopyBack(kind, target)
+    try {
+      t.sessions.noteTurn(run.sessionId, false)
+      await prep.wait()
+      t.activation.abort()
+    } finally {
+      prep.release()
+    }
+    const cause = await t.sessions.stop(run.sessionId).catch((error: unknown) => error)
+    expect(fault.calls()).toBe(1)
+    expect(cause).toMatchObject({ message: expect.stringContaining(`${kind} refused`) })
+    await expect(t.sessions.stop(run.sessionId)).rejects.toBe(cause)
+    await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [cause] })
     for (let i = 0; i < 2; i++)
-      await expect(t.fenced.leave()).rejects.toThrow('cleanup did not complete')
+      await expect(t.fenced.leave()).rejects.toMatchObject({
+        message: expect.stringContaining('cleanup did not complete'),
+        errors: [cause],
+      })
+    expect(await readFile(join(run.entry.cwd, 'note.md'), 'utf8')).toBe('agent version')
+    await expect(access(run.state)).resolves.toBeUndefined()
     const leftovers = (await readdir(t.root)).filter((name) => name.startsWith('.holi-'))
     if (kind === 'rollback') {
+      expect(cause).toMatchObject({ cause: expect.any(CopyBackCancelled) })
       const preserved = leftovers.find((name) => name.startsWith('.holi-copy-'))!
       expect(await readFile(join(t.root, preserved, 'previous'), 'utf8')).toBe('original')
       await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -1182,7 +889,8 @@ it.each(['rollback', 'temporary cleanup'] as const)(
 it.each(['safe cancellation', 'rollback', 'temporary cleanup'] as const)(
   'retains job copy-back ownership after %s without hiding restoration failures',
   async (kind) => {
-    const t = await rig()
+    const prep = holdCopyBack(kind === 'rollback')
+    const t = await rig({ beforePublish: prep.beforePublish })
     const target = join(t.root, 'note.md')
     await writeFile(target, 'original')
     t.provider.capabilities.jobs.command = () => ({
@@ -1190,58 +898,51 @@ it.each(['safe cancellation', 'rollback', 'temporary cleanup'] as const)(
       args: ['-e', `require('node:fs').writeFileSync('note.md', 'agent version');${SCRIPT}`],
       env: {},
     })
-    const prep = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
-    const result = await t.jobs.start({
-      provider: t.provider,
-      name: 'fixture',
-      prompt: 'go',
-      scope: { read: ['note.md'], write: ['note.md'] },
-    })
-    if (!result.ok) throw new Error(result.message)
-    await prep.entered
-    const failure =
-      kind === 'rollback'
-        ? hold(
-            'link',
-            (args) =>
-              basename(String(args[0])) === 'previous' && basename(String(args[1])) === 'note.md',
-          )
-        : kind === 'temporary cleanup'
-          ? hold('rm', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
-          : undefined
-    const stop = t.jobs.stop(result.sessionId)
-    const stopped =
-      kind === 'safe cancellation'
-        ? expect(stop).resolves.toEqual({ ok: true })
-        : expect(stop).rejects.toThrow(`${kind} refused`)
-    prep.release()
-    if (failure !== undefined) {
-      await failure.entered
-      failure.fail(new Error(`${kind} refused`))
+    const fault = kind === 'safe cancellation' ? undefined : failCopyBack(kind, target)
+    let id: string
+    let stop: ReturnType<Jobs['stop']>
+    try {
+      const result = await t.jobs.start({
+        provider: t.provider,
+        name: 'fixture',
+        prompt: 'go',
+        scope: { read: ['note.md'], write: ['note.md'] },
+      })
+      if (!result.ok) throw new Error(result.message)
+      id = result.sessionId
+      await prep.wait()
+      stop = t.jobs.stop(id)
+    } finally {
+      prep.release()
     }
-    await stopped
     if (kind === 'safe cancellation') {
+      await expect(stop).resolves.toEqual({ ok: true })
       expect(await readFile(target, 'utf8')).toBe('original')
       await t.jobs.leave()
       expect((await readdir(t.root)).filter((name) => name.startsWith('.holi-'))).toEqual([])
       await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
       return
     }
+    const cause = await stop.catch((error: unknown) => error)
+    expect(fault?.calls()).toBe(1)
+    expect(cause).toMatchObject({ message: expect.stringContaining(`${kind} refused`) })
     expect(t.jobs.sessions()[0]).toMatchObject({
       state: 'idle',
       outcome: 'failed',
       error: expect.stringContaining(`${kind} refused`),
     })
     for (let i = 0; i < 2; i++) {
-      await expect(t.jobs.stop(result.sessionId)).rejects.toThrow(`${kind} refused`)
-      await expect(t.jobs.leave()).rejects.toThrow('did not drain')
-      expect(t.jobs.has(result.sessionId)).toBe(true)
-      await expect(
-        access(join(t.scratchRoot, `${result.sessionId}.agent`)),
-      ).resolves.toBeUndefined()
+      await expect(t.jobs.stop(id)).rejects.toBe(cause)
+      await expect(t.jobs.leave()).rejects.toMatchObject({
+        message: expect.stringContaining('did not drain'),
+        errors: [cause],
+      })
+      expect(t.jobs.has(id)).toBe(true)
+      await expect(access(join(t.scratchRoot, `${id}.agent`))).resolves.toBeUndefined()
     }
     const leftovers = (await readdir(t.root)).filter((name) => name.startsWith('.holi-'))
     if (kind === 'rollback') {
+      expect(cause).toMatchObject({ cause: expect.any(CopyBackCancelled) })
       const preserved = leftovers.find((name) => name.startsWith('.holi-copy-'))!
       expect(await readFile(join(t.root, preserved, 'previous'), 'utf8')).toBe('original')
       await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -1253,9 +954,19 @@ it.each(['safe cancellation', 'rollback', 'temporary cleanup'] as const)(
 )
 
 it.each(['readFile', 'close'] as const)(
-  'preserves the original when recovery %s fails beside a competing file',
+  'preserves the original when its pre-publication %s fails beside a competing file',
   async (method) => {
-    const t = await rig()
+    const refused = new Error(`pre-publication ${method} refused`)
+    const fail = vi.fn((): never => {
+      throw refused
+    })
+    const t = await rig({
+      beforePublish: async (rel) => {
+        // The original was moved aside. A competing writer takes the now-free name.
+        await writeFile(join(t.root, rel), 'competing version', { flag: 'wx' })
+        native.previousFailure = { method, fail }
+      },
+    })
     const target = join(t.root, 'note.md')
     await writeFile(target, 'original')
     t.provider.capabilities.jobs.command = () => ({
@@ -1263,7 +974,6 @@ it.each(['readFile', 'close'] as const)(
       args: ['-e', `require('node:fs').writeFileSync('note.md', 'agent version');${SCRIPT}`],
       env: {},
     })
-    const prep = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
     const run = await t.jobs.start({
       provider: t.provider,
       name: 'fixture',
@@ -1271,23 +981,22 @@ it.each(['readFile', 'close'] as const)(
       scope: { read: ['note.md'], write: ['note.md'] },
     })
     if (!run.ok) throw new Error(run.message)
-    await prep.entered
-    const restore = hold(
-      'link',
-      (args) => basename(String(args[0])) === 'previous' && basename(String(args[1])) === 'note.md',
-    )
-    const stop = t.jobs.stop(run.sessionId)
-    const failed = expect(stop).rejects.toThrow(`recovery ${method} refused`)
-    prep.release()
-    await restore.entered
-    await writeFile(target, 'competing version')
-    native.previousFailure = { method, error: new Error(`recovery ${method} refused`) }
-    restore.release()
-    await failed
+    await t.idle(true)
+    expect(fail).toHaveBeenCalledOnce()
+    expect(t.jobs.sessions()[0]).toMatchObject({ outcome: 'failed' })
+    const cause = await t.jobs.stop(run.sessionId).catch((error: unknown) => error)
     const holdDir = (await readdir(t.root)).find((name) => name.startsWith('.holi-copy-'))!
+    expect(cause).toMatchObject({
+      message: `${String(refused)} The previous file is preserved at ${join(holdDir, 'previous')}.`,
+    })
+    expect((cause as Error).cause).toBe(refused)
     expect(await readFile(join(t.root, holdDir, 'previous'), 'utf8')).toBe('original')
     expect(await readFile(target, 'utf8')).toBe('competing version')
-    await expect(t.jobs.leave()).rejects.toThrow('did not drain')
+    await expect(t.jobs.stop(run.sessionId)).rejects.toBe(cause)
+    await expect(t.jobs.leave()).rejects.toMatchObject({
+      message: expect.stringContaining('did not drain'),
+      errors: [cause],
+    })
     expect(t.jobs.has(run.sessionId)).toBe(true)
   },
 )
@@ -1309,7 +1018,7 @@ it.each(['pending', 'failed'] as const)(
     const a = await t.start()
     const b = await t.sessions.start('codex', {})
     if (!b.ok) throw new Error(b.message)
-    a.entry.onExit?.()
+    void finishExit(a.entry)?.catch(() => {})
     await entered.promise
     if (kind === 'failed') {
       gate.resolve()
@@ -1333,11 +1042,13 @@ it.each(['pending', 'failed'] as const)(
     expect(t.sessions.has(b.sessionId)).toBe(false)
     const leaving = t.sessions.leave()
     if (kind === 'pending') {
-      const failed = expect(leaving).rejects.toThrow('did not drain')
+      const settled = vi.fn()
+      void leaving.then(settled, settled)
       await vi.advanceTimersByTimeAsync(5_001)
-      await failed
+      // This terminal adapter models the authoritative close settlement.
+      expect(settled).not.toHaveBeenCalled()
       gate.resolve()
-      await t.sessions.leave()
+      await leaving
       await t.fenced.leave()
     } else {
       await expect(leaving).rejects.toThrow('did not drain')

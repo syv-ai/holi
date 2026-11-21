@@ -117,18 +117,26 @@ export interface PluginScheme {
   handle(request: Request, ctx: SchemeContext): Response | Promise<Response>
 }
 
+export interface SyncHoldOptions {
+  /** Keep an outstanding hold if this activation throws during startup or its
+   * disposer fails (including a reported drain failure). Opt in only for a
+   * writer whose owner must explicitly release once it knows the writer is
+   * absent. Release also works after failed cleanup, but does not clear the
+   * first latched teardown failure or permit replacement. */
+  retainOnFailure?: boolean
+}
+
 /**
  * What a plugin gets when it starts in a vault, bound to that vault until it
- * stops: turned off, the vault left, or Holi quitting. Nothing a plugin starts
- * outlives its vault, so nothing carries from one vault to the next. Every
- * undo below the host also runs when it stops.
+ * stops: turned off, the vault left, or Holi quitting. The host also runs its
+ * undos on stop, except for sync holds explicitly retained on failure.
  */
 export interface PluginCtx extends LiveVault, SchemeContext {
   /** Aborted synchronously when this activation is stopped or invalidated. */
   activationSignal: AbortSignal
   /** Revoke this activation before awaiting failed-start cleanup. */
   invalidateActivation(): void
-  /** Latch unproven cleanup; stop and replacement must fail with this error. */
+  /** Latch unproven cleanup; stop and replacement must fail with the first latched error. */
   reportDrainFailure(error: unknown): void
   /** The renderer's displayed vault, independent of plugin lifetimes. */
   displayed(): string | null
@@ -207,12 +215,13 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   /**
    * Hold the vault's sync loop: no autosave commit, pull or push until the
    * returned release runs. Holds from several callers stack; the loop runs
-   * again when the last is released, and a release after the vault is left
-   * does nothing.
+   * again when the last is released. The host releases outstanding holds on
+   * activation failure or stop unless `retainOnFailure` applies.
    */
-  pauseSync(reason: string): () => void
-  /** Pause sync admission and wait until already-running Git mutations drain. */
-  pauseSyncAndDrain(reason: string): Promise<() => void>
+  pauseSync(reason: string, options?: SyncHoldOptions): () => void
+  /** Pause sync admission and wait until already-running Git mutations drain.
+   * A failed or cancelled acquisition always releases before rejecting. */
+  pauseSyncAndDrain(reason: string, options?: SyncHoldOptions): Promise<() => void>
   /** Commit whatever is dirty now. The new commit's sha, or null for none;
    *  `'busy'` when a pull in flight refused it, so asking again shortly may
    *  commit. */
@@ -416,15 +425,15 @@ export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
 export { delimiterFor, isRunnable, nodeFallbackDir, resolveBin, toolPath, withPath } from './bin'
 export { execProgram, spawnProgram } from './launch'
-export { spawnOwnedProgram } from './owned-process'
+export { spawnOwnedProgram, ownedProcessDrain } from './owned-process'
+export { preparePosixLaunch, type PosixLaunch } from './posix-launch-lease'
+/** @public Node-only POSIX ownership seam for Provider owners. */
 export {
-  joinOwnedProgram,
-  UnconfirmedOwnedProgramError,
-  type ManagedOwnedChild,
-  type OwnedCompletion,
-  type OwnedProgramCleanupLease,
-  type OwnedProgramResult,
-} from './owned-program-lifetime'
+  inspectPosixOwnership,
+  posixLaunchNonAdmission,
+  type PosixOwnershipInspection,
+} from './posix-ownership-journal'
+export type { ProcessGroupSupervision } from './owned-process-supervision'
 export { defaultProbePid, killChildTree, killTree, type PidState } from './process-group'
 export { writeScreenshot } from './screenshot-files'
 export {

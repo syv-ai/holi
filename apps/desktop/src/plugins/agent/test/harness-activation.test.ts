@@ -9,6 +9,7 @@ import {
   waitForFile,
   waitForGone,
 } from './activation-fixture'
+import * as fs from 'node:fs/promises'
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { execFileSync } from 'node:child_process'
@@ -1208,6 +1209,66 @@ it('rejects late UI config dispatch after A releases ownership but before unregi
     await host.stopAll()
   }
 })
+
+it.skipIf(process.platform === 'win32').each(['empty', 'unlinked'] as const)(
+  'finishes admitted cold job recovery on stop with %s scratch',
+  async (state) => {
+    const { host, enter, call, roots, userData, expectFailedDrain } = await rig()
+    const { jobs } = await agentScratchRoots(userData, { remote: A, root: roots[A] })
+    await mkdir(jobs)
+    const coldFile = join(jobs, 'unlinked')
+    if (state === 'unlinked') {
+      await writeFile(coldFile, 'existing scratch')
+      expectFailedDrain()
+    }
+    const enteredSweep = deferred()
+    const releaseSweep = deferred()
+    const read = fs.readdir
+    const sweep = vi.spyOn(fs, 'readdir').mockImplementation(async (...args) => {
+      if (args[0] === jobs) {
+        enteredSweep.resolve()
+        await releaseSweep.promise
+      }
+      return read(...args)
+    })
+    try {
+      await enter(A)
+      await enteredSweep.promise
+      let stopped = false
+      const stopping = host.stop(A).finally(() => {
+        stopped = true
+      })
+      // Observe rejection while checking that cleanup is still waiting for the sweep.
+      const result = stopping.catch((error: unknown) => error)
+      try {
+        await expect(call(A, 'agent.sessions')).rejects.toThrow('no such method')
+        expect(stopped).toBe(false)
+      } finally {
+        releaseSweep.resolve()
+        await result
+      }
+      if (state === 'empty') {
+        await expect(stopping).resolves.toBeUndefined()
+        await expect(access(jobs)).rejects.toMatchObject({ code: 'ENOENT' })
+        await enter(A)
+        expect(await call(A, 'agent.sessions')).toEqual([])
+      } else {
+        const failure = await result
+        expect(nestedErrors(failure)).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining('Missing scratch ownership link.'),
+          }),
+        ])
+        await expect(host.stop(A)).rejects.toBe(failure)
+        await expect(enter(A)).rejects.toBe(failure)
+        expect(await readFile(coldFile, 'utf8')).toBe('existing scratch')
+      }
+    } finally {
+      releaseSweep.resolve()
+      sweep.mockRestore()
+    }
+  },
+)
 
 it('releases failed activation ownership so a fresh activation reads current disk state', async () => {
   const { host, enter, call, userData } = await rig()

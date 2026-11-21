@@ -35,8 +35,8 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { parse, stringify } from 'smol-toml'
@@ -171,28 +171,41 @@ const isObject = (text: string): boolean => {
  * into the person's `auth.json` (through a symlink to what it names), but
  * only while theirs is still the one handed over. One that changed meanwhile
  * (another Codex refreshed it, or they signed in again) is newer and stands.
- * Never throws.
+ * Best effort unless the caller's deadline revokes permission to release.
  */
 export async function releaseCodexHome(
   state: string,
   env: NodeJS.ProcessEnv = process.env,
+  signal?: AbortSignal,
 ): Promise<void> {
+  let next: string | undefined
   try {
+    signal?.throwIfAborted()
     const given = await readFile(join(state, AUTH_GIVEN), 'utf8').catch(() => null)
     const after = await readFile(join(state, HOME, 'auth.json'), 'utf8').catch(() => null)
     if (given === null || after === null || after === given || !isObject(after)) return
-    const target = realpathSync(join(personCodexHome(env), 'auth.json'))
+    const auth = join(personCodexHome(env), 'auth.json')
+    const target = realpathSync(auth)
     if ((await readFile(target, 'utf8')) !== given) return
+    signal?.throwIfAborted()
     // Its own name: jobs in this process may release at the same time.
-    const next = join(
-      dirname(target),
-      `.${basename(target)}.holi-${randomBytes(6).toString('hex')}`,
-    )
-    await writeFile(next, after, { mode: 0o600 })
-    await rename(next, target)
+    next = join(dirname(target), `.${basename(target)}.holi-${randomBytes(16).toString('hex')}`)
+    await writeFile(next, after, { mode: 0o600, flag: 'wx' }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') next = undefined
+      throw error
+    })
+    signal?.throwIfAborted()
+    // Recheck after staging. Keep the check and both mutations in this turn
+    // so a deadline or another release cannot intervene between them.
+    if (realpathSync(auth) !== target || readOrNull(target) !== given) return
+    renameSync(next, target)
+    next = undefined
     // A follow-up turn compares against what the person's file now holds.
-    await writeFile(join(state, AUTH_GIVEN), after, { mode: 0o600 })
+    writeFileSync(join(state, AUTH_GIVEN), after, { mode: 0o600 })
   } catch {
-    // The person's sign-in stays as it was; Codex refreshes it again.
+    // Best effort: Codex can refresh the sign-in again.
+  } finally {
+    if (next !== undefined) await rm(next, { force: true }).catch(() => {})
+    signal?.throwIfAborted()
   }
 }
