@@ -38,6 +38,13 @@ function validFixture() {
   )
 }
 
+test('accepts the package-local installed-doc warning on help, including indentation and CRLF', () => {
+  const warning = 'Warning: No models available. Use /login to log into a provider via OAuth or API key. See:\\r\\n  /home/runner/work/_temp/pi-install/node_modules/@earendil-works/pi-coding-agent/docs/providers.md\\r\\n  /home/runner/work/_temp/pi-install/node_modules/@earendil-works/pi-coding-agent/docs/models.md'
+  const fixture = executable(`if (process.argv[2] === '--version') process.stdout.write('1.2.3\\n'); else { process.stdout.write(${JSON.stringify(help + '\\n')}); process.stderr.write(${JSON.stringify(warning)}) }`)
+  try { assert.equal(checkPiCli({ bin: fixture.bin, expectedVersion: '1.2.3' }).outcome, 'pass') }
+  finally { rmSync(fixture.directory, { recursive: true, force: true }) }
+})
+
 test('accepts exact-version help contract with a minimal test binary', () => {
   const fixture = validFixture()
   try {
