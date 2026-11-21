@@ -41,8 +41,8 @@ export type TurnVault = Pick<PluginCtx, 'root' | 'pauseSync' | 'commitNow' | 'he
 
 export interface ManagedTurn {
   /** After the owner proves the turn is no longer writing: resolves only
-   *  after its record was written. The owner's deadline can revoke a queued
-   *  write or its publication, but cannot undo an append already in flight. */
+   *  after its record was written. The owner's deadline can revoke queued work
+   *  or publication for its turn, but cannot undo a write already in flight. */
   end(signal?: AbortSignal): Promise<TurnRecord>
   /** After physical proof without a usable end: release without recording. */
   forget(): void
@@ -251,11 +251,16 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
   }
 
   /** A turn that ended while another is still running is recorded now against
-   *  the working tree, or HEAD when the snapshot fails. */
+   *  the working tree. Only legacy turns may fall back to HEAD. */
   async function recordNow(vault: TurnVault, turn: Turn): Promise<TurnRecord | null> {
     await turn.basePending
     if (deps.turnLogFor === undefined || turn.base === null) return null
-    const end = (await deps.snapshot?.(vault.root)) ?? (await turn.finalize(() => vault.head()))
+    turn.history?.signal?.throwIfAborted()
+    const snapshot = await deps.snapshot?.(vault.root)
+    // HEAD may omit this turn's uncommitted work, so it cannot back a managed receipt.
+    if (snapshot == null && turn.managed)
+      throw new Error(`Could not snapshot the working tree for ${turn.sessionId}.`)
+    const end = snapshot ?? (await turn.finalize(() => vault.head()))
     return writeRecord(vault, turn, end, new Date().toISOString())
   }
 
@@ -288,8 +293,11 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
 
   async function settleRange(vault: TurnVault, batch: Turn[]) {
     await Promise.allSettled(batch.map((turn) => turn.basePending))
-    if (deps.turnLogFor === undefined || !batch.some((turn) => turn.base !== null))
-      return { commit: null, end: null, at: new Date().toISOString() }
+    const empty = { commit: null, end: null }
+    const hasRecordableTurn = () =>
+      batch.some((turn) => turn.base !== null && !turn.history?.signal?.aborted)
+    if (deps.turnLogFor === undefined || !hasRecordableTurn())
+      return { ...empty, at: new Date().toISOString() }
 
     // Taken explicitly rather than observed. Waiting for the idle committer to
     // fire on its own would make the end sha race a 3-second timer that the
@@ -302,10 +310,16 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     // is asked again once the pull has had a moment; a null (a clean tree) is
     // not, so the Stop hook waiting on a turn that only read is not held.
     const { commit, end } = await batch[0]!.finalize(async () => {
+      // A deadline revokes only its own turn. Check the whole batch before
+      // each new commit; an operation already in flight still runs to completion.
+      if (!hasRecordableTurn()) return empty
       let asked = await vault.commitNow()
+      if (!hasRecordableTurn()) return empty
       if (asked === 'busy') {
         await new Promise((r) => setTimeout(r, deps.settleRetryMs ?? 1_000))
+        if (!hasRecordableTurn()) return empty
         asked = await vault.commitNow()
+        if (!hasRecordableTurn()) return empty
       }
       const commit = asked === 'busy' ? null : asked
       return { commit, end: commit ?? (await vault.head()) }
