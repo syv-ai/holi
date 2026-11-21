@@ -240,7 +240,7 @@ it.each(['ignore', 'inherit'] as const)(
   15000,
 )
 
-it.each(['output', 'settled', 'failed'] as const)(
+it.each(['output', 'settled', 'failed', 'outer only', 'outer and caller'] as const)(
   'recovers native-settled fenced scratch only after positive caller proof (%s)',
   async (phase) => {
     const data = await realpath(await mkdtemp(join(tmpdir(), 'holi-cold-fenced-caller-')))
@@ -275,7 +275,7 @@ it.each(['output', 'settled', 'failed'] as const)(
     try {
       await launch.bind(child.pid!)
       await exited
-      if (phase !== 'output') linked.beginCallerFinalization()
+      if (phase !== 'output' && phase !== 'outer only') linked.beginCallerFinalization()
       await launch.drain()
       const text = await readFile(join(path, 'journal'), 'utf8')
       identities = [...text.matchAll(/^(ROOT|REAPER|ANCHOR) (\d+)$/gm)].flatMap(
@@ -285,7 +285,7 @@ it.each(['output', 'settled', 'failed'] as const)(
       expect(identities).toHaveLength(5)
       expect(inspectPosixOwnership(path)).toEqual({ state: 'confirmed', proof: 'settled' })
       expect(await readFile(join(cwd, 'output'), 'utf8')).toBe('only-copy')
-      if (phase === 'settled') {
+      if (phase === 'settled' || phase === 'outer and caller') {
         // Emulate the crash after copy/release and their durable receipt, but
         // before the caller could delete its two source directories.
         await writeFile(join(data, 'published'), await readFile(join(cwd, 'output')))
@@ -294,10 +294,16 @@ it.each(['output', 'settled', 'failed'] as const)(
         linked.fail(new Error('first copy failure'))
         linked.fail(new Error('secondary failure'))
       }
+      if (phase === 'outer only' || phase === 'outer and caller') {
+        const entry = dirname(dirname(path))
+        await writeFile(join(entry, 'settled'), `HOLI-AGENT-1 ${basename(entry)}\nSETTLED\n`, {
+          mode: 0o600,
+        })
+      }
       controller.abort() // Virtual Main death: the stale caller never gets its output/copy back.
       probe.mockClear()
       const next = activationOwnership(data, vault, signal())!
-      if (phase === 'settled') {
+      if (phase === 'settled' || phase === 'outer and caller') {
         recoverFencedScratch(next, fenced)
         await expect(access(cwd)).rejects.toMatchObject({ code: 'ENOENT' })
         await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -641,6 +647,7 @@ it.each([
   'never drained',
   'interrupted drain',
   'native settled',
+  'outer only',
   'caller settled',
   'retired',
 ] as const)(
@@ -695,22 +702,25 @@ it.each([
         proof: lostController ? 'kernel-absence' : 'settled',
       })
       const next = activationOwnership(data, vault, signal())!
-      if (phase === 'retired') {
-        // Crash after rename, with both phases durable and no remaining writer.
+      if (phase === 'retired' || phase === 'outer only') {
+        // Outer settlement is not a substitute for durable caller settlement.
         const entry = dirname(dirname(path))
         await writeFile(join(entry, 'settled'), `HOLI-AGENT-1 ${basename(entry)}\nSETTLED\n`, {
           mode: 0o600,
         })
         const retired = `${entry}.retired`
-        await rename(entry, retired)
+        if (phase === 'retired') await rename(entry, retired)
         const probe = vi.spyOn(process, 'kill')
         try {
-          next.recover('pi')
+          if (phase === 'retired') next.recover('pi')
+          else expect(() => next.recover('pi')).toThrow(/Pi.*settlement/)
           expect(probe).not.toHaveBeenCalled()
         } finally {
           probe.mockRestore()
         }
-        await expect(access(retired)).rejects.toMatchObject({ code: 'ENOENT' })
+        if (phase === 'retired')
+          await expect(access(retired)).rejects.toMatchObject({ code: 'ENOENT' })
+        else await access(entry)
       } else if (phase === 'interrupted drain' || phase === 'native settled') {
         expect(() => next.recover('pi')).toThrow(/Pi.*(pending|settlement)/)
         await access(path)
@@ -867,6 +877,72 @@ it.each(
   },
   15_000,
 )
+
+it.each(
+  (['active', 'retired'] as const).flatMap((phase) =>
+    (['missing native', 'failed native', 'non-launch', 'explicit'] as const).map((proof) => ({
+      phase,
+      proof,
+    })),
+  ),
+)('validates $proof beside outer settlement ($phase)', async ({ phase, proof }) => {
+  // Disk-only fixture: no process or PID is created, even for native failure.
+  const data = await realpath(await mkdtemp(join(tmpdir(), 'holi-outer-receipt-')))
+  const probe = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw new Error('An outer settlement must never probe the kernel')
+  })
+  try {
+    const vault = { root: data, remote: 'fixture/outer-receipt' }
+    const controller = new AbortController()
+    const registry = activationOwnership(data, vault, controller.signal)!
+    const scratch = join(data, 'scratch')
+    const id = 'ad012345abcd'
+    const output = join(scratch, id, 'output')
+    const key = createHash('sha256')
+      .update(JSON.stringify([vault.remote, data]))
+      .digest('hex')
+    const parent = join(data, 'agent-ownership', key, 'fenced')
+    recoverFencedScratch(registry, scratch)
+    const record = registry.allocate('fenced', id, proof === 'explicit' ? 'explicit' : 'native')
+    const [nonce] = await readdir(parent)
+    const entry = join(parent, nonce!)
+    const current = phase === 'retired' ? `${entry}.retired` : entry
+    if (proof === 'non-launch') record.nonLaunch()
+    else {
+      record.beginCallerFinalization()
+      record.settleCaller()
+    }
+    if (proof === 'failed native') {
+      const path = record.ownershipRecordPath!
+      const header = `HOLI-POSIX-1 ${nonce}\n`
+      await mkdir(path, { mode: 0o700 })
+      await writeFile(join(path, 'journal'), header, { mode: 0o600 })
+      await writeFile(join(path, 'failed'), header + 'FAILED drain\n', { mode: 0o600 })
+      await writeFile(join(path, 'settled'), header + 'SETTLED\n', { mode: 0o600 })
+    }
+    if (phase === 'active') {
+      await mkdir(dirname(output), { recursive: true })
+      await writeFile(output, 'keep until full proof')
+    }
+    await writeFile(join(entry, 'settled'), `HOLI-AGENT-1 ${nonce}\nSETTLED\n`, { mode: 0o600 })
+    controller.abort()
+    if (phase === 'retired') await rename(entry, current)
+    const recover = () => recoverFencedScratch(activationOwnership(data, vault, signal())!, scratch)
+    if (proof === 'failed native' || proof === 'missing native') {
+      expect(recover).toThrow(proof === 'failed native' ? /cleanup failed/ : /Missing native/)
+      await access(current)
+      if (phase === 'active') expect(await readFile(output, 'utf8')).toBe('keep until full proof')
+    } else {
+      recover()
+      await expect(access(current)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(access(output)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+    expect(probe).not.toHaveBeenCalled()
+  } finally {
+    probe.mockRestore()
+    await rm(data, { recursive: true, force: true })
+  }
+})
 
 it.each([
   'missing link',
