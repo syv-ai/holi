@@ -76,14 +76,19 @@ jobs:
           fi
           printf '%s\n' "$RESULT" > cli-result.json
           echo "result=$(printf '%s' "$RESULT" | base64 -w0)" >> "$GITHUB_OUTPUT"
+      - name: Build the native process helper for fixture consumers
+        if: always() && steps.dependencies.outcome == 'success'
+        id: native
+        run: pnpm --filter @holi/desktop exec node scripts/build-posix-lease.mjs
       - name: Replay attributed RPC consumer fixtures through PiRpcRun
         if: always()
         id: consumer
         env:
           DEPENDENCIES_OUTCOME: ${{ steps.dependencies.outcome }}
+          NATIVE_OUTCOME: ${{ steps.native.outcome }}
         run: |
-          if [ "$DEPENDENCIES_OUTCOME" != success ]; then
-            RESULT='{"outcome":"unverified","detail":"Repository test dependencies failed to install; RPC consumer fixtures could not run."}'
+          if [ "$DEPENDENCIES_OUTCOME" != success ] || [ "$NATIVE_OUTCOME" != success ]; then
+            RESULT='{"outcome":"unverified","detail":"Repository dependencies or native process-helper preparation failed; RPC consumer fixtures could not run."}'
           elif pnpm --filter @holi/desktop exec vitest run src/plugins/agent/test/pi-rpc.test.ts; then
             RESULT="$(node -e 'process.stdout.write(JSON.stringify({outcome:"pass",detail:"Consumer fixture tests passed through PiRpcRun; constructed from upstream RPC documentation/types at b4899f59ef0fba6507c2e619fd804dcde51920ba, not captured from the installed CLI."}))')"
           else
@@ -144,6 +149,10 @@ jobs:
           cache: pnpm
       - name: Install workspace for consumer fixtures
         run: pnpm install --frozen-lockfile
+      - name: Build the native process helper for fixture consumers
+        id: native
+        continue-on-error: true
+        run: pnpm --filter @holi/desktop exec node scripts/build-posix-lease.mjs
       - name: Probe exact npm Codex version without credentials
         env:
           MONITOR_REPORT: ${{ needs.discover.outputs.report }}
@@ -152,7 +161,9 @@ jobs:
           VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('report.json')).providers.find(p => p.id === 'codex').version)")
           mkdir -p "$RUNNER_TEMP/codex"
           node scripts/codex-compatibility.mjs "$VERSION" > "$RUNNER_TEMP/codex/cli.json" || true
-          if pnpm --filter @holi/desktop exec vitest run src/plugins/agent/test/codex-provider.test.ts src/plugins/agent/test/agent-jobs.test.ts; then
+          if [ "${{ steps.native.outcome }}" != success ]; then
+            echo '{"name":"fixture consumers","outcome":"unverified","detail":"Native process-helper preparation failed; consumer fixtures could not run."}' > "$RUNNER_TEMP/codex/fixtures.json"
+          elif pnpm --filter @holi/desktop exec vitest run src/plugins/agent/test/codex-provider.test.ts src/plugins/agent/test/agent-jobs.test.ts; then
             echo '{"name":"fixture consumers","outcome":"pass","detail":"Codex notify and job-event production consumers exercised by attributed fixtures; no provider execution."}' > "$RUNNER_TEMP/codex/fixtures.json"
           else
             echo '{"name":"fixture consumers","outcome":"mismatch","detail":"Codex production-consumer fixture tests failed."}' > "$RUNNER_TEMP/codex/fixtures.json"
@@ -269,5 +280,13 @@ jobs:
           # is installed and executed in separate, read-only compatibility jobs.
           node scripts/harness-monitor.mjs merge-codex report.json codex-checks/checks.json > codex-report.json
           node scripts/harness-monitor.mjs merge-claude codex-report.json claude-checks/checks.json > claude-report.json
-          node scripts/harness-monitor.mjs merge-pi claude-report.json pi-cli-result.json pi-consumer-result.json pi-producer-result.json > normalized-report.json
+          node scripts/harness-monitor.mjs merge-pi claude-report.json pi-cli-result.json pi-consumer-result.json pi-producer-result.json > combined-report.json
+          node --input-type=module -e 'import {readFileSync,writeFileSync} from "node:fs"; import {normalizeReport} from "./scripts/harness-monitor.mjs"; const r=JSON.parse(readFileSync("combined-report.json")); r.providers=r.providers.map(p=>normalizeReport(p)); writeFileSync("normalized-report.json",JSON.stringify(r,null,2))'
+          node -e 'const r=JSON.parse(require("fs").readFileSync("normalized-report.json")); for(const p of r.providers){const checks=p.checks||[]; console.log(`## ${p.name} (${p.version})\n\n${checks.map(c=>`- ${c.name}: ${c.outcome}${c.detail?` — ${c.detail}`:""}`).join("\n")}\n`)}' >> "$GITHUB_STEP_SUMMARY"
           node scripts/harness-monitor.mjs report normalized-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: harness-monitor-report
+          path: normalized-report.json
+          if-no-files-found: warn

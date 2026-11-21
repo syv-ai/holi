@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 export const providers = [
@@ -111,79 +110,71 @@ export async function reconcile(report, adapter) {
     const previous = tracked ? parseIssue(tracked) : null
     if (previous && previous.runNumber > normalized.runNumber) continue
 
-    const body = renderBody(normalized)
-    const allPass =
-      normalized.checks.length > 0 && normalized.checks.every((check) => check.outcome === 'pass')
+    const failures = new Set(previous?.failures ?? [])
+    for (const check of normalized.checks) {
+      if (check.outcome === 'mismatch') failures.add(check.name)
+      if (check.outcome === 'pass') failures.delete(check.name)
+    }
+    const unresolved = [...failures].sort()
     if (!tracked) {
-      await adapter.createIssue({
-        title: `${provider.name} compatibility: ${provider.version}`,
-        label,
-        body,
-      })
+      if (unresolved.length) {
+        await adapter.createIssue({
+          title: `${provider.name} compatibility: ${provider.version}`,
+          label,
+          body: renderBody(normalized, unresolved),
+        })
+      }
       continue
     }
-    const changed =
-      !previous ||
-      previous.version !== provider.version ||
-      previous.reportKey !== reportKey(normalized)
-    const sameRelease = previous?.version === provider.version
-    const currentRun = normalized.runNumber >= (previous?.runNumber ?? 0)
-    if (changed || currentRun) {
-      // Persist newest run metadata even when checks are unchanged, preventing a
-      // delayed older observation from replacing the evidence.
-      await adapter.updateIssue(tracked.number, {
-        title: `${provider.name} compatibility: ${provider.version}`,
-        body,
-      })
-    }
 
-    // Reconcile state independently of content changes so a failed state mutation
-    // can be retried after the body edit has already succeeded.
-    if (!allPass) {
+    const added = unresolved.filter((name) => !previous.failures.includes(name))
+    const pending =
+      previous.pending ??
+      (added.length
+        ? {
+            key: `alert-${provider.id}-${normalized.runNumber}`,
+            message: `New failing checks for ${provider.name}: ${added.join(', ')}. Report: ${report.runUrl}`,
+          }
+        : null)
+    // Save evidence before state mutations. A pending alert survives partial writes.
+    await adapter.updateIssue(tracked.number, {
+      title: `${provider.name} compatibility: ${provider.version}`,
+      body: renderBody(normalized, unresolved, pending),
+    })
+    if (unresolved.length) {
       if (tracked.state === 'closed') await adapter.reopenIssue(tracked.number)
-    } else if (sameRelease && currentRun) {
-      if (tracked.state !== 'closed') await adapter.closeIssue(tracked.number)
-    } else if (tracked.state === 'closed') {
-      // A passing report for a newly observed release cannot inherit old checks.
-      await adapter.reopenIssue(tracked.number)
+    } else if (tracked.state !== 'closed') {
+      await adapter.closeIssue(tracked.number)
     }
-
-    if (changed) {
+    if (pending) {
       await adapter.commentIssue(
         tracked.number,
-        `<!-- holi-harness-report:${reportKey(normalized)} -->\nUpdated ${provider.name} to ${provider.version}; monitoring report: ${report.runUrl}`,
+        `<!-- holi-harness-report:${pending.key} -->\n${pending.message}`,
       )
+      await adapter.updateIssue(tracked.number, {
+        title: `${provider.name} compatibility: ${provider.version}`,
+        body: renderBody(normalized, unresolved),
+      })
     }
   }
 }
 
 function parseIssue(issue) {
-  const version = issue.body.match(/^Observed npm latest: `([^`]+)`$/m)?.[1]
   const runNumber = Number(issue.body.match(/<!-- holi-harness-run:(\d+) -->/)?.[1] || 0)
-  const reportKey = issue.body.match(/<!-- holi-harness-report:([^>]+) -->/)?.[1] || ''
-  return { version, runNumber, reportKey }
+  const state = issue.body.match(/<!-- holi-harness-state:([^ ]+) -->/)?.[1]
+  if (state) return { runNumber, ...JSON.parse(Buffer.from(state, 'base64').toString('utf8')) }
+  // Old tracking issues have no persisted state; retain their actual mismatch evidence.
+  const failures = [...issue.body.matchAll(/^- \*\*(.+?): mismatch\*\*/gm)].map((match) => match[1])
+  return { runNumber, failures, pending: null }
 }
 
-function reportKey(report) {
-  const checks = report.checks
-    .map(({ name, outcome, detail = '' }) => [name, outcome, detail])
-    .sort(([nameA, outcomeA, detailA], [nameB, outcomeB, detailB]) => {
-      const left = JSON.stringify([nameA, outcomeA, detailA])
-      const right = JSON.stringify([nameB, outcomeB, detailB])
-      return left < right ? -1 : left > right ? 1 : 0
-    })
-  return `v2-${createHash('sha256')
-    .update(JSON.stringify([report.version, checks]))
-    .digest('hex')}`
-}
-
-function renderBody(report) {
+function renderBody(report, failures, pending = null) {
   const checkLines = report.checks.map(
     (check) => `- **${check.name}: ${check.outcome}**${check.detail ? ` — ${check.detail}` : ''}`,
   )
   const mismatches = report.checks.filter((check) => check.outcome === 'mismatch')
   return [
-    `Monitoring-only observation for **${report.name}** (\`${report.package}\`). ${report.id === 'pi' ? 'The isolated CLI contract and local synthetic-provider RPC producer execute the exact npm package without external provider credentials; RPC consumer fixtures are constructed from attributed upstream sources.' : report.id === 'codex' || report.id === 'claude-code' ? 'The exact npm CLI surface and production consumer fixtures are checked in an isolated, read-only job; live provider execution and output not captured by fixtures remain unverified.' : 'No provider harness was installed or executed.'}`,
+    `Compatibility evidence for **${report.name}** (\`${report.package}\`). ${report.id === 'pi' ? 'The isolated CLI contract and local synthetic-provider RPC producer execute the exact npm package without external provider credentials; RPC consumer fixtures are constructed from attributed upstream sources.' : report.id === 'codex' || report.id === 'claude-code' ? 'The exact npm CLI surface and production consumer fixtures are checked in an isolated, read-only job; live provider execution and output not captured by fixtures remain unverified.' : 'No provider harness was installed or executed.'}`,
 
     '',
     `Observed npm latest: \`${report.version}\``,
@@ -195,11 +186,12 @@ function renderBody(report) {
     'Checks (missing coverage is unverified, never a pass):',
     ...checkLines,
     '',
+    `Unresolved failing checks (retained until explicitly passing): ${failures.join(', ') || 'None'}`,
     `Mismatches: ${mismatches.length ? mismatches.map((check) => `${check.name}: ${check.detail || 'mismatch'}`).join('; ') : 'None reported.'}`,
     '',
     issueMarker(report.id),
     runMarker(report.runNumber),
-    `<!-- holi-harness-report:${reportKey(report)} -->`,
+    `<!-- holi-harness-state:${Buffer.from(JSON.stringify({ failures, pending })).toString('base64')} -->`,
   ].join('\n')
 }
 
