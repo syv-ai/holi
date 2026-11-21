@@ -54,7 +54,7 @@ export interface PiRpcOptions {
     options: { cwd: string; env?: NodeJS.ProcessEnv; stdio: 'pipe' },
   ) => PiChild
 }
-export interface PiChild {
+interface PiChild {
   readonly ownedCompletion?: ManagedOwnedChild['ownedCompletion']
   pid?: number
   /** Spawn adapters must provide their own drain receipt; stdio close is not proof. */

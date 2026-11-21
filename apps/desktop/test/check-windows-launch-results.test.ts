@@ -576,6 +576,30 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(temp, { force: true, recursive: true }))
 
+it('selects every required evidence suite in the Windows CI run', () => {
+  const workflow = readFileSync(
+    new URL('../../../.github/workflows/ci.yml', import.meta.url),
+    'utf8',
+  )
+  const windowsJob = workflow.split('\n  windows-agent-launch:')[1]!.split(/\n  \S/)[0]!
+  const selection = windowsJob.match(/exec vitest run (.+) --project node/)![1]!.split(' ')
+  for (const file of [...Object.keys(required), ...smokeSuites]) {
+    expect(selection).toContain(file)
+  }
+  expect(required['test/owned-process-windows.test.ts']).toContain(timeoutTitle)
+  expect(required).not.toHaveProperty('test/owned-process.test.ts')
+})
+
+it('rejects native cases reported under the old non-Windows suite', () => {
+  const suites = reports()
+  const core = suites.find(({ name }) => name.endsWith('\\owned-process-windows.test.ts'))!
+  core.name = core.name.replace('owned-process-windows.test.ts', 'owned-process.test.ts')
+  report(suites)
+  expect(() => prepare(run, env)).toThrow()
+  expect(existsSync(candidate)).toBe(false)
+  expect(existsSync(final)).toBe(false)
+})
+
 it('stages without a verdict and refuses publication before proof-workspace removal', () => {
   const hash = prepare(run, env)
   expect(JSON.parse(readFileSync(candidate, 'utf8'))).not.toHaveProperty('verdict')
@@ -640,7 +664,7 @@ it.each(['missing', 'duplicate', 'skipped'] as const)(
   'rejects a %s spawn timeout title even with valid native proof',
   (failure) => {
     const suites = reports()
-    const core = suites.find(({ name }) => name.endsWith('\\owned-process.test.ts'))!
+    const core = suites.find(({ name }) => name.endsWith('\\owned-process-windows.test.ts'))!
     const index = core.assertionResults.findIndex((test) => test.title === timeoutTitle)
     const test = core.assertionResults[index]!
     if (failure === 'missing') core.assertionResults.splice(index, 1)
@@ -751,8 +775,8 @@ it.each([
   ...registrationStopTitles.map(
     (title) => ['windows-owned-process-status.test.ts', title] as const,
   ),
-  ['owned-process.test.ts', 'bounds a partial native control frame from its first byte'],
-  ['owned-process.test.ts', 'fails closed on post-auth EOF'],
+  ['owned-process-windows.test.ts', 'bounds a partial native control frame from its first byte'],
+  ['owned-process-windows.test.ts', 'fails closed on post-auth EOF'],
   [
     'owned-program-host.test.ts',
     'keeps approved Claude launches and same-id HTTP rows bound to their own vaults',
@@ -860,7 +884,7 @@ it.each([...registrationTitles, ...registrationStopTitles, createFailureTitle])(
     const suites = reports()
     const file =
       title === createFailureTitle
-        ? '\\owned-process.test.ts'
+        ? '\\owned-process-windows.test.ts'
         : '\\windows-owned-process-status.test.ts'
     const suite = suites.find(({ name }) => name.endsWith(file))!
     const test = suite.assertionResults.find((test) => test.title === title)!

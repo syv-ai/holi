@@ -578,7 +578,7 @@ const required = {
     'stops descendants after maxBuffer cleanup',
     'stops descendants after stdin error cleanup',
   ],
-  'test/owned-process.test.ts': [
+  'test/owned-process-windows.test.ts': [
     'creates a console root without a visible console',
     'resolves a relative executable against the requested cwd',
     'terminates descendants before reporting root exit (pipes: false)',
