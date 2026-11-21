@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,10 +28,22 @@ function host(
     // The host keeps its own outputs open until the join. Observe EOF on the
     // actual inner pipes without changing the relay or adding a live handle.
     plan.args[1] += `
+      const fs = require('node:fs');
+      const started = performance.now();
+      const mark = (event) => {
+        try {
+          fs.appendFileSync('native-join-events', event + '=' + Math.round(performance.now() - started) + '\\n');
+        } catch {} // Diagnostics are not evidence for the assertion barrier.
+      };
+      native.once('spawn', () => mark('spawn'));
+      native.once('exit', () => mark('exit'));
+      native.once('close', () => mark('close'));
+      native.stdin?.once('close', () => mark('stdinClose'));
       let ended = 0;
-      for (const pipe of [native.stdout, native.stderr]) {
+      for (const [event, pipe] of [['stdoutEnd', native.stdout], ['stderrEnd', native.stderr]]) {
         pipe.once('end', () => {
-          if (++ended === 2) require('node:fs').writeFileSync('native-output-ended', '');
+          if (++ended === 2) fs.writeFileSync('native-output-ended', '');
+          mark(event);
         });
       }
     `
@@ -152,6 +164,17 @@ ${visitSelf}
   return { ...adapter, cwd }
 }
 
+// These fixture files are written only by the test, with fixed-size records.
+function readJoinMarker(cwd: string, name: string, maxBytes: number): string | undefined {
+  try {
+    const path = join(cwd, name)
+    const stat = statSync(path)
+    if (stat.isFile() && stat.size <= maxBytes) return readFileSync(path, 'utf8')
+  } catch {
+    // A marker may not exist yet; don't hide the original failure.
+  }
+}
+
 async function collect(
   stream: Readable,
   slow = false,
@@ -199,17 +222,41 @@ describe('owned Job broker host', () => {
   })
 
   it('waits past the terminal frame for physical exit without requiring parent EOF', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'holi-broker-host-'))
+    const started = performance.now()
+    const elapsed = () => Math.round(performance.now() - started)
+    let phase = 'prepare'
+    const phaseMs: Record<string, number> = { prepare: 0 }
+    function enter(next: string) {
+      phase = next
+      phaseMs[next] = elapsed()
+    }
+    let reported = false
+    let inspectFixture: (() => object) | undefined
+    function reportFailure() {
+      if (reported) return
+      reported = true
+      console.error(
+        'HOLI_BROKER_JOIN_PHASE ' +
+          JSON.stringify({ phase, elapsedMs: elapsed(), phaseMs, ...inspectFixture?.() }),
+      )
+    }
+
+    const directory = mkdtemp(join(tmpdir(), 'holi-broker-host-'))
     let closeFixture: (() => Promise<void>) | undefined
-    onTestFinished(async () => {
+    onTestFinished(async ({ task }) => {
+      if (!closeFixture && task.result?.state === 'fail') reportFailure()
       await closeFixture?.()
-      await rm(cwd, { recursive: true, force: true })
+      const cwd = await directory.catch(() => undefined)
+      if (cwd) await rm(cwd, { recursive: true, force: true })
     })
-    const { child } =
-      process.platform === 'win32'
-        ? host(windowsJoinFixture(cwd), true)
-        : nodeHost(
-            `
+    const cwd = await directory
+    if (reported) return // Preparation timed out; do not spawn during teardown.
+    const native = process.platform === 'win32' ? windowsJoinFixture(cwd) : undefined
+    enter('spawn')
+    const { child } = native
+      ? host(native, true)
+      : nodeHost(
+          `
               const { writeFileSync } = require('node:fs');
               let command = '';
               process.stdin.setEncoding('utf8').on('data', (chunk) => {
@@ -221,12 +268,29 @@ describe('owned Job broker host', () => {
               process.stdout.end('terminal\\n');
               process.stderr.end();
             `,
-            cwd,
-            true,
-          )
+          cwd,
+          true,
+        )
+    // Vitest runs these hooks in reverse order: report a timeout before host() joins.
+    onTestFinished(({ task }) => {
+      if (task.result?.state === 'fail') reportFailure()
+    })
+    type Status = [number | null, NodeJS.Signals | null]
+    let hostExit: Status | null = null
+    let hostClose: Status | null = null
+    let finishWriteOk: boolean | null = null
+    child.once('spawn', () => (phaseMs.hostSpawn = elapsed()))
+    child.once('exit', (code, signal) => {
+      phaseMs.hostExit = elapsed()
+      hostExit = [code, signal]
+    })
     // Observe physical close (even if spawning raised an error) before consuming output.
-    const closed = new Promise<[number | null, NodeJS.Signals | null]>((resolve) => {
-      child.once('close', (code, signal) => resolve([code, signal]))
+    const closed = new Promise<Status>((resolve) => {
+      child.once('close', (code, signal) => {
+        phaseMs.hostClose = elapsed()
+        hostClose = [code, signal]
+        resolve(hostClose)
+      })
     })
     closeFixture = async () => {
       child.stdin.destroy()
@@ -249,6 +313,7 @@ describe('owned Job broker host', () => {
       prefix = Buffer.concat([prefix, chunk.subarray(0, terminal.length - prefix.length)])
       if (prefix.length < terminal.length) return
       terminalSeen = prefix.equals(terminal)
+      phaseMs.firstFrame = elapsed()
       reportTerminal(terminalSeen)
     })
     const startup = Promise.race([
@@ -261,40 +326,58 @@ describe('owned Job broker host', () => {
     const stderr = collect(child.stderr)
     void stderr.catch(() => {})
     const finished = join(cwd, 'native-finished')
-    try {
-      try {
-        // PowerShell compilation is startup, not part of the inner-pipe EOF barrier.
-        expect(await startup).toBe(true)
-        await expect.poll(() => existsSync(join(cwd, 'native-output-ended'))).toBe(true)
-        expect(existsSync(finished)).toBe(false)
-        expect(child.exitCode).toBeNull()
-        expect(child.signalCode).toBeNull()
-        child.stdin.write('finish') // Release the inner process without sending parent EOF.
-        const [status, output, errors] = await Promise.all([closed, stdout, stderr])
-        expect(status).toEqual([0, null])
-        expect(await readFile(finished, 'utf8')).toBe('done')
-        expect(output.toString()).toBe('terminal\n')
-        expect(errors).toHaveLength(0)
-      } finally {
-        if (!child.stdin.destroyed) child.stdin.end('finish')
-        await closed // Release a failed barrier before its cwd cleanup hook runs.
+    const innerEof = join(cwd, 'native-output-ended')
+    inspectFixture = () => {
+      const counts = readJoinMarker(cwd, 'native-handles-closed', 19)
+      const events = readJoinMarker(cwd, 'native-join-events', 160) ?? ''
+      return {
+        terminalSeen,
+        innerEof: existsSync(innerEof),
+        nativeEntered: existsSync(join(cwd, 'native-entered')),
+        nativeHandlesClosed: counts !== undefined && /^\d{1,9},\d{1,9}$/.test(counts),
+        nativeAliasCounts:
+          counts !== undefined && /^\d{1,9},\d{1,9}$/.test(counts) ? counts : undefined,
+        nativeFinished: existsSync(finished),
+        // Inner times start at observer installation in the host, not at test start.
+        innerMs: Object.fromEntries(
+          [
+            ...events.matchAll(/^(spawn|exit|close|stdinClose|stdoutEnd|stderrEnd)=(\d{1,9})$/gm),
+          ].map(([, event, ms]) => [event, Number(ms)]),
+        ),
+        parentStdinOpen: !child.stdin.destroyed && !child.stdin.writableEnded,
+        finishWriteOk,
+        hostExit,
+        hostClose,
       }
-    } catch (cause) {
-      const excerpt = (await stderr.catch(() => Buffer.alloc(0)))
-        .subarray(0, 500)
-        .toString('latin1')
-        .replace(/[^ -~]/g, ' ')
-      const closedCounts = await readFile(join(cwd, 'native-handles-closed'), 'utf8').then(
-        (counts) => (/^\d{1,9},\d{1,9}$/.test(counts) ? counts : 'invalid'),
-        () => 'unreported',
-      )
-      throw new Error(
-        `Broker join fixture failed: terminalSeen=${terminalSeen}, hostStatus=${JSON.stringify(await closed)}, ` +
-          `windowsEntry=${existsSync(join(cwd, 'native-entered'))}, ` +
-          `windowsHandlesClosed(stdout,stderr)=${closedCounts}, ` +
-          `nativeFinished=${existsSync(finished)}, stderr=${excerpt}`,
-        { cause },
-      )
+    }
+    try {
+      // PowerShell compilation is startup, not part of the inner-pipe EOF barrier.
+      enter('terminal')
+      expect(await startup).toBe(true)
+      enter('inner-eof')
+      await expect.poll(() => existsSync(innerEof)).toBe(true)
+      enter('pre-release-assertions')
+      expect(existsSync(finished)).toBe(false)
+      expect(child.exitCode).toBeNull()
+      expect(child.signalCode).toBeNull()
+      enter('finish-submit')
+      child.stdin.write('finish', (error) => {
+        phaseMs.finishWrite = elapsed()
+        finishWriteOk = !error
+      }) // Release the inner process without sending parent EOF.
+      enter('physical-join')
+      const [status, output, errors] = await Promise.all([closed, stdout, stderr])
+      enter('joined-assertions')
+      expect(status).toEqual([0, null])
+      expect(await readFile(finished, 'utf8')).toBe('done')
+      expect(output.toString()).toBe('terminal\n')
+      expect(errors).toHaveLength(0)
+    } catch (error) {
+      reportFailure() // An ordinary failure must be captured before finally releases input.
+      throw error
+    } finally {
+      if (!child.stdin.destroyed) child.stdin.end('finish')
+      await closed // Release a failed barrier before its cwd cleanup hook runs.
     }
   })
 
