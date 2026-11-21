@@ -14,7 +14,6 @@ import {
   COMMUNITY_NAMESPACES,
   communityCapabilities,
   linkRunningCommands,
-  listPlugins,
   refreshInstalledPins,
   runChecks,
   seedRunningApps,
@@ -37,11 +36,13 @@ export const communityMain: MainPlugin = {
   },
   activate(ctx) {
     const owner = communityOwner({ userData: ctx.userData })
-    const { store, consent, supervisor: servers } = owner
+    const { store, consent } = owner
     const checks = createChecks()
     const attachment = owner.attach(ctx.root, ctx.remote, {
+      activationSignal: ctx.activationSignal,
       emit: ctx.emit,
       frameOrigin: ctx.frameOrigin,
+      forgetCheck: (id) => checks.forget(ctx.root, id),
     })
     attachment.signal.addEventListener(
       'abort',
@@ -53,29 +54,14 @@ export const communityMain: MainPlugin = {
     ctx.register(
       COMMUNITY_NAMESPACES,
       communityCapabilities({
-        store,
-        consent,
-        supervisor: servers,
+        ...owner,
+        context: { root: ctx.root, remote: ctx.remote },
         git: { url: remoteUrl, token: ctx.githubToken },
         token: ctx.githubToken,
         firstPartyIds: () => installedInfos().map((p) => p.id),
         bridgeScript: () => hintBridge,
         scratch: join(pluginsDir(ctx.userData), '.staging'),
         checks,
-        mutate: (work) =>
-          attachment.run(() =>
-            owner.mutate(async () => {
-              if (attachment.signal.aborted) throw new Error('community attachment is closed')
-              return work()
-            }),
-          ),
-        admit: (work) =>
-          attachment.run(() =>
-            owner.admit(async () => {
-              if (attachment.signal.aborted) throw new Error('community attachment is closed')
-              return work()
-            }),
-          ),
         signal: attachment.signal,
         live: attachment.isLive,
         run: (work) => attachment.run(() => work()),
@@ -92,29 +78,27 @@ export const communityMain: MainPlugin = {
     // check of each running plugin not asked yet: every one as the vault
     // opens, and one just turned on.
     const refresh = async (signal: AbortSignal) => {
-      if (signal.aborted) return
-      await refreshInstalledPins(ctx.root, {
-        store,
-        consent,
-        git: { url: remoteUrl, token: ctx.githubToken },
-        signal: attachment.signal,
-      })
-      if (signal.aborted) return
-      await seedRunningApps(ctx.root, {
-        store,
-        consent,
-        signal: attachment.signal,
-        live: attachment.isLive,
-      })
-      if (signal.aborted) return
-      await linkRunningCommands(ctx.root, { store, consent })
-      if (signal.aborted) return
-      ctx.emit(ctx.remote, 'commands', null)
-      for (const row of await listPlugins(ctx.root, { store, consent })) {
+      await owner.admit(async () => {
         if (signal.aborted) return
-        await checks.forget(ctx.root, row.id)
-      }
-      const asked = await runChecks(ctx.root, { store, consent, checks }, { fresh: true })
+        await refreshInstalledPins(ctx.root, {
+          store,
+          consent,
+          git: { url: remoteUrl, token: ctx.githubToken },
+          signal,
+        })
+        if (signal.aborted) return
+        await seedRunningApps(ctx.root, {
+          store,
+          consent,
+          signal,
+          live: attachment.isLive,
+        })
+        if (signal.aborted) return
+        await linkRunningCommands(ctx.root, { store, consent })
+        if (!signal.aborted) ctx.emit(ctx.remote, 'commands', null)
+      })
+      if (signal.aborted) return
+      const asked = await runChecks(ctx.root, { ...owner, checks, signal }, { passive: true })
       if (asked && !signal.aborted) ctx.emit(ctx.remote, 'check', null)
     }
     const follow = () =>
@@ -135,8 +119,15 @@ export const communityMain: MainPlugin = {
       // Stopping stops its servers: the tabs on them are gone too. And any
       // check still running.
       await attachment.close(async () => {
-        await checks.stop()
-        await unlinkWhenOff(ctx.root, installedInfos())
+        const [proof] = await Promise.allSettled([checks.stop()])
+        // Revoking command links does not depend on proof of physical drain.
+        try {
+          await unlinkWhenOff(ctx.root, installedInfos())
+        } catch (error) {
+          if (proof.status === 'fulfilled') throw error
+          console.error('[community] commands:', error)
+        }
+        if (proof.status === 'rejected') throw proof.reason
       })
     }
   },

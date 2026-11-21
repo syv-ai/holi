@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { once } from 'node:events'
 import { expect, it, onTestFinished, vi } from 'vitest'
-import { PiRpcRun, type PiChild } from '../main/pi/rpc'
+import { PiRpcRun, type PiRpcOptions } from '../main/pi/rpc'
 import {
   inspectPosixOwnership,
   ownedProcessDrain,
@@ -31,6 +31,8 @@ import {
   kernelGroupAbsent,
   posixFixtureLedger,
 } from '../../../../test/fixtures/posix-fixture-ledger'
+
+type PiChild = ReturnType<NonNullable<PiRpcOptions['spawn']>>
 
 const { cacheLeaseProof, publishFinalSettlement, readFinalSettlement } = createRequire(
   import.meta.url,

@@ -190,10 +190,18 @@ it.each([
   const log = vi.spyOn(turnLog, 'openTurnLog').mockReturnValue({ list: async () => [], append })
   const children: ChildProcess[] = []
   const spawn = vi.spyOn(processApi, 'spawnOwnedProgram').mockImplementation(() => {
-    const child = Object.assign(new ChildProcess(), {
-      stdout: new PassThrough(),
-      ...(platform === 'posix' && { [processApi.ownedProcessDrain]: { drain: async () => {} } }),
-    })
+    const child = Object.assign(new ChildProcess(), { stdout: new PassThrough() })
+    if (platform === 'posix')
+      Object.assign(child, { [processApi.ownedProcessDrain]: { drain: async () => {} } })
+    else {
+      // The simulated native adapter proves its owned set empty on completion;
+      // an exit/close event alone is no longer Windows ownership proof.
+      Object.assign(child, {
+        ownedCompletion: new Promise<'empty'>((resolve) => {
+          child.once('close', () => resolve('empty'))
+        }),
+      })
+    }
     children.push(child)
     return child
   })
@@ -220,7 +228,7 @@ it.each([
     if (platform === 'win32') {
       expect(await h.rows(A)).toEqual([expect.objectContaining({ outcome: 'completed' })])
       expect(await follow()).toEqual({ ok: true })
-      expect(spawn).toHaveBeenCalledTimes(2)
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2))
       expect(spawn.mock.calls[1]?.[1]).toContain(thread)
       complete(children[1]!)
       await vi.waitFor(async () => {

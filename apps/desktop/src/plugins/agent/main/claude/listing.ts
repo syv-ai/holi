@@ -16,6 +16,7 @@
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */
 import { watch, type FSWatcher } from 'node:fs'
+import { posix, win32 } from 'node:path'
 import type { ProviderId } from '../provider'
 
 /** A Claude Code job id: eight hex characters, the name of its `jobs/` dir.
@@ -101,47 +102,93 @@ function isStatus(value: unknown): value is ClaudeStatus {
   return typeof value === 'string' && (STATUSES as readonly string[]).includes(value)
 }
 
-/** The root itself, or somewhere under it: a session may have moved into a
- *  subdirectory, and a row for another tree is never ours to act on. */
-function isUnder(cwd: string, root: string): boolean {
-  return cwd === root || cwd.startsWith(root.endsWith('/') ? root : `${root}/`)
+/** Drive and UNC paths carry their own volume. A bare `\\` is relative to
+ *  the current Windows drive and can't identify a vault. */
+function hasWindowsVolume(value: string): boolean {
+  return win32.isAbsolute(value) && win32.parse(value).root.length > 1
 }
 
-/** One row, or null. Row by row: a shape we do not recognise costs that
- *  session, not every session. */
-function toRow(value: unknown, vaultRoot: string): ClaudeRow | null {
-  if (value === null || typeof value !== 'object') return null
-  const r = value as Record<string, unknown>
-  if (r['kind'] !== 'background') return null
-  if (typeof r['cwd'] !== 'string' || !isUnder(r['cwd'], vaultRoot)) return null
-  if (typeof r['id'] !== 'string' || r['id'] === '') return null
-  const pid = typeof r['pid'] === 'number' && Number.isInteger(r['pid']) ? r['pid'] : undefined
+/** Lexical containment, using the paths' flavor rather than the host OS.
+ *  The result only filters rows; it does not change the vault's identity. */
+function isUnder(cwd: string, root: string): boolean {
+  const windows = hasWindowsVolume(root)
+  if (windows !== hasWindowsVolume(cwd)) return false
+  const path = windows ? win32 : posix
+  if (!path.isAbsolute(root) || !path.isAbsolute(cwd)) return false
+  const relative = path.relative(root, cwd)
+  return !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)
+}
+
+/** Malformed provider output, not a failure to drain the command.
+ *  @public exported for its test */
+export class ListingParseError extends Error {
+  override name = 'ListingParseError'
+}
+
+function toRow(value: unknown, vaultRoot: string, index: number): ClaudeRow | null {
+  const invalid = (field: string): never => {
+    throw new ListingParseError(`Invalid ${field} in Claude session listing row ${index + 1}`)
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return invalid('row')
+  const { kind, cwd, id, pid, status, name, sessionId, waitingFor, state, startedAt } =
+    value as Record<string, unknown>
+  if (
+    pid !== undefined &&
+    (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0 || pid > 0x7fffffff)
+  )
+    return invalid('pid')
+  // Interactive entries aren't supervisor sessions and don't use their schema.
+  if (kind === 'interactive') return null
+  if (kind !== 'background') return invalid('kind')
+  if (typeof cwd !== 'string' || !(posix.isAbsolute(cwd) || win32.isAbsolute(cwd)))
+    return invalid('cwd')
+  // Listing ids need to be safe arguments, but need not match the narrower
+  // --bg receipt or hook syntax.
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)) return invalid('id')
+  if (status !== undefined && !isStatus(status)) return invalid('status')
+  if (name !== undefined && typeof name !== 'string') return invalid('name')
+  if (sessionId !== undefined && typeof sessionId !== 'string') return invalid('sessionId')
+  if (waitingFor !== undefined && typeof waitingFor !== 'string') return invalid('waitingFor')
+  if (state !== undefined && typeof state !== 'string') return invalid('state')
+  if (startedAt !== undefined && (typeof startedAt !== 'number' || !Number.isFinite(startedAt)))
+    return invalid('startedAt')
+  if (!isUnder(cwd, vaultRoot)) return null
   return {
-    id: r['id'],
-    name: typeof r['name'] === 'string' ? r['name'] : '',
-    ...(typeof r['sessionId'] === 'string' ? { sessionId: r['sessionId'] } : {}),
+    id,
+    name: name ?? '',
+    ...(sessionId === undefined ? {} : { sessionId }),
     ...(pid === undefined ? {} : { pid }),
-    ...(isStatus(r['status']) ? { status: r['status'] } : {}),
-    ...(typeof r['waitingFor'] === 'string' ? { waitingFor: r['waitingFor'] } : {}),
-    ...(typeof r['state'] === 'string' ? { state: r['state'] } : {}),
-    ...(typeof r['startedAt'] === 'number' && Number.isFinite(r['startedAt'])
-      ? { startedAt: r['startedAt'] }
-      : {}),
+    ...(status === undefined ? {} : { status }),
+    ...(waitingFor === undefined ? {} : { waitingFor }),
+    ...(state === undefined ? {} : { state }),
+    ...(startedAt === undefined ? {} : { startedAt }),
   }
 }
 
-/** The vault's background sessions out of `claude agents --json`. Every
- *  failure, including a null listing, is an empty answer. */
+/** A verified, complete snapshot of the vault's background sessions. Only
+ *  omission of a PID means past. Unknown fields are ignored, but any malformed
+ *  row makes the entire snapshot unusable, even if other rows are valid.
+ *  @throws {ListingParseError} if there is no usable snapshot. */
 export function parseListing(stdout: string | null, vaultRoot: string): ClaudeRow[] {
-  if (stdout === null) return []
+  if (stdout === null) throw new ListingParseError('Claude session listing is unavailable')
   let parsed: unknown
   try {
     parsed = JSON.parse(stdout)
   } catch {
-    return []
+    throw new ListingParseError('Claude Code did not return JSON for its session listing')
   }
-  if (!Array.isArray(parsed)) return []
-  return parsed.map((entry) => toRow(entry, vaultRoot)).filter((r): r is ClaudeRow => r !== null)
+  if (!Array.isArray(parsed))
+    throw new ListingParseError('Claude Code did not return a session listing array')
+  const rows: ClaudeRow[] = []
+  const seen = new Set<string>()
+  for (const [index, entry] of parsed.entries()) {
+    const row = toRow(entry, vaultRoot, index)
+    if (row === null) continue
+    if (seen.has(row.id)) throw new ListingParseError('Duplicate id in Claude session listing')
+    seen.add(row.id)
+    rows.push(row)
+  }
+  return rows
 }
 
 /** Is its process alive? Only these are in the sidebar; the rest live in the

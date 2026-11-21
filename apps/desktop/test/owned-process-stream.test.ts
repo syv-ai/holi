@@ -42,3 +42,10 @@ describe('owned process completion stream', () => {
     )
   })
 })
+
+it('does not report a clean retained EOF when bytes trail a marker in the same chunk', async () => {
+  const clean = completionStream(Buffer.from('marker'))
+  const result = read(clean as PassThrough)
+  clean.end('outputmarkertrailing')
+  await expect(result).rejects.toThrow('after completion marker')
+})

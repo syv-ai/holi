@@ -458,6 +458,31 @@ describe('killTree', () => {
 })
 
 describe('execProgram', () => {
+  it.runIf(process.platform !== 'win32')(
+    'keeps POSIX execFile nonzero status and both output streams',
+    async () => {
+      const { execProgram } = await import('../src/main/launch')
+      const done = vi.fn()
+      await new Promise<void>((resolve) => {
+        execProgram(
+          process.execPath,
+          ['-e', 'process.stdout.write("out"); process.stderr.write("err"); process.exitCode = 7'],
+          { env: process.env, timeoutMs: 3000, maxBuffer: 4096, encoding: 'utf8' },
+          (err, out, stderr, ownership) => {
+            done(err, out, stderr, ownership)
+            resolve()
+          },
+        )
+      })
+      expect(done).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ code: 7, killed: false }),
+        'out',
+        'err',
+        { kind: 'settled' },
+      )
+    },
+  )
+
   it.runIf(process.platform === 'win32')(
     'reports cold-start timeout using the actual root state',
     async () => {
@@ -495,7 +520,7 @@ describe('execProgram', () => {
         )
       })
       expect(result.err).not.toBeNull()
-      expect(result.err?.code).toBe('ETIMEDOUT')
+      expect(result.err).toMatchObject({ code: 'ETIMEDOUT' })
       expect(metadata?.helperStarted).toBe(true)
       if (metadata?.rootStarted) {
         expect(metadata.rootPid).toBeGreaterThan(1)
@@ -527,7 +552,7 @@ describe('execProgram', () => {
             (err) => resolve({ err }),
           )
         })
-        expect(result.err?.code).toBe('ETIMEDOUT')
+        expect(result.err).toMatchObject({ code: 'ETIMEDOUT' })
         await vi.waitFor(async () =>
           expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
         )
@@ -635,12 +660,7 @@ describe('execProgram', () => {
           pid = Number(await readFile(pidFile, 'utf8'))
           expect(result.err).toBeNull()
           expect(result.out).toBe('backgrounded · 12345678 · test')
-          if (tracing) {
-            expect(result.stderr).toContain('detached stderr payload')
-            expect(result.stderr).toContain('[holi-owned-process] phase=')
-          } else {
-            expect(result.stderr).toBe('detached stderr payload')
-          }
+          expect(result.stderr).toBe('detached stderr payload')
           expect(result.stderr).not.toContain('[holi-complete-')
           expect(pid).toBeGreaterThan(1)
           expect(defaultProbePid(pid, 'win32')).toBe('group-leader')
@@ -756,7 +776,7 @@ describe('execProgram', () => {
         timeout.expire()
         const err = await result
         expect(err).not.toBeNull()
-        expect(err?.code).toBe('ETIMEDOUT')
+        expect(err).toMatchObject({ code: 'ETIMEDOUT' })
         const pid = Number(await readFile(pidFile, 'utf8'))
         expect(defaultProbePid(pid, 'win32')).toBe('gone')
       } finally {
@@ -863,7 +883,7 @@ describe('execProgram', () => {
         timeout.expire()
         const { err, out } = await result
         expect(err).not.toBeNull()
-        expect(err?.code).toBe('ETIMEDOUT')
+        expect(err).toMatchObject({ code: 'ETIMEDOUT' })
         expect(Number(out.trim())).toBe(behind)
         await vi.waitFor(() => expect(defaultProbePid(behind, 'win32')).toBe('gone'), {
           timeout: 10_000,

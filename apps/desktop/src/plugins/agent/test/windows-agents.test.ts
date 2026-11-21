@@ -234,19 +234,16 @@ it.each(['reused PID', 'matching live PID', 'missing receipt', 'unexpected entry
         vault: { remote: 'fixture/windows', root: data },
         scratchRoot,
         spawn,
-        windowsRecovery: recovery,
         onChange: () => {},
       })
       expect(await jobs.start({ provider, name: 'fake', prompt: 'go', allow: [] })).toMatchObject({
-        ok: true,
+        ok: false,
       })
-      child.emit('close', 0, null)
-      await jobs.leave()
-      expect(spawn).toHaveBeenCalledTimes(1)
-      expect(recovery.probePid).toHaveBeenCalledTimes(hasReceipt ? 1 : 0)
-      expect(recovery.stopTree.mock.calls).toEqual(kind === 'matching live PID' ? [[4242]] : [])
+      await expect(jobs.leave()).rejects.toThrow()
+      expect(spawn).not.toHaveBeenCalled()
+      expect(recovery.probePid).not.toHaveBeenCalled()
+      expect(recovery.stopTree).not.toHaveBeenCalled()
       expect(kill).not.toHaveBeenCalled()
-      expect(child.kill).not.toHaveBeenCalled()
       expect(await readFile(join(data, 'note'), 'utf8')).toBe('vault contents')
     } finally {
       Object.defineProperty(process, 'platform', { value: platform })

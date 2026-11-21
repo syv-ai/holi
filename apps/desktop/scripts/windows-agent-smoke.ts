@@ -1,21 +1,28 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { ChildProcess, execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { release } from 'node:os'
 import { join, relative } from 'node:path'
+import { finished } from 'node:stream/promises'
 import { app, BrowserWindow } from 'electron'
 import { launchPlan, spawnProgram, execProgram } from '../src/main/launch'
 import { resolveBin } from '../src/main/bin'
 import { spawnOwnedProgram } from '../src/main/owned-process'
+import {
+  joinOwnedProgram,
+  UnconfirmedOwnedProgramError,
+  type ManagedOwnedChild,
+} from '../src/main/owned-program-lifetime'
+import { killChildTree } from '../src/main/process-group'
 import { defaultSpawnPty } from '../src/main/terminal/pty'
 import { createTerminals } from '../src/main/terminal/terminals'
 import { AgentRuntime } from '../src/plugins/agent/main/host/pty'
 
 const root = process.env.HOLI_QA372_ROOT!
-const evidence = process.env.HOLI_QA372_EVIDENCE!
 const desktop = process.env.HOLI_QA372_DESKTOP!
 const nativeNode = process.env.HOLI_QA372_NODE!
-assert(root && evidence && desktop && nativeNode)
+assert(root && desktop && nativeNode)
 const profile = join(root, 'profile')
 const vault = join(root, 'vault')
 for (const dir of [profile, vault, join(root, 'session'), join(root, 'app-data')]) {
@@ -28,11 +35,12 @@ app.setPath('userData', profile)
 app.setPath('sessionData', join(root, 'session'))
 assert.equal(app.getPath('userData'), profile)
 assert(!relative(root, vault).startsWith('..'))
-execFileSync('git', ['init', '--quiet', vault])
+execFileSync('git', ['init', '--quiet', vault], { timeout: 10_000 })
 
 const checks: string[] = []
-const active: AgentRuntime[] = []
-let terminals: ReturnType<typeof createTerminals> | undefined
+const cleanup: (() => Promise<unknown>)[] = []
+const pendingPids = new Set<number[]>()
+const phaseMs = 8_000
 let output = ''
 let window: BrowserWindow | undefined
 const args = [
@@ -57,25 +65,145 @@ const until = async (ready: () => boolean | Promise<boolean>) => {
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
 }
+// Read-only smoke regression probe for fixture-reported PIDs. It is not a
+// creation-identity witness, and a PID from this file is never used to signal.
 const alive = (pid: number) => {
   try {
     process.kill(pid, 0)
     return true
-  } catch {
-    return false
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    throw error
   }
+}
+
+async function bounded<T>(label: string, action: () => T | Promise<T>, ms = phaseMs) {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      Promise.resolve().then(action),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out (${ms} ms)`)), ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function watchExit(child: ChildProcess) {
+  let exited = child.exitCode != null || child.signalCode != null
+  const done = new Promise<void>((resolve) => {
+    if (exited) return resolve()
+    const settled = () => {
+      exited = true
+      resolve()
+    }
+    child.once('exit', settled)
+    // A synthetic not-started child has no OS process and emits close, not exit.
+    // Never substitute close for physical exit of a started helper.
+    child.once('close', () => {
+      if (child.pid === undefined) settled()
+    })
+  })
+  return { done, live: () => !exited && child.pid !== undefined }
+}
+
+function trackManaged(child: ManagedOwnedChild) {
+  const platform = process.platform
+  // Observe from admission, before readiness, stdin writes, or a cleanup request.
+  const joined = joinOwnedProgram(child, platform)
+  const exit = watchExit(child)
+  const outputs = [child.stdout, child.stderr].flatMap((stream, index) => {
+    if (!stream) return []
+    const done = finished(stream, { readable: true, writable: false, cleanup: true })
+    void done.catch(() => undefined)
+    return [{ stream, done, name: index === 0 ? 'stdout' : 'stderr' }]
+  })
+  let stopped: Promise<void> | undefined
+  async function stopAndJoin() {
+    const failures = new Set<unknown>()
+    const attempt = async (label: string, action: () => unknown | Promise<unknown>) => {
+      try {
+        await bounded(label, action)
+      } catch (error) {
+        failures.add(error)
+      }
+    }
+    try {
+      await attempt('managed Stop', () => {
+        if (platform === 'win32') {
+          if (exit.live()) child.kill()
+        } else if (exit.live())
+          assert(killChildTree(child, 'SIGKILL', platform), 'group Stop failed')
+      })
+      await Promise.all([
+        attempt('managed ownership receipt', async () => {
+          if (platform !== 'win32') return
+          assert(child.ownedCompletion, 'Windows managed child must expose ownership completion')
+          try {
+            assert.equal(await child.ownedCompletion, 'empty', 'managed launch must drain')
+          } catch (error) {
+            failures.add(error)
+            if (error instanceof UnconfirmedOwnedProgramError && error.lease) {
+              const { lease } = error
+              await attempt('managed native lease revoke', () => lease.revoke())
+            }
+          }
+        }),
+        attempt('managed stable child exit', () => exit.done),
+        ...outputs.map(({ name, done }) => attempt(`managed ${name} settlement`, () => done)),
+        attempt('managed joined result', async () => {
+          const result = await joined
+          if (result.error) throw result.error
+          if (platform === 'win32') assert.equal(result.ownership, 'empty')
+        }),
+      ])
+      if (failures.size) {
+        // Fallback is the exact ChildProcess handle only, never a looked-up root PID.
+        await attempt('managed fallback exit', async () => {
+          if (exit.live()) ChildProcess.prototype.kill.call(child, 'SIGKILL')
+          await exit.done
+        })
+      }
+    } finally {
+      child.stdin?.destroy()
+      for (const { stream } of outputs) stream.destroy()
+    }
+    if (failures.size) throw new AggregateError([...failures], 'managed fixture teardown failed')
+  }
+  const stop = () => (stopped ??= stopAndJoin())
+  cleanup.push(stop)
+  return stop
 }
 const pidFile = join(vault, 'pids.json')
 const argvFile = join(vault, 'argv.json')
-const readPids = async () => JSON.parse(await readFile(pidFile, 'utf8')) as number[]
+const readPids = async () => {
+  const pids = JSON.parse(await readFile(pidFile, 'utf8')) as number[]
+  assert(
+    Array.isArray(pids) &&
+      pids.length === 2 &&
+      pids.every((pid) => Number.isInteger(pid) && pid > 1),
+  )
+  pendingPids.add(pids)
+  return pids
+}
+async function checkPidsGone(pids: number[]) {
+  await bounded('fixture PID liveness', () => until(() => pids.every((pid) => !alive(pid))), 16_000)
+  pendingPids.delete(pids)
+}
 
 async function run() {
-  await app.whenReady()
+  await bounded('Electron readiness', () => app.whenReady(), 15_000)
+  assert.equal(app.isPackaged, false, 'This smoke runs dependency Electron, not the unpacked app')
   window = new BrowserWindow({
     show: false,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   })
-  await window.loadURL('data:text/html,<h1>Holi native agent launch checks</h1>')
+  const gui = window
+  await bounded('dependency Electron window load', () =>
+    gui.loadURL('data:text/html,<h1>Holi native agent launch checks</h1>'),
+  )
   const bin = join(root, 'Ada Lovelace ! percent %', 'bin')
   const packageDir = join(bin, 'node_modules', 'fixture')
   await mkdir(packageDir, { recursive: true })
@@ -154,10 +282,21 @@ if(args[0]==='--pty') {
   child.stderr!.on('data', (d) => {
     stderr += d
   })
-  const code = await new Promise((resolve, reject) => {
+  const childExit = watchExit(child)
+  const childClose = new Promise<number | null>((resolve, reject) => {
     child.once('error', reject)
     child.once('close', resolve)
   })
+  cleanup.push(async () => {
+    if (childExit.live()) child.kill('SIGKILL')
+    try {
+      await bounded('direct argv fixture exit', () => childExit.done)
+    } finally {
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+    }
+  })
+  const code = await bounded('direct argv fixture completion', () => childClose)
   assert.equal(code, 0, stderr)
   assert.deepEqual(JSON.parse(stdout), args)
   assert.equal(env.ELECTRON_RUN_AS_NODE, undefined)
@@ -167,14 +306,20 @@ if(args[0]==='--pty') {
       ? 'GUI Electron parent selects bundled genuine Node with exact argv and no Electron runtime flag'
       : 'GUI Electron parent launches npm JS with exact argv and child-only runtime flag',
   )
-  const result = await new Promise<string>((resolve, reject) =>
-    execProgram(
-      program,
-      programArgs,
-      { cwd: vault, env: programEnv, timeoutMs: 10_000, maxBuffer: 100_000, encoding: 'utf8' },
-      (err, out) => (err ? reject(err) : resolve(out)),
-      execution,
-    ),
+  const result = await bounded(
+    'execProgram callback',
+    () =>
+      new Promise<string>((resolve, reject) => {
+        const executed: ManagedOwnedChild = execProgram(
+          program,
+          programArgs,
+          { cwd: vault, env: programEnv, timeoutMs: 10_000, maxBuffer: 100_000, encoding: 'utf8' },
+          (err, out) => (err ? reject(err) : resolve(out)),
+          execution,
+        )
+        if (process.platform === 'win32' && executed.ownedCompletion) trackManaged(executed)
+      }),
+    30_000,
   )
   assert.deepEqual(JSON.parse(result), args)
   checks.push('execProgram preserves Unicode, empty, hostile, multiline and 12KiB arguments')
@@ -190,7 +335,7 @@ if(args[0]==='--pty') {
           })
         }
   const runtime = new AgentRuntime({ spawnPty: ptySpawn })
-  active.push(runtime)
+  cleanup.push(() => bounded('AgentRuntime Stop', () => runtime.kill()))
   runtime.onData((data) => {
     output += data
   })
@@ -207,14 +352,14 @@ if(args[0]==='--pty') {
     runtime.write('size\r')
     return false
   })
-  await runtime.kill()
-  await until(() => pids.every((pid) => !alive(pid)))
+  await bounded('AgentRuntime Stop', () => runtime.kill())
+  await checkPidsGone(pids)
   checks.push(
     `real ${process.platform === 'win32' ? 'ConPTY' : 'PTY'} exact argv, stdin/output, resize and AgentRuntime Stop terminate root and descendant`,
   )
 
   if (process.platform === 'win32') {
-    const fallbackEnv = {
+    const fallbackEnv: Record<string, string> = {
       ...env,
       ProgramFiles: root,
       USERPROFILE: root,
@@ -231,11 +376,15 @@ if(args[0]==='--pty') {
       { bin: esmShim, args: ['--pty', ...args], name: 'bundled Node ESM with top-level await' },
       ...(packagedNode
         ? [
-            { bin: packagedNode, args: [script, '--pty', ...args], name: 'packaged Node CommonJS' },
+            {
+              bin: packagedNode,
+              args: [script, '--pty', ...args],
+              name: 'unpacked-app Node CommonJS under dependency Electron',
+            },
             {
               bin: packagedNode,
               args: [esmScript, '--pty', ...args],
-              name: 'packaged Node ESM with top-level await',
+              name: 'unpacked-app Node ESM with top-level await under dependency Electron',
             },
           ]
         : []),
@@ -248,7 +397,7 @@ if(args[0]==='--pty') {
         assert.equal(fallbackPlan.env?.ELECTRON_RUN_AS_NODE, undefined)
       }
       const fallbackRuntime = new AgentRuntime()
-      active.push(fallbackRuntime)
+      cleanup.push(() => bounded('fallback AgentRuntime Stop', () => fallbackRuntime.kill()))
       let fallbackOutput = ''
       fallbackRuntime.onData((data) => {
         fallbackOutput += data
@@ -274,8 +423,8 @@ if(args[0]==='--pty') {
         fallbackRuntime.write('size\r')
         return false
       })
-      await fallbackRuntime.kill()
-      await until(() => fallbackPids.every((pid) => !alive(pid)))
+      await bounded('fallback AgentRuntime Stop', () => fallbackRuntime.kill())
+      await checkPidsGone(fallbackPids)
       checks.push(
         `${entryName} preserves argv, entry semantics and inherited stdin, responds to input, resizes and stops its full ConPTY tree`,
       )
@@ -287,6 +436,7 @@ if(args[0]==='--pty') {
     env: { ...env, ...plan.env },
     stdio: 'pipe',
   })
+  const stopManaged = trackManaged(managed)
   let managedOutput = ''
   managed.stdout!.on('data', (d) => {
     managedOutput += d
@@ -294,22 +444,16 @@ if(args[0]==='--pty') {
   managed.stderr!.on('data', (d) => {
     output += d
   })
-  const managedDone = new Promise((resolve, reject) => {
-    managed.once('error', reject)
-    managed.once('close', resolve)
-  })
   managed.stdin!.write('ping\n')
   await until(() => managedOutput.includes('READY'))
+  const managedPids = await readPids()
   await until(() => managedOutput.includes('INPUT:ping'))
   assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')), { input: false, output: false })
-  const managedPids = await readPids()
-  if (process.platform === 'win32') managed.kill()
-  else process.kill(-managed.pid!, 'SIGKILL')
-  await managedDone
-  await until(() => managedPids.every((pid) => !alive(pid)))
-  checks.push('managed process ownership stops its real descendant before completion')
+  await stopManaged()
+  await checkPidsGone(managedPids)
+  checks.push('managed Stop, ownership join, output and exit, and fixture PID liveness regression')
 
-  terminals = createTerminals({
+  const panel = createTerminals({
     send() {},
     shell: () => process.execPath,
     baseEnv: () => env,
@@ -318,50 +462,67 @@ if(args[0]==='--pty') {
     processCwd: async () => null,
     spawnPty: (_file, _args, opts) => ptySpawn(shim, ['--pty', ...args], opts),
   })
-  const opened = terminals.create({ remote: 'qa/disposable', root: vault, cols: 100, rows: 30 })
+  cleanup.push(() => bounded('panel terminal cleanup', () => panel.closeAll()))
+  const opened = panel.create({ remote: 'qa/disposable', root: vault, cols: 100, rows: 30 })
   assert(opened.ok)
-  await until(() => terminals!.replay('qa/disposable', opened.terminal.id).includes('READY'))
+  await until(() => panel.replay('qa/disposable', opened.terminal.id).includes('READY'))
   const leavePids = await readPids()
-  await terminals.closeRemote('qa/disposable')
-  await until(() => leavePids.every((pid) => !alive(pid)))
+  await bounded('vault leave terminal cleanup', () => panel.closeRemote('qa/disposable'))
+  await checkPidsGone(leavePids)
   checks.push('vault leave closes real panel terminal and descendant')
-  const quitting = terminals.create({ remote: 'qa/disposable', root: vault, cols: 100, rows: 30 })
+  const quitting = panel.create({ remote: 'qa/disposable', root: vault, cols: 100, rows: 30 })
   assert(quitting.ok)
-  await until(() => terminals!.replay('qa/disposable', quitting.terminal.id).includes('READY'))
+  await until(() => panel.replay('qa/disposable', quitting.terminal.id).includes('READY'))
   const quitPids = await readPids()
-  app.once('before-quit', (event) => {
-    event.preventDefault()
-    void (async () => {
-      await terminals!.closeAll()
-      await until(() => quitPids.every((pid) => !alive(pid)))
-      checks.push('application quit closes real terminal tree')
-      await writeFile(
-        join(evidence, 'native-electron-results.json'),
-        JSON.stringify(
-          { ok: true, platform: process.platform, electron: process.versions.electron, checks },
-          null,
-          2,
-        ),
-      )
-      console.log(JSON.stringify({ ok: true, checks }))
-      app.exit(0)
-    })().catch(fail)
+  const beforeQuit = new Promise<void>((resolve) => {
+    app.once('before-quit', (event) => {
+      event.preventDefault()
+      resolve()
+    })
   })
   app.quit()
+  await bounded('application before-quit', () => beforeQuit)
+  await bounded('application quit terminal cleanup', () => panel.closeAll())
+  await checkPidsGone(quitPids)
+  checks.push('application quit closes real terminal tree')
 }
 
-async function fail(error: unknown) {
-  console.error(error)
-  await Promise.allSettled(active.map((runtime) => runtime.kill()))
-  await terminals?.closeAll()
-  await writeFile(
-    join(evidence, 'native-electron-results.json'),
-    JSON.stringify(
-      { ok: false, checks, error: String(error), output: output.slice(-4000) },
-      null,
-      2,
-    ),
+async function main() {
+  const failures = new Set<unknown>()
+  try {
+    await run()
+  } catch (error) {
+    failures.add(error)
+  } finally {
+    const results = await Promise.allSettled(cleanup.map((stop) => Promise.resolve().then(stop)))
+    // Do not infer cleanup from the receipt or the PTY adapter alone. Only probe
+    // the known fixture PIDs not already observed gone, and never signal them.
+    const probes = await Promise.allSettled([...pendingPids].map(checkPidsGone))
+    for (const result of [...results, ...probes])
+      if (result.status === 'rejected') failures.add(result.reason)
+  }
+  try {
+    window?.destroy()
+  } catch (error) {
+    failures.add(error)
+  }
+  if (failures.size) throw new AggregateError([...failures], 'Dependency Electron smoke failed')
+  // Closing the last window can queue an implicit quit. Seal the report without yielding.
+  writeFileSync(
+    join(root, 'smoke-result.json'),
+    JSON.stringify({
+      ok: true,
+      runtime: 'dependency-electron',
+      platform: process.platform,
+      platformVersion: release(),
+      electron: process.versions.electron,
+      checks,
+    }),
+    { flag: 'wx' },
   )
-  app.exit(1)
+  app.exit(0)
 }
-void run().catch(fail)
+void main().catch((error) => {
+  console.error(error)
+  app.exit(1)
+})

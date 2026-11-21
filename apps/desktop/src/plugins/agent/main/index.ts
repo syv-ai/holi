@@ -54,6 +54,7 @@ import { watchNeedsYou } from './inbox/needs-you'
 import { INBOX_FILE, parseInbox } from './inbox/rules'
 import { sweepAgentMemory, SWEEP_EVERY_MS } from './memory/sweep'
 import type { SessionSummary } from './claude/listing'
+import { createAgentProbeOwner } from './probe-owner'
 import { hasBackground } from './provider'
 import { versionCapabilities } from './version'
 
@@ -132,7 +133,9 @@ export const agentMain: MainPlugin = {
         return Promise.reject(new Error(`agent activation for ${ctx.remote} was cancelled`))
       return trackOwned(work())
     }
+    const probes = createAgentProbeOwner(ctx.activationSignal)
     const activationOwners: Array<() => unknown | Promise<unknown>> = [
+      probes.stop,
       () => harnesses.dispose(),
       () => drainOwned(),
     ]
@@ -351,11 +354,12 @@ export const agentMain: MainPlugin = {
         ...inboxCapabilities({ inbox, liveRemote, trackMutation }),
         ...harnessCapabilities({
           registry: harnesses,
+          probes,
           file: harnessFile,
           root: () => ctx.root,
           changed: () => ctx.emit(ctx.remote, 'providers', null),
         }),
-        ...versionCapabilities({ holi: app.getVersion() }),
+        ...versionCapabilities({ holi: app.getVersion(), probes }),
       })
       const unwatchNeedsYou = watchNeedsYou({
         sessions: started,
@@ -520,6 +524,7 @@ export const agentMain: MainPlugin = {
         // sessions' leave ends.
         const failures: unknown[] = []
         for (const cleanup of [
+          probes.stop,
           stopNeedsYou,
           () => sweeping,
           // Invalidation already revoked native PTY admission and started drain.

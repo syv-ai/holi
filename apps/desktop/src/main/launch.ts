@@ -22,12 +22,18 @@ import {
 } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { readFileSync, statSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { win32 } from 'node:path'
 import { resolveBin, type Platform } from './bin'
-import { killTree } from './process-group'
-import { spawnOwnedLaunch } from './owned-process-launch'
+import { ownedLaunchControl, spawnOwnedLaunch } from './owned-process-launch'
+import type { PrivateCompletion } from './owned-process-completion'
+import {
+  observeWindowsOwnedProgram,
+  OwnedProgramResourceCleanupError,
+  UnconfirmedOwnedProgramError,
+  type RetainedExecMetadata,
+} from './owned-program-lifetime'
+import { resolveBundledWindowsNode } from './windows-node-runtime'
 
 /** What to hand `spawn`, `execFile` or node-pty. */
 export interface Launch {
@@ -98,20 +104,6 @@ export interface LaunchOptions {
 
 /** A bare name: no folder in it, so only the `PATH` can say where it is. */
 const isBare = (name: string): boolean => !/[\\/]/.test(name)
-
-/** Resolve the optional runtime without making it a requirement on other OSes. */
-function resolveBundledWindowsNode(): string | null {
-  try {
-    const moduleRequire = typeof require === 'function' ? require : createRequire(import.meta.url)
-    const file = moduleRequire.resolve('node-win-x64/bin/node.exe')
-    return file.replace(
-      /(.*[\\/])resources([\\/])app\.asar([\\/])/i,
-      '$1resources$2app.asar.unpacked$3',
-    )
-  } catch {
-    return null
-  }
-}
 
 /**
  * What to run for `file` and `args`. Windows first resolves bare names and
@@ -269,11 +261,10 @@ function failedChild(failure: unknown): ChildProcess {
 }
 
 /**
- * `execFile` through `launchPlan`. On Windows its own timeout would end only
- * the root, leaving descendants without a live root for `taskkill /T` to find.
- * Holi's timer stops the tree before the root exits, for executables and batch
- * launchers alike. Successful background launches keep their descendants.
- * POSIX keeps `execFile`'s timeout unchanged.
+ * On Windows, join command status and actual output settlement with authenticated
+ * native proof. Proof failure reports immediately without relinquishing cleanup.
+ * Retained EMPTY also joins resource cleanup; HANDOFF carries a revocable lease
+ * until its next owner commits.
  */
 export function execProgram(
   file: string,
@@ -287,7 +278,12 @@ export function execProgram(
     /** Only a successful Claude `--bg` launch may detach its descendants. */
     retainDescendantsOnSuccess?: boolean
   },
-  done: (err: ExecFileException | null, stdout: string, stderr: string) => void,
+  done: (
+    err: ExecFileException | null,
+    stdout: string,
+    stderr: string,
+    ownership?: RetainedExecMetadata,
+  ) => void,
   launch: LaunchOptions = {},
 ): ChildProcess {
   let plan: Launch
@@ -299,206 +295,204 @@ export function execProgram(
     })
   } catch (failure) {
     const error = failure as ExecFileException
-    process.nextTick(() => done(error, '', ''))
+    process.nextTick(() => done(error, '', '', { kind: 'settled' }))
     return new ChildProcess()
   }
-  const ownTimeout = (launch.platform ?? process.platform) === 'win32'
-  if (ownTimeout) {
-    const child = spawnOwnedLaunch(
-      plan,
-      {
-        cwd: options.cwd,
-        env: plan.env ? { ...options.env, ...plan.env } : options.env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-        ...(plan.verbatim ? { windowsVerbatimArguments: true } : {}),
-      },
-      process.pid,
-      options.retainDescendantsOnSuccess ?? false,
-    )
-    let stdout = ''
-    let stderr = ''
-    let failure: ExecFileException | null = null
-    let completed = false
-    let committedSuccess = false
-    let stdoutEnded = false
-    let stderrEnded = false
-    const traceEnabled = Object.entries(options.env).some(
-      ([key, value]) => key.toUpperCase() === 'HOLI_OWNED_PROCESS_TRACE' && value === '1',
-    )
-    let traceBuffer = ''
-    let trace: { phase: string; helperPid: number | null; rootPid: number | null; state: string } =
-      {
-        phase: 'none',
-        helperPid: null,
-        rootPid: null,
-        state: '-',
-      }
-    const collectTrace = (chunk: Buffer | string) => {
-      if (!traceEnabled) return
-      traceBuffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk
-      const lines = traceBuffer.split(/\r?\n/)
-      traceBuffer = (lines.pop() ?? '').slice(-512)
-      for (const line of lines) {
-        const match =
-          /^\[holi-owned-process\] phase=([\w-]+) helperPid=(\d+) rootPid=(-?\d+) state=([\w=.-]+)$/.exec(
-            line,
-          )
-        if (!match) continue
-        trace = {
-          phase: match[1]!,
-          helperPid: Number(match[2]),
-          rootPid: Number(match[3]) > 0 ? Number(match[3]) : null,
-          state: match[4]!,
-        }
-      }
+  if ((launch.platform ?? process.platform) !== 'win32') {
+    try {
+      return execFile(
+        plan.file,
+        plan.args,
+        {
+          cwd: options.cwd,
+          env: plan.env ? { ...options.env, ...plan.env } : options.env,
+          maxBuffer: options.maxBuffer,
+          encoding: options.encoding,
+          windowsHide: true,
+          timeout: options.timeoutMs,
+        },
+        (err, stdout, stderr) => done(err, stdout, stderr, { kind: 'settled' }),
+      )
+    } catch (error) {
+      process.nextTick(() => done(error as ExecFileException, '', '', { kind: 'settled' }))
+      return new ChildProcess()
     }
-    const timeoutMetadata = () => ({
-      helperLastPhase: trace.phase,
-      helperStarted: child.pid !== undefined,
-      rootStarted: trace.rootPid !== null && trace.rootPid > 0,
-      helperPid: trace.helperPid ?? child.pid ?? null,
-      rootPid: trace.rootPid,
-      rootState: trace.state,
-    })
-    const ownedControl = child as ChildProcess & {
-      ownedSuccessReady?: () => boolean
-      acknowledgeOwnedSuccess?: () => boolean
-    }
-    const acknowledge = ownedControl.acknowledgeOwnedSuccess
-    const timer = setTimeout(() => {
-      if (committedSuccess) return
-      failure = Object.assign(new Error(`timed out after ${options.timeoutMs} ms`), {
-        killed: true,
+  }
+  const retained = options.retainDescendantsOnSuccess === true
+  const child = spawnOwnedLaunch(
+    plan,
+    { cwd: options.cwd, env: options.env, stdio: ['pipe', 'pipe', 'pipe'] },
+    process.pid,
+    retained,
+  )
+  joinWindowsExec(child, options, retained, done)
+  child.stdin?.end()
+  return child
+}
+
+function joinWindowsExec(
+  child: ChildProcess & { ownedCompletion?: Promise<PrivateCompletion> },
+  options: { timeoutMs: number; encoding: BufferEncoding; maxBuffer: number },
+  retained: boolean,
+  done: (
+    err: ExecFileException | null,
+    out: string,
+    errOut: string,
+    ownership: RetainedExecMetadata,
+  ) => void,
+) {
+  const control = ownedLaunchControl(child)
+  const outputs = [
+    { stream: child.stdout, chunks: [] as string[] },
+    { stream: child.stderr, chunks: [] as string[] },
+  ]
+  const detach: (() => void)[] = []
+  let size = 0
+  let overflow = false
+  let acknowledged = false
+  let reported = false
+  const timer = setTimeout(() => {
+    observer.record(
+      Object.assign(new Error(`timed out after ${options.timeoutMs} ms`), {
         code: 'ETIMEDOUT',
-        ...(traceEnabled ? timeoutMetadata() : {}),
-      }) as ExecFileException
-      child.kill('SIGKILL')
-    }, options.timeoutMs)
-    const append = (target: 'stdout' | 'stderr', chunk: Buffer | string) => {
-      if (failure) return
-      const text = Buffer.isBuffer(chunk) ? chunk.toString(options.encoding) : chunk
-      if (target === 'stdout') stdout += text
-      else stderr += text
-      if (
-        !failure &&
-        Buffer.byteLength(stdout, options.encoding) + Buffer.byteLength(stderr, options.encoding) >
-          options.maxBuffer
-      ) {
-        failure = Object.assign(new Error('maxBuffer exceeded'), {
-          code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
-        }) as ExecFileException
-        child.kill('SIGKILL')
-      }
+        killed: true,
+        ...control?.diagnostics(),
+      }),
+    )
+    stop()
+  }, options.timeoutMs)
+
+  function complete(error: Error | null, ownership: RetainedExecMetadata) {
+    if (reported) return
+    reported = true
+    clearTimeout(timer)
+    for (const remove of detach) remove()
+    if (control) {
+      control.onReady = undefined
+      control.onOutputFailure = undefined
     }
-    child.stdout?.setEncoding(options.encoding)
-    child.stderr?.setEncoding(options.encoding)
-    child.stdout?.on('data', (chunk: Buffer | string) => append('stdout', chunk))
-    child.stderr?.on('data', (chunk: Buffer | string) => {
-      collectTrace(chunk)
-      append('stderr', chunk)
-    })
-    let readinessPoll: NodeJS.Timeout | undefined
-    const maybeAcknowledge = () => {
-      if (
-        committedSuccess ||
-        failure ||
-        !stdoutEnded ||
-        !stderrEnded ||
-        !acknowledge ||
-        !ownedControl.ownedSuccessReady?.()
-      ) {
+    done(
+      error as ExecFileException | null,
+      outputs[0]!.chunks.join(''),
+      outputs[1]!.chunks.join(''),
+      ownership,
+    )
+  }
+  function unconfirmed(failure: UnconfirmedOwnedProgramError) {
+    const { cause } = failure
+    const lease = failure.lease ?? control?.lease ?? { revoke: () => Promise.reject(cause) }
+    complete(failure.commandError ?? failure, { kind: 'unconfirmed', cause, lease })
+  }
+  function stop() {
+    if (reported) return
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      // A stop request cannot substitute for proof, or replace the first error.
+    }
+  }
+  function acknowledge() {
+    if (!reported && !acknowledged) acknowledged = control?.acknowledge() === true
+  }
+  const handoff =
+    retained && control
+      ? {
+          onOutputEnd: acknowledge,
+          acknowledged: () => acknowledged,
+          complete(error: Error | null) {
+            if (!error && !control.stopped) {
+              complete(null, { kind: 'settled', lease: control.lease })
+              return
+            }
+            const first = error ?? new Error('owned handoff was stopped before commit')
+            void control.lease.revoke().then(
+              () => complete(first, { kind: 'settled' }),
+              (failure: unknown) =>
+                unconfirmed(
+                  failure instanceof UnconfirmedOwnedProgramError
+                    ? new UnconfirmedOwnedProgramError(
+                        failure.cause,
+                        failure.lease ?? control.lease,
+                        first,
+                      )
+                    : new UnconfirmedOwnedProgramError(failure, control.lease, first),
+                ),
+            )
+          },
+        }
+      : undefined
+  const observer = observeWindowsOwnedProgram(
+    child,
+    ({ error, ownership }) => {
+      if (!retained || ownership !== 'empty') {
+        complete(error, { kind: 'settled' })
         return
       }
-      try {
-        if (!acknowledge()) throw new Error('managed launch success acknowledgement was rejected')
-        committedSuccess = true
-        clearTimeout(timer)
-        if (readinessPoll) clearInterval(readinessPoll)
-      } catch (error) {
-        failure = error as ExecFileException
-        child.kill('SIGKILL')
-      }
-    }
-    child.stdout?.once('end', () => {
-      stdoutEnded = true
-      maybeAcknowledge()
-    })
-    child.stderr?.once('end', () => {
-      stderrEnded = true
-      maybeAcknowledge()
-    })
-    if (acknowledge) readinessPoll = setInterval(maybeAcknowledge, 10)
-    const stopOnStreamError = (error: Error) => {
-      failure ??= error as ExecFileException
-      child.kill('SIGKILL')
-    }
-    child.stdout?.on('error', stopOnStreamError)
-    child.stderr?.on('error', stopOnStreamError)
-    child.stdin?.on('error', (error) => {
-      failure ??= error as ExecFileException
-      child.kill('SIGKILL')
-    })
-    child.on('error', (error) => {
-      failure ??= error as ExecFileException
-    })
-    child.on('close', (code, signal) => {
-      if (completed) return
-      completed = true
+      // Status, output and Job zero are already known. The command deadline
+      // cannot replace that result while the broker finishes closing resources.
       clearTimeout(timer)
-      if (readinessPoll) clearInterval(readinessPoll)
-      if (!failure && (code !== 0 || signal !== null)) {
-        failure = Object.assign(new Error(`command failed with ${signal ?? code}`), {
-          code,
-          signal,
-          killed: signal !== null,
-        }) as ExecFileException
+      const cleanupFailed = (cause: unknown) => {
+        const lease = control?.lease ?? { revoke: () => Promise.reject(cause) }
+        complete(error ?? new OwnedProgramResourceCleanupError(cause, lease), {
+          kind: 'unconfirmed',
+          ownership,
+          cause,
+          lease,
+        })
       }
-      done(failure, stdout, stderr)
-    })
-    child.stdin?.end()
-    return child
-  }
-  let timedOut = false
-  const child = execFile(
-    plan.file,
-    plan.args,
-    {
-      cwd: options.cwd,
-      env: plan.env ? { ...options.env, ...plan.env } : options.env,
-      maxBuffer: options.maxBuffer,
-      encoding: options.encoding,
-      windowsHide: true,
-      ...(plan.verbatim ? { windowsVerbatimArguments: true } : {}),
-      ...(!ownTimeout ? { timeout: options.timeoutMs } : {}),
+      const cleanup = control?.resourceCleanup
+      if (!cleanup) {
+        cleanupFailed(new Error('Retained EMPTY has no resource cleanup receipt'))
+        return
+      }
+      void cleanup.then(() => complete(error, { kind: 'settled' }), cleanupFailed)
     },
-    (err, stdout, stderr) => {
-      if (timer !== undefined) clearTimeout(timer)
-      done(
-        timedOut
-          ? (Object.assign(new Error(`timed out after ${options.timeoutMs} ms`), {
-              killed: true,
-            }) as ExecFileException)
-          : err,
-        stdout,
-        stderr,
-      )
+    unconfirmed,
+    {
+      statusError: ({ code, signal }) =>
+        signal !== null || (code !== null && code !== 0)
+          ? Object.assign(new Error(`command failed with ${signal ?? code}`), {
+              code,
+              signal,
+              killed: signal !== null,
+            })
+          : null,
+      requestStop: stop,
+      lease: control?.lease,
+      handoff,
     },
   )
-  const timer =
-    ownTimeout && child.pid !== undefined
-      ? setTimeout(() => {
-          timedOut = true
-          // `execFile`'s own timeout also closes the pipes, which is what makes
-          // its callback fire when a descendant (a `--bg` supervisor) still
-          // holds them: so they are closed here too.
-          child.stdout?.destroy()
-          child.stderr?.destroy()
-          // A root that has exited may have a pid that is another program's
-          // now: its tree is not stopped by pid.
-          if (child.exitCode !== null || child.signalCode !== null) return
-          killTree(child.pid!, 'SIGKILL', 'win32')
-        }, options.timeoutMs)
-      : undefined
-  return child
+  const onOutputFailure = (error: Error) => {
+    observer.record(error)
+    stop()
+  }
+  const onReady = () => {
+    if (observer.canAcknowledge()) acknowledge()
+  }
+  if (control) {
+    control.onReady = handoff ? onReady : undefined
+    control.onOutputFailure = onOutputFailure
+  }
+  for (const { stream, chunks } of outputs) {
+    if (!stream) continue
+    stream.setEncoding(options.encoding)
+    const collect = (chunk: string) => {
+      if (overflow || !chunk.length) return
+      // Exit and command errors do not end a pipe. Keep the buffered tail, up
+      // to the same limit, while the join waits for actual output settlement.
+      size += Math.max(1, Buffer.byteLength(chunk, options.encoding))
+      if (size <= options.maxBuffer) chunks.push(chunk)
+      else {
+        overflow = true
+        onOutputFailure(
+          Object.assign(new Error('maxBuffer exceeded'), {
+            code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+          }),
+        )
+      }
+    }
+    stream.on('data', collect)
+    detach.push(() => stream.off('data', collect))
+  }
+  if (handoff) onReady()
 }

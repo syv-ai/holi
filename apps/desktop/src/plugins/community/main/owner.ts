@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { CapabilityError, UnconfirmedOwnedProgramError } from '../../../main/plugin-api'
 import { createConsentStore } from './consent'
 import { createSupervisor, type ServerState, type Supervisor } from './supervisor'
 import { createInstallStore, type InstallStore } from './store'
@@ -26,16 +27,83 @@ export interface CommunityOwner {
     root: string,
     remote: string,
     adapters: {
+      activationSignal?: AbortSignal
       emit(remote: string, name: string, payload: unknown): void
       frameOrigin(origin: string): () => void
+      forgetCheck?(id: string): Promise<void>
     },
   ): CommunityAttachment
+  forgetChecks(id: string): Promise<void>
+  notifyMutation(): Promise<void>
   /** Serialize resource reads with machine mutations without notifying attachments. */
   admit<T>(work: () => Promise<T>): Promise<T>
   mutate<T>(work: () => Promise<T>): Promise<T>
 }
 
 const owners = new Map<string, CommunityOwner>()
+
+// Setup/check failures belong to the machine install, not to whichever Vault
+// ran the command. Call under the owner's admission queue, before mutating the
+// install or launching another command against it.
+const uncertainInstalls = new WeakMap<InstallStore, Map<string, UnconfirmedOwnedProgramError>>()
+const uncertainSetups = new WeakMap<AbortSignal, UnconfirmedOwnedProgramError>()
+
+export function installProgramFailure(store: InstallStore, id: string) {
+  return uncertainInstalls.get(store)?.get(id)
+}
+
+export function assertInstallProgramDrained(store: InstallStore, id: string): void {
+  const failure = installProgramFailure(store, id)
+  if (failure) throw failure
+}
+
+const installReservations = new WeakMap<InstallStore, Map<string, object>>()
+
+export function installIsReserved(store: InstallStore, id: string): boolean {
+  return installReservations.get(store)?.has(id) === true
+}
+
+export function assertInstallAvailable(store: InstallStore, id: string): void {
+  if (installIsReserved(store, id))
+    throw new CapabilityError('CONFLICT', `${id} installation is changing`)
+}
+
+/** Under admission, preserve the original cleanup failure ahead of a transient conflict. */
+export function assertInstallLaunchable(store: InstallStore, id: string): void {
+  assertInstallProgramDrained(store, id)
+  assertInstallAvailable(store, id)
+}
+
+/** Under admission, claim a machine install until its drain and commit finish. */
+export function reserveInstall(store: InstallStore, id: string) {
+  assertInstallAvailable(store, id)
+  let reservations = installReservations.get(store)
+  if (!reservations) installReservations.set(store, (reservations = new Map()))
+  const token = {}
+  reservations.set(id, token)
+  const current = () => reservations.get(id) === token
+  return {
+    assertCurrent() {
+      if (!current()) throw new CapabilityError('CONFLICT', `${id} install reservation changed`)
+    },
+    release() {
+      if (current()) reservations.delete(id)
+    },
+  }
+}
+
+export function retainInstallProgramFailure(
+  store: InstallStore,
+  id: string,
+  error: unknown,
+  setupSignal?: AbortSignal,
+): void {
+  if (!(error instanceof UnconfirmedOwnedProgramError)) return
+  let failures = uncertainInstalls.get(store)
+  if (!failures) uncertainInstalls.set(store, (failures = new Map()))
+  if (!failures.has(id)) failures.set(id, error)
+  if (setupSignal && !uncertainSetups.has(setupSignal)) uncertainSetups.set(setupSignal, error)
+}
 
 export function communityOwner(args: { userData: string }): CommunityOwner {
   const existing = owners.get(args.userData)
@@ -46,6 +114,7 @@ export function communityOwner(args: { userData: string }): CommunityOwner {
       emit(remote: string, name: string, payload: unknown): void
       frameOrigin(origin: string): () => void
       notifyMutation(): Promise<void>
+      forgetCheck?(id: string): Promise<void>
       observer?: (signal: AbortSignal) => Promise<void>
     }
   >()
@@ -78,60 +147,68 @@ export function communityOwner(args: { userData: string }): CommunityOwner {
     attach(root, remote, adapters) {
       if (attached.has(root)) throw new Error(`community attachment already active: ${root}`)
       const controller = new AbortController()
-      let live = true
+      // The host can revoke ordinary work while its disposer is still queued.
+      const signal = adapters.activationSignal
+        ? AbortSignal.any([adapters.activationSignal, controller.signal])
+        : controller.signal
+      const isLive = () => !signal.aborted
       let closing: Promise<void> | undefined
       const pending = new Set<Promise<unknown>>()
+      const track = <T>(task: Promise<T>): Promise<T> => {
+        pending.add(task)
+        void task.finally(() => pending.delete(task)).catch(() => {})
+        return task
+      }
       let refreshTail: Promise<void> = Promise.resolve()
       let refreshQueued = false
       const attachment = {
         root,
         remote,
-        signal: controller.signal,
-        isLive: () => live,
+        signal,
+        isLive,
         emit: (target: string, name: string, payload: unknown) => {
-          if (live && target === remote) adapters.emit(remote, name, payload)
+          if (isLive() && target === remote) adapters.emit(remote, name, payload)
         },
         frameOrigin: adapters.frameOrigin,
+        forgetCheck: adapters.forgetCheck,
         observer: undefined as ((signal: AbortSignal) => Promise<void>) | undefined,
         observeMutations(work: (signal: AbortSignal) => Promise<void>) {
           this.observer = work
         },
         run<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
-          if (!live) return Promise.reject(new Error('community attachment is closed'))
+          if (!isLive()) return Promise.reject(new Error('community attachment is closed'))
           const task = Promise.resolve().then(() => {
-            if (!live) throw new Error('community attachment is closed')
-            return work(controller.signal)
+            if (!isLive()) throw new Error('community attachment is closed')
+            return work(signal)
           })
-          pending.add(task)
-          void task.finally(() => pending.delete(task)).catch(() => {})
-          return task
+          return track(task)
         },
         refresh(work: (signal: AbortSignal) => Promise<void>): Promise<void> {
-          if (!live) return Promise.resolve()
+          if (!isLive()) return Promise.resolve()
           if (refreshQueued) return refreshTail
           refreshQueued = true
-          const task = refreshTail.then(() =>
-            admit(async () => {
-              refreshQueued = false
-              if (live) await work(controller.signal)
-            }),
-          )
+          const task = refreshTail.then(async () => {
+            refreshQueued = false
+            if (isLive()) await work(signal)
+          })
           refreshTail = task.catch(() => {})
-          pending.add(task)
-          void task.finally(() => pending.delete(task)).catch(() => {})
-          return task
+          return track(task)
         },
         close(cleanup: () => Promise<void>): Promise<void> {
           if (closing) return closing
-          live = false
           controller.abort()
           closing = (async () => {
             try {
               // Abort and stop synchronously-owned starts before draining tasks
               // that may be waiting for server readiness.
-              await supervisor.stopAll((key) => key.startsWith(`${root}\0`))
-              await Promise.allSettled([...pending])
-              await cleanup()
+              const servers = supervisor.stopAll((key) => key.startsWith(`${root}\0`))
+              const [drain] = await Promise.allSettled([servers, ...pending])
+              // A failed server proof cannot skip the attachment's check cleanup.
+              const [cleaned] = await Promise.allSettled([Promise.resolve().then(cleanup)])
+              if (drain?.status === 'rejected') throw drain.reason
+              const setupFailure = uncertainSetups.get(signal)
+              if (setupFailure) throw setupFailure
+              if (cleaned?.status === 'rejected') throw cleaned.reason
             } finally {
               if (attached.get(root) === attachment) attached.delete(root)
             }
@@ -142,6 +219,7 @@ export function communityOwner(args: { userData: string }): CommunityOwner {
         emit(remote: string, name: string, payload: unknown): void
         frameOrigin(origin: string): () => void
         observer?: (signal: AbortSignal) => Promise<void>
+        forgetCheck?(id: string): Promise<void>
         notifyMutation(): Promise<void>
       }
       attachment.notifyMutation = () =>
@@ -152,29 +230,28 @@ export function communityOwner(args: { userData: string }): CommunityOwner {
       return attachment
     },
     admit,
-    mutate<T>(work: () => Promise<T>): Promise<T> {
-      const result = admit(work)
-      const notify = async () => {
-        await Promise.all(
-          [...attached.values()].map((attachment) =>
-            attachment.notifyMutation().catch((error) => {
-              console.error('[community] refresh:', error)
-            }),
-          ),
-        )
-      }
-      // Refresh only after the FIFO work releases its slot. Awaiting these
-      // observers makes removal's cross-vault link cleanup part of completion.
-      return result.then(
-        async (value) => {
-          await notify()
-          return value
-        },
-        async (error: unknown) => {
-          await notify()
-          throw error
-        },
+    async forgetChecks(id) {
+      const results = await Promise.allSettled(
+        [...attached.values()].map((attachment) => attachment.forgetCheck?.(id)),
       )
+      for (const result of results) if (result.status === 'rejected') throw result.reason
+    },
+    async notifyMutation() {
+      await Promise.all(
+        [...attached.values()].map((attachment) =>
+          attachment.notifyMutation().catch((error) => {
+            console.error('[community] refresh:', error)
+          }),
+        ),
+      )
+    },
+    async mutate<T>(work: () => Promise<T>): Promise<T> {
+      try {
+        return await admit(work)
+      } finally {
+        // Refresh after releasing the FIFO. Its checks may need native joins.
+        await owner.notifyMutation()
+      }
     },
   }
   owners.set(args.userData, owner)

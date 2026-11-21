@@ -515,15 +515,16 @@ function prepare(
       const deadline = performance.now() + timeout
       const sent = startup!.then(async () => {
         const frame = command ? Buffer.from(command) : Buffer.from([70, sig])
-        await wait(
-          deadline,
-          'sending POSIX signal',
-          () => transport.post(frame) === frame.length || undefined,
-        )
-        if (command) acceptedStop = command
-        else {
-          const pendingSignal = { sig }
-          pendingSignals.push(pendingSignal)
+        const pendingSignal = { sig }
+        await wait(deadline, 'sending POSIX signal', () => {
+          if (transport.post(frame) !== frame.length) return
+          // Publish acceptance in the write turn. The native acknowledgement
+          // can be collected by exec/lifecycle polling before await resumes.
+          if (command) acceptedStop = command
+          else pendingSignals.push(pendingSignal)
+          return true
+        })
+        if (!command) {
           await wait(
             deadline,
             'waiting for POSIX signal acknowledgement',

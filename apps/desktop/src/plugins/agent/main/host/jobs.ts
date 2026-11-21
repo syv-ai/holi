@@ -73,6 +73,7 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import { CapabilityError, readableOrNull } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
 import type { JobRun, JobsProvider, VaultRef } from '../provider'
+import { createWindowsJobs } from './windows-jobs'
 import { bounded } from './bounded'
 import { jobScratch, type JobFiles, type JobTurnReceipt } from './job-receipts'
 import { startJobTurn } from './job-turn'
@@ -101,6 +102,7 @@ type JobSpec = JobSpecBase & ({ scope: JobScope } | { allow: readonly string[] }
 export type JobResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
 export interface JobsDeps {
+  platform?: NodeJS.Platform
   vault: VaultRef
   /** This vault's private scratch root from `agentScratchRoots`. */
   scratchRoot: string
@@ -113,7 +115,6 @@ export interface JobsDeps {
   /** Injected children supply explicit drainage, not a native journal. */
   spawn?: NonNullable<Parameters<typeof startJobTurn>[0]['spawn']>
   ownership?: NonNullable<Parameters<typeof jobScratch>[0]['ownership']>
-  windowsRecovery?: NonNullable<Parameters<typeof jobScratch>[0]['windowsRecovery']>
   /** Windows helper signal grace only; the POSIX lease owns its own grace. */
   killGraceMs?: number
   /** How long a finished job stays in the list. */
@@ -468,6 +469,7 @@ async function readRegular(path: string): Promise<Buffer | null> {
 const MAX_QUEUE = 20
 
 export function createJobs(deps: JobsDeps): Jobs {
+  if ((deps.platform ?? process.platform) === 'win32') return createWindowsJobs(deps)
   const log = deps.log ?? ((msg: string) => console.log(`[agent-jobs] ${msg}`))
   const scratch = jobScratch(deps)
   const killGraceMs = deps.killGraceMs ?? 2_000
