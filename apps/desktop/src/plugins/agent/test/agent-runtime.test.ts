@@ -398,6 +398,7 @@ describe('AgentRuntime', () => {
     )
     const runtime = new AgentRuntime({
       spawnPty: () => pty,
+      platform: 'linux',
       superviseGroup: () => ({ drain: proof }),
     })
     const draining = vi.fn()
