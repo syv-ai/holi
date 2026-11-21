@@ -112,8 +112,10 @@ export async function reconcile(report, adapter) {
     if (previous && previous.runNumber > normalized.runNumber) continue
 
     const body = renderBody(normalized)
+    const mismatches = normalized.checks.filter((check) => check.outcome === 'mismatch')
     const allPass =
       normalized.checks.length > 0 && normalized.checks.every((check) => check.outcome === 'pass')
+    if (!tracked && mismatches.length === 0) continue
     if (!tracked) {
       await adapter.createIssue({
         title: `${provider.name} compatibility: ${provider.version}`,
@@ -122,10 +124,7 @@ export async function reconcile(report, adapter) {
       })
       continue
     }
-    const changed =
-      !previous ||
-      previous.version !== provider.version ||
-      previous.reportKey !== reportKey(normalized)
+    const changed = !previous || previous.reportKey !== reportKey(normalized)
     const sameRelease = previous?.version === provider.version
     const currentRun = normalized.runNumber >= (previous?.runNumber ?? 0)
     if (changed || currentRun) {
@@ -139,9 +138,9 @@ export async function reconcile(report, adapter) {
 
     // Reconcile state independently of content changes so a failed state mutation
     // can be retried after the body edit has already succeeded.
-    if (!allPass) {
+    if (mismatches.length > 0) {
       if (tracked.state === 'closed') await adapter.reopenIssue(tracked.number)
-    } else if (sameRelease && currentRun) {
+    } else if (allPass && currentRun) {
       if (tracked.state !== 'closed') await adapter.closeIssue(tracked.number)
     } else if (tracked.state === 'closed') {
       // A passing report for a newly observed release cannot inherit old checks.
@@ -166,14 +165,15 @@ function parseIssue(issue) {
 
 function reportKey(report) {
   const checks = report.checks
-    .map(({ name, outcome, detail = '' }) => [name, outcome, detail])
+    .filter(({ outcome }) => outcome === 'mismatch')
+    .map(({ name, outcome }) => [name, outcome])
     .sort(([nameA, outcomeA, detailA], [nameB, outcomeB, detailB]) => {
       const left = JSON.stringify([nameA, outcomeA, detailA])
       const right = JSON.stringify([nameB, outcomeB, detailB])
       return left < right ? -1 : left > right ? 1 : 0
     })
-  return `v2-${createHash('sha256')
-    .update(JSON.stringify([report.version, checks]))
+  return `v3-${createHash('sha256')
+    .update(JSON.stringify(checks))
     .digest('hex')}`
 }
 
