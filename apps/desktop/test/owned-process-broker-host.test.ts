@@ -45,11 +45,13 @@ function host(
   })
   child.stdin.on('error', () => {})
   const closed = once(child, 'close')
+  const joined = new Promise<void>((resolve) => child.once('close', () => resolve()))
   void closed.catch(() => {})
-  onTestFinished(() => {
+  onTestFinished(async () => {
     child.stdin.destroy()
     child.stdout.resume()
     child.stderr.resume()
+    await joined
   })
   return { ...plan, child, closed }
 }
@@ -156,7 +158,11 @@ describe('owned Job broker host', () => {
 
   it('waits past the terminal frame for physical exit without requiring parent EOF', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'holi-broker-host-'))
-    onTestFinished(() => rm(cwd, { recursive: true, force: true }))
+    let closeFixture: (() => Promise<void>) | undefined
+    onTestFinished(async () => {
+      await closeFixture?.()
+      await rm(cwd, { recursive: true, force: true })
+    })
     const { child } =
       process.platform === 'win32'
         ? host(windowsJoinFixture(cwd), true)
@@ -180,6 +186,12 @@ describe('owned Job broker host', () => {
     const closed = new Promise<[number | null, NodeJS.Signals | null]>((resolve) => {
       child.once('close', (code, signal) => resolve([code, signal]))
     })
+    closeFixture = async () => {
+      child.stdin.destroy()
+      child.stdout.resume()
+      child.stderr.resume()
+      await closed
+    }
     const earlyClose = closed.then(() => {
       throw new Error('Broker host closed before the terminal frame')
     })
