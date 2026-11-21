@@ -38,6 +38,19 @@ function validFixture() {
   )
 }
 
+test('accepts the package-local installed-doc warning on help, including indentation and CRLF', () => {
+  const warning =
+    'Warning: No models available. Use /login to log into a provider via OAuth or API key. See:\r\n  /home/runner/work/_temp/pi-install/node_modules/@earendil-works/pi-coding-agent/docs/providers.md\r\n  /home/runner/work/_temp/pi-install/node_modules/@earendil-works/pi-coding-agent/docs/models.md'
+  const fixture = executable(
+    `if (process.argv[2] === '--version') process.stdout.write('1.2.3\\n'); else { process.stdout.write(${JSON.stringify(help + '\\n')}); process.stderr.write(${JSON.stringify(warning)}) }`,
+  )
+  try {
+    assert.equal(checkPiCli({ bin: fixture.bin, expectedVersion: '1.2.3' }).outcome, 'pass')
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
 test('accepts exact-version help contract with a minimal test binary', () => {
   const fixture = validFixture()
   try {
@@ -161,6 +174,30 @@ test('raw command stdout remains parseable JSON', async () => {
     assert.equal(result.status, 0)
     assert.equal(result.stderr, '')
     assert.equal(JSON.parse(result.stdout).outcome, 'pass')
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('unexpected help diagnostics and version warnings remain mismatches', () => {
+  for (const warning of [
+    'Unexpected warning',
+    'Warning: No models available. Use /login to log into a provider via OAuth or API key. See:\n  /wrong/docs/providers.md\n  /wrong/docs/models.md',
+  ]) {
+    const fixture = executable(
+      `process.stdout.write(process.argv[2] === '--version' ? '1.2.3\\n' : ${JSON.stringify(help)}); if (process.argv[2] === '--help') process.stderr.write(${JSON.stringify(warning)})`,
+    )
+    try {
+      assert.equal(checkPiCli({ bin: fixture.bin, expectedVersion: '1.2.3' }).outcome, 'mismatch')
+    } finally {
+      rmSync(fixture.directory, { recursive: true, force: true })
+    }
+  }
+  const fixture = executable(
+    `process.stdout.write('1.2.3'); process.stderr.write('Warning: No models available.')`,
+  )
+  try {
+    assert.equal(checkPiCli({ bin: fixture.bin, expectedVersion: '1.2.3' }).outcome, 'mismatch')
   } finally {
     rmSync(fixture.directory, { recursive: true, force: true })
   }
