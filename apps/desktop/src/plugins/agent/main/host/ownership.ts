@@ -254,11 +254,9 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
     }
   }
 
-  return {
-    /** Inspect every old link and, optionally, every entry of one scratch root
-     * before deleting anything. A failed inspection never sweeps partial state. */
-    recover(kind: Consumer, scratch?: RecoveryScratch): void {
-      signal.throwIfAborted()
+  function admitRecovery(kind: Consumer, scratch?: RecoveryScratch): () => void {
+    signal.throwIfAborted()
+    return () => {
       if (used.has(kind)) throw new Error('Cannot recover a live agent ownership scope.')
       const parent = join(scope, kind)
       privateDir(parent, true)
@@ -427,6 +425,22 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
       }
       for (const retire of confirmed) retire()
       ready.add(kind)
+    }
+  }
+
+  return {
+    /** Inspect every old link and, optionally, every entry of one scratch root
+     * before deleting anything. A failed inspection never sweeps partial state. */
+    recover(kind: Consumer, scratch?: RecoveryScratch): void {
+      admitRecovery(kind, scratch)()
+    },
+
+    /** Join this cold sweep even if activation is revoked during its startup I/O.
+     * Its authority is limited to this jobs scope; allocation still checks revocation. */
+    async recoverJobs(scratch: RecoveryScratch, observe: () => Promise<unknown>): Promise<void> {
+      const finish = admitRecovery('jobs', scratch)
+      await observe()
+      finish()
     },
 
     /** Publish a unique consumer link before starting work. The default is a

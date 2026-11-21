@@ -18,6 +18,7 @@ import { CopyBackCancelled, createJobs, type Jobs, type JobsDeps } from '../main
 import { createPtySessions } from '../main/host/pty-sessions'
 import { createFencedSessions } from '../main/host/fenced'
 import { bounded } from '../main/host/bounded'
+import { activationOwnership } from '../main/host/ownership'
 import type { OpenArgs } from '../main/host/terminals'
 import type { SessionSummary } from '../main/claude/listing'
 import type { AgentProvider, JobsProvider } from '../main/provider'
@@ -139,7 +140,7 @@ const SCRIPT = [
   'console.log(JSON.stringify({type:"turn.completed"}))',
 ].join(';')
 
-async function rig(options: Partial<JobsDeps> = {}) {
+async function rig(options: Partial<JobsDeps> = {}, durableOwnership = false) {
   // Copy-back uses canonical paths. Match those even when TMPDIR is a symlink.
   const dir = await mkdtemp(join(await realpath(tmpdir()), 'holi-finalization-'))
   roots.push(dir)
@@ -163,9 +164,14 @@ async function rig(options: Partial<JobsDeps> = {}) {
     },
   }
   let endedTurns = 0
+  const vault = { remote: 'fixture/vault', root }
+  const ownership = durableOwnership
+    ? activationOwnership(dir, vault, new AbortController().signal)
+    : undefined
   const jobs = createJobs({
-    vault: { remote: 'fixture/vault', root },
+    vault,
     scratchRoot,
+    ...(ownership && { ownership }),
     onChange: () => {},
     log: () => {},
     bracket: (_id, edge) => {
@@ -226,29 +232,46 @@ it.each(['scratch', 'vault'] as const)(
   },
 )
 
-it('joins the same underlying retirement after each timeout without overlapping deletion', async () => {
-  const t = await rig()
+it('keeps the first retirement timeout after late deletion without unindexing or retiring evidence', async () => {
+  const t = await rig({}, true)
   const id = await t.start()
   await t.idle()
   const state = join(t.scratchRoot, `${id}.agent`)
   const gate = hold('rm', (args) => args[0] === state)
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-  const first = t.jobs.stop(id)
-  const failedFirst = expect(first).rejects.toThrow('timed out')
+  const first = t.jobs.stop(id).catch((error: unknown) => error)
   await gate.entered
+  const concurrent = t.jobs.stop(id).catch((error: unknown) => error)
   await vi.advanceTimersByTimeAsync(5_001)
-  await failedFirst
-  const second = t.jobs.stop(id)
-  const failedSecond = expect(second).rejects.toThrow('timed out')
-  await vi.advanceTimersByTimeAsync(5_001)
-  await failedSecond
+  const timeout = await first
+  expect(timeout).toBeInstanceOf(Error)
+  expect(timeout).toHaveProperty('message', expect.stringContaining('timed out'))
+  expect(await concurrent).toBe(timeout)
+  await expect(t.jobs.stop(id)).rejects.toBe(timeout)
+  await access(state)
+
+  // The in-flight removal can finish. It must not proceed to the PID or
+  // caller receipts, retire the durable ownership link, or remove the row.
+  gate.release()
+  await Promise.all([...native.operations])
+  await tick()
+  await expect(access(state)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(gate.calls()).toBe(1)
   expect(t.jobs.has(id)).toBe(true)
-  const third = t.jobs.stop(id)
-  gate.release()
-  await third
-  expect(gate.calls()).toBe(1)
-  expect(t.jobs.has(id)).toBe(false)
+  if (process.platform !== 'win32') {
+    await access(join(t.scratchRoot, `${id}.pid`))
+    expect(await readFile(join(t.scratchRoot, `${id}.turn`), 'utf8')).toBe(
+      `HOLI-JOB-1 ${id}\nSETTLED\n`,
+    )
+    const owners = join(t.dir, 'agent-ownership')
+    const [scope] = await readdir(owners)
+    const jobs = join(owners, scope!, 'jobs')
+    const [link] = await readdir(jobs)
+    expect(link).toMatch(/^[\da-f-]{36}$/)
+    expect(await readFile(join(jobs, link!, 'failed'), 'utf8')).toContain('timed out')
+  }
+  await expect(t.jobs.stop(id)).rejects.toBe(timeout)
+  await expect(t.jobs.leave()).rejects.toMatchObject({ errors: [timeout] })
 })
 
 it('keeps a delayed startup sweep owned across timeout and repeated leave', async () => {

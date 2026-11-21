@@ -133,8 +133,7 @@ export function jobScratch({
 }) {
   const windows = process.platform === 'win32'
   const registry = windows ? undefined : ownership
-  async function recover() {
-    if (windows) return sweepWindows(root, injected ?? (spawn ? undefined : windowsRecovery))
+  async function observe() {
     await lstat(root).then(
       (stat) => {
         if (!stat.isDirectory()) throw new Error(`Not a job state directory: ${root}`)
@@ -145,27 +144,34 @@ export function jobScratch({
     )
     // Observe the namespace asynchronously before the registry's all-or-nothing
     // inspection. The registry enumerates it again at the point of deletion.
-    const entries = await readdir(root).catch((error: unknown) => {
+    return readdir(root).catch((error: unknown) => {
       if (!missing(error)) throw error
       return []
     })
+  }
+  async function recover() {
+    if (windows) return sweepWindows(root, injected ?? (spawn ? undefined : windowsRecovery))
     if (!registry) {
+      const entries = await observe()
       if (entries.length) throw new Error(`Retaining unlinked job state: ${entries.join(', ')}.`)
       return
     }
     const checked = new Set<string>()
-    registry.recover('jobs', {
-      root,
-      consumerId(entry) {
-        const id = /^(j[0-9a-f]{12})(?:\.(?:agent|pid|turn))?$/.exec(entry)?.[1]
-        if (id && !checked.has(id)) {
-          if (!completeCaller(root, id))
-            throw new Error(`Retaining job ${id}: missing or incomplete caller receipt.`)
-          checked.add(id)
-        }
-        return id
+    await registry.recoverJobs(
+      {
+        root,
+        consumerId(entry) {
+          const id = /^(j[0-9a-f]{12})(?:\.(?:agent|pid|turn))?$/.exec(entry)?.[1]
+          if (id && !checked.has(id)) {
+            if (!completeCaller(root, id))
+              throw new Error(`Retaining job ${id}: missing or incomplete caller receipt.`)
+            checked.add(id)
+          }
+          return id
+        },
       },
-    })
+      observe,
+    )
   }
   return {
     recover,
