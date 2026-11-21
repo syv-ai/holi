@@ -240,9 +240,12 @@ function windowsJoinFixture(cwd: string) {
     !script.endsWith(`\n'@\n${joinCompile}exit [HoliOwnedProcess]::RunBroker()`)
   )
     throw new Error('Expected one Add-Type statement before the native broker entry')
+  // Supply zero PowerShell pipeline objects; $source is still bound explicitly.
+  // This does not read or close Win32 stdin, which RunBroker uses for finish.
+  const compileWithEmptyInput = `@() | ${joinCompile}`
   const marked = script.replace(
     joinCompile,
-    `${joinPhaseMarker('compile-start')}${joinCompile}${joinPhaseMarker('compile-done')}`,
+    `${joinPhaseMarker('compile-start')}${compileWithEmptyInput}${joinPhaseMarker('compile-done')}`,
   )
   const encoded = gzipSync(Buffer.from(marked)).toString('base64')
   adapter.args[adapter.args.length - 1] =
@@ -345,22 +348,24 @@ describe('owned Job broker host', () => {
     ).toEqual({ ...paths, TEMP: cwd, TMP: cwd })
   })
 
-  it('prepares Windows join phase markers without spawning', () => {
+  it('prepares an empty Windows compiler pipeline and join phase markers without spawning', () => {
     const cwd = 'fixture-cwd'
     const original = decodeJoinBootstrap(windowsJoinAdapter(cwd).args)
     const fixture = windowsJoinFixture(cwd)
     const { bootstrap, script } = decodeJoinBootstrap(brokerHostPlan(node, fixture).args)
     const start = joinPhaseMarker('compile-start')
     const done = joinPhaseMarker('compile-done')
+    const compileWithEmptyInput = `@() | ${joinCompile}`
+    const markedCompile = `${start}${compileWithEmptyInput}${done}`
     // Compare as booleans so a regression does not print the command or generated source.
     expect(
       bootstrap.replace(joinPayload, '') ===
         joinPhaseMarker('powershell-start') + original.bootstrap.replace(joinPayload, ''),
     ).toBe(true)
-    expect(
-      script.endsWith(`${start}${joinCompile}${done}exit [HoliOwnedProcess]::RunBroker()`),
-    ).toBe(true)
-    expect(script.replace(start, '').replace(done, '') === original.script).toBe(true)
+    expect(script.split(compileWithEmptyInput).length === 2).toBe(true)
+    expect(script.endsWith(`${markedCompile}exit [HoliOwnedProcess]::RunBroker()`)).toBe(true)
+    // The entire decoded script, including the C# here-string, must otherwise match.
+    expect(script.replace(markedCompile, joinCompile) === original.script).toBe(true)
     expect(!script.includes('RunOriginalBroker')).toBe(true)
     expect(script.split('public static int RunBroker()').length === 2).toBe(true)
     expect(script.includes('foreach (byte expected in Encoding.UTF8.GetBytes("finish"))')).toBe(
