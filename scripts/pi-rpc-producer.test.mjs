@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
@@ -64,8 +64,19 @@ const good = {
   cleanup,
 }
 
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const rolesInOrder = ['version', 'rpc-first', 'rpc-cancel']
+const fakeNativeIds = [1910000000, 1910000001, 1910000002]
+const cachePath = (root, { id, role }) => join(root, 'admissions', `${role}-${id}`, 'proof.json')
+const readCache = (root, lease) => JSON.parse(readFileSync(cachePath(root, lease), 'utf8'))
+function writeCache(root, lease, cache) {
+  const bytes = JSON.stringify(cache)
+  writeFileSync(cachePath(root, lease), bytes, { mode: 0o600 })
+  lease.proofSha256 = sha256(bytes)
+}
+
 function writeArtifact(env, workerPid, evidence, options) {
-  const { roles = ['version', 'rpc-first', 'rpc-cancel'], change } = options ?? {}
+  const { roles = rolesInOrder, change, coldRole } = options ?? {}
   const root = dirname(env.PI_NATIVE_PROBE_EVIDENCE)
   const bytes = typeof evidence === 'string' ? evidence : JSON.stringify(evidence)
   const worker = {
@@ -74,11 +85,35 @@ function writeArtifact(env, workerPid, evidence, options) {
     nonce: env.PI_NATIVE_PROBE_NONCE,
     workerPid,
   }
-  const leases = roles.map((role) => ({ role, id: randomUUID(), proof: 'settled' }))
-  for (const { id, role } of leases) {
+  const leases = roles.map((role) => {
+    const id = randomUUID()
+    const proof = role === coldRole ? 'kernel-absence' : 'settled'
+    const lease = { role, id, proof }
+    const [pid, reaper, anchor] = fakeNativeIds
+    const header = `HOLI-POSIX-1 ${id}\n`
+    const journal = `${header}ROOT ${pid}\nREAPER ${reaper}\nANCHOR ${anchor}\nCOMPLETE\n`
+    const settled = `${header}SETTLED\n`
+    const path = join(root, 'ownership', id)
     mkdirSync(join(root, 'admissions', `${role}-${id}`), { mode: 0o700 })
-    mkdirSync(join(root, 'ownership', id), { mode: 0o700 })
-  }
+    mkdirSync(path, { mode: 0o700 })
+    writeFileSync(join(path, 'journal'), journal, { mode: 0o600 })
+    if (proof === 'settled') writeFileSync(join(path, 'settled'), settled, { mode: 0o600 })
+    writeCache(root, lease, {
+      ...worker,
+      id,
+      role,
+      journal,
+      ...(proof === 'settled'
+        ? { settled }
+        : {
+            absenceSnapshot: {
+              protocol: 'posix-kill-0',
+              absent: [reaper, -reaper, anchor, pid, -pid],
+            },
+          }),
+    })
+    return lease
+  })
   writeFileSync(env.PI_NATIVE_PROBE_EVIDENCE, bytes, { mode: 0o600 })
   writeFileSync(join(root, 'worker.json'), JSON.stringify(worker), { mode: 0o600 })
   const receipt = {
@@ -86,7 +121,7 @@ function writeArtifact(env, workerPid, evidence, options) {
     state: 'final',
     admission: leases.length ? 'leases-settled' : 'no-admission',
     leases,
-    evidenceSha256: createHash('sha256').update(bytes).digest('hex'),
+    evidenceSha256: sha256(bytes),
   }
   const record = change ? change(receipt, root) : receipt
   if (record !== undefined)
@@ -125,6 +160,7 @@ test('requires exact Pi version and binary for native producer probe', async () 
 posixTest(
   'removes the root with complete worker, lease and RPC evidence, without re-probing detached PIDs',
   async (t) => {
+    t.mock.method(process, 'kill', () => assert.fail('parent re-probed a cached native proof'))
     const adapter = artifactRunner(good)
     const result = await checkFixture(t, input, adapter)
     assert.equal(result.outcome, 'pass', result.detail)
@@ -184,6 +220,40 @@ test('retains the root for malformed or partial evidence even with a receipt and
   }
 })
 
+posixTest(
+  'uses the complete cached cold proof without probing its journal identities',
+  async (t) => {
+    t.mock.method(process, 'kill', () => assert.fail('parent re-probed a cached cold proof'))
+    const coldRole = 'rpc-first'
+    const adapter = artifactRunner(good, { coldRole })
+    const result = await checkFixture(t, input, adapter)
+    assert.equal(result.outcome, 'pass')
+    assert.deepEqual(result.cleanup, { temporaryRootRemoved: true })
+
+    const invalid = artifactRunner(good, {
+      coldRole,
+      change(receipt, root) {
+        const lease = receipt.leases[1]
+        const cache = readCache(root, lease)
+        cache.absenceSnapshot.absent.pop()
+        writeCache(root, lease, cache)
+        return receipt
+      },
+    })
+    retained(await checkFixture(t, input, invalid))
+  },
+)
+
+function changeCache(change) {
+  return (receipt, root) => {
+    const lease = receipt.leases.at(-1)
+    const cache = readCache(root, lease)
+    change(cache, join(root, 'ownership', lease.id))
+    writeCache(root, lease, cache)
+    return receipt
+  }
+}
+
 for (const [label, change] of Object.entries({
   missing: () => undefined,
   truncated: () => '{"version":1,',
@@ -210,6 +280,63 @@ for (const [label, change] of Object.entries({
     leases: [receipt.leases[0], receipt.leases[0], receipt.leases[2]],
   }),
   'native-only proof': ({ leases }) => ({ leases }),
+  'empty native ownership': (receipt, root) => {
+    const path = join(root, 'ownership', receipt.leases[0].id)
+    rmSync(path, { recursive: true })
+    mkdirSync(path, { mode: 0o700 })
+    return receipt
+  },
+  ...Object.fromEntries(
+    rolesInOrder.map((role) => [
+      `missing ${role} cache`,
+      (receipt, root) => {
+        rmSync(
+          cachePath(
+            root,
+            receipt.leases.find((lease) => lease.role === role),
+          ),
+        )
+        return receipt
+      },
+    ]),
+  ),
+  'stale cache digest': (receipt) => {
+    receipt.leases.at(-1).proofSha256 = '0'.repeat(64)
+    return receipt
+  },
+  'cache owner mismatch': changeCache((cache) => {
+    cache.workerPid++
+  }),
+  'cache nonce mismatch': changeCache((cache) => {
+    cache.nonce = randomUUID()
+  }),
+  'cache path mismatch': changeCache((cache) => {
+    cache.id = randomUUID()
+  }),
+  'cache role mismatch': changeCache((cache) => {
+    cache.role = 'version'
+  }),
+  'cache protocol mismatch': changeCache((cache, path) => {
+    cache.journal = cache.journal.replace('HOLI-POSIX-1', 'HOLI-POSIX-2')
+    writeFileSync(join(path, 'journal'), cache.journal)
+  }),
+  'native journal changed after caching': changeCache((cache, path) => {
+    writeFileSync(join(path, 'journal'), cache.journal.replace('1910000000', '1910000003'))
+  }),
+  'partial native journal': changeCache((cache, path) => {
+    cache.journal = cache.journal.replace('COMPLETE\n', '')
+    writeFileSync(join(path, 'journal'), cache.journal)
+  }),
+  'failed native journal': changeCache((cache, path) => {
+    cache.journal += 'ERROR drain 1\n'
+    writeFileSync(join(path, 'journal'), cache.journal)
+  }),
+  'failed native terminal': changeCache((cache, path) => {
+    writeFileSync(join(path, 'failed'), `HOLI-POSIX-1 ${cache.id}\nFAILED drain\n`, { mode: 0o600 })
+  }),
+  'partial native terminal': changeCache((cache, path) => {
+    writeFileSync(join(path, 'settled.tmp'), 'HOLI-POSIX-1 ', { mode: 0o600 })
+  }),
   'noncanonical ownership': (receipt, root) => {
     const path = join(root, 'ownership', receipt.leases[0].id)
     rmSync(path, { recursive: true })

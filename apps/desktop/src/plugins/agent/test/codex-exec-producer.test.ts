@@ -1,5 +1,6 @@
 import type { SpawnOptions } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { once } from 'node:events'
 import { afterAll, afterEach, describe, expect, it, onTestFailed } from 'vitest'
 import {
@@ -19,21 +20,37 @@ import {
   spawnOwnedProgram,
 } from '../../../main/plugin-api'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { codexProvider } from '../main/codex/index'
 import { createJobs } from '../main/host/jobs'
+
+const { cacheLeaseProof, publishFinalSettlement, readFinalSettlement } = createRequire(
+  import.meta.url,
+)('../../../../../../scripts/producer-settlement.mjs') as {
+  cacheLeaseProof(
+    root: string,
+    identity: { version: number; runId: string; nonce: string; workerPid: number },
+    lease: { id: string; role: string },
+    inspect: typeof inspectPosixOwnership,
+  ): { id: string; role: string; proof: 'settled' | 'kernel-absence'; proofSha256: string }
+  publishFinalSettlement(
+    root: string,
+    identity: { version: number; runId: string; nonce: string; workerPid: number },
+    leases: readonly ReturnType<typeof cacheLeaseProof>[],
+    evidenceName: string,
+    bytes: string,
+  ): Promise<void>
+  readFinalSettlement(
+    root: string,
+    identity: { runId: string; nonce: string },
+    roles: readonly string[],
+    bytes: Buffer,
+    requireComplete: boolean,
+  ): false | { leases: ReturnType<typeof cacheLeaseProof>[] }
+}
 
 const version = '0.169.0'
 const bin = process.env.HOLI_CODEX_BIN
@@ -55,6 +72,7 @@ const leasePlan: Record<ScenarioName, readonly string[]> = {
 const leaseRoles = scenarioNames.flatMap((name) => leasePlan[name])
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const privateFile = { mode: 0o600, flag: 'wx' } as const
+const maxEvidenceBytes = 1024 * 1024
 
 // The challenge is for this worker only. Neither the challenge nor the lease
 // registry is passed to a provider child. Each intent exists before native launch.
@@ -76,13 +94,12 @@ function claimWorker(root: string, runId: string, nonce: string) {
   }
   const identity = { version: 1, runId, nonce, workerPid: process.pid }
   writeFileSync(join(root, 'worker.json'), JSON.stringify(identity), privateFile)
-  type Lease = { role: string; id: string; proof: 'settled' }
   const attempts: {
     name: ScenarioName
     id: string
     role: string
     join?: () => Promise<void>
-    settled?: Lease
+    settled?: ReturnType<typeof cacheLeaseProof>
   }[] = []
   const work = new Map<ScenarioName, string>()
   const scenarios = new Map<ScenarioName, Promise<void>>()
@@ -163,11 +180,7 @@ function claimWorker(root: string, runId: string, nonce: string) {
               const { id, role, join: joinLease } = attempt
               if (!joinLease) throw new Error('Missing Codex worker launch settlement')
               await joinLease()
-              const inspection = inspectPosixOwnership(join(ownership, id))
-              if (inspection.state !== 'confirmed') throw new Error(inspection.reason)
-              if (inspection.proof !== 'settled')
-                throw new Error('Missing durable Codex lease settlement')
-              attempt.settled = { id, role, proof: inspection.proof }
+              attempt.settled = cacheLeaseProof(root, identity, { id, role }, inspectPosixOwnership)
             }),
         ])
         outcomes.push(...(await Promise.allSettled([Promise.resolve().then(joinServer)])))
@@ -181,7 +194,7 @@ function claimWorker(root: string, runId: string, nonce: string) {
       scenarios.set(name, settling)
       return settling
     },
-    async finish() {
+    async finish(artifact: () => Record<string, unknown>) {
       admissionClosed = true
       if (
         !scenarioNames.every((name) => scenarios.has(name)) ||
@@ -191,15 +204,11 @@ function claimWorker(root: string, runId: string, nonce: string) {
         return
       const outcomes = await Promise.allSettled(scenarios.values())
       if (outcomes.some((result) => result.status === 'rejected')) return
-      const leases = attempts.map(({ settled }) => settled)
-      if (leases.some((lease) => lease === undefined)) return
-      const staging = join(root, 'settlement.tmp')
-      await writeFile(
-        staging,
-        JSON.stringify({ ...identity, state: 'final', admission: 'leases-settled', leases }),
-        privateFile,
-      )
-      await rename(staging, join(root, 'settlement.json'))
+      const leases = attempts.flatMap(({ settled }) => (settled ? [settled] : []))
+      if (leases.length !== attempts.length) return
+      const bytes = JSON.stringify(artifact())
+      if (Buffer.byteLength(bytes) > maxEvidenceBytes) return
+      await publishFinalSettlement(root, identity, leases, 'native-evidence.json', bytes)
     },
   }
 }
@@ -216,8 +225,9 @@ const worker =
 const servers: (() => Promise<void>)[] = []
 const jobsList: ReturnType<typeof createJobs>[] = []
 const bracketGateReleases: Array<() => void> = []
+let proofClosed = false
 function persistProof() {
-  if (!worker || !output) return
+  if (proofClosed || !worker || !output) return
   const temporary = `${output}.${process.pid}.tmp`
   try {
     writeFileSync(temporary, `${JSON.stringify(proof, null, 2)}\n`, privateFile)
@@ -774,7 +784,10 @@ if (bin) {
   describe('native Codex exec producer → real jobs host', () => {
     if (!worker) throw new Error('Native Codex proof requires a private runner challenge')
     afterEach(settleCurrentScenario)
-    afterAll(() => worker.finish())
+    afterAll(() => {
+      proofClosed = true
+      return worker.finish(() => proof)
+    })
     it('consumes the pinned CLI version and native initial-turn events', async () => {
       const scenario = beginScenario('initial-turn')
       onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
@@ -1111,6 +1124,7 @@ if (process.platform !== 'win32' && !bin && process.env.HOLI_CODEX_SETTLEMENT_FI
     const ownership = join(root, 'ownership')
     const admissions = join(root, 'admissions')
     const settlementPath = join(root, 'settlement.json')
+    const evidencePath = join(root, 'native-evidence.json')
     for (const path of [join(root, 'worker-tmp'), admissions, ownership])
       await mkdir(path, { mode: 0o700 })
     const runId = randomUUID()
@@ -1159,9 +1173,10 @@ if (process.platform !== 'win32' && !bin && process.env.HOLI_CODEX_SETTLEMENT_FI
           }
         }
       }
-      finish = worker.finish()
+      finish = worker.finish(() => ({ fixture: 'synthetic Codex', capturedAfterJoin: true }))
       void finish.catch(() => {})
       expect(existsSync(settlementPath)).toBe(false)
+      expect(existsSync(evidencePath)).toBe(false)
       caller.resolve()
       await serverEntered.promise
       const ids = await readdir(ownership)
@@ -1173,6 +1188,7 @@ if (process.platform !== 'win32' && !bin && process.env.HOLI_CODEX_SETTLEMENT_FI
         })
       }
       expect(existsSync(settlementPath)).toBe(false)
+      expect(existsSync(evidencePath)).toBe(false)
       expect(existsSync(join(root, 'worker-tmp', 'stall-leave'))).toBe(true)
       server.resolve()
       await finish
@@ -1180,19 +1196,29 @@ if (process.platform !== 'win32' && !bin && process.env.HOLI_CODEX_SETTLEMENT_FI
       const registrations = new Map(
         (await readdir(admissions)).map((entry) => [entry.slice(0, -37), entry.slice(-36)]),
       )
-      expect(JSON.parse(await readFile(settlementPath, 'utf8'))).toEqual({
-        version: 1,
-        runId,
-        nonce,
-        workerPid: process.pid,
-        state: 'final',
-        admission: 'leases-settled',
-        leases: leaseRoles.map((role) => ({
+      const evidence = await readFile(evidencePath)
+      const receipt = JSON.parse(await readFile(settlementPath, 'utf8'))
+      expect(receipt.evidenceSha256).toBe(createHash('sha256').update(evidence).digest('hex'))
+      expect(receipt.leases).toEqual(
+        leaseRoles.map((role) => ({
           role,
           id: registrations.get(role),
           proof: 'settled',
+          proofSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         })),
-      })
+      )
+      expect(readFinalSettlement(root, { runId, nonce }, leaseRoles, evidence, true)).toEqual(
+        receipt,
+      )
+      expect(
+        readFinalSettlement(
+          root,
+          { runId, nonce },
+          leaseRoles,
+          Buffer.concat([evidence, Buffer.from(' ')]),
+          true,
+        ),
+      ).toBe(false)
       expect(await readdir(join(root, 'worker-tmp'))).toEqual([])
     } finally {
       caller.resolve()

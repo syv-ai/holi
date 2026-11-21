@@ -560,28 +560,44 @@ function completeProbe(bin, work) {
   }
 }
 
-const settlementFixture = `
-  import { randomUUID } from 'node:crypto'
-  import { mkdir, writeFile } from 'node:fs/promises'
+const settlementFixture = String.raw`
+  import { createHash, randomUUID } from 'node:crypto'
+  import { mkdir, writeFile, rename } from 'node:fs/promises'
   import { dirname, join } from 'node:path'
   const { TMPDIR, HOLI_CODEX_PROOF_OUTPUT: output, HOLI_CODEX_BIN: bin, HOLI_CODEX_PROOF_RUN_ID: runId, HOLI_CODEX_PROOF_NONCE: nonce } = process.env
   const root = dirname(output)
   const completeProbe = ${completeProbe.toString()}
   const roles = ['initial-turn-version', 'initial-turn', 'follow-up', 'follow-up-resume', 'http-400', 'stall-stop', 'stall-leave']
-  const leases = roles.map((role) => ({ id: randomUUID(), role, proof: 'settled' }))
   const identity = { version: 1, runId, nonce, workerPid: process.pid }
   const file = { mode: 0o600 }
-  for (const { id, role } of leases) {
+  const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+  const leases = []
+  for (const role of roles) {
+    const id = randomUUID()
+    const header = 'HOLI-POSIX-1 ' + id + '\n'
+    const journal = header + 'ROOT 1910000000\nREAPER 1910000001\nANCHOR 1910000002\nCOMPLETE\n'
+    const settled = header + 'SETTLED\n'
+    const cache = JSON.stringify({ ...identity, id, role, journal, settled })
+    leases.push({ id, role, proof: 'settled', proofSha256: sha256(cache) })
     if (mode === 'unregistered' && role === 'stall-leave') continue
-    await mkdir(join(root, 'admissions', role + '-' + id), { mode: 0o700 })
-    await mkdir(join(root, 'ownership', id), { mode: 0o700 })
+    const registration = join(root, 'admissions', role + '-' + id)
+    const path = join(root, 'ownership', id)
+    await mkdir(registration, { mode: 0o700 })
+    await mkdir(path, { mode: 0o700 })
+    await writeFile(join(path, 'journal'), journal, file)
     if (!(mode === 'no-native-terminal' && role === 'stall-leave'))
-      await writeFile(join(root, 'ownership', id, 'settled'), 'HOLI-POSIX-1 ' + id + '\\nSETTLED\\n', file)
+      await writeFile(join(path, 'settled'), settled, file)
+    if (mode !== 'missing-cache-' + role) await writeFile(join(registration, 'proof.json'), cache, file)
   }
   if (mode === 'extra-registration') await mkdir(join(root, 'admissions', 'stall-leave-' + randomUUID()), { mode: 0o700 })
   const claim = mode === 'wrong-run' ? { ...identity, runId: randomUUID() } : identity
   if (mode !== 'no-claim') await writeFile(join(root, 'worker.json'), JSON.stringify(claim), file)
-  const receipt = { ...claim, state: 'final', admission: 'leases-settled', leases }
+  const proof = mode === 'probe-refused' ? { schema: 'wrong' } : completeProbe(bin, TMPDIR)
+  if (mode === 'provider-error' || mode === 'changed-provider-error') Object.assign(proof.scenarios[0], { status: 'mismatch', failureKind: 'contract', failure: 'original provider error' })
+  if (mode === 'partial-probe') delete proof.scenarios.at(-1).rawProcesses
+  if (mode === 'status-only-failure') proof.scenarios[0] = { name: 'initial-turn', status: 'mismatch', stage: 'native-contract', failureKind: 'contract', failure: 'no native evidence' }
+  const bytes = mode === 'malformed-probe' ? '{' : JSON.stringify(proof)
+  const receipt = { ...claim, state: 'final', admission: 'leases-settled', leases, evidenceSha256: sha256(bytes) }
   if (mode === 'pending') receipt.state = 'pending'
   if (mode === 'wrong-version') receipt.version = 2
   if (mode === 'wrong-nonce') receipt.nonce = randomUUID()
@@ -590,13 +606,19 @@ const settlementFixture = `
   if (mode === 'bool-proof') leases[0].proof = true
   if (mode === 'omitted') leases.pop()
   if (mode === 'unfinished') await mkdir(join(TMPDIR, 'stall-leave'), { mode: 0o700 })
-  if (mode === 'staging') await writeFile(join(root, 'settlement.tmp'), '{', file)
-  if (mode !== 'missing') await writeFile(join(root, 'settlement.json'), mode === 'malformed' ? '{' : JSON.stringify(receipt), file)
-  const proof = mode === 'probe-refused' ? { schema: 'wrong' } : completeProbe(bin, TMPDIR)
-  if (mode === 'provider-error') Object.assign(proof.scenarios[0], { status: 'mismatch', failureKind: 'contract', failure: 'original provider error' })
-  if (mode !== 'no-probe') await writeFile(output, JSON.stringify(proof), file)
-  console.log('5 passed')
-  if (mode === 'bad-runner') process.exitCode = 7
+  if (mode === 'wrong-digest') receipt.evidenceSha256 = '0'.repeat(64)
+  if (mode !== 'no-probe') await writeFile(output, bytes, file)
+  const staging = join(root, 'settlement.tmp')
+  if (mode !== 'missing') await writeFile(staging, mode === 'malformed' || mode === 'staging' ? '{' : JSON.stringify(receipt), file)
+  if (!['staging', 'missing'].includes(mode)) await rename(staging, join(root, 'settlement.json'))
+  if (mode === 'changed-probe' || mode === 'changed-provider-error') {
+    // Still compact, valid JSON with the same schema, but not the published bytes.
+    proof.scenarios[1].requests[0].fixture = 'changed after FINAL'
+    await writeFile(output, JSON.stringify(proof), file)
+  }
+  if (mode === 'truncated-probe') await writeFile(output, bytes.slice(0, -1), file)
+  if (['bad-runner', 'changed-provider-error', 'truncated-probe'].includes(mode)) process.exitCode = 7
+  else console.log('5 passed')
 `
 
 test('Codex checks the final worker claim and every ordered pre-launch lease', async (t) => {
@@ -617,12 +639,28 @@ test('Codex checks the final worker claim and every ordered pre-launch lease', a
       'bool-proof',
       'unregistered',
       'no-native-terminal',
+      ...[
+        'initial-turn-version',
+        'initial-turn',
+        'follow-up',
+        'follow-up-resume',
+        'http-400',
+        'stall-stop',
+        'stall-leave',
+      ].map((role) => `missing-cache-${role}`),
       'omitted',
       'extra-registration',
       'unfinished',
       'valid',
       'probe-refused',
       'no-probe',
+      'malformed-probe',
+      'truncated-probe',
+      'partial-probe',
+      'status-only-failure',
+      'wrong-digest',
+      'changed-probe',
+      'changed-provider-error',
       'bad-runner',
       'provider-error',
     ]) {
@@ -631,23 +669,27 @@ test('Codex checks the final worker claim and every ordered pre-launch lease', a
         `const mode = ${JSON.stringify(mode)};\n${settlementFixture}`,
       )
       const { evidence, failed } = await runFakeProof(t, { npm, pnpm })
-      const settled = [
-        'valid',
-        'probe-refused',
-        'no-probe',
-        'bad-runner',
-        'provider-error',
-      ].includes(mode)
-      assert.equal(failed, mode !== 'valid', mode)
+      const settled = ['valid', 'bad-runner', 'provider-error'].includes(mode)
+      assert.equal(
+        failed,
+        mode !== 'valid',
+        `${mode}: ${evidence.detail}; ${evidence.test?.stderr}`,
+      )
       assert.equal(evidence.cleanup.rootRemoved, settled, mode)
       assert.equal(evidence.cleanup.processesDrained, settled, mode)
       if (!settled) {
         assert.equal(evidence.cleanup.status, 'incomplete', mode)
         assert.ok(existsSync(evidence.cleanup.retainedRoot), mode)
       }
-      if (mode === 'bad-runner') assert.match(evidence.detail, /Vitest runner exited 7/)
+      if (['bad-runner', 'truncated-probe'].includes(mode))
+        assert.match(evidence.detail, /Vitest runner exited 7/)
       if (mode === 'probe-refused') assert.match(evidence.detail, /native evidence identity/)
       if (mode === 'no-probe') assert.match(evidence.detail, /native evidence unavailable/)
+      if (mode === 'changed-provider-error') {
+        assert.equal(evidence.firstFailure, 'observed-contract-error')
+        assert.match(evidence.test.failure, /Vitest runner exited 7/)
+        assert.equal(evidence.native.scenarios[0].failure, 'original provider error')
+      }
       if (mode === 'provider-error') {
         assert.equal(evidence.classification, 'observed-contract-error')
         assert.equal(evidence.native.scenarios[0].failure, 'original provider error')
