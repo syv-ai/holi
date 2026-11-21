@@ -2,10 +2,12 @@ import { PassThrough } from 'node:stream'
 import { setImmediate as tick } from 'node:timers/promises'
 import { posixFixtureLedger } from '../../../../test/fixtures/posix-fixture-ledger'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PiRpcRun, type PiChild } from '../main/pi/rpc'
+import { PiRpcRun, type PiRpcOptions } from '../main/pi/rpc'
 import { ownedProcessDrain, spawnOwnedProgram } from '../../../main/plugin-api'
 
 vi.mock('../../../main/plugin-api', { spy: true })
+
+type PiChild = ReturnType<NonNullable<PiRpcOptions['spawn']>>
 
 function fake(autoClose = true) {
   const stdin = new PassThrough()

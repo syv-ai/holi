@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { NO_TOOLS, type PiChild } from '../main/pi/rpc'
+import { NO_TOOLS, type PiRpcOptions } from '../main/pi/rpc'
 import { createPiBackground } from '../main/pi/background'
 import { activationOwnership } from '../main/host/ownership'
 import { agentCapabilities } from '../main/host/capabilities'
@@ -20,6 +20,8 @@ import { inspectPosixOwnership, ownedProcessDrain } from '../../../main/plugin-a
 import { posixFixtureLedger } from '../../../../test/fixtures/posix-fixture-ledger'
 import { join } from 'node:path'
 import { setImmediate as tick } from 'node:timers/promises'
+
+type PiChild = ReturnType<NonNullable<PiRpcOptions['spawn']>>
 
 function fake(autoClose = true, autoStats = true) {
   const stdin = new PassThrough()
