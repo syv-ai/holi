@@ -310,7 +310,9 @@ int main(int argc, char **argv) {
     execvp(argv[6], argv + 7);
     int exec_error = errno;
     snprintf(line, sizeof line, "%d\n", exec_error);
-    (void)write(result, line, strlen(line));
+    ssize_t written;
+    do written = write(result, line, strlen(line)); while (written < 0 && errno == EINTR);
+    (void)written;
     if (base < 3) {
         errno = exec_error;
 #ifndef __APPLE__
