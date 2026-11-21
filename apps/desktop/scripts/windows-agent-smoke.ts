@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { ChildProcess, execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { join, relative } from 'node:path'
 import { finished } from 'node:stream/promises'
@@ -507,7 +507,8 @@ async function main() {
     failures.add(error)
   }
   if (failures.size) throw new AggregateError([...failures], 'Dependency Electron smoke failed')
-  await writeFile(
+  // Closing the last window can queue an implicit quit. Seal the report without yielding.
+  writeFileSync(
     join(root, 'smoke-result.json'),
     JSON.stringify({
       ok: true,
