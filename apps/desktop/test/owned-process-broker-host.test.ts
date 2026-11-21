@@ -19,7 +19,10 @@ const env =
     ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR }
     : {}
 
-function host(native: Parameters<typeof brokerHostPlan>[1], observeNativeEof = false) {
+function host(
+  native: Parameters<typeof brokerHostPlan>[1] & { env?: NodeJS.ProcessEnv },
+  observeNativeEof = false,
+) {
   const plan = brokerHostPlan(node, native)
   if (observeNativeEof) {
     // The host keeps its own outputs open until the join. Observe EOF on the
@@ -35,7 +38,7 @@ function host(native: Parameters<typeof brokerHostPlan>[1], observeNativeEof = f
   }
   const child = spawn(plan.file, plan.args, {
     cwd: plan.cwd,
-    env,
+    env: native.env ?? env,
     detached: true,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -56,7 +59,8 @@ function nodeHost(source: string, cwd = process.cwd(), observeNativeEof = false)
 }
 
 function windowsJoinFixture(cwd: string) {
-  const adapter = win32Adapter('RunBroker', env, (source) => {
+  // Add-Type's CodeDOM compiler needs writable temp space, not the parent's environment.
+  const adapter = win32Adapter('RunBroker', { ...env, TEMP: cwd, TMP: cwd }, (source) => {
     // Keep the real broker body compiling, but run only the fixture entry.
     const entry = 'public static int RunBroker()'
     if (source.split(entry).length !== 2) throw new Error('Expected one native broker entry')
@@ -75,6 +79,7 @@ public static partial class HoliOwnedProcess {
 
   public static int RunBroker() {
     try {
+      File.WriteAllText("native-entered", "");
       var input = JoinGetStdHandle(-10);
       var output = JoinGetStdHandle(-11);
       var error = JoinGetStdHandle(-12);
@@ -84,6 +89,7 @@ public static partial class HoliOwnedProcess {
         return 125;
       // Close the actual Windows pipe handles, not Node's CRT descriptor aliases.
       if (!JoinCloseHandle(output) || !JoinCloseHandle(error)) return 125;
+      File.WriteAllText("native-handles-closed", "");
       var one = new byte[1];
       foreach (byte expected in Encoding.UTF8.GetBytes("finish")) {
         if (!JoinReadFile(input, one, 1, out count, IntPtr.Zero) || count != 1 || one[0] != expected)
@@ -102,10 +108,15 @@ public static partial class HoliOwnedProcess {
   return { ...adapter, cwd }
 }
 
-async function collect(stream: Readable, slow = false): Promise<Buffer> {
+async function collect(
+  stream: Readable,
+  slow = false,
+  observe?: (chunk: Buffer) => void,
+): Promise<Buffer> {
   const chunks: Buffer[] = []
   for await (const chunk of stream) {
     chunks.push(chunk)
+    observe?.(chunk)
     if (slow) await delay(2)
   }
   return Buffer.concat(chunks)
@@ -146,7 +157,7 @@ describe('owned Job broker host', () => {
   it('waits past the terminal frame for physical exit without requiring parent EOF', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'holi-broker-host-'))
     onTestFinished(() => rm(cwd, { recursive: true, force: true }))
-    const { child, closed } =
+    const { child } =
       process.platform === 'win32'
         ? host(windowsJoinFixture(cwd), true)
         : nodeHost(
@@ -165,23 +176,67 @@ describe('owned Job broker host', () => {
             cwd,
             true,
           )
-    const stdout = collect(child.stdout)
+    // Observe physical close (even if spawning raised an error) before consuming output.
+    const closed = new Promise<[number | null, NodeJS.Signals | null]>((resolve) => {
+      child.once('close', (code, signal) => resolve([code, signal]))
+    })
+    const earlyClose = closed.then(() => {
+      throw new Error('Broker host closed before the terminal frame')
+    })
+    let reportTerminal!: (seen: boolean) => void
+    const firstFrame = new Promise<boolean>((resolve) => {
+      reportTerminal = resolve
+    })
+    const terminal = Buffer.from('terminal\n')
+    let prefix = Buffer.alloc(0)
+    let terminalSeen = false
+    const stdout = collect(child.stdout, false, (chunk) => {
+      if (prefix.length === terminal.length) return
+      prefix = Buffer.concat([prefix, chunk.subarray(0, terminal.length - prefix.length)])
+      if (prefix.length < terminal.length) return
+      terminalSeen = prefix.equals(terminal)
+      reportTerminal(terminalSeen)
+    })
+    const startup = Promise.race([
+      firstFrame,
+      earlyClose,
+      stdout.then(() => {
+        throw new Error('Broker host stdout ended before the terminal frame')
+      }),
+    ])
     const stderr = collect(child.stderr)
+    void stderr.catch(() => {})
     const finished = join(cwd, 'native-finished')
     try {
-      await expect.poll(() => existsSync(join(cwd, 'native-output-ended'))).toBe(true)
-      expect(existsSync(finished)).toBe(false)
-      expect(child.exitCode).toBeNull()
-      expect(child.signalCode).toBeNull()
-      child.stdin.write('finish') // Release the inner process without sending parent EOF.
-      const [status, output, errors] = await Promise.all([closed, stdout, stderr])
-      expect(status).toEqual([0, null])
-      expect(await readFile(finished, 'utf8')).toBe('done')
-      expect(output.toString()).toBe('terminal\n')
-      expect(errors).toHaveLength(0)
-    } finally {
-      if (!child.stdin.destroyed) child.stdin.end('finish')
-      await closed // Release a failed barrier before its cwd cleanup hook runs.
+      try {
+        // PowerShell compilation is startup, not part of the inner-pipe EOF barrier.
+        expect(await startup).toBe(true)
+        await expect.poll(() => existsSync(join(cwd, 'native-output-ended'))).toBe(true)
+        expect(existsSync(finished)).toBe(false)
+        expect(child.exitCode).toBeNull()
+        expect(child.signalCode).toBeNull()
+        child.stdin.write('finish') // Release the inner process without sending parent EOF.
+        const [status, output, errors] = await Promise.all([closed, stdout, stderr])
+        expect(status).toEqual([0, null])
+        expect(await readFile(finished, 'utf8')).toBe('done')
+        expect(output.toString()).toBe('terminal\n')
+        expect(errors).toHaveLength(0)
+      } finally {
+        if (!child.stdin.destroyed) child.stdin.end('finish')
+        await closed // Release a failed barrier before its cwd cleanup hook runs.
+      }
+    } catch (cause) {
+      const excerpt = (await stderr.catch(() => Buffer.alloc(0)))
+        .subarray(0, 500)
+        .toString('latin1')
+        .replace(/[^ -~]/g, ' ')
+      throw new Error(
+        `Broker join fixture failed: terminalSeen=${terminalSeen}, hostStatus=${JSON.stringify(await closed)}, ` +
+          `windowsEntry=${existsSync(join(cwd, 'native-entered'))}, ` +
+          `windowsHandlesClosed=${existsSync(join(cwd, 'native-handles-closed'))}, ` +
+          `nativeFinished=${existsSync(finished)}, stderr=${excerpt}`,
+        { cause },
+      )
     }
   })
 
