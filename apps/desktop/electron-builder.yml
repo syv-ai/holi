@@ -44,6 +44,9 @@ publish:
   owner: syv-ai
   repo: holi
 mac:
+  extraResources:
+    - from: build/native/holi-posix-lease
+      to: holi-posix-lease
   target:
     # The dmg is what a person downloads; the zip and latest-mac.yml are what
     # the updater downloads.
@@ -58,6 +61,9 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
 linux:
+  extraResources:
+    - from: build/native/holi-posix-lease
+      to: holi-posix-lease
   target:
     # The deb installs Holi into the app menu and registers holi:// links; the
     # AppImage runs without installing. electron-updater updates both from

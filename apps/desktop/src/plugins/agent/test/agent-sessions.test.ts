@@ -1,3 +1,6 @@
+import { ChildProcess } from 'node:child_process'
+import { PassThrough } from 'node:stream'
+import { setImmediate as tick } from 'node:timers/promises'
 import { describe, expect, it, vi } from 'vitest'
 import { fakeClaudeCommand } from './fake-claude-command'
 import type { ClaudeCli } from '../main/claude/cli'
@@ -11,7 +14,11 @@ import {
 } from '../main/claude/listing'
 import type { SessionChannel } from '../main/claude/messaging'
 import { createAgentSessions, type AgentVault } from '../main/host/sessions'
-import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
+import { ownedProcessDrain } from '../../../main/plugin-api'
+import { createManagedTurnBrackets } from '../main/host/turn-coordinator'
+import { createPiBackground } from '../main/pi/background'
+import { createAgentTerminals, type AgentTerminals, type OpenArgs } from '../main/host/terminals'
+import { createPtySessions } from '../main/host/pty-sessions'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
 const REMOTE = 'syv/vault'
@@ -34,6 +41,7 @@ function setup(
   nativeCli?: ClaudeCli,
   root = ROOT,
   activationSignal?: AbortSignal,
+  turnLogFor?: Parameters<typeof createAgentSessions>[0]['turnLogFor'],
 ) {
   let listing: Row[] = initial
   const cli = {
@@ -106,6 +114,7 @@ function setup(
     },
   }
   const sessions = createAgentSessions({
+    turnLogFor,
     ...(activationSignal === undefined ? {} : { activationSignal }),
     emit: (_remote: string, name: string, payload: unknown) => sent.push([name, payload]),
     provider: {
@@ -140,6 +149,7 @@ function setup(
   return {
     running,
     sessions,
+    vault,
     cli,
     opened,
     pastes,
@@ -155,6 +165,180 @@ function setup(
     notifyWatch: () => watched(),
   }
 }
+
+it
+  .runIf(process.platform !== 'win32')
+  .each([
+    'unknown physical proof',
+    'positive proof after output failure',
+    'live semantic end',
+  ] as const)('honors the Pi hold through SessionHost with %s', async (mode) => {
+  const append = vi.fn(async () => {})
+  const { sessions, vault, attach } = setup([], undefined, ROOT, undefined, () => ({
+    list: async () => [],
+    append,
+  }))
+  const resume = vi.fn()
+  vault.pauseSync = vi.fn(() => resume)
+  const managed = createManagedTurnBrackets()
+  vault.claimManagedTurn = managed.claimManagedTurn
+  await attach()
+  const stdin = new PassThrough()
+  const stdout = new PassThrough()
+  const stderr = new PassThrough()
+  const failure = new Error('physical proof unavailable')
+  const broken = new Error('output failed')
+  const child = Object.assign(new ChildProcess(), {
+    stdin,
+    stdout,
+    stderr,
+    [ownedProcessDrain]: {
+      drain: vi.fn(async () => {
+        if (mode === 'unknown physical proof') throw failure
+        if (mode === 'live semantic end') {
+          const eof = new Promise<void>((resolve) => stdout.once('end', resolve))
+          stdout.end()
+          child.emit('exit', 0, null)
+          await eof
+          child.emit('close', 0, null)
+        }
+      }),
+    },
+  })
+  const pi = createPiBackground({
+    bin: () => 'pi',
+    spawn: () => child,
+    bracket: sessions.bracket,
+    changed: () => {},
+    beginManagedTurn: (id) => managed.begin(id, sessions.bracket),
+  })
+  pi.setVault(vault.remote, vault.root)
+  try {
+    const launched = await pi.launch({ name: 'fixture', prompt: 'go', keep: true })
+    if (!launched.ok) throw new Error(launched.message)
+    const id = launched.sessionId
+    expect(vault.pauseSync).toHaveBeenCalledOnce()
+    expect(resume).not.toHaveBeenCalled()
+    if (mode === 'live semantic end') {
+      stdout.write(
+        '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"live"}}\n',
+      )
+      stdout.write('{"type":"agent_settled"}\n')
+      const command = stdin
+        .read()!
+        .toString()
+        .trim()
+        .split('\n')
+        .map((line: string) => JSON.parse(line))
+        .at(-1)
+      expect(command.type).toBe('get_session_stats')
+      stdout.write(`${JSON.stringify({ type: 'response', id: command.id, success: false })}\n`)
+      await vi.waitFor(() => expect(pi.reply(id)).toBe('live'))
+      expect(child[ownedProcessDrain].drain).not.toHaveBeenCalled()
+      expect(append).toHaveBeenCalledOnce()
+    } else {
+      if (mode === 'positive proof after output failure') {
+        stdout.destroy(broken)
+        await tick()
+      }
+      const cause = mode === 'unknown physical proof' ? failure : broken
+      await expect(pi.stop(id)).rejects.toBe(cause)
+      await expect(pi.leave()).rejects.toBe(cause)
+      expect(append).not.toHaveBeenCalled()
+      expect(pi.reply(id)).toBeNull()
+    }
+    await sessions.leave()
+    if (mode === 'unknown physical proof') expect(resume).not.toHaveBeenCalled()
+    else expect(resume).toHaveBeenCalledOnce()
+  } finally {
+    await pi.leave().catch(() => {})
+    await sessions.leave()
+    stdin.destroy()
+    stdout.destroy()
+    stderr.destroy()
+  }
+})
+
+it.skipIf(process.platform === 'win32')(
+  'forgets an ordinary PTY turn on physical proof despite output failure',
+  async () => {
+    const append = vi.fn(async () => {})
+    const { sessions, terminals, vault, attach } = setup([], undefined, ROOT, undefined, () => ({
+      list: async () => [],
+      append,
+    }))
+    const resume = vi.fn()
+    vault.pauseSync = vi.fn(() => resume)
+    const failure = new Error('failed exit output notification')
+    let prove!: () => void
+    const proof = new Promise<void>((resolve) => {
+      prove = resolve
+    })
+    let publicExit!: (event: { exitCode: number }) => void
+    Object.assign(
+      terminals,
+      createAgentTerminals({
+        emit: (_remote, name) => {
+          if (name === 'pty-exit') throw failure
+        },
+        spawnPty: () => ({
+          pid: 2, // Synthetic; this adapter only uses the receipt below, never OS calls.
+          onExit: (fn) => {
+            publicExit = fn
+          },
+          onData() {},
+          write() {},
+          resize() {},
+          kill: () => {
+            throw new Error('must use explicit supervision')
+          },
+        }),
+        superviseGroup: () => ({ drain: () => proof }),
+      }),
+    )
+    const ptys = createPtySessions({
+      vault,
+      providers: () => [
+        {
+          id: 'codex',
+          label: 'Fixture',
+          notInstalled: 'unused',
+          installed: () => true,
+          configure: async () => ({ dir: '/fixture' }),
+          terminal: () => ({ bin: 'fixture', args: [], env: {} }),
+          capabilities: {},
+        },
+      ],
+      terminals,
+      bracket: sessions.bracket,
+      protectPtyTurn: sessions.protectPtyTurn,
+      binDir: () => null,
+      onChange() {},
+    })
+    await attach()
+    const started = await ptys.start('codex', { prompt: 'go' })
+    if (!started.ok) throw new Error(started.message)
+    const stopped = ptys.stop(started.sessionId)
+    void stopped.catch(() => {})
+    try {
+      sessions.bracket(started.sessionId, 'forget') // Generic traffic is not a proof.
+      expect(resume).not.toHaveBeenCalled()
+      publicExit({ exitCode: 0 })
+      prove()
+      await expect(stopped).rejects.toBe(failure)
+      await expect(ptys.stop(started.sessionId)).rejects.toBe(failure)
+      expect(resume).toHaveBeenCalledOnce()
+      expect(append).not.toHaveBeenCalled()
+      expect(terminals.list()).toContainEqual(expect.objectContaining({ id: started.terminalId }))
+      await expect(sessions.leave()).rejects.toMatchObject({ errors: [failure] })
+    } finally {
+      publicExit({ exitCode: 0 })
+      prove()
+      await ptys.leave().catch(() => {})
+      await sessions.leave().catch(() => {})
+    }
+  },
+)
 
 describe('agent sessions', () => {
   it('propagates a malformed native launch receipt without speculative stop or terminal attach', async () => {

@@ -1,7 +1,13 @@
+import { ChildProcess } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { JobsProvider } from '../main/provider'
+
 import { describe, expect, it, vi } from 'vitest'
 import { buildAgentEnv, notInstalledText } from '../main/claude/cli'
 import { notInstalledText as codexNotInstalled } from '../main/codex'
-import { defaultCommandOf } from '../main/host/jobs'
+import { createJobs } from '../main/host/jobs'
 import { AgentRuntime, type PidState, type PtyProcess } from '../main/host/pty'
 import { isFullPath, notFound, presetOf, readHarness } from '../main/harness/record'
 import { shellEnv } from '../../../main/terminal/terminals'
@@ -185,18 +191,67 @@ describe('stopping an agent on Windows', () => {
   })
 })
 
-describe('what a leftover job’s pid is running', () => {
-  it('refuses a pid that cannot be a job’s, on either OS', () => {
-    for (const platform of ['win32', 'linux'] as const) {
-      expect(defaultCommandOf(0, platform)).toBeNull()
-      expect(defaultCommandOf(1, platform)).toBeNull()
-      expect(defaultCommandOf(Number.NaN, platform)).toBeNull()
+it.each(['reused PID', 'matching live PID', 'missing receipt', 'unexpected entry'])(
+  'admits a Windows job with %s after restart',
+  async (kind) => {
+    const data = await mkdtemp(join(tmpdir(), 'holi-jobs-windows-fake-'))
+    const scratchRoot = join(data, 'jobs')
+    await mkdir(scratchRoot)
+    await writeFile(join(data, 'note'), 'vault contents')
+    const hasReceipt = kind === 'reused PID' || kind === 'matching live PID'
+    if (hasReceipt)
+      await writeFile(join(scratchRoot, 'j0123456789ab.pid'), `4242\n${scratchRoot}\n`)
+    else
+      await mkdir(
+        join(scratchRoot, kind === 'missing receipt' ? 'j0123456789ab.agent' : 'unexpected'),
+      )
+    const platform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+    try {
+      const child = new ChildProcess()
+      child.kill = vi.fn()
+      const spawn = vi.fn(() => child)
+      const provider: JobsProvider = {
+        id: 'codex',
+        label: 'Codex',
+        notInstalled: 'missing',
+        installed: () => true,
+        configure: async () => ({ dir: data }),
+        terminal: () => null,
+        capabilities: {
+          jobs: { command: () => ({ bin: 'fake', args: [], env: {} }), event: () => null },
+        },
+      }
+      const recovery = {
+        probePid: vi.fn(() => 'group-leader' as const),
+        commandOf: vi.fn(() =>
+          kind === 'matching live PID' ? `fixture ${scratchRoot}` : 'some other application',
+        ),
+        stopTree: vi.fn(),
+      }
+      const jobs = createJobs({
+        vault: { remote: 'fixture/windows', root: data },
+        scratchRoot,
+        spawn,
+        windowsRecovery: recovery,
+        onChange: () => {},
+      })
+      expect(await jobs.start({ provider, name: 'fake', prompt: 'go', allow: [] })).toMatchObject({
+        ok: true,
+      })
+      child.emit('close', 0, null)
+      await jobs.leave()
+      expect(spawn).toHaveBeenCalledTimes(1)
+      expect(recovery.probePid).toHaveBeenCalledTimes(hasReceipt ? 1 : 0)
+      expect(recovery.stopTree.mock.calls).toEqual(kind === 'matching live PID' ? [[4242]] : [])
+      expect(kill).not.toHaveBeenCalled()
+      expect(child.kill).not.toHaveBeenCalled()
+      expect(await readFile(join(data, 'note'), 'utf8')).toBe('vault contents')
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform })
+      kill.mockRestore()
+      await rm(data, { recursive: true, force: true })
     }
-  })
-
-  it('reads this very process’s command line from the OS it is on', () => {
-    const line = defaultCommandOf(process.pid)
-    expect(line).not.toBeNull()
-    expect(line!.toLowerCase()).toContain('node')
-  })
-})
+  },
+)

@@ -1,13 +1,43 @@
-import { execFileSync, spawn } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, lstat, rm, writeFile, realpath } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { lstatSync } from 'node:fs'
+import { mkdtemp, mkdir, readFile, realpath, lstat, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve, dirname } from 'node:path'
+import { join, resolve } from 'node:path'
+import {
+  leaseBuildScript,
+  producerCommandFailure,
+  runProducerCommand,
+} from './producer-command.mjs'
+import {
+  exactKeys,
+  privateDirectory,
+  readFinalSettlement,
+  readPrivate,
+} from './producer-settlement.mjs'
 
 const VERSION = '0.169.0'
 const MAX_OUTPUT = 2 * 1024 * 1024
 const MAX_EVIDENCE = 1024 * 1024
 const TOTAL_TIMEOUT = 180_000
 const TEST_TIMEOUT = 100_000
+const scenarioNames = ['initial-turn', 'follow-up', 'http-400', 'stall-stop', 'stall-leave']
+
+const leaseRoles = [
+  'initial-turn-version',
+  'initial-turn',
+  'follow-up',
+  'follow-up-resume',
+  ...scenarioNames.slice(2),
+]
+
+function hasFinalSettlement(root, identity, workerTmp, bytes, requireComplete) {
+  const receipt = readFinalSettlement(root, identity, leaseRoles, bytes, requireComplete)
+  return (
+    receipt &&
+    receipt.leases.length === leaseRoles.length &&
+    scenarioNames.every((name) => !lstatSync(join(workerTmp, name), { throwIfNoEntry: false }))
+  )
+}
 
 function cleanEnvironment(home, extra = {}) {
   return {
@@ -22,206 +52,55 @@ function cleanEnvironment(home, extra = {}) {
   }
 }
 
-function groupExists(pid) {
-  if (process.platform === 'win32') return false
-  try {
-    process.kill(-pid, 0)
-    return true
-  } catch (error) {
-    return error.code === 'EPERM'
-  }
-}
-
-async function cleanupGroup(pid) {
-  if (process.platform === 'win32' || !pid || !groupExists(pid)) return true
-  try {
-    process.kill(-pid, 'SIGTERM')
-  } catch {}
-  await new Promise((resolveDelay) => setTimeout(resolveDelay, 250))
-  if (groupExists(pid)) {
-    try {
-      process.kill(-pid, 'SIGKILL')
-    } catch {}
-  }
-  return waitGroupGone(pid)
-}
-
-async function drainOwnedNativeGroups(packageRoot, ledgerPath, root) {
-  if (process.platform === 'win32') return false
-  const groups = new Set()
-  const forbidden = new Set([process.pid, process.ppid])
-  const normalizeMacPath = (path) => (path.startsWith('/var/') ? `/private${path}` : path)
-  const packageRoots = new Set()
-  const candidateRoots = [
-    packageRoot,
-    join(dirname(packageRoot), `codex-${process.platform}-${process.arch}`),
-  ]
-  for (const candidate of candidateRoots) {
-    packageRoots.add(resolve(candidate))
-    try {
-      packageRoots.add(await realpath(candidate))
-    } catch {}
-  }
-  for (const path of [...packageRoots]) packageRoots.add(normalizeMacPath(path))
-  const isWithin = (path, parent) => path === parent || path.startsWith(`${parent}/`)
-  // The ledger is only a recovery hint: PIDs may have been reused, and its
-  // contents are not authority to signal a process. The live process snapshot
-  // below is the sole source of killable process groups.
-  void ledgerPath
-  void root
-  try {
-    const { spawnSync } = await import('node:child_process')
-    const scan = spawnSync('ps', ['-axo', 'pid=,pgid=,command='], {
-      encoding: 'utf8',
-      timeout: 1500,
-      maxBuffer: 4 * 1024 * 1024,
+function validFailedScenario(scenario, bin) {
+  return (
+    scenario &&
+    ['unverified', 'mismatch'].includes(scenario.status) &&
+    ['setup', 'native-launch', 'native-contract', 'host-lifecycle', 'cleanup'].includes(
+      scenario.stage,
+    ) &&
+    ['setup', 'timeout', 'contract'].includes(scenario.failureKind) &&
+    typeof scenario.failure === 'string' &&
+    scenario.failure.length > 0 &&
+    // Seven registered roles means every scenario entered its capture fixture.
+    ['processes', 'rawProcesses', 'jsonl', 'requests', 'host', 'brackets'].every(
+      (key) =>
+        Array.isArray(scenario[key]) &&
+        scenario[key].every((row) => row && typeof row === 'object' && !Array.isArray(row)),
+    ) &&
+    scenario.rawProcesses.length === scenario.processes.length &&
+    scenario.rawProcesses.every((raw, index) => {
+      const captured = scenario.processes[index]
+      return (
+        Number.isInteger(raw.pid) &&
+        raw.pid > 1 &&
+        raw.bin === bin &&
+        captured.pid === raw.pid &&
+        captured.bin === raw.bin &&
+        typeof raw.cwd === 'string' &&
+        captured.cwd === raw.cwd &&
+        Array.isArray(raw.args) &&
+        raw.args.includes('exec') &&
+        raw.args.includes('--json') &&
+        JSON.stringify(captured.args) === JSON.stringify(raw.args) &&
+        typeof raw.stdout === 'string' &&
+        typeof raw.stderr === 'string' &&
+        Number.isSafeInteger(raw.stdoutBytes) &&
+        raw.stdoutBytes >= 0 &&
+        Number.isSafeInteger(raw.stderrBytes) &&
+        raw.stderrBytes >= 0 &&
+        Number.isSafeInteger(raw.outputLines) &&
+        raw.outputLines >= 0 &&
+        typeof raw.outputLimited === 'boolean' &&
+        (Number.isInteger(raw.exitCode) ||
+          (raw.exitCode === null && typeof raw.signal === 'string')) &&
+        (raw.signal === null || typeof raw.signal === 'string')
+      )
     })
-    if (scan.status !== 0 || scan.error || scan.stdout.length > 4 * 1024 * 1024) return false
-    for (const line of scan.stdout.split('\n')) {
-      const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line)
-      if (!match) continue
-      const pid = Number(match[1]),
-        group = Number(match[2]),
-        command = match[3]
-      if (pid === process.pid || pid === process.ppid) forbidden.add(group)
-      if (pid <= 1 || group <= 1 || forbidden.has(group)) continue
-      const exactPath = command.split(/\s+/).some((part) => {
-        const cleaned = normalizeMacPath(part.replace(/^['"]|['"]$/g, ''))
-        const candidates = [cleaned]
-        try {
-          candidates.push(normalizeMacPath(resolve(cleaned)))
-        } catch {}
-        return candidates.some((path) =>
-          [...packageRoots].some((base) => path === base || path.startsWith(`${base}/`)),
-        )
-      })
-      if (exactPath) groups.add(group)
-    }
-  } catch {
-    return false
-  }
-  for (const group of groups) {
-    if (group <= 1 || forbidden.has(group)) continue
-    try {
-      process.kill(-group, 'SIGTERM')
-    } catch {}
-  }
-  const drainDeadline = Date.now() + 12_000
-  await new Promise((resolveDelay) => setTimeout(resolveDelay, 300))
-  for (const group of groups) {
-    if (group <= 1 || forbidden.has(group)) continue
-    if (groupExists(group))
-      try {
-        process.kill(-group, 'SIGKILL')
-      } catch {}
-  }
-  for (const group of groups) {
-    if (group <= 1 || forbidden.has(group)) continue
-    if (!(await waitGroupGone(group, Math.max(0, drainDeadline - Date.now())))) return false
-  }
-  return true
+  )
 }
 
-async function waitGroupGone(pid, ms = 2_000) {
-  if (process.platform === 'win32' || !pid) return true
-  const until = Date.now() + ms
-  while (Date.now() < until) {
-    if (!groupExists(pid)) return true
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25))
-  }
-  return !groupExists(pid)
-}
-
-async function run(command, args, { cwd, env, timeout, deadline, recoveryPackageRoot }) {
-  const remaining = Math.min(timeout, deadline - Date.now())
-  if (remaining <= 0)
-    return {
-      code: null,
-      timedOut: true,
-      outputLimited: false,
-      stdout: '',
-      stderr: '',
-      groupDrained: true,
-    }
-  return new Promise((resolveRun) => {
-    const child = spawn(command, args, {
-      cwd,
-      env,
-      detached: process.platform !== 'win32',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-    let stdout = Buffer.alloc(0),
-      stderr = Buffer.alloc(0),
-      outputBytes = 0,
-      outputLimited = false,
-      timedOut = false,
-      finalized = false,
-      escalator,
-      finalizer
-    const append = (stream, chunk) => {
-      const room = Math.max(0, MAX_OUTPUT - outputBytes)
-      const retained = chunk.subarray(0, room)
-      outputBytes += retained.length
-      if (stream === 'stdout') stdout = Buffer.concat([stdout, retained])
-      else stderr = Buffer.concat([stderr, retained])
-      if (retained.length < chunk.length && !outputLimited) {
-        outputLimited = true
-        terminate()
-      }
-    }
-    child.stdout.on('data', (chunk) => append('stdout', chunk))
-    child.stderr.on('data', (chunk) => append('stderr', chunk))
-    const signal = (name) => {
-      try {
-        process.kill(process.platform === 'win32' ? child.pid : -child.pid, name)
-      } catch {}
-    }
-    const terminate = () => {
-      signal('SIGTERM')
-      if (!escalator) escalator = setTimeout(() => signal('SIGKILL'), 500)
-      // A descendant can keep inherited pipes open after the process exits.
-      if (!finalizer) finalizer = setTimeout(() => void finish(null, null, true), 750)
-    }
-    const timer = setTimeout(() => {
-      timedOut = true
-      terminate()
-    }, remaining)
-    const finish = async (code, childSignal, force = false) => {
-      if (finalized) return
-      finalized = true
-      clearTimeout(timer)
-      if (finalizer) clearTimeout(finalizer)
-      if (force) {
-        signal('SIGKILL')
-        child.stdout.destroy()
-        child.stderr.destroy()
-      }
-      const groupDrained = await cleanupGroup(child.pid)
-      const ownedDrained =
-        recoveryPackageRoot && process.platform !== 'win32'
-          ? await drainOwnedNativeGroups(recoveryPackageRoot, '', cwd)
-          : true
-      if (escalator) clearTimeout(escalator)
-      resolveRun({
-        code,
-        signal: childSignal,
-        timedOut,
-        outputLimited,
-        stdout: stdout.toString(),
-        stderr: stderr.toString(),
-        groupDrained: groupDrained && ownedDrained,
-      })
-    }
-    child.once('error', (error) => {
-      append('stderr', Buffer.from(`\n${error.message}`))
-      void finish(null, null)
-    })
-    child.once('close', (code, childSignal) => void finish(code, childSignal))
-  })
-}
-
-export function validateNativeProof(proof, expectedBin) {
+function validateProbe(proof, expectedBin, allowFailure) {
   if (
     !proof ||
     proof.schema !== 'holi.codex-exec-producer.v1' ||
@@ -232,13 +111,18 @@ export function validateNativeProof(proof, expectedBin) {
     return 'native evidence identity is incomplete or mismatched'
   if (typeof expectedBin !== 'string' || proof.bin !== expectedBin)
     return 'native CLI path does not match the pinned package installation'
-  const expected = ['initial-turn', 'follow-up', 'http-400', 'stall-stop', 'stall-leave']
+  const expected = scenarioNames
   if (!Array.isArray(proof.scenarios) || proof.scenarios.length !== expected.length)
     return 'native evidence scenarios are incomplete'
   if (new Set(proof.scenarios.map((row) => row?.name)).size !== expected.length)
     return 'native evidence scenarios are duplicated'
   for (const name of expected) {
     const s = proof.scenarios.find((row) => row?.name === name)
+    if (allowFailure && s?.status !== 'pass') {
+      if (!validFailedScenario(s, expectedBin))
+        return `native evidence ${name} has an incomplete failure record`
+      continue
+    }
     if (!s || s.status !== 'pass' || s.failure || s.failureKind)
       return `native evidence ${name} did not finish passing`
     if (!['cleanup', 'host-lifecycle', 'native-contract'].includes(s.stage))
@@ -411,17 +295,53 @@ export function validateNativeProof(proof, expectedBin) {
   return null
 }
 
+export function validateNativeProof(proof, expectedBin) {
+  return validateProbe(proof, expectedBin, false)
+}
+
+// Cleanup can follow a failed probe, but it still requires the complete terminal
+// artifact, not a progress snapshot or a success envelope with missing observations.
+function validFinalArtifact(proof, bin, issue) {
+  return (
+    exactKeys(proof, [
+      'schema',
+      'package',
+      'expectedVersion',
+      'version',
+      'bin',
+      'scenarios',
+      'cleanup',
+    ]) &&
+    exactKeys(proof.cleanup, ['nativeGroupsDrained', 'rootsRemoved']) &&
+    proof.cleanup.nativeGroupsDrained === true &&
+    proof.cleanup.rootsRemoved === true &&
+    Array.isArray(proof.scenarios) &&
+    proof.scenarios.length === scenarioNames.length &&
+    scenarioNames.every((name, index) => {
+      const scenario = proof.scenarios[index]
+      return (
+        scenario?.name === name &&
+        (scenario.status !== 'pass' ||
+          (scenario.failure === undefined && scenario.failureKind === undefined))
+      )
+    }) &&
+    (!issue || !validateProbe(proof, bin, true))
+  )
+}
+
 export async function runProducerProof({
   npm = 'npm',
   pnpm = 'pnpm',
   timeout = TOTAL_TIMEOUT,
   testEnv = {},
+  adapter,
 } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'holi-codex-exec-proof-'))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-codex-exec-proof-')))
   const deadline = Date.now() + timeout
   const proofPath = join(root, 'native-evidence.json')
   const ledgerPath = join(root, 'native-processes.jsonl')
-  let nativePackageRoot
+  let unsettled
+  let runnerPid
   const evidence = {
     package: '@openai/codex',
     expectedVersion: VERSION,
@@ -439,6 +359,24 @@ export async function runProducerProof({
     evidence,
   }
   try {
+    const run = async (label, command, args, options, worker = false) => {
+      unsettled = `Missing settlement for ${label}`
+      const commandResult = await runProducerCommand(command, args, {
+        ...options,
+        timeout: Math.min(options.timeout, deadline - Date.now()),
+        maxOutput: MAX_OUTPUT,
+        adapter,
+      })
+      runnerPid = commandResult.pid
+      unsettled = commandResult.cleanupError
+      if (!unsettled && !commandResult.notStarted) {
+        if (worker) unsettled = 'Missing complete detached worker lease settlement receipt'
+        else if (commandResult.signal || commandResult.timedOut || commandResult.outputLimited)
+          unsettled = `${label} was interrupted before normal settlement`
+      }
+      if (unsettled && commandResult.stopError) unsettled += `; ${commandResult.stopError}`
+      return commandResult
+    }
     const home = join(root, 'home'),
       install = join(root, 'install'),
       cache = join(root, 'npm-cache'),
@@ -459,7 +397,19 @@ export async function runProducerProof({
     })
     await writeFile(env.npm_config_userconfig, '')
     await writeFile(join(corepack, 'lastKnownGood.json'), JSON.stringify({ pnpm: '10.8.1' }))
+    const build = await run('POSIX launch helper build', process.execPath, [leaseBuildScript], {
+      cwd: root,
+      env,
+      timeout: 35_000,
+    })
+    const buildFailure = producerCommandFailure(build, 'POSIX launch helper build')
+    if (buildFailure || unsettled) {
+      evidence.detail = buildFailure ?? unsettled
+      evidence.diagnostics = build.stderr.slice(-8000)
+      return result
+    }
     const installResult = await run(
+      'Pinned package installation',
       npm,
       [
         'install',
@@ -470,16 +420,11 @@ export async function runProducerProof({
         '--no-fund',
         `@openai/codex@${VERSION}`,
       ],
-      { cwd: root, env, timeout: Math.min(60_000, timeout), deadline },
+      { cwd: root, env, timeout: 60_000 },
     )
-    evidence.cleanup.processesDrained = installResult.groupDrained
-    if (
-      installResult.code !== 0 ||
-      installResult.timedOut ||
-      installResult.outputLimited ||
-      !installResult.groupDrained
-    ) {
-      evidence.detail = `pinned package installation ${installResult.timedOut ? 'timed out' : installResult.outputLimited ? 'exceeded output limit' : `exited ${installResult.code}`}`
+    const installFailure = producerCommandFailure(installResult, 'Pinned package installation')
+    if (installFailure || unsettled) {
+      evidence.detail = installFailure ?? unsettled
       evidence.diagnostics = installResult.stderr.slice(-8000)
       evidence.classification =
         installResult.timedOut || installResult.outputLimited
@@ -488,7 +433,6 @@ export async function runProducerProof({
       return result
     }
     const packageRoot = join(install, 'node_modules', '@openai', 'codex')
-    nativePackageRoot = packageRoot
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
     evidence.packageVersion = manifest.version ?? null
     if (manifest.name !== '@openai/codex' || manifest.version !== VERSION) {
@@ -497,24 +441,17 @@ export async function runProducerProof({
       return result
     }
     const bin = join(packageRoot, 'bin', 'codex.js')
-    const version = await run(process.execPath, [bin, '--version'], {
+    const version = await run('Pinned CLI version probe', process.execPath, [bin, '--version'], {
       cwd: root,
       env,
-      recoveryPackageRoot: nativePackageRoot,
       timeout: 15_000,
-      deadline,
     })
-    evidence.cleanup.processesDrained = evidence.cleanup.processesDrained && version.groupDrained
     evidence.version = version.stdout.trim()
-    if (version.timedOut || version.outputLimited || !version.groupDrained) {
-      evidence.classification = 'incomplete-proof'
-      evidence.detail = 'pinned CLI version probe did not finish and drain cleanly'
-      evidence.diagnostics = version.stderr.slice(-8000)
-      return result
-    }
-    if (version.code !== 0) {
-      evidence.classification = 'setup-unavailable'
-      evidence.detail = `pinned CLI version probe could not observe a version (exit ${version.code})`
+    const versionFailure = producerCommandFailure(version, 'Pinned CLI version probe')
+    if (versionFailure || unsettled) {
+      evidence.classification =
+        version.timedOut || version.outputLimited ? 'incomplete-proof' : 'setup-unavailable'
+      evidence.detail = versionFailure ?? unsettled
       evidence.diagnostics = version.stderr.slice(-8000)
       return result
     }
@@ -524,7 +461,12 @@ export async function runProducerProof({
       evidence.diagnostics = version.stderr.slice(-8000)
       return result
     }
+    const workerTmp = join(root, 'worker-tmp')
+    const identity = { runId: randomUUID(), nonce: randomUUID() }
+    for (const dir of [workerTmp, join(root, 'admissions'), join(root, 'ownership')])
+      await mkdir(dir, { mode: 0o700 })
     const test = await run(
+      'Vitest runner',
       pnpm,
       [
         '--filter',
@@ -539,36 +481,40 @@ export async function runProducerProof({
       ],
       {
         cwd: resolve(import.meta.dirname, '..'),
-        recoveryPackageRoot: nativePackageRoot,
         env: cleanEnvironment(home, {
           ...env,
           ...testEnv,
+          TMPDIR: workerTmp,
+          TMP: workerTmp,
+          TEMP: workerTmp,
           HOLI_CODEX_BIN: bin,
           HOLI_CODEX_PROOF_OUTPUT: proofPath,
+          HOLI_CODEX_PROOF_RUN_ID: identity.runId,
+          HOLI_CODEX_PROOF_NONCE: identity.nonce,
           HOLI_CODEX_PROCESS_LEDGER: ledgerPath,
         }),
         timeout: TEST_TIMEOUT,
-        deadline,
       },
+      true,
     )
-    evidence.cleanup.processesDrained = evidence.cleanup.processesDrained && test.groupDrained
+    const runnerFailure = producerCommandFailure(test, 'Vitest runner')
     evidence.test = {
       code: test.code,
       timedOut: test.timedOut,
       outputLimited: test.outputLimited,
-      retainedBytes: Buffer.byteLength(test.stdout) + Buffer.byteLength(test.stderr),
-      groupDrained: test.groupDrained,
+      retainedBytes: test.retainedBytes,
+      ...(runnerFailure ? { failure: runnerFailure } : {}),
       stdout: test.stdout.slice(-12000),
       stderr: test.stderr.slice(-8000),
     }
-    let proof
+    let proof, bytes
     try {
-      const stat = await (await import('node:fs/promises')).stat(proofPath)
-      if (stat.size > MAX_EVIDENCE) throw new Error('native proof artifact exceeds size limit')
-      proof = JSON.parse(await readFile(proofPath, 'utf8'))
+      privateDirectory(root)
+      bytes = readPrivate(proofPath, MAX_EVIDENCE)
+      proof = JSON.parse(bytes)
     } catch (error) {
       evidence.classification = 'incomplete-proof'
-      evidence.detail = `native evidence unavailable: ${String(error)}`
+      evidence.detail = runnerFailure ?? `native evidence unavailable: ${String(error)}`
       return result
     }
     evidence.native = proof
@@ -578,14 +524,25 @@ export async function runProducerProof({
     } catch {
       issue = 'native evidence is malformed'
     }
+    if (!test.cleanupError && !test.notStarted) {
+      try {
+        // Parse and hash the same read. Only the worker's final artifact can
+        // authorize cleanup, even if an earlier diagnostic snapshot parses.
+        if (
+          bytes.equals(Buffer.from(JSON.stringify(proof))) &&
+          validFinalArtifact(proof, bin, issue) &&
+          hasFinalSettlement(root, identity, workerTmp, bytes, !issue)
+        )
+          unsettled = undefined
+      } catch {
+        // Keep the worker's root and the original runner/probe failure.
+      }
+    }
     const testsPassed =
-      test.code === 0 &&
-      !test.timedOut &&
-      !test.outputLimited &&
-      test.groupDrained &&
+      !runnerFailure &&
       /\b5 passed\b/.test(test.stdout) &&
       !/\b[1-9]\d* skipped\b/.test(test.stdout)
-    const scenarios = Array.isArray(proof.scenarios) ? proof.scenarios : []
+    const scenarios = Array.isArray(proof?.scenarios) ? proof.scenarios : []
     const credibleAttempt = (scenario) =>
       Array.isArray(scenario?.rawProcesses) &&
       scenario.rawProcesses.some(
@@ -615,7 +572,6 @@ export async function runProducerProof({
         !credibleAttempt(scenario),
     )
     const incomplete =
-      !test.groupDrained ||
       test.timedOut ||
       test.outputLimited ||
       scenarios.some(
@@ -637,7 +593,9 @@ export async function runProducerProof({
           : 'incomplete-proof'
     else if (!testsPassed) evidence.classification = 'incomplete-proof'
     else evidence.classification = 'pass'
-    if (issue) evidence.detail = issue
+    if (test.timedOut || test.outputLimited) evidence.detail = runnerFailure
+    else if (issue) evidence.detail = issue
+    else if (runnerFailure) evidence.detail = runnerFailure
     else if (!testsPassed)
       evidence.detail = 'Vitest did not report five executed, non-skipped scenarios'
     return result
@@ -646,25 +604,25 @@ export async function runProducerProof({
     evidence.classification = 'setup-unavailable'
     return result
   } finally {
-    if (nativePackageRoot) {
-      const nativeDrained = await drainOwnedNativeGroups(nativePackageRoot, ledgerPath, root)
-      evidence.cleanup.processesDrained = evidence.cleanup.processesDrained && nativeDrained
-    }
-    if (evidence.cleanup.processesDrained) {
+    evidence.cleanup.processesDrained = !unsettled
+    if (!unsettled) {
       await rm(root, { recursive: true, force: true }).catch((error) => {
         evidence.cleanup.error = String(error)
       })
-    } else {
-      evidence.cleanup.error ??= 'owned native process groups did not drain; retained private root'
+      try {
+        await lstat(root)
+      } catch (error) {
+        evidence.cleanup.rootRemoved = error.code === 'ENOENT'
+        if (!evidence.cleanup.rootRemoved) evidence.cleanup.error ??= String(error)
+      }
     }
-    try {
-      await lstat(root)
-      evidence.cleanup.rootRemoved = false
-    } catch (error) {
-      evidence.cleanup.rootRemoved = error.code === 'ENOENT'
-      if (!evidence.cleanup.rootRemoved) evidence.cleanup.error = String(error)
-    }
-    if (!evidence.cleanup.rootRemoved || !evidence.cleanup.processesDrained) {
+    if (!evidence.cleanup.rootRemoved) {
+      evidence.cleanup.status = 'incomplete'
+      evidence.cleanup.retainedRoot = root
+      evidence.cleanup.error ??= unsettled ?? 'Temporary root removal was not confirmed'
+      if (unsettled && runnerPid) evidence.cleanup.runnerPid = runnerPid
+      if (!['pass', 'incomplete-proof'].includes(evidence.classification))
+        evidence.firstFailure = evidence.classification
       evidence.classification = 'incomplete-proof'
       evidence.detail ??= 'temporary roots or owned processes were not fully cleaned up'
     }

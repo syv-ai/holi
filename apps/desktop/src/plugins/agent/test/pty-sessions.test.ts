@@ -16,6 +16,11 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+function finishExit(args: OpenArgs | undefined, title?: string) {
+  if (!args) return
+  return Promise.resolve(args.onExit?.(title)).then(() => args.onRetired?.())
+}
+
 function setup(
   providerId: 'codex' | 'pi' = 'codex',
   past?: {
@@ -46,6 +51,7 @@ function setup(
   const pastes: Array<[string, string]> = []
   const edges: string[] = []
   const lists: unknown[] = []
+  const histories: unknown[] = []
   const targets: { binDir: string | null }[] = []
   const sessions = createPtySessions({
     vault: VAULT,
@@ -58,9 +64,9 @@ function setup(
       },
       close: async (id) => {
         closed.push(id)
-        const exit = () => opened[Number(id.slice(5)) - 1]?.onExit?.()
+        const exit = () => finishExit(opened[Number(id.slice(5)) - 1])
         if (closeTerminal !== undefined) return closeTerminal(id, exit)
-        exit()
+        await exit()
       },
       paste: (id, text) => {
         pastes.push([id, text])
@@ -71,10 +77,11 @@ function setup(
     bracket: (id, edge) => edges.push(`${edge}:${id}`),
     binDir: () => '/holi/bin',
     onChange: (list) => lists.push(list),
+    onPast: (list) => histories.push(list),
     idleMs: 100,
     log: () => {},
   })
-  return { sessions, opened, closed, pastes, edges, asked, lists, targets, provider }
+  return { sessions, opened, closed, pastes, edges, asked, lists, histories, targets, provider }
 }
 
 describe('nameOf', () => {
@@ -212,6 +219,62 @@ describe('sessions Holi runs', () => {
     expect(t.sessions.has(started.sessionId)).toBe(true)
   })
 
+  it('does not write closed history for unconfirmed physical close', async () => {
+    const cause = new Error('physical proof unavailable')
+    const write = vi.fn(async () => {})
+    const t = setup('pi', { read: async () => [], write }, {}, async () => {
+      throw cause
+    })
+    const started = await t.sessions.start('pi', {})
+    if (!started.ok) throw new Error(started.message)
+    await expect(t.sessions.leave()).rejects.toThrow('PTY sessions did not drain')
+    expect(write).not.toHaveBeenCalled()
+    await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
+  })
+
+  it('stages closed history but does not expose it until the terminal retires', async () => {
+    let rows: Awaited<ReturnType<ReturnType<typeof createPtySessions>['past']>> = []
+    const t = setup('codex', {
+      read: async () => rows,
+      write: async (next) => {
+        rows = next
+      },
+    })
+    const started = await t.sessions.start('codex', {
+      resume: '123e4567-e89b-42d3-a456-426614174000',
+    })
+    if (!started.ok) throw new Error(started.message)
+    const term = t.opened[0]!
+    await term.onExit?.('Last title')
+    expect(rows).toEqual([expect.objectContaining({ id: started.sessionId, name: 'Last title' })])
+    expect(t.histories).toEqual([])
+    expect(await t.sessions.past()).toEqual([])
+    expect(t.sessions.terminalOf(started.sessionId)).toBe(started.terminalId)
+    expect(await t.sessions.start('codex', { sessionId: started.sessionId })).toMatchObject({
+      ok: false,
+    })
+    term.onRetired?.()
+    term.onRetired?.()
+    expect(t.histories).toEqual([rows])
+    expect(await t.sessions.past()).toEqual(rows)
+    expect(t.sessions.has(started.sessionId)).toBe(false)
+  })
+
+  it('retains a natural exit history failure for subsequent Stop', async () => {
+    const cause = new Error('history write failed')
+    const write = vi.fn(async () => {
+      throw cause
+    })
+    const t = setup('codex', { read: async () => [], write })
+    const conversationId = '123e4567-e89b-42d3-a456-426614174000'
+    const started = await t.sessions.start('codex', { resume: conversationId })
+    if (!started.ok) throw new Error(started.message)
+    await expect(finishExit(t.opened[0])).rejects.toBe(cause)
+    await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
+    await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+  })
+
   it('pastes an ask unsent, and stops by ending its terminal', async () => {
     const t = setup()
     const res = await t.sessions.start('codex', {})
@@ -239,7 +302,7 @@ describe('sessions Holi runs', () => {
     expect(t.sessions.sessions()[0]?.state).toBe('working')
     expect(t.edges).toEqual([`begin:${started.sessionId}`])
 
-    t.opened[0]?.onExit?.()
+    await finishExit(t.opened[0])
     expect(t.sessions.sessions()[0]?.state).toBe('idle')
     expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
     t.opened[0]?.onInput?.('\r')
@@ -308,7 +371,7 @@ describe('sessions Holi runs', () => {
     const t = setup('pi')
     const started = await t.sessions.start('pi', {})
     if (!started.ok) throw new Error(started.message)
-    t.opened[0]!.onExit?.('Pi plan')
+    await finishExit(t.opened[0], 'Pi plan')
     expect(t.sessions.has(started.sessionId)).toBe(true)
     await t.sessions.stop(started.sessionId)
     expect(await t.sessions.past()).toEqual([
@@ -321,7 +384,7 @@ describe('sessions Holi runs', () => {
     const started = await t.sessions.start('pi', {})
     if (!started.ok) throw new Error(started.message)
 
-    t.opened[0]!.onExit?.('Pi terminal title')
+    await finishExit(t.opened[0], 'Pi terminal title')
 
     expect(t.sessions.has(started.sessionId)).toBe(true)
     expect(t.sessions.terminalOf(started.sessionId)).toBe(started.terminalId)
@@ -348,7 +411,7 @@ describe('sessions Holi runs', () => {
     if (!picker.ok) throw new Error(picker.message)
     expect(t.asked[2]?.session).toMatch(PTY_SESSION_ID)
     expect(t.asked[2]?.conversation).toBeUndefined()
-    t.opened[2]!.onExit?.()
+    finishExit(t.opened[2])
     expect(await t.sessions.past()).toEqual([])
   })
 
@@ -405,6 +468,19 @@ describe('sessions Holi runs', () => {
     expect(await starting).toMatchObject({ ok: false })
     expect(t.opened).toEqual([])
     expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('reports an in-flight sign-in failure once during leave', async () => {
+    const t = setup('codex', undefined, {
+      background: {} as NonNullable<AgentProvider['capabilities']['background']>,
+    })
+    const cause = new Error('configure failed synchronously')
+    t.provider.configure = () => {
+      throw cause
+    }
+    const started = t.sessions.start('codex', { login: true }).catch((error: unknown) => error)
+    await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [cause] })
+    expect(await started).toBe(cause)
   })
 
   it('does not create a sign-in terminal when the vault is left during the first-spawn notice', async () => {
@@ -476,7 +552,7 @@ describe('sessions Holi runs', () => {
     }
     const started = await t.sessions.start('codex', { prompt: 'Make the app', fence })
     if (!started.ok) throw new Error(started.message)
-    t.opened[0]?.onExit?.()
+    finishExit(t.opened[0])
     expect(t.sessions.sessions()[0]).toMatchObject({ id: started.sessionId, copying: true })
     expect(t.sessions.has(started.sessionId)).toBe(true)
     finish({ error: 'Holi could not copy back app.yaml.' })
@@ -556,8 +632,9 @@ describe('sessions Holi runs', () => {
     expect(writes).toBe(2)
     expect(history.map((row) => row.id)).toEqual([second.sessionId, first.sessionId])
     expect(t.sessions.has(first.sessionId)).toBe(true)
-    await t.sessions.leave()
-    expect(t.sessions.has(first.sessionId)).toBe(false)
+    await expect(t.sessions.leave()).rejects.toThrow('PTY sessions did not drain')
+    expect(t.sessions.has(first.sessionId)).toBe(true)
+    expect(writes).toBe(2)
   })
 
   it('persists active and already-exited Pi sessions when leaving the vault', async () => {
@@ -572,7 +649,7 @@ describe('sessions Holi runs', () => {
     const active = await t.sessions.start('pi', { prompt: 'Still working' })
     const exited = await t.sessions.start('pi', { name: 'Already finished' })
     if (!active.ok || !exited.ok) throw new Error('Pi session did not start')
-    t.opened[1]?.onExit?.()
+    finishExit(t.opened[1])
     await t.sessions.leave()
 
     expect(history).toHaveLength(2)
@@ -599,8 +676,8 @@ describe('sessions Holi runs', () => {
     })
     const clean = await t.sessions.start('codex', { fence: fenced({}) })
     if (!partial.ok || !clean.ok) throw new Error('fenced session did not start')
-    t.opened[0]?.onExit?.()
-    t.opened[1]?.onExit?.()
+    finishExit(t.opened[0])
+    finishExit(t.opened[1])
     await vi.waitFor(() => expect(t.sessions.sessions()).toHaveLength(2))
     await vi.advanceTimersByTimeAsync(10 * 60_000)
     expect(t.sessions.sessions()).toEqual([
