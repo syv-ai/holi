@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -909,6 +910,15 @@ it.skipIf(process.platform === 'win32').each(['success', 'failure'] as const)(
       child.once('spawn', () => spawned.resolve(child.pid!))
       child.once('exit', () => reaped.resolve())
       created.resolve()
+      // This case throws after native startup, not while fork/exec is still
+      // pending. The helper unlinks control only after opening both receipt
+      // channels and persisting ROOT. Keep cancellation's short test deadline
+      // out of that startup race (the real adapter has a longer deadline).
+      const control = join(args[1]!, 'control')
+      const deadline = performance.now() + 5000
+      const pause = new Int32Array(new SharedArrayBuffer(4))
+      while (existsSync(control) && performance.now() < deadline) Atomics.wait(pause, 0, 0, 1)
+      expect(existsSync(control)).toBe(false)
       throw nativeError
     })
     const t = rig(root, {})
