@@ -12,6 +12,7 @@ import {
 import * as processApi from '../../../main/plugin-api'
 import { PRESETS } from '../main/harness/record'
 import * as turnLog from '../main/host/turn-log'
+import * as worktree from '../main/host/worktree-end'
 import { activationHosts } from './fixtures/activation-hosts'
 
 vi.mock('electron', () => ({
@@ -30,6 +31,14 @@ const completed = [
   JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 5 } }),
   '',
 ].join('\n')
+
+function complete(child: ChildProcess) {
+  const stdout = child.stdout as PassThrough
+  if (stdout.writableEnded) return
+  stdout.end(completed)
+  child.emit('exit', 0, null)
+  child.emit('close', 0, null)
+}
 
 async function attach(
   h: ReturnType<typeof activationHosts>,
@@ -180,13 +189,6 @@ it.each([
   })
   const log = vi.spyOn(turnLog, 'openTurnLog').mockReturnValue({ list: async () => [], append })
   const children: ChildProcess[] = []
-  function complete(child: ChildProcess) {
-    const stdout = child.stdout as PassThrough
-    if (stdout.writableEnded) return
-    stdout.end(completed)
-    child.emit('exit', 0, null)
-    child.emit('close', 0, null)
-  }
   const spawn = vi.spyOn(processApi, 'spawnOwnedProgram').mockImplementation(() => {
     const child = Object.assign(new ChildProcess(), {
       stdout: new PassThrough(),
@@ -244,3 +246,85 @@ it.each([
     await rm(data, { recursive: true, force: true })
   }
 })
+
+it.skipIf(process.platform === 'win32').each(['rejected', 'unavailable'] as const)(
+  'actual agent wiring: fails only the overlapping job whose snapshot is %s',
+  async (mode) => {
+    const data = await mkdtemp(join(tmpdir(), 'holi-overlapping-job-history-'))
+    const h = activationHosts(data)
+    const { A } = h
+    const root = h.roots[A]
+    const history = turnLog.openTurnLog(root)
+    const original = new Error('fixture worktree snapshot rejected')
+    const snapshot = vi.spyOn(worktree, 'worktreeEnd').mockResolvedValue('snapshot')
+    if (mode === 'rejected') snapshot.mockRejectedValueOnce(original)
+    else snapshot.mockResolvedValueOnce(null)
+    const children: ChildProcess[] = []
+    const spawn = vi.spyOn(processApi, 'spawnOwnedProgram').mockImplementation(() => {
+      const child = Object.assign(new ChildProcess(), {
+        stdout: new PassThrough(),
+        [processApi.ownedProcessDrain]: { drain: async () => {} },
+      })
+      children.push(child)
+      return child
+    })
+    try {
+      const home = join(data, 'codex-home')
+      const bin = join(data, 'fixture-codex')
+      await mkdir(root)
+      await mkdir(home)
+      await writeFile(join(home, 'auth.json'), '{"fixture":"not a credential"}')
+      await writeFile(bin, '', { mode: 0o700 })
+      await attach(h, { home, bin, head: 'base' })
+      const start = async () => {
+        const job = (await h.call(A, 'agent.job', spec)) as { ok: boolean; sessionId: string }
+        expect(job).toMatchObject({ ok: true })
+        return job.sessionId
+      }
+      const failed = await start()
+      const next = await start()
+      const last = await start()
+      const outcome = (id: string, expected: 'failed' | 'completed') =>
+        vi.waitFor(async () => {
+          expect((await h.rows(A)).find((row) => row.id === id)).toMatchObject({
+            outcome: expected,
+          })
+        })
+
+      complete(children[0]!)
+      await outcome(failed, 'failed')
+      expect(await history.list()).toEqual([])
+      const stop = () => h.call(A, 'agent.stop', { id: failed })
+      const cause = await stop().catch((error: unknown) => error)
+      if (mode === 'rejected') expect(cause).toBe(original)
+      else
+        expect(cause).toMatchObject({ message: expect.stringMatching(/snapshot the working tree/) })
+
+      complete(children[1]!)
+      await outcome(next, 'completed')
+      complete(children[2]!)
+      await outcome(last, 'completed')
+      expect(
+        (await history.list()).map(({ sessionId, base, end, overlapped }) => [
+          sessionId,
+          base,
+          end,
+          overlapped,
+        ]),
+      ).toEqual([
+        [last, 'base', 'base', true],
+        [next, 'base', 'snapshot', true],
+      ])
+      expect(
+        h.publications.filter(({ name }) => name === 'turn-end').map(({ payload }) => payload),
+      ).toEqual([expect.objectContaining({ id: next }), expect.objectContaining({ id: last })])
+      await expect(stop()).rejects.toBe(cause)
+    } finally {
+      for (const child of children) complete(child)
+      await h.host.stopAll().catch(() => {})
+      spawn.mockRestore()
+      snapshot.mockRestore()
+      await rm(data, { recursive: true, force: true })
+    }
+  },
+)

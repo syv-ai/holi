@@ -533,6 +533,111 @@ it.each(['success', 'failure'] as const)(
   },
 )
 
+posix.each([
+  'base read',
+  'busy commit',
+  'busy retry delay',
+  'busy commit with a live peer',
+] as const)(
+  'does not start a settle commit solely for a job after its deadline: %s',
+  async (mode) => {
+    const t = await fixture()
+    const hold = gate()
+    const child = fakeChild(async () => {}, false)
+    const managed = createManagedTurnBrackets()
+    const commitNow = vi.fn(async () => 'settled')
+    if (mode !== 'base read') {
+      commitNow.mockImplementationOnce(async () => {
+        await hold.promise
+        return 'busy'
+      })
+    }
+    const append = vi.fn<TurnLog['append']>(async () => {})
+    const onTurnEnd = vi.fn()
+    const coordinator = createTurnCoordinator({
+      vault: () => ({
+        root: t.root,
+        head: async () => {
+          if (mode === 'base read') await hold.promise
+          return 'base'
+        },
+        commitNow,
+        pauseSync: () => () => {},
+        claimManagedTurn: managed.claimManagedTurn,
+      }),
+      turnLogFor: () => ({ list: async () => [], append }),
+      settleRetryMs: 2,
+      onTurnEnd,
+      log: () => {},
+    })
+    const begin = (id: string) => managed.begin(id, (job, edge) => coordinator[edge](job))
+    const jobs = t.create({ beginManagedTurn: begin, spawn: () => child, ownership: t.registry() })
+    const peer = mode === 'busy commit with a live peer' ? begin('peer') : undefined
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const started = await jobs.start({ ...t.spec, allow: [] })
+      if (!started.ok) throw new Error(started.message)
+      const id = started.sessionId
+      child.stdout!.push('{"type":"turn.completed"}\n')
+      child.stdout!.push(null)
+      child.emit('close', 0, null)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(coordinator.working.has(id)).toBe(false)
+      const receipt = peer?.end()
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(commitNow).toHaveBeenCalledTimes(mode === 'base read' ? 0 : 1)
+      expect(jobs.sessions()[0]).toMatchObject({ state: 'working' })
+      if (mode === 'busy retry delay') {
+        // The first commit reports busy before expiry; the retry timer fires after it.
+        hold.resolve()
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      await vi.advanceTimersByTimeAsync(1)
+      expect(jobs.sessions()[0]).toMatchObject({ state: 'idle', outcome: 'failed' })
+      const failure = await jobs.stop(id).catch((error: unknown) => error)
+      expect(failure).toMatchObject({
+        message: expect.stringMatching(/Finalization of job.*timed out/),
+      })
+
+      hold.resolve()
+      await vi.advanceTimersByTimeAsync(2)
+      await expect(coordinator.drain()).rejects.toMatchObject({ errors: [failure] })
+      expect(commitNow).toHaveBeenCalledTimes(mode === 'base read' ? 0 : peer ? 2 : 1)
+      if (receipt !== undefined) {
+        await expect(receipt).resolves.toMatchObject({
+          sessionId: 'peer',
+          base: 'base',
+          end: 'settled',
+        })
+        expect(append.mock.calls).toEqual([
+          [expect.objectContaining({ sessionId: 'peer', end: 'settled' })],
+        ])
+        expect(onTurnEnd.mock.calls).toEqual([['peer']])
+      } else {
+        expect(append).not.toHaveBeenCalled()
+        expect(onTurnEnd).not.toHaveBeenCalled()
+      }
+      expect(jobs.sessions()[0]).toMatchObject({ id, outcome: 'failed' })
+      expect(jobs.has(id)).toBe(true)
+      await expect(readFile(join(t.scratchRoot, `${id}.turn`), 'utf8')).resolves.toContain(
+        'FINALIZING',
+      )
+      await expect(jobs.stop(id)).rejects.toBe(failure)
+      await expect(jobs.leave()).rejects.toMatchObject({ errors: [failure] })
+      expect(t.kill).not.toHaveBeenCalled()
+    } finally {
+      hold.resolve()
+      peer?.forget()
+      child.stdout!.destroy()
+      child.stderr!.destroy()
+      await vi.advanceTimersByTimeAsync(2)
+      vi.useRealTimers()
+      await jobs.leave().catch(() => {})
+      await coordinator.drain().catch(() => {})
+    }
+  },
+)
+
 posix.each(['positive', 'unknown'] as const)(
   'only forgets a managed bracket on stdout loss with positive physical proof: %s',
   async (mode) => {
