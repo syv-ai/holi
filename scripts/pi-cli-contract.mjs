@@ -12,6 +12,8 @@ function boundedDiagnostic(value) {
   return text.length > maxDiagnosticChars ? `${text.slice(0, maxDiagnosticChars)}…` : text
 }
 
+const knownHelpWarning = /^Warning: No models available\. Use \/login to log into a provider via OAuth or API key\. See:\nhttps:\/\/pi\.dev\/guide\/models\nhttps:\/\/pi\.dev\/guide\/providers$/
+
 function run(bin, args, options) {
   const result = spawnSync(bin, args, {
     ...options,
@@ -28,8 +30,9 @@ function run(bin, args, options) {
     )
   if (result.status !== 0)
     throw new Error(`${args[0]} exited ${result.status}: ${boundedDiagnostic(result.stderr)}`)
-  if (result.stderr.trim())
-    throw new Error(`${args[0]} wrote unexpected stderr: ${boundedDiagnostic(result.stderr)}`)
+  const stderr = result.stderr.trim()
+  if (stderr && !(args[0] === '--help' && knownHelpWarning.test(stderr)))
+    throw new Error(`${args[0]} wrote unexpected stderr: ${boundedDiagnostic(stderr)}`)
   return result.stdout.trim()
 }
 
