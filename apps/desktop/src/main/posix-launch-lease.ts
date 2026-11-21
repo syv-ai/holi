@@ -13,6 +13,23 @@ import {
   posixLaunchNonAdmission,
 } from './posix-ownership-journal'
 
+const signals = osConstants.signals
+const knownSignals = new Set(Object.values(signals))
+// Before GO there is no provider with its own signal handlers. The platform's
+// default-terminating signals cancel admission; stop/continue and ignored
+// signals keep their existing forwarding semantics once the provider is admitted.
+const nonTerminatingSignals = new Set([
+  signals.SIGCHLD,
+  signals.SIGCONT,
+  signals.SIGSTOP,
+  signals.SIGTSTP,
+  signals.SIGTTIN,
+  signals.SIGTTOU,
+  signals.SIGURG,
+  signals.SIGWINCH,
+  ...(process.platform === 'darwin' ? [signals.SIGINFO, signals.SIGIO] : []),
+])
+
 type OwnershipRecord = ReturnType<typeof openPosixOwnershipJournal>
 
 type LaunchOptions = SpawnOptions & {
@@ -375,6 +392,14 @@ function prepare(
     })())
   }
 
+  function stopBeforeCommit(): boolean {
+    if (goWritten) return false
+    // Acceptance closes admission in this turn. It is not a cleanup receipt;
+    // bind and the explicit owner drain still join the same cancellation.
+    void drain().catch(() => {})
+    return true
+  }
+
   return {
     executable,
     args: [
@@ -455,11 +480,7 @@ function prepare(
     },
     drain,
     cancel,
-    abortBeforeCommit(): boolean {
-      if (goWritten) return false
-      void drain().catch(() => {})
-      return true
-    },
+    stopBeforeCommit,
     canceledBeforeCommit: () => canceled && !goWritten,
     failExecution(error: unknown): Promise<void> {
       note(error)
@@ -485,7 +506,11 @@ function prepare(
         sig > 127
       )
         return false
-      const { SIGTERM, SIGKILL } = osConstants.signals
+      if (!goWritten) {
+        if (!knownSignals.has(sig)) return false
+        if (!nonTerminatingSignals.has(sig)) return stopBeforeCommit()
+      }
+      const { SIGTERM, SIGKILL } = signals
       const command = sig === SIGTERM ? 'T' : sig === SIGKILL ? 'K' : undefined
       const deadline = performance.now() + timeout
       const sent = startup!.then(async () => {

@@ -221,8 +221,9 @@ function spawnLeased(
   adaptExecEvents(child, launch, binding)
   // Node reports an already-aborted signal on nextTick. Close the gate now;
   // startup continuations may run before that tick when called in a microtask.
-  if (options.signal?.aborted) launch.abortBeforeCommit()
+  if (options.signal?.aborted) launch.stopBeforeCommit()
   let abortKillAcknowledged = false
+  // Node routes both its spawn timeout and AbortSignal through child.kill.
   child.kill = (signal = 'SIGTERM') => {
     const number =
       typeof signal === 'number'
@@ -233,7 +234,7 @@ function spawnLeased(
         code: 'ERR_UNKNOWN_SIGNAL',
       })
     const preCommitAbort =
-      options.signal?.aborted && !abortKillAcknowledged && launch.abortBeforeCommit()
+      number !== 0 && options.signal?.aborted && !abortKillAcknowledged && launch.stopBeforeCommit()
     if (preCommitAbort) abortKillAcknowledged = true
     else {
       if (child.exitCode !== null || child.signalCode !== null) return false
@@ -254,6 +255,10 @@ function adaptExecEvents(
   binding: Promise<ProcessGroupSupervision>,
 ) {
   const emit = child.emit.bind(child)
+  // Node registers its timeout/abort disposers before spawn returns, on the
+  // native child's exit. A pre-GO stop hides that exit from provider observers
+  // but must still release Node's own resources.
+  const nativeExitListeners = child.rawListeners('exit')
   let state: 'pending' | 'spawned' | 'failed' = 'pending'
   let reportedFailure = false
   let failureCode: number | undefined
@@ -382,6 +387,16 @@ function adaptExecEvents(
         return false
       }
     } else if (event === 'exit' || event === 'close' || event === 'disconnect') {
+      if (event === 'exit') {
+        const listeners = nativeExitListeners.splice(0)
+        if (launch.canceledBeforeCommit()) {
+          const remaining = child.rawListeners('exit')
+          for (const listener of listeners) {
+            if (remaining.includes(listener)) Reflect.apply(listener, child, args)
+          }
+          return false
+        }
+      }
       probe(false)
       if (state === 'pending' || (state === 'failed' && !reportedFailure)) {
         lifecycle.push({ event, args })
