@@ -8,7 +8,12 @@ import {
   producerCommandFailure,
   runProducerCommand,
 } from './producer-command.mjs'
-import { privateDirectory, readFinalSettlement, readPrivate } from './producer-settlement.mjs'
+import {
+  exactKeys,
+  privateDirectory,
+  readFinalSettlement,
+  readPrivate,
+} from './producer-settlement.mjs'
 
 const VERSION = '0.169.0'
 const MAX_OUTPUT = 2 * 1024 * 1024
@@ -25,21 +30,13 @@ const leaseRoles = [
   ...scenarioNames.slice(2),
 ]
 
-// The worker joins caller finalization and the fixture, then attests to every
-// drain. Read the cached native terminal markers too; never probe their PIDs.
-function hasFinalSettlement(root, identity, workerTmp) {
-  const receipt = readFinalSettlement(root, identity, leaseRoles)
-  if (!receipt || receipt.leases.length !== leaseRoles.length) return false
-  const exists = (path) => lstatSync(path, { throwIfNoEntry: false }) !== undefined
-  if (scenarioNames.some((name) => exists(join(workerTmp, name)))) return false
-  return receipt.leases.every(({ id, proof }) => {
-    const path = join(root, 'ownership', id)
-    return (
-      proof === 'settled' &&
-      !['failed', 'failed.tmp', 'settled.tmp'].some((name) => exists(join(path, name))) &&
-      readPrivate(join(path, 'settled'), 1024).toString('utf8') === `HOLI-POSIX-1 ${id}\nSETTLED\n`
-    )
-  })
+function hasFinalSettlement(root, identity, workerTmp, bytes, requireComplete) {
+  const receipt = readFinalSettlement(root, identity, leaseRoles, bytes, requireComplete)
+  return (
+    receipt &&
+    receipt.leases.length === leaseRoles.length &&
+    scenarioNames.every((name) => !lstatSync(join(workerTmp, name), { throwIfNoEntry: false }))
+  )
 }
 
 function cleanEnvironment(home, extra = {}) {
@@ -55,7 +52,55 @@ function cleanEnvironment(home, extra = {}) {
   }
 }
 
-export function validateNativeProof(proof, expectedBin) {
+function validFailedScenario(scenario, bin) {
+  return (
+    scenario &&
+    ['unverified', 'mismatch'].includes(scenario.status) &&
+    ['setup', 'native-launch', 'native-contract', 'host-lifecycle', 'cleanup'].includes(
+      scenario.stage,
+    ) &&
+    ['setup', 'timeout', 'contract'].includes(scenario.failureKind) &&
+    typeof scenario.failure === 'string' &&
+    scenario.failure.length > 0 &&
+    // Seven registered roles means every scenario entered its capture fixture.
+    ['processes', 'rawProcesses', 'jsonl', 'requests', 'host', 'brackets'].every(
+      (key) =>
+        Array.isArray(scenario[key]) &&
+        scenario[key].every((row) => row && typeof row === 'object' && !Array.isArray(row)),
+    ) &&
+    scenario.rawProcesses.length === scenario.processes.length &&
+    scenario.rawProcesses.every((raw, index) => {
+      const captured = scenario.processes[index]
+      return (
+        Number.isInteger(raw.pid) &&
+        raw.pid > 1 &&
+        raw.bin === bin &&
+        captured.pid === raw.pid &&
+        captured.bin === raw.bin &&
+        typeof raw.cwd === 'string' &&
+        captured.cwd === raw.cwd &&
+        Array.isArray(raw.args) &&
+        raw.args.includes('exec') &&
+        raw.args.includes('--json') &&
+        JSON.stringify(captured.args) === JSON.stringify(raw.args) &&
+        typeof raw.stdout === 'string' &&
+        typeof raw.stderr === 'string' &&
+        Number.isSafeInteger(raw.stdoutBytes) &&
+        raw.stdoutBytes >= 0 &&
+        Number.isSafeInteger(raw.stderrBytes) &&
+        raw.stderrBytes >= 0 &&
+        Number.isSafeInteger(raw.outputLines) &&
+        raw.outputLines >= 0 &&
+        typeof raw.outputLimited === 'boolean' &&
+        (Number.isInteger(raw.exitCode) ||
+          (raw.exitCode === null && typeof raw.signal === 'string')) &&
+        (raw.signal === null || typeof raw.signal === 'string')
+      )
+    })
+  )
+}
+
+function validateProbe(proof, expectedBin, allowFailure) {
   if (
     !proof ||
     proof.schema !== 'holi.codex-exec-producer.v1' ||
@@ -73,6 +118,11 @@ export function validateNativeProof(proof, expectedBin) {
     return 'native evidence scenarios are duplicated'
   for (const name of expected) {
     const s = proof.scenarios.find((row) => row?.name === name)
+    if (allowFailure && s?.status !== 'pass') {
+      if (!validFailedScenario(s, expectedBin))
+        return `native evidence ${name} has an incomplete failure record`
+      continue
+    }
     if (!s || s.status !== 'pass' || s.failure || s.failureKind)
       return `native evidence ${name} did not finish passing`
     if (!['cleanup', 'host-lifecycle', 'native-contract'].includes(s.stage))
@@ -243,6 +293,40 @@ export function validateNativeProof(proof, expectedBin) {
   if (!proof.cleanup?.rootsRemoved || !proof.cleanup?.nativeGroupsDrained)
     return 'native cleanup was not verified'
   return null
+}
+
+export function validateNativeProof(proof, expectedBin) {
+  return validateProbe(proof, expectedBin, false)
+}
+
+// Cleanup can follow a failed probe, but it still requires the complete terminal
+// artifact, not a progress snapshot or a success envelope with missing observations.
+function validFinalArtifact(proof, bin, issue) {
+  return (
+    exactKeys(proof, [
+      'schema',
+      'package',
+      'expectedVersion',
+      'version',
+      'bin',
+      'scenarios',
+      'cleanup',
+    ]) &&
+    exactKeys(proof.cleanup, ['nativeGroupsDrained', 'rootsRemoved']) &&
+    proof.cleanup.nativeGroupsDrained === true &&
+    proof.cleanup.rootsRemoved === true &&
+    Array.isArray(proof.scenarios) &&
+    proof.scenarios.length === scenarioNames.length &&
+    scenarioNames.every((name, index) => {
+      const scenario = proof.scenarios[index]
+      return (
+        scenario?.name === name &&
+        (scenario.status !== 'pass' ||
+          (scenario.failure === undefined && scenario.failureKind === undefined))
+      )
+    }) &&
+    (!issue || !validateProbe(proof, bin, true))
+  )
 }
 
 export async function runProducerProof({
@@ -423,17 +507,11 @@ export async function runProducerProof({
       stdout: test.stdout.slice(-12000),
       stderr: test.stderr.slice(-8000),
     }
-    if (!test.cleanupError && !test.notStarted) {
-      try {
-        if (hasFinalSettlement(root, identity, workerTmp)) unsettled = undefined
-      } catch {
-        // Keep the worker's root and the original runner/probe failure.
-      }
-    }
-    let proof
+    let proof, bytes
     try {
       privateDirectory(root)
-      proof = JSON.parse(readPrivate(proofPath, MAX_EVIDENCE))
+      bytes = readPrivate(proofPath, MAX_EVIDENCE)
+      proof = JSON.parse(bytes)
     } catch (error) {
       evidence.classification = 'incomplete-proof'
       evidence.detail = runnerFailure ?? `native evidence unavailable: ${String(error)}`
@@ -445,6 +523,20 @@ export async function runProducerProof({
       issue = validateNativeProof(proof, bin)
     } catch {
       issue = 'native evidence is malformed'
+    }
+    if (!test.cleanupError && !test.notStarted) {
+      try {
+        // Parse and hash the same read. Only the worker's final artifact can
+        // authorize cleanup, even if an earlier diagnostic snapshot parses.
+        if (
+          bytes.equals(Buffer.from(JSON.stringify(proof))) &&
+          validFinalArtifact(proof, bin, issue) &&
+          hasFinalSettlement(root, identity, workerTmp, bytes, !issue)
+        )
+          unsettled = undefined
+      } catch {
+        // Keep the worker's root and the original runner/probe failure.
+      }
     }
     const testsPassed =
       !runnerFailure &&

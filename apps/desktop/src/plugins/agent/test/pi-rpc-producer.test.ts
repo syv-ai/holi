@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams, SpawnOptions } from 'node:child_pr
 
 import { createServer } from 'node:http'
 import { createHash, randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import {
   chmod,
@@ -17,7 +18,7 @@ import {
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { once } from 'node:events'
-import { expect, it, onTestFinished } from 'vitest'
+import { expect, it, onTestFinished, vi } from 'vitest'
 import { PiRpcRun, type PiChild } from '../main/pi/rpc'
 import {
   inspectPosixOwnership,
@@ -30,6 +31,31 @@ import {
   kernelGroupAbsent,
   posixFixtureLedger,
 } from '../../../../test/fixtures/posix-fixture-ledger'
+
+const { cacheLeaseProof, publishFinalSettlement, readFinalSettlement } = createRequire(
+  import.meta.url,
+)('../../../../../../scripts/producer-settlement.mjs') as {
+  cacheLeaseProof(
+    root: string,
+    identity: { version: number; runId: string; nonce: string; workerPid: number },
+    lease: { id: string; role: string },
+    inspect: typeof inspectPosixOwnership,
+  ): { id: string; role: string; proof: 'settled' | 'kernel-absence'; proofSha256: string }
+  publishFinalSettlement(
+    root: string,
+    identity: { version: number; runId: string; nonce: string; workerPid: number },
+    leases: readonly ReturnType<typeof cacheLeaseProof>[],
+    evidenceName: string,
+    bytes: string,
+  ): Promise<void>
+  readFinalSettlement(
+    root: string,
+    identity: { runId: string; nonce: string },
+    roles: readonly string[],
+    bytes: Buffer,
+    requireComplete: boolean,
+  ): false | { leases: ReturnType<typeof cacheLeaseProof>[] }
+}
 
 const maxEvidenceBytes = 64 * 1024
 const timeoutMs = 20_000
@@ -263,7 +289,7 @@ function claimWorker(evidencePath: string, runId: string, nonce: string) {
   const work = join(workerTmp, 'probe-work')
   let workCreated = false
   let admissionClosed = false
-  const attempts: { role: LeaseRole; id: string; path: string; join?: () => Promise<void> }[] = []
+  const attempts: { role: LeaseRole; id: string; join?: () => Promise<void> }[] = []
   return {
     createWork() {
       mkdirSync(work, { mode: 0o700 })
@@ -275,7 +301,7 @@ function claimWorker(evidencePath: string, runId: string, nonce: string) {
         throw new Error('Unexpected Pi probe lease admission')
       const id = randomUUID()
       const path = join(ownership, id)
-      const attempt: (typeof attempts)[number] = { role, id, path }
+      const attempt: (typeof attempts)[number] = { role, id }
       attempts.push(attempt)
       mkdirSync(join(admissions, `${role}-${id}`), { mode: 0o700 })
       try {
@@ -322,12 +348,10 @@ function claimWorker(evidencePath: string, runId: string, nonce: string) {
           ),
         ]),
         Promise.allSettled(
-          attempts.map(async ({ role, id, path, join: joinLease }) => {
+          attempts.map(async ({ role, id, join: joinLease }) => {
             if (!joinLease) throw new Error('Missing Pi probe launch settlement')
             await joinLease()
-            const inspection = inspectPosixOwnership(path)
-            if (inspection.state !== 'confirmed') throw new Error('Unsettled Pi probe ownership')
-            return { role, id, proof: inspection.proof }
+            return cacheLeaseProof(root, identity, { role, id }, inspectPosixOwnership)
           }),
         ),
       ])
@@ -343,18 +367,12 @@ function claimWorker(evidencePath: string, runId: string, nonce: string) {
       } catch {}
       const bytes = JSON.stringify({ ...artifact(), cleanup })
       if (Buffer.byteLength(bytes) > maxEvidenceBytes) return
-      await writeFile(evidencePath, bytes, privateFile)
-      if (!cleanup.piRunDrained || !cleanup.fixtureServerClosed || !cleanup.localRootRemoved) return
-      const receipt = {
-        ...identity,
-        state: 'final',
-        admission: attempts.length ? 'leases-settled' : 'no-admission',
-        leases: leases.flatMap((lease) => (lease.status === 'fulfilled' ? [lease.value] : [])),
-        evidenceSha256: createHash('sha256').update(bytes).digest('hex'),
+      const settled = leases.flatMap((lease) => (lease.status === 'fulfilled' ? [lease.value] : []))
+      if (!cleanup.piRunDrained || !cleanup.fixtureServerClosed || !cleanup.localRootRemoved) {
+        await writeFile(evidencePath, bytes, privateFile)
+        return
       }
-      const staging = join(root, 'settlement.tmp')
-      await writeFile(staging, JSON.stringify(receipt), privateFile)
-      await rename(staging, join(root, 'settlement.json'))
+      await publishFinalSettlement(root, identity, settled, 'evidence.json', bytes)
     },
   }
 }
@@ -831,9 +849,11 @@ it.skipIf(!nativeProbeEnabled)(
 
 // This fixture never invokes the real producer binary or starts a model. Run
 // only this named test with the explicit synthetic-native fixture gate.
-it.runIf(process.platform !== 'win32' && process.env.HOLI_PI_SETTLEMENT_FIXTURE === '1')(
-  'joins the last worker resource before publishing the synthetic Pi settlement',
-  async () => {
+it
+  .runIf(process.platform !== 'win32' && process.env.HOLI_PI_SETTLEMENT_FIXTURE === '1')
+  .each(['settled', 'kernel-absence'] as const)(
+  'joins the last worker resource before publishing the synthetic Pi settlement (%s)',
+  async (proof) => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-pi-settlement-fixture-')))
     const ownership = join(root, 'ownership')
     const evidencePath = join(root, 'evidence.json')
@@ -882,15 +902,37 @@ it.runIf(process.platform !== 'win32' && process.env.HOLI_PI_SETTLEMENT_FIXTURE 
       )
       expect(result.code).toBe(0)
       expect(result.stdout.trim()).toBe('0.0.0-fixture')
-      finish = beginFinish()
-      await joiningLastResource
       const [id] = await readdir(ownership)
       expect(id).toMatch(uuid)
-      expect(inspectPosixOwnership(join(ownership, id!))).toEqual({
-        state: 'confirmed',
-        proof: 'settled',
-      })
+      const path = join(ownership, id!)
+      if (proof === 'kernel-absence') {
+        // Keep the real complete journal, but model EOF cleanup without a
+        // published terminal marker. The cold inspector must prove absence.
+        await rename(join(path, 'settled'), join(root, 'fixture-native-terminal'))
+      }
+      finish = beginFinish()
+      await joiningLastResource
+      const cache = JSON.parse(
+        await readFile(join(root, 'admissions', `version-${id}`, 'proof.json'), 'utf8'),
+      )
+      const journal = await readFile(join(path, 'journal'), 'utf8')
+      expect(cache.journal).toBe(journal)
+      if (proof === 'kernel-absence') {
+        expect(cache).not.toHaveProperty('settled')
+        const [rootPid, reaper, anchor] = Array.from(
+          journal.matchAll(/(?:ROOT|REAPER|ANCHOR) (\d+)\n/g),
+          (match) => Number(match[1]),
+        )
+        expect(cache.absenceSnapshot).toEqual({
+          protocol: 'posix-kill-0',
+          absent: [reaper, -reaper!, anchor, rootPid, -rootPid!],
+        })
+      } else {
+        expect(cache).not.toHaveProperty('absenceSnapshot')
+        expect(cache.settled).toBe(await readFile(join(path, 'settled'), 'utf8'))
+      }
       expect(existsSync(settlementPath)).toBe(false)
+      expect(existsSync(evidencePath)).toBe(false)
       expect(existsSync(work)).toBe(true)
       releaseLastResource()
       await finish
@@ -902,9 +944,23 @@ it.runIf(process.platform !== 'win32' && process.env.HOLI_PI_SETTLEMENT_FIXTURE 
         workerPid: process.pid,
         state: 'final',
         admission: 'leases-settled',
-        leases: [{ id, role: 'version', proof: 'settled' }],
+        leases: [
+          {
+            id,
+            role: 'version',
+            proof,
+            proofSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        ],
         evidenceSha256: createHash('sha256').update(bytes).digest('hex'),
       })
+      const probe = vi.spyOn(process, 'kill')
+      try {
+        expect(readFinalSettlement(root, { runId, nonce }, leaseRoles, bytes, true)).toBeTruthy()
+        expect(probe).not.toHaveBeenCalled()
+      } finally {
+        probe.mockRestore()
+      }
       expect(existsSync(work)).toBe(false)
     } finally {
       releaseLastResource()

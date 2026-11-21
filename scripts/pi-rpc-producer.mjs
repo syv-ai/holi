@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -124,9 +124,7 @@ function validFailureEvidence(evidence, expectedVersion) {
 }
 
 function verifyWorkerSettlement(root, identity, bytes, evidence, successful) {
-  const receipt = readFinalSettlement(root, identity, leaseRoles, {
-    evidenceSha256: createHash('sha256').update(bytes).digest('hex'),
-  })
+  const receipt = readFinalSettlement(root, identity, leaseRoles, bytes, successful)
   if (!receipt) return false
   const count = receipt.leases.length
   // This exact working directory is a separate resource, not a prefix scan or
