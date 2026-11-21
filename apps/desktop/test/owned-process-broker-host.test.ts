@@ -9,6 +9,7 @@ import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { brokerHostPlan } from '../src/main/owned-process-broker-host'
+import { win32Adapter } from '../src/main/owned-process-win32'
 
 const node = process.execPath
 // The native child inherits the host's environment; don't expose credentials or
@@ -52,6 +53,53 @@ function host(native: Parameters<typeof brokerHostPlan>[1], observeNativeEof = f
 
 function nodeHost(source: string, cwd = process.cwd(), observeNativeEof = false) {
   return host({ file: node, args: ['-e', source], cwd }, observeNativeEof)
+}
+
+function windowsJoinFixture(cwd: string) {
+  const adapter = win32Adapter('RunBroker', env, (source) => {
+    // Keep the real broker body compiling, but run only the fixture entry.
+    const entry = 'public static int RunBroker()'
+    if (source.split(entry).length !== 2) throw new Error('Expected one native broker entry')
+    return (
+      source.replace(entry, 'private static int RunOriginalBroker()') +
+      String.raw`
+public static partial class HoliOwnedProcess {
+  [DllImport("kernel32.dll", EntryPoint="GetStdHandle", ExactSpelling=true)]
+  private static extern IntPtr JoinGetStdHandle(int which);
+  [DllImport("kernel32.dll", EntryPoint="WriteFile", ExactSpelling=true)]
+  private static extern bool JoinWriteFile(IntPtr handle, byte[] bytes, int count, out int written, IntPtr overlapped);
+  [DllImport("kernel32.dll", EntryPoint="ReadFile", ExactSpelling=true)]
+  private static extern bool JoinReadFile(IntPtr handle, [Out] byte[] bytes, int count, out int read, IntPtr overlapped);
+  [DllImport("kernel32.dll", EntryPoint="CloseHandle", ExactSpelling=true)]
+  private static extern bool JoinCloseHandle(IntPtr handle);
+
+  public static int RunBroker() {
+    try {
+      var input = JoinGetStdHandle(-10);
+      var output = JoinGetStdHandle(-11);
+      var error = JoinGetStdHandle(-12);
+      var terminal = Encoding.UTF8.GetBytes("terminal\n");
+      int count;
+      if (!JoinWriteFile(output, terminal, terminal.Length, out count, IntPtr.Zero) || count != terminal.Length)
+        return 125;
+      // Close the actual Windows pipe handles, not Node's CRT descriptor aliases.
+      if (!JoinCloseHandle(output) || !JoinCloseHandle(error)) return 125;
+      var one = new byte[1];
+      foreach (byte expected in Encoding.UTF8.GetBytes("finish")) {
+        if (!JoinReadFile(input, one, 1, out count, IntPtr.Zero) || count != 1 || one[0] != expected)
+          return 125;
+      }
+      File.WriteAllText("native-finished", "done");
+      return 0;
+    } catch {
+      return 125; // Never report errors through the closed stderr handle.
+    }
+  }
+}
+`
+    )
+  })
+  return { ...adapter, cwd }
 }
 
 async function collect(stream: Readable, slow = false): Promise<Buffer> {
@@ -98,30 +146,25 @@ describe('owned Job broker host', () => {
   it('waits past the terminal frame for physical exit without requiring parent EOF', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'holi-broker-host-'))
     onTestFinished(() => rm(cwd, { recursive: true, force: true }))
-    const { child, closed } = nodeHost(
-      `
-        const { closeSync, writeFileSync, writeSync } = require('node:fs');
-        let command = '';
-        process.stdin.setEncoding('utf8').on('data', (chunk) => {
-          command += chunk;
-          if (command !== 'finish') return;
-          process.once('exit', () => writeFileSync('native-finished', 'done'));
-          process.exit(0);
-        });
-        // Windows named pipes need actual handle closure to produce EOF.
-        // Keep raw fd closes off macOS, where lazy libuv setup can reuse them.
-        if (process.platform === 'win32') {
-          writeSync(1, 'terminal\\n');
-          closeSync(1);
-          closeSync(2);
-        } else {
-          process.stdout.end('terminal\\n');
-          process.stderr.end();
-        }
-      `,
-      cwd,
-      true,
-    )
+    const { child, closed } =
+      process.platform === 'win32'
+        ? host(windowsJoinFixture(cwd), true)
+        : nodeHost(
+            `
+              const { writeFileSync } = require('node:fs');
+              let command = '';
+              process.stdin.setEncoding('utf8').on('data', (chunk) => {
+                command += chunk;
+                if (command !== 'finish') return;
+                process.once('exit', () => writeFileSync('native-finished', 'done'));
+                process.exit(0);
+              });
+              process.stdout.end('terminal\\n');
+              process.stderr.end();
+            `,
+            cwd,
+            true,
+          )
     const stdout = collect(child.stdout)
     const stderr = collect(child.stderr)
     const finished = join(cwd, 'native-finished')
