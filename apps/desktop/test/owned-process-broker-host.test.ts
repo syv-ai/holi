@@ -110,27 +110,46 @@ function windowsJoinAdapter(cwd: string) {
   // The Node host receives this environment and PowerShell inherits it from the host.
   const compilerEnv = safeWindowsCompilerEnv(process.env, cwd)
   const adapter = win32Adapter('RunBroker', compilerEnv, (source) => {
-    // Keep the real broker body compiling, but run only the fixture entry.
-    const entry = 'public static int RunBroker()'
-    if (source.split(entry).length !== 2) throw new Error('Expected one native broker entry')
-    // Use the compiled snapshot layout and walker, but do not consult the broker's parent lease.
-    const snapshots = source.match(
-      /^  static void VisitBrokerHandleTable\([^\n]+\) {\n[\s\S]+?^  }$/gm,
+    // Select whole methods by exact declaration; a changed shape must fail rather than
+    // pull another declaration or any of the unused broker into the fixture.
+    const methods = [...source.matchAll(/^  (static [^\n]+) {\n(?:(?: {4}[^\n]*)?\n)*^  }$/gm)]
+    const method = (declaration: string) => {
+      const [match, duplicate] = methods.filter(([, signature]) => signature === declaration)
+      if (!match || duplicate) throw new Error('Expected one matching native broker method')
+      return match[0]
+    }
+    const shared = [
+      // The unchanged protocol ReadAvailable and interop CloseSource reference this diagnostic.
+      'static void RememberBrokerFailure(Exception error)',
+      'static IntPtr BrokerPipe(int which)',
+      'static void BrokerWriteBytes(IntPtr pipe,byte[] bytes)',
+      'static bool SameKernelObject(IntPtr left,IntPtr right)',
+    ].map(method)
+    const [diagnosticFields, duplicateFields] =
+      source.match(
+        /^  static string brokerPhase="open-pipes", brokerFailurePhase;\n  static uint brokerFailureCode;$/gm,
+      ) ?? []
+    if (!diagnosticFields || duplicateFields)
+      throw new Error('Expected native broker diagnostic fields')
+
+    // Reuse the snapshot walker, but scope it to self and replace its parent lease guard.
+    const snapshot = method(
+      'static void VisitBrokerHandleTable(IntPtr process,long deadline,Action<HandleSnapshotEntry> visit)',
     )
     const guard = 'ScanBudget(deadline);'
-    if (snapshots?.length !== 1 || !snapshots[0].includes(guard))
-      throw new Error('Expected one guarded native handle snapshot walker')
-    const visitSelf = snapshots[0]
+    if (!snapshot.includes(guard))
+      throw new Error('Expected a guarded native handle snapshot walker')
+    const visitSelf = snapshot
       .replace('VisitBrokerHandleTable(IntPtr process,', 'VisitJoinHandleTable(')
       .replace(
         'NtQueryInformationProcess(process,',
         'NtQueryInformationProcess(GetCurrentProcess(),',
       )
       .replaceAll(guard, 'if (Clock.ElapsedMilliseconds >= deadline) throw new IOException();')
-    return (
-      source.replace(entry, 'private static int RunOriginalBroker()') +
-      String.raw`
+    return String.raw`
 public static partial class HoliOwnedProcess {
+${diagnosticFields}
+${shared.join('\n')}
 ${visitSelf}
 
   private static void JoinCloseOutputAliases(IntPtr input, IntPtr output, IntPtr error) {
@@ -194,7 +213,6 @@ ${visitSelf}
   }
 }
 `
-    )
   })
   return { ...adapter, cwd }
 }
@@ -343,6 +361,11 @@ describe('owned Job broker host', () => {
       script.endsWith(`${start}${joinCompile}${done}exit [HoliOwnedProcess]::RunBroker()`),
     ).toBe(true)
     expect(script.replace(start, '').replace(done, '') === original.script).toBe(true)
+    expect(!script.includes('RunOriginalBroker')).toBe(true)
+    expect(script.split('public static int RunBroker()').length === 2).toBe(true)
+    expect(script.includes('foreach (byte expected in Encoding.UTF8.GetBytes("finish"))')).toBe(
+      true,
+    )
     expect(script.includes('ReadFile(input, one, 1, out count, IntPtr.Zero)')).toBe(true)
   })
 
