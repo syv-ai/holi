@@ -1,17 +1,19 @@
 import { ChildProcess, type SpawnOptions } from 'node:child_process'
 import { constants } from 'node:os'
 import { getSystemErrorName } from 'node:util'
-import { PassThrough, Readable } from 'node:stream'
+import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { launchPlan, spawnProgram } from './launch'
-import { spawnOwnedLaunch } from './owned-process-launch'
+import { notStartedOwnedChild, spawnOwnedLaunch } from './owned-process-launch'
 import type { ProcessGroupSupervision } from './owned-process-supervision'
 import { preparePosixSpawn, refusePosixSpawnPreparation } from './posix-launch-lease'
 import { markPosixNonAdmission, posixLaunchNonAdmission } from './posix-ownership-journal'
 
+import type { ManagedOwnedChild } from './owned-program-lifetime'
+
 export const ownedProcessDrain = Symbol('ownedProcessDrain')
 
-type SupervisedChild = ChildProcess & { [ownedProcessDrain]?: ProcessGroupSupervision }
+type SupervisedChild = ManagedOwnedChild & { [ownedProcessDrain]?: ProcessGroupSupervision }
 
 /** Start a Windows job or, by default on POSIX, an ordinary detached child.
  * Only owners that join physical drainage opt into `posixGroupLease`.
@@ -40,22 +42,7 @@ export function spawnOwnedProgram(
       cwd: typeof options.cwd === 'string' ? options.cwd : process.cwd(),
     })
   } catch (failure) {
-    const failed = new ChildProcess()
-    const input = new PassThrough()
-    const output = new PassThrough()
-    const errors = new PassThrough()
-    input.on('error', () => undefined)
-    failed.stdin = input
-    failed.stdout = output
-    failed.stderr = errors
-    process.nextTick(() => {
-      failed.emit('error', failure as Error)
-      input.destroy()
-      output.end()
-      errors.end()
-      failed.emit('close', null, null)
-    })
-    return failed
+    return notStartedOwnedChild(failure)
   }
   return spawnOwnedLaunch(plan, options, parentPid)
 }

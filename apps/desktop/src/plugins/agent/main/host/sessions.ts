@@ -22,15 +22,26 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import { CapabilityError, type PluginCtx } from '../../../../main/plugin-api'
+import {
+  CapabilityError,
+  UnconfirmedOwnedProgramError,
+  type PluginCtx,
+} from '../../../../main/plugin-api'
 import type { VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
 import type { SessionChannel } from '../claude/messaging'
 import { firstSpawnNotice, type BackgroundProvider } from '../provider'
-import type { AgentTerminals } from './terminals'
+import {
+  createClaudeLaunchAdmission,
+  unconfirmed,
+  type CliCreation,
+  type Failure,
+  type Unconfirmed,
+} from './claude-launch-admission'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { createLateSessionCleanup } from './late-session-cleanup'
 import { admitAgentSessions, createOwnedOperationTracker } from './session-admission'
+import type { AgentTerminals } from './terminals'
 import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
 import type { TurnLog } from './turn-log'
 
@@ -41,14 +52,11 @@ const IDLE_RECHECK_MS = 1_100
  *  hold a vault switch or a quit. */
 const LEAVE_CAP_MS = 5_000
 
-export type ActionResult = { ok: true } | { ok: false; message: string }
-export type OpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
+export type ActionResult = { ok: true } | Failure | Unconfirmed
+export type OpenResult = { ok: true; terminalId: string } | Failure | Unconfirmed
 export type StartResult =
-  | { ok: true; sessionId: string; terminalId: string }
-  | { ok: false; message: string; cleanupUnconfirmed?: true; sessionId?: string }
-type LaunchResult =
-  | { ok: true; sessionId: string }
-  | { ok: false; message: string; cleanupUnconfirmed?: true; sessionId?: string }
+  { ok: true; sessionId: string; terminalId: string } | Failure | Unconfirmed
+type LaunchResult = { ok: true; sessionId: string } | Failure | Unconfirmed
 
 export interface Geometry {
   cols?: number
@@ -111,7 +119,8 @@ export interface AgentSessions {
   /** The ones the listing still has but whose process is gone: stopped, or
    *  retired by the supervisor. Opening one brings it back (`respawn`). */
   past(): SessionSummary[]
-  /** Re-read the listing now. Never rejects. */
+  /** Re-read while listing probes remain safe. Read failures leave the last
+   *  verified listing in place; teardown reports unconfirmed native cleanup. */
   refresh(): Promise<void>
   /** A terminal on the list (no `attach`), on one session, or on a copy of
    *  a conversation by Claude Code's session id (`fork`). Its sign-in is a
@@ -187,7 +196,7 @@ export interface AgentSessions {
    */
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<string | null>
   /** Let go of the vault: optionally stop its live sessions, close every
-   *  terminal, stop watching its config directory. Bounded; reports unconfirmed drains. */
+   *  terminal, stop watching its config directory. Reports unconfirmed drains. */
   leave(opts?: { stopSessions?: boolean }): Promise<void>
 }
 
@@ -220,13 +229,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
    *  which would watch a directory Holi is letting go of. */
   let leaving: Promise<void> | null = null
   let drainFailure: AggregateError | null = null
-  let admissionClosed = deps.activationSignal?.aborted ?? false
+  const activationSignal = deps.activationSignal
+  let admissionClosed = activationSignal?.aborted ?? false
   const lifetime = new AbortController()
-  const lateCleanup = createLateSessionCleanup((target, id) =>
-    bg.cli.stop(target, id).then((result) => {
-      if (!result.ok) throw new Error(`Could not stop late session ${id}: ${result.message}`)
-    }),
-  )
+  // Always bind the grant to the original activation, including a direct leave
+  // in callers that do not supply a plugin activation signal.
+  const commitSignal = activationSignal
+    ? AbortSignal.any([activationSignal, lifetime.signal])
+    : lifetime.signal
+  const lateCleanup = createLateSessionCleanup()
+  let identifying = false
   let focusStop: Promise<void> | null = null
   let focusStopFailure: unknown | null = null
   function revoke(): void {
@@ -243,23 +255,38 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       })
     }
   }
-  deps.activationSignal?.addEventListener('abort', revoke, { once: true })
-  /** The latest listing for the current vault, live or not. */
-  let rows: ClaudeRow[] = []
+  activationSignal?.addEventListener('abort', revoke, { once: true })
+  /** This provider's verified rows and shutdown inventory for the attached vault. */
+  const inventory = {
+    rows: [] as ClaudeRow[],
+    listed: new Set<string>(),
+    // A missing or past row cannot prove that a pending owner drained.
+    pending: new Set<string>(),
+    uncertain: new Map<string, Unconfirmed>(),
+    acting: new Set<string>(),
+    unpublished: new Set<string>(),
+    /**
+     * Sessions Holi started with no prompt that have not had a turn yet. Left
+     * as they are, each one sits in Claude Code's list after Holi stops it, a
+     * nameless row that resumes blank; so leaving the vault removes them.
+     *
+     * Holi's own record, not a reading of the listing, which cannot say whether
+     * a session ever had a turn. A session resumed from the list is never on
+     * it, so a conversation that exists is never removed.
+     */
+    unprompted: new Set<string>(),
+    revision: 0,
+  }
+  const admission = createClaudeLaunchAdmission(
+    inventory,
+    lateCleanup,
+    deps.terminals,
+    commitSignal,
+  )
   let lastPushed = ''
   let lastPast = ''
   let idleRecheck: ReturnType<typeof setTimeout> | null = null
   let focusWriter: { root: string; snapshot: ContextSnapshot } | null = null
-  /**
-   * Sessions Holi started with no prompt that have not had a turn yet. Left
-   * as they are, each one sits in Claude Code's list after Holi stops it, a
-   * nameless row that resumes blank; so leaving the vault removes them.
-   *
-   * Holi's own record, not a reading of the listing, which cannot say whether
-   * a session ever had a turn. A session resumed from the list is never on
-   * it, so a conversation that exists is never removed.
-   */
-  const unprompted = new Set<string>()
   /** Turns an outside driver opened (`bracket`): its own ids, which the
    *  listing will never read live, so the reconcile must not forget them. */
   const bracketed = new Set<string>()
@@ -329,9 +356,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     if (model !== null) modelName.set(jobId, model)
   }
 
-  const live = (): ClaudeRow[] => rows.filter((row) => bg.isLive(row))
+  const live = (): ClaudeRow[] => inventory.rows.filter((row) => bg.isLive(row))
   const past = (): SessionSummary[] =>
-    rows
+    inventory.rows
       .filter((row) => !bg.isLive(row))
       .map((row) => ({ provider: provider.id, ...bg.summarise(row, new Set()) }))
   const summaries = (): SessionSummary[] =>
@@ -380,22 +407,244 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
   const admittedFor = (c: Current | null, owner: AgentVault | null): c is Current =>
     c !== null &&
     !admissionClosed &&
-    !deps.activationSignal?.aborted &&
+    !activationSignal?.aborted &&
     leaving === null &&
     attached === owner &&
     owner !== null &&
     current === c
 
-  /** An unidentifiable provider creation remains an unresolved drain. */
-  function retainUncertainReceipt(result: {
-    ok: false
-    message: string
-    cleanupUnconfirmed?: true
-  }): void {
-    if (result.cleanupUnconfirmed)
-      lateCleanup.recordFailure(
-        new Error(`Provider session creation is unresolved: ${result.message}`),
-      )
+  function trackPendingShutdown(id: string): void {
+    inventory.revision++
+    inventory.pending.add(id)
+  }
+
+  function confirmStopped(id: string): void {
+    inventory.revision++
+    inventory.pending.delete(id)
+    inventory.listed.delete(id)
+  }
+
+  async function stopProvider(target: VaultCliTarget, id: string): Promise<void> {
+    const result = await bg.cli.stop(target, id)
+    if (!result.ok)
+      throw result.error ?? new Error(`Could not stop session ${id}: ${result.message}`)
+    confirmStopped(id)
+  }
+
+  const vaultClosed = { ok: false as const, message: 'The vault closed as the session started.' }
+
+  /** Own discovery, admission and cleanup as one operation. Never substitute
+   * a provider stop for a still-revocable native launch. */
+  function createBackground(
+    c: Current,
+    target: VaultCliTarget,
+    create: () => Promise<CliCreation>,
+    terminal: Geometry,
+    blank?: boolean,
+  ): Promise<StartResult>
+  function createBackground(
+    c: Current,
+    target: VaultCliTarget,
+    create: () => Promise<CliCreation>,
+  ): Promise<LaunchResult>
+  async function createBackground(
+    c: Current,
+    target: VaultCliTarget,
+    create: () => Promise<CliCreation>,
+    terminal?: Geometry,
+    blank = false,
+  ): Promise<Failure | Unconfirmed | { ok: true; sessionId: string; terminalId?: string }> {
+    const alreadyBlocked = admission.creationBlock()
+    if (alreadyBlocked) return alreadyBlocked
+    const unlock = await admission.acquire()
+    if (unlock === null) return vaultClosed
+    let released = false
+    const releaseAdmission = () => {
+      if (released) return
+      released = true
+      // A read from the discovery window cannot overwrite verified history
+      // when a rejected receipt never reserved an id.
+      if (identifying) inventory.revision++
+      identifying = false
+      unlock()
+    }
+    try {
+      if (!admittedFor(c, c.vault)) return vaultClosed
+      const blocked = admission.creationBlock()
+      if (blocked) return blocked
+      // The listing cannot identify an in-flight launch. Delay applying reads
+      // until we can withhold its exact job id until native commit.
+      identifying = true
+      const result = await create()
+      if (!result.ok) {
+        if (!result.cleanupUnconfirmed) return result
+        const failure = admission.retainFailedReceipt(result)
+        if (!admittedFor(c, c.vault)) await admission.revokeUnconfirmed(failure.error)
+        return failure
+      }
+      const { id, lease } = result
+      const occupied = admission.rejectCollision(result)
+      if (occupied !== undefined) return await occupied
+      let tracked = false
+      let committed = false
+      let terminalId: string | undefined
+      async function closeTerminal() {
+        if (terminalId === undefined) return
+        try {
+          await deps.terminals.close(terminalId)
+        } catch (error) {
+          lateCleanup.recordFailure(error)
+          if (error instanceof Error && !admittedFor(c, c.vault))
+            await admission.revokeUnconfirmed(error)
+        }
+      }
+      const discard = async (
+        failure: Failure,
+        commandError = failure.error,
+      ): Promise<Failure | Unconfirmed> => {
+        await closeTerminal()
+        inventory.unprompted.delete(id)
+        try {
+          if (lease !== undefined && !committed) {
+            await lateCleanup.revoke(lease)
+            if (tracked) {
+              inventory.pending.delete(id)
+              inventory.revision++
+            }
+          } else await lateCleanup.track(() => stopProvider(target, id))
+        } catch (cause) {
+          const unresolved = admission.retainFailure(
+            unconfirmed(cause, id, committed ? undefined : lease, commandError),
+            true,
+          )
+          if (!admittedFor(c, c.vault)) await admission.revokeUnconfirmed(unresolved.error)
+          return unresolved
+        }
+        inventory.unpublished.delete(id)
+        releaseAdmission()
+        await refresh()
+        return failure
+      }
+      if (!admittedFor(c, c.vault)) return await discard(vaultClosed)
+      const openFailure = (error: unknown): Failure => ({
+        ok: false,
+        message: error instanceof Error ? error.message : 'Could not open session.',
+        ...(error instanceof Error ? { error } : {}),
+      })
+      let notice: string | undefined
+      try {
+        if (terminal !== undefined) notice = await prepareOpen(c)
+      } catch (error) {
+        const occupied = admission.rejectCollision(result)
+        if (occupied !== undefined) return await occupied
+        return await discard(openFailure(error))
+      }
+      // First-spawn preparation can yield to another session action or attach.
+      // Recheck before reserving so we never count our own pending id.
+      const refused = admission.rejectCollision(result)
+      if (refused !== undefined) return await refused
+      if (!admittedFor(c, c.vault)) return await discard(vaultClosed)
+      // Teardown owns the pending id, but listing cannot adopt it before commit.
+      if (lease !== undefined) inventory.unpublished.add(id)
+      trackPendingShutdown(id)
+      tracked = true
+      identifying = false
+      if (blank) inventory.unprompted.add(id)
+      if (lease !== undefined) {
+        try {
+          await lease.commit(commitSignal)
+          committed = true
+          // A read begun before commit cannot transfer the pending id.
+          inventory.revision++
+        } catch (cause) {
+          if (commitSignal.aborted && cause === commitSignal.reason)
+            return await discard(
+              vaultClosed,
+              cause instanceof Error ? cause : new Error(vaultClosed.message, { cause }),
+            )
+          // Commit has settled. Join the original lease, not a provider stop.
+          let revoked: PromiseSettledResult<void>
+          try {
+            await lateCleanup.revoke(lease)
+            revoked = { status: 'fulfilled', value: undefined }
+          } catch (reason) {
+            revoked = { status: 'rejected', reason }
+          }
+          return admission.rejectCommit(id, lease, cause, revoked)
+        }
+        if (!admittedFor(c, c.vault)) return await discard(vaultClosed)
+      }
+      // Never attach a terminal to a retained run that has not actually committed.
+      if (terminal !== undefined) {
+        try {
+          const opened = openPrepared(c, { ...terminal, attach: id }, notice)
+          if (!opened.ok) return await discard(opened)
+          terminalId = opened.terminalId
+        } catch (error) {
+          return await discard(openFailure(error))
+        }
+      }
+      inventory.unpublished.delete(id)
+      // The next receipt can now check this id against the pending owner (or
+      // the verified listing). Refresh is still this operation's to join.
+      releaseAdmission()
+      if (admittedFor(c, c.vault)) await refresh()
+      if (!admittedFor(c, c.vault)) return await discard(vaultClosed)
+      return { ok: true, sessionId: id, ...(terminalId === undefined ? {} : { terminalId }) }
+    } finally {
+      releaseAdmission()
+    }
+  }
+
+  async function changeSession(
+    c: Current,
+    id: string,
+    action: 'stop' | 'respawn',
+  ): Promise<ActionResult> {
+    const failure = inventory.uncertain.get(id)
+    if (failure) return failure
+    // When no further listing can verify ownership, stop only known owners
+    // and don't admit new processes.
+    const blocked = admission.inventoryFailure()
+    if (blocked) {
+      // A collision fences new identities and listing adoption, not an
+      // explicit resume of a conversation that was already verified.
+      const known =
+        action === 'respawn'
+          ? admission.canResume(blocked, id)
+          : inventory.listed.has(id) || inventory.pending.has(id)
+      if (!known) return blocked
+    }
+    if (inventory.unpublished.has(id) || inventory.acting.has(id))
+      return { ok: false, message: `Session ${id} is still changing.` }
+    inventory.acting.add(id)
+    const target = targetOf(c)
+    try {
+      const result = await bg.cli[action](target, id)
+      if (!result.ok && result.cleanupUnconfirmed) {
+        const failure = admission.retainFailure({ ...result, sessionId: id })
+        if (!admittedFor(c, c.vault)) await admission.revokeUnconfirmed(failure.error)
+        return failure
+      }
+      if (result.ok) {
+        if (action === 'respawn') trackPendingShutdown(id)
+        else confirmStopped(id)
+      }
+      if (admittedFor(c, c.vault)) await refresh()
+      if (!result.ok || admittedFor(c, c.vault)) return result
+      if (action === 'respawn') {
+        try {
+          await lateCleanup.track(() => stopProvider(target, id))
+        } catch (cause) {
+          const failure = admission.retainFailure(unconfirmed(cause, id))
+          await admission.revokeUnconfirmed(failure.error)
+          return failure
+        }
+      }
+      return { ok: false, message: `The vault was left before ${action} completed.` }
+    } finally {
+      inventory.acting.delete(id)
+    }
   }
 
   async function activate(vault: AgentVault): Promise<Current | null> {
@@ -405,7 +654,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
         log(`config directory unresolved: ${String(err)}`)
         return null
       })
-    if (config === null || admissionClosed || deps.activationSignal?.aborted) return null
+    if (config === null || admissionClosed || activationSignal?.aborted) return null
     const next: Current = {
       remote: vault.remote,
       root: vault.root,
@@ -430,7 +679,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
   }
 
   async function ensureCurrent(): Promise<Current | null> {
-    if (admissionClosed || deps.activationSignal?.aborted || leaving !== null) return null
+    if (admissionClosed || activationSignal?.aborted || leaving !== null) return null
     const vault = attached
     if (vault === null) return null
     if (current?.remote === vault.remote) return current
@@ -460,11 +709,40 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
   async function readOnce(): Promise<void> {
     const c = current
     if (c === null) return
-    const stdout = await bg.cli.list(targetOf(c))
-    if (current !== c || admissionClosed || deps.activationSignal?.aborted) return // the vault moved while we read
-    rows = bg.parseListing(stdout, c.root)
+    const before = inventory.revision
+    let stdout: string | null
+    try {
+      stdout = await bg.cli.list(targetOf(c))
+    } catch (error) {
+      if (error instanceof UnconfirmedOwnedProgramError) {
+        // Retain on the activation that launched the probe, even if revoked
+        // during the read. Join this exact command, not a session from stdout.
+        admission.retainListingFailure(error)
+        await admission.revokeUnconfirmed(error)
+      }
+      throw error
+    }
+    // A command confirmed while this read was in flight may not be in it.
+    // Use the refresh queued by that command rather than overwrite its inventory.
+    if (
+      stdout === null ||
+      !admittedFor(c, c.vault) ||
+      identifying ||
+      before !== inventory.revision ||
+      admission.inventoryFailure()
+    )
+      return
+    // Parsing is atomic and may throw on a malformed row. Don't change any
+    // display, working state, or shutdown inventory until it succeeds.
+    inventory.rows = bg
+      .parseListing(stdout, c.root)
+      .filter((row) => !inventory.unpublished.has(row.id))
     const liveRows = live()
     const liveIds = new Set(liveRows.map((r) => r.id))
+    // Transfer a pending id only when it actually appears live. Even a
+    // verified empty listing can lag a successful command.
+    inventory.listed = new Set(liveIds)
+    for (const id of liveIds) inventory.pending.delete(id)
 
     // Sessions keep running while Holi is closed, so the first read after
     // opening a vault may find one mid-turn: that turn holds sync too.
@@ -500,7 +778,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     let wantsRecheck = false
     for (const row of liveRows) {
       // Busy, or waiting on an answer, means a turn: the hook's floor.
-      if (row.status !== undefined && row.status !== 'idle') unprompted.delete(row.id)
+      if (row.status !== undefined && row.status !== 'idle') inventory.unprompted.delete(row.id)
       if (row.status !== 'idle') {
         // Whatever it is doing, it is not between turns. That cancels any idle
         // candidacy, which makes the confirmation two CONSECUTIVE readings.
@@ -527,12 +805,12 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       readAgain = true
       return reading
     }
+    if (admission.inventoryFailure()) return
     reading = (async () => {
       do {
         readAgain = false
-        if (admissionClosed) break
         await readOnce().catch((err: unknown) => log(`refresh failed: ${String(err)}`))
-      } while (readAgain && !admissionClosed)
+      } while (readAgain && !admissionClosed && !admission.inventoryFailure())
     })()
     try {
       await reading
@@ -547,18 +825,27 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     unwatch()
   }
 
-  async function openOn(
-    c: Current,
-    args: Geometry & { attach?: string; fork?: string },
-  ): Promise<OpenResult> {
+  async function prepareOpen(c: Current): Promise<string | undefined> {
     // Taken here, at a terminal, not at vault open: a run that opens no
     // terminal must leave the notice for the one that does.
-    let notice: string | undefined
-    if (!c.spawnChecked) {
-      c.spawnChecked = true
-      notice = await firstSpawnNotice(provider, c.configDir)
-    }
-    if (admissionClosed || deps.activationSignal?.aborted || current !== c)
+    if (c.spawnChecked) return undefined
+    c.spawnChecked = true
+    return firstSpawnNotice(provider, c.configDir)
+  }
+
+  async function openOn(c: Current, args: Geometry & { attach?: string; fork?: string }) {
+    const notice = await prepareOpen(c)
+    if (args.attach !== undefined && inventory.unpublished.has(args.attach))
+      return { ok: false as const, message: `Session ${args.attach} is still changing.` }
+    return openPrepared(c, args, notice)
+  }
+
+  function openPrepared(
+    c: Current,
+    args: Geometry & { attach?: string; fork?: string },
+    notice?: string,
+  ): { ok: true; terminalId: string } | Failure {
+    if (!admittedFor(c, c.vault))
       return { ok: false, message: 'The vault was left before the terminal opened.' }
     const target = targetOf(c)
     const res = deps.terminals.open({
@@ -605,87 +892,25 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     },
 
     async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
-      const origin = attached
+      const owner = attached
       const c = await ensureCurrent()
-      if (!admittedFor(c, origin))
+      if (!admittedFor(c, owner))
         return { ok: false, message: 'The vault changed before the session started.' }
       const target = targetOf(c)
-      const res = await bg.cli.startBg(target, {
+      const options = {
         ...(name === undefined ? {} : { name }),
         ...(prompt === undefined ? {} : { prompt }),
         ...(model === undefined ? {} : { model }),
-        ...(allow === undefined ? {} : { allow }),
+        ...(allow === undefined ? {} : { allow: [...allow] }),
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
-      })
-      if (!res.ok) {
-        retainUncertainReceipt(res)
-        return res
       }
-      const cleanup = async () => {
-        try {
-          await trackStop(target, res.id)
-          return true
-        } catch {
-          return false
-        }
-      }
-      const cleanupFailure = () => ({
-        ok: false as const,
-        message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
-        cleanupUnconfirmed: true,
-        sessionId: res.id,
-      })
-      if (
-        admissionClosed ||
-        deps.activationSignal?.aborted ||
-        attached !== origin ||
-        current !== c
-      ) {
-        return (await cleanup())
-          ? { ok: false, message: 'The vault closed as the session started.' }
-          : cleanupFailure()
-      }
-      if (prompt === undefined) unprompted.add(res.id)
-      let opened: Awaited<ReturnType<typeof openOn>>
-      try {
-        await refresh()
-        if (
-          admissionClosed ||
-          deps.activationSignal?.aborted ||
-          attached !== origin ||
-          current !== c
-        ) {
-          return (await cleanup())
-            ? { ok: false, message: 'The vault closed as the session started.' }
-            : cleanupFailure()
-        }
-        opened = await openOn(c, { attach: res.id, cols, rows: r })
-      } catch (error) {
-        if (!(await cleanup())) return cleanupFailure()
-        await refresh().catch(() => {})
-        return {
-          ok: false,
-          message: error instanceof Error ? error.message : 'Could not open session.',
-        }
-      }
-      if (
-        admissionClosed ||
-        deps.activationSignal?.aborted ||
-        attached !== origin ||
-        current !== c
-      ) {
-        return (await cleanup())
-          ? { ok: false, message: 'The vault closed as the session started.' }
-          : cleanupFailure()
-      }
-      if (!opened.ok) {
-        // A failed terminal open must not leave a hidden background run that a
-        // caller will retry as a second conversation.
-        if (!(await cleanup())) return cleanupFailure()
-        await refresh()
-        return opened
-      }
-      return { ok: true, sessionId: res.id, terminalId: opened.terminalId }
+      return createBackground(
+        c,
+        target,
+        () => bg.cli.startBg(target, options),
+        { cols, rows: r },
+        prompt === undefined,
+      )
     },
 
     async launch({ name, prompt, model, allow, deny, appendSystemPrompt, mcpConfig }) {
@@ -693,50 +918,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       const c = await ensureCurrent()
       if (!admittedFor(c, owner)) return noVault
       const target = targetOf(c)
-      const res = await bg.cli.startBg(target, {
+      const options = {
         name,
         prompt,
         ...(model === undefined ? {} : { model }),
-        ...(allow === undefined ? {} : { allow }),
-        ...(deny === undefined ? {} : { deny }),
+        ...(allow === undefined ? {} : { allow: [...allow] }),
+        ...(deny === undefined ? {} : { deny: [...deny] }),
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
         ...(mcpConfig === undefined ? {} : { mcpConfig }),
-      })
-      if (!res.ok) {
-        retainUncertainReceipt(res)
-        return res
       }
-      if (!admittedFor(c, owner)) {
-        // The leave read the sessions to stop before this one was listed, so
-        // it would go on running in the vault left while its caller is told
-        // it failed: stop it here, and keep the cleanup failure in the drain.
-        try {
-          await trackStop(targetOf(c), res.id)
-          return { ok: false, message: 'The vault closed as the session started.' }
-        } catch {
-          return {
-            ok: false,
-            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
-            cleanupUnconfirmed: true,
-            sessionId: res.id,
-          }
-        }
-      }
-      await refresh()
-      if (admissionClosed || deps.activationSignal?.aborted || current !== c) {
-        try {
-          await trackStop(target, res.id)
-          return { ok: false, message: 'The vault closed as the session started.' }
-        } catch {
-          return {
-            ok: false,
-            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
-            cleanupUnconfirmed: true,
-            sessionId: res.id,
-          }
-        }
-      }
-      return { ok: true, sessionId: res.id }
+      return createBackground(c, target, () => bg.cli.startBg(target, options))
     },
 
     watched: (id) => !admissionClosed && deps.terminals.launchedFor(id) !== null,
@@ -781,124 +972,30 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     async stop(id) {
       const owner = attached
       const c = await ensureCurrent()
-      if (!admittedFor(c, owner)) return noVault
-      const res = await bg.cli.stop(targetOf(c), id)
-      if (admissionClosed || current !== c)
-        return { ok: false, message: 'The vault was left before stop completed.' }
-      await refresh()
-      if (admissionClosed || current !== c)
-        return { ok: false, message: 'The vault was left before stop completed.' }
-      return res
+      return admittedFor(c, owner) ? changeSession(c, id, 'stop') : noVault
     },
 
     async respawn(id) {
       const owner = attached
       const c = await ensureCurrent()
-      if (!admittedFor(c, owner)) return noVault
-      const target = targetOf(c)
-      const res = await bg.cli.respawn(target, id)
-      const cleanupLateRespawn = async () => {
-        if (!res.ok) return
-        try {
-          await trackStop(target, id)
-        } catch {
-          // The late-session cleanup owner retains this failure for teardown.
-        }
-      }
-      if (admissionClosed || current !== c) {
-        await cleanupLateRespawn()
-        return { ok: false, message: 'The vault was left before respawn completed.' }
-      }
-      await refresh()
-      if (admissionClosed || current !== c) {
-        await cleanupLateRespawn()
-        return { ok: false, message: 'The vault was left before respawn completed.' }
-      }
-      return res
+      return admittedFor(c, owner) ? changeSession(c, id, 'respawn') : noVault
     },
 
     async duplicate(id, geometry = {}) {
       const owner = attached
       const c = await ensureCurrent()
       if (!admittedFor(c, owner)) return noVault
-      const row = rows.find((r) => r.id === id)
-      if (row?.sessionId === undefined) {
+      const blocked = admission.creationBlock()
+      if (blocked) return blocked
+      const row = inventory.rows.find((r) => r.id === id)
+      const conversation = row?.sessionId
+      if (row === undefined || conversation === undefined) {
         return { ok: false, message: 'Claude Code has not said which conversation this is yet.' }
       }
       const label = bg.summarise(row, coordinator.working).name
       const name = label === 'New session' ? undefined : `${label} (copy)`
       const target = targetOf(c)
-      const res = await bg.cli.forkBg(target, row.sessionId, name)
-      if (!res.ok) {
-        retainUncertainReceipt(res)
-        return res
-      }
-      const cleanup = async () => {
-        try {
-          await trackStop(target, res.id)
-          return true
-        } catch {
-          return false
-        }
-      }
-      if (admissionClosed || current !== c) {
-        if (!(await cleanup()))
-          return {
-            ok: false,
-            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
-            cleanupUnconfirmed: true,
-            sessionId: res.id,
-          }
-        return { ok: false, message: 'The vault closed as the session started.' }
-      }
-      await refresh()
-      if (admissionClosed || current !== c) {
-        if (!(await cleanup()))
-          return {
-            ok: false,
-            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
-            cleanupUnconfirmed: true,
-            sessionId: res.id,
-          }
-        return { ok: false, message: 'The vault closed as the session started.' }
-      }
-      let opened: OpenResult
-      try {
-        opened = await openOn(c, { attach: res.id, ...geometry })
-      } catch (error) {
-        if (!(await cleanup()))
-          return {
-            ok: false,
-            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
-            cleanupUnconfirmed: true,
-            sessionId: res.id,
-          }
-        return {
-          ok: false,
-          message: error instanceof Error ? error.message : 'Could not open session.',
-        }
-      }
-      if (!opened.ok) {
-        if (!(await cleanup()))
-          return {
-            ok: false,
-            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
-            cleanupUnconfirmed: true,
-            sessionId: res.id,
-          }
-        return opened
-      }
-      if (admissionClosed || current !== c) {
-        if (!(await cleanup()))
-          return {
-            ok: false,
-            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
-            cleanupUnconfirmed: true,
-            sessionId: res.id,
-          }
-        return { ok: false, message: 'The vault closed as the session started.' }
-      }
-      return { ok: true, sessionId: res.id, terminalId: opened.terminalId }
+      return createBackground(c, target, () => bg.cli.forkBg(target, conversation, name), geometry)
     },
 
     async noteTurn(remote, jobId, active, pending = null, pid) {
@@ -908,7 +1005,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       if (current === null) await ensureCurrent()
       if (current?.remote !== remote) return null
       let settled: Promise<string | null> = Promise.resolve(null)
-      if (active) unprompted.delete(jobId)
+      if (active) inventory.unprompted.delete(jobId)
       if (active && pid !== undefined)
         workingPid.set(jobId, { ...workingPid.get(jobId), hook: pid })
       if (active) coordinator.begin(jobId)
@@ -991,7 +1088,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
 
     bracket(id, edge) {
       if (edge === 'begin') {
-        if (admissionClosed || deps.activationSignal?.aborted) return
+        if (admissionClosed || activationSignal?.aborted) return
         bracketed.add(id)
         coordinator.begin(id)
         return
@@ -1024,10 +1121,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     },
   }
 
-  const trackStop = lateCleanup.stop
-
   async function leaveNow(stopSessions: boolean): Promise<void> {
-    const failures: unknown[] = lateCleanup.takeFailures()
+    const failures: unknown[] = []
     // A vault still attaching is the one being left: let it land first.
     if (activating !== null) {
       try {
@@ -1037,15 +1132,18 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       }
     }
     attached = null
-    while (operations.pending.size > 0 || lateCleanup.size > 0 || reading !== null) {
+    while (operations.pending.size > 0 || lateCleanup.pending.length > 0 || reading !== null) {
       await Promise.allSettled([
         ...operations.pending,
         ...lateCleanup.pending,
         ...(reading === null ? [] : [reading]),
       ])
-      failures.push(...lateCleanup.takeFailures())
     }
-    failures.push(...lateCleanup.takeFailures())
+    await Promise.all(
+      lateCleanup
+        .failures()
+        .flatMap((error) => (error instanceof Error ? [admission.revokeUnconfirmed(error)] : [])),
+    )
     const c = current
     if (c === null) {
       try {
@@ -1062,34 +1160,62 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       focusStop = null
       focusStopFailure = null
       focusWriter = null
-      if (failures.length > 0) {
-        drainFailure = new AggregateError(failures, 'Agent session teardown failed.')
-        throw drainFailure
-      }
+      finishDrain(failures)
       return
     }
     if (stopSessions) {
-      // Stop, then remove the ones that never had a turn (`unprompted`).
+      const shutdownIds = new Set([
+        ...inventory.listed,
+        ...inventory.pending,
+        ...inventory.uncertain.keys(),
+      ])
+      // Uncertain ids are drained via their original lease above, never by
+      // issuing another verb. Stop the rest, then remove unprompted sessions.
       const stops = Promise.allSettled(
-        live().map(async (row) => {
-          const stopped = await bg.cli.stop(targetOf(c), row.id)
-          if (!stopped.ok) throw new Error(`Could not stop session ${row.id}: ${stopped.message}`)
-          if (unprompted.has(row.id)) {
-            const removed = await bg.cli.rm(targetOf(c), row.id)
-            if (!removed.ok)
-              throw new Error(`Could not remove session ${row.id}: ${removed.message}`)
-          }
-        }),
+        [...shutdownIds]
+          .filter((id) => !inventory.uncertain.has(id) && !inventory.unpublished.has(id))
+          .map(async (id) => {
+            const target = targetOf(c)
+            try {
+              await stopProvider(target, id)
+            } catch (error) {
+              if (error instanceof UnconfirmedOwnedProgramError) {
+                admission.retainFailure(unconfirmed(error, id))
+                await admission.revokeUnconfirmed(error)
+                return
+              }
+              throw error
+            }
+            if (inventory.unprompted.has(id)) {
+              const removed = await bg.cli.rm(target, id)
+              if (!removed.ok) {
+                if (removed.cleanupUnconfirmed) {
+                  admission.retainFailure(unconfirmed(removed.error, id))
+                  await admission.revokeUnconfirmed(removed.error)
+                  return
+                }
+                throw (
+                  removed.error ?? new Error(`Could not remove session ${id}: ${removed.message}`)
+                )
+              }
+            }
+          }),
       )
       let timer: ReturnType<typeof setTimeout> | undefined
-      const timedOut = new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error('Agent sessions did not stop before vault teardown timed out.')),
-          deps.leaveCapMs ?? LEAVE_CAP_MS,
-        )
-      })
+      const timedOut =
+        process.platform === 'win32'
+          ? null
+          : new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(new Error('Agent sessions did not stop before vault teardown timed out.')),
+                deps.leaveCapMs ?? LEAVE_CAP_MS,
+              )
+            })
       try {
-        const results = await Promise.race([stops, timedOut])
+        // The native command and lease own their deadlines on Windows. A
+        // presentation timeout cannot stand in for joining that cleanup.
+        const results = await (timedOut === null ? stops : Promise.race([stops, timedOut]))
         failures.push(
           ...results
             .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
@@ -1114,7 +1240,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     }
     bracketed.clear()
     workingPid.clear()
-    unprompted.clear()
+    inventory.unprompted.clear()
     contextPercent.clear()
     modelName.clear()
     channels.clear()
@@ -1135,7 +1261,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     focusStop = null
     focusWriter = null
     current = null
-    rows = []
+    inventory.rows = []
     try {
       await release(c)
     } catch (error) {
@@ -1143,13 +1269,18 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     }
     push(c.remote)
     pushPast(c.remote)
-    if (failures.length > 0) {
-      drainFailure = new AggregateError(failures, 'Agent session teardown failed.')
+    finishDrain(failures)
+  }
+
+  function finishDrain(failures: unknown[]): void {
+    const all = [...new Set([...failures, ...lateCleanup.failures()])]
+    if (all.length > 0) {
+      drainFailure = new AggregateError(all, 'Agent session teardown failed.')
       throw drainFailure
     }
   }
   const operations = createOwnedOperationTracker(
-    () => !admissionClosed && !deps.activationSignal?.aborted && leaving === null,
+    () => !admissionClosed && !activationSignal?.aborted && leaving === null,
   )
   return {
     ...admitAgentSessions(

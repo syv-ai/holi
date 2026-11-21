@@ -3,7 +3,7 @@ import { buildPiEnv } from './env'
 import type { SessionSummary } from '../claude/listing'
 import type { CallerOwnership } from '../host/ownership'
 import type { ManagedTurn } from '../host/turn-coordinator'
-import { posixLaunchNonAdmission } from '../../../../main/plugin-api'
+import { UnconfirmedOwnedProgramError, posixLaunchNonAdmission } from '../../../../main/plugin-api'
 import { PiRpcConfigurationError, PiRpcRun, type PiRunResult } from './rpc'
 
 function summarizeUsage(raw: unknown): SessionSummary['usage'] | undefined {
@@ -46,6 +46,7 @@ interface PiJob {
   keep: boolean
   reply?: string
   removal?: Promise<void>
+  deadFollowUp?: Promise<never>
 }
 
 interface PiOwnership {
@@ -83,6 +84,7 @@ export interface PiLaunch {
 }
 
 export interface PiBackgroundDeps {
+  platform?: NodeJS.Platform
   bin(): string | null
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): Promise<unknown> | unknown
   beginManagedTurn?: (id: string) => ManagedTurn
@@ -97,6 +99,7 @@ export interface PiBackgroundDeps {
 
 /** Owns one activation's RPC processes and joins every admitted turn at leave. */
 export function createPiBackground(deps: PiBackgroundDeps) {
+  const platform = deps.platform ?? process.platform
   let remote: string | null = null
   let root: string | null = null
   let invalidated = deps.activationSignal?.aborted ?? false
@@ -141,7 +144,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     if (!invalidated) deps.changed()
   }
   const sessions = (): SessionSummary[] =>
-    (invalidated ? [] : [...jobs.values()]).map(
+    (invalidated && platform !== 'win32' ? [] : [...jobs.values()]).map(
       ({ id, name, state, startedAt, model, usage, contextPercent, outcome, error }) => ({
         id,
         provider: 'pi',
@@ -160,7 +163,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     if (turn.finalized) return turn.finalized
     turn.finalized = turn.begin.then(async () => {
       let finalEdge = invalidated || job.removal ? 'forget' : edge
-      if (process.platform !== 'win32' && (finalEdge === 'forget' || !job.run.isAlive)) {
+      if (finalEdge === 'forget' || !job.run.isAlive) {
         if (finalEdge === 'forget' && job.run.isAlive) void job.run.close()
         // Natural EOF can precede root exit. Observe its receipt without
         // converting it to an explicit stop. Only positive physical proof
@@ -250,7 +253,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         await job.run.drained
       } catch (error) {
         failOwnership(owner, error)
-        if (process.platform === 'win32') throw error
+        if (platform === 'win32') throw error
         // A broken output stream still owes the turn's guarded forget once
         // the writer is gone. Unknown physical state must leave it open.
         await job.run.physicalDrain
@@ -263,7 +266,14 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     } catch (error) {
       const cause = failOwnership(owner, error)
       if (job.state === 'working')
-        publish(job, undefined, { status: 'failed', output: '', error: String(cause) })
+        publish(job, undefined, {
+          status: 'failed',
+          output: '',
+          error:
+            cause instanceof UnconfirmedOwnedProgramError
+              ? (cause.commandError?.message ?? cause.message)
+              : String(cause),
+        })
       throw cause
     } finally {
       job.staged = undefined
@@ -278,7 +288,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     clearRetention(job)
     if (job.removal) return job.removal
     job.removal = Promise.resolve().then(async () => {
-      if (process.platform === 'win32') void job.run.close()
+      if (platform === 'win32') void job.run.close()
       await job.settlement
       if (jobs.get(job.id) === job) {
         jobs.delete(job.id)
@@ -291,7 +301,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     })
     // Store the removal first: synchronous process callbacks must see the
     // stopped owner. POSIX must close the GO gate before startup can resume.
-    if (process.platform !== 'win32') void job.run.close()
+    if (platform !== 'win32') void job.run.close()
     void job.removal.catch(recordFailure)
     return job.removal
   }
@@ -418,6 +428,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     let run: PiRpcRun
     try {
       run = new PiRpcRun({
+        platform,
         ownershipRecordPath: ownership.record?.ownershipRecordPath,
         activationSignal: deps.activationSignal,
         onDrainFailure: (error) => failOwnership(ownership, error),
@@ -467,6 +478,18 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       }
       throw error
     }
+    if (run.startup) {
+      try {
+        const error = await run.startup
+        if (error) {
+          nonLaunch(ownership)
+          return refused(error)
+        }
+      } catch (error) {
+        failOwnership(ownership, error)
+        throw error
+      }
+    }
     job = {
       id,
       remote: owner,
@@ -484,7 +507,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     void job.settlement.catch(() => {})
     jobs.set(id, job)
     if (invalidated) {
-      if (process.platform !== 'win32') void retire(job)
+      void retire(job)
       return { ok: false as const, message: 'No vault is open.' }
     }
     // A child without a receipt is already closed to RPC admission, but its
@@ -535,7 +558,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       throwFailures(failures)
     })
     void leavePromise.catch(() => {})
-    if (process.platform !== 'win32') for (const job of jobs.values()) void retire(job)
+    for (const job of jobs.values()) void retire(job)
     return leavePromise
   }
 
@@ -567,6 +590,15 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       if (!job || job.remote !== remote) throw new Error(`no running Pi session ${id}`)
       if (job.ownership.failure) throw job.ownership.failure.cause
       const turn = job.currentTurn
+      if (platform === 'win32' && !job.run.isAlive) {
+        if (!turn || job.state === 'idle') {
+          job.deadFollowUp ??= retire(job).then(() => {
+            throw new Error('Pi RPC process exited before the follow-up')
+          })
+          return job.deadFollowUp
+        }
+        throw new Error('Pi RPC process exited before the follow-up')
+      }
       if (turn && !job.removal) {
         if (turn.acceptingFollowUps && job.run.isAlive && job.followUps.length === 0) {
           try {
@@ -595,9 +627,10 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       if (refused) throw refused.cause
     },
     async stop(id: string) {
-      if (invalidated) return { ok: false as const, message: 'That session has ended.' }
+      if (invalidated && platform !== 'win32')
+        return { ok: false as const, message: 'That session has ended.' }
       const job = jobs.get(id)
-      if (!job || job.remote !== remote)
+      if (!job || (job.remote !== remote && !invalidated))
         return { ok: false as const, message: 'That session has ended.' }
       await retire(job)
       return { ok: true as const }

@@ -130,6 +130,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     const blocked = {
       ok: false as const,
       message: 'Previous fenced launch cleanup is unconfirmed.',
+      error: new Error('Previous fenced launch cleanup is unconfirmed.'),
       cleanupUnconfirmed: true as const,
     }
     if (failedStarts.size > 0) return blocked
