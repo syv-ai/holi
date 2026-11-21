@@ -66,35 +66,77 @@ function windowsJoinFixture(cwd: string) {
     // Keep the real broker body compiling, but run only the fixture entry.
     const entry = 'public static int RunBroker()'
     if (source.split(entry).length !== 2) throw new Error('Expected one native broker entry')
+    // Use the compiled snapshot layout and walker, but do not consult the broker's parent lease.
+    const snapshots = source.match(
+      /^  static void VisitBrokerHandleTable\([^\n]+\) {\n[\s\S]+?^  }$/gm,
+    )
+    const guard = 'ScanBudget(deadline);'
+    if (snapshots?.length !== 1 || !snapshots[0].includes(guard))
+      throw new Error('Expected one guarded native handle snapshot walker')
+    const visitSelf = snapshots[0]
+      .replace('VisitBrokerHandleTable(IntPtr process,', 'VisitJoinHandleTable(')
+      .replace(
+        'NtQueryInformationProcess(process,',
+        'NtQueryInformationProcess(GetCurrentProcess(),',
+      )
+      .replaceAll(guard, 'if (Clock.ElapsedMilliseconds >= deadline) throw new IOException();')
     return (
       source.replace(entry, 'private static int RunOriginalBroker()') +
       String.raw`
 public static partial class HoliOwnedProcess {
-  [DllImport("kernel32.dll", EntryPoint="GetStdHandle", ExactSpelling=true)]
-  private static extern IntPtr JoinGetStdHandle(int which);
-  [DllImport("kernel32.dll", EntryPoint="WriteFile", ExactSpelling=true)]
-  private static extern bool JoinWriteFile(IntPtr handle, byte[] bytes, int count, out int written, IntPtr overlapped);
-  [DllImport("kernel32.dll", EntryPoint="ReadFile", ExactSpelling=true)]
-  private static extern bool JoinReadFile(IntPtr handle, [Out] byte[] bytes, int count, out int read, IntPtr overlapped);
-  [DllImport("kernel32.dll", EntryPoint="CloseHandle", ExactSpelling=true)]
-  private static extern bool JoinCloseHandle(IntPtr handle);
+${visitSelf}
+
+  private static void JoinCloseOutputAliases(IntPtr input, IntPtr output, IntPtr error) {
+    var self = GetCurrentProcess();
+    IntPtr outputPin = IntPtr.Zero, errorPin = IntPtr.Zero;
+    int outputCount = 0, errorCount = 0;
+    bool outputClosed = false, errorClosed = false;
+    try {
+      const uint DuplicateSameAccess = 2;
+      Check(DuplicateHandle(self, output, self, out outputPin, 0, false, DuplicateSameAccess));
+      Check(DuplicateHandle(self, error, self, out errorPin, 0, false, DuplicateSameAccess));
+      if (SameKernelObject(outputPin, errorPin) || SameKernelObject(outputPin, input) ||
+          SameKernelObject(errorPin, input)) throw new IOException();
+
+      // Add-Type has returned and the fixture does not use console writers. A CRT or
+      // PowerShell alias can still hold the pipe open. Only close a local slot after
+      // comparing it to an owned pin, never on the basis of its type or slot value.
+      VisitJoinHandleTable(Clock.ElapsedMilliseconds + 1000, entry => {
+        var slot = entry.HandleValue;
+        if (slot == input || slot == outputPin || slot == errorPin) return;
+        if (SameKernelObject(slot, outputPin)) {
+          Check(CloseHandle(slot));
+          outputCount++;
+          if (slot == output) outputClosed = true;
+        } else if (SameKernelObject(slot, errorPin)) {
+          Check(CloseHandle(slot));
+          errorCount++;
+          if (slot == error) errorClosed = true;
+        }
+      });
+      if (!outputClosed || !errorClosed) throw new IOException();
+    } finally {
+      bool closedOutputPin = outputPin == IntPtr.Zero || CloseHandle(outputPin);
+      bool closedErrorPin = errorPin == IntPtr.Zero || CloseHandle(errorPin);
+      if (!closedOutputPin || !closedErrorPin) throw new IOException();
+    }
+    // One per stream means only the original standard handle was present.
+    File.WriteAllText("native-handles-closed", outputCount.ToString(CultureInfo.InvariantCulture) +
+      "," + errorCount.ToString(CultureInfo.InvariantCulture));
+  }
 
   public static int RunBroker() {
     try {
       File.WriteAllText("native-entered", "");
-      var input = JoinGetStdHandle(-10);
-      var output = JoinGetStdHandle(-11);
-      var error = JoinGetStdHandle(-12);
-      var terminal = Encoding.UTF8.GetBytes("terminal\n");
-      int count;
-      if (!JoinWriteFile(output, terminal, terminal.Length, out count, IntPtr.Zero) || count != terminal.Length)
-        return 125;
-      // Close the actual Windows pipe handles, not Node's CRT descriptor aliases.
-      if (!JoinCloseHandle(output) || !JoinCloseHandle(error)) return 125;
-      File.WriteAllText("native-handles-closed", "");
+      var input = BrokerPipe(-10);
+      var output = BrokerPipe(-11);
+      var error = BrokerPipe(-12);
+      BrokerWriteBytes(output, Encoding.UTF8.GetBytes("terminal\n"));
+      JoinCloseOutputAliases(input, output, error);
       var one = new byte[1];
       foreach (byte expected in Encoding.UTF8.GetBytes("finish")) {
-        if (!JoinReadFile(input, one, 1, out count, IntPtr.Zero) || count != 1 || one[0] != expected)
+        int count;
+        if (!ReadFile(input, one, 1, out count, IntPtr.Zero) || count != 1 || one[0] != expected)
           return 125;
       }
       File.WriteAllText("native-finished", "done");
@@ -242,10 +284,14 @@ describe('owned Job broker host', () => {
         .subarray(0, 500)
         .toString('latin1')
         .replace(/[^ -~]/g, ' ')
+      const closedCounts = await readFile(join(cwd, 'native-handles-closed'), 'utf8').then(
+        (counts) => (/^\d{1,9},\d{1,9}$/.test(counts) ? counts : 'invalid'),
+        () => 'unreported',
+      )
       throw new Error(
         `Broker join fixture failed: terminalSeen=${terminalSeen}, hostStatus=${JSON.stringify(await closed)}, ` +
           `windowsEntry=${existsSync(join(cwd, 'native-entered'))}, ` +
-          `windowsHandlesClosed=${existsSync(join(cwd, 'native-handles-closed'))}, ` +
+          `windowsHandlesClosed(stdout,stderr)=${closedCounts}, ` +
           `nativeFinished=${existsSync(finished)}, stderr=${excerpt}`,
         { cause },
       )
