@@ -36,6 +36,17 @@ export function savePosition(remote: string, path: string, cfi: string): void {
   positions[key] = cfi
   const keys = Object.keys(positions)
   for (const old of keys.slice(0, Math.max(0, keys.length - MAX_BOOKS))) delete positions[old]
+  store(positions)
+}
+
+/** Forgets where `path` was read: a place a newer version of the book lost. */
+export function forgetPosition(remote: string, path: string): void {
+  const positions = load()
+  delete positions[bookKey(remote, path)]
+  store(positions)
+}
+
+function store(positions: Positions): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(positions))
   } catch {

@@ -9,14 +9,14 @@
  * and cell paragraphs dropped (a cover title vanished; docxjs#253). Drop each
  * part of the patch once a release has it.
  *
- * Images come out of the file as `data:` URLs (`useBase64URL`), which the
- * frame's policy allows, and nothing the document links to outside itself is
- * fetched. Pages are paper whatever the theme: a document brings its own
+ * The file is refused before it is unpacked if it would unpack too large
+ * (`checkArchiveSize`): docx-preview bounds nothing it inflates. Images come
+ * out of the file as `data:` URLs (`useBase64URL`), which the frame's policy
+ * allows, and nothing the document links to outside itself is fetched. Pages are paper whatever the theme: a document brings its own
  * colours.
  */
-import { useState } from 'react'
 import { renderAsync } from 'docx-preview'
-import { ErrorState } from '@/composites/empty-state'
+import { checkArchiveSize } from './archive-size'
 import { InertFrame } from './inert-frame-host'
 
 /** The library's grey wrapper gives way to the theme's canvas. */
@@ -47,31 +47,19 @@ export function DocxView({
   name: string
   path: string
 }) {
-  const [error, setError] = useState<string | null>(null)
-  const [attempt, setAttempt] = useState(0)
-  if (error !== null)
-    return (
-      <ErrorState
-        title="This document didn’t open"
-        message={error}
-        onRetry={() => {
-          setError(null)
-          setAttempt((n) => n + 1)
-        }}
-      />
-    )
   return (
     <InertFrame
-      key={attempt}
       label={name}
       css={DOCX_CSS}
+      failure="This document didn’t open"
       onInternalLink={(href, doc) => {
         // A bookmark or a table of contents entry (`#_Toc…`).
         if (href.startsWith('#'))
           doc.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView()
       }}
-      draw={(body) => {
-        let live = true
+      draw={async (body, signal) => {
+        await checkArchiveSize(bytes)
+        if (signal.aborted) return
         // Containers of its own: docx-preview empties both before it draws,
         // and the frame's head holds the policy and the canvas styles.
         const doc = body.ownerDocument
@@ -80,7 +68,8 @@ export function DocxView({
         const fit = () => fitToWidth(body, pages)
         const resize = new ResizeObserver(fit)
         resize.observe(body)
-        renderAsync(bytes, pages, styles, {
+        signal.addEventListener('abort', () => resize.disconnect())
+        await renderAsync(bytes, pages, styles, {
           inWrapper: true,
           useBase64URL: true,
           // Word's own page breaks from its last save, so pages fall where
@@ -91,13 +80,8 @@ export function DocxView({
           // drawn as a frame of its own: never.
           renderAltChunks: false,
           experimental: false,
-        }).then(fit, (err: unknown) => {
-          if (live) setError(err instanceof Error ? err.message : String(err))
         })
-        return () => {
-          live = false
-          resize.disconnect()
-        }
+        fit()
       }}
     />
   )

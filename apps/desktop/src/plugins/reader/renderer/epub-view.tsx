@@ -3,6 +3,8 @@
  * one page at a time. The one module that imports it, loaded lazily so the
  * main chunk never carries it.
  *
+ * - **Too large to unpack** is refused before foliate unpacks anything
+ *   (`checkArchiveSize`): foliate bounds nothing it inflates.
  * - **No book script runs.** foliate's chapter frames are sandboxed
  *   `allow-same-origin` only (the vendored patch), and a script the book lists
  *   is never even unpacked.
@@ -40,8 +42,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { activeModeAtom, activeRemoteAtom } from '@/plugin-api'
+import { checkArchiveSize } from './archive-size'
 import { closeBook, guardChapters } from './epub-chapters'
-import { readPosition, savePosition } from './epub-positions'
+import { forgetPosition, readPosition, savePosition } from './epub-positions'
+import { startReading } from './epub-start'
 import {
   READING_THEME_LABELS,
   nextReadingTheme,
@@ -98,10 +102,13 @@ export function EpubView({
     let live = true
     let view: View | null = null
     let opened: Book | null = null
-    const unforward: Array<() => void> = []
+    // Per chapter document, dropped once foliate lets the document go.
+    const forwarders = new Map<Document, () => void>()
     setState('opening')
     void (async () => {
       try {
+        await checkArchiveSize(bytes)
+        if (!live) return
         const { makeBook } = await import('./vendor/foliate/view.js')
         const book: Book = await makeBook(new File([bytes], name, { type: 'application/epub+zip' }))
         opened = book
@@ -137,7 +144,12 @@ export function EpubView({
         })
         view.addEventListener('load', (event) => {
           const { doc } = (event as CustomEvent<{ doc: Document }>).detail
-          unforward.push(forwardShortcuts(doc, parent))
+          for (const [old, undo] of forwarders)
+            if (old.defaultView === null) {
+              undo()
+              forwarders.delete(old)
+            }
+          forwarders.set(doc, forwardShortcuts(doc, parent))
           doc.addEventListener('keydown', (key) => turnPage(view, key))
           // foliate takes clicks on `a[href]`; any other link (an SVG
           // `xlink:href`, an image map's `area`) would navigate the frame.
@@ -153,8 +165,9 @@ export function EpubView({
         viewRef.current = view
         await view.open(book)
         view.renderer.setStyles?.(stylesRef.current)
-        const lastLocation = remote === null ? undefined : readPosition(remote, path)
-        await view.init(lastLocation ? { lastLocation } : { showTextStart: true })
+        await startReading(view, remote === null ? undefined : readPosition(remote, path), () => {
+          if (remote !== null) forgetPosition(remote, path)
+        })
         if (!live) return
         setToc(book.toc ?? [])
         setState('open')
@@ -164,7 +177,7 @@ export function EpubView({
     })()
     return () => {
       live = false
-      for (const undo of unforward) undo()
+      for (const undo of forwarders.values()) undo()
       closeBook(view, opened)
       viewRef.current = null
     }

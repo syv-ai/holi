@@ -25,9 +25,7 @@
  * - A deck's embedded fonts register on the app's document, not the frame's,
  *   so its slides fall back to the system's fonts (docs/features/reader.md).
  */
-import { useState } from 'react'
 import { PptxViewer, RECOMMENDED_ZIP_LIMITS } from '@aiden0z/pptx-renderer'
-import { ErrorState } from '@/composites/empty-state'
 import { InertFrame } from './inert-frame-host'
 
 /** Room around the slides, so they sit on the canvas rather than at its edge. */
@@ -41,30 +39,16 @@ export function PptxView({
   name: string
   path: string
 }) {
-  const [error, setError] = useState<string | null>(null)
-  const [attempt, setAttempt] = useState(0)
-  if (error !== null)
-    return (
-      <ErrorState
-        title="This deck didn’t open"
-        message={error}
-        onRetry={() => {
-          setError(null)
-          setAttempt((n) => n + 1)
-        }}
-      />
-    )
   return (
     <InertFrame
-      key={attempt}
       label={name}
       css={PPTX_CSS}
-      draw={(body) => {
-        const abort = new AbortController()
+      failure="This deck didn’t open"
+      draw={async (body, signal) => {
         // A container of its own: the renderer fits slides to its
         // `clientWidth`, which on the body would count the padding.
         const slides = body.appendChild(body.ownerDocument.createElement('div'))
-        const opened = PptxViewer.open(bytes.buffer, slides, {
+        const viewer = await PptxViewer.open(bytes.buffer, slides, {
           renderMode: 'list',
           fitMode: 'contain',
           externalMedia: 'block',
@@ -72,15 +56,10 @@ export function PptxView({
           zipLimits: RECOMMENDED_ZIP_LIMITS,
           lazyMedia: true,
           lazySlides: true,
-          signal: abort.signal,
+          signal,
         })
-        opened.catch((err: unknown) => {
-          if (!abort.signal.aborted) setError(err instanceof Error ? err.message : String(err))
-        })
-        return () => {
-          abort.abort()
-          void opened.then((viewer) => viewer.destroy()).catch(() => {})
-        }
+        if (signal.aborted) viewer.destroy()
+        else signal.addEventListener('abort', () => viewer.destroy())
       }}
     />
   )

@@ -8,11 +8,16 @@
  * The pages sit on the theme's muted canvas. A frame cannot read the app's CSS
  * variables, so the colour is resolved here and set again when the mode flips,
  * without rebuilding what was drawn.
+ *
+ * The frame owns its drawing's lifecycle: a page's shape until the file is
+ * drawn, the error with Retry if it never is, and a fresh frame on Retry.
  */
 import { useAtomValue } from 'jotai'
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { ErrorState } from '@/composites/empty-state'
 import { activeModeAtom } from '@/plugin-api'
 import { followLink, forwardShortcuts, inertFrameDocument } from './inert-frame'
+import { ReaderLoading } from './reader-pane'
 
 /** A theme token's colour as the app's document resolves it now, for a frame,
  *  which cannot read the app's CSS variables. The vault's theme is included. */
@@ -24,28 +29,57 @@ export function themeColour(
 
 const canvasColour = () => themeColour('--muted') || 'gray'
 
-export function InertFrame({
-  label,
-  css,
-  draw,
-  onInternalLink,
-}: {
+interface FrameProps {
   /** Names the frame for a screen reader: the file's name. */
   label: string
   /** The viewer's own stylesheet, put in after the canvas. */
   css?: string
-  /** Builds the file into the frame's body; returns its cleanup. Called once
-   *  per mount, so a new file version is a new `key` on this component. */
-  draw: (body: HTMLElement) => () => void
+  /** Builds the file into the frame's body and settles once it is drawn.
+   *  `signal` aborts when the frame goes: undo what was built on it. Called
+   *  once per frame, so a new file version is a new `key` on this component. */
+  draw: (body: HTMLElement, signal: AbortSignal) => Promise<void>
   /** A link within the file (`#bookmark`); none by default. */
   onInternalLink?: (href: string, doc: Document) => void
+}
+
+export function InertFrame({
+  failure,
+  ...frame
+}: FrameProps & {
+  /** The error's title when the file cannot be drawn. */
+  failure: string
 }) {
+  const [attempt, setAttempt] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  if (error !== null)
+    return (
+      <ErrorState
+        title={failure}
+        message={error}
+        onRetry={() => {
+          setError(null)
+          setAttempt((n) => n + 1)
+        }}
+      />
+    )
+  return <Frame key={attempt} {...frame} onError={setError} />
+}
+
+function Frame({
+  label,
+  css,
+  draw,
+  onInternalLink,
+  onError,
+}: FrameProps & { onError: (message: string) => void }) {
   const ref = useRef<HTMLIFrameElement>(null)
   const mode = useAtomValue(activeModeAtom)
-  // The first draw only: `draw` and `css` belong to this mount (see `draw`).
+  const [drawn, setDrawn] = useState(false)
+  // The first render's only: `draw` and `css` belong to this frame (see `draw`).
   const drawRef = useRef(draw)
   const cssRef = useRef(css)
   const internalRef = useRef(onInternalLink)
+  const errorRef = useRef(onError)
 
   useLayoutEffect(() => {
     const frame = ref.current
@@ -66,11 +100,20 @@ export function InertFrame({
 
     const unforward = forwardShortcuts(doc, frame)
 
-    const undraw = drawRef.current(doc.body)
+    const abort = new AbortController()
+    drawRef.current(doc.body, abort.signal).then(
+      () => {
+        if (!abort.signal.aborted) setDrawn(true)
+      },
+      (err: unknown) => {
+        if (!abort.signal.aborted)
+          errorRef.current(err instanceof Error ? err.message : String(err))
+      },
+    )
     return () => {
+      abort.abort()
       doc.removeEventListener('click', onCapturedClick, true)
       unforward()
-      undraw()
     }
   }, [])
 
@@ -82,12 +125,21 @@ export function InertFrame({
     root.ownerDocument.body.style.background = colour
   }, [mode])
 
+  // The frame keeps its size while it is drawn, under the page's shape: the
+  // renderers fit what they draw to its width.
   return (
-    <iframe
-      ref={ref}
-      sandbox="allow-same-origin"
-      aria-label={label}
-      className="block min-h-0 w-full flex-1 border-0"
-    />
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <iframe
+        ref={ref}
+        sandbox="allow-same-origin"
+        aria-label={label}
+        className={`block min-h-0 w-full flex-1 border-0 ${drawn ? '' : 'invisible'}`}
+      />
+      {!drawn && (
+        <div className="absolute inset-0 flex flex-col">
+          <ReaderLoading />
+        </div>
+      )}
+    </div>
   )
 }
