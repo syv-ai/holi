@@ -25,7 +25,6 @@ import {
   shownPath,
   stringParam,
 } from '../../../../main/plugin-api'
-import { JOB_ID } from '../claude/listing'
 import type { Inbox, RaiseResult } from './inbox'
 import type { InboxView } from './rules'
 import { appendWorkLog, workLogPath } from './work-log'
@@ -35,11 +34,14 @@ export interface InboxCapabilitiesDeps {
   /** The open vault's remote, or null with none open. */
   liveRemote(): string | null
   now?: () => Date
+  /** Admit the complete durable operation into activation teardown. */
+  trackMutation?<T>(work: () => Promise<T>): Promise<T>
 }
 
 /** Long enough for a sentence, short enough for a banner. */
 const MAX_TITLE = 120
 const MAX_LINE = 400
+const NOTIFY_SESSION_ID = /^(?:[0-9a-f]{8}|[pj][0-9a-f]{12})$/
 
 function bounded(raw: Record<string, unknown>, key: string, max: number): string {
   const value = stringParam(raw, key).trim()
@@ -55,6 +57,8 @@ const NOTIFY_TEXT: Record<RaiseResult, string> = {
 
 export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
   const now = deps.now ?? (() => new Date())
+  const trackMutation = <T>(work: () => Promise<T>): Promise<T> =>
+    deps.trackMutation?.(work) ?? work()
   /** Best-effort where a notice is the point: the person has been told. */
   const logQuietly = (root: string, text: string): Promise<void> =>
     appendWorkLog(root, now(), text).catch((err: unknown) =>
@@ -74,7 +78,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
         const p = paramsObject(raw)
         const path = optionalStringParam(p, 'path')
         const session = optionalStringParam(p, 'session')
-        if (session !== undefined && !JOB_ID.test(session)) {
+        if (session !== undefined && !NOTIFY_SESSION_ID.test(session)) {
           throw new CapabilityError('BAD_REQUEST', `not a session id: ${session}`)
         }
         // What the entry opens is shown to the person, so it is held to what
@@ -89,11 +93,13 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
       },
       run: async (ctx, notice): Promise<RaiseResult> => {
         requireOpen(ctx)
-        const link = notice.path === undefined ? '' : ` [[${notice.path}]]`
-        const line = `${notice.title}: ${notice.line}${link}`
-        const result = await deps.inbox.raise(notice)
-        if (result !== 'repeat') await logQuietly(ctx.root, line)
-        return result
+        return trackMutation(async () => {
+          const link = notice.path === undefined ? '' : ` [[${notice.path}]]`
+          const line = `${notice.title}: ${notice.line}${link}`
+          const result = await deps.inbox.raise(notice)
+          if (result !== 'repeat') await logQuietly(ctx.root, line)
+          return result
+        })
       },
       text: (result) => NOTIFY_TEXT[result],
     }),
@@ -106,9 +112,11 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
       },
       params: (raw) => ({ line: bounded(paramsObject(raw), 'line', MAX_LINE) }),
       run: async (ctx, { line }): Promise<string> => {
-        const at = now()
-        await appendWorkLog(ctx.root, at, line)
-        return workLogPath(at)
+        return trackMutation(async () => {
+          const at = now()
+          await appendWorkLog(ctx.root, at, line)
+          return workLogPath(at)
+        })
       },
       text: (path) => `logged to ${path}`,
     }),
@@ -127,7 +135,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
       params: (raw) => ({ id: stringParam(paramsObject(raw), 'id') }),
       run: async (ctx, { id }): Promise<InboxView> => {
         requireOpen(ctx)
-        return deps.inbox.dismiss(id)
+        return trackMutation(() => deps.inbox.dismiss(id))
       },
     }),
 
@@ -136,7 +144,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
       params: noParams,
       run: async (ctx): Promise<InboxView> => {
         requireOpen(ctx)
-        return deps.inbox.seen()
+        return trackMutation(() => deps.inbox.seen())
       },
     }),
   }

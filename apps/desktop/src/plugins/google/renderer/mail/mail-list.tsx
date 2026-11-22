@@ -11,6 +11,7 @@ import {
   SearchIcon,
   SquarePenIcon,
   SquarePlusIcon,
+  SparklesIcon,
   StarIcon,
   XIcon,
 } from 'lucide-react'
@@ -46,6 +47,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/plugin-api'
 import { listStamp } from '../mail-stamp'
+import { MailMarkerStatus } from '../mail-marker-icon'
+import type { MailMarkerStatus as MarkerState } from '../use-mail-markers'
 import { CATEGORIES, MAILBOXES, initialsOf, type MailFolder } from './data'
 import { senderIconUrl } from './sender-icon'
 import type { DraftSummary, MailState, ThreadSummary } from './use-mail'
@@ -89,6 +92,12 @@ function MailRow({
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => {
+        if (
+          e.target !== e.currentTarget &&
+          e.target instanceof HTMLElement &&
+          e.target.closest('button, a, input, select, textarea, [role="button"], [role="checkbox"]')
+        )
+          return
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
           onClick()
@@ -131,10 +140,16 @@ function MailItem({
   thread,
   isSelected,
   onClick,
+  marker,
+  onRetryMarker,
+  onPrimaryMarker,
 }: {
   thread: ThreadSummary
   isSelected: boolean
   onClick: () => void
+  marker: MarkerState
+  onRetryMarker: () => void
+  onPrimaryMarker: () => void
 }) {
   const chip = categoryChip(thread.category)
   return (
@@ -175,12 +190,26 @@ function MailItem({
 
           {/* Timestamp + icons */}
           <div className="flex shrink-0 items-center gap-1">
-            {thread.starred && (
-              <StarIcon
-                className="size-3 fill-amber-400 text-amber-400 dark:fill-amber-500 dark:text-amber-500"
-                role="img"
-                aria-label="Starred"
-              />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={thread.starred ? 'Unstar thread' : 'Star thread'}
+              aria-pressed={thread.starred}
+              onClick={(event) => {
+                event.stopPropagation()
+                onPrimaryMarker()
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              {thread.starred && marker.kind === 'ready' ? (
+                <MailMarkerStatus state={marker} starred />
+              ) : (
+                <StarIcon aria-hidden="true" />
+              )}
+            </Button>
+            {marker.kind === 'error' && (
+              <MailMarkerStatus state={marker} starred={thread.starred} onRetry={onRetryMarker} />
             )}
             {thread.hasDraft && (
               <FilePenIcon
@@ -235,7 +264,7 @@ function MailItem({
         {(chip !== null || thread.labels.length > 0) && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {chip !== null && (
-              <Badge variant="outline" size="sm">
+              <Badge variant="secondary" size="sm">
                 {chip}
               </Badge>
             )}
@@ -346,20 +375,43 @@ interface MailListProps {
   mail: MailState
   /** The account menu, full width at the top of the column. */
   account: ReactNode
-  /** Switch mailbox (or the starred pill); the shell also closes any reply. */
+  /** Switch mailbox from the mailbox menu. */
   onSelectFolder: (folder: MailFolder) => void
+  /** Change inbox/unread/starred state in one navigation transaction. */
+  onSelectTab: (folder: MailFolder, unreadOnly: boolean) => void
   onCompose: () => void
   onOpenDraft: (draft: DraftSummary) => void
   onOpenConnections: () => void
+  onCatchUp: () => void
+  catchUpPending: boolean
+  catchUpError: string | null
+  catchUpRetryable: boolean
+  catchUpRecovery: boolean
+  catchUpCleanupPending: boolean
+  catchUpCleanupFailed: boolean
+  onCatchUpCleanup: () => void
+  onCatchUpRecovery: () => void
+  visible: boolean
 }
 
 export function MailList({
   mail,
   account,
   onSelectFolder,
+  onSelectTab,
   onCompose,
   onOpenDraft,
   onOpenConnections,
+  onCatchUp,
+  catchUpPending,
+  catchUpError,
+  catchUpRetryable,
+  catchUpRecovery,
+  catchUpCleanupPending,
+  catchUpCleanupFailed,
+  onCatchUpCleanup,
+  onCatchUpRecovery,
+  visible,
 }: MailListProps) {
   const [query, setQuery] = useState('')
   /** Starred is a pill on the inbox, so the title still says Inbox. */
@@ -494,14 +546,30 @@ export function MailList({
     return (
       <>
         <div role="list" aria-label={title}>
-          {list.threads.map((thread) => (
-            <MailItem
-              key={thread.id}
-              thread={thread}
-              isSelected={mail.openId === thread.id}
-              onClick={() => mail.openThread(thread)}
-            />
-          ))}
+          {list.threads.map((thread) => {
+            const intent = mail.markerActions.get(thread.id)
+            const displayed = intent === undefined ? thread : { ...thread, starred: intent.starred }
+            const marker =
+              intent === undefined
+                ? mail.markers.get(thread.id)
+                : intent.error
+                  ? { kind: 'error' as const }
+                  : { kind: 'ready' as const, marker: intent.marker }
+            return (
+              <MailItem
+                key={thread.id}
+                thread={displayed}
+                isSelected={mail.openId === thread.id}
+                marker={marker}
+                onRetryMarker={() => {
+                  mail.markers.invalidate([thread.id])
+                  void mail.retryMarker(thread.id)
+                }}
+                onClick={() => mail.openThread(thread)}
+                onPrimaryMarker={() => mail.activateMarker(thread.id, displayed.starred)}
+              />
+            )
+          })}
         </div>
         {list.nextPageToken !== null && (
           <div className="flex justify-center px-3 py-3">
@@ -519,13 +587,7 @@ export function MailList({
     mail.folder === 'starred' ? 'starred' : mail.unreadOnly && filterable ? 'unread' : 'all'
 
   const selectTab = (next: FilterTab) => {
-    if (next === 'starred') {
-      if (mail.folder !== 'starred') onSelectFolder('starred')
-      mail.setUnreadOnly(false)
-      return
-    }
-    if (mail.folder !== 'inbox') onSelectFolder('inbox')
-    mail.setUnreadOnly(next === 'unread')
+    onSelectTab(next === 'starred' ? 'starred' : 'inbox', next === 'unread')
   }
 
   return (
@@ -533,10 +595,60 @@ export function MailList({
       {/* ── Account ── */}
       <div className="border-border shrink-0 border-b p-2">{account}</div>
 
+      {catchUpPending && (
+        <div role="status" className="text-muted-foreground px-3 py-2 text-sm">
+          Starting catch-up conversation…
+        </div>
+      )}
+      {catchUpCleanupPending && (
+        <div role="status" className="text-muted-foreground px-3 py-2 text-sm">
+          Confirming that the surviving session has stopped…
+        </div>
+      )}
+      {catchUpError !== null && (
+        <div
+          role="alert"
+          className="text-destructive flex items-center justify-between gap-2 px-3 py-2 text-sm"
+        >
+          <span>{catchUpError}</span>
+          {catchUpRecovery ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={onCatchUpRecovery}
+                disabled={catchUpCleanupPending}
+              >
+                Open surviving session
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={onCatchUpCleanup}
+                disabled={catchUpCleanupPending}
+              >
+                {catchUpCleanupPending
+                  ? 'Confirming stop…'
+                  : catchUpCleanupFailed
+                    ? 'Retry cleanup'
+                    : 'Stop surviving session'}
+              </Button>
+            </div>
+          ) : (
+            catchUpRetryable && (
+              <Button variant="outline" size="xs" onClick={onCatchUp}>
+                Retry
+              </Button>
+            )
+          )}
+        </div>
+      )}
       {/* ── Header: the mailbox is the title's menu ── */}
       <div className="border-border flex h-(--header-height) shrink-0 items-center justify-between border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
-          <DropdownMenu>
+          <DropdownMenu key={`mailbox-${visible ? 'visible' : 'hidden'}`}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
@@ -562,7 +674,7 @@ export function MailList({
             </DropdownMenuContent>
           </DropdownMenu>
           {unreadCount !== null && unreadCount > 0 && (
-            <Badge radius="full" variant="outline" size="sm">
+            <Badge radius="full" variant="secondary" size="sm">
               {unreadCount}
             </Badge>
           )}
@@ -570,6 +682,22 @@ export function MailList({
 
         {/* Header tools */}
         <div className="flex items-center gap-0.5">
+          {inbox && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={catchUpPending ? 'Starting catch-up' : 'Catch me up'}
+                  disabled={catchUpPending || !catchUpRetryable}
+                  onClick={onCatchUp}
+                >
+                  <SparklesIcon aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              {visible && <TooltipContent>Catch me up</TooltipContent>}
+            </Tooltip>
+          )}
           {/* Refresh */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -582,12 +710,13 @@ export function MailList({
                 <RefreshCwIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Refresh</TooltipContent>
+            {visible && <TooltipContent>Refresh</TooltipContent>}
           </Tooltip>
 
           {/* Gmail's tabs: the inbox's own subdivisions */}
           {inbox && (
             <DropdownMenu
+              key={`category-${visible ? 'visible' : 'hidden'}`}
               onOpenChange={(open) => {
                 if (open && mail.categoryCounts === null) mail.loadCategoryCounts()
               }}
@@ -653,7 +782,7 @@ export function MailList({
                 <SquarePenIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Compose</TooltipContent>
+            {visible && <TooltipContent>Compose</TooltipContent>}
           </Tooltip>
         </div>
       </div>

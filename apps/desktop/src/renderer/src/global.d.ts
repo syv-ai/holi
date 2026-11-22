@@ -47,6 +47,10 @@ declare global {
             focus?: boolean
           }) => void,
         ): () => void
+        /** Main asks a plugin to act after switching to the event's vault. */
+        onNavigate(
+          cb: (request: { remote: string; plugin: string; name: string; payload: unknown }) => void,
+        ): () => void
         /** This window has landed its vault: main may send the opens it held. */
         openReady(): void
         /** Main asks where a path's tab is drawn, for `holi docs screenshot`.

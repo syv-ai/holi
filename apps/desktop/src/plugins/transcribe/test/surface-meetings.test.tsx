@@ -19,6 +19,7 @@ import { startCapture } from '../renderer/audio/capture'
 import { MEETING_CLAIM } from '../renderer/meeting-claim'
 import { MeetingsSurface } from '../renderer/meetings-surface'
 import { stopRecordingAtom } from '../renderer/recorder'
+import { transcribeRenderer } from '../renderer'
 import {
   meetingsAtom,
   meetingStatesAtom,
@@ -79,19 +80,19 @@ beforeEach(() => {
   })
 })
 
-function show(shown: string | null = null) {
+function show(shown: string | null = null, visible = true) {
   const store = createStore()
   store.set(activeRemoteAtom, 'syv/vault')
   store.set(profilesAtom, [profile])
   store.set(meetingsAtom, LIST)
   store.set(meetingStatesAtom, { m1: done })
   store.set(shownMeetingIdAtom, shown)
-  render(
+  const view = render(
     <Provider store={store}>
-      <MeetingsSurface />
+      <MeetingsSurface visible={visible} />
     </Provider>,
   )
-  return store
+  return { store, view }
 }
 
 const rowOf = (title: string) =>
@@ -103,6 +104,61 @@ async function menu(row: HTMLElement, item: string): Promise<void> {
   await userEvent.click(within(row).getByRole('button', { name: 'Meeting actions' }))
   await userEvent.click(await screen.findByRole('menuitem', { name: item }))
 }
+
+test('parking the meetings header closes selector and profile menu portals', async () => {
+  const { store, view } = show()
+  await userEvent.click(screen.getByRole('combobox', { name: 'Profile' }))
+  expect(await screen.findByRole('listbox')).toBeInTheDocument()
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible={false} />
+    </Provider>,
+  )
+  expect(screen.queryByRole('listbox')).toBeNull()
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible />
+    </Provider>,
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech service' }))
+  expect(await screen.findByRole('menuitem', { name: 'New profile…' })).toBeInTheDocument()
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible={false} />
+    </Provider>,
+  )
+  expect(screen.queryByRole('menuitem', { name: 'New profile…' })).toBeNull()
+}, 15_000)
+
+test('parking a profile form retains its draft without keeping the dialog modal', async () => {
+  const { store, view } = show()
+  const pointerEvents = document.body.style.pointerEvents
+  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech service' }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'New profile…' }))
+  const profileDialog = await screen.findByRole('dialog', { name: 'New profile' })
+  await userEvent.type(within(profileDialog).getByLabelText('Name'), 'Draft name')
+  await userEvent.click(within(profileDialog).getByRole('button', { name: 'More settings' }))
+  await userEvent.click(within(profileDialog).getByRole('combobox', { name: 'Assistant model' }))
+  expect(await screen.findByRole('listbox')).toBeInTheDocument()
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible={false} />
+    </Provider>,
+  )
+  expect(document.body.style.pointerEvents).toBe(pointerEvents)
+  expect(screen.queryByRole('dialog', { name: 'New profile' })).toBeNull()
+  expect(screen.queryByRole('listbox')).toBeNull()
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible />
+    </Provider>,
+  )
+  expect(await screen.findByRole('textbox', { name: 'Name' })).toHaveValue('Draft name')
+  expect(screen.queryByRole('listbox')).toBeNull()
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech service' }))
+  expect(await screen.findByRole('menuitem', { name: 'New profile…' })).toBeInTheDocument()
+}, 15_000)
 
 test('a meeting in the list is renamed in place; Escape keeps its title', async () => {
   show()
@@ -139,7 +195,7 @@ test('a meeting in the list is deleted once asked; one that records cannot be', 
 }, 15_000)
 
 test('from its review a meeting is renamed, and deleted back to the list', async () => {
-  const store = show('m1')
+  const { store } = show('m1')
   await userEvent.click(screen.getByRole('button', { name: 'Meeting actions' }))
   await userEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }))
   const title = screen.getByLabelText('Rename meeting')
@@ -155,6 +211,69 @@ test('from its review a meeting is renamed, and deleted back to the list', async
   expect(store.get(meetingStatesAtom)).toEqual({})
   expect(screen.getByRole('region', { name: 'Past meetings' })).toBeInTheDocument()
 }, 15_000)
+
+test('parking retains meeting title setup and suspends review dialogs', async () => {
+  const { store, view } = show()
+  const title = screen.getByLabelText('Meeting title')
+  await userEvent.type(title, 'Design review')
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible={false} />
+    </Provider>,
+  )
+  expect(screen.getByLabelText('Meeting title')).toHaveValue('Design review')
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible />
+    </Provider>,
+  )
+  expect(screen.getByLabelText('Meeting title')).toHaveValue('Design review')
+})
+
+test('parking hides the custom-range dialog while retaining its draft', async () => {
+  const { store, view } = show('m1')
+  await userEvent.click(screen.getByRole('button', { name: 'Custom range' }))
+  const prompt = await screen.findByPlaceholderText('e.g. Turn this into a spec for the CI change')
+  await userEvent.type(prompt, 'Write a short design proposal')
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible={false} />
+    </Provider>,
+  )
+  expect(screen.queryByRole('dialog')).toBeNull()
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible />
+    </Provider>,
+  )
+  expect(
+    await screen.findByPlaceholderText('e.g. Turn this into a spec for the CI change'),
+  ).toHaveValue('Write a short design proposal')
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Custom range' }))
+  expect(
+    await screen.findByPlaceholderText('e.g. Turn this into a spec for the CI change'),
+  ).toHaveValue('')
+})
+
+test('parking suspends review dialogs without losing their state', async () => {
+  const { store, view } = show('m1')
+  await userEvent.click(screen.getByRole('button', { name: 'Meeting actions' }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+  expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible={false} />
+    </Provider>,
+  )
+  expect(screen.queryByRole('alertdialog')).toBeNull()
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible />
+    </Provider>,
+  )
+  expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+})
 
 test('a meeting folder from the New menu opens as its setup, and Record starts it there', async () => {
   const path = 'Clients/Acme/2026-11-04 Kickoff.meeting'
@@ -212,8 +331,44 @@ test('a meeting folder from the New menu opens as its setup, and Record starts i
   await act(() => store.set(stopRecordingAtom))
 }, 15_000)
 
+test('the registered Meetings surface keeps a folder draft while parked and resets when closed', async () => {
+  const surface = transcribeRenderer.surfaces!.find((candidate) => candidate.kind === 'meetings')!
+  expect(surface.keepMounted).toBe(true)
+  const path = 'Meetings/Unrecorded.meeting'
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(profilesAtom, [profile])
+  store.set(meetingsAtom, LIST)
+  const view = render(
+    <Provider store={store}>
+      <surface.render id={path} visible />
+    </Provider>,
+  )
+  const title = screen.getByLabelText('Meeting title')
+  expect(title).toHaveValue('Unrecorded')
+  await userEvent.clear(title)
+  await userEvent.type(title, 'Unsaved draft')
+  expect(title).toHaveValue('Unsaved draft')
+
+  view.rerender(
+    <Provider store={store}>
+      <surface.render id={path} visible={false} />
+    </Provider>,
+  )
+  expect(screen.getByLabelText('Meeting title')).toHaveValue('Unsaved draft')
+  expect(screen.getByLabelText('Meeting title').closest('[inert]')).not.toBeNull()
+
+  view.unmount()
+  render(
+    <Provider store={store}>
+      <surface.render id={path} visible />
+    </Provider>,
+  )
+  expect(screen.getByLabelText('Meeting title')).toHaveValue('Unrecorded')
+}, 15_000)
+
 test('a meeting folder opened from the tree shows that meeting', async () => {
-  const store = show()
+  const { store } = show()
   cleanup()
   render(
     <Provider store={store}>
@@ -236,4 +391,50 @@ test('a folder at the path a moved or deleted meeting had is not that meeting', 
   )
   expect(screen.getByText(/is not recorded yet$/)).toBeInTheDocument()
   expect(screen.queryByRole('heading', { name: done.title })).toBeNull()
+}, 15_000)
+
+test('a tab with an empty id is the list, and Record makes a new meeting', async () => {
+  // The shell gives a tab opened without an id `id=''`.
+  run.mockImplementation(async ({ name }: { name: string }) => {
+    switch (name) {
+      case 'meeting.key.status':
+        return {
+          set: true,
+          source: 'app',
+          service: { url: null, model: null },
+          ready: true,
+          elsewhere: false,
+        }
+      case 'meeting.start':
+        return { meetingId: 'm9' }
+      case 'meeting.get':
+        return { ...meeting, id: 'm9', title: 'bob' }
+      case 'meeting.list':
+        return LIST
+      default:
+        return { ok: true }
+    }
+  })
+  vi.mocked(startCapture).mockResolvedValue({
+    stop: async () => {},
+    sources: { microphone: true, system: true },
+    problems: [],
+  })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(profilesAtom, [profile])
+  store.set(meetingsAtom, LIST)
+  render(
+    <Provider store={store}>
+      <MeetingsSurface id="" />
+    </Provider>,
+  )
+  expect(screen.getByRole('region', { name: 'Past meetings' })).toBeInTheDocument()
+  expect(screen.queryByText(/is not recorded yet$/)).toBeNull()
+  await userEvent.type(screen.getByLabelText('Meeting title'), 'bob')
+  await userEvent.click(screen.getByRole('button', { name: 'Record' }))
+  await waitFor(() =>
+    expect(calls('meeting.start')).toEqual([{ profileId: 'planning', title: 'bob' }]),
+  )
+  await act(() => store.set(stopRecordingAtom))
 }, 15_000)

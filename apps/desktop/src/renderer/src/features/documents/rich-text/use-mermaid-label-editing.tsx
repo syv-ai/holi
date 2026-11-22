@@ -1,3 +1,4 @@
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { minimalTextChange, patchMermaidLabel } from '@holi/shared'
 import { closeHistory } from '@tiptap/pm/history'
 import { NodeSelection, type Transaction } from '@tiptap/pm/state'
@@ -16,6 +17,8 @@ export function useMermaidLabelEditing({
   getPos,
   theme,
 }: Pick<ReactNodeViewProps, 'node' | 'editor' | 'getPos'> & { theme: 'dark' | 'default' }) {
+  const activity = useEditorActivity(editor)
+  const draftMemory = useRef<{ source: string; id: string; draft: string } | null>(null)
   const [editable, setEditable] = useState(() => editor.isEditable)
   const [targets, setTargets] = useState<MermaidTarget[]>([])
   const [editing, setEditing] = useState(false)
@@ -25,8 +28,10 @@ export function useMermaidLabelEditing({
   const [draft, setDraft] = useState('')
   const [editError, setEditError] = useState('')
   const session = useRef(0)
+  const lastMappedTransaction = useRef<Transaction | null>(null)
   const context = useRef<{
     node: typeof node
+    position: number
     source: string
     remote: string | null
     theme: string
@@ -65,22 +70,24 @@ export function useMermaidLabelEditing({
     const current = context.current
     if (
       !current ||
+      !activity.focused ||
       editor.isDestroyed ||
       !editor.isEditable ||
       store.get(activeRemoteAtom) !== current.remote ||
-      (store.get(activeModeAtom) === 'dark' ? 'dark' : 'default') !== current.theme ||
-      !current.anchor.isConnected
+      (store.get(activeModeAtom) === 'dark' ? 'dark' : 'default') !== current.theme
     )
       return undefined
+    // React may replace the SVG without changing its source node. The anchor is
+    // only a focus target; document mapping and node identity own validation.
     try {
-      const currentPos = currentPosition()
-      return typeof currentPos === 'number' && editor.state.doc.nodeAt(currentPos) === current.node
-        ? currentPos
+      const liveNode = editor.state.doc.nodeAt(current.position)
+      return liveNode === current.node && liveNode.textContent === current.source
+        ? current.position
         : undefined
     } catch {
       return undefined
     }
-  }, [currentPosition, editor, store])
+  }, [editor, store, activity])
   const finish = useCallback(() => {
     const currentPos = position()
     const target = context.current?.anchor
@@ -90,7 +97,7 @@ export function useMermaidLabelEditing({
       const size = editor.state.doc.nodeAt(currentPos)!.nodeSize
       if (from >= currentPos + 1 && to <= currentPos + size - 1)
         editor.commands.setNodeSelection(currentPos)
-      target.focus()
+      if (target.isConnected) target.focus()
     }
   }, [position, close, editor])
 
@@ -105,11 +112,11 @@ export function useMermaidLabelEditing({
   }, [editor, close])
 
   useEffect(() => {
-    if (!editable || active) {
+    if ((!editable && activity.displayed) || active) {
       setEditing(false)
       close()
     }
-  }, [active, editable, close])
+  }, [active, editable, close, activity, activity.focused])
 
   useEffect(() => {
     const changed = ({ transaction }: { transaction?: Transaction }) => {
@@ -117,6 +124,21 @@ export function useMermaidLabelEditing({
       setEditable(editor.isEditable)
       if (
         context.current &&
+        transaction?.docChanged &&
+        lastMappedTransaction.current !== transaction
+      ) {
+        lastMappedTransaction.current = transaction
+        const mapped = transaction.mapping.mapResult(context.current.position, 1)
+        const nodeAtMappedPosition = editor.state.doc.nodeAt(mapped.pos)
+        if (mapped.deleted || nodeAtMappedPosition !== context.current.node) {
+          close()
+          return
+        }
+        context.current.position = mapped.pos
+      }
+      if (
+        context.current &&
+        activity.focused &&
         (position() === undefined || (transaction?.selectionSet && !transaction.docChanged))
       )
         close()
@@ -137,7 +159,7 @@ export function useMermaidLabelEditing({
       stopVault()
       stopTheme()
     }
-  }, [editor, position, close, store])
+  }, [editor, position, close, store, activity, activity.focused])
 
   useEffect(
     () => () => {
@@ -145,6 +167,19 @@ export function useMermaidLabelEditing({
       context.current = null
     },
     [],
+  )
+
+  useEffect(
+    () =>
+      activity.subscribe(() => {
+        if (!activity.focused) {
+          session.current++
+          setValidating(false)
+          setSelected(null)
+          setAnchor(null)
+        }
+      }),
+    [activity],
   )
 
   const onRendered = useCallback(
@@ -161,9 +196,18 @@ export function useMermaidLabelEditing({
         element.setAttribute('aria-label', target.label)
         element.setAttribute('data-label-target', '')
         element.addEventListener('click', () => {
+          const livePosition = currentPosition()
+          if (
+            !activity.focused ||
+            !editor.isEditable ||
+            typeof livePosition !== 'number' ||
+            editor.state.doc.nodeAt(livePosition) !== node
+          )
+            return
           session.current++
           context.current = {
             node,
+            position: livePosition,
             source,
             remote: store.get(activeRemoteAtom),
             theme,
@@ -172,7 +216,8 @@ export function useMermaidLabelEditing({
           }
           setSelected(target)
           setValidating(false)
-          setDraft(target.label)
+          const saved = draftMemory.current
+          setDraft(saved?.source === source && saved.id === target.id ? saved.draft : target.label)
           setAnchor(element)
           setEditError('')
         })
@@ -185,7 +230,7 @@ export function useMermaidLabelEditing({
         })
       })
     },
-    [editing, node, source, store, theme],
+    [editing, node, source, store, theme, activity, editor, currentPosition],
   )
 
   async function apply() {
@@ -195,6 +240,7 @@ export function useMermaidLabelEditing({
       close()
       return
     }
+    const currentVisit = activity.capture()
     const sessionId = session.current
     const capturedSource = current.source
     const capturedId = selected.id
@@ -209,7 +255,10 @@ export function useMermaidLabelEditing({
       return
     }
     const isCurrent = () =>
-      session.current === sessionId && context.current === current && position() !== undefined
+      currentVisit() &&
+      session.current === sessionId &&
+      context.current === current &&
+      position() !== undefined
     if (!isCurrent()) {
       close()
       return
@@ -245,6 +294,7 @@ export function useMermaidLabelEditing({
       ) {
         transaction.setSelection(NodeSelection.create(transaction.doc, livePosition))
       }
+      draftMemory.current = null
       close()
       setEditing(false)
       editor.view.dispatch(transaction)
@@ -277,6 +327,7 @@ export function useMermaidLabelEditing({
           session.current++
           setValidating(false)
           setEditError('')
+          if (selected) draftMemory.current = { source, id: selected.id, draft: value }
           setDraft(value)
         }}
         onApply={() => void apply()}

@@ -75,6 +75,14 @@ describe('buildRfc822', () => {
     expect(h.cc).toBe('cec@syv.ai')
   })
 
+  it('writes Bcc recipients as a header and rejects header injection', () => {
+    const raw = buildRfc822({ ...BASE, bcc: ['hidden@syv.ai'] })
+    expect(headersOf(raw).bcc).toBe('hidden@syv.ai')
+    expect(() =>
+      buildRfc822({ ...BASE, bcc: ['hidden@syv.ai\r\nCc: attacker@example.com'] }),
+    ).toThrow(/newline/i)
+  })
+
   // The one that matters most. With In-Reply-To alone, Gmail starts a NEW
   // thread — and every assertion short of reading both headers passes anyway.
   it('carries In-Reply-To AND References on a reply', () => {

@@ -8,9 +8,16 @@
  * fails or stops, the output and a way to start it again.
  */
 import { useAtomValue, useStore } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { pluginServerOrigin, servedFile } from '@holi/shared'
-import { activeRemoteAtom, cn } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  cn,
+  registerHostHintAdapter,
+  vimCodeEditingAtom,
+} from '@/plugin-api'
+import { communityFramePaneFocused, createCommunityHintAdapter } from './community-hints'
 import { Button } from '@/components/ui/button'
 import { communityCap } from './community-cap'
 import {
@@ -25,7 +32,17 @@ import {
 
 type Phase =
   | { kind: 'starting' }
-  | { kind: 'running'; port: number }
+  | {
+      kind: 'running'
+      port: number
+      lease: string
+      remote: string
+      remoteRevision: number
+      path: string
+      rowId: string
+      rowIdentity: string
+      attempt: number
+    }
   | { kind: 'failed'; message: string }
   | { kind: 'unavailable' }
 
@@ -38,6 +55,8 @@ export function PluginFrame({
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const rows = useAtomValue(rowsAtom)
+  const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const rowsError = useAtomValue(rowsErrorAtom)
   const store = useStore()
   const server: ServerState | undefined = useAtomValue(serversAtom)[path]
@@ -46,24 +65,108 @@ export function PluginFrame({
   // Non-running claims explain unavailability, but never choose the lease's owner.
   const unavailableRow =
     row === null ? (currentRows.find((item) => servedFile(item, path) !== null) ?? null) : null
-  const eligible = remote !== null && row !== null
+  const rowId = row?.id
+  const rowIdentity = JSON.stringify([
+    row?.pin,
+    row?.install,
+    row?.setup,
+    row?.status,
+    row?.on,
+    row?.running,
+  ])
+  const eligible =
+    remote !== null && row !== null && row.on && row.running && row.status === 'ready'
   const [phase, setPhase] = useState<Phase>({ kind: 'starting' })
   /** Bumped by Restart: a fresh acquire, and a fresh document. */
   const [attempt, setAttempt] = useState(0)
-  const [loaded, setLoaded] = useState(false)
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
+  const [frame, setFrame] = useState<HTMLIFrameElement | null>(null)
+  const [focusEpoch, setFocusEpoch] = useState(0)
+  const [documentGeneration, setDocumentGeneration] = useState(0)
+  const adapterRef = useRef<ReturnType<typeof createCommunityHintAdapter> | null>(null)
+
+  const running =
+    phase.kind === 'running' &&
+    phase.remote === remote &&
+    phase.remoteRevision === remoteRevision &&
+    phase.path === path &&
+    phase.rowId === row?.id &&
+    phase.rowIdentity === rowIdentity &&
+    phase.attempt === attempt
+      ? phase
+      : null
+  const documentKey = running
+    ? `${running.port}:${running.lease}:${attempt}:${remoteRevision}`
+    : null
+  const loaded = documentKey !== null && loadedKey === documentKey
+
+  useLayoutEffect(() => {
+    const onFocusChange = () => setFocusEpoch((epoch) => epoch + 1)
+    window.addEventListener('focusin', onFocusChange, true)
+    window.addEventListener('blur', onFocusChange)
+    return () => {
+      window.removeEventListener('focusin', onFocusChange, true)
+      window.removeEventListener('blur', onFocusChange)
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    if (
+      !frame ||
+      !loaded ||
+      !vimEnabled ||
+      !visible ||
+      !running ||
+      !remote ||
+      !communityFramePaneFocused(frame)
+    )
+      return
+    const adapter = createCommunityHintAdapter(frame)
+    adapterRef.current = adapter
+    adapter.capture?.()
+    const unregister = registerHostHintAdapter(frame, adapter)
+    return () => {
+      adapter.invalidate?.()
+      unregister()
+      if (adapterRef.current === adapter) adapterRef.current = null
+    }
+  }, [
+    frame,
+    loaded,
+    vimEnabled,
+    visible,
+    running,
+    remote,
+    path,
+    remoteRevision,
+    focusEpoch,
+    documentGeneration,
+  ])
 
   useEffect(() => {
-    if (remote === null || !eligible) {
+    if (remote === null || !eligible || rowId === undefined) {
       setPhase({ kind: 'unavailable' })
-      setLoaded(false)
+      setLoadedKey(null)
       return
     }
     let live = true
     setPhase({ kind: 'starting' })
-    setLoaded(false)
+    setLoadedKey(null)
     const acquired = communityCap.acquire(remote, { path })
     acquired.then(
-      ({ port }) => live && setPhase({ kind: 'running', port }),
+      ({ port, lease }) =>
+        live &&
+        setPhase({
+          kind: 'running',
+          port,
+          lease,
+          remote,
+          remoteRevision,
+          path,
+          rowId,
+          rowIdentity,
+          attempt,
+        }),
       (err: unknown) =>
         live &&
         setPhase({ kind: 'failed', message: err instanceof Error ? err.message : String(err) }),
@@ -76,18 +179,19 @@ export function PluginFrame({
         .then(({ lease }) => communityCap.release(remote, { lease }))
         .catch(() => undefined)
     }
-  }, [remote, path, attempt, eligible, row?.id])
+  }, [remote, path, attempt, eligible, rowId, rowIdentity, remoteRevision])
 
   // A server that stops on its own while the tab shows it.
   const exited = server?.state === 'exited' ? server : null
   const name = row?.name ?? unavailableRow?.name ?? 'The plugin'
   const log = server?.log ?? []
 
-  if (eligible && phase.kind === 'running' && exited === null) {
+  if (eligible && running !== null && exited === null) {
     return (
       <iframe
-        key={`${phase.port}:${attempt}`}
-        src={`${pluginServerOrigin(phase.port)}/`}
+        ref={setFrame}
+        key={documentKey!}
+        src={`${pluginServerOrigin(running.port)}/`}
         aria-label={`${name}: ${path}`}
         inert={!visible}
         // `allow-same-origin` is safe here, unlike a vault app's frame: the
@@ -96,7 +200,13 @@ export function PluginFrame({
         // server's module scripts fail CORS from an opaque origin.
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
         allow="fullscreen; clipboard-read; clipboard-write"
-        onLoad={() => setLoaded(true)}
+        onLoad={() => {
+          // Invalidate synchronously at every document replacement, even when
+          // the lease key is unchanged (reload and same-URL navigation).
+          adapterRef.current?.invalidate?.()
+          setDocumentGeneration((generation) => generation + 1)
+          setLoadedKey(documentKey)
+        }}
         className={cn('size-full border-0', loaded ? 'motion-in-fade' : 'opacity-0')}
       />
     )

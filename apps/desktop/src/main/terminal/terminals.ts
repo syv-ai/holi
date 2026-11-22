@@ -22,6 +22,7 @@
  * Pure Node: tests inject the spawn, the clock-free pieces and the push.
  */
 import { basename } from 'node:path'
+import { delimiterFor, readPath, withPath } from '../bin'
 import { defaultProbePid, type PidState } from '../process-group'
 import { defaultSpawnPty, nativeLoadHint, signalPty, type PtyProcess, type SpawnPty } from './pty'
 import { defaultIntegrationDir, shellLaunch } from './shell-integration'
@@ -69,7 +70,9 @@ export interface Terminals {
   resize(remote: string, id: string, cols: number, rows: number): void
   /** Stop one (its ×), and forget it. Resolves once it is gone. */
   kill(remote: string, id: string): Promise<void>
-  /** Stop every one: leaving the vault, quitting. */
+  /** Stop the terminals belonging to one vault. */
+  closeRemote(remote: string): Promise<void>
+  /** Stop every one: quitting. */
   closeAll(): Promise<void>
 }
 
@@ -113,7 +116,11 @@ const DROP_ENV = /^(ELECTRON_RUN_AS_NODE|ELECTRON_NO_ATTACH_CONSOLE|ELECTRON_ENA
  * The environment a panel shell starts with. Exported for the test.
  * @public exported for its test
  */
-export function shellEnv(base: NodeJS.ProcessEnv, binDir: string | null): Record<string, string> {
+export function shellEnv(
+  base: NodeJS.ProcessEnv,
+  binDir: string | null,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(base)) {
     if (value !== undefined && !DROP_ENV.test(key)) env[key] = value
@@ -122,7 +129,14 @@ export function shellEnv(base: NodeJS.ProcessEnv, binDir: string | null): Record
   env.COLORTERM = 'truecolor'
   env.TERM_PROGRAM = 'Holi'
   if (binDir !== null && binDir !== '') {
-    env.PATH = env.PATH ? `${binDir}:${env.PATH}` : binDir
+    // Under the key the environment has (`Path` on Windows), joined with the
+    // OS's delimiter: a second `PATH` beside `Path` would replace it.
+    const inherited = readPath(env, platform)
+    return withPath(
+      env,
+      inherited ? `${binDir}${delimiterFor(platform)}${inherited}` : binDir,
+      platform,
+    )
   }
   return env
 }
@@ -357,6 +371,10 @@ export function createTerminals(deps: TerminalsDeps): Terminals {
     async kill(remote, id) {
       const t = find(remote, id)
       if (t !== null) await stop(t)
+    },
+
+    async closeRemote(remote) {
+      await Promise.all([...live.values()].filter((t) => t.remote === remote).map((t) => stop(t)))
     },
 
     async closeAll() {

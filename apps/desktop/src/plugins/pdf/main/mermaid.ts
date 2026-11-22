@@ -34,6 +34,9 @@ export function commentSafeString(s: string): string {
     .replace(/\n/g, '\\n')
     .replace(/\t/g, '\\t')
     .replace(/>/g, '\\u{3e}')
+    // The branded template scans @@FIG@@ / @@SIG@@ in the note before
+    // cmarker runs, so keep token spellings out of the source comment.
+    .replace(/@/g, '\\u{40}')
   return `"${escaped}"`
 }
 

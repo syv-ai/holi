@@ -13,16 +13,18 @@
  * half-typed settings file never reaches the vault. Its header carries the
  * latest commit and History, the same as a document's (`FileHistoryButton`).
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { fileKind, readableDoc } from '@holi/shared'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
+import { lintGutter } from '@codemirror/lint'
 import { findNext, findPrevious } from '@codemirror/search'
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { FileTextIcon } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { plainTextExtensions } from '@/editor/extensions'
 import { syntaxValid } from '@/editor/languages'
@@ -35,6 +37,7 @@ import { useViewMemory } from '@/state/view-memory'
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { useVimEditor } from '@/editor/vim'
 import { claimsAtom } from '@/state/plugins'
+import type { PathClaim } from '@/state/plugin-types'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { FileHistoryButton } from '../history/file-history-button'
@@ -42,6 +45,8 @@ import type { FindCount, FindRequest } from '../../composites/find-bar'
 import { codeFind, codeFindCount } from './code-find'
 import { CodeFindBar } from './code-find-bar'
 import { codeLook } from './code-look'
+import { MdxTrustControl } from './mdx-trust-control'
+import { useMdxDiagnostics } from './use-mdx-diagnostics'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
 import { basename } from '@/lib/tree-paths'
 
@@ -77,7 +82,7 @@ function FileHeader({
                 </span>
               ) : null}
               {editorMode !== undefined ? (
-                <Badge variant="outline" aria-label={`Vim ${editorMode} mode`}>
+                <Badge variant="secondary" aria-label={`Vim ${editorMode} mode`}>
                   {editorMode.toUpperCase()}
                 </Badge>
               ) : null}
@@ -106,6 +111,16 @@ const SAVE_LABEL: Record<SaveState, string> = {
 type Load =
   { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; text: string }
 
+/** True only when FileView will choose the core CodeMirror editor. */
+export function isCoreTextFilePath(path: string, claims: readonly PathClaim[]): boolean {
+  if (/\.md$/i.test(path)) return false
+  // MDX remains an inert source file even if a future file-kind or plugin claims it.
+  if (/\.mdx$/i.test(path)) return true
+  if (claims.some((claim) => claim.view !== undefined && claim.match(path))) return false
+  const kind = fileKind(path)
+  return kind !== 'image' && kind !== 'doc' && kind !== 'pdf'
+}
+
 function FileLoading({ label }: { label: string }) {
   return (
     <div className="flex flex-col gap-2.5 px-4 py-6 sm:px-6" role="status" aria-label={label}>
@@ -130,6 +145,11 @@ function TextEditor({
   onSaveState,
   vimEnabled,
   onVimModeChange,
+  visible,
+  focused,
+  mdxTrustContext,
+  mdxTrusted,
+  sourceRevision,
 }: {
   path: string
   text: string
@@ -137,6 +157,11 @@ function TextEditor({
   onSaveState: (state: SaveState) => void
   vimEnabled: boolean
   onVimModeChange: (mode: string) => void
+  visible: boolean
+  focused: boolean
+  mdxTrustContext: string | null
+  mdxTrusted: boolean
+  sourceRevision: number
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -145,6 +170,7 @@ function TextEditor({
   const saveTimer = useRef<number | undefined>(undefined)
   const dirty = useRef(false)
   const writing = useRef<Promise<void>>(Promise.resolve())
+  const leaveWriter = useRef<((view: EditorView) => Promise<void>) | null>(null)
   const callbacks = useRef({ onSaved, onSaveState })
   callbacks.current = { onSaved, onSaveState }
   const [view, setView] = useState<EditorView | null>(null)
@@ -155,7 +181,41 @@ function TextEditor({
   const reportSelection = useRef(setEditorSelection)
   reportSelection.current = setEditorSelection
   const memory = useViewMemory()
-  const vim = useVimEditor(view, vimEnabled, onVimModeChange, handleFindKeyDown)
+  const vim = useVimEditor(view, vimEnabled, visible && focused, onVimModeChange, handleFindKeyDown)
+  const mdx = useMdxDiagnostics({
+    view,
+    remote,
+    path,
+    context: mdxTrustContext,
+    trusted: mdxTrusted,
+    visible,
+    sourceRevision,
+  })
+  const mdxSourceChanged = mdx.sourceChanged
+  const visibility = useRef(visible)
+  const focusState = useRef(focused)
+  focusState.current = focused
+
+  const publishCurrentSelection = useCallback(
+    (current: EditorView) => {
+      const { from, to } = current.state.selection.main
+      if (from === to) {
+        reportSelection.current((was) => (was?.path === path ? null : was))
+        return
+      }
+      const doc = current.state.doc
+      const start = doc.lineAt(from)
+      const end = doc.lineAt(to)
+      const endLine =
+        to > from && to === end.from && end.number > start.number ? end.number - 1 : end.number
+      reportSelection.current((was) =>
+        was?.path === path && was.lines.startLine === start.number && was.lines.endLine === endLine
+          ? was
+          : { path, lines: { startLine: start.number, endLine } },
+      )
+    },
+    [path],
+  )
 
   useEffect(() => {
     const host = hostRef.current
@@ -193,6 +253,7 @@ function TextEditor({
       return done
     }
     const save = (view: EditorView) => write(view, true)
+    leaveWriter.current = save
 
     const editable = new Compartment()
     const frozen = { current: false }
@@ -206,6 +267,7 @@ function TextEditor({
           // The code block's look: no soft wrap, as in the block.
           ...plainTextExtensions(path).filter((extension) => extension !== EditorView.lineWrapping),
           lineNumbers(),
+          ...(path.toLowerCase().endsWith('.mdx') ? [lintGutter()] : []),
           highlightActiveLineGutter(),
           ...codeLook(path),
           codeFind(),
@@ -224,30 +286,12 @@ function TextEditor({
             if (update.selectionSet) {
               const { anchor, head } = update.state.selection.main
               memory.note(remote, path, { anchor, head })
-              // The lines selected, for the agent's per-turn context; a
-              // caret clears what this file reported, never another's.
-              const { from, to } = update.state.selection.main
-              const doc = update.state.doc
-              const start = doc.lineAt(from)
-              const end = doc.lineAt(to)
-              const endLine =
-                to > from && to === end.from && end.number > start.number
-                  ? end.number - 1
-                  : end.number
-              reportSelection.current((was) => {
-                if (from === to) return was?.path === path ? null : was
-                const same =
-                  was?.path === path &&
-                  was.lines.startLine === start.number &&
-                  was.lines.endLine === endLine
-                return same ? was : { path, lines: { startLine: start.number, endLine } }
-              })
+              // A caret clears this file's report, never another's.
+              if (focusState.current) publishCurrentSelection(update.view)
             }
-            if (
-              !update.docChanged ||
-              update.transactions.some((tr) => tr.annotation(externalReload))
-            )
-              return
+            if (!update.docChanged) return
+            mdxSourceChanged(update.view, update.state.doc.toString())
+            if (update.transactions.some((tr) => tr.annotation(externalReload))) return
             dirty.current = true
             window.clearTimeout(saveTimer.current)
             saveTimer.current = window.setTimeout(
@@ -287,9 +331,9 @@ function TextEditor({
     )
     return () => {
       unregister()
+      leaveWriter.current = null
       scroller.removeEventListener('scroll', noteScroll)
-      // Leaving the editor writes what is pending, and leaves what it showed
-      // for its tab to be compared to (`doc-changes.ts`).
+      // A closed editor leaves what it showed for `doc-changes.ts`.
       sawText(remote, path, view.state.doc.toString())
       if (dirty.current) void save(view).catch(() => undefined)
       view.destroy()
@@ -297,7 +341,25 @@ function TextEditor({
       setView(null)
       setFind(null)
     }
-  }, [remote, path, memory, vim.extension])
+  }, [remote, path, memory, vim.extension, mdxSourceChanged, publishCurrentSelection])
+
+  useEffect(() => {
+    const wasVisible = visibility.current
+    visibility.current = visible
+    if (wasVisible && !visible) {
+      const current = viewRef.current
+      if (current !== null) {
+        // Keep the last selected passage available when the agent becomes active.
+        sawText(remote!, path, current.state.doc.toString())
+        if (dirty.current) void leaveWriter.current?.(current).catch(() => undefined)
+      }
+    }
+  }, [visible, remote, path])
+
+  useEffect(() => {
+    focusState.current = focused
+    if (focused && viewRef.current !== null) publishCurrentSelection(viewRef.current)
+  }, [focused, path, publishCurrentSelection, view])
 
   // A change on disk comes back in, unless local edits are still pending.
   useEffect(() => {
@@ -344,6 +406,27 @@ function TextEditor({
       onKeyDownCapture={vim.onKeyDownCapture}
       onKeyDown={vim.onKeyDown}
     >
+      {/\.mdx$/i.test(path) ? (
+        <div
+          className="flex min-h-8 shrink-0 items-center gap-2 px-4 py-1 text-sm"
+          aria-live="polite"
+        >
+          <span>
+            {mdx.state.kind === 'checking'
+              ? 'Checking MDX…'
+              : mdx.state.kind === 'clean'
+                ? 'MDX syntax is valid'
+                : mdx.state.kind === 'syntax-error'
+                  ? `${mdx.state.diagnostics.length} MDX diagnostic${mdx.state.diagnostics.length === 1 ? '' : 's'}`
+                  : `MDX diagnostics unavailable: ${mdx.state.kind === 'unavailable' ? mdx.state.message : ''}`}
+          </span>
+          {mdx.state.kind === 'unavailable' && mdxTrusted && visible ? (
+            <Button type="button" size="sm" variant="outline" onClick={mdx.retry}>
+              Retry
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {view && find ? (
         <div className="absolute top-2 right-4 z-40">
           <CodeFindBar view={view} request={find} count={count} onClose={() => setFind(null)} />
@@ -358,14 +441,32 @@ function TextEditor({
   )
 }
 
-function TextFileView({ path }: { path: string }) {
+function TextFileView({
+  path,
+  visible = true,
+  focused = true,
+}: {
+  path: string
+  visible?: boolean
+  focused?: boolean
+}) {
   const remote = useAtomValue(activeRemoteAtom)
   const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const mtime = useAtomValue(snapshotAtom).files.find((file) => file.path === path)?.updatedAt
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
+  const [sourceRevision, setSourceRevision] = useState(0)
   const [attempt, setAttempt] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [vimMode, setVimMode] = useState('')
+  const [mdxTrust, setMdxTrust] = useState<{ context: string | null; trusted: boolean }>({
+    context: null,
+    trusted: false,
+  })
+  const setMdxTrustSnapshot = useCallback((context: string | null, trusted: boolean) => {
+    setMdxTrust({ context, trusted })
+  }, [])
+  const writeGeneration = useRef(0)
+  const observedFile = useRef({ remote, path, mtime })
 
   useEffect(() => {
     if (remote === null) return
@@ -373,7 +474,11 @@ function TextFileView({ path }: { path: string }) {
     setLoad({ kind: 'loading' })
     trpc.notes.read
       .query({ remote, path })
-      .then((text) => live && setLoad({ kind: 'ready', text }))
+      .then((text) => {
+        if (!live) return
+        setLoad({ kind: 'ready', text })
+        setSourceRevision((revision) => revision + 1)
+      })
       .catch(
         (err: unknown) =>
           live &&
@@ -391,16 +496,29 @@ function TextFileView({ path }: { path: string }) {
   // whether its pending edits keep it out.
   const ready = load.kind === 'ready'
   useEffect(() => {
-    if (!ready || remote === null || mtime === undefined) return
+    const previous = observedFile.current
+    observedFile.current = { remote, path, mtime }
+    if (
+      !ready ||
+      remote === null ||
+      mtime === undefined ||
+      (previous.remote === remote && previous.path === path && previous.mtime === mtime)
+    )
+      return
     let live = true
+    const generation = writeGeneration.current
     trpc.notes.read
       .query({ remote, path })
       .then(
         (text) =>
           live &&
-          setLoad((current) =>
-            current.kind === 'ready' && current.text === text ? current : { kind: 'ready', text },
-          ),
+          generation === writeGeneration.current &&
+          (() => {
+            setLoad((current) =>
+              current.kind === 'ready' && current.text === text ? current : { kind: 'ready', text },
+            )
+            setSourceRevision((revision) => revision + 1)
+          })(),
       )
       .catch(() => undefined)
     return () => {
@@ -416,8 +534,19 @@ function TextFileView({ path }: { path: string }) {
         path={path}
         status={ready ? SAVE_LABEL[saveState] : undefined}
         editorMode={vimMode || undefined}
-        actions={<FileHistoryButton path={path} />}
+        actions={<FileHistoryButton path={path} visible={visible} />}
       />
+      {/\.mdx$/i.test(path) && remote !== null ? (
+        <div data-testid="mdx-trust-region" className="min-w-0 shrink-0 border-b px-4 py-2">
+          <MdxTrustControl
+            remote={remote}
+            path={path}
+            visible={visible}
+            focused={focused}
+            onTrustContextChange={setMdxTrustSnapshot}
+          />
+        </div>
+      ) : null}
       {load.kind === 'error' ? (
         <ErrorState
           title="This file could not be opened"
@@ -430,10 +559,20 @@ function TextFileView({ path }: { path: string }) {
         <TextEditor
           path={path}
           text={load.text}
-          onSaved={(text) => setLoad({ kind: 'ready', text })}
+          onSaved={(text) => {
+            // A read begun before this write cannot replace its durable result.
+            writeGeneration.current++
+            setLoad({ kind: 'ready', text })
+            setSourceRevision((revision) => revision + 1)
+          }}
           onSaveState={setSaveState}
           vimEnabled={vimEnabled}
           onVimModeChange={setVimMode}
+          visible={visible}
+          focused={focused}
+          mdxTrustContext={mdxTrust.context}
+          mdxTrusted={mdxTrust.trusted}
+          sourceRevision={sourceRevision}
         />
       )}
     </div>
@@ -478,13 +617,26 @@ function UnviewableFile({ path }: { path: string }) {
   )
 }
 
-export function FileView({ path }: { path: string }) {
+export function FileView({
+  path,
+  visible = true,
+  focused = visible,
+}: {
+  path: string
+  visible?: boolean
+  focused?: boolean
+}) {
   const claims = useAtomValue(claimsAtom)
-  const Claimed = claims.find((claim) => claim.view !== undefined && claim.match(path))?.view
-  if (Claimed !== undefined) return <Claimed path={path} />
+  const isMdxSource = /\.mdx$/i.test(path)
+  const Claimed = isMdxSource
+    ? undefined
+    : claims.find((claim) => claim.view !== undefined && claim.match(path))?.view
+  if (Claimed !== undefined) return <Claimed path={path} visible={visible} focused={focused} />
 
+  if (isMdxSource)
+    return <TextFileView key={path} path={path} visible={visible} focused={focused} />
   const kind = fileKind(path)
   if (kind === 'image') return <ImageFileView key={path} path={path} />
   if (kind === 'doc' || kind === 'pdf') return <UnviewableFile path={path} />
-  return <TextFileView key={path} path={path} />
+  return <TextFileView key={path} path={path} visible={visible} focused={focused} />
 }

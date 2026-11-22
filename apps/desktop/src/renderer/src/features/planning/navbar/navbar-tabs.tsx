@@ -4,7 +4,6 @@ import { Badge } from '@/components/ui/badge'
 
 import { Button } from '@/components/ui/button'
 import {
-  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuRadioGroup,
@@ -13,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MenuIcon } from 'lucide-react'
+import { PlanningDropdownMenu } from '../planning-visibility'
 
 export type TabItem = {
   value: string
@@ -50,7 +50,7 @@ export function NavbarTabs({ items, value, onValueChange }: NavbarTabsProps) {
       </TabsList>
 
       {/* Narrow: a menu of the same tabs */}
-      <DropdownMenu>
+      <PlanningDropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="sm" aria-label="Choose a view" className="md:hidden">
             <MenuIcon data-icon="inline-start" aria-hidden="true" />
@@ -75,7 +75,7 @@ export function NavbarTabs({ items, value, onValueChange }: NavbarTabsProps) {
             </DropdownMenuRadioGroup>
           </DropdownMenuGroup>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </PlanningDropdownMenu>
     </>
   )
 }

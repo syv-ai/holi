@@ -9,7 +9,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
  * The block's rail toggle, positioned in the view rather than the window:
  * the view lives in a pane of Holi's shell, not at the window's edge.
  */
-function SidebarRailToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+function SidebarRailToggle({
+  expanded,
+  onToggle,
+  visible,
+}: {
+  expanded: boolean
+  onToggle: () => void
+  visible: boolean
+}) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -49,7 +57,7 @@ function SidebarRailToggle({ expanded, onToggle }: { expanded: boolean; onToggle
           </span>
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="right">{expanded ? 'Collapse' : 'Expand'}</TooltipContent>
+      {visible && <TooltipContent side="right">{expanded ? 'Collapse' : 'Expand'}</TooltipContent>}
     </Tooltip>
   )
 }
@@ -59,6 +67,7 @@ function SidebarRailToggle({ expanded, onToggle }: { expanded: boolean; onToggle
 interface AppSidebarProps {
   expanded: boolean
   onToggle: () => void
+  visible: boolean
   /** The mail list column. */
   children: ReactNode
 }
@@ -69,7 +78,7 @@ interface AppSidebarProps {
  * mailboxes are its title's menu. No fill of its own, so the window's surface
  * shows through.
  */
-export function AppSidebar({ expanded, onToggle, children }: AppSidebarProps) {
+export function AppSidebar({ expanded, onToggle, visible, children }: AppSidebarProps) {
   return (
     <>
       <div
@@ -81,7 +90,7 @@ export function AppSidebar({ expanded, onToggle, children }: AppSidebarProps) {
         {expanded && children}
       </div>
 
-      <SidebarRailToggle expanded={expanded} onToggle={onToggle} />
+      <SidebarRailToggle expanded={expanded} onToggle={onToggle} visible={visible} />
     </>
   )
 }

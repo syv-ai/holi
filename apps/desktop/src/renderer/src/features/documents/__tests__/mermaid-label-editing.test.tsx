@@ -5,6 +5,7 @@ import { analyseMermaidLabels } from '@holi/shared'
 import { Provider, createStore } from 'jotai'
 import { activeRemoteAtom } from '@/state/vaults'
 import { colorSchemeAtom } from '@/state/color-scheme'
+import { vimCodeEditingAtom } from '@/state/preferences'
 
 const renderDiagram = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/mermaid-renderer', () => ({ renderMermaid: renderDiagram }))
@@ -13,6 +14,8 @@ import { createDocumentExtensions } from '../document-extensions'
 
 let editor: Editor | null = null
 const markdown = 'Before\n\n```mermaid\nflowchart LR\nA[Alpha] --> B[Beta]\n```\n\nAfter'
+const captioned =
+  '<!-- holi:figure -->\n\n~~~mermaid extra-info\nflowchart LR\nA[Alpha] --> B[Beta]\n~~~\n\n<!-- holi:caption -->\n\nA **portable** caption.\n\n<!-- /holi:figure -->'
 
 function drawing(source: string) {
   const analysis = analyseMermaidLabels(source)
@@ -34,10 +37,11 @@ function drawing(source: string) {
   }
 }
 
-async function open(text = markdown) {
+async function open(text = markdown, vim = false) {
   const store = createStore()
   store.set(activeRemoteAtom, 'owner/first')
   store.set(colorSchemeAtom, 'light')
+  store.set(vimCodeEditingAtom, vim)
   const updates = vi.fn()
   const e = new Editor({
     extensions: createDocumentExtensions({
@@ -58,6 +62,7 @@ async function open(text = markdown) {
     </Provider>,
   )
   await waitFor(() => expect(e.view.dom.querySelector('svg')).not.toBeNull())
+  await screen.findByRole('button', { name: 'Edit labels' })
   updates.mockClear()
   return { e, store, view, updates }
 }
@@ -66,7 +71,6 @@ async function labelField(name = 'Alpha') {
   fireEvent.click(await screen.findByRole('button', { name: 'Edit labels' }))
   const target = await screen.findByRole('button', { name })
   expect(target.namespaceURI).toBe('http://www.w3.org/2000/svg')
-  expect(target.isConnected).toBe(true)
   fireEvent.click(target)
   return await screen.findByRole('textbox', { name })
 }
@@ -104,9 +108,98 @@ afterEach(() => {
 })
 
 describe('editing labels in the rendered Mermaid drawing', () => {
+  it('keeps nested source hidden, exposes source only from its action, and isolates label undo from its caption', async () => {
+    const { e, updates, view } = await open(captioned)
+    const figure = e.state.doc.firstChild!
+    expect(figure.type.name).toBe('documentFigure')
+    expect(figure.firstChild?.type.name).toBe('codeBlock')
+    expect(figure.lastChild?.type.name).toBe('documentCaption')
+    expect(e.view.dom.querySelector('figcaption')?.textContent).toBe('A portable caption.')
+    expect(e.view.dom.querySelector('[data-mermaid-source]')).toHaveClass('hidden')
+    expect(e.view.dom.querySelector('figure[data-holi-code-figure]')).not.toBeNull()
+
+    const figurePosition = 0
+    const captionPosition = figurePosition + 1 + figure.firstChild!.nodeSize + 1
+    act(() =>
+      e.view.dispatch(
+        e.state.tr.insertText(' Updated', captionPosition + figure.lastChild!.content.size),
+      ),
+    )
+    expect(e.view.dom.querySelector('figcaption')?.textContent).toBe('A portable caption. Updated')
+    expect(e.view.dom.querySelector('[data-mermaid-source]')).toHaveClass('hidden')
+    expect(e.getMarkdown()).toContain('~~~mermaid extra-info')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit source' }))
+    await waitFor(() =>
+      expect(e.state.doc.resolve(e.state.selection.from).parent.type.name).toBe('codeBlock'),
+    )
+    expect(e.view.dom.querySelector('[data-mermaid-source]')).not.toHaveClass('hidden')
+    expect(e.view.dom.querySelector('[data-mermaid-source]')?.textContent).toContain('A[Alpha]')
+    expect(e.getMarkdown()).toContain('A **portable** caption.')
+    act(() => e.commands.setNodeSelection(blockPosition(e)))
+
+    const beforeLabel = e.getMarkdown()
+    updates.mockClear()
+    fireEvent.change(await labelField(), { target: { value: 'Gamma' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(e.getMarkdown()).toContain('A[Gamma] --> B[Beta]'))
+    expect(e.getMarkdown()).toContain('<!-- holi:figure -->')
+    expect(e.getMarkdown()).toContain('mermaid extra-info')
+    expect(e.getMarkdown()).toContain('A **portable** caption. Updated')
+    expect(updates).toHaveBeenCalledOnce()
+
+    act(() => e.commands.undo())
+    expect(e.getMarkdown()).toBe(beforeLabel)
+    expect(e.getMarkdown()).toContain('A **portable** caption.')
+    act(() => e.commands.undo())
+    expect(e.getMarkdown().trimEnd()).toBe(captioned)
+    act(() => {
+      e.commands.redo()
+      e.commands.redo()
+    })
+    expect(e.getMarkdown()).toContain('A[Gamma] --> B[Beta]')
+    expect(e.getMarkdown()).toContain('A **portable** caption. Updated')
+    view.unmount()
+  })
+  it('invalidates old SVG labels immediately while a changed source redraws', async () => {
+    const { e } = await open()
+    await labelField()
+    let resolve!: (value: ReturnType<typeof drawing>) => void
+    renderDiagram.mockImplementation((source: string) =>
+      source.includes('Gamma')
+        ? new Promise((done) => (resolve = done))
+        : Promise.resolve(drawing(source)),
+    )
+    const position = blockPosition(e)
+    const node = e.state.doc.nodeAt(position)!
+    const start = position + 1 + node.textContent.indexOf('Alpha')
+    act(() => e.view.dispatch(e.state.tr.insertText('Gamma', start, start + 'Alpha'.length)))
+    await waitFor(() => expect(resolve).toBeTypeOf('function'))
+    expect(e.getMarkdown()).toContain('A[Gamma]')
+    expect(screen.queryByRole('textbox', { name: 'Alpha' })).not.toBeInTheDocument()
+    expect(document.querySelector('[data-mermaid-diagram] svg')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Alpha' })).not.toBeInTheDocument()
+    await act(async () => resolve(drawing('flowchart LR\nA[Gamma] --> B[Beta]')))
+    fireEvent.click(await screen.findByRole('button', { name: 'Gamma' }))
+    await screen.findByRole('textbox', { name: 'Gamma' })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(e.getMarkdown()).toContain('A[Gamma]')
+  })
+
   it('activates the connected SVG label and opens its anchored field', async () => {
     const { e } = await open()
     expect(await labelField()).toHaveValue('Alpha')
+    expect(e.getMarkdown()).toContain('A[Alpha] --> B[Beta]')
+  })
+
+  it('does not apply or cancel a label edit on normal-mode Enter or Escape', async () => {
+    const { e } = await open(markdown, true)
+    const field = await labelField()
+    fireEvent.change(field, { target: { value: 'Renamed' } })
+    fireEvent.keyDown(field, { key: 'Escape' })
+    expect(screen.getByLabelText('Vim normal mode')).toBeInTheDocument()
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(field).toBeInTheDocument()
     expect(e.getMarkdown()).toContain('A[Alpha] --> B[Beta]')
   })
 
@@ -138,6 +231,36 @@ describe('editing labels in the rendered Mermaid drawing', () => {
     fireEvent.click(button)
     expect(e.state.selection.toJSON()).toEqual(selection)
     expect(await screen.findByRole('button', { name: 'Alpha' })).toBeInTheDocument()
+  })
+
+  it.each([
+    ['rounded rectangle', '(Alpha)'],
+    ['diamond', '{Alpha}'],
+    ['circle', '((Alpha))'],
+    ['stadium', '([Alpha])'],
+    ['subroutine', '[[Alpha]]'],
+    ['cylinder', '[(Alpha)]'],
+    ['hexagon', '{{Alpha}}'],
+  ])('applies and cancels a %s edit through autosave and undo', async (_name, shape) => {
+    const source = markdown.replace('A[Alpha]', `A${shape}`)
+    const { e, updates } = await open(source)
+    const original = e.getMarkdown()
+    const field = await labelField('Alpha')
+    fireEvent.change(field, { target: { value: 'Gamma' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(updates).toHaveBeenCalledOnce())
+    expect(e.getMarkdown()).toContain('A' + shape.replace('Alpha', 'Gamma'))
+    expect(e.can().undo()).toBe(true)
+    act(() => e.commands.undo())
+    expect(e.getMarkdown()).toBe(original)
+
+    updates.mockClear()
+    const beforeCancel = e.state.doc
+    const cancelField = await labelField('Alpha')
+    fireEvent.change(cancelField, { target: { value: 'Discarded' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(e.state.doc).toBe(beforeCancel)
+    expect(updates).not.toHaveBeenCalled()
   })
 
   it('applies only the label, serializes Markdown and keeps the drawing visible', async () => {
@@ -235,6 +358,33 @@ describe('editing labels in the rendered Mermaid drawing', () => {
       expect(screen.queryByRole('textbox', { name: 'Alpha' })).not.toBeInTheDocument()
     },
   )
+
+  it('discards pending label validation when the captioned figure is relocated', async () => {
+    const { e, updates } = await open(`Before\n\n${captioned}\n\nAfter`)
+    const original = e.getMarkdown()
+    act(() => e.commands.setNodeSelection(blockPosition(e)))
+    fireEvent.change(await labelField(), { target: { value: 'Gamma' } })
+    const complete = pendingValidation()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    const position = blockPosition(e)
+    const figure = e.state.doc.nodeAt(position - 1)!
+    expect(figure.type.name).toBe('documentFigure')
+    act(() => {
+      e.view.dispatch(
+        e.state.tr
+          .delete(position - 1, position - 1 + figure.nodeSize)
+          .insert(position + 1, e.schema.nodeFromJSON(figure.toJSON())),
+      )
+    })
+    const expected = e.state.doc
+    updates.mockClear()
+    await complete()
+    expect(e.state.doc).toBe(expected)
+    expect(e.getMarkdown()).toContain('A **portable** caption.')
+    expect(e.getMarkdown()).not.toContain('A[Gamma]')
+    expect(updates).not.toHaveBeenCalled()
+    expect(original).toContain('A **portable** caption.')
+  })
 
   it('allows an unchanged target to move after a preceding document edit', async () => {
     const { e } = await open()

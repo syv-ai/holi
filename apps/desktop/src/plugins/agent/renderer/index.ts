@@ -17,6 +17,7 @@ import { agentIndicator } from './lib/notices'
 import { AGENT_SERVICE } from './service'
 import { SessionActions } from './session-actions'
 import { AgentsView } from './agents/agents-view'
+import { agentsViewOf } from './state/agents-view'
 import { AgentsSidebar } from './agents/agents-sidebar'
 import { agentsStatusAtom } from './state/agents-status'
 import { showHistoryAtom } from './state/agents-view'
@@ -30,6 +31,7 @@ import {
   agentTerminalsAtom,
   agentVault,
   terminalLabel,
+  type AgentSession,
 } from './state/sessions'
 import { agentMenuEntriesAtom, runAgentMenuEntryAtom } from './state/command-menu'
 import {
@@ -59,6 +61,11 @@ const tabLooksAtom = atom((get): readonly SurfaceTabLook[] => {
   })
 })
 
+// The policy is synchronous and receives no store. The vault lifecycle owns
+// this lookup, so it reads this window's current sessions, not Jotai's default
+// store (the app supplies its own). Claude and Pi RPC can share the id grammar.
+let sessionInVault: ((id: string) => AgentSession | undefined) | undefined
+
 export const agentRenderer: RendererPlugin = {
   info: AGENT_INFO,
   events: { ...agentEvents, ...inboxEvents, ...providerEvents },
@@ -85,6 +92,13 @@ export const agentRenderer: RendererPlugin = {
   agentsMode: {
     sidebar: AgentsSidebar,
     main: AgentsView,
+    keepsSelectionMounted: (selection) => {
+      const view = agentsViewOf(selection)
+      return (
+        view.kind === 'session' &&
+        !(view.id.length === 8 && sessionInVault?.(view.id)?.provider === 'pi')
+      )
+    },
     status: agentsStatusAtom,
     tabLook: sessionTabLookAtom,
     newSession: newSessionAtom,
@@ -96,12 +110,15 @@ export const agentRenderer: RendererPlugin = {
   // The agent's terminals and the session list's turn ends while the vault
   // is open.
   vault: (remote, store) => {
+    const lookup = (id: string) => store.get(agentSessionsAtom).find((session) => session.id === id)
+    sessionInVault = lookup
     const offAgent = agentVault(remote, store)
     const offList = sessionListVault(store)
     // The inbox's entries: `holi agent notify`, needs-you, mentions.
     const offInbox = inboxVault(remote, store)
     void store.set(loadProvidersAtom)
     return () => {
+      if (sessionInVault === lookup) sessionInVault = undefined
       offInbox()
       offList()
       offAgent()

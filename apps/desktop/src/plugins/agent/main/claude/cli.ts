@@ -15,12 +15,20 @@
  *
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */
-import { execFile } from 'node:child_process'
-import { accessSync, constants } from 'node:fs'
 import { join } from 'node:path'
 import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
-import { nodeFallbackDir, resolveBin, toolPath } from '../../../../main/plugin-api'
+import {
+  delimiterFor,
+  execProgram,
+  isRunnable,
+  nodeFallbackDir,
+  resolveBin,
+  toolPath,
+  UnconfirmedOwnedProgramError,
+  withPath,
+} from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
+import { parseListing } from './listing'
 
 /**
  * The child's env. Strips the nested-session guards (`claude` refuses to run
@@ -52,6 +60,8 @@ export interface AgentEnvOpts {
    * nothing from the machine's config. Absolute path only.
    */
   configDir?: string | null
+  /** The OS the environment is for; tests run both branches on any machine. */
+  platform?: NodeJS.Platform
 }
 
 export function buildAgentEnv(
@@ -110,32 +120,30 @@ export function buildAgentEnv(
   // a `node` the machine has always wins (`main/bridge/node-fallback.ts`).
   // The plugin commands come last of all, so a plugin adds a command but
   // never stands in for one the machine or Holi has.
-  env.PATH = [
-    opts.binDir,
-    toolPath(env),
-    opts.binDir ? nodeFallbackDir(opts.binDir) : undefined,
-    opts.commandsDir,
-  ]
-    .filter((dir): dir is string => !!dir)
-    .join(':')
-  return env
+  // One key, whatever case the inherited one had: a Windows environment copied
+  // from an Explorer launch holds `Path`, and a second `PATH` beside it would
+  // be read by some children and not by others.
+  const platform = opts.platform ?? process.platform
+  return withPath(
+    env,
+    [
+      opts.binDir,
+      toolPath(env, platform),
+      opts.binDir ? nodeFallbackDir(opts.binDir, platform) : undefined,
+      opts.commandsDir,
+    ]
+      .filter((dir): dir is string => !!dir)
+      .join(delimiterFor(platform)),
+    platform,
+  )
 }
 
 /** `HOLI_CLAUDE_BIN` when it is set and runs, else `claude` as `resolveBin`
  *  finds it. */
 export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HOLI_CLAUDE_BIN
-  if (override && isExecutable(override)) return override
+  if (override && isRunnable(override)) return override
   return resolveBin('claude', env)
-}
-
-function isExecutable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
 }
 
 /** A listing is read on a filesystem edge, so a hung CLI would queue reads. */
@@ -158,21 +166,53 @@ export interface RunOptions {
   cwd: string
   env: Record<string, string>
   timeoutMs: number
+  /** Successful `--bg` is the only launch whose descendants outlive the CLI. */
+  retainDescendantsOnSuccess?: boolean
 }
 
+type ExecCallback = Parameters<typeof execProgram>[3]
+type Ownership = NonNullable<Parameters<ExecCallback>[3]>
+type RetainedLease = NonNullable<Extract<Ownership, { kind: 'settled' }>['lease']>
+
 export interface ClaudeCliDeps {
-  /** Injected so tests never shell out. */
   resolveBin?: () => string | null
+  /** Legacy POSIX/string adapter. */
   run?: (bin: string, args: string[], opts: RunOptions) => Promise<string>
+  execProgram?: typeof execProgram
+  platform?: NodeJS.Platform
   log?: (msg: string) => void
 }
 
-type ActionResult = { ok: true } | { ok: false; message: string }
-type StartResult = { ok: true; id: string } | { ok: false; message: string }
+type CommandFailure = { ok: false; message: string; error?: Error; cleanupUnconfirmed?: never }
+type UnconfirmedFailure = {
+  ok: false
+  message: string
+  cleanupUnconfirmed: true
+  error: UnconfirmedOwnedProgramError
+}
+type UnconfirmedLaunchFailure = UnconfirmedFailure & {
+  /** Receipt validation already joined this lease; retain its failure without retrying. */
+  revokeAttempted?: true
+}
+type MissingProviderReceipt = {
+  ok: false
+  message: string
+  cleanupUnconfirmed: true
+  missingProviderReceipt: true
+  error: Error
+}
+type ActionResult = { ok: true } | CommandFailure | UnconfirmedFailure
+type StartResult =
+  | { ok: true; id: string; lease?: RetainedLease }
+  | CommandFailure
+  | UnconfirmedLaunchFailure
+  | MissingProviderReceipt
 
 export interface ClaudeCli {
-  /** `claude agents --json`, raw. Null for every failure: no binary, a
-   *  non-zero exit, a timeout. */
+  /** Raw JSON from a successful, validated `claude agents --json` snapshot.
+   *  Null for an ordinary command or format failure; rejects with
+   *  UnconfirmedOwnedProgramError if native completion is unknown. Neither
+   *  failure is an empty listing. */
   list(target: VaultCliTarget): Promise<string | null>
   stop(target: VaultCliTarget, id: string): Promise<ActionResult>
   respawn(target: VaultCliTarget, id: string): Promise<ActionResult>
@@ -223,10 +263,20 @@ const ANSI = /\x1b\[[0-9;]*m/g
  * The id out of `backgrounded · <id> · <name>`, or null.
  * @public exported for its test
  */
-export function parseBackgrounded(stdout: string): string | null {
+export function parseBackgrounded(stdout: string, retained = false): string | null {
   const plain = stdout.replace(ANSI, '')
-  const match = /^backgrounded\s+·\s+([0-9a-f]{8})\b/m.exec(plain)
-  return match?.[1] ?? null
+  if (!retained) return /^backgrounded\s+·\s+([0-9a-f]{8})\b/m.exec(plain)?.[1] ?? null
+  // Only complete canonical receipts count for a retained handoff. Repeated
+  // reports of one id are harmless, but no ordering can resolve a conflict.
+  let id: string | null = null
+  for (const [, candidate] of plain.matchAll(
+    /^backgrounded[ \t]+·[ \t]+([0-9a-f]{8})[ \t]+·(?:[ \t]|$)/gm,
+  )) {
+    if (candidate === undefined) continue
+    if (id !== null && id !== candidate) return null
+    id = candidate
+  }
+  return id
 }
 
 /**
@@ -247,9 +297,17 @@ function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string,
   })
 }
 
+/** The text for a machine without the binary: Windows gets its install command,
+ *  and every other OS the text it has always had.
+ * @public exported for its test */
+export function notInstalledText(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32'
+    ? 'Claude CLI not found on PATH. Install it with `irm https://claude.ai/install.ps1 | iex` in PowerShell (or `npm install -g @anthropic-ai/claude-code`) and restart Holi.'
+    : 'Claude CLI not found on PATH. Install it (https://claude.com/claude-code) and restart Holi.'
+}
+
 /** The binary when it is not on the machine. */
-export const NOT_INSTALLED =
-  'Claude CLI not found on PATH. Install it (https://claude.com/claude-code) and restart Holi.'
+export const NOT_INSTALLED = notInstalledText()
 
 /** What a terminal runs: `claude agents` (the list), `claude attach <id>`,
  *  a copy of a chat session's conversation (`--resume <id>
@@ -278,23 +336,31 @@ export function terminalCommand(
   }
 }
 
-function defaultRun(bin: string, args: string[], opts: RunOptions): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = execFile(
+interface ExecOutcome {
+  stdout: string
+  stderr: string
+  error: Error | null
+  ownership?: Ownership
+}
+
+function defaultRun(
+  launch: typeof execProgram,
+  bin: string,
+  args: string[],
+  opts: RunOptions,
+): Promise<ExecOutcome> {
+  return new Promise((resolve) => {
+    const child = launch(
       bin,
       args,
       {
-        cwd: opts.cwd,
-        env: opts.env,
-        timeout: opts.timeoutMs,
+        ...opts,
         maxBuffer: 1024 * 1024,
         encoding: 'utf8',
       },
-      (err, stdout, stderr) => (err ? reject(new Error(stderr || String(err))) : resolve(stdout)),
+      (error, stdout, stderr, ownership) => resolve({ error, stdout, stderr, ownership }),
     )
-    // No input, and saying so at once: `claude --bg` reads a piped stdin as
-    // part of the prompt and waits for its end, which execFile's open pipe
-    // never sends, so every start sat out Claude Code's stdin wait (~3 s).
+    // An open pipe makes --bg wait for stdin as part of the prompt.
     child.stdin?.end()
   })
 }
@@ -302,38 +368,144 @@ function defaultRun(bin: string, args: string[], opts: RunOptions): Promise<stri
 export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
   const log = deps.log ?? ((msg: string) => console.log(`[claude-cli] ${msg}`))
   const resolveBin = deps.resolveBin ?? (() => resolveClaudeBin())
-  const run = deps.run ?? defaultRun
+  const windows = (deps.platform ?? process.platform) === 'win32'
 
-  async function exec(target: VaultCliTarget, args: string[], timeoutMs: number): Promise<string> {
+  async function exec(
+    target: VaultCliTarget,
+    args: string[],
+    timeoutMs: number,
+    retainDescendantsOnSuccess = false,
+  ) {
     const bin = resolveBin()
-    if (bin === null) {
-      throw new Error(NOT_INSTALLED)
+    if (bin === null) throw new Error(NOT_INSTALLED)
+    const opts = {
+      cwd: target.root,
+      env: cliEnv(process.env, target),
+      timeoutMs,
+      ...(retainDescendantsOnSuccess ? { retainDescendantsOnSuccess: true } : {}),
     }
-    return run(bin, args, { cwd: target.root, env: cliEnv(process.env, target), timeoutMs })
+    const result: ExecOutcome = deps.run
+      ? { stdout: await deps.run(bin, args, opts), stderr: '', error: null }
+      : await defaultRun(deps.execProgram ?? execProgram, bin, args, opts)
+    const { ownership, error, stderr } = result
+    // The child controls stderr; it can explain a command failure but never
+    // attest to completion, nor override the first command error or proof cause.
+    const unconfirmed =
+      ownership?.kind === 'unconfirmed'
+        ? error instanceof UnconfirmedOwnedProgramError &&
+          error.lease === ownership.lease &&
+          error.cause === ownership.cause
+          ? error
+          : new UnconfirmedOwnedProgramError(ownership.cause, ownership.lease, error)
+        : error instanceof UnconfirmedOwnedProgramError
+          ? error
+          : windows && !deps.run && ownership?.kind !== 'settled'
+            ? new UnconfirmedOwnedProgramError(
+                new Error('Windows Claude command did not report ownership completion'),
+                undefined,
+                error,
+              )
+            : undefined
+    return { ...result, message: stderr || (error === null ? '' : String(error)), unconfirmed }
+  }
+
+  function failed(err: UnconfirmedOwnedProgramError): UnconfirmedFailure
+  function failed(err: unknown): CommandFailure | UnconfirmedFailure
+  function failed(err: unknown): CommandFailure | UnconfirmedFailure {
+    const error = err instanceof Error ? err : new Error(String(err))
+    return error instanceof UnconfirmedOwnedProgramError
+      ? { ok: false, cleanupUnconfirmed: true, message: error.message, error }
+      : { ok: false, message: error.message, error }
   }
 
   async function action(target: VaultCliTarget, args: string[]): Promise<ActionResult> {
     try {
-      await exec(target, args, ACTION_TIMEOUT_MS)
+      const result = await exec(target, args, ACTION_TIMEOUT_MS)
+      if (result.unconfirmed) return failed(result.unconfirmed)
+      if (result.error) return { ok: false, message: result.message, error: result.error }
       return { ok: true }
     } catch (err: unknown) {
       log(`${args[0]} failed: ${String(err)}`)
-      return { ok: false, message: err instanceof Error ? err.message : String(err) }
+      return failed(err)
     }
   }
 
   async function start(target: VaultCliTarget, args: string[]): Promise<StartResult> {
-    let stdout: string
     try {
-      stdout = await exec(target, args, ACTION_TIMEOUT_MS)
+      const result = await exec(target, args, ACTION_TIMEOUT_MS, true)
+      // A proof failure can reach us before stdout finishes. Even a
+      // complete-looking line cannot identify a session to act on here.
+      if (result.unconfirmed) return failed(result.unconfirmed)
+      const lease = result.ownership?.kind === 'settled' ? result.ownership.lease : undefined
+      // Only a concrete handoff lease selects retained-id validation. Native
+      // settlement (also reported on POSIX) doesn't describe provider stdout.
+      const id =
+        result.error === null ? parseBackgrounded(result.stdout, lease !== undefined) : null
+      if (id !== null) return { ok: true, id, ...(lease === undefined ? {} : { lease }) }
+
+      const error =
+        result.error ??
+        new Error(
+          lease === undefined
+            ? 'Claude Code did not report its background session id.'
+            : 'Claude Code did not report an unambiguous background session id.',
+        )
+      if (lease !== undefined) {
+        try {
+          await lease.revoke()
+        } catch (cause) {
+          return {
+            ...failed(new UnconfirmedOwnedProgramError(cause, lease, error)),
+            revokeAttempted: true,
+          }
+        }
+      } else if (result.error === null) {
+        // The provider did not identify the session. No listing, name, or
+        // missing PID can identify it in place of the receipt (legacy POSIX,
+        // or a provider supervisor outside the just-drained native command).
+        return {
+          ok: false,
+          cleanupUnconfirmed: true,
+          missingProviderReceipt: true,
+          error,
+          message:
+            'Cleanup unconfirmed: Claude Code started a session but did not report its id. Holi cannot safely confirm cleanup until native session ownership is known; identify the run in Claude Code before stopping it.',
+        }
+      }
+      return { ok: false, message: result.error === null ? error.message : result.message, error }
     } catch (err: unknown) {
       log(`--bg failed: ${String(err)}`)
-      return { ok: false, message: err instanceof Error ? err.message : String(err) }
+      return failed(err)
     }
-    const id = parseBackgrounded(stdout)
-    if (id === null)
-      return { ok: false, message: 'Claude Code did not say which session it started.' }
-    return { ok: true, id }
+  }
+
+  class UnsupportedOption extends Error {}
+
+  async function listing(target: VaultCliTarget, args: string[]): Promise<string> {
+    const result = await exec(target, args, LIST_TIMEOUT_MS).catch((err: unknown) => {
+      // The legacy string adapter can only report a command error by throwing.
+      if (
+        deps.run &&
+        !(err instanceof UnconfirmedOwnedProgramError) &&
+        /unknown option/i.test(String(err))
+      )
+        throw new UnsupportedOption(String(err))
+      throw err
+    })
+    if (result.unconfirmed) throw result.unconfirmed
+    if (result.ownership?.kind === 'settled' && result.ownership.lease !== undefined)
+      throw new UnconfirmedOwnedProgramError(
+        new Error('Claude listing unexpectedly retained native ownership'),
+        result.ownership.lease,
+        result.error,
+      )
+    if (result.error) {
+      if (/unknown option/i.test(result.message)) throw new UnsupportedOption(result.message)
+      throw result.error
+    }
+    // Draining the command says nothing about the validity of its rows.
+    parseListing(result.stdout, target.root)
+    return result.stdout
   }
 
   /** Set once this Claude Code has refused `--all`: it predates the flag,
@@ -348,14 +520,15 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
       try {
         if (!allRefused) {
           try {
-            return await exec(target, ['agents', '--json', '--all'], LIST_TIMEOUT_MS)
+            return await listing(target, ['agents', '--json', '--all'])
           } catch (err: unknown) {
-            if (!/unknown option/i.test(String(err))) throw err
+            if (!(err instanceof UnsupportedOption)) throw err
             allRefused = true
           }
         }
-        return await exec(target, ['agents', '--json'], LIST_TIMEOUT_MS)
+        return await listing(target, ['agents', '--json'])
       } catch (err: unknown) {
+        if (err instanceof UnconfirmedOwnedProgramError) throw err
         log(`listing failed: ${String(err)}`)
         return null
       }

@@ -54,16 +54,21 @@ answers.
 sidebar marks, what Settings' nav and an app's folded sidebar follow, what `useSessionTabs` writes
 back as the Agents selection, and what ⌘W closes.
 
-**What each tab shows** is one switch, `TabView`: the New tab's empty view (also an empty strip's),
-the board, Settings (its nav in the sidebar while it is the view in front and the sidebar is open,
-inline otherwise), a sidebar app's view, the Agents mode's `main` for a session or the home, the
-`app` surface for a vault app, and the document editor for a document. Active views mount normally.
-A surface opts into `keepMounted` explicitly: after first display, it stays mounted while hidden
-and its stable host is parked until the tab closes, the surface is removed, or the vault changes.
-Browser tabs and the agent's terminal surfaces already opt in. Agent session tabs use the
-separate `session` descriptor, not a surface; their viewport and geometry retention remain separate
-work. The terminal host/cache and PTY attachment behavior are unchanged. Other views unmount when
-left.
+**What each tab shows** is one switch, `TabView`: the New tab's empty view (also an empty
+strip's), the board, Settings (its nav in the sidebar while it is the view in front and the
+sidebar is open, inline otherwise), a sidebar app's view, the Agents mode's `main` for a
+session or the home, the `app` surface for a vault app, and the document editor for a
+document. Views mount lazily when first displayed. The shell retains selected views by
+policy—including markdown documents, core text files, graph, board, Settings and launchers—or
+by explicit opt-in from a surface, app, file claim or agent session mode. A retained view
+stays mounted while its tab is open in the same vault. When hidden, it is parked; a split
+member can be displayed without being focused, so hidden, displayed and focused are distinct
+states. Closing the tab, removing its retaining claim or surface, or leaving the vault
+disposes the view. This preserves the mounted view instance; it is not a file-content cache.
+Browser tabs and the agent's terminal surfaces opt in. Agent session tabs use the separate
+`session` descriptor and are retained when their agent-mode policy opts in. The terminal
+host/cache and PTY attachment behavior are unchanged. Views not retained by shell policy or
+an opt-in still unmount when left.
 
 **Sessions are tabs** ([sidebar](sidebar.md)): the Agents mode's selection opens or selects a
 session tab, and the view in front writes the selection back, so inside a split the selection
@@ -95,9 +100,9 @@ both sides tidied, against what the view last showed. A tab not shown since it o
 against the file as first read. A split's members have no room for a badge, so each shows its
 state as a dot on its mark.
 
-**The count.** When the strip holds more entries than it has room to show, a muted `text-xs` line
-beside its ⋯ says how many are open (`12 tabs`), a split counting as one. While every tab is in
-sight it says nothing. A `ResizeObserver` on the strip and its entries compares what it holds with
+**The count.** When the strip holds more entries than it has room to show, a muted `text-xs` ghost
+button between the strip and its + says how many are open (`12 tabs`), a split counting as one;
+clicking it opens the switcher (below). While every tab is in sight it says nothing. A `ResizeObserver` on the strip and its entries compares what it holds with
 what it shows, so a window resize or a tab opening brings the count in or out.
 
 **The switcher.** Hold ⌃ and press Tab: a list of the strip's entries hangs under the strip, each
@@ -108,7 +113,9 @@ quick ⌃Tab goes back to the tab you were just in. Escape, a click outside or t
 focus cancels. Pressing a row opens it (on pointerdown, as ⌃ is still held and a Mac makes a
 ⌃-click a secondary click); the pointer does not move the selection. A tab closed while switching
 opens nothing. Run from the Keyboard shortcuts dialog, where ⌃ is not held, it goes to the tab used
-before at once. The mechanics are one pure function (`features/shell/tab-switch.ts`); the list is a
+before at once. Opened by a click on the count, the list is pinned: letting go of ⌃ opens nothing,
+the arrows move the selection and Enter opens it, a row pressed opens that one, and Escape, a click
+outside or the count again closes it. The mechanics are one pure function (`features/shell/tab-switch.ts`); the list is a
 stock `Popover` holding a `Command` list (`tab-switcher.tsx`) that takes no focus, so focus stays in
 the editor or terminal it was in. ⌃Tab reaches it from there because its row runs before the
 focused widget sees the key ([keyboard shortcuts](keyboard-shortcuts.md)).
@@ -287,10 +294,11 @@ play ranked live. Sign-in and adding a vault run the same board as background on
 - A view's content renders through its own host, never as a child of a layout slot, or a layout
   change remounts it.
 - `useSessionTabs` remembers the selection it last wrote, so its own writes never open a tab.
-- Only the active entry's views are mounted, so a document or code file switched back to opens
-  where it was left: its caret and scroll are kept per vault and path as they move
-  (`state/view-memory.ts`), for the app's lifetime and never on disk. A Holi link to a heading
-  lands on the heading instead.
+- Retained open views preserve their mounted instances across tab switches. After disposal,
+  a document or code file can restore its caret and scroll from lightweight per-vault/path
+  position memory (`state/view-memory.ts`). This lasts for the app's lifetime and never goes
+  to disk; it is separate from retaining a mounted view. A Holi link to a heading lands on
+  the heading instead.
 
 ## Rejected
 

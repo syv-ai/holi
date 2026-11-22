@@ -6,6 +6,7 @@
  */
 import {
   seedFolder,
+  shellJobId,
   shellReadBridgeEnv,
   type SeedContribution,
   type SettingsFragment,
@@ -33,14 +34,29 @@ const SETTINGS = '.claude/settings.json'
  * (parsed, never sourced) and keyed by the job id, the way `turn-signal.mjs`
  * does it. The post is detached with its output discarded, so a slow or absent
  * Holi never holds up the footer, and outside Holi the command only prints.
- * @public exported for its test
  */
-export const STATUS_LINE = [
+const LEGACY_STATUS_LINE = [
   'input=$(cat)',
   `printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")'`,
   `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi; fi`,
   'true',
 ].join('; ')
+
+const STATUS_FORMATTER = `let s=\"\";process.stdin.setEncoding(\"utf8\");process.stdin.on(\"data\",c=>s+=c);process.stdin.on(\"end\",()=>{try{const x=JSON.parse(s);const m=x?.model?.display_name;const n=x?.context_window?.used_percentage;const a=[];if(typeof m===\"string\"&&m)a.push(m);if(typeof n===\"number\"&&Number.isFinite(n))a.push(Math.floor(n+0.5)+\"% context\");process.stdout.write(a.join(\" · \"))}catch{}})`
+
+/** @public exported for its test */
+export const POSIX_STATUS_LINE = LEGACY_STATUS_LINE
+
+/** @public exported for its cross-platform shell fixture */
+export const WINDOWS_STATUS_LINE = [
+  'input=$(cat)',
+  `if command -v jq >/dev/null 2>&1; then printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")' 2>/dev/null; else printf '%s' "$input" | node -e '${STATUS_FORMATTER}'; fi`,
+  `${shellJobId('win32')}; case "$job" in ???????? ) case "$job" in *[!0-9a-f]* ) job= ;; esac ;; *) job= ;; esac; if [ -n "$job" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=$job" >/dev/null 2>&1 & fi; fi`,
+  'true',
+].join('; ')
+
+/** @public exported for its test */
+export const STATUS_LINE = process.platform === 'win32' ? WINDOWS_STATUS_LINE : POSIX_STATUS_LINE
 
 /** Claude Code's bundled skills a vault agent has no use for: code review,
  *  app launching, API and workflow authoring, Claude Code configuration, and
@@ -125,6 +141,28 @@ const SETTINGS_BASE = {
 
 /** The agent's own hooks and rules. */
 const AGENT_SETTINGS: SettingsFragment = {
+  // Google's leftovers, retired here because only an enabled plugin's fragment
+  // is merged, and a vault with Google switched off needs them gone too.
+  retired: {
+    // The two copies of the gate Holi wrote inline. An `ask` from any hook wins,
+    // so each would keep prompting whatever the current gate says; but in a
+    // vault whose shipped gate predates `respond` and `api`, one is all that
+    // asks about those, so it stays until `holi skills update` brings the gate.
+    hooks: {
+      sha256: [
+        'c6d21ee4a373b314cb3631d9513b85b7dac647cb4870bdc88d6ba874f52e65d2',
+        '9a78405b52906801ba40755988142fe67ffce3cb67b6eecfbf289fad92b05c07',
+      ],
+      replacedBy: hookScript('google-send-gate'),
+      holding: ['respond:', 'api:'],
+    },
+    // These reach nobody and have an undo.
+    ask: [
+      'Bash(holi google archive:*)',
+      'Bash(holi google trash:*)',
+      'Bash(holi google unschedule:*)',
+    ],
+  },
   hooks: [
     // Injects the focused note's path into each prompt.
     { event: 'UserPromptSubmit', script: 'user-prompt-submit' },
@@ -191,7 +229,45 @@ export const agentSettings = (
   existing: string | null,
   fragments: readonly SettingsFragment[],
   has: (rel: string) => boolean,
-): string | null => mergeClaudeSettings(existing, SETTINGS_BASE, fragments, has)
+  read?: (rel: string) => string | null,
+  platform: NodeJS.Platform = process.platform,
+): string | null => {
+  let migrated = existing
+  if (existing !== null) {
+    try {
+      const parsed: unknown = JSON.parse(existing)
+      if (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        (parsed as { statusLine?: unknown }).statusLine !== null &&
+        typeof (parsed as { statusLine?: unknown }).statusLine === 'object'
+      ) {
+        const statusLine = (parsed as { statusLine: { type?: unknown; command?: unknown } })
+          .statusLine
+        if (
+          platform === 'win32' &&
+          statusLine.type === 'command' &&
+          statusLine.command === LEGACY_STATUS_LINE
+        ) {
+          statusLine.command = WINDOWS_STATUS_LINE
+          migrated = JSON.stringify(parsed, null, 2) + '\n'
+        }
+      }
+    } catch {
+      // Keep malformed settings untouched; Claude Code owns their interpretation.
+    }
+  }
+  const base = {
+    ...SETTINGS_BASE,
+    statusLine: {
+      type: 'command',
+      command: platform === 'win32' ? WINDOWS_STATUS_LINE : POSIX_STATUS_LINE,
+    },
+  }
+  const merged = mergeClaudeSettings(migrated, base, fragments, has, read)
+  return merged ?? (migrated !== existing ? migrated : null)
+}
 
 export const claudeSeed: SeedContribution = {
   id: 'agent',
@@ -200,7 +276,7 @@ export const claudeSeed: SeedContribution = {
   shipped: folder.shipped,
   fragments: { [SETTINGS]: [AGENT_SETTINGS] },
   merge: {
-    [SETTINGS]: async (existing, fragments, has) => {
+    [SETTINGS]: async (existing, fragments, has, read) => {
       const all = fragments as SettingsFragment[]
       const present = new Set<string>()
       for (const hook of all.flatMap((f) => f.hooks ?? [])) {
@@ -208,7 +284,17 @@ export const claudeSeed: SeedContribution = {
           present.add(hookScript(hook.script))
         }
       }
-      return agentSettings(existing, all, (rel) => present.has(rel))
+      const replacements = new Map<string, string | null>()
+      for (const hooks of all.flatMap((f) => f.retired?.hooks ?? [])) {
+        replacements.set(hooks.replacedBy, await read(hooks.replacedBy))
+      }
+      return agentSettings(
+        existing,
+        all,
+        (rel) => present.has(rel),
+        (rel) => replacements.get(rel) ?? null,
+        process.platform,
+      )
     },
   },
 }

@@ -5,7 +5,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./path-safety-node": "./src/path-safety-node.ts"
+    "./path-safety-node": "./src/path-safety-node.ts",
+    "./vault-format": "./src/vault-format.ts",
+    "./wiki-links": "./src/wiki-links.ts",
+    "./mobile-path-safety": "./src/mobile-path-safety.ts"
   },
   "scripts": {
     "test": "vitest run",

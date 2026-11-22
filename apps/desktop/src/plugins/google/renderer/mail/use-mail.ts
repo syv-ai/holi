@@ -12,6 +12,8 @@ import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import { activeRemoteAtom } from '@/plugin-api'
 import { googleCap } from '../google-cap'
+import { useMailMarkers } from '../use-mail-markers'
+import { useMailMarkerActions } from '../use-mail-marker-actions'
 import { explainWriteFailure, isDisconnected, messageOf } from '../google-errors'
 import type { MailAddress, ThreadMessage } from '../mail-types'
 import type { MailFolder } from './data'
@@ -356,6 +358,31 @@ export function useMail(account: string | null) {
   /** The open thread's row as the list has it now (flags move there), else
    *  as it was when opened. */
   const openRow = threads.find((thread) => thread.id === openId) ?? openSummary
+  const markers = useMailMarkers({
+    remote,
+    accountSub: account,
+    ids: [...threads.map((thread) => thread.id), ...(openId === null ? [] : [openId])],
+  })
+  const markerActions = useMailMarkerActions({
+    remote,
+    accountSub: account,
+    activeThreadId: openId,
+    reconcile: (id) => markers.invalidate([id]),
+    onFailure: (cause) => setWriteError(explainWriteFailure(cause)),
+    onChange: (id, state) => {
+      listGeneration.current++
+      setList((previous) =>
+        previous.kind === 'ready'
+          ? {
+              ...previous,
+              threads: previous.threads.map((thread) =>
+                thread.id === id ? { ...thread, starred: state.starred } : thread,
+              ),
+            }
+          : previous,
+      )
+    },
+  })
 
   const setFolder = (next: MailFolder) => {
     setFolderState(next)
@@ -397,9 +424,24 @@ export function useMail(account: string | null) {
     closeThread,
     reloadThread,
     load,
-    refresh,
+    refresh: () => {
+      refresh()
+      markers.invalidate()
+    },
     setRead,
-    setStarred,
+    setStarred: async (id: string, starred: boolean) => {
+      markerActions.invalidate(id)
+      const result = await setStarred(id, starred)
+      markers.invalidate([id])
+      return result
+    },
+    activateMarker: (id: string, starred: boolean) => {
+      const status = markers.get(id)
+      markerActions.activate(id, starred, status.kind === 'ready' ? status.marker : null)
+    },
+    markerActions,
+    retryMarker: (id: string) => markerActions.retry(id),
+    markers,
     removeThreads,
     call,
   }

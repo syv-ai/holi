@@ -21,11 +21,11 @@ import {
   type ThemeBlock,
   type ThemeMode,
 } from '@holi/shared'
-import { bundleFromAppHost } from '../shared/bundle'
+import { appLeaseFromHost, bundleFromAppHost } from '../shared/bundle'
 import { mimeFor, readVaultTheme, type PluginScheme } from '../../../main/plugin-api'
 import { COMMAND_PARAM } from '../shared/commands'
 import { COMMAND_NAME } from '../shared/manifest'
-import { BRIDGE_JS, COMMAND_JS } from './bridge-script'
+import { APP_HINTS_JS, BRIDGE_JS, COMMAND_JS } from './bridge-script'
 import { manifestOf } from './grants'
 import { appBaseTokens, paletteFor } from './tokens'
 
@@ -37,9 +37,13 @@ import { appBaseTokens, paletteFor } from './tokens'
  * to `index.html`.
  * @public exported for its test
  */
-export function parseAppUrl(
-  url: string,
-): { bundle: string; rel: string; mode: 'light' | 'dark'; command: string | null } | null {
+export function parseAppUrl(url: string): {
+  bundle: string
+  token: string | null
+  rel: string
+  mode: 'light' | 'dark'
+  command: string | null
+} | null {
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -47,8 +51,10 @@ export function parseAppUrl(
     return null
   }
   if (parsed.protocol !== 'holi-app:') return null
-  const bundle = bundleFromAppHost(parsed.hostname)
+  const host = appLeaseFromHost(parsed.hostname)
+  const bundle = host?.bundle ?? bundleFromAppHost(parsed.hostname)
   if (bundle === null) return null
+  const token = host?.token ?? null
   let rel: string
   try {
     rel = decodeURIComponent(parsed.pathname).replace(/^\/+/, '')
@@ -59,7 +65,7 @@ export function parseAppUrl(
   const mode = parsed.searchParams.get('mode') === 'light' ? 'light' : 'dark'
   // `?command=` on the bare host is the runner for one of its slash commands.
   const command = rel === '' ? parsed.searchParams.get(COMMAND_PARAM) : null
-  return { bundle, rel: rel === '' ? 'index.html' : rel, mode, command }
+  return { bundle, token, rel: rel === '' ? 'index.html' : rel, mode, command }
 }
 
 /**
@@ -153,7 +159,7 @@ function cssSafe(value: string): string {
  * palette without knowing there is such a thing as a theme.
  * @public exported for its test
  */
-export function appHeadHtml(block: ThemeBlock, mode: ThemeMode): string {
+export function appHeadHtml(block: ThemeBlock, mode: ThemeMode, nonce = ''): string {
   // Base first, the vault's overrides second, so the later declaration wins. A
   // vault whose file leaves a token out still gets a full palette, which is
   // what makes the authoring skill's `var(--primary)` advice true.
@@ -161,7 +167,7 @@ export function appHeadHtml(block: ThemeBlock, mode: ThemeMode): string {
   const vars = Object.entries(themeBlockToVars({ ...paletteFor(tokens), ...tokens }))
     .map(([name, value]) => `${cssSafe(name)}:${cssSafe(value)}`)
     .join(';')
-  return `<style>:root{${vars}}</style><script>${BRIDGE_JS}</script>`
+  return `<meta name="holi-app-document-nonce" content="${nonce}"><style>:root{${vars}}</style><script>${BRIDGE_JS}</script><script>${APP_HINTS_JS}</script>`
 }
 
 /**
@@ -217,45 +223,79 @@ export const appScheme: PluginScheme = {
   scheme: 'holi-app',
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
   frame: true,
-  async handle(request, ctx) {
-    const vault = ctx.active()
-    if (vault === null) return new Response(null, { status: 404 })
+  async ownerForRequest(request, ctx) {
     const parsed = parseAppUrl(request.url)
-    if (parsed === null) return new Response(null, { status: 400 })
+    const win = ctx.windowForRequest?.(request)
+    if (
+      parsed === null ||
+      parsed.token === null ||
+      win === null ||
+      win === undefined ||
+      ctx.appFrames === undefined
+    )
+      return null
+    const frame = ctx.frameForRequest?.(request) ?? null
+    if (ctx.frameForRequest !== undefined && frame === null) return null
+    const lease = ctx.appFrames.resolve(parsed.token, win, frame)
+    if (lease === null || lease.bundle !== parsed.bundle) return null
+    ctx.appFrameLease = lease
+    return lease
+  },
+  async handle(request, ctx) {
+    const lease = ctx.appFrameLease ?? null
+    const win = ctx.windowForRequest?.(request)
+    if (lease === null || win === null || win === undefined || !lease.valid(win))
+      return new Response(null, { status: 404 })
+    const vault = { remote: lease.remote, root: lease.root }
+    const parsed = parseAppUrl(request.url)
+    if (parsed === null || parsed.token !== lease.token || parsed.bundle !== lease.bundle)
+      return new Response(null, { status: 404 })
+    const current = (): boolean => lease.valid(win) && ctx.appFrameLease === lease
 
     // A command's runner is made here, not read: only the app's manifest says
     // which script it is. Its own entries only: `constructor` is a name too.
     if (parsed.command !== null) {
+      if (!lease.claimDocument()) return new Response(null, { status: 404 })
       const commands = (await manifestOf(vault.root, parsed.bundle))?.commands
+      if (!current()) return new Response(null, { status: 404 })
       const name = parsed.command
       if (commands === undefined || !COMMAND_NAME.test(name) || !Object.hasOwn(commands, name)) {
         return new Response(null, { status: 404 })
       }
       const spec = commands[name]!
       const theme = await readVaultTheme(vault.root)
-      const head = appHeadHtml(theme[parsed.mode], parsed.mode)
+      if (!current()) return new Response(null, { status: 404 })
+      const head = appHeadHtml(theme[parsed.mode], parsed.mode, lease.nonce)
+      if (!current()) return new Response(null, { status: 404 })
       return new Response(commandRunnerHtml(head, spec.script), {
         headers: { 'content-type': appMimeFor('runner.html') },
       })
     }
     const abs = await servableAppFile(vault.root, parsed.bundle, parsed.rel)
+    if (!current()) return new Response(null, { status: 404 })
     if (abs === null) return new Response(null, { status: 403 })
 
     // The entry document is the one file that is rewritten: it carries the
     // theme and the bridge. Everything else is served byte-for-byte.
-    if (parsed.rel === 'index.html') {
+    if (parsed.rel === 'index.html' || /\.html?$/i.test(parsed.rel)) {
+      if (!lease.claimDocument()) return new Response(null, { status: 404 })
       const html = await readFile(abs, 'utf8').catch(() => null)
+      if (!current()) return new Response(null, { status: 404 })
       if (html === null) return new Response(null, { status: 404 })
       const theme = await readVaultTheme(vault.root)
+      if (!current()) return new Response(null, { status: 404 })
       // The renderer's mode rides in on the URL (`?mode=`).
       const block = theme[parsed.mode]
-      return new Response(injectAppHead(html, appHeadHtml(block, parsed.mode)), {
+      if (!current()) return new Response(null, { status: 404 })
+      const head = appHeadHtml(block, parsed.mode, lease.nonce)
+      return new Response(injectAppHead(html, head), {
         headers: { 'content-type': appMimeFor(abs) },
       })
     }
 
     try {
       const bytes = await readFile(abs)
+      if (!current()) return new Response(null, { status: 404 })
       return new Response(bytes, { headers: { 'content-type': appMimeFor(abs) } })
     } catch {
       return new Response(null, { status: 404 })

@@ -94,12 +94,14 @@ export interface TurnRouteDeps {
   /** A turn began or ended. At an end, `pending` is how much the session
    *  said was still in flight, 0 meaning done; null when it does not say. An
    *  end may answer the tree of the settle commit Holi made for the turn, for
-   *  the Stop hook to count the next prompt's changes from. */
+   *  the Stop hook to count the next prompt's changes from. At a start, `pid`
+   *  is the session's own process, when its hook says. */
   onTurn(
     remote: string,
     id: string,
     active: boolean,
     pending: number | null,
+    pid?: number,
   ): void | Promise<string | null>
   /** A status report (`status` reads it). */
   onStatus?(remote: string, id: string, status: unknown): void
@@ -135,7 +137,7 @@ interface BackgroundCapability {
   watch(configDir: string, onChange: () => void, log: (msg: string) => void): () => void
   /** Add a message to a running session's conversation through the channel
    *  its hooks reported. Throws a `CapabilityError` when it is not taken. */
-  message(channel: SessionChannel, text: string): Promise<void>
+  message(channel: SessionChannel, text: string, signal?: AbortSignal): Promise<void>
 }
 
 /** What a job's output said, one line of it at a time. */
@@ -213,9 +215,9 @@ export interface AgentProvider {
   /** What the provider writes into a vault. */
   seed?: SeedContribution
   /** A process Holi ran on one of its state folders (a job's, a fenced
-   *  session's) has exited: take back what the agent keeps of the person's,
-   *  such as a sign-in it refreshed there. Never throws. */
-  release?(state: string): Promise<void>
+   *  session's) has exited: take back what the agent keeps of the person's,   * such as a sign-in it refreshed there. Best effort except on deadline:
+   * after abort, do not begin another mutation and reject with signal.reason. */
+  release?(state: string, signal?: AbortSignal): Promise<void>
   /** Why a terminal cannot open on `opts`, in words, or null when it can:
    *  a harness a person added that was given no way to start on a message
    *  or to pick up a conversation. Absent: it takes every option. */

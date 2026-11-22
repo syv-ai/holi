@@ -8,7 +8,7 @@
  * rest of Holi uses, then the vault is re-read. Nothing here keeps a copy of
  * a task: a drag keeps its arrangement only until its write lands.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { columnFor, isOverdue, openingStatus, type Task } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
@@ -43,12 +43,14 @@ import { KanbanBoard } from './board/kanban-board'
 import { Navbar } from './navbar/planning-navbar'
 import { EditProjectDialog } from './edit-project-dialog'
 import { NewTaskDialog, type NewTaskInput } from './new-task-dialog'
+import type { InlineAddState } from './inline-add'
 import { Overview, type ProjectState } from './overview'
 import { ProjectStatusBadge } from './task-bits'
 import { usePlanningNotices } from './planning-notices'
 import { reportError } from './report-error'
 import { NoMatches, RegionEmpty, TasksSkeleton } from './states'
 import { usePlanningBoardDrag } from './use-planning-board-drag'
+import { PlanningVisibilityContext } from './planning-visibility'
 import { PanelBody } from './panel-body'
 import { PlanningToolbar } from './planning-toolbar'
 
@@ -67,11 +69,17 @@ const TABS: { value: PlanningTab; label: string; icon: React.ReactNode }[] = [
   { value: 'table', label: 'Table', icon: <TableIcon aria-hidden="true" /> },
 ]
 
-export function PlanningView({
+function PlanningViewContent({
   onOpenTask,
+  visible = true,
+  focused = visible,
 }: {
   /** Opens a vault path the way the shell opens a document. */
   onOpenTask: (path: string) => void
+  /** Hidden retained tabs keep state but do not own active UI. */
+  visible?: boolean
+  /** Displayed but unfocused split members must not take foreground focus. */
+  focused?: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
@@ -93,6 +101,10 @@ export function PlanningView({
 
   const [newTask, setNewTask] = useState<{ status: string } | null>(null)
   const [editingProject, setEditingProject] = useState(false)
+  const [inlineAddState, setInlineAddState] = useState<Record<string, InlineAddState>>({})
+  const boardScrollPosition = useRef({ top: 0, left: 0 })
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
 
   const vaultName =
     vaults.find((v) => v.remote === remote)?.name ?? remote?.split('/').at(-1) ?? 'Vault'
@@ -203,6 +215,7 @@ export function PlanningView({
               onOpenTask={onOpenTask}
               onShowStatus={() => setTab('list')}
               onNewTask={() => openNewTask()}
+              visible={visible}
             />
           </PanelBody>
         </TabsContent>
@@ -217,12 +230,21 @@ export function PlanningView({
               noTasksYet
             ) : noMatches ? (
               nothingMatches
-            ) : (
+            ) : !visible ? null : (
               <KanbanBoard
                 statuses={statuses}
                 {...board}
                 context={{ today, isOverdue: overdue, onOpenTask }}
+                scrollPosition={boardScrollPosition.current}
+                onScrollPositionChange={(position) => {
+                  if (visibleRef.current) boardScrollPosition.current = position
+                }}
                 onAddTask={addTask}
+                inlineAddState={inlineAddState}
+                onInlineAddStateChange={(status, state) =>
+                  setInlineAddState((current) => ({ ...current, [status]: state }))
+                }
+                focused={focused}
               />
             )}
           </PanelBody>
@@ -258,26 +280,39 @@ export function PlanningView({
         ))}
       </Navbar>
 
-      {newTask !== null ? (
-        <NewTaskDialog
-          open
-          onOpenChange={(open) => !open && setNewTask(null)}
-          statuses={statuses}
-          defaultStatus={newTask.status}
-          today={today}
-          onCreate={createFromDialog}
-        />
-      ) : null}
-      {editingProject ? (
-        <EditProjectDialog
-          open
-          onOpenChange={setEditingProject}
-          project={project ?? { status: 'planning', milestones: [], about: '' }}
-          fallbackName={vaultName}
-          people={people}
-          onSave={saveProject}
-        />
-      ) : null}
+      <NewTaskDialog
+        open={newTask !== null}
+        visible={visible}
+        focused={focused}
+        onOpenChange={(open) => !open && setNewTask(null)}
+        statuses={statuses}
+        defaultStatus={newTask?.status ?? openingStatus(statuses).id}
+        today={today}
+        onCreate={createFromDialog}
+      />
+      <EditProjectDialog
+        open={editingProject}
+        visible={visible}
+        focused={focused}
+        onOpenChange={(open) => !open && setEditingProject(false)}
+        project={project ?? { status: 'planning', milestones: [], about: '' }}
+        fallbackName={vaultName}
+        people={people}
+        onSave={saveProject}
+      />
     </div>
+  )
+}
+
+export function PlanningView(props: {
+  onOpenTask: (path: string) => void
+  visible?: boolean
+  focused?: boolean
+}) {
+  const visible = props.visible ?? true
+  return (
+    <PlanningVisibilityContext.Provider value={visible}>
+      <PlanningViewContent {...props} />
+    </PlanningVisibilityContext.Provider>
   )
 }

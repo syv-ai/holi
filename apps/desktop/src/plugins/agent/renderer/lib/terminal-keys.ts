@@ -39,6 +39,13 @@ export function terminalKeyAction(
   if (e.key === 'Enter' && e.shiftKey && !mod)
     return { kind: 'write', seq: provider === 'pi' ? '\x1b[13;2u' : '\x1b\r' }
 
+  // Pi's fullscreen TUI uses PageUp/PageDown for transcript navigation; macOS
+  // trackpads and keyboards commonly expose that action as ⌥↑/↓ instead.
+  if (provider === 'pi' && e.altKey && !mod && !e.shiftKey) {
+    if (e.key === 'ArrowUp') return { kind: 'write', seq: '\x1b[5~' }
+    if (e.key === 'ArrowDown') return { kind: 'write', seq: '\x1b[6~' }
+  }
+
   // ⌥←/→/⌫ — word motion and word delete, the readline meta bindings.
   if (e.altKey && !mod) {
     if (e.key === 'ArrowLeft') return { kind: 'write', seq: '\x1bb' }

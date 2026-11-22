@@ -27,6 +27,8 @@ import { trpc } from '@/lib/trpc'
 import { DEFAULT_VAULT_NAME } from '@/state/onboarding-flow'
 import { OwnerAvatar, type Owner } from './owner-avatar'
 import { sessionAtom } from '@/state/session'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 interface Props {
   name: string
@@ -42,6 +44,7 @@ interface Props {
 
 export function NamingAct({ name, owner, slug, error, active, onName, onOwner, onJoin }: Props) {
   const session = useAtomValue(sessionAtom)
+  const vim = useVimField('vault-name', name)
   const [orgs, setOrgs] = useState<Owner[]>([])
   const nameRef = useRef<HTMLInputElement>(null)
 
@@ -79,6 +82,7 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
           // count characters; `--name-len` hands it the count).
           style={{ '--name-len': Math.max(name.length, 10) } as CSSProperties}
           value={name}
+          {...vim.vimFieldProps}
           onChange={(e) => onName(e.target.value)}
           placeholder={DEFAULT_VAULT_NAME}
           aria-label="Vault name"
@@ -87,6 +91,7 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
           autoCapitalize="off"
           maxLength={40}
         />
+        <VimFieldMode mode={vim.vimFieldMode} />
         <div className="obrit-input-underline" />
         {/* A URL reads left to right in any language. */}
         <div className="obrit-path" dir="ltr">

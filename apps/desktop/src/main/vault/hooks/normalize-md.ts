@@ -14,6 +14,7 @@
 import { readFile } from 'node:fs/promises'
 import { normalizeText, vaultRelPath, type Normalizer } from '@holi/shared'
 import { absPathFor, writeAtomic } from '../vault-files'
+import { scratchpadContentPaths } from '../scratchpad'
 import type { StagedChanges } from './staged'
 import type { TransformResult } from './relink'
 
@@ -24,9 +25,10 @@ export async function normalizeMd(
 ): Promise<TransformResult> {
   const targets = [...staged.added, ...staged.modified, ...staged.renamed.map((r) => r.to)]
   const changed: string[] = []
+  const protectedPaths = scratchpadContentPaths(staged.renamed)
 
   for (const path of [...new Set(targets)].sort()) {
-    if (!path.endsWith('.md')) continue
+    if (!path.endsWith('.md') || protectedPaths.has(path)) continue
     const rel = vaultRelPath(path)
     const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
     if (text === null) continue

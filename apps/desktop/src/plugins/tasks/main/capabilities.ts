@@ -8,7 +8,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
-import { completeTask, isClosedStatus } from '@holi/shared'
+import { completeTask, hasLogin, isClosedStatus, isOverdue } from '@holi/shared'
 import {
   isPrivateTask,
   isTaskFilePath,
@@ -32,7 +32,6 @@ import {
   CapabilityError,
   flagParam,
   knownPath,
-  noParams,
   paramsObject,
   pathParams,
   readableOrNull,
@@ -180,7 +179,7 @@ async function createTaskFile(
       if ((await readFile(absPathFor(ctx.root, twin), 'utf8').catch(() => null)) !== null) {
         return false
       }
-      await writeAtomic(ctx.root, rel, text)
+      await writeAtomic(ctx.root, rel, text, ctx.assertCurrent)
       return true
     })
     if (created) return rel
@@ -290,20 +289,54 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
 
     'tasks.list': cap({
       doors: ['app', 'cli'],
-      cli: { args: [], summary: 'every task: status, title, path, and private for a private one' },
-      params: noParams,
+      cli: {
+        args: [],
+        flags: ['overdue', 'open'],
+        values: ['assignee', 'due'],
+        summary:
+          'list tasks; --due today and --overdue filter by due date; --assignee <login> and --open filter assignments and status',
+      },
+      params: (raw): { due?: string; overdue?: boolean; assignee?: string; open?: boolean } => {
+        const p = paramsObject(raw)
+        const due = optionalString(p, 'due')
+        if (due !== undefined && due !== 'today') {
+          throw new CapabilityError('BAD_REQUEST', 'due must be today')
+        }
+        const overdue = flagParam(p, 'overdue')
+        const assignee = optionalString(p, 'assignee')
+        const open = flagParam(p, 'open')
+        return { due, overdue, assignee, open }
+      },
       // An app is told only the tasks it may read, as `docs.list` tells it
       // only the notes: a task's path and title are its content too.
-      run: async (ctx): Promise<Task[]> => {
+      run: async (ctx, filters): Promise<Task[]> => {
         const tasks = snapshotTasks(await ctx.snapshot()).items
-        return ctx.bundle === null ? tasks : tasks.filter((t) => readableOrNull(t.path) !== null)
+        const readable =
+          ctx.bundle === null ? tasks : tasks.filter((t) => readableOrNull(t.path) !== null)
+        const today = deps.today()
+        const statuses = await readVaultStatuses(ctx.root)
+        const now = new Date()
+        const localNow = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+        return readable.filter((task) => {
+          if (filters.assignee !== undefined && !hasLogin(task.assignees, filters.assignee))
+            return false
+          if (filters.open && isClosedStatus(statuses, task.status)) return false
+          if (filters.due === 'today' && task.due?.slice(0, 10) !== today) return false
+          if (
+            filters.overdue &&
+            (!task.due || isClosedStatus(statuses, task.status) || !isOverdue(task.due, localNow))
+          )
+            return false
+          return true
+        })
       },
       // A private task says so: it is on this machine only, and an agent
       // reporting tasks to a teammate should know which ones they cannot see.
       text: (tasks) =>
         tasks
           .map(
-            (t) => `${t.status}\t${t.title}\t${t.path}${isPrivateTask(t.path) ? '\tprivate' : ''}`,
+            (t) =>
+              `${t.status}\t${t.title}\t${t.path}${t.due ? `\tdue ${t.due}` : ''}${isPrivateTask(t.path) ? '\tprivate' : ''}`,
           )
           .join('\n'),
     }),
@@ -327,7 +360,9 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           ctx.bundle !== null
             ? await writableFile(ctx, appTaskPath(rel))
             : await lockPath(ctx.root, rel)
-        const result = await withFileLock(abs, () => taskDoneOp(ctx.root, rel, deps.today()))
+        const result = await withFileLock(abs, () =>
+          taskDoneOp(ctx.root, rel, deps.today(), ctx.assertCurrent),
+        )
         if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
         return result
       },
@@ -373,7 +408,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
         }
         return withFileLock(abs, async () => {
           const next = await patched(ctx.root, await readTask(ctx.root, rel), patch)
-          await writeAtomic(ctx.root, rel, serializeTaskFile(next))
+          await writeAtomic(ctx.root, rel, serializeTaskFile(next), ctx.assertCurrent)
           return next
         })
       },

@@ -17,33 +17,34 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { cp, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
-import { basename, dirname, join, relative, sep } from 'node:path'
+import { basename } from 'node:path'
 import { isAppBundlePath, type PluginManifest } from '@holi/shared'
 import { CapabilityError } from '../../../main/plugin-api'
+import { transactSkillRefresh, type SkillSnapshot } from './skill-transaction'
+import { publishApps } from './app-publication'
 
-/** Where a vault keeps Claude Code's skills. */
-const SKILLS_DIR = join('.claude', 'skills')
-
-const inside = (root: string, path: string) => {
-  const rel = relative(root, path)
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep) && rel !== path)
-}
-
-/** Every path under `dir`, resolved, must stay inside `root`. */
-async function assertContained(root: string, dir: string): Promise<void> {
-  const real = await realpath(dir)
-  if (!inside(root, real))
-    throw new CapabilityError('BAD_REQUEST', `${dir} points outside the plugin`)
-  if (!(await stat(real)).isDirectory()) return
-  for (const entry of await readdir(real)) await assertContained(root, join(real, entry))
-}
-
-/** Copy `from`, a folder inside the plugin at `root`, to `to`. */
-async function copyFromPlugin(root: string, from: string, to: string): Promise<void> {
-  await assertContained(root, from)
-  await mkdir(dirname(to), { recursive: true })
-  await cp(from, to, { recursive: true, dereference: true })
+/** Refresh only declared skill folders after preflighting every source and destination. */
+export async function refreshSkills(
+  manifest: Pick<PluginManifest, 'skills'>,
+  codeDir: string,
+  vaultRoot: string,
+  options: {
+    force: boolean
+    guard: () => void | Promise<void>
+    expectedSnapshots?: readonly SkillSnapshot[]
+    validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
+    retainOriginals?: boolean
+  },
+): Promise<string[]> {
+  const names = (manifest.skills ?? []).map((path) => basename(path))
+  if (new Set(names.map((name) => name.toLocaleLowerCase('en-US'))).size !== names.length)
+    throw new CapabilityError('BAD_REQUEST', 'skill paths have colliding destination names')
+  return transactSkillRefresh(
+    (manifest.skills ?? []).map((path) => ({ path, name: basename(path) })),
+    codeDir,
+    vaultRoot,
+    options,
+  )
 }
 
 /**
@@ -54,20 +55,28 @@ export async function writeSkills(
   manifest: Pick<PluginManifest, 'skills'>,
   codeDir: string,
   vaultRoot: string,
+  options: {
+    guard?: () => void | Promise<void>
+    expectedSnapshots?: readonly SkillSnapshot[]
+    validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
+  } = {},
 ): Promise<string[]> {
-  const root = await realpath(codeDir)
-  const written: string[] = []
-  for (const skill of manifest.skills ?? []) {
-    const from = join(root, skill)
-    const present = await stat(join(from, 'SKILL.md')).catch(() => null)
-    if (present === null) throw new CapabilityError('BAD_REQUEST', `skill ${skill} has no SKILL.md`)
-    const name = basename(skill)
-    const to = join(vaultRoot, SKILLS_DIR, name)
-    await rm(to, { recursive: true, force: true })
-    await copyFromPlugin(root, from, to)
-    written.push(`.claude/skills/${name}`)
-  }
-  return written
+  // Plugins without skills must not create skill transaction state.
+  if ((manifest.skills ?? []).length === 0) return []
+  // Use the same bounded snapshot, canonical-path and rollback safeguards as
+  // the explicit CLI refresh. A pin/update can replace complete folders, but
+  // never by deleting the only copy before the replacement is ready.
+  return refreshSkills(manifest, codeDir, vaultRoot, {
+    force: true,
+    guard: options.guard ?? (() => {}),
+    retainOriginals: true,
+    ...(options.expectedSnapshots === undefined
+      ? {}
+      : { expectedSnapshots: options.expectedSnapshots }),
+    ...(options.validateSnapshot === undefined
+      ? {}
+      : { validateSnapshot: options.validateSnapshot }),
+  })
 }
 
 /**
@@ -78,20 +87,17 @@ export async function seedApps(
   manifest: Pick<PluginManifest, 'apps'>,
   codeDir: string,
   vaultRoot: string,
+  options: {
+    guard?: () => void | Promise<void>
+    signal?: AbortSignal
+    release?: { root: string; commit: string; sourcePath: string }
+  } = {},
 ): Promise<string[]> {
-  const root = await realpath(codeDir)
-  const written: string[] = []
-  for (const app of manifest.apps ?? []) {
-    const name = basename(app)
-    if (!isAppBundlePath(name))
+  const apps = manifest.apps ?? []
+  if (!apps.length) return []
+  for (const app of apps) {
+    if (!isAppBundlePath(basename(app)))
       throw new CapabilityError('BAD_REQUEST', `${app} is not a vault app's folder`)
-    const from = join(root, app)
-    if ((await stat(join(from, 'index.html')).catch(() => null)) === null)
-      throw new CapabilityError('BAD_REQUEST', `app ${app} has no index.html`)
-    const to = join(vaultRoot, name)
-    if ((await stat(to).catch(() => null)) !== null) continue
-    await copyFromPlugin(root, from, to)
-    written.push(name)
   }
-  return written
+  return publishApps(apps, codeDir, vaultRoot, options)
 }

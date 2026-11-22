@@ -24,6 +24,8 @@ export interface FakeHoli {
   pushSyncState(state: SyncState): void
   pushHeldBack(files: HeldBackFile[]): void
   pushCommitted(paths: string[] | null): void
+  pushOpen(request: { remote: string; path: string; heading?: string }): void
+  pushNavigate(request: { remote: string; plugin: string; name: string; payload: unknown }): void
   /** Main emitting `name` for the plugin `id`. */
   pushPluginEvent(id: string, event: { remote: string; name: string; payload: unknown }): void
   /** What the renderer sent each plugin's main side, in order. */
@@ -48,6 +50,9 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const flushSubs = new Set<(request: { id: string }) => void>()
   const openSubs = new Set<
     (p: { remote: string; path: string; heading?: string; focus?: boolean }) => void
+  >()
+  const navigateSubs = new Set<
+    (p: { remote: string; plugin: string; name: string; payload: unknown }) => void
   >()
   const pluginSubs = new Map<string, Set<(e: unknown) => void>>()
   const pluginSent: { id: string; event: unknown }[] = []
@@ -83,6 +88,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
       onFlushCancelled: subscribe(new Set<(request: { id: string }) => void>()),
       flushDone: (id: string, error?: string) => onFlushed?.(id, error),
       onOpen: subscribe(openSubs),
+      onNavigate: subscribe(navigateSubs),
       openReady: () => {},
       onLocate: subscribe(new Set<(r: { id: string; path: string }) => void>()),
       located: () => {},
@@ -135,6 +141,12 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     },
     pushCommitted: (paths) => {
       for (const cb of committedSubs) cb(paths)
+    },
+    pushOpen: (request) => {
+      for (const cb of openSubs) cb(request)
+    },
+    pushNavigate: (request) => {
+      for (const cb of navigateSubs) cb(request)
     },
     pushPluginEvent: (id, event) => {
       for (const cb of pluginSubs.get(id) ?? []) cb(event)

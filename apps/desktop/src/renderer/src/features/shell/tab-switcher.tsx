@@ -1,5 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react'
 
+import { Button } from '@/components/ui/button'
 import { Command, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { useShortcutHandlers } from '@/hooks/use-shortcuts'
@@ -13,6 +22,27 @@ export interface SwitcherRow {
   content: ReactNode
 }
 
+const SwitcherToggle = createContext<{ toggle: () => void; open: boolean } | null>(null)
+
+/** A button inside a `TabSwitcher` that opens its list by a click, pinned,
+ *  and closes it again: the strip's tab count. */
+export function TabSwitcherButton({ onClick, ...props }: ComponentProps<typeof Button>) {
+  const switcher = useContext(SwitcherToggle)
+  return (
+    <Button
+      {...props}
+      type="button"
+      data-tab-switcher-toggle=""
+      aria-haspopup="true"
+      aria-expanded={switcher?.open ?? false}
+      onClick={(event) => {
+        onClick?.(event)
+        switcher?.toggle()
+      }}
+    />
+  )
+}
+
 /**
  * Hold Control and press Tab (docs/features/tabs-panes.md): the first press
  * opens a list of the strip's entries under the strip, most recently used
@@ -22,6 +52,10 @@ export interface SwitcherRow {
  * mechanics are `tab-switch.ts`; this listens for the keys and draws the
  * list. Focus never leaves where it was, an editor or a terminal included:
  * ⌃Tab is a `capture` row, so the dispatcher takes it before they see it.
+ *
+ * The strip's tab count opens the same list by a click (`TabSwitcherButton`,
+ * anywhere inside): pinned, it stays open when Control is let go,
+ * until a row is pressed, Enter opens the one selected, or it is dismissed.
  */
 export function TabSwitcher({
   order,
@@ -47,6 +81,8 @@ export function TabSwitcher({
    *  against. */
   const strip = useRef(order)
   strip.current = order
+  const activeRef = useRef(active)
+  activeRef.current = active
   const listRef = useRef<HTMLDivElement>(null)
 
   const send = useRef((event: TabSwitchEvent) => {
@@ -68,8 +104,19 @@ export function TabSwitcher({
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (current.current === null) return
+      const pinned = current.current.pinned === true
       if (e.type === 'keyup' && !e.ctrlKey) {
         send({ kind: 'release', order: strip.current })
+      } else if (pinned && e.type === 'keydown' && /^(Enter|ArrowDown|ArrowUp)$/.test(e.key)) {
+        // Opened by a click, the list takes the keys a list would: the
+        // arrows move the selection, Enter opens it.
+        e.preventDefault()
+        e.stopPropagation()
+        if (e.key === 'Enter') send({ kind: 'commit', order: strip.current })
+        else {
+          const step = e.key === 'ArrowDown' ? 1 : -1
+          send({ kind: 'step', step, held: true, order: strip.current, active: activeRef.current })
+        }
       } else if (e.type === 'keydown' && e.key === 'Escape') {
         // Never the focused widget's Escape too: a terminal would interrupt
         // its agent.
@@ -101,6 +148,12 @@ export function TabSwitcher({
     return () => cancelAnimationFrame(frame)
   }, [state])
 
+  /** A `TabSwitcherButton`'s click: open the list pinned, or close it. */
+  const toggle = (): void => {
+    if (current.current !== null) send({ kind: 'cancel' })
+    else send({ kind: 'open', order: strip.current, active: activeRef.current })
+  }
+
   const rows = state === null ? [] : state.order.map((id) => ({ id, ...row(id) }))
   const selected = state === null ? undefined : rows[state.at]
 
@@ -111,7 +164,9 @@ export function TabSwitcher({
         if (!open) send({ kind: 'cancel' })
       }}
     >
-      <PopoverAnchor asChild>{children}</PopoverAnchor>
+      <SwitcherToggle.Provider value={{ toggle, open: state !== null }}>
+        <PopoverAnchor asChild>{children}</PopoverAnchor>
+      </SwitcherToggle.Provider>
       <PopoverContent
         align="center"
         variant="flush"
@@ -123,6 +178,14 @@ export function TabSwitcher({
         aria-label="Switch tab"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
+        // The count that opened it toggles it: a press there is its own,
+        // not a click outside that closes the list for the click to reopen.
+        onInteractOutside={(event) => {
+          const target = event.target
+          if (target instanceof Element && target.closest('[data-tab-switcher-toggle]')) {
+            event.preventDefault()
+          }
+        }}
       >
         {/* The pointer does not move the selection: what is marked is what
             letting go opens. */}

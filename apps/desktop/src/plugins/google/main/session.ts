@@ -46,11 +46,12 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/contacts.readonly',
   'https://www.googleapis.com/auth/contacts.other.readonly',
-  // Calendar WRITE, for time-blocking on the user's own calendar.
-  // Narrower than it looks: Holi refuses any event carrying attendees, so this
-  // scope never sends an invitation or a cancellation. `calendar.readonly`
-  // stays alongside it because reading the full calendar list is not implied
-  // by the events scope.
+  // Calendar writes: the UI can explicitly create a meeting with guests and
+  // send invitations. The agent's `google.schedule` stays silent and solo;
+  // raw API writes that reach people stay behind its ask gate. The dedicated
+  // reschedule/unschedule capabilities refuse attendee events; approved raw
+  // API writes can modify them. `calendar.readonly` stays alongside this scope
+  // because the events scope does not read the full list.
   'https://www.googleapis.com/auth/calendar.events',
 ]
 
@@ -104,13 +105,16 @@ export class GoogleReconnectRequiredError extends Error {
  * the owner has already loaded it; a session never touches the disk itself.
  */
 export interface AccountRef {
+  /** Bound to the creation grant: null forever once that grant is replaced. */
   read(): StoredGoogleAuth | null
-  write(auth: StoredGoogleAuth): Promise<void>
+  /** Identifies the currently stored grant, including reconnects that reuse a token. */
+  generation(): number
+  write(auth: StoredGoogleAuth, expectedGeneration: number): Promise<void>
   /** The person disconnected: the tokens and every vault's link go. */
   remove(): Promise<void>
   /** Google refused the grant: the tokens and links go, and each vault linked
    *  to it is remembered as needing a reconnect, not as never connected. */
-  expire(): Promise<void>
+  expire(expectedGeneration: number): Promise<void>
 }
 
 export interface GoogleSessionDeps {
@@ -201,7 +205,8 @@ export class GoogleSession {
 
     // `??=` is the latch: the first caller starts the refresh, everyone else
     // awaits the same promise.
-    this.#refreshing ??= this.#refresh(auth).finally(() => {
+    const generation = this.#deps.account.generation()
+    this.#refreshing ??= this.#refresh(auth, generation).finally(() => {
       this.#refreshing = null
     })
     return this.#refreshing
@@ -231,7 +236,7 @@ export class GoogleSession {
     return () => this.#listeners.delete(cb)
   }
 
-  async #refresh(auth: StoredGoogleAuth): Promise<string> {
+  async #refresh(auth: StoredGoogleAuth, generation: number): Promise<string> {
     let body: Record<string, unknown>
     const client = this.#client()
     try {
@@ -247,7 +252,7 @@ export class GoogleSession {
       // must NOT drop a working connection. Google reports it as a 400.
       if (err instanceof Error && 'status' in err && err.status === 400) {
         // This account's record goes; every other account's is untouched.
-        await this.#deps.account.expire()
+        await this.#deps.account.expire(generation)
         this.#emit()
         throw new GoogleReconnectRequiredError()
       }
@@ -264,7 +269,8 @@ export class GoogleSession {
       refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : auth.refreshToken,
     }
 
-    await this.#deps.account.write(updated)
+    await this.#deps.account.write(updated, generation)
+    if (this.#deps.account.generation() !== generation) throw new GoogleReconnectRequiredError()
     return updated.accessToken
   }
 

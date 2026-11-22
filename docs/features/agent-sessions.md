@@ -310,6 +310,44 @@ written at every launch: the app's executable run with `ELECTRON_RUN_AS_NODE`). 
 has is always found first. The supervisor keeps the environment of the process that started it, so an
 already running one picks this up only after it has exited (it does when idle).
 
+**On Windows the same lookup and launch run under Windows' own names.** None of it changes what
+macOS and Linux do: every difference is `process.platform === 'win32'` or an injected `platform`, so
+the tests run both branches anywhere.
+
+- _Finding a program_ (`main/bin.ts`). `PATH` is read under whatever key the environment has (an
+  Explorer or Start-menu launch has `Path`, not `PATH`) and joined with `;`. There is no login shell
+  to ask, so the inherited `PATH` is followed by Windows' install folders (`%USERPROFILE%\.local\bin`,
+  `%APPDATA%\npm`, Volta, Bun, Scoop, `%ProgramFiles%\nodejs`). A bare name gets each runnable
+  `PATHEXT` extension in turn, `.exe` first and `.cmd` and `.bat` after; the extensionless sh shim npm
+  writes beside a `.cmd` is never taken, since Windows calls it executable and cannot run it. A
+  `HOLI_*_BIN` override and a harness's program must end in one of those extensions, and a harness
+  may name a full path as `C:\…` or a `\\server\…` share as well as `/…`.
+- _One `PATH` key_ (`withPath`). Every environment Holi builds for a child (the agent's, the panel
+  shell's, a community plugin's) is written under the key the copy already has. A second `PATH` beside
+  `Path` is read by `child_process` and not by node-pty, so the two would disagree.
+- _Starting it_ (`main/launch.ts`). Node refuses to start a `.cmd` (npm's launcher for every agent
+  installed with `npm install -g`), so `execFile`, `spawn` and node-pty run it through
+  `cmd.exe /d /s /c "<file> <args>"`, with each argument quoted for the program and `^`-escaped for
+  `cmd.exe`. A line break cannot cross `cmd.exe`, so it becomes a space in a `.cmd`'s arguments; an
+  `.exe` (the Claude Code installer's `claude.exe`) carries one untouched. `cmd.exe` also refuses a
+  command line over 8191 characters, so a prompt of several kilobytes does not reach a `.cmd` agent
+  (Codex, and an npm-installed Claude Code or Pi); an `.exe` has no such limit. `spawnProgram` turns a
+  start that throws into the `error` event its callers already handle. Background starts pass
+  `windowsHide`, and `detached` is dropped: a detached child has no console, so the console program
+  behind a `.cmd` would open a window of its own.
+- _Stopping it_ (`main/process-group.ts`). There are no process groups or signals. A live child Holi
+  started is the root of a tree, and `killTree` stops the tree with `taskkill /PID <pid> /T /F`; a
+  negative pid is never used. Windows has no gentle stop for a console program, so the first signal is
+  already the forced one and the TERM-then-KILL grace has nothing to wait for. node-pty's own `kill()`
+  is called without a signal, which it refuses on Windows. A child that has exited is not stopped by
+  pid: its pid may already be another program's, and a Windows tree cannot be found from a dead root,
+  so what a job started and left running after its process exited outlives it, and the guarantee
+  that nothing changes a job's folder while it is copied back holds on Windows only for the job's own
+  process.
+- _The message_. A missing agent says how to install it for the OS: Claude Code's
+  `irm https://claude.ai/install.ps1 | iex` or `npm install -g @anthropic-ai/claude-code`, Codex's
+  `npm install -g @openai/codex`.
+
 **Terminals are windows.** A Holi terminal is a PTY running `claude agents` (the list) or
 `claude attach <id>` (one session), with a headless-xterm `TerminalMirror` as its record. Closing
 one detaches: the session keeps running. Its tab is labelled in Holi's names, so tab and row
@@ -529,7 +567,8 @@ still exists. A conversation with no note, or resumed in the same job, gets noth
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
-the job id from `$CLAUDE_JOB_DIR`; at a Stop, also `pending`, how many background tasks and
+the job id from `$CLAUDE_JOB_DIR`; at a start, also `pid`, the session's `claude` process (`$CLAUDE_PID`, or the hook's parent on
+an older CLI); at a Stop, also `pending`, how many background tasks and
 session crons its input lists, which is what tells a done session from a paused one
 ([scheduled-agents](scheduled-agents.md)). At a Stop it also saves where the turn left the vault, for the
 prompt hook's "changed since your last turn" ([agent-config](agent-config.md)), Holi open or not:
@@ -539,7 +578,11 @@ sync, the last to end resumes it and takes one settle commit (when the resume's 
 already running, the settle commit waits for it and takes what it left; with nothing left, that commit
 is the settle commit). A session also leaves the set when
 its process goes, on two consecutive `idle` readings (escaping a permission prompt fires no `Stop`),
-or on a 10 minute cap. Sessions keep running while Holi is closed, so the first read after a vault
+or on a 10 minute cap. Whether its process went is the process's own answer, not the listing's:
+a working session the listing does not name stays in the set while either pid known for it (from the turn's
+start, or from the listing while it named the session) still runs, since the listing can lose
+sight of a live session after a resume. With no pid known, as from a hook older than it, the
+listing's silence is enough. A reused pid could hold the set past a crash, but only until the cap. Sessions keep running while Holi is closed, so the first read after a vault
 opens puts any session already busy into the set.
 
 **Turn review.** A turn is a commit range, `base` at start to the settle commit, or, for a turn

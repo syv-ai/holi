@@ -181,7 +181,7 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
   entry, `disableClaudeAiConnectors`, `autoMemoryEnabled`, `awaySummaryEnabled` and
   `promptSuggestionEnabled` (all `false`: no session recap, no next-prompt suggestion),
   `worktree.bgIsolation: "none"` (so sessions edit the vault rather than a worktree of it) and the
-  inline `statusLine`. Everything else stays. A vault turns a default back by setting it here or
+  inline `statusLine`. Everything else stays, apart from what a fragment retires by name. A vault turns a default back by setting it here or
   in `settings.local.json`; Claude Code's `/config` writes user settings, which a project value
   outranks. Malformed JSON is left alone.
 
@@ -225,8 +225,8 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   error. An answer over 16 KiB is written to `.holi/state/out/` and the command prints its path and
   shape instead ([architecture](../architecture.md) §3). A command that reads a
   body from stdin and was not given one is answered 428 without running, and the script sends
-  stdin once (`send --draft <id>` reads none, and `google api` reads it only for `--body -`). Today: `apps open|init|console`, `skills update|status`,
-  `comments list|add|reply|resolve|reopen`, `community path`, `pdf comments|typst`, `google accounts|agenda|search|read|mark-read|star|archive|trash|draft|send|reply|respond|schedule|reschedule|unschedule|api`, `tasks list|complete`,
+  stdin once (`send --draft <id>` reads none, and `google api` reads it only for `--body -`). A command that is its namespace (`rest`) reads every word after it itself, `--help` too, and may return a program for the script to run in its place (`cliRun`), so that program's stdin, output and exit code are the caller's: `holi plugin <id> <verb>`, a community plugin's verbs ([community-plugins.md](community-plugins.md)). Today: `apps open|init|console`, `skills update|status`,
+  `comments list|add|reply|resolve|reopen`, `community path`, `plugin`, `pdf comments|typst`, `google accounts|agenda|search|read|mark-read|star|archive|trash|draft|send|reply|respond|schedule|reschedule|unschedule|api`, `tasks list|complete`,
   `store list|get|put|delete|check`,
   `docs list|read|inspect|render|open|screenshot|create|update|delete|settle`, `sync status`,
   `agent sessions|notify|log|message|version`, `schedules list|disable|run` (turning one on is the
@@ -263,7 +263,7 @@ outranks an allow in every scope, so getting a tool back means removing it from 
 
 **Permissions.** Each agent's native prompts are the permission UX, answered in its terminal.
 The seeded rules ask for `curl`, `wget`, `holi schedules run` and
-`holi google archive|trash|unschedule|send|reply|respond` (one rule per verb) and
+`holi google send|reply|respond` (one rule per verb) and
 `holi google api POST|PUT|PATCH|DELETE` (one rule per method), and allow `holi apps`,
 `holi store`, `holi pdf comments`, `holi pdf typst`, `holi community path`, `holi comments list`,
 `holi schedules list`, the read-only memory lint (`node .claude/skills/memory/lint.mjs`),

@@ -12,9 +12,9 @@
  * says so), and the agent creates it when it first learns something about the
  * user.
  */
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { vaultRelPath, VAULT_MARKER_FILE } from '@holi/shared'
+import { SCRATCHPAD_PATH, vaultRelPath, VAULT_MARKER_FILE } from '@holi/shared'
 import { writeAtomic } from '../vault-files'
 import { readSeedState, recordPlugins, recordRelease, recordSeeded } from './state'
 import type { SeedContribution, SeedResult } from './types'
@@ -113,10 +113,11 @@ export async function runMerges(
 ): Promise<string[]> {
   const written: string[] = []
   const has = async (rel: string) => pending.has(rel) || (await exists(root, rel))
+  const read = (rel: string) => readFile(join(root, rel), 'utf8').catch(() => null)
   for (const [rel, merge] of tables(contributions).merged) {
     const fragments = contributions.flatMap((c) => c.fragments?.[rel] ?? [])
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
-    const next = await merge(onDisk, fragments, has)
+    const next = await merge(onDisk, fragments, has, read)
     if (next === null) continue
     await writeAtomic(root, vaultRelPath(rel), next)
     written.push(rel)
@@ -169,8 +170,19 @@ export async function ensureSeeded(
 
   for (const [rel, content] of once) {
     if (await exists(root, rel)) continue
-    await writeAtomic(root, vaultRelPath(rel), content)
-    written.push(rel)
+    if (rel !== SCRATCHPAD_PATH) {
+      await writeAtomic(root, vaultRelPath(rel), content)
+      written.push(rel)
+      continue
+    }
+    // `wx` makes the scratchpad's missing-file check race-safe: an occupied
+    // path (including a symlink created after the check) is never replaced.
+    try {
+      await writeFile(join(root, SCRATCHPAD_PATH), content, { flag: 'wx' })
+      written.push(rel)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
   }
 
   let shippedAny = false

@@ -4,7 +4,7 @@
  * file, in the chosen project's folder (the vault root without one). Private
  * unless Sharing says otherwise, as every new task is (docs/features/tasks.md).
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { StatusDef, Task } from '@holi/shared'
 
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,8 @@ import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { TaskFields, type TaskFieldValues } from './task-fields'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 export type NewTaskInput = {
   title: string
@@ -36,6 +38,8 @@ function emptyDraft(status: string, folder: string): TaskFieldValues {
 
 export function NewTaskDialog({
   open,
+  visible = true,
+  focused = visible,
   onOpenChange,
   statuses,
   defaultStatus,
@@ -44,6 +48,8 @@ export function NewTaskDialog({
   onCreate,
 }: {
   open: boolean
+  visible?: boolean
+  focused?: boolean
   onOpenChange: (open: boolean) => void
   statuses: readonly StatusDef[]
   defaultStatus: string
@@ -52,10 +58,35 @@ export function NewTaskDialog({
   onCreate: (input: NewTaskInput) => Promise<void>
 }) {
   const [title, setTitle] = useState('')
+  const vim = useVimField('new-task-title', title)
   const [description, setDescription] = useState('')
   const [fields, setFields] = useState(() => emptyDraft(defaultStatus, defaultFolder))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const presentationFocused = useRef(focused)
+  const wasPresented = useRef(false)
+  const presented = open && visible
+  if (presented && !wasPresented.current) {
+    presentationFocused.current = focused
+    wasPresented.current = true
+  } else if (!presented) {
+    wasPresented.current = false
+  }
+  const dialogFocused = presentationFocused.current
+  const wasOpen = useRef(false)
+  const edited = useRef(false)
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      setTitle('')
+      setDescription('')
+      setFields(emptyDraft(defaultStatus, defaultFolder))
+      setError(null)
+      edited.current = false
+    } else if (open && !edited.current) {
+      setFields(emptyDraft(defaultStatus, defaultFolder))
+    }
+    wasOpen.current = open
+  }, [open, defaultStatus, defaultFolder])
 
   const reset = () => {
     setTitle('')
@@ -96,16 +127,24 @@ export function NewTaskDialog({
 
   return (
     <Dialog
-      open={open}
+      modal={dialogFocused}
+      open={presented}
       onOpenChange={(next) => {
         if (!next) reset()
         onOpenChange(next)
       }}
     >
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent
+        className="sm:max-w-xl"
+        onOpenAutoFocus={(event) => !dialogFocused && event.preventDefault()}
+        onCloseAutoFocus={(event) => (!visible || !dialogFocused) && event.preventDefault()}
+        onFocusOutside={(event) => !dialogFocused && event.preventDefault()}
+        onInteractOutside={(event) => !dialogFocused && event.preventDefault()}
+      >
         <div
           className="flex flex-col gap-6"
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return
             // Enter in a one-line field creates, as the form it replaced did.
             if (
               event.key === 'Enter' &&
@@ -124,15 +163,20 @@ export function NewTaskDialog({
           </DialogHeader>
 
           <FieldGroup>
+            <VimFieldMode mode={vim.vimFieldMode} />
             <Field>
               <FieldLabel htmlFor="new-task-title" className="sr-only">
                 Title
               </FieldLabel>
               <Input
                 id="new-task-title"
-                autoFocus
+                autoFocus={dialogFocused}
                 value={title}
-                onChange={(event) => setTitle(event.target.value)}
+                {...vim.vimFieldProps}
+                onChange={(event) => {
+                  edited.current = true
+                  setTitle(event.target.value)
+                }}
                 placeholder="Task title"
               />
             </Field>
@@ -143,7 +187,11 @@ export function NewTaskDialog({
               <Textarea
                 id="new-task-description"
                 value={description}
-                onChange={(event) => setDescription(event.target.value)}
+                {...vim.vimFieldProps}
+                onChange={(event) => {
+                  edited.current = true
+                  setDescription(event.target.value)
+                }}
                 placeholder="Add a description (optional)"
                 className="min-h-24"
               />
@@ -152,18 +200,26 @@ export function NewTaskDialog({
               values={fields}
               statuses={statuses}
               today={today}
-              onChange={(change) =>
+              onChange={(change) => {
+                edited.current = true
                 setFields((current) => ({
                   ...current,
                   [change.field]: change.value,
                 }))
-              }
+              }}
             />
             {error !== null ? <FieldError>{error}</FieldError> : null}
           </FieldGroup>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                reset()
+                onOpenChange(false)
+              }}
+            >
               Cancel
             </Button>
             <Button

@@ -51,11 +51,15 @@ function clientLabel(client: ClientInfo): string {
 
 export function OAuthClient({
   accountCount,
-  onChanged,
+  beforeChange,
+  disabled = false,
+  visible = true,
 }: {
   /** The accounts connected on this machine: what a new client disconnects. */
   accountCount: number
-  onChanged: () => void
+  beforeChange: (change: () => Promise<void>) => Promise<string | null>
+  disabled?: boolean
+  visible?: boolean
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const [client, setClient] = useState<ClientInfo | null>(null)
@@ -70,7 +74,7 @@ export function OAuthClient({
   const [asking, setAsking] = useState<{ id: string; secret: string } | null>(null)
 
   useEffect(() => {
-    if (remote === null) return
+    if (remote === null || !visible) return
     let live = true
     setFailed(false)
     googleCap.client(remote).then(
@@ -80,7 +84,14 @@ export function OAuthClient({
     return () => {
       live = false
     }
-  }, [remote, version])
+  }, [remote, version, visible])
+
+  useEffect(() => {
+    if (!visible) {
+      setOpen(false)
+      setAsking(null)
+    }
+  }, [visible])
 
   const close = () => {
     setOpen(false)
@@ -94,10 +105,15 @@ export function OAuthClient({
     if (remote === null) return
     setBusy(true)
     try {
-      await googleCap.setClient(remote, next)
+      const error = await beforeChange(async () => {
+        await googleCap.setClient(remote, next)
+      })
+      if (error !== null) {
+        setError(error)
+        return
+      }
       close()
       setVersion((v) => v + 1)
-      onChanged()
     } catch (err) {
       setAsking(null)
       setError(err instanceof Error ? err.message : 'Could not save the client.')
@@ -147,7 +163,7 @@ export function OAuthClient({
           <Button
             variant="outline"
             size="sm"
-            disabled={client === null}
+            disabled={client === null || disabled}
             onClick={() => setOpen(true)}
           >
             {client?.source === 'own' ? 'Change client…' : 'Use your own client…'}
@@ -155,7 +171,7 @@ export function OAuthClient({
         )}
       </ItemActions>
 
-      <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
+      <Dialog open={visible && open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
         <DialogContent className="sm:max-w-lg">
           {/* Enter in a field saves, as a form would. */}
           <div

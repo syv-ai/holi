@@ -5,15 +5,15 @@
  * the checks are that HTML goes through it rather than around it, that blocked
  * remote content can be unblocked, and that links open externally.
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../renderer/mail-view'
-import { getDefaultStore } from 'jotai'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
-import { activeRemoteAtom } from '@/plugin-api'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { activeRemoteAtom, loadVaultSettingsAtom } from '@/plugin-api'
+import { refreshGoogleAtom } from '../renderer/account'
+import { getDefaultStore } from 'jotai'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
@@ -27,6 +27,7 @@ const untrashMock = vi.fn()
 const toastMock = vi.fn()
 const categoryCountsMock = vi.fn()
 const imageSendersMock = vi.fn()
+const setImagesFromAllSendersMock = vi.fn()
 const allowImagesFromMock = vi.fn()
 const forgetImageSendersMock = vi.fn()
 const sendAsMock = vi.fn()
@@ -36,12 +37,31 @@ const discardDraftMock = vi.fn()
 const draftMock = vi.fn()
 const draftsMock = vi.fn()
 const meetingMock = vi.fn()
+const mailMarkersMock = vi.fn()
+const markerPreferencesMock = vi.fn()
+const setMailMarkerMock = vi.fn()
+let currentAnnotations: Record<string, string> = {}
 /** What `openDialogAtom` was asked to open. */
 const openedDialog = vi.fn()
 const createTaskMock = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
+let mailAccountSub = 'mail-view-account'
 const google: Record<string, (params: unknown) => unknown> = {
+  status: () => ({
+    account: {
+      sub: mailAccountSub,
+      email: mailAccountSub === 'mail-view-account' ? 'ada@syv.ai' : 'ada@home.test',
+    },
+    missingScopes: [],
+  }),
+  allAccounts: () => ({
+    accounts: [
+      { sub: 'mail-view-account', email: 'ada@syv.ai' },
+      { sub: 'account-b', email: 'ada@home.test' },
+    ],
+    current: mailAccountSub,
+  }),
   search: (p) => threadMock(p),
   thread: (p) => readMock(p),
   mailCounts: () => countsMock(),
@@ -53,7 +73,16 @@ const google: Record<string, (params: unknown) => unknown> = {
   untrash: (p) => untrashMock(p),
   categoryCounts: () => categoryCountsMock(),
   imageSenders: () => imageSendersMock(),
-  allowImagesFrom: (p) => allowImagesFromMock(p),
+  setImagesFromAllSenders: (p) => setImagesFromAllSendersMock(p),
+  allowImagesFrom: async (p) => {
+    const result = await allowImagesFromMock(p)
+    const before = await imageSendersMock()
+    imageSendersMock.mockResolvedValue({
+      ...before,
+      imageSenders: [...before.imageSenders, (p as { sender: string }).sender],
+    })
+    return result
+  },
   forgetImageSenders: () => forgetImageSendersMock(),
   sendAs: () => sendAsMock(),
   saveDraft: (p) => saveDraftMock(p),
@@ -62,6 +91,9 @@ const google: Record<string, (params: unknown) => unknown> = {
   draftBody: (p) => draftMock(p),
   drafts: () => draftsMock(),
   meeting: (p) => meetingMock(p),
+  mailMarkerAnnotations: (p) => mailMarkersMock(p),
+  mailMarkerPreferences: (p) => markerPreferencesMock(p),
+  setMailMarker: (p) => setMailMarkerMock(p),
 }
 
 vi.mock('@/plugin-api', async (original) => {
@@ -79,6 +111,14 @@ vi.mock('sonner', async (original) => ({
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    settings: {
+      read: {
+        query: async () => ({
+          pluginValues: { google: await imageSendersMock() },
+          plugins: { vault: {}, localOff: [] },
+        }),
+      },
+    },
     cap: {
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
@@ -187,6 +227,7 @@ async function frameOf(article: HTMLElement): Promise<Document> {
 
 beforeEach(() => {
   threadMock.mockReset()
+  mailAccountSub = 'mail-view-account'
   // A default, because the real query ALWAYS returns a promise. A bare
   // `mockReset()` returns `undefined`, which surfaces as an unhandled error
   // beside a passing suite rather than as a failure.
@@ -216,7 +257,17 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   categoryCountsMock.mockReset().mockResolvedValue({})
   meetingMock.mockReset().mockResolvedValue(null)
-  imageSendersMock.mockReset().mockResolvedValue([])
+  currentAnnotations = {}
+  mailMarkersMock.mockReset().mockImplementation(async () => currentAnnotations)
+  markerPreferencesMock.mockReset().mockResolvedValue({ enabledOrder: ['yellow-star'] })
+  setMailMarkerMock.mockReset().mockImplementation(async (raw) => {
+    const { id, marker } = raw as { id: string; marker: string | null }
+    if (marker === null) delete currentAnnotations[id]
+    else currentAnnotations[id] = marker
+    return { ok: true }
+  })
+  imageSendersMock.mockReset().mockResolvedValue({ imageSenders: [], imagesFromAllSenders: false })
+  setImagesFromAllSendersMock.mockReset().mockResolvedValue({ ok: true })
   allowImagesFromMock.mockReset().mockResolvedValue({ ok: true })
   forgetImageSendersMock.mockReset().mockResolvedValue({ ok: true })
   sendAsMock.mockReset().mockResolvedValue(['ada@syv.ai'])
@@ -239,6 +290,7 @@ beforeEach(() => {
   window.holi = { openExternal }
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   // @ts-expect-error — as above.
   delete window.holi
 })
@@ -419,7 +471,7 @@ test('groups the stamp, the count and the meeting badge apart from the text', as
   const rail = document.querySelector('[data-thread-meta]')
 
   expect(rail).not.toBeNull()
-  expect(rail!.textContent).toMatch(/\d{1,2}:\d{2}/)
+  expect(rail!.textContent).toMatch(/\d{1,2}[.:]\d{2}/)
   expect(rail).toHaveTextContent('(3)')
   expect(rail!.querySelector('[aria-label="Meeting invite"]')).not.toBeNull()
   // The truncating text is NOT in here.
@@ -592,8 +644,11 @@ test('lists attachments on an open message', async () => {
   )
 
   const article = await openThread()
+  const attachment = within(article).getByRole('button', { name: /q2-deck\.pdf/i })
+  const body = within(article).getByText('see attached')
 
   expect(within(article).getByText('q2-deck.pdf')).toBeInTheDocument()
+  expect(attachment.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })
 
 test('opens an attachment in Gmail rather than downloading it', async () => {
@@ -1106,6 +1161,38 @@ test('a refused mark-read puts the row back to unread', async () => {
   )
 })
 
+test('the row marker action is independently keyboard reachable and never opens or marks read', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: false })]))
+  markerPreferencesMock.mockResolvedValue({ enabledOrder: ['red-star', 'blue-question'] })
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  const star = await screen.findByRole('button', { name: 'Star thread' })
+  star.focus()
+  await user.keyboard('{Enter}')
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenCalledWith({
+      id: 't1',
+      marker: 'red-star',
+      expectedAccountSub: 'mail-view-account',
+    }),
+  )
+  expect(screen.queryByRole('article')).toBeNull()
+  expect(setReadMock).not.toHaveBeenCalled()
+  expect(await screen.findByLabelText('Red star')).toBeInTheDocument()
+  const unstar = await screen.findByRole('button', { name: 'Unstar thread' })
+  await new Promise((resolve) => setTimeout(resolve, 510))
+  unstar.focus()
+  await user.keyboard(' ')
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenLastCalledWith({
+      id: 't1',
+      marker: null,
+      expectedAccountSub: 'mail-view-account',
+    }),
+  )
+})
+
 test('stars and unstars the open thread', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ starred: false })]))
@@ -1115,11 +1202,24 @@ test('stars and unstars the open thread', async () => {
 
   await user.click(screen.getByRole('button', { name: 'Star this thread' }))
 
-  await waitFor(() => expect(setStarredMock).toHaveBeenCalledWith({ id: 't1', off: false }))
-  // The button becomes its own inverse.
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenCalledWith({
+      id: 't1',
+      marker: 'yellow-star',
+      expectedAccountSub: 'mail-view-account',
+    }),
+  )
+  // The button becomes its own inverse after the interaction state updates.
   const unstar = await screen.findByRole('button', { name: 'Unstar this thread' })
+  await new Promise((resolve) => setTimeout(resolve, 510))
   await user.click(unstar)
-  await waitFor(() => expect(setStarredMock).toHaveBeenLastCalledWith({ id: 't1', off: true }))
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenLastCalledWith({
+      id: 't1',
+      marker: null,
+      expectedAccountSub: 'mail-view-account',
+    }),
+  )
 })
 
 test('archiving removes the row and closes the reader', async () => {
@@ -1278,7 +1378,11 @@ test('“always from this sender” is remembered in main, keyed on the address'
 })
 
 test('a sender already allowed never shows the banner at all', async () => {
-  imageSendersMock.mockResolvedValue(['jane@example.com'])
+  imageSendersMock.mockResolvedValue({
+    imageSenders: ['jane@example.com'],
+    imagesFromAllSenders: false,
+  })
+  await getDefaultStore().set(loadVaultSettingsAtom, { force: true })
   withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
 
   const article = await openThread()
@@ -1305,21 +1409,17 @@ test('offers nothing to remember when the sender could not be parsed', async () 
   expect(within(article).queryByRole('button', { name: /always from this sender/i })).toBeNull()
 })
 
-/**
- * The canvas a message renders on.
- *
- * Mail declares its ink and inherits its paper (see `canvasFor`), so a message
- * that brings any design of its own gets white.
- */
-test('a designed message renders on paper, not on the dark theme', async () => {
+/** Dark mode keeps the app canvas and discards author colors without losing content. */
+test('a designed message keeps the dark theme while its body remains readable', async () => {
   withMessage({ body: 'hello', html: '<p style="color:#333333">the quarterly plan</p>' })
 
   const article = await openThread()
   const frame = await frameOf(article)
 
   const style = frame.querySelector('style')?.textContent ?? ''
-  expect(style).toContain('background: #ffffff')
-  expect(style).toContain('color-scheme: light')
+  expect(style).toContain('color-scheme: dark')
+  expect(frame.querySelector('p')?.getAttribute('style')).toBeNull()
+  expect(frame.querySelector('p')?.textContent).toBe('the quarterly plan')
 })
 
 test('prose that brought no design keeps the app’s own theme', async () => {
@@ -1936,6 +2036,39 @@ async function openForCompose() {
   return user
 }
 
+test('narrow composition hides the list without remounting, then restores the reader', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  const row = await screen.findByRole('button', { name: /Q2 budget/ })
+  const group = row.closest('[data-slot="resizable-panel-group"]')!
+  const list = group.querySelector('#mail-list')!
+  const handle = group.querySelector('[data-slot="resizable-handle"]')!
+  const reader = group.querySelector('[data-mail-pane="reader"]')!
+
+  expect(group).not.toHaveClass('@container/mail')
+  expect(group).not.toHaveClass('@max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden')
+
+  await user.click(screen.getByRole('button', { name: 'New message' }))
+  const composer = await screen.findByRole('region', { name: 'Compose mail' })
+  const subject = within(composer).getByRole('textbox', { name: 'Subject' })
+  expect(group).toHaveClass('@container/mail')
+  expect(group).toHaveClass('@max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden')
+  expect(handle).toHaveClass('@max-[40rem]/mail:hidden')
+
+  await user.type(subject, 'A narrow-window draft')
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBe(composer)
+  expect(within(composer).getByRole('textbox', { name: 'Subject' })).toBe(subject)
+
+  await user.click(within(composer).getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(group).not.toHaveClass('@container/mail')
+  expect(group).not.toHaveClass('@max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden')
+  expect(group.querySelector('#mail-list')).toBe(list)
+  expect(handle).not.toHaveClass('@max-[40rem]/mail:hidden')
+  expect(group.querySelector('[data-mail-pane="reader"]')).toBe(reader)
+})
+
 test('reply opens a composer inside the thread, not a browser', async () => {
   const user = await openForCompose()
 
@@ -2077,7 +2210,7 @@ test('opening a draft loads it into the composer', async () => {
   await user.click(await screen.findByText('Half written'))
 
   await screen.findByRole('region', { name: 'Compose mail' })
-  expect(draftMock).toHaveBeenCalledWith({ id: 'd-1' })
+  expect(draftMock).toHaveBeenCalledWith({ id: 'd-1', expectedAccountSub: 'mail-view-account' })
 })
 
 test('opening a draft closes the thread it would otherwise hide behind', async () => {
@@ -2144,7 +2277,9 @@ test('Continue draft opens the newest draft in the open thread', async () => {
 
   await moreAction(user, 'Continue your draft')
 
-  await waitFor(() => expect(draftMock).toHaveBeenCalledWith({ id: 'new' }))
+  await waitFor(() =>
+    expect(draftMock).toHaveBeenCalledWith({ id: 'new', expectedAccountSub: 'mail-view-account' }),
+  )
 })
 
 test('no Continue draft on a thread that has none', async () => {
@@ -2178,32 +2313,77 @@ test('the thread list comes back when Mail is chosen again', async () => {
  * A dialog, where a reply is inline: a fresh message has no context to
  * preserve.
  */
-test('new message opens the compose dialog rather than an inline composer', async () => {
+test('confirmed discard closes a dirty new message without recreating it', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: 'New message' }))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' throw away')
+
+  await user.click(screen.getByRole('button', { name: 'Discard' }))
+  await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(discardDraftMock).toHaveBeenCalledWith({
+    draftId: 'd-1',
+    expectedAccountSub: 'mail-view-account',
+  })
+  // Any debounced save may already have created a server draft; discarding it
+  // must not trigger another create from the unmount lifecycle.
+  const callsAtCompletion = saveDraftMock.mock.calls.length
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  expect(saveDraftMock).toHaveBeenCalledTimes(callsAtCompletion)
+  expect(screen.getByText('Pick a thread to read it')).toBeInTheDocument()
+})
+
+test('confirmed discard removes a saved draft and restores the previous reader', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  draftsMock.mockResolvedValue([draft()])
+  draftMock.mockResolvedValue({
+    draftId: 'd-1',
+    threadId: null,
+    to: [],
+    cc: [],
+    bcc: [],
+    subject: 'Half written',
+    markdown: 'body',
+    html: null,
+    foreign: false,
+  })
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await chooseMailbox(user, 'Drafts')
+  await user.click(await screen.findByText('Half written'))
+  await screen.findByRole('textbox', { name: 'Subject' })
+  await user.click(screen.getByRole('button', { name: 'Discard' }))
+  await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+
+  await waitFor(() => expect(discardDraftMock).toHaveBeenCalledTimes(1))
+  expect(discardDraftMock).toHaveBeenCalledWith({
+    draftId: 'd-1',
+    expectedAccountSub: 'mail-view-account',
+  })
+  expect(await screen.findByRole('article')).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  expect(saveDraftMock).not.toHaveBeenCalled()
+})
+
+test('new message opens in the reader pane without a compose dialog', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
 
   await user.click(await screen.findByRole('button', { name: 'New message' }))
 
-  // The plugin dialog is the contract with core's dialog host: it renders
-  // what the plugin hands it.
-  expect(openedDialog).toHaveBeenCalledWith(expect.objectContaining({ id: 'plugin', size: 'lg' }))
-  const { render: content } = openedDialog.mock.calls[0]![0] as {
-    render: (close: () => void) => React.ReactNode
-  }
-  render(
-    <Dialog open>
-      <DialogContent>{content(() => {})}</DialogContent>
-    </Dialog>,
-  )
-  // Named by its visible title, and the body field by its own label.
-  expect(await screen.findByRole('dialog', { name: 'New message' })).toBeInTheDocument()
+  expect(openedDialog).not.toHaveBeenCalled()
+  expect(await screen.findByRole('heading', { name: 'New message' })).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Subject' })).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Message' })).toBeInTheDocument()
 })
 
-test('new message does not disturb an open thread', async () => {
-  // The dialog must not close what is being read behind it.
+test('new message replaces the open thread in the reader pane', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
@@ -2212,5 +2392,510 @@ test('new message does not disturb an open thread', async () => {
 
   await user.click(screen.getByRole('button', { name: 'New message' }))
 
+  expect(screen.queryByRole('article')).not.toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'New message' })).toBeInTheDocument()
+})
+
+test('thread navigation saves the active composer before displaying the destination', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Next thread' })]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' latest')
+
+  let finish!: (result: { id: string }) => void
+  saveDraftMock.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+  await user.click(screen.getByRole('button', { name: /Next thread/ }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  finish({ id: 'saved-draft' })
+
+  await screen.findByText('Next thread')
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  expect(readMock).toHaveBeenLastCalledWith({ id: 't2' })
+  expect(saveDraftMock.mock.calls[0]![0]).toMatchObject({
+    expectedAccountSub: 'mail-view-account',
+    mail: { subject: 'Re: Q2 budget latest' },
+  })
+})
+
+test('failed navigation save keeps the composer and does not open the thread', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Next thread' })]))
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' latest')
+  await user.click(screen.getByRole('button', { name: /Next thread/ }))
+
+  expect(await screen.findByText('offline')).toBeInTheDocument()
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(readMock).not.toHaveBeenCalledWith({ id: 't2' })
+})
+
+test.each([
+  ['Archive this thread', archiveMock],
+  ['Move this thread to trash', trashMock],
+] as const)(
+  '%s waits for a reply save and refuses the write on failure',
+  async (label, mutation) => {
+    const user = userEvent.setup()
+    threadMock.mockResolvedValue(page([summary()]))
+    saveDraftMock.mockRejectedValue(new Error('offline'))
+    render(<MailView />)
+    await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+    await screen.findByRole('article')
+    await user.click(screen.getByRole('button', { name: 'Reply' }))
+    await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' latest')
+    await user.click(screen.getByRole('button', { name: label }))
+
+    expect(await screen.findByText('offline')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+    expect(mutation).not.toHaveBeenCalled()
+    expect(screen.getByRole('article')).toBeInTheDocument()
+  },
+)
+
+test('Close waits for the latest dirty reply save, then restores its thread', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  const subject = screen.getByRole('textbox', { name: 'Subject' })
+  await user.clear(subject)
+  await user.type(subject, 'Latest reply subject')
+
+  let finish!: (result: { id: string }) => void
+  saveDraftMock.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
   expect(screen.getByRole('article')).toBeInTheDocument()
+  expect(saveDraftMock.mock.calls[0]![0]).toMatchObject({
+    expectedAccountSub: 'mail-view-account',
+    mail: { subject: 'Latest reply subject' },
+  })
+
+  finish({ id: 'saved-draft' })
+
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(screen.getByRole('article')).toBeInTheDocument()
+})
+
+test('failed dirty Close keeps the subject editable and Retry lets Close finish', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  const subject = screen.getByRole('textbox', { name: 'Subject' })
+  const setTimeout = globalThis.setTimeout
+  const pendingAutosaves: TimerHandler[] = []
+  // Keep the two-second idle autosave pending so it cannot consume the failed
+  // save's Retry state; all other timers (including test-library waits) stay real.
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) {
+      pendingAutosaves.push(callback)
+      return 0 as never
+    }
+    return setTimeout(callback, delay, ...args)
+  })
+  await user.clear(subject)
+  await user.type(subject, 'Keep this subject')
+  expect(pendingAutosaves.length).toBeGreaterThan(0)
+  let rejectSave!: (error: Error) => void
+  saveDraftMock.mockImplementationOnce(
+    () => new Promise((_resolve, reject) => (rejectSave = reject)),
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  rejectSave(new Error('offline'))
+
+  await waitFor(() => {
+    expect(screen.getByText('offline')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('Keep this subject')
+  })
+  saveDraftMock.mockResolvedValue({ id: 'saved-draft' })
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2))
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(screen.getByRole('article')).toBeInTheDocument()
+  expect(saveDraftMock.mock.calls[1]![0]).toMatchObject({
+    expectedAccountSub: 'mail-view-account',
+    mail: { subject: 'Keep this subject' },
+  })
+})
+
+test('mailbox change waits for a dirty save before showing Sent', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+  await user.click(screen.getByRole('button', { name: 'New message' }))
+  const subject = screen.getByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'Sent after save')
+
+  let finish!: (result: { id: string }) => void
+  saveDraftMock.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+  await user.click(screen.getByRole('button', { name: 'Choose a mailbox' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Sent' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  expect(queryOf(0).mailbox).toBeUndefined()
+  expect(threadMock).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+
+  finish({ id: 'saved-draft' })
+
+  await waitFor(() => expect(queryOf(1)).toMatchObject({ mailbox: 'sent' }))
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Choose a mailbox' })).toHaveTextContent('Sent')
+})
+
+test('failed mailbox-change save keeps the mailbox and editable text without requesting Sent', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+  await user.click(screen.getByRole('button', { name: 'New message' }))
+  const subject = screen.getByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'Keep me in All mail')
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+
+  await user.click(screen.getByRole('button', { name: 'Choose a mailbox' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Sent' }))
+
+  expect(await screen.findByText('offline')).toBeInTheDocument()
+  expect(threadMock).toHaveBeenCalledTimes(1)
+  expect(queryOf(0).mailbox).toBeUndefined()
+  expect(screen.getByRole('button', { name: 'Choose a mailbox' })).not.toHaveTextContent('Sent')
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('Keep me in All mail')
+})
+
+test('renders account markers in the list and reader from one batched read', async () => {
+  const rows = [
+    summary({ id: 'yellow', subject: 'Yellow marker', starred: true }),
+    summary({ id: 'red', subject: 'Red marker', starred: true }),
+    summary({ id: 'blue', subject: 'Blue marker', starred: true }),
+  ]
+  threadMock.mockResolvedValue(page(rows))
+  mailMarkersMock.mockResolvedValue({
+    yellow: 'yellow-star',
+    red: 'red-star',
+    blue: 'blue-question',
+  })
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  for (const label of ['Yellow star', 'Red star', 'Blue question mark'])
+    expect(await screen.findByLabelText(label)).toBeInTheDocument()
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+  expect(mailMarkersMock.mock.calls[0]![0]).toMatchObject({
+    ids: ['blue', 'red', 'yellow'],
+    expectedAccountSub: 'mail-view-account',
+  })
+
+  for (const [subject, label] of Object.entries({
+    'Yellow marker': 'Yellow star',
+    'Red marker': 'Red star',
+    'Blue marker': 'Blue question mark',
+  })) {
+    await user.click(screen.getByRole('button', { name: new RegExp(subject, 'i') }))
+    await waitFor(() => expect(screen.getAllByLabelText(label).length).toBeGreaterThanOrEqual(2))
+  }
+})
+
+test('keeps account rows, messages, and annotations isolated across A-B-A switches and late reads', async () => {
+  const user = userEvent.setup()
+  let finishLateSearch: ((value: ReturnType<typeof page>) => void) | undefined
+  let finishLateRead: ((value: unknown) => void) | undefined
+  let delayNextSearch = false
+  let delayFirstRead = true
+  threadMock.mockImplementation(() => {
+    const account = mailAccountSub
+    if (delayNextSearch) {
+      delayNextSearch = false
+      return new Promise((resolve) => (finishLateSearch = resolve))
+    }
+    return Promise.resolve(
+      page([
+        summary({
+          starred: true,
+          subject: account === 'mail-view-account' ? 'Account A mail' : 'Account B mail',
+        }),
+      ]),
+    )
+  })
+  readMock.mockImplementation(() => {
+    const account = mailAccountSub
+    if (account === 'mail-view-account' && delayFirstRead) {
+      delayFirstRead = false
+      return new Promise((resolve) => (finishLateRead = resolve))
+    }
+    return Promise.resolve({
+      id: 't1',
+      subject: account === 'mail-view-account' ? 'Account A mail' : 'Account B mail',
+      webUrl: 'https://mail.google.com/x',
+      messages: [
+        {
+          id: `message-${account}`,
+          from: { name: 'Jane', email: 'jane@example.com' },
+          to: [],
+          cc: [],
+          bcc: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: `Message from ${account}`,
+          html: null,
+          attachments: [],
+        },
+      ],
+    })
+  })
+  mailMarkersMock.mockImplementation(async ({ ids }: { ids: string[] }) => ({
+    [ids[0]!]: mailAccountSub === 'mail-view-account' ? 'red-star' : 'blue-question',
+  }))
+  render(<MailView />)
+  const accountARow = await screen.findByRole('button', { name: /Account A mail/ })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+  expect(within(accountARow).getByLabelText('Red star')).toBeInTheDocument()
+  await user.click(accountARow)
+  await waitFor(() => expect(readMock).toHaveBeenCalledTimes(1))
+
+  mailAccountSub = 'account-b'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  const accountBRow = await screen.findByRole('button', { name: /Account B mail/ })
+  expect(screen.queryByRole('button', { name: /Account A mail/ })).toBeNull()
+  await waitFor(() =>
+    expect(within(accountBRow).getByLabelText('Blue question mark')).toBeInTheDocument(),
+  )
+  await user.click(accountBRow)
+  expect(await screen.findByText('Message from account-b')).toBeInTheDocument()
+
+  // Returning to A remounts its reader/list state, even though Gmail reuses t1.
+  mailAccountSub = 'mail-view-account'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  const returnedARow = await screen.findByRole('button', { name: /Account A mail/ })
+  await waitFor(() => expect(within(returnedARow).getByLabelText('Red star')).toBeInTheDocument())
+  expect(screen.queryByText('Message from account-b')).toBeNull()
+
+  // An in-flight list search from A cannot overwrite B's rows.
+  delayNextSearch = true
+  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+  await waitFor(() => expect(finishLateSearch).toBeDefined())
+  mailAccountSub = 'account-b'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await screen.findByRole('button', { name: /Account B mail/ })
+  await act(async () => finishLateSearch?.(page([summary({ subject: 'Stale A search' })])))
+  expect(screen.queryByRole('button', { name: /Stale A search/ })).toBeNull()
+
+  // A deferred read from the prior A mount must not leak into B.
+  mailAccountSub = 'mail-view-account'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await user.click(await screen.findByRole('button', { name: /Account A mail/ }))
+  await waitFor(() => expect(finishLateRead).toBeDefined())
+  mailAccountSub = 'account-b'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await screen.findByRole('button', { name: /Account B mail/ })
+  await act(async () =>
+    finishLateRead?.({
+      id: 't1',
+      subject: 'Account A mail',
+      webUrl: 'https://mail.google.com/x',
+      messages: [
+        {
+          id: 'message-account-a',
+          from: { name: 'Jane', email: 'jane@example.com' },
+          to: [],
+          cc: [],
+          bcc: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: 'Stale message from mail-view-account',
+          html: null,
+          attachments: [],
+        },
+      ],
+    }),
+  )
+  expect(screen.queryByText('Stale message from mail-view-account')).toBeNull()
+  expect(screen.queryByLabelText('Red star')).toBeNull()
+})
+
+test('invalidates markers across an A-B-A vault switch before accepting the latest identical-id read', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+  const pending: ((value: Record<string, string>) => void)[] = []
+  mailMarkersMock.mockImplementation(
+    () =>
+      new Promise((resolve) => pending.push(resolve as (value: Record<string, string>) => void)),
+  )
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/i })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+
+  act(() => getDefaultStore().set(activeRemoteAtom, 'other/vault'))
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(2))
+  act(() => getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault'))
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(3))
+
+  await act(async () => pending[2]!({ t1: 'red-star' }))
+  expect(await screen.findByLabelText('Red star')).toBeInTheDocument()
+  await act(async () => pending[0]!({ t1: 'yellow-star' }))
+  expect(screen.queryByLabelText('Yellow star')).toBeNull()
+  expect(screen.getByLabelText('Red star')).toBeInTheDocument()
+  await act(async () => pending[1]!({ t1: 'blue-question' }))
+  expect(screen.queryByLabelText('Blue question mark')).toBeNull()
+})
+
+test('hides a persisted annotation when Gmail reports the thread unstarred', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: false })]))
+  mailMarkersMock.mockResolvedValue({ t1: 'red-star' })
+  render(<MailView />)
+
+  await screen.findByRole('button', { name: /Q2 budget/i })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+  expect(screen.queryByLabelText('Red star')).toBeNull()
+  expect(screen.queryByLabelText('Starred')).toBeNull()
+})
+
+test.each([0, 1_001])(
+  'refresh and Gmail star writes invalidate the visible thread marker after %i ms',
+  async (elapsed) => {
+    // Extra page reads must not star the thread before the write happens.
+    let starred = false
+    currentAnnotations = { t1: 'red-star' }
+    threadMock.mockImplementation(async () => page([summary({ starred })]))
+    mailMarkersMock.mockImplementation(async () => ({ ...currentAnnotations }))
+    const writeMarker = setMailMarkerMock.getMockImplementation()!
+    setMailMarkerMock.mockImplementation((raw) => {
+      starred = (raw as { marker: string | null }).marker !== null
+      return writeMarker(raw)
+    })
+    const user = userEvent.setup()
+    render(<MailView />)
+
+    const row = await screen.findByRole('button', { name: /Q2 budget/i })
+    await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+    expect(screen.queryByLabelText('Red star')).toBeNull()
+    await user.click(row)
+    const star = await screen.findByRole('button', { name: 'Star this thread' })
+
+    // Capture an annotation read BEFORE the write. Returning an old value from a
+    // new, post-write read only tests the temporary optimistic overlay's lifetime.
+    let finishStaleRead!: (value: Record<string, string>) => void
+    mailMarkersMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishStaleRead = resolve
+        }),
+    )
+    await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+    await waitFor(() => expect(finishStaleRead).toBeDefined())
+
+    vi.useFakeTimers()
+    try {
+      await act(async () => fireEvent.click(star))
+      expect(setMailMarkerMock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 't1', marker: 'yellow-star' }),
+      )
+      expect(currentAnnotations).toEqual({ t1: 'yellow-star' })
+      // Advance past settlement without relying on the speed of userEvent/CI.
+      await act(async () => vi.advanceTimersByTimeAsync(elapsed))
+      await act(async () => finishStaleRead({ t1: 'blue-question' }))
+      expect(
+        within(screen.getByRole('button', { name: /Q2 budget/i })).getByLabelText('Yellow star'),
+      ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('button', { name: 'Unstar this thread' })).getByLabelText(
+          'Yellow star',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.queryByLabelText('Blue question mark')).toBeNull()
+
+      // A fresh read uses the persisted write, also after the overlay expires.
+      const readsBeforeRefresh = mailMarkersMock.mock.calls.length
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Refresh mail' })))
+      expect(mailMarkersMock.mock.calls.length).toBeGreaterThan(readsBeforeRefresh)
+      expect(
+        within(screen.getByRole('button', { name: /Q2 budget/i })).getByLabelText('Yellow star'),
+      ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('button', { name: 'Unstar this thread' })).getByLabelText(
+          'Yellow star',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.queryByLabelText('Blue question mark')).toBeNull()
+
+      // Once settled, a genuinely newer annotation must still be observable.
+      await act(async () => vi.advanceTimersByTimeAsync(1_001))
+      currentAnnotations = { t1: 'blue-question' }
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Refresh mail' })))
+      expect(
+        within(screen.getByRole('button', { name: /Q2 budget/i })).getByLabelText(
+          'Blue question mark',
+        ),
+      ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('button', { name: 'Unstar this thread' })).getByLabelText(
+          'Blue question mark',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.queryByLabelText('Yellow star')).toBeNull()
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  },
+)
+
+test('reader Retry settles a failed marker reconciliation', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await openThread()
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+  mailMarkersMock
+    .mockRejectedValueOnce(new Error('temporary annotation failure'))
+    .mockResolvedValueOnce({ t1: 'yellow-star' })
+  await user.click(screen.getAllByRole('button', { name: 'Star this thread' }).at(-1)!)
+
+  const readerHeader = screen.getByRole('heading', { name: 'Q2 budget' }).parentElement!
+  await user.click(within(readerHeader).getByRole('button', { name: 'Retry marker' }))
+
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+  await waitFor(() => expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3))
+})
+
+test('reader preserves a Gmail star when its personal marker is absent', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+  setMailMarkerMock.mockRejectedValue(new Error('removal refused'))
+  render(<MailView />)
+  await openThread()
+  await user.click(screen.getAllByRole('button', { name: 'Unstar this thread' }).at(-1)!)
+
+  expect(screen.getAllByRole('button', { name: 'Unstar this thread' }).at(-1)).toBeInTheDocument()
+  expect(setMailMarkerMock).toHaveBeenCalled()
+})
+
+test('shows ordinary Gmail stars only after the annotation read and retries marker errors', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+  mailMarkersMock.mockRejectedValueOnce(new Error('offline'))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  expect(await screen.findByRole('button', { name: 'Retry marker' })).toBeInTheDocument()
+  expect(await screen.findByLabelText('Starred')).toBeInTheDocument()
+  mailMarkersMock.mockResolvedValueOnce({})
+  await user.click(screen.getByRole('button', { name: 'Retry marker' }))
+  expect((await screen.findAllByLabelText('Starred')).length).toBeGreaterThan(0)
 })

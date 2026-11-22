@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { NOT_INSTALLED, piProvider } from '../main/pi'
 import { buildPiEnv } from '../main/pi/env'
+import { join } from 'node:path'
 
 const TARGET = { root: '/vault', configDir: '/home/ada/.pi', binDir: '/holi/bin' }
 
@@ -9,7 +10,7 @@ describe('the Pi provider', () => {
     const pi = piProvider({ resolveBin: () => '/usr/local/bin/pi' })
     const cmd = pi.terminal(TARGET)
     expect(cmd).toMatchObject({ bin: '/usr/local/bin/pi', args: [] })
-    expect(cmd?.env.PATH).toContain('/holi/bin/fallback')
+    expect(cmd?.env.PATH).toContain(join('/holi/bin', 'fallback'))
   })
 
   it('uses Pi’s interactive resume picker and accepts a first prompt', () => {
@@ -50,7 +51,7 @@ describe('the Pi provider', () => {
       PI_CODING_AGENT_DIR: '/home/ada/.pi-custom',
       USER_MODEL_CONFIG: 'keep-me',
     })
-    expect(env.PATH).toContain('/holi/bin/fallback')
+    expect(env.PATH).toContain(join('/holi/bin', 'fallback'))
     for (const key of [
       'PI_SESSION_ID',
       'PI_SESSION_FILE',

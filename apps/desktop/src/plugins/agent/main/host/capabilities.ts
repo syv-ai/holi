@@ -25,10 +25,11 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import { merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
+import { shownPathOrNull, merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
+  GitHistoricalPathMissingError,
   noParams,
   optionalStringParam,
   paramsObject,
@@ -121,6 +122,8 @@ export interface AgentCapabilitiesDeps {
   liveRemote(): string | null
   /** Commit the open vault now. */
   commitNow(): Promise<unknown>
+  trackMutation?<T>(work: () => Promise<T>): Promise<T>
+  captureFinalization?: () => <T>(work: () => Promise<T>) => Promise<T>
   /** Pi's per-job RPC supervisor; unlike Claude it is managed by Holi. */
   pi?: {
     sessions(): SessionSummary[]
@@ -143,6 +146,11 @@ const notOpen = { ok: false as const, message: VAULT_NOT_OPEN }
 /** Far under Claude Code's own cap of about a million characters: a message
  *  is a note to a session, not a document. */
 const MAX_MESSAGE = 100_000
+const TURN_READ_BUDGET = { maxBuffer: 4 * 1024 * 1024, timeout: 10_000 }
+
+function turnPathAllowed(path: string): boolean {
+  return shownPathOrNull(path) !== null
+}
 
 /** An optional whole number, such as a terminal's columns. */
 function countParam(raw: Record<string, unknown>, key: string): number | undefined {
@@ -177,7 +185,14 @@ const idParams = (raw: unknown): { id: string } => ({ id: stringParam(paramsObje
 
 const rangeParams = (raw: unknown): { base: string; end: string } => {
   const p = paramsObject(raw)
-  return { base: stringParam(p, 'base'), end: stringParam(p, 'end') }
+  const endpoint = (key: 'base' | 'end'): string => {
+    const value = stringParam(p, key)
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) {
+      throw new CapabilityError('BAD_REQUEST', `${key} must be a full Git object id`)
+    }
+    return value
+  }
+  return { base: endpoint('base'), end: endpoint('end') }
 }
 
 /** The most paths a job's scope names. */
@@ -830,7 +845,10 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     'agent.turnFiles': cap({
       doors: ['ui'],
       params: rangeParams,
-      run: (ctx, { base, end }): Promise<RangeFile[]> => ctx.core.repo().rangeFiles(base, end),
+      run: async (ctx, { base, end }): Promise<RangeFile[]> =>
+        (await ctx.core.repo().rangeFiles(base, end, TURN_READ_BUDGET)).filter((file) =>
+          turnPathAllowed(file.path),
+        ),
     }),
 
     /** One file's before and after across the turn. Either side is `''` when
@@ -846,8 +864,16 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, { base, end, path }): Promise<{ before: string; after: string }> => {
         const repo = ctx.core.repo()
         const rel = relPath(path)
-        const before = await repo.show(base, rel).catch(() => '')
-        const after = await repo.show(end, rel).catch(() => '')
+        if (!turnPathAllowed(rel))
+          throw new CapabilityError('BAD_REQUEST', 'This path is not available in turn history.')
+        const before = await repo.show(base, rel, TURN_READ_BUDGET).catch((error: unknown) => {
+          if (error instanceof GitHistoricalPathMissingError) return ''
+          throw error
+        })
+        const after = await repo.show(end, rel, TURN_READ_BUDGET).catch((error: unknown) => {
+          if (error instanceof GitHistoricalPathMissingError) return ''
+          throw error
+        })
         return { before, after }
       },
     }),
@@ -883,29 +909,60 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, args): Promise<{ ok: true }> => {
         if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
         const rel = relPath(args.path)
-        if ('delete' in args) {
-          await withFileLocks(ctx.root, [rel], () => removeDocFile(ctx.root, rel))
-        } else {
-          const { text, base } = args
-          const abs = await writableFile(ctx, rel)
-          await withFileLock(abs, async () => {
-            // A file the turn deleted is absent on disk and empty in the review.
-            const current = (await readFile(abs, 'utf8').catch(() => null)) ?? ''
-            let next = text
-            if (base !== undefined && current !== base) {
-              const merged = merge3(base, text, current)
-              if (merged.kind === 'conflict') {
-                throw new CapabilityError(
-                  'CONFLICT',
-                  `${rel} has changed since this turn, where you are changing it. Nothing was written: open the file to see what changed.`,
+        // Bind the commit to the admitting activation before revocation or any
+        // lock wait, not to whichever vault is displayed when it eventually runs.
+        const finalize = deps.captureFinalization?.() ?? (<T>(work: () => Promise<T>) => work())
+        const mutation = async (): Promise<{ ok: true } | { refusal: CapabilityError }> => {
+          let mutationStarted = false
+          try {
+            if ('delete' in args) {
+              await writableFile(ctx, rel)
+              await withFileLocks(ctx.root, [rel], () => {
+                mutationStarted = true
+                return removeDocFile(ctx.root, rel)
+              })
+            } else {
+              const { text, base } = args
+              const abs = await writableFile(ctx, rel)
+              let conflict = false
+              await withFileLock(abs, async () => {
+                // A file the turn deleted is absent on disk and empty in the review.
+                const current = await readFile(abs, 'utf8').catch(
+                  (error: NodeJS.ErrnoException) => {
+                    if (error.code === 'ENOENT') return ''
+                    throw error
+                  },
                 )
+                let next = text
+                if (base !== undefined && current !== base) {
+                  const merged = merge3(base, text, current)
+                  if (merged.kind === 'conflict') {
+                    conflict = true
+                    return
+                  }
+                  next = merged.text
+                }
+                mutationStarted = true
+                await writeAtomic(ctx.root, rel, next)
+              })
+              if (conflict) {
+                return {
+                  refusal: new CapabilityError(
+                    'CONFLICT',
+                    `${rel} has changed since this turn, where you are changing it. Nothing was written: open the file to see what changed.`,
+                  ),
+                }
               }
-              next = merged.text
             }
-            await writeAtomic(ctx.root, rel, next)
-          })
+            await finalize(() => deps.commitNow().then(() => undefined))
+            return { ok: true }
+          } catch (error) {
+            if (!mutationStarted && error instanceof CapabilityError) return { refusal: error }
+            throw error
+          }
         }
-        await deps.commitNow()
+        const result = await (deps.trackMutation?.(mutation) ?? mutation())
+        if ('refusal' in result) throw result.refusal
         return { ok: true }
       },
     }),

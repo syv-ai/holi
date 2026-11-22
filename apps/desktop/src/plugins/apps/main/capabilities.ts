@@ -16,6 +16,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { BrowserWindow } from 'electron'
 import { appBundleOf, isAppBundlePath, vaultRelPath } from '@holi/shared'
 import { APP_MANIFEST_FILE, parseAppManifest, setManifestArchived } from '../shared/manifest'
 import { APP_LOG_LEVELS, appLogEntries, appLogSinceLoad } from '../shared/store'
@@ -41,7 +42,7 @@ import {
 } from './grants'
 import { readAppLog, writeAppLog } from './log'
 import { initAppOp, openAppOp } from './ops'
-import type { AppPreviews } from './previews'
+import { bundleStamp, type AppPreviews } from './previews'
 import { storeCheck, storeDelete, storeGet, storeList, storePut } from './store'
 
 /**
@@ -90,10 +91,21 @@ export interface AppCapabilitiesDeps {
   grants: AppGrants
   /** This machine's pictures of its apps, for their cards. */
   previews: AppPreviews
+  /** Per-activation placement authority for in-flight app preview captures. */
+  previewPlacements: Map<string, { generation: number; rect: PreviewRect | null }>
   /** The window's pixels inside `rect` (CSS pixels from the top left of the
    *  page), as a small JPEG; null when there is nothing to take, such as a
    *  hidden window. Electron's, injected so this file loads under Node. */
-  capture(rect: PreviewRect): Promise<Buffer | null>
+  capture(rect: PreviewRect, window: BrowserWindow, current: () => boolean): Promise<Buffer | null>
+  issueFrameLease(
+    bundle: string,
+  ): Pick<import('../../../main/plugin-api').AppFrameLease, 'token' | 'nonce'>
+  releaseFrameLease(token: string, bundle: string): boolean
+  validateFrameLease?(
+    token: string,
+    nonce: string,
+    bundle: string,
+  ): import('../../../main/plugin-api').AppFrameLease | null
 }
 
 /** Where on the page an app's frame is, in CSS pixels. */
@@ -106,7 +118,7 @@ export interface PreviewRect {
 
 /** The frame's rect from the renderer: whole, non-negative and of a size a
  *  window can have. */
-function rectParam(raw: unknown): PreviewRect {
+export function previewRect(raw: unknown): PreviewRect {
   const r = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const out: Record<string, number> = {}
   for (const key of ['x', 'y', 'width', 'height'] as const) {
@@ -138,6 +150,35 @@ const readManifest = (root: string, bundle: string) =>
   readFile(join(root, vaultRelPath(`${bundle}/${APP_MANIFEST_FILE}`)), 'utf8').catch(() => null)
 
 export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
+  /** Frame document authority is issued only to Holi's UI door, never an app. */
+  'apps.frameLease': cap({
+    doors: ['ui'],
+    params: (raw) => ({ bundle: bundleParam(paramsObject(raw)) }),
+    run: async (_ctx, { bundle }) => deps.issueFrameLease(bundle),
+  }),
+  'apps.frameLeaseValid': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const p = paramsObject(raw)
+      return {
+        bundle: bundleParam(p),
+        token: stringParam(p, 'token'),
+        nonce: stringParam(p, 'nonce'),
+      }
+    },
+    run: async (ctx, { bundle, token, nonce }) => {
+      const lease = deps.validateFrameLease?.(token, nonce, bundle) ?? null
+      return lease !== null && lease.remote === ctx.remote && lease.root === ctx.root
+    },
+  }),
+  'apps.releaseFrameLease': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const p = paramsObject(raw)
+      return { bundle: bundleParam(p), token: stringParam(p, 'token') }
+    },
+    run: async (_ctx, { bundle, token }) => deps.releaseFrameLease(token, bundle),
+  }),
   /**
    * One bridge call from the frame `AppFrame` mounted for `bundle`, through
    * the app door. Not a write itself: the call it carries refreshes the vault
@@ -147,10 +188,23 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     doors: ['ui'],
     params: (raw) => {
       const p = paramsObject(raw)
-      return { bundle: bundleParam(p), method: stringParam(p, 'method'), params: p.params }
+      return {
+        bundle: bundleParam(p),
+        method: stringParam(p, 'method'),
+        params: p.params,
+        token: stringParam(p, 'token'),
+        nonce: stringParam(p, 'nonce'),
+      }
     },
-    run: async (ctx, { bundle, method, params }) =>
-      (await deps.appDoor().call(ctx.remote, bundle, method, params)).value,
+    run: async (ctx, { bundle, method, params, token, nonce }) => {
+      const lease = deps.validateFrameLease?.(token, nonce, bundle) ?? null
+      if (lease === null || lease.remote !== ctx.remote || lease.root !== ctx.root) {
+        throw new CapabilityError('FORBIDDEN', 'app document lease is no longer valid')
+      }
+      const valid = () => lease.valid(lease.window)
+      if (!valid()) throw new CapabilityError('FORBIDDEN', 'app document lease is no longer valid')
+      return (await deps.appDoor().call(ctx.remote, bundle, method, params, valid)).value
+    },
   }),
 
   /** Which of the app's `dangerously-allow` reads this person has approved
@@ -243,13 +297,51 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     doors: ['ui'],
     params: (raw) => {
       const p = paramsObject(raw)
-      return { bundle: bundleParam(p), rect: rectParam(p.rect) }
+      return {
+        bundle: bundleParam(p),
+        rect: previewRect(p.rect),
+        token: stringParam(p, 'token'),
+        nonce: stringParam(p, 'nonce'),
+        generation:
+          typeof p.generation === 'number' &&
+          Number.isSafeInteger(p.generation) &&
+          p.generation >= 0
+            ? p.generation
+            : 0,
+      }
     },
-    run: async (ctx, { bundle, rect }) => {
-      const jpeg = await deps.capture(rect)
-      if (jpeg === null) return { saved: false }
-      await deps.previews.save(ctx.remote, ctx.root, bundle, jpeg)
-      return { saved: true }
+    run: async (ctx, { bundle, rect, token, nonce, generation }) => {
+      const lease = deps.validateFrameLease?.(token, nonce, bundle) ?? null
+      if (lease === null || lease.remote !== ctx.remote || lease.root !== ctx.root) {
+        return { saved: false }
+      }
+      const placementKey = `${ctx.remote}\0${bundle}\0${token}`
+      const matches = () => {
+        const placement = deps.previewPlacements.get(placementKey)
+        return (
+          placement !== undefined &&
+          placement.generation === generation &&
+          placement.rect !== null &&
+          JSON.stringify(placement.rect) === JSON.stringify(rect)
+        )
+      }
+      const current = () => lease.valid(lease.window) && matches()
+      if (!current()) return { saved: false }
+      const revision = deps.previews.revision(ctx.remote, bundle)
+      const expectedStamp = await bundleStamp(ctx.root, bundle)
+      if (!current()) return { saved: false }
+      const jpeg = await deps.capture(rect, lease.window, current)
+      if (!current() || jpeg === null) return { saved: false }
+      const saved = await deps.previews.save(
+        ctx.remote,
+        ctx.root,
+        bundle,
+        jpeg,
+        current,
+        revision,
+        expectedStamp,
+      )
+      return { saved: saved && current() }
     },
   }),
 
@@ -295,11 +387,21 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
       const p = paramsObject(raw)
       const level = APP_LOG_LEVELS.find((l) => l === p.level)
       if (level === undefined) throw new CapabilityError('BAD_REQUEST', 'not a log entry')
-      return { bundle: bundleParam(p), level, text: typeof p.text === 'string' ? p.text : '' }
+      return {
+        bundle: bundleParam(p),
+        level,
+        text: typeof p.text === 'string' ? p.text : '',
+        token: stringParam(p, 'token'),
+        nonce: stringParam(p, 'nonce'),
+      }
     },
-    run: async (ctx, { bundle, level, text }) => {
-      await writeAppLog(ctx.root, bundle, { level, text })
-      return true
+    run: async (ctx, { bundle, level, text, token, nonce }) => {
+      const lease = deps.validateFrameLease?.(token, nonce, bundle) ?? null
+      if (lease === null || lease.remote !== ctx.remote || lease.root !== ctx.root) return false
+      const current = () => lease.valid(lease.window)
+      if (!current()) return false
+      await writeAppLog(ctx.root, bundle, { level, text }, undefined, current)
+      return current()
     },
   }),
 
@@ -444,7 +546,7 @@ export const storeCapabilities = () => ({
       return { ...base, id: id === '' ? undefined : id, value: valueParam(base.p.value) }
     },
     run: (ctx, { bundle, collection, id, value }) =>
-      storePut(ctx.root, bundleOf(ctx, bundle), collection, id, value),
+      storePut(ctx.root, bundleOf(ctx, bundle), collection, id, value, ctx.assertCurrent),
     text: (id) => id,
   }),
 
@@ -457,7 +559,7 @@ export const storeCapabilities = () => ({
       return { ...base, id: stringParam(base.p, 'id') }
     },
     run: (ctx, { bundle, collection, id }) =>
-      storeDelete(ctx.root, bundleOf(ctx, bundle), collection, id),
+      storeDelete(ctx.root, bundleOf(ctx, bundle), collection, id, ctx.assertCurrent),
     text: (deleted) => (deleted ? 'deleted' : 'no such record'),
   }),
 

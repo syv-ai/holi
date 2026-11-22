@@ -16,6 +16,11 @@
  * Code exports to its hooks: how Holi adds a message to a running session
  * (`messaging.ts`). Kept in memory by the host, never written down.
  *
+ * A turn's start also carries `pid`, the session's `claude` process
+ * (`$CLAUDE_PID`, or the hook's parent on an older CLI), absent from a hook older than it: how the host tells a
+ * session that died mid-turn from one the listing merely does not name
+ * (`host/sessions.ts`).
+ *
  * The job id rides beside the vault's standing token, because a background
  * session's environment comes from Claude Code's supervisor rather than from
  * Holi: no per-session bearer can reach it.
@@ -65,10 +70,18 @@ export function registerAgentRoutes(server: RouteServer, deps: TurnRouteDeps): (
         const job = query.get('job') ?? ''
         const raw = query.get('pending')
         const pending = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null
+        const rawPid = query.get('pid')
+        const pid = rawPid !== null && /^[1-9]\d{0,9}$/.test(rawPid) ? Number(rawPid) : undefined
         if (!JOB_ID.test(job)) return EMPTY
         // Before the turn: a message sent the moment it starts finds the inbox.
         if (active) channel(remote, job, body)
-        const tree = await deps.onTurn(remote, job, active, active ? null : pending)
+        const tree = await deps.onTurn(
+          remote,
+          job,
+          active,
+          active ? null : pending,
+          active ? pid : undefined,
+        )
         if (typeof tree !== 'string' || !/^[0-9a-f]{7,64}$/.test(tree)) return EMPTY
         return { status: 200, body: JSON.stringify({ tree }), contentType: 'application/json' }
       },

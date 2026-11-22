@@ -2,17 +2,19 @@
  * The capabilities PDF's renderer calls through the UI door: templates,
  * render and the viewer's signatures.
  */
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { emptyVaultSnapshot } from '@holi/shared'
+import { emptyVaultSnapshot, writeMarkdownCaptionEnvelope } from '@holi/shared'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
 import { PDF_NAMESPACES, pdfCapabilities } from '../main/capabilities'
 import { createSignatureStore } from '../main/signatures'
 import { resolveTypstBin } from '../main/typst-bin'
 import plainTemplateTyp from '../main/vault/once/.holi/document-templates/plain/template.typ?raw'
+import reportTemplateJson from '../main/vault/once/.holi/document-templates/report/template.json?raw'
+import reportTemplateTyp from '../main/vault/once/.holi/document-templates/report/template.typ?raw'
 
 const TEMPLATE_FILES = {
   '.holi/document-templates/plain/template.json': JSON.stringify({
@@ -38,7 +40,7 @@ afterEach(async () => {
 })
 
 /** A vault holding `files`, and a runner for PDF's entries at the UI door. */
-async function rig(files: Record<string, string> = {}) {
+async function rig(files: Record<string, string> = {}, useFakeTypst = false) {
   base = await mkdtemp(join(tmpdir(), 'holi-pdf-caps-'))
   const root = join(base, 'vault')
   for (const [rel, text] of Object.entries(files)) {
@@ -46,12 +48,13 @@ async function rig(files: Record<string, string> = {}) {
     await writeFile(join(root, rel), text, 'utf8')
   }
   await mkdir(root, { recursive: true })
+  const typstBin = useFakeTypst ? await fakeTypst() : undefined
   const registry = createCapabilityRegistry()
   registry.register(
     PDF_NAMESPACES,
     pdfCapabilities({
       signatures: createSignatureStore(join(base, 'pdf-signatures.json')),
-      typst: () => resolveTypstBin(),
+      typst: () => (typstBin ? Promise.resolve(typstBin) : resolveTypstBin()),
       diagrams: async (sources) => sources.map(() => ({ svg: SVG })),
     }),
   )
@@ -63,26 +66,104 @@ async function rig(files: Record<string, string> = {}) {
     claims: async () => [],
     core: noCoreServices(),
   }
-  const run = async (name: string, params?: unknown) =>
-    (await registry.run(name, 'ui', ctx, params)).value
+  const run = async (name: string, params?: unknown, door: 'ui' | 'cli' = 'ui') =>
+    (await registry.run(name, door, ctx, params)).value
   return { root, run }
 }
 
+/** A deterministic Typst stand-in that writes recognizable PDF bytes. */
+async function fakeTypst(): Promise<string> {
+  const bin = join(base, 'typst')
+  await writeFile(
+    bin,
+    '#!/usr/bin/env node\n' +
+      'const args = process.argv.slice(2);\n' +
+      "const out = args.find((arg) => arg.endsWith('.pdf'));\n" +
+      `require('node:fs').copyFileSync(args[1], ${JSON.stringify(join(base, 'compiled-wrapper.typ'))});\n` +
+      "require('node:fs').writeFileSync(out, '%PDF-1.7\\nfake')\n",
+  )
+  await chmod(bin, 0o755)
+  return bin
+}
+
 describe('pdf capabilities', () => {
-  it('templates returns each template with its declared fields', async () => {
+  it('templates returns each template with its declared fields through both doors', async () => {
     const { run } = await rig(TEMPLATE_FILES)
-    expect(await run('pdf.templates')).toEqual([
+    for (const door of ['ui', 'cli'] as const) {
+      expect(await run('pdf.templates', undefined, door)).toEqual([
+        {
+          name: 'Plain',
+          slug: 'plain',
+          description: 'Clean.',
+          fields: [
+            { key: 'date', label: 'Date', type: 'text', required: false },
+            { key: 'recipient', label: 'Recipient', type: 'text', required: true },
+          ],
+          warnings: [],
+        },
+      ])
+    }
+  })
+
+  it('filters reintroduced obsolete templates from UI and CLI and refuses rendering them', async () => {
+    const files = {
+      ...TEMPLATE_FILES,
+      '.holi/document-templates/legacy/template.json': JSON.stringify({
+        name: 'Syv.ai report',
+        fields: [],
+      }),
+      '.holi/document-templates/case/template.json': JSON.stringify({
+        name: 'syv.ai report',
+        fields: [],
+      }),
+      'note.md': '# Note',
+    }
+    const { run } = await rig(files, true)
+    for (const door of ['ui', 'cli'] as const) {
+      const listed = (await run('pdf.templates', undefined, door)) as { name: string }[]
+      expect(listed.map(({ name }) => name)).toContain('syv.ai report')
+      expect(listed.map(({ name }) => name)).not.toContain('Syv.ai report')
+      await expect(
+        run('pdf.render', { path: 'note.md', template: 'legacy' }, door),
+      ).rejects.toThrow(/template legacy/)
+      const output = join(base, `${door}.pdf`)
+      await run(
+        'pdf.render',
+        { path: 'note.md', template: 'plain', out: output, meta: { recipient: 'ACME' } },
+        door,
+      )
+      expect((await readFile(output)).toString()).toContain('%PDF-1.7')
+    }
+  })
+
+  it('renders the restored Report through the capability with the local Typst fixture', async () => {
+    const { root, run } = await rig(
       {
-        name: 'Plain',
-        slug: 'plain',
-        description: 'Clean.',
-        fields: [
-          { key: 'date', label: 'Date', type: 'text', required: false },
-          { key: 'recipient', label: 'Recipient', type: 'text', required: true },
-        ],
-        warnings: [],
+        '.holi/document-templates/report/template.json': reportTemplateJson,
+        '.holi/document-templates/report/template.typ': reportTemplateTyp,
+        'note.md': '# Restored report\n',
       },
-    ])
+      true,
+    )
+    const out = join(base, 'report.pdf')
+    const result = await run(
+      'pdf.render',
+      {
+        path: 'note.md',
+        template: 'report',
+        out,
+        meta: { title: 'CLI title', client: 'CLI client' },
+      },
+      'cli',
+    )
+    expect(result).toMatchObject({ pdfPath: out, vaultPath: null, bytes: expect.any(Number) })
+    expect((await readFile(out)).toString()).toContain('%PDF-1.7')
+    const wrapper = await readFile(join(base, 'compiled-wrapper.typ'), 'utf8')
+    expect(wrapper).toContain('client: "CLI client"')
+    expect(reportTemplateTyp).toContain('meta.at("client", default: none)')
+    expect(await readFile(join(root, '.holi/document-templates/report/template.typ'), 'utf8')).toBe(
+      reportTemplateTyp,
+    )
   })
 
   it('keeps the signatures made in the viewer, outside the vault', async () => {
@@ -109,9 +190,9 @@ describe('pdf capabilities', () => {
     ).rejects.toThrow(/meta/)
   })
 
-  it('render writes to the given out, fills fields and threads meta through (needs typst)', async () => {
-    if ((await resolveTypstBin()) === null) return // no typst: skip, don't fail
-    const { run } = await rig({
+  it('renders captioned code through both UI and CLI doors (needs typst)', async (ctx) => {
+    if ((await resolveTypstBin()) === null) ctx.skip('Typst is required for real PDF compilation')
+    const { root, run } = await rig({
       '.holi/document-templates/plain/template.json': JSON.stringify({
         name: 'Plain',
         fields: [
@@ -121,8 +202,25 @@ describe('pdf capabilities', () => {
       }),
       '.holi/document-templates/plain/template.typ': plainTemplateTyp,
       'note.md':
-        '---\nrecipient: ACME\n---\n\n## Heading\n\n```mermaid\nflowchart LR\n  A --> B\n```\n',
+        '---\nrecipient: ACME\n---\n\n## Heading\n\n<!-- holi:figure -->\n\n```js\nconst path = "[[path/to/file.md|shown]]"; // @@FIG:literal@@\n```\n\n<!-- holi:caption -->\n\n**Caption**\n\n<!-- /holi:figure -->\n\n' +
+        writeMarkdownCaptionEnvelope(
+          '![Photo][photo]',
+          '**Centered image caption** with `#raw-typst malicious`',
+        ) +
+        '\n\n' +
+        writeMarkdownCaptionEnvelope(
+          '| Link | Image |\n| --- | --- |\n| [destination][dest] | ![Photo][photo] |',
+          'Reference table caption.',
+        ) +
+        '\n\n[photo]: image.png\n[dest]: https://example.com/\n  "Reference destination"\n',
     })
+    await writeFile(
+      join(root, 'image.png'),
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    )
     const out = join(base, 'chosen.pdf')
     const result = await run('pdf.render', { path: 'note.md', out, meta: { date: '2026-07-26' } })
     expect(result).toEqual({
@@ -133,6 +231,38 @@ describe('pdf capabilities', () => {
     })
     const bytes = await readFile(out)
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    const original = await readFile(join(root, 'note.md'), 'utf8')
+    expect(original).toContain('[[path/to/file.md|shown]]')
+
+    const cliOut = join(base, 'cli.pdf')
+    const cliResult = await run(
+      'pdf.render',
+      { path: 'note.md', out: cliOut, meta: { date: '2026-07-26' } },
+      'cli',
+    )
+    expect(cliResult).toMatchObject({ pdfPath: cliOut, vaultPath: null, bytes: expect.any(Number) })
+    const cliBytes = await readFile(cliOut)
+    expect(cliBytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(await readFile(join(root, 'note.md'), 'utf8')).toBe(original)
+  }, 30_000)
+
+  it('a unique render goes beside the note and never replaces a file there (needs typst)', async () => {
+    if ((await resolveTypstBin()) === null) return // no typst: skip, don't fail
+    const { root, run } = await rig({
+      ...TEMPLATE_FILES,
+      '.holi/document-templates/plain/template.typ': plainTemplateTyp,
+      'notes/meeting.md': '# Meeting\n',
+      'notes/meeting.pdf': 'theirs',
+    })
+    const meta = { recipient: 'A' }
+    const first = await run('pdf.render', { path: 'notes/meeting.md', unique: true, meta })
+    expect(first).toMatchObject({ vaultPath: 'notes/meeting 2.pdf' })
+    const second = await run('pdf.render', { path: 'notes/meeting.md', unique: true, meta })
+    expect(second).toMatchObject({ vaultPath: 'notes/meeting 3.pdf' })
+    expect(await readFile(join(root, 'notes/meeting.pdf'), 'utf8')).toBe('theirs')
+    await expect(
+      run('pdf.render', { path: 'notes/meeting.md', unique: true, out: 'x.pdf', meta }),
+    ).rejects.toThrow(/unique/)
   }, 30_000)
 
   it('render refuses a field the template does not have, and a missing required one', async () => {
@@ -142,6 +272,102 @@ describe('pdf capabilities', () => {
     ).rejects.toThrow(/colour/)
     await expect(run('pdf.render', { path: 'note.md' })).rejects.toThrow(/recipient/)
   })
+
+  it('unique render refuses an alias into machine state before writing', async () => {
+    const { root, run } = await rig(
+      {
+        ...TEMPLATE_FILES,
+        '.holi/document-templates/plain/template.typ': plainTemplateTyp,
+        'public.md': '# Public note\\n',
+      },
+      true,
+    )
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await symlink(join(root, '.holi/state'), join(root, 'alias'))
+    await symlink('../../public.md', join(root, '.holi/state/note.md'))
+
+    await expect(
+      run('pdf.render', {
+        path: 'alias/note.md',
+        unique: true,
+        meta: { recipient: 'A' },
+      }),
+    ).rejects.toThrow(/secret or machine-state/)
+    await expect(readFile(join(root, '.holi/state/note.pdf'))).rejects.toThrow()
+  })
+
+  it('unique render skips an occupied leaf symlink without following it', async () => {
+    const { root, run } = await rig(
+      {
+        ...TEMPLATE_FILES,
+        '.holi/document-templates/plain/template.typ': plainTemplateTyp,
+        'notes/broken.md': '# Broken\n',
+        'notes/broken.pdf': 'already here',
+        'notes/kept.pdf': 'internal target',
+        '.holi/state/protected.pdf': 'protected target',
+      },
+      true,
+    )
+    await writeFile(join(base, 'outside.pdf'), 'outside target')
+    await symlink(join(base, 'outside.pdf'), join(root, 'notes/broken 2.pdf'))
+    await symlink(join(base, 'missing.pdf'), join(root, 'notes/broken 3.pdf'))
+    await symlink(join(root, '.holi/state/protected.pdf'), join(root, 'notes/broken 4.pdf'))
+    await symlink(join(root, 'notes/kept.pdf'), join(root, 'notes/broken 5.pdf'))
+
+    const result = await run('pdf.render', {
+      path: 'notes/broken.md',
+      unique: true,
+      meta: { recipient: 'A' },
+    })
+
+    expect(result).toMatchObject({ vaultPath: 'notes/broken 6.pdf' })
+    expect(await readFile(join(base, 'outside.pdf'), 'utf8')).toBe('outside target')
+    expect(await readFile(join(root, '.holi/state/protected.pdf'), 'utf8')).toBe('protected target')
+    expect(await readFile(join(root, 'notes/kept.pdf'), 'utf8')).toBe('internal target')
+  }, 30_000)
+
+  it('unique render skips a symlink at the first candidate name', async () => {
+    const { root, run } = await rig(
+      {
+        ...TEMPLATE_FILES,
+        '.holi/document-templates/plain/template.typ': plainTemplateTyp,
+        'notes/first.md': '# First\n',
+      },
+      true,
+    )
+    await writeFile(join(base, 'outside.pdf'), 'outside target')
+    await symlink(join(base, 'outside.pdf'), join(root, 'notes/first.pdf'))
+
+    const result = await run('pdf.render', {
+      path: 'notes/first.md',
+      unique: true,
+      meta: { recipient: 'A' },
+    })
+
+    expect(result).toMatchObject({ vaultPath: 'notes/first 2.pdf' })
+    expect(await readFile(join(base, 'outside.pdf'), 'utf8')).toBe('outside target')
+  }, 30_000)
+
+  it('repeated unique render of a leading local markdown filename keeps .pdf', async () => {
+    const { root, run } = await rig(
+      {
+        ...TEMPLATE_FILES,
+        '.holi/document-templates/plain/template.typ': plainTemplateTyp,
+        '.local.md': '# Private note\n',
+      },
+      true,
+    )
+    const meta = { recipient: 'A' }
+
+    const first = await run('pdf.render', { path: '.local.md', unique: true, meta })
+    const second = await run('pdf.render', { path: '.local.md', unique: true, meta })
+
+    expect(first).toMatchObject({ vaultPath: '.local.pdf' })
+    expect(second).toMatchObject({ vaultPath: '.local. 2.pdf' })
+    expect((await readFile(join(root, '.local. 2.pdf'))).subarray(0, 5).toString('latin1')).toBe(
+      '%PDF-',
+    )
+  }, 30_000)
 
   it('render will not read a note through a symlink that leaves the vault', async () => {
     const { root, run } = await rig({ ...TEMPLATE_FILES })

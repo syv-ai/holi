@@ -192,6 +192,8 @@ export interface KanbanRootProps<T> extends Omit<
   onDragEnd?: (event: DragEndEvent) => void
   onDragCancel?: (event: DragCancelEvent) => void
   accessibility?: React.ComponentProps<typeof DndContext>["accessibility"]
+  /** Cancel a sensor's release when its owner became unavailable mid-drag. */
+  cancelDrop?: React.ComponentProps<typeof DndContext>["cancelDrop"]
   asChild?: boolean
   modifiers?: Modifiers
 }
@@ -210,6 +212,7 @@ function Kanban<T>({
   onDragEnd,
   onDragCancel,
   accessibility,
+  cancelDrop,
   modifiers,
   ...props
 }: KanbanRootProps<T>) {
@@ -664,6 +667,7 @@ function Kanban<T>({
         sensors={sensors}
         modifiers={modifiers}
         accessibility={accessibility}
+        cancelDrop={cancelDrop}
         measuring={MEASURING_CONFIG}
         collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
@@ -874,6 +878,7 @@ function KanbanItem({
 
   const { activeId, isColumn } = useContext(KanbanContext)
   const isItemDragging = activeId ? !isColumn(activeId) : false
+  const { onKeyDown: itemOnKeyDown, ...itemProps } = props
 
   const style = {
     transition,
@@ -917,7 +922,11 @@ function KanbanItem({
           disabled && "opacity-50",
           className
         )}
-        {...props}
+        onKeyDown={(event) => {
+          if (event.target === event.currentTarget) listeners?.onKeyDown?.(event)
+          itemOnKeyDown?.(event)
+        }}
+        {...itemProps}
       >
         {children}
       </Comp>
@@ -938,6 +947,7 @@ function KanbanItemHandle({
   ...props
 }: KanbanItemHandleProps) {
   const { listeners, isDragging, disabled } = useContext(ItemContext)
+  const { onKeyDown, ...handleProps } = props
 
   const Comp = asChild ? Slot.Root : "div"
 
@@ -947,11 +957,12 @@ function KanbanItemHandle({
       data-dragging={isDragging}
       data-disabled={disabled}
       {...listeners}
+      onKeyDown={onKeyDown}
       className={cn(
         cursor && (isDragging ? "cursor-grabbing!" : "cursor-grab!"),
         className
       )}
-      {...props}
+      {...handleProps}
     >
       {children}
     </Comp>

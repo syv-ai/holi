@@ -69,4 +69,58 @@ describe('markdown round trip', () => {
       '| Name | Role |\n| ---- | ---- |\n| Ada  | Lead |',
     )
   })
+
+  it('keeps reference definitions intact across CRLF and mixed newlines', () => {
+    const source =
+      '---\r\ntitle: Kept\r\n---\r\n\r\n![Alt][chart]\r\n\r\n<!-- holi:figure -->\n![Fig](images/a.png)\n<!-- /holi:figure -->\r\n\r\n[chart]: images/chart.png \"chart title\"\r\n'
+    const { head, body } = splitDocument(source)
+    expect(head).toBe('---\ntitle: Kept\n---\n\n')
+    const saved = roundTrip(body)
+    expect(saved).toContain('[chart]: images/chart.png \"chart title\"')
+    expect(saved).toContain('<!-- holi:figure -->')
+    expect(saved).toContain('images/a.png')
+  })
+
+  it('does not duplicate definitions retained inside malformed envelopes on repeated saves', () => {
+    let saved =
+      '![Other][ref]\n\n<!-- holi:figure -->\n\n![Photo](../photo.png)\n\n[ref]: ../other.png "Title"\n\nAfter.'
+    for (let cycle = 0; cycle < 3; cycle++) saved = roundTrip(saved)
+    expect(saved.match(/\[ref\]:/g)).toHaveLength(1)
+    expect(roundTrip(saved)).toBe(saved)
+  })
+
+  it.each([
+    ['blockquote', '> [photo]: ../photo.png "Nested title"'],
+    ['list item', '- label\n\n  [photo]: ../photo.png "Nested title"'],
+  ])(
+    'keeps %s reference definitions in place through repeated reopen-save cycles',
+    (_, definition) => {
+      const source = `![Photo][photo]\n\n${definition}`
+      let saved = source
+      for (let cycle = 0; cycle < 3; cycle++) {
+        saved = roundTrip(saved)
+        // Native containers normalize whitespace on otherwise blank lines.
+        expect(saved.replace(/^ +$/gm, '')).toContain(definition)
+        expect(editor?.state.doc.firstChild?.type.name).toBe('image')
+        expect(editor?.state.doc.firstChild?.attrs.src).toBe('../photo.png')
+      }
+      expect(saved).toMatch(/> \[photo\]:|  \[photo\]:/)
+    },
+  )
+
+  it('preserves first-definition precedence when an earlier opaque envelope has a duplicate', () => {
+    const opaque =
+      '<!-- holi:figure -->\n\n![Other](../other.png)\n\n[photo]: ../wrong.png\n\nAfter.'
+    const source = `![Photo][photo]\n\n[photo]: ../right.png\n\n${opaque}`
+    let saved = source
+    for (let cycle = 0; cycle < 3; cycle++) {
+      saved = roundTrip(saved)
+      expect(editor?.state.doc.firstChild?.type.name).toBe('image')
+      expect(editor?.state.doc.firstChild?.attrs.src).toBe('../right.png')
+    }
+    expect(saved.indexOf('[photo]: ../right.png')).toBeLessThan(
+      saved.indexOf('[photo]: ../wrong.png'),
+    )
+    expect(saved).toContain(opaque)
+  })
 })

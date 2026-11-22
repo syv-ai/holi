@@ -10,12 +10,20 @@
  * **The rule that contains the cost:** parse only plumbing commands and
  * `--porcelain=v2`. Human-readable output is not a stable interface.
  */
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { appendFile, lstat, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { MEMORY_INDEX, appBundleOf, isAppDataPath, isSharedMemoryPath } from '@holi/shared'
+import {
+  MEMORY_INDEX,
+  appBundleOf,
+  isAppDataPath,
+  isSharedMemoryPath,
+  shownPathOrNull,
+} from '@holi/shared'
 import { writeMemoryIndex } from './vault/hooks/memory-index'
+import { rawCommitParents, traceHasOnlyManagedBuiltins } from './git-provenance-evidence'
 
 /**
  * A git command that ran and failed.
@@ -43,6 +51,34 @@ export class GitMissingError extends Error {
   }
 }
 
+/** A bounded historical read could not complete within its fixed resource budget. */
+class GitEvidenceCommandError extends Error {
+  constructor(readonly code: number) {
+    super('Git evidence command failed.')
+  }
+}
+
+class GitResourceError extends Error {
+  constructor(readonly kind: 'time' | 'output') {
+    super(`Historical Git read exceeded its ${kind === 'time' ? 'time' : 'output'} resource limit.`)
+    this.name = 'GitResourceError'
+  }
+}
+
+class GitHistoricalObjectError extends Error {
+  constructor() {
+    super('Historical Git endpoint must be a full commit or tree object id.')
+    this.name = 'GitHistoricalObjectError'
+  }
+}
+
+export class GitHistoricalPathMissingError extends Error {
+  constructor() {
+    super('The path is not present at this historical object.')
+    this.name = 'GitHistoricalPathMissingError'
+  }
+}
+
 export interface GitDeps {
   /** The GitHub token, read lazily so a sign-out takes effect on the next
    * operation rather than on the next restart. */
@@ -55,6 +91,11 @@ export interface GitDeps {
   /** Extra environment for the git child process. Tests use it to simulate a
    * machine with no global config; nothing in the app needs it. */
   env?: Record<string, string>
+  /** Optional machine-local recorder used only by managed vault commits. */
+  commitProvenance?: {
+    begin(root: string): Promise<unknown> | unknown
+    record(ticket: unknown, root: string, oid: string | null): Promise<void>
+  }
 }
 
 /** Bounded so a large `git log` cannot silently truncate: execFile's default is
@@ -78,9 +119,10 @@ const WINDOWS = process.platform === 'win32'
  * either. Writing it at runtime sidesteps both, and works identically under
  * vitest, `electron-vite dev`, and a packaged app.
  *
- * **Why a shell script and not node.** It must run with no interpreter
- * assumptions: git executes this directly, and a `#!/usr/bin/env node` shebang
- * depends on a working `node` on PATH, which is not a given.
+ * **Why a shell script and not node.** Git for Windows supplies the `sh.exe`
+ * interpreter used for askpass scripts, while POSIX systems provide `/bin/sh`.
+ * A `#!/usr/bin/env node` shebang would instead depend on Node being on PATH,
+ * which is not a given in a packaged Electron app.
  *
  * The directory comes from `mkdtemp`, so it is 0700 and unpredictable — no other
  * user can pre-create the path and have git execute their script instead.
@@ -88,15 +130,21 @@ const WINDOWS = process.platform === 'win32'
 let askpassPromise: Promise<string> | null = null
 
 /** @public exported for its test */
+export function askpassScript(platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') {
+    return '#!/bin/sh\ncase "$1" in *sername*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
+  }
+  // Git for Windows provides sh.exe and runs shebang scripts, avoiding CMD's
+  // unsafe interpolation of the prompt argument into batch syntax.
+  return '#!/bin/sh\ncase "$1" in [Uu][Ss][Ee][Rr][Nn][Aa][Mm][Ee]*) echo "x-access-token";; *) printf "%s\\n" "$HOLI_GIT_TOKEN";; esac\n'
+}
+
+/** @public exported for its test */
 export function ensureAskpass(): Promise<string> {
   askpassPromise ??= (async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-git-'))
-    const file = join(dir, WINDOWS ? 'askpass.bat' : 'askpass.sh')
-    const body = WINDOWS
-      ? '@echo off\r\nif not "%~1"=="%~1:Username=%" (echo x-access-token) else (echo %HOLI_GIT_TOKEN%)\r\n'
-      : // `case` rather than a regex: this has to be POSIX sh, not bash.
-        '#!/bin/sh\ncase "$1" in *sername*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
-    await writeFile(file, body, { mode: 0o700 })
+    const file = join(dir, 'askpass.sh')
+    await writeFile(file, askpassScript(), { mode: 0o700 })
     return file
   })()
   return askpassPromise
@@ -108,6 +156,8 @@ export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath' | 'env'> {
    * a path list (`check-ignore`): thousands of paths as arguments hit `E2BIG`.
    */
   input?: string
+  /** Limits for historical reads consumed by an agent turn; absent for ordinary git work. */
+  executionBudget?: { maxBuffer: number; timeout: number }
 }
 
 export interface RepoStatus {
@@ -198,21 +248,41 @@ export interface GitRepo {
   /** The current commit, or **null** on an unborn branch (no commits yet): a
    *  real state of a real vault, not an error. */
   head(): Promise<string | null>
-  /** The paths changed across `from..to`, with line counts.
-   *
-   *  **Empty on failure, never a throw.** A turn record outlives the commits it
-   *  names — a reset, a re-clone — and a range whose shas are gone is a turn
-   *  whose history is gone, which the caller reports rather than crashes on. */
-  rangeFiles(from: string, to: string): Promise<RangeFile[]>
+  /** Local-only, bounded HEAD capture for historical queries. Unborn is distinct from unavailable. */
+  historicalHead(): Promise<
+    { kind: 'commit'; sha: string } | { kind: 'unborn' } | { kind: 'unavailable' }
+  >
+  /** The paths changed across `from..to`, with line counts. Missing or invalid
+   *  history is empty; an exhausted execution budget throws GitResourceError. */
+  rangeFiles(
+    from: string,
+    to: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<RangeFile[]>
   /** The vault's history — which IS git history (`features/history.md`).
    * `path` follows a file through renames; a `folder` is every commit under it,
    * which `--follow` (one file only) cannot walk. */
   log(opts?: { path?: string; folder?: boolean; limit?: number }): Promise<Commit[]>
+  /** Bounded reachable commit/path changes between exact endpoints. */
+  revisionChanges(
+    from: string,
+    to: string,
+    path: string,
+  ): Promise<{
+    complete: boolean
+    reason: 'ok' | 'history-unavailable' | 'limit'
+    changes: { sha: string; path: string }[]
+  }>
   /** A file's content at a past commit, for the history preview/restore
    * (`features/history.md`). Rejects when `path` is absent at `sha` —
    * e.g. a commit from before the file was renamed (`show` reads the given name,
-   * it does not `--follow`). */
-  show(sha: string, path: string): Promise<string>
+   * it does not `--follow`). A budgeted read throws typed historical-object,
+   * missing-path and resource errors. */
+  show(
+    sha: string,
+    path: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<string>
   /** One commit's exact metadata and churn, even when it is outside a recent
    * history listing. Null when the object is unavailable. */
   commit(sha: string): Promise<Commit | null>
@@ -315,6 +385,160 @@ export interface GitOutcome {
   stderr: string
 }
 
+/** One bounded, replacement-proof Git evidence read. Evidence failures are deliberately distinct from operation failures. */
+async function readGitEvidence(
+  cwd: string,
+  args: string[],
+  opts: RunOpts,
+  deadline: number,
+): Promise<string> {
+  const timeout = deadline - Date.now()
+  if (timeout <= 0) throw new GitResourceError('time')
+  const result = await runGitOnce(cwd, ['--no-replace-objects', ...args], {
+    ...opts,
+    env: { ...opts.env, GIT_NO_REPLACE_OBJECTS: '1' },
+    executionBudget: { maxBuffer: 65536, timeout },
+  })
+  if (!result.ok) throw new GitEvidenceCommandError(result.code)
+
+  return result.stdout.trim()
+}
+
+/** Run an invocation with Trace2 on a private fd3 pipe, never stderr. The Git
+ * operation is not bounded by provenance: only waiting for a detached descendant
+ * to close the observation pipe is bounded. */
+async function tryGitObservedOnce(
+  cwd: string,
+  args: string[],
+  opts: RunOpts,
+): Promise<{ outcome: GitOutcome; trace: string; complete: boolean }> {
+  const gitPath = opts.gitPath ?? 'git'
+  const askpass = await ensureAskpass()
+  const token = opts.token?.() ?? ''
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: askpass,
+    HOLI_GIT_TOKEN: token,
+    LC_ALL: 'C',
+    ...opts.env,
+    GIT_TRACE2_EVENT: '3',
+  }
+  if (WINDOWS) env.GCM_INTERACTIVE = 'never'
+  return new Promise((resolve, reject) => {
+    const child = spawn(gitPath, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] })
+    const output: Buffer[] = []
+    const errors: Buffer[] = []
+    const traces: Buffer[] = []
+    let outputSize = 0
+    let errorSize = 0
+    let traceSize = 0
+    let traceOverflow = false
+    let traceEnded = false
+    const append = (target: Buffer[], chunk: Buffer, size: number, limit: number): number => {
+      if (size + chunk.length <= limit) target.push(chunk)
+      return size + chunk.length
+    }
+    let stdoutEnded = false
+    let stderrEnded = false
+    let exited = false
+    let finished = false
+    let streamsFailed = false
+    let outcomeCode = 1
+    let drainTimer: NodeJS.Timeout | undefined
+    const closeStreams = () => {
+      child.stdin!.destroy()
+      child.stdout!.destroy()
+      child.stderr!.destroy()
+      child.stdio[3]!.destroy()
+    }
+    const finish = (expired = false) => {
+      if (finished || !exited) return
+      if (!expired && !(stdoutEnded && stderrEnded && traceEnded)) return
+      finished = true
+      if (drainTimer !== undefined) clearTimeout(drainTimer)
+      closeStreams()
+      resolve({
+        outcome: {
+          ok: outcomeCode === 0,
+          code: outcomeCode,
+          stdout: Buffer.concat(output).toString(),
+          stderr: Buffer.concat(errors).toString(),
+        },
+        trace: Buffer.concat(traces).toString(),
+        complete:
+          !expired &&
+          !streamsFailed &&
+          !traceOverflow &&
+          outputSize <= MAX_BUFFER &&
+          errorSize <= MAX_BUFFER,
+      })
+    }
+    child.stdout!.on('data', (chunk: Buffer) => {
+      outputSize = append(output, chunk, outputSize, MAX_BUFFER)
+    })
+    child.stderr!.on('data', (chunk: Buffer) => {
+      errorSize = append(errors, chunk, errorSize, MAX_BUFFER)
+    })
+    child.stdio[3]!.on('data', (chunk: Buffer) => {
+      traceSize += chunk.length
+      if (traceSize > 256 * 1024) traceOverflow = true
+      else traces.push(Buffer.from(chunk))
+    })
+    child.stdout!.on('end', () => {
+      stdoutEnded = true
+      finish()
+    })
+    child.stderr!.on('end', () => {
+      stderrEnded = true
+      finish()
+    })
+    child.stdio[3]!.on('end', () => {
+      traceEnded = true
+      finish()
+    })
+    for (const stream of [child.stdout!, child.stderr!, child.stdio[3]!]) {
+      stream.on('error', () => {
+        streamsFailed = true
+      })
+    }
+    child.stdin!.on('error', () => {})
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      if (finished) return
+      finished = true
+      if (drainTimer !== undefined) clearTimeout(drainTimer)
+      closeStreams()
+      reject(error.code === 'ENOENT' ? new GitMissingError(gitPath) : error)
+    })
+    child.on('exit', (code, signal) => {
+      if (finished) return
+      exited = true
+      outcomeCode = code ?? (signal ? 1 : 0)
+      drainTimer = setTimeout(() => finish(true), 1000)
+      finish()
+    })
+    child.stdin!.end()
+  })
+}
+
+async function tryGitObserved(
+  cwd: string,
+  args: string[],
+  opts: RunOpts,
+): Promise<{ outcome: GitOutcome; trace: string; complete: boolean }> {
+  for (let attempt = 1; ; attempt++) {
+    const observation = await tryGitObservedOnce(cwd, args, opts)
+    if (attempt >= LOCK_ATTEMPTS || !isIndexLockFailure(observation.outcome)) return observation
+    await new Promise((resolve) => setTimeout(resolve, LOCK_BACKOFF_MS))
+  }
+}
+
+function isMissingObject(stderr: string): boolean {
+  return /could not get object info|not a valid object name|bad object|path .* does not exist in|path .* exists on disk, but not in/i.test(
+    stderr,
+  )
+}
+
 /**
  * Run one git command and return its stdout, trimmed. Throws `GitError` on a
  * non-zero exit and `GitMissingError` when the binary is absent.
@@ -380,34 +604,85 @@ export async function tryGit(cwd: string, args: string[], opts: RunOpts = {}): P
 async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<GitOutcome> {
   const gitPath = opts.gitPath ?? 'git'
   const askpass = await ensureAskpass()
+  const token = opts.token?.() ?? ''
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: askpass,
+    HOLI_GIT_TOKEN: token,
+    LC_ALL: 'C',
+    ...opts.env,
+  }
+  if (WINDOWS) {
+    for (const key of [
+      'GIT_TERMINAL_PROMPT',
+      'GIT_ASKPASS',
+      'HOLI_GIT_TOKEN',
+      'LC_ALL',
+      'GCM_INTERACTIVE',
+    ]) {
+      for (const existing of Object.keys(env)) {
+        if (existing.toLowerCase() === key.toLowerCase()) delete env[existing]
+      }
+    }
+    Object.assign(env, {
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_ASKPASS: askpass,
+      HOLI_GIT_TOKEN: token,
+      LC_ALL: 'C',
+      GCM_INTERACTIVE: 'never',
+    })
+  }
   return new Promise((resolve, reject) => {
+    let expired = false
+    let outputExceeded = false
+    let outputBytes = 0
+    let killTimer: NodeJS.Timeout | undefined
+    const budgetTimer =
+      opts.executionBudget === undefined
+        ? undefined
+        : setTimeout(() => {
+            expired = true
+            child.kill('SIGTERM')
+            killTimer = setTimeout(() => child.kill('SIGKILL'), 100)
+          }, opts.executionBudget.timeout)
     const child = execFile(
       gitPath,
       args,
       {
         cwd,
-        maxBuffer: MAX_BUFFER,
-        env: {
-          ...process.env,
-          // Never block on an interactive prompt: there is no terminal attached
-          // to an Electron main process, so a prompt is a permanent hang.
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_ASKPASS: askpass,
-          HOLI_GIT_TOKEN: opts.token?.() ?? '',
-          // Stable messages regardless of the user's locale. We parse porcelain
-          // rather than prose, but stderr still reaches error messages and logs.
-          LC_ALL: 'C',
-          ...opts.env,
-        },
+        maxBuffer: opts.executionBudget?.maxBuffer ?? MAX_BUFFER,
+        env,
       },
       (err, stdout, stderr) => {
+        if (budgetTimer !== undefined) clearTimeout(budgetTimer)
+        if (killTimer !== undefined) clearTimeout(killTimer)
+        if (outputExceeded) return reject(new GitResourceError('output'))
+        if (expired) return reject(new GitResourceError('time'))
         if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
           return reject(new GitMissingError(gitPath))
+        }
+        if (err && opts.executionBudget !== undefined) {
+          const code = (err as NodeJS.ErrnoException).code
+          if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
+            return reject(new GitResourceError('output'))
         }
         const code = err ? ((err as { code?: number }).code ?? 1) : 0
         resolve({ ok: !err, code, stdout: String(stdout), stderr: String(stderr) })
       },
     )
+    if (opts.executionBudget !== undefined) {
+      const accountOutput = (chunk: Buffer): void => {
+        outputBytes += Buffer.byteLength(String(chunk))
+        if (outputExceeded || outputBytes <= opts.executionBudget!.maxBuffer) return
+        outputExceeded = true
+        clearTimeout(budgetTimer)
+        child.kill('SIGTERM')
+        killTimer = setTimeout(() => child.kill('SIGKILL'), 100)
+      }
+      child.stdout?.on('data', accountOutput)
+      child.stderr?.on('data', accountOutput)
+    }
     if (opts.input !== undefined) {
       // EPIPE is normal here, not a failure: git may exit before reading all of
       // it (`check-ignore` stops at a bad pathspec). The callback above still
@@ -472,50 +747,186 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }: {
     abortOnConflict: boolean
   }): Promise<PullResult> {
-    await runGit(root, ['fetch', 'origin'], opts)
-    const target = await remoteTarget()
-    // A branch never pushed has nothing on `origin` to merge yet.
-    if (target === null) return { kind: 'up-to-date' }
-
-    const before = await runGit(root, ['rev-parse', 'HEAD'], opts)
-    const incoming = await runGit(root, ['rev-list', '--count', `HEAD..${target}`], opts)
-    if (incoming === '0') return { kind: 'up-to-date' }
-
-    const merge = await tryGit(root, ['merge', '--no-edit', target], opts)
-    if (!merge.ok) {
-      if (!(await isMerging())) {
-        // Refused before it started: git names no unmerged paths, only the
-        // uncommitted ones in its way, which are the incoming side's changes
-        // that are dirty here.
-        return { kind: 'conflict', paths: [], overwrites: await dirtyIncoming(target) }
+    const recorder = deps.commitProvenance
+    let ticket: unknown = null
+    if (recorder !== undefined) {
+      try {
+        ticket = await recorder.begin(root)
+      } catch (error) {
+        console.error('[git] merge provenance capture failed:', error)
       }
-      // A settlement that throws must not leave markers and MERGE_HEAD behind
-      // for autosave to commit: a pull aborts, as it does on a conflict.
-      const paths = await settleOneAnswerConflicts().catch(async (err: unknown) => {
-        if (abortOnConflict) await abortMerge()
-        throw err
-      })
-      if (paths.length > 0) {
-        if (abortOnConflict) await abortMerge()
-        // Left in the tree for the reconcile otherwise.
-        return { kind: 'conflict', paths }
-      }
-      // Every conflict had one answer and was settled: the merge is whole,
-      // and committed as `git merge` commits one it finishes itself, with no
-      // pre-commit hook. Its changes were committed on both sides already,
-      // and the hook would hold this merge alone to a gate (large files) the
-      // clean ones skip. The transforms would not undo the settlement: relink
-      // deletes no kept file (`followNoteComments`), and memory-index writes
-      // the index this merge just wrote.
-      await runGit(root, [...(await identityArgs()), 'commit', '--no-verify', '--no-edit'], opts)
     }
+    const marker = ticket === null ? null : `holi-managed-merge:${randomUUID()}`
+    let beforeHead: string | null = null
+    let beforeReflog: string | null = null
+    let exactMerge: string | null = null
+    let provenanceFinished = false
+    const finishProvenance = async (oid: string | null) => {
+      if (recorder === undefined || ticket === null || provenanceFinished) return
+      provenanceFinished = true
+      try {
+        await recorder.record(ticket, root, oid)
+      } catch (error) {
+        console.error('[git] merge provenance write failed:', error)
+      }
+    }
+    try {
+      await runGit(root, ['fetch', 'origin'], opts)
+      const target = await remoteTarget()
+      // A branch never pushed has nothing on `origin` to merge yet.
+      if (target === null) return { kind: 'up-to-date' }
 
-    const after = await runGit(root, ['rev-parse', 'HEAD'], opts)
-    return {
-      kind: 'merged',
-      commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
-      from: before,
-      to: after,
+      const before = await runGit(root, ['rev-parse', 'HEAD'], opts)
+      let evidenceDeadline = Date.now() + 1000
+      if (marker !== null) {
+        try {
+          beforeHead = await readGitEvidence(
+            root,
+            ['rev-parse', '--verify', 'HEAD'],
+            opts,
+            evidenceDeadline,
+          )
+        } catch (error) {
+          console.error('[git] merge HEAD evidence unavailable:', error)
+        }
+      }
+      const boundedMergeEvidence = (args: string[]) =>
+        readGitEvidence(root, args, opts, evidenceDeadline)
+      let targetOid: string | null = null
+      if (marker !== null) {
+        try {
+          targetOid = await boundedMergeEvidence(['rev-parse', '--verify', target])
+        } catch (error) {
+          console.error('[git] merge target evidence unavailable:', error)
+        }
+      }
+      if (marker !== null) {
+        try {
+          beforeReflog = await boundedMergeEvidence([
+            'reflog',
+            'show',
+            '-n1',
+            '--format=%H%x00%gs',
+            'HEAD',
+          ])
+        } catch (error) {
+          console.error('[git] merge reflog anchor unavailable:', error)
+        }
+      }
+      const incoming = await runGit(root, ['rev-list', '--count', `HEAD..${target}`], opts)
+      if (incoming === '0') return { kind: 'up-to-date' }
+
+      const mergeOpts: RunOpts =
+        marker === null ? opts : { ...opts, env: { ...opts.env, GIT_REFLOG_ACTION: marker } }
+      const mergeObservation =
+        marker === null
+          ? null
+          : await tryGitObserved(root, ['merge', '--no-edit', target], mergeOpts)
+      const merge =
+        mergeObservation?.outcome ?? (await tryGit(root, ['merge', '--no-edit', target], mergeOpts))
+      const mergeTraceComplete =
+        mergeObservation !== null &&
+        mergeObservation.complete &&
+        traceHasOnlyManagedBuiltins(mergeObservation.trace, 'merge', merge.code)
+      let settlementTraceComplete = true
+      if (!merge.ok) {
+        if (!(await isMerging())) {
+          // Refused before it started: git names no unmerged paths, only the
+          // uncommitted ones in its way, which are the incoming side's changes
+          // that are dirty here.
+          return { kind: 'conflict', paths: [], overwrites: await dirtyIncoming(target) }
+        }
+        // A settlement that throws must not leave markers and MERGE_HEAD behind
+        // for autosave to commit: a pull aborts, as it does on a conflict.
+        const paths = await settleOneAnswerConflicts().catch(async (err: unknown) => {
+          if (abortOnConflict) await abortMerge()
+          throw err
+        })
+        if (paths.length > 0) {
+          if (abortOnConflict) await abortMerge()
+          // Left in the tree for the reconcile otherwise.
+          return { kind: 'conflict', paths }
+        }
+        // Every conflict had one answer and was settled: the merge is whole,
+        // and committed as `git merge` commits one it finishes itself, with no
+        // pre-commit hook. Its changes were committed on both sides already,
+        // and the hook would hold this merge alone to a gate (large files) the
+        // clean ones skip. The transforms would not undo the settlement: relink
+        // deletes no kept file (`followNoteComments`), and memory-index writes
+        // the index this merge just wrote.
+        const settleArgs = [...(await identityArgs()), 'commit', '--no-verify', '--no-edit']
+        const settlementObservation =
+          marker === null ? null : await tryGitObserved(root, settleArgs, mergeOpts)
+        const settleCommit =
+          settlementObservation?.outcome ?? (await tryGit(root, settleArgs, mergeOpts))
+        settlementTraceComplete =
+          settlementObservation !== null &&
+          settlementObservation.complete &&
+          traceHasOnlyManagedBuiltins(settlementObservation.trace, 'commit', settleCommit.code)
+        if (!settleCommit.ok) {
+          throw new GitError(
+            `git ${settleArgs[0]} failed (${settleCommit.code}): ${settleCommit.stderr.split('\n')[0] ?? ''}`,
+            settleCommit.code,
+            settleCommit.stderr,
+          )
+        }
+        // A successful settlement is attributable only when both Git
+        // invocations independently supplied a complete, bounded observation.
+        if (!mergeTraceComplete || !settlementTraceComplete) {
+          console.error('[git] merge execution observation unavailable')
+        }
+      }
+
+      const after = await runGit(root, ['rev-parse', 'HEAD'], opts)
+      if (
+        marker !== null &&
+        beforeReflog !== null &&
+        mergeTraceComplete &&
+        settlementTraceComplete
+      ) {
+        try {
+          evidenceDeadline = Date.now() + 1000
+          const evidence = boundedMergeEvidence
+          try {
+            await evidence(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])
+            throw new Error('Merge state remains active after settlement')
+          } catch (error) {
+            if (!(error instanceof GitEvidenceCommandError && error.code === 1)) throw error
+          }
+          if ((await evidence(['rev-parse', '--verify', 'HEAD'])) !== after)
+            throw new Error('HEAD changed during merge evidence collection')
+          const entries = (await evidence(['reflog', 'show', '-n2', '--format=%H%x00%gs', 'HEAD']))
+            .split('\n')
+            .filter(Boolean)
+          if (entries.length !== 2 || entries[1] !== beforeReflog)
+            throw new Error('Ambiguous merge reflog interval')
+          const [oid, action] = entries[0]!.split('\0')
+          if (oid !== after || !action?.startsWith(`${marker}:`))
+            throw new Error('Missing merge invocation marker')
+          const raw = await evidence(['cat-file', '-p', oid])
+          const parents = rawCommitParents(raw)
+          if (
+            (await evidence(['cat-file', '-t', oid])) !== 'commit' ||
+            parents.length !== 2 ||
+            targetOid === null ||
+            parents[0] !== beforeHead ||
+            parents[1] !== targetOid
+          )
+            throw new Error('Commit is not the exact managed merge')
+          exactMerge = oid
+        } catch (error) {
+          console.error('[git] merge reflog evidence unavailable:', error)
+        }
+      }
+      await finishProvenance(exactMerge)
+      return {
+        kind: 'merged',
+        commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
+        from: before,
+        to: after,
+      }
+    } finally {
+      await finishProvenance(null)
     }
   }
 
@@ -693,11 +1104,149 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return (birth === -1 ? commits : commits.slice(0, birth + 1)).map((c) => c.commit)
   }
 
+  async function revisionChanges(from: string, to: string, path: string) {
+    const incomplete = (reason: 'history-unavailable' | 'limit') => ({
+      complete: false,
+      reason,
+      changes: [] as { sha: string; path: string }[],
+    })
+    if (
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(from) ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(to)
+    )
+      return incomplete('history-unavailable')
+    const started = Date.now()
+    const deadline = started + 5000
+    const outputLimit = 8 * 1024 * 1024
+    let outputBytes = 0
+    const git = async (args: string[], maxOutput = outputLimit): Promise<GitOutcome> => {
+      const timeout = deadline - Date.now()
+      const remainingOutput = outputLimit - outputBytes
+      if (timeout <= 0) throw new GitResourceError('time')
+      if (remainingOutput <= 0) throw new GitResourceError('output')
+      const result = await runGitOnce(
+        root,
+        ['--no-replace-objects', '--literal-pathspecs', ...args],
+        {
+          ...opts,
+          env: {
+            ...opts.env,
+            GIT_NO_REPLACE_OBJECTS: '1',
+            GIT_NO_LAZY_FETCH: '1',
+            GIT_TERMINAL_PROMPT: '0',
+          },
+          executionBudget: {
+            maxBuffer: Math.min(remainingOutput, maxOutput),
+            timeout,
+          },
+        },
+      )
+      outputBytes += Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)
+      return result
+    }
+    try {
+      const base = await git(['cat-file', '-e', `${from}^{commit}`])
+      const tip = await git(['cat-file', '-e', `${to}^{commit}`])
+      const shallow = await git(['rev-parse', '--is-shallow-repository'])
+      if (!base.ok || !tip.ok || !shallow.ok || shallow.stdout.trim() !== 'false')
+        return incomplete('history-unavailable')
+      const ancestry = await git(['merge-base', '--is-ancestor', from, to])
+      if (!ancestry.ok) return incomplete('history-unavailable')
+      // 201 distinguishes exactly-at-limit from over-limit without walking an
+      // unbounded history. The output limit is cumulative across every command.
+      const list = await git(['rev-list', '--topo-order', '--max-count=201', to, `^${from}`])
+      if (!list.ok) return incomplete('history-unavailable')
+      const commits = list.stdout.split(/\r?\n/).filter(Boolean)
+      if (commits.length > 200) return incomplete('limit')
+      const changes: { sha: string; path: string }[] = []
+      const baseArgs = [
+        'diff-tree',
+        '--no-commit-id',
+        '--raw',
+        '-z',
+        '--no-renames',
+        '--no-ext-diff',
+        '-m',
+        '-r',
+        '--root',
+      ]
+      for (const sha of commits) {
+        const args = [...baseArgs, sha]
+        // An empty scope means the entire tree. Do not pass an empty pathspec,
+        // which Git interprets as a literal empty filename.
+        if (path !== '') args.push('--', path)
+        const result = await git(args)
+        if (!result.ok) return incomplete('history-unavailable')
+        // Raw records retain both modes without reading blobs. Exclude a path if
+        // either historical side is a symlink or gitlink, even when absent now.
+        const records = result.stdout.split('\0')
+        const changedPaths = new Set<string>()
+        for (let i = 0; i < records.length;) {
+          const header = records[i++]
+          if (!header) continue
+          const fields = header.trimStart().split(/\s+/)
+          const oldMode = fields[0]?.slice(1)
+          const newMode = fields[1]
+          const changed = records[i++]
+          if (!changed) break
+          if (
+            oldMode === '120000' ||
+            newMode === '120000' ||
+            oldMode === '160000' ||
+            newMode === '160000'
+          )
+            continue
+          changedPaths.add(changed)
+        }
+        for (const changed of changedPaths) {
+          changes.push({ sha, path: changed })
+          if (changes.length > 2000) return incomplete('limit')
+        }
+      }
+      return { complete: true, reason: 'ok' as const, changes }
+    } catch (error) {
+      if (error instanceof GitResourceError) return incomplete('limit')
+      // Git may disappear, fail to spawn, or encounter a corrupt/missing object
+      // between validation and traversal. None of these is an empty history.
+      return incomplete('history-unavailable')
+    }
+  }
+
   /** A file's content at a commit. Unlike `runGit`, this must **not** trim:
    * restore writes the result back verbatim, and a stripped trailing newline is
-   * a real edit. Rejects (a `GitError`) when the path does not exist at `sha`. */
-  async function show(sha: string, path: string): Promise<string> {
-    const res = await tryGit(root, ['show', `${sha}:${path}`], opts)
+   * a real edit. A budgeted read throws typed historical-object, missing-path
+   * and resource errors. */
+  async function show(
+    sha: string,
+    path: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<string> {
+    const readOpts = { ...opts, ...(executionBudget === undefined ? {} : { executionBudget }) }
+    if (executionBudget !== undefined) {
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) throw new GitHistoricalObjectError()
+      const endpoint = await tryGit(root, ['cat-file', '-t', sha], readOpts)
+      if (!endpoint.ok) {
+        if (isMissingObject(endpoint.stderr)) return ''
+        throw new GitError(
+          `git cat-file failed (${endpoint.code}): ${endpoint.stderr}`,
+          endpoint.code,
+          endpoint.stderr,
+        )
+      }
+      if (!['commit', 'tree'].includes(endpoint.stdout.trim())) throw new GitHistoricalObjectError()
+      const pathType = await tryGit(root, ['cat-file', '-t', `${sha}:${path}`], readOpts)
+      if (!pathType.ok) {
+        if (isMissingObject(pathType.stderr)) throw new GitHistoricalPathMissingError()
+        throw new GitError(
+          `git cat-file failed (${pathType.code}): ${pathType.stderr}`,
+          pathType.code,
+          pathType.stderr,
+        )
+      }
+      // A path that resolves to a tree is a directory, not a file-side value.
+      if (pathType.stdout.trim() !== 'blob') throw new GitHistoricalPathMissingError()
+    }
+    const res = await tryGit(root, ['show', '--end-of-options', `${sha}:${path}`], readOpts)
     if (!res.ok) {
       throw new GitError(
         `git show ${sha}:${path} failed (${res.code}): ${res.stderr.split('\n')[0] ?? ''}`,
@@ -777,9 +1326,98 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       })
   }
 
+  async function probeHead(readOpts: RunOpts): Promise<{
+    kind: 'commit' | 'unborn' | 'unavailable'
+    sha?: string
+    ref: GitOutcome
+  }> {
+    const budget = readOpts.executionBudget
+    const deadline = budget === undefined ? undefined : Date.now() + budget.timeout
+    let outputRemaining = budget?.maxBuffer
+    const run = async (args: string[]): Promise<GitOutcome> => {
+      let commandOpts = readOpts
+      if (budget !== undefined) {
+        const timeout = (deadline ?? 0) - Date.now()
+        if (timeout <= 0) throw new GitResourceError('time')
+        commandOpts = {
+          ...readOpts,
+          executionBudget: {
+            timeout,
+            maxBuffer: Math.max(1, outputRemaining ?? budget.maxBuffer),
+          },
+        }
+      }
+      const result = await tryGit(root, args, commandOpts)
+      if (outputRemaining !== undefined) {
+        outputRemaining -= Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)
+        if (outputRemaining < 0) throw new GitResourceError('output')
+      }
+      return result
+    }
+
+    const ref = await run(['rev-parse', '--verify', 'HEAD'])
+    if (ref.ok) {
+      const sha = ref.stdout.trim()
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) return { kind: 'unavailable', ref }
+      const object = await run(['cat-file', '-e', `${sha}^{commit}`])
+      return object.ok ? { kind: 'commit', sha, ref } : { kind: 'unavailable', ref }
+    }
+
+    // A missing HEAD is a pending baseline only for a valid symbolic branch
+    // whose ref does not exist yet. All other rev-parse failures are unavailable.
+    const symbolic = await run(['symbolic-ref', '--quiet', 'HEAD'])
+    const workTree = await run(['rev-parse', '--is-inside-work-tree'])
+    if (!symbolic.ok || !workTree.ok || workTree.stdout.trim() !== 'true')
+      return { kind: 'unavailable', ref }
+    const branch = symbolic.stdout.trim()
+    if (!/^refs\/heads\/[^\s]+$/.test(branch)) return { kind: 'unavailable', ref }
+    const valid = await run(['check-ref-format', branch])
+    const refExists = await run(['show-ref', '--verify', '--quiet', branch])
+    return valid.ok && !refExists.ok && refExists.code === 1
+      ? { kind: 'unborn', ref }
+      : { kind: 'unavailable', ref }
+  }
+
+  async function historicalHead(): Promise<
+    { kind: 'commit'; sha: string } | { kind: 'unborn' } | { kind: 'unavailable' }
+  > {
+    try {
+      const result = await probeHead({
+        ...opts,
+        env: {
+          ...opts.env,
+          GIT_NO_REPLACE_OBJECTS: '1',
+          GIT_NO_LAZY_FETCH: '1',
+          GIT_TERMINAL_PROMPT: '0',
+        },
+        executionBudget: { maxBuffer: 65536, timeout: 1000 },
+      })
+      return result.kind === 'commit' ? { kind: 'commit', sha: result.sha! } : { kind: result.kind }
+    } catch {
+      return { kind: 'unavailable' }
+    }
+  }
+
   async function head(): Promise<string | null> {
-    const res = await tryGit(root, ['rev-parse', 'HEAD'], opts)
-    return res.ok ? res.stdout.trim() : null
+    const result = await probeHead(opts)
+    if (result.kind === 'commit') return result.sha!
+    if (result.kind === 'unborn') return null
+    if (result.ref.ok) {
+      throw new GitError(
+        'Could not read repository HEAD.',
+        1,
+        'HEAD does not name an available commit.',
+      )
+    }
+    throw new GitError('Could not read repository HEAD.', result.ref.code, result.ref.stderr)
+  }
+
+  async function gitObjectType(id: string, readOpts: RunOpts): Promise<'commit' | 'tree' | null> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(id)) return null
+    const result = await tryGit(root, ['cat-file', '-t', id], readOpts)
+    if (!result.ok) return null
+    const type = result.stdout.trim()
+    return type === 'commit' || type === 'tree' ? type : null
   }
 
   /**
@@ -789,13 +1427,25 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * `git diff` silently drops the counts (the last flag wins), so this joins two
    * results on the path.
    */
-  async function rangeFiles(from: string, to: string): Promise<RangeFile[]> {
+  async function rangeFiles(
+    from: string,
+    to: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<RangeFile[]> {
+    const readOpts = { ...opts, ...(executionBudget === undefined ? {} : { executionBudget }) }
+    const fromType = await gitObjectType(from, readOpts)
+    const toType = await gitObjectType(to, readOpts)
+    if (fromType === null || toType === null) return []
     const range = `${from}..${to}`
-    const stat = await tryGit(root, ['diff', '--numstat', '-z', '--no-color', range], opts)
+    const stat = await tryGit(
+      root,
+      ['diff', '--numstat', '-z', '--no-color', '-M', range],
+      readOpts,
+    )
     const names = await tryGit(
       root,
       ['diff', '--name-status', '-z', '--no-color', '-M', range],
-      opts,
+      readOpts,
     )
     if (!stat.ok || !names.ok) return []
 
@@ -807,15 +1457,18 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     for (let i = 0; i < statFields.length; i++) {
       const field = statFields[i]
       if (field === undefined || field === '') continue
-      const parts = field.split('\t')
-      if (parts.length < 2) continue
+      const first = field.indexOf('\t')
+      const second = field.indexOf('\t', first + 1)
+      if (first < 0 || second < 0) continue
       // A binary file reports `-` for both counts. Zero is the honest number to
       // show beside a picture; a dash in a `+N / -M` column reads as an error.
-      const added = parts[0] === '-' ? 0 : Number(parts[0])
-      const removed = parts[1] === '-' ? 0 : Number(parts[1])
+      const addedText = field.slice(0, first)
+      const removedText = field.slice(first + 1, second)
+      const added = addedText === '-' ? 0 : Number(addedText)
+      const removed = removedText === '-' ? 0 : Number(removedText)
       // Two tabs and a trailing path: an ordinary entry. One trailing empty
       // field: a rename, whose two paths are the next two records.
-      let path = parts[2] ?? ''
+      let path = field.slice(second + 1)
       if (path === '') {
         i += 2
         path = statFields[i] ?? ''
@@ -832,11 +1485,14 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       const status = nameFields[i]
       if (status === undefined || status === '') continue
       const renamed = status.startsWith('R') || status.startsWith('C')
+      const oldPath = renamed ? (nameFields[i + 1] ?? '') : ''
       const path = nameFields[renamed ? i + 2 : i + 1] ?? ''
       i += renamed ? 2 : 1
       if (path === '') continue
+      const shown = shownPathOrNull(path)
+      if (shown === null || (renamed && shownPathOrNull(oldPath) === null)) continue
       const count = counts.get(path) ?? { added: 0, removed: 0 }
-      out.push({ path, status, added: count.added, removed: count.removed })
+      out.push({ path: shown, status, added: count.added, removed: count.removed })
     }
     return out
   }
@@ -896,6 +1552,112 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     )
   }
 
+  async function commitWithProvenance(args: string[]): Promise<string> {
+    const recorder = deps.commitProvenance
+    let ticket: unknown = null
+    if (recorder !== undefined) {
+      try {
+        ticket = await recorder.begin(root)
+      } catch (error) {
+        console.error('[git] commit provenance capture failed:', error)
+      }
+    }
+    let marker: string | null = null
+    let before: string[] | null = null
+    let beforeHead: string | null = null
+    // Separate budgets either side of the commit: native hooks keep their normal
+    // permissions and duration. Only provenance reads get a deadline/output cap.
+    let deadline = Date.now() + 1000
+    // These are reads, not index mutations: never retry an evidence process.
+    const evidence = (command: string[]) => readGitEvidence(root, command, opts, deadline)
+    const probe = async (command: string[]) => {
+      try {
+        await evidence(command)
+        return { ok: true }
+      } catch {
+        return { ok: false }
+      }
+    }
+    const mergeHeadExists = async (): Promise<boolean> => {
+      try {
+        await evidence(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])
+        return true
+      } catch (error) {
+        if (error instanceof GitEvidenceCommandError && error.code === 1) return false
+        throw error
+      }
+    }
+    if (recorder !== undefined && ticket !== null) {
+      marker = `holi-managed-commit:${randomUUID()}`
+      try {
+        if (!(await mergeHeadExists())) {
+          const head = await probe(['rev-parse', '--verify', 'HEAD'])
+          beforeHead = head.ok ? await evidence(['rev-parse', '--verify', 'HEAD']) : null
+          // One previous entry and its exact parent are enough to anchor a
+          // single new entry. Never scan or materialize the historical reflog.
+          before =
+            beforeHead === null
+              ? []
+              : (await evidence(['reflog', 'show', '-n1', '--format=%H%x00%gs', 'HEAD']))
+                  .split('\n')
+                  .filter(Boolean)
+          if (beforeHead !== null && before.length !== 1) throw new Error('Missing reflog anchor')
+        }
+      } catch (error) {
+        before = null
+        console.error('[git] commit reflog anchor unavailable:', error)
+      }
+    }
+    await runGit(root, args, {
+      ...opts,
+      ...(marker === null ? {} : { env: { ...opts.env, GIT_REFLOG_ACTION: marker } }),
+    })
+    let exactOid: string | null = null
+    if (marker !== null && before !== null) {
+      deadline = Date.now() + 1000
+      try {
+        const after = (await evidence(['reflog', 'show', '-n2', '--format=%H%x00%gs', 'HEAD']))
+          .split('\n')
+          .filter(Boolean)
+        if (after.length !== before.length + 1 || (before.length === 1 && after[1] !== before[0]))
+          throw new Error('Missing or ambiguous commit reflog interval')
+        const [oid, action] = after[0]!.split('\0')
+        if (
+          !oid ||
+          !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid) ||
+          !action?.startsWith(`${marker}:`)
+        )
+          throw new Error('Missing invocation marker')
+        const type = await evidence(['cat-file', '-t', oid])
+        const object = await evidence(['cat-file', '-p', oid])
+        const headers = object.slice(0, object.indexOf('\n\n')).split('\n')
+        const parents = rawCommitParents(object)
+        if (
+          type !== 'commit' ||
+          !/^tree (?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headers[0]!) ||
+          parents.length > 1 ||
+          (parents[0] ?? null) !== beforeHead ||
+          (await mergeHeadExists())
+        )
+          throw new Error('Commit object is not the managed non-merge invocation')
+        exactOid = oid
+      } catch (error) {
+        console.error('[git] commit reflog evidence unavailable:', error)
+      }
+    }
+    if (recorder !== undefined && ticket !== null) {
+      try {
+        // Null is an explicit evidence gap, including pre-commit read failure.
+        await recorder.record(ticket, root, exactOid)
+      } catch (error) {
+        console.error('[git] commit provenance write failed:', error)
+      }
+    }
+    // Preserve the historical API: return the current HEAD after hooks, even
+    // when exact invocation evidence is unavailable. Only exactOid is recorded.
+    return runGit(root, ['rev-parse', 'HEAD'], opts)
+  }
+
   async function commitAll(message: string, paths: string[]): Promise<string | null> {
     // The caller decides what commits (the large-file gate holds oversized files
     // out by simply not naming them); an empty pathspec is the idle/all-held-back
@@ -924,28 +1686,43 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     // Nothing actually got staged (e.g. the named paths were already clean): not
     // an error, just the idle path — do not create an empty commit.
     if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
-    await runGit(root, [...(await identityArgs()), 'commit', '-m', message], opts)
-    return runGit(root, ['rev-parse', 'HEAD'], opts)
+    return commitWithProvenance([...(await identityArgs()), 'commit', '-m', message])
   }
 
   async function commitFileNoVerify(path: string): Promise<string | null> {
-    await runGit(root, ['add', '--', path], opts)
-    if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
-    await runGit(
-      root,
-      [...(await identityArgs()), 'commit', '--no-verify', '-m', `Add ${path}`],
-      opts,
-    )
-    return runGit(root, ['rev-parse', 'HEAD'], opts)
+    // `--only` commits this working-tree path without consuming unrelated
+    // staged entries. Literal pathspecs keep bracketed names exact.
+    if (!(await status()).dirtyPaths.includes(path)) return null
+    await runGit(root, ['--literal-pathspecs', 'add', '-A', '--', path], opts)
+    return commitWithProvenance([
+      '--literal-pathspecs',
+      ...(await identityArgs()),
+      'commit',
+      '--only',
+      '--no-verify',
+      '-m',
+      `Add ${path}`,
+      '--',
+      path,
+    ])
   }
 
   /** Uses `.git/info/exclude`, not the shared `.gitignore`: another clone
    * decides for itself. An untracked file listed here stops being dirty, so it
    * leaves the held-back set on its own. */
   async function excludeLocally(path: string): Promise<void> {
+    const tracked = await tryGit(
+      root,
+      ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', path],
+      opts,
+    )
+    if (tracked.ok) throw new Error('A tracked file cannot be kept local')
     const excludeFile = join(root, '.git', 'info', 'exclude')
     await mkdir(dirname(excludeFile), { recursive: true })
-    await appendFile(excludeFile, `${path}\n`, 'utf8')
+    // One file, not a pattern: anchored to the root so a same-named file in
+    // another folder keeps syncing, and its glob characters escaped.
+    const literal = path.replace(/[\\*?[\]]/g, '\\$&').replace(/ $/, '\\ ')
+    await appendFile(excludeFile, `/${literal}\n`, 'utf8')
   }
 
   /**
@@ -1186,7 +1963,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     commit,
     commitFiles,
     head,
+    historicalHead,
     rangeFiles,
+    revisionChanges,
     commitAll,
     commitFileNoVerify,
     excludeLocally,

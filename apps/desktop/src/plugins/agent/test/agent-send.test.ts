@@ -22,15 +22,18 @@ import {
   startSessionAtom,
   stopSessionAtom,
 } from '../renderer/state/send'
-import { registerSessionTerminal } from '../renderer/lib/session-terminals'
+import { receivePtyData, registerSessionTerminal } from '../renderer/lib/session-terminals'
 import { agentsViewAtom, viewTerminalsAtom } from '../renderer/state/agents-view'
 import { showSessionAtom } from '../renderer/state/session-view'
 import {
   activeRemoteAtom,
   activeSurfaceIdAtom,
+  agentsSelectionAtom,
   appModeAtom,
   closeSurfaceTabAtom,
   openSurfaceAtom,
+  openDocumentAtom,
+  openDocumentRequestAtom,
   surfaceTabIdsAtom,
 } from '@/plugin-api'
 
@@ -55,6 +58,15 @@ const duplicate = vi.fn()
 const detach = vi.fn()
 /** The vault's opening lists, which these tests never answer. */
 const pending = () => new Promise<never>(() => {})
+const deferred = <T>() => {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
 
 vi.mock('../renderer/agent-cap', () => ({
   agentCap: {
@@ -73,7 +85,7 @@ vi.mock('../renderer/agent-cap', () => ({
 beforeEach(() => {
   for (const fn of [open, start, send, stop, duplicate, detach]) fn.mockReset()
   open.mockResolvedValue({ ok: true, terminalId: 'opened' })
-  start.mockResolvedValue({ ok: true, sessionId: 'newnew00', terminalId: 'started' })
+  start.mockResolvedValue({ ok: true, sessionId: 'p0123456789ab', terminalId: 'started' })
   send.mockResolvedValue({ ok: true, terminalId: 'sent' })
   stop.mockResolvedValue({ ok: true })
   duplicate.mockResolvedValue({ ok: true, sessionId: 'copy0000', terminalId: 'copied' })
@@ -97,7 +109,11 @@ test('opening a session reuses the window Holi opened for it', async () => {
   await store.set(openSessionAtom, 'aaaaaaaa')
 
   expect(open).not.toHaveBeenCalled()
-  expect(shown(store)).toBe('t-a')
+  expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 't-a' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
+  expect(shown(store)).toBeNull()
 })
 
 test('opening a stopped Pi conversation uses its own terminal rather than Claude respawn', async () => {
@@ -111,18 +127,200 @@ test('opening a stopped Pi conversation uses its own terminal rather than Claude
   expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id })
 })
 
+test.each([
+  ['claude', 'aaaaaaaa'],
+  ['codex', 'j0123456789ab'],
+  ['pi', 'p0123456789ab'],
+] as const)('reopening a closed %s tab selects the retained terminal', async (provider, id) => {
+  const terminalId = `retained-${provider}-terminal`
+  const store = storeWith([session({ id, provider })], [terminal(terminalId, id)])
+
+  const result = await store.set(openSessionAtom, id)
+
+  expect(result).toEqual({ ok: true })
+  expect(open).not.toHaveBeenCalled()
+  expect(store.get(viewTerminalsAtom)).toEqual({ [id]: terminalId })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id })
+})
+
+test('opening a session does not reuse its launched terminal after it shows another session', async () => {
+  const alpha = 'aaaaaaaa'
+  const beta = 'bbbbbbbb'
+  const store = storeWith(
+    [session({ id: alpha }), session({ id: beta, name: 'Beta' })],
+    [terminal('terminal', alpha, 'Beta')],
+  )
+  store.set(viewTerminalsAtom, { [alpha]: 'terminal' })
+  const focused = vi.fn()
+  const unregister = registerSessionTerminal('terminal', { focus: focused, write: () => {} })
+
+  await store.set(openSessionAtom, alpha)
+
+  expect(open).toHaveBeenCalledWith({ attach: alpha, cols: 80, rows: 24 })
+  expect(focused).not.toHaveBeenCalled()
+  expect(store.get(viewTerminalsAtom)).toEqual({ [alpha]: 'opened' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: alpha })
+  unregister()
+})
+
+test('a missing Codex job is reported when its attach is refused', async () => {
+  const id = 'j0123456789ab'
+  open.mockResolvedValueOnce({ ok: false, message: 'That Codex job has expired.' })
+  const store = storeWith([session({ id, provider: 'codex' })])
+
+  await expect(store.set(openSessionAtom, id)).resolves.toEqual({
+    ok: false,
+    message: 'That Codex job has expired.',
+  })
+  expect(open).toHaveBeenCalledWith({ attach: id, cols: 80, rows: 24 })
+})
+
 test('opening a session with no window attaches a new one', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
   await store.set(openSessionAtom, 'aaaaaaaa')
 
   expect(open).toHaveBeenCalledWith({ attach: 'aaaaaaaa', cols: 80, rows: 24 })
-  expect(shown(store)).toBe('opened')
+  expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 'opened' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
+  expect(shown(store)).toBeNull()
+})
+
+test('a pending attach cannot land after switching vaults', async () => {
+  const attach = deferred<{ ok: true; terminalId: string }>()
+  open.mockReturnValueOnce(attach.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const opening = store.set(openSessionAtom, 'aaaaaaaa')
+
+  store.set(activeRemoteAtom, 'o/other')
+  attach.resolve({ ok: true, terminalId: 'from-old-vault' })
+
+  await expect(opening).resolves.toEqual({ ok: true })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'home' })
+})
+
+test('a pending attach is invalidated by leaving and returning to the same vault', async () => {
+  const attach = deferred<{ ok: true; terminalId: string }>()
+  open.mockReturnValueOnce(attach.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const opening = store.set(openSessionAtom, 'aaaaaaaa')
+
+  store.set(activeRemoteAtom, 'o/other')
+  store.set(activeRemoteAtom, 'o/vault')
+  attach.resolve({ ok: true, terminalId: 'from-old-selection' })
+
+  await expect(opening).resolves.toEqual({ ok: true })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'home' })
+})
+
+test('only the newest attach lands when same-vault opens resolve out of order', async () => {
+  const older = deferred<{ ok: true; terminalId: string }>()
+  const newer = deferred<{ ok: true; terminalId: string }>()
+  open.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' }), session({ id: 'bbbbbbbb' })])
+  const first = store.set(openSessionAtom, 'aaaaaaaa')
+  const second = store.set(openSessionAtom, 'bbbbbbbb')
+
+  newer.resolve({ ok: true, terminalId: 'newer' })
+  await second
+  older.resolve({ ok: true, terminalId: 'older' })
+  await first
+
+  expect(store.get(viewTerminalsAtom)).toEqual({ bbbbbbbb: 'newer' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'bbbbbbbb' })
+})
+
+test('a document open invalidates a pending session attach and keeps its navigation', async () => {
+  const attach = deferred<{ ok: true; terminalId: string }>()
+  open.mockReturnValueOnce(attach.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const focused = vi.fn()
+  const unregister = registerSessionTerminal('stale-session', { focus: focused, write: () => {} })
+  const opening = store.set(openSessionAtom, 'aaaaaaaa')
+
+  store.set(openDocumentAtom, 'notes/newer.md')
+  const navigation = store.get(openDocumentRequestAtom)
+  expect(navigation).toMatchObject({ path: 'notes/newer.md' })
+
+  attach.resolve({ ok: true, terminalId: 'stale-session' })
+  await expect(opening).resolves.toEqual({ ok: true })
+
+  expect(store.get(openDocumentRequestAtom)).toBe(navigation)
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'home' })
+  expect(store.get(appModeAtom)).toBe('documents')
+  expect(focused).not.toHaveBeenCalled()
+  unregister()
+})
+
+test('a document open makes an older attach failure stale', async () => {
+  const rejected = deferred<{ ok: true; terminalId: string }>()
+  open.mockReturnValueOnce(rejected.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const opening = store.set(openSessionAtom, 'aaaaaaaa')
+
+  store.set(openDocumentAtom, 'notes/newer.md')
+  rejected.reject(new Error('stale attach rejection'))
+
+  await expect(opening).resolves.toEqual({ ok: true })
+  expect(store.get(openDocumentRequestAtom)).toMatchObject({ path: 'notes/newer.md' })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(appModeAtom)).toBe('documents')
+})
+
+test('a newer click reusing a terminal invalidates an older pending attach', async () => {
+  const attach = deferred<{ ok: true; terminalId: string }>()
+  open.mockReturnValueOnce(attach.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const older = store.set(openSessionAtom, 'aaaaaaaa')
+
+  store.set(agentTerminalsAtom, [terminal('reused', 'aaaaaaaa')])
+  await expect(store.set(openSessionAtom, 'aaaaaaaa')).resolves.toEqual({ ok: true })
+  attach.resolve({ ok: true, terminalId: 'late-attach' })
+  await older
+
+  expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 'reused' })
+})
+
+test('a stale refused attach is ignored but the latest failure is preserved', async () => {
+  const refused = deferred<{ ok: false; message: string }>()
+  open.mockReturnValueOnce(refused.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const stale = store.set(openSessionAtom, 'aaaaaaaa')
+  store.set(activeRemoteAtom, 'o/other')
+  refused.resolve({ ok: false, message: 'stale refusal' })
+  await expect(stale).resolves.toEqual({ ok: true })
+
+  store.set(activeRemoteAtom, 'o/vault')
+  open.mockResolvedValueOnce({ ok: false, message: 'current refusal' })
+  await expect(store.set(openSessionAtom, 'aaaaaaaa')).resolves.toEqual({
+    ok: false,
+    message: 'current refusal',
+  })
+})
+
+test('a stale rejected attach is ignored but the latest rejection propagates', async () => {
+  const rejected = deferred<{ ok: true; terminalId: string }>()
+  open.mockReturnValueOnce(rejected.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const stale = store.set(openSessionAtom, 'aaaaaaaa')
+  store.set(activeRemoteAtom, 'o/other')
+  rejected.reject(new Error('stale rejection'))
+  await expect(stale).resolves.toEqual({ ok: true })
+
+  store.set(activeRemoteAtom, 'o/vault')
+  open.mockRejectedValueOnce(new Error('current rejection'))
+  await expect(store.set(openSessionAtom, 'aaaaaaaa')).rejects.toThrow('current rejection')
 })
 
 test('an ask goes to main unsent, and its window comes forward with the keyboard', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
   const focus = vi.fn()
-  const unregister = registerSessionTerminal('sent', { focus, write: () => {} })
+  const write = vi.fn()
+  const unregister = registerSessionTerminal('sent', { focus, write })
 
   const res = await store.set(sendToAgentAtom, { text: 'look at this', target: 'aaaaaaaa' })
 
@@ -133,9 +331,40 @@ test('an ask goes to main unsent, and its window comes forward with the keyboard
     cols: 80,
     rows: 24,
   })
-  expect(shown(store)).toBe('sent')
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 'sent' })
+  expect(shown(store)).toBeNull()
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
   expect(focus).toHaveBeenCalled()
+  receivePtyData({ id: 'sent', data: 'Ask response' })
+  expect(write).toHaveBeenCalledWith('Ask response')
   unregister()
+})
+
+test('an existing session tab keeps its canonical terminal when another window is returned', async () => {
+  const store = storeWith([session({ id: 'aaaaaaaa' })], [terminal('t-session', 'aaaaaaaa')])
+  store.set(viewTerminalsAtom, { aaaaaaaa: 't-session' })
+  const focusCanonical = vi.fn()
+  const focusReturned = vi.fn()
+  const unregisterCanonical = registerSessionTerminal('t-session', {
+    focus: focusCanonical,
+    write: () => {},
+  })
+  const unregisterReturned = registerSessionTerminal('sent', {
+    focus: focusReturned,
+    write: () => {},
+  })
+
+  await store.set(sendToAgentAtom, { text: 'look at this', target: 'aaaaaaaa' })
+
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 't-session' })
+  expect(focusCanonical).toHaveBeenCalled()
+  expect(focusReturned).not.toHaveBeenCalled()
+  unregisterCanonical()
+  unregisterReturned()
 })
 
 test('a refused ask says why and opens nothing, so the sender keeps the text', async () => {
@@ -153,7 +382,81 @@ test('starting a session opens its window', async () => {
   await store.set(startSessionAtom, { name: 'Tidy' })
 
   expect(start).toHaveBeenCalledWith({ name: 'Tidy', cols: 80, rows: 24 })
-  expect(shown(store)).toBe('started')
+  expect(store.get(viewTerminalsAtom)).toEqual({ p0123456789ab: 'started' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'p0123456789ab' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:p0123456789ab' })
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
+  expect(shown(store)).toBeNull()
+})
+
+test('a start completing after an A-B-A vault switch is stopped and never lands', async () => {
+  const started = deferred<{
+    ok: true
+    sessionId: string
+    terminalId: string
+  }>()
+  start.mockReturnValueOnce(started.promise)
+  const store = storeWith()
+  const opening = store.set(startSessionAtom, { name: 'Catch-up' })
+
+  store.set(activeRemoteAtom, 'o/other')
+  store.set(activeRemoteAtom, 'o/vault')
+  started.resolve({ ok: true, sessionId: 'p0123456789ab', terminalId: 'stale-terminal' })
+
+  await expect(opening).resolves.toEqual({
+    ok: false,
+    message: 'The vault changed before the session opened.',
+  })
+  expect(stop).toHaveBeenCalledWith('p0123456789ab')
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'home' })
+})
+
+test('a failed stale-session cleanup is reported without landing its terminal', async () => {
+  const started = deferred<{
+    ok: true
+    sessionId: string
+    terminalId: string
+  }>()
+  start.mockReturnValueOnce(started.promise)
+  stop.mockRejectedValueOnce(new Error('cleanup refused'))
+  const store = storeWith()
+  const opening = store.set(startSessionAtom, { name: 'Catch-up' })
+
+  store.set(activeRemoteAtom, 'o/other')
+  started.resolve({ ok: true, sessionId: 'p0123456789ab', terminalId: 'stale-terminal' })
+
+  await expect(opening).resolves.toEqual({
+    ok: false,
+    message:
+      'Cleanup unconfirmed: the vault changed and session p0123456789ab may still be running. cleanup refused',
+    cleanupUnconfirmed: true,
+    sessionId: 'p0123456789ab',
+  })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'home' })
+})
+
+test('a resolved stale-session stop refusal remains unconfirmed', async () => {
+  const started = deferred<{
+    ok: true
+    sessionId: string
+    terminalId: string
+  }>()
+  start.mockReturnValueOnce(started.promise)
+  const store = storeWith()
+  const opening = store.set(startSessionAtom, { name: 'Catch-up' })
+
+  store.set(activeRemoteAtom, 'o/other')
+  stop.mockResolvedValueOnce({ ok: false, message: 'cleanup refused' })
+  started.resolve({ ok: true, sessionId: 'p0123456789ab', terminalId: 'stale-terminal' })
+
+  await expect(opening).resolves.toMatchObject({
+    ok: false,
+    cleanupUnconfirmed: true,
+    sessionId: 'p0123456789ab',
+  })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
 })
 
 test('stop goes to main and answers what it said', async () => {

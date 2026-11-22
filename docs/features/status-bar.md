@@ -126,7 +126,7 @@ events grid of ReUI's `solution-dev-ops-2` audit log (`log-table.tsx`, shared wi
 virtualised data grid with no header
 fill, newest first, sortable by time, channel, level and vault. A row is the time, the channel's
 mark and name (the Git logo, GitHub's for sync, Claude's for the agent, a puzzle piece for plugins,
-Holi's for the app), the level as a badge (`info-light`, `warning-light`, `destructive-light`), the
+Holi's for the app), the level as a solid badge (`info`, `warning`, `destructive`), the
 message and the vault. A row opens under itself, as in ReUI's `c-data-grid-8` expandable rows: its
 fields, the detail (a git error's text, the paths a commit or a conflict named), the line as JSON,
 and Copy line. The opened panel measures itself, and the virtualizer adds that height to the row's

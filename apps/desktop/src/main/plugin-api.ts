@@ -42,6 +42,61 @@ export interface LiveVault {
 export interface SchemeContext {
   /** The open vault, or null with none open. */
   active(): LiveVault | null
+  /** Main-owned authority for vault-app frame and resource leases. */
+  appFrames?: AppFrameLeases
+  /** Resolve the native window that initiated a protocol request. */
+  windowForRequest?(request: Request): BrowserWindow | null
+  /** Native WebFrameMain identity correlated from Electron's WebRequest event. */
+  frameForRequest?(request: Request): string | null
+  appFrameLease?: AppFrameLease | null
+}
+
+export interface AppFrameLease {
+  token: string
+  nonce: string
+  remote: string
+  root: string
+  bundle: string
+  activation: number
+  window: BrowserWindow
+  /** Revalidate against this exact native window and current presentation. */
+  valid(window: BrowserWindow): boolean
+  /** Consume the single top-level document load; a reload needs a fresh lease. */
+  claimDocument(): boolean
+  /** Bind this lease to the native main-frame document generation. */
+  bindDocument(frame: string, isAlive: () => boolean): boolean
+  /** Whether this lease belongs to the live native requester of a protocol resource. */
+  isDocumentFrame(frame: string): boolean
+}
+
+export interface AppFrameLeases {
+  issue(input: {
+    remote: string
+    root: string
+    bundle: string
+    activation: number
+    window: BrowserWindow
+    current(): boolean
+  }): AppFrameLease
+  resolve(token: string, window: BrowserWindow, frame?: string | null): AppFrameLease | null
+  /** Find a live lease by its unguessable token for native navigation tracking. */
+  resolveToken(token: string): AppFrameLease | null
+  /** Observe synchronous revocation so native frame indexes discard dead entries. */
+  onRevoke(listener: (token: string) => void): () => void
+  validate(input: {
+    token: string
+    nonce: string
+    window: BrowserWindow
+    remote: string
+    bundle: string
+  }): AppFrameLease | null
+  revoke(lease: AppFrameLease): void
+  release(token: string, remote: string, bundle: string): boolean
+  revokeActivation(remote: string, activation: number): void
+  revokeRemote(remote: string): void
+  /** Revoke every lease issued to one native window, including unbound leases. */
+  revokeWindow(window: BrowserWindow): void
+  revokeAll(): void
 }
 
 /**
@@ -57,16 +112,40 @@ export interface PluginScheme {
   /** It serves pages in frames: a frame on it may move within the scheme,
    *  and a link out of it opens in the browser (`window-guard.ts`). */
   frame?: true
+  /** Resolve the app-origin owner before plugin enablement is consulted. */
+  ownerForRequest?(request: Request, ctx: SchemeContext): Promise<LiveVault | null>
   handle(request: Request, ctx: SchemeContext): Response | Promise<Response>
+}
+
+export interface SyncHoldOptions {
+  /** Keep an outstanding hold if this activation throws during startup or its
+   * disposer fails (including a reported drain failure). Opt in only for a
+   * writer whose owner must explicitly release once it knows the writer is
+   * absent. Release also works after failed cleanup, but does not clear the
+   * first latched teardown failure or permit replacement. */
+  retainOnFailure?: boolean
 }
 
 /**
  * What a plugin gets when it starts in a vault, bound to that vault until it
- * stops: turned off, the vault left, or Holi quitting. Nothing a plugin starts
- * outlives its vault, so nothing carries from one vault to the next. Every
- * undo below the host also runs when it stops.
+ * stops: turned off, the vault left, or Holi quitting. The host also runs its
+ * undos on stop, except for sync holds explicitly retained on failure.
  */
 export interface PluginCtx extends LiveVault, SchemeContext {
+  /** Aborted synchronously when this activation is stopped or invalidated. */
+  activationSignal: AbortSignal
+  /** Revoke this activation before awaiting failed-start cleanup. */
+  invalidateActivation(): void
+  /** Latch unproven cleanup; stop and replacement must fail with the first latched error. */
+  reportDrainFailure(error: unknown): void
+  /** The renderer's displayed vault, independent of plugin lifetimes. */
+  displayed(): string | null
+  /** Capture whether this activation's vault is the current presentation. */
+  presentationLease(): () => boolean
+  /** Hear when the renderer's displayed vault changes. Returns the undo. */
+  onDisplayChange(cb: (remote: string | null) => void): () => void
+  /** Holi's native window only while this activation's vault is displayed. */
+  window(): BrowserWindow | null
   /** Holi's own data directory on this machine, for state a plugin keeps
    *  outside any vault. */
   userData: string
@@ -80,13 +159,17 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * `name` is kebab-case and `payload` must survive structured clone. Nothing
    * is sent while that vault has the plugin off.
    */
-  emit(remote: string, name: string, payload: unknown): void
+  emit(remote: string, name: string, payload: unknown, guard?: () => boolean): void
   /**
    * Hear `name` from this plugin's renderer side, in the order it was sent.
    * A message about any vault but the open one, or one with the plugin off,
    * is dropped. Returns the undo.
    */
-  on(name: string, handler: (remote: string, payload: unknown) => void): () => void
+  on(
+    name: string,
+    handler: (remote: string, payload: unknown) => void,
+    deliveryGuard?: (remote: string, payload: unknown) => () => boolean,
+  ): () => void
   /**
    * Open the app door (docs/features/vault-apps.md): the way a vault app's
    * frame reaches capabilities, with the consent check for entries that ask
@@ -94,6 +177,17 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * it is open throws. Closed when the plugin stops.
    */
   openAppDoor(opener: AppDoorOpener): AppDoor
+  /** Issue a document/resource lease for an app in this activation. The returned token is
+   *  bound to this vault presentation and the exact Holi window. */
+  issueAppFrameLease(bundle: string): AppFrameLease
+  releaseAppFrameLease(token: string, bundle: string): boolean
+  /** Validate a capability/log/capture caller against its document generation. */
+  validateAppFrameLease(input: {
+    token: string
+    nonce: string
+    window: BrowserWindow
+    bundle: string
+  }): AppFrameLease | null
   /**
    * Ask before Holi quits. `check` runs when someone quits: null lets the
    * quit go on, a question puts it to them, and Cancel keeps Holi open. A
@@ -121,16 +215,23 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   /**
    * Hold the vault's sync loop: no autosave commit, pull or push until the
    * returned release runs. Holds from several callers stack; the loop runs
-   * again when the last is released, and a release after the vault is left
-   * does nothing.
+   * again when the last is released. The host releases outstanding holds on
+   * activation failure or stop unless `retainOnFailure` applies.
    */
-  pauseSync(reason: string): () => void
+  pauseSync(reason: string, options?: SyncHoldOptions): () => void
+  /** Pause sync admission and wait until already-running Git mutations drain.
+   * A failed or cancelled acquisition always releases before rejecting. */
+  pauseSyncAndDrain(reason: string, options?: SyncHoldOptions): Promise<() => void>
   /** Commit whatever is dirty now. The new commit's sha, or null for none;
    *  `'busy'` when a pull in flight refused it, so asking again shortly may
    *  commit. */
   commitNow(): Promise<string | null | 'busy'>
   /** The checked-out commit, or null on an unborn branch. */
   head(): Promise<string | null>
+  /** Capture a narrowly scoped authority for an already-admitted operation to
+   * finish its vault finalization after this activation is revoked. The returned
+   * runner is bound to this exact activation and only permits finalization APIs. */
+  captureFinalization(): <T>(work: () => Promise<T>) => Promise<T>
   /** Hear what the renderer reports the person is looking at in this vault. */
   onReport(cb: (report: UiReport) => void): () => void
   /**
@@ -165,6 +266,11 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    */
   onMention(cb: (mention: NoteMention) => void): () => void
   /**
+   * Bring a vault forward and deliver one event to this plugin after the
+   * renderer has switched to it. Used for native notification click targets.
+   */
+  navigate(remote: string, name: string, payload: unknown): void
+  /**
    * A native notification, the one the reminders use. Raised only while no
    * Holi window has focus: Holi's banners never cover Holi. True when it was
    * raised. Clicking it brings Holi's window forward, opening one if none is
@@ -173,9 +279,6 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   notify(notice: Notice): boolean
   /** Whether a Holi window has focus now. */
   focused(): boolean
-  /** Holi's window, or null while none is open: for a plugin that draws
-   *  into it from main (the browser's pages). */
-  window(): BrowserWindow | null
   /** Hear each scan of this vault, the latest one first, at once. Returns
    *  the undo. */
   onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
@@ -202,6 +305,8 @@ export interface NoteMention extends CommentMention {
 export interface Notice {
   title: string
   body: string
+  /** A plugin-owned event, captured against this live plugin and vault when admitted. */
+  navigate?: { name: string; payload: unknown }
   onClick?: () => void
 }
 
@@ -291,6 +396,7 @@ export {
   type CapabilityContext,
   type CapabilityTable,
   type Admit,
+  type CliRun,
   type CliSpec,
   type Door,
 } from './capabilities/registry'
@@ -317,17 +423,36 @@ export {
 } from './capabilities/params'
 export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
-export { nodeFallbackDir, resolveBin, toolPath } from './bin'
-export { defaultProbePid, type PidState } from './process-group'
+export { delimiterFor, isRunnable, nodeFallbackDir, resolveBin, toolPath, withPath } from './bin'
+export { execProgram, spawnProgram } from './launch'
+export { spawnOwnedProgram, ownedProcessDrain } from './owned-process'
+export { preparePosixLaunch, type PosixLaunch } from './posix-launch-lease'
+/** @public Node-only POSIX ownership seam for Provider owners. */
+export {
+  inspectPosixOwnership,
+  posixLaunchNonAdmission,
+  type PosixOwnershipInspection,
+} from './posix-ownership-journal'
+export type { ProcessGroupSupervision } from './owned-process-supervision'
+export {
+  joinOwnedProgram,
+  UnconfirmedOwnedProgramError,
+  type ManagedOwnedChild,
+  type OwnedCompletion,
+  type OwnedProgramCleanupLease,
+  type OwnedProgramResult,
+} from './owned-program-lifetime'
+export { defaultProbePid, killChildTree, killTree, type PidState } from './process-group'
 export { writeScreenshot } from './screenshot-files'
 export {
   defaultSpawnPty,
+  signalPty,
   type PtyProcess,
   type SpawnPty,
   type SpawnPtyOptions,
 } from './terminal/pty'
 export type { ActivityChannel, ActivityLevel } from './activity/log'
-export { remoteUrl, runGit, type RangeFile } from './git'
+export { remoteUrl, runGit, GitHistoricalPathMissingError, type RangeFile } from './git'
 export { gitignoreWith } from './vault/seed/core'
 export {
   absPathFor,
@@ -344,9 +469,9 @@ export { moveNotes } from './vault/move'
 export { completionStatuses, readVaultStatuses } from './vault/statuses'
 export { renameNote } from './vault/rename'
 export { holiTheme, readVaultTheme } from './vault/theme'
-export { readVaultSettings, writePluginSettings } from './vault/settings'
+export { readVaultSettings, writePluginSettings, writeVaultSettings } from './vault/settings'
 export { readVaultEnv } from './vault/dotenv'
 export type { SafeStorageLike } from './github/token-store'
 export { installedInfos } from './plugin-host/installed'
-export { shellReadBridgeEnv } from './bridge/env-file'
+export { shellJobId, shellReadBridgeEnv } from './bridge/env-file'
 export { mimeFor } from './vault/asset-protocol'

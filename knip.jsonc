@@ -31,6 +31,48 @@
         // Loaded with `new Worker(new URL(...))`, which the import graph cannot see.
         "src/**/*.worker.ts!",
         "scripts/*.{mjs,cjs,mts}",
+        // Vite's disposable Electron smoke entry is selected by a filesystem path.
+        "scripts/windows-agent-smoke.ts",
+        "scripts/browser-display-smoke.ts",
+        "scripts/browser-frame-addressing-smoke.ts",
+        "scripts/code-captions-smoke-main.ts",
+        "scripts/code-captions-smoke-renderer.tsx",
+        "scripts/browser-display-fixture/index.html",
+        "scripts/browser-display-fixture/entry.tsx",
+        "scripts/browser-display-fixture/preload.cjs",
+        "scripts/browser-display-fixture/toolbar-sequence.ts",
+        "scripts/browser-display-fixture/hints-sequence.ts",
+        "scripts/mail-markers-smoke-main.ts",
+        "scripts/mail-markers-smoke-renderer.tsx",
+        // Native file-subscription smoke entries are built by the disposable MJS runner.
+        "scripts/files-subscriptions-smoke-main.ts",
+        "scripts/files-subscriptions-smoke-renderer.tsx",
+        // Vite's disposable #542 Electron smoke entry is selected by filesystem path.
+        "scripts/agent-inbox-542-smoke-main.ts",
+        "scripts/agent-inbox-542-smoke-renderer.tsx",
+        // Native IPC smoke is selected by the Node runner's filesystem path.
+        "scripts/ipc-sender-native-smoke.ts",
+        // Native Electron smoke: the TS entry and isolated renderer are built by its MJS runner.
+        "scripts/terminal-hints-native-smoke-main.ts",
+        "scripts/terminal-hints-native-smoke.tsx",
+        // Isolated #510 community iframe smoke entries are selected by its runner.
+        "scripts/community-hints-native-smoke-main.ts",
+        "scripts/community-hints-native-smoke.tsx",
+        "scripts/community-hints-native-smoke-serve.cjs",
+        "scripts/pdf-vim-native-smoke-main.ts",
+        "scripts/pdf-vim-native-smoke.tsx",
+        "scripts/mail-vim-native-smoke-main.ts",
+        "scripts/mail-vim-native-smoke.tsx",
+        "scripts/folder-subscriptions-native-smoke-main.ts",
+        "scripts/folder-subscriptions-native-smoke.tsx",
+        "scripts/rich-text-vim-native-smoke-main.ts",
+        "scripts/rich-text-vim-native-smoke.tsx",
+        // Issue #507 native packaged MDX diagnostics fixture entries.
+        "scripts/mdx-diagnostics-native-smoke-main.ts",
+        "scripts/mdx-diagnostics-native-smoke.tsx",
+        "scripts/mdx-diagnostics-smoke-trpc.ts",
+        // Native GitHub safeStorage entry is built as an Electron SSR fixture.
+        "scripts/github-storage-native-smoke-main.ts",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",
@@ -55,8 +97,22 @@
         // they export a component's whole API whether or not Holi uses it yet.
         "src/renderer/src/components/ui/**": ["exports", "types"],
       },
-      // A system binary one community-plugin test shells out to.
-      "ignoreBinaries": ["pgrep"],
+      // System binaries used by smoke tests and native video capture/inspection.
+      "ignoreBinaries": ["pgrep", "ffmpeg", "ffprobe"],
+    },
+    "apps/mobile": {
+      "entry": [
+        "nativescript.config.ts!",
+        "webpack.config.js!",
+        // The Simulator driver is run by the package's test:ios script.
+        "scripts/ios-simulator.mjs!",
+        // build:ios invokes this standalone native-dependency build entry.
+        "scripts/build-libgit2-ios.mjs!",
+        "test/*.test.mjs",
+      ],
+      "project": ["app/**/*.ts!", "scripts/*.{mjs,cjs}!", "test/*.test.mjs"],
+      // NativeScript discovers the pinned platform runtime, not a JS import.
+      "ignoreDependencies": ["@nativescript/ios"],
     },
     "packages/shared": {
       "project": ["src/**/*.ts!", "test/**/*.ts"],

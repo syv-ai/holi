@@ -126,8 +126,8 @@ export function ApproveHoliDialog(): React.JSX.Element | null {
               )}
             </Part>
             <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">Model: {holi.model ?? 'default'}</Badge>
-              <Badge variant="outline">
+              <Badge variant="secondary">Model: {holi.model ?? 'default'}</Badge>
+              <Badge variant="secondary">
                 Takes: {accepts.length === 0 ? 'any document' : accepts.join(', ')}
               </Badge>
             </div>

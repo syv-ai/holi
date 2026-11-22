@@ -43,7 +43,10 @@ it('answers every bridge method that is not the renderer’s at the app door', (
     googleCapabilities({
       accounts: {} as GoogleAccountsManager,
       dataFor: async () => null,
-      settings: { read: async () => ({ calendars: {}, imageSenders: [] }), write: async () => {} },
+      settings: {
+        read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
+        write: async () => {},
+      },
     }),
   )
   registry.register(
@@ -62,8 +65,10 @@ it('answers every bridge method that is not the renderer’s at the app door', (
         throw new Error('not called')
       },
       grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => true },
-      previews: { read: async () => null, save: async () => {}, forget: async () => {} },
+      previews: { read: async () => null, save: async () => true, forget: async () => {} },
+      previewPlacements: new Map(),
       capture: async () => null,
+      captureCurrent: () => true,
     }),
   )
   registry.register(['store'], storeCapabilities())

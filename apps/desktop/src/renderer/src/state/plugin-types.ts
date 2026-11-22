@@ -10,6 +10,7 @@ import type { PluginInfo, VaultSnapshot } from '@holi/shared'
 export type { /** @public */ IconGlyph } from '@/lib/icon-glyph'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import type { PluginDialog } from '@/state/dialogs'
+import type { TabDescriptor } from '@/state/tab-descriptor'
 
 /** What a slash command is given: the text it was typed over, the
  *  caret's line, and the note's vault path; nothing more of the buffer.
@@ -44,7 +45,7 @@ export interface SlashCommand {
    *  The command's plugin decides. */
   offeredIn?(path: string): boolean
   /** Rejects when it failed; the plugin says where (an app's log). */
-  run(input: SlashInput): Promise<SlashResult>
+  run(input: SlashInput, isCurrent?: () => boolean): Promise<SlashResult>
 }
 
 /** One item a claim adds to a file's row menu. @public */
@@ -108,7 +109,9 @@ export interface ClaimCreate {
  */
 export interface PathClaim {
   match(path: string): boolean
-  view?: ComponentType<{ path: string }>
+  /** Keep a visited claimed view mounted while its tab remains open. */
+  retainView?: true
+  view?: ComponentType<{ path: string; visible?: boolean; focused?: boolean }>
   folder?: FolderClaim
   decorate?: ClaimDecoration
   rowMenu?: readonly ClaimMenuItem[]
@@ -142,6 +145,8 @@ export interface Surface {
   label: string | ((id?: string) => string)
   icon: IconGlyph
   render: ComponentType<{ id?: string; visible: boolean }>
+  /** Open this registered surface through its canonical shell tab instead. */
+  openAs?: TabDescriptor
   /** Every tab of it stays mounted in its pane, hidden while another tab is
    *  active, so it keeps state a remount would lose (a terminal's
    *  scrollback). */
@@ -259,7 +264,7 @@ export interface SettingsSection {
   /** Shown inside core's Plugins page, under its label, rather than as a
    *  section of its own: a plugin's settings about plugins. */
   within?: 'plugins'
-  Component: (props: { remote: string }) => React.JSX.Element
+  Component: (props: { remote: string; visible?: boolean }) => React.JSX.Element
 }
 
 /** The renderer's one store, as an event handler gets it. */
@@ -276,7 +281,14 @@ export type PluginEventHandler = (
 ) => void
 
 /** What an ask or a start answers: done, or why not, in words to show. */
-export type AskResult = { ok: true } | { ok: false; message: string }
+export type AskResult =
+  | { ok: true }
+  | {
+      ok: false
+      message: string
+      cleanupUnconfirmed?: true
+      sessionId?: string
+    }
 
 /** One of the vault's live agent sessions, as an ask offers it. */
 export interface AgentSessionRow {
@@ -352,6 +364,8 @@ export interface AgentService {
   ask(args: { text: string; target: string }): Promise<AskResult>
   /** A new session whose first turn is `prompt`, brought forward. */
   start(args: { name?: string; prompt: string }): Promise<AskResult>
+  /** Show a possibly surviving session for recovery instead of launching another. */
+  show(args: { session: string; live: boolean }): Promise<AskResult>
 }
 
 /** What a plugin provides for `AgentService`: the same, as atoms, which
@@ -387,7 +401,10 @@ export interface SidebarApp {
   icon: IconGlyph
   /** Its place among every plugin's apps, lowest first. */
   order: number
-  render: ComponentType
+  /** Visible means in the displayed split; a visible member need not be focused. */
+  render: ComponentType<{ visible?: boolean; focused?: boolean }>
+  /** Keep this app's mounted view while its tab is hidden. */
+  keepMounted?: boolean
   /** Listed only while true (an account it needs is connected). */
   visible?: Atom<boolean>
 }
@@ -412,7 +429,9 @@ export interface AgentsMode {
   sidebar: ComponentType
   /** The mode's main view for one tab: `selection` is what the tab shows
    *  (null for the mode's home), so two tabs can show two sessions. */
-  main: ComponentType<{ selection: { owner: string; id: string } | null }>
+  main: ComponentType<{ selection: { owner: string; id: string } | null; visible?: boolean }>
+  /** Whether this selection is a live view whose state should survive tab switches. */
+  keepsSelectionMounted?: (selection: { owner: string; id: string }) => boolean
   status: Atom<AgentsStatus>
   /** How a session tab looks (`AgentsTabLook`), by the selection it shows;
    *  undefined for one the mode does not know (yet). */

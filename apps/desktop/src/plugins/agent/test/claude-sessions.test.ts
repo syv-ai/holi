@@ -1,4 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import { ChildProcess, spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,15 +12,23 @@ import {
   sessionName,
   type RunOptions,
 } from '../main/claude/cli'
+import { UnconfirmedOwnedProgramError, type execProgram } from '../../../main/plugin-api'
+import { fakeClaudeCommand } from './fake-claude-command'
+import { POSIX_STATUS_LINE } from '../main/claude/seed'
 import {
   isLive,
+  ListingParseError,
   parseListing,
+  readContextPercent,
+  readModelName,
   summarise,
   watchConfigDir,
   type ClaudeRow,
 } from '../main/claude/listing'
+import { delimiter } from 'node:path'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
+const target = { root: ROOT, configDir: '/cfg/vault', binDir: '/holi/bin' }
 
 /** A row as `claude agents --json` prints it (2.1.284). */
 const LIVE = {
@@ -33,7 +45,235 @@ const LIVE = {
 
 const listing = (rows: unknown[]): string => JSON.stringify(rows, null, 2) + '\n'
 
+describe('attributed Claude Code 2.1.319 fixture consumers', () => {
+  it('exercises launch output, status fields, and consumed CLI argv', async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        resolve(
+          fileURLToPath(new URL('.', import.meta.url)),
+          'fixtures/claude-compatibility/agents-2.1.319.json',
+        ),
+        'utf8',
+      ),
+    ) as {
+      sourceVersion: string
+      reference: string
+      provenance: string
+      launchOutput: string
+      statusLineInput: unknown
+      rows: unknown[]
+    }
+    expect(fixture).toMatchObject({ sourceVersion: '2.1.319', provenance: 'constructed' })
+    expect(fixture.reference).toMatch(/Claude Code 2.1.319/)
+    expect(parseBackgrounded(fixture.launchOutput)).toBe('1234abcd')
+    expect(readModelName(fixture.statusLineInput)).toBe('Sonnet 4')
+    expect(readContextPercent(fixture.statusLineInput)).toBe(43)
+
+    const calls: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/fake/claude',
+      run: async (_bin, args) => {
+        calls.push(args)
+        return fixture.launchOutput
+      },
+    })
+    expect(
+      await cli.startBg(target, {
+        name: 'Compatibility run',
+        prompt: 'Inspect',
+        model: 'sonnet',
+        allow: ['Read'],
+        deny: ['Bash'],
+        appendSystemPrompt: 'Rules',
+        mcpConfig: '/tmp/mcp.json',
+      }),
+    ).toEqual({ ok: true, id: '1234abcd' })
+    expect(calls[0]).toEqual([
+      '--bg',
+      '--model',
+      'sonnet',
+      '--append-system-prompt',
+      'Rules',
+      '--mcp-config=/tmp/mcp.json',
+      '--allowedTools=Read',
+      '--disallowedTools=Bash',
+      '--name',
+      'Compatibility run',
+      '--',
+      'Inspect',
+    ])
+  })
+})
+
+describe('shipped Claude turn signal hook', () => {
+  it('sends turn edges, Claude pid, pending work, and session-channel data locally', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'claude-turn-hook-'))
+    const received: Array<{ url: string; body: string }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', (chunk: string) => {
+        body += chunk
+      })
+      request.on('end', () => {
+        received.push({ url: request.url ?? '', body })
+        response.statusCode = request.url?.startsWith('/turn/end') ? 200 : 204
+        if (response.statusCode === 200) response.end(JSON.stringify({ tree: '0123456789abcdef' }))
+        else response.end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('No loopback server address')
+    try {
+      const vault = dir
+      await mkdir(join(vault, '.holi/state'), { recursive: true })
+      await writeFile(join(vault, '.holi/vault'), '')
+      await writeFile(
+        join(vault, '.holi/state/bridge.local.env'),
+        `HOLI_BRIDGE_PORT=${address.port}\nHOLI_BRIDGE_TOKEN=abc123\n`,
+      )
+      const hook = resolve(
+        fileURLToPath(new URL('.', import.meta.url)),
+        '../main/claude/vault/shipped/.claude/hooks/turn-signal.mjs',
+      )
+      const run = (edge: string, input: unknown, extra: NodeJS.ProcessEnv = {}) =>
+        new Promise<void>((resolve, reject) => {
+          const child = spawn(process.execPath, [hook, edge], {
+            cwd: vault,
+            env: {
+              ...process.env,
+              CLAUDE_JOB_DIR: join(vault, '.claude/jobs/1234abcd'),
+              CLAUDE_PID: '7788',
+              ...extra,
+            },
+            stdio: ['pipe', 'ignore', 'pipe'],
+          })
+          let stderr = ''
+          child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+            stderr += chunk
+          })
+          child.stdin.end(JSON.stringify(input))
+          const timer = setTimeout(() => {
+            child.kill()
+            reject(new Error(`${edge} hook timed out`))
+          }, 4000)
+          child.once('error', (error) => {
+            clearTimeout(timer)
+            reject(error)
+          })
+          child.once('close', (code) => {
+            clearTimeout(timer)
+            code === 0 ? resolve() : reject(new Error(`${edge} hook exited ${code}: ${stderr}`))
+          })
+        })
+      await run('start', {})
+      await run('end', { background_tasks: [{ id: 'pending' }], session_crons: [{}] })
+      await run(
+        'session',
+        {},
+        {
+          CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/inbox.sock',
+          CLAUDE_CODE_MESSAGING_TOKEN: 'inbox-secret',
+        },
+      )
+      expect(received).toHaveLength(3)
+      expect(received[0]?.url).toContain('/turn/start?t=abc123&job=1234abcd&pid=7788')
+      expect(received[1]?.url).toContain('/turn/end?t=abc123&job=1234abcd&pending=2')
+      expect(received[2]?.url).toContain('/session?t=abc123&job=1234abcd')
+      expect(JSON.parse(received[2]!.body)).toEqual({
+        socket: '/tmp/inbox.sock',
+        token: 'inbox-secret',
+      })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('shipped Claude statusline command', () => {
+  it('emits current status fields to a bounded loopback bridge', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'claude-statusline-'))
+    const requests: Array<{ url: string; body: string }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', (chunk: string) => {
+        body += chunk
+      })
+      request.on('end', () => {
+        requests.push({ url: request.url ?? '', body })
+        response.end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('No loopback server address')
+    try {
+      await mkdir(join(dir, '.holi/state'), { recursive: true })
+      await writeFile(join(dir, '.holi/vault'), '')
+      await writeFile(
+        join(dir, '.holi/state/bridge.local.env'),
+        `HOLI_BRIDGE_PORT=${address.port}\nHOLI_BRIDGE_TOKEN=abc123\n`,
+      )
+      const child = spawn('sh', ['-c', POSIX_STATUS_LINE], {
+        cwd: dir,
+        env: { ...process.env, CLAUDE_JOB_DIR: join(dir, '.claude/jobs/1234abcd') },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      let stdout = ''
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+        stdout += chunk
+      })
+      child.stdin.end(
+        JSON.stringify({
+          model: { display_name: 'Sonnet 4' },
+          context_window: { used_percentage: 42.6 },
+        }),
+      )
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('statusline subprocess timed out')), 3000)
+        child.once('error', (error) => {
+          clearTimeout(timer)
+          reject(error)
+        })
+        child.once('close', (code) => {
+          clearTimeout(timer)
+          code === 0 ? resolve() : reject(new Error(`statusline exited ${code}`))
+        })
+      })
+      await vi.waitFor(() => expect(requests).toHaveLength(1), { timeout: 2500 })
+      expect(stdout).toContain('Sonnet 4 · 43% context')
+      expect(requests[0]).toMatchObject({
+        url: '/statusline?t=abc123&job=1234abcd',
+        body: expect.stringContaining('Sonnet 4'),
+      })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('parseListing', () => {
+  it('consumes the attributed constructed compatibility listing, including history', async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        resolve(
+          fileURLToPath(new URL('.', import.meta.url)),
+          'fixtures/claude-compatibility/agents-2.1.319.json',
+        ),
+        'utf8',
+      ),
+    ) as { sourceVersion: string; provenance: string; rows: unknown[] }
+    expect(fixture).toMatchObject({ sourceVersion: '2.1.319', provenance: 'constructed' })
+    const rows = parseListing(listing(fixture.rows), '/fixture/vault')
+    expect(rows.map((row) => row.id)).toEqual(['20c9f6e8', '7b1e0c42'])
+    expect(isLive(rows[0]!)).toBe(true)
+    expect(isLive(rows[1]!)).toBe(false)
+  })
+
   it('reads a background row keyed by its job id', () => {
     expect(parseListing(listing([LIVE]), ROOT)).toEqual([
       {
@@ -52,6 +292,58 @@ describe('parseListing', () => {
     const under = { ...LIVE, id: 'aaaaaaaa', cwd: `${ROOT}/notes` }
     const sibling = { ...LIVE, id: 'bbbbbbbb', cwd: `${ROOT}-other` }
     expect(parseListing(listing([under, sibling]), ROOT).map((r) => r.id)).toEqual(['aaaaaaaa'])
+  })
+
+  it.each([
+    [
+      'C:\\Vault',
+      [
+        ['C:\\Vault', true],
+        ['c:\\VAULT\\sub', true],
+        ['C:/vault\\Sub/./notes/../drafts', true],
+        ['C:\\Vault\\..notes', true],
+        ['C:\\Vault-sibling\\sub', false],
+        ['C:\\Vault\\a\\..\\..\\escape', false],
+        ['D:\\Vault\\sub', false],
+        ['\\Vault\\sub', false],
+        ['/Vault/sub', false],
+      ],
+    ],
+    [
+      'c:/vault/',
+      [
+        ['C:\\Vault\\Sub', true],
+        ['C:/vault-sibling/sub', false],
+      ],
+    ],
+    [
+      '\\\\Server\\Share\\Vault',
+      [
+        ['//server/SHARE/vault/sub', true],
+        ['\\\\server\\share\\Vault2', false],
+        ['\\\\server\\other-share\\Vault\\sub', false],
+        ['\\\\server\\share-more\\Vault\\sub', false],
+        ['\\\\other-server\\share\\Vault\\sub', false],
+      ],
+    ],
+    [
+      ROOT,
+      [
+        [`${ROOT}/sub/../notes`, true],
+        [`${ROOT}/notes/../../escape`, false],
+        [`${ROOT.toUpperCase()}/sub`, false],
+      ],
+    ],
+  ] as const)('checks normalized path containment in %s', (root, cases) => {
+    const rows = cases.map(([cwd, keep], index) => ({
+      ...LIVE,
+      cwd,
+      id: `row-${index}`,
+      keep,
+    }))
+    expect(parseListing(listing(rows), root).map(({ id }) => id)).toEqual(
+      rows.filter(({ keep }) => keep).map(({ id }) => id),
+    )
   })
 
   it('drops interactive rows, which Holi never starts', () => {
@@ -80,16 +372,57 @@ describe('parseListing', () => {
     expect(row !== undefined && isLive(row)).toBe(false)
   })
 
-  it('costs a malformed row that row only', () => {
-    const rows = parseListing(listing([{ ...LIVE, id: 7 }, null, LIVE]), ROOT)
-    expect(rows.map((r) => r.id)).toEqual(['20c9f6e8'])
+  it('accepts empty listings, optional display metadata, and unknown extra fields', () => {
+    expect(parseListing('[]', ROOT)).toEqual([])
+    expect(
+      parseListing(
+        listing([
+          { kind: 'background', cwd: ROOT, id: 'old-job', state: 'done', heartbeat: { time: 1 } },
+        ]),
+        ROOT,
+      ),
+    ).toEqual([{ id: 'old-job', name: '', state: 'done' }])
   })
 
-  it('answers nothing for a failed or garbled listing', () => {
-    expect(parseListing(null, ROOT)).toEqual([])
-    expect(parseListing('not json', ROOT)).toEqual([])
-    expect(parseListing('{}', ROOT)).toEqual([])
+  it.each(
+    [
+      null,
+      [],
+      { ...LIVE, kind: 'backgroun' },
+      { ...LIVE, cwd: 42 },
+      { ...LIVE, cwd: 'relative' },
+      { ...LIVE, id: 7 },
+      { ...LIVE, id: '--help' },
+      { ...LIVE, pid: '4242' },
+      { ...LIVE, pid: null },
+      { ...LIVE, pid: 0 },
+      { ...LIVE, pid: -1 },
+      { ...LIVE, pid: 1.5 },
+      { ...LIVE, status: 1 },
+      { ...LIVE, status: 'unknown' },
+      { ...LIVE, sessionId: {} },
+      { ...LIVE, name: true },
+      { ...LIVE, waitingFor: [] },
+      { ...LIVE, state: false },
+      { ...LIVE, startedAt: 'yesterday' },
+    ].map((entry) => [entry]),
+  )('rejects the entire snapshot for malformed row %j', (entry) => {
+    expect(() => parseListing(listing([LIVE, entry]), ROOT)).toThrow(ListingParseError)
   })
+
+  it('rejects ambiguous duplicate ids in the vault, not coincident ids across vaults', () => {
+    expect(() => parseListing(listing([LIVE, { ...LIVE, pid: undefined }]), ROOT)).toThrow(
+      ListingParseError,
+    )
+    expect(parseListing(listing([LIVE, { ...LIVE, cwd: `${ROOT}-other` }]), ROOT)).toHaveLength(1)
+  })
+
+  it.each([null, 'not json', '{}'])(
+    'distinguishes unusable listing output %j from empty',
+    (stdout) => {
+      expect(() => parseListing(stdout, ROOT)).toThrow(ListingParseError)
+    },
+  )
 })
 
 describe('summarise', () => {
@@ -123,13 +456,25 @@ describe('summarise', () => {
 })
 
 describe('claude-cli', () => {
-  const target = { root: ROOT, configDir: '/cfg/vault', binDir: '/holi/bin' }
-
   it('parses the documented --bg line, colour codes and all', () => {
     expect(
       parseBackgrounded('backgrounded · \x1b[36maeea37bf\x1b[39m · lab\n  claude agents'),
     ).toBe('aeea37bf')
     expect(parseBackgrounded('something else')).toBeNull()
+  })
+
+  it('requires one distinct canonical id for a retained handoff, not the first or last match', () => {
+    const first = 'backgrounded · 1234abcd · Existing'
+    const second = 'backgrounded · deadbeef · New'
+    expect(parseBackgrounded(`${first}\r\n${second}`, true)).toBeNull()
+    expect(parseBackgrounded(`${second}\n${first}`, true)).toBeNull()
+    expect(parseBackgrounded(`${first}\n${second}`)).toBe('1234abcd')
+    expect(
+      parseBackgrounded(
+        `{"prelude":true}\r\n${first}\r\nbackgrounded · deadbeef\n\x1b[32m${first}\x1b[0m`,
+        true,
+      ),
+    ).toBe('1234abcd')
   })
 
   it('names from the first line only, capped', () => {
@@ -163,8 +508,14 @@ describe('claude-cli', () => {
     for (const { opts } of calls) {
       expect(opts.cwd).toBe(ROOT)
       expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/cfg/vault')
-      expect(opts.env.PATH?.split(':')[0]).toBe('/holi/bin')
+      expect(opts.env.PATH?.split(delimiter)[0]).toBe('/holi/bin')
     }
+    expect(calls.map(({ opts }) => opts.retainDescendantsOnSuccess ?? false)).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ])
   })
 
   it('lists finished sessions with --all, and without it on a Claude Code that refuses it', async () => {
@@ -309,7 +660,7 @@ describe('claude-cli', () => {
     expect(await ok.startBg(target, {})).toEqual({ ok: true, id: '1234abcd' })
 
     const silent = createClaudeCli({ resolveBin: () => '/c', run: async () => '', log: () => {} })
-    expect((await silent.startBg(target, {})).ok).toBe(false)
+    expect(await silent.startBg(target, {})).toMatchObject({ ok: false, cleanupUnconfirmed: true })
 
     const failing = createClaudeCli({
       resolveBin: () => '/c',
@@ -319,7 +670,7 @@ describe('claude-cli', () => {
       log: () => {},
     })
     expect(await failing.list(target)).toBeNull()
-    expect(await failing.stop(target, 'x')).toEqual({ ok: false, message: 'boom' })
+    expect(await failing.stop(target, 'x')).toMatchObject({ ok: false, message: 'boom' })
   })
 
   it('refuses without a binary', async () => {
@@ -381,5 +732,239 @@ describe('watchConfigDir', () => {
     await mkdir(join(dir, 'sessions'))
     await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 3_000 })
     stop()
+  })
+})
+
+describe('legacy POSIX Claude launch receipts', () => {
+  it('accepts a backgrounded line after a prelude with lease-free settlement metadata', async () => {
+    const exec = vi.fn<typeof execProgram>((_bin, _args, _opts, done) => {
+      done(null, '{"prelude":true}\nbackgrounded · 1234abcd\n', '', { kind: 'settled' })
+      return new ChildProcess()
+    })
+    const cli = createClaudeCli({ platform: 'darwin', resolveBin: () => '/c', execProgram: exec })
+    expect(
+      await cli.startBg(target, { allow: ['Edit'], deny: ['WebFetch'], prompt: '- go' }),
+    ).toEqual({ ok: true, id: '1234abcd' })
+    expect(exec).toHaveBeenCalledWith(
+      '/c',
+      [
+        '--bg',
+        '--allowedTools=Edit',
+        '--disallowedTools=WebFetch',
+        '--name',
+        'Scheduled run',
+        '--',
+        '- go',
+      ],
+      expect.objectContaining({ cwd: ROOT, retainDescendantsOnSuccess: true }),
+      expect.any(Function),
+    )
+  })
+
+  it.skipIf(process.platform === 'win32').each(['', 'started but no native id\n'])(
+    'retains a successful child with unparseable receipt %j and reports typed uncertainty',
+    async (output) => {
+      const command = await fakeClaudeCommand(output)
+      try {
+        const result = await command.cli.startBg(command.target, {
+          name: 'Mail catch-up',
+          prompt: 'Read only',
+        })
+        expect(result).toMatchObject({ ok: false, cleanupUnconfirmed: true })
+        expect(result).not.toHaveProperty('id')
+        if (result.ok) throw new Error('unparseable launch unexpectedly succeeded')
+        expect(result.message).toContain('native session ownership is known')
+        const pid = await command.childPid()
+        expect(pid).toBeGreaterThan(1)
+        expect(() => process.kill(pid, 0)).not.toThrow()
+        // Even an empty supported listing is not proof that the child is gone.
+        expect(await command.cli.list(command.target)).toBe('[]')
+        expect(() => process.kill(pid, 0)).not.toThrow()
+        const beat = await command.heartbeat()
+        await vi.waitFor(async () => expect(await command.heartbeat()).toBeGreaterThan(beat))
+        expect((await command.calls()).map((args) => args[0])).toEqual(['--bg', 'agents'])
+      } finally {
+        await command.close()
+      }
+    },
+  )
+})
+
+describe('Windows Claude exec ownership metadata', () => {
+  type Done = Parameters<typeof execProgram>[3]
+  const idLine = 'backgrounded · 1234abcd · name\n'
+  const firstError = Object.assign(new Error('first collection error'), { cmd: 'claude' })
+  const proofError = new Error('helper exited before proof')
+
+  function withReceipt(...reply: Parameters<Done>) {
+    const exec = vi.fn<typeof execProgram>((_bin, _args, _opts, done) => {
+      done(...reply)
+      return new ChildProcess()
+    })
+    return {
+      cli: createClaudeCli({
+        resolveBin: () => 'claude.cmd',
+        execProgram: exec,
+        platform: 'win32',
+      }),
+      exec,
+    }
+  }
+
+  it.each(['start', 'fork'] as const)(
+    'preserves command error and proof independently in %s',
+    async (verb) => {
+      const call = (cli: ReturnType<typeof createClaudeCli>) =>
+        verb === 'start' ? cli.startBg(target, {}) : cli.forkBg(target, 'source-conversation')
+      const lease = { revoke: vi.fn(async () => {}) }
+      const stderr = 'EMPTY: child-controlled text'
+      const { cli } = withReceipt(firstError, idLine, stderr, {
+        kind: 'unconfirmed',
+        cause: proofError,
+        lease,
+      })
+      const rejected = await call(cli)
+      expect(rejected).toMatchObject({ ok: false, cleanupUnconfirmed: true })
+      expect(rejected).not.toHaveProperty('id')
+      if (rejected.ok || !rejected.cleanupUnconfirmed) throw new Error('Expected a proof failure')
+      expect(rejected.error).toBeInstanceOf(UnconfirmedOwnedProgramError)
+      expect(rejected.error.cause).toBe(proofError)
+      expect(rejected.error).toHaveProperty('lease', lease)
+      expect(rejected.error).toHaveProperty('commandError', firstError)
+      expect(rejected.message).not.toBe(stderr)
+      expect(lease.revoke).not.toHaveBeenCalled()
+
+      const settled = await call(withReceipt(firstError, idLine, stderr, { kind: 'settled' }).cli)
+      expect(settled).toEqual({ ok: false, message: stderr, error: firstError })
+      const missing = await call(withReceipt(firstError, idLine, stderr).cli)
+      expect(missing).toMatchObject({
+        ok: false,
+        cleanupUnconfirmed: true,
+        error: { commandError: firstError },
+      })
+      expect(await call(withReceipt(null, idLine, stderr).cli)).toMatchObject({
+        ok: false,
+        cleanupUnconfirmed: true,
+      })
+    },
+  )
+
+  it.each(['stop', 'respawn'] as const)(
+    'preserves the exact typed failure from %s',
+    async (verb) => {
+      const lease = { revoke: vi.fn(async () => {}) }
+      const error = Object.assign(new UnconfirmedOwnedProgramError(proofError, lease, firstError), {
+        cmd: 'claude',
+      })
+      const { cli } = withReceipt(error, '', 'cleanup succeeded')
+      const result = await cli[verb](target, '1234abcd')
+      expect(result).toMatchObject({ ok: false, cleanupUnconfirmed: true })
+      expect(!result.ok && result.error).toBe(error)
+    },
+  )
+
+  it('rejects an unconfirmed listing without fallback even if stderr says unknown option', async () => {
+    const lease = { revoke: vi.fn(async () => {}) }
+    const { cli, exec } = withReceipt(firstError, '[]', 'unknown option --all', {
+      kind: 'unconfirmed',
+      cause: proofError,
+      lease,
+    })
+    const listing = cli.list(target)
+    await expect(listing).rejects.toBeInstanceOf(UnconfirmedOwnedProgramError)
+    await expect(listing).rejects.toMatchObject({
+      cause: proofError,
+      lease,
+      commandError: firstError,
+    })
+    expect(exec).toHaveBeenCalledTimes(1)
+    expect(lease.revoke).not.toHaveBeenCalled()
+  })
+
+  it('preserves the exact typed listing error and distinguishes verified empty output', async () => {
+    const lease = { revoke: vi.fn(async () => {}) }
+    const error = Object.assign(new UnconfirmedOwnedProgramError(proofError, lease, firstError), {
+      cmd: 'claude',
+    })
+    const metadata = { kind: 'unconfirmed', cause: proofError, lease } as const
+    await expect(withReceipt(error, '[]', 'EMPTY', metadata).cli.list(target)).rejects.toBe(error)
+
+    const settled = { kind: 'settled' } as const
+    await expect(
+      withReceipt(firstError, '[]', 'EMPTY', settled).cli.list(target),
+    ).resolves.toBeNull()
+    for (const stdout of [
+      '',
+      '{"rows":[]}',
+      '[corrupt',
+      listing([LIVE, { ...LIVE, pid: '4242' }]),
+    ]) {
+      await expect(withReceipt(null, stdout, '', settled).cli.list(target)).resolves.toBeNull()
+    }
+    await expect(withReceipt(null, '[]\n', '', settled).cli.list(target)).resolves.toBe('[]\n')
+    const retained = { commit: vi.fn(async () => {}), revoke: vi.fn(async () => {}) }
+    await expect(
+      withReceipt(null, '[]', '', { kind: 'settled', lease: retained }).cli.list(target),
+    ).rejects.toMatchObject({ name: 'UnconfirmedOwnedProgramError', lease: retained })
+  })
+
+  it.each([false, true])(
+    'revokes the exact retained Job for an invalid id (revoke rejects: %s)',
+    async (fails) => {
+      const lease = {
+        commit: vi.fn(async () => {}),
+        revoke: vi.fn(async () => {
+          if (fails) throw proofError
+        }),
+      }
+      const { cli } = withReceipt(null, 'backgrounded · 1234abcd-fake · x', idLine, {
+        kind: 'settled',
+        lease,
+      })
+      const result = await cli.forkBg(target, 'known-conversation')
+      expect(lease.revoke).toHaveBeenCalledTimes(1)
+      expect(lease.commit).not.toHaveBeenCalled()
+      expect(result).not.toHaveProperty('id')
+      if (fails) {
+        expect(result).toMatchObject({ ok: false, cleanupUnconfirmed: true })
+        if (result.ok || !result.cleanupUnconfirmed)
+          throw new Error('Expected a revocation failure')
+        expect(result.error.cause).toBe(proofError)
+        expect(result.error).toHaveProperty('lease', lease)
+      } else {
+        expect(result).toMatchObject({
+          ok: false,
+          message: expect.stringContaining('did not report'),
+        })
+        expect(result).not.toHaveProperty('cleanupUnconfirmed')
+      }
+    },
+  )
+
+  it('returns a validated receipt uncommitted and preserves native permissions argv', async () => {
+    const lease = { commit: vi.fn(async () => {}), revoke: vi.fn(async () => {}) }
+    const { cli, exec } = withReceipt(null, `provider prelude\r\n${idLine}`, '', {
+      kind: 'settled',
+      lease,
+    })
+    expect(
+      await cli.startBg(target, { allow: ['Edit'], deny: ['WebFetch'], prompt: '- go' }),
+    ).toEqual({ ok: true, id: '1234abcd', lease })
+    expect(exec).toHaveBeenCalledWith(
+      'claude.cmd',
+      [
+        '--bg',
+        '--allowedTools=Edit',
+        '--disallowedTools=WebFetch',
+        '--name',
+        'Scheduled run',
+        '--',
+        '- go',
+      ],
+      expect.objectContaining({ retainDescendantsOnSuccess: true }),
+      expect.any(Function),
+    )
+    expect(lease.commit).not.toHaveBeenCalled()
+    expect(lease.revoke).not.toHaveBeenCalled()
   })
 })

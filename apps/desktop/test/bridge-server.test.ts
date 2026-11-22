@@ -46,9 +46,13 @@ async function rig(cli?: BridgeServerDeps['cli']) {
   // useful if it says WHICH session turned.
   const starts: string[] = []
   const ends: string[] = []
+  const pids: Array<number | undefined> = []
   const server = createBridgeServer({ cli, log: () => {} })
   registerAgentRoutes(server, {
-    onTurn: (remote, job, active) => (active ? starts : ends).push(`${remote}:${job}`),
+    onTurn: (remote, job, active, _pending, pid) => {
+      ;(active ? starts : ends).push(`${remote}:${job}`)
+      if (active) pids.push(pid)
+    },
     log: () => {},
   })
   servers.push(server)
@@ -60,6 +64,7 @@ async function rig(cli?: BridgeServerDeps['cli']) {
     token: () => token,
     starts: () => starts,
     ends: () => ends,
+    pids: () => pids,
   }
 }
 
@@ -100,6 +105,86 @@ describe('createBridgeServer', () => {
     expect(asked).toEqual(['me/personal', 'syv/work'])
   })
 
+  it('scopes same-path routes to the authenticated remote without fallback', async () => {
+    const r = await rig()
+    const a = r.server.tokenForVault('route/a')
+    const b = r.server.tokenForVault('route/b')
+    r.server.route(
+      '/scoped',
+      { body: 'discard', handle: (remote) => ({ status: 200, body: `A:${remote}` }) },
+      'route/a',
+    )
+    r.server.route(
+      '/scoped',
+      { body: 'discard', handle: (remote) => ({ status: 200, body: `B:${remote}` }) },
+      'route/b',
+    )
+    expect(await post(r.port(), `/scoped?t=${a}`)).toEqual({ status: 200, body: 'A:route/a' })
+    expect(await post(r.port(), `/scoped?t=${b}`)).toEqual({ status: 200, body: 'B:route/b' })
+    expect(
+      (await post(r.port(), `/scoped?t=${r.server.tokenForVault('route/missing')}`)).status,
+    ).toBe(404)
+    expect(() =>
+      r.server.route('/scoped', { body: 'discard', handle: () => ({ status: 204 }) }),
+    ).toThrow(/already taken/)
+    expect(() =>
+      r.server.route('/cli', { body: 'discard', handle: () => ({ status: 204 }) }, 'route/a'),
+    ).toThrow(/reserved/)
+  })
+
+  it('uses registration leases for stale disposal and requests with a partially received body', async () => {
+    const r = await rig()
+    const remote = 'lease/test'
+    const token = r.server.tokenForVault(remote)
+    const route = {
+      body: 'text' as const,
+      handle: (_remote: string, _query: URLSearchParams, body: string) => ({ status: 200, body }),
+    }
+    r.server.route('/keeper', route, remote)
+    const removeOld = r.server.route('/lease', route, remote)
+    removeOld()
+    r.server.route('/lease', route, remote)
+    removeOld()
+    expect(await post(r.port(), `/lease?t=${token}`, 'current')).toEqual({
+      status: 200,
+      body: 'current',
+    })
+
+    let received!: () => void
+    const receiving = new Promise<void>((resolve) => {
+      received = resolve
+    })
+    const partialRoute = {
+      ...route,
+      get body() {
+        received()
+        return 'text' as const
+      },
+    }
+    const remove = r.server.route('/partial', partialRoute, remote)
+    let finish!: () => void
+    const response = new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request(
+        { host: '127.0.0.1', port: r.port(), path: `/partial?t=${token}`, method: 'POST' },
+        (res) => {
+          let body = ''
+          res.on('data', (chunk) => {
+            body += chunk
+          })
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body }))
+        },
+      )
+      req.on('error', reject)
+      req.write('first')
+      finish = () => req.end('second')
+    })
+    await receiving
+    remove()
+    r.server.route('/partial', partialRoute, remote)
+    finish()
+    expect(await response).toEqual({ status: 404, body: '' })
+  })
+
   it('never resolves a vault for an unknown token', async () => {
     const asked: string[] = []
     const r = await rig()
@@ -121,6 +206,14 @@ describe('createBridgeServer', () => {
     expect(res.body).toBe('')
     expect(r.starts()).toEqual([`${VAULT}:1234abcd`])
     expect(r.ends()).toEqual([])
+  })
+
+  it("POST /turn/start hands over the session's pid, when it is one", async () => {
+    const r = await rig()
+    await post(r.port(), `/turn/start?t=${r.token()}&job=1234abcd&pid=4242`)
+    await post(r.port(), `/turn/start?t=${r.token()}&job=1234abcd&pid=-1`)
+    await post(r.port(), `/turn/start?t=${r.token()}&job=1234abcd`)
+    expect(r.pids()).toEqual([4242, undefined, undefined])
   })
 
   it('POST /turn/end with a job id names that session', async () => {

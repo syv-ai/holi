@@ -6,12 +6,20 @@ import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { allTabs } from '@/state/shell-workspace'
 import { parseTabKey } from '@/state/tab-descriptor'
 import { activeRemoteAtom } from '@/state/vaults'
+import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
+
+/** Whether a view is one of the shell's in-vault launchers. */
+export function isLauncherSurfaceKey(key: string): boolean {
+  const tab = parseTabKey(key)
+  return key === 'holi:none' || tab?.kind === 'new' || tab?.kind === 'apps'
+}
 
 /** One vault's visited surfaces, behind stable, connected portal hosts.
  * Slots may change with the shell layout; the iframe's document must not. */
 export function useRetainedSurfaces(
   visibleKeys: readonly string[],
   render: (key: string, visible: boolean) => ReactNode,
+  retainKey: (key: string) => boolean = () => false,
 ): { slot: (key: string) => ReactNode; content: ReactNode } {
   const remote = useAtomValue(activeRemoteAtom)
   const workspace = useAtomValue(shellWorkspaceAtom)
@@ -19,15 +27,27 @@ export function useRetainedSurfaces(
   const parking = useRef<HTMLDivElement>(null)
   const focusGuard = useRef<{
     release(host: HTMLElement): void
+    parked(): void
   } | null>(null)
   const hosts = useRef(new Map<string, HTMLDivElement>())
-  const releaseFocus = useCallback((host: HTMLElement) => focusGuard.current?.release(host), [])
+  const releaseFocus = useCallback(
+    (host: HTMLElement, parked = false) =>
+      parked ? focusGuard.current?.parked() : focusGuard.current?.release(host),
+    [],
+  )
   const [visited, setVisited] = useState({ remote, keys: [] as string[] })
   const visible = new Set(visibleKeys)
+  const apps = useSidebarApps()
   const open = new Set(allTabs(workspace))
   const retained = (key: string) => {
     const tab = parseTabKey(key)
-    return tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true
+    return (
+      tab?.kind === 'graph' ||
+      (tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true) ||
+      (tab?.kind === 'vault-app' && surfaces.get('app')?.keepMounted === true) ||
+      (tab?.kind === 'app' && apps.find((app) => app.id === tab.id)?.keepMounted === true) ||
+      retainKey(key)
+    )
   }
   const keep = new Set(
     visited.remote === remote ? visited.keys.filter((key) => open.has(key) && retained(key)) : [],
@@ -41,7 +61,9 @@ export function useRetainedSurfaces(
   ) {
     setVisited({ remote, keys })
   }
-  const displayed = [...new Set([...visibleKeys, ...keys])]
+  // Keep retained portals in a stable sibling order as focus moves between tabs.
+  // Their physical hosts move into visible slots below; React need not reorder them.
+  const displayed = [...new Set([...keys, ...visibleKeys])]
   const identity = (key: string) => JSON.stringify([remote, key])
   function hostFor(key: string): HTMLDivElement {
     const id = identity(key)
@@ -104,13 +126,23 @@ export function useRetainedSurfaces(
     // A remote document can change frame focus without a parent DOM event.
     // Watch only while hosts are parked; no layout reads are needed.
     const watch = () => {
-      if (disposed || timer !== null) return
+      if (disposed || timer !== null || home.querySelector('iframe') === null) return
       timer = ownerWindow.setTimeout(() => {
         timer = null
         check()
-        if (home.childElementCount > 0) watch()
+        watch()
       }, 250)
     }
+    const syncWatch = () => {
+      if (home.querySelector('iframe') === null) {
+        if (timer !== null) ownerWindow.clearTimeout(timer)
+        timer = null
+      } else {
+        watch()
+      }
+    }
+    const observer = new ownerWindow.MutationObserver(syncWatch)
+    observer.observe(home, { childList: true, subtree: true })
     const focusIn = (event: FocusEvent) => {
       if (outside(event.target as Element | null)) lastOutside = event.target as HTMLElement
       schedule()
@@ -126,7 +158,9 @@ export function useRetainedSurfaces(
         // A layout move can adopt this host into another visible slot in
         // this commit. Only reject focus if it ends up parked.
         if (host.contains(ownerDocument.activeElement)) schedule()
-        watch()
+      },
+      parked() {
+        syncWatch()
       },
     }
     focusGuard.current = guard
@@ -134,6 +168,7 @@ export function useRetainedSurfaces(
       disposed = true
       queued = false
       if (timer !== null) ownerWindow.clearTimeout(timer)
+      observer.disconnect()
       ownerDocument.removeEventListener('focusin', focusIn, true)
       ownerDocument.removeEventListener('focus', schedule, true)
       ownerWindow.removeEventListener('blur', schedule)
@@ -184,6 +219,10 @@ function moveHost(parent: HTMLElement, host: HTMLElement): void {
     const destination = parent as HTMLElement & {
       moveBefore(node: Node, before: Node | null): void
     }
+    // Flush size/inert changes before the state-preserving move. Otherwise
+    // Chromium can apply pending responsive layout in the new parent and clamp
+    // an embedded document's scroll even though its browsing context survives.
+    host.getBoundingClientRect()
     destination.moveBefore(host, null)
   } else {
     parent.appendChild(host)
@@ -197,7 +236,7 @@ function SurfaceSlot({
 }: {
   host: HTMLDivElement
   parking: React.RefObject<HTMLDivElement | null>
-  releaseFocus(host: HTMLElement): void
+  releaseFocus(host: HTMLElement, parked?: boolean): void
 }) {
   const slot = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -210,12 +249,13 @@ function SurfaceSlot({
     host.inert = false
     return () => {
       if (host.parentElement === destination) {
-        releaseFocus(host)
         const bounds = host.getBoundingClientRect()
         host.style.width = `${bounds.width}px`
         host.style.height = `${bounds.height}px`
+        releaseFocus(host)
         host.inert = true
         moveHost(home, host)
+        releaseFocus(host, true)
       }
     }
   }, [host, parking, releaseFocus])

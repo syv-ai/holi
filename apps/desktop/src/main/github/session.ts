@@ -44,6 +44,10 @@ export class GitHubSession {
   #deps: SessionDeps
   #auth: StoredAuth | null
   #listeners = new Set<(viewer: Viewer | null) => void>()
+  #generationListeners = new Set<() => void>()
+  #generation = 0
+  #storeWork: Promise<void> = Promise.resolve()
+  #attempt: { generation: number; invalidated: boolean; flow?: DeviceFlow } | null = null
   readonly api: GitHubApi
 
   private constructor(deps: SessionDeps, auth: StoredAuth | null) {
@@ -51,8 +55,12 @@ export class GitHubSession {
     this.#auth = auth
     this.api = new GitHubApi({
       token: () => this.token(),
-      // Only on a 401. Every other refusal leaves the session alone.
-      onUnauthorized: () => this.#forget(),
+      credentialIdentity: () => this.#auth,
+      // Only on a 401. Every other refusal leaves the session alone. Object
+      // identity distinguishes a fresh validation of the same bearer token.
+      onUnauthorized: (_token, identity) => {
+        if (identity !== null && this.#auth === identity) return this.#forget(false)
+      },
       fetch: deps.fetch,
     })
   }
@@ -75,6 +83,11 @@ export class GitHubSession {
     return this.#auth?.token ?? null
   }
 
+  /** Changes on every account adoption attempt and logout, including same-account relogin. */
+  get generation(): number {
+    return this.#generation
+  }
+
   /**
    * Starts the grant and returns as soon as there is a code to display.
    *
@@ -83,6 +96,7 @@ export class GitHubSession {
    * resolution cannot beat the write.
    */
   async signIn(): Promise<DeviceFlow> {
+    const attempt = this.#beginAttempt()
     const flow = await startDeviceFlow({
       clientId: this.#clientId(),
       scopes: SCOPES,
@@ -90,15 +104,25 @@ export class GitHubSession {
       now: this.#deps.now,
       sleep: this.#deps.sleep,
     })
+    attempt.flow = flow
+    if (attempt.invalidated) flow.cancel()
 
+    let wait: Promise<DeviceFlowResult> | null = null
     return {
       code: flow.code,
-      cancel: () => flow.cancel(),
-      wait: async (): Promise<DeviceFlowResult> => {
-        const result = await flow.wait()
-        if (result.kind !== 'granted') return result
-        await this.#adopt(result.token, result.scopes)
-        return result
+      cancel: () => {
+        this.#invalidate(attempt)
+        flow.cancel()
+      },
+      wait: () => {
+        if (wait !== null) return wait
+        wait = (async (): Promise<DeviceFlowResult> => {
+          const result = await flow.wait()
+          if (!this.#isCurrent(attempt)) return { kind: 'cancelled' }
+          if (result.kind !== 'granted') return result
+          return this.#adopt(attempt, result.token, result.scopes)
+        })()
+        return wait
       },
     }
   }
@@ -115,34 +139,101 @@ export class GitHubSession {
     return () => this.#listeners.delete(cb)
   }
 
+  /** Synchronous invalidation before an account generation starts changing. */
+  onGenerationChange(cb: () => void): () => void {
+    this.#generationListeners.add(cb)
+    return () => this.#generationListeners.delete(cb)
+  }
+
   /**
-   * `accountId` is the identity key, and it only comes from the viewer call. So
-   * the fetch happens before anything is persisted, and a failure leaves the
-   * session exactly as signed out as it was: a half-stored token with no
-   * identity would be indistinguishable from a corrupt keychain later.
+   * Every sign-in attempt owns a generation from before device-code lookup.
+   * Its credential is staged encrypted, then synchronously published only if
+   * that attempt still owns the session; memory adoption happens in the same
+   * turn. Store mutations are serialized so sign-out cannot race publication.
    */
-  async #adopt(token: string, scopes: string[]): Promise<void> {
-    const previous = this.#auth
-    // Set in memory first so `api.viewer()` can read it through the getter.
-    this.#auth = { token, accountId: -1, login: '', scopes }
-
-    let viewer: Viewer
-    try {
-      viewer = await this.api.viewer()
-    } catch (err) {
-      this.#auth = previous
-      throw err
+  #beginAttempt(): { generation: number; invalidated: boolean; flow?: DeviceFlow } {
+    if (this.#attempt !== null) this.#invalidate(this.#attempt)
+    for (const cb of this.#generationListeners) cb()
+    const attempt = { generation: ++this.#generation, invalidated: false } as {
+      generation: number
+      invalidated: boolean
+      flow?: DeviceFlow
     }
+    this.#attempt = attempt
+    return attempt
+  }
 
-    this.#auth = { token, scopes, ...viewer }
-    await this.#deps.store.write(this.#auth)
+  #invalidate(attempt: { generation: number; invalidated: boolean; flow?: DeviceFlow }): void {
+    if (attempt.invalidated) return
+    attempt.invalidated = true
+    attempt.flow?.cancel()
+    if (this.#attempt === attempt) {
+      for (const cb of this.#generationListeners) cb()
+      this.#generation++
+      this.#attempt = null
+    }
+  }
+
+  #isCurrent(attempt: { generation: number; invalidated: boolean }): boolean {
+    return (
+      !attempt.invalidated && this.#attempt === attempt && attempt.generation === this.#generation
+    )
+  }
+
+  async #adopt(
+    attempt: { generation: number; invalidated: boolean },
+    token: string,
+    scopes: string[],
+  ): Promise<DeviceFlowResult> {
+    const lookup = new GitHubApi({ token: () => token, fetch: this.#deps.fetch })
+    const viewer = await lookup.viewer()
+    if (!this.#isCurrent(attempt)) return { kind: 'cancelled' }
+    const auth = { token, scopes, ...viewer }
+
+    return this.#serializeStore(async () => {
+      if (!this.#isCurrent(attempt)) return { kind: 'cancelled' } as const
+      const prepared = await this.#deps.store.prepare(auth)
+      if (!this.#isCurrent(attempt)) {
+        await prepared.discard()
+        return { kind: 'cancelled' } as const
+      }
+      try {
+        prepared.publish()
+      } catch (error) {
+        await prepared.discard()
+        throw error
+      }
+      // The candidate is now durable. Retire work opened during the pending
+      // attempt before exposing the new credential, even for same-account login.
+      for (const cb of this.#generationListeners) cb()
+      this.#generation++
+      this.#auth = auth
+      this.#attempt = null
+      this.#emit()
+      return { kind: 'granted', token, scopes }
+    })
+  }
+
+  async #forget(cancelAttempt = true): Promise<void> {
+    if (cancelAttempt && this.#attempt !== null) this.#invalidate(this.#attempt)
+    for (const cb of this.#generationListeners) cb()
+    this.#generation++
+    if (!cancelAttempt && this.#attempt !== null) this.#attempt.generation = this.#generation
+    this.#auth = null
+    await this.#serializeStore(() => {
+      if (!cancelAttempt && this.#auth !== null) return Promise.resolve()
+      return this.#deps.store.clear()
+    })
     this.#emit()
   }
 
-  async #forget(): Promise<void> {
-    this.#auth = null
-    await this.#deps.store.clear()
-    this.#emit()
+  #serializeStore<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#storeWork.then(operation)
+    this.#storeWork = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 
   #emit(): void {

@@ -38,13 +38,25 @@ export function MailReader({
   mail,
   composer,
   onCompose,
+  standaloneComposer = null,
+  visible,
+  accountSub,
 }: {
   mail: MailState
   /** The inline reply or forward, at the foot of the thread it answers. */
   composer: ReactNode
   onCompose: () => void
+  standaloneComposer?: ReactNode
+  visible: boolean
+  accountSub: string | null
 }) {
   const reader = mail.reader
+
+  if (standaloneComposer !== null) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">{standaloneComposer}</div>
+    )
+  }
 
   if (reader.kind === 'idle') {
     return (
@@ -111,11 +123,13 @@ export function MailReader({
             key={message.id}
             message={message}
             threadUrl={thread.webUrl}
+            hintOwner={`account:${accountSub ?? 'no-account'}:thread:${thread.id}:visible:${visible}`}
             // Only the last opens expanded, so a long thread does not bury
             // what is new.
             initiallyOpen={index === thread.messages.length - 1}
             position={index + 1}
             total={thread.messages.length}
+            visible={visible}
           />
         ))}
         {composer}
@@ -127,15 +141,19 @@ export function MailReader({
 function MessageBlock({
   message,
   threadUrl,
+  hintOwner,
   initiallyOpen,
   position,
   total,
+  visible,
 }: {
   message: ThreadMessage
   threadUrl: string
+  hintOwner: string
   initiallyOpen: boolean
   position: number
   total: number
+  visible: boolean
 }) {
   const [expanded, setExpanded] = useState(initiallyOpen)
 
@@ -191,8 +209,8 @@ function MessageBlock({
         <CollapsibleContent>
           <div className="flex flex-col gap-3 md:pl-10.5">
             <MessageAddresses message={message} />
-            <MessageBody message={message} />
-            <Attachments attachments={message.attachments} webUrl={threadUrl} />
+            <Attachments attachments={message.attachments} webUrl={threadUrl} visible={visible} />
+            <MessageBody message={message} threadUrl={threadUrl} hintOwner={hintOwner} />
           </div>
         </CollapsibleContent>
       </article>
@@ -231,7 +249,15 @@ function MessageAddresses({ message }: { message: ThreadMessage }) {
 }
 
 /** A sandboxed frame when there is HTML, the plain text otherwise. */
-function MessageBody({ message }: { message: ThreadMessage }) {
+function MessageBody({
+  message,
+  threadUrl,
+  hintOwner,
+}: {
+  message: ThreadMessage
+  threadUrl: string
+  hintOwner: string
+}) {
   if (message.html === null) {
     return <p className="text-sm break-words whitespace-pre-wrap">{message.body}</p>
   }
@@ -240,6 +266,8 @@ function MessageBody({ message }: { message: ThreadMessage }) {
       html={message.html}
       label={`Message from ${message.from.name}`}
       identity={{ key: message.id, sender: message.from.email }}
+      hintScope={`${hintOwner}:url:${threadUrl}:message:${message.id}`}
+      mailHints
     />
   )
 }
@@ -248,7 +276,15 @@ function MessageBody({ message }: { message: ThreadMessage }) {
  * What came with a message, in the block's attachment group. Each opens the
  * thread in Gmail: Holi does not fetch attachment bytes.
  */
-function Attachments({ attachments, webUrl }: { attachments: MailAttachment[]; webUrl: string }) {
+function Attachments({
+  attachments,
+  webUrl,
+  visible,
+}: {
+  attachments: MailAttachment[]
+  webUrl: string
+  visible: boolean
+}) {
   if (attachments.length === 0) return null
   const open = () => openExternal(webUrl)
   return (
@@ -273,7 +309,7 @@ function Attachments({ attachments, webUrl }: { attachments: MailAttachment[]; w
                 <ExternalLinkIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Opens in Gmail</TooltipContent>
+            {visible && <TooltipContent>Opens in Gmail</TooltipContent>}
           </Tooltip>
         </ButtonGroup>
       ))}

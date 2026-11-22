@@ -337,6 +337,9 @@ describe('memory-overview', () => {
     const pin = (id: string, extra: object = {}) => JSON.stringify({ id, ...extra })
     const files = {
       '.holi/plugins/dash/manifest.json': pin('dash', { bin: { dashctl: 'bin/dashctl' } }),
+      '.holi/plugins/modelokale/manifest.json': pin('modelokale', {
+        cli: { run: ['node', 'cli.mjs'], verbs: { login: 'Sign in', book: 'Book a room' } },
+      }),
       '.holi/plugins/notes/manifest.json': pin('notes'),
       '.holi/plugins/prezzi/manifest.json': pin('prezzi'),
       '.holi/settings/plugins.local.yaml': writePluginSettingsText(
@@ -349,7 +352,7 @@ describe('memory-overview', () => {
       await vault({
         ...files,
         '.holi/settings/plugins.yaml': writePluginSettingsText(
-          { plugins: { community: true, dash: true, prezzi: true } },
+          { plugins: { community: true, dash: true, modelokale: true, prezzi: true } },
           'committed',
           known,
         ),
@@ -357,6 +360,7 @@ describe('memory-overview', () => {
     )
     expect(on.code).toBe(0)
     expect(on.out).toContain('dash (on, commands: dashctl)')
+    expect(on.out).toContain('modelokale (on, verbs: holi plugin modelokale login|book)')
     expect(on.out).toContain('notes (off in this vault)')
     // Holi still runs a community plugin the local file turns off.
     expect(on.out).toContain('prezzi (on)')
@@ -371,7 +375,7 @@ describe('memory-overview', () => {
         ),
       }),
     )
-    expect(hostOff.out).toContain('dash, notes, prezzi')
+    expect(hostOff.out).toContain('dash, modelokale, notes, prezzi')
     expect(hostOff.out).not.toContain('(on')
 
     // The local file can turn community plugins themselves off on this machine.

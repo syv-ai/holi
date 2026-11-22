@@ -36,7 +36,7 @@ describe('partitionBySize', () => {
     // exactly-at-threshold commits (only strictly-over is held); a null size is a
     // deletion and always commits (it shrinks history, never grows it).
     expect(commit.sort()).toEqual(['exactly.bin', 'gone.md', 'small.md'])
-    expect(heldBack).toEqual([{ path: 'big.mp4', bytes: 20_000_000 }])
+    expect(heldBack).toEqual([{ path: 'big.mp4', bytes: 20_000_000, limit: THRESHOLD }])
   })
 
   it('returns two empty sets for no dirty paths', () => {

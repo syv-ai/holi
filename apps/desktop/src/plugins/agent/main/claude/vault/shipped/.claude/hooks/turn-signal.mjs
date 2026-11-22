@@ -47,6 +47,10 @@
 // kept. A conversation's Stop and its next prompt run one after the other, so
 // nothing else writes its file meanwhile.
 //
+// At `start` it also sends `pid`, the session's own `claude` process
+// (`$CLAUDE_PID`, or this hook's parent on an older CLI). Holi checks it is still
+// alive before it gives up on a working session the listing has lost sight of.
+//
 // It never fails the turn and prints nothing else: anything written to stdout
 // from a UserPromptSubmit hook is injected into Claude's context. Outside Holi, or in
 // a session that is not a background one, it does nothing; with Holi closed,
@@ -260,6 +264,11 @@ async function signal(root, input) {
   const holi = bridge(root)
   if (holi === null) return null
   const query = new URLSearchParams({ t: holi.token, job: basename(jobDir) })
+  // Claude's own pid: the hook's parent is a short-lived wrapper under
+  // CLAUDE_CODE_SHELL_PREFIX. A CLI older than the variable has neither.
+  if (edge === 'start') {
+    query.set('pid', /^[1-9]\d*$/.test(process.env.CLAUDE_PID ?? '') ? process.env.CLAUDE_PID : String(process.ppid))
+  }
   const pending = edge === 'end' ? pendingOf(input) : null
   if (pending !== null) query.set('pending', String(pending))
   const { CLAUDE_CODE_MESSAGING_SOCKET: socket, CLAUDE_CODE_MESSAGING_TOKEN: inboxToken } =

@@ -135,7 +135,7 @@ function HomeView(): React.JSX.Element {
     <IconStackEmpty
       icon={TerminalSquare}
       title="No session here"
-      description={`Start one and it opens in its terminal, in ${providerLabel(providers, provider)}. Hover the sidebar's + for the other agents.`}
+      description={`Start one and it opens in its terminal, in ${providerLabel(providers, provider)}. Use the sidebar's + to choose an agent.`}
       action={{ label: 'New session', icon: SquarePen, onClick: () => void create() }}
       secondary={{ label: 'History', onClick: () => setView({ kind: 'history' }) }}
     />
@@ -269,14 +269,19 @@ function MemoryView(): React.JSX.Element {
  * background session goes on without it; a session Holi runs is its
  * terminal, which stays).
  */
-function SessionView({ id }: { id: string }): React.JSX.Element {
+function SessionView({ id, visible }: { id: string; visible: boolean }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const session = useAtomValue(agentSessionsAtom).find((row) => row.id === id)
   const geometry = useAtomValue(agentGeometryAtom)
   const setGeometry = useSetAtom(agentGeometryAtom)
   const owned = useAtomValue(viewTerminalsAtom)[id]
   const setOwned = useSetAtom(viewTerminalsAtom)
-  const [terminalId, setTerminalId] = useState<string | null>(owned ?? null)
+  const [terminal, setTerminal] = useState<{ remote: string | null; id: string } | null>(
+    owned === undefined ? null : { remote, id: owned },
+  )
+  // A vault change renders before the old effect cleans up. Never give the
+  // next vault the previous window's id, even for that first render.
+  const terminalId = terminal?.remote === remote ? terminal.id : null
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const opened = useRef<string | null>(owned ?? null)
@@ -292,7 +297,7 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
         }
         if (res.ok) {
           opened.current = res.terminalId
-          setTerminalId(res.terminalId)
+          setTerminal({ remote, id: res.terminalId })
           setError(null)
         } else setError(res.message)
       })
@@ -303,6 +308,9 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
       // terminal open: only a window onto a background session ends.
       if (opened.current !== null) void agentCap.detach(remote, { id: opened.current })
       opened.current = null
+      // A closed session may become live again in the same view. Its old
+      // xterm is gone; wait for open() rather than reattaching that window.
+      setTerminal(null)
       setOwned((t) => {
         const { [id]: _gone, ...rest } = t
         return rest
@@ -360,8 +368,9 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
     <SessionTerminal
       key={terminalId}
       terminalId={terminalId}
+      focusId={`session:${id}`}
       provider={session?.provider as 'pi' | 'claude' | 'codex' | undefined}
-      visible
+      visible={visible}
       onGeometry={(cols, rows) => setGeometry({ cols, rows })}
     />
   )
@@ -372,8 +381,10 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
  *  tab's, which the shell keeps in step. */
 export function AgentsView({
   selection,
+  visible = true,
 }: {
   selection: { owner: string; id: string } | null
+  visible?: boolean
 }): React.JSX.Element {
   const view = agentsViewOf(selection)
   const sessions = useAtomValue(agentSessionsAtom)
@@ -396,7 +407,7 @@ export function AgentsView({
         sessions.find((s) => s.id === view.id)?.provider === 'pi' && view.id.length === 8 ? (
           <PiRunView key={view.id} session={sessions.find((s) => s.id === view.id)!} />
         ) : (
-          <SessionView key={view.id} id={view.id} />
+          <SessionView key={view.id} id={view.id} visible={visible} />
         )
       ) : view.kind === 'slot' && slot?.main !== undefined ? (
         <slot.main key={view.id} id={view.id} />

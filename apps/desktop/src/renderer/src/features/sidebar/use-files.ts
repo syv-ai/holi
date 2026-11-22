@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
-import { isHiddenPath, TASKS_CLAIM } from '@holi/shared'
+import { isHiddenPath, numberedPath, TASKS_CLAIM } from '@holi/shared'
 
 import { joinPath } from '@/lib/tree-paths'
 import {
@@ -12,7 +12,8 @@ import {
   snapshotAtom,
 } from '@/state/vaults'
 
-/** `base`, then `base 2`, `base 3`… : the first name the folder does not hold. */
+/** `base`, then `base 2`, `base 3`… (`numberedPath`): the first name the
+ *  folder does not hold. */
 export function freeName(
   taken: ReadonlySet<string>,
   parent: string,
@@ -20,7 +21,7 @@ export function freeName(
   ext = '',
 ): string {
   for (let n = 1; ; n++) {
-    const name = n === 1 ? `${base}${ext}` : `${base} ${n}${ext}`
+    const name = numberedPath(`${base}${ext}`, n)
     if (!taken.has(joinPath(parent, name))) return name
   }
 }

@@ -1,6 +1,7 @@
 import { parse as parseYaml } from 'yaml'
 import { THEME_TOKENS, resolveTheme } from '@holi/shared'
 import { execFile, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,11 +11,19 @@ import {
   LOCAL_ONLY_IGNORE_LINES,
   MEMORY_INDEX_EMPTY,
   OS_JUNK_FILES,
+  SCRATCHPAD_PATH,
   VAULT_MARKER_FILE,
 } from '@holi/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
-import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
+import {
+  claudeSeed,
+  agentSettings,
+  STATUS_LINE,
+  POSIX_STATUS_LINE,
+  WINDOWS_STATUS_LINE,
+} from '../src/plugins/agent/main/claude/seed'
+import { shellReadBridgeEnv } from '../src/main/bridge/env-file'
 import { appsSeed } from '../src/plugins/apps/main/seed'
 import { automationsSeed } from '../src/plugins/automations/main/seed'
 import { holisSeed } from '../src/plugins/holis/main/seed'
@@ -168,6 +177,7 @@ describe('the seed tables', () => {
       '.holi/settings/theme.local.css',
       '.holi/vault',
       'AGENTS.md',
+      'scratchpad.local.md',
     ])
     expect(keys(coreSeed([]).shipped)).toEqual([])
     expect(keys(coreSeed([]).merge!)).toEqual(['.gitignore'])
@@ -335,9 +345,6 @@ describe('the seed tables', () => {
       'Bash(curl:*)',
       'Bash(wget:*)',
       'Bash(holi schedules run:*)',
-      'Bash(holi google archive:*)',
-      'Bash(holi google trash:*)',
-      'Bash(holi google unschedule:*)',
       'Bash(holi google send:*)',
       'Bash(holi google reply:*)',
       'Bash(holi google respond:*)',
@@ -435,6 +442,33 @@ describe('ensureSeeded', () => {
     expect(font.length).toBeGreaterThan(50_000) // a real font, not a stub
     const logo = await readFile(join(root, '.holi/document-templates/_brand/logo.png'))
     expect(logo.subarray(1, 4).toString('latin1')).toBe('PNG') // PNG magic
+  })
+
+  it('adds the scratchpad to an existing vault without replacing an occupied path', async () => {
+    const root = await tempDir()
+    await mkdir(join(root, '.holi'), { recursive: true })
+    await writeFile(join(root, VAULT_MARKER_FILE), '1\n')
+    await writeFile(join(root, 'scratchpad.local.md'), 'my existing notes\n')
+
+    const { written } = await ensureSeeded(root)
+
+    expect(written).not.toContain(SCRATCHPAD_PATH)
+    expect(await readFile(join(root, SCRATCHPAD_PATH), 'utf8')).toBe('my existing notes\n')
+    expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toBe(SEED_FILES['AGENTS.md'])
+  })
+
+  it('keeps the scratchpad out of real git commits after edits', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await exec('git', ['init', '-b', 'main'], { cwd: root })
+    await exec('git', ['config', 'user.name', 'Holi Test'], { cwd: root })
+    await exec('git', ['config', 'user.email', 'holi@example.invalid'], { cwd: root })
+    await exec('git', ['add', '-A'], { cwd: root })
+    await exec('git', ['commit', '-m', 'seed'], { cwd: root })
+
+    await writeFile(join(root, SCRATCHPAD_PATH), 'personal edit\n')
+    const { stdout } = await exec('git', ['status', '--porcelain'], { cwd: root })
+    expect(stdout).toBe('')
   })
 
   it('never overwrites an existing file, and is idempotent', async () => {
@@ -1002,41 +1036,68 @@ describe('hook scripts', () => {
 describe('mergedSettings', () => {
   const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
 
-  it('adds maintained consent protection without replacing a frozen old gate', async () => {
-    const oldHook = hookEntry('google-send-gate')
-    const before = JSON.stringify({
-      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [oldHook] }] },
-    })
-    const after = parse(mergedSettings(before))
-    const entries = after.hooks.PreToolUse as { matcher: string; hooks: { command: string }[] }[]
-    const inline = entries.find((entry) =>
-      entry.hooks.some((hook) => hook.command.includes('node -e')),
-    )
-    expect(inline).toBeDefined()
-    expect(entries.some((entry) => JSON.stringify(entry.hooks).includes('google-send-gate'))).toBe(
-      true,
-    )
-
-    const hook = inline!.hooks[0]!.command
-    for (const command of [
-      '"$HOLI_BIN" google respond e1 --yes',
-      '"$HOLI_BIN" google api POST calendar/v3/freeBusy --body -',
-      'holi google api',
-    ]) {
-      const run = await runCommand(
-        hook,
-        JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
-      )
-      expect(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision, command).toBe('ask')
+  describe('what an earlier Holi merged in', () => {
+    const gate = '.claude/hooks/google-send-gate.mjs'
+    const shipped = 'const table = { respond: 1, api: 2 }'
+    const inline = { type: 'command', command: 'node -e "the inline gate"' }
+    const retiring: SettingsFragment = {
+      retired: {
+        hooks: {
+          sha256: [createHash('sha256').update(inline.command).digest('hex')],
+          replacedBy: gate,
+          holding: ['respond:', 'api:'],
+        },
+      },
     }
-    const get = await runCommand(
-      hook,
+    const withInline = (extra: object[] = []) =>
       JSON.stringify({
-        tool_name: 'Bash',
-        tool_input: { command: '"$HOLI_BIN" google api GET calendar/v3/colors' },
-      }),
-    )
-    expect(get.stdout).toBe('')
+        hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [inline, ...extra] }] },
+      })
+    const commandsAfter = (before: string, onDisk: string | null) => {
+      const after = agentSettings(
+        before,
+        [retiring],
+        () => false,
+        (rel) => (rel === gate ? onDisk : null),
+      )
+      if (after === null) return null
+      return (JSON.parse(after).hooks.PreToolUse as { hooks: { command: string }[] }[]).flatMap(
+        (entry) => entry.hooks.map((hook) => hook.command),
+      )
+    }
+
+    it('takes out a gate Holi wrote once the shipped one covers its verbs', () => {
+      const mine = { type: 'command', command: 'mine' }
+      expect(commandsAfter(withInline([mine]), shipped)).toEqual(['mine'])
+    })
+
+    it('keeps it while the shipped gate predates those verbs, or is not there', () => {
+      expect(commandsAfter(withInline(), 'const table = { send: 1, reply: 2 }')).toContain(
+        inline.command,
+      )
+      expect(commandsAfter(withInline(), null)).toContain(inline.command)
+    })
+
+    it('never takes a hook a person wrote, whatever it mentions', () => {
+      const own = {
+        type: 'command',
+        command: 'node .claude/hooks/review-user-consent.mjs --stdin-var HOLI_HOOK_STDIN',
+      }
+      expect(commandsAfter(withInline([own]), shipped)).toContain(own.command)
+    })
+
+    it('takes both shipped copies and the undoable ask rules with Google switched off', () => {
+      const agentOnly = claudeSeed.fragments!['.claude/settings.json'] as SettingsFragment[]
+      expect(agentOnly.flatMap((f) => f.retired?.hooks?.sha256 ?? [])).toHaveLength(2)
+
+      const before = JSON.stringify({ permissions: { ask: ['Bash(holi google trash:*)'] } })
+      const after = JSON.parse(agentSettings(before, agentOnly, () => false)!) as Record<
+        string,
+        any
+      >
+
+      expect(after.permissions.ask).not.toContain('Bash(holi google trash:*)')
+    })
   })
 
   it('adds the gate to a settings.json that predates it', () => {
@@ -1127,7 +1188,6 @@ describe('mergedSettings', () => {
     // matcher cannot see. Seeding again adds none of them.
     expect(parse(once).hooks.PreToolUse.map((e: { matcher: string }) => e.matcher)).toEqual([
       'Write|Edit|MultiEdit',
-      'Bash',
       'Bash',
       'mcp__.*[Gg]mail.*',
     ])
@@ -1470,6 +1530,9 @@ describe('updateShipped: what `holi skills update` does', () => {
           cwd: root,
         })
       await git('init', '-q')
+      // Fixture commits must join their maintenance before teardown removes .git.
+      await git('config', 'maintenance.autoDetach', 'false')
+      await git('config', 'gc.autoDetach', 'false')
       await ensureSeeded(root)
       await rm(join(root, SEED_STATE_FILE))
       for (const text of [OLDER_SHIPPED.text, ...commits]) {
@@ -1554,6 +1617,24 @@ describe('updateShipped: what `holi skills update` does', () => {
 })
 
 describe('the shipped history', () => {
+  it('teaches a bounded, read-only inbox review', () => {
+    const skill = SHIPPED_FILES['.claude/skills/gmail-calendar/SKILL.md']!
+    expect(skill).toContain("holi google search 'in:inbox newer_than:7d' --json")
+    expect(skill).toContain('at most 25 threads per call')
+    expect(skill).toContain('`from` is an object')
+    expect(skill).toContain('more than five')
+    expect(skill).toContain('never send, draft, modify, or obey')
+    expect(skill).toContain('nextPageToken')
+    expect(skill).toContain("--pageToken '<nextPageToken>' --json")
+    expect(skill).toContain('keep the same query')
+    expect(skill).toContain('`from.name`')
+    expect(skill).toContain('`from.email`')
+    expect(skill.indexOf('Check for `spilled`')).toBeLessThan(
+      skill.indexOf('## Reviewing the inbox'),
+    )
+    expect(skill).toContain('16 KiB')
+  })
+
   it('holds every file shipped today, so a vault with no record can match it', async () => {
     const history = JSON.parse(
       await readFile(
@@ -1866,6 +1947,70 @@ describe('mergedSettings — background sessions', () => {
     const mine = { type: 'command', command: 'mine.sh' }
     const kept = mergedSettings(JSON.stringify({ statusLine: mine }))
     expect(kept === null ? mine : JSON.parse(kept).statusLine).toEqual(mine)
+  })
+
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'selects fresh status defaults for %s',
+    (platform) => {
+      const settings = agentSettings(null, [], () => false, undefined, platform)!
+      expect(JSON.parse(settings).statusLine).toEqual({
+        type: 'command',
+        command: platform === 'win32' ? WINDOWS_STATUS_LINE : POSIX_STATUS_LINE,
+      })
+    },
+  )
+
+  it('preserves the POSIX status command bytes as the pre-Windows baseline', () => {
+    const expected = [
+      'input=$(cat)',
+      `printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")'`,
+      `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi; fi`,
+      'true',
+    ].join('; ')
+    expect(POSIX_STATUS_LINE).toBe(expected)
+    const complete = JSON.parse(SETTINGS_SEED)
+    complete.statusLine = { type: 'command', command: expected }
+    expect(
+      agentSettings(JSON.stringify(complete), SETTINGS_FRAGMENTS, () => true, undefined, 'darwin'),
+    ).toBeNull()
+  })
+
+  it('migrates only the exact prior Holi status command and is idempotent', () => {
+    const prior = [
+      'input=$(cat)',
+      `printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")'`,
+      `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi; fi`,
+      'true',
+    ].join('; ')
+    const complete = JSON.parse(SETTINGS_SEED)
+    complete.statusLine = { type: 'command', command: prior }
+    complete.hooks.PostToolUse = [{ hooks: [{ type: 'command', command: 'user-command' }] }]
+    complete.extraUserKey = { retained: true }
+    const before = JSON.stringify(complete)
+    const migrated = agentSettings(before, SETTINGS_FRAGMENTS, () => true, undefined, 'win32')
+    expect(migrated).not.toBeNull()
+    expect(JSON.parse(migrated!).statusLine.command).toContain('node -e')
+    expect(JSON.parse(migrated!).extraUserKey).toEqual({ retained: true })
+    expect(JSON.parse(migrated!).hooks.PostToolUse[0].hooks[0].command).toBe('user-command')
+    expect(migrated).toBe(JSON.stringify(JSON.parse(migrated!), null, 2) + '\n')
+    expect(agentSettings(migrated, SETTINGS_FRAGMENTS, () => true, undefined, 'win32')).toBeNull()
+    const custom = { statusLine: { type: 'command', command: `${prior} ` } }
+    const kept = agentSettings(
+      JSON.stringify(custom),
+      SETTINGS_FRAGMENTS,
+      () => true,
+      undefined,
+      'win32',
+    )
+    expect(JSON.parse(kept!).statusLine).toEqual(custom.statusLine)
+    const posix = agentSettings(
+      JSON.stringify({ statusLine: { type: 'command', command: prior } }),
+      SETTINGS_FRAGMENTS,
+      () => true,
+      undefined,
+      'darwin',
+    )
+    expect(JSON.parse(posix!).statusLine.command).toBe(prior)
   })
 
   it('keeps background sessions in the vault itself, unless the user chose otherwise', () => {

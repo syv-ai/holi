@@ -12,8 +12,14 @@ import { THEME_TOKENS } from '@holi/shared'
 const HOLI_THEME = fileURLToPath(
   new URL('../src/main/vault/seed/vault/once/.holi/settings/theme.css', import.meta.url),
 )
+const RENDERER_CSS = fileURLToPath(new URL('../src/renderer/src/index.css', import.meta.url))
 
 describe('theme token vocabulary stays in sync with the CSS layer', () => {
+  it('emits Tailwind palette variables for runtime vault themes', async () => {
+    const css = await readFile(RENDERER_CSS, 'utf8')
+    expect(css).toMatch(/@import ['"]tailwindcss['"] theme\(static\);/)
+  })
+
   it('every whitelisted token has a --slug definition in Holi’s theme', async () => {
     const css = await readFile(HOLI_THEME, 'utf8')
     // A definition is `--slug:`. The trailing `:` distinguishes it from a

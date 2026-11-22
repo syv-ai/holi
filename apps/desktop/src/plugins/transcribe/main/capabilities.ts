@@ -242,6 +242,7 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
     /** One chunk of captured audio: a 16 kHz, 16-bit WAV, base64. */
     'meeting.chunk': cap({
       doors: ['ui'],
+      drain: true,
       params: (raw) => {
         const p = paramsObject(raw)
         const audio = stringParam(p, 'audio')
@@ -266,6 +267,7 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
     /** The renderer gave up on a chunk: the transcript goes on past it. */
     'meeting.chunk.lost': cap({
       doors: ['ui'],
+      drain: true,
       params: (raw) => {
         const p = paramsObject(raw)
         return {
@@ -284,6 +286,7 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
 
     'meeting.stop': cap({
       doors: ['ui'],
+      drain: true,
       params: meetingParams,
       run: async (ctx, { meetingId }): Promise<{ ok: true }> => {
         here(ctx)

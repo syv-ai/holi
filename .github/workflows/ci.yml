@@ -96,6 +96,344 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
         run: node scripts/check-commit-msg.mjs --message "$TITLE"
 
+  native-codex-exec-producer:
+    name: Native Codex exec producer proof
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build the POSIX launch helper and run pinned producer and host proof
+        env:
+          HOLI_CODEX_EVIDENCE: ${{ runner.temp }}/codex-exec-producer/evidence.json
+        run: node scripts/codex-exec-producer.mjs
+      - name: Upload native producer evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-codex-exec-producer-evidence
+          path: ${{ runner.temp }}/codex-exec-producer/evidence.json
+          if-no-files-found: error
+
+  pi-native-producer:
+    name: Native Pi RPC producer
+    runs-on: ubuntu-24.04
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install repository test dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install isolated exact Pi package without lifecycle scripts
+        env:
+          npm_config_cache: ${{ runner.temp }}/pi-npm-cache
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-install"
+          npm install --prefix "$RUNNER_TEMP/pi-install" --ignore-scripts --no-audit --no-fund '@earendil-works/pi-coding-agent@1.5.2'
+      - name: Build the POSIX launch helper and run native producer probe
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-native-evidence"
+          node scripts/pi-rpc-producer.mjs "$RUNNER_TEMP/pi-install/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" 1.5.2 > "$RUNNER_TEMP/pi-native-evidence/result.json"
+          node -e 'const r=require(process.env.RUNNER_TEMP+"/pi-native-evidence/result.json"); if(r.outcome!=="pass") { console.error(JSON.stringify(r)); process.exit(1) } if(r.evidence) require("fs").writeFileSync(process.env.RUNNER_TEMP+"/pi-native-evidence/evidence.json",JSON.stringify(r.evidence,null,2))'
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pi-native-producer-evidence
+          path: ${{ runner.temp }}/pi-native-evidence/
+          if-no-files-found: warn
+      - name: Remove temporary Pi installation and npm cache
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/pi-install" "$RUNNER_TEMP/pi-npm-cache"
+
+  windows-askpass:
+    name: Windows askpass
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Exercise the generated Windows helper
+        run: pnpm --filter @holi/desktop exec vitest run test/git-askpass.test.ts
+
+  windows-agent-launch:
+    name: Windows agent launch and cleanup
+    runs-on: windows-2025
+    env:
+      LANG: en_US.UTF-8
+      ELECTRON_SKIP_BINARY_DOWNLOAD: ''
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Stage native Windows launch and caller evidence
+        id: native-proof
+        shell: pwsh
+        run: |
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:GITHUB_SHA) { throw 'Checkout does not match GITHUB_SHA' }
+          $run = Join-Path $env:RUNNER_TEMP "windows-agent-$($env:GITHUB_SHA)-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
+          New-Item -ItemType Directory -Path $run -ErrorAction Stop | Out-Null
+          "HOLI_WINDOWS_AGENT_RUN_DIR=$run" >> $env:GITHUB_ENV
+          $proofs = Join-Path $run 'proof-workspace'
+          New-Item -ItemType Directory -Path $proofs -ErrorAction Stop | Out-Null
+          try {
+            $env:HOLI_WINDOWS_OWNED_PROCESS_PROOFS = Join-Path $proofs 'native'
+            New-Item -ItemType Directory -Path $env:HOLI_WINDOWS_OWNED_PROCESS_PROOFS -ErrorAction Stop | Out-Null
+            $runLog = Join-Path $proofs 'vitest.log'
+            pnpm --filter @holi/desktop exec vitest run test/launch.test.ts test/tool-lookup.test.ts test/owned-process.test.ts test/owned-process-windows.test.ts test/owned-process-protocol.test.ts test/owned-process-completion.test.ts test/owned-process-launch.test.ts test/owned-process-broker.test.ts test/owned-process-broker-host.test.ts test/owned-process-broker-startup.test.ts test/windows-node-runtime.test.ts test/owned-program-lifetime.test.ts test/windows-owned-process-witness.test.ts test/windows-owned-process-lifecycle.test.ts test/windows-owned-process-control.test.ts test/windows-owned-process-status.test.ts src/plugins/agent/test/windows-agents.test.ts src/plugins/agent/test/agent-runtime.test.ts src/plugins/agent/test/owned-program-host.test.ts --project node --reporter=verbose --reporter=json --outputFile="$proofs/vitest.json" | Tee-Object -FilePath $runLog
+            if ($LASTEXITCODE -ne 0) { throw "Native Windows regressions failed ($LASTEXITCODE)" }
+            $preparedHash = node apps/desktop/scripts/check-windows-launch-results.cjs prepare "$run"
+            if ($LASTEXITCODE -ne 0 -or $preparedHash -cnotmatch '^[0-9a-f]{64}$') { throw 'Native proof preparation failed' }
+          } finally {
+            Remove-Item -LiteralPath $proofs -Recurse -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $proofs -ErrorAction Stop) { throw 'Proof workspace still exists' }
+            'workspace-removed=true' >> $env:GITHUB_OUTPUT
+          }
+          "prepared-hash=$preparedHash" >> $env:GITHUB_OUTPUT
+
+      - name: Install Electron
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: Check native PTY under Electron
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          pnpm --filter @holi/desktop exec electron scripts/check-node-pty.cjs
+
+      - name: Build production desktop output
+        run: pnpm --filter @holi/desktop build
+
+      - name: Check space for unpacked Windows package
+        shell: pwsh
+        run: |
+          $drive = [System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)
+          $available = (Get-PSDrive -Name $drive.TrimEnd('\\').TrimEnd(':')).Free
+          if ($available -lt 8GB) { throw "Insufficient free space for packaged Windows runtime verification: $available bytes available; 8 GiB required" }
+          Write-Host "Available space before packaging: $available bytes"
+
+      - name: Package unpacked Windows app for runtime verification
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'holi-qa372-windows-package'
+          if (Test-Path -LiteralPath $output -ErrorAction Stop) { throw 'Unpacked app output already exists' }
+          pnpm --filter @holi/desktop exec electron-builder --win --dir --publish never --config electron-builder.yml --config.directories.output="$output" --config.npmRebuild=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify Node from the unpacked Windows app
+        id: packaged-node
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'holi-qa372-windows-package'
+          $raw = Join-Path $env:HOLI_WINDOWS_AGENT_RUN_DIR 'packaged-node-raw.json'
+          node apps/desktop/scripts/check-packaged-windows-node.cjs "$output" "$raw"
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Windows Node verification failed' }
+          $runtime = Get-Content -LiteralPath $raw -Raw | ConvertFrom-Json
+          $release = node -p "require('node:os').release()"
+          if ($LASTEXITCODE -ne 0 -or -not $release) { throw 'Could not determine Windows release' }
+          @{
+            runtime = 'unpacked-app-node'
+            platform = 'win32'
+            platformVersion = $release
+            gitSha = $env:GITHUB_SHA
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            version = $runtime.version
+            optionalDependencyVersion = $runtime.optionalDependencyVersion
+            sha256 = $runtime.sha256
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:HOLI_WINDOWS_AGENT_RUN_DIR 'packaged-node.json')
+
+      - name: Exercise dependency Electron and real ConPTY lifecycle
+        id: dependency-smoke
+        run: pnpm --filter @holi/desktop exec node scripts/run-windows-agent-smoke.mjs "$env:HOLI_WINDOWS_AGENT_RUN_DIR"
+
+      - name: Upload unpacked-app Node runtime evidence
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-packaged-node-runtime-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/packaged-node.json
+          if-no-files-found: error
+
+      - name: Upload dependency Electron and real ConPTY smoke evidence
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-dependency-electron-conpty-smoke-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/dependency-electron-smoke.json
+          if-no-files-found: error
+
+      - name: Publish finalized Windows ownership verdict
+        id: finalize-proof
+        shell: pwsh
+        env:
+          WORKSPACE_REMOVED: ${{ steps.native-proof.outputs.workspace-removed }}
+          PREPARED_HASH: ${{ steps.native-proof.outputs.prepared-hash }}
+        run: |
+          if ($env:WORKSPACE_REMOVED -cne 'true') { throw 'Proof workspace removal was not confirmed' }
+          node apps/desktop/scripts/check-windows-launch-results.cjs finalize "$env:HOLI_WINDOWS_AGENT_RUN_DIR" "$env:PREPARED_HASH"
+          if ($LASTEXITCODE -ne 0) { throw 'Native proof publication failed' }
+
+      - name: Upload finalized native Windows ownership proof
+        if: success() && steps.finalize-proof.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-owned-process-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/owned-process-proof.json
+          if-no-files-found: error
+
+      - name: Write sanitized Windows failure diagnostics
+        id: failure-diagnostics
+        if: failure() && env.HOLI_WINDOWS_AGENT_RUN_DIR != ''
+        shell: pwsh
+        env:
+          NATIVE_OUTCOME: ${{ steps.native-proof.outcome }}
+          WORKSPACE_REMOVED: ${{ steps.native-proof.outputs.workspace-removed }}
+          PACKAGED_OUTCOME: ${{ steps.packaged-node.outcome }}
+          SMOKE_OUTCOME: ${{ steps.dependency-smoke.outcome }}
+          FINALIZE_OUTCOME: ${{ steps.finalize-proof.outcome }}
+        run: |
+          @{
+            verdict = 'failure'
+            gitSha = $env:GITHUB_SHA
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            nativeProof = $env:NATIVE_OUTCOME
+            workspaceRemovalConfirmed = ($env:WORKSPACE_REMOVED -ceq 'true')
+            packagedNode = $env:PACKAGED_OUTCOME
+            dependencyElectron = $env:SMOKE_OUTCOME
+            finalize = $env:FINALIZE_OUTCOME
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:HOLI_WINDOWS_AGENT_RUN_DIR 'failure.json')
+
+      - name: Upload sanitized Windows failure diagnostics
+        if: failure() && steps.failure-diagnostics.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-agent-launch-failure-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/failure.json
+          if-no-files-found: error
+
+  windows-helpers:
+    name: Windows helper portability
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run Git for Windows helper fixtures
+        run: pnpm --filter @holi/desktop exec vitest run test/windows-helper-portability.test.ts --project node
+
+  windows-clone-preparation:
+    name: Windows clone preparation
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run clone preservation and seed-update fixtures on Windows Git
+        run: pnpm --filter @holi/desktop exec vitest run test/prepare-clone.test.ts --project node
+
+  browser-display-smoke:
+    name: Native browser display isolation
+    runs-on: macos-26-intel
+    env:
+      LANG: en_US.UTF-8
+      ELECTRON_SKIP_BINARY_DOWNLOAD: ''
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install Electron
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: Run isolated native browser display smoke
+        run: pnpm --filter @holi/desktop exec node scripts/run-browser-display-smoke.mjs "$RUNNER_TEMP/holi-472-evidence"
+
+      - name: Run isolated native IPC sender smoke
+        run: pnpm --filter @holi/desktop exec node scripts/run-ipc-sender-native-smoke.mjs "$RUNNER_TEMP/holi-506-evidence"
+
+      - name: Upload native display evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-display-isolation-evidence
+          path: |
+            ${{ runner.temp }}/holi-472-evidence/
+            ${{ runner.temp }}/holi-506-evidence/
+          if-no-files-found: error
+
   test:
     name: Test
     # macOS on purpose: the tests encode the filesystem Holi ships on (macOS and
@@ -118,6 +456,22 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install the production Typst version for native PDF tests
+        run: |
+          VERSION="$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const source = readFileSync('apps/desktop/src/plugins/pdf/main/typst-bin.ts', 'utf8'); const match = source.match(/export const TYPST_VERSION = '([0-9.]+)'/); if (!match) throw new Error('Typst version not found'); console.log(match[1]);")"
+          case "$(uname -m)" in
+            x86_64) TARGET=x86_64-apple-darwin ;;
+            arm64) TARGET=aarch64-apple-darwin ;;
+            *) echo 'Unsupported native Typst runner architecture' >&2; exit 1 ;;
+          esac
+          ROOT="$RUNNER_TEMP/holi-native-typst"
+          mkdir -p "$ROOT"
+          curl --fail --location --retry 3 "https://github.com/typst/typst/releases/download/v$VERSION/typst-$TARGET.tar.xz" --output "$ROOT/typst.tar.xz"
+          tar -xJf "$ROOT/typst.tar.xz" -C "$ROOT"
+          "$ROOT/typst-$TARGET/typst" --version
+          echo "TYPST_BIN=$ROOT/typst-$TARGET/typst" >> "$GITHUB_ENV"
+          echo "TYPST_PACKAGE_CACHE_PATH=$RUNNER_TEMP/holi-typst-packages" >> "$GITHUB_ENV"
 
       # The node suite creates real repositories and commits in them.
       - name: Git identity for the tests

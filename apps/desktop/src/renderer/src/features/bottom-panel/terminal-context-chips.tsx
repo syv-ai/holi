@@ -62,7 +62,7 @@ export function TerminalContextChips({
       <Tooltip>
         <TooltipTrigger asChild>
           <Badge
-            variant="outline"
+            variant="secondary"
             size="lg"
             role="button"
             tabIndex={0}
@@ -87,7 +87,7 @@ export function TerminalContextChips({
       {git === null ? null : (
         <>
           <Badge
-            variant="outline"
+            variant="secondary"
             size="lg"
             className="text-muted-foreground min-w-0 font-mono font-normal"
           >
@@ -96,7 +96,7 @@ export function TerminalContextChips({
           </Badge>
           {git.files === 0 ? null : (
             <Badge
-              variant="outline"
+              variant="secondary"
               size="lg"
               aria-label={changesLabel(git)}
               className="text-muted-foreground font-mono font-normal tabular-nums"

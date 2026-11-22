@@ -124,7 +124,7 @@ function Thread({
           <Quote text={thread.anchor.quote} />
         </Button>
         {!placed ? (
-          <Badge variant="warning-light" className="shrink-0">
+          <Badge variant="warning" className="shrink-0">
             Detached
           </Badge>
         ) : null}

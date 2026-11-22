@@ -7,15 +7,29 @@
  * which app is speaking rather than the app's.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
-import { appHost } from '../shared/bundle'
+import { leasedAppHost } from '../shared/bundle'
 import { getDefaultStore } from 'jotai'
-import { beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { act } from 'react'
-import { render, screen, waitFor } from '@/test/render'
+import { fireEvent, render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { activeRemoteAtom, snapshotAtom } from '@/plugin-api'
+import { setTestColorScheme } from '@/test/vault-app-shell'
 import { AppFrame } from '../renderer/app-frame'
-import { appOpensAtom } from '../renderer/apps'
+import { appCodeGenerationsAtom, appOpensAtom } from '../renderer/apps'
+import { appSlashCommandsAtom, followAppCommands } from '../renderer/commands'
+import { appsRenderer } from '../renderer'
+import { createAppCode } from '../main/code'
+import { createAppGrants } from '../main/grants'
+import { listFiles } from '../../../main/plugin-api'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  PREVIEW_SETTLE_MS,
+  previewRequestsAtom,
+  previewVersionsAtom,
+} from '../renderer/app-previews'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 
 const approvalCommit = vi.hoisted(() => ({
@@ -29,6 +43,13 @@ const approvalStatus = vi.hoisted(() => ({
   lastChange: null as typeof approvalCommit | null,
 }))
 let fakeHoli: FakeHoli
+const { FRAME_TOKEN, FRAME_NONCE } = vi.hoisted(() => ({
+  FRAME_TOKEN: 'a'.repeat(48),
+  FRAME_NONCE: 'b'.repeat(48),
+}))
+const frameLeaseMock = vi.hoisted(() => vi.fn())
+const frameLeaseValidMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
+const releaseLeaseMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => Promise.resolve(true)))
 
 /** Main's side of the app door, answering the way the registry would. */
 const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<unknown> => {
@@ -43,17 +64,32 @@ vi.mock('../renderer/apps-cap', () => ({
   appsCap: {
     call: (remote: string, input: { method: string }) => bridgeMock({ remote, ...input }),
     // No `dangerously-allow` reads to approve, so the frame mounts at once.
-    grants: () =>
-      Promise.resolve({
-        codeHash: 'h',
-        affordances: approvalStatus.needsApproval ? [{ affordance: 'mail', granted: false }] : [],
-        ...(approvalStatus.needsApproval
-          ? { added: approvalCommit, lastChange: approvalStatus.lastChange }
-          : {}),
-      }),
-    log: () => Promise.resolve(true),
+    grants: (...args: unknown[]) => grantsMock(...args),
+    grant: (...args: unknown[]) => grantMock(...args),
+    capturePreview: (...args: unknown[]) => captureMock(...args),
+    frameLease: (...args: unknown[]) => frameLeaseMock(...args),
+    frameLeaseValid: () => frameLeaseValidMock(),
+    releaseFrameLease: (...args: unknown[]) => releaseLeaseMock(...args),
+    log: (...args: unknown[]) => logMock(...args),
+    commands: (...args: unknown[]) => commandsMock(...args),
   },
 }))
+
+const status = () => ({
+  codeHash: 'h',
+  expiresAt: null as number | null,
+  affordances: approvalStatus.needsApproval ? [{ affordance: 'mail', granted: false }] : [],
+  ...(approvalStatus.needsApproval
+    ? { added: approvalCommit, lastChange: approvalStatus.lastChange }
+    : {}),
+})
+const grantsMock = vi.fn((..._args: unknown[]) => Promise.resolve(status()))
+const grantMock = vi.fn((..._args: unknown[]) => Promise.resolve(true))
+const captureMock = vi.fn((..._args: unknown[]) => Promise.resolve({ saved: true }))
+const logMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => Promise.resolve(true)))
+const commandsMock = vi.hoisted(() =>
+  vi.fn((..._args: unknown[]) => Promise.resolve([{ bundle: 'Team/Retro.app', name: 'format' }])),
+)
 
 /** The tabs the tombstone's button closed, as `[surface, id]`. */
 const closed = vi.hoisted(() => [] as [string, string][])
@@ -83,6 +119,26 @@ function withApps(...bundles: string[]) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  bridgeMock.mockReset().mockImplementation((input: { remote: string; method: string }) => {
+    if (input.method === 'docs.read') return Promise.resolve('# A')
+    if (input.method === 'docs.list') {
+      return Promise.resolve([{ path: 'a.md', kind: 'note', updatedAt: '' }])
+    }
+    return Promise.resolve([])
+  })
+  frameLeaseMock.mockReset().mockResolvedValue({ token: FRAME_TOKEN, nonce: FRAME_NONCE })
+  frameLeaseValidMock.mockReset().mockResolvedValue(true)
+  releaseLeaseMock.mockReset().mockResolvedValue(true)
+  grantsMock.mockReset().mockImplementation(() => Promise.resolve(status()))
+  grantMock.mockReset().mockResolvedValue(true)
+  captureMock.mockReset().mockResolvedValue({ saved: true })
+  logMock.mockReset().mockResolvedValue(true)
+  commandsMock.mockReset().mockResolvedValue([{ bundle: 'Team/Retro.app', name: 'format' }])
+  setTestColorScheme('dark')
+  store.set(appOpensAtom, {})
+  store.set(appCodeGenerationsAtom, {})
+  store.set(previewRequestsAtom, {})
+  store.set(previewVersionsAtom, {})
   approvalStatus.needsApproval = false
   approvalStatus.lastChange = null
   fakeHoli?.restore()
@@ -141,13 +197,37 @@ test('approval Last changed by opens its exact history target', async () => {
 
 /** A message as the frame itself would send it. */
 function fromFrame(data: unknown, source: Window | null = frameOf().contentWindow) {
-  window.dispatchEvent(new MessageEvent('message', { data, source }))
+  const envelope =
+    data !== null && typeof data === 'object' ? { nonce: FRAME_NONCE, ...data } : data
+  window.dispatchEvent(new MessageEvent('message', { data: envelope, source }))
 }
+
+test('releases a lease acquired after its frame has unmounted', async () => {
+  let acquire!: (lease: { token: string; nonce: string }) => void
+  frameLeaseMock.mockReturnValueOnce(
+    new Promise((resolve) => {
+      acquire = resolve
+    }),
+  )
+  const mounted = render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(frameLeaseMock).toHaveBeenCalled())
+  mounted.unmount()
+  await act(async () => acquire({ token: FRAME_TOKEN, nonce: FRAME_NONCE }))
+  await waitFor(() => expect(releaseLeaseMock).toHaveBeenCalledWith(REMOTE, expect.any(Object)))
+})
+
+test('shows Retry when a main frame lease is refused', async () => {
+  frameLeaseMock.mockRejectedValueOnce(new Error('lease unavailable'))
+  render(<AppFrame path="Team/Retro.app" />)
+  expect(await screen.findByText('Could not open this app.')).toBeTruthy()
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(frameOf()).not.toBeNull())
+})
 
 test('serves the app from its own origin, the host encoding its bundle', async () => {
   await renderApp()
   expect(frameOf().getAttribute('src')).toBe(
-    `holi-app://${appHost('Team/Retro.app')}/index.html?mode=dark`,
+    `holi-app://${leasedAppHost('Team/Retro.app', FRAME_TOKEN)}/index.html?mode=dark`,
   )
 })
 
@@ -172,6 +252,13 @@ test('ignores a message that did not come from the frame', async () => {
   expect(bridgeMock).not.toHaveBeenCalled()
 })
 
+test('ignores an old-document envelope from the same WindowProxy', async () => {
+  await renderApp()
+  fromFrame({ nonce: 'old-document', id: 'old', method: 'docs.list' })
+  await Promise.resolve()
+  expect(bridgeMock).not.toHaveBeenCalled()
+})
+
 test('answers a docs.read with the value, addressed to the frame', async () => {
   await renderApp()
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
@@ -183,8 +270,15 @@ test('answers a docs.read with the value, addressed to the frame', async () => {
     bundle: 'Team/Retro.app',
     method: 'docs.read',
     params: { path: 'a.md' },
+    token: FRAME_TOKEN,
+    nonce: FRAME_NONCE,
   })
-  expect(post.mock.calls[0]![0]).toEqual({ id: 'r1', ok: true, value: '# A' })
+  expect(post.mock.calls[0]![0]).toEqual({
+    nonce: FRAME_NONCE,
+    id: 'r1',
+    ok: true,
+    value: '# A',
+  })
 })
 
 test('answers docs.list and tasks.list from the vault the frame is in', async () => {
@@ -257,4 +351,609 @@ test("holi.open refuses a secret file and this machine's state, even when they e
     await waitFor(() => expect(post).toHaveBeenCalledTimes(at + 1))
     expect(post.mock.calls[at]![0]).toMatchObject({ id: `o${at}`, ok: false })
   }
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  return { promise, resolve, reject }
+}
+
+function changeCode(file = 'index.html') {
+  appsRenderer.events!['code-changed']!(
+    { remote: REMOTE, payload: { bundle: 'Team/Retro.app', codeHash: `${file}-v2` } },
+    store,
+  )
+}
+
+const runningFrame = () =>
+  document.querySelector<HTMLIFrameElement>('iframe[sandbox*="allow-scripts"]')
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
+
+test('hidden consent neither steals focus nor leaves a history portal open', async () => {
+  approvalStatus.needsApproval = true
+  const view = render(<AppFrame path="Team/Retro.app" visible={false} />)
+  await screen.findByText(/wants permission/)
+  expect(document.activeElement).toBe(document.body)
+  view.rerender(<AppFrame path="Team/Retro.app" />)
+  expect(document.activeElement).toBe(screen.getByRole('dialog'))
+  await userEvent.click(screen.getByRole('button', { name: approvalCommit.sha.slice(0, 7) }))
+  await screen.findByRole('heading', { name: 'create app' })
+  view.rerender(<AppFrame path="Team/Retro.app" visible={false} />)
+  expect(screen.queryByRole('heading', { name: 'create app' })).toBeNull()
+  view.rerender(<AppFrame path="Team/Retro.app" />)
+  expect(screen.queryByRole('heading', { name: 'create app' })).toBeNull()
+})
+
+test.each(['index.html', 'app.yaml'])(
+  'a hidden %s edit removes executable code until consent is checked',
+  async (file) => {
+    const view = render(<AppFrame path="Team/Retro.app" />)
+    await waitFor(() => expect(runningFrame()).not.toBeNull())
+    const before = runningFrame()!
+    view.rerender(<AppFrame path="Team/Retro.app" visible={false} />)
+    const pending = deferred<ReturnType<typeof status>>()
+    grantsMock.mockReturnValueOnce(pending.promise)
+    act(() => changeCode(file))
+    expect(before.isConnected).toBe(false)
+    expect(runningFrame()).toBeNull()
+    approvalStatus.needsApproval = true
+    await act(async () => pending.resolve(status()))
+    expect(runningFrame()).toBeNull()
+    expect(document.querySelector('iframe')?.getAttribute('sandbox')).toBe('')
+    expect(document.activeElement).toBe(document.body)
+    view.rerender(<AppFrame path="Team/Retro.app" />)
+    await userEvent.click(screen.getByRole('button', { name: 'Not now' }))
+    await waitFor(() => expect(runningFrame()).not.toBeNull())
+    expect(grantMock).not.toHaveBeenCalled()
+    expect(runningFrame()).not.toBe(before)
+  },
+)
+
+test('hidden record pushes continue without resetting the frame; log edits do not reload', async () => {
+  const view = render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  const before = runningFrame()!
+  const post = vi.spyOn(before.contentWindow!, 'postMessage')
+  view.rerender(<AppFrame path="Team/Retro.app" visible={false} />)
+  act(() =>
+    store.set(snapshotAtom, (snapshot) => ({
+      ...snapshot,
+      files: [
+        ...snapshot.files,
+        { path: 'Team/Retro.app/data/items/a.json', updatedAt: 'v2' },
+        { path: 'Team/Retro.app/log.local.txt', updatedAt: 'v2' },
+      ],
+    })),
+  )
+  expect(runningFrame()).toBe(before)
+  expect(before).toHaveAttribute('aria-hidden', 'true')
+  expect(before).toHaveAttribute('tabindex', '-1')
+  expect(post).toHaveBeenCalledWith({ push: 'store:items', nonce: FRAME_NONCE }, '*')
+  expect(grantsMock).toHaveBeenCalledTimes(1)
+})
+
+for (const replacement of ['reload', 'path', 'remote', 'mode', 'code', 'dispose'] as const) {
+  function replace(view: ReturnType<typeof render>) {
+    act(() => {
+      if (replacement === 'reload') store.set(appOpensAtom, { 'Team/Retro.app': 1 })
+      if (replacement === 'path') view.rerender(<AppFrame path="Other.app" />)
+      if (replacement === 'remote') store.set(activeRemoteAtom, 'other/vault')
+      if (replacement === 'mode') setTestColorScheme('light')
+      if (replacement === 'code') changeCode()
+      if (replacement === 'dispose') view.unmount()
+    })
+  }
+
+  test(`a stale grant check cannot revive a load after ${replacement}`, async () => {
+    withApps('Team/Retro.app', 'Other.app')
+    const pending = deferred<ReturnType<typeof status>>()
+    grantsMock.mockReturnValueOnce(pending.promise)
+    const view = render(<AppFrame path="Team/Retro.app" />)
+    approvalStatus.needsApproval = true
+    replace(view)
+    if (replacement !== 'dispose') await screen.findByText(/wants permission/)
+    await act(async () => pending.resolve({ ...status(), affordances: [] }))
+    expect(runningFrame()).toBeNull()
+  })
+
+  test(`pending approval cannot open a replacement after ${replacement}`, async () => {
+    withApps('Team/Retro.app', 'Other.app')
+    approvalStatus.needsApproval = true
+    const pending = deferred<boolean>()
+    grantMock.mockReturnValueOnce(pending.promise)
+    const view = render(<AppFrame path="Team/Retro.app" />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Allow for 30 days' }))
+    replace(view)
+    if (replacement !== 'dispose') await screen.findByText(/wants permission/)
+    await act(async () => pending.resolve(true))
+    expect(runningFrame()).toBeNull()
+    if (replacement !== 'dispose')
+      expect(screen.getByRole('button', { name: 'Allow for 30 days' })).toBeTruthy()
+  })
+
+  test(`delayed bridge response cannot reach any document after ${replacement}`, async () => {
+    withApps('Team/Retro.app', 'Other.app')
+    const pending = deferred<unknown>()
+    bridgeMock.mockReturnValueOnce(pending.promise)
+    const view = render(<AppFrame path="Team/Retro.app" />)
+    await waitFor(() => expect(runningFrame()).not.toBeNull())
+    const old = runningFrame()!
+    const oldPost = vi.spyOn(old.contentWindow!, 'postMessage')
+    fromFrame({ id: 'late', method: 'docs.read', params: { path: 'a.md' } }, old.contentWindow)
+    await waitFor(() => expect(bridgeMock).toHaveBeenCalled())
+    replace(view)
+    if (replacement !== 'dispose') await waitFor(() => expect(runningFrame()).not.toBeNull())
+    const newPost = runningFrame() ? vi.spyOn(runningFrame()!.contentWindow!, 'postMessage') : null
+    oldPost.mockClear()
+    newPost?.mockClear()
+    await act(async () => pending.resolve('old vault data'))
+    expect(oldPost).not.toHaveBeenCalled()
+    if (newPost) expect(newPost).not.toHaveBeenCalled()
+  })
+}
+
+test('an A to B to A return cannot revive an old bridge reply', async () => {
+  await renderApp()
+  const pending = deferred<unknown>()
+  bridgeMock.mockReturnValueOnce(pending.promise)
+  const frame = frameOf()
+  const post = vi.spyOn(frame.contentWindow!, 'postMessage')
+  fromFrame({ id: 'late', method: 'docs.read', params: { path: 'a.md' } })
+  await waitFor(() => expect(bridgeMock).toHaveBeenCalled())
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  act(() => store.set(activeRemoteAtom, REMOTE))
+  await act(async () => pending.resolve('stale vault data'))
+  expect(post).not.toHaveBeenCalled()
+})
+
+test('a failed permission check recovers when main registers the apps capability', async () => {
+  grantsMock.mockRejectedValueOnce(new Error('no such method'))
+  render(<AppFrame path="Team/Retro.app" />)
+  expect(await screen.findByText('Could not check app permissions.')).toBeTruthy()
+  expect(runningFrame()).toBeNull()
+  expect(document.querySelector('iframe')).toBeNull()
+
+  act(() =>
+    appsRenderer.events!['commands-changed']!({ remote: 'other/vault', payload: null }, store),
+  )
+  expect(grantsMock).toHaveBeenCalledTimes(1)
+
+  act(() => appsRenderer.events!['commands-changed']!({ remote: REMOTE, payload: null }, store))
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  expect(grantsMock).toHaveBeenCalledTimes(2)
+  expect(screen.queryByText('Could not check app permissions.')).toBeNull()
+})
+
+test('registration signal recovers a permission check that is still pending', async () => {
+  const pending = deferred<ReturnType<typeof status>>()
+  grantsMock.mockReturnValueOnce(pending.promise)
+  render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(grantsMock).toHaveBeenCalledTimes(1))
+
+  act(() => appsRenderer.events!['commands-changed']!({ remote: REMOTE, payload: null }, store))
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  expect(grantsMock).toHaveBeenCalledTimes(2)
+
+  await act(async () => pending.reject(new Error('no such method')))
+  expect(runningFrame()).not.toBeNull()
+})
+
+test('a refused grant rechecks the changed code instead of executing it', async () => {
+  approvalStatus.needsApproval = true
+  grantMock.mockResolvedValueOnce(false)
+  render(<AppFrame path="Team/Retro.app" />)
+  await userEvent.click(await screen.findByRole('button', { name: 'Allow for 30 days' }))
+  await screen.findByRole('button', { name: 'Allow for 30 days' })
+  expect(runningFrame()).toBeNull()
+  expect(grantsMock).toHaveBeenCalledTimes(2)
+})
+
+test('command timeout rejects before logging, ignores late success, and releases after logging', async () => {
+  const stop = followAppCommands(REMOTE, store)
+  await waitFor(() => expect(store.get(appSlashCommandsAtom)).toHaveLength(1))
+  const pendingLog = deferred<boolean>()
+  logMock.mockReturnValueOnce(pendingLog.promise)
+  vi.useFakeTimers()
+  const run = store
+    .get(appSlashCommandsAtom)[0]!
+    .run({ text: 'source', line: 'source', path: 'note.md' })
+  const rejected = expect(run).rejects.toThrow('took longer than 10 s')
+  await act(async () => {})
+  const frame = document.querySelector<HTMLIFrameElement>('iframe')!
+  const post = vi.spyOn(frame.contentWindow!, 'postMessage')
+  fromFrame({ ready: true })
+  await act(async () => {})
+  const pendingAuthorization = deferred<boolean>()
+  frameLeaseValidMock.mockReturnValueOnce(pendingAuthorization.promise)
+  fromFrame({ id: 'awaiting-auth', method: 'docs.read', params: { path: 'a.md' } })
+  await act(async () => {})
+  post.mockClear()
+  await act(async () => vi.advanceTimersByTime(10_000))
+  await rejected
+  expect(logMock).toHaveBeenCalledWith(
+    REMOTE,
+    expect.objectContaining({ text: '/format: took longer than 10 s', token: FRAME_TOKEN }),
+  )
+  expect(frame.isConnected).toBe(true)
+  // The main-process log batch starts flushing after a full second, not before it.
+  await act(async () => vi.advanceTimersByTime(1_001))
+  expect(frame.isConnected).toBe(true)
+  expect(releaseLeaseMock).not.toHaveBeenCalled()
+  const callCount = bridgeMock.mock.calls.length
+  await act(async () => pendingAuthorization.resolve(true))
+  fromFrame({ command: { ok: true, value: { replace: 'late' } } })
+  await act(async () => {})
+  expect(bridgeMock).toHaveBeenCalledTimes(callCount)
+  await act(async () => pendingLog.resolve(true))
+  expect(frame.isConnected).toBe(false)
+  expect(releaseLeaseMock).toHaveBeenCalledWith(
+    REMOTE,
+    expect.objectContaining({ token: FRAME_TOKEN }),
+  )
+  vi.useRealTimers()
+  const freshRun = store
+    .get(appSlashCommandsAtom)[0]!
+    .run({ text: 'fresh', line: 'fresh', path: 'note.md' })
+  await waitFor(() => expect(frameOf()).not.toBeNull())
+  fromFrame({ ready: true })
+  await act(async () => {})
+  fromFrame({ command: { ok: true, value: { replace: 'fresh result' } } })
+  await expect(freshRun).resolves.toEqual({ replace: 'fresh result' })
+  expect(frameOf()).toBeNull()
+  stop()
+})
+
+test('hidden previews are cancelled and resume only after display', async () => {
+  const view = render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  const frame = runningFrame()!
+  vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+    left: 0,
+    top: 0,
+    right: 400,
+    bottom: 400,
+    width: 400,
+    height: 400,
+  } as DOMRect)
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => frame })
+  vi.useFakeTimers()
+  fireEvent.load(frame)
+  view.rerender(<AppFrame path="Team/Retro.app" visible={false} />)
+  act(() => store.set(previewRequestsAtom, { 'Team/Retro.app': 1 }))
+  await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+  expect(captureMock).not.toHaveBeenCalled()
+  view.rerender(<AppFrame path="Team/Retro.app" />)
+  await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+  expect(captureMock).toHaveBeenCalledTimes(1)
+  expect(runningFrame()).toBe(frame)
+  view.rerender(<AppFrame path="Team/Retro.app" visible={false} />)
+  view.rerender(<AppFrame path="Team/Retro.app" />)
+  await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+  expect(captureMock).toHaveBeenCalledTimes(1)
+})
+
+test.each([false, true])(
+  'preview placement monitoring stops after capture settles (saved=%s)',
+  async (saved) => {
+    withApps('Team/Retro.app')
+    const view = render(<AppFrame path="Team/Retro.app" />)
+    await waitFor(() => expect(runningFrame()).not.toBeNull())
+    const frame = runningFrame()!
+    vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 400,
+      bottom: 400,
+      width: 400,
+      height: 400,
+    } as DOMRect)
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => frame })
+    const pending = deferred<{ saved: boolean }>()
+    captureMock.mockReturnValueOnce(pending.promise)
+    vi.useFakeTimers()
+    fireEvent.load(frame)
+    await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+    expect(captureMock).toHaveBeenCalledTimes(1)
+    const placementEvents = fakeHoli.pluginSent as {
+      id: string
+      event: { name: string; payload: { rect: unknown } }
+    }[]
+    const invalidations = placementEvents.filter(
+      (sent) =>
+        sent.id === 'apps' &&
+        sent.event.name === 'preview-placement' &&
+        sent.event.payload.rect === null,
+    ).length
+    await act(async () => pending.resolve({ saved }))
+    document.body.append(document.createElement('div'))
+    await act(async () => Promise.resolve())
+    expect(
+      placementEvents.filter(
+        (sent) =>
+          sent.id === 'apps' &&
+          sent.event.name === 'preview-placement' &&
+          sent.event.payload.rect === null,
+      ),
+    ).toHaveLength(invalidations)
+    view.unmount()
+  },
+)
+
+test('a pending capture is invalidated when its same-vault frame moves', async () => {
+  withApps('Team/Retro.app')
+  const view = render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  const frame = runningFrame()!
+  let left = 0
+  vi.spyOn(frame, 'getBoundingClientRect').mockImplementation(
+    () =>
+      ({
+        left,
+        top: 0,
+        right: left + 400,
+        bottom: 400,
+        width: 400,
+        height: 400,
+      }) as DOMRect,
+  )
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => frame })
+  const pending = deferred<{ saved: boolean }>()
+  captureMock.mockReturnValueOnce(pending.promise)
+  vi.useFakeTimers()
+  fireEvent.load(frame)
+  await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+  expect(captureMock).toHaveBeenCalledTimes(1)
+  left = 40
+  fireEvent.resize(window)
+  expect(fakeHoli.pluginSent).toContainEqual({
+    id: 'apps',
+    event: expect.objectContaining({
+      remote: REMOTE,
+      name: 'preview-placement',
+      payload: expect.objectContaining({ rect: null }),
+    }),
+  })
+  await act(async () => pending.resolve({ saved: true }))
+  expect(store.get(previewVersionsAtom)).toEqual({})
+  view.unmount()
+})
+
+test('an overlay invalidates a pending preview capture before publication', async () => {
+  withApps('Team/Retro.app')
+  const view = render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  const frame = runningFrame()!
+  vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+    left: 0,
+    top: 0,
+    right: 400,
+    bottom: 400,
+    width: 400,
+    height: 400,
+  } as DOMRect)
+  let overlay: HTMLElement | null = null
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    value: () => overlay ?? frame,
+  })
+  const pending = deferred<{ saved: boolean }>()
+  captureMock.mockReturnValueOnce(pending.promise)
+  vi.useFakeTimers()
+  fireEvent.load(frame)
+  await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+  expect(captureMock).toHaveBeenCalledTimes(1)
+  overlay = document.createElement('div')
+  document.body.append(overlay)
+  await act(async () => {
+    await Promise.resolve()
+    vi.advanceTimersByTime(20)
+  })
+  expect(fakeHoli.pluginSent).toContainEqual({
+    id: 'apps',
+    event: expect.objectContaining({
+      remote: REMOTE,
+      name: 'preview-placement',
+      payload: expect.objectContaining({ rect: null }),
+    }),
+  })
+  await act(async () => pending.resolve({ saved: true }))
+  expect(store.get(previewVersionsAtom)).toEqual({})
+  overlay.remove()
+  view.unmount()
+})
+
+test.each(['hide', 'reload', 'path', 'remote', 'mode', 'code', 'dispose'] as const)(
+  'stale load and preview responses are ignored after %s',
+  async (replacement) => {
+    withApps('Team/Retro.app', 'Other.app')
+    const view = render(<AppFrame path="Team/Retro.app" />)
+    await waitFor(() => expect(runningFrame()).not.toBeNull())
+    const frame = runningFrame()!
+    vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 400,
+      bottom: 400,
+      width: 400,
+      height: 400,
+    } as DOMRect)
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => frame })
+    const pending = deferred<{ saved: boolean }>()
+    captureMock.mockReturnValueOnce(pending.promise)
+    vi.useFakeTimers()
+    fireEvent.load(frame)
+    await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+    expect(captureMock).toHaveBeenCalledTimes(1)
+    act(() => {
+      if (replacement === 'hide') view.rerender(<AppFrame path="Team/Retro.app" visible={false} />)
+      if (replacement === 'reload') store.set(appOpensAtom, { 'Team/Retro.app': 1 })
+      if (replacement === 'path') view.rerender(<AppFrame path="Other.app" />)
+      if (replacement === 'remote') store.set(activeRemoteAtom, 'other/vault')
+      if (replacement === 'mode') setTestColorScheme('light')
+      if (replacement === 'code') changeCode()
+      if (replacement === 'dispose') view.unmount()
+    })
+    if (replacement === 'hide') {
+      expect(fakeHoli.pluginSent).toContainEqual({
+        id: 'apps',
+        event: expect.objectContaining({
+          remote: REMOTE,
+          name: 'preview-placement',
+          payload: expect.objectContaining({ rect: null }),
+        }),
+      })
+    }
+    await act(async () => pending.resolve({ saved: true }))
+    // A detached old iframe's load must not schedule a picture of its successor.
+    fireEvent.load(frame)
+    await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+    expect(captureMock).toHaveBeenCalledTimes(1)
+    expect(store.get(previewVersionsAtom)).toEqual({})
+  },
+)
+
+// These clocks are sampled in test steps to exercise main's wall-clock
+// deadlines, never to generate UI state during a render.
+test('an approved retained load expires while hidden and asks again before running', async () => {
+  const expiresAt = Date.now() + 10_000
+  grantsMock.mockResolvedValueOnce({ ...status(), expiresAt, affordances: [] })
+  const view = render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  const before = runningFrame()!
+  view.rerender(<AppFrame path="Team/Retro.app" visible={false} />)
+  approvalStatus.needsApproval = true
+  vi.useFakeTimers()
+  // Fake time starts after the expiry timer was scheduled; advance both the
+  // real deadline and the timer through the platform clock seam.
+  vi.setSystemTime(expiresAt)
+  fireEvent.focus(window)
+  await act(async () => {})
+  expect(before.isConnected).toBe(false)
+  expect(runningFrame()).toBeNull()
+  expect(document.activeElement).toBe(document.body)
+  expect(screen.getByText(/wants permission/)).toBeTruthy()
+})
+
+test('expiry timers rearm beyond the browser timer limit without refreshing early', async () => {
+  vi.useFakeTimers()
+  const duration = 30 * 24 * 60 * 60 * 1000
+  grantsMock.mockResolvedValueOnce({ ...status(), expiresAt: Date.now() + duration })
+  const view = render(<AppFrame path="Team/Retro.app" visible={false} />)
+  await act(async () => {})
+  const frame = runningFrame()!
+  expect(frame).not.toBeNull()
+  approvalStatus.needsApproval = true
+  await act(async () => vi.advanceTimersByTime(2_147_483_647))
+  expect(runningFrame()).toBe(frame)
+  expect(grantsMock).toHaveBeenCalledTimes(1)
+  await act(async () => vi.advanceTimersByTime(duration - 2_147_483_647))
+  expect(frame.isConnected).toBe(false)
+  expect(runningFrame()).toBeNull()
+  expect(grantsMock).toHaveBeenCalledTimes(2)
+  view.unmount()
+})
+
+test('code-change signals are vault-scoped and invalidate even a hash seen on an earlier visit', async () => {
+  await renderApp()
+  const first = runningFrame()!
+  act(() =>
+    appsRenderer.events!['code-changed']!(
+      { remote: 'other/vault', payload: { bundle: 'Team/Retro.app', codeHash: 'seen' } },
+      store,
+    ),
+  )
+  expect(runningFrame()).toBe(first)
+  act(() => changeCode())
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  const second = runningFrame()!
+  expect(second).not.toBe(first)
+  act(() => changeCode())
+  expect(second.isConnected).toBe(false)
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  expect(runningFrame()).not.toBe(second)
+})
+
+test('a dependency-only scan invalidates a hidden approved frame through the real plugin signal', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-frame-code-'))
+  const bundle = 'Team/Retro.app'
+  const put = async (path: string, text: string) => {
+    await mkdir(join(root, bundle, path, '..'), { recursive: true })
+    await writeFile(join(root, bundle, path), text)
+  }
+  const signals: string[] = []
+  const code = createAppCode(root, (path, codeHash) => {
+    signals.push(codeHash)
+    appsRenderer.events!['code-changed']!(
+      { remote: REMOTE, payload: { bundle: path, codeHash } },
+      store,
+    )
+  })
+  try {
+    await put('index.html', '<script src="node_modules/lib/index.js"></script>')
+    await put('app.yaml', 'dangerously-allow: [mail]\n')
+    await put('node_modules/lib/index.js', 'window.version = 1')
+    const grants = createAppGrants(join(root, 'grants.json'), Date.now, code.read)
+    const original = await grants.status(REMOTE, root, bundle)
+    await grants.grant(REMOTE, root, bundle, ['mail'], original.codeHash)
+    grantsMock.mockImplementation(async () => ({
+      ...status(),
+      ...(await grants.status(REMOTE, root, bundle)),
+    }))
+    // The vault scanner's real walk prunes dependencies before snapshot bucketing.
+    const snapshot = {
+      ...emptyVaultSnapshot(),
+      files: (await listFiles(root)).map((path) => ({ path, updatedAt: '' })),
+    }
+    expect(snapshot.files.some((f) => f.path.includes('node_modules'))).toBe(false)
+    act(() => store.set(snapshotAtom, snapshot))
+    const view = render(<AppFrame path={bundle} />)
+    await waitFor(() => expect(runningFrame()).not.toBeNull())
+    const before = runningFrame()!
+    view.rerender(<AppFrame path={bundle} visible={false} />)
+    await put('data/items/a.json', '{}')
+    await put('log.local.txt', 'one line')
+    await act(async () => code.scan())
+    expect(signals).toEqual([])
+    expect(runningFrame()).toBe(before)
+    await put('node_modules/lib/index.js', 'window.version = 2')
+    // Exercise the same scanner used by watcher hints and onSnapshot healing.
+    // No dependency is invented in the snapshot, and no renderer stamp changes.
+    await act(async () => code.scan())
+    expect(before.isConnected).toBe(false)
+    expect(runningFrame()).toBeNull()
+    await screen.findByText(/wants permission/)
+    expect(signals.at(-1)).toBe((await grants.status(REMOTE, root, bundle)).codeHash)
+    expect(signals.at(-1)).not.toBe(original.codeHash)
+    expect(document.activeElement).toBe(document.body)
+    view.rerender(<AppFrame path={bundle} />)
+    expect(runningFrame()).toBeNull()
+    expect(screen.getByRole('button', { name: 'Allow for 30 days' })).toBeTruthy()
+    view.unmount()
+  } finally {
+    await code.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('successful approval rereads main for expiry before executing the approved load', async () => {
+  approvalStatus.needsApproval = true
+  const pending = deferred<ReturnType<typeof status>>()
+  render(<AppFrame path="Team/Retro.app" />)
+  const allow = await screen.findByRole('button', { name: 'Allow for 30 days' })
+  grantsMock.mockReturnValueOnce(pending.promise)
+  await userEvent.click(allow)
+  expect(runningFrame()).toBeNull()
+  await act(async () =>
+    pending.resolve({ ...status(), affordances: [], expiresAt: Date.now() + 1000 }),
+  )
+  expect(runningFrame()).not.toBeNull()
 })

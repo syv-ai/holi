@@ -55,7 +55,7 @@ export function SidebarNavItem({
       </SidebarMenuButton>
       {inProgress ? (
         <SidebarMenuBadge aria-hidden="true">
-          <Badge variant="outline">In progress</Badge>
+          <Badge variant="secondary">In progress</Badge>
         </SidebarMenuBadge>
       ) : count > 0 ? (
         <SidebarMenuBadge aria-hidden="true">{count}</SidebarMenuBadge>

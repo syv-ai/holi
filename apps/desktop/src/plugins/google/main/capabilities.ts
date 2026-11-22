@@ -41,6 +41,7 @@ import {
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { GoogleAccountsManager, GoogleAccountsOverview } from './accounts'
+import type { GoogleSession } from './session'
 import { vaultAttachments } from './attachments'
 import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './api'
 import {
@@ -67,6 +68,7 @@ import {
   textOnly,
   type MailboxName,
   type MailCategory,
+  type MailPage,
 } from './gmail'
 import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
@@ -75,7 +77,11 @@ import type { OutgoingMail } from './mime'
 import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
+import { meetingParams, type MeetingCreation } from './meeting-creation'
+import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
+import { isMailMarker, validateBatch, validateThreadId, type MarkerValue } from './markers'
+import { normalizeMailMarkerPreferences, type MailMarkerPreferences } from '../shared/mail-markers'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -87,8 +93,11 @@ export const GOOGLE_NAMESPACES = ['google'] as const
 
 export interface GoogleCapabilityDeps {
   accounts: GoogleAccountsManager
+  meetings?: MeetingCreation
   /** The vault's cached data layer; null when no account is connected to it. */
   dataFor(remote: string): Promise<GoogleData | null>
+  /** Cached data permanently bound to this resolved account session. */
+  dataForSession?(session: GoogleSession): GoogleData
   /** This vault's Google settings on this machine (`GOOGLE_INFO.settings`):
    *  the agenda view, an app and the agent all read through them. */
   settings: GoogleSettingsStore
@@ -96,10 +105,18 @@ export interface GoogleCapabilityDeps {
 
 /** The Google plugin's own settings in a vault, read and written by root. */
 interface GoogleSettingsStore {
-  read(root: string): Promise<{ calendars: CalendarOverrides; imageSenders: string[] }>
+  read(root: string): Promise<{
+    calendars: CalendarOverrides
+    imageSenders: string[]
+    imagesFromAllSenders: boolean
+  }>
   write(
     root: string,
-    values: Partial<{ calendars: CalendarOverrides; imageSenders: string[] }>,
+    values: Partial<{
+      calendars: CalendarOverrides
+      imageSenders: string[]
+      imagesFromAllSenders: boolean
+    }>,
   ): Promise<void>
 }
 
@@ -149,6 +166,7 @@ function windowParams(raw: unknown): { from: string; to: string } {
   const p = paramsObject(raw)
   const fromText = optionalStringParam(p, 'from')
   const toText = optionalStringParam(p, 'to')
+  // Main's CLI default, evaluated per request; this clock never runs in React render.
   const start = fromText === undefined ? Date.now() : instant(fromText, 'from')
   const end = toText === undefined ? start + DEFAULT_AGENDA_DAYS * DAY_MS : instant(toText, 'to')
   if (end <= start) throw new CapabilityError('BAD_REQUEST', 'from must be before to')
@@ -162,6 +180,9 @@ const agendaWindow = ({ from, to }: { from: string; to: string }): AgendaWindow 
   timeMin: from,
   timeMax: to,
 })
+
+const NEEDS_REPLY_CLI_TEXT: unique symbol = Symbol('needs-reply CLI text envelope')
+type CliMailPage = MailPage & { [NEEDS_REPLY_CLI_TEXT]?: true }
 
 const MAIL_CATEGORIES: readonly MailCategory[] = [
   'primary',
@@ -179,6 +200,9 @@ function searchParams(raw: unknown): {
   category?: MailCategory
   unread?: boolean
   mailbox?: MailboxName
+  needsReply?: boolean
+  includeCc?: boolean
+  includeAutomated?: boolean
 } {
   const p = paramsObject(raw)
   const category = MAIL_CATEGORIES.find((c) => c === optionalStringParam(p, 'category'))
@@ -192,6 +216,9 @@ function searchParams(raw: unknown): {
     ...(category === undefined ? {} : { category }),
     ...(flagParam(p, 'unread') ? { unread: true } : {}),
     ...(mailbox === undefined ? {} : { mailbox }),
+    ...(flagParam(p, 'needs-reply') ? { needsReply: true } : {}),
+    ...(flagParam(p, 'include-cc') ? { includeCc: true } : {}),
+    ...(flagParam(p, 'include-automated') ? { includeAutomated: true } : {}),
   }
 }
 
@@ -219,10 +246,19 @@ function addressesParam(p: Record<string, unknown>, key: string): string[] {
  * in `buildRfc822`, the last thing to see the message, which already refuses a
  * newline in any header.
  */
-function composeParams(raw: unknown): ComposeWrite {
+function expectedAccountParam(p: Record<string, unknown>): string | undefined {
+  const sub = optionalStringParam(p, 'expectedAccountSub')
+  if (sub !== undefined && !/^[A-Za-z0-9_-]+$/.test(sub)) {
+    throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub must be a Google account id')
+  }
+  return sub
+}
+
+function composeParams(raw: unknown): ComposeWrite & { expectedAccountSub?: string } {
   const p = paramsObject(raw)
   const draftId = optionalStringParam(p, 'draftId')
   const threadId = optionalStringParam(p, 'threadId')
+  const expectedAccountSub = expectedAccountParam(p)
   const mail = p.mail
   if (mail === null || typeof mail !== 'object' || Array.isArray(mail)) {
     throw new CapabilityError('BAD_REQUEST', 'mail must be an object')
@@ -241,6 +277,7 @@ function composeParams(raw: unknown): ComposeWrite {
     throw new CapabilityError('BAD_REQUEST', 'mail.html must be a string')
   }
   const cc = addressesParam(m, 'cc')
+  const bcc = addressesParam(m, 'bcc')
   // A forward names the message whose attachments travel with it, never the
   // files: main fetches the bytes, so nothing base64 crosses the IPC seam.
   let forwardOf: { messageId: string } | undefined
@@ -251,12 +288,14 @@ function composeParams(raw: unknown): ComposeWrite {
     forwardOf = { messageId: stringParam(p.forwardOf as Record<string, unknown>, 'messageId') }
   }
   return {
+    ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
     ...(draftId === undefined ? {} : { draftId }),
     ...(threadId === undefined ? {} : { threadId }),
     ...(forwardOf === undefined ? {} : { forwardOf }),
     mail: {
       to: addressesParam(m, 'to'),
       ...(cc.length === 0 ? {} : { cc }),
+      ...(bcc.length === 0 ? {} : { bcc }),
       subject: text('subject'),
       body: text('body'),
       ...(typeof html === 'string' ? { html } : {}),
@@ -265,13 +304,34 @@ function composeParams(raw: unknown): ComposeWrite {
 }
 
 /** The CLI's message: `--to`, `--subject`, `--cc` and the body from stdin. */
-function cliMail(p: Record<string, unknown>): OutgoingMail {
+function cliMail(
+  p: Record<string, unknown>,
+  { allowBcc = true }: { allowBcc?: boolean } = {},
+): OutgoingMail {
+  const repeated = (key: string): string[] => {
+    const value = p[key]
+    const values = value === undefined ? [] : typeof value === 'string' ? [value] : value
+    if (!Array.isArray(values) || !values.every((entry) => typeof entry === 'string')) {
+      throw new CapabilityError('BAD_REQUEST', `${key} must be addresses`)
+    }
+    return values.flatMap((entry) =>
+      entry
+        .split(',')
+        .map((address) => address.trim())
+        .filter(Boolean),
+    )
+  }
   const to = addressesParam(p, 'to')
   if (to.length === 0) throw new CapabilityError('BAD_REQUEST', 'to is required')
-  const cc = addressesParam(p, 'cc')
+  const cc = repeated('cc')
+  if (!allowBcc && p.bcc !== undefined) {
+    throw new CapabilityError('BAD_REQUEST', '--bcc is only available when creating a draft')
+  }
+  const bcc = allowBcc ? repeated('bcc') : []
   return {
     to,
     ...(cc.length === 0 ? {} : { cc }),
+    ...(bcc.length === 0 ? {} : { bcc }),
     subject: stringParam(p, 'subject'),
     body: typeof p.body === 'string' ? p.body : '',
   }
@@ -309,10 +369,13 @@ async function withAttachments(
  * Gmail's `drafts.send`, which deletes it as it sends: a draft followed by a
  * composed send would be two messages and an orphaned draft.
  */
-function sendParams(raw: unknown): ComposeWrite & { attach?: string[] } {
+function sendParams(
+  raw: unknown,
+): ComposeWrite & { attach?: string[]; expectedAccountSub?: string } {
   const p = paramsObject(raw)
   if (p.mail !== undefined) return composeParams(raw)
   const draft = optionalStringParam(p, 'draft')
+  const expectedAccountSub = expectedAccountParam(p)
   if (draft !== undefined) {
     if (p.to !== undefined) {
       throw new CapabilityError('BAD_REQUEST', '--draft and --to are alternatives')
@@ -322,9 +385,17 @@ function sendParams(raw: unknown): ComposeWrite & { attach?: string[] } {
     if (p.attach !== undefined) {
       throw new CapabilityError('BAD_REQUEST', '--draft and --attach are alternatives')
     }
-    return { draftId: draft, mail: { to: [], subject: '', body: '' } }
+    return {
+      ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
+      draftId: draft,
+      mail: { to: [], subject: '', body: '' },
+    }
   }
-  return { mail: cliMail(p), attach: attachParam(p) }
+  return {
+    ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
+    mail: cliMail(p, { allowBcc: false }),
+    attach: attachParam(p),
+  }
 }
 
 /** `schedule`'s and `reschedule`'s event fields. */
@@ -356,7 +427,6 @@ function inviteAnswer(p: Record<string, unknown>): InviteAnswer {
 }
 
 const ok = { ok: true as const }
-const json = (value: unknown): string => JSON.stringify(value, null, 2)
 
 /** `holi google accounts`, as the agent reads it. */
 function accountsText(value: GoogleAccountsOverview): string {
@@ -378,22 +448,52 @@ function accountsText(value: GoogleAccountsOverview): string {
   return lines.join('\n')
 }
 
+const capabilityDisposers = new WeakMap<object, () => void>()
+
+export function disposeGoogleCapabilities(capabilities: object): void {
+  capabilityDisposers.get(capabilities)?.()
+}
+
 export function googleCapabilities(deps: GoogleCapabilityDeps) {
   /** The connect in progress. One per process: a second supersedes the first
    *  rather than leaving a listener holding a port. */
   let connectFlow: LoopbackFlow | null = null
+  let disposed = false
+  let connectGeneration = 0
 
   /** The vault's data layer, or the refusal that says there is none. */
+  const accountOf = async (remote: string, expectedAccountSub?: string) => {
+    const session = await deps.accounts.sessionFor(remote)
+    if (expectedAccountSub !== undefined && session?.accountSub !== expectedAccountSub) {
+      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+    }
+    if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
+    if (expectedAccountSub !== undefined && deps.dataForSession === undefined) {
+      throw new CapabilityError('UNAVAILABLE', 'account-bound Google data is unavailable')
+    }
+    const data = deps.dataForSession?.(session) ?? (await deps.dataFor(remote))
+    if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
+    return { session, data }
+  }
+
+  const validateSession = (remote: string, session: GoogleSession) => async () => {
+    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+    const current = await deps.accounts.sessionFor(remote)
+    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+    if (current !== session)
+      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+  }
+
   const dataOf = async (remote: string): Promise<GoogleData> => {
     const data = await deps.dataFor(remote)
     if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
     return data
   }
 
-  /**
-   * A Google client bound to the vault's session's token **getter**, never a
-   * token. Built per call: a held one would outlive a disconnect.
-   */
+  /** A client bound to one resolved session, never a vault mapping looked up later. */
+  const apiForSession = (session: GoogleSession): GoogleApi =>
+    new GoogleApi({ accessToken: () => session.getAccessToken() })
+
   const apiOf = (remote: string): GoogleApi =>
     new GoogleApi({
       accessToken: async () => {
@@ -405,7 +505,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
   const overrides = async (root: string) => (await deps.settings.read(root)).calendars
 
-  return {
+  const capabilities = {
     /**
      * Who is connected, and whether that grant is still wide enough. A grant
      * from before `GOOGLE_SCOPES` widened keeps working and is insufficient
@@ -432,9 +532,17 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: noParams,
       run: async (ctx) => {
+        if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+        const generation = ++connectGeneration
         connectFlow?.cancel()
-        connectFlow = await deps.accounts.connect(ctx.remote)
-        return { authUrl: connectFlow.authUrl }
+        connectFlow = null
+        const flow = await deps.accounts.connect(ctx.remote)
+        if (disposed || generation !== connectGeneration) {
+          flow.cancel()
+          throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+        }
+        connectFlow = flow
+        return { authUrl: flow.authUrl }
       },
     }),
 
@@ -621,21 +729,48 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
     /**
      * A page of threads matching Gmail's own search grammar; no query is the
-     * inbox. Cached and current: a `history.list` delta brings the cached list
-     * up to date. The CLI prints the threads alone; `nextPageToken` is the
-     * list view's "load more".
+     * inbox. Ordinary UI lists use the cache and history delta. CLI reads use
+     * a fresh page; --json exposes its continuation token. Ordinary CLI text
+     * remains a thread array; --needs-reply text includes the page envelope.
      */
     'google.search': cap({
       doors: ['ui', 'cli', 'app'],
       appGrant: 'mail',
-      cli: { args: ['query?'], summary: "threads matching Gmail's search grammar (the inbox)" },
+      cli: {
+        args: ['query?'],
+        flags: ['needs-reply', 'include-cc', 'include-automated', 'unread'],
+        values: ['pageToken', 'category', 'mailbox'],
+        summary:
+          "threads matching Gmail's search grammar (the inbox). --needs-reply is a factual shortlist, not a classification of obligation: it selects incoming mail after the latest sent message, so a new incoming message remains eligible after an older reply; a draft is not a sent reply. The facts replied, lastReplyAt, addressedAs and automated describe Gmail evidence, not semantics: replied means a sent message followed an incoming message, and lastReplyAt is the latest such sent message time. addressedAs is the latest incoming message's recipient classification (to, cc, neither or unknown), or null when there is no incoming message; known send-as aliases are matched and unknown recipients remain eligible. Direct To is the default only with --needs-reply; --include-cc opts into Cc-only and --include-automated opts into positively recognized automation only in that mode, and neither flag otherwise filters results. No recognized automation evidence is not proof a human wrote it; automationUnknown marks MIME evidence that was unavailable or truncated and remains eligible. Filters apply to one Gmail page. Use --json to receive nextPageToken and continue with --pageToken <token>; an empty filtered page may still have a token and is not exhausted until nextPageToken is null.",
+      },
       params: searchParams,
       run: async (ctx, options) => {
         const data = await dataOf(ctx.remote)
-        return google(() => data.threads(options))
+        const page = (await google(() =>
+          data.threads(options, { freshPage: ctx.door === 'cli' }),
+        )) as CliMailPage
+        if (ctx.door === 'cli' && options.needsReply === true) {
+          Object.defineProperty(page, NEEDS_REPLY_CLI_TEXT, { value: true })
+        }
+        return page
       },
-      cliValue: (page) => ({ ...page, threads: fenceThreads(page.threads) }),
-      text: (page) => json(page.threads),
+      cliValue: (page: CliMailPage) => {
+        const value = {
+          ...page,
+          threads: fenceThreads(
+            page.threads.map((thread) => ({
+              ...thread,
+              snippet: cleanSearchSnippet(thread.snippet),
+            })),
+          ),
+        }
+        if (page[NEEDS_REPLY_CLI_TEXT]) {
+          Object.defineProperty(value, NEEDS_REPLY_CLI_TEXT, { value: true })
+        }
+        return value as CliMailPage
+      },
+      text: (page: CliMailPage) =>
+        JSON.stringify(page[NEEDS_REPLY_CLI_TEXT] ? page : page.threads, null, 2),
     }),
 
     /**
@@ -671,10 +806,17 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
      */
     'google.read': cap({
       doors: ['cli'],
-      cli: { args: ['id'], summary: 'one thread, as text' },
-      params: idParams,
-      run: async (ctx, { id }) =>
-        google(async () => textOnly(await readThread(apiOf(ctx.remote), id))),
+      cli: {
+        args: ['id'],
+        flags: ['full'],
+        summary: 'one thread, as text (--full: include quoted history and boilerplate)',
+      },
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return { ...idParams(p), full: flagParam(p, 'full') }
+      },
+      run: async (ctx, { id, full }) =>
+        google(async () => textOnly(await readThread(apiOf(ctx.remote), id), { full })),
       cliValue: fenceThread,
     }),
 
@@ -698,16 +840,144 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
+    'google.mailMarkerAnnotations': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const ids = p.ids
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'ids must be a list of Gmail thread ids')
+        try {
+          validateBatch(ids as string[])
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { ids: ids as string[], expectedAccountSub }
+      },
+      run: async (ctx, { ids, expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        return google(() => data.mailMarkerAnnotations(ids, validateSession(ctx.remote, session)))
+      },
+    }),
+
+    'google.mailMarkers': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const ids = p.ids
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'ids must be a list of Gmail thread ids')
+        try {
+          validateBatch(ids as string[])
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { ids: ids as string[], expectedAccountSub }
+      },
+      run: async (ctx, { ids, expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        const validate = validateSession(ctx.remote, session)
+        return google(() => data.mailMarkers(ids, validate))
+      },
+    }),
+
+    'google.mailMarkerPreferences': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const expectedAccountSub = expectedAccountParam(paramsObject(raw))
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { expectedAccountSub }
+      },
+      run: async (ctx, { expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        return google(() => data.mailMarkerPreferences(validateSession(ctx.remote, session)))
+      },
+    }),
+
+    'google.setMailMarkerPreferences': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        let preferences: MailMarkerPreferences
+        try {
+          preferences = normalizeMailMarkerPreferences(p.preferences)
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return { expectedAccountSub, preferences }
+      },
+      run: async (ctx, { expectedAccountSub, preferences }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        await google(() =>
+          data.setMailMarkerPreferences(preferences, validateSession(ctx.remote, session)),
+        )
+        return ok
+      },
+    }),
+
+    'google.setMailMarker': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const marker = p.marker
+        if (marker !== null && !isMailMarker(marker))
+          throw new CapabilityError('BAD_REQUEST', 'invalid mail marker')
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return {
+          id: stringParam(p, 'id'),
+          marker: marker as MarkerValue,
+          expectedAccountSub,
+        }
+      },
+      run: async (ctx, { id, marker, expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        const validate = validateSession(ctx.remote, session)
+        await google(() => data.setMailMarker(id, marker, validate))
+        return ok
+      },
+    }),
+
     'google.star': cap({
       doors: ['ui', 'cli'],
       cli: { args: ['id'], flags: ['off'], summary: 'star a thread (--off: unstar)' },
       params: (raw) => {
         const p = paramsObject(raw)
-        return { id: stringParam(p, 'id'), off: flagParam(p, 'off') }
+        const id = stringParam(p, 'id')
+        try {
+          validateThreadId(id)
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return { id, off: flagParam(p, 'off') }
       },
       run: async (ctx, { id, off }) => {
-        const data = await dataOf(ctx.remote)
-        await google(() => data.setStarred(id, !off))
+        const { data, session } = await accountOf(ctx.remote)
+        const validate = validateSession(ctx.remote, session)
+        await google(() => data.setStarred(id, !off, validate))
         return ok
       },
     }),
@@ -771,8 +1041,18 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
     'google.draftBody': cap({
       doors: ['ui'],
-      params: idParams,
-      run: async (ctx, { id }) => google(() => readDraft(apiOf(ctx.remote), id)),
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const expectedAccountSub = expectedAccountParam(p)
+        return {
+          id: stringParam(p, 'id'),
+          ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
+        }
+      },
+      run: async (ctx, { id, expectedAccountSub }) => {
+        const { session } = await accountOf(ctx.remote, expectedAccountSub)
+        return google(() => readDraft(apiForSession(session), id))
+      },
     }),
 
     /**
@@ -794,8 +1074,8 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.saveDraft': cap({
       doors: ['ui'],
       params: composeParams,
-      run: async (ctx, input) => {
-        const data = await dataOf(ctx.remote)
+      run: async (ctx, { expectedAccountSub, ...input }) => {
+        const { data } = await accountOf(ctx.remote, expectedAccountSub)
         return google(() => data.saveDraft(input))
       },
     }),
@@ -805,13 +1085,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: (raw) => {
         const p = paramsObject(raw)
         const threadId = optionalStringParam(p, 'threadId')
+        const expectedAccountSub = expectedAccountParam(p)
         return {
           draftId: stringParam(p, 'draftId'),
           ...(threadId === undefined ? {} : { threadId }),
+          ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
         }
       },
-      run: async (ctx, input) => {
-        const data = await dataOf(ctx.remote)
+      run: async (ctx, { expectedAccountSub, ...input }) => {
+        const { data } = await accountOf(ctx.remote, expectedAccountSub)
         await google(() => data.discardDraft(input))
         return ok
       },
@@ -827,21 +1109,22 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       cli: {
         args: [],
         summary:
-          'draft a message: --to, --subject, [--cc], [--thread], [--attach <path>]...; the body on stdin',
+          'draft or update a message: --to, --subject, [--cc/--bcc]... [--thread] [--update <draftId>]; body on stdin',
         stdin: 'body',
-        many: ['attach'],
+        many: ['attach', 'cc', 'bcc'],
       },
       params: (raw) => {
         const p = paramsObject(raw)
         return {
           mail: cliMail(p),
           thread: optionalStringParam(p, 'thread'),
+          update: optionalStringParam(p, 'update'),
           attach: attachParam(p),
         }
       },
-      run: async (ctx, { mail, thread, attach }) => {
+      run: async (ctx, { mail, thread, update, attach }) => {
         const attached = await withAttachments(ctx, mail, attach)
-        return google(() => createDraft(apiOf(ctx.remote), attached, thread))
+        return google(() => createDraft(apiOf(ctx.remote), attached, thread, update))
       },
     }),
 
@@ -859,12 +1142,12 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           'send a message (--to, --subject, [--cc], [--attach <path>]...; the body on stdin), or --draft <id>; asks first',
         stdin: 'body',
         stdinUnless: 'draft',
-        many: ['attach'],
+        many: ['attach', 'cc', 'bcc'],
       },
       params: sendParams,
-      run: async (ctx, { attach, ...input }) => {
+      run: async (ctx, { attach, expectedAccountSub, ...input }) => {
+        const { data } = await accountOf(ctx.remote, expectedAccountSub)
         const mail = await withAttachments(ctx, input.mail, attach ?? [])
-        const data = await dataOf(ctx.remote)
         return google(() => data.sendMail({ ...input, mail }))
       },
     }),
@@ -904,8 +1187,49 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
-    /** A solo event, the agent's and the agenda's alike. There is no way to
-     *  invite anyone: inviting would email them. */
+    /** Person-created meetings only. Every send is an explicit UI action;
+     * the agent and app doors never reach this surface. */
+    'google.meetingState': cap({
+      doors: ['ui'],
+      params: (raw) => ({ sub: stringParam(paramsObject(raw), 'sub') }),
+      run: async (ctx, { sub }) =>
+        google(() => {
+          if (!deps.meetings) throw new Error('Meeting creation is unavailable.')
+          return deps.meetings.state(ctx.remote, sub)
+        }),
+    }),
+    'google.createMeeting': cap({
+      doors: ['ui'],
+      params: meetingParams,
+      run: async (ctx, input) =>
+        google(() => {
+          if (!deps.meetings) throw new Error('Meeting creation is unavailable.')
+          return deps.meetings.submit(ctx.remote, input)
+        }),
+    }),
+    'google.checkMeeting': cap({
+      doors: ['ui'],
+      params: (raw) => ({ sub: stringParam(paramsObject(raw), 'sub') }),
+      run: async (ctx, { sub }) =>
+        google(() => {
+          if (!deps.meetings) throw new Error('Meeting creation is unavailable.')
+          return deps.meetings.check(ctx.remote, sub)
+        }),
+    }),
+    'google.finishMeeting': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return { sub: stringParam(p, 'sub'), operation: stringParam(p, 'operation') }
+      },
+      run: async (ctx, { sub, operation }) => {
+        if (!deps.meetings) throw new Error('Meeting creation is unavailable.')
+        await google(() => deps.meetings!.finish(ctx.remote, sub, operation))
+        return ok
+      },
+    }),
+
+    /** The agent and Agenda's existing solo-only creation path stays silent. */
     'google.schedule': cap({
       doors: ['ui', 'cli'],
       cli: {
@@ -1061,11 +1385,32 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.imageSenders': cap({
       doors: ['ui'],
       params: noParams,
-      run: async (ctx) => (await deps.settings.read(ctx.root)).imageSenders,
+      run: async (ctx) => {
+        const settings = await deps.settings.read(ctx.root)
+        return {
+          senders: settings.imageSenders,
+          allSenders: settings.imagesFromAllSenders === true,
+        }
+      },
     }),
 
     /** Lowercased on the way in: `Ada@Syv.ai` and `ada@syv.ai` are one person,
      *  and matching by case would re-block a sender already allowed. */
+    'google.setImagesFromAllSenders': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const value = paramsObject(raw).enabled
+        if (typeof value !== 'boolean') {
+          throw new CapabilityError('BAD_REQUEST', 'enabled must be a boolean')
+        }
+        return { enabled: value }
+      },
+      run: async (ctx, { enabled }) => {
+        await deps.settings.write(ctx.root, { imagesFromAllSenders: enabled })
+        return ok
+      },
+    }),
+
     'google.allowImagesFrom': cap({
       doors: ['ui'],
       params: (raw) => ({ sender: stringParam(paramsObject(raw), 'sender') }),
@@ -1088,6 +1433,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
   } satisfies CapabilityTable
+
+  capabilityDisposers.set(capabilities, () => {
+    if (disposed) return
+    disposed = true
+    connectGeneration += 1
+    connectFlow?.cancel()
+    connectFlow = null
+  })
+  return capabilities
 }
 
 export type GoogleCapabilities = ReturnType<typeof googleCapabilities>

@@ -6,7 +6,7 @@
  */
 import { activeRemoteAtom, openSurfaceAtom, type RendererPlugin } from '@/plugin-api'
 import { APPS_INFO } from '../info'
-import { appOpensAtom } from './apps'
+import { appCodeGenerationsAtom, appOpensAtom } from './apps'
 import { appSlashCommandsAtom, commandsChangedAtom, followAppCommands } from './commands'
 import { APP_CLAIM, APP_RAIL, APP_SURFACE } from './surface'
 
@@ -18,6 +18,15 @@ export const appsRenderer: RendererPlugin = {
   slashCommands: appSlashCommandsAtom,
   vault: followAppCommands,
   events: {
+    /** Consent's exact code generation, not the snapshot's partial file list. */
+    'code-changed': ({ remote, payload }, store) => {
+      if (remote !== store.get(activeRemoteAtom)) return
+      const { bundle } = payload as { bundle: string; codeHash: string }
+      store.set(appCodeGenerationsAtom, (generations) => ({
+        ...generations,
+        [remote]: { ...generations[remote], [bundle]: (generations[remote]?.[bundle] ?? 0) + 1 },
+      }))
+    },
     /**
      * The agent's `holi apps open`: open the app, or reload it when it is
      * open. Local authorship only: apps sync, so opening a tab whenever one

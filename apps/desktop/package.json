@@ -1,21 +1,40 @@
 {
   "name": "@holi/desktop",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Local-first markdown vaults on GitHub, with Claude Code as the assistant",
   "author": "syv.ai",
   "homepage": "https://github.com/syv-ai/holi",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "dev:debug": "electron-vite dev -- --remote-debugging-port=9333",
-    "build": "electron-vite build",
+    "dev": "node scripts/build-posix-lease.mjs && vite build --config vite.mdx-compiler.config.ts && electron-vite dev",
+    "dev:debug": "node scripts/build-posix-lease.mjs && vite build --config vite.mdx-compiler.config.ts && electron-vite dev -- --remote-debugging-port=9333",
+    "build": "node scripts/build-posix-lease.mjs && vite build --config vite.mdx-compiler.config.ts && electron-vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node scripts/build-posix-lease.mjs && vitest run",
     "rebuild:natives": "electron-rebuild -f -w node-pty",
     "shipped-history": "node scripts/shipped-history.mjs",
-    "package:mac": "electron-vite build && electron-builder --mac --publish never",
-    "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\""
+    "smoke:terminal-hints:native": "node scripts/run-terminal-hints-native-smoke.mjs",
+    "smoke:browser-hints:native": "HOLI_524_HINTS=1 node scripts/run-browser-display-smoke.mjs",
+    "smoke:terminal-hints:typecheck": "tsc --noEmit --project tsconfig.native-smoke.json",
+    "smoke:pdf-vim:native": "node scripts/run-pdf-vim-native-smoke.mjs",
+    "smoke:pdf-vim:typecheck": "tsc --noEmit --project tsconfig.pdf-vim-native-smoke.json",
+    "smoke:mail-vim:native": "node scripts/run-mail-vim-native-smoke.mjs",
+    "smoke:mail-vim:typecheck": "tsc --noEmit --project tsconfig.mail-vim-native-smoke.json",
+    "smoke:rich-text-vim:native": "node scripts/run-rich-text-vim-native-smoke.mjs",
+    "smoke:rich-text-vim:typecheck": "tsc --noEmit --project tsconfig.rich-text-vim-native-smoke.json",
+    "smoke:files-subscriptions:native": "node scripts/run-files-subscriptions-smoke.mjs",
+    "smoke:files-subscriptions:typecheck": "tsc --noEmit --project tsconfig.files-subscriptions-native-smoke.json",
+    "smoke:mdx-diagnostics:native": "node scripts/run-mdx-diagnostics-native-smoke.mjs",
+    "smoke:mdx-diagnostics:typecheck": "tsc --noEmit --project tsconfig.mdx-diagnostics-native-smoke.json",
+    "package:mac": "pnpm build && electron-builder --mac --publish never",
+    "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\"",
+    "smoke:community-hints:native": "node scripts/run-community-hints-native-smoke.mjs",
+    "smoke:github-storage:native": "node scripts/run-github-storage-native-smoke.mjs",
+    "smoke:github-storage:typecheck": "tsc --noEmit --project tsconfig.github-storage-native-smoke.json",
+    "smoke:community-hints:typecheck": "tsc --noEmit --project tsconfig.native-smoke.json",
+    "smoke:browser-frame-addressing:native": "node scripts/run-browser-frame-addressing-smoke.mjs",
+    "smoke:browser-frame-addressing:typecheck": "tsc --noEmit --project tsconfig.browser-frame-addressing-smoke.json"
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "1.4.0",
@@ -56,6 +75,7 @@
     "@lezer/common": "^1.5.2",
     "@lezer/highlight": "^1.2.3",
     "@lezer/markdown": "^1.7.1",
+    "@mdx-js/mdx": "3.1.1",
     "@replit/codemirror-css-color-picker": "^6.3.0",
     "@replit/codemirror-vim": "6.4.0",
     "@tanstack/react-table": "^9.3.1",
@@ -105,6 +125,8 @@
     "next-themes": "^0.4.6",
     "node-pty": "^1.0.0",
     "onnxruntime-web": "1.30.0",
+    "postcss": "8.5.28",
+    "postcss-value-parser": "4.2.0",
     "prosemirror-search": "^1.1.1",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",
@@ -122,6 +144,7 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^3.7.0",
     "@shadcn/lint": "0.2.3",
     "@tailwindcss/vite": "^4.3.2",
@@ -147,5 +170,8 @@
     "typescript-eslint": "^8.65.0",
     "vite": "^7.3.6",
     "vitest": "^4.1.10"
+  },
+  "optionalDependencies": {
+    "node-win-x64": "24.18.0"
   }
 }

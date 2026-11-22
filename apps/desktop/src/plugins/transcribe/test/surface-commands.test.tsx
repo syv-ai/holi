@@ -1,28 +1,36 @@
 /**
- * The command menu's way to Meetings: Go to lists it always, since the nav is
- * not drawn, and opening it never starts a recording; Start meeting is the
- * action that records.
+ * The command menu's way to Meetings: Go to lists it always and opens its app,
+ * the sidebar's, never starting a recording; Start meeting is the action that
+ * records.
  */
 import { atom, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { meetingMenuEntriesAtom, runMeetingMenuEntryAtom } from '../renderer/commands'
+import { transcribeRenderer } from '../renderer/index'
+import { MeetingsSurface } from '../renderer/meetings-surface'
 import { recorderAtom } from '../renderer/recorder'
-import { MEETINGS_SURFACE } from '../renderer/state'
+import { MEETINGS_APP } from '../renderer/state'
 
 const run = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
   trpc: { cap: { run: { mutate: (input: unknown) => run(input) } } },
 }))
 vi.mock('../renderer/audio/capture', () => ({ startCapture: vi.fn() }))
-const opened = vi.hoisted(() => [] as string[])
+const opened = vi.hoisted(() => [] as unknown[])
 vi.mock('@/plugin-api', async (original) => ({
   ...(await original<typeof import('@/plugin-api')>()),
-  openSurfaceAtom: atom(null, (_get, _set, surface: string) => void opened.push(surface)),
+  openTabAtom: atom(null, (_get, _set, tab: unknown) => void opened.push(tab)),
 }))
 
 beforeEach(() => {
   run.mockReset()
   opened.length = 0
+})
+
+test('Meetings is one of the sidebar apps, showing the list', () => {
+  expect(transcribeRenderer.sidebarApps).toEqual([
+    expect.objectContaining({ id: MEETINGS_APP, label: 'Meetings', render: MeetingsSurface }),
+  ])
 })
 
 test('Meetings is under Go to while idle, beside Start meeting', () => {
@@ -34,10 +42,10 @@ test('Meetings is under Go to while idle, beside Start meeting', () => {
   ])
 })
 
-test('going to Meetings opens the tab and records nothing', () => {
+test('going to Meetings opens its app and records nothing', () => {
   const store = createStore()
   store.set(runMeetingMenuEntryAtom, 'open')
-  expect(opened).toEqual([MEETINGS_SURFACE])
+  expect(opened).toEqual([{ kind: 'app', id: MEETINGS_APP }])
   expect(store.get(recorderAtom).phase).toBe('idle')
   expect(run).not.toHaveBeenCalled()
 })

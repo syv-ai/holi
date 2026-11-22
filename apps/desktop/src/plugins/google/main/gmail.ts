@@ -14,11 +14,13 @@
  * - The **agent** reads `body`, via `textOnly()` below. An LLM wants prose, not
  *   a table layout.
  *
- * Nothing here sanitizes, and that is deliberate: main hands over exactly what
- * Google returned, so there is one sanitizer, in the one process with a DOM,
- * rather than two half-measures that each assume the other did the work.
+ * Raw message bodies and HTML remain exactly as Google returned them. Only the
+ * agent's text projection applies conservative quoted-span cleanup; the UI's
+ * HTML sanitizer remains in the renderer, where a DOM is available.
  */
-import type { GoogleApi } from './api'
+import { Parser } from 'htmlparser2'
+import { GoogleApiError, type GoogleApi } from './api'
+import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
 
@@ -52,8 +54,8 @@ export interface MailThreadSummary {
   snippet: string
   unread: boolean
   /**
-   * The last message in the thread is one the user sent, so they have replied
-   * and are waiting on the other side.
+   * The last non-draft message in the thread is one the user sent. A trailing
+   * unsent draft does not change who last wrote a real message.
    *
    * Deliberately not "a sent message exists somewhere in this thread": in a long
    * back-and-forth that is true forever, which makes it useless for the question
@@ -87,6 +89,18 @@ export interface MailThreadSummary {
    * see `fetchInviteIds` for why it cannot, and what is asked instead.
    */
   hasInvite: boolean
+  /** Whether a Gmail-SENT message followed an incoming non-SENT message, regardless of later follow-up. */
+  replied: boolean
+  /** ISO timestamp of the last qualifying account reply, or null when none exists. */
+  lastReplyAt: string | null
+  /** Latest incoming message recipient match; unknown means account addresses could not be resolved. */
+  addressedAs: 'to' | 'cc' | 'neither' | 'unknown' | null
+  /** Recognized automation evidence on the latest incoming message only; false means no recognized signal, not that a reply is needed. */
+  automated: boolean
+  /** MIME evidence could not be fully checked; this is not proof of a human sender. */
+  automationUnknown?: boolean
+  /** Whether a real incoming message is later than the latest real sent reply. */
+  needsReply: boolean
 }
 
 interface MailAttachment {
@@ -208,10 +222,10 @@ function headerOf(part: RawPart | undefined, name: string): string | null {
  */
 function parseAddress(value: string | null): MailAddress {
   if (value === null) return { name: '', email: '' }
-  const match = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(value)
+  const match = /^\s*(?:"((?:[^"\\]|\\[\s\S])*)"|([^"<]*?))\s*<([^<>]+)>\s*$/.exec(value)
   if (match !== null) {
-    const email = match[2]!.trim().toLowerCase()
-    const name = match[1]!.trim()
+    const email = match[3]!.trim().toLowerCase()
+    const name = (match[1] ?? match[2] ?? '').replace(/\\([\s\S])/g, '$1').trim()
     return { name: name === '' ? email : name, email }
   }
   // A bare address, or a header this pattern does not fit. Treated as an
@@ -220,14 +234,84 @@ function parseAddress(value: string | null): MailAddress {
   return { name: bare, email: bare.includes('@') ? bare.toLowerCase() : '' }
 }
 
+function stripGroupLabel(mailbox: string): string {
+  let quoted = false
+  let escaped = false
+  let angleDepth = 0
+  for (let index = 0; index < mailbox.length; index += 1) {
+    const character = mailbox[index]!
+    if (escaped) escaped = false
+    else if (character === '\\' && quoted) escaped = true
+    else if (character === '"') quoted = !quoted
+    else if (!quoted && character === '<') angleDepth += 1
+    else if (!quoted && character === '>') angleDepth = Math.max(0, angleDepth - 1)
+    else if (!quoted && angleDepth === 0 && character === ':') return mailbox.slice(index + 1)
+  }
+  return mailbox
+}
+
 function parseAddresses(value: string | null): MailAddress[] {
   if (value === null) return []
-  // Split on commas that are not inside quotes: a display name may contain one
-  // ("Holm, Ada" <…>), and splitting naively mangles it into two people.
-  return value
-    .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
-    .map((a) => parseAddress(a))
-    .filter((a) => a.name !== '')
+  // RFC 5322 address lists can contain nested comments and named groups in
+  // addition to quoted commas. Remove comments outside quoted strings, then
+  // split only at top-level commas/semicolons; a group's label is not a mailbox.
+  let uncommented = ''
+  let quoted = false
+  let escaped = false
+  let commentDepth = 0
+  for (const character of value) {
+    if (escaped) {
+      if (commentDepth === 0) uncommented += character
+      escaped = false
+    } else if (character === '\\' && quoted) {
+      if (commentDepth === 0) uncommented += character
+      escaped = true
+    } else if (character === '"' && commentDepth === 0) {
+      quoted = !quoted
+      uncommented += character
+    } else if (!quoted && character === '(') {
+      commentDepth += 1
+    } else if (!quoted && character === ')' && commentDepth > 0) {
+      commentDepth -= 1
+    } else if (commentDepth === 0) {
+      uncommented += character
+    }
+  }
+
+  const addresses: MailAddress[] = []
+  let part = ''
+  quoted = false
+  escaped = false
+  let angleDepth = 0
+  for (const character of uncommented) {
+    if (escaped) {
+      part += character
+      escaped = false
+    } else if (character === '\\' && quoted) {
+      part += character
+      escaped = true
+    } else if (character === '"') {
+      quoted = !quoted
+      part += character
+    } else if (!quoted && character === '<') {
+      angleDepth += 1
+      part += character
+    } else if (!quoted && character === '>') {
+      angleDepth = Math.max(0, angleDepth - 1)
+      part += character
+    } else if (!quoted && angleDepth === 0 && (character === ',' || character === ';')) {
+      const mailbox = part.trim()
+      const candidate = stripGroupLabel(mailbox)
+      if (candidate !== '') addresses.push(parseAddress(candidate))
+      part = ''
+    } else {
+      part += character
+    }
+  }
+  if (part.trim() !== '') {
+    addresses.push(parseAddress(stripGroupLabel(part)))
+  }
+  return addresses.filter((address) => address.name !== '')
 }
 
 /** Gmail encodes body data as base64**url**; plain base64 decoding corrupts any
@@ -402,6 +486,12 @@ export interface ListThreadsOptions {
    * movement means a thread has left this list.
    */
   mailbox?: MailboxName
+  /** Filter each fetched page to incoming threads without a later real reply. */
+  needsReply?: boolean
+  /** Include messages addressed to the account only through Cc. */
+  includeCc?: boolean
+  /** Include messages with positive automation evidence. */
+  includeAutomated?: boolean
 }
 
 /** The mailboxes the list can be of. Not every Gmail label: only the two that
@@ -513,10 +603,10 @@ export async function fetchCategoryCounts(api: GoogleApi): Promise<CategoryCount
  * the row. That is the N+1 this pools; asking for `full` here would download
  * every body to render a list.
  */
-export async function listThreads(
+export async function listThreadIds(
   api: GoogleApi,
   options: ListThreadsOptions = {},
-): Promise<MailPage> {
+): Promise<{ ids: string[]; nextPageToken: string | null }> {
   const page = await api.get<{ threads?: { id?: string }[]; nextPageToken?: string }>(
     `${BASE}/threads`,
     {
@@ -526,13 +616,26 @@ export async function listThreads(
     },
   )
 
-  const ids = (page.threads ?? []).map((t) => t.id).filter((id): id is string => id !== undefined)
-
   return {
-    threads: await fetchThreadSummaries(api, ids),
+    ids: (page.threads ?? [])
+      .map((thread) => thread.id)
+      .filter((id): id is string => id !== undefined),
     // `undefined` means "no further page" on the wire; `null` says it on the
     // type, so a caller cannot mistake "not asked" for "nothing left".
     nextPageToken: page.nextPageToken ?? null,
+  }
+}
+
+export async function listThreads(
+  api: GoogleApi,
+  options: ListThreadsOptions = {},
+  knownAddresses?: string[],
+): Promise<MailPage> {
+  const page = await listThreadIds(api, options)
+
+  return {
+    threads: await fetchThreadSummaries(api, page.ids, knownAddresses),
+    nextPageToken: page.nextPageToken,
     syncedAt: new Date().toISOString(),
   }
 }
@@ -547,6 +650,7 @@ export async function listThreads(
 export async function fetchThreadSummaries(
   api: GoogleApi,
   ids: string[],
+  knownAddresses?: string[],
 ): Promise<MailThreadSummary[]> {
   if (ids.length === 0) return []
 
@@ -555,52 +659,155 @@ export async function fetchThreadSummaries(
   const labelNames = fetchLabelNames(api)
 
   const threads = await mapPooled(ids, 5, (id) =>
-    api.get<RawThread>(`${BASE}/threads/${id}`, {
-      format: 'metadata',
-      // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
-      // Comma-joined, Gmail reads the whole string as one header name, matches
-      // nothing, and returns 200 with no headers.
-      metadataHeaders: [
-        'Subject',
-        'From',
-        'Date',
-        'Message-ID',
-        'To',
-        'Cc',
-        'Reply-To',
-        'List-Unsubscribe',
-      ],
-    }),
+    api
+      .get<RawThread>(`${BASE}/threads/${id}`, {
+        format: 'metadata',
+        // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
+        // Comma-joined, Gmail reads the whole string as one header name, matches
+        // nothing, and returns 200 with no headers.
+        metadataHeaders: [
+          'Subject',
+          'From',
+          'Date',
+          'Message-ID',
+          'To',
+          'Cc',
+          'Reply-To',
+          'List-Unsubscribe',
+          'Auto-Submitted',
+          'List-Id',
+          'Content-Type',
+        ],
+      })
+      .catch((error: unknown): RawThread => {
+        if (error instanceof GoogleApiError && error.status === 404) return {}
+        throw error
+      }),
   )
 
   const names = await labelNames
   const summaries = threads
-    .map((thread) => summarize(thread, names))
+    .map((thread) => summarize(thread, names, knownAddresses))
     .filter((t): t is Omit<MailThreadSummary, 'hasInvite'> => t !== null)
 
+  // Metadata omits MIME children. Inspect only multipart MIME structure and
+  // headers for an ambiguous latest incoming; never request body bytes.
+  const { invitationIds, unknownIds } = await fetchLatestIncomingInvitations(api, threads)
   const invites = await fetchInviteIds(api, summaries)
-  return summaries.map((summary) => ({ ...summary, hasInvite: invites.has(summary.id) }))
+  return summaries.map((summary) => ({
+    ...summary,
+    automated: summary.automated || invitationIds.has(summary.id),
+    automationUnknown: unknownIds.has(summary.id),
+    hasInvite: invites.has(summary.id),
+  }))
 }
 
 /**
- * Which of these threads carry a calendar invite.
- *
- * **The question is asked backwards, deliberately.** A thread's attachments are
- * not knowable from the summary fetch: it asks for `format: 'metadata'`, which
- * returns headers and no `payload.parts`. `format: 'full'` would download every
- * body in the page to draw one icon. So Gmail is asked once which threads hold
- * an `.ics`, and the answer is intersected with the page in hand.
- *
- * **The date window is what makes the intersection sound.** `threads.list` is
- * newest-first across the whole mailbox, so unbounded this answers "the most
- * recent threads with an .ics", which would match nothing on an older page. The
- * window is taken
- * from the dates of the threads being intersected, with a day of slack either
- * side because Gmail reads `after:`/`before:` in the account's own timezone.
- *
- * No mailbox term: the ids may have come from the inbox, from Sent or from a
- * search, and a superset costs nothing when the result is intersected anyway.
- * Gmail excludes spam and trash from an unqualified search on its own.
+ * Invitation evidence is a headers-only projection, never a full message: the
+ * partial response selects MIME type, headers and parts only. Eight nested
+ * levels are examined. Children beyond that bound set automationUnknown; a
+ * 404 omits invitation evidence for that message, while other Google failures
+ * still fail the page rather than being mistaken for negative evidence.
+ */
+const MIME_EVIDENCE_DEPTH = 8
+
+function mimeEvidenceFields(depth: number): string {
+  const headers = 'mimeType,headers(name,value)'
+  return depth === 0
+    ? `${headers},parts(mimeType)`
+    : `${headers},parts(${mimeEvidenceFields(depth - 1)})`
+}
+
+function hasUnexaminedMimeDepth(part: RawPart | undefined, depth: number): boolean {
+  if (part === undefined) return false
+  if (depth === 0) return (part.parts?.length ?? 0) > 0
+  return (part.parts ?? []).some((child) => hasUnexaminedMimeDepth(child, depth - 1))
+}
+
+async function fetchLatestIncomingInvitations(
+  api: GoogleApi,
+  threads: RawThread[],
+): Promise<{ invitationIds: Set<string>; unknownIds: Set<string> }> {
+  const unknownIds = new Set<string>()
+  const ids = threads.flatMap((thread) => {
+    if (thread.id === undefined) return []
+    const messages = thread.messages ?? []
+    const latestIncoming = latestIncomingOf(messages)
+    const payload = latestIncoming?.payload
+    if (latestIncoming?.id === undefined || payload === undefined) {
+      unknownIds.add(thread.id)
+      return []
+    }
+
+    const hasOtherEvidence = hasAutomationHeaderEvidence(payload)
+    if (hasInvitationMethod(payload)) return []
+    const contentType = headerOf(payload, 'Content-Type')
+    const mainType = parseHeaderParameters(contentType ?? '')?.main.toLowerCase()
+    const multipart =
+      payload.mimeType?.toLowerCase().startsWith('multipart/') === true ||
+      mainType?.startsWith('multipart/') === true
+    return !hasOtherEvidence && multipart
+      ? [{ threadId: thread.id, messageId: latestIncoming.id }]
+      : []
+  })
+
+  const results = await mapPooled(ids, 5, async ({ threadId, messageId }) => {
+    try {
+      const message = await api.get<RawMessage>(
+        `${BASE}/messages/${encodeURIComponent(messageId)}`,
+        {
+          format: 'full',
+          fields: `id,threadId,payload(${mimeEvidenceFields(MIME_EVIDENCE_DEPTH)})`,
+        },
+      )
+      if (message.threadId !== threadId) return { threadId, invitation: false, unknown: true }
+      return {
+        threadId,
+        invitation: hasInvitationMethod(message.payload),
+        unknown:
+          message.payload === undefined ||
+          hasUnexaminedMimeDepth(message.payload, MIME_EVIDENCE_DEPTH),
+      }
+    } catch (error) {
+      // A message can disappear after its thread metadata was fetched. Omit that
+      // thread's invitation evidence; do not turn a lookup failure into proof.
+      if (error instanceof GoogleApiError && error.status === 404) {
+        return { threadId, invitation: false, unknown: true }
+      }
+      throw error
+    }
+  })
+  const found = results.filter((result): result is NonNullable<typeof result> => result !== null)
+  return {
+    invitationIds: new Set(
+      found.filter((result) => result.invitation).map((result) => result.threadId),
+    ),
+    unknownIds: new Set([
+      ...unknownIds,
+      ...found.filter((result) => result.unknown).map((result) => result.threadId),
+    ]),
+  }
+}
+
+/** Only a valid invitation method on a calendar MIME part is positive evidence. */
+function hasInvitationMethod(part: RawPart | undefined): boolean {
+  if (part === undefined) return false
+  if (part.mimeType?.toLowerCase() === 'text/calendar') {
+    const contentType = headerOf(part, 'Content-Type')
+    const method = parseHeaderParameters(contentType ?? '')?.parameters.get('method')
+    if (method !== undefined && ['request', 'reply', 'cancel'].includes(method.toLowerCase())) {
+      return true
+    }
+  }
+  return (part.parts ?? []).some(hasInvitationMethod)
+}
+
+/**
+ * Which of these threads carry a calendar invite. Gmail's attachment search
+ * avoids fetching full message bodies merely to draw one icon. Its result is
+ * intersected with the page, using a date window with a day of slack either
+ * side because Gmail interprets `after:`/`before:` in the account's timezone.
+ * No mailbox term is needed: the ids may come from inbox, Sent or a search.
  */
 async function fetchInviteIds(
   api: GoogleApi,
@@ -696,11 +903,108 @@ function unsubscribeUrlOf(header: string | null): string | null {
   return null
 }
 
+function validUnsubscribeUri(candidate: string): string | null {
+  if (!candidate || /[\s<>\\]/.test(candidate)) return null
+  try {
+    const url = new URL(candidate)
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.hostname ? candidate : null
+    }
+    if (url.protocol === 'mailto:' && /^[^@\s,<>]+@[^@\s,<>]+\.[^@\s,<>]+$/.test(url.pathname)) {
+      return candidate
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+/** Parse a header value and its complete RFC-style parameter list. */
+function parseHeaderParameters(
+  value: string,
+): { main: string; parameters: Map<string, string> } | null {
+  const parts: string[] = []
+  let part = ''
+  let quoted = false
+  let escaped = false
+  for (const character of value) {
+    if (escaped) {
+      part += character
+      escaped = false
+    } else if (quoted && character === '\\') {
+      part += character
+      escaped = true
+    } else if (character === '"') {
+      quoted = !quoted
+      part += character
+    } else if (character === ';' && !quoted) {
+      parts.push(part.trim())
+      part = ''
+    } else {
+      part += character
+    }
+  }
+  if (quoted || escaped) return null
+  parts.push(part.trim())
+  const main = parts.shift()
+  if (!main) return null
+  const parameters = new Map<string, string>()
+  for (const entry of parts) {
+    const match = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+)\s*=\s*(.*)$/.exec(entry)
+    if (!match || !match[2]) return null
+    const name = match[1]!.toLowerCase()
+    const raw = match[2]!
+    let parsed: string
+    if (raw.startsWith('"')) {
+      if (!/^"(?:[^"\\]|\\[\s\S])*"$/.test(raw)) return null
+      parsed = raw.slice(1, -1).replace(/\\([\s\S])/g, '$1')
+    } else {
+      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(raw)) return null
+      parsed = raw
+    }
+    if (parameters.has(name)) return null
+    parameters.set(name, parsed)
+  }
+  return { main, parameters }
+}
+
+function validListId(value: string | null): boolean {
+  if (value === null) return false
+  const match =
+    /^\s*(?:[^<>\r\n]*?\s*)?<([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+)>\s*$/.exec(
+      value,
+    )
+  return match !== null
+}
+
+function hasAutomationHeaderEvidence(payload: RawPart | undefined): boolean {
+  const autoSubmitted = headerOf(payload, 'Auto-Submitted')
+  const listUnsubscribe = headerOf(payload, 'List-Unsubscribe')
+  return (
+    (autoSubmitted !== null &&
+      ['auto-generated', 'auto-replied'].includes(
+        parseHeaderParameters(autoSubmitted)?.main.toLowerCase() ?? '',
+      )) ||
+    validListId(headerOf(payload, 'List-Id')) ||
+    (listUnsubscribe !== null &&
+      [...listUnsubscribe.matchAll(/<([^<>]*)>/g)].some(
+        (match) => validUnsubscribeUri(match[1]!) !== null,
+      ))
+  )
+}
+
+function latestIncomingOf(messages: RawMessage[]): RawMessage | undefined {
+  return [...messages]
+    .reverse()
+    .find((message) => !message.labelIds?.includes('SENT') && !message.labelIds?.includes('DRAFT'))
+}
+
 /** Everything derivable from the metadata fetch: everything except
  *  `hasInvite`. */
 function summarize(
   thread: RawThread,
   labelNames: Map<string, string>,
+  knownAddresses?: string[],
 ): Omit<MailThreadSummary, 'hasInvite'> | null {
   const messages = thread.messages ?? []
   const first = messages[0]
@@ -710,6 +1014,38 @@ function summarize(
   // A label anywhere in the thread applies to the thread, as in Gmail's own list.
   const allLabels = messages.flatMap((m) => m.labelIds ?? [])
   const category = last.labelIds?.map((id) => CATEGORY_BY_LABEL[id]).find((c) => c !== undefined)
+  const latestIncoming = latestIncomingOf(messages)
+  let seenIncoming = false
+  const replies = messages.filter((message) => {
+    if (!message.labelIds?.includes('SENT') && !message.labelIds?.includes('DRAFT')) {
+      seenIncoming = true
+      return false
+    }
+    return message.labelIds?.includes('SENT') === true && seenIncoming
+  })
+  const incomingTo =
+    latestIncoming === undefined ? [] : parseAddresses(headerOf(latestIncoming.payload, 'To'))
+  const incomingCc =
+    latestIncoming === undefined ? [] : parseAddresses(headerOf(latestIncoming.payload, 'Cc'))
+  const own =
+    knownAddresses === undefined || knownAddresses.length === 0
+      ? null
+      : new Set(knownAddresses.map((address) => address.trim().toLowerCase()))
+  const matches = (addresses: MailAddress[]) =>
+    own !== null && addresses.some((address) => own.has(address.email))
+  const listEvidence =
+    latestIncoming !== undefined && hasAutomationHeaderEvidence(latestIncoming.payload)
+  const contentType =
+    latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'Content-Type')
+  const mimeType = contentType?.split(';', 1)[0]?.trim().toLowerCase()
+  // Only a genuine invitation method is positive evidence. PUBLISH calendars and
+  // arbitrary text/attachments mentioning calendar are not necessarily automation.
+  const calendarParameters = contentType === null ? null : parseHeaderParameters(contentType)
+  const invitation =
+    mimeType === 'text/calendar' &&
+    ['request', 'reply', 'cancel'].includes(
+      calendarParameters?.parameters.get('method')?.toLowerCase() ?? '',
+    )
 
   return {
     id: thread.id,
@@ -727,7 +1063,11 @@ function summarize(
     // `SENT` is Gmail's own label for "this account sent this", so it needs no
     // comparison against the connected address, which would be wrong anyway
     // for aliases and send-as addresses.
-    answered: last.labelIds?.includes('SENT') === true,
+    answered:
+      [...messages]
+        .reverse()
+        .find((message) => !message.labelIds?.includes('DRAFT'))
+        ?.labelIds?.includes('SENT') === true,
     messageCount: messages.length,
     webUrl: messageUrl(headerOf(first.payload, 'Message-ID'), thread.id),
     starred: allLabels.includes('STARRED'),
@@ -743,6 +1083,28 @@ function summarize(
       .map((id) => labelNames.get(id))
       .filter((name): name is string => name !== undefined),
     unsubscribeUrl: unsubscribeUrlOf(headerOf(last.payload, 'List-Unsubscribe')),
+    replied: replies.length > 0,
+    lastReplyAt: replies.length === 0 ? null : isoDate(replies[replies.length - 1]!),
+    addressedAs:
+      latestIncoming === undefined
+        ? null
+        : own === null
+          ? 'unknown'
+          : matches(incomingTo)
+            ? 'to'
+            : matches(incomingCc)
+              ? 'cc'
+              : 'neither',
+    // Conservative evidence only; unknown MIME depth is reported separately.
+    automated: latestIncoming !== undefined && (listEvidence || invitation),
+    needsReply:
+      latestIncoming !== undefined &&
+      messages.indexOf(latestIncoming) >
+        messages.reduce(
+          (lastSent, message, index) =>
+            message.labelIds?.includes('SENT') === true ? index : lastSent,
+          -1,
+        ),
   }
 }
 
@@ -782,6 +1144,37 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
   }
 }
 
+/** Preserve each HTML quote's extent only for the CLI's HTML-only fallback.
+ * The reader and --full retain the original htmlToText projection. */
+function quotedHtmlText(html: string): string {
+  const spans: { start: number; end: number }[] = []
+  let depth = 0
+  let start = 0
+  const parser = new Parser({
+    onopentag(name) {
+      if (name === 'blockquote' && depth++ === 0) start = parser.startIndex
+    },
+    onclosetag(name, implied) {
+      if (name !== 'blockquote' || depth === 0) return
+      if (--depth === 0 && !implied) spans.push({ start, end: parser.endIndex + 1 })
+    },
+  })
+  parser.end(html)
+  let marked = html
+  for (const { start, end } of spans.reverse()) {
+    const quote = htmlToText(html.slice(start, end))
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>')
+    marked = `${marked.slice(0, start)}<p>${quote}</p>${marked.slice(end)}`
+  }
+  return htmlToText(marked)
+}
+
 /**
  * The thread as the agent should see it: text bodies, no markup.
  *
@@ -790,12 +1183,24 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
  * unsanitized markup should reach exactly one consumer, the renderer that
  * sanitizes it.
  */
-export function textOnly(thread: MailThread): AgentMailThread {
+export function textOnly(
+  thread: MailThread,
+  { full = false }: { full?: boolean } = {},
+): AgentMailThread {
   return {
     id: thread.id,
     subject: thread.subject,
     webUrl: thread.webUrl,
-    messages: thread.messages.map(({ html: _html, ...message }) => message),
+    messages: thread.messages.map(({ html: _html, ...message }) => ({
+      ...message,
+      body: full
+        ? message.body
+        : cleanMailText(
+            typeof _html === 'string' && message.body === htmlToText(_html)
+              ? quotedHtmlText(_html)
+              : message.body,
+          ),
+    })),
   }
 }
 
@@ -832,7 +1237,8 @@ export function applyLabelDelta(
   change: { added: ReadonlySet<string>; removed: ReadonlySet<string> },
 ): MailThreadSummary {
   const patched = { ...thread }
-  for (const [label, flag] of Object.entries(LABEL_FLAGS) as [string, MailFlag][]) {
+  for (const label of Object.keys(LABEL_FLAGS) as (keyof typeof LABEL_FLAGS)[]) {
+    const flag = LABEL_FLAGS[label]
     if (change.added.has(label)) patched[flag] = true
     else if (change.removed.has(label)) patched[flag] = false
   }
@@ -868,8 +1274,25 @@ export async function setThreadStarred(
   api: GoogleApi,
   id: string,
   starred: boolean,
+  validate?: () => Promise<void>,
 ): Promise<void> {
-  await modifyThread(api, id, starred ? { add: ['STARRED'] } : { remove: ['STARRED'] })
+  await api.request(
+    'POST',
+    `${BASE}/threads/${encodeURIComponent(id)}/modify`,
+    starred ? { addLabelIds: ['STARRED'] } : { removeLabelIds: ['STARRED'] },
+    validate,
+  )
+}
+
+/** Gmail STARRED belongs to messages, so a thread stays starred while any message has it. */
+export async function threadHasStarredMessage(api: GoogleApi, id: string): Promise<boolean> {
+  const thread = (await api.request(
+    'GET',
+    `${BASE}/threads/${encodeURIComponent(id)}?format=minimal`,
+  )) as { messages?: Array<{ labelIds?: string[] }> } | null
+  return (
+    thread?.messages?.some((message) => message.labelIds?.includes('STARRED') === true) ?? false
+  )
 }
 
 /** Archive is the *absence* of `INBOX`, not the presence of anything. The
@@ -946,14 +1369,95 @@ export async function createDraft(
   api: GoogleApi,
   mail: OutgoingMail,
   threadId?: string,
+  updateId?: string,
 ): Promise<{ id: string | null }> {
-  const draft = await api.postJson<{ id?: string }>(`${BASE}/drafts`, {
-    message: {
-      raw: toBase64Url(buildRfc822(mail)),
-      ...(threadId === undefined ? {} : { threadId }),
-    },
+  if (updateId !== undefined && (!updateId.trim() || /[\r\n]/.test(updateId))) {
+    throw new Error('invalid draft id')
+  }
+  const threading = threadId === undefined ? {} : await replyHeaders(api, threadId)
+  const message = {
+    raw: toBase64Url(buildRfc822({ ...mail, ...threading })),
+    ...(threadId === undefined ? {} : { threadId }),
+  }
+  const draft =
+    updateId === undefined
+      ? await api.postJson<{ id?: string }>(`${BASE}/drafts`, { message })
+      : await api.putJson<{ id?: string }>(`${BASE}/drafts/${encodeURIComponent(updateId)}`, {
+          id: updateId,
+          message,
+        })
+  if (updateId !== undefined && draft?.id !== undefined && draft.id !== updateId) {
+    throw new Error('Gmail returned a different draft id while updating')
+  }
+  return { id: draft?.id ?? updateId ?? null }
+}
+
+function normalizeMessageIds(value: string): string[] | null {
+  const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
+  if (/[\r\n]/.test(unfolded)) return null
+  let clean = ''
+  let comments = 0
+  let escaped = false
+  let quoted = false
+  for (const char of unfolded) {
+    if (escaped) {
+      if (comments === 0) clean += char
+      escaped = false
+    } else if (char === '\\') {
+      if (comments === 0) clean += char
+      escaped = true
+    } else if (comments > 0) {
+      if (char === '(') comments++
+      else if (char === ')') comments--
+    } else if (char === '"') {
+      quoted = !quoted
+      clean += char
+    } else if (char === '(' && !quoted) comments++
+    else clean += char
+  }
+  if (comments !== 0 || escaped || quoted) return null
+  const text = clean.trim()
+  if (text === '') return []
+  const ids = text.match(/<[^<>]+>/g) ?? []
+  if (ids.length === 0 || !/^\s*$/.test(text.replace(/<[^<>]+>/g, ''))) return null
+  const valid = ids.every((token) => {
+    const id = token.slice(1, -1)
+    const at = id.lastIndexOf('@')
+    if (at < 1 || at === id.length - 1) return false
+    const atom = "[A-Za-z0-9!#$%&'*+\\-/=?^_`{|}~]+"
+    const local = id.slice(0, at)
+    const domain = id.slice(at + 1)
+    return (
+      new RegExp(`^(?:${atom}(?:\\.${atom})*|\"(?:[^\"\\\\\\r\\n]|\\\\[\\x00-\\x7f])*\")$`).test(
+        local,
+      ) && new RegExp(`^(?:${atom}(?:\\.${atom})*|\\[[^\\]\\r\\n]+\\])$`).test(domain)
+    )
   })
-  return { id: draft?.id ?? null }
+  return valid ? ids : null
+}
+
+async function replyHeaders(
+  api: GoogleApi,
+  threadId: string,
+): Promise<Pick<OutgoingMail, 'inReplyTo' | 'references'>> {
+  if (!threadId.trim() || /[\r\n]/.test(threadId)) throw new Error('invalid thread id')
+  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
+    format: 'full',
+  })
+  const parent = [...(thread.messages ?? [])]
+    .reverse()
+    .find((message) => !message.labelIds?.includes('DRAFT'))
+  const messageId = headerOf(parent?.payload, 'Message-ID')
+  const ids = messageId === null ? null : normalizeMessageIds(messageId)
+  if (ids?.length !== 1) throw new Error('thread has no valid Message-ID to reply to')
+  const normalizedReferences = normalizeMessageIds(headerOf(parent?.payload, 'References') ?? '')
+  if (normalizedReferences === null) throw new Error('thread has an invalid References header')
+  const validMessageId = ids[0]!
+  const references = normalizedReferences
+  return {
+    inReplyTo: validMessageId,
+    references: references.at(-1) === validMessageId ? references : [...references, validMessageId],
+  }
 }
 
 /**
@@ -1059,6 +1563,7 @@ export interface DraftBody {
   threadId: string | null
   to: MailAddress[]
   cc: MailAddress[]
+  bcc: MailAddress[]
   subject: string
   /**
    * The markdown source, byte-exact, when `X-Holi-Source` says this draft came
@@ -1229,6 +1734,7 @@ export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftB
     threadId: threadIdOf(message),
     to: parseAddresses(headerOf(payload, 'To')),
     cc: parseAddresses(headerOf(payload, 'Cc')),
+    bcc: parseAddresses(headerOf(payload, 'Bcc')),
     subject: headerOf(payload, 'Subject') ?? '',
     // The marker means the text/plain part IS the markdown that produced this
     // draft, so it round-trips byte-exact. Without it there is nothing here to

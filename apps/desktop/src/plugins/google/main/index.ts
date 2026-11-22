@@ -13,13 +13,25 @@ import { join } from 'node:path'
 import { pluginSettingValue } from '@holi/shared'
 import { readVaultSettings, writePluginSettings, type MainPlugin } from '../../../main/plugin-api'
 import { GOOGLE_INFO } from '../info'
-import { GoogleApi } from './api'
-import { openGoogleCache, type GoogleCache } from './cache'
+import { accountApi } from './account-api'
+import { openGoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
-import { GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
+import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
+import { createMailMarkerStore } from './markers'
 import { googleSeed } from './seed'
+import { createMeetingCreation } from './meeting-creation'
+import type { GoogleSession } from './session'
 import { startGoogleTriggers } from './triggers'
+
+type GoogleOwner = {
+  accounts: Awaited<ReturnType<typeof import('./electron').createGoogleAccountsManager>>
+  dataForSession: (session: GoogleSession) => GoogleData
+}
+
+// Google credentials and mail cache belong to this Electron process, not to a
+// particular open vault. Keep the lazy owner across activation leases.
+const owners = new Map<string, Promise<GoogleOwner>>()
 
 export const googleMain: MainPlugin = {
   info: GOOGLE_INFO,
@@ -28,36 +40,79 @@ export const googleMain: MainPlugin = {
     // The keychain and the system browser: Electron, loaded only when the
     // plugin starts (after `whenReady`), so the module stays importable under
     // plain Node in the tests.
-    const { createGoogleAccountsManager } = await import('./electron')
-    const accounts = await createGoogleAccountsManager(ctx.userData)
-
-    /** Each account's data, memoized while the plugin runs: one cache file
-     *  per account, which outlives it, so a later start does not re-fetch. */
-    const bySub = new Map<string, { data: GoogleData; cache: GoogleCache }>()
-    const dataForSub = (sub: string): GoogleData => {
-      const held = bySub.get(sub)
-      if (held !== undefined) return held.data
-      // `sub` becomes a filename. It is a numeric string from Google today, but
-      // build a path out of it only after saying so.
-      if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
-      const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
-      cache.ensureShape()
-      const data = createGoogleData({
-        // Bound to THIS account's session, not to whatever vault is active:
-        // the cache and the client it fills from have to be the same account.
-        api: () =>
-          new GoogleApi({
-            accessToken: () => {
-              const session = accounts.sessionForSub(sub)
-              if (session === null) throw new Error('that Google account is no longer connected')
-              return session.getAccessToken()
-            },
-          }),
-        cache,
-      })
-      bySub.set(sub, { data, cache })
-      return data
+    let ownerPromise = owners.get(ctx.userData)
+    if (ownerPromise === undefined) {
+      ownerPromise = (async () => {
+        const { createGoogleAccountsManager } = await import('./electron')
+        const accounts = await createGoogleAccountsManager(ctx.userData)
+        const bySub = new Map<string, { data: GoogleData; session: GoogleSession }>()
+        const markersBySub = new Map<string, ReturnType<typeof createMailMarkerStore>>()
+        const dataForSession = (session: GoogleSession): GoogleData => {
+          const sub = session.accountSub
+          if (sub === null || accounts.sessionForSub(sub) !== session)
+            throw new Error('that Google account is no longer connected')
+          const held = bySub.get(sub)
+          if (held !== undefined) return held.data
+          // `sub` becomes a filename. It is a numeric string from Google today, but
+          // build a path out of it only after saying so.
+          if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
+          const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
+          cache.ensureShape()
+          const data = createGoogleData({
+            // Bind this handle to the grant it was created for. A reconnect of
+            // the same account retires it instead of lending it the new grant.
+            api: accountApi(sub, (accountSub) =>
+              bySub.get(accountSub)?.session === session &&
+              accounts.sessionForSub(accountSub) === session
+                ? session
+                : null,
+            ),
+            cache,
+            markers:
+              markersBySub.get(sub) ??
+              (() => {
+                const markers = createMailMarkerStore(ctx.userData, sub)
+                markersBySub.set(sub, markers)
+                return markers
+              })(),
+          })
+          bySub.set(sub, { data, session })
+          return data
+        }
+        accounts.onChange(async (sub, reason) => {
+          if (sub === null) return
+          // Linking another vault does not replace the grant or its shared cache.
+          if (bySub.get(sub)?.session === accounts.sessionForSub(sub)) return
+          // An old request can still finish after reconnecting the same account.
+          // Retire its data handle and cache so it cannot return or persist stale rows.
+          bySub.get(sub)?.data.forget()
+          bySub.delete(sub)
+          if (!/^[A-Za-z0-9_-]+$/.test(sub)) return
+          // An expired grant can be reconnected to the same Google identity;
+          // keep its durable annotations. Only deliberate account deletion
+          // removes them (including an explicit removal after expiry).
+          try {
+            if (reason === 'removed') {
+              const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
+              markersBySub.delete(sub)
+              await markers.purge()
+            }
+          } catch (error) {
+            throw new Error(
+              `Google account was removed, but personal mail markers could not be deleted: ${String(error)}`,
+            )
+          } finally {
+            // Also erase accounts that never opened a data handle this process.
+            const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
+            retired.retire()
+          }
+        })
+        return { accounts, dataForSession }
+      })()
+      owners.set(ctx.userData, ownerPromise)
+      void ownerPromise.catch(() => owners.delete(ctx.userData))
     }
+    const { accounts, dataForSession } = await ownerPromise
 
     /**
      * Keep a removed account's cache off the disk. On `onChange` rather than
@@ -65,16 +120,9 @@ export const googleMain: MainPlugin = {
      * or expired connection is just as much "this mail is no longer yours to
      * hold" as a button press.
      */
-    const stopWatching = accounts.onChange((sub) => {
-      if (sub === null) return // a vault unlinked; the account and its cache live on
-      if (accounts.sessionForSub(sub) !== null) return // still connected
-      bySub.get(sub)?.data.forget()
-      bySub.delete(sub)
-    })
-
     const dataFor = async (remote: string): Promise<GoogleData | null> => {
-      const sub = (await accounts.sessionFor(remote))?.accountSub ?? null
-      return sub === null ? null : dataForSub(sub)
+      const session = await accounts.sessionFor(remote)
+      return session === null ? null : dataForSession(session)
     }
     // The vault's own Google settings, in its local plugins file: the agenda
     // view, an app, the agent and the triggers all read through them.
@@ -83,23 +131,25 @@ export const googleMain: MainPlugin = {
       return {
         calendars: pluginSettingValue(pluginValues, GOOGLE_INFO, 'calendars') as CalendarOverrides,
         imageSenders: pluginSettingValue(pluginValues, GOOGLE_INFO, 'imageSenders') as string[],
+        imagesFromAllSenders:
+          pluginSettingValue(pluginValues, GOOGLE_INFO, 'imagesFromAllSenders') === true,
       }
     }
 
-    ctx.register(
-      GOOGLE_NAMESPACES,
-      googleCapabilities({
-        accounts,
-        dataFor,
-        settings: {
-          read: readSettings,
-          write: async (root, values) => {
-            const refused = await writePluginSettings(root, GOOGLE_INFO.id, values)
-            if (refused.length > 0) console.warn(`[google] settings: ${refused.join('; ')}`)
-          },
+    const capabilities = googleCapabilities({
+      accounts,
+      meetings: createMeetingCreation({ userData: ctx.userData, accounts }),
+      dataFor,
+      dataForSession,
+      settings: {
+        read: readSettings,
+        write: async (root, values) => {
+          const refused = await writePluginSettings(root, GOOGLE_INFO.id, values)
+          if (refused.length > 0) console.warn(`[google] settings: ${refused.join('; ')}`)
         },
-      }),
-    )
+      },
+    })
+    ctx.register(GOOGLE_NAMESPACES, capabilities)
 
     // Mail and the agenda for schedules that run on them, polled only while
     // one listens.
@@ -108,12 +158,12 @@ export const googleMain: MainPlugin = {
       overrides: async () => (await readSettings(ctx.root)).calendars,
     })
 
+    let stopped = false
     return () => {
+      if (stopped) return
+      stopped = true
       stopTriggers()
-      accounts.cancelConnect()
-      stopWatching()
-      for (const { cache } of bySub.values()) cache.close()
-      bySub.clear()
+      disposeGoogleCapabilities(capabilities)
     }
   },
 }

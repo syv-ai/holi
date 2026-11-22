@@ -29,15 +29,18 @@ export interface CapabilityHostDeps {
   /** The open vault, or null with none open. */
   active(): {
     remote: string
+    root: string
     snapshot(): VaultSnapshot
     refresh(): Promise<unknown>
   } | null
   core(remote: string, root: string): CoreServices
   /** Whether the vault cloned at `root` runs this plugin. */
-  pluginEnabled(plugin: string, root: string): Promise<boolean>
+  pluginEnabled(plugin: string, root: string, allowDrain?: boolean): Promise<boolean>
   /** What the scanner claims in the vault cloned at `root`: the claims of
    *  the plugins it runs. */
   claims(root: string): Promise<readonly ScanClaim[]>
+  /** Fresh scans can be delayed independently of claims (also useful for tests). */
+  scan?(root: string, claims: readonly ScanClaim[]): Promise<VaultSnapshot>
 }
 
 /** A call through the UI or the CLI door. */
@@ -46,9 +49,14 @@ interface CapabilityCall {
   remote: string
   name: string
   params: unknown
+  beforeInvoke?: (target: { remote: string; root: string }) => Promise<void>
 }
 
-export type Dispatch = (call: CapabilityCall) => Promise<CapabilityResult>
+export type Dispatch = (
+  call: CapabilityCall,
+  /** Main-only authority supplied by a draining plugin context, never request data. */
+  finalization?: CapabilityCall['beforeInvoke'],
+) => Promise<CapabilityResult>
 
 /** What opens the app door: the consent check for entries with an `appGrant`. */
 export interface AppDoorOpener {
@@ -57,7 +65,13 @@ export interface AppDoorOpener {
 
 /** The app door, once opened: one call from the frame mounted for `bundle`. */
 export interface AppDoor {
-  call(remote: string, bundle: string, name: string, params: unknown): Promise<CapabilityResult>
+  call(
+    remote: string,
+    bundle: string,
+    name: string,
+    params: unknown,
+    isCurrent?: () => boolean,
+  ): Promise<CapabilityResult>
   /** Shut it: a call through it throws, and the door can be opened again. */
   close(): void
 }
@@ -67,9 +81,9 @@ export interface CapabilityHost {
   /** The names open at `door` in the vault at `remote`: core's, and those of
    *  the plugins it runs. What `has('tasks.create')` asks. */
   names(remote: string, door: Door): Promise<string[]>
-  /** Open the app door. One opener at a time: a second throws while the
-   *  first has not closed it. */
-  openAppDoor(opener: AppDoorOpener): AppDoor
+  /** Open one app door per remote. A second opener for that remote throws
+   *  until the first closes; closing also revokes its pending calls. */
+  openAppDoor(opener: AppDoorOpener, remote: string): AppDoor
 }
 
 export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
@@ -79,9 +93,14 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     return root
   }
 
-  async function enabled(name: string, root: string): Promise<boolean> {
-    const plugin = deps.registry.pluginOf(name)
-    return plugin === null || (await deps.pluginEnabled(plugin, root))
+  async function enabled(
+    name: string,
+    root: string,
+    remote: string,
+    allowDrain = false,
+  ): Promise<boolean> {
+    const plugin = deps.registry.pluginOf(name, remote)
+    return plugin === null || (await deps.pluginEnabled(plugin, root, allowDrain))
   }
 
   async function run(
@@ -91,11 +110,24 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     name: string,
     params: unknown,
     admit?: Admit,
+    isCurrent?: () => boolean,
+    beforeInvoke?: CapabilityCall['beforeInvoke'],
+    finalization?: CapabilityCall['beforeInvoke'],
   ): Promise<CapabilityResult> {
     const root = await rootOf(remote)
-    if (!(await enabled(name, root))) {
-      throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+    if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+    const mayDrain = () =>
+      finalization !== undefined || deps.registry.allowsDrain(name, remote, door)
+    const validate = async (): Promise<void> => {
+      await finalization?.({ remote, root })
+      if (!(await enabled(name, root, remote, mayDrain())))
+        throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
     }
+    await finalization?.({ remote, root })
+    const isEnabled = await enabled(name, root, remote, mayDrain())
+    if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+    if (!isEnabled) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+    if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
     const result = await deps.registry.run(
       name,
       door,
@@ -105,35 +137,68 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
         bundle,
         snapshot: async () => {
           const active = deps.active()
-          return active?.remote === remote
-            ? active.snapshot()
-            : scanVault(root, await deps.claims(root))
+          const snapshot =
+            active?.remote === remote && active.root === root
+              ? active.snapshot()
+              : await (deps.scan ?? scanVault)(root, await deps.claims(root))
+          if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+          return snapshot
         },
-        claims: () => deps.claims(root),
+        claims: async () => {
+          const claims = await deps.claims(root)
+          if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+          return claims
+        },
         core: deps.core(remote, root),
       },
       params,
       admit,
+      isCurrent,
+      async (target) => {
+        await beforeInvoke?.(target)
+        await validate()
+      },
     )
+    if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+    if (result.run !== undefined) {
+      if (!(await enabled(name, root, remote, mayDrain()))) {
+        throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+      }
+      if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+      result.validateRun?.()
+    }
     if (result.writes) {
+      if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
       const active = deps.active()
-      if (active?.remote === remote) {
+      if (active?.remote === remote && active.root === root) {
         await active.refresh().catch((e) => console.error('[capabilities] post-write rescan:', e))
       }
     }
     return result
   }
 
-  let opened = false
   // One CLI note operation at a time per vault, through its snapshot refresh
   // and settlement. Two agents that inspect the same revision must not both
   // pass the check before either has written and published its change.
   const docQueues = new Map<string, Promise<void>>()
   const docCommands = new Set(['docs.create', 'docs.update', 'docs.delete', 'docs.settle'])
 
+  const openedDoors = new Map<string, object>()
   return {
-    dispatch: async ({ door, remote, name, params }) => {
-      if (door !== 'cli' || !docCommands.has(name)) return run(door, remote, null, name, params)
+    dispatch: async ({ door, remote, name, params, beforeInvoke }, finalization) => {
+      if (door !== 'cli' || !docCommands.has(name)) {
+        return run(
+          door,
+          remote,
+          null,
+          name,
+          params,
+          undefined,
+          undefined,
+          beforeInvoke,
+          finalization,
+        )
+      }
       const previous = docQueues.get(remote) ?? Promise.resolve()
       let release!: () => void
       const pending = new Promise<void>((resolve) => {
@@ -142,7 +207,17 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       docQueues.set(remote, pending)
       await previous
       try {
-        return await run(door, remote, null, name, params)
+        return await run(
+          door,
+          remote,
+          null,
+          name,
+          params,
+          undefined,
+          undefined,
+          beforeInvoke,
+          finalization,
+        )
       } finally {
         release()
         if (docQueues.get(remote) === pending) docQueues.delete(remote)
@@ -151,24 +226,28 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
 
     async names(remote, door) {
       const root = await rootOf(remote)
-      const names = deps.registry.names(door)
-      const on = await Promise.all(names.map((name) => enabled(name, root)))
+      const names = deps.registry.names(door, remote)
+      const on = await Promise.all(names.map((name) => enabled(name, root, remote)))
       return names.filter((_, i) => on[i])
     },
 
-    openAppDoor({ admit }) {
-      if (opened) throw new Error('the app door is already open')
-      opened = true
+    openAppDoor({ admit }, remote) {
+      if (openedDoors.has(remote)) throw new Error('the app door is already open')
+      const lease = {}
+      openedDoors.set(remote, lease)
       let shut = false
+      const isCurrent = () => !shut && openedDoors.get(remote) === lease
       return {
-        call: async (remote, bundle, name, params) => {
-          if (shut) throw new Error('the app door is closed')
-          return run('app', remote, bundle, name, params, admit)
+        call: async (target, bundle, name, params, authorityCurrent = () => true) => {
+          if (target !== remote) throw new Error(`app door belongs to ${remote}`)
+          const current = () => isCurrent() && authorityCurrent()
+          if (!current()) throw new Error('the app door is closed')
+          return run('app', remote, bundle, name, params, admit, current)
         },
         close: () => {
           if (shut) return
           shut = true
-          opened = false
+          if (openedDoors.get(remote) === lease) openedDoors.delete(remote)
         },
       }
     },

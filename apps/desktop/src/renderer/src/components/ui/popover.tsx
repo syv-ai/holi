@@ -1,3 +1,4 @@
+import { OverlayActivityContext, useActivityOpen, useOverlayAutoFocus } from "@/hooks/use-editor-activity"
 "use client"
 
 import * as React from "react"
@@ -7,7 +8,9 @@ import { Popover as PopoverPrimitive } from "radix-ui"
 function Popover({
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+  const { open, defaultOpen, onOpenChange, ...rest } = props
+  const overlay = useActivityOpen(open, defaultOpen, onOpenChange)
+  return <OverlayActivityContext value={overlay.valid}><PopoverPrimitive.Root data-slot="popover" {...rest} open={overlay.open} onOpenChange={overlay.onOpenChange} /></OverlayActivityContext>
 }
 
 function PopoverTrigger({
@@ -21,11 +24,16 @@ function PopoverContent({
   align = "center",
   sideOffset = 4,
   variant = "default",
+  size = "default",
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content> & {
   /** `flush` drops the padding and gap, for a list or menu that draws its own edges. */
   variant?: "default" | "flush"
+  /** A viewport-constrained event-card surface; default preserves the existing popover size. */
+  size?: "default" | "calendar"
 }) {
+  const openAutoFocus = useOverlayAutoFocus(props.onOpenAutoFocus)
+  const closeAutoFocus = useOverlayAutoFocus(props.onCloseAutoFocus)
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
@@ -35,9 +43,13 @@ function PopoverContent({
         className={cn(
           "z-50 flex w-72 origin-(--radix-popover-content-transform-origin) flex-col gap-2.5 rounded-lg bg-popover p-2.5 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-hidden duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           variant === "flush" && "gap-0 p-0",
+          size === "calendar" &&
+            "w-[min(32rem,calc(100vw-2rem))] max-h-[min(42rem,calc(100dvh-2rem),var(--radix-popover-content-available-height))] min-h-0 overflow-hidden",
           className
         )}
         {...props}
+        onOpenAutoFocus={openAutoFocus}
+        onCloseAutoFocus={closeAutoFocus}
       />
     </PopoverPrimitive.Portal>
   )

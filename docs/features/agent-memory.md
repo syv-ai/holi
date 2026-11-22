@@ -79,8 +79,8 @@ question the [onboarding](onboarding.md) naming step asks.
 
 **The overview names the vault's community plugins too**, in one line near its heading: each pin in
 `.holi/plugins/`, whether the vault turns it on in `.holi/settings/plugins.yaml` and, when on, the
-commands it gives the agent, such as
-`Community plugins: dash (on, commands: dashctl), notes (off in this vault)`. So a question about a
+commands and `holi plugin` verbs it gives the agent, such as
+`Community plugins: dash (on, commands: dashctl), modelokale (on, verbs: holi plugin modelokale login|book), notes (off in this vault)`. So a question about a
 plugin's tool leads the agent to the plugin, not into another app's files. It reads only vault
 files, so "on" is what the vault says, not whether this machine has the plugin set up. As Holi
 reads them, `plugins.local.yaml` can turn off only `community` itself, which turns off every

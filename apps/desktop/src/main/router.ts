@@ -6,7 +6,8 @@
  * with no server, a check running on the machine of the person it restricts is
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
-import { readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import { resolveRelative } from '@holi/shared/path-safety-node'
@@ -30,8 +31,10 @@ import {
   MEMORY_DIR,
   MEMORY_INDEX,
   isHiddenPath,
+  SCRATCHPAD_PATH,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
+import type { OpenVault } from './plugin-host/host'
 import { searchBodies, type SearchHit } from './vault/search'
 import { CapabilityError, trpcCodeOf } from './capabilities/error'
 import { createCapabilityHost, type CapabilityHost } from './capabilities/dispatch'
@@ -39,6 +42,8 @@ import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
 import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
+import { createSubscriptions } from './vault/subscriptions'
+import { subscriptionChanges } from './vault/subscription-changes'
 import { fileCards, type FileCard } from './vault/file-cards'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
@@ -57,11 +62,16 @@ import { GitHubApiError, type Contributor, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
+import type { MdxTrustStore } from './mdx-trust'
+import { canonicalGitHubRemote } from './mdx-trust'
+import { createMdxDiagnostics } from './mdx-diagnostics'
+import type { MdxResources } from './mdx-resources'
 import type { ActiveVault, SyncInfo, SyncState, VaultHost } from './vault/active-vault'
 import type { ActivityEntry, ActivityLog } from './activity/log'
 import type { AppLog, AppLogEntry } from './logs/app-log'
 import type { TerminalInfo, TerminalOpened, Terminals } from './terminal/terminals'
 import { ensureClone } from './vault/clone'
+import { prepareManagedClone } from './vault/prepare-clone'
 import {
   absPathFor,
   carryFolder,
@@ -131,7 +141,20 @@ export type VaultMembership =
 
 export interface RouterDeps {
   registry: VaultRegistry
+  /** Electron userData for machine-local subscription state. */
+  userData?: string
+  /** The shared main-side Holi link validation/opener, used by paste. */
+  openPastedHoliLink?: (
+    url: string,
+  ) => Promise<{ ok: true } | { ok: false; message: string; detail: string }>
   session: GitHubSession
+  /** The one machine-local MDX trust store, composed by main. */
+  mdxTrust?: MdxTrustStore
+  /** Main invalidates view leases when its window is destroyed. */
+  onMdxDiagnosticsInvalidate?: (invalidate: () => void) => void
+  /** Main permanently closes view leases when the app quits. */
+  onMdxDiagnosticsClose?: (close: () => void) => void
+  mdxCompiler?: MdxResources
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /**
@@ -148,7 +171,9 @@ export interface RouterDeps {
    * looks again at what runs across vaults, after a vault leaves the registry.
    */
   plugins: {
-    reconcile(why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    reconcile(vault: OpenVault, why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    invalidate(remote?: string): void
+    setDisplayed(remote: string | null): void
     syncBackground(): Promise<void>
     failures(remote: string): Record<string, string>
     scanClaimsFor(root: string): Promise<readonly ScanClaim[]>
@@ -163,6 +188,8 @@ export interface RouterDeps {
    *  tests. Passed in rather than read from `vaultRoot()` here so the router
    *  has no ambient dependency on the environment. */
   vaultRoot: string
+  /** Clone preparation, injectable for router tests that use non-Git fixture roots. */
+  prepareClone?: (root: string) => Promise<void>
   /**
    * Where to clone a remote *from*. Defaults to its credential-free GitHub URL.
    *
@@ -395,6 +422,20 @@ const ACTIVITY_FILES = 5
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? (() => localDate(new Date()))
+  let vaultOpenRevision = 0
+  let completedVaultOpenRevision = 0
+  // One token per live ownership context, shared by split source views. Never
+  // retain every status request or references to a growing set of old vaults.
+  let trustContext: {
+    token: string
+    accountGeneration: number
+    accountId: string
+    remote: string
+    openRevision: number
+    active: ActiveVault
+  } | null = null
+  let mdxTrustTransition = 0
+  let mdxTrustTransitionEpoch = 0
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const capabilities =
     deps.capabilities ??
@@ -409,6 +450,10 @@ export function createRouter(deps: RouterDeps) {
     })
   const members =
     deps.members ?? createMembersCache((remote) => deps.session.api.collaborators(remote))
+  const subscriptions =
+    deps.userData === undefined
+      ? null
+      : createSubscriptions(join(deps.userData, 'subscriptions.json'))
 
   /**
    * A write must be visible to the very next read.
@@ -463,52 +508,58 @@ export function createRouter(deps: RouterDeps) {
     url: string | undefined,
     opts: { requireVault?: boolean; readme?: string } = {},
   ): Promise<VaultSnapshot> {
-    const { repo, outcome } = await ensureClone({
-      root: deps.vaultRoot,
-      remote,
-      url: url ?? cloneUrlFor(remote),
-      deps: { token: () => deps.session.token() },
-    })
-    // Joining an existing vault (not creating one) — refuse anything that is not
-    // already a vault. The seed below would otherwise write `AGENTS.md`,
-    // `.claude/` and friends into a plain code repo and the auto-push would carry
-    // them upstream, quietly turning someone's codebase into a half-vault. The
-    // marker is the `.holi/vault` the seed commits at creation. A repo we
-    // just cloned for this is removed on refusal so nothing is left behind; a
-    // pre-existing adopted path is left exactly as we found it.
-    if (opts.requireVault && !(await isVaultClone(repo.root))) {
-      if (outcome.kind === 'cloned') await rm(repo.root, { recursive: true, force: true })
-      throw new Error(
-        `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
-      )
+    const finishTransition = beginMdxTrustTransition()
+    try {
+      const active = await deps.host.open(remote, async (coldStart) => {
+        if (!coldStart) return
+        const { repo, outcome } = await ensureClone({
+          root: deps.vaultRoot,
+          remote,
+          url: url ?? cloneUrlFor(remote),
+          deps: { token: () => deps.session.token() },
+        })
+        // Validate before any preparation or seed side effects. A rejected clone
+        // is never entered into the registry.
+        if (opts.requireVault && !(await isVaultClone(repo.root))) {
+          if (outcome.kind === 'cloned') await rm(repo.root, { recursive: true, force: true })
+          throw new Error(
+            `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
+          )
+        }
+        await (deps.prepareClone ?? prepareManagedClone)(repo.root)
+        await deps.seed(repo.root)
+        // A new vault's README, beside the seed so it lands in the first commit.
+        // Not a once-seed file: it is written from this vault's own answer. Never
+        // over one that is already there (`wx`).
+        if (opts.readme !== undefined) {
+          await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
+            (err: NodeJS.ErrnoException) => {
+              if (err.code !== 'EEXIST') throw err
+            },
+          )
+        }
+        await deps.registry.add({
+          remote,
+          path: repo.root,
+          name: repoName(remote),
+          lastOpenedAt: now(),
+        })
+      })
+      deps.plugins.setDisplayed(remote)
+      await deps.plugins.reconcile(active, 'open')
+      deps.opened?.(remote)
+      return await active.snapshot()
+    } finally {
+      finishTransition()
     }
-    await deps.seed(repo.root)
-    // A new vault's README, beside the seed so it lands in the first commit.
-    // Not a once-seed file: it is written from this vault's own answer. Never
-    // over one that is already there (`wx`).
-    if (opts.readme !== undefined) {
-      await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
-        (err: NodeJS.ErrnoException) => {
-          if (err.code !== 'EEXIST') throw err
-        },
-      )
-    }
-    await deps.registry.add({
-      remote,
-      path: repo.root,
-      name: repoName(remote),
-      lastOpenedAt: now(),
-    })
-    const active = await deps.host.open(remote)
-    await deps.plugins.reconcile('open')
-    deps.opened?.(remote)
-    return active.snapshot()
   }
-
   /** remote -> the clone's root on this machine. Every path-taking procedure
    * goes through here, so an unknown vault fails once, in one place. */
   async function rootFor(remote: string): Promise<string> {
-    const entry = (await deps.registry.list()).find((e) => e.remote === remote)
+    const canonicalRemote = canonicalGitHubRemote(remote)
+    const entry = (await deps.registry.list()).find(
+      (e) => canonicalGitHubRemote(e.remote) === canonicalRemote,
+    )
     if (!entry) throw new TRPCError({ code: 'NOT_FOUND', message: `no such vault: ${remote}` })
     return entry.path
   }
@@ -530,6 +581,16 @@ export function createRouter(deps: RouterDeps) {
       return vaultRelPath(path)
     } catch (err) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message })
+    }
+  }
+
+  /** Refuse a planted scratchpad link rather than reading through it or
+   * replacing it with the atomic writer. Missing leaves remain valid writes. */
+  async function guardScratchpadLink(root: string, rel: VaultRelPath): Promise<void> {
+    if (rel.toLowerCase() !== SCRATCHPAD_PATH.toLowerCase()) return
+    const info = await lstat(join(root, rel)).catch(() => null)
+    if (info?.isSymbolicLink()) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'scratchpad path cannot be a symlink' })
     }
   }
 
@@ -648,11 +709,16 @@ export function createRouter(deps: RouterDeps) {
    * clone that will not move stays listed rather than orphaned.
    */
   async function removeClone(remote: string): Promise<void> {
-    const root = await rootFor(remote)
-    if (deps.host.active()?.remote === remote) await deps.host.close()
-    await deps.trashItem(root)
-    await deps.registry.remove(remote)
-    await deps.plugins.syncBackground()
+    const finishTransition = beginMdxTrustTransition()
+    try {
+      const root = await rootFor(remote)
+      await deps.host.close(remote)
+      await deps.trashItem(root)
+      await deps.registry.remove(remote)
+      await deps.plugins.syncBackground()
+    } finally {
+      finishTransition()
+    }
   }
 
   /** The remote is interpolated into a URL, so it is validated before it is. */
@@ -787,6 +853,10 @@ export function createRouter(deps: RouterDeps) {
     open: t.procedure
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
+        const revision = ++vaultOpenRevision
+        trustContext = null
+        mdxDiagnostics.invalidate()
+        deps.mdxCompiler?.invalidate()
         // Opening is what starts the watcher and the sync loop — the snapshot
         // is a by-product, and comes from the vault that is now live rather
         // than from a second read that could already disagree with it.
@@ -799,11 +869,21 @@ export function createRouter(deps: RouterDeps) {
          * Before `host.open`, for `addVault`'s reason: nothing can be committed
          * ahead of the `.gitignore`.
          */
+        if (deps.host.get(input.remote) === null) {
+          await deps.host.prepare(input.remote, (coldStart) =>
+            coldStart ? (deps.prepareClone ?? prepareManagedClone)(root) : Promise.resolve(),
+          )
+        }
         await deps.seed(root)
         await deps.registry.touch(input.remote, now())
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         const active = await deps.host.open(input.remote)
-        await deps.plugins.reconcile('open')
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
+        deps.plugins.setDisplayed(input.remote)
+        await deps.plugins.reconcile(active, 'open')
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         deps.opened?.(input.remote)
+        if (revision === vaultOpenRevision) completedVaultOpenRevision = revision
         return active.snapshot()
       }),
 
@@ -859,8 +939,13 @@ export function createRouter(deps: RouterDeps) {
       // Deregisters the vault; the clone stays on disk. Deleting someone's files
       // — which may hold unpushed commits — is never a side effect here.
       .mutation(async ({ input }) => {
-        await deps.registry.remove(input.remote)
-        await deps.plugins.syncBackground()
+        const finishTransition = beginMdxTrustTransition()
+        try {
+          await deps.registry.remove(input.remote)
+          await deps.plugins.syncBackground()
+        } finally {
+          finishTransition()
+        }
       }),
 
     // What "also delete local clones" would throw away. One
@@ -893,17 +978,24 @@ export function createRouter(deps: RouterDeps) {
     // best-effort: one that won't trash stays on disk AND in the registry, never
     // orphaned.
     deleteClones: t.procedure.mutation(async (): Promise<{ ok: true }> => {
-      await deps.host.close()
-      for (const e of await deps.registry.list()) {
-        try {
-          await deps.trashItem(e.path)
-          await deps.registry.remove(e.remote)
-        } catch (err) {
-          console.error(`[vaults] could not trash clone ${e.remote}:`, err)
+      const finishTransition = beginMdxTrustTransition()
+      try {
+        // Every registered clone may have a runtime: background runtimes keep
+        // their own watcher and timers even when another vault is selected.
+        await deps.host.closeAll()
+        for (const e of await deps.registry.list()) {
+          try {
+            await deps.trashItem(e.path)
+            await deps.registry.remove(e.remote)
+          } catch (err) {
+            console.error(`[vaults] could not trash clone ${e.remote}:`, err)
+          }
         }
+        await deps.plugins.syncBackground()
+        return { ok: true as const }
+      } finally {
+        finishTransition()
       }
-      await deps.plugins.syncBackground()
-      return { ok: true as const }
     }),
 
     /**
@@ -1013,16 +1105,18 @@ export function createRouter(deps: RouterDeps) {
 
     // "Commit anyway" for a file the large-file gate held back: the user has
     // decided this big asset belongs in git. Bypasses the pre-commit hook.
-    commitFile: t.procedure
+    commitFile: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
-        await openRepo(await rootFor(input.remote)).commitFileNoVerify(safe(input.path))
+        const active = await activeOrThrow()
+        if (active.remote !== safeRemote(input.remote)) throw new Error('Vault is no longer active')
+        await active.commitHeldBack(safe(input.path))
         return { ok: true as const }
       }),
 
     // "Keep local" for a held-back file: git-ignore it machine-locally so it
     // stays on disk but never commits or syncs (`.git/info/exclude`).
-    keepFileLocal: t.procedure
+    keepFileLocal: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
         await openRepo(await rootFor(input.remote)).excludeLocally(safe(input.path))
@@ -1082,17 +1176,226 @@ export function createRouter(deps: RouterDeps) {
       .mutation(async ({ input }): Promise<{ updatedAt: string }> => {
         const root = await rootFor(input.remote)
         const rel = safe(input.path)
+        mdxDiagnostics.invalidatePath(input.remote, rel)
         await writeAtomic(root, rel, input.bytes)
         const info = await stat(absPathFor(root, rel))
         return { updatedAt: info.mtime.toISOString() }
       }),
   })
 
+  function trustContextCurrent(
+    context: {
+      accountGeneration: number
+      accountId: string
+      remote: string
+      openRevision: number
+      active: ActiveVault
+    },
+    requestedRemote: string,
+  ): boolean {
+    return (
+      deps.session.generation === context.accountGeneration &&
+      String(deps.session.viewer?.accountId) === context.accountId &&
+      context.remote === canonicalGitHubRemote(requestedRemote) &&
+      vaultOpenRevision === context.openRevision &&
+      completedVaultOpenRevision === context.openRevision &&
+      deps.host.active() === context.active &&
+      canonicalGitHubRemote(context.active.remote) === canonicalGitHubRemote(requestedRemote)
+    )
+  }
+
+  const mdxDiagnostics = createMdxDiagnostics({
+    context: (token, remote) => {
+      const context = trustContext?.token === token ? trustContext : null
+      return context && trustContextCurrent(context, remote) ? context : null
+    },
+    authorize: (identity, remote) =>
+      trustContextCurrent(identity as typeof trustContext & {}, remote),
+    root: rootFor,
+    trusted: (identity) =>
+      deps.mdxTrust?.status({ accountId: identity.accountId, remote: identity.remote }) ??
+      Promise.resolve(false),
+    createResourceOwner: (isCurrent) => deps.mdxCompiler!.createOwner(isCurrent),
+    retireResourceOwner: (owner) => deps.mdxCompiler!.retireOwner(owner),
+    compile: (owner, source, signal) => deps.mdxCompiler!.compile(owner, source, signal),
+  })
+  function beginMdxTrustTransition(): () => void {
+    mdxTrustTransition += 1
+    mdxTrustTransitionEpoch += 1
+    trustContext = null
+    mdxDiagnostics.invalidate()
+    deps.mdxCompiler?.invalidate()
+    let finished = false
+    return () => {
+      if (finished) return
+      finished = true
+      mdxTrustTransition -= 1
+    }
+  }
+
+  deps.session.onGenerationChange(() => mdxDiagnostics.invalidate())
+  deps.onMdxDiagnosticsInvalidate?.(() => mdxDiagnostics.invalidate())
+  deps.onMdxDiagnosticsClose?.(() => mdxDiagnostics.close())
+
+  const mdxTrust = t.router({
+    status: t.procedure.input(fields({ remote: 'string' })).query(async ({ input }) => {
+      if (mdxTrustTransition > 0)
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
+      const viewer = deps.session.viewer
+      if (
+        !deps.mdxTrust ||
+        viewer === null ||
+        !Number.isSafeInteger(viewer.accountId) ||
+        viewer.accountId <= 0
+      )
+        return { trusted: false, identityAvailable: false, context: null }
+      const remote = canonicalGitHubRemote(input.remote)
+      const active = deps.host.active()
+      const revision = vaultOpenRevision
+      if (
+        !active ||
+        canonicalGitHubRemote(active.remote) !== remote ||
+        completedVaultOpenRevision !== revision
+      )
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
+      const accountGeneration = deps.session.generation
+      const accountId = String(viewer.accountId)
+      const transitionEpoch = mdxTrustTransitionEpoch
+      const current = () =>
+        mdxTrustTransition === 0 &&
+        mdxTrustTransitionEpoch === transitionEpoch &&
+        deps.session.generation === accountGeneration &&
+        deps.session.viewer?.accountId === viewer.accountId &&
+        deps.host.active() === active &&
+        vaultOpenRevision === revision &&
+        completedVaultOpenRevision === revision
+      const entry = (await deps.registry.list()).find(
+        (vault) => canonicalGitHubRemote(vault.remote) === remote,
+      )
+      if (!current())
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
+      if (!entry)
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Vault is not registered on this machine',
+        })
+      const [registeredRoot, activeRoot] = await Promise.all([
+        realpath(entry.path).catch(() => null),
+        realpath(active.root).catch(() => null),
+      ])
+      if (!current() || !registeredRoot || !activeRoot || registeredRoot !== activeRoot)
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
+      const owner = { accountId, remote }
+      const trusted = await deps.mdxTrust.status(owner)
+      if (!current())
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Vault or account context changed',
+        })
+      const token =
+        trustContext !== null && trustContextCurrent(trustContext, input.remote)
+          ? trustContext.token
+          : randomBytes(32).toString('hex')
+      trustContext = {
+        token,
+        accountGeneration,
+        accountId,
+        remote,
+        openRevision: revision,
+        active,
+      }
+      return { trusted, identityAvailable: true, context: token }
+    }),
+    approve: t.procedure
+      .input(fields({ remote: 'string', context: 'string' }))
+      .mutation(({ input }) => mutateTrust(input, true)),
+    revoke: t.procedure
+      .input(fields({ remote: 'string', context: 'string' }))
+      .mutation(({ input }) => mutateTrust(input, false)),
+    acquireDiagnosticsLease: t.procedure
+      .input(fields({ remote: 'string', path: 'string', context: 'string' }))
+      .mutation(({ input }) => mdxDiagnostics.acquire(input)),
+    cancelCompile: t.procedure
+      .input((raw: unknown) => {
+        const value = raw as { lease?: unknown; generation?: unknown }
+        if (typeof value?.lease !== 'string' || !Number.isSafeInteger(value.generation))
+          throw new Error('invalid MDX cancellation')
+        return { lease: value.lease, generation: value.generation as number }
+      })
+      .mutation(({ input }) => mdxDiagnostics.cancel(input)),
+    compile: t.procedure
+      .input((raw: unknown) => {
+        const value = raw as { lease?: unknown; generation?: unknown; source?: unknown }
+        if (
+          typeof value?.lease !== 'string' ||
+          typeof value.source !== 'string' ||
+          !Number.isSafeInteger(value.generation)
+        )
+          throw new Error('invalid MDX compile')
+        return { lease: value.lease, generation: value.generation as number, source: value.source }
+      })
+      .mutation(({ input }) => mdxDiagnostics.compile(input)),
+    releaseDiagnosticsLease: t.procedure
+      .input(fields({ lease: 'string' }))
+      .mutation(({ input }) => mdxDiagnostics.release(input)),
+  })
+
+  async function mutateTrust(
+    input: { remote: string; context: string },
+    approve: boolean,
+  ): Promise<{ trusted: boolean }> {
+    const context = trustContext?.token === input.context ? trustContext : null
+    if (
+      mdxTrustTransition > 0 ||
+      !context ||
+      !deps.mdxTrust ||
+      !trustContextCurrent(context, input.remote)
+    )
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
+    const remote = canonicalGitHubRemote(input.remote)
+    // Retire the context synchronously, before registry or trust-store I/O can
+    // yield to a compile using this token. The captured identity remains the
+    // authority for this in-flight operation; it is not re-read from the
+    // renderer-facing token slot after retirement.
+    mdxTrustTransition += 1
+    const operationEpoch = ++mdxTrustTransitionEpoch
+    trustContext = null
+    mdxDiagnostics.invalidate()
+    deps.mdxCompiler?.invalidate()
+    const stillOwned = () =>
+      mdxTrustTransitionEpoch === operationEpoch &&
+      deps.session.generation === context.accountGeneration &&
+      String(deps.session.viewer?.accountId) === context.accountId &&
+      context.remote === remote &&
+      deps.host.active() === context.active &&
+      vaultOpenRevision === context.openRevision &&
+      completedVaultOpenRevision === context.openRevision
+    try {
+      const registered = (await deps.registry.list()).some(
+        (vault) => canonicalGitHubRemote(vault.remote) === remote,
+      )
+      if (!registered || !stillOwned())
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
+      await (approve ? deps.mdxTrust.approve : deps.mdxTrust.revoke)(
+        { accountId: context.accountId, remote },
+        stillOwned,
+      )
+      if (!stillOwned())
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
+      return { trusted: approve }
+    } finally {
+      mdxTrustTransition -= 1
+    }
+  }
+
   const notes = t.router({
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
       .query(async ({ input }): Promise<string> => {
-        const abs = absPathFor(await rootFor(input.remote), safe(input.path))
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        await guardScratchpadLink(root, rel)
+        const abs = absPathFor(root, rel)
         const text = await readFile(abs, 'utf8').catch(() => null)
         if (text === null) throw new TRPCError({ code: 'NOT_FOUND', message: input.path })
         return text
@@ -1170,7 +1473,11 @@ export function createRouter(deps: RouterDeps) {
         // Under the file's lock, keyed as an app's `docs.write` keys it (the
         // canonical path), so an app's check of the text it read and its
         // write are never split by this save.
-        await withFileLock(await lockPath(root, rel), () => writeAtomic(root, rel, input.text))
+        await withFileLock(await lockPath(root, rel), async () => {
+          await guardScratchpadLink(root, rel)
+          mdxDiagnostics.invalidatePath(input.remote, rel)
+          await writeAtomic(root, rel, input.text)
+        })
         return { ok: true as const }
       }),
 
@@ -1186,6 +1493,7 @@ export function createRouter(deps: RouterDeps) {
         if (await exists(root, rel)) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${rel}` })
         }
+        mdxDiagnostics.invalidatePath(input.remote, rel)
         await writeAtomic(root, rel, input.text ?? '')
         return { path: rel }
       }),
@@ -1195,6 +1503,7 @@ export function createRouter(deps: RouterDeps) {
       .mutation(async ({ input }) => {
         const root = await rootFor(input.remote)
         const rel = safe(input.path)
+        mdxDiagnostics.invalidatePath(input.remote, rel)
         await withFileLocks(root, [rel], () => removeDocFile(root, rel))
         return { ok: true as const }
       }),
@@ -1243,6 +1552,8 @@ export function createRouter(deps: RouterDeps) {
         if (await exists(root, to)) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
         }
+        mdxDiagnostics.invalidatePath(input.remote, from)
+        mdxDiagnostics.invalidatePath(input.remote, to)
         return renameNote(root, from, to, { localLinksOnly: input.localLinksOnly === true })
       }),
 
@@ -1265,6 +1576,19 @@ export function createRouter(deps: RouterDeps) {
             throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${m.to}` })
           }
         }
+        const movedSources = input.moves.map((move) => ({
+          from: safe(move.from),
+          to: safe(move.to),
+        }))
+        // Retire MDX source leases before the move mutates either path.
+        for (const { from, to } of movedSources) {
+          mdxDiagnostics.invalidatePath(input.remote, from)
+          mdxDiagnostics.invalidatePath(input.remote, to)
+        }
+        for (const folder of input.folders) {
+          mdxDiagnostics.invalidatePath(input.remote, safe(folder.from))
+          mdxDiagnostics.invalidatePath(input.remote, safe(folder.to))
+        }
         const { rewritten } = await moveNotes(root, input.moves)
         for (const f of input.folders) await carryFolder(root, safe(f.from), safe(f.to))
         return { rewritten }
@@ -1286,6 +1610,7 @@ export function createRouter(deps: RouterDeps) {
             throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${c.to}` })
           }
         }
+        for (const copy of input.copies) mdxDiagnostics.invalidatePath(input.remote, safe(copy.to))
         await copyNotes(root, input.copies)
         return { copied: input.copies.map((c) => c.to) }
       }),
@@ -1300,6 +1625,8 @@ export function createRouter(deps: RouterDeps) {
       // Held together, as a move holds its files: no write that checked one
       // of them lands between two removes.
       const rels = input.paths.map((p) => safe(p))
+      for (const rel of rels) mdxDiagnostics.invalidatePath(input.remote, rel)
+      for (const folder of input.folders) mdxDiagnostics.invalidatePath(input.remote, safe(folder))
       await withFileLocks(root, rels, async () => {
         for (const rel of rels) await removeDocFile(root, rel)
       })
@@ -1627,6 +1954,7 @@ export function createRouter(deps: RouterDeps) {
         const root = await rootFor(input.remote)
         const rel = safe(input.path)
         const text = await activeOrThrow().repo.show(input.sha, rel)
+        mdxDiagnostics.invalidatePath(input.remote, rel)
         await writeAtomic(root, rel, text)
         await activeOrThrow().commitNow()
         return { ok: true as const }
@@ -1738,8 +2066,10 @@ export function createRouter(deps: RouterDeps) {
         // A plugin just turned on gets its files and starts now, and one
         // turned off stops now, not at the vault's next open.
         if ('plugins' in committed.patch || 'plugins' in local.patch) {
+          deps.plugins.invalidate(input.remote)
           if (deps.host.active()?.remote === input.remote) {
-            await deps.plugins.reconcile('settings')
+            const active = deps.host.active()
+            if (active !== null) await deps.plugins.reconcile(active, 'settings')
           } else {
             await deps.seed(root)
           }
@@ -2023,14 +2353,114 @@ export function createRouter(deps: RouterDeps) {
   })
 
   return t.router({
+    holiLinks: t.router({
+      openPasted: t.procedure.input(fields({ url: 'string' })).mutation(({ input }) =>
+        deps.openPastedHoliLink === undefined
+          ? Promise.resolve({
+              ok: false as const,
+              message: 'This link cannot be opened.',
+              detail: 'Link opening is unavailable.',
+            })
+          : deps.openPastedHoliLink(input.url),
+      ),
+    }),
     auth,
     github,
     vaults,
     notes,
+    mdxTrust,
     comments,
     files,
     sync,
     history,
+    subscriptions: t.router({
+      list: t.procedure
+        .input(fields({ remote: 'string', paths: 'string' }))
+        .query(async ({ input }) => {
+          if (subscriptions === null)
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Subscriptions are unavailable.',
+            })
+          const active = activeOrThrow()
+          if (active.remote !== input.remote)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault changed; retry in the active vault.',
+            })
+          const { remote, root } = active
+          let paths: unknown
+          try {
+            paths = JSON.parse(input.paths)
+          } catch {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid subscription paths.' })
+          }
+          if (!Array.isArray(paths) || paths.some((path) => typeof path !== 'string'))
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid subscription paths.' })
+          return subscriptions.list(remote, root, paths)
+        }),
+      changes: t.procedure
+        .input(fields({ remote: 'string', path: 'string' }))
+        .query(async ({ input }) => {
+          if (subscriptions === null)
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Subscriptions are unavailable.',
+            })
+          const active = activeOrThrow()
+          if (active.remote !== input.remote)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault changed; retry in the active vault.',
+            })
+          const { remote, root, repo } = active
+          const scope = await subscriptions.scope(remote, input.path)
+          if (scope === null)
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: 'This path is not explicitly subscribed.',
+            })
+          const accountId = deps.session.viewer?.accountId ?? null
+          const accountGeneration = deps.session.generation
+          return subscriptionChanges({
+            repo,
+            root,
+            remote,
+            baseline: scope.baseline,
+            path: scope.path,
+            provenanceFile: join(deps.userData ?? '', 'managed-commit-provenance.json'),
+            accountId,
+            current: () => {
+              const current = deps.host.active()
+              return (
+                current === active &&
+                current.remote === remote &&
+                current.root === root &&
+                (deps.session.viewer?.accountId ?? null) === accountId &&
+                deps.session.generation === accountGeneration
+              )
+            },
+            currentScope: () => subscriptions.scope(remote, scope.path),
+          })
+        }),
+      set: t.procedure
+        .input(fields({ remote: 'string', path: 'string', enabled: 'boolean' }))
+        .mutation(async ({ input }) => {
+          if (subscriptions === null)
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Subscriptions are unavailable.',
+            })
+          const active = activeOrThrow()
+          if (active.remote !== input.remote)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault changed; retry in the active vault.',
+            })
+          const { remote, root, repo } = active
+          return subscriptions.set(remote, root, input.path, input.enabled, () => repo.head())
+        }),
+    }),
     theme,
     settings,
     ui,

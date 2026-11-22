@@ -29,6 +29,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, openExternal } from '@/plugin-api'
+import { MailMarkerStatus } from '../mail-marker-icon'
 import type { MailState } from './use-mail'
 
 // ── App Header ──
@@ -53,13 +54,22 @@ interface AppHeaderProps {
  * what can be done to it. Permanent delete is not here because Holi has no
  * scope for it; Trash is Gmail's, recoverable for 30 days.
  */
-export function AppHeader({ mail, commands }: AppHeaderProps) {
+export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visible: boolean }) {
   const reader = mail.reader
   const thread = reader.kind === 'ready' ? reader.thread : null
   const row = mail.openRow
   const subject = thread?.subject ?? row?.subject ?? ''
-  const starred = row?.starred === true
   const openId = mail.openId
+  const intent = openId === null ? undefined : mail.markerActions.get(openId)
+  const starred = intent === undefined ? row?.starred === true : intent.starred
+  const marker =
+    openId === null
+      ? null
+      : intent === undefined
+        ? mail.markers.get(openId)
+        : intent.error
+          ? { kind: 'error' as const }
+          : { kind: 'ready' as const, marker: intent.marker }
 
   const index = mail.threads.findIndex((t) => t.id === openId)
   const previous = index > 0 ? mail.threads[index - 1] : undefined
@@ -101,6 +111,16 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
       <h3 className="text-foreground w-0 flex-1 truncate text-sm leading-snug font-semibold">
         {subject}
       </h3>
+      {openId !== null && marker !== null && marker.kind !== 'ready' && (
+        <MailMarkerStatus
+          state={marker}
+          starred={row?.starred === true}
+          onRetry={() => {
+            mail.markers.invalidate([openId])
+            void mail.retryMarker(openId)
+          }}
+        />
+      )}
 
       {/* Actions, once a thread is open */}
       {openId !== null && (
@@ -154,20 +174,16 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 size="icon-sm"
                 aria-label={starred ? 'Unstar thread' : 'Star thread'}
                 aria-pressed={starred}
-                onClick={() => void mail.setStarred(openId, !starred)}
+                onClick={() => mail.activateMarker(openId, starred)}
               >
-                <StarIcon
-                  aria-hidden="true"
-                  className={cn(
-                    'shrink-0',
-                    starred
-                      ? 'fill-amber-500 text-amber-500 dark:fill-amber-400 dark:text-amber-400'
-                      : 'text-muted-foreground',
-                  )}
-                />
+                {starred && marker?.kind === 'ready' ? (
+                  <MailMarkerStatus state={marker} starred />
+                ) : (
+                  <StarIcon aria-hidden="true" className="shrink-0 text-muted-foreground" />
+                )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{starred ? 'Unstar' : 'Star'}</TooltipContent>
+            {visible && <TooltipContent>{starred ? 'Unstar' : 'Star'}</TooltipContent>}
           </Tooltip>
 
           <Tooltip>
@@ -182,7 +198,9 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 <ArchiveIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Archive: out of the inbox, kept in All Mail</TooltipContent>
+            {visible && (
+              <TooltipContent>Archive: out of the inbox, kept in All Mail</TooltipContent>
+            )}
           </Tooltip>
 
           <Tooltip>
@@ -197,14 +215,14 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 <Trash2Icon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Move to trash: recoverable for 30 days</TooltipContent>
+            {visible && <TooltipContent>Move to trash: recoverable for 30 days</TooltipContent>}
           </Tooltip>
 
           <div className="mx-0.5 hidden items-center sm:flex">
             <Separator orientation="vertical" className="h-5" />
           </div>
 
-          <DropdownMenu>
+          <DropdownMenu key={`more-${visible ? 'visible' : 'hidden'}`}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"

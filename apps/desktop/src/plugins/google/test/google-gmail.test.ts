@@ -73,19 +73,37 @@ function gmail(
   labels: RawLabel[] = [],
   nextPageToken?: string,
   invites: { id: string }[] = [],
+  messageData: Record<string, unknown> = {},
 ) {
   const seen: string[] = []
   const fetchImpl = vi.fn(async (url: string) => {
     seen.push(url)
     const path = new URL(url).pathname
     const isIcs = queryParam(url).includes('filename:ics')
-    const body = path.endsWith('/labels')
+    let body = path.endsWith('/labels')
       ? { labels }
       : path.endsWith('/threads')
         ? isIcs
           ? { threads: invites }
           : { threads: list, nextPageToken }
-        : (threads[path.split('/').pop()!] ?? {})
+        : path.includes('/messages/')
+          ? (messageData[path.split('/').pop()!] ??
+            Object.values(threads)
+              .flatMap((thread) => (thread as { messages?: unknown[] }).messages ?? [])
+              .find((message) => (message as { id?: string }).id === path.split('/').pop()) ??
+            {})
+          : (threads[path.split('/').pop()!] ?? {})
+    if (path.includes('/messages/') && new URL(url).searchParams.get('format') === 'metadata') {
+      const message = body as Record<string, unknown>
+      const payload = message.payload as Record<string, unknown> | undefined
+      // Gmail metadata never includes MIME children, even when fields requests them.
+      body = {
+        ...message,
+        ...(payload === undefined
+          ? {}
+          : { payload: { ...payload, parts: undefined, body: undefined } }),
+      }
+    }
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   }) as unknown as typeof globalThis.fetch
 
@@ -238,6 +256,410 @@ describe('htmlToText', () => {
 })
 
 describe('listThreads', () => {
+  it.each([
+    ['new incoming after a reply', ['INBOX'], ['SENT'], ['INBOX'], true, false],
+    ['draft after incoming', ['INBOX'], ['DRAFT'], undefined, true, false],
+    ['draft after sent reply', ['INBOX'], ['SENT'], ['DRAFT'], false, true],
+    ['sent-only', ['SENT'], undefined, ['DRAFT'], false, true],
+  ])(
+    'classifies %s from real message order',
+    async (_name, firstLabels, secondLabels, thirdLabels, expectedNeedsReply, expectedAnswered) => {
+      const messages = [firstLabels, secondLabels, thirdLabels].flatMap((labels, index) =>
+        labels === undefined
+          ? []
+          : [
+              {
+                id: `m${index}`,
+                internalDate: String(index + 1),
+                labelIds: labels,
+                payload: { headers: [header('To', 'me@example.com')] },
+              },
+            ],
+      )
+      const { api } = gmail([{ id: 't' }], { t: { id: 't', messages } })
+      const result = (await listThreads(api, {}, ['me@example.com'])).threads[0]!
+      expect(result.needsReply).toBe(expectedNeedsReply)
+      expect(result.answered).toBe(expectedAnswered)
+    },
+  )
+
+  it('recognizes nested calendar invitations only on the latest incoming message', async () => {
+    const invitation = {
+      id: 'invite-message',
+      internalDate: '1000',
+      labelIds: ['INBOX'],
+      payload: {
+        mimeType: 'multipart/mixed',
+        headers: [header('Content-Type', 'multipart/mixed; boundary="invite"')],
+        parts: [
+          {
+            mimeType: 'multipart/alternative',
+            parts: [
+              { mimeType: 'text/plain', body: { data: b64('Please see invitation') } },
+              {
+                mimeType: 'text/calendar',
+                headers: [header('Content-Type', 'text/calendar; method=REQUEST')],
+                body: { data: b64('BEGIN:VCALENDAR\\nMETHOD:REQUEST') },
+              },
+            ],
+          },
+        ],
+      },
+    }
+    const metadataInvitation = {
+      ...invitation,
+      payload: {
+        mimeType: 'multipart/mixed',
+        headers: [header('Content-Type', 'multipart/mixed; boundary="invite"')],
+      },
+    }
+    const humanFollowup = {
+      id: 'human-followup',
+      internalDate: '2000',
+      labelIds: ['INBOX'],
+      payload: {
+        mimeType: 'text/plain',
+        headers: [header('Content-Type', 'text/plain; charset=UTF-8')],
+        body: { data: b64('Thanks, I will attend.') },
+      },
+    }
+    const { api, seen } = gmail(
+      [{ id: 'invitation' }, { id: 'followup' }],
+      {
+        invitation: { id: 'invitation', messages: [metadataInvitation] },
+        followup: { id: 'followup', messages: [metadataInvitation, humanFollowup] },
+      },
+      [],
+      undefined,
+      [],
+      { 'invite-message': { ...invitation, threadId: 'invitation' } },
+    )
+    const result = await listThreads(api)
+
+    expect(result.threads.map((thread) => thread.automated)).toEqual([true, false])
+    expect(seen.some((url) => new URL(url).pathname.endsWith('/messages/invite-message'))).toBe(
+      true,
+    )
+    expect(seen.some((url) => new URL(url).pathname.endsWith('/messages/human-followup'))).toBe(
+      false,
+    )
+    const mimeProbe = seen
+      .map((value) => new URL(value))
+      .find((url) => url.pathname.endsWith('/messages/invite-message'))
+    expect(mimeProbe?.searchParams.get('format')).toBe('full')
+    expect(mimeProbe?.searchParams.get('fields')).toMatch(/^id,threadId,payload\(/)
+    expect(mimeProbe?.searchParams.get('fields')).not.toMatch(/body|data|attachmentId/i)
+  })
+
+  it('marks MIME invitation evidence beyond the inspected depth as unknown', async () => {
+    let nested: Record<string, unknown> = {
+      mimeType: 'multipart/mixed',
+      parts: [{ mimeType: 'text/calendar' }],
+    }
+    for (let depth = 0; depth < 8; depth += 1) {
+      nested = { mimeType: 'multipart/mixed', parts: [nested] }
+    }
+    const { api } = gmail(
+      [{ id: 'nested-thread' }],
+      {
+        'nested-thread': {
+          id: 'nested-thread',
+          messages: [
+            {
+              id: 'nested-message',
+              internalDate: '1000',
+              labelIds: ['INBOX'],
+              payload: { mimeType: 'multipart/mixed' },
+            },
+          ],
+        },
+      },
+      [],
+      undefined,
+      [],
+      {
+        'nested-message': {
+          id: 'nested-message',
+          threadId: 'nested-thread',
+          payload: nested,
+        },
+      },
+    )
+
+    expect((await listThreads(api)).threads[0]).toMatchObject({
+      automated: false,
+      automationUnknown: true,
+    })
+  })
+
+  it('omits a vanished MIME probe per thread without losing the page or continuation', async () => {
+    const incoming = (id: string, threadId: string) => ({
+      id,
+      threadId,
+      internalDate: id === 'gone-message' ? '1000' : '2000',
+      labelIds: ['INBOX'],
+      payload: {
+        mimeType: 'multipart/mixed',
+        headers: [header('Content-Type', 'multipart/mixed')],
+      },
+    })
+    const list = [{ id: 'gone-thread' }, { id: 'live-thread' }]
+    const seen: string[] = []
+    const fetchImpl = vi.fn(async (input: string) => {
+      seen.push(input)
+      const url = new URL(input)
+      const path = url.pathname
+      const messageId = path.split('/').pop()
+      if (path.endsWith('/labels')) return Response.json({ labels: [] })
+      if (path.endsWith('/threads')) {
+        return Response.json(
+          url.searchParams.get('q')?.includes('filename:ics')
+            ? { threads: [] }
+            : { threads: list, nextPageToken: 'continue' },
+        )
+      }
+      if (path.endsWith('/messages/gone-message')) {
+        return new Response('{}', { status: 404 })
+      }
+      if (path.endsWith('/messages/live-message')) {
+        return Response.json({
+          id: messageId,
+          threadId: 'live-thread',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                mimeType: 'text/calendar',
+                headers: [header('Content-Type', 'text/calendar; method=REQUEST')],
+              },
+            ],
+          },
+        })
+      }
+      const threadId = path.split('/').pop()!
+      const message =
+        threadId === 'gone-thread'
+          ? incoming('gone-message', threadId)
+          : incoming('live-message', threadId)
+      return Response.json({ id: threadId, messages: [message] })
+    }) as unknown as typeof globalThis.fetch
+    const api = new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl })
+
+    const page = await listThreads(api)
+
+    expect(
+      page.threads.map(({ id, automated, automationUnknown }) => ({
+        id,
+        automated,
+        automationUnknown,
+      })),
+    ).toEqual([
+      { id: 'gone-thread', automated: false, automationUnknown: true },
+      { id: 'live-thread', automated: true, automationUnknown: false },
+    ])
+    expect(page.nextPageToken).toBe('continue')
+  })
+
+  it('keeps recipient identity explicitly unknown when send-as addresses are unavailable', async () => {
+    const { api } = gmail([{ id: 't' }], {
+      t: {
+        id: 't',
+        messages: [
+          {
+            id: 'in',
+            internalDate: '1',
+            labelIds: ['INBOX'],
+            payload: { headers: [header('To', 'me@example.com')] },
+          },
+        ],
+      },
+    })
+    expect((await listThreads(api)).threads[0]).toMatchObject({
+      addressedAs: 'unknown',
+      needsReply: true,
+    })
+  })
+
+  it('summarizes replies and latest incoming recipient and automation facts', async () => {
+    const messages = [
+      {
+        id: 'in',
+        internalDate: '1000',
+        labelIds: ['INBOX'],
+        payload: { headers: [header('To', 'Ada <ada@example.com>')] },
+      },
+      { id: 'sent', internalDate: '2000', labelIds: ['SENT'], payload: { headers: [] } },
+      {
+        id: 'followup',
+        internalDate: '3000',
+        labelIds: ['INBOX'],
+        payload: {
+          headers: [
+            header('Cc', 'ADA@example.com'),
+            header('Auto-Submitted', 'auto-replied'),
+            header('List-Id', 'list.example'),
+          ],
+        },
+      },
+    ]
+    const { api } = gmail([{ id: 't1' }], { t1: { id: 't1', messages } })
+    const summary = (await listThreads(api, {}, ['ada@example.com'])).threads[0]!
+
+    expect(summary).toMatchObject({
+      replied: true,
+      lastReplyAt: new Date(2000).toISOString(),
+      addressedAs: 'cc',
+      automated: true,
+      answered: false,
+      needsReply: true,
+    })
+  })
+
+  it.each([
+    ['comment after bare mailbox', 'ada@example.com (Ada Holm)', 'to'],
+    ['group mailbox', 'team: Ada <ada@example.com>;', 'to'],
+    ['escaped quoted display name', '"Ada \\\"A\\\" Holm" <ada@example.com>', 'to'],
+    ['colon in quoted display name', '"Support: Ada" <ada@example.com>', 'to'],
+    ['escaped comma in quoted display name', '"Ada \\\\, Holm" <ada@example.com>', 'to'],
+    ['To wins over Cc', 'ada@example.com', 'to'],
+  ])('extracts RFC mailbox addresses (%s)', async (_name, to, expected) => {
+    const { api } = gmail([{ id: 'address' }], {
+      address: {
+        id: 'address',
+        messages: [
+          {
+            id: 'incoming',
+            internalDate: '1000',
+            labelIds: ['INBOX'],
+            payload: { headers: [header('To', to), header('Cc', 'ada@example.com')] },
+          },
+        ],
+      },
+    })
+    expect((await listThreads(api, {}, ['ada@example.com'])).threads[0]!.addressedAs).toBe(expected)
+  })
+
+  it('does not treat drafts as incoming messages or replies', async () => {
+    const ownDraft = {
+      id: 'd',
+      internalDate: '2000',
+      labelIds: ['DRAFT'],
+      payload: { headers: [] },
+    }
+    const sentOnly = { id: 's', internalDate: '1000', labelIds: ['SENT'], payload: { headers: [] } }
+    const { api } = gmail([{ id: 't1' }], { t1: { id: 't1', messages: [sentOnly, ownDraft] } })
+    const summary = (await listThreads(api, {}, ['me@example.com'])).threads[0]!
+    expect(summary).toMatchObject({
+      answered: true,
+      replied: false,
+      lastReplyAt: null,
+      addressedAs: null,
+      automated: false,
+      needsReply: false,
+    })
+  })
+
+  it.each([
+    ['empty Auto-Submitted', [header('Auto-Submitted', '')]],
+    ['invalid Auto-Submitted', [header('Auto-Submitted', 'no; parameter')]],
+    ['empty list headers', [header('List-Unsubscribe', ' '), header('List-Id', '')]],
+    ['invalid list id', [header('List-Id', 'example.com')]],
+    ['calendar subtype lookalike', [header('Content-Type', 'text/calendar-bogus; method=REQUEST')]],
+    [
+      'plain content with calendar mention',
+      [header('Content-Type', 'text/plain; name=text/calendar')],
+    ],
+    ['calendar publish', [header('Content-Type', 'text/calendar; method=PUBLISH')]],
+  ])('does not infer automation from %s', async (_name, headers) => {
+    const { api } = gmail([{ id: 't1' }], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'in', internalDate: '1000', labelIds: ['INBOX'], payload: { headers } }],
+      },
+    })
+    expect((await listThreads(api, {}, ['me@example.com'])).threads[0]!.automated).toBe(false)
+  })
+
+  const automationFor = async (headers: { name: string; value: string }[]) => {
+    const { api } = gmail([{ id: 'fact' }], {
+      fact: {
+        id: 'fact',
+        messages: [
+          { id: 'incoming', internalDate: '1000', labelIds: ['INBOX'], payload: { headers } },
+        ],
+      },
+    })
+    return (await listThreads(api, {}, ['me@example.com'])).threads[0]!.automated
+  }
+
+  it.each([
+    ['bare qualified', '<list.example.org>', true],
+    ['descriptive', 'Project discussion <project.example.org>', true],
+    ['commented', '(project discussion) <project.example.org>', true],
+    ['unqualified', '<not-an-id>', false],
+    ['email-shaped', '<team@example.org>', false],
+    ['empty segment', '<project..example.org>', false],
+  ])('validates list ids (%s)', async (_name, listId, expected) => {
+    expect(await automationFor([header('List-Id', listId)])).toBe(expected)
+  })
+
+  it.each([
+    ['actual quoted method', 'text/calendar; method="REQUEST"', true],
+    [
+      'fake method in quoted filename',
+      'text/calendar; name="calendar; method=REQUEST; other.ics"; method=PUBLISH',
+      false,
+    ],
+    ['quoted semicolon and escaped quote', 'text/calendar; name="a; \\\"b"; method="REPLY"', true],
+    ['unmatched quote', 'text/calendar; method="REQUEST', false],
+    ['missing equals', 'text/calendar; method', false],
+    ['malformed unrelated parameter', 'text/calendar; method=REQUEST; !!!', false],
+    ['duplicate method', 'text/calendar; method=REQUEST; method=CANCEL', false],
+  ])('parses complete calendar parameters (%s)', async (_name, contentType, expected) => {
+    expect(await automationFor([header('Content-Type', contentType)])).toBe(expected)
+  })
+
+  it.each([
+    ['valid generated token with parameter', 'Auto-Generated; type=vacation', true],
+    ['valid replied token with quoted semicolon', 'auto-replied; note="x;y"', true],
+    ['invalid punctuation token', 'auto-replied!!!', false],
+    ['malformed parameter syntax', 'auto-replied; !!!', false],
+    ['missing parameter value', 'auto-replied; type=', false],
+    ['unterminated parameter quote', 'auto-replied; note="oops', false],
+  ])('parses complete Auto-Submitted parameters (%s)', async (_name, value, expected) => {
+    expect(await automationFor([header('Auto-Submitted', value)])).toBe(expected)
+  })
+
+  it.each([
+    ['valid HTTP', '<https://example.org/unsubscribe>', true],
+    ['malformed HTTP', '<http://[>', false],
+    ['malformed mailto', '<mailto:not-an-address>', false],
+  ])('validates List-Unsubscribe URI (%s)', async (_name, value, expected) => {
+    expect(await automationFor([header('List-Unsubscribe', value)])).toBe(expected)
+  })
+
+  it.each([
+    ['uppercase scheme', '<HTTPS://EXAMPLE.ORG/unsubscribe>', 'HTTPS://EXAMPLE.ORG/unsubscribe'],
+    ['legacy malformed URL', '<http://[>', 'http://['],
+  ])('preserves the existing unsubscribe URL (%s)', async (_name, value, expected) => {
+    const { api } = gmail([{ id: 'legacy' }], {
+      legacy: {
+        id: 'legacy',
+        messages: [
+          {
+            id: 'incoming',
+            internalDate: '1000',
+            labelIds: ['INBOX'],
+            payload: { headers: [header('List-Unsubscribe', value)] },
+          },
+        ],
+      },
+    })
+    expect((await listThreads(api, {}, ['me@example.com'])).threads[0]!.unsubscribeUrl).toBe(
+      expected,
+    )
+  })
+
   const thread = {
     id: 't1',
     messages: [
@@ -708,11 +1130,43 @@ describe('listThreads', () => {
       'Cc',
       'Reply-To',
       'List-Unsubscribe',
+      'Auto-Submitted',
+      'List-Id',
+      'Content-Type',
     ])
   })
 })
 
 describe('readThread', () => {
+  it('keeps escaped quotes, commas and colons inside a display name', async () => {
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              headers: [
+                header('From', 'ada@syv.ai'),
+                header('To', '"Ada \\"A, B: C\\" Holm" <ada@syv.ai>, "Bob Smith" <bob@syv.ai>'),
+                header('Cc', '"Carol, Jones: Esq." <carol@syv.ai>'),
+              ],
+              mimeType: 'text/plain',
+            },
+          },
+        ],
+      },
+    })
+
+    const [message] = (await readThread(api, 't1')).messages
+
+    expect(message!.to).toEqual([
+      { name: 'Ada "A, B: C" Holm', email: 'ada@syv.ai' },
+      { name: 'Bob Smith', email: 'bob@syv.ai' },
+    ])
+    expect(message!.cc).toEqual([{ name: 'Carol, Jones: Esq.', email: 'carol@syv.ai' }])
+  })
+
   it('returns each message with its text body, sender and recipients', async () => {
     const { api } = gmail([], {
       t1: {
@@ -939,6 +1393,93 @@ describe('readThread', () => {
 })
 
 describe('textOnly', () => {
+  it('keeps an HTML bottom-posted reply after a bounded forwarded quote', async () => {
+    const html =
+      '<p>-----Original Message-----</p><p>From: Ada</p><p>Date: Tue</p><p>Subject: Plan</p><blockquote><p>Old proposal.</p><p>Old dates.</p></blockquote><p>The dates work for me.</p>'
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+      },
+    })
+
+    const thread = await readThread(api, 't1')
+    expect(textOnly(thread).messages[0]!.body).toBe('The dates work for me.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(thread.messages[0]!.body)
+    expect(thread.messages[0]!.html).toBe(html)
+  })
+
+  it('cleans complete HTML quote spans only for the CLI and leaves the original projection intact', async () => {
+    const html =
+      '<p>On Tuesday Ada wrote:</p><blockquote><p>Old first paragraph.</p><p>Old second paragraph.</p><blockquote><p>Nested older history.</p></blockquote></blockquote><p>New bottom-posted answer.</p>'
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+      },
+    })
+    const thread = await readThread(api, 't1')
+    const before = structuredClone(thread)
+    // The pre-existing HTML-to-text reader representation must not gain quote markers.
+    expect(thread.messages[0]!.body).toBe(
+      'On Tuesday Ada wrote:\n\nOld first paragraph.\n\nOld second paragraph.\n\nNested older history.\n\nNew bottom-posted answer.',
+    )
+    expect(textOnly(thread).messages[0]!.body).toBe('New bottom-posted answer.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(thread.messages[0]!.body)
+    expect(thread).toEqual(before)
+    expect(thread.messages[0]!.html).toBe(html)
+  })
+
+  it('prefers plain originals over HTML alternatives and retains ambiguous malformed HTML', async () => {
+    const plain = 'The complete authored plain message.\r\n--\r\nKeep this separator.'
+    const html = '<p>On Tuesday Ada wrote:</p><blockquote><p>Old quoted text.</p>'
+    const { api } = gmail([], {
+      t1: {
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              mimeType: 'multipart/alternative',
+              parts: [
+                { mimeType: 'text/plain', body: { data: b64(plain) } },
+                { mimeType: 'text/html', body: { data: b64(html) } },
+              ],
+            },
+          },
+          { id: 'm2', payload: { mimeType: 'text/html', body: { data: b64(html) } } },
+        ],
+      },
+    })
+    const thread = await readThread(api, 't1')
+    const result = textOnly(thread)
+    expect(result.messages.map(({ id }) => id)).toEqual(['m1', 'm2'])
+    expect(result.messages[0]!.body).toBe(plain.replace(/\r\n/g, '\n'))
+    expect(result.messages[1]!.body).toContain('Old quoted text.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(plain)
+  })
+
+  it('drops recognized quoted history by default and preserves the complete body with full', () => {
+    const thread = {
+      id: 't1',
+      subject: 'Plan',
+      webUrl: 'https://mail.google.com/…',
+      messages: [
+        {
+          id: 'm1',
+          from: 'Jane',
+          to: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: 'The plan is ready.\n\nOn Tue, Jane wrote:\n> previous message',
+          html: null,
+        },
+      ],
+    } as never
+    expect(textOnly(thread).messages[0]!.body).toBe('The plan is ready.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(
+      'The plan is ready.\n\nOn Tue, Jane wrote:\n> previous message',
+    )
+  })
+
   it('drops html entirely, so the agent never receives markup', () => {
     // The shape the agent's JSON had before senders became addresses: the
     // projection passes each field through as it finds it.
@@ -1338,9 +1879,9 @@ describe('send, draft and reply', () => {
   /** A Gmail that serves one thread and accepts writes — validating `raw` the
    *  way Gmail does, so an encoding bug fails here rather than in a mailbox. */
   function mailbox(thread?: Record<string, unknown>, sendResponse: unknown = { id: 'm-9' }) {
-    const posts: { url: string; body: unknown }[] = []
+    const posts: { url: string; method: string; body: unknown }[] = []
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      if (init?.method !== 'POST') {
+      if (init?.method !== 'POST' && init?.method !== 'PUT') {
         return { ok: true, status: 200, json: async () => thread ?? {}, text: async () => '{}' }
       }
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
@@ -1355,7 +1896,7 @@ describe('send, draft and reply', () => {
           json: async () => ({}),
         }
       }
-      posts.push({ url, body })
+      posts.push({ url, method: init?.method ?? 'POST', body })
       return { ok: true, status: 200, json: async () => sendResponse, text: async () => '{}' }
     })
     const api = new GoogleApi({
@@ -1448,8 +1989,25 @@ describe('send, draft and reply', () => {
     ).resolves.toEqual({ id: null })
   })
 
+  it('normalizes RFC comments and adjacent references when threading a draft', async () => {
+    const thread = structuredClone(THREAD)
+    thread.messages[2]!.payload.headers = [
+      header('Message-ID', ' (latest) <msg-3@mail.example> (comment)'),
+      header('References', '<msg-1@mail.example>(root) <msg-2@mail.example>'),
+    ]
+    const { posts, api } = mailbox(thread)
+
+    await createDraft(api, { to: ['ada@syv.ai'], subject: 'Reply', body: 'Hi' }, 't1')
+
+    const raw = rawOf(posts[0]!.body)
+    expect(headerIn(raw, 'In-Reply-To')).toBe('<msg-3@mail.example>')
+    expect(headerIn(raw, 'References')).toBe(
+      '<msg-1@mail.example> <msg-2@mail.example> <msg-3@mail.example>',
+    )
+  })
+
   it('drafts through the drafts endpoint, filed into its thread', async () => {
-    const { posts, api } = mailbox(undefined, { id: 'd-1' })
+    const { posts, api } = mailbox(THREAD, { id: 'd-1' })
 
     const result = await createDraft(
       api,
@@ -1460,7 +2018,29 @@ describe('send, draft and reply', () => {
     expect(posts[0]!.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/drafts')
     // Without threadId the draft is a loose message that never joins the thread.
     expect((posts[0]!.body as { message: { threadId?: string } }).message.threadId).toBe('t1')
+    expect(headerIn(rawOf(posts[0]!.body), 'In-Reply-To')).toBe('<msg-3@mail.example>')
+    expect(headerIn(rawOf(posts[0]!.body), 'References')).toBe('<msg-3@mail.example>')
     expect(result.id).toBe('d-1')
+  })
+
+  it('updates a draft in place and preserves its id', async () => {
+    const { posts, api } = mailbox(undefined, { id: 'd-1' })
+
+    const result = await createDraft(
+      api,
+      {
+        to: ['ada@syv.ai'],
+        subject: 'Revised',
+        body: 'Replacement body',
+      },
+      undefined,
+      'd-1',
+    )
+
+    expect(posts[0]!.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/drafts/d-1')
+    expect(posts[0]!.method).toBe('PUT')
+    expect(headerIn(rawOf(posts[0]!.body), 'Subject')).toBe('Revised')
+    expect(result).toEqual({ id: 'd-1' })
   })
 
   it('carries In-Reply-To AND References so the reply stays in its thread', async () => {
@@ -2168,11 +2748,15 @@ describe('the composer surface', () => {
       expect(draft.markdown).toBe(markdown)
     })
 
-    it('carries cc, which is what a reply-all draft is for', async () => {
-      const raw = toBase64Url(buildRfc822({ ...MAIL, cc: ['cec@example.com'] }))
+    it('carries cc and bcc recipients back from an existing draft', async () => {
+      const raw = toBase64Url(
+        buildRfc822({ ...MAIL, cc: ['cec@example.com'], bcc: ['hidden@example.com'] }),
+      )
       const { api } = composer({ drafts: [{ id: 'd-1', raw }] })
+      const draft = await readDraft(api, 'd-1')
 
-      expect((await readDraft(api, 'd-1')).cc.map((a) => a.email)).toEqual(['cec@example.com'])
+      expect(draft.cc.map((a) => a.email)).toEqual(['cec@example.com'])
+      expect(draft.bcc.map((a) => a.email)).toEqual(['hidden@example.com'])
     })
 
     it('reports a 404 for a draft that is gone', async () => {

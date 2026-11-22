@@ -32,6 +32,8 @@ import {
   UsersIcon,
   type LucideIcon,
 } from 'lucide-react'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -45,7 +47,6 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import {
-  DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuLabel,
@@ -55,7 +56,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/cn'
 import { parentOf } from '@/lib/tree-paths'
 import { PRIORITIES, shortDate } from '@/lib/planning'
@@ -64,6 +65,7 @@ import { taskTagsAtom, tasksAtom } from '@/state/tasks'
 import { snapshotAtom } from '@/state/vaults'
 import { PeopleStack } from '@/composites/person-avatar'
 import { StatusIcon } from './task-bits'
+import { PlanningDropdownMenu, PlanningPopover } from './planning-visibility'
 
 /** What the row edits. `folder` is vault-relative, `""` the vault root. */
 export interface TaskFieldValues {
@@ -230,7 +232,7 @@ function StatusField({
 }) {
   const current = statuses.find((s) => s.id === value)
   return (
-    <DropdownMenu modal={false}>
+    <PlanningDropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -253,7 +255,7 @@ function StatusField({
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
-    </DropdownMenu>
+    </PlanningDropdownMenu>
   )
 }
 
@@ -271,7 +273,7 @@ function AssigneesField({
   const toggle = (login: string, on: boolean) =>
     onChange(on ? [...value, login] : value.filter((x) => x !== login))
   return (
-    <DropdownMenu modal={false}>
+    <PlanningDropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -303,7 +305,7 @@ function AssigneesField({
           ))
         )}
       </DropdownMenuContent>
-    </DropdownMenu>
+    </PlanningDropdownMenu>
   )
 }
 
@@ -320,7 +322,7 @@ function PriorityField({
 }) {
   const name = PRIORITIES.find((p) => p.id === value)?.name
   return (
-    <DropdownMenu modal={false}>
+    <PlanningDropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -345,7 +347,7 @@ function PriorityField({
           <DropdownMenuRadioItem value={NO_PRIORITY}>No priority</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
-    </DropdownMenu>
+    </PlanningDropdownMenu>
   )
 }
 
@@ -366,7 +368,7 @@ function DateField({
   const day = stampDay(value)
   const { label } = FIELD_NAMES[field]
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <PlanningPopover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -404,7 +406,7 @@ function DateField({
           </div>
         ) : null}
       </PopoverContent>
-    </Popover>
+    </PlanningPopover>
   )
 }
 
@@ -417,7 +419,11 @@ function PickList({
   onPick,
   render = (option) => option,
   emptyOption,
+  query,
+  setQuery,
 }: {
+  query: string
+  setQuery: (query: string) => void
   placeholder: string
   options: string[]
   selected: string[]
@@ -427,56 +433,64 @@ function PickList({
   /** A first item meaning "none", like the vault root for a project. */
   emptyOption?: { label: string; value: string }
 }) {
-  const [query, setQuery] = useState('')
+  const vim = useVimField(`task-field-${placeholder}`, query)
   const typed = query.trim()
   const isNew =
     typed !== '' && !options.some((option) => option.toLowerCase() === typed.toLowerCase())
   return (
-    <Command>
-      <CommandInput placeholder={placeholder} value={query} onValueChange={setQuery} />
-      <CommandList>
-        <CommandEmpty>Type a name to add it.</CommandEmpty>
-        <CommandGroup>
-          {emptyOption !== undefined ? (
-            <CommandItem value={emptyOption.label} onSelect={() => onPick(emptyOption.value)}>
-              {emptyOption.label}
-              <CheckIcon
-                className={cn('ml-auto', !selected.includes(emptyOption.value) && 'opacity-0')}
-                aria-hidden="true"
-              />
-            </CommandItem>
-          ) : null}
-          {options.map((option) => (
-            <CommandItem
-              key={option}
-              value={option}
-              onSelect={() => {
-                onPick(option)
-                if (!multiple) setQuery('')
-              }}
-            >
-              {render(option)}
-              <CheckIcon
-                className={cn('ml-auto', !selected.includes(option) && 'opacity-0')}
-                aria-hidden="true"
-              />
-            </CommandItem>
-          ))}
-          {isNew ? (
-            <CommandItem
-              value={`create ${typed}`}
-              onSelect={() => {
-                onPick(typed)
-                setQuery('')
-              }}
-            >
-              <PlusIcon aria-hidden="true" />
-              Add “{typed}”
-            </CommandItem>
-          ) : null}
-        </CommandGroup>
-      </CommandList>
-    </Command>
+    <>
+      <Command>
+        <CommandInput
+          placeholder={placeholder}
+          value={query}
+          onValueChange={setQuery}
+          {...vim.vimFieldProps}
+        />
+        <CommandList>
+          <CommandEmpty>Type a name to add it.</CommandEmpty>
+          <CommandGroup>
+            {emptyOption !== undefined ? (
+              <CommandItem value={emptyOption.label} onSelect={() => onPick(emptyOption.value)}>
+                {emptyOption.label}
+                <CheckIcon
+                  className={cn('ml-auto', !selected.includes(emptyOption.value) && 'opacity-0')}
+                  aria-hidden="true"
+                />
+              </CommandItem>
+            ) : null}
+            {options.map((option) => (
+              <CommandItem
+                key={option}
+                value={option}
+                onSelect={() => {
+                  onPick(option)
+                  if (!multiple) setQuery('')
+                }}
+              >
+                {render(option)}
+                <CheckIcon
+                  className={cn('ml-auto', !selected.includes(option) && 'opacity-0')}
+                  aria-hidden="true"
+                />
+              </CommandItem>
+            ))}
+            {isNew ? (
+              <CommandItem
+                value={`create ${typed}`}
+                onSelect={() => {
+                  onPick(typed)
+                  setQuery('')
+                }}
+              >
+                <PlusIcon aria-hidden="true" />
+                Add “{typed}”
+              </CommandItem>
+            ) : null}
+          </CommandGroup>
+        </CommandList>
+      </Command>
+      <VimFieldMode mode={vim.vimFieldMode} />
+    </>
   )
 }
 
@@ -489,10 +503,11 @@ function LabelsField({
   value: string[]
   onChange: (tags: string[]) => void
 }) {
+  const [query, setQuery] = useState('')
   const known = useAtomValue(taskTagsAtom)
   const options = [...new Set([...known, ...value])]
   return (
-    <Popover>
+    <PlanningPopover>
       <PopoverTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -513,6 +528,8 @@ function LabelsField({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64">
         <PickList
+          query={query}
+          setQuery={setQuery}
           placeholder="Find or add a label…"
           options={options}
           selected={value}
@@ -522,7 +539,7 @@ function LabelsField({
           }
         />
       </PopoverContent>
-    </Popover>
+    </PlanningPopover>
   )
 }
 
@@ -536,10 +553,11 @@ function ProjectField({
   onChange: (folder: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const projects = useProjects()
   const options = value !== '' && !projects.includes(value) ? [...projects, value] : projects
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <PlanningPopover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -552,6 +570,8 @@ function ProjectField({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72">
         <PickList
+          query={query}
+          setQuery={setQuery}
           placeholder="Find or name a project…"
           options={options}
           selected={[value]}
@@ -569,7 +589,7 @@ function ProjectField({
           }}
         />
       </PopoverContent>
-    </Popover>
+    </PlanningPopover>
   )
 }
 
@@ -586,6 +606,12 @@ function EstimateField({
 }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(value ?? '')
+  const vim = useVimField('estimate', draft)
+  const [savedValue, setSavedValue] = useState(value)
+  if (savedValue !== value) {
+    setSavedValue(value)
+    setDraft(value ?? '')
+  }
   const bad = draft.trim() !== '' && !isEstimate(draft.trim())
   const commit = (next: string) => {
     const trimmed = next.trim()
@@ -594,13 +620,7 @@ function EstimateField({
     setOpen(false)
   }
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        if (next) setDraft(value ?? '')
-        setOpen(next)
-      }}
-    >
+    <PlanningPopover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -627,8 +647,10 @@ function EstimateField({
             aria-invalid={bad}
             placeholder="2h"
             value={draft}
+            {...vim.vimFieldProps}
             onChange={(event) => setDraft(event.target.value)}
           />
+          <VimFieldMode mode={vim.vimFieldMode} />
           <p className={cn('text-xs', bad ? 'text-destructive' : 'text-muted-foreground')}>
             A number and m, h, d or w, like 30m or 1.5d.
           </p>
@@ -652,7 +674,7 @@ function EstimateField({
           ) : null}
         </div>
       </PopoverContent>
-    </Popover>
+    </PlanningPopover>
   )
 }
 
@@ -682,7 +704,7 @@ function SharingField({
 }) {
   const current = SHARINGS[value ? 1 : 0]
   return (
-    <DropdownMenu modal={false}>
+    <PlanningDropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -716,7 +738,7 @@ function SharingField({
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
-    </DropdownMenu>
+    </PlanningDropdownMenu>
   )
 }
 

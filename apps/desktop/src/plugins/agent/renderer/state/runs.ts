@@ -10,6 +10,7 @@
  */
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
+import { toast } from 'sonner'
 import { activeRemoteAtom } from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 import { reviewTurnAtom, turnReviewOpenAtom, type Turn, type TurnFile } from './turns'
@@ -51,7 +52,18 @@ function rangesOf(turns: readonly Turn[]): Record<string, Turn> {
 export const loadRunChangesAtom = atom(null, async (get, set, jobIds: readonly string[]) => {
   const remote = get(activeRemoteAtom)
   if (remote === null) return
-  const ranges = rangesOf(await agentCap.turns(remote))
+  let ranges: Record<string, Turn>
+  try {
+    ranges = rangesOf(await agentCap.turns(remote))
+  } catch (error) {
+    if (get(activeRemoteAtom) === remote) {
+      toast.error('Could not load run changes', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+    return
+  }
+  if (get(activeRemoteAtom) !== remote) return
   set(runRangesAtom, ranges)
   const known = get(runFilesAtom)
   const next = { ...known }
@@ -63,12 +75,19 @@ export const loadRunChangesAtom = atom(null, async (get, set, jobIds: readonly s
         next[id] = []
         return
       }
-      next[id] = await agentCap
-        .turnFiles(remote, { base: range.base, end: range.end })
-        .catch(() => [])
+      try {
+        next[id] = await agentCap.turnFiles(remote, { base: range.base, end: range.end })
+      } catch (error) {
+        next[id] = []
+        if (get(activeRemoteAtom) === remote) {
+          toast.error('Could not load run changes', {
+            description: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
     }),
   )
-  set(runFilesAtom, next)
+  if (get(activeRemoteAtom) === remote) set(runFilesAtom, next)
 })
 
 /** Review changes: the turn review drawer, over the run's whole range. */

@@ -47,7 +47,7 @@ export function StatusIcon({ status, className }: { status: StatusDef; className
 
 export function StatusBadge({ status }: { status: StatusDef }) {
   return (
-    <Badge variant="outline">
+    <Badge variant="secondary">
       <StatusIcon status={status} />
       {status.name}
     </Badge>
@@ -55,9 +55,9 @@ export function StatusBadge({ status }: { status: StatusDef }) {
 }
 
 const PRIORITY_VARIANT: Record<Priority, ComponentProps<typeof Badge>['variant']> = {
-  urgent: 'destructive-light',
-  high: 'warning-light',
-  medium: 'info-light',
+  urgent: 'destructive',
+  high: 'warning',
+  medium: 'info',
   low: 'secondary',
 }
 
@@ -84,7 +84,7 @@ export function DateBadge({
 }) {
   return (
     <Badge
-      variant={overdue ? 'destructive-light' : 'outline'}
+      variant={overdue ? 'destructive' : 'secondary'}
       className={cn('font-normal', !overdue && 'bg-background')}
       aria-label={`${label} ${shortDate(stamp, today)}${overdue ? ', overdue' : ''}`}
     >
@@ -100,7 +100,7 @@ export function DateBadge({
 export function EstimateBadge({ estimate }: { estimate: string }) {
   return (
     <Badge
-      variant="outline"
+      variant="secondary"
       className="bg-background font-normal"
       aria-label={`Estimate ${estimate}`}
     >
@@ -136,10 +136,10 @@ export function PrivateMark({ path }: { path: string }) {
 
 const PROJECT_STATUS_VARIANT = {
   planning: 'secondary',
-  active: 'info-light',
-  'at-risk': 'warning-light',
+  active: 'info',
+  'at-risk': 'warning',
   'on-hold': 'secondary',
-  complete: 'success-light',
+  complete: 'success',
 } as const
 
 export function ProjectStatusBadge({ status }: { status: Project['status'] }) {

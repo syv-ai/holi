@@ -33,6 +33,7 @@ interface Found {
   from: number
   to: number
   alt: string
+  source: 'markdown' | 'wiki'
   /** A vault path, or an `http(s)` address. */
   target: { kind: 'vault'; path: string } | { kind: 'external'; url: string }
 }
@@ -133,6 +134,7 @@ function findImages(markdown: string, notePath: string): Found[] {
       from: image.from,
       to: image.to,
       alt: image.alt,
+      source: 'markdown',
       target: resolveImageRef(notePath, destination(url)),
     })
   }
@@ -145,6 +147,7 @@ function findImages(markdown: string, notePath: string): Found[] {
       from,
       to: link.end,
       alt: link.label ?? link.target,
+      source: 'wiki',
       target: { kind: 'vault', path: link.target },
     })
   }
@@ -175,10 +178,22 @@ function unusable(bytes: Uint8Array, format: string): string | null {
   return null
 }
 
-/** The markdown that stands in for an image: the image itself, in Typst. */
-function imageMarkdown(bytes: Uint8Array, format: string, alt: string): string {
+/** The trusted expression for an image, with bytes and alt text encoded as data. */
+function imageTypst(bytes: Uint8Array, format: string, alt: string): string {
   const altArg = alt === '' ? '' : `, alt: ${commentSafeString(alt)}`
-  return `<!--raw-typst #image(bytes((${bytes.join(',')})), format: "${format}"${altArg})-->`
+  return `#image(bytes((${bytes.join(',')})), format: "${format}"${altArg})`
+}
+
+/** True when a range contains exactly one ordinary Markdown image and whitespace. */
+export function hasSingleMarkdownImage(markdown: string, from: number, to: number): boolean {
+  const images = findImages(markdown, '').filter(
+    (image) => image.source === 'markdown' && image.from >= from && image.to <= to,
+  )
+  if (images.length !== 1) return false
+  const image = images[0]!
+  return (
+    markdown.slice(from, image.from).trim() === '' && markdown.slice(image.to, to).trim() === ''
+  )
 }
 
 /**
@@ -192,6 +207,9 @@ export async function inlineImages(
   markdown: string,
   notePath: string,
   load: LoadImage,
+  // Register generated content at its point of creation, never by recognizing
+  // raw comments in already-transformed user text. Positions refer to `markdown`.
+  generatedImage: (typst: string, from: number) => string = (typst) => `<!--raw-typst ${typst}-->`,
 ): Promise<{ markdown: string; warnings: string[] }> {
   const images = findImages(markdown, notePath)
   if (images.length === 0) return { markdown, warnings: [] }
@@ -226,7 +244,7 @@ export async function inlineImages(
       continue
     }
     const why = unusable(bytes, format)
-    if (why === null) out += imageMarkdown(bytes, format, image.alt)
+    if (why === null) out += generatedImage(imageTypst(bytes, format, image.alt), image.from)
     else leftOut(`${path} ${why}`)
   }
   return { markdown: out + markdown.slice(at), warnings }

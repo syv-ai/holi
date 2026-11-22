@@ -3,8 +3,10 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const CSS = resolve(process.cwd(), 'src/renderer/src/index.css')
+const TAILWIND_THEME = resolve(process.cwd(), 'node_modules/tailwindcss/theme.css')
 const SESSION_CARD = resolve(process.cwd(), 'src/plugins/agent/renderer/sessions/session-card.tsx')
 const css = await readFile(CSS, 'utf8')
+const tailwindTheme = await readFile(TAILWIND_THEME, 'utf8')
 const sessionCard = await readFile(SESSION_CARD, 'utf8')
 
 type RGB = [number, number, number]
@@ -27,9 +29,9 @@ function declarations(selector: string): Record<string, string> {
 }
 
 function oklch(color: string): RGB {
-  const match = color.match(/oklch\(([\d.]+)\s+([\d.]+)\s+([\d.]+)/)
-  if (!match) throw new Error(`Expected neutral OKLCH, got ${color}`)
-  const L = Number(match[1]!)
+  const match = color.match(/oklch\(([\d.]+)%?\s+([\d.]+)\s+([\d.]+)/)
+  if (!match) throw new Error(`Expected OKLCH, got ${color}`)
+  const L = Number(match[1]!) / (color.includes('%') ? 100 : 1)
   const C = Number(match[2]!)
   const h = (Number(match[3]!) * Math.PI) / 180
   const a = C * Math.cos(h)
@@ -76,6 +78,18 @@ function percentage(value: string): number {
   return Number(match[1]!) / 100
 }
 
+function palette(name: string): string {
+  const value = tailwindTheme.match(new RegExp(`${name}:\\s*(oklch\\([^;]+\\));`))?.[1]
+  if (!value) throw new Error(`Missing Tailwind palette value: ${name}`)
+  return value
+}
+
+function resolveColor(theme: Record<string, string>, name: string): string {
+  const value = theme[name] ?? css.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim()
+  if (!value) throw new Error(`Missing theme color: ${name}`)
+  return value.startsWith('var(--color-') ? palette(value.slice(4, -1)) : value
+}
+
 function token(selector: string, name: string): string {
   const value = declarations(selector)[name]
   if (!value) throw new Error(`Missing ${name} in ${selector}`)
@@ -97,6 +111,41 @@ const darkDrawerGlass = css.match(
 )?.[1]
 
 describe('macOS glass text contrast from the production CSS cascade', () => {
+  it('keeps solid status, destructive, default, secondary, and invert text readable', () => {
+    const solidForeground = oklch(palette('--color-zinc-950'))
+    for (const theme of [light, dark]) {
+      for (const name of ['--success', '--info', '--warning', '--focus']) {
+        expect(
+          contrast(solidForeground, oklch(resolveColor(theme, name))),
+          name,
+        ).toBeGreaterThanOrEqual(4.5)
+      }
+      const destructiveForeground = oklch(theme['--destructive-solid-foreground']!)
+      const destructiveFill = oklch(theme['--destructive']!)
+      expect(
+        contrast(destructiveForeground, destructiveFill),
+        'destructive',
+      ).toBeGreaterThanOrEqual(4.5)
+      expect(
+        contrast(
+          destructiveForeground,
+          composite(destructiveFill, oklch(theme['--background']!), 1),
+        ),
+        'destructive hover',
+      ).toBeGreaterThanOrEqual(4.5)
+      expect(
+        contrast(oklch(theme['--secondary-foreground']!), oklch(theme['--secondary']!)),
+        'secondary',
+      ).toBeGreaterThanOrEqual(4.5)
+      expect(
+        contrast(
+          oklch(resolveColor(theme, '--invert-foreground')),
+          oklch(resolveColor(theme, '--invert')),
+        ),
+        'invert',
+      ).toBeGreaterThanOrEqual(4.5)
+    }
+  })
   it('uses calibrated encoded-sRGB compositing and WCAG luminance', () => {
     expect(contrast([0, 0, 0], [1, 1, 1])).toBeCloseTo(21, 10)
     expect(composite([0, 0, 0], [1, 1, 1], 0.5)).toEqual([0.5, 0.5, 0.5])

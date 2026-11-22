@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PtyProcess } from '../main/host/pty'
+import { withPtyOwnership, type PtyProcess } from '../main/host/pty'
 import { terminalCommand } from '../main/claude/cli'
 import { createAgentTerminals } from '../main/host/terminals'
+import { delimiter } from 'node:path'
 
 class FakePty implements PtyProcess {
   readonly writes: string[] = []
@@ -68,6 +69,143 @@ afterEach(() => {
 })
 
 describe('agent terminals', () => {
+  it('joins repeat close with a rejecting natural-exit callback', async () => {
+    const pty = new FakePty()
+    const proof = vi.fn(async () => {})
+    const cause = new Error('exit callback failed')
+    let finish!: () => void
+    const callback = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      throw cause
+    })
+    const terminals = createAgentTerminals({
+      emit: () => {},
+      spawnPty: () => pty,
+      superviseGroup: () => ({ drain: proof }),
+    })
+    const terminal = terminals.open({ ...on('same-session'), onExit: callback })
+    if (!terminal.ok) throw new Error(terminal.message)
+    pty.exit(7)
+    const first = terminals.close(terminal.id)
+    const again = terminals.close(terminal.id)
+    const closing = Promise.allSettled([first, again])
+    try {
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledTimes(1))
+      expect(terminals.launchedFor('same-session')).toBe(terminal.id)
+      finish()
+      expect(await closing).toEqual([
+        { status: 'rejected', reason: cause },
+        { status: 'rejected', reason: cause },
+      ])
+      await expect(terminals.close(terminal.id)).rejects.toBe(cause)
+      await expect(terminals.closeAll()).rejects.toBe(cause)
+      expect(proof).toHaveBeenCalledTimes(1)
+      expect(pty.kills).toEqual([])
+    } finally {
+      finish?.()
+      await closing
+    }
+  })
+
+  it.skipIf(process.platform === 'win32').each(['success', 'failure'] as const)(
+    'keeps the terminal indexed through ownership retirement: %s',
+    async (mode) => {
+      const pty = new FakePty()
+      const activation = new AbortController()
+      const cause = new Error('ownership retirement failed')
+      const proof = vi.fn(async () => {})
+      const spawnPty = vi.fn(() => pty)
+      const terminals = createAgentTerminals({
+        emit: () => {},
+        activationSignal: activation.signal,
+        spawnPty,
+        superviseGroup: () => ({ drain: proof }),
+        log: () => {},
+      })
+      let finishCallback!: () => void
+      let enterCallback!: () => void
+      const callback = new Promise<void>((resolve) => {
+        finishCallback = resolve
+      })
+      const entered = new Promise<void>((resolve) => {
+        enterCallback = resolve
+      })
+      const onExit = vi.fn(() => {
+        enterCallback()
+        return callback
+      })
+      const slot = 'same-session'
+      const atRetirement = vi.fn()
+      const ownership = {
+        ownershipRecordPath: undefined,
+        nonLaunch: vi.fn(),
+        fail: vi.fn(),
+        retire: vi.fn(() => {
+          atRetirement(terminals.launchedFor(slot))
+          if (mode === 'failure') throw cause
+        }),
+      }
+      const allocate = vi.fn(() => ownership)
+      const opened = withPtyOwnership({ cwd: TARGET.root, allocate }, () =>
+        terminals.open({ ...on(slot), onExit }),
+      )
+      if (!opened.ok) throw new Error(opened.message)
+      pty.exit()
+      try {
+        await entered
+        expect(allocate).toHaveBeenCalledExactlyOnceWith('explicit')
+        expect(terminals.launchedFor(slot)).toBe(opened.id)
+        expect(terminals.open(on(slot)).ok).toBe(false)
+        expect(ownership.retire).not.toHaveBeenCalled()
+      } finally {
+        finishCallback()
+      }
+      // Let natural exit finish before Stop or the activation disposer joins it.
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(onExit).toHaveBeenCalledOnce()
+      expect(atRetirement).toHaveBeenCalledExactlyOnceWith(opened.id)
+      expect(proof).toHaveBeenCalledOnce()
+      expect(pty.kills).toEqual([])
+      if (mode === 'failure') {
+        expect(ownership.fail).toHaveBeenCalledWith(cause)
+        expect(terminals.launchedFor(slot)).toBe(opened.id)
+        expect(terminals.open(on(slot)).ok).toBe(false)
+        expect(spawnPty).toHaveBeenCalledOnce()
+        await expect(terminals.close(opened.id)).rejects.toBe(cause)
+        await expect(terminals.close(opened.id)).rejects.toBe(cause)
+        activation.abort()
+        await expect(terminals.closeAll()).rejects.toBe(cause)
+        await expect(terminals.closeAll()).rejects.toBe(cause)
+      } else {
+        expect(ownership.fail).not.toHaveBeenCalled()
+        expect(terminals.launchedFor(slot)).toBeNull()
+        expect(terminals.open(on(slot)).ok).toBe(true)
+        pty.exit()
+        await terminals.closeAll()
+        expect(terminals.list()).toEqual([])
+      }
+    },
+  )
+
+  it('retains the terminal and original failure when exit notification throws', async () => {
+    const pty = new FakePty()
+    const cause = new Error('exit notification failed')
+    const emit = vi.fn((_remote: string, name: string) => {
+      if (name === 'pty-exit') throw cause
+    })
+    const terminals = createAgentTerminals({ emit, spawnPty: () => pty })
+    const opened = terminals.open(on('same-session'))
+    if (!opened.ok) throw new Error(opened.message)
+    pty.exit()
+    expect(terminals.launchedFor('same-session')).toBe(opened.id)
+    await expect(terminals.close(opened.id)).rejects.toBe(cause)
+    await expect(terminals.closeAll()).rejects.toBe(cause)
+    expect(terminals.open(on('same-session')).ok).toBe(false)
+    expect(emit.mock.calls.filter(([, name]) => name === 'pty-exit')).toHaveLength(1)
+  })
+
   it('opens the list, or one session, in the vault on its config dir', () => {
     const { terminals, spawns } = setup()
     terminals.open(on())
@@ -77,7 +215,7 @@ describe('agent terminals', () => {
     for (const { opts } of spawns) {
       expect(opts.cwd).toBe(TARGET.root)
       expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/cfg/vault')
-      expect(opts.env.PATH.split(':')[0]).toBe('/holi/bin')
+      expect(opts.env.PATH.split(delimiter)[0]).toBe('/holi/bin')
     }
     expect(terminals.list().map((t) => t.launchedFor)).toEqual([null, '1234abcd'])
   })
@@ -162,16 +300,18 @@ describe('agent terminals', () => {
     expect(sent).toContainEqual(['pty-data', { id, data: 'after' }])
   })
 
-  it('passes the final title to a session after removing its terminal', async () => {
+  it('passes the final title before retiring terminal ownership', async () => {
     const { terminals, spawns } = setup()
-    const onExit = vi.fn()
-    terminals.open({ ...on('1234abcd'), onExit })
+    const onExit = vi.fn(() => {
+      expect(terminals.launchedFor('1234abcd')).not.toBeNull()
+    })
+    const opened = terminals.open({ ...on('1234abcd'), onExit })
+    if (!opened.ok) throw new Error(opened.message)
     spawns[0]!.pty.emit('\x1b]0;Pi plan\x07')
-    await vi.waitFor(() => expect(terminals.list()[0]?.title).toBe('Pi plan'))
-
     spawns[0]!.pty.exit()
+    await terminals.close(opened.id)
+    expect(onExit).toHaveBeenCalledWith('Pi plan', expect.any(AbortSignal))
     expect(terminals.list()).toEqual([])
-    expect(onExit).toHaveBeenCalledWith('Pi plan')
   })
 
   it('retains an exited Pi transcript until close and rejects further input', async () => {
@@ -222,13 +362,15 @@ describe('agent terminals', () => {
     expect(terminals.paste(id, 'x')).toBe(false)
   })
 
-  it('closes a terminal even when its client never reports the exit', async () => {
-    const { terminals, sent } = setup()
+  it('reports an unconfirmed exit instead of fabricating terminal closure', async () => {
+    const { terminals, spawns, sent } = setup()
     const res = terminals.open(on())
     const id = res.ok ? res.id : ''
-    await terminals.close(id)
+    await expect(terminals.close(id)).rejects.toThrow(/did not report process exit/)
+    expect(terminals.list()).toHaveLength(1)
+    expect(sent.some(([c, p]) => c === 'pty-exit' && (p as { id: string }).id === id)).toBe(false)
+    spawns[0]!.pty.exit(-1)
     expect(terminals.list()).toEqual([])
-    expect(sent.some(([c, p]) => c === 'pty-exit' && (p as { id: string }).id === id)).toBe(true)
   })
 
   it('refuses without a binary', () => {

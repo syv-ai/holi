@@ -36,27 +36,58 @@ export const vaultSettingsAtom = atom<{
   remote: string
   settings: ResolvedVaultSettings
 } | null>(null)
+const settingsReadRevisionAtom = atom(0)
 
 /**
  * The active vault's settings, from the cache or from main.
  *
  * Returns `null` only when there is no active vault. `force` re-reads even on a
  * cache hit, for a caller that has just written the file and needs to see its
- * own write.
+ * own write. `invalidatePluginValues` drops only those keys before re-reading:
+ * permission values must fail closed during a read and after a failed read,
+ * without resetting unrelated settings or restarting enabled plugins.
  */
 export const loadVaultSettingsAtom = atom(
   null,
-  async (get, set, opts?: { force?: boolean }): Promise<ResolvedVaultSettings | null> => {
+  async (
+    get,
+    set,
+    opts?: {
+      force?: boolean
+      invalidatePluginValues?: { plugin: string; keys: readonly string[] }
+    },
+  ): Promise<ResolvedVaultSettings | null> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return null
 
     const cached = get(vaultSettingsAtom)
-    if (opts?.force !== true && cached !== null && cached.remote === remote) {
+    const invalidate = opts?.invalidatePluginValues
+    if (invalidate !== undefined && cached !== null && cached.remote === remote) {
+      const values = { ...cached.settings.pluginValues[invalidate.plugin] }
+      for (const key of invalidate.keys) delete values[key]
+      set(vaultSettingsAtom, {
+        remote,
+        settings: {
+          ...cached.settings,
+          pluginValues: { ...cached.settings.pluginValues, [invalidate.plugin]: values },
+        },
+      })
+    }
+    if (
+      opts?.force !== true &&
+      invalidate === undefined &&
+      cached !== null &&
+      cached.remote === remote
+    ) {
       return cached.settings
     }
 
+    const revision = get(settingsReadRevisionAtom) + 1
+    set(settingsReadRevisionAtom, revision)
     const settings = await trpc.settings.read.query({ remote })
-    set(vaultSettingsAtom, { remote, settings })
+    if (revision === get(settingsReadRevisionAtom) && get(activeRemoteAtom) === remote) {
+      set(vaultSettingsAtom, { remote, settings })
+    }
     return settings
   },
 )

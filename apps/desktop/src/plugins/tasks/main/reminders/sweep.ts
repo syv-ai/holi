@@ -11,14 +11,23 @@
  * fire-once watermark comparison; `sweep` composes it across all vaults and
  * decides coalescing.
  */
-import { pendingFireTime } from '@holi/shared'
-import { remindsViewer } from '@holi/shared'
-import type { Task } from '@holi/shared'
+import {
+  DEFAULT_STATUSES,
+  isClosedStatus,
+  isOverdue,
+  pendingFireTime,
+  remindsViewer,
+  stampDate,
+  stampTime,
+} from '@holi/shared'
+import type { StatusDef, Task } from '@holi/shared'
 import type { ReminderFire, RemindersEvent } from './types'
 
 export interface VaultTasks {
   remote: string
   tasks: Task[]
+  /** Null means status lookup failed: explicit reminders still run, fallback does not. */
+  statuses?: readonly StatusDef[] | null
 }
 
 /** taskPath → last-fired local time, per vault — the `remindedAtLocal` watermark. */
@@ -31,6 +40,18 @@ export interface SweepMark {
   remote: string
   path: string
   fireAt: string
+}
+
+export interface FallbackReceipt {
+  has(remote: string, path: string, due: string): boolean
+}
+
+/** Stable occurrence key retains whether due names a day or a precise minute. */
+function dueOccurrence(due: string): string | null {
+  const date = stampDate(due)
+  if (date === null) return null
+  const time = stampTime(due)
+  return time === null ? date : `${date}T${time}`
 }
 
 /** `YYYY-MM-DDTHH:MM` in the machine's own timezone — the frame `pendingFireTime`
@@ -47,11 +68,13 @@ export function sweep(
   now: string,
   delivered: (remote: string) => Delivered,
   viewer: string | null = null,
-): { event: RemindersEvent | null; marks: SweepMark[] } {
+  fallbackDelivered: FallbackReceipt = { has: () => false },
+): { event: RemindersEvent | null; marks: SweepMark[]; fallbackMarks: SweepMark[] } {
   const fires: ReminderFire[] = []
   const marks: SweepMark[] = []
+  const fallbackMarks: SweepMark[] = []
 
-  for (const { remote, tasks } of vaults) {
+  for (const { remote, tasks, statuses } of vaults) {
     const read = delivered(remote)
     for (const t of tasks) {
       if (!remindsViewer(t, viewer)) continue
@@ -59,15 +82,39 @@ export function sweep(
       // Both `fire` and `now` are local `YYYY-MM-DDTHH:MM`, so lexicographic
       // compare is chronological — a fire whose time has arrived (or passed,
       // for launch catch-up) is selected.
-      if (fire === null || fire > now) continue
-      fires.push({ remote, path: t.path, title: t.title, fireAt: fire })
-      marks.push({ remote, path: t.path, fireAt: fire })
+      if (fire !== null && fire <= now) {
+        fires.push({ remote, path: t.path, title: t.title, fireAt: fire })
+        marks.push({ remote, path: t.path, fireAt: fire })
+        continue
+      }
+
+      const due = t.reminder === undefined ? t.due : undefined
+      if (due === undefined || t.reminder !== undefined || fire !== null) continue
+      const occurrence = dueOccurrence(due)
+      if (
+        occurrence === null ||
+        statuses === null ||
+        isClosedStatus(statuses ?? DEFAULT_STATUSES, t.status) ||
+        !isOverdue(occurrence, now) ||
+        fallbackDelivered.has(remote, t.path, occurrence)
+      )
+        continue
+      fires.push({
+        remote,
+        path: t.path,
+        title: t.title,
+        fireAt: now,
+        due: occurrence,
+        overdue: true,
+      })
+      fallbackMarks.push({ remote, path: t.path, fireAt: occurrence })
     }
   }
 
-  if (fires.length === 0) return { event: null, marks: [] }
+  if (fires.length === 0) return { event: null, marks: [], fallbackMarks: [] }
   return {
     event: { fires, coalesced: fires.length > COALESCE_THRESHOLD, firedAt: now },
     marks,
+    fallbackMarks,
   }
 }

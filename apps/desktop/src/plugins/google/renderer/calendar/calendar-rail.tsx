@@ -44,6 +44,7 @@ export function CalendarRail({
   events,
   calendars,
   loading,
+  displayed,
   onToggleCalendar,
   onOpenOccurrence,
   className,
@@ -54,8 +55,12 @@ export function CalendarRail({
   calendars: CalendarChoice[]
   /** The first answer has not arrived: the day sheet shows skeleton rows. */
   loading: boolean
+  displayed: boolean
   onToggleCalendar: (id: string, enabled: boolean) => void
-  onOpenOccurrence: (occurrence: EventCalendarOccurrence<GoogleEventData>) => void
+  onOpenOccurrence: (
+    occurrence: EventCalendarOccurrence<GoogleEventData>,
+    event: React.MouseEvent<HTMLButtonElement>,
+  ) => void
   className?: string
 }) {
   // The month the mini calendar paints. It is its own state so the user can
@@ -119,7 +124,7 @@ export function CalendarRail({
           so there is one calendars menu in the view, not two. */}
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">Calendars</h2>
-        <CalendarsMenu calendars={calendars} onToggle={onToggleCalendar} />
+        <CalendarsMenu calendars={calendars} onToggle={onToggleCalendar} displayed={displayed} />
       </div>
       {/* The month picker is fixed chrome: it drives the view's date, so it
           must stay reachable while the day sheet beneath it scrolls. */}
@@ -250,7 +255,10 @@ function DaySheetRows({
   onOpen,
 }: {
   occurrences: EventCalendarOccurrence<GoogleEventData>[]
-  onOpen: (occurrence: EventCalendarOccurrence<GoogleEventData>) => void
+  onOpen: (
+    occurrence: EventCalendarOccurrence<GoogleEventData>,
+    event: React.MouseEvent<HTMLButtonElement>,
+  ) => void
 }) {
   const clock = useTimeFormat()
   if (occurrences.length === 0) {
@@ -266,7 +274,7 @@ function DaySheetRows({
             type="button"
             variant="ghost"
             size="row"
-            onClick={() => onOpen(occurrence)}
+            onClick={(event) => onOpen(occurrence, event)}
             className="w-full"
           >
             <IconTile variant="outline" size="xs" radius="full">
@@ -300,12 +308,12 @@ function DaySheetRows({
               </span>
             </span>
             {data?.myResponse === 'needsAction' && (
-              <Badge variant="warning-light" className="shrink-0">
+              <Badge variant="warning" className="shrink-0">
                 Invited
               </Badge>
             )}
             {data?.myResponse === 'tentative' && (
-              <Badge variant="info-light" className="shrink-0">
+              <Badge variant="info" className="shrink-0">
                 Maybe
               </Badge>
             )}

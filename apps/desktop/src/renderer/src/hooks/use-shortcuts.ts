@@ -3,8 +3,10 @@ import { useEffect, useRef } from 'react'
 
 import { isMac } from '@/lib/platform'
 import { keyTargetOf, resolveShortcut } from '@/lib/shortcuts'
+import { dialogOpen } from '@/lib/dialog-open'
 import {
   handlersAtom,
+  hostHintKeyAtom,
   liveShortcutIdsAtom,
   type ShortcutHandler,
   type Slot,
@@ -53,15 +55,6 @@ export function useShortcutHandlers(
   }, [ids, setHandlers])
 }
 
-/** A modal over the shell: a Radix dialog or alert dialog that is open. */
-function dialogOpen(): boolean {
-  return (
-    document.querySelector(
-      '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]',
-    ) !== null
-  )
-}
-
 /**
  * The `keydown` listeners over the table, one per phase, and the menu's ids.
  * Installed once; they read the handlers through the store, so registering
@@ -80,9 +73,14 @@ export function useShortcutDispatcher(): void {
     const listener =
       (capture: boolean) =>
       (e: KeyboardEvent): void => {
+        if (capture && store.get(hostHintKeyAtom)?.(e)) {
+          e.preventDefault()
+          e.stopPropagation()
+          return
+        }
         const match = resolveShortcut(e, {
           mac: isMac(),
-          target: keyTargetOf(e.target),
+          target: keyTargetOf(e.composedPath()[0] ?? e.target),
           dialogOpen: dialogOpen(),
           live: store.get(liveShortcutIdsAtom),
           capture,

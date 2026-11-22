@@ -139,7 +139,7 @@ function Row({
                     <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
                       {toggle.label}
                       {owner !== undefined && (
-                        <Badge variant="outline" radius="full">
+                        <Badge variant="secondary" radius="full">
                           {owner}
                         </Badge>
                       )}
