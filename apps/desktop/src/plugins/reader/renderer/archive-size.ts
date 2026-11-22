@@ -20,7 +20,9 @@ const MB = 1024 * 1024
 const LIMITS: ArchiveLimits = { maxEntries: 4000, maxEntryBytes: 32 * MB, maxTotalBytes: 256 * MB }
 
 /** Rejects, saying why, when `bytes` would unpack past `limits`. Reads only
- *  the archive's directory; nothing is inflated. */
+ *  the archive's directory; nothing is inflated. A directory zip.js cannot
+ *  read is left to the renderer, whose own zip reader may be more forgiving
+ *  (docx-preview's is JSZip) and which says what is wrong if it is not. */
 export async function checkArchiveSize(
   bytes: Uint8Array<ArrayBuffer>,
   limits: ArchiveLimits = LIMITS,
@@ -30,6 +32,8 @@ export async function checkArchiveSize(
   let files
   try {
     files = (await reader.getEntries()).filter((entry) => !entry.directory)
+  } catch {
+    return
   } finally {
     await reader.close()
   }

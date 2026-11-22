@@ -166,7 +166,8 @@ export function EpubView({
         await view.open(book)
         view.renderer.setStyles?.(stylesRef.current)
         await startReading(view, remote === null ? undefined : readPosition(remote, path), () => {
-          if (remote !== null) forgetPosition(remote, path)
+          // Not when the book closed under it: that rejection says nothing of the place.
+          if (live && remote !== null) forgetPosition(remote, path)
         })
         if (!live) return
         setToc(book.toc ?? [])

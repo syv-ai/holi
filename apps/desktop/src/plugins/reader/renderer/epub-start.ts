@@ -33,6 +33,8 @@ export async function startReading(
       if (placed) return
       forget()
     }
+    // `shown` is not reset: when the start is the chapter the saved place
+    // already loaded, foliate shows it again without a second `load`.
     await view.init({ showTextStart: true })
     if (!shown) throw new Error('The book’s first page didn’t load.')
   } finally {

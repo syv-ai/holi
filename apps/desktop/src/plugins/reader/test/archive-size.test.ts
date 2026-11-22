@@ -59,6 +59,11 @@ describe('an archive’s size', () => {
     )
   })
 
+  it('leaves a file whose directory it cannot read to the renderer', async () => {
+    const junk = new Uint8Array(new TextEncoder().encode('not a zip at all'))
+    await expect(checkArchiveSize(junk, LIMITS)).resolves.toBeUndefined()
+  })
+
   it('refuses too many entries', async () => {
     await expect(checkArchiveSize(zip({ a: 1, b: 1, c: 1, d: 1 }), LIMITS)).rejects.toThrow(
       /too many/,
