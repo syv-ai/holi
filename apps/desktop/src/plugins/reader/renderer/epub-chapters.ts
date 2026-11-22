@@ -14,8 +14,7 @@
 import type { Book, View } from './vendor/foliate/view.js'
 import { withInertPolicy } from './inert-frame'
 
-/** @public */
-export type ChapterType = 'application/xhtml+xml' | 'text/html'
+type ChapterType = 'application/xhtml+xml' | 'text/html'
 
 /** A media type's essence: lowercase, without parameters. */
 function essence(type: string): string {

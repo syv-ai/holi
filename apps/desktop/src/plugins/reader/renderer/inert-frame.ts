@@ -105,8 +105,8 @@ export function withInertPolicy(
 
 /**
  * Sends a shortcut pressed inside a frame on to `target` in the app: a key
- * pressed in a frame does not cross into the app, so ⌘W, ⌘K or ⌘F would
- * otherwise die there. Returns the listener's removal.
+ * pressed in a frame does not cross into the app, so ⌘K or ⌘F would
+ * otherwise die there. (⌘W is a menu accelerator and needs no help.) Returns the listener's removal.
  */
 export function forwardShortcuts(doc: Document, target: EventTarget): () => void {
   const onKeyDown = (event: KeyboardEvent) => {
