@@ -12,11 +12,12 @@
 import {
   cap,
   joinOwnedProgram,
-  killChildTree,
   CapabilityError,
   noParams,
   paramsObject,
   spawnOwnedProgram,
+  ownedProcessDrain,
+  posixLaunchNonAdmission,
   stringParam,
 } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
@@ -84,7 +85,13 @@ export interface HarnessCapabilitiesDeps {
   run?: (
     bin: string,
     args: string[],
-    opts: { cwd: string; env: Record<string, string>; timeoutMs: number },
+    opts: {
+      cwd: string
+      env: Record<string, string>
+      timeoutMs: number
+      signal?: AbortSignal
+      graceMs?: number
+    },
   ) => Promise<TestRun>
 }
 
@@ -96,67 +103,110 @@ export interface HarnessCapabilitiesDeps {
 async function defaultRun(
   bin: string,
   args: string[],
-  opts: { cwd: string; env: Record<string, string>; timeoutMs: number },
+  opts: {
+    cwd: string
+    env: Record<string, string>
+    timeoutMs: number
+    signal?: AbortSignal
+    graceMs?: number
+  },
 ): Promise<TestRun> {
-  // A test reads nothing: its input is closed from the start.
   const platform = process.platform
-  const child = spawnOwnedProgram(bin, args, {
-    cwd: opts.cwd,
-    env: opts.env,
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  let child
+  try {
+    child = spawnOwnedProgram(bin, args, {
+      cwd: opts.cwd,
+      env: opts.env,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      posixGroupLease: platform !== 'win32',
+      graceMs: opts.graceMs ?? TEST_KILL_GRACE_MS,
+    })
+  } catch (error) {
+    const cleanup =
+      posixLaunchNonAdmission(error)?.cleanup ?? (error as { cleanup?: Promise<unknown> })?.cleanup
+    if (cleanup) await cleanup
+    throw error
+  }
+  const authority = child[ownedProcessDrain]
+  if (platform !== 'win32' && !authority)
+    throw new Error('The test process has no cleanup authority.')
   const joined = joinOwnedProgram(child, platform)
   const chunks: Buffer[] = []
   let read = 0
-  let stopped: 'timeout' | 'over' | null = null
+  let stopped: 'timeout' | 'over' | 'cancelled' | null = null
+  let timer: NodeJS.Timeout | undefined
   let kill: NodeJS.Timeout | undefined
-  const signal = (sig: NodeJS.Signals): void => {
-    if (platform === 'win32') child.kill(sig)
-    else killChildTree(child, sig)
+  let drain: Promise<unknown> | undefined
+  const requestDrain = (): void => {
+    if (drain) return
+    try {
+      drain = authority ? authority.drain() : joined
+    } catch (error) {
+      drain = Promise.reject(error)
+    }
+    void drain.catch(() => {})
   }
-  const stop = (why: 'timeout' | 'over'): void => {
+  const signal = (sig: NodeJS.Signals): void => {
+    try {
+      child.kill(sig)
+    } catch {
+      /* join reports ownership failures */
+    }
+  }
+  const stop = (why: 'timeout' | 'over' | 'cancelled'): void => {
     if (stopped !== null) return
     stopped = why
     signal('SIGTERM')
-    kill = setTimeout(() => signal('SIGKILL'), TEST_KILL_GRACE_MS)
+    requestDrain()
+    kill = setTimeout(() => signal('SIGKILL'), opts.graceMs ?? TEST_KILL_GRACE_MS)
   }
   const take = (chunk: Buffer): void => {
     if (read >= TEST_READ_MAX) return
     const remaining = TEST_READ_MAX - read
-    const kept = chunk.subarray(0, remaining)
-    chunks.push(kept)
-    read += kept.length
+    chunks.push(chunk.subarray(0, remaining))
+    read += Math.min(chunk.length, remaining)
     if (chunk.length > remaining || read >= TEST_READ_MAX) stop('over')
   }
   child.stdout?.on('data', take)
   child.stderr?.on('data', take)
-  const timer = setTimeout(() => stop('timeout'), opts.timeoutMs)
-  return joined
-    .then(({ code, error, ownership }) => {
-      const output = Buffer.concat(chunks).toString('utf8')
-      if (ownership === 'not-started')
-        return {
-          code,
-          output,
-          error: error?.message ?? 'The program could not be started.',
-          timedOut: false,
-          overLimit: false,
-        }
-      return {
-        code,
-        output,
-        ...(error === null ? {} : { error: error.message }),
-        timedOut: stopped === 'timeout',
-        overLimit: stopped === 'over',
-      }
-    })
-    .finally(() => {
+  if (opts.signal?.aborted) stop('cancelled')
+  else opts.signal?.addEventListener('abort', () => stop('cancelled'), { once: true })
+  timer = setTimeout(() => stop('timeout'), opts.timeoutMs)
+  child.once('exit', () => {
+    if (stopped === null) {
       clearTimeout(timer)
-      clearTimeout(kill)
-      child.stdout?.off('data', take)
-      child.stderr?.off('data', take)
-    })
+      timer = undefined
+    }
+    requestDrain()
+  })
+  child.once('error', requestDrain)
+  try {
+    const result = await Promise.race([
+      joined,
+      new Promise<never>((_resolve, reject) => {
+        const observe = (): void => {
+          if (drain) void drain.catch(reject)
+        }
+        child.once('exit', observe)
+        child.once('error', observe)
+      }),
+    ])
+    requestDrain()
+    await drain
+    return {
+      code: result.code,
+      output: Buffer.concat(chunks).toString('utf8'),
+      ...(result.error === null ? {} : { error: result.error.message }),
+      timedOut: stopped === 'timeout',
+      overLimit: stopped === 'over',
+    }
+  } finally {
+    clearTimeout(timer)
+    clearTimeout(kill)
+    child.stdout?.off('data', take)
+    child.stderr?.off('data', take)
+  }
 }
 
 const harnessParams = (raw: unknown): { harness: Harness; create: boolean } => {
@@ -238,7 +288,7 @@ export const harnessCapabilities = (deps: HarnessCapabilitiesDeps) => {
       doors: ['ui'],
       params: idParams,
       run: (_ctx, { id }) =>
-        deps.probes.run(async (): Promise<HarnessTestResult> => {
+        deps.probes.run(async (signal): Promise<HarnessTestResult> => {
           const h = deps.registry.get(id)
           if (h === undefined) return { ok: false, message: `There is no agent ${id}.`, output: '' }
           const bin = deps.registry.resolve(id)
@@ -253,6 +303,7 @@ export const harnessCapabilities = (deps: HarnessCapabilitiesDeps) => {
             cwd: root,
             env,
             timeoutMs: TEST_TIMEOUT_MS,
+            signal,
           })
           const output = res.output.slice(0, TEST_OUTPUT_MAX)
           if (res.timedOut) {
