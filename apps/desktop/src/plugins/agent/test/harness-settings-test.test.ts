@@ -350,34 +350,38 @@ test.each(['cancel', 'timeout', 'output', 'zero', 'nonzero'] as const)(
   },
 )
 
-test('Windows thrown stop joins late receipt failure and revokes its lease without close', async () => {
-  const owner = activation()
-  const f = start(true, owner)
-  const killFailure = new Error('Windows stop request failed')
-  f.kill.mockImplementation(() => {
-    throw killFailure
-  })
-  owner.controller.abort()
-  let failure: unknown
-  await f.answer.catch((error: unknown) => {
-    failure = error
-  })
-  expect(failure).toBeInstanceOf(AgentProbeCleanupError)
-  expect(failure).toMatchObject({ cause: killFailure, authority: expect.any(Object) })
-  const revoke = vi.fn(async () => {})
-  const lease = { revoke }
-  const lost = new UnconfirmedOwnedProgramError(new Error('receipt failed'), lease)
-  let stopped = false
-  const stopping = owner.stop().finally(() => {
-    stopped = true
-  })
-  await Promise.resolve()
-  expect(stopped).toBe(false)
-  f.reject(lost)
-  await expect(stopping).rejects.toBeInstanceOf(AggregateError)
-  expect(revoke).toHaveBeenCalledOnce()
-  await expect(owner.stop()).rejects.toBeInstanceOf(AggregateError)
-})
+test.each(['plain', 'leased'] as const)(
+  'Windows %s stop failure retains its late receipt lease without close',
+  async (kind) => {
+    const owner = activation()
+    const f = start(true, owner)
+    const revoke = vi.fn(async () => {})
+    const lease = { revoke }
+    const lost = new UnconfirmedOwnedProgramError(new Error('receipt failed'), lease)
+    const killFailure = kind === 'leased' ? lost : new Error('Windows stop request failed')
+    f.kill.mockImplementation(() => {
+      throw killFailure
+    })
+    owner.controller.abort()
+    let failure: unknown
+    await f.answer.catch((error: unknown) => {
+      failure = error
+    })
+    expect(failure).toBeInstanceOf(AgentProbeCleanupError)
+    expect(failure).toMatchObject({ cause: killFailure, authority: expect.any(Object) })
+    if (kind === 'leased') expect(failure).toMatchObject({ lease })
+    let stopped = false
+    const stopping = owner.stop().finally(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    f.reject(lost)
+    await expect(stopping).rejects.toBeInstanceOf(AggregateError)
+    expect(revoke).toHaveBeenCalledOnce()
+    await expect(owner.stop()).rejects.toBeInstanceOf(AggregateError)
+  },
+)
 
 test('POSIX drain failure rejects without close and stays with its original owner', async () => {
   Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' })

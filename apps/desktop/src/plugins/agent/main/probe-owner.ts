@@ -5,12 +5,14 @@ import {
 
 /** A failed proof belongs to its original probe even after later cleanup. */
 export class AgentProbeCleanupError extends Error {
+  readonly lease: UnconfirmedOwnedProgramError['lease']
   constructor(
     cause: unknown,
     readonly authority?: ProcessGroupSupervision,
   ) {
     super('Could not confirm agent probe cleanup', { cause })
     this.name = 'AgentProbeCleanupError'
+    this.lease = cause instanceof UnconfirmedOwnedProgramError ? cause.lease : undefined
   }
 }
 
@@ -79,11 +81,7 @@ export function createAgentProbeOwner(activationSignal: AbortSignal) {
       activationSignal.removeEventListener('abort', cancel)
       void (async () => {
         await Promise.allSettled(pending)
-        const leases = new Set(
-          [...failures].flatMap((error) =>
-            error instanceof UnconfirmedOwnedProgramError && error.lease ? [error.lease] : [],
-          ),
-        )
+        const leases = new Set([...failures].flatMap((error) => (error.lease ? [error.lease] : [])))
         const authorities = new Set(
           [...failures].flatMap((error) =>
             error instanceof AgentProbeCleanupError && error.authority ? [error.authority] : [],
@@ -98,7 +96,11 @@ export function createAgentProbeOwner(activationSignal: AbortSignal) {
         for (const result of revoked) {
           if (result.status !== 'rejected') continue
           errors.add(result.reason)
-          if (result.reason instanceof UnconfirmedOwnedProgramError && result.reason.lease)
+          if (
+            result.reason instanceof UnconfirmedOwnedProgramError &&
+            result.reason.lease &&
+            !leases.has(result.reason.lease)
+          )
             lateLeases.add(result.reason.lease)
         }
         for (const lease of lateLeases) {

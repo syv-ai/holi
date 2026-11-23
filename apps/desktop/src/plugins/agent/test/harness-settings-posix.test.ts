@@ -51,12 +51,17 @@ describe.skipIf(process.platform === 'win32')('Settings Test physical POSIX drai
     '%s joins resistant descendant drainage',
     async (mode) => {
       ledger = await posixFixtureLedger('holi-harness-drain-')
-      const script = join(ledger.root, 'fixture.cjs')
-      const ready = join(ledger.root, 'ready.json')
-      const trigger = join(ledger.root, 'continue')
-      await writeFile(
-        script,
-        `
+      const controller = new AbortController()
+      const probes = createAgentProbeOwner(controller.signal)
+      let answer: Promise<unknown> | undefined
+      const failures: unknown[] = []
+      try {
+        const script = join(ledger.root, 'fixture.cjs')
+        const ready = join(ledger.root, 'ready.json')
+        const trigger = join(ledger.root, 'continue')
+        await writeFile(
+          script,
+          `
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 spawn(process.execPath, ['-e', ${JSON.stringify(`process.on('SIGTERM',()=>{}); require('node:fs').writeFileSync(${JSON.stringify(ready)},JSON.stringify({child:process.pid})); setInterval(()=>{},1000);`)}], {stdio:['ignore','inherit','inherit']});
@@ -67,30 +72,28 @@ const timer=setInterval(()=>{
  else process.exit(${mode === 'nonzero' ? 7 : 0});
 },10);
 `,
-      )
-      const controller = new AbortController()
-      const probes = createAgentProbeOwner(controller.signal)
-      const caps = harnessCapabilities({
-        registry: {
-          get: () => ({ env: {}, test: [script] }),
-          resolve: () => process.execPath,
-        } as unknown as HarnessRegistry,
-        probes,
-        file: 'fixture.json',
-        root: () => ledger.root,
-        changed() {},
-      })
-      const answer = caps['agent.harnessTest'].run(
-        { remote: 'fixture/vault', root: ledger.root } as never,
-        { id: 'fixture' },
-      )
-      void answer.catch(() => {})
-      try {
+        )
+        const caps = harnessCapabilities({
+          registry: {
+            get: () => ({ env: {}, test: [script] }),
+            resolve: () => process.execPath,
+          } as unknown as HarnessRegistry,
+          probes,
+          file: 'fixture.json',
+          root: () => ledger.root,
+          changed() {},
+        })
+        const run = caps['agent.harnessTest'].run(
+          { remote: 'fixture/vault', root: ledger.root } as never,
+          { id: 'fixture' },
+        )
+        answer = run
+        void run.catch(() => {})
         // The descendant publishes only after installing SIGTERM resistance.
         await waitReady(ready)
         if (mode === 'cancel') controller.abort()
         else if (mode !== 'timeout') await writeFile(trigger, '')
-        const result = await answer
+        const result = await run
         kernelGroupAbsent(group)
         expect(result.ok).toBe(mode === 'zero')
         expect(result.output.length).toBeLessThanOrEqual(4000)
@@ -98,14 +101,30 @@ const timer=setInterval(()=>{
           expect(result).toMatchObject({ message: expect.stringMatching(/cancel/i) })
         if (mode === 'timeout')
           expect(result).toMatchObject({ message: expect.stringMatching(/5 seconds/) })
+      } catch (error) {
+        failures.push(error)
       } finally {
         controller.abort()
-        await answer.catch(() => {})
-        // Cleanup uses the retained authority, never a reconstructed PID/group lease.
-        await probes.stop()
-        await ledger.reap()
-        await ledger.remove()
+        const stopped = await Promise.allSettled([probes.stop(), answer ?? Promise.resolve()])
+        for (const result of stopped) if (result.status === 'rejected') failures.push(result.reason)
+        // Always attempt retained cleanup even when activation teardown failed.
+        // A failed physical proof preserves the directory and diagnostic receipts.
+        let reaped = false
+        try {
+          await ledger.reap()
+          reaped = true
+        } catch (error) {
+          failures.push(error)
+        }
+        if (reaped) {
+          try {
+            await ledger.remove()
+          } catch (error) {
+            failures.push(error)
+          }
+        }
       }
+      if (failures.length) throw new AggregateError(failures, 'Native harness fixture failed')
     },
     15000,
   )
