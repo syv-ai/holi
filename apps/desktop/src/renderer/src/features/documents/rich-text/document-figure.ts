@@ -1,4 +1,4 @@
-import { Node, mergeAttributes, type Editor } from '@tiptap/react'
+import { Node, mergeAttributes, flattenExtensions, type Editor } from '@tiptap/react'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { NodeSelection, Plugin } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
@@ -259,7 +259,14 @@ export const DocumentCaption = Node.create({
 export const DocumentFigure = Node.create({
   name: 'documentFigure',
   group: 'block',
-  content: '(codeBlock | image) documentCaption',
+  content() {
+    const table = this.editor
+      ? flattenExtensions(this.editor.options.extensions).some(
+          (extension) => extension.name === 'table',
+        )
+      : false
+    return `(codeBlock | image${table ? ' | table' : ''}) documentCaption`
+  },
   defining: true,
   isolating: true,
   draggable: true,
@@ -324,7 +331,9 @@ export const DocumentFigure = Node.create({
             if (
               node.childCount === 2 &&
               child &&
-              (child.type.name === 'image' || child.type.name === 'codeBlock') &&
+              (child.type.name === 'image' ||
+                child.type.name === 'codeBlock' ||
+                child.type.name === 'table') &&
               !(typeof node.attrs.sourceImageAttrs === 'string' && child.type.name !== 'image') &&
               caption?.type.name === 'documentCaption'
             )
@@ -335,7 +344,9 @@ export const DocumentFigure = Node.create({
               replacement:
                 node.childCount === 1 &&
                 child &&
-                (child.type.name === 'image' || child.type.name === 'codeBlock')
+                (child.type.name === 'image' ||
+                  child.type.name === 'codeBlock' ||
+                  child.type.name === 'table')
                   ? child
                   : null,
             })
@@ -431,6 +442,10 @@ export const DocumentFigure = Node.create({
     const code = node.content?.[0]
     const caption = node.content?.[1]
     if (!code || !caption || caption.type !== 'documentCaption') return ''
+    if (code.type === 'table') {
+      const tableMarkdown = helpers.renderChildren([code]).trim()
+      return writeFigureCaption(tableMarkdown, caption, renderCaptionMarkdown(caption, helpers))
+    }
     if (code.type === 'image') {
       const source = node.attrs?.sourceBody
       const imageAttrs = node.attrs?.sourceImageAttrs
@@ -508,6 +523,21 @@ export function addImageCaption(editor: Editor, pos: number): boolean {
   return true
 }
 
+export function addTableCaption(editor: Editor, pos: number): boolean {
+  if (!editor.isEditable || pos < 0 || pos > editor.state.doc.content.size) return false
+  const $pos = editor.state.doc.resolve(pos)
+  if ($pos.depth !== 0 || pos >= editor.state.doc.content.size) return false
+  const table = editor.state.doc.nodeAt(pos)
+  if (!table || table.type.name !== 'table') return false
+  const caption = editor.schema.nodes.documentCaption?.create()
+  const figure = caption && editor.schema.nodes.documentFigure?.create(null, [table, caption])
+  if (!figure) return false
+  editor.view.dispatch(editor.state.tr.replaceWith(pos, pos + table.nodeSize, figure))
+  editor.commands.setTextSelection(pos + table.nodeSize + 2)
+  editor.view.focus()
+  return true
+}
+
 export function addCodeCaption(editor: Editor, pos: number): boolean {
   if (!editor.isEditable) return false
   if (pos < 0 || pos > editor.state.doc.content.size) return false
@@ -542,21 +572,23 @@ export function removeCodeCaption(editor: Editor, pos: number): boolean {
   if (!node || node.type.name !== 'documentFigure' || !node.firstChild) return false
   const child = node.firstChild
   const replacement =
-    child.type.name === 'codeBlock'
-      ? child.type.create({ ...child.attrs, preserveFence: true }, child.content, child.marks)
-      : child.type.name === 'image' &&
-          typeof node.attrs.sourceBody === 'string' &&
-          typeof node.attrs.sourceImageAttrs === 'string'
-        ? child.type.create(
-            {
-              ...child.attrs,
-              sourceMarkdown: node.attrs.sourceBody,
-              sourceMarkdownImageAttrs: node.attrs.sourceImageAttrs,
-            },
-            child.content,
-            child.marks,
-          )
-        : child
+    child.type.name === 'table'
+      ? child
+      : child.type.name === 'codeBlock'
+        ? child.type.create({ ...child.attrs, preserveFence: true }, child.content, child.marks)
+        : child.type.name === 'image' &&
+            typeof node.attrs.sourceBody === 'string' &&
+            typeof node.attrs.sourceImageAttrs === 'string'
+          ? child.type.create(
+              {
+                ...child.attrs,
+                sourceMarkdown: node.attrs.sourceBody,
+                sourceMarkdownImageAttrs: node.attrs.sourceImageAttrs,
+              },
+              child.content,
+              child.marks,
+            )
+          : child
   editor.view.dispatch(editor.state.tr.replaceWith(pos, pos + node.nodeSize, replacement))
   return true
 }

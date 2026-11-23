@@ -2,16 +2,24 @@ import { Editor } from '@tiptap/react'
 import { NodeSelection } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { RichTextTable } from '@/features/documents/rich-text/rich-text-table'
+
 import { createDocumentExtensions } from '../document-extensions'
 import { applyReload } from '../apply-reload'
-import { readMarkdownCodeCaptions } from '@holi/shared'
+import { readMarkdownCodeCaptions, readMarkdownTableCaptions } from '@holi/shared'
 import {
   addCodeCaption,
   addImageCaption,
+  addTableCaption,
   removeCodeCaption,
   renderImageMarkdown,
 } from '../rich-text/document-figure'
-import { blockTargetAtPos, duplicateBlock } from '../rich-text/rich-text-block-actions'
+import {
+  blockTargetAtPos,
+  deleteBlock,
+  duplicateBlock,
+  moveBlockDown,
+} from '../rich-text/rich-text-block-actions'
 
 let editor: Editor | null = null
 afterEach(() => {
@@ -21,11 +29,14 @@ afterEach(() => {
 
 function open(markdown: string): Editor {
   editor = new Editor({
-    extensions: createDocumentExtensions({
-      folder: 'notes',
-      placeholder: '',
-      onOpenLink: () => undefined,
-    }),
+    extensions: [
+      ...createDocumentExtensions({
+        folder: 'notes',
+        placeholder: '',
+        onOpenLink: () => undefined,
+      }),
+      RichTextTable,
+    ],
     content: markdown,
     contentType: 'markdown',
   })
@@ -37,7 +48,98 @@ const captioned =
 const mermaidCaptioned =
   '<!-- holi:figure -->\n\n~~~mermaid extra-info\nflowchart TD\n  A[Start] --> B[End]\n~~~\n\n<!-- holi:caption -->\n\nA **portable** diagram caption.\n\n<!-- /holi:figure -->'
 
+describe('document table captions', () => {
+  const table = '| Name | Value |\n| --- | --- |\n| A | 1 |'
+
+  it('adds only to editable top-level tables', () => {
+    const instance = open(table)
+    expect(addTableCaption(instance, 0)).toBe(true)
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(addTableCaption(instance, 1)).toBe(false)
+    expect(addTableCaption(instance, 0)).toBe(false)
+    instance.destroy()
+    const locked = open(table)
+    locked.setEditable(false)
+    expect(addTableCaption(locked, 0)).toBe(false)
+    locked.destroy()
+    const nested = open('> ' + table.replaceAll('\n', '\n> '))
+    expect(addTableCaption(nested, 1)).toBe(false)
+  })
+
+  it('saves formatted captions, reopens and removes them without changing cells', () => {
+    const instance = open(table)
+    const original = instance.state.doc.firstChild?.toJSON()
+    expect(addTableCaption(instance, 0)).toBe(true)
+    instance.commands.insertContent([
+      { type: 'text', text: 'A ' },
+      { type: 'text', text: 'bold', marks: [{ type: 'bold' }] },
+      { type: 'text', text: ' caption' },
+    ])
+    const saved = instance.getMarkdown()
+    expect(saved).toContain('A **bold** caption')
+    expect(readMarkdownTableCaptions(saved)).toHaveLength(1)
+    instance.destroy()
+    const reopened = open(saved)
+    expect(reopened.state.doc.firstChild?.firstChild?.toJSON()).toEqual(original)
+    expect(removeCodeCaption(reopened, 0)).toBe(true)
+    expect(reopened.state.doc.firstChild?.toJSON()).toEqual(original)
+    expect(readMarkdownTableCaptions(reopened.getMarkdown())).toEqual([])
+  })
+
+  it('retains table edits and keeps captions attached through block actions', () => {
+    const instance = open(
+      '<!-- holi:figure -->\n\n' +
+        table +
+        '\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->\n\nAfter',
+    )
+    instance.commands.setTextSelection(5)
+    expect(instance.commands.addRowAfter()).toBe(true)
+    expect(instance.commands.addColumnAfter()).toBe(true)
+    expect(instance.commands.toggleHeaderRow()).toBe(true)
+    expect(instance.state.doc.firstChild?.firstChild?.firstChild?.firstChild?.type.name).toBe(
+      'tableCell',
+    )
+    expect(instance.commands.toggleHeaderRow()).toBe(true)
+    const edited = instance.state.doc.firstChild?.firstChild?.toJSON()
+    const saved = instance.getMarkdown()
+    expect(readMarkdownTableCaptions(saved)).toHaveLength(1)
+    const target = blockTargetAtPos(instance.state.doc, 0)!
+    instance.view.dispatch(duplicateBlock(instance.state, target)!)
+    expect(readMarkdownTableCaptions(instance.getMarkdown())).toHaveLength(2)
+    const duplicate = blockTargetAtPos(instance.state.doc, instance.state.doc.firstChild!.nodeSize)!
+    instance.view.dispatch(moveBlockDown(instance.state, duplicate)!)
+    expect(instance.state.doc.child(1).textContent).toBe('After')
+    const moved = blockTargetAtPos(
+      instance.state.doc,
+      instance.state.doc.child(0).nodeSize + instance.state.doc.child(1).nodeSize,
+    )!
+    instance.view.dispatch(deleteBlock(instance.state, moved)!)
+    expect(readMarkdownTableCaptions(instance.getMarkdown())).toHaveLength(1)
+    instance.destroy()
+    const reopened = open(saved)
+    expect(reopened.state.doc.firstChild?.firstChild?.toJSON()).toEqual(edited)
+    expect(reopened.state.doc.firstChild?.lastChild?.textContent).toBe('Caption')
+  })
+})
+
 describe('document code captions', () => {
+  it('round-trips a table figure and preserves malformed table figures', () => {
+    const tableFigure =
+      '<!-- holi:figure -->\n\n| Name | Value |\n| --- | --- |\n| A | 1 |\n\n<!-- holi:caption -->\n\nTable caption\n\n<!-- /holi:figure -->'
+    const instance = open(tableFigure)
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(instance.state.doc.firstChild?.firstChild?.type.name).toBe('table')
+    const saved = instance.getMarkdown()
+    expect(saved).toContain('| Name | Value |')
+    expect(saved).toContain('Table caption')
+
+    const malformed =
+      '<!-- holi:figure -->\n\nnot a table\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->'
+    const preserved = open(malformed).getMarkdown()
+    expect(preserved).toContain('not a table')
+    expect(preserved).toContain('Caption')
+    expect(preserved).toContain('holi:figure')
+  })
   it('adds and removes a caption with the complete image block', () => {
     const source = '![A cat](../assets/cat.png "A cat")'
     const instance = open(source)
