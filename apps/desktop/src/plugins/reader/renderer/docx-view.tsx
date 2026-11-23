@@ -9,14 +9,14 @@
  * and cell paragraphs dropped (a cover title vanished; docxjs#253). Drop each
  * part of the patch once a release has it.
  *
- * The file is refused before it is unpacked if it would unpack too large
- * (`checkArchiveSize`): docx-preview bounds nothing it inflates. Images come
+ * The file is refused before docx-preview unpacks it if it would unpack too
+ * large (`checkOfficeArchive`): docx-preview bounds nothing it inflates. Images come
  * out of the file as `data:` URLs (`useBase64URL`), which the frame's policy
  * allows, and nothing the document links to outside itself is fetched. Pages are paper whatever the theme: a document brings its own
  * colours.
  */
 import { renderAsync } from 'docx-preview'
-import { checkArchiveSize } from './archive-size'
+import { checkOfficeArchive } from './archive-size'
 import { InertFrame } from './inert-frame-host'
 
 /** The library's grey wrapper gives way to the theme's canvas. */
@@ -58,7 +58,7 @@ export function DocxView({
           doc.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView()
       }}
       draw={async (body, signal) => {
-        await checkArchiveSize(bytes)
+        await checkOfficeArchive(bytes)
         if (signal.aborted) return
         // Containers of its own: docx-preview empties both before it draws,
         // and the frame's head holds the policy and the canvas styles.

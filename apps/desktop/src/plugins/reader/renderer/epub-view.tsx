@@ -4,7 +4,7 @@
  * main chunk never carries it.
  *
  * - **Too large to unpack** is refused before foliate unpacks anything
- *   (`checkArchiveSize`): foliate bounds nothing it inflates.
+ *   (`checkBookArchive`): foliate bounds nothing it inflates.
  * - **No book script runs.** foliate's chapter frames are sandboxed
  *   `allow-same-origin` only (the vendored patch), and a script the book lists
  *   is never even unpacked.
@@ -42,7 +42,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { activeModeAtom, activeRemoteAtom } from '@/plugin-api'
-import { checkArchiveSize } from './archive-size'
+import { checkBookArchive } from './archive-size'
 import { closeBook, guardChapters } from './epub-chapters'
 import { forgetPosition, readPosition, savePosition } from './epub-positions'
 import { startReading } from './epub-start'
@@ -107,7 +107,7 @@ export function EpubView({
     setState('opening')
     void (async () => {
       try {
-        await checkArchiveSize(bytes)
+        await checkBookArchive(bytes)
         if (!live) return
         const { makeBook } = await import('./vendor/foliate/view.js')
         const book: Book = await makeBook(new File([bytes], name, { type: 'application/epub+zip' }))

@@ -77,7 +77,10 @@ const BLANK_PAGE = `<html xmlns="${XHTML}"><head><title></title></head><body></b
 /**
  * A chapter's markup with `INERT_CSP` as the first thing in its head, made
  * with a real parser so a `<head>` inside a comment or a string cannot take
- * the policy somewhere it does nothing. A chapter without a head gets one.
+ * the policy somewhere it does nothing. The head is the one the browser reads
+ * a policy from: an XHTML `head` that is a child of an XHTML `html` root, the
+ * document's `head`. A `head` in another namespace looks the same to a
+ * selector but holds no policy, so a chapter with only that gets a real one.
  */
 export function withInertPolicy(
   markup: string,
@@ -85,22 +88,27 @@ export function withInertPolicy(
 ): string {
   const doc = new DOMParser().parseFromString(markup, type)
   const root = doc.documentElement
-  // A `<meta>` only counts in the HTML namespace, and one inside an `<svg>` or
-  // an invented root would leave the page free to fetch. Nothing to read there.
-  if (root.namespaceURI !== XHTML) return withInertPolicy(BLANK_PAGE, 'application/xhtml+xml')
-  const ns = XHTML
-  let head = root.querySelector(':scope > head')
-  if (head === null) {
-    head = doc.createElementNS(ns, 'head')
-    root.prepend(head)
-  }
-  const meta = doc.createElementNS(ns, 'meta')
+  // A `<meta>` only counts in an HTML document's head, and an `<svg>`, a
+  // `<body>` or an invented root has none. Nothing to read there.
+  if (root.namespaceURI !== XHTML || root.localName !== 'html')
+    return withInertPolicy(BLANK_PAGE, 'application/xhtml+xml')
+  const head =
+    [...root.children].find(
+      (child) => child.namespaceURI === XHTML && child.localName === 'head',
+    ) ?? doc.createElementNS(XHTML, 'head')
+  // First in the root as well: a policy covers only what is fetched after it,
+  // so a head written after the body must not count on the parser holding
+  // the body's images back.
+  root.prepend(head)
+  const meta = doc.createElementNS(XHTML, 'meta')
   meta.setAttribute('http-equiv', 'Content-Security-Policy')
   meta.setAttribute('content', INERT_CSP)
   head.prepend(meta)
   return type === 'text/html'
     ? `<!doctype html>${root.outerHTML}`
-    : new XMLSerializer().serializeToString(doc)
+    : // The root alone: an `<?xml-stylesheet?>` written before it is fetched
+      // as it is parsed, before the policy exists.
+      new XMLSerializer().serializeToString(root)
 }
 
 /**

@@ -1,8 +1,6 @@
 /** Holi's types for the parts of zip.js it uses itself (../vendored.md). */
 export interface Entry {
-  filename: string
-  directory: boolean
-  uncompressedSize: number
+  getData(writer: WritableStream<Uint8Array>): Promise<unknown>
 }
 
 export class BlobReader {

@@ -6,7 +6,9 @@
  *
  * - **Nothing outside the file.** `externalMedia: 'block'` skips every linked
  *   image, fill, audio and video; `pdfjs: false` drops the PDF fallback for EMF
- *   previews; the zip limits bound what a hostile archive can make it unpack.
+ *   previews. What a hostile archive can make it unpack is bounded before it
+ *   opens (`checkOfficeArchive`): its own `zipLimits` weigh an entry only once
+ *   it is inflated, so they stay as the second line.
  * - **Charts draw as SVG.** A `<canvas>` in a document with scripting disabled
  *   shows only its fallback content, so echarts' default canvas charts stay
  *   blank in the inert frame. `patches/@aiden0z__pptx-renderer@1.4.0.patch`
@@ -26,6 +28,7 @@
  *   so its slides fall back to the system's fonts (docs/features/reader.md).
  */
 import { PptxViewer, RECOMMENDED_ZIP_LIMITS } from '@aiden0z/pptx-renderer'
+import { checkOfficeArchive } from './archive-size'
 import { InertFrame } from './inert-frame-host'
 
 /** Room around the slides, so they sit on the canvas rather than at its edge. */
@@ -45,6 +48,8 @@ export function PptxView({
       css={PPTX_CSS}
       failure="This deck didn’t open"
       draw={async (body, signal) => {
+        await checkOfficeArchive(bytes)
+        if (signal.aborted) return
         // A container of its own: the renderer fits slides to its
         // `clientWidth`, which on the body would count the padding.
         const slides = body.appendChild(body.ownerDocument.createElement('div'))
