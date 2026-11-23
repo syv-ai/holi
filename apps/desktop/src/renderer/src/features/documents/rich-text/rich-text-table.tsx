@@ -96,12 +96,16 @@ interface TableSnapshot {
   headerRow: boolean
   canDeleteRow: boolean
   canDeleteColumn: boolean
+  tablePosition?: number
+  figurePosition?: number
+  canAddCaption: boolean
 }
 
 const IDLE_TABLE: TableSnapshot = {
   headerRow: false,
   canDeleteRow: false,
   canDeleteColumn: false,
+  canAddCaption: false,
 }
 
 function findTable(editor: Editor) {
@@ -123,10 +127,20 @@ function readTable(editor: Editor | null): TableSnapshot {
     columns += Number(cell.attrs.colspan ?? 1)
   })
 
+  const figure = findParentNodeClosestToPos(
+    editor.state.selection.$from,
+    (node) => node.type.name === 'documentFigure',
+  )
+  const topLevelTable = table.depth === 1 || (table.depth === 2 && figure?.depth === 1)
+  const figurePosition = topLevelTable && figure?.depth === 1 ? figure.pos : undefined
+
   return {
     headerRow: firstRow.firstChild?.type.name === 'tableHeader',
     canDeleteRow: table.node.childCount > 1,
     canDeleteColumn: columns > 1,
+    tablePosition: table.pos,
+    figurePosition,
+    canAddCaption: topLevelTable && !figurePosition,
   }
 }
 
@@ -201,42 +215,44 @@ export function RichTextTableBubble({ editor, onDeleteTable }: RichTextTableBubb
           <PanelTopIcon aria-hidden="true" />
         </RichTextToggle>
         <RichTextToolbarSeparator />
-        {(() => {
-          const tablePosition = findTable(editor)?.pos
-          const figure =
-            tablePosition === undefined
-              ? undefined
-              : findParentNodeClosestToPos(
-                  editor.state.selection.$from,
-                  (node) => node.type.name === 'documentFigure',
-                )
-          return figure ? (
-            <>
-              <RichTextButton
-                label="Edit caption"
-                onClick={() => focusCodeCaption(editor, figure.pos)}
-              >
-                <TableIcon aria-hidden="true" />
-              </RichTextButton>
-              <RichTextButton
-                label="Remove caption"
-                onClick={() => removeCodeCaption(editor, figure.pos)}
-              >
-                <TableIcon aria-hidden="true" />
-              </RichTextButton>
-            </>
-          ) : (
+        {table.figurePosition !== undefined ? (
+          <>
             <RichTextButton
-              label="Add caption"
+              label="Edit caption"
               onClick={() => {
-                const found = findTable(editor)
-                if (found) addTableCaption(editor, found.pos)
+                const current = readTable(editor)
+                if (current.figurePosition !== undefined) {
+                  focusCodeCaption(editor, current.figurePosition)
+                }
               }}
             >
               <TableIcon aria-hidden="true" />
             </RichTextButton>
-          )
-        })()}
+            <RichTextButton
+              label="Remove caption"
+              onClick={() => {
+                const current = readTable(editor)
+                if (current.figurePosition !== undefined) {
+                  removeCodeCaption(editor, current.figurePosition)
+                }
+              }}
+            >
+              <TableIcon aria-hidden="true" />
+            </RichTextButton>
+          </>
+        ) : table.canAddCaption ? (
+          <RichTextButton
+            label="Add caption"
+            onClick={() => {
+              const current = readTable(editor)
+              if (current.canAddCaption && current.tablePosition !== undefined) {
+                addTableCaption(editor, current.tablePosition)
+              }
+            }}
+          >
+            <TableIcon aria-hidden="true" />
+          </RichTextButton>
+        ) : null}
         <RichTextToolbarSeparator />
         <DropdownMenu>
           <Tooltip>
