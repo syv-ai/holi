@@ -42,7 +42,8 @@ describe("the history dialog's list", () => {
 describe("a commit's age", () => {
   it("reads like the header's, down to the hour", () => {
     expect(commitAge('2026-10-24T11:59:40', NOW)).toBe('just now')
-    expect(commitAge('2026-10-24T09:00:00', NOW)).toBe('3 hours ago')
-    expect(commitAge('2026-08-05T10:00:00', NOW)).toBe('3 months ago')
+    const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+    expect(commitAge('2026-10-24T09:00:00', NOW)).toBe(relative.format(-3, 'hour'))
+    expect(commitAge('2026-08-05T10:00:00', NOW)).toBe(relative.format(-3, 'month'))
   })
 })
