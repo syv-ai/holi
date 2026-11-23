@@ -324,7 +324,9 @@ export const DocumentFigure = Node.create({
             if (
               node.childCount === 2 &&
               child &&
-              (child.type.name === 'image' || child.type.name === 'codeBlock' || child.type.name === 'table') &&
+              (child.type.name === 'image' ||
+                child.type.name === 'codeBlock' ||
+                child.type.name === 'table') &&
               !(typeof node.attrs.sourceImageAttrs === 'string' && child.type.name !== 'image') &&
               caption?.type.name === 'documentCaption'
             )
@@ -335,7 +337,9 @@ export const DocumentFigure = Node.create({
               replacement:
                 node.childCount === 1 &&
                 child &&
-                (child.type.name === 'image' || child.type.name === 'codeBlock' || child.type.name === 'table')
+                (child.type.name === 'image' ||
+                  child.type.name === 'codeBlock' ||
+                  child.type.name === 'table')
                   ? child
                   : null,
             })
@@ -432,7 +436,7 @@ export const DocumentFigure = Node.create({
     const caption = node.content?.[1]
     if (!code || !caption || caption.type !== 'documentCaption') return ''
     if (code.type === 'table') {
-      const tableMarkdown = helpers.renderChildren(code)
+      const tableMarkdown = helpers.renderNode(code)
       return writeFigureCaption(tableMarkdown, caption, renderCaptionMarkdown(caption, helpers))
     }
     if (code.type === 'image') {
@@ -562,19 +566,20 @@ export function removeCodeCaption(editor: Editor, pos: number): boolean {
     child.type.name === 'table'
       ? child
       : child.type.name === 'codeBlock'
-        ? child.type.create({ ...child.attrs, preserveFence: true }, child.content, child.marks)        : child.type.name === 'image' &&
-          typeof node.attrs.sourceBody === 'string' &&
-          typeof node.attrs.sourceImageAttrs === 'string'
-        ? child.type.create(
-            {
-              ...child.attrs,
-              sourceMarkdown: node.attrs.sourceBody,
-              sourceMarkdownImageAttrs: node.attrs.sourceImageAttrs,
-            },
-            child.content,
-            child.marks,
-          )
-        : child
+        ? child.type.create({ ...child.attrs, preserveFence: true }, child.content, child.marks)
+        : child.type.name === 'image' &&
+            typeof node.attrs.sourceBody === 'string' &&
+            typeof node.attrs.sourceImageAttrs === 'string'
+          ? child.type.create(
+              {
+                ...child.attrs,
+                sourceMarkdown: node.attrs.sourceBody,
+                sourceMarkdownImageAttrs: node.attrs.sourceImageAttrs,
+              },
+              child.content,
+              child.marks,
+            )
+          : child
   editor.view.dispatch(editor.state.tr.replaceWith(pos, pos + node.nodeSize, replacement))
   return true
 }

@@ -13,6 +13,7 @@ import {
   isPortableInlineCaption,
   readMarkdownCaptionEnvelopes,
   readMarkdownCodeCaptions,
+  readMarkdownTableCaptions,
 } from '@holi/shared'
 
 /** The line that marks where an agent run was asked to write: an HTML
@@ -168,6 +169,12 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
       ),
   )
   const codeRanges = new Set(codeFrames.map((frame) => frame.envelope.from))
+  const tableFrames = readMarkdownTableCaptions(source).filter(
+    (frame) =>
+      !protectedRanges.some(
+        (range) => frame.envelope.from >= range.from && frame.envelope.from < range.to,
+      ),
+  )
   const imageFrames = readMarkdownCaptionEnvelopes(source).flatMap((frame) => {
     if (
       protectedRanges.some(
@@ -205,7 +212,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
       return []
     }
   })
-  const frames = [...codeFrames, ...imageFrames].sort(
+  const frames = [...codeFrames, ...imageFrames, ...tableFrames].sort(
     (left, right) => left.envelope.from - right.envelope.from,
   )
   const opaqueRanges = unhandledCaptionRanges(
@@ -265,6 +272,18 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
             ]),
           },
           content: [imageFrame.image, { type: 'documentCaption', content: caption.content }],
+        }
+      }
+      if (tableFrames.some((candidate) => candidate.envelope.from === frame.envelope.from)) {
+        const tableDocument = manager.parse(source.slice(frame.body.from, frame.body.to))
+        const table = tableDocument.content?.find((node: any) => node.type === 'table')
+        const captionMarkdown = source.slice(frame.caption.from, frame.caption.to)
+        const captionDocument = manager.parse(captionMarkdown)
+        const caption = captionDocument.content?.find((node: any) => node.type === 'paragraph')
+        if (!table || !caption) return null
+        return {
+          type: 'documentFigure',
+          content: [table, { type: 'documentCaption', content: caption.content }],
         }
       }
       const fence = source.slice(frame.body.from, frame.body.to)
