@@ -13,7 +13,7 @@ Notification.prototype.show = function () {
   }
   return nativeShow.call(this)
 }
-app.setName('Holi notification readiness')
+app.setName(process.env.HOLI_NOTIFICATION_APP_NAME!)
 app.setPath('userData', process.env.HOLI_NOTIFICATION_USER_DATA!)
 app.setPath('sessionData', process.env.HOLI_NOTIFICATION_SESSION_DATA!)
 void app.whenReady().then(() => {
