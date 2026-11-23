@@ -38,6 +38,23 @@ const mermaidCaptioned =
   '<!-- holi:figure -->\n\n~~~mermaid extra-info\nflowchart TD\n  A[Start] --> B[End]\n~~~\n\n<!-- holi:caption -->\n\nA **portable** diagram caption.\n\n<!-- /holi:figure -->'
 
 describe('document code captions', () => {
+  it('round-trips a table figure and preserves malformed table figures', () => {
+    const tableFigure =
+      '<!-- holi:figure -->\\n\\n| Name | Value |\\n| --- | --- |\\n| A | 1 |\\n\\n<!-- holi:caption -->\\n\\nTable caption\\n\\n<!-- /holi:figure -->'
+    const instance = open(tableFigure)
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(instance.state.doc.firstChild?.firstChild?.type.name).toBe('table')
+    const saved = instance.getMarkdown()
+    expect(saved).toContain('| Name | Value |')
+    expect(saved).toContain('Table caption')
+
+    const malformed =
+      '<!-- holi:figure -->\\n\\nnot a table\\n\\n<!-- holi:caption -->\\n\\nCaption\\n\\n<!-- /holi:figure -->'
+    const preserved = open(malformed).getMarkdown()
+    expect(preserved).toContain('not a table')
+    expect(preserved).toContain('Caption')
+    expect(preserved).toContain('holi:figure')
+  })
   it('adds and removes a caption with the complete image block', () => {
     const source = '![A cat](../assets/cat.png "A cat")'
     const instance = open(source)
