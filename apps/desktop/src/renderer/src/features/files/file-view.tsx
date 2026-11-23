@@ -14,7 +14,7 @@
  * latest commit and History, the same as a document's (`FileHistoryButton`).
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { fileKind } from '@holi/shared'
+import { fileKind, readableDoc } from '@holi/shared'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
 import { lintGutter } from '@codemirror/lint'
 import { findNext, findPrevious } from '@codemirror/search'
@@ -608,7 +608,9 @@ function UnviewableFile({ path }: { path: string }) {
         description={
           kind === 'pdf'
             ? 'Turn on the PDF plugin in Settings to read PDFs here.'
-            : "Holi can't show this kind of document yet. It stays in the vault and syncs."
+            : readableDoc(path) !== null
+              ? 'Turn on Read all the things in Settings to read this here.'
+              : "Holi can't show this kind of document yet. It stays in the vault and syncs."
         }
       />
     </div>

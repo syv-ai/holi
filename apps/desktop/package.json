@@ -37,6 +37,7 @@
     "smoke:browser-frame-addressing:typecheck": "tsc --noEmit --project tsconfig.browser-frame-addressing-smoke.json"
   },
   "dependencies": {
+    "@aiden0z/pptx-renderer": "1.4.0",
     "@base-ui/react": "^1.8.0",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.4",
@@ -107,6 +108,7 @@
     "command-score": "0.1.2",
     "d3-force": "^3.0.0",
     "date-fns": "^4.4.0",
+    "docx-preview": "0.4.1",
     "dompurify": "^3.4.13",
     "electron-liquid-glass": "1.1.1",
     "electron-updater": "^6.8.9",
@@ -114,6 +116,7 @@
     "htmlparser2": "^10.1.0",
     "input-otp": "^1.5.0",
     "jotai": "^2.20.1",
+    "jszip": "^3.10.1",
     "lucide": "1.27.0",
     "lucide-react": "^1.27.0",
     "marked": "^18.0.9",
