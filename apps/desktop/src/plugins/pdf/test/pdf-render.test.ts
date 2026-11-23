@@ -114,42 +114,54 @@ after diagram`
     ])
     expect(await readFile(notePath, 'utf8')).toBe(original)
   })
-  it('leaves a nested table envelope byte-for-byte and still converts later captions', async () => {
-    const root = await work()
-    const templateDir = join(root, 'template')
-    await mkdir(templateDir)
-    await writeFile(join(templateDir, 'template.typ'), '')
-    const typstBin = join(root, 'capture-typst')
-    await writeFile(
-      typstBin,
-      '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
-    )
-    await chmod(typstBin, 0o755)
-    const nestedInner = writeMarkdownCaptionEnvelope(
-      '| Inner |\n| --- |\n| value |',
-      'Inner caption',
-    )
-    const nested = `<!-- holi:figure -->\n\nouter body\n\n${nestedInner}\n\n<!-- holi:caption -->\n\nouter caption\n\n<!-- /holi:figure -->`
-    const later = writeMarkdownCaptionEnvelope('| Later |\n| --- |\n| value |', 'Later caption')
-    const notePath = join(root, 'nested.md')
-    await writeFile(notePath, `${nested}\n\n${later}`)
-    const outPath = join(root, 'captured.md')
-    await renderPdf({
-      typstBin,
-      vaultRoot: root,
-      templateDir,
-      notePath,
-      outPath,
-      fields: [],
-      meta: {},
-      diagrams: async () => [],
-    })
-    const transformed = await readFile(outPath, 'utf8')
-    expect(transformed.slice(0, nested.length)).toBe(nested)
-    expect(transformed).toContain('Later caption')
-    expect(transformed.match(/Later caption/g)).toHaveLength(1)
-    expect(await readFile(notePath, 'utf8')).toBe(`${nested}\n\n${later}`)
-  })
+  it.each(['nested', 'fenced-before', 'fenced-after', 'indented-before', 'indented-after'])(
+    'leaves unsupported table envelopes byte-for-byte and converts later captions: %s',
+    async (kind) => {
+      const root = await work()
+      const templateDir = join(root, 'template')
+      await mkdir(templateDir)
+      await writeFile(join(templateDir, 'template.typ'), '')
+      const typstBin = join(root, 'capture-typst')
+      await writeFile(
+        typstBin,
+        '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
+      )
+      await chmod(typstBin, 0o755)
+      const nestedInner = writeMarkdownCaptionEnvelope(
+        '| Inner |\n| --- |\n| value |',
+        'Inner caption',
+      )
+      const nested = `<!-- holi:figure -->\n\nouter body\n\n${nestedInner}\n\n<!-- holi:caption -->\n\nouter caption\n\n<!-- /holi:figure -->`
+      const table = '| A |\n| --- |\n| value |'
+      const extra = kind.startsWith('fenced') ? '```txt\nkeep code\n```' : '    keep code'
+      const unsupported =
+        kind === 'nested'
+          ? nested
+          : writeMarkdownCaptionEnvelope(
+              kind.endsWith('before') ? `${extra}\n\n${table}` : `${table}\n\n${extra}`,
+              'Unsupported caption',
+            )
+      const later = writeMarkdownCaptionEnvelope('| Later |\n| --- |\n| value |', 'Later caption')
+      const notePath = join(root, 'nested.md')
+      await writeFile(notePath, `${unsupported}\n\n${later}`)
+      const outPath = join(root, 'captured.md')
+      await renderPdf({
+        typstBin,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+        diagrams: async () => [],
+      })
+      const transformed = await readFile(outPath, 'utf8')
+      expect(transformed.slice(0, unsupported.length)).toBe(unsupported)
+      expect(transformed).toContain('Later caption')
+      expect(transformed.match(/Later caption/g)).toHaveLength(1)
+      expect(await readFile(notePath, 'utf8')).toBe(`${unsupported}\n\n${later}`)
+    },
+  )
 
   it('keeps mixed table, image, code, and Mermaid captions in source order', async () => {
     const root = await work()

@@ -11,29 +11,41 @@ const body =
 const caption = '**A** &amp; _B_'
 
 describe('Markdown table captions', () => {
-  it('preserves exact CRLF source ranges and rejects code blocks around the table', () => {
-    const valid =
-      '<!-- holi:figure -->\r\n\r\n| A |\r\n| - |\r\n| `x` |\r\n\r\n<!-- holi:caption -->\r\n\r\nCaption.\r\n\r\n<!-- /holi:figure -->'
-    const [frame] = readMarkdownTableCaptions(valid)
+  const table = '| A |\n| --- |\n| `x` 🐈 |'
+
+  it('preserves exact UTF-16 source ranges with CRLF and preceding Unicode', () => {
+    const envelope = writeMarkdownCaptionEnvelope(table, '**Caption** 🐈.').replaceAll('\n', '\r\n')
+    const source = `🐈 before\r\n\r\n${envelope}\r\n\r\nafter`
+    const [frame] = readMarkdownTableCaptions(source)
     expect(frame).toBeDefined()
-    expect(valid.slice(frame!.body.from, frame!.body.to)).toBe('| A |\\r\\n| - |\\r\\n| `x` |')
-    const codeBefore = valid.replace('| A |', '```txt\\nkeep\\n```\\n\\n| A |')
-    const codeAfter = valid.replace(
-      '| A |\\r\\n| - |\\r\\n| `x` |',
-      '| A |\\r\\n| - |\\r\\n| `x` |\\r\\n\\r\\n    keep',
-    )
-    expect(readMarkdownTableCaptions(codeBefore)).toEqual([])
-    expect(readMarkdownTableCaptions(codeAfter)).toEqual([])
+    expect(source.slice(frame!.envelope.from, frame!.envelope.to)).toBe(envelope)
+    expect(source.slice(frame!.body.from, frame!.body.to)).toBe(table.replaceAll('\n', '\r\n'))
+    expect(source.slice(frame!.caption.from, frame!.caption.to)).toBe('**Caption** 🐈.')
   })
 
-  it('writes only a valid table and portable caption', () => {
-    const serialized = writeMarkdownTableCaption('| A |\n| - |\n| 1 |', '  Caption.')
+  it.each(['```txt\nkeep\n```', '    keep', 'extra prose', '[ref]: https://example.com'])(
+    'rejects additional blocks before or after a table and recovers later figures: %s',
+    (extra) => {
+      const later = writeMarkdownTableCaption(table, 'Later caption')
+      for (const body of [`${extra}\n\n${table}`, `${table}\n\n${extra}`]) {
+        const invalid = writeMarkdownCaptionEnvelope(body, 'Invalid caption')
+        expect(readMarkdownTableCaptions(invalid)).toEqual([])
+        expect(() => writeMarkdownTableCaption(body, 'Invalid caption')).toThrow()
+        const source = `${invalid}\n\n${later}`
+        const frames = readMarkdownTableCaptions(source)
+        expect(frames).toHaveLength(1)
+        expect(source.slice(frames[0]!.envelope.from, frames[0]!.envelope.to)).toBe(later)
+      }
+    },
+  )
+
+  it('writes valid tables losslessly and encodes leading caption whitespace', () => {
+    const serialized = writeMarkdownTableCaption(table, ' \tCaption.')
     const [frame] = readMarkdownTableCaptions(serialized)
-    expect(serialized.slice(frame!.caption.from, frame!.caption.to)).toBe('&#32;&#32;Caption.')
-    expect(serialized.slice(frame!.body.from, frame!.body.to)).toBe('| A |\n| - |\n| 1 |')
-    expect(writeMarkdownTableCaption('| A |\n| - |\n| 1 |', 'Caption.')).toContain('| 1 |')
-    expect(() => writeMarkdownTableCaption('| A |\n| - |\n| 1 |\n\nextra', 'Caption.')).toThrow()
-    expect(() => writeMarkdownTableCaption('| A |\n| - |\n| 1 |', '[reference]')).toThrow()
+    expect(frame).toBeDefined()
+    expect(serialized.slice(frame!.caption.from, frame!.caption.to)).toBe('&#32;&#9;Caption.')
+    expect(serialized.slice(frame!.body.from, frame!.body.to)).toBe(table)
+    expect(() => writeMarkdownTableCaption(table, '[reference]')).toThrow()
   })
 })
 

@@ -1,5 +1,4 @@
 import { GFM, parser } from '@lezer/markdown'
-import { readMarkdownTableCaptions } from '@holi/shared'
 import { splitFrontmatter } from '@holi/shared'
 
 const markdownParser = parser.configure(GFM)
