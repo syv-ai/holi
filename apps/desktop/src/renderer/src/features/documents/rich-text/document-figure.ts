@@ -518,8 +518,12 @@ export function addImageCaption(editor: Editor, pos: number): boolean {
 
 export function addTableCaption(editor: Editor, pos: number): boolean {
   if (!editor.isEditable || pos < 0 || pos > editor.state.doc.content.size) return false
+  const $pos = editor.state.doc.resolve(pos)
+  if ($pos.depth !== 0 || pos >= editor.state.doc.content.size) return false
   const table = editor.state.doc.nodeAt(pos)
   if (!table || table.type.name !== 'table') return false
+  const before = pos > 0 ? editor.state.doc.nodeAt(pos - 1) : null
+  if (before?.type.name === 'documentFigure') return false
   const caption = editor.schema.nodes.documentCaption?.create()
   const figure = caption && editor.schema.nodes.documentFigure?.create(null, [table, caption])
   if (!figure) return false
