@@ -163,10 +163,14 @@ async function defaultRun(
   })
   void drained.catch(() => {})
   const cleanupFailure = (error: unknown): void => {
+    // Keep observing the original authority even when the immediate Windows
+    // kill request throws: a later receipt may still carry the process lease.
+    const cleanupAuthority =
+      platform === 'win32' ? { drain: () => joined.then(() => {}) } : authority
     rejectDrain(
       error instanceof AgentProbeCleanupError
         ? error
-        : new AgentProbeCleanupError(error, authority),
+        : new AgentProbeCleanupError(error, cleanupAuthority),
     )
   }
   const requestDrain = (): void => {
