@@ -123,9 +123,11 @@ async function defaultRun(
   }
   const take = (chunk: Buffer): void => {
     if (read >= TEST_READ_MAX) return
-    chunks.push(chunk)
-    read += chunk.length
-    if (read >= TEST_READ_MAX) stop('over')
+    const remaining = TEST_READ_MAX - read
+    const kept = chunk.subarray(0, remaining)
+    chunks.push(kept)
+    read += kept.length
+    if (chunk.length > remaining || read >= TEST_READ_MAX) stop('over')
   }
   child.stdout?.on('data', take)
   child.stderr?.on('data', take)
