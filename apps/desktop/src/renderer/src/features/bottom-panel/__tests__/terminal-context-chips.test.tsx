@@ -41,9 +41,10 @@ describe('context chips', () => {
     expect(screen.getByText('~/Development/syvai/repos/holi')).toBeInTheDocument()
     expect(screen.getByText('feat/agents-holis-automations')).toBeInTheDocument()
     const changes = screen.getByLabelText('16 changed files, 1435 lines added, 0 removed')
-    expect(changes).toHaveTextContent('16•+1,435')
+    const formattedAdded = new Intl.NumberFormat().format(1435)
+    expect(changes).toHaveTextContent(`16•+${formattedAdded}`)
     expect(changes).not.toHaveTextContent('−')
-    expect(screen.getByText('+1,435')).toHaveClass('text-success-foreground')
+    expect(screen.getByText(`+${formattedAdded}`)).toHaveClass('text-success-foreground')
   })
 
   test('draw the lines removed in the destructive colour', () => {
