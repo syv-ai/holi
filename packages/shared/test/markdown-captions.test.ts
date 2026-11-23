@@ -11,7 +11,7 @@ const body =
 const caption = '**A** &amp; _B_'
 
 describe('Markdown table captions', () => {
-  const table = '| A |\n| --- |\n| `x` 🐈 |'
+  const table = '| A |\n| --- |\n| `x` 🐈 [[notes/plan.md|Plan]] |'
 
   it('preserves exact UTF-16 source ranges with CRLF and preceding Unicode', () => {
     const envelope = writeMarkdownCaptionEnvelope(table, '**Caption** 🐈.').replaceAll('\n', '\r\n')
