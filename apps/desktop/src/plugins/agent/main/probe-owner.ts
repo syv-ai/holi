@@ -7,17 +7,30 @@ export type AgentProbeOwner = ReturnType<typeof createAgentProbeOwner>
  * then revokes each failed launch's original cleanup lease once. */
 export function createAgentProbeOwner(activationSignal: AbortSignal) {
   const pending = new Set<Promise<unknown>>()
+  const controllers = new Set<AbortController>()
   const failures = new Set<UnconfirmedOwnedProgramError>()
   let stopping: Promise<void> | undefined
 
   return {
-    run<T>(probe: () => Promise<T>): Promise<T> {
+    run<T>(probe: (signal: AbortSignal) => Promise<T>): Promise<T> {
       for (const failure of failures) return Promise.reject(failure)
       if (stopping || activationSignal.aborted)
         return Promise.reject(new Error('Agent probe activation was cancelled'))
 
-      const work = probe()
+      const controller = new AbortController()
+      controllers.add(controller)
+      let resolveWork!: (value: T | PromiseLike<T>) => void
+      let rejectWork!: (reason: unknown) => void
+      const work = new Promise<T>((resolve, reject) => {
+        resolveWork = resolve
+        rejectWork = reject
+      })
       pending.add(work)
+      try {
+        resolveWork(probe(controller.signal))
+      } catch (error) {
+        rejectWork(error)
+      }
       // Observe before any caller can discard a stale result. Even if the
       // activation has since been revoked, this launch still belongs here.
       void work.then(
@@ -25,13 +38,16 @@ export function createAgentProbeOwner(activationSignal: AbortSignal) {
         (error: unknown) => {
           if (error instanceof UnconfirmedOwnedProgramError) failures.add(error)
           pending.delete(work)
+          controllers.delete(controller)
         },
       )
       return work
     },
 
     stop(): Promise<void> {
-      return (stopping ??= (async () => {
+      if (stopping) return stopping
+      for (const controller of controllers) controller.abort()
+      return (stopping = (async () => {
         await Promise.allSettled(pending)
         const leases = new Set([...failures].flatMap((error) => (error.lease ? [error.lease] : [])))
         const revoked = await Promise.allSettled([...leases].map(async (lease) => lease.revoke()))
