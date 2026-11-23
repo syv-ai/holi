@@ -120,7 +120,7 @@ function readTable(editor: Editor | null): TableSnapshot {
   const table = editor ? findTable(editor) : undefined
   const firstRow = table?.node.firstChild
 
-  if (!table || !firstRow) return IDLE_TABLE
+  if (!editor || !table || !firstRow) return IDLE_TABLE
 
   let columns = 0
   firstRow.forEach((cell) => {
@@ -140,7 +140,7 @@ function readTable(editor: Editor | null): TableSnapshot {
     canDeleteColumn: columns > 1,
     tablePosition: table.pos,
     figurePosition,
-    canAddCaption: topLevelTable && !figurePosition,
+    canAddCaption: topLevelTable && figurePosition === undefined,
   }
 }
 

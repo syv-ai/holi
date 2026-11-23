@@ -1,5 +1,5 @@
 import { Editor } from '@tiptap/react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { DeleteTableDialog } from '../rich-text/delete-table-dialog'
@@ -7,7 +7,11 @@ import { createDocumentExtensions } from '../document-extensions'
 import { RichTextTable } from '../rich-text/rich-text-table'
 
 let editor: Editor | null = null
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    cleanup()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
   editor?.destroy()
   editor = null
 })
