@@ -7,8 +7,10 @@
  * is the backstop for every drop surface that does not claim its drops.
  *
  * Holi is a single page. It never navigates on purpose: external links go
- * through `shell.openExternal` over IPC, and nothing in the renderer calls
- * `window.open`. So the rule can be as tight as "the document we loaded".
+ * through `shell.openExternal` over IPC, and Holi's own code never calls
+ * `window.open` (the deck renderer does, for a shape's hyperlink, and the
+ * window-open handler below sends that to the browser). So the rule can be as
+ * tight as "the document we loaded".
  * A vault app's links are the one kind of link Holi did not write, and they
  * go to the browser too (`guardNavigation`).
  */
@@ -109,8 +111,8 @@ export function originFrameExit(
  * one of `frameOrigins`, which is live: plugins add and remove origins as their
  * servers start and stop. A new window is
  * never made; an http(s) or mailto one (an app's `target=_blank` link, which
- * its sandbox's `allow-popups` lets reach here) opens in the browser. The
- * renderer itself never calls `window.open`.
+ * its sandbox's `allow-popups` lets reach here, or a deck shape's hyperlink,
+ * which the deck renderer opens with `window.open`) opens in the browser.
  */
 export function guardNavigation(
   win: BrowserWindow,

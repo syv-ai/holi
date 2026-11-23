@@ -12,6 +12,7 @@ import { googleRenderer } from './google/renderer'
 import { browserRenderer } from './browser/renderer'
 import { linksRenderer } from './links/renderer'
 import { pdfRenderer } from './pdf/renderer'
+import { readerRenderer } from './reader/renderer'
 import { tasksRenderer } from './tasks/renderer'
 import { transcribeRenderer } from './transcribe/renderer'
 
@@ -21,6 +22,7 @@ export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   holisRenderer,
   tasksRenderer,
   pdfRenderer,
+  readerRenderer,
   linksRenderer,
   browserRenderer,
   googleRenderer,

@@ -43,6 +43,10 @@ describe('subscriptions IPC', () => {
     await exec('git', ['-C', root, 'config', '--local', 'protocol.https.allow', 'never'])
     await caller.vaults.open({ remote: REMOTE })
     const active = host.active()!
+    // Own the fixture's Git history: long timer intervals do not stop startup
+    // sync that was already admitted while opening the vault.
+    active.pause('subscription history fixture')
+    await active.drainSync()
     // Subscription query fixtures have immutable commit history. Never permit
     // host lifecycle sync to contact any transport, even the local mirror.
     active.repo.push = vi.fn(async () => ({ kind: 'nothing-to-push' as const }))
@@ -520,6 +524,7 @@ describe('subscriptions IPC', () => {
     await addFile(active.root, 'literal[?].md', 'changed\n')
     const renamed = await gitCommit(active.root, ['old.md', 'literal[?].md'], 'rename and literal')
     const result = await caller.subscriptions.changes({ remote: REMOTE, path: '' })
+    expect(result).toMatchObject({ complete: true, history: 'ok' })
     expect(result.changes.map(({ sha, path }) => [sha, path])).toContainEqual([changed, 'gone.md'])
     expect(result.changes.map(({ sha, path }) => [sha, path])).toContainEqual([renamed, 'old.md'])
     expect(result.changes.map(({ sha, path }) => [sha, path])).toContainEqual([
