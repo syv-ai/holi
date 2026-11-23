@@ -53,8 +53,7 @@ export function readMarkdownTableCaptions(markdown: string): MarkdownTableCaptio
 export function writeMarkdownTableCaption(body: string, caption: string): string {
   const serialized = writeMarkdownCaptionEnvelope(body, caption)
   const frame = readMarkdownTableCaptions(serialized)[0]
-  if (!frame) throw new Error('body must be exactly one portable GFM table')
-  if (!isPortableInlineCaption(serialized.slice(frame.caption.from, frame.caption.to)))
-    throw new Error('caption must be one portable inline paragraph')
+  if (!frame)
+    throw new Error('expected exactly one portable GFM table and one portable inline caption')
   return serialized
 }

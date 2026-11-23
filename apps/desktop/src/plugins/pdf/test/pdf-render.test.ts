@@ -159,6 +159,8 @@ after diagram`
       expect(transformed.slice(0, unsupported.length)).toBe(unsupported)
       expect(transformed).toContain('Later caption')
       expect(transformed.match(/Later caption/g)).toHaveLength(1)
+      expect(transformed.slice(unsupported.length)).not.toContain('<!-- holi:figure -->')
+      expect(transformed.slice(unsupported.length)).toContain('<!--raw-typst ')
       expect(await readFile(notePath, 'utf8')).toBe(`${unsupported}\n\n${later}`)
     },
   )
