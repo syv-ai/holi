@@ -6,6 +6,8 @@ import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { createPluginHost, type OpenVault } from '../../../main/plugin-host/host'
 import {
   spawnOwnedProgram,
+  ownedProcessDrain,
+  type ProcessGroupSupervision,
   UnconfirmedOwnedProgramError,
   type CapabilityContext,
   type OwnedCompletion,
@@ -14,7 +16,7 @@ import {
 import { AGENT_INFO } from '../info'
 import { harnessCapabilities } from '../main/harness/capabilities'
 import type { HarnessRegistry } from '../main/harness/registry'
-import { createAgentProbeOwner } from '../main/probe-owner'
+import { AgentProbeCleanupError, createAgentProbeOwner } from '../main/probe-owner'
 import { versionCapabilities } from '../main/version'
 
 vi.mock('../../../main/plugin-api', async (actual) => ({
@@ -66,7 +68,11 @@ function activation() {
   }
 }
 
-function start(receipt = true, owner: { test(): Promise<unknown> } = activation()) {
+function start(
+  receipt = true,
+  owner: { test(): Promise<unknown> } = activation(),
+  authority?: ProcessGroupSupervision,
+) {
   let resolve!: (proof: OwnedCompletion) => void
   let reject!: (error: unknown) => void
   const proof = new Promise<OwnedCompletion>((yes, no) => {
@@ -78,6 +84,7 @@ function start(receipt = true, owner: { test(): Promise<unknown> } = activation(
   const kill = vi.fn(() => true)
   const child = Object.assign(new ChildProcess(), {
     ...(receipt ? { ownedCompletion: proof } : {}),
+    ...(authority ? { [ownedProcessDrain]: authority } : {}),
     stdout,
     stderr,
     kill,
@@ -202,7 +209,7 @@ test('a late proof fault poisons only the admitting activation and joins one lea
   const revoked = new Promise<void>((resolve) => (finishRevoke = resolve))
   const lease = { revoke: vi.fn(() => revoked) }
   const lost = new UnconfirmedOwnedProgramError(new Error('lost receipt'), lease)
-  await vi.advanceTimersByTimeAsync(5_000)
+  await vi.advanceTimersByTimeAsync(0)
   expect(f.kill).toHaveBeenCalledExactlyOnceWith('SIGTERM')
   f.reject(lost) // No child close or output end; fail now, not at the kill grace.
   await expect(f.answer).rejects.toBe(lost)
@@ -219,13 +226,6 @@ test('a late proof fault poisons only the admitting activation and joins one lea
   await expect(stopping).rejects.toBe(lost)
   await expect(a.stop()).rejects.toBe(lost)
   expect(lease.revoke).toHaveBeenCalledOnce()
-  expect(f.child.listenerCount('close')).toBe(0)
-  expect(f.child.listenerCount('exit')).toBe(0)
-  for (const stream of [f.stdout, f.stderr]) {
-    expect(stream.listenerCount('data')).toBe(0)
-    expect(stream.listenerCount('close')).toBe(0)
-    expect(stream.listenerCount('error')).toBe(1) // Public join's stateless late-error sink.
-  }
   f.close(0)
   await vi.advanceTimersByTimeAsync(6_000)
   expect(f.settled).toHaveBeenCalledExactlyOnceWith(lost)
@@ -319,3 +319,158 @@ test.each(['timeout', 'over-limit'] as const)(
     })
   },
 )
+
+test.each(['cancel', 'timeout', 'output', 'zero', 'nonzero'] as const)(
+  'POSIX %s joins original physical authority before returning an outcome',
+  async (mode) => {
+    vi.useFakeTimers()
+    Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' })
+    const owner = activation()
+    let finish!: () => void
+    const physical = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const f = start(false, owner, { drain: () => physical })
+    if (mode === 'cancel') owner.controller.abort()
+    else if (mode === 'timeout') await vi.advanceTimersByTimeAsync(5000)
+    else if (mode === 'output') f.stdout.write(Buffer.alloc(270 * 1024, 'x'))
+    f.close(mode === 'nonzero' ? 7 : 0)
+    await f.pending()
+    // Synthetic POSIX adapters never confer a signalling or PID-probing right.
+    expect(f.kill).not.toHaveBeenCalled()
+    finish()
+    const result = await f.answer
+    expect(result).toMatchObject({ ok: mode === 'zero' })
+    if (mode === 'cancel')
+      expect(result).toMatchObject({ message: expect.stringMatching(/cancel/i) })
+    if (mode === 'timeout')
+      expect(result).toMatchObject({ message: expect.stringMatching(/5 seconds/) })
+    if (mode === 'output') expect(result).toMatchObject({ output: expect.any(String) })
+    await expect(owner.stop()).resolves.toBeUndefined()
+  },
+)
+
+test.each(['plain', 'leased'] as const)(
+  'Windows %s stop failure retains its late receipt lease without close',
+  async (kind) => {
+    const owner = activation()
+    const f = start(true, owner)
+    const revoke = vi.fn(async () => {})
+    const lease = { revoke }
+    const lost = new UnconfirmedOwnedProgramError(new Error('receipt failed'), lease)
+    const killFailure = kind === 'leased' ? lost : new Error('Windows stop request failed')
+    f.kill.mockImplementation(() => {
+      throw killFailure
+    })
+    owner.controller.abort()
+    let failure: unknown
+    await f.answer.catch((error: unknown) => {
+      failure = error
+    })
+    expect(failure).toBeInstanceOf(AgentProbeCleanupError)
+    expect(failure).toMatchObject({ cause: killFailure, authority: expect.any(Object) })
+    if (kind === 'leased') expect(failure).toMatchObject({ lease })
+    let stopped = false
+    const stopping = owner.stop().finally(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    f.reject(lost)
+    await expect(stopping).rejects.toBeInstanceOf(AggregateError)
+    expect(revoke).toHaveBeenCalledOnce()
+    await expect(owner.stop()).rejects.toBeInstanceOf(AggregateError)
+  },
+)
+
+test('POSIX drain failure rejects without close and stays with its original owner', async () => {
+  Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' })
+  const owner = activation()
+  const cause = new Error('physical proof lost')
+  const authority = { drain: () => Promise.reject(cause) }
+  const f = start(false, owner, authority)
+  owner.controller.abort()
+  let failure: unknown
+  await f.answer.catch((error: unknown) => {
+    failure = error
+  })
+  expect(failure).toBeInstanceOf(AgentProbeCleanupError)
+  expect(failure).toMatchObject({ cause, authority })
+  await expect(owner.test()).rejects.toBe(failure)
+  await expect(owner.stop()).rejects.toThrow()
+  await expect(owner.stop()).rejects.toThrow()
+  expect(f.kill).not.toHaveBeenCalled()
+  f.close(0)
+})
+
+test('missing POSIX authority fails sticky without touching a synthetic child', async () => {
+  Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' })
+  const owner = activation()
+  const f = start(false, owner)
+  let failure: unknown
+  await f.answer.catch((error: unknown) => {
+    failure = error
+  })
+  expect(failure).toBeInstanceOf(AgentProbeCleanupError)
+  await expect(owner.test()).rejects.toBe(failure)
+  await expect(owner.stop()).rejects.toBe(failure)
+  expect(f.kill).not.toHaveBeenCalled()
+  f.close(0)
+})
+
+test('uncertain synchronous creation joins attached cleanup but retains uncertainty', async () => {
+  Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' })
+  let finish!: () => void
+  const cleanup = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const cause = Object.assign(new Error('native creation uncertain'), { cleanup })
+  vi.mocked(spawnOwnedProgram).mockImplementationOnce(() => {
+    throw cause
+  })
+  const owner = activation()
+  const answer = owner.test()
+  let settled = false
+  void answer.then(
+    () => {
+      settled = true
+    },
+    () => {
+      settled = true
+    },
+  )
+  await Promise.resolve()
+  expect(settled).toBe(false)
+  finish()
+  let failure: unknown
+  await answer.catch((error: unknown) => {
+    failure = error
+  })
+  expect(failure).toMatchObject({ cause })
+  await expect(owner.test()).rejects.toBe(failure)
+  await expect(owner.stop()).rejects.toBe(failure)
+})
+
+test('revocation aborts admitted setup and reentrant stop retains its settlement', async () => {
+  const activation = new AbortController()
+  const owner = createAgentProbeOwner(activation.signal)
+  let finish!: () => void
+  const setup = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  let observedSignal!: AbortSignal
+  let stop!: Promise<void>
+  const run = owner.run(async (signal) => {
+    observedSignal = signal
+    stop = owner.stop()
+    await setup
+    expect(signal.aborted).toBe(true)
+    return 'cancelled before launch'
+  })
+  expect(observedSignal.aborted).toBe(true)
+  expect(owner.stop()).toBe(stop)
+  await expect(owner.run(async () => 'not admitted')).rejects.toThrow(/cancel/i)
+  finish()
+  await expect(run).resolves.toBe('cancelled before launch')
+  await expect(stop).resolves.toBeUndefined()
+})

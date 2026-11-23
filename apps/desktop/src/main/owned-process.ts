@@ -21,13 +21,22 @@ type SupervisedChild = ManagedOwnedChild & { [ownedProcessDrain]?: ProcessGroupS
 export function spawnOwnedProgram(
   bin: string,
   args: readonly string[],
-  options: SpawnOptions & { posixGroupLease?: boolean; ownershipRecordPath?: string },
+  options: SpawnOptions & {
+    posixGroupLease?: boolean
+    ownershipRecordPath?: string
+    graceMs?: number
+  },
   parentPid = process.pid,
 ): SupervisedChild {
   if (process.platform !== 'win32') {
-    const { posixGroupLease, ownershipRecordPath, ...spawnOptions } = options
+    const { posixGroupLease, ownershipRecordPath, graceMs, ...spawnOptions } = options
     if (!posixGroupLease) return spawnProgram(bin, args, { ...spawnOptions, detached: true })
-    return spawnLeased(bin, args, spawnOptions, ownershipRecordPath)
+    return spawnLeased(
+      bin,
+      args,
+      { ...spawnOptions, ...(graceMs === undefined ? {} : { graceMs }) },
+      ownershipRecordPath,
+    )
   }
   const launchEnv = { ...(options.env ?? process.env) }
   const planningEnv = { ...launchEnv }

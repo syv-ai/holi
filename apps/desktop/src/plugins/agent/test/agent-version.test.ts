@@ -45,6 +45,34 @@ function holdVersionCallback() {
 }
 
 describe('agent.version', () => {
+  it('aborts admitted probes on stop and rejects later admissions', async () => {
+    const probes = createAgentProbeOwner(new AbortController().signal)
+    let observed: AbortSignal | undefined
+    let finish!: () => void
+    const held = new Promise<void>((resolve) => (finish = resolve))
+    const work = probes.run(async (signal) => {
+      observed = signal
+      await held
+      return 'done'
+    })
+    const stopping = probes.stop()
+    expect(observed?.aborted).toBe(true)
+    await expect(probes.run(async () => 'late')).rejects.toThrow('cancelled')
+    finish()
+    await expect(work).resolves.toBe('done')
+    await stopping
+  })
+
+  it('joins synchronous setup failures and repeated stop calls', async () => {
+    const probes = createAgentProbeOwner(new AbortController().signal)
+    const failure = new Error('setup failed')
+    const work = probes.run(() => {
+      void probes.stop()
+      throw failure
+    })
+    await expect(work).rejects.toBe(failure)
+    await expect(probes.stop()).resolves.toBeUndefined()
+  })
   it('prints both versions, asking claude --version', async () => {
     const asked: string[][] = []
     const text = await versionText({
