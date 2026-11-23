@@ -6,6 +6,7 @@ import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { ConfirmDialog } from '@/composites/confirm-dialog'
 
 import { TOAST_SUCCESS_ICON } from './icons'
+import { findBlockTarget, deleteBlock } from './rich-text-block-actions'
 
 // Long enough to reach Undo from the keyboard (WCAG 2.2.1).
 const UNDO_TOAST_MS = 8000
@@ -50,7 +51,13 @@ export function DeleteTableDialog({ editor, open, onOpenChange }: DeleteTableDia
   function deleteTable() {
     if (!activity.focused || !editor || editor.isDestroyed) return
     const current = activity.capture()
-    editor.chain().focus().deleteTable().run()
+    const target = findBlockTarget(editor.state.doc, editor.state.selection.from)
+    if (target?.node.type.name === 'documentFigure') {
+      const transaction = deleteBlock(editor.state, target)
+      if (transaction) editor.view.dispatch(transaction)
+    } else {
+      editor.chain().focus().deleteTable().run()
+    }
     toast.success('Table deleted', {
       icon: TOAST_SUCCESS_ICON,
       description: name,
