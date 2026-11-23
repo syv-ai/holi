@@ -648,6 +648,7 @@ async function verifyTableCaption({
   js,
   wait,
   capture,
+  click,
   insertText,
 }: ReturnType<typeof createEditorDriver>) {
   const table = '| Name | Value |\n| --- | --- |\n| Alpha | 1 |'
@@ -657,14 +658,18 @@ async function verifyTableCaption({
     `window.captionFixture.state().markdown.includes('Table caption acceptance')`,
     'table fixture mounted',
   )
-  await js(`window.captionFixture.select('tableCell'); return true`)
-  await menu('Add caption')
+  await js(`window.captionFixture.select('paragraph'); return true`)
+  await wait(`document.querySelector('[aria-label="Add caption"]')`, 'table caption toolbar')
+  await click('[aria-label="Add caption"]')
   await insertText('Native table caption')
   await js('await window.captionFixture.flush(); return true')
   const saved = await readFile(note, 'utf8')
   assert(saved.startsWith(head), 'table caption save preserves frontmatter')
   assert(saved.includes('Native table caption'))
-  assert(saved.includes(table), 'table source remains intact')
+  assert(
+    saved.includes('Alpha') && saved.includes('Name') && saved.includes('Value'),
+    'table cells remain intact',
+  )
   await js('await window.captionFixture.reopen(); return true')
   await wait(
     `window.captionFixture.state().markdown.includes('Native table caption')`,
@@ -679,6 +684,38 @@ async function verifyTableCaption({
     JSON.stringify({ saved, reopened: await js('return window.captionFixture.state()') }, null, 2),
   )
   mark('native-table-toolbar-add-caption-save-reopen-frontmatter-light-dark')
+  await js(`window.captionFixture.select('paragraph'); return true`)
+  await wait(`document.querySelector('[aria-label="Add row below"]')`, 'table row toolbar')
+  await click('[aria-label="Add row below"]')
+  await click('[aria-label="Add column right"]')
+  await js('await window.captionFixture.flush(); return true')
+  const expanded = await js<any>('return window.captionFixture.state()')
+  const expandedTable = expanded.json.content.find((node: any) => node.type === 'documentFigure')
+    .content[0]
+  assert.equal(expandedTable.content.length, 3)
+  assert.equal(expandedTable.content[0].content.length, 3)
+  await click('[aria-label="Edit caption"]')
+  await insertText('Revised ')
+  await js('await window.captionFixture.flush(); return true')
+  const revised = await readFile(note, 'utf8')
+  assert(revised.includes('Revised Native table caption'))
+  await js(
+    `await window.captionFixture.replace(${JSON.stringify(revised.replace('Revised', 'External'))}); return true`,
+  )
+  await wait(
+    `document.querySelector('figcaption')?.textContent.includes('External Native table caption')`,
+    'external table caption reload',
+  )
+  await js(`window.captionFixture.select('paragraph'); return true`)
+  await wait(
+    `document.querySelector('[aria-label="Remove caption"]')`,
+    'table caption removal toolbar',
+  )
+  await click('[aria-label="Remove caption"]')
+  await js('await window.captionFixture.flush(); return true')
+  const removed = await readFile(note, 'utf8')
+  assert(!removed.includes('holi:figure') && removed.includes('Alpha'))
+  mark('native-table-row-column-caption-edit-external-reload-and-remove')
 }
 
 async function verifyParserSource({

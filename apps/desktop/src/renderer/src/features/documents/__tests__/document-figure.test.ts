@@ -51,72 +51,74 @@ const mermaidCaptioned =
 describe('document table captions', () => {
   const table = '| Name | Value |\n| --- | --- |\n| A | 1 |'
 
-  it('adds captions to bare tables and rejects readonly, nested, and already-captioned tables', () => {
+  it('adds only to editable top-level tables', () => {
     const instance = open(table)
     expect(addTableCaption(instance, 0)).toBe(true)
     expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
-    expect(readMarkdownTableCaptions(instance.getMarkdown())).toHaveLength(1)
-
-    const readonly = open(table)
-    readonly.setEditable(false)
-    expect(addTableCaption(readonly, 0)).toBe(false)
     expect(addTableCaption(instance, 1)).toBe(false)
     expect(addTableCaption(instance, 0)).toBe(false)
-
+    instance.destroy()
+    const locked = open(table)
+    locked.setEditable(false)
+    expect(addTableCaption(locked, 0)).toBe(false)
+    locked.destroy()
     const nested = open('> ' + table.replaceAll('\n', '\n> '))
-    expect(addTableCaption(nested, 0)).toBe(false)
+    expect(addTableCaption(nested, 1)).toBe(false)
   })
 
-  it('edits, saves, reopens, and removes a caption without changing table cells', () => {
+  it('saves formatted captions, reopens and removes them without changing cells', () => {
     const instance = open(table)
+    const original = instance.state.doc.firstChild?.toJSON()
     expect(addTableCaption(instance, 0)).toBe(true)
-    instance.commands.insertContent('A **bold** caption')
+    instance.commands.insertContent([
+      { type: 'text', text: 'A ' },
+      { type: 'text', text: 'bold', marks: [{ type: 'bold' }] },
+      { type: 'text', text: ' caption' },
+    ])
     const saved = instance.getMarkdown()
     expect(saved).toContain('A **bold** caption')
+    expect(readMarkdownTableCaptions(saved)).toHaveLength(1)
+    instance.destroy()
     const reopened = open(saved)
-    expect(reopened.getMarkdown()).toContain('| A | 1 |')
-    expect(readMarkdownTableCaptions(reopened.getMarkdown())).toHaveLength(1)
+    expect(reopened.state.doc.firstChild?.firstChild?.toJSON()).toEqual(original)
     expect(removeCodeCaption(reopened, 0)).toBe(true)
-    expect(reopened.getMarkdown()).toContain('| A | 1 |')
+    expect(reopened.state.doc.firstChild?.toJSON()).toEqual(original)
     expect(readMarkdownTableCaptions(reopened.getMarkdown())).toEqual([])
   })
 
-  it('keeps a captioned table intact through table commands and block actions', () => {
+  it('retains table edits and keeps captions attached through block actions', () => {
     const instance = open(
       '<!-- holi:figure -->\n\n' +
         table +
         '\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->\n\nAfter',
     )
-    const figure = instance.state.doc.firstChild!
-    const tableNode = figure.firstChild!
-    instance.commands.setTextSelection(3)
-    expect(instance.commands.insertTableRowAfter()).toBe(true)
-    expect(instance.commands.insertTableColumnAfter()).toBe(true)
+    instance.commands.setTextSelection(5)
+    expect(instance.commands.addRowAfter()).toBe(true)
+    expect(instance.commands.addColumnAfter()).toBe(true)
     expect(instance.commands.toggleHeaderRow()).toBe(true)
+    expect(instance.state.doc.firstChild?.firstChild?.firstChild?.firstChild?.type.name).toBe(
+      'tableCell',
+    )
+    expect(instance.commands.toggleHeaderRow()).toBe(true)
+    const edited = instance.state.doc.firstChild?.firstChild?.toJSON()
     const saved = instance.getMarkdown()
     expect(readMarkdownTableCaptions(saved)).toHaveLength(1)
-    const reopened = open(saved)
-    expect(reopened.getMarkdown()).toContain('Caption')
-    expect(reopened.state.doc.firstChild?.firstChild?.childCount).toBeGreaterThan(2)
-
     const target = blockTargetAtPos(instance.state.doc, 0)!
     instance.view.dispatch(duplicateBlock(instance.state, target)!)
-    expect(instance.state.doc.childCount).toBe(2)
-    expect(instance.state.doc.child(1).textContent).toContain('Caption')
-    const duplicated = blockTargetAtPos(
-      instance.state.doc,
-      instance.state.doc.firstChild!.nodeSize,
-    )!
-    instance.view.dispatch(moveBlockDown(instance.state, duplicated)!)
-    instance.view.dispatch(moveBlockDown(instance.state, duplicated)!)
-    expect(instance.state.doc.child(2).textContent).toContain('Caption')
+    expect(readMarkdownTableCaptions(instance.getMarkdown())).toHaveLength(2)
+    const duplicate = blockTargetAtPos(instance.state.doc, instance.state.doc.firstChild!.nodeSize)!
+    instance.view.dispatch(moveBlockDown(instance.state, duplicate)!)
+    expect(instance.state.doc.child(1).textContent).toBe('After')
     const moved = blockTargetAtPos(
       instance.state.doc,
-      instance.state.doc.child(2).nodeSize + instance.state.doc.child(1).nodeSize,
+      instance.state.doc.child(0).nodeSize + instance.state.doc.child(1).nodeSize,
     )!
     instance.view.dispatch(deleteBlock(instance.state, moved)!)
-    expect(instance.getMarkdown()).toContain('Caption')
     expect(readMarkdownTableCaptions(instance.getMarkdown())).toHaveLength(1)
+    instance.destroy()
+    const reopened = open(saved)
+    expect(reopened.state.doc.firstChild?.firstChild?.toJSON()).toEqual(edited)
+    expect(reopened.state.doc.firstChild?.lastChild?.textContent).toBe('Caption')
   })
 })
 

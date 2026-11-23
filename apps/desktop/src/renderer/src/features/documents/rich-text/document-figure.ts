@@ -260,9 +260,11 @@ export const DocumentFigure = Node.create({
   name: 'documentFigure',
   group: 'block',
   content() {
-    const table = flattenExtensions(this.editor.options.extensions).some(
-      (extension) => extension.name === 'table',
-    )
+    const table = this.editor
+      ? flattenExtensions(this.editor.options.extensions).some(
+          (extension) => extension.name === 'table',
+        )
+      : false
     return `(codeBlock | image${table ? ' | table' : ''}) documentCaption`
   },
   defining: true,
@@ -441,7 +443,7 @@ export const DocumentFigure = Node.create({
     const caption = node.content?.[1]
     if (!code || !caption || caption.type !== 'documentCaption') return ''
     if (code.type === 'table') {
-      const tableMarkdown = helpers.renderChild(code).trim()
+      const tableMarkdown = helpers.renderChildren([code]).trim()
       return writeFigureCaption(tableMarkdown, caption, renderCaptionMarkdown(caption, helpers))
     }
     if (code.type === 'image') {

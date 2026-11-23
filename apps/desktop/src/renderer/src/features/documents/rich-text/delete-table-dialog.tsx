@@ -52,7 +52,10 @@ export function DeleteTableDialog({ editor, open, onOpenChange }: DeleteTableDia
     if (!activity.focused || !editor || editor.isDestroyed) return
     const current = activity.capture()
     const target = findBlockTarget(editor.state.doc, editor.state.selection.from)
-    if (target?.node.type.name === 'documentFigure') {
+    if (
+      target?.node.type.name === 'documentFigure' &&
+      target.node.firstChild?.type.name === 'table'
+    ) {
       const transaction = deleteBlock(editor.state, target)
       if (transaction) editor.view.dispatch(transaction)
     } else {
