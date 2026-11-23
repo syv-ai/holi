@@ -644,6 +644,43 @@ async function verifyReferenceImages({
   }
 }
 
+async function verifyTableCaption({
+  js,
+  wait,
+  capture,
+  insertText,
+}: ReturnType<typeof createEditorDriver>) {
+  const table = '| Name | Value |\n| --- | --- |\n| Alpha | 1 |'
+  const document = `${head}# Table caption acceptance\n\n${table}\n`
+  await js(`await window.captionFixture.replace(${JSON.stringify(document)}); return true`)
+  await wait(
+    `window.captionFixture.state().markdown.includes('Table caption acceptance')`,
+    'table fixture mounted',
+  )
+  await js(`window.captionFixture.select('tableCell'); return true`)
+  await menu('Add caption')
+  await insertText('Native table caption')
+  await js('await window.captionFixture.flush(); return true')
+  const saved = await readFile(note, 'utf8')
+  assert(saved.startsWith(head), 'table caption save preserves frontmatter')
+  assert(saved.includes('Native table caption'))
+  assert(saved.includes(table), 'table source remains intact')
+  await js('await window.captionFixture.reopen(); return true')
+  await wait(
+    `window.captionFixture.state().markdown.includes('Native table caption')`,
+    'saved table caption reopened',
+  )
+  await js(`window.captionFixture.theme('light'); return true`)
+  await capture('table-caption-light.png')
+  await js(`window.captionFixture.theme('dark'); return true`)
+  await capture('table-caption-dark.png')
+  await writeFile(
+    join(evidence, 'table-caption-saved.json'),
+    JSON.stringify({ saved, reopened: await js('return window.captionFixture.state()') }, null, 2),
+  )
+  mark('native-table-toolbar-add-caption-save-reopen-frontmatter-light-dark')
+}
+
 async function verifyParserSource({
   js,
   wait,
@@ -2105,6 +2142,7 @@ async function run() {
 
     await verifyReferenceImages(driver)
     await verifyParserSource(driver)
+    await verifyTableCaption(driver)
 
     await verifyImageTransfers(driver, win, cli)
     await js(
