@@ -22,8 +22,10 @@ export type MarkdownTableCaption = MarkdownCaptionEnvelope
 export function readMarkdownTableCaptions(markdown: string): MarkdownTableCaption[] {
   return readMarkdownCaptionEnvelopes(markdown).flatMap((frame) => {
     const body = markdown.slice(frame.body.from, frame.body.to)
-    const normalizedBody = body.split('')
-    for (const link of parseWikiLinks(body)) {
+    // Lezer's GFM grammar expects LF; source ranges still refer to the untouched envelope.
+    const parserBody = body.replaceAll('\r\n', '\n')
+    const normalizedBody = parserBody.split('')
+    for (const link of parseWikiLinks(parserBody)) {
       for (let index = link.start; index < link.end; index++) {
         if (normalizedBody[index] !== '\n' && normalizedBody[index] !== '\r')
           normalizedBody[index] = 'x'

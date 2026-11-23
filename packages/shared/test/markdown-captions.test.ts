@@ -40,12 +40,13 @@ describe('Markdown table captions', () => {
   )
 
   it('writes valid tables losslessly and encodes leading caption whitespace', () => {
-    const serialized = writeMarkdownTableCaption(table, ' \tCaption.')
+    const serialized = writeMarkdownTableCaption(table, '  Caption.')
     const [frame] = readMarkdownTableCaptions(serialized)
     expect(frame).toBeDefined()
-    expect(serialized.slice(frame!.caption.from, frame!.caption.to)).toBe('&#32;&#9;Caption.')
+    expect(serialized.slice(frame!.caption.from, frame!.caption.to)).toBe('&#32;&#32;Caption.')
     expect(serialized.slice(frame!.body.from, frame!.body.to)).toBe(table)
     expect(() => writeMarkdownTableCaption(table, '[reference]')).toThrow()
+    expect(() => writeMarkdownTableCaption(table, '\tCaption.')).toThrow()
   })
 })
 
