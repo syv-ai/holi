@@ -20,10 +20,10 @@ import type { TrpcEnvelope, TrpcOpWire } from '@/lib/ipc-link'
 export interface FakeHoli {
   /** Every op that reached the seam, in order. */
   calls: { path: string; input: unknown }[]
-  pushSnapshot(snapshot: VaultSnapshot): void
-  pushSyncState(state: SyncState): void
-  pushHeldBack(files: HeldBackFile[]): void
-  pushCommitted(paths: string[] | null): void
+  pushSnapshot(remote: string, snapshot: VaultSnapshot): void
+  pushSyncState(remote: string, state: SyncState): void
+  pushHeldBack(remote: string, files: HeldBackFile[]): void
+  pushCommitted(remote: string, paths: string[] | null): void
   pushOpen(request: { remote: string; path: string; heading?: string }): void
   pushNavigate(request: { remote: string; plugin: string; name: string; payload: unknown }): void
   /** Main emitting `name` for the plugin `id`. */
@@ -43,10 +43,10 @@ export interface FakeHoli {
  */
 export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => undefined): FakeHoli {
   const calls: { path: string; input: unknown }[] = []
-  const snapshotSubs = new Set<(s: VaultSnapshot) => void>()
-  const syncSubs = new Set<(s: SyncState) => void>()
-  const heldBackSubs = new Set<(f: HeldBackFile[]) => void>()
-  const committedSubs = new Set<(p: string[] | null) => void>()
+  const snapshotSubs = new Set<(s: { remote: string; snapshot: VaultSnapshot }) => void>()
+  const syncSubs = new Set<(s: { remote: string; state: SyncState }) => void>()
+  const heldBackSubs = new Set<(f: { remote: string; files: HeldBackFile[] }) => void>()
+  const committedSubs = new Set<(p: { remote: string; paths: string[] | null }) => void>()
   const flushSubs = new Set<(request: { id: string }) => void>()
   const openSubs = new Set<
     (p: { remote: string; path: string; heading?: string; focus?: boolean }) => void
@@ -130,17 +130,17 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
 
   return {
     calls,
-    pushSnapshot: (snapshot) => {
-      for (const cb of snapshotSubs) cb(snapshot)
+    pushSnapshot: (remote, snapshot) => {
+      for (const cb of snapshotSubs) cb({ remote, snapshot })
     },
-    pushSyncState: (state) => {
-      for (const cb of syncSubs) cb(state)
+    pushSyncState: (remote, state) => {
+      for (const cb of syncSubs) cb({ remote, state })
     },
-    pushHeldBack: (files) => {
-      for (const cb of heldBackSubs) cb(files)
+    pushHeldBack: (remote, files) => {
+      for (const cb of heldBackSubs) cb({ remote, files })
     },
-    pushCommitted: (paths) => {
-      for (const cb of committedSubs) cb(paths)
+    pushCommitted: (remote, paths) => {
+      for (const cb of committedSubs) cb({ remote, paths })
     },
     pushOpen: (request) => {
       for (const cb of openSubs) cb(request)

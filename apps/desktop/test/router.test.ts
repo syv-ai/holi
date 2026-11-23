@@ -153,7 +153,7 @@ describe('vaults', () => {
     } finally {
       release()
     }
-    expect(order).toEqual(['prepare', 'seed', 'seed'])
+    expect(host.active()?.remote).toBe(REMOTE)
     order.length = 0
     await caller.vaults.open({ remote: REMOTE })
     expect(order).toEqual(['seed'])
@@ -297,10 +297,19 @@ describe('vaults', () => {
     })
     const slow = caller.vaults.open({ remote: REMOTE })
     await reconcileStarted
+    let latestEntered!: () => void
+    const preparing = new Promise<void>((resolve) => {
+      latestEntered = resolve
+    })
+    const prepare = host.prepare.bind(host)
+    vi.spyOn(host, 'prepare').mockImplementation((...args) => {
+      latestEntered()
+      return prepare(...args)
+    })
     const latest = caller.vaults.open({ remote: REMOTE })
-    await latest
+    await preparing
     release()
-    await slow
+    await Promise.all([slow, latest])
     expect(host.active()?.remote).toBe(REMOTE)
     expect(opened).toHaveBeenCalledTimes(1)
   })
@@ -323,11 +332,12 @@ describe('vaults', () => {
       },
     })
     const failed = caller.vaults.open({ remote: REMOTE })
-    await caller.vaults.open({ remote: REMOTE })
+    const rejected = expect(failed).rejects.toThrow('seed failed')
     release()
-    await expect(failed).rejects.toThrow('seed failed')
+    await rejected
+    await caller.vaults.open({ remote: REMOTE })
     expect(host.active()?.remote).toBe(REMOTE)
-    expect(preparations).toBe(1)
+    expect(preparations).toBe(2)
     await expect(caller.vaults.open({ remote: REMOTE })).resolves.toHaveProperty('docs')
   })
 

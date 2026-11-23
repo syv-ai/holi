@@ -2413,7 +2413,7 @@ describe('VaultHost', () => {
     expect(preparations).toBe(2)
   })
 
-  it('drains a held-back override before switching vaults', async () => {
+  it('finishes a held-back override in the background after switching vaults', async () => {
     const { registry, a } = await twoVaults()
     const heldBackUpdates: string[][] = []
     const host = createVaultHost({
@@ -2456,13 +2456,15 @@ describe('VaultHost', () => {
     const switching = host.open('syv-ai/b').then(() => {
       switched = true
     })
-    await sleep(500)
-    expect(switched).toBe(false)
-
-    release()
-    await override
-    await switching
-    commit.mockRestore()
+    try {
+      await switching
+      expect(switched).toBe(true)
+      expect(host.get('syv-ai/a')).toBe(active)
+    } finally {
+      release()
+      await override
+      commit.mockRestore()
+    }
     expect(host.active()?.remote).toBe('syv-ai/b')
     expect(heldBackUpdates.at(-1)).toEqual([])
     expect(
@@ -2586,9 +2588,7 @@ describe('VaultHost', () => {
     expect(vault.snapshot().docs.map((d) => d.path)).toEqual(['README.md'])
   })
 
-  it('tears the previous vault down when switching', async () => {
-    // Exactly one watcher and one set of timers
-    // exist at a time, so a switch is a teardown rather than a leak.
+  it('keeps background vault watchers alive when selecting another vault', async () => {
     const { registry, a } = await twoVaults()
     const { h, snaps } = host(registry, { rescanDebounceMs: 30 })
 
@@ -2596,11 +2596,9 @@ describe('VaultHost', () => {
     await h.open('syv-ai/b')
     const before = snaps.count
 
-    // The first vault's watcher must be gone: writing into it pushes nothing.
-    await writeFile(join(a, 'orphan.md'), 'nobody is listening\n', 'utf8')
-    await sleep(SETTLE)
+    await writeFile(join(a, 'orphan.md'), 'background watcher remains\n', 'utf8')
+    await waitFor('background vault watcher update', () => snaps.count > before)
 
-    expect(snaps.count).toBe(before)
     expect(h.active()?.remote).toBe('syv-ai/b')
   })
 
@@ -2625,15 +2623,15 @@ describe('VaultHost', () => {
     await h.open('syv-ai/a')
     expect(leftFrom).toEqual([]) // nothing to leave yet
     await h.open('syv-ai/b')
-    expect(leftFrom).toEqual(['syv-ai/a'])
+    expect(leftFrom).toEqual([])
 
     // Re-opening the vault that is already open is the renderer asking for a
     // fresh picture, not a switch: a session must survive it.
     await h.open('syv-ai/b')
-    expect(leftFrom).toEqual(['syv-ai/a'])
+    expect(leftFrom).toEqual([])
 
     await h.close()
-    expect(leftFrom).toEqual(['syv-ai/a', 'syv-ai/b'])
+    expect(leftFrom).toEqual(['syv-ai/b'])
   })
 
   it('keeps the active vault and runtime when leave cleanup fails, then allows retry', async () => {
@@ -2652,19 +2650,21 @@ describe('VaultHost', () => {
     hosts.push(h)
 
     const a = await h.open('syv-ai/a')
-    await expect(h.open('syv-ai/b')).rejects.toThrow('the PTY would not die')
+    await expect(h.close('syv-ai/a')).rejects.toThrow('the PTY would not die')
     expect(h.active()).toBe(a)
     expect(h.get('syv-ai/a')).toBe(a)
     expect(h.get('syv-ai/b')).toBeNull()
 
     fail = false
+    await h.close('syv-ai/a')
+    expect(h.get('syv-ai/a')).toBeNull()
     await h.open('syv-ai/b')
     expect(h.active()?.remote).toBe('syv-ai/b')
   })
 
-  it('commits a dirty vault before switching away from it', async () => {
-    // Work is flushed and committed on a vault switch. A tree left dirty
-    // is one the next pull cannot merge — and nothing is watching it any more
+  it('does not force a commit when selecting another vault', async () => {
+    // Background runtimes retain their ordinary autosave schedule; selection
+    // itself must not flush the previous vault.
     // to notice.
     const { registry, a } = await twoVaults()
     const { h } = host(registry, { commitQuietMs: 60_000 })
@@ -2673,8 +2673,7 @@ describe('VaultHost', () => {
     await writeFile(join(a, 'unsaved.md'), 'mid-sentence\n', 'utf8')
     await h.open('syv-ai/b')
 
-    expect(await plainGit(a, ['log', '-1', '--format=%s'])).toBe('Update unsaved.md')
-    expect(await plainGit(a, ['status', '--porcelain'])).toBe('')
+    expect(await plainGit(a, ['status', '--porcelain'])).not.toBe('')
   })
 
   it('is idempotent for the vault already open', async () => {
@@ -3155,6 +3154,67 @@ describe('VaultHost', () => {
     await expect(h.closeAll()).rejects.toThrow(/Could not close all/)
     expect(closedA).toBe(true)
     expect(closedB).toBe(true)
+  })
+
+  it('drains startup activation before unregistering and refuses queued resurrection', async () => {
+    const { registry } = await twoVaults()
+    const original = (await registry.list()).find((entry) => entry.remote === 'syv-ai/a')!
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const activating = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let resourceAlive = false
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onLeave: async (remote) => {
+        if (remote === 'syv-ai/a') resourceAlive = false
+      },
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const b = await h.open('syv-ai/b')
+    try {
+      const startup = h.withRuntime(
+        'syv-ai/a',
+        async () => {},
+        async () => {
+          entered()
+          await gate
+          resourceAlive = true
+        },
+      )
+      await activating
+      const removing = h.remove('syv-ai/a')
+      const queued = h
+        .withRuntime(
+          'syv-ai/a',
+          async () => {},
+          async () => 'resurrected',
+        )
+        .then(
+          (value) => value,
+          (error: Error) => error.message,
+        )
+      release()
+      await Promise.all([startup, removing])
+      expect(await queued).toMatch(/no such vault/)
+      expect(resourceAlive).toBe(false)
+      expect(h.get('syv-ai/a')).toBeNull()
+      expect((await registry.list()).map((entry) => entry.remote)).toEqual(['syv-ai/b'])
+      expect(h.active()).toBe(b)
+      await registry.add(original)
+      expect((await h.getOrOpen('syv-ai/a')).remote).toBe('syv-ai/a')
+    } finally {
+      release()
+      await h.closeAll()
+    }
   })
 
   it('admits cold preparation once across visible and non-selecting starts', async () => {

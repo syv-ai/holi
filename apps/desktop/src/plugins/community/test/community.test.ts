@@ -982,7 +982,7 @@ process.exit(process.argv.includes('--taken') ? 3 : 0)
         dispatch: createCapabilityHost({
           registry,
           rootFor: async () => vault,
-          active: () => null,
+          get: (_remote) => null,
           core: noCoreServices,
           pluginEnabled: async () => true,
           claims: async () => [],

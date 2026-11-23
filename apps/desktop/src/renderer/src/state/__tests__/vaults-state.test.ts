@@ -25,6 +25,9 @@ import {
   openedRemoteAtom,
   selectedVaultOpenAttemptedAtom,
   snapshotAtom,
+  syncStateAtom,
+  heldBackAtom,
+  historyEpochsAtom,
   subscribeToVault,
   vaultsAtom,
 } from '@/state/vaults'
@@ -94,6 +97,70 @@ function observeReady() {
 }
 
 describe('vaults', () => {
+  it('ignores background vault events without replacing the displayed presentation', () => {
+    holi = installFakeHoli()
+    const store = createStore()
+    const displayed = 'syv-ai/displayed'
+    const background = 'syv-ai/background'
+    const pluginRemote = atom<string | null>(null)
+    store.set(activeRemoteAtom, displayed)
+    unsubscribe = subscribeToVault(store, [
+      {
+        info: { id: 'proof', label: 'Proof', default: true },
+        events: {
+          update: (event, target) => target.set(pluginRemote, event.remote),
+        },
+      },
+    ])
+    holi.pushSnapshot(displayed, snapshot('displayed.md'))
+    holi.pushSyncState(displayed, { kind: 'offline', count: 1 })
+    holi.pushHeldBack(displayed, [{ path: 'b.bin', bytes: 100, limit: 50 }])
+    holi.pushCommitted(displayed, ['displayed.md'])
+    holi.pushPluginEvent('proof', { remote: displayed, name: 'update', payload: {} })
+    const history = store.get(historyEpochsAtom)
+    holi.pushSnapshot(background, snapshot('background.md'))
+    holi.pushSyncState(background, { kind: 'up-to-date' })
+    holi.pushHeldBack(background, [])
+    holi.pushCommitted(background, ['background.md'])
+    holi.pushPluginEvent('proof', { remote: background, name: 'update', payload: {} })
+    expect(store.get(snapshotAtom).docs.map((doc) => doc.path)).toEqual(['displayed.md'])
+    expect(store.get(syncStateAtom)).toEqual({ kind: 'offline', count: 1 })
+    expect(store.get(heldBackAtom).map((file) => file.path)).toEqual(['b.bin'])
+    expect(store.get(historyEpochsAtom)).toEqual(history)
+    expect(store.get(pluginRemote)).toBe(displayed)
+  })
+
+  it('applies target sync and held-back events received before a cross-vault open resolves', async () => {
+    const response = deferred<VaultSnapshot>()
+    holi = installFakeHoli((op) => (op.path === 'vaults.open' ? response.promise : undefined))
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    store.set(openedRemoteAtom, 'syv-ai/alpha')
+    store.set(syncStateAtom, { kind: 'offline', count: 2 })
+    store.set(heldBackAtom, [{ path: 'alpha.bin', bytes: 200, limit: 100 }])
+    unsubscribe = subscribeToVault(store)
+
+    const opening = store.set(openVaultAtom, 'syv-ai/beta')
+    await vi.waitFor(() =>
+      expect(holi?.calls).toContainEqual({
+        path: 'vaults.open',
+        input: { remote: 'syv-ai/beta' },
+      }),
+    )
+    holi.pushSyncState('syv-ai/beta', { kind: 'conflict', paths: ['main.md'] })
+    holi.pushHeldBack('syv-ai/beta', [{ path: 'beta.bin', bytes: 300, limit: 100 }])
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
+    expect(store.get(syncStateAtom)).toEqual({ kind: 'offline', count: 2 })
+    expect(store.get(heldBackAtom).map((file) => file.path)).toEqual(['alpha.bin'])
+
+    response.resolve(snapshot('beta.md'))
+    await expect(opening).resolves.toBe(true)
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/beta')
+    expect(store.get(syncStateAtom)).toEqual({ kind: 'conflict', paths: ['main.md'] })
+    expect(store.get(heldBackAtom).map((file) => file.path)).toEqual(['beta.bin'])
+  })
+
   it('dispatches ready same-vault notification without reopening the plugin vault', async () => {
     holi = installFakeHoli((op) => (op.path === 'vaults.open' ? snapshot() : undefined))
     const store = createStore()
@@ -261,12 +328,14 @@ describe('vaults', () => {
   it('replaces the snapshot wholesale, so a deleted note disappears', async () => {
     holi = installFakeHoli()
     const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/notes')
+    store.set(openedRemoteAtom, 'syv-ai/notes')
     unsubscribe = subscribeToVault(store)
 
-    holi.pushSnapshot(snapshot('a.md', 'b.md'))
+    holi.pushSnapshot('syv-ai/notes', snapshot('a.md', 'b.md'))
     expect(store.get(snapshotAtom).docs.map((d) => d.path)).toEqual(['a.md', 'b.md'])
 
-    holi.pushSnapshot(snapshot('a.md'))
+    holi.pushSnapshot('syv-ai/notes', snapshot('a.md'))
 
     // The assertion that matters. A reducer that merged frames would leave
     // `b.md` in the tree until the next vault switch.
