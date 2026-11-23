@@ -75,13 +75,11 @@ describe('DeleteTableDialog', () => {
 
     await waitFor(() => expect(ed.state.doc.textContent).not.toContain('cell content'))
     expect(ed.state.doc.textContent).not.toContain('Table caption')
-    expect(ed.state.doc.toJSON().content?.some((node) => node.type === 'documentFigure')).toBe(
-      false,
-    )
+    expect(ed.state.doc.firstChild?.type.name).not.toBe('documentFigure')
     expect(ed.commands.undo()).toBe(true)
     expect(ed.state.doc.textContent).toContain('cell content')
     expect(ed.state.doc.textContent).toContain('Table caption')
-    expect(ed.state.doc.toJSON().content?.some((node) => node.type === 'documentFigure')).toBe(true)
+    expect(ed.state.doc.firstChild?.type.name).toBe('documentFigure')
   })
 
   it('deletes only a nested table, keeping its outer captioned table', async () => {
