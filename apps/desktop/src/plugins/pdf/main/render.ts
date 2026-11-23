@@ -18,7 +18,8 @@ import type { TemplateField } from '../shared/template-fields'
 import { hasSingleMarkdownImage, inlineImages } from './images'
 import { commentSafeString, drawMermaid, type DrawDiagrams } from './mermaid'
 import { composeWrapper } from './wrapper'
-import { readMarkdownReferenceDefinitions, readMarkdownTableCaptions } from './table-captions'
+import { readMarkdownReferenceDefinitions } from './table-captions'
+import { readMarkdownTableCaptions } from '@holi/shared'
 
 const exec = promisify(execFile)
 

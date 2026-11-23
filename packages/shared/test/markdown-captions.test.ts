@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { readMarkdownTableCaptions, writeMarkdownTableCaption } from '../src/markdown-tables'
 import {
   readMarkdownCaptionEnvelopes,
   readMarkdownCodeCaptions,
@@ -8,6 +9,46 @@ import {
 const body =
   '```mermaid\ngraph TD\nA-->B\n```\n\n![alt](image.png)\n\n| a | b |\n| - | - |\n| 1 | 2 |'
 const caption = '**A** &amp; _B_'
+
+describe('Markdown table captions', () => {
+  const table = '| A |\n| --- |\n| `x` 🐈 [[notes/plan.md|Plan]] |'
+
+  it('preserves exact UTF-16 source ranges with CRLF and preceding Unicode', () => {
+    const envelope = writeMarkdownCaptionEnvelope(table, '**Caption** 🐈.').replaceAll('\n', '\r\n')
+    const source = `🐈 before\r\n\r\n${envelope}\r\n\r\nafter`
+    const [frame] = readMarkdownTableCaptions(source)
+    expect(frame).toBeDefined()
+    expect(source.slice(frame!.envelope.from, frame!.envelope.to)).toBe(envelope)
+    expect(source.slice(frame!.body.from, frame!.body.to)).toBe(table.replaceAll('\n', '\r\n'))
+    expect(source.slice(frame!.caption.from, frame!.caption.to)).toBe('**Caption** 🐈.')
+  })
+
+  it.each(['```txt\nkeep\n```', '    keep', 'extra prose', '[ref]: https://example.com'])(
+    'rejects additional blocks before or after a table and recovers later figures: %s',
+    (extra) => {
+      const later = writeMarkdownTableCaption(table, 'Later caption')
+      for (const body of [`${extra}\n\n${table}`, `${table}\n\n${extra}`]) {
+        const invalid = writeMarkdownCaptionEnvelope(body, 'Invalid caption')
+        expect(readMarkdownTableCaptions(invalid)).toEqual([])
+        expect(() => writeMarkdownTableCaption(body, 'Invalid caption')).toThrow()
+        const source = `${invalid}\n\n${later}`
+        const frames = readMarkdownTableCaptions(source)
+        expect(frames).toHaveLength(1)
+        expect(source.slice(frames[0]!.envelope.from, frames[0]!.envelope.to)).toBe(later)
+      }
+    },
+  )
+
+  it('writes valid tables losslessly and encodes leading caption whitespace', () => {
+    const serialized = writeMarkdownTableCaption(table, '  Caption.')
+    const [frame] = readMarkdownTableCaptions(serialized)
+    expect(frame).toBeDefined()
+    expect(serialized.slice(frame!.caption.from, frame!.caption.to)).toBe('&#32;&#32;Caption.')
+    expect(serialized.slice(frame!.body.from, frame!.body.to)).toBe(table)
+    expect(() => writeMarkdownTableCaption(table, '[reference]')).toThrow()
+    expect(() => writeMarkdownTableCaption(table, '\tCaption.')).toThrow()
+  })
+})
 
 describe('Markdown caption envelopes', () => {
   it('keeps image bodies opaque while exposing their source and caption ranges', () => {
