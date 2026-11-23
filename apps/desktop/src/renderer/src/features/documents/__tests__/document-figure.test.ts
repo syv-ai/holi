@@ -6,14 +6,20 @@ import { RichTextTable } from '@/features/documents/rich-text/rich-text-table'
 
 import { createDocumentExtensions } from '../document-extensions'
 import { applyReload } from '../apply-reload'
-import { readMarkdownCodeCaptions } from '@holi/shared'
+import { readMarkdownCodeCaptions, readMarkdownTableCaptions } from '@holi/shared'
 import {
   addCodeCaption,
   addImageCaption,
+  addTableCaption,
   removeCodeCaption,
   renderImageMarkdown,
 } from '../rich-text/document-figure'
-import { blockTargetAtPos, duplicateBlock } from '../rich-text/rich-text-block-actions'
+import {
+  blockTargetAtPos,
+  deleteBlock,
+  duplicateBlock,
+  moveBlockDown,
+} from '../rich-text/rich-text-block-actions'
 
 let editor: Editor | null = null
 afterEach(() => {
@@ -41,6 +47,78 @@ const captioned =
   '<!-- holi:figure -->\n\n~~~typescript extra\nconst value = 1\n~~~\n\n<!-- holi:caption -->\n\nA **portable** caption.\n\n<!-- /holi:figure -->'
 const mermaidCaptioned =
   '<!-- holi:figure -->\n\n~~~mermaid extra-info\nflowchart TD\n  A[Start] --> B[End]\n~~~\n\n<!-- holi:caption -->\n\nA **portable** diagram caption.\n\n<!-- /holi:figure -->'
+
+describe('document table captions', () => {
+  const table = '| Name | Value |\n| --- | --- |\n| A | 1 |'
+
+  it('adds captions to bare tables and rejects readonly, nested, and already-captioned tables', () => {
+    const instance = open(table)
+    expect(addTableCaption(instance, 0)).toBe(true)
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(readMarkdownTableCaptions(instance.getMarkdown())).toHaveLength(1)
+
+    const readonly = open(table)
+    readonly.setEditable(false)
+    expect(addTableCaption(readonly, 0)).toBe(false)
+    expect(addTableCaption(instance, 1)).toBe(false)
+    expect(addTableCaption(instance, 0)).toBe(false)
+
+    const nested = open('> ' + table.replaceAll('\n', '\n> '))
+    expect(addTableCaption(nested, 0)).toBe(false)
+  })
+
+  it('edits, saves, reopens, and removes a caption without changing table cells', () => {
+    const instance = open(table)
+    expect(addTableCaption(instance, 0)).toBe(true)
+    instance.commands.insertContent('A **bold** caption')
+    const saved = instance.getMarkdown()
+    expect(saved).toContain('A **bold** caption')
+    const reopened = open(saved)
+    expect(reopened.getMarkdown()).toContain('| A | 1 |')
+    expect(readMarkdownTableCaptions(reopened.getMarkdown())).toHaveLength(1)
+    expect(removeCodeCaption(reopened, 0)).toBe(true)
+    expect(reopened.getMarkdown()).toContain('| A | 1 |')
+    expect(readMarkdownTableCaptions(reopened.getMarkdown())).toEqual([])
+  })
+
+  it('keeps a captioned table intact through table commands and block actions', () => {
+    const instance = open(
+      '<!-- holi:figure -->\n\n' +
+        table +
+        '\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->\n\nAfter',
+    )
+    const figure = instance.state.doc.firstChild!
+    const tableNode = figure.firstChild!
+    instance.commands.setTextSelection(3)
+    expect(instance.commands.insertTableRowAfter()).toBe(true)
+    expect(instance.commands.insertTableColumnAfter()).toBe(true)
+    expect(instance.commands.toggleHeaderRow()).toBe(true)
+    const saved = instance.getMarkdown()
+    expect(readMarkdownTableCaptions(saved)).toHaveLength(1)
+    const reopened = open(saved)
+    expect(reopened.getMarkdown()).toContain('Caption')
+    expect(reopened.state.doc.firstChild?.firstChild?.childCount).toBeGreaterThan(2)
+
+    const target = blockTargetAtPos(instance.state.doc, 0)!
+    instance.view.dispatch(duplicateBlock(instance.state, target)!)
+    expect(instance.state.doc.childCount).toBe(2)
+    expect(instance.state.doc.child(1).textContent).toContain('Caption')
+    const duplicated = blockTargetAtPos(
+      instance.state.doc,
+      instance.state.doc.firstChild!.nodeSize,
+    )!
+    instance.view.dispatch(moveBlockDown(instance.state, duplicated)!)
+    instance.view.dispatch(moveBlockDown(instance.state, duplicated)!)
+    expect(instance.state.doc.child(2).textContent).toContain('Caption')
+    const moved = blockTargetAtPos(
+      instance.state.doc,
+      instance.state.doc.child(2).nodeSize + instance.state.doc.child(1).nodeSize,
+    )!
+    instance.view.dispatch(deleteBlock(instance.state, moved)!)
+    expect(instance.getMarkdown()).toContain('Caption')
+    expect(readMarkdownTableCaptions(instance.getMarkdown())).toHaveLength(1)
+  })
+})
 
 describe('document code captions', () => {
   it('round-trips a table figure and preserves malformed table figures', () => {
