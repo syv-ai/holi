@@ -15,21 +15,40 @@ export async function clickNativeBanner({ appName, title, timeoutMs = 12_000 }) 
     tell application "System Events"
       set deadline to (current date) + ${Math.ceil(timeoutMs / 1000)}
       repeat
-        set matches to {}
+        set observedWindows to 0
+        set observedTitles to 0
+        set observedValues to 0
+        set observedAppParents to 0
         repeat with p in (every process whose name is "NotificationCenter")
-          try
-            set matches to (entire contents of (window 1 of p))
-            repeat with e in matches
-              try
-                if (value of attribute "AXTitle" of e as text) is "${escapeAppleScript(title)}" and (value of attribute "AXDescription" of e as text) contains "${escapeAppleScript(appName)}" then
-                  click e
-                  return "clicked"
+          repeat with w in (every window of p)
+            set observedWindows to observedWindows + 1
+            try
+              repeat with e in (entire contents of w)
+                set ownTitle to ""
+                set ownValue to ""
+                try
+                  set ownTitle to value of attribute "AXTitle" of e as text
+                end try
+                try
+                  set ownValue to value of attribute "AXValue" of e as text
+                end try
+                if ownTitle is "${escapeAppleScript(title)}" then set observedTitles to observedTitles + 1
+                if ownValue is "${escapeAppleScript(title)}" then set observedValues to observedValues + 1
+                if ownTitle is "${escapeAppleScript(title)}" or ownValue is "${escapeAppleScript(title)}" then
+                  try
+                    set parentElement to value of attribute "AXParent" of e
+                    if (value of attribute "AXDescription" of parentElement as text) contains "${escapeAppleScript(appName)}" then
+                      set observedAppParents to observedAppParents + 1
+                      click parentElement
+                      return "clicked"
+                    end if
+                  end try
                 end if
-              end try
-            end repeat
-          end try
+              end repeat
+            end try
+          end repeat
         end repeat
-        if (current date) > deadline then error "exact notification title not found in Accessibility tree"
+        if (current date) > deadline then error "exact notification not found: windows=" & observedWindows & ", titleMatches=" & observedTitles & ", valueMatches=" & observedValues & ", appParents=" & observedAppParents
         delay 0.25
       end repeat
     end tell`

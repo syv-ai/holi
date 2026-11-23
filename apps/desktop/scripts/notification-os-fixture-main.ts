@@ -1,10 +1,18 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, Notification } from 'electron'
 import { writeFileSync } from 'node:fs'
 import { showNotification } from '../src/main/notifications'
 
 const result = process.env.HOLI_NOTIFICATION_RESULT!
 const title = process.env.HOLI_NOTIFICATION_TITLE!
 const report = (value: string) => writeFileSync(result, value)
+const nativeShow = Notification.prototype.show
+Notification.prototype.show = function () {
+  if (this.title === title) {
+    this.once('failed', (_event, error) => report(`native-failed: ${error}`))
+    this.once('show', () => report('shown-native'))
+  }
+  return nativeShow.call(this)
+}
 app.setName('Holi notification readiness')
 app.setPath('userData', process.env.HOLI_NOTIFICATION_USER_DATA!)
 app.setPath('sessionData', process.env.HOLI_NOTIFICATION_SESSION_DATA!)

@@ -18,10 +18,13 @@ const result = join(root, 'result')
 const title = `Holi readiness ${randomUUID()}`
 const owned = createOwnedProcesses()
 let log = ''
+let child
+let artifactsCreated = false
 try {
   await mkdir(join(profile, 'home'), { recursive: true })
   await mkdir(join(profile, 'tmp'), { recursive: true })
-  await mkdir(evidence, { recursive: true })
+  await mkdir(evidence, { mode: 0o700 })
+  artifactsCreated = true
   await build({
     configFile: false,
     root: desktop,
@@ -37,7 +40,7 @@ try {
     },
   })
   const electron = require('electron')
-  const child = owned.start(electron, [join(root, 'main.cjs')], {
+  child = owned.start(electron, [join(root, 'main.cjs')], {
     env: {
       PATH: process.env.PATH,
       HOME: join(profile, 'home'),
@@ -50,9 +53,12 @@ try {
   })
   const deadline = Date.now() + 45_000
   while (Date.now() < deadline) {
-    try {
-      if ((await readFile(result, 'utf8')) === 'shown') break
-    } catch {}
+    const state = await readFile(result, 'utf8').catch((error) => {
+      if (error.code === 'ENOENT') return ''
+      throw error
+    })
+    if (state.startsWith('native-failed:')) throw new Error(state)
+    if (state.startsWith('shown')) break
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   if (Date.now() >= deadline) throw new Error(`fixture did not become ready: ${child.output}`)
@@ -76,11 +82,13 @@ try {
   await writeFile(join(evidence, 'result.json'), `${log}\n`)
   console.log(log)
 } catch (error) {
-  const failure = JSON.stringify({ title, error: String(error), output: owned.output })
-  try {
-    await mkdir(evidence, { recursive: true })
-    await writeFile(join(evidence, 'result.json'), `${failure}\n`)
-  } catch {}
+  const failure = JSON.stringify({
+    title,
+    error: String(error),
+    output: child?.output,
+    nativeState: await readFile(result, 'utf8').catch(() => null),
+  })
+  if (artifactsCreated) await writeFile(join(evidence, 'result.json'), `${failure}\n`)
   throw error
 } finally {
   await owned.stopAll()
