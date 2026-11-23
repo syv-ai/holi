@@ -21,7 +21,7 @@ import {
   stringParam,
 } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
-import type { AgentProbeOwner } from '../probe-owner'
+import { AgentProbeCleanupError, type AgentProbeOwner } from '../probe-owner'
 import { hasBackground, hasJobs } from '../provider'
 import { readHarness, type Harness } from './record'
 import type { HarnessRegistry } from './registry'
@@ -111,6 +111,7 @@ async function defaultRun(
     graceMs?: number
   },
 ): Promise<TestRun> {
+  if (opts.signal?.aborted) throw new Error('Harness test cancelled.')
   const platform = process.platform
   let child
   try {
@@ -121,6 +122,7 @@ async function defaultRun(
       stdio: ['ignore', 'pipe', 'pipe'],
       posixGroupLease: platform !== 'win32',
       graceMs: opts.graceMs ?? TEST_KILL_GRACE_MS,
+      signal: opts.signal,
     })
   } catch (error) {
     const cleanup =
@@ -130,7 +132,7 @@ async function defaultRun(
   }
   const authority = child[ownedProcessDrain]
   if (platform !== 'win32' && !authority)
-    throw new Error('The test process has no cleanup authority.')
+    throw new AgentProbeCleanupError(new Error('The test process has no cleanup authority.'))
   const joined = joinOwnedProgram(child, platform)
   const chunks: Buffer[] = []
   let read = 0
@@ -138,6 +140,13 @@ async function defaultRun(
   let timer: NodeJS.Timeout | undefined
   let kill: NodeJS.Timeout | undefined
   let drain: Promise<unknown> | undefined
+  const onAbort = (): void => stop('cancelled')
+  let rejectDrain!: (error: unknown) => void
+  const drainFailure = new Promise<never>((_resolve, reject) => {
+    rejectDrain = reject
+  })
+  // Keep this branch observed even before process/stream completion.
+  void drainFailure.catch(() => {})
   const requestDrain = (): void => {
     if (drain) return
     try {
@@ -145,13 +154,13 @@ async function defaultRun(
     } catch (error) {
       drain = Promise.reject(error)
     }
-    void drain.catch(() => {})
+    void drain.catch((error) => rejectDrain(error))
   }
   const signal = (sig: NodeJS.Signals): void => {
     try {
       child.kill(sig)
-    } catch {
-      /* join reports ownership failures */
+    } catch (error) {
+      rejectDrain(error)
     }
   }
   const stop = (why: 'timeout' | 'over' | 'cancelled'): void => {
@@ -171,7 +180,7 @@ async function defaultRun(
   child.stdout?.on('data', take)
   child.stderr?.on('data', take)
   if (opts.signal?.aborted) stop('cancelled')
-  else opts.signal?.addEventListener('abort', () => stop('cancelled'), { once: true })
+  else opts.signal?.addEventListener('abort', onAbort, { once: true })
   timer = setTimeout(() => stop('timeout'), opts.timeoutMs)
   child.once('exit', () => {
     if (stopped === null) {
@@ -184,6 +193,7 @@ async function defaultRun(
   try {
     const result = await Promise.race([
       joined,
+      drainFailure,
       new Promise<never>((_resolve, reject) => {
         const observe = (): void => {
           if (drain) void drain.catch(reject)
@@ -206,6 +216,7 @@ async function defaultRun(
     clearTimeout(kill)
     child.stdout?.off('data', take)
     child.stderr?.off('data', take)
+    opts.signal?.removeEventListener('abort', onAbort)
   }
 }
 
