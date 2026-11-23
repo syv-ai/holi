@@ -21,6 +21,7 @@ import {
   stringParam,
 } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
+import { bounded } from '../host/bounded'
 import { AgentProbeCleanupError, type AgentProbeOwner } from '../probe-owner'
 import { hasBackground, hasJobs } from '../provider'
 import { readHarness, type Harness } from './record'
@@ -70,6 +71,7 @@ interface TestRun {
   timedOut: boolean
   /** It printed more than Test reads, and was stopped. */
   overLimit: boolean
+  cancelled?: boolean
 }
 
 export interface HarnessCapabilitiesDeps {
@@ -125,10 +127,22 @@ async function defaultRun(
       signal: opts.signal,
     })
   } catch (error) {
-    const cleanup =
-      posixLaunchNonAdmission(error)?.cleanup ?? (error as { cleanup?: Promise<unknown> })?.cleanup
-    if (cleanup) await cleanup
-    throw error
+    const nonAdmission = posixLaunchNonAdmission(error)
+    const cleanup = nonAdmission?.cleanup ?? (error as { cleanup?: Promise<unknown> })?.cleanup
+    const authority = cleanup
+      ? {
+          drain: async () => {
+            await cleanup
+          },
+        }
+      : undefined
+    try {
+      await cleanup
+    } catch (failure) {
+      throw new AgentProbeCleanupError(failure, authority)
+    }
+    if (nonAdmission) throw error
+    throw new AgentProbeCleanupError(error, authority)
   }
   const authority = child[ownedProcessDrain]
   if (platform !== 'win32' && !authority)
@@ -137,85 +151,107 @@ async function defaultRun(
   const chunks: Buffer[] = []
   let read = 0
   let stopped: 'timeout' | 'over' | 'cancelled' | null = null
+  let exited = false
   let timer: NodeJS.Timeout | undefined
   let kill: NodeJS.Timeout | undefined
-  let drain: Promise<unknown> | undefined
-  const onAbort = (): void => stop('cancelled')
+  let drainStarted = false
+  let resolveDrain!: () => void
   let rejectDrain!: (error: unknown) => void
-  const drainFailure = new Promise<never>((_resolve, reject) => {
+  const drained = new Promise<void>((resolve, reject) => {
+    resolveDrain = resolve
     rejectDrain = reject
   })
-  // Keep this branch observed even before process/stream completion.
-  void drainFailure.catch(() => {})
+  void drained.catch(() => {})
+  const cleanupFailure = (error: unknown): void => {
+    rejectDrain(
+      error instanceof AgentProbeCleanupError
+        ? error
+        : new AgentProbeCleanupError(error, authority),
+    )
+  }
   const requestDrain = (): void => {
-    if (drain) return
+    if (drainStarted) return
+    drainStarted = true
     try {
-      drain = authority ? authority.drain() : joined
+      if (authority) void authority.drain().then(resolveDrain, cleanupFailure)
+      else void joined.then(() => resolveDrain(), rejectDrain)
     } catch (error) {
-      drain = Promise.reject(error)
+      cleanupFailure(error)
     }
-    void drain.catch((error) => rejectDrain(error))
   }
   const signal = (sig: NodeJS.Signals): void => {
     try {
       child.kill(sig)
     } catch (error) {
-      rejectDrain(error)
+      cleanupFailure(error)
     }
   }
   const stop = (why: 'timeout' | 'over' | 'cancelled'): void => {
-    if (stopped !== null) return
+    if (stopped !== null || exited) return
     stopped = why
-    signal('SIGTERM')
+    clearTimeout(timer)
     requestDrain()
-    kill = setTimeout(() => signal('SIGKILL'), opts.graceMs ?? TEST_KILL_GRACE_MS)
+    // The POSIX authority owns signalling and its grace period, including pre-GO cancellation.
+    if (platform === 'win32') {
+      signal('SIGTERM')
+      kill = setTimeout(() => signal('SIGKILL'), opts.graceMs ?? TEST_KILL_GRACE_MS)
+    }
   }
   const take = (chunk: Buffer): void => {
-    if (read >= TEST_READ_MAX) return
     const remaining = TEST_READ_MAX - read
+    if (remaining <= 0) return
     chunks.push(chunk.subarray(0, remaining))
     read += Math.min(chunk.length, remaining)
-    if (chunk.length > remaining || read >= TEST_READ_MAX) stop('over')
+    if (read >= TEST_READ_MAX) stop('over')
+  }
+  const onAbort = (): void => stop('cancelled')
+  const onExit = (): void => {
+    exited = true
+    clearTimeout(timer)
+    requestDrain()
+  }
+  const onError = (): void => {
+    clearTimeout(timer)
+    requestDrain()
   }
   child.stdout?.on('data', take)
   child.stderr?.on('data', take)
+  child.once('exit', onExit)
+  child.once('error', onError)
+  timer = setTimeout(() => stop('timeout'), opts.timeoutMs)
   if (opts.signal?.aborted) stop('cancelled')
   else opts.signal?.addEventListener('abort', onAbort, { once: true })
-  timer = setTimeout(() => stop('timeout'), opts.timeoutMs)
-  child.once('exit', () => {
-    if (stopped === null) {
-      clearTimeout(timer)
-      timer = undefined
-    }
-    requestDrain()
-  })
-  child.once('error', requestDrain)
   try {
+    // A physical failure settles independently of close. Once proof succeeds,
+    // transport/output must settle within a bound rather than retaining the activation forever.
     const result = await Promise.race([
-      joined,
-      drainFailure,
-      new Promise<never>((_resolve, reject) => {
-        const observe = (): void => {
-          if (drain) void drain.catch(reject)
-        }
-        child.once('exit', observe)
-        child.once('error', observe)
+      joined.then(async (result) => {
+        requestDrain()
+        await drained
+        return result
       }),
+      drained
+        .then(() => bounded(joined, 'Harness test output'))
+        .catch((error: unknown) => {
+          if (platform === 'win32' || error instanceof AgentProbeCleanupError) throw error
+          throw new AgentProbeCleanupError(error, authority)
+        }),
     ])
-    requestDrain()
-    await drain
     return {
       code: result.code,
       output: Buffer.concat(chunks).toString('utf8'),
       ...(result.error === null ? {} : { error: result.error.message }),
       timedOut: stopped === 'timeout',
       overLimit: stopped === 'over',
+      cancelled: stopped === 'cancelled',
     }
   } finally {
     clearTimeout(timer)
     clearTimeout(kill)
     child.stdout?.off('data', take)
     child.stderr?.off('data', take)
+    child.off('exit', onExit)
+    child.off('error', onError)
     opts.signal?.removeEventListener('abort', onAbort)
   }
 }
@@ -317,6 +353,7 @@ export const harnessCapabilities = (deps: HarnessCapabilitiesDeps) => {
             signal,
           })
           const output = res.output.slice(0, TEST_OUTPUT_MAX)
+          if (res.cancelled) return { ok: false, message: 'Harness test cancelled.', output }
           if (res.timedOut) {
             return {
               ok: false,
