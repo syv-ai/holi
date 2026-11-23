@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { RichTextBubbleBar } from './rich-text-bubble-bar'
+import { addTableCaption } from './document-figure'
 import type { RichTextSlashItem } from './rich-text-slash-menu'
 import { useRichTextSelector } from './rich-text-state'
 import {
@@ -199,6 +200,16 @@ export function RichTextTableBubble({ editor, onDeleteTable }: RichTextTableBubb
         >
           <PanelTopIcon aria-hidden="true" />
         </RichTextToggle>
+        <RichTextToolbarSeparator />
+        <RichTextButton
+          label="Add caption"
+          onClick={() => {
+            const found = findTable(editor)
+            if (found) addTableCaption(editor, found.pos)
+          }}
+        >
+          <TableIcon aria-hidden="true" />
+        </RichTextButton>
         <RichTextToolbarSeparator />
         <DropdownMenu>
           <Tooltip>
