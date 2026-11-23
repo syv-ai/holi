@@ -5,6 +5,7 @@ import {
   readMarkdownCaptionEnvelopes,
   writeMarkdownCaptionEnvelope,
 } from './markdown-captions'
+import type { MarkdownCaptionEnvelope } from './markdown-captions'
 
 const markdownParser = parser.configure(GFM)
 const UNSUPPORTED = new Set([
@@ -16,11 +17,7 @@ const UNSUPPORTED = new Set([
   'FootnoteDefinition',
 ])
 
-export interface MarkdownTableCaption {
-  envelope: { from: number; to: number }
-  body: { from: number; to: number }
-  caption: { from: number; to: number }
-}
+export type MarkdownTableCaption = MarkdownCaptionEnvelope
 
 export function readMarkdownTableCaptions(markdown: string): MarkdownTableCaption[] {
   return readMarkdownCaptionEnvelopes(markdown).flatMap((frame) => {
@@ -37,13 +34,14 @@ export function readMarkdownTableCaptions(markdown: string): MarkdownTableCaptio
     let unsupported = false
     tree.iterate({
       enter(node) {
-        if (['FencedCode', 'CodeBlock', 'InlineCode'].includes(node.name)) return false
+        if (node.node.parent?.name === 'Document') elements.push(node.name)
+        if (['FencedCode', 'CodeBlock'].includes(node.name)) return false
+        if (node.name === 'InlineCode') return false
         if (UNSUPPORTED.has(node.name)) unsupported = true
         if (node.name === 'Link' && node.node.getChild('URL') === null) {
           const source = normalizedBody.slice(node.from, node.to).join('')
           if (source.startsWith('[^') || source.startsWith('[@')) unsupported = true
         }
-        if (node.node.parent?.name === 'Document') elements.push(node.name)
       },
     })
     if (elements.length !== 1 || elements[0] !== 'Table' || unsupported) return []
@@ -53,13 +51,10 @@ export function readMarkdownTableCaptions(markdown: string): MarkdownTableCaptio
 }
 
 export function writeMarkdownTableCaption(body: string, caption: string): string {
-  if (
-    readMarkdownTableCaptions(
-      `<!-- holi:figure -->\n\n${body}\n\n<!-- holi:caption -->\n\n${caption}\n\n<!-- /holi:figure -->`,
-    ).length !== 1
-  )
-    throw new Error('body must be exactly one portable GFM table')
-  if (!isPortableInlineCaption(caption))
+  const serialized = writeMarkdownCaptionEnvelope(body, caption)
+  const frame = readMarkdownTableCaptions(serialized)[0]
+  if (!frame) throw new Error('body must be exactly one portable GFM table')
+  if (!isPortableInlineCaption(serialized.slice(frame.caption.from, frame.caption.to)))
     throw new Error('caption must be one portable inline paragraph')
-  return writeMarkdownCaptionEnvelope(body, caption)
+  return serialized
 }

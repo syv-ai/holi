@@ -13,7 +13,7 @@ const caption = '**A** &amp; _B_'
 describe('Markdown table captions', () => {
   it('preserves exact CRLF source ranges and rejects code blocks around the table', () => {
     const valid =
-      '<!-- holi:figure -->\\r\\n\\r\\n| A |\\r\\n| - |\\r\\n| `x` |\\r\\n\\r\\n<!-- holi:caption -->\\r\\n\\r\\nCaption.\\r\\n\\r\\n<!-- /holi:figure -->'
+      '<!-- holi:figure -->\r\n\r\n| A |\r\n| - |\r\n| `x` |\r\n\r\n<!-- holi:caption -->\r\n\r\nCaption.\r\n\r\n<!-- /holi:figure -->'
     const [frame] = readMarkdownTableCaptions(valid)
     expect(frame).toBeDefined()
     expect(valid.slice(frame!.body.from, frame!.body.to)).toBe('| A |\\r\\n| - |\\r\\n| `x` |')
@@ -27,11 +27,13 @@ describe('Markdown table captions', () => {
   })
 
   it('writes only a valid table and portable caption', () => {
-    expect(writeMarkdownTableCaption('| A |\\n| - |\\n| 1 |', 'Caption.')).toContain('| 1 |')
-    expect(() =>
-      writeMarkdownTableCaption('| A |\\n| - |\\n| 1 |\\n\\nextra', 'Caption.'),
-    ).toThrow()
-    expect(() => writeMarkdownTableCaption('| A |\\n| - |\\n| 1 |', '[reference]')).toThrow()
+    const serialized = writeMarkdownTableCaption('| A |\n| - |\n| 1 |', '  Caption.')
+    const [frame] = readMarkdownTableCaptions(serialized)
+    expect(serialized.slice(frame!.caption.from, frame!.caption.to)).toBe('&#32;&#32;Caption.')
+    expect(serialized.slice(frame!.body.from, frame!.body.to)).toBe('| A |\n| - |\n| 1 |')
+    expect(writeMarkdownTableCaption('| A |\n| - |\n| 1 |', 'Caption.')).toContain('| 1 |')
+    expect(() => writeMarkdownTableCaption('| A |\n| - |\n| 1 |\n\nextra', 'Caption.')).toThrow()
+    expect(() => writeMarkdownTableCaption('| A |\n| - |\n| 1 |', '[reference]')).toThrow()
   })
 })
 
