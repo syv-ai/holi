@@ -159,6 +159,17 @@ describe('seen revisions', () => {
     ]) {
       await expect(store.acknowledge('owner/repo', path, revisions[0]!, ancestry)).rejects.toThrow()
     }
+    const sha256 = 'a'.repeat(64)
+    await store.acknowledge('owner/repo', 'sha256.md', sha256.toUpperCase(), ancestry)
+    expect(await createSeenRevisions(file).get('owner/repo', 'sha256.md')).toEqual({
+      seen: sha256,
+      previous: null,
+    })
+    for (const length of [39, 41, 63, 65]) {
+      await expect(
+        store.acknowledge('owner/repo', 'note.md', 'a'.repeat(length), ancestry),
+      ).rejects.toThrow()
+    }
     await expect(store.read('invalid')).rejects.toThrow()
     await expect(
       store.acknowledge('owner/repo', 'note.md', 'not-a-sha', ancestry),
