@@ -33,6 +33,8 @@ jobs:
           RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           SHA: ${{ github.event.workflow_run.head_sha }}
           LABEL: dev-release-failed
+          # syv-ai's native Priority issue field (not a project field).
+          PRIORITY_FIELD_ID: '28446238'
         run: |
           JOB_RESULT=$(gh run view "$RUN_ID" --json jobs --jq '[.jobs[] | select(.name == "build-prerelease-mac") | .conclusion][0] // ""')
           # A cancelled workflow can stop before the macOS job is created, in
@@ -90,8 +92,15 @@ jobs:
           fi
           if [ -z "$ISSUE" ]; then
             gh label create "$LABEL" --color d73a4a --description "A dev prerelease on main failed or was cancelled" --force
-            gh issue create --title "Dev prerelease failed: the dev channel is behind main" --label "$LABEL" --body "$BODY"
+            ISSUE_URL=$(gh issue create --title "Dev prerelease failed: the dev channel is behind main" --label "$LABEL" --body "$BODY")
+            ISSUE=${ISSUE_URL##*/}
           else
             gh issue edit "$ISSUE" --body "$BODY"
             gh issue comment "$ISSUE" --body "dev.$RUN for $SHA ended as **$JOB_RESULT**: $RUN_URL"
           fi
+
+          # POST updates Priority without replacing the issue's other field values.
+          gh api --method POST "repos/$GH_REPO/issues/$ISSUE/issue-field-values" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            -F "issue_field_values[][field_id]=$PRIORITY_FIELD_ID" \
+            -f 'issue_field_values[][value]=Urgent' --silent
