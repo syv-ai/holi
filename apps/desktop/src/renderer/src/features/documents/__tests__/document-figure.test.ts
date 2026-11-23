@@ -7,7 +7,6 @@ import { RichTextTable } from '@/features/documents/rich-text/rich-text-table'
 import { createDocumentExtensions } from '../document-extensions'
 import { applyReload } from '../apply-reload'
 import { readMarkdownCodeCaptions } from '@holi/shared'
-import { DocumentFigure } from '../rich-text/document-figure'
 import {
   addCodeCaption,
   addImageCaption,
@@ -29,11 +28,7 @@ function open(markdown: string): Editor {
         folder: 'notes',
         placeholder: '',
         onOpenLink: () => undefined,
-      }).map((extension) =>
-        extension.name === 'documentFigure'
-          ? DocumentFigure.configure({ content: '(codeBlock | image | table) documentCaption' })
-          : extension,
-      ),
+      }),
       RichTextTable,
     ],
     content: markdown,
@@ -50,7 +45,7 @@ const mermaidCaptioned =
 describe('document code captions', () => {
   it('round-trips a table figure and preserves malformed table figures', () => {
     const tableFigure =
-      '<!-- holi:figure -->\\n\\n| Name | Value |\\n| --- | --- |\\n| A | 1 |\\n\\n<!-- holi:caption -->\\n\\nTable caption\\n\\n<!-- /holi:figure -->'
+      '<!-- holi:figure -->\n\n| Name | Value |\n| --- | --- |\n| A | 1 |\n\n<!-- holi:caption -->\n\nTable caption\n\n<!-- /holi:figure -->'
     const instance = open(tableFigure)
     expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
     expect(instance.state.doc.firstChild?.firstChild?.type.name).toBe('table')
@@ -59,7 +54,7 @@ describe('document code captions', () => {
     expect(saved).toContain('Table caption')
 
     const malformed =
-      '<!-- holi:figure -->\\n\\nnot a table\\n\\n<!-- holi:caption -->\\n\\nCaption\\n\\n<!-- /holi:figure -->'
+      '<!-- holi:figure -->\n\nnot a table\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->'
     const preserved = open(malformed).getMarkdown()
     expect(preserved).toContain('not a table')
     expect(preserved).toContain('Caption')
