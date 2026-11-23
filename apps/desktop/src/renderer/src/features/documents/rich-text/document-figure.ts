@@ -259,7 +259,7 @@ export const DocumentCaption = Node.create({
 export const DocumentFigure = Node.create({
   name: 'documentFigure',
   group: 'block',
-  content: '(codeBlock | image | table) documentCaption',
+  content: '(codeBlock | image) documentCaption',
   defining: true,
   isolating: true,
   draggable: true,

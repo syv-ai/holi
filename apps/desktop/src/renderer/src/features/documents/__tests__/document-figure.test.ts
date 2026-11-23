@@ -2,9 +2,12 @@ import { Editor } from '@tiptap/react'
 import { NodeSelection } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { RichTextTable } from '@/features/documents/rich-text/rich-text-table'
+
 import { createDocumentExtensions } from '../document-extensions'
 import { applyReload } from '../apply-reload'
 import { readMarkdownCodeCaptions } from '@holi/shared'
+import { DocumentFigure } from '../rich-text/document-figure'
 import {
   addCodeCaption,
   addImageCaption,
@@ -21,11 +24,18 @@ afterEach(() => {
 
 function open(markdown: string): Editor {
   editor = new Editor({
-    extensions: createDocumentExtensions({
-      folder: 'notes',
-      placeholder: '',
-      onOpenLink: () => undefined,
-    }),
+    extensions: [
+      ...createDocumentExtensions({
+        folder: 'notes',
+        placeholder: '',
+        onOpenLink: () => undefined,
+      }).map((extension) =>
+        extension.name === 'documentFigure'
+          ? DocumentFigure.configure({ content: '(codeBlock | image | table) documentCaption' })
+          : extension,
+      ),
+      RichTextTable,
+    ],
     content: markdown,
     contentType: 'markdown',
   })
