@@ -93,8 +93,18 @@ export function createAgentProbeOwner(activationSignal: AbortSignal) {
           ...[...leases].map(async (lease) => lease.revoke()),
           ...[...authorities].map(async (authority) => authority.drain()),
         ])
+        const lateLeases = new Set<NonNullable<UnconfirmedOwnedProgramError['lease']>>()
         const errors = new Set<unknown>(failures)
-        for (const result of revoked) if (result.status === 'rejected') errors.add(result.reason)
+        for (const result of revoked) {
+          if (result.status !== 'rejected') continue
+          errors.add(result.reason)
+          if (result.reason instanceof UnconfirmedOwnedProgramError && result.reason.lease)
+            lateLeases.add(result.reason.lease)
+        }
+        for (const lease of lateLeases) {
+          const result = await Promise.allSettled([lease.revoke()])
+          if (result[0]?.status === 'rejected') errors.add(result[0].reason)
+        }
         if (errors.size === 1) throw errors.values().next().value
         if (errors.size > 1) throw new AggregateError(errors, 'agent probes failed to drain')
       })().then(resolveStop, rejectStop)
