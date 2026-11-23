@@ -9,16 +9,27 @@ app.setName('Holi notification readiness')
 app.setPath('userData', process.env.HOLI_NOTIFICATION_USER_DATA!)
 app.setPath('sessionData', process.env.HOLI_NOTIFICATION_SESSION_DATA!)
 void app.whenReady().then(() => {
-  const window = new BrowserWindow({ width: 520, height: 220, show: true, title: `READY ${title}` })
+  const window = new BrowserWindow({
+    width: 520,
+    height: 220,
+    show: true,
+    title: `READY ${title}`,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  })
   window.loadURL(`data:text/html,<h1>${encodeURIComponent(`READY ${title}`)}</h1>`)
-  window.on('focus', () => report('clicked-and-window-activated'))
+  let clicked = false
+  window.on('focus', () => {
+    if (clicked) report('clicked-and-window-activated')
+  })
+  window.hide()
   showNotification({
     title,
     body: 'Holi native notification readiness probe',
     onClick: () => {
-      report('notification-click-callback')
+      clicked = true
       window.show()
       window.focus()
+      if (window.isFocused()) report('clicked-and-window-activated')
     },
   })
   report('shown')
