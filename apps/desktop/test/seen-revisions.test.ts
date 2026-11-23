@@ -2,7 +2,7 @@ import { mkdtemp, rm, mkdir, readFile, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
-import { createSeenRevisions } from '../src/main/vault/seen-revisions'
+import { createSeenRevisions } from '../src/main/vault/subscriptions'
 
 import {
   cleanupFixtures,
