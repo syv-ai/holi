@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { readMarkdownTableCaptions, writeMarkdownTableCaption } from '../src/markdown-tables'
 import {
   readMarkdownCaptionEnvelopes,
   readMarkdownCodeCaptions,
@@ -8,6 +9,31 @@ import {
 const body =
   '```mermaid\ngraph TD\nA-->B\n```\n\n![alt](image.png)\n\n| a | b |\n| - | - |\n| 1 | 2 |'
 const caption = '**A** &amp; _B_'
+
+describe('Markdown table captions', () => {
+  it('preserves exact CRLF source ranges and rejects code blocks around the table', () => {
+    const valid =
+      '<!-- holi:figure -->\\r\\n\\r\\n| A |\\r\\n| - |\\r\\n| `x` |\\r\\n\\r\\n<!-- holi:caption -->\\r\\n\\r\\nCaption.\\r\\n\\r\\n<!-- /holi:figure -->'
+    const [frame] = readMarkdownTableCaptions(valid)
+    expect(frame).toBeDefined()
+    expect(valid.slice(frame!.body.from, frame!.body.to)).toBe('| A |\\r\\n| - |\\r\\n| `x` |')
+    const codeBefore = valid.replace('| A |', '```txt\\nkeep\\n```\\n\\n| A |')
+    const codeAfter = valid.replace(
+      '| A |\\r\\n| - |\\r\\n| `x` |',
+      '| A |\\r\\n| - |\\r\\n| `x` |\\r\\n\\r\\n    keep',
+    )
+    expect(readMarkdownTableCaptions(codeBefore)).toEqual([])
+    expect(readMarkdownTableCaptions(codeAfter)).toEqual([])
+  })
+
+  it('writes only a valid table and portable caption', () => {
+    expect(writeMarkdownTableCaption('| A |\\n| - |\\n| 1 |', 'Caption.')).toContain('| 1 |')
+    expect(() =>
+      writeMarkdownTableCaption('| A |\\n| - |\\n| 1 |\\n\\nextra', 'Caption.'),
+    ).toThrow()
+    expect(() => writeMarkdownTableCaption('| A |\\n| - |\\n| 1 |', '[reference]')).toThrow()
+  })
+})
 
 describe('Markdown caption envelopes', () => {
   it('keeps image bodies opaque while exposing their source and caption ranges', () => {
