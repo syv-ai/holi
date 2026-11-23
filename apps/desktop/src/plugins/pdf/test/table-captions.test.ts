@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { writeMarkdownCaptionEnvelope } from '@holi/shared'
-import { readMarkdownReferenceDefinitions, readMarkdownTableCaptions } from '../main/table-captions'
+import { readMarkdownTableCaptions, writeMarkdownCaptionEnvelope } from '@holi/shared'
+import { readMarkdownReferenceDefinitions } from '../main/table-captions'
 
 describe('readMarkdownReferenceDefinitions', () => {
   it('keeps complete parsed definitions and excludes code, HTML, and malformed fences', () => {
