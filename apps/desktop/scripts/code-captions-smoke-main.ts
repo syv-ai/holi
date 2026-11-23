@@ -716,6 +716,34 @@ async function verifyTableCaption({
   const removed = await readFile(note, 'utf8')
   assert(!removed.includes('holi:figure') && removed.includes('Alpha'))
   mark('native-table-row-column-caption-edit-external-reload-and-remove')
+  const framed = (caption: string) =>
+    `<!-- holi:figure -->\n\n${table}\n\n<!-- holi:caption -->\n\n${caption}\n\n<!-- /holi:figure -->`
+  await js(
+    `await window.captionFixture.replace(${JSON.stringify(`${head}${framed('First caption')}\n\n${framed('Second caption')}\n\n${table}\n`)}); return true`,
+  )
+  await click('[data-pane="primary"] figure:nth-of-type(1) td p')
+  await wait(
+    `document.querySelector('[aria-label="Remove caption"]')`,
+    'first table caption controls',
+  )
+  await click('[data-pane="primary"] figure:nth-of-type(2) td p')
+  await wait(
+    `document.querySelector('[aria-label="Remove caption"]')`,
+    'second table caption controls',
+  )
+  await click('[aria-label="Remove caption"]')
+  await js('await window.captionFixture.flush(); return true')
+  const switched = await readFile(note, 'utf8')
+  assert(
+    switched.includes('First caption') && !switched.includes('Second caption'),
+    'caption removal targets the currently selected matching table',
+  )
+  await click('[data-pane="primary"] .tiptap > .tableWrapper:last-of-type td p')
+  await wait(
+    `document.querySelector('[aria-label="Add caption"]') && !document.querySelector('[aria-label="Remove caption"]')`,
+    'bare table gets fresh caption controls',
+  )
+  mark('native-matching-tables-caption-controls-follow-current-selection')
 }
 
 async function verifyParserSource({
