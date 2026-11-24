@@ -383,6 +383,7 @@ try {
                 'native-composition-preserves-unmodified-insert-path',
                 'production-toolbar-native-interaction-light-dark-and-trusted-recording',
                 'native-rich-contenteditable-recorded',
+                'production-multiline-paragraph-div-br-inline-contenteditable-edit-history',
                 'native-baseline-and-vim-rich-link-start-affinity-undo-redo',
                 'plaintext-host-replacement-releases-old-owner',
               ]

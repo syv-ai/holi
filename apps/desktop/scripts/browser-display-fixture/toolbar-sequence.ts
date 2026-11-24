@@ -524,6 +524,37 @@
   view.webContents.redo()
   await pause(500)
   assert.equal(await field(`document.querySelector('#rich').innerHTML`), changedRichMarkup)
+  // Exercise real multiline contenteditable input through the native view. The
+  // fixture intentionally retains paragraph, div, BR, link and inline markup.
+  const multilineInitial =
+    '<p>first <strong>bold</strong></p><p><br></p><div>third <a href="/next">linked</a></div>'
+  await field(`document.querySelector('#multiline').innerHTML=${JSON.stringify(multilineInitial)}`)
+  await field(
+    `(() => { const h=document.querySelector('#multiline'); const n=h.querySelector('strong').firstChild; h.focus(); const r=document.createRange(); r.setStart(n,2); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r) })()`,
+  )
+  await trustedPress(view, 'Escape')
+  await badge('normal')
+  await trustedPress(view, 'j')
+  assert.equal(
+    await field(`getSelection().anchorNode.parentElement.closest('p')?.innerHTML`),
+    '<br>',
+  )
+  await trustedPress(view, 'j')
+  await trustedPress(view, 'i')
+  await badge('insert')
+  await trustedPress(view, 'X')
+  await trustedPress(view, 'Enter')
+  await trustedPress(view, 'Y')
+  const multilineEdited = await field(`document.querySelector('#multiline').innerHTML`)
+  assert(multilineEdited.includes('third X') && multilineEdited.includes('Y'))
+  await trustedPress(view, 'Escape')
+  view.webContents.undo()
+  await pause(250)
+  assert.equal(await field(`document.querySelector('#multiline').innerHTML`), multilineInitial)
+  view.webContents.redo()
+  await pause(250)
+  assert.equal(await field(`document.querySelector('#multiline').innerHTML`), multilineEdited)
+  mark('production-multiline-paragraph-div-br-inline-contenteditable-edit-history')
   await pause(800)
   recording = false
   await recordingLoop
