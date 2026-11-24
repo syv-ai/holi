@@ -15,6 +15,50 @@ const build = join(generated, 'build')
 const prefix = join(generated, 'install')
 const url = 'https://github.com/libgit2/libgit2/archive/refs/tags/v1.9.7.tar.gz'
 const sha256 = '1a4fbe7589e814777ae76b64734ad80f4ecad22cd33a22682a2aaea4ae5375e7'
+const patchVersion = 'holi-isolated-config-open-v1'
+
+async function patchRepository(sourceRoot) {
+  const repositoryPath = join(sourceRoot, 'src/libgit2/repository.c')
+  let repository = await readFile(repositoryPath, 'utf8')
+  const signature = 'int git_repository_open_ext('
+  if (repository.split(signature).length !== 2) throw new Error('Unexpected libgit2 repository.c open_ext definition')
+  const start = repository.indexOf(signature)
+  const brace = repository.indexOf('{', start)
+  if (brace < 0) throw new Error('Could not locate open_ext body')
+  let depth = 0
+  let end = -1
+  for (let i = brace; i < repository.length; i++) {
+    if (repository[i] === '{') depth++
+    if (repository[i] === '}' && --depth === 0) {
+      end = i + 1
+      break
+    }
+  }
+  if (end < 0) throw new Error('Could not parse open_ext body')
+  const original = repository.slice(start, end)
+  const declaration = 'int git_repository_open_holi(git_repository **out, const char *path, unsigned int flags, const git_strarray *ceiling_dirs, git_config *isolated_config)'
+  if (repository.includes('git_repository_open_holi')) {
+    if (!repository.includes(declaration)) throw new Error('Conflicting existing git_repository_open_holi patch')
+  } else {
+    let duplicate = original.replace(signature, 'int git_repository_open_holi(')
+    const parameterEnd = duplicate.indexOf(')', duplicate.indexOf('int git_repository_open_holi('))
+    if (parameterEnd < 0) throw new Error('Could not parse open_ext parameters')
+    duplicate = `${duplicate.slice(0, parameterEnd)}, git_config *isolated_config${duplicate.slice(parameterEnd)}`
+    const allocation = /((?:if\s*\(\s*)?\(?\s*error\s*=\s*repository_alloc\([\s\S]*?\)\s*\)?\s*;\s*if\s*\(error\s*<\s*0\)\s*return\s+error\s*;)/g
+    if ([...duplicate.matchAll(allocation)].length !== 1) throw new Error('Unexpected repository_alloc success check in open_ext')
+    duplicate = duplicate.replace(allocation, '$1\n\tif ((error = git_repository_set_config(repo, isolated_config)) < 0)\n\t\treturn error;')
+    repository = `${repository.slice(0, end)}\n\n${duplicate}${repository.slice(end)}`
+    await writeFile(repositoryPath, repository)
+  }
+  const headerPath = join(sourceRoot, 'include/git2/repository.h')
+  let header = await readFile(headerPath, 'utf8')
+  if (!header.includes('git_repository_open_holi')) {
+    const anchor = 'GIT_EXTERN(int) git_repository_open_ext('
+    if (header.split(anchor).length !== 2) throw new Error('Unexpected libgit2 repository.h open_ext declaration')
+    header = header.replace(anchor, `GIT_EXTERN(int) git_repository_open_holi(git_repository **out, const char *path, unsigned int flags, const git_strarray *ceiling_dirs, git_config *isolated_config);\n${anchor}`)
+    await writeFile(headerPath, header)
+  }
+}
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, stdio: 'inherit' })
@@ -59,9 +103,17 @@ if ((await checksum(archive).catch(() => null)) !== sha256) {
     await rm(temporary, { force: true })
   }
 }
-await rm(source, { recursive: true, force: true })
-await mkdir(source, { recursive: true })
-run('tar', ['-xzf', archive, '--strip-components=1', '-C', source])
+const stamp = join(generated, 'build-stamp')
+const expectedStamp = `${sha256}\n${patchVersion}\n`
+if ((await readFile(stamp, 'utf8').catch(() => null)) !== expectedStamp) {
+  await rm(source, { recursive: true, force: true })
+  await rm(build, { recursive: true, force: true })
+  await rm(prefix, { recursive: true, force: true })
+  await mkdir(source, { recursive: true })
+  run('tar', ['-xzf', archive, '--strip-components=1', '-C', source])
+  await patchRepository(source)
+  await writeFile(stamp, expectedStamp)
+}
 await rm(build, { recursive: true, force: true })
 await rm(prefix, { recursive: true, force: true })
 const sdk = spawnSync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-path'], {
