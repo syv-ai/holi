@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   cp,
+  rmdir,
   lstat,
   mkdtemp,
   mkdir,
@@ -11,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -30,7 +31,10 @@ const nonce = randomUUID().replaceAll('-', '')
 const appName = `Holi550-${nonce}`
 const bundleId = `ai.syv.holi.fixture.run${nonce}`
 const title = `Holi readiness ${nonce}`
-const ownedApp = join(root, `${appName}.app`)
+const applications = join(homedir(), 'Applications')
+const ownedApp = join(applications, `${appName}.app`)
+let createdApplications = false
+let createdApp = false
 const ownedBinary = join(ownedApp, 'Contents/MacOS/Electron')
 const controller = new AbortController()
 const owned = createOwnedProcesses({ signal: controller.signal })
@@ -65,6 +69,17 @@ const capture = async (name, operation) => {
   }
 }
 try {
+  try {
+    await mkdir(applications, { mode: 0o700 })
+    createdApplications = true
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error
+  }
+  const appsInfo = await lstat(applications)
+  if (!appsInfo.isDirectory() || appsInfo.uid !== process.getuid())
+    throw new Error('Applications directory is not an owned directory')
+  await mkdir(ownedApp, { mode: 0o700 })
+  createdApp = true
   await mkdir(join(profile, 'home'), { recursive: true })
   await mkdir(join(profile, 'tmp'), { recursive: true })
   await mkdir(evidence, { mode: 0o700 })
@@ -216,6 +231,10 @@ try {
       ).output,
     }))
   await capture('cleanupProcesses', () => cleanupProcesses.stopAll())
+  if (createdApp && Object.values(cleanup).every((step) => step.ok))
+    await capture('installedBundle', () => rm(ownedApp, { recursive: true, force: true }))
+  if (createdApplications && Object.values(cleanup).every((step) => step.ok))
+    await capture('createdApplications', () => rmdir(applications))
   if (Object.values(cleanup).every((step) => step.ok))
     await capture('runtime', () => rm(root, { recursive: true, force: true }))
   else cleanup.retainedRuntime = root

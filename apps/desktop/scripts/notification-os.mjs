@@ -72,56 +72,52 @@ export async function allowNativeNotificationPermission({ appName, timeoutMs = 1
   if (process.platform !== 'darwin')
     throw new Error('native notification permission requires macOS')
   const script = `
-    on textAttribute(element, key)
+    on attr(e,k)
       tell application "System Events"
         try
-          return value of attribute key of element as text
+          return value of attribute k of e as text
         on error
           return ""
         end try
       end tell
-    end textAttribute
+    end attr
+    set deadline to (current date) + ${Math.ceil(timeoutMs / 1000)}
     tell application "System Events"
-      set deadline to (current date) + ${Math.ceil(timeoutMs / 1000)}
-      set ownMatches to 0
       repeat
-        repeat with p in (every application process whose name is "UserNotificationCenter" or name is "NotificationCenter" or name is "${escapeAppleScript(appName)}")
-          try
-            repeat with w in every window of p
-              repeat with candidate in ({w} & (entire contents of w))
-                set candidateRole to my textAttribute(candidate, "AXRole")
-                set candidateSubrole to my textAttribute(candidate, "AXSubrole")
-                if candidateRole is "AXDialog" or candidateRole is "AXSheet" or (candidateRole is "AXWindow" and candidateSubrole is "AXSystemDialog") then
-                  set buttonCount to 0
-                  set allowButton to missing value
-                  set denyFound to false
-                  set exactPrompt to false
-                  set nestedDialog to false
-                  repeat with uiControl in (entire contents of candidate)
-                    set itemRole to my textAttribute(uiControl, "AXRole")
-                    if itemRole is "AXDialog" or itemRole is "AXSheet" then set nestedDialog to true
-                    set labelText to my textAttribute(uiControl, "AXTitle")
-                    set valueText to my textAttribute(uiControl, "AXValue")
-                    set ownPrompt to "“${escapeAppleScript(appName)}” Would Like to Send You Notifications"
-                    set ownPlainPrompt to quote & "${escapeAppleScript(appName)}" & quote & " Would Like to Send You Notifications"
-                    if labelText is ownPrompt or valueText is ownPrompt or labelText is ownPlainPrompt or valueText is ownPlainPrompt then set exactPrompt to true
-                    if itemRole is "AXButton" then
-                      set buttonCount to buttonCount + 1
-                      if labelText is "Allow" then set allowButton to uiControl
-                      if labelText is "Don't Allow" or labelText is "Don’t Allow" then set denyFound to true
-                    end if
-                  end repeat
-                  if exactPrompt then set ownMatches to ownMatches + 1
-                  if exactPrompt and not nestedDialog and buttonCount is 2 and allowButton is not missing value and denyFound then
-                    click allowButton
-                    return "owned-app-consent-clicked"
-                  end if
-                end if
-              end repeat
+        repeat with p in (application processes whose name is "NotificationCenter")
+          repeat with w in windows of p
+            set children to entire contents of w
+            set ownedPrompt to false
+            set cards to 0
+            set targetCard to missing value
+            set nestedDialog to false
+            repeat with e in children
+              set valueText to my attr(e,"AXValue")
+              set roleText to my attr(e,"AXRole")
+              if roleText is "AXDialog" or roleText is "AXSheet" then set nestedDialog to true
+              if valueText is "“${escapeAppleScript(appName)}” Notifications" then set ownedPrompt to true
+              if my attr(e,"AXSubrole") is "AXNotificationCenterAlert" then
+                set cards to cards + 1
+                set targetCard to contents of e
+              end if
             end repeat
-          end try
+            set windowRole to my attr(w,"AXSubrole")
+            if ownedPrompt and cards is 1 and windowRole is "AXSystemDialog" and not nestedDialog then
+              set allowAction to missing value
+              set denyAction to missing value
+              repeat with a in (actions of targetCard)
+                set actionLabel to paragraph 1 of (name of a as text)
+                if actionLabel is "Name:Allow" then set allowAction to contents of a
+                if actionLabel is "Name:Don’t Allow" or actionLabel is "Name:Don't Allow" then set denyAction to contents of a
+              end repeat
+              if allowAction is not missing value and denyAction is not missing value then
+                perform allowAction
+                return "owned-app-consent-clicked"
+              end if
+            end if
+          end repeat
         end repeat
-        if (current date) > deadline then error "owned notification consent dialog not found; ownMatches=" & ownMatches
+        if (current date) > deadline then error "owned notification consent dialog not found"
         delay 0.2
       end repeat
     end tell`
