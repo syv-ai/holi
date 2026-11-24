@@ -2,6 +2,14 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 
 /** Caller owns the process: stop it before close unless deliberately resuming startup. */
+function classifyProtocolError(code, message) {
+  if (code === -32000 && /execution context was destroyed/i.test(message || ''))
+    return 'context-destroyed'
+  if (code === -32000 && /cannot find context/i.test(message || '')) return 'context-missing'
+  if (code === -32000 && /target closed|session closed/i.test(message || '')) return 'target-closed'
+  return 'protocol-error'
+}
+
 export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_000 } = {}) {
   const deadline = Date.now() + timeoutMs
   let url
@@ -18,6 +26,7 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   const contexts = new Map()
   let nextId = 0
   let closed = false
+  let lifecycle = 'connected'
   let frame
   let paused = true
   let resolvePause
@@ -29,7 +38,7 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   pause.catch(() => {})
   function fail(message) {
     const error = new Error(message)
-    error.details = { method: null, kind: message }
+    error.details = { method: null, kind: message, lifecycle }
     failure.abort(error)
     for (const { reject, timer } of requests.values()) {
       clearTimeout(timer)
@@ -55,17 +64,29 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
         error.details = {
           method: /^[A-Za-z]+\.[A-Za-z]+$/.test(pending.method) ? pending.method : null,
           code: Number.isInteger(message.error.code) ? message.error.code : null,
+          kind: classifyProtocolError(message.error.code, message.error.message),
+          lifecycle,
         }
         pending.reject(error)
       } else pending.resolve(message.result)
     }
+    if (message.method === 'Runtime.executionContextDestroyed') lifecycle = 'context-destroyed'
+    if (message.method === 'Runtime.executionContextsCleared') {
+      contexts.clear()
+      lifecycle = 'contexts-cleared'
+    }
+    if (message.method === 'Inspector.targetCrashed') lifecycle = 'target-crashed'
+    if (message.method === 'Target.detachedFromTarget') lifecycle = 'target-detached'
     if (message.method === 'Debugger.scriptParsed' && !frame)
       contexts.set(message.params.scriptId, message.params.executionContextId)
     if (message.method === 'Debugger.paused') resolvePause(message.params)
   }
   const onAbort = () => fail('inspector operation aborted')
   const onClose = () => {
-    if (!closed) fail('inspector connection closed')
+    if (!closed) {
+      lifecycle = 'debugger-disconnected'
+      fail('inspector connection closed')
+    }
   }
   const onError = () => fail('inspector connection failed')
   socket.addEventListener('message', onMessage)
