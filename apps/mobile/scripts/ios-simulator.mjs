@@ -27,6 +27,8 @@ import {
 import { captureStorageEvidence, readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
 import { createGitFixture } from './git-fixture.mjs'
+import { createWorkingCopyFixture, verifyWorkingCopyUnchanged } from './working-copy-fixture.mjs'
+import { validateWorkingCopyResults } from './host-checks.mjs'
 import {
   interruptionBefore,
   interruptionPending,
@@ -140,6 +142,17 @@ try {
   const container = await simctl('get_app_container', simulator, bundleId, 'data')
   canonicalContainer = await realpath(container)
   const reportPath = join(canonicalContainer, 'Documents/vault-format-report.json')
+  const workingCopyFixture = await createWorkingCopyFixture(
+    join(canonicalContainer, 'Documents'),
+    runId,
+    await realpath(join(canonicalContainer, 'Library')),
+  )
+  const workingCopyManifest = join(canonicalContainer, 'Documents/working-copy-manifest.json')
+  await writeFile(workingCopyManifest, JSON.stringify(workingCopyFixture, null, 2))
+  await writeFile(
+    join(artifacts, 'working-copy-fixture.json'),
+    JSON.stringify(workingCopyFixture, null, 2),
+  )
   for (const [index, name] of ['Café.md', 'Cafe\u0301.md'].entries()) {
     const directory = join(canonicalContainer, `Documents/holi-raw-${runId}-${index}`)
     await mkdir(directory)
@@ -187,6 +200,7 @@ try {
         SIMCTL_CHILD_HOLI_STORAGE_PHASE: phase,
         ...(phase === 'normal'
           ? {
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_MANIFEST: workingCopyManifest,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: `${canonicalContainer}/Documents/holi-git-${runId}`,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: gitFixture.url,
               SIMCTL_CHILD_HOLI_GIT_INVALID_TLS_URL: gitFixture.invalidUrl,
@@ -231,6 +245,30 @@ try {
     library,
   }
   validateReport(report, { ...context, ...normalProcess, phase: 'normal' })
+  const statusEvidence = validateWorkingCopyResults(
+    report.workingCopy?.cases,
+    workingCopyFixture.cases,
+    runId,
+  )
+  for (const item of workingCopyFixture.cases) {
+    assert.equal(
+      await verifyWorkingCopyUnchanged(item.root, item.before),
+      true,
+      `Status mutated ${item.name}`,
+    )
+  }
+  for (const item of workingCopyFixture.cases) {
+    for (const artifact of item.recovery)
+      assert.equal(
+        (await readFile(artifact.path)).toString('base64'),
+        artifact.bytes,
+        'Recovery artifact mutated',
+      )
+  }
+  await writeFile(
+    join(artifacts, 'working-copy-evidence.json'),
+    JSON.stringify(statusEvidence, null, 2),
+  )
   assert.ok(gitFixture.remoteAdvanced, 'Fixture host did not advance remote after native clone')
   assert.ok(gitFixture.authChallengeCount > 0, 'Fixture did not challenge native credentials')
   assert.equal(gitFixture.backendFailures, 0, 'Fixture backend request failed')
