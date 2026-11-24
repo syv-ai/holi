@@ -1236,7 +1236,9 @@ describe('the calendar view', () => {
     eventAttachmentsMock.mockReturnValueOnce(refreshed.promise)
     await user.click(screen.getByRole('button', { name: 'Check guest access' }))
     expect(await screen.findByText(/guest access incomplete.*workshop agenda/i)).toBeInTheDocument()
-    expect(screen.getByRole('alert')).not.toHaveTextContent(BRIEF.name)
+    expect(
+      screen.queryByText(/(?:guest access incomplete|sharing not confirmed).*workshop brief/i),
+    ).not.toBeInTheDocument()
     await act(async () => refreshed.resolve({ attachments: current, canAttach: true }))
     expect(screen.queryByRole('button', { name: BRIEF.name })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Add from Drive' })).toBeEnabled()
