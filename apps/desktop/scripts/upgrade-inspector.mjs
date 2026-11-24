@@ -2,6 +2,22 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 
 function classifyProtocolError(code, message) {
+  if (code === -32000) {
+    switch (message) {
+      case 'Cannot find default execution context':
+        return 'default-context-missing'
+      case 'Execution was terminated':
+        return 'execution-terminated'
+      case 'Promise was collected':
+        return 'promise-collected'
+      case 'Tearing down inspector/session/context':
+        return 'inspector-teardown'
+      case "Object couldn't be returned by value":
+        return 'value-unserializable'
+      case 'Object reference chain is too long':
+        return 'value-too-deep'
+    }
+  }
   if (code === -32000 && /execution context was destroyed/i.test(message || ''))
     return 'context-destroyed'
   if (code === -32000 && /cannot find context/i.test(message || '')) return 'context-missing'
@@ -56,7 +72,11 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   }
   function snapshot() {
     refreshChildExit()
-    return { ...observations, childExit: observations.childExit && { ...observations.childExit } }
+    return {
+      ...observations,
+      entryContextId: Number.isInteger(entryContextId) ? entryContextId : null,
+      childExit: observations.childExit && { ...observations.childExit },
+    }
   }
   function fail(message) {
     const error = new Error(message)

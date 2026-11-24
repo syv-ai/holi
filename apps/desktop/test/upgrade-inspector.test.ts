@@ -4,6 +4,7 @@ import { connectUpgradeInspector } from '../scripts/upgrade-inspector.mjs'
 
 class InspectorSocket extends EventTarget {
   static instance: InspectorSocket
+  static protocolError = { code: -32602, message: 'sensitive protocol sentinel' }
   readyState = 0
   sent: { id: number; method: string; params: Record<string, unknown> }[] = []
 
@@ -39,10 +40,7 @@ class InspectorSocket extends EventTarget {
         callFrames: [{ callFrameId: 'frame', location: { scriptId: 'entry-script' } }],
       })
     }
-    const error =
-      command.method === 'Runtime.evaluate'
-        ? { code: -32602, message: 'sensitive protocol sentinel' }
-        : undefined
+    const error = command.method === 'Runtime.evaluate' ? InspectorSocket.protocolError : undefined
     const result =
       command.method === 'Debugger.evaluateOnCallFrame' ? { result: { value: true } } : {}
     this.dispatchEvent(
@@ -54,6 +52,40 @@ class InspectorSocket extends EventTarget {
 }
 
 describe('upgrade inspector diagnostics', () => {
+  it.each([
+    ['Cannot find default execution context', 'default-context-missing'],
+    ['Execution was terminated', 'execution-terminated'],
+    ['Promise was collected', 'promise-collected'],
+    ['Tearing down inspector/session/context', 'inspector-teardown'],
+    ["Object couldn't be returned by value", 'value-unserializable'],
+    ['Object reference chain is too long', 'value-too-deep'],
+  ])('classifies pinned V8 error %s without exposing its message', async (message, kind) => {
+    vi.stubGlobal('WebSocket', InspectorSocket)
+    InspectorSocket.protocolError = { code: -32000, message }
+    const record = {
+      output: 'Debugger listening on ws://127.0.0.1:1234/devtools/page/1',
+      child: { exitCode: null, signalCode: null },
+      exited: new Promise(() => {}),
+    }
+    let inspector: Awaited<ReturnType<typeof connectUpgradeInspector>> | undefined
+    try {
+      inspector = await connectUpgradeInspector(record, { timeoutMs: 1000 })
+      await inspector.resume()
+      const error = await inspector.evaluate('sentinel').catch((reason) => reason)
+      expect(error.details).toMatchObject({
+        method: 'Runtime.evaluate',
+        code: -32000,
+        kind,
+        observations: { entryContextId: 7 },
+      })
+      expect(JSON.stringify(error)).not.toContain(message)
+    } finally {
+      inspector?.close()
+      InspectorSocket.protocolError = { code: -32602, message: 'sensitive protocol sentinel' }
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('redacts protocol messages and reports only destruction of the captured entry context', async () => {
     vi.stubGlobal('WebSocket', InspectorSocket)
     const record = {
