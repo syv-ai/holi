@@ -69,6 +69,25 @@ describe('compareRevisions', () => {
     })
   })
 
+  it.each(['root', 'nested'])('reports a missing %s tree as unavailable history', async (which) => {
+    const root = await repository()
+    await mkdir(join(root, 'folder'))
+    await writeFile(join(root, 'folder', 'note.md'), 'nested text\n')
+    const sha = await commit(root, 'nested snapshot')
+    await expect(compareRevisions(root, 'folder/note.md', sha, sha)).resolves.toEqual({
+      kind: 'text',
+      before: 'nested text\n',
+      after: 'nested text\n',
+    })
+    const revision = which === 'root' ? `${sha}^{tree}` : `${sha}:folder`
+    const tree = (await exec('git', ['-C', root, 'rev-parse', revision])).stdout.trim()
+    await rm(join(root, '.git', 'objects', tree.slice(0, 2), tree.slice(2)))
+    await expect(compareRevisions(root, 'folder/note.md', sha, sha)).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'missing',
+    })
+  })
+
   it('never fetches a missing promisor blob through a reachable transport', async () => {
     const root = await repository()
     await writeFile(join(root, 'note.md'), 'promised content')

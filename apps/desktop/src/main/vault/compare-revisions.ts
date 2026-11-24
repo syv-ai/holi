@@ -5,6 +5,7 @@ import { isSecretPath, vaultRelPath } from '@holi/shared'
 const exec = promisify(execFile)
 const MAX_BYTES = 1024 * 1024
 const TIMEOUT = 5000
+class ReadLimit extends Error {}
 
 type Entry = { kind: 'text'; text: string } | { kind: 'missing' | 'unsupported' | 'limit' }
 export type RevisionComparison =
@@ -27,9 +28,10 @@ export async function compareRevisions(
   if (![before, after].every((oid) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid)))
     return { kind: 'unavailable', reason: 'unsupported' }
   try {
-    const left = await readEntry(root, path, before.toLowerCase())
+    const deadline = Date.now() + TIMEOUT
+    const left = await readEntry(root, path, before.toLowerCase(), deadline)
     if (left.kind !== 'text') return { kind: 'unavailable', reason: left.kind }
-    const right = await readEntry(root, path, after.toLowerCase())
+    const right = await readEntry(root, path, after.toLowerCase(), deadline)
     if (right.kind !== 'text') return { kind: 'unavailable', reason: right.kind }
     return { kind: 'text', before: left.text, after: right.text }
   } catch (error) {
@@ -37,16 +39,28 @@ export async function compareRevisions(
     return {
       kind: 'unavailable',
       reason:
-        failure.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || failure.killed ? 'limit' : 'error',
+        error instanceof ReadLimit ||
+        failure.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ||
+        failure.killed
+          ? 'limit'
+          : 'error',
     }
   }
 }
 
-async function git(root: string, args: string[], maxBuffer = 64 * 1024, input = '') {
+async function git(
+  root: string,
+  args: string[],
+  deadline: number,
+  maxBuffer = 64 * 1024,
+  input = '',
+) {
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) throw new ReadLimit()
   const pending = exec('git', ['-C', root, ...args], {
     encoding: 'buffer',
     maxBuffer,
-    timeout: TIMEOUT,
+    timeout: remaining,
     killSignal: 'SIGKILL',
     env: { ...process.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
   })
@@ -56,46 +70,85 @@ async function git(root: string, args: string[], maxBuffer = 64 * 1024, input = 
   return pending
 }
 
-async function readEntry(root: string, path: string, commit: string): Promise<Entry> {
-  // Batch plumbing distinguishes unavailable objects from command failures without parsing stderr.
+async function readEntry(
+  root: string,
+  path: string,
+  commit: string,
+  deadline: number,
+): Promise<Entry> {
   const object = (
-    await git(root, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], 1024, `${commit}\n`)
+    await git(
+      root,
+      ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
+      deadline,
+      1024,
+      `${commit}\n`,
+    )
   ).stdout
     .toString('ascii')
     .trim()
   if (object === `${commit} missing`) return { kind: 'missing' }
   if (object !== `${commit} commit`) return { kind: 'unsupported' }
-  const { stdout } = await git(root, [
-    'ls-tree',
-    '-z',
-    '--full-tree',
-    commit,
-    '--',
-    `:(literal)${path}`,
-  ])
-  if (!stdout.length) return { kind: 'missing' }
-  const record = stdout.toString('utf8').replace(/\0$/, '')
-  const tab = record.indexOf('\t')
-  if (tab < 0 || record.slice(tab + 1) !== path) return { kind: 'unsupported' }
-  const [mode, type, oid] = record.slice(0, tab).split(' ')
-  if (!oid || type !== 'blob' || (mode !== '100644' && mode !== '100755'))
-    return { kind: 'unsupported' }
+  const rawCommit = (await git(root, ['cat-file', 'commit', commit], deadline)).stdout
+  const tree = /^tree ([0-9a-f]{40}|[0-9a-f]{64})\n/.exec(rawCommit.toString('utf8'))?.[1]
+  if (!tree) return { kind: 'unsupported' }
+  let treeOid = tree
+  let blobOid: string | undefined
+  const segments = path.split('/')
+  for (let index = 0; index < segments.length; index++) {
+    // Check each traversed tree explicitly: missing history is not an empty file or a command error.
+    const treeInfo = (
+      await git(
+        root,
+        ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
+        deadline,
+        1024,
+        `${treeOid}\n`,
+      )
+    ).stdout
+      .toString('ascii')
+      .trim()
+    if (treeInfo === `${treeOid} missing`) return { kind: 'missing' }
+    if (treeInfo !== `${treeOid} tree`) return { kind: 'unsupported' }
+    const segment = segments[index]!
+    const { stdout } = await git(
+      root,
+      ['ls-tree', '-z', treeOid, '--', `:(literal)${segment}`],
+      deadline,
+    )
+    if (!stdout.length) return { kind: 'missing' }
+    const record = stdout.toString('utf8').replace(/\0$/, '')
+    const tab = record.indexOf('\t')
+    if (tab < 0 || record.slice(tab + 1) !== segment) return { kind: 'unsupported' }
+    const [mode, type, oid] = record.slice(0, tab).split(' ')
+    if (!oid) return { kind: 'unsupported' }
+    if (index < segments.length - 1) {
+      if (type !== 'tree' || mode !== '040000') return { kind: 'unsupported' }
+      treeOid = oid
+    } else {
+      if (type !== 'blob' || (mode !== '100644' && mode !== '100755'))
+        return { kind: 'unsupported' }
+      blobOid = oid
+    }
+  }
+  if (!blobOid) return { kind: 'unsupported' }
   const objectInfo = (
     await git(
       root,
       ['cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'],
+      deadline,
       1024,
-      `${oid}\n`,
+      `${blobOid}\n`,
     )
   ).stdout
     .toString('ascii')
     .trim()
-  if (objectInfo === `${oid} missing`) return { kind: 'missing' }
-  const [blobOid, blobType, size] = objectInfo.split(' ')
-  if (blobOid !== oid || blobType !== 'blob' || size === undefined || !/^\d+$/.test(size))
+  if (objectInfo === `${blobOid} missing`) return { kind: 'missing' }
+  const [oid, type, size] = objectInfo.split(' ')
+  if (oid !== blobOid || type !== 'blob' || size === undefined || !/^\d+$/.test(size))
     return { kind: 'unsupported' }
   if (Number(size) > MAX_BYTES) return { kind: 'limit' }
-  const blob = (await git(root, ['cat-file', 'blob', oid], MAX_BYTES + 1)).stdout
+  const blob = (await git(root, ['cat-file', 'blob', blobOid], deadline, MAX_BYTES + 1)).stdout
   if (blob.length > MAX_BYTES) return { kind: 'limit' }
   if (blob.includes(0)) return { kind: 'unsupported' }
   try {
