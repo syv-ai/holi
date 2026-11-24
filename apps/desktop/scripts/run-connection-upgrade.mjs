@@ -506,6 +506,20 @@ try {
     drained = true
     inspector?.close()
   })
+  if (!drained && owned.size) {
+    await attempt('inspect-owned-group-states', async () => {
+      const groups = new Set(owned.remainingPids)
+      const states = { live: 0, zombie: 0 }
+      const result = await command('/bin/ps', ['-axo', 'pgid=,stat='], { cleanup: true })
+      for (const line of result.stdout.split('\n')) {
+        const match = line.trim().match(/^(\d+)\s+(\S+)/)
+        if (match && groups.has(Number(match[1]))) {
+          states[match[2].startsWith('Z') ? 'zombie' : 'live']++
+        }
+      }
+      receipt.cleanupGroupStates = states
+    })
+  }
   for (const key of launchKeys)
     await attempt(`unset-${key}`, () =>
       command('/bin/launchctl', ['unsetenv', key], { cleanup: true }),

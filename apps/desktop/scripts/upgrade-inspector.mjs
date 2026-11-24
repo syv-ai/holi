@@ -29,6 +29,7 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   pause.catch(() => {})
   function fail(message) {
     const error = new Error(message)
+    error.details = { method: null, kind: message }
     failure.abort(error)
     for (const { reject, timer } of requests.values()) {
       clearTimeout(timer)
@@ -49,9 +50,14 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
     if (pending) {
       requests.delete(message.id)
       clearTimeout(pending.timer)
-      message.error
-        ? pending.reject(new Error('inspector command rejected'))
-        : pending.resolve(message.result)
+      if (message.error) {
+        const error = new Error('inspector command rejected')
+        error.details = {
+          method: /^[A-Za-z]+\.[A-Za-z]+$/.test(pending.method) ? pending.method : null,
+          code: Number.isInteger(message.error.code) ? message.error.code : null,
+        }
+        pending.reject(error)
+      } else pending.resolve(message.result)
     }
     if (message.method === 'Debugger.scriptParsed' && !frame)
       contexts.set(message.params.scriptId, message.params.executionContextId)
@@ -86,15 +92,26 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
       const id = ++nextId
       const timer = setTimeout(() => {
         requests.delete(id)
-        reject(new Error('inspector command timed out'))
+        const error = new Error('inspector command timed out')
+        error.details = {
+          method: /^[A-Za-z]+\.[A-Za-z]+$/.test(method) ? method : null,
+          kind: 'timeout',
+          timeoutMs,
+        }
+        reject(error)
       }, timeoutMs)
-      requests.set(id, { resolve, reject, timer })
+      requests.set(id, { resolve, reject, timer, method })
       try {
         socket.send(JSON.stringify({ id, method, params }))
       } catch {
         clearTimeout(timer)
         requests.delete(id)
-        reject(new Error('inspector send failed'))
+        const error = new Error('inspector send failed')
+        error.details = {
+          method: /^[A-Za-z]+\.[A-Za-z]+$/.test(method) ? method : null,
+          kind: 'send-failed',
+        }
+        reject(error)
       }
     })
   }

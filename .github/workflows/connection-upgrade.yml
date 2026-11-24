@@ -12,6 +12,7 @@ on:
       - apps/desktop/scripts/upgrade-inspector.mjs
       - apps/desktop/test/upgrade-connection-safety.test.ts
       - apps/desktop/test/upgrade-providers.test.ts
+      - apps/desktop/test/upgrade-inspector.test.ts
 
 permissions:
   contents: read
