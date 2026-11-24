@@ -320,7 +320,20 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
   if(rootFD<0){ if(error)*error=HNGPathError(errno,@"Cannot safely open working tree"); git_repository_free(repo); return nil; }
   git_index *index=NULL; git_reference *head=NULL; git_commit *commit=NULL; git_tree *tree=NULL;
   int rc=git_repository_index(&index,repo);
-  if(rc==0 && git_repository_head(&head,repo)==0) rc=git_reference_peel((git_object **)&commit,head,GIT_OBJECT_COMMIT);
+  if (rc == 0) {
+    rc = git_repository_head(&head, repo);
+    if (rc == GIT_EUNBORNBRANCH || rc == GIT_ENOTFOUND) {
+      if (error) *error = HNGPathError(ENODATA, @"Working-copy status requires an existing HEAD commit");
+      close(rootFD); git_index_free(index); git_repository_free(repo); return nil;
+    }
+  }
+  if (rc == 0) {
+    if (!git_reference_is_branch(head)) {
+      if (error) *error = HNGPathError(EINVAL, @"Working-copy status requires an attached branch");
+      close(rootFD); git_reference_free(head); git_index_free(index); git_repository_free(repo); return nil;
+    }
+    rc = git_reference_peel((git_object **)&commit, head, GIT_OBJECT_COMMIT);
+  }
   if(rc==0 && commit) rc=git_commit_tree(&tree,commit);
   if(rc<0){ if(error)HNGError(error,rc); close(rootFD); git_index_free(index); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); return nil; }
   git_config *config=NULL; BOOL filemode=YES; if(git_repository_config(&config,repo)==0){ int value=1; if(git_config_get_bool(&value,config,"core.filemode")==0)filemode=value; git_config_free(config); }
@@ -337,11 +350,11 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
     if(statResult==0){
       if(S_ISLNK(st.st_mode)){ if(error)*error=HNGPathError(EINVAL,@"Symbolic links are not supported in status paths"); changes=nil; close(parent); break; }
       if(!S_ISREG(st.st_mode)){ if(error)*error=HNGPathError(EINVAL,@"Only regular files are supported in status paths"); changes=nil; close(parent); break; }
-      int fd=openat(parent,parts.lastObject.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW); close(parent);
+      int fd=openat(parent,parts.lastObject.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK); close(parent);
       if(fd<0){if(error)*error=HNGPathError(errno,@"Cannot safely read working-tree file");changes=nil;break;}
       struct stat opened; if(fstat(fd,&opened)||!S_ISREG(opened.st_mode)){close(fd);if(error)*error=HNGPathError(EINVAL,@"Working-tree file changed during status");changes=nil;break;}
       if (opened.st_size < 0 || opened.st_size > 64 * 1024 * 1024) { close(fd); if(error)*error=HNGPathError(EFBIG,@"Working-tree file exceeds the 64 MiB status limit"); changes=nil; break; }
-      NSMutableData *data=[NSMutableData dataWithCapacity:(NSUInteger)opened.st_size]; uint8_t buffer[16384]; ssize_t n; while((n=read(fd,buffer,sizeof(buffer)))>0) { if (data.length + (NSUInteger)n > 64 * 1024 * 1024) { n = -1; errno = EFBIG; break; } [data appendBytes:buffer length:(NSUInteger)n]; } int readError=errno; close(fd);
+      NSMutableData *data=[NSMutableData dataWithCapacity:(NSUInteger)opened.st_size]; uint8_t buffer[16384]; ssize_t n; errno = 0; while((n=read(fd,buffer,sizeof(buffer)))>0) { if (data.length + (NSUInteger)n > 64 * 1024 * 1024) { n = -1; errno = EFBIG; break; } [data appendBytes:buffer length:(NSUInteger)n]; } int readError=errno; close(fd);
       if(n<0){if(error)*error=HNGPathError(readError,@"Cannot read working-tree file");changes=nil;break;}
       git_oid oid; git_odb *odb=NULL; rc=git_repository_odb(&odb,repo); if(rc==0)rc=git_odb_hash(&oid,data.bytes,data.length,GIT_OBJECT_BLOB); git_odb_free(odb);
       uint32_t mode=(opened.st_mode & S_IXUSR)?GIT_FILEMODE_BLOB_EXECUTABLE:GIT_FILEMODE_BLOB;
