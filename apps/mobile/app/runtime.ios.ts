@@ -8,6 +8,7 @@ import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
+import { runWorkingCopyCheck } from './working-copy-check.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -80,6 +81,14 @@ export async function checkCompatibility(): Promise<string> {
     phase = 'native-git-transport'
     operation = 'runGitCompatibilityCheck'
     git = await runGitCompatibilityCheck(runId)
+    phase = 'native-working-copy-status'
+    operation = 'runWorkingCopyCheck'
+    const gitEnvironment = NSProcessInfo.processInfo.environment
+    const workingCopyRoot = gitEnvironment.objectForKey('HOLI_GIT_FIXTURE_ROOT')
+    const workingCopyRemote = gitEnvironment.objectForKey('HOLI_GIT_FIXTURE_URL')
+    if (typeof workingCopyRoot !== 'string' || typeof workingCopyRemote !== 'string')
+      throw new Error('Missing working-copy fixture identity')
+    const workingCopy = await runWorkingCopyCheck(workingCopyRoot, workingCopyRemote, 'fixture-start')
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
@@ -268,6 +277,6 @@ export async function checkCompatibility(): Promise<string> {
       ...(git ? { git } : {}),
     }
   }
-  persist({ rawNames, ...evidence })
+  persist({ rawNames, workingCopy, ...evidence })
   return status
 }
