@@ -6,6 +6,7 @@
  * with no server, a check running on the machine of the person it restricts is
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
+import { realpathSync } from 'node:fs'
 import { lstat, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
@@ -65,6 +66,8 @@ import type { GitHubSession } from './github/session'
 import type { MdxTrustStore } from './mdx-trust'
 import { canonicalGitHubRemote } from './mdx-trust'
 import { createMdxDiagnostics } from './mdx-diagnostics'
+import type { MdxConsentStore } from './mdx-consent'
+import type { fetchMdxExternalData } from './mdx-external-data'
 import type { MdxResources } from './mdx-resources'
 import type { ActiveVault, SyncInfo, SyncState, VaultHost } from './vault/active-vault'
 import type { ActivityEntry, ActivityLog } from './activity/log'
@@ -150,8 +153,12 @@ export interface RouterDeps {
   session: GitHubSession
   /** The one machine-local MDX trust store, composed by main. */
   mdxTrust?: MdxTrustStore
-  /** Main invalidates view leases when its window is destroyed. */
-  onMdxDiagnosticsInvalidate?: (invalidate: () => void) => void
+  mdxConsent?: MdxConsentStore
+  mdxExternalFetch?: typeof fetchMdxExternalData
+  onMdxResourcesChanged?: (remote: string) => void
+  mdxApplicationReady?: () => boolean
+  /** Main invalidates view leases and trust contexts when its document retires. */
+  onMdxDiagnosticsInvalidate?: (invalidate: (retireDocument?: boolean) => void) => void
   /** Main permanently closes view leases when the app quits. */
   onMdxDiagnosticsClose?: (close: () => void) => void
   mdxCompiler?: MdxResources
@@ -1194,6 +1201,7 @@ export function createRouter(deps: RouterDeps) {
     requestedRemote: string,
   ): boolean {
     return (
+      deps.mdxApplicationReady?.() !== false &&
       deps.session.generation === context.accountGeneration &&
       String(deps.session.viewer?.accountId) === context.accountId &&
       context.remote === canonicalGitHubRemote(requestedRemote) &&
@@ -1211,7 +1219,21 @@ export function createRouter(deps: RouterDeps) {
     },
     authorize: (identity, remote) =>
       trustContextCurrent(identity as typeof trustContext & {}, remote),
-    root: rootFor,
+    root: async (remote, identity) => {
+      const active = identity.active as ActiveVault
+      const [registeredRoot, activeRoot] = await Promise.all([
+        rootFor(remote).then(realpath),
+        realpath(active.root),
+      ])
+      if (registeredRoot !== activeRoot) throw new Error('MDX vault root changed')
+      return activeRoot
+    },
+    rootCurrent: (identity, root) => realpathSync((identity.active as ActiveVault).root) === root,
+    external: deps.mdxConsent && {
+      consent: deps.mdxConsent,
+      fetch: deps.mdxExternalFetch,
+      changed: deps.onMdxResourcesChanged,
+    },
     trusted: (identity) =>
       deps.mdxTrust?.status({ accountId: identity.accountId, remote: identity.remote }) ??
       Promise.resolve(false),
@@ -1235,12 +1257,17 @@ export function createRouter(deps: RouterDeps) {
   }
 
   deps.session.onGenerationChange(() => mdxDiagnostics.invalidate())
-  deps.onMdxDiagnosticsInvalidate?.(() => mdxDiagnostics.invalidate())
+  deps.onMdxDiagnosticsInvalidate?.((retireDocument = true) => {
+    mdxTrustTransitionEpoch++
+    if (retireDocument) trustContext = null
+    mdxDiagnostics.invalidate()
+    deps.mdxCompiler?.invalidate()
+  })
   deps.onMdxDiagnosticsClose?.(() => mdxDiagnostics.close())
 
   const mdxTrust = t.router({
     status: t.procedure.input(fields({ remote: 'string' })).query(async ({ input }) => {
-      if (mdxTrustTransition > 0)
+      if (mdxTrustTransition > 0 || deps.mdxApplicationReady?.() === false)
         throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
       const viewer = deps.session.viewer
       if (
@@ -1265,6 +1292,7 @@ export function createRouter(deps: RouterDeps) {
       const current = () =>
         mdxTrustTransition === 0 &&
         mdxTrustTransitionEpoch === transitionEpoch &&
+        deps.mdxApplicationReady?.() !== false &&
         deps.session.generation === accountGeneration &&
         deps.session.viewer?.accountId === viewer.accountId &&
         deps.host.active() === active &&
@@ -1339,6 +1367,18 @@ export function createRouter(deps: RouterDeps) {
     releaseDiagnosticsLease: t.procedure
       .input(fields({ lease: 'string' }))
       .mutation(({ input }) => mdxDiagnostics.release(input)),
+    externalResources: t.procedure
+      .input(fields({ lease: 'string' }))
+      .query(({ input }) => mdxDiagnostics.externalResources(input)),
+    approveExternalResource: t.procedure
+      .input(fields({ lease: 'string', requestId: 'string' }))
+      .mutation(({ input }) => mdxDiagnostics.approveExternalResource(input)),
+    rejectExternalResource: t.procedure
+      .input(fields({ lease: 'string', requestId: 'string' }))
+      .mutation(({ input }) => mdxDiagnostics.rejectExternalResource(input)),
+    revokeExternalResource: t.procedure
+      .input(fields({ lease: 'string', grantId: 'string' }))
+      .mutation(({ input }) => mdxDiagnostics.revokeExternalResource(input)),
   })
 
   async function mutateTrust(

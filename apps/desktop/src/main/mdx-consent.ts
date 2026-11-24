@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { renameSync } from 'node:fs'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { MDX_RESOURCE_PURPOSE } from '@holi/shared'
 
 const VERSION = 1
-const PURPOSE = 'mdx-dependency-diagnostics' as const
 
 /** The trusted main caller supplies the canonical vault root, remote and verified account. */
 export interface MdxConsentScope {
@@ -16,6 +16,7 @@ export interface MdxConsentScope {
 
 export interface MdxConsentStore {
   allows(scope: MdxConsentScope): Promise<boolean>
+  listOrigins(owner: Omit<MdxConsentScope, 'origin'>): Promise<string[]>
   /** Pass a synchronous lifetime check for a document-bound approval. A retired approval rejects. */
   grant(scope: MdxConsentScope, stillOwned?: () => boolean): Promise<void>
   revoke(scope: MdxConsentScope): Promise<void>
@@ -50,7 +51,7 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
   const denied = new Set<string>()
   const revocations = new Map<string, symbol>()
   const key = (scope: MdxConsentScope) =>
-    JSON.stringify([scope.origin, PURPOSE, scope.root, scope.remote, scope.accountId])
+    JSON.stringify([scope.origin, MDX_RESOURCE_PURPOSE, scope.root, scope.remote, scope.accountId])
 
   const transact = <T>(work: () => Promise<T>): Promise<T> => {
     const result = queue.then(work)
@@ -117,6 +118,20 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
         } catch {
           return false
         }
+      })
+    },
+    listOrigins(owner) {
+      return transact(async () => {
+        const { grants } = await read()
+        return [
+          ...new Set(
+            grants.flatMap((grant) => {
+              if (key({ ...owner, origin: grant.origin }) !== key(grant) || denied.has(key(grant)))
+                return []
+              return [grant.origin]
+            }),
+          ),
+        ].sort()
       })
     },
     async grant(scope, stillOwned) {

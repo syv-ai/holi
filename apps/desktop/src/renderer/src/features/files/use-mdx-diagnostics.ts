@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { MdxCompileState, MdxDiagnostic } from '@holi/shared'
+import { MDX_RESOURCE_EVENTS, type MdxCompileState, type MdxDiagnostic } from '@holi/shared'
 import { setDiagnostics } from '@codemirror/lint'
 import type { EditorView } from '@codemirror/view'
 import { trpc } from '@/lib/trpc'
@@ -190,6 +190,17 @@ export function useMdxDiagnostics(input: Scope) {
     // `view` identity intentionally scopes lease; new editors receive new leases.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, clear, schedule, retryRevision, ownershipRevision])
+
+  useEffect(() => {
+    if (!remote || !trusted || !visible || !view) return
+    return window.holi?.plugin?.on(MDX_RESOURCE_EVENTS, (event) => {
+      if (event.name !== 'changed' || event.remote !== remote.toLowerCase()) return
+      const currentLease = lease.current
+      if (ownerScope.current !== scope || renderedScope.current !== scope || !active.current) return
+      if (currentLease && latestSource.current !== null)
+        schedule(view, latestSource.current, lifetime.current, currentLease, false, scope)
+    })
+  }, [remote, trusted, visible, view, scope, schedule])
 
   const sourceChanged = useCallback(
     (target: EditorView, source: string) => {
