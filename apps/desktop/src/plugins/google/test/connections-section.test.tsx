@@ -466,9 +466,12 @@ describe('the OAuth client', () => {
       await screen.findByText(/Holi’s client, which accepts syv.ai accounts only/),
     ).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Use your own client…' }))
-    expect(
-      screen.getByRole('dialog', { name: 'Your own OAuth client' }),
-    ).toHaveAccessibleDescription(/enable.*Google Drive.*APIs/i)
+    const setup = screen.getByRole('dialog', { name: 'Your own OAuth client' })
+    expect(setup).toHaveAccessibleDescription(/enable.*Google Drive.*APIs/i)
+    expect(setup).toHaveAccessibleDescription(
+      /consent screen.*https:\/\/www\.googleapis\.com\/auth\/drive(?=\.?(?:\s|$))/i,
+    )
+    expect(setup).toHaveAccessibleDescription(/drive\.file.*list and share.*existing files/i)
     await user.type(screen.getByLabelText('Client ID'), 'mine.apps.googleusercontent.com')
     await user.type(screen.getByLabelText('Client secret'), 's3cret')
     await user.click(screen.getByRole('button', { name: 'Save and disconnect 2 accounts' }))

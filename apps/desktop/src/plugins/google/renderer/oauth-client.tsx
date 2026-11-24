@@ -187,8 +187,11 @@ export function OAuthClient({
               <DialogTitle>Your own OAuth client</DialogTitle>
               <DialogDescription>
                 For a Google account outside syv.ai, create an OAuth client of type Desktop app.
-                Enable the Gmail, Google Calendar, Google Drive and People APIs in Google Cloud. The
-                client is kept on this machine and used by every vault here.
+                Enable the Gmail, Google Calendar, Google Drive and People APIs in Google Cloud. On
+                the OAuth consent screen, add the full Drive scope{' '}
+                <code className="wrap-anywhere">https://www.googleapis.com/auth/drive</code>. The{' '}
+                <code>drive.file</code> scope can’t list and share arbitrary existing files in
+                Drive. The client is kept on this machine and used by every vault here.
               </DialogDescription>
             </DialogHeader>
             <Button
