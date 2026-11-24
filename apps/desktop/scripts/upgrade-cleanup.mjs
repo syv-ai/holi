@@ -24,7 +24,6 @@ export async function cleanupUpgradeFixture({ resources, owned, command, runtime
     vaultRoot,
   } = resources
   const report = {}
-  const ownRuntimePids = runtimePids
   async function waitForRuntimeDrain() {
     const deadline = Date.now() + 15_000
     while ((await runtimePids()).length) {

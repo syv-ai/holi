@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createServer } from 'node:http'
 import { createReadStream } from 'node:fs'
-import { copyFile, lstat, mkdir, mkdtemp, realpath, rm, statfs, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, mkdtemp, realpath, statfs, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -130,70 +130,7 @@ async function attach(child) {
   return inspector.frame
 }
 
-async function main() {
-  assert(process.argv.length === 2, 'no local options or overrides are supported')
-  assert(
-    process.env.GITHUB_ACTIONS === 'true' &&
-      process.env.RUNNER_ENVIRONMENT === 'github-hosted' &&
-      process.platform === 'darwin' &&
-      process.arch === 'arm64' &&
-      userInfo().username === 'runner',
-    'requires a fresh GitHub-hosted macOS arm64 runner; local execution is forbidden',
-  )
-  profile = join(homedir(), 'Library', 'Application Support', 'Holi')
-  vaultRoot = join(homedir(), 'Holi')
-  assert(
-    (await absent(profile)) &&
-      (await absent(vaultRoot)) &&
-      (await absent('/Applications/Holi.app')),
-    'refusing existing Holi data or installation',
-  )
-  const running = await command('/usr/bin/pgrep', ['-x', 'Holi']).catch((error) => {
-    if (error.code === 1) return { stdout: '' }
-    throw error
-  })
-  assert(!running.stdout.trim(), 'refusing an existing Holi process')
-  const shipit = await command('/usr/bin/pgrep', ['-f', 'ai.syv.holi.ShipIt']).catch((error) => {
-    if (error.code === 1) return { stdout: '' }
-    throw error
-  })
-  assert(!shipit.stdout.trim(), 'refusing an existing Holi installer')
-  const disk = await statfs(tmpdir())
-  assert(disk.bavail * disk.bsize >= 6 * 1024 ** 3, 'insufficient native fixture disk space')
-  assert(process.env.RUNNER_TEMP, 'RUNNER_TEMP is required')
-  evidence = join(process.env.RUNNER_TEMP, 'holi-565-evidence')
-  await mkdir(evidence, { mode: 0o700 })
-  root = await realpath(await mkdtemp(join(tmpdir(), 'holi-565-native-')))
-  const scratch = join(root, 'installer-guard')
-  await mkdir(scratch, { mode: 0o700 })
-  const binary = join(scratch, 'upgrade-installer')
-  await command('/usr/bin/xcrun', [
-    'swiftc',
-    join(desktop, 'scripts', 'upgrade-installer.swift'),
-    '-o',
-    binary,
-  ])
-  firstObserverBinary = join(scratch, 'upgrade-first-target')
-  await owned.run(
-    '/usr/bin/xcrun',
-    [
-      'swiftc',
-      '-parse-as-library',
-      join(desktop, 'scripts', 'upgrade-first-target.swift'),
-      '-o',
-      firstObserverBinary,
-    ],
-    { timeoutMs: 60_000, signal: abort.signal, label: 'compile owned first-target observer' },
-  )
-  const label = 'ai.syv.holi.ShipIt'
-  installer = createUpgradeInstaller({
-    binary,
-    artifact: join(root, 'installed', 'Holi.app'),
-    statePath: installerStatePath(label),
-    label,
-  })
-  await installer.assertAbsent()
-  installerGuardReady = true
+async function prepareSignedArtifacts() {
   await checkpoint('download-signed-artifact')
   const old = JSON.parse(
     (await command('gh', ['release', 'view', oldTag, '--repo', 'syv-ai/holi', '--json', 'assets']))
@@ -316,61 +253,10 @@ async function main() {
       },
     },
   })
-  // ShipIt deliberately relaunches without our argv/environment. Only this fresh
-  // disposable OS account makes its normal default-profile launch safe.
-  await mkdir(profile, { recursive: true, mode: 0o700 })
-  await mkdir(vaultRoot, { recursive: true, mode: 0o700 })
-  ownsProfile = true
-  await writeFile(join(profile, 'updates.json'), JSON.stringify({ enabled: true, channel: 'dev' }))
-  const child = owned.start(
-    join(artifact, 'Contents', 'MacOS', 'Holi'),
-    ['--inspect-brk=127.0.0.1:0'],
-    {
-      cwd: root,
-      env: {
-        HOME: homedir(),
-        PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
-        TMPDIR: tmpdir(),
-        ...providers.env,
-      },
-    },
-  )
-  appStarted = true
-  await attach(child)
-  const initial = await evaluate(
-    `(() => {
-    const { app } = require('electron');
-    return { packaged: app.isPackaged, version: app.getVersion(), profile: app.getPath('userData') };
-  })()`,
-  )
-  assert(
-    initial.packaged && initial.version === '0.8.1-dev.275' && initial.profile === profile,
-    'unexpected packaged app profile/version',
-  )
-  await evaluate(
-    `(() => {
-    const { app } = require('electron');
-    require('electron-updater').autoUpdater.setFeedURL({ provider: 'generic', url: ${JSON.stringify(feedUrl)} });
-    const fs = require('node:fs/promises');
-    const original = fs.readFile;
-    let release;
-    const seeded = new Promise(resolve => { release = resolve; });
-    globalThis.__holi565 = { seeded: false };
-    fs.readFile = async function(file, ...args) {
-      if (String(file) === ${JSON.stringify(join(profile, 'github-auth.enc'))}) await seeded;
-      return original.call(this, file, ...args);
-    };
-    app.once('ready', async () => {
-      try {
-        globalThis.__holi565.receipt = await require(${JSON.stringify(join(bundle, 'producer.cjs'))}).seedConnections(${JSON.stringify(profile)}, ${JSON.stringify(vaultRoot)});
-        globalThis.__holi565.seeded = true;
-      } catch (error) { globalThis.__holi565.failed = { type: error.name, code: /^[A-Z_]+$/.test(error.code || '') ? error.code : null }; }
-      finally { fs.readFile = original; release(); }
-    });
-    return true;
-  })()`,
-  )
-  await inspector.resume()
+  return { bundle, feedUrl }
+}
+
+async function observeBeforeUpgrade() {
   await checkpoint('actual-authenticated-startup')
   const seeded = await wait('native-credential-seeding', async () => {
     const state = await evaluate('globalThis.__holi565')
@@ -431,6 +317,130 @@ async function main() {
     () => renderer('document.body.innerText.includes("Restart to update")'),
     600_000,
   )
+  return seeded
+}
+
+async function main() {
+  assert(process.argv.length === 2, 'no local options or overrides are supported')
+  assert(
+    process.env.GITHUB_ACTIONS === 'true' &&
+      process.env.RUNNER_ENVIRONMENT === 'github-hosted' &&
+      process.platform === 'darwin' &&
+      process.arch === 'arm64' &&
+      userInfo().username === 'runner',
+    'requires a fresh GitHub-hosted macOS arm64 runner; local execution is forbidden',
+  )
+  profile = join(homedir(), 'Library', 'Application Support', 'Holi')
+  vaultRoot = join(homedir(), 'Holi')
+  assert(
+    (await absent(profile)) &&
+      (await absent(vaultRoot)) &&
+      (await absent('/Applications/Holi.app')),
+    'refusing existing Holi data or installation',
+  )
+  const running = await command('/usr/bin/pgrep', ['-x', 'Holi']).catch((error) => {
+    if (error.code === 1) return { stdout: '' }
+    throw error
+  })
+  assert(!running.stdout.trim(), 'refusing an existing Holi process')
+  const shipit = await command('/usr/bin/pgrep', ['-f', 'ai.syv.holi.ShipIt']).catch((error) => {
+    if (error.code === 1) return { stdout: '' }
+    throw error
+  })
+  assert(!shipit.stdout.trim(), 'refusing an existing Holi installer')
+  const disk = await statfs(tmpdir())
+  assert(disk.bavail * disk.bsize >= 6 * 1024 ** 3, 'insufficient native fixture disk space')
+  assert(process.env.RUNNER_TEMP, 'RUNNER_TEMP is required')
+  evidence = join(process.env.RUNNER_TEMP, 'holi-565-evidence')
+  await mkdir(evidence, { mode: 0o700 })
+  root = await realpath(await mkdtemp(join(tmpdir(), 'holi-565-native-')))
+  const scratch = join(root, 'installer-guard')
+  await mkdir(scratch, { mode: 0o700 })
+  const binary = join(scratch, 'upgrade-installer')
+  await command('/usr/bin/xcrun', [
+    'swiftc',
+    join(desktop, 'scripts', 'upgrade-installer.swift'),
+    '-o',
+    binary,
+  ])
+  firstObserverBinary = join(scratch, 'upgrade-first-target')
+  await owned.run(
+    '/usr/bin/xcrun',
+    [
+      'swiftc',
+      '-parse-as-library',
+      join(desktop, 'scripts', 'upgrade-first-target.swift'),
+      '-o',
+      firstObserverBinary,
+    ],
+    { timeoutMs: 60_000, signal: abort.signal, label: 'compile owned first-target observer' },
+  )
+  const label = 'ai.syv.holi.ShipIt'
+  installer = createUpgradeInstaller({
+    binary,
+    artifact: join(root, 'installed', 'Holi.app'),
+    statePath: installerStatePath(label),
+    label,
+  })
+  await installer.assertAbsent()
+  installerGuardReady = true
+  const { bundle, feedUrl } = await prepareSignedArtifacts()
+  // ShipIt deliberately relaunches without our argv/environment. Only this fresh
+  // disposable OS account makes its normal default-profile launch safe.
+  await mkdir(profile, { recursive: true, mode: 0o700 })
+  await mkdir(vaultRoot, { recursive: true, mode: 0o700 })
+  ownsProfile = true
+  await writeFile(join(profile, 'updates.json'), JSON.stringify({ enabled: true, channel: 'dev' }))
+  const child = owned.start(
+    join(artifact, 'Contents', 'MacOS', 'Holi'),
+    ['--inspect-brk=127.0.0.1:0'],
+    {
+      cwd: root,
+      env: {
+        HOME: homedir(),
+        PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+        TMPDIR: tmpdir(),
+        ...providers.env,
+      },
+    },
+  )
+  appStarted = true
+  await attach(child)
+  const initial = await evaluate(
+    `(() => {
+    const { app } = require('electron');
+    return { packaged: app.isPackaged, version: app.getVersion(), profile: app.getPath('userData') };
+  })()`,
+  )
+  assert(
+    initial.packaged && initial.version === '0.8.1-dev.275' && initial.profile === profile,
+    'unexpected packaged app profile/version',
+  )
+  await evaluate(
+    `(() => {
+    const { app } = require('electron');
+    require('electron-updater').autoUpdater.setFeedURL({ provider: 'generic', url: ${JSON.stringify(feedUrl)} });
+    const fs = require('node:fs/promises');
+    const original = fs.readFile;
+    let release;
+    const seeded = new Promise(resolve => { release = resolve; });
+    globalThis.__holi565 = { seeded: false };
+    fs.readFile = async function(file, ...args) {
+      if (String(file) === ${JSON.stringify(join(profile, 'github-auth.enc'))}) await seeded;
+      return original.call(this, file, ...args);
+    };
+    app.once('ready', async () => {
+      try {
+        globalThis.__holi565.receipt = await require(${JSON.stringify(join(bundle, 'producer.cjs'))}).seedConnections(${JSON.stringify(profile)}, ${JSON.stringify(vaultRoot)});
+        globalThis.__holi565.seeded = true;
+      } catch (error) { globalThis.__holi565.failed = { type: error.name, code: /^[A-Z_]+$/.test(error.code || '') ? error.code : null }; }
+      finally { fs.readFile = original; release(); }
+    });
+    return true;
+  })()`,
+  )
+  await inspector.resume()
+  const seeded = await observeBeforeUpgrade()
   // A normal DOM click invokes the renderer's install atom, tRPC mutation and
   // main's guarded shutdown. No installer/download method is replaced.
   upgradeNotBeforeMicros = Date.now() * 1000
