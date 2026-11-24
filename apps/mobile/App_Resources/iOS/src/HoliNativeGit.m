@@ -215,16 +215,25 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   NSFileManager *fileManager = NSFileManager.defaultManager;
   while (directories.count) {
     NSString *directory = directories.lastObject; [directories removeLastObject];
-    NSArray<NSString *> *entries = [fileManager contentsOfDirectoryAtPath:directory error:nil];
-    if (!entries) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+    NSError *listingError = nil;
+    NSArray<NSString *> *entries = [fileManager contentsOfDirectoryAtPath:directory error:&listingError];
+    if (!entries) { if(error)*error=listingError ?: HNGPathError(EIO,@"Cannot inspect repository metadata"); return NULL; }
     for (NSString *entry in entries) {
       NSString *path = [directory stringByAppendingPathComponent:entry]; struct stat item;
       if (lstat(path.fileSystemRepresentation, &item) != 0 || S_ISLNK(item.st_mode)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
-      if (S_ISDIR(item.st_mode) && ![path isEqualToString:[metadata stringByAppendingPathComponent:@"objects/info"]]) [directories addObject:path];
+      if (S_ISDIR(item.st_mode)) [directories addObject:path];
+      else if (!S_ISREG(item.st_mode)) { if(error)*error=HNGPathError(EINVAL,@"Repository metadata must contain only regular files and directories"); return NULL; }
       if ([path isEqualToString:[metadata stringByAppendingPathComponent:@"objects/info/alternates"]] || [path isEqualToString:[metadata stringByAppendingPathComponent:@"objects/info/http-alternates"]]) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
       if ([entry isEqualToString:@"commondir"] || [entry isEqualToString:@"config.worktree"] || [entry isEqualToString:@"worktrees"]) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
       if ([entry isEqualToString:@"config"]) {
-        NSData *data = [NSData dataWithContentsOfFile:path]; NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+        int configDirFD = open(directory.fileSystemRepresentation, O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+        int configFD = configDirFD >= 0 ? openat(configDirFD, entry.fileSystemRepresentation, O_RDONLY|O_NOFOLLOW|O_NONBLOCK) : -1;
+        if (configDirFD >= 0) close(configDirFD);
+        struct stat configStat; NSMutableData *data = [NSMutableData data]; uint8_t configBuffer[4096]; ssize_t configRead = 0;
+        BOOL validConfig = configFD >= 0 && fstat(configFD, &configStat) == 0 && S_ISREG(configStat.st_mode) && configStat.st_size <= 1024 * 1024;
+        if (validConfig) while ((configRead = read(configFD, configBuffer, sizeof(configBuffer))) > 0) [data appendBytes:configBuffer length:(NSUInteger)configRead];
+        if (configFD >= 0) close(configFD);
+        NSString *text = validConfig && configRead == 0 ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
         if (!text || [text rangeOfString:@"include" options:NSCaseInsensitiveSearch].location != NSNotFound || [text rangeOfString:@"core.worktree" options:NSCaseInsensitiveSearch].location != NSNotFound || [text rangeOfString:@"extensions." options:NSCaseInsensitiveSearch].location != NSNotFound) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
       }
     }
@@ -268,7 +277,8 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); return out;
 }
 - (BOOL)authorizeWorkingCopyPath:(NSString *)path root:(NSString *)root error:(NSError **)error {
-  if(path.length==0 || [path hasPrefix:@"/"] || [path containsString:@".."] || [path containsString:@"\\"]){ if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NO; }
+  NSArray<NSString *> *parts = nil;
+  if (!HNGPathParts(path, &parts)) { if(error)*error=HNGPathError(EINVAL,@"Invalid working-tree path"); return NO; }
   NSString *full=[root stringByAppendingPathComponent:path]; char resolved[PATH_MAX]; if(!realpath(full.fileSystemRepresentation,resolved)) { if(errno==ENOENT)return YES; if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:errno userInfo:nil]; return NO; }
   NSString *canonicalRoot=[self canonicalRoot:root error:error]; return canonicalRoot && [[NSString stringWithUTF8String:resolved] hasPrefix:[canonicalRoot stringByAppendingString:@"/"]];
 }
@@ -314,15 +324,17 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
     for(int stage=1;stage<=3;stage++) if(git_index_get_bypath(index,p,stage)){conflict=YES;break;}
     const git_tree_entry *headEntry=NULL; if(tree){ rc=git_tree_entry_bypath((git_tree_entry **)&headEntry,tree,p); if(rc==GIT_ENOTFOUND)rc=0; else if(rc<0){if(error)HNGError(error,rc);changes=nil;break;} }
     BOOL staged = conflict || ((headEntry!=NULL)!=(stage0!=NULL)) || (headEntry&&stage0&&(!git_oid_equal(git_tree_entry_id(headEntry),&stage0->id)||git_tree_entry_filemode(headEntry)!=stage0->mode));
-    BOOL worktree=NO; int parent=HNGOpenParent(rootFD,parts); struct stat st; int statResult=parent<0?-1:fstatat(parent,parts.lastObject.fileSystemRepresentation,&st,AT_SYMLINK_NOFOLLOW);
-    if(statResult<0 && errno!=ENOENT){ if(error)*error=HNGPathError(errno,@"Cannot inspect working-tree path"); changes=nil; if(parent>=0)close(parent); break; }
+    BOOL worktree=NO; int parent=HNGOpenParent(rootFD,parts); struct stat st; int parentError = errno; int statResult=parent<0?-1:fstatat(parent,parts.lastObject.fileSystemRepresentation,&st,AT_SYMLINK_NOFOLLOW);
+    BOOL missing = (statResult < 0 && (errno == ENOENT || errno == ENOTDIR)) || (parent < 0 && (parentError == ENOENT || parentError == ENOTDIR));
+    if(statResult<0 && !missing){ if(error)*error=HNGPathError(errno,@"Cannot inspect working-tree path"); changes=nil; if(parent>=0)close(parent); break; }
     if(statResult==0){
       if(S_ISLNK(st.st_mode)){ if(error)*error=HNGPathError(EINVAL,@"Symbolic links are not supported in status paths"); changes=nil; close(parent); break; }
       if(!S_ISREG(st.st_mode)){ if(error)*error=HNGPathError(EINVAL,@"Only regular files are supported in status paths"); changes=nil; close(parent); break; }
       int fd=openat(parent,parts.lastObject.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW); close(parent);
       if(fd<0){if(error)*error=HNGPathError(errno,@"Cannot safely read working-tree file");changes=nil;break;}
       struct stat opened; if(fstat(fd,&opened)||!S_ISREG(opened.st_mode)){close(fd);if(error)*error=HNGPathError(EINVAL,@"Working-tree file changed during status");changes=nil;break;}
-      NSMutableData *data=[NSMutableData data]; uint8_t buffer[16384]; ssize_t n; while((n=read(fd,buffer,sizeof(buffer)))>0)[data appendBytes:buffer length:(NSUInteger)n]; int readError=errno; close(fd);
+      if (opened.st_size < 0 || opened.st_size > 64 * 1024 * 1024) { close(fd); if(error)*error=HNGPathError(EFBIG,@"Working-tree file exceeds the 64 MiB status limit"); changes=nil; break; }
+      NSMutableData *data=[NSMutableData dataWithCapacity:(NSUInteger)opened.st_size]; uint8_t buffer[16384]; ssize_t n; while((n=read(fd,buffer,sizeof(buffer)))>0) { if (data.length + (NSUInteger)n > 64 * 1024 * 1024) { n = -1; errno = EFBIG; break; } [data appendBytes:buffer length:(NSUInteger)n]; } int readError=errno; close(fd);
       if(n<0){if(error)*error=HNGPathError(readError,@"Cannot read working-tree file");changes=nil;break;}
       git_oid oid; git_odb *odb=NULL; rc=git_repository_odb(&odb,repo); if(rc==0)rc=git_odb_hash(&oid,data.bytes,data.length,GIT_OBJECT_BLOB); git_odb_free(odb);
       uint32_t mode=(opened.st_mode & S_IXUSR)?GIT_FILEMODE_BLOB_EXECUTABLE:GIT_FILEMODE_BLOB;
