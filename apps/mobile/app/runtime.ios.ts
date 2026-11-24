@@ -4,6 +4,8 @@ import { createNativeFiles, nativeFiles } from './native-files.ios'
 import { runVaultStorageCheck } from './vault-storage-check'
 import { nativeIO } from './native-posix.ios'
 import { createVaultStorage } from './vault-storage'
+import { noteMetadataSettings } from './note-metadata-settings.ios'
+import { createNoteMetadata } from './note-metadata'
 import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
@@ -19,6 +21,14 @@ function nativeUtf8(text: string): Uint8Array {
 /** The only iOS adapter: launch identity, native encoding and sandbox evidence. */
 export async function checkCompatibility(): Promise<string> {
   const startedAt = Date.now()
+  const metadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
+  metadata.recent('diagnostic.md')
+  if (!metadata.visible(['diagnostic.md']).recents.includes('diagnostic.md'))
+    throw new Error('Note metadata persistence check failed')
+  const restoredMetadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
+  if (!restoredMetadata.visible(['diagnostic.md']).recents.includes('diagnostic.md'))
+    throw new Error('Note metadata reconstruction check failed')
+  restoredMetadata.remove('diagnostic.md')
   const runId = NSProcessInfo.processInfo.environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
   const launchPhase =
     NSProcessInfo.processInfo.environment.objectForKey('HOLI_STORAGE_PHASE') ?? 'normal'
