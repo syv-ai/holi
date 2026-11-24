@@ -90,7 +90,7 @@ describe('upgrade inspector diagnostics', () => {
         targetCrashed: true,
         targetDetached: true,
         debuggerDisconnected: true,
-        childExit: { code: 17, signal: 'SIGTERM' },
+        childExit: { code: 17, signal: null },
       })
     } finally {
       vi.unstubAllGlobals()
