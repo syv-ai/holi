@@ -10,6 +10,9 @@ on:
       - apps/desktop/scripts/tsconfig.upgrade-connections.json
       - apps/desktop/scripts/connection-upgrade-provider.mjs
       - apps/desktop/scripts/upgrade-inspector.mjs
+      - apps/desktop/scripts/upgrade-installer.mjs
+      - apps/desktop/scripts/upgrade-installer.swift
+      - apps/desktop/test/upgrade-installer.test.ts
       - apps/desktop/test/upgrade-connection-safety.test.ts
       - apps/desktop/test/upgrade-providers.test.ts
       - apps/desktop/test/upgrade-inspector.test.ts

@@ -31,4 +31,4 @@ guard let requestData = try? Data(contentsOf: URL(fileURLWithPath: state)), let 
 var error: Unmanaged<CFError>?
 guard SMJobRemove(kSMDomainUserLaunchd, label as CFString, nil, true, &error) else { fail("job removal failed") }
 guard matchingJob() == nil else { fail("job restarted or remains") }
-print("{\"removed\":true}")
+print("{\"present\":false,\"removed\":true}")

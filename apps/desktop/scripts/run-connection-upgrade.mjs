@@ -586,8 +586,8 @@ try {
   if (failures.length) {
     receipt.cleanup = {
       failures,
-      filesRetained: !(drained && installerDrained),
-      root: !(drained && installerDrained) ? root : undefined,
+      filesRetained: !deletionAllowed,
+      root: !deletionAllowed ? root : undefined,
     }
     if (evidence) await checkpoint(receipt.phase).catch(() => {})
     console.error('Owned upgrade fixture cleanup failed; see sanitised cleanup receipt')
