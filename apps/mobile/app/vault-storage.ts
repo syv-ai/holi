@@ -9,8 +9,8 @@ import {
   type VaultRelPath,
 } from '@holi/shared/mobile-path-safety'
 import type { NativeFiles, StorageCheckpointCallback } from './native-files'
-import { moveNote, recoverMoves } from './storage-move'
-import { withVaultLock } from './vault-lock'
+import { moveNote } from './storage-move'
+import { withVaultOperation, validateStoragePath as validatePath } from './operation-gate'
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((byte, index) => byte === right[index])
@@ -19,18 +19,6 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 export type Revision = string
 export type StoredDocument = { path: VaultRelPath; bytes: Uint8Array; revision: Revision }
 
-function validatePath(raw: string): VaultRelPath {
-  const path = vaultRelPath(raw)
-  if (
-    isSecretPath(path) ||
-    isInIgnoredDir(path) ||
-    path.split('/').some((part) => part.startsWith('.holi-storage-')) ||
-    !shownPathOrNull(path)
-  ) {
-    throw new Error('Path is not available to vault storage')
-  }
-  return path
-}
 function revision(bytes: Uint8Array): Revision {
   // The token encodes the full content, so even a hash collision cannot admit stale bytes.
   let encoded = `${bytes.length}:`
@@ -45,15 +33,8 @@ export function createVaultStorage(
   options: { checkpoint?: StorageCheckpointCallback } = {},
 ) {
   if (!isRemote(vault.remote)) throw new Error('Invalid vault identity')
-  let canonical: Promise<string> | undefined
-  const rootPath = () => (canonical ??= adapter.canonicalRoot(vault.root))
   const serialize = <T>(work: (root: string) => Promise<T>) =>
-    rootPath().then((resolved) =>
-      withVaultLock(resolved, async () => {
-        await recoverMoves(adapter, resolved, validatePath, options.checkpoint)
-        return work(resolved)
-      }),
-    )
+    withVaultOperation(adapter, vault.root, work, options.checkpoint)
 
   return {
     async list(): Promise<VaultRelPath[]> {
