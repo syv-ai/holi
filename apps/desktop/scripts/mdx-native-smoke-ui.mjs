@@ -1,0 +1,103 @@
+export function createMdxSmokeUi(signal) {
+  async function delay(ms) {
+    await new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  async function waitFor(fn, label, timeout = 30000) {
+    const deadline = Date.now() + timeout
+    let last
+    while (Date.now() < deadline) {
+      signal.throwIfAborted()
+      try {
+        last = await fn()
+        if (last) return last
+      } catch {}
+      await delay(100)
+    }
+    throw new Error(`Timed out waiting for ${label}; last=${JSON.stringify(last)}`)
+  }
+
+  async function clickPointerAt(page, point) {
+    await page.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+    for (const type of ['mousePressed', 'mouseReleased'])
+      await page.call('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 })
+  }
+
+  async function findInFile(page, text) {
+    const point = await waitFor(
+      () =>
+        page.evaluate(`(() => {
+        const editor = document.querySelector('.cm-content');
+        if (!editor) return null;
+        const { left, top, width, height } = editor.getBoundingClientRect();
+        const x = left + width / 2, y = top + height / 2;
+        return editor.contains(document.elementFromPoint(x, y)) ? { x, y } : null;
+      })()`),
+      'visible CodeMirror content to click before Find',
+    )
+    await clickPointerAt(page, point)
+    const editorFocused = `document.hasFocus() && document.activeElement?.matches('.cm-content')`
+    await waitFor(() => page.evaluate(editorFocused), 'CodeMirror focus after pointer click')
+    const press = async (key, code, windowsVirtualKeyCode, modifiers = 0) => {
+      for (const type of ['keyDown', 'keyUp'])
+        await page.call('Input.dispatchKeyEvent', {
+          type,
+          key,
+          code,
+          windowsVirtualKeyCode,
+          modifiers,
+        })
+    }
+    const bar = '[role="search"][aria-label="Find in file"]'
+    await press('f', 'KeyF', 70, process.platform === 'darwin' ? 4 : 2)
+    await waitFor(
+      () => page.evaluate(`!!document.activeElement?.closest(${JSON.stringify(bar)})`),
+      'focused Find in file field',
+    )
+    await page.call('Input.insertText', { text })
+    const selectionMatches = `(() => {
+      const { state } = window.__mdxSmoke.editor();
+      const { from, to } = state.selection.main;
+      return state.sliceDoc(from, to) === ${JSON.stringify(text)};
+    })()`
+    await waitFor(
+      () => page.evaluate(selectionMatches),
+      'Find in file selects the matching MDX source text',
+    )
+    await press('Escape', 'Escape', 27)
+    await waitFor(
+      () =>
+        page.evaluate(
+          `!document.querySelector(${JSON.stringify(bar)}) && ${editorFocused} && ${selectionMatches}`,
+        ),
+      'Find in file closed and returned focus to the selected MDX match',
+    )
+  }
+
+  function cleanDiagnostics(page) {
+    return page.evaluate(`
+      [...document.querySelectorAll('[aria-live="polite"]')].some(el => el.textContent.includes('syntax is valid')) &&
+      window.__mdxSmoke.diagnostics().length === 0
+    `)
+  }
+
+  async function settledPaint(page) {
+    await page.evaluate(
+      `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`,
+    )
+  }
+
+  async function windowStatus(page) {
+    return await page.evaluate(`window.holiSmoke.call('smoke:status')`)
+  }
+
+  return {
+    delay,
+    waitFor,
+    clickPointerAt,
+    findInFile,
+    cleanDiagnostics,
+    settledPaint,
+    windowStatus,
+  }
+}

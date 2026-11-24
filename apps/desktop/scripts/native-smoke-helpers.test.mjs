@@ -4,9 +4,21 @@ import test from 'node:test'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
+import { createMdxSmokeUi } from './mdx-native-smoke-ui.mjs'
 import { encodeScreencast } from './native-smoke-recording.mjs'
 import { rowSnapshotExpression } from './native-smoke-row-snapshot.mjs'
 import { assertExclusiveRowHover, assertStableRowBoxes } from './native-smoke-row-assertions.mjs'
+
+test('native mdx readiness returns its result and stops on run cancellation', async () => {
+  const controller = new AbortController()
+  const { waitFor } = createMdxSmokeUi(controller.signal)
+  const ready = { ready: true }
+  assert.equal(await waitFor(() => ready, 'ready fixture'), ready)
+  const pending = waitFor(() => false, 'pending fixture', 1000)
+  const reason = new Error('fixture interrupted')
+  controller.abort(reason)
+  await assert.rejects(pending, (error) => error === reason)
+})
 
 test('snapshots folder and file rows through one path-parameterized browser expression', () => {
   for (const path of ['nested', 'notes/brief.md']) {
