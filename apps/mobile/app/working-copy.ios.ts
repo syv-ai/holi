@@ -1,4 +1,7 @@
 import type { NativeWorkingCopy } from './working-copy'
+import { legacyStagingDirectory, stagingDirectory } from './storage-staging'
+import { nativeIO } from './native-posix.ios'
+import { knownFolders } from '@nativescript/core'
 
 function checked<T>(operation: (error: interop.Reference<NSError>) => T): T {
   const error = new interop.Reference<NSError>()
@@ -27,7 +30,31 @@ function text(value: unknown): string {
 }
 
 function flag(value: unknown): boolean {
-  return Boolean(value)
+  if (value === null || value === undefined || value === NSNull.null()) return false
+  if (value === true || value === false) return value
+  if (value instanceof NSNumber) return value.boolValue
+  return false
+}
+
+async function hasPendingRecovery(root: string): Promise<boolean> {
+  const library = nativeIO.canonical(knownFolders.ios.library().path)
+  const canonicalRoot = nativeIO.canonical(root)
+  const current = stagingDirectory(library, canonicalRoot)
+  const legacy = legacyStagingDirectory(library, canonicalRoot)
+  for (const directory of [current, legacy]) {
+    const kind = nativeIO.kind(directory)
+    if (kind === null) continue
+    if (kind !== 'directory') throw new Error('Unsafe working-copy recovery namespace')
+    if (nativeIO.canonical(directory) !== directory) throw new Error('Unsafe working-copy recovery namespace')
+    for (const name of nativeIO.names(directory)) {
+      if (name === '.' || name === '..' || name.includes('/')) throw new Error('Unsafe recovery entry')
+      const entry = `${directory}/${name}`
+      const entryKind = nativeIO.kind(entry)
+      if (entryKind !== 'file' || nativeIO.canonical(entry) !== entry) throw new Error('Unsafe recovery entry')
+      if (name.endsWith('.journal')) return true
+    }
+  }
+  return false
 }
 
 function statusRows(rows: Record<string, unknown>[]) {
@@ -75,8 +102,8 @@ export const nativeWorkingCopy: NativeWorkingCopy = {
       HoliNativeGit.alloc().init().authorizeWorkingCopyPathRootError(path, root, error),
     )
   },
-  async hasPendingRecovery(root) {
-    return checked((error) => HoliNativeGit.alloc().init().hasPendingRecoveryError(root, error))
+  async recoveryPending(root) {
+    return hasPendingRecovery(root)
   },
   async status(root, paths) {
     const nativePaths = NSMutableArray.alloc<string>().init()

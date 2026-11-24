@@ -11,7 +11,7 @@ function adapter(overrides: Partial<NativeWorkingCopy> = {}) {
       calls.push(`authorize:${path}`)
       return true
     },
-    hasPendingRecovery: async () => false,
+    recoveryPending: async () => false,
     status: async (_root, paths) => {
       calls.push(`status:${paths.join(',')}`)
       return paths.map((path) => ({ path, staged: false, worktree: true, conflict: false }))
@@ -42,7 +42,7 @@ describe('working copy status', () => {
 
   it('refuses pending recovery and mismatched or detached identities before inspecting candidates', async () => {
     for (const override of [
-      { hasPendingRecovery: async () => true },
+      { recoveryPending: async () => true },
       { identity: async () => ({ remotes: ['holi/other'], branch: 'main', attached: true }) },
       { identity: async () => ({ remotes: ['holi/vault'], branch: 'other', attached: true }) },
       { identity: async () => ({ remotes: ['holi/vault'], branch: 'main', attached: false }) },
