@@ -699,3 +699,110 @@ test('Codex checks the final worker claim and every ordered pre-launch lease', a
     await rm(root, { recursive: true })
   }
 })
+
+function sandboxProbe() {
+  const proof = completeProbe('/pinned/codex', '/fixture/vault')
+  const names = ['sandbox-read-only', 'sandbox-workspace', 'sandbox-outside', 'sandbox-network']
+  const scenarios = names.map((name) => {
+    const row = structuredClone(proof.scenarios[0])
+    row.name = name
+    row.platform = 'darwin'
+    row.platformRelease = '25.0.0'
+    row.arch = 'arm64'
+    const nonce = 'fixture-nonce'
+    const statuses =
+      name === 'sandbox-workspace' ? [0, 0, 0] : name === 'sandbox-network' ? [7] : [1, 1]
+    const url = 'http://127.0.0.1:12345/tool-fixture'
+    const command = `node fixture-${nonce} ${url}`
+    const nativeCommand = {
+      type: 'command_execution',
+      status: 'completed',
+      exit_code: 0,
+      command,
+      aggregated_output: statuses.map((code, i) => `HOLI_ATTEMPT_${i}=${code}`).join('\n'),
+    }
+    row.sandbox = {
+      command,
+      nonce,
+      nativeCommand,
+      statuses,
+      before: 'original',
+      after: name === 'sandbox-workspace' ? nonce : 'original',
+      created: name === 'sandbox-workspace',
+      createdContent: name === 'sandbox-workspace' ? nonce : null,
+      additionalContent: name === 'sandbox-workspace' ? nonce : null,
+      url,
+      controlRequests: 1,
+      networkRequests: 0,
+    }
+    row.requests = [
+      { url: '/v1/responses' },
+      {
+        url: '/v1/responses',
+        body: JSON.stringify({
+          input: [
+            {
+              type: 'function_call_output',
+              call_id: 'call_sandbox',
+              output: nativeCommand.aggregated_output,
+            },
+          ],
+        }),
+      },
+    ]
+    const raw = row.rawProcesses[0]
+    raw.stdout += '\n' + JSON.stringify({ type: 'item.completed', item: nativeCommand })
+    raw.stdoutBytes = Buffer.byteLength(raw.stdout)
+    raw.outputLines = raw.stdout.split('\n').length - 1
+    return row
+  })
+  proof.scenarios.unshift(...scenarios)
+  return proof
+}
+
+test('sandbox proof requires all native enforcement scenarios, not the baseline producer', () => {
+  assert.match(
+    validateNativeProof(completeProbe('/pinned/codex', '/fixture/vault'), '/pinned/codex', true),
+    /incomplete/,
+  )
+  assert.equal(validateNativeProof(sandboxProbe(), '/pinned/codex', true), null)
+})
+
+test('sandbox proof rejects missing successful writes, denied operations that changed files, and reachable networking', () => {
+  for (const mutate of [
+    (p) => {
+      p.scenarios[1].sandbox.additionalContent = null
+    },
+    (p) => {
+      p.scenarios[0].sandbox.after = 'changed'
+    },
+    (p) => {
+      p.scenarios[2].sandbox.created = true
+    },
+    (p) => {
+      p.scenarios[3].sandbox.networkRequests = 1
+    },
+    (p) => {
+      p.scenarios[3].sandbox.controlRequests = 0
+    },
+    (p) => {
+      p.scenarios[3].sandbox.statuses = [28]
+    },
+    (p) => {
+      p.scenarios[2].rawProcesses[0].stdout = p.scenarios[2].jsonl[0].line
+    },
+    (p) => {
+      p.scenarios[0].requests[1].body = '{}'
+    },
+    (p) => {
+      p.scenarios[0].rawProcesses[0].outputLimited = true
+    },
+    (p) => {
+      p.cleanup.nativeGroupsDrained = false
+    },
+  ]) {
+    const proof = sandboxProbe()
+    mutate(proof)
+    assert.ok(validateNativeProof(proof, '/pinned/codex', true))
+  }
+})
