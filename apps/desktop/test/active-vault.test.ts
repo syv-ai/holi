@@ -3191,7 +3191,18 @@ describe('VaultHost', () => {
         },
       )
       await activating
-      const removing = h.remove('syv-ai/a')
+      let finishTrash!: () => void
+      let trashStarted!: () => void
+      const trashGate = new Promise<void>((resolve) => {
+        finishTrash = resolve
+      })
+      const trashing = new Promise<void>((resolve) => {
+        trashStarted = resolve
+      })
+      const removing = h.remove('syv-ai/a', async () => {
+        trashStarted()
+        await trashGate
+      })
       const queued = h
         .withRuntime(
           'syv-ai/a',
@@ -3203,7 +3214,10 @@ describe('VaultHost', () => {
           (error: Error) => error.message,
         )
       release()
-      await Promise.all([startup, removing])
+      await startup
+      await trashing
+      finishTrash()
+      await removing
       expect(await queued).toMatch(/no such vault/)
       expect(resourceAlive).toBe(false)
       expect(h.get('syv-ai/a')).toBeNull()

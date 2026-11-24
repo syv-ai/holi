@@ -715,9 +715,7 @@ export function createRouter(deps: RouterDeps) {
     const finishTransition = beginMdxTrustTransition()
     try {
       const root = await rootFor(remote)
-      await deps.host.close(remote)
-      await deps.trashItem(root)
-      await deps.registry.remove(remote)
+      await deps.host.remove(remote, () => deps.trashItem(root))
       await deps.plugins.syncBackground()
     } finally {
       finishTransition()

@@ -1620,7 +1620,7 @@ export interface VaultHost {
   /** Close one runtime without affecting another. */
   close(remote: string): Promise<void>
   /** Drain this lifetime and unregister it under the same per-remote lock. */
-  remove(remote: string): Promise<void>
+  remove(remote: string, afterClose?: () => Promise<void>): Promise<void>
   /** Drain starts and close every runtime. */
   closeAll(): Promise<void>
 }
@@ -1717,6 +1717,7 @@ export function createVaultHost(args: {
     remote: string,
     priorSelection: Promise<unknown>,
     unregister = false,
+    afterClose?: () => Promise<void>,
   ): Promise<void> {
     const previous = closeQueues.get(remote) ?? Promise.resolve()
     const run = previous
@@ -1724,6 +1725,7 @@ export function createVaultHost(args: {
       .then(() =>
         serialise(remote, async () => {
           await closeRuntime(remote)
+          await afterClose?.()
           if (unregister) await args.registry.remove(remote)
         }),
       )
@@ -1961,9 +1963,9 @@ export function createVaultHost(args: {
               preparedStarts.delete(remote)
             }),
       ),
-    remove: (remote) =>
+    remove: (remote, afterClose) =>
       trackClose(
-        serialiseClose(remote, selectionQueue, true).finally(() => {
+        serialiseClose(remote, selectionQueue, true, afterClose).finally(() => {
           preparedStarts.delete(remote)
         }),
       ),
