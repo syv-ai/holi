@@ -144,7 +144,7 @@ class FakeNativeChild extends EventEmitter {
   readonly stderr = new PassThrough()
   readonly stdin = new PassThrough()
   readonly ownedCompletion: Promise<OwnedCompletion>
-  readonly [ownedProcessDrain]: { drain: () => Promise<void> }
+  declare readonly [ownedProcessDrain]?: { drain: () => Promise<void> }
   drainRequests = 0
   stopRequests = 0
   exited = false
@@ -176,12 +176,13 @@ class FakeNativeChild extends EventEmitter {
       this.settle = resolve
       this.fail = reject
     })
-    this[ownedProcessDrain] = {
-      drain: () => {
-        this.drainRequests += 1
-        if (process.platform === 'win32') return Promise.resolve()
-        return drainProof
-      },
+    if (process.platform !== 'win32') {
+      this[ownedProcessDrain] = {
+        drain: () => {
+          this.drainRequests += 1
+          return drainProof
+        },
+      }
     }
   }
 
