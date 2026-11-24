@@ -106,6 +106,8 @@ type SharingOptions = {
   validate: Validate
   /** Omit for an access check that never writes. */
   validateGuest?: (guest: string, fileId: string) => Promise<void>
+  /** These files may only be checked, even when other files can receive grants. */
+  readOnlyFileIds?: ReadonlySet<string>
 }
 
 // Drive forbids concurrent permission operations on one file, even across
@@ -150,11 +152,12 @@ export async function ensureGuestViewers(
   guests: readonly string[],
   options: SharingOptions,
 ): Promise<{ sharing: AttachmentSharingResult[]; reconnect: boolean }> {
-  const { signal, receipts, validate, validateGuest } = options
+  const { signal, receipts, validate } = options
   const sharing: AttachmentSharingResult[] = []
   let reconnect = false
   for (const fileId of fileIds) {
     if (!guests.length) break
+    const validateGuest = options.readOnlyFileIds?.has(fileId) ? undefined : options.validateGuest
     const url = `${DRIVE}/files/${encodeURIComponent(fileId)}/permissions`
     let index = 0
     let pendingGuest: string | null = null

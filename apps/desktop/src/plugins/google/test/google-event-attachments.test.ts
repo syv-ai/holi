@@ -3,12 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { GoogleApi } from '../main/api'
-import {
-  attachEventFiles,
-  checkEventFileAccess,
-  driveFiles,
-  eventAttachments,
-} from '../main/event-attachments'
+import { driveFiles } from '../main/drive-files'
+import { attachEventFiles, checkEventFileAccess, eventAttachments } from '../main/event-attachments'
 import { createPermissionReceipts } from '../main/permission-receipts'
 import type { EventAttachment } from '../shared/event-attachments'
 
@@ -135,7 +131,7 @@ describe('Calendar attachments over Google transport', () => {
     expect(event.description).toBe(solo.description)
   })
 
-  it('re-merges a 412 on a recurring occurrence and reports the latest guest list', async () => {
+  it('re-merges a 412 without sharing the selection another writer attached', async () => {
     const occurrence = { ...target, eventId: 'series_20261124T100000Z' }
     let event = {
       ...solo,
@@ -144,7 +140,9 @@ describe('Calendar attachments over Google transport', () => {
       attendees: [{ email: 'old@example.com' }],
     }
     const grants: Record<string, unknown>[] = []
+    const permissionCreates: string[] = []
     const api = transport((url, req) => {
+      if (req.method === 'POST') permissionCreates.push(url.pathname)
       if (calendarList(url) && !req.method) return json({ accessRole: 'writer' })
       if (calendarEvent(url, occurrence.eventId)) {
         if (req.method === 'PATCH') {
@@ -153,6 +151,7 @@ describe('Calendar attachments over Google transport', () => {
               ...event,
               etag: '"1002"',
               attachments: [original, attachment('concurrent')],
+              description: 'Concurrent description',
               attendees: [
                 organizer,
                 resource,
@@ -167,6 +166,10 @@ describe('Calendar attachments over Google transport', () => {
         return json(event)
       }
       if (url.pathname === '/drive/v3/files/selected' && !req.method) return json(file('selected'))
+      if (url.pathname === '/drive/v3/files/concurrent' && !req.method)
+        return json(file('concurrent'))
+      if (url.pathname === '/drive/v3/files/concurrent/permissions' && req.method === 'GET')
+        return json({ permissions: [] })
       if (url.pathname === '/drive/v3/files/selected/permissions') {
         if (req.method === 'GET') {
           if (grants.length > 0) {
@@ -181,19 +184,28 @@ describe('Calendar attachments over Google transport', () => {
       }
       throw new Error('Unexpected Google request')
     })
-    const result = await attachEventFiles(api, occurrence, ['selected', 'selected'], validate, {
-      receipts,
-    })
+    const result = await attachEventFiles(
+      api,
+      occurrence,
+      ['concurrent', 'selected', 'selected'],
+      validate,
+      { receipts },
+    )
     expect(result).toMatchObject({
       attachmentStatus: 'attached',
+      calendarWriteStatus: 'confirmed',
       attachments: [original, attachment('concurrent'), attachment('selected')],
       guestsChecked: ['new@example.com'],
       sharingComplete: false,
       sharing: [
+        { status: 'failed', fileId: 'concurrent', guest: 'new@example.com' },
+        { status: 'failed', fileId: 'concurrent', guest: 'leaving@example.com' },
         { status: 'granted', fileId: 'selected', guest: 'new@example.com' },
         { status: 'failed', fileId: 'selected', guest: 'leaving@example.com' },
       ],
     })
+    expect(event.description).toBe('Concurrent description')
+    expect(permissionCreates).toEqual(['/drive/v3/files/selected/permissions'])
     expect(grants).toEqual([{ type: 'user', role: 'reader', emailAddress: 'new@example.com' }])
   })
 
@@ -280,8 +292,7 @@ describe('Calendar attachments over Google transport', () => {
 
 it('quotes the Drive search term, preserves pagination, and excludes unusable results', async () => {
   const api = transport((url) => {
-    if (calendarList(url)) return json({ accessRole: 'owner' })
-    if (calendarEvent(url)) return json(solo)
+    expect(url.pathname).toBe('/drive/v3/files')
     expect(url.searchParams.get('q')).toContain(String.raw`name contains 'O\'Neil\\Draft'`)
     if (url.searchParams.get('pageToken') === 'next') return json({ files: [file('usable')] })
     return json({
@@ -296,9 +307,9 @@ it('quotes the Drive search term, preserves pagination, and excludes unusable re
     })
   })
   const query = String.raw`O'Neil\Draft`
-  const page = await driveFiles(api, target, query, undefined, validate)
+  const page = await driveFiles(api, query, undefined, validate)
   expect(page).toEqual({ files: [], nextPageToken: 'next' })
-  await expect(driveFiles(api, target, query, page.nextPageToken, validate)).resolves.toEqual({
+  await expect(driveFiles(api, query, page.nextPageToken, validate)).resolves.toEqual({
     files: [{ id: 'usable', name: file('usable').name, mimeType: file('usable').mimeType }],
   })
 })
@@ -324,7 +335,6 @@ it('refuses a submitted shortcut without changing the event or creating permissi
 it('does not replay an unverified permission and checks the current attachment and access without writing', async () => {
   const guest = 'verify@example.com'
   const newGuest = 'not-shared@example.com'
-  const newGrant = { id: 'new-guest', type: 'user', role: 'reader', emailAddress: newGuest }
   let event = { ...solo, attendees: [{ email: guest }] }
   const notifications: string[] = []
   let patches = 0
@@ -343,14 +353,13 @@ it('does not replay an unverified permission and checks the current attachment a
         const recipient = JSON.parse(String(req.body)).emailAddress as string
         notifications.push(recipient)
         // A write response does not establish that Drive's ACL has this guest.
-        return json({ id: recipient === guest ? 'not-yet-visible' : newGrant.id })
+        return json({ id: 'not-yet-visible' })
       }
       return json({
         permissions: [
           ...(permissionVisible
             ? [{ id: 'not-yet-visible', type: 'user', role: 'reader', emailAddress: guest }]
             : []),
-          ...(notifications.includes(newGuest) ? [newGrant] : []),
         ],
       })
     }
@@ -375,12 +384,17 @@ it('does not replay an unverified permission and checks the current attachment a
     ],
   })
   expect(notifications).toEqual([guest])
-  // Our definite 2xx settles the file-wide barrier, but does not allow a
-  // duplicate notification to the guest whose ACL entry is still absent.
+  // Even after Drive acknowledged the original request, a stale attach
+  // selection cannot send a grant to a new guest of an already-attached file.
   await expect(submit()).resolves.toMatchObject({
+    attachmentStatus: 'attached',
+    calendarWriteStatus: 'not-written',
+    attachmentsVerified: true,
+    attachments: [original, attachment('uncertain')],
+    sharingComplete: false,
     sharing: [
       { guest, status: 'unknown' },
-      { guest: newGuest, status: 'granted' },
+      { guest: newGuest, status: 'failed' },
     ],
   })
   event = { ...event, attendees: [{ email: guest }] }
@@ -404,7 +418,7 @@ it('does not replay an unverified permission and checks the current attachment a
   })
   expect(afterRemoval).not.toHaveProperty('calendarWriteStatus')
   expect(patches).toBe(1)
-  expect(notifications).toEqual([guest, newGuest])
+  expect(notifications).toEqual([guest])
 })
 
 it('reports a refused read-only Drive permissions check as an access-check failure', async () => {

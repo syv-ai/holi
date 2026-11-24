@@ -1,9 +1,8 @@
 import { CapabilityError } from '../../../main/plugin-api'
+import { DRIVE_SHORTCUT_MIME, isDriveFileId } from '../shared/drive-files'
 import {
   ATTACHMENT_LIMIT,
   type AttachEventFilesResult,
-  type DriveFile,
-  type DriveFilePage,
   type EventAttachment,
   type EventAttachments,
   type EventAttachmentTarget,
@@ -16,14 +15,11 @@ import {
   type GoogleApi,
 } from './api'
 import { ensureGuestViewers } from './attachment-sharing'
+import { driveAttachmentCandidate, type DriveAttachmentCandidate } from './drive-files'
 import type { PermissionReceipts } from './permission-receipts'
 import { GoogleReconnectRequiredError } from './session'
 
 const CALENDAR = 'https://www.googleapis.com/calendar/v3'
-const DRIVE_FILES = 'https://www.googleapis.com/drive/v3/files'
-const FOLDER = 'application/vnd.google-apps.folder'
-const SHORTCUT = 'application/vnd.google-apps.shortcut'
-const DRIVE_FIELDS = 'id,name,mimeType,webViewLink,trashed,capabilities(canShare)'
 const CONFLICT_RETRIES = 2
 const LIMIT_MESSAGE = `Google Calendar supports at most ${ATTACHMENT_LIMIT} attachments.`
 const UNKNOWN_MESSAGE = 'Could not confirm that all selected files were attached.'
@@ -58,16 +54,6 @@ type Snapshot = {
   calendar: { accessRole?: string }
   event: CalendarEvent
 }
-type DriveMetadata = {
-  id?: string
-  name?: string
-  mimeType?: string
-  webViewLink?: string
-  trashed?: boolean
-  capabilities?: { canShare?: boolean }
-}
-type ShareableFile = DriveFile & { webViewLink: string }
-
 function segment(id: string): string {
   // URL normalizes dot segments even when they are percent-encoded.
   if (!id || id === '.' || id === '..') throw new Error('Invalid Google resource id.')
@@ -174,66 +160,12 @@ export async function eventAttachments(
   }
 }
 
-const driveId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]+$/.test(id)
-
-function shareable(file: DriveMetadata | null): file is ShareableFile {
-  if (
-    !driveId(file?.id) ||
-    typeof file.name !== 'string' ||
-    !file.name ||
-    typeof file.mimeType !== 'string' ||
-    !file.mimeType ||
-    file.mimeType === FOLDER ||
-    file.mimeType === SHORTCUT ||
-    file.trashed === true ||
-    file.capabilities?.canShare !== true ||
-    typeof file.webViewLink !== 'string'
-  )
-    return false
-  if (!URL.canParse(file.webViewLink)) return false
-  const url = new URL(file.webViewLink)
-  return url.protocol === 'https:' && !url.username && !url.password
-}
-
-export async function driveFiles(
-  api: GoogleApi,
-  target: EventAttachmentTarget,
-  query: string,
-  pageToken: string | undefined,
-  validate: Validate,
-  signal?: AbortSignal,
-): Promise<DriveFilePage> {
-  const escaped = query.replace(/[\\']/g, (character) => `\\${character}`)
-  const result = await api.get<{ files?: DriveMetadata[]; nextPageToken?: string }>(
-    DRIVE_FILES,
-    {
-      q: `trashed = false and mimeType != '${FOLDER}' and mimeType != '${SHORTCUT}'${escaped ? ` and name contains '${escaped}'` : ''}`,
-      pageSize: '100',
-      fields: `nextPageToken,files(${DRIVE_FIELDS})`,
-      supportsAllDrives: 'true',
-      includeItemsFromAllDrives: 'true',
-      pageToken,
-    },
-    async () => {
-      const editable = editability(await snapshot(api, target, validate, signal))
-      if ('reason' in editable) throw new CapabilityError('FORBIDDEN', editable.reason)
-    },
-    { signal },
-  )
-  return {
-    files: (result.files ?? [])
-      .filter(shareable)
-      .map(({ id, name, mimeType }) => ({ id, name, mimeType })),
-    ...(result.nextPageToken ? { nextPageToken: result.nextPageToken } : {}),
-  }
-}
-
 type SelectedFile = { id: string; webViewLink?: string }
 
 const attached = (event: CalendarEvent, file: SelectedFile) =>
   event.attachments?.some(
     (item) =>
-      item.mimeType !== SHORTCUT &&
+      item.mimeType !== DRIVE_SHORTCUT_MIME &&
       (item.fileId ? item.fileId === file.id : item.fileUrl === file.webViewLink),
   ) === true
 
@@ -267,15 +199,6 @@ export function attachmentUpdateRefused(
 
 const selection = (fileIds: string[]) => [...new Set(fileIds)]
 
-async function driveMetadata(api: GoogleApi, id: string, validate: Validate, signal: AbortSignal) {
-  return api.get<DriveMetadata>(
-    `${DRIVE_FILES}/${id}`,
-    { fields: DRIVE_FIELDS, supportsAllDrives: 'true' },
-    validate,
-    { signal },
-  )
-}
-
 export async function attachEventFiles(
   api: GoogleApi,
   target: EventAttachmentTarget,
@@ -285,51 +208,60 @@ export async function attachEventFiles(
 ): Promise<AttachEventFilesResult> {
   const ids = selection(fileIds)
   if (ids.length > ATTACHMENT_LIMIT) return attachFailed(LIMIT_MESSAGE)
-  if (!ids.length || !ids.every(driveId)) return attachFailed('Select valid Google Drive files.')
+  if (!ids.length || !ids.every(isDriveFileId))
+    return attachFailed('Select valid Google Drive files.')
 
   const signal = options.signal ?? attachmentDeadline()
   const validateWrite = options.validateDrive ?? validate
-  let current: Snapshot | undefined
-  let files: ShareableFile[]
+  let current: Snapshot
   try {
     current = await snapshot(api, target, validate, signal)
-    const initialAccess = editability(current)
-    if ('reason' in initialAccess) return attachFailed(initialAccess.reason, current.event)
-    const resolved = await Promise.all(
-      ids.map(async (id) => {
-        const file = await driveMetadata(api, id, validateWrite, signal)
-        return shareable(file) && file.id === id ? file : null
-      }),
-    )
-    await untilGoogleAbort(signal, validateWrite)
-    files = resolved.filter((file) => file !== null)
-    if (files.length !== ids.length)
-      return attachFailed('A selected Drive file cannot be attached and shared.', current.event)
   } catch (error) {
-    return attachmentUpdateRefused(error, current?.event)
+    return attachmentUpdateRefused(error)
   }
 
+  let files: DriveAttachmentCandidate[] = ids.map((id) => ({ id }))
+  const resolved = new Set<string>()
+  const alreadyAttached = new Set<string>()
+  const grantIds = new Set<string>()
   let calendarWriteStatus: NonNullable<AttachEventFilesResult['calendarWriteStatus']> =
     'not-written'
   for (let conflicts = 0; ; conflicts++) {
-    const editable = editability(current)
-    if ('reason' in editable) return attachFailed(editable.reason, current.event)
     const { event } = current
-    const newFiles = files.filter((file) => !attached(event, file))
+    if (!files.every((file) => attached(event, file))) {
+      const editable = editability(current)
+      if ('reason' in editable) return attachFailed(editable.reason, event)
+      try {
+        files = await Promise.all(
+          files.map(async (file) => {
+            if (resolved.has(file.id) || attached(event, file)) return file
+            const candidate = await driveAttachmentCandidate(api, file.id, validateWrite, signal)
+            resolved.add(file.id)
+            return candidate
+          }),
+        )
+      } catch (error) {
+        return attachmentUpdateRefused(error, event)
+      }
+    }
+
+    // A stale selection (including after a rejected ETag) never authorizes
+    // sharing files that were already on any prewrite snapshot.
+    const newFiles = files.filter((file) => {
+      if (!attached(event, file)) return true
+      alreadyAttached.add(file.id)
+      return false
+    })
+    if (newFiles.length === 0) break
+    const additions = newFiles.flatMap((file) => (file.attachment ? [file.attachment] : []))
+    if (additions.length !== newFiles.length)
+      return attachFailed('A selected Drive file cannot be attached and shared.', event)
     // Send the original attachment objects unchanged; Calendar PATCH replaces
     // the whole array. fileId is read-only and only Google resolves it.
-    const merged = [
-      ...(current.event.attachments ?? []),
-      ...newFiles.map((file) => ({
-        fileUrl: file.webViewLink,
-        title: file.name,
-        mimeType: file.mimeType,
-      })),
-    ]
-    if (merged.length > ATTACHMENT_LIMIT) return attachFailed(LIMIT_MESSAGE, current.event)
-    if (newFiles.length === 0) break
+    const merged = [...(event.attachments ?? []), ...additions]
+    if (merged.length > ATTACHMENT_LIMIT) return attachFailed(LIMIT_MESSAGE, event)
     if (conflicts > CONFLICT_RETRIES)
-      return attachFailed('The event kept changing. No attachment update was made.', current.event)
+      return attachFailed('The event kept changing. No attachment update was made.', event)
 
     try {
       await api.request(
@@ -353,6 +285,9 @@ export async function attachEventFiles(
       }
       if (!isUncertainGoogleWrite(error)) return attachmentUpdateRefused(error, current.event)
       calendarWriteStatus = 'unknown'
+    }
+    for (const file of newFiles) {
+      if (!alreadyAttached.has(file.id)) grantIds.add(file.id)
     }
     // Verify the current event before sharing. A read can show the files are
     // present, but cannot attribute them to a PATCH whose response was lost.
@@ -382,7 +317,7 @@ export async function attachEventFiles(
     validateWrite,
     signal,
     options.receipts,
-    'share',
+    grantIds,
   )
   return { ...access, calendarWriteStatus }
 }
@@ -397,7 +332,7 @@ export async function checkEventFileAccess(
 ): Promise<AttachEventFilesResult> {
   const ids = selection(fileIds)
   if (ids.length > ATTACHMENT_LIMIT) return failed(LIMIT_MESSAGE)
-  if (!ids.length || !ids.every(driveId)) return failed('Select valid Google Drive files.')
+  if (!ids.length || !ids.every(isDriveFileId)) return failed('Select valid Google Drive files.')
 
   const signal = options.signal ?? attachmentDeadline()
   const current = await snapshot(api, target, validate, signal)
@@ -412,7 +347,6 @@ export async function checkEventFileAccess(
     options.validateDrive ?? validate,
     signal,
     options.receipts,
-    'check',
   )
 }
 
@@ -425,12 +359,15 @@ async function reconcileGuestAccess(
   validateDrive: Validate,
   signal: AbortSignal,
   receipts: PermissionReceipts,
-  mode: 'share' | 'check',
+  grantIds?: ReadonlySet<string>,
 ): Promise<AttachEventFilesResult> {
   const confirmed = new Map(
     files.filter((file) => attached(current.event, file)).map((file) => [file.id, file]),
   )
-  const accessFor = mode === 'share' ? editability : guestList
+  const fileIds = [...confirmed.keys()]
+  const readOnlyFileIds = grantIds && new Set(fileIds.filter((id) => !grantIds.has(id)))
+  const canGrant = grantIds && fileIds.some((id) => grantIds.has(id))
+  const accessFor = canGrant ? editability : guestList
   const initial = accessFor(current)
   const guests = 'guests' in initial ? initial.guests : []
   const startedWith = new Set(guests)
@@ -455,11 +392,12 @@ async function reconcileGuestAccess(
     return access
   }
 
-  const result = await ensureGuestViewers(api, [...confirmed.keys()], guests, {
+  const result = await ensureGuestViewers(api, fileIds, guests, {
     receipts,
     signal,
     validate: validateDrive,
-    ...(mode === 'share'
+    readOnlyFileIds,
+    ...(canGrant
       ? {
           validateGuest: async (guest, fileId) => {
             const access = await refresh()
@@ -476,7 +414,7 @@ async function reconcileGuestAccess(
       : {}),
   })
   let reconnect = result.reconnect
-  if (mode === 'check' && (!confirmed.size || !guests.length)) {
+  if (!canGrant && (!confirmed.size || !guests.length)) {
     // With no ACLs to request, still surface missing Drive consent.
     try {
       await untilGoogleAbort(signal, validateDrive)
@@ -497,17 +435,18 @@ async function reconcileGuestAccess(
   }
 
   const complete = !unverified && files.every((file) => attached(current.event, file))
+  const incompleteAccess = result.sharing.filter(
+    ({ status }) => status !== 'already-accessible' && status !== 'granted',
+  )
   const sharingComplete =
-    complete &&
-    !reason &&
-    !changed &&
-    !reconnect &&
-    !signal.aborted &&
-    result.sharing.every(({ status }) => status === 'already-accessible' || status === 'granted')
+    complete && !reason && !changed && !reconnect && !signal.aborted && !incompleteAccess.length
   const message = [
     complete ? undefined : UNKNOWN_MESSAGE,
     signal.aborted ? TIMEOUT_MESSAGE : undefined,
     reason ? `Guest access is incomplete. ${reason}` : undefined,
+    incompleteAccess.some(({ fileId }) => readOnlyFileIds?.has(fileId))
+      ? 'Holi only checks guest access for files that were already attached.'
+      : undefined,
     changed && !reason
       ? 'The attachments or guest list changed. Some access may not have been checked.'
       : undefined,

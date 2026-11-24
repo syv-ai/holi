@@ -357,19 +357,22 @@ describe('event attachment capabilities', () => {
       capabilities: { canShare: true },
     }
     const attachment = { fileId: selected, fileUrl: metadata.webViewLink, title: metadata.name }
+    let attached = false
     const grants: object[] = []
     const { invoke, requests } = attachmentRig({
       scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
       onRefresh: () => [CALENDAR_READ, CALENDAR_WRITE, DRIVE_READ],
       onRequest: (path, init, expireToken) => {
-        if (path.endsWith('/events/event1'))
+        if (path.endsWith('/events/event1')) {
+          if (init.method === 'PATCH') attached = true
           return Response.json({
             id: 'event1',
-            etag: '"v1"',
+            etag: attached ? '"v2"' : '"v1"',
             organizer: { self: true },
-            attachments: [attachment],
+            attachments: attached ? [attachment] : [],
             attendees: [{ email: first }, { email: second }],
           })
+        }
         if (path.endsWith(`/files/${selected}`)) return Response.json(metadata)
         if (path.endsWith('/permissions')) {
           if (init.method === 'POST') {
@@ -394,6 +397,7 @@ describe('event attachment capabilities', () => {
       ],
     })
     expect(requests.filter(({ method }) => method !== 'GET')).toEqual([
+      { path: '/calendar/v3/calendars/primary/events/event1', method: 'PATCH' },
       { path: `/drive/v3/files/${selected}/permissions`, method: 'POST' },
     ])
   })
@@ -501,23 +505,25 @@ describe('event attachment capabilities', () => {
     }
     const agenda = { fileUrl: 'https://example.com/agenda', title: 'Agenda' }
     const attachment = { fileId: metadata.id, fileUrl: metadata.webViewLink, title: metadata.name }
-    let removed = false
+    let version = 1
     const { invoke, requests } = attachmentRig({
       scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
       onRequest: (path, init) => {
-        if (path.endsWith('/events/event1'))
+        if (path.endsWith('/events/event1')) {
+          if (init.method === 'PATCH') version = 2
           return Response.json({
             id: 'event1',
-            etag: removed ? '"v2"' : '"v1"',
+            etag: `"v${version}"`,
             organizer: { self: true },
-            attachments: removed ? [agenda] : [agenda, attachment],
+            attachments: version === 2 ? [agenda, attachment] : [agenda],
             attendees: [{ email: guest }],
           })
+        }
         if (path.endsWith('/files/selected')) return Response.json(metadata)
         if (path.endsWith('/permissions')) {
           if (init.method === 'GET') return Response.json({ permissions: [] })
           if (init.method === 'POST') {
-            removed = true
+            version = 3
             return Response.json(
               { error: { errors: [{ reason: 'insufficientPermissions' }] } },
               { status: 403 },
@@ -536,6 +542,7 @@ describe('event attachment capabilities', () => {
       sharing: [{ fileId: metadata.id, guest, status: 'failed' }],
     })
     expect(requests.filter(({ method }) => method !== 'GET')).toEqual([
+      { path: '/calendar/v3/calendars/primary/events/event1', method: 'PATCH' },
       { path: '/drive/v3/files/selected/permissions', method: 'POST' },
     ])
   })

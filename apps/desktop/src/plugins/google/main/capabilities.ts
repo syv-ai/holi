@@ -87,9 +87,9 @@ import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 import { isMailMarker, validateBatch, validateThreadId, type MarkerValue } from './markers'
 import { normalizeMailMarkerPreferences, type MailMarkerPreferences } from '../shared/mail-markers'
+import { driveFiles } from './drive-files'
 import {
   eventAttachments,
-  driveFiles,
   attachEventFiles,
   checkEventFileAccess,
   attachmentUpdateRefused,
@@ -1395,7 +1395,20 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
             ATTACHMENT_WRITE_SCOPES,
             signal,
           )
-          const result = await driveFiles(api, target, query ?? '', pageToken, validate, signal)
+          const result = await driveFiles(
+            api,
+            query ?? '',
+            pageToken,
+            async () => {
+              const current = await eventAttachments(api, target, validate, signal)
+              if (!current.canAttach)
+                throw new CapabilityError(
+                  'FORBIDDEN',
+                  current.reason ?? 'This event is not eligible for attachments.',
+                )
+            },
+            signal,
+          )
           await validate()
           return result
         }),
