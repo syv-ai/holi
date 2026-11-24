@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UserNotifications/UserNotifications.h>
+#import <Intents/Intents.h>
 #include <node_api.h>
 #include <unistd.h>
 
@@ -39,6 +40,11 @@ static void Execute(napi_env, void *data) {
   if (@available(macOS 13.0, *)) {
     values[@"scheduledDeliverySetting"] = @(settings.scheduledDeliverySetting);
     values[@"timeSensitiveSetting"] = @(settings.timeSensitiveSetting);
+  }
+  if (@available(macOS 12.0, *)) {
+    INFocusStatusCenter *focus = INFocusStatusCenter.defaultCenter;
+    values[@"focusAuthorizationStatus"] = @(focus.authorizationStatus);
+    values[@"isFocused"] = focus.focusStatus.isFocused ?: NSNull.null;
   }
   NSData *encoded = [NSJSONSerialization dataWithJSONObject:values options:NSJSONWritingSortedKeys error:nil];
   if (!encoded) { work->error = @"could not encode notification settings"; return; }

@@ -172,6 +172,8 @@ try {
     'Foundation',
     '-framework',
     'UserNotifications',
+    '-framework',
+    'Intents',
     '-I',
     nodeHeaders,
     resolve(dirname(fileURLToPath(import.meta.url)), 'notification-settings.mm'),
