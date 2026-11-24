@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createWorkingCopyFixture } from '../scripts/working-copy-fixture.mjs'
+import { createWorkingCopyFixture, snapshotWorkingCopy, verifyWorkingCopyUnchanged } from '../scripts/working-copy-fixture.mjs'
 
 describe('working-copy fixture', () => {
   let parent
@@ -10,17 +10,18 @@ describe('working-copy fixture', () => {
     if (parent) await rm(parent, { recursive: true, force: true })
   })
 
-  it('provides an offline repository with a logical identity and plumbing baselines', async () => {
+  it('creates independent persistent repositories with host-derived expectations', async () => {
     parent = await mkdtemp(join(tmpdir(), 'holi-working-copy-'))
-    const fixture = await createWorkingCopyFixture(parent, 'host-test')
-    assert.equal(fixture.remote, 'fixture/vault')
-    assert.equal(fixture.branch, 'fixture-start')
-    assert.deepEqual(fixture.results.map(({ name }) => name), [
-      'staged',
-      'unstaged',
-      'addition',
-      'deletion',
-    ])
-    assert.ok(fixture.results.every(({ changes }) => changes.length > 0))
+    const { cases } = await createWorkingCopyFixture(parent, 'host-test')
+    assert.ok(cases.length >= 15)
+    assert.equal(new Set(cases.map(({ root }) => root)).size, cases.length)
+    const staged = cases.find(({ name }) => name === 'staged')
+    const clean = cases.find(({ name }) => name === 'clean')
+    assert.ok(staged.expectedChanges.length > 0)
+    assert.equal(clean.expectedChanges, '')
+    assert.equal(cases.find(({ name }) => name === 'identity').expectedRefusal, true)
+    const before = await snapshotWorkingCopy(staged.root)
+    assert.equal(await verifyWorkingCopyUnchanged(staged.root, before), true)
+    assert.equal(await verifyWorkingCopyUnchanged(staged.root, []), false)
   })
 })
