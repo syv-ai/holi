@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
+import { StringDecoder } from 'node:string_decoder'
 import { spawnOwnedProgram } from './owned-process'
-import { ownedPtyHostPlan } from './owned-process-pty-host'
+import { ownedPtyHostPlan, type PtyHostLaunch } from './owned-process-pty-host'
 import { joinOwnedProgram, type ManagedOwnedChild } from './owned-program-lifetime'
 import { resolveBundledWindowsNode } from './windows-node-runtime'
 
@@ -13,7 +14,7 @@ export type OwnedWindowsPtyOptions = {
   rows: number
 }
 export type OwnedPtyProcess = {
-  pid: number
+  readonly pid: number
   write(data: string): void
   resize(cols: number, rows: number): void
   onData(listener: (data: string) => void): void
@@ -21,14 +22,12 @@ export type OwnedPtyProcess = {
 }
 export type OwnedPtyLaunch = {
   ready: Promise<OwnedPtyProcess>
+  /** Joins native Job zero and output settlement; failures retain their original cause. */
   completion: Promise<void>
   stop(): Promise<void>
 }
 type Runtime = {
-  spawn(
-    plan: { file: string; args: string[]; cwd: string },
-    env: NodeJS.ProcessEnv,
-  ): ManagedOwnedChild
+  spawn(plan: PtyHostLaunch, env: NodeJS.ProcessEnv): ManagedOwnedChild
   node(): string | null
   modulePath(): string
   platform: NodeJS.Platform
@@ -38,131 +37,237 @@ const production: Runtime = {
     spawnOwnedProgram(plan.file, plan.args, { cwd: plan.cwd, env, stdio: 'pipe' }),
   node: resolveBundledWindowsNode,
   modulePath: () => {
-    const req = createRequire(import.meta.url)
+    const req = typeof require === 'function' ? require : createRequire(import.meta.url)
     return req.resolve('node-pty').replace(/([\\/])app\.asar([\\/])/i, '$1app.asar.unpacked$2')
   },
   platform: process.platform,
 }
-const MAX_LINE = 1024 * 1024
+const MAX_FRAME = 1024 * 1024
 
-/** Start node-pty beneath the native Job root; all native completion stays with that root. */
+type Exit = { exitCode: number; signal?: number }
+
+/** Node-pty inherits the helper's native Job; no post-creation PID attachment occurs. */
 export function launchOwnedWindowsPty(
   options: OwnedWindowsPtyOptions,
   runtime: Runtime = production,
 ): OwnedPtyLaunch {
   let resolveReady!: (pty: OwnedPtyProcess) => void
-  let rejectReady!: (reason: Error) => void
+  let rejectReady!: (reason: unknown) => void
   let resolveDone!: () => void
-  let rejectDone!: (reason: Error) => void
-  const ready = new Promise<OwnedPtyProcess>((res, rej) => {
-    resolveReady = res
-    rejectReady = rej
+  let rejectDone!: (reason: unknown) => void
+  const ready = new Promise<OwnedPtyProcess>((resolve, reject) => {
+    resolveReady = resolve
+    rejectReady = reject
   })
-  const completion = new Promise<void>((res, rej) => {
-    resolveDone = res
-    rejectDone = rej
+  const completion = new Promise<void>((resolve, reject) => {
+    resolveDone = resolve
+    rejectDone = reject
   })
-  void ready.catch(() => undefined)
-  void completion.catch(() => undefined)
+  void ready.catch(() => {})
+  void completion.catch(() => {})
   let child: ManagedOwnedChild | undefined
-  let failure: Error | undefined
-  let ended = false
-  let buffer = ''
-  let pty: OwnedPtyProcess | undefined
+  let failed = false
+  let failure: unknown
+  let stopped = false
+  let settled = false
+  let admitted = false
+  let pending = ''
+  let exit: Exit | undefined
+  let outputBytes = 0
+  let bufferedOutput: string[] = []
+  const lines = new StringDecoder('utf8')
+  const terminalText = new StringDecoder('utf8')
   const dataListeners = new Set<(data: string) => void>()
-  const exitListeners = new Set<(event: { exitCode: number; signal?: number }) => void>()
-  let pendingData = ''
-  let pendingExit: { exitCode: number; signal?: number } | undefined
-  const fail = (message: string) => {
-    if (failure) return
-    failure = new Error(message)
-    rejectReady(failure)
-    rejectDone(failure)
+  const exitListeners = new Set<(event: Exit) => void>()
+  let deadline: NodeJS.Timeout | undefined
+
+  const recordFailure = (cause: unknown) => {
+    if (failed) return
+    failed = true
+    failure = cause
+    rejectReady(cause)
   }
-  const send = (command: object) => {
-    if (!child || ended || failure) throw failure ?? new Error('PTY is not running')
-    child.stdin?.write(`${JSON.stringify(command)}\n`)
+  const requestStop = () => {
+    if (stopped || settled) return
+    stopped = true
+    try {
+      child?.kill()
+    } catch (cause) {
+      recordFailure(cause)
+    }
   }
-  const launch = runtime.node()
-  if (runtime.platform !== 'win32' || !launch) fail('Bundled Windows Node runtime unavailable')
-  else {
-    const plan = ownedPtyHostPlan(launch, runtime.modulePath(), options)
+  const fail = (cause: unknown) => {
+    recordFailure(cause)
+    requestStop()
+  }
+  const emitData = (data: string) => {
+    if (!data) return
+    if (dataListeners.size) for (const listener of dataListeners) listener(data)
+    else {
+      outputBytes += Buffer.byteLength(data)
+      if (outputBytes > MAX_FRAME)
+        throw new Error('PTY output awaiting a consumer exceeded its bound')
+      bufferedOutput.push(data)
+    }
+  }
+  const emitExit = (event: Exit) => {
+    if (exit) throw new Error('Duplicate PTY exit')
+    emitData(terminalText.end())
+    exit = event
+    for (const listener of exitListeners) listener(event)
+  }
+  const send = (record: object) => {
+    if (failed) throw failure
+    if (stopped || exit || !child?.stdin) throw new Error('PTY is not accepting input')
+    const frame = Buffer.from(`${JSON.stringify(record)}\n`)
+    if (frame.length > MAX_FRAME || child.stdin.writableLength + frame.length > MAX_FRAME) {
+      const error = new Error('PTY input transport exceeded its bound')
+      fail(error)
+      throw error
+    }
+    try {
+      child.stdin.write(frame, (error) => {
+        if (error && !settled) fail(error)
+      })
+    } catch (cause) {
+      fail(cause)
+      throw cause
+    }
+  }
+  const handle = (record: unknown) => {
+    if (!record || typeof record !== 'object' || !('type' in record))
+      throw new Error('Invalid PTY protocol record')
+    if (exit) throw new Error('PTY record after exit')
+    if (record.type === 'error') throw new Error('Windows PTY helper failed')
+    if (record.type === 'ready') {
+      if (
+        admitted ||
+        !('pid' in record) ||
+        !Number.isSafeInteger(record.pid) ||
+        Number(record.pid) <= 0
+      )
+        throw new Error('Invalid PTY readiness')
+      admitted = true
+      clearTimeout(deadline)
+      const pty: OwnedPtyProcess = {
+        pid: Number(record.pid),
+        write: (data) => send({ type: 'input', data }),
+        resize: (cols, rows) => send({ type: 'resize', cols, rows }),
+        onData: (listener) => {
+          dataListeners.add(listener)
+          const queued = bufferedOutput
+          bufferedOutput = []
+          outputBytes = 0
+          for (const data of queued) listener(data)
+        },
+        onExit: (listener) => {
+          exitListeners.add(listener)
+          if (exit) listener(exit)
+        },
+      }
+      if (stopped) rejectReady(new Error('Windows PTY launch cancelled'))
+      else resolveReady(pty)
+      return
+    }
+    if (!admitted) throw new Error('PTY output preceded readiness')
+    if (record.type === 'data' && 'data' in record && typeof record.data === 'string') {
+      const bytes = Buffer.from(record.data, 'base64')
+      if (bytes.toString('base64') !== record.data) throw new Error('Invalid PTY terminal encoding')
+      emitData(terminalText.write(bytes))
+    } else if (
+      record.type === 'exit' &&
+      'exitCode' in record &&
+      Number.isSafeInteger(record.exitCode) &&
+      (!('signal' in record) || record.signal === undefined || Number.isSafeInteger(record.signal))
+    ) {
+      emitExit({
+        exitCode: Number(record.exitCode),
+        ...('signal' in record && typeof record.signal === 'number'
+          ? { signal: record.signal }
+          : {}),
+      })
+    } else throw new Error('Invalid PTY protocol record')
+  }
+
+  try {
+    if (runtime.platform !== 'win32') throw new Error('Owned Windows PTYs require Windows')
+    const node = runtime.node()
+    if (!node) throw new Error('Bundled Windows Node runtime unavailable')
+    const plan = ownedPtyHostPlan(node, runtime.modulePath(), options)
     child = runtime.spawn(plan, process.env)
-    const native = joinOwnedProgram(child, runtime.platform)
-    void native.then(
-      (result) => {
-        if (result.ownership !== 'empty') fail('Native Job did not become empty')
-        else if (!failure) resolveDone()
-      },
-      (error) => fail(error instanceof Error ? error.message : String(error)),
-    )
-    let lineBuffer = ''
-    child.stdout?.on('data', (chunk: Buffer | string) => {
-      lineBuffer += chunk.toString()
-      if (lineBuffer.length > MAX_LINE && !lineBuffer.includes('\n'))
-        return fail('PTY protocol frame too large')
-      let at: number
-      while ((at = lineBuffer.indexOf('\n')) !== -1) {
-        const line = lineBuffer.slice(0, at)
-        lineBuffer = lineBuffer.slice(at + 1)
-        if (line.length > MAX_LINE) return fail('PTY protocol frame too large')
-        let frame: any
-        try {
-          frame = JSON.parse(line)
-        } catch {
-          return fail('Invalid PTY protocol JSON')
+    // Observe the original native lease before reading any protocol events.
+    const native = joinOwnedProgram(child, 'win32')
+    void native
+      .then(
+        (result) => {
+          settled = true
+          clearTimeout(deadline)
+          try {
+            pending += lines.end()
+            if (pending) throw new Error('Truncated PTY protocol frame')
+            if (result.error) throw result.error
+            if (result.ownership !== 'empty' && result.ownership !== 'not-started')
+              throw new Error('Windows PTY has no native empty receipt')
+            if (!admitted) rejectReady(failed ? failure : new Error('Windows PTY did not start'))
+            if (!stopped && (!exit || result.code !== 0))
+              throw new Error('Windows PTY helper ended without complete terminal output')
+            if (admitted && !exit && stopped) {
+              // Job cancellation can end the helper before a root status record.
+              // -1 denotes unavailable status, never the helper's exit code.
+              emitExit({ exitCode: -1 })
+            }
+          } catch (cause) {
+            recordFailure(cause)
+          }
+          if (failed) rejectDone(failure)
+          else resolveDone()
+        },
+        (cause) => {
+          settled = true
+          clearTimeout(deadline)
+          recordFailure(cause)
+          rejectDone(failure)
+        },
+      )
+      .catch((cause: unknown) => {
+        recordFailure(cause)
+        rejectDone(failure)
+      })
+    if (!child.stdout || !child.stdin || !child.stderr)
+      throw new Error('Missing PTY transport pipes')
+    child.stderr.resume()
+    child.stdin.on('error', fail)
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (failed) return
+      try {
+        pending += lines.write(chunk)
+        let at: number
+        while ((at = pending.indexOf('\n')) >= 0) {
+          if (at > MAX_FRAME) throw new Error('PTY protocol frame exceeded its bound')
+          const line = pending.slice(0, at)
+          pending = pending.slice(at + 1)
+          handle(JSON.parse(line) as unknown)
         }
-        if (frame.type === 'ready' && Number.isInteger(frame.pid)) {
-          pty = {
-            pid: frame.pid,
-            write: (data) => send({ type: 'input', data }),
-            resize: (cols, rows) => send({ type: 'resize', cols, rows }),
-            onData: (listener) => {
-              dataListeners.add(listener)
-              if (pendingData) listener(pendingData)
-              pendingData = ''
-            },
-            onExit: (listener) => {
-              exitListeners.add(listener)
-              if (pendingExit) listener(pendingExit)
-              pendingExit = undefined
-            },
-          }
-          resolveReady(pty)
-        } else if (frame.type === 'data' && typeof frame.data === 'string') {
-          const data = Buffer.from(frame.data, 'base64').toString()
-          if (!dataListeners.size) {
-            pendingData += data
-            if (pendingData.length > MAX_LINE) return fail('PTY output buffer exceeded')
-          } else dataListeners.forEach((listener) => listener(data))
-        } else if (frame.type === 'exit' && Number.isInteger(frame.exitCode)) {
-          const event = {
-            exitCode: frame.exitCode,
-            ...(typeof frame.signal === 'number' ? { signal: frame.signal } : {}),
-          }
-          pendingExit = event
-          exitListeners.forEach((listener) => listener(event))
-          ended = true
-        } else if (frame.type === 'error') fail(String(frame.message ?? 'PTY host error'))
-        else fail('Invalid PTY protocol frame')
+        if (Buffer.byteLength(pending) > MAX_FRAME)
+          throw new Error('PTY protocol frame exceeded its bound')
+      } catch (cause) {
+        fail(cause)
       }
     })
-    child.stdin?.write(`${JSON.stringify({ ...options, env: options.env })}\n`)
+    deadline = setTimeout(() => fail(new Error('Windows PTY readiness timed out')), 60_000)
+    deadline.unref()
+    send(options)
+  } catch (cause) {
+    fail(cause)
+    if (!child) rejectDone(failure)
   }
+
   return {
     ready,
     completion,
-    stop: async () => {
-      if (!child) {
-        if (failure) throw failure
-        return
-      }
-      child.kill()
-      try {
-        await completion
-      } catch (error) {
-        throw failure ?? error
-      }
+    stop: () => {
+      requestStop()
+      return completion
     },
   }
 }
