@@ -1,35 +1,46 @@
+import { app } from 'electron'
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { GitHubSession } from '../src/main/github/session'
-import { TokenStore } from '../src/main/github/token-store'
+import { TokenStore, type SafeStorageLike, type StoredAuth } from '../src/main/github/token-store'
 
-const auth = {
-  token: 'holi-550-owned-fixture-token',
-  accountId: 550001,
-  login: 'holi-550-fixture',
-  name: 'Holi 550 Fixture',
-  avatarUrl: 'https://avatars.githubusercontent.com/u/550001?v=4',
-  scopes: ['repo', 'read:user', 'read:org'],
-}
-const memoryEncryption = {
+const key = randomBytes(32)
+const storage: SafeStorageLike = {
   isEncryptionAvailable: () => true,
-  encryptString: (plain: string) => Buffer.from(plain, 'utf8'),
-  decryptString: (encrypted: Buffer) => encrypted.toString('utf8'),
   getSelectedStorageBackend: () => 'unknown',
+  encryptString(text) {
+    const iv = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', key, iv)
+    return Buffer.concat([iv, cipher.update(text), cipher.final(), cipher.getAuthTag()])
+  },
+  decryptString(data) {
+    const cipher = createDecipheriv('aes-256-gcm', key, data.subarray(0, 12))
+    cipher.setAuthTag(data.subarray(-16))
+    return Buffer.concat([cipher.update(data.subarray(12, -16)), cipher.final()]).toString()
+  },
 }
 
-export async function createSession(userDataDir: string): Promise<GitHubSession> {
-  const store = new TokenStore(join(userDataDir, 'github-auth.enc'), memoryEncryption)
-  if (!(await store.read())) await store.write(auth)
+export async function createSession(userDataDir = app.getPath('userData')): Promise<GitHubSession> {
+  const auth: StoredAuth = {
+    token: 'holi-550-owned-fixture-token',
+    accountId: 550001,
+    login: 'holi-550-fixture',
+    name: 'Holi 550 Fixture',
+    avatarUrl: '',
+    scopes: ['repo', 'read:user', 'read:org'],
+  }
+  const store = new TokenStore(join(userDataDir, 'github-auth.enc'), storage)
+  await store.write(auth)
   return GitHubSession.load({
     store,
     fetch: async (input) => {
-      const url = new URL(String(input))
+      const url = new URL(input instanceof Request ? input.url : String(input))
       if (url.origin === 'https://api.github.com' && url.pathname === '/user')
         return Response.json({
           id: auth.accountId,
           login: auth.login,
           name: auth.name,
-          avatar_url: auth.avatarUrl,
+          avatar_url: '',
         })
       throw new Error(`Unexpected fixture network request: ${url.origin}${url.pathname}`)
     },

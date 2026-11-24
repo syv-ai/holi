@@ -20,7 +20,7 @@ export async function clickNativeBanner({ appName, title, timeoutMs = 12_000, si
         set observedTitles to 0
         set observedValues to 0
         set observedAppParents to 0
-        repeat with p in (every process whose name is "NotificationCenter")
+        repeat with p in (every process whose name is "NotificationCenter" or name is "UserNotificationCenter")
           repeat with w in (every window of p)
             set observedWindows to observedWindows + 1
             try

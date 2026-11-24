@@ -51,6 +51,10 @@
         "scripts/agent-inbox-542-smoke-main.ts",
         "scripts/agent-inbox-542-smoke-renderer.tsx",
         // Native #550 fixtures are built by disposable MJS runners via filesystem paths.
+        "scripts/agent-inbox-550.vite.config.ts",
+        "scripts/agent-inbox-550-main.ts",
+        "scripts/agent-inbox-550-github.ts",
+        "scripts/seed-agent-inbox-550.ts",
         "scripts/notification-os-fixture-main.ts",
         "scripts/claude-native-background-worker.ts",
         // Native IPC smoke is selected by the Node runner's filesystem path.
