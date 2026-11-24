@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
 import { resolveNativeBinary } from './claude-compatibility.mjs'
@@ -61,6 +61,8 @@ export async function runClaudeNativeTuiFixture({
     requests = []
   const deadline = Date.now() + timeout
   let root, server, tui, detail, provenance, containment, denial, cleanupError
+  let phase = 'containment',
+    nativeRequests = 0
   const launch = async (command, args, env, label) => {
     const remaining = deadline - Date.now()
     if (remaining <= 0) throw new Error('Overall native fixture deadline exceeded')
@@ -79,14 +81,15 @@ export async function runClaudeNativeTuiFixture({
   try {
     if (process.platform !== 'darwin' || !existsSync('/usr/bin/sandbox-exec'))
       throw new Error('Verified macOS Seatbelt containment required')
-    const binary = await resolveNativeBinary(install, version)
+    const binary = await resolveNativeBinary(resolve(install), version)
     const manifest = await readFile(join(dirname(binary), 'package.json'))
     provenance = {
       package: JSON.parse(manifest).name,
       version,
       packageManifestSha256: digest(manifest),
       binarySha256: digest(await readFile(binary)),
-      registry: 'https://registry.npmjs.org/',
+      expectedRegistry: 'https://registry.npmjs.org/',
+      origin: 'unverified; installed manifests and hashes do not establish registry integrity',
     }
     root = await realpath(await mkdtemp(join(tmpdir(), 'holi-661-runtime-')))
     const home = join(root, 'home'),
@@ -105,11 +108,12 @@ export async function runClaudeNativeTuiFixture({
     )
     server = createServer((request, response) => {
       request.resume()
-      if (request.url !== '/probe')
-        requests.push({ method: request.method, url: request.url?.slice(0, 256) })
+      if (phase !== 'containment') nativeRequests++
+      if (requests.length < 16)
+        requests.push({ phase, method: request.method, url: request.url?.slice(0, 256) })
       response.writeHead(404, { 'content-type': 'application/json' })
       response.end('{}')
-      if (requests.length > 16) server.closeAllConnections()
+      if (nativeRequests > 16) server.closeAllConnections()
     })
     await new Promise((resolve, reject) => {
       server.once('error', reject)
@@ -151,12 +155,14 @@ console.log(JSON.stringify({local,denied}));`,
       !['EPERM', 'EACCES'].includes(containment.denied)
     )
       throw new Error('Network containment not positively established')
+    phase = 'version'
     const versionProbe = await launch(binary, ['--version'], env, 'version')
     const versionExit = await versionProbe.waitForExit()
     await versionProbe.close()
     provenance.observedVersion = stripVTControlCharacters(versionProbe.output.toString()).trim()
     if (versionExit.code !== 0 || provenance.observedVersion !== `${version} (Claude Code)`)
       throw new Error('Native version does not match the fixture contract')
+    phase = 'tui'
     tui = await launch(
       binary,
       [],
@@ -181,7 +187,7 @@ console.log(JSON.stringify({local,denied}));`,
       if (Date.now() >= deadline) throw new Error('Native trust selector deadline exceeded')
       await delay(20)
     }
-    if (requests.length) throw new Error('Unexpected model request before native trust selection')
+    if (nativeRequests) throw new Error('Unexpected request before native trust selection')
     // This is the pinned upstream startup selector before any model content exists.
     // Confirm its selected negative choice only; never select or persist affirmative trust.
     inputs.push({
@@ -192,7 +198,7 @@ console.log(JSON.stringify({local,denied}));`,
     await tui.write('\r')
     const exit = await tui.waitForExit()
     denial = { nativeSelectorObserved: true, nativeExit: exit, selected: 'No, exit' }
-    if (exit.code !== 1 || requests.length) throw new Error('Native trust denial outcome mismatch')
+    if (exit.code !== 1 || nativeRequests) throw new Error('Native trust denial outcome mismatch')
     detail =
       'Native workspace trust denial exits. Affirmative trust is prohibited; post-trust ownership and controls remain unverified.'
   } catch (error) {
@@ -234,6 +240,7 @@ console.log(JSON.stringify({local,denied}));`,
     nativeLaunched: Boolean(tui),
     inputs,
     requests,
+    nativeRequests,
     ownership: { currentSession: null, targets: [] },
     remaining: [
       'post-trust typing, cancellation and shortcuts',
