@@ -21,7 +21,8 @@ func sanitized(_ job: [String: Any]?) -> [String: Any] {
   return result
 }
 if mode == "inspect" { print(String(data: try! JSONSerialization.data(withJSONObject: sanitized(matchingJob())), encoding: .utf8)!); exit(0) }
-guard mode == "remove", let job = matchingJob() else { fail("job absent or invalid mode") }
+guard mode == "remove" else { fail("invalid mode") }
+guard let job = matchingJob() else { print("{\"present\":false,\"removed\":true}"); exit(0) }
 guard let argv = job["ProgramArguments"] as? [String], argv.count >= 3 else { fail("invalid arguments") }
 let framework = canonical((artifact as NSString).appendingPathComponent("Contents/Frameworks/Squirrel.framework"))
 let expectedExe = canonical((framework as NSString).appendingPathComponent("Resources/ShipIt"))

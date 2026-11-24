@@ -13,7 +13,11 @@ import { externalizeDepsPlugin } from 'electron-vite'
 import { createOwnedProcesses } from './owned-processes.mjs'
 import { createUpgradeProviders } from './connection-upgrade-provider.mjs'
 import { connectUpgradeInspector } from './upgrade-inspector.mjs'
-import { createUpgradeInstaller, installerStatePath } from './upgrade-installer.mjs'
+import {
+  createUpgradeInstaller,
+  installerStatePath,
+  removeAfterDrain,
+} from './upgrade-installer.mjs'
 
 const exec = promisify(execFile)
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -33,6 +37,7 @@ let ownsProfile = false
 let artifact
 let installer
 let installerGuardReady = false
+let appStarted = false
 let providers
 let feed
 const launchKeys = []
@@ -316,6 +321,7 @@ async function main() {
       },
     },
   )
+  appStarted = true
   await attach(child)
   const initial = await evaluate(
     `(() => {
@@ -420,7 +426,7 @@ async function main() {
   receipt.providerRequests = providers.stats.requests
   receipt.restored = { googleAccountStateStored: true, ownClientSelected: true }
   receipt.newProcessObserved = Number.isSafeInteger(newPid)
-  // The uninspected first post-update process above must restore Google itself.
+  // The uninspected first post-update process must restore stored Google account state.
   // A subsequent cold start independently checks every native encrypted store.
   process.kill(newPid, 'SIGTERM')
   await wait('first-relaunch-exit', async () => (await ownAppPids()).length === 0, 30_000)
@@ -461,16 +467,20 @@ async function main() {
   })()`,
   )
   await inspector.resume()
-  receipt.nativeDecryptionCompatibility = await wait('updated-electron-native-readers', () =>
-    evaluate('globalThis.__holi565Audit'),
-  )
+  receipt.nativeDecryptionCompatibility = {
+    readerSource: 'checkout-bundled',
+    host: 'updated-electron',
+    outcomes: await wait('updated-electron-native-readers', () =>
+      evaluate('globalThis.__holi565Audit'),
+    ),
+  }
   assert(
     ['github', 'google', 'client', 'vaultBinding', 'speech'].every(
-      (key) => receipt.nativeDecryptionCompatibility[key] === true,
+      (key) => receipt.nativeDecryptionCompatibility.outcomes[key] === true,
     ),
     'a native credential reader did not restore its fixture connection',
   )
-  await checkpoint('completed-no-google-disconnect-reproduced')
+  await checkpoint('completed-stored-google-account-state')
 }
 
 try {
@@ -556,12 +566,22 @@ try {
     )
   if (providers) await attempt('provider-shutdown', () => providers.close())
   if (feed) await attempt('feed-shutdown', () => feed.stop())
-  if (drained && installerDrained) {
-    if (ownsProfile) {
-      await attempt('remove-profile', () => rm(profile, { recursive: true, force: true }))
-      await attempt('remove-vaults', () => rm(vaultRoot, { recursive: true, force: true }))
-    }
-    if (root) await attempt('remove-artifacts', () => rm(root, { recursive: true, force: true }))
+  let deletionAllowed = false
+  if (drained && installerDrained && (!appStarted || installerGuardReady)) {
+    await attempt('confirmed-absence-and-remove-resources', async () => {
+      await removeAfterDrain({
+        runtimeDrained: true,
+        installer: installer ?? { inspect: async () => ({ present: false }) },
+        removeResources: async () => {
+          if (ownsProfile) {
+            await rm(profile, { recursive: true, force: true })
+            await rm(vaultRoot, { recursive: true, force: true })
+          }
+          if (root) await rm(root, { recursive: true, force: true })
+        },
+      })
+      deletionAllowed = true
+    })
   }
   if (failures.length) {
     receipt.cleanup = {
