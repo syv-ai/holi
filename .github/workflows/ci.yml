@@ -126,6 +126,33 @@ jobs:
           path: ${{ runner.temp }}/codex-exec-producer/evidence.json
           if-no-files-found: error
 
+  native-codex-sandbox:
+    name: Native Codex sandbox enforcement
+    runs-on: macos-26-intel
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install repository test dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Prove native production job write and network restrictions
+        env:
+          HOLI_CODEX_EVIDENCE: ${{ runner.temp }}/codex-sandbox/evidence.json
+        run: node scripts/codex-exec-producer.mjs --sandbox-proof
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: native-codex-sandbox-evidence
+          path: ${{ runner.temp }}/codex-sandbox/evidence.json
+          if-no-files-found: error
+
   pi-native-producer:
     name: Native Pi RPC producer
     runs-on: ubuntu-24.04
