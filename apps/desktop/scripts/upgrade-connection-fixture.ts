@@ -96,6 +96,7 @@ export async function seedConnections(
 }
 
 /** Readers executed inside the updated Electron return fixture decryption compatibility outcomes. */
+// Reads stored account state with checkout-bundled readers; this does not restore shipped readers.
 export async function inspectConnections(userData: string, remote: string) {
   if (!app.isReady() || !safeStorage.isEncryptionAvailable()) {
     throw new Error('Native credential inspection is unavailable')
