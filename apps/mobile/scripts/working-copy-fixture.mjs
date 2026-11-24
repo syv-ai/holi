@@ -13,6 +13,7 @@ import {
   rm,
 } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
+import { stagingDirectory, legacyStagingDirectory } from '../app/storage-staging.ts'
 
 const exec = promisify(execFile)
 const remoteUrl = 'https://github.com/fixture/vault.git'
@@ -136,6 +137,27 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
       },
     ],
     ['addition', async (r) => put(r, 'added.md', 'added\n')],
+    [
+      'autocrlf',
+      async (r) => {
+        await git(r, 'config', 'core.autocrlf', 'true')
+        await put(r, '.gitattributes', '*.md text eol=crlf\n')
+      },
+    ],
+    [
+      'skip-worktree',
+      async (r) => {
+        await git(r, 'update-index', '--skip-worktree', 'tracked.md')
+        await put(r, 'tracked.md', 'hidden worktree change\n')
+      },
+    ],
+    [
+      'ignored-untracked',
+      async (r) => {
+        await put(r, '.gitignore', 'ignored.md\n')
+        await put(r, 'ignored.md', 'ignored\n')
+      },
+    ],
     ['deletion', async (r) => git(r, 'rm', 'tracked.md')],
     [
       'file-directory',
@@ -183,6 +205,10 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
           if (p !== 'image.bin') await chmod(join(r, p), 0)
         }
       },
+    ],
+    [
+      'spaced-name',
+      async (r) => put(r, 'notes with spaces.md', 'spaced\n'),
     ],
     ['detached', async (r) => git(r, 'checkout', '--detach', 'HEAD')],
     ['unborn', async (r) => git(r, 'checkout', '--orphan', 'unborn')],
@@ -233,13 +259,19 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
         )
     const recovery = []
     if (libraryRoot) {
-      /* Storage journals use move-<id>.json; callers supply real pending files. */
-      for (const entry of await readdir(libraryRoot, { withFileTypes: true }).catch(() => []))
-        if (entry.isFile() && /^move-[A-Za-z0-9_-]+\.json$/.test(entry.name))
-          recovery.push({
-            name: entry.name,
-            bytes: (await readFile(join(libraryRoot, entry.name))).toString('base64'),
-          })
+      const stageRoot = stagingDirectory(libraryRoot, root)
+      const legacyRoot = legacyStagingDirectory(libraryRoot, root)
+      await mkdir(stageRoot, { recursive: true })
+      await mkdir(legacyRoot, { recursive: true })
+      const pending = [
+        [stageRoot, 'stage-00000000-0000-0000-0000-000000000001.tmp', 'pending stage'],
+        [legacyRoot, 'stage-00000000-0000-0000-0000-000000000002.tmp', 'legacy stage'],
+        [libraryRoot, 'move-00000000-0000-0000-0000-000000000003.json', '{"pending":true}'],
+      ]
+      for (const [directory, name, contents] of pending) {
+        await writeFile(join(directory, name), contents)
+        recovery.push({ name, bytes: Buffer.from(contents).toString('base64') })
+      }
     }
     cases.push({
       name,
