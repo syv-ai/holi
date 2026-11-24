@@ -22,14 +22,17 @@ import { googleCap } from '../google-cap'
 import { codeOf, isDisconnected, messageOf } from '../google-errors'
 
 type PageRequest = { query: string; pageToken?: string }
+const NO_FILES: DriveFile[] = []
 
 export function DriveFilesDialog({
   remote,
   target,
   eventTitle,
   attachedIds,
-  retryFiles,
+  slots,
+  initialFiles = NO_FILES,
   busy,
+  canSubmit,
   onConfirm,
   onClose,
   onRestoreFocus,
@@ -38,9 +41,11 @@ export function DriveFilesDialog({
   remote: string
   target: EventAttachmentTarget
   eventTitle: string
-  attachedIds: string[]
-  retryFiles?: DriveFile[]
+  attachedIds: ReadonlySet<string>
+  slots: number
+  initialFiles?: DriveFile[]
   busy: boolean
+  canSubmit: boolean
   onConfirm: (files: DriveFile[]) => void
   onClose: () => void
   onRestoreFocus: () => void
@@ -53,14 +58,22 @@ export function DriveFilesDialog({
   const [page, setPage] = useState<DriveFilePage>({ files: [] })
   const [loading, setLoading] = useState(true)
   const [failure, setFailure] = useState<{ cause: unknown } | null>(null)
-  const [selection, setSelection] = useState<DriveFile[]>([])
-  const [confirming, setConfirming] = useState(Boolean(retryFiles))
+  const [selection, setSelection] = useState(initialFiles)
+  const [confirming, setConfirming] = useState(false)
   const title = useRef<HTMLHeadingElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
-  const files = retryFiles ?? selection
+  const adding = selection.filter(({ id }) => !attachedIds.has(id)).length
+  const remaining = Math.max(0, slots - adding)
+  const canConfirm = canSubmit && selection.length > 0 && adding <= slots
+  const revisableIds = new Set(initialFiles.map(({ id }) => id))
+  // Keep selected files reachable even if they are on a different search page.
+  const candidates = [
+    ...new Map(
+      [...selection, ...initialFiles, ...page.files].map((file) => [file.id, file]),
+    ).values(),
+  ]
 
   useEffect(() => {
-    if (retryFiles) return
     let current = true
     const { query, pageToken } = request
     void googleCap
@@ -96,7 +109,7 @@ export function DriveFilesDialog({
     return () => {
       current = false
     }
-  }, [remote, expectedAccountSub, calendarId, eventId, request, retryFiles])
+  }, [remote, expectedAccountSub, calendarId, eventId, request])
 
   useEffect(() => {
     if (confirming) title.current?.focus()
@@ -164,7 +177,7 @@ export function DriveFilesDialog({
                 className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto text-sm"
                 aria-label="Files to attach"
               >
-                {files.map(({ id, name }) => (
+                {selection.map(({ id, name }) => (
                   <li className="wrap-anywhere" key={id}>
                     {name}
                   </li>
@@ -198,23 +211,33 @@ export function DriveFilesDialog({
                 </Button>
               </div>
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-1">
-                {page.files.length > 0 && (
+                {candidates.length > 0 && (
                   <ul className="flex flex-col gap-2" aria-label="Drive files">
-                    {page.files.map((file) => {
-                      const attached = attachedIds.includes(file.id)
+                    {candidates.map((file) => {
+                      const attached = attachedIds.has(file.id)
+                      const selected = selection.some(({ id }) => id === file.id)
+                      const alreadyAttached = attached && !revisableIds.has(file.id)
                       return (
                         <li key={file.id}>
                           <FieldLabel className="items-center">
                             <Checkbox
                               type="button"
-                              checked={attached || selection.some(({ id }) => id === file.id)}
-                              disabled={attached}
+                              checked={alreadyAttached || selected}
+                              disabled={
+                                alreadyAttached || (!selected && !attached && remaining === 0)
+                              }
                               onCheckedChange={(checked) =>
-                                setSelection((previous) =>
-                                  checked === true
-                                    ? [...previous.filter(({ id }) => id !== file.id), file]
-                                    : previous.filter(({ id }) => id !== file.id),
-                                )
+                                setSelection((previous) => {
+                                  if (!checked) return previous.filter(({ id }) => id !== file.id)
+                                  if (previous.some(({ id }) => id === file.id)) return previous
+                                  if (
+                                    !attached &&
+                                    previous.filter(({ id }) => !attachedIds.has(id)).length >=
+                                      slots
+                                  )
+                                    return previous
+                                  return [...previous, file]
+                                })
                               }
                             />
                             <span className="min-w-0 wrap-anywhere">{file.name}</span>
@@ -297,7 +320,9 @@ export function DriveFilesDialog({
               </div>
               <div className="flex items-center gap-2">
                 <span role="status" className="text-muted-foreground text-xs tabular-nums">
-                  {selection.length} selected
+                  {selection.length} selected · {remaining} attachment{' '}
+                  {remaining === 1 ? 'slot' : 'slots'} left
+                  {adding > slots ? ` · Remove ${adding - slots} to continue` : ''}
                 </span>
                 {selection.length > 0 && (
                   <Button type="button" variant="ghost" size="sm" onClick={() => setSelection([])}>
@@ -308,7 +333,7 @@ export function DriveFilesDialog({
             </>
           )}
           <DialogFooter>
-            {confirming && !retryFiles && !busy && (
+            {confirming && !busy && (
               <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(false)}>
                 Back
               </Button>
@@ -317,14 +342,19 @@ export function DriveFilesDialog({
               Cancel
             </Button>
             {confirming ? (
-              <Button type="button" size="sm" disabled={busy} onClick={() => onConfirm(files)}>
-                {retryFiles ? 'Retry attaching and sharing' : 'Attach and share with guests'}
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy || !canConfirm}
+                onClick={() => onConfirm(selection)}
+              >
+                Attach and share with guests
               </Button>
             ) : (
               <Button
                 type="button"
                 size="sm"
-                disabled={selection.length === 0}
+                disabled={!canConfirm}
                 onClick={() => setConfirming(true)}
               >
                 Review files

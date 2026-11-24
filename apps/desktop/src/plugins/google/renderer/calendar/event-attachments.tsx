@@ -3,6 +3,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
+import { capClient, type UiCapability } from '@/plugin-api'
 import { ExternalLinkIcon, PlusIcon } from 'lucide-react'
 import type {
   AttachEventFilesResult,
@@ -11,12 +12,70 @@ import type {
   EventAttachments as AttachmentList,
   EventAttachmentTarget,
 } from '../../shared/event-attachments'
+import { useGoogleAccount } from '../account'
 import { googleCap } from '../google-cap'
 import { codeOf, isDisconnected, messageOf } from '../google-errors'
 import { DriveFilesDialog } from './drive-files-dialog'
 
+const ATTACHMENT_LIMIT = 25
+
 type Read = { data: AttachmentList } | { error: unknown }
-type Attempt = { files: DriveFile[]; result: AttachEventFilesResult; reconnect?: boolean }
+type Outcome = AttachEventFilesResult & { reconnect?: boolean; sharingComplete?: boolean }
+type Attempt = { files: DriveFile[]; result: Outcome }
+
+const { checkEventFileAccess } = capClient<{
+  'google.checkEventFileAccess': UiCapability<
+    EventAttachmentTarget & { fileIds: string[] },
+    Outcome
+  >
+}>('google')
+
+const needsCheck = (result: Outcome) =>
+  result.attachmentStatus === 'unknown' ||
+  result.sharing.some(({ status }) => status === 'unknown') ||
+  result.reconnect === true
+
+const needsAttention = (result: Outcome) =>
+  result.attachmentStatus !== 'attached' ||
+  result.sharingComplete === false ||
+  result.sharing.some(({ status }) => status === 'failed' || status === 'unknown') ||
+  result.reconnect === true ||
+  Boolean(result.message)
+
+function reconcile(previous: Outcome, checked: Outcome): Outcome {
+  const sharing = [...checked.sharing]
+  for (const row of previous.sharing) {
+    const index = sharing.findIndex(
+      ({ fileId, guest }) => fileId === row.fileId && guest === row.guest,
+    )
+    const observed = sharing[index]
+    // A missing permission does not prove an in-flight POST failed. Only
+    // observing access clears that uncertainty. Keep completed rows if the
+    // check stopped partway through (for example, due to a scope refusal).
+    if (
+      (row.status === 'unknown' &&
+        (observed?.status === 'failed' || (!observed && checked.sharingComplete !== true))) ||
+      (checked.reconnect &&
+        !observed &&
+        (row.status === 'granted' || row.status === 'already-accessible'))
+    ) {
+      if (index === -1) sharing.push(row)
+      else sharing[index] = row
+    }
+  }
+  return {
+    ...checked,
+    attachmentStatus:
+      checked.attachmentStatus !== 'attached' && previous.attachmentStatus === 'unknown'
+        ? 'unknown'
+        : checked.reconnect && previous.attachmentStatus === 'attached'
+          ? 'attached'
+          : checked.attachmentStatus,
+    sharing,
+  }
+}
+
+const reconnectFor = (error: unknown) => codeOf(error) === 'FORBIDDEN' || isDisconnected(error)
 
 /** The caller keys this section by the vault, account, calendar and event. */
 export function EventAttachments({
@@ -35,15 +94,19 @@ export function EventAttachments({
   openCalendar: () => void
 }) {
   const { expectedAccountSub, calendarId, eventId } = target
+  const { currentSub, loading: accountLoading, readError: accountReadError } = useGoogleAccount()
+  const currentAccount = currentSub === expectedAccountSub && !accountLoading && !accountReadError
   const headingId = useId()
   const heading = useRef<HTMLHeadingElement>(null)
   const trigger = useRef<HTMLButtonElement | null>(null)
   const [read, setRead] = useState<Read | null>(null)
   const [revision, setRevision] = useState(0)
-  const [dialog, setDialog] = useState<'pick' | 'retry' | null>(null)
+  const [dialog, setDialog] = useState<'pick' | 'revise' | null>(null)
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState<Attempt | null>(null)
-  const writing = useRef(false)
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState<unknown>(null)
+  const inFlight = useRef(false)
   const mounted = useRef(false)
 
   useLayoutEffect(() => {
@@ -74,17 +137,34 @@ export function EventAttachments({
   }
   const data = read && 'data' in read ? read.data : null
   const readError = read && 'error' in read ? read : null
+  const attachedIds = new Set(data?.attachments.flatMap(({ fileId }) => (fileId ? [fileId] : [])))
+  const slots = Math.max(0, ATTACHMENT_LIMIT - (data?.attachments.length ?? 0))
+  const canSubmit =
+    currentAccount &&
+    data?.canAttach === true &&
+    !(attempt && needsCheck(attempt.result)) &&
+    !checking &&
+    checkError === null
   const confirm = async (files: DriveFile[]) => {
-    if (writing.current || !mounted.current || !data?.canAttach) return
-    writing.current = true
+    if (
+      inFlight.current ||
+      !mounted.current ||
+      !canSubmit ||
+      files.length === 0 ||
+      files.length > ATTACHMENT_LIMIT ||
+      files.filter(({ id }) => !attachedIds.has(id)).length > slots
+    )
+      return
+    inFlight.current = true
+    setCheckError(null)
     setBusy(true)
     try {
-      const result = await googleCap.attachEventFiles(remote, {
+      const result: Outcome = await googleCap.attachEventFiles(remote, {
         ...target,
         fileIds: files.map(({ id }) => id),
       })
       if (!mounted.current) return
-      setAttempt({ files, result: { ...result, sharing: result.sharing ?? [] } })
+      setAttempt({ files, result })
     } catch (error) {
       if (!mounted.current) return
       setAttempt({
@@ -94,11 +174,11 @@ export function EventAttachments({
           attachmentStatus: 'unknown',
           sharing: [],
           message: messageOf(error, 'Google did not return an attachment result.'),
+          reconnect: reconnectFor(error),
         },
-        reconnect: codeOf(error) === 'FORBIDDEN' || isDisconnected(error),
       })
     } finally {
-      writing.current = false
+      inFlight.current = false
       if (mounted.current) {
         setBusy(false)
         setDialog(null)
@@ -106,6 +186,28 @@ export function EventAttachments({
         // even if the write failed, without turning that read into a retry.
         reload()
       }
+    }
+  }
+
+  const check = async () => {
+    if (!attempt || !currentAccount || inFlight.current || !mounted.current) return
+    inFlight.current = true
+    setChecking(true)
+    setCheckError(null)
+    try {
+      const result = await checkEventFileAccess(remote, {
+        ...target,
+        fileIds: attempt.files.map(({ id }) => id),
+      })
+      if (!mounted.current) return
+      setAttempt({ ...attempt, result: reconcile(attempt.result, result) })
+      reload()
+    } catch (error) {
+      if (!mounted.current) return
+      setCheckError(error)
+    } finally {
+      inFlight.current = false
+      if (mounted.current) setChecking(false)
     }
   }
 
@@ -120,6 +222,7 @@ export function EventAttachments({
             type="button"
             variant="outline"
             size="sm"
+            disabled={!canSubmit || slots === 0}
             onClick={(event) => {
               trigger.current = event.currentTarget
               setDialog('pick')
@@ -139,7 +242,7 @@ export function EventAttachments({
             message={messageOf(readError.error, 'Google did not return the event attachments.')}
             onRetry={reload}
           />
-          {(codeOf(readError.error) === 'FORBIDDEN' || isDisconnected(readError.error)) && (
+          {reconnectFor(readError.error) && (
             <Button type="button" size="sm" variant="outline" onClick={onOpenConnections}>
               Open Connections
             </Button>
@@ -171,6 +274,7 @@ export function EventAttachments({
                 type="button"
                 size="sm"
                 variant="secondary"
+                disabled={!canSubmit}
                 onClick={(event) => {
                   trigger.current = event.currentTarget
                   setDialog('pick')
@@ -181,6 +285,11 @@ export function EventAttachments({
             )}
           </EmptyState>
         ))}
+      {data?.canAttach && slots === 0 && (
+        <p className="text-muted-foreground text-xs">
+          This event has no remaining attachment slots.
+        </p>
+      )}
       {data?.canAttach === false && (
         <p className="text-muted-foreground text-xs">
           {data.reason ?? 'You can’t add files to this event.'}
@@ -189,11 +298,16 @@ export function EventAttachments({
       {attempt && (
         <AttachmentOutcome
           attempt={attempt}
-          canAttach={data?.canAttach === true}
-          onCheck={read ? reload : undefined}
-          onRetry={(button) => {
+          canRevise={
+            canSubmit && (slots > 0 || attempt.files.some(({ id }) => attachedIds.has(id)))
+          }
+          checking={checking}
+          canCheck={currentAccount}
+          checkError={checkError}
+          onCheck={() => void check()}
+          onRevise={(button) => {
             trigger.current = button
-            setDialog('retry')
+            setDialog('revise')
           }}
           onOpenConnections={onOpenConnections}
         />
@@ -203,9 +317,11 @@ export function EventAttachments({
           remote={remote}
           target={target}
           eventTitle={eventTitle}
-          attachedIds={data.attachments.flatMap(({ fileId }) => (fileId ? [fileId] : []))}
-          retryFiles={dialog === 'retry' ? attempt?.files : undefined}
+          attachedIds={attachedIds}
+          slots={slots}
+          initialFiles={dialog === 'revise' ? attempt?.files : undefined}
           busy={busy}
+          canSubmit={canSubmit}
           onConfirm={(files) => void confirm(files)}
           onClose={() => setDialog(null)}
           onRestoreFocus={() =>
@@ -242,66 +358,96 @@ function AttachmentRow({
 
 function AttachmentOutcome({
   attempt,
-  canAttach,
+  canRevise,
+  checking,
+  canCheck,
+  checkError,
   onCheck,
-  onRetry,
+  onRevise,
   onOpenConnections,
 }: {
   attempt: Attempt
-  canAttach: boolean
-  onCheck?: () => void
-  onRetry: (button: HTMLButtonElement) => void
+  canRevise: boolean
+  checking: boolean
+  canCheck: boolean
+  checkError: unknown
+  onCheck: () => void
+  onRevise: (button: HTMLButtonElement) => void
   onOpenConnections: () => void
 }) {
-  const { attachmentStatus, message, sharing } = attempt.result
-  const denied = sharing.filter(({ status }) => status === 'failed')
-  const uncertain = sharing.filter(({ status }) => status === 'unknown')
-  const accessible = sharing.length - denied.length - uncertain.length
-  const needsRetry = attachmentStatus !== 'attached' || denied.length > 0 || uncertain.length > 0
+  const { attachmentStatus, message, sharing, reconnect } = attempt.result
+  const accessible = sharing.filter(
+    ({ status }) => status === 'granted' || status === 'already-accessible',
+  )
+  const incomplete = needsAttention(attempt.result)
+  const checkNeeded = needsCheck(attempt.result) || checkError !== null
+  const canReconcile = checkNeeded || (incomplete && attachmentStatus === 'attached')
   return (
     <Alert
-      variant={attachmentStatus === 'failed' ? 'destructive' : needsRetry ? 'warning' : 'success'}
+      variant={attachmentStatus === 'failed' ? 'destructive' : incomplete ? 'warning' : 'success'}
     >
       <AlertTitle>
         {attachmentStatus === 'attached'
-          ? 'Files attached'
+          ? incomplete
+            ? 'Guest access incomplete'
+            : 'Files attached'
           : attachmentStatus === 'failed'
             ? 'Attachment failed'
             : 'Attachment not confirmed'}
       </AlertTitle>
       <AlertDescription>
+        {attachmentStatus === 'attached' && incomplete && <p>Files attached.</p>}
         {message && <p>{message}</p>}
-        {accessible > 0 && (
+        {accessible.length > 0 && (
           <p className="tabular-nums">
-            {`Guest access confirmed for ${accessible} file–guest ${accessible === 1 ? 'pair' : 'pairs'}.`}
+            {`Guest access confirmed for ${accessible.length} file–guest ${accessible.length === 1 ? 'pair' : 'pairs'}.`}
           </p>
         )}
-        {[...denied, ...uncertain].map(({ fileId, guest, status, message }, index) => (
-          <p key={JSON.stringify([fileId, guest, index])} className="wrap-anywhere">
-            {status === 'failed' ? 'Sharing failed' : 'Sharing not confirmed'}:{' '}
-            {attempt.files.find(({ id }) => id === fileId)?.name ?? fileId} · {guest}
-            {message ? ` — ${message}` : ''}
+        {sharing
+          .filter(({ status }) => status === 'failed' || status === 'unknown')
+          .map(({ fileId, guest, status, message }) => (
+            <p key={JSON.stringify([fileId, guest])} className="wrap-anywhere">
+              {status === 'failed' ? 'Guest access incomplete' : 'Sharing not confirmed'}:{' '}
+              {attempt.files.find(({ id }) => id === fileId)?.name ?? fileId} · {guest}
+              {message ? ` — ${message}` : ''}
+            </p>
+          ))}
+        {checking && <p role="status">Checking attachments and guest access…</p>}
+        {checkError !== null && (
+          <p>{messageOf(checkError, 'Could not check attachments and guest access.')}</p>
+        )}
+        {checkNeeded && (
+          <p>
+            {reconnect || reconnectFor(checkError)
+              ? 'Reconnect Google, then check file access before trying again.'
+              : 'Check access before trying again. Google may still be processing the previous request.'}
           </p>
-        ))}
+        )}
         <div className="flex flex-wrap gap-2">
-          {attempt.reconnect && (
+          {(reconnect || reconnectFor(checkError)) && (
             <Button type="button" variant="outline" size="sm" onClick={onOpenConnections}>
               Open Connections
             </Button>
           )}
-          {attachmentStatus === 'unknown' && (
-            <Button type="button" variant="outline" size="sm" disabled={!onCheck} onClick={onCheck}>
-              Check attachments
-            </Button>
-          )}
-          {needsRetry && canAttach && (
+          {canReconcile && (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={(event) => onRetry(event.currentTarget)}
+              disabled={checking || !canCheck}
+              onClick={onCheck}
             >
-              Retry same files
+              Check file access
+            </Button>
+          )}
+          {incomplete && canRevise && !checkNeeded && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={(event) => onRevise(event.currentTarget)}
+            >
+              Revise selection
             </Button>
           )}
         </div>
