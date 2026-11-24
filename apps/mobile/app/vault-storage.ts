@@ -10,6 +10,7 @@ import {
 } from '@holi/shared/mobile-path-safety'
 import type { NativeFiles, StorageCheckpointCallback } from './native-files'
 import { moveNote, recoverMoves } from './storage-move'
+import { withVaultLock } from './vault-lock'
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((byte, index) => byte === right[index])
@@ -17,20 +18,6 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 
 export type Revision = string
 export type StoredDocument = { path: VaultRelPath; bytes: Uint8Array; revision: Revision }
-
-const locks = new Map<string, Promise<void>>()
-function locked<T>(key: string, work: () => Promise<T>): Promise<T> {
-  const previous = locks.get(key) ?? Promise.resolve()
-  const next = previous.then(work, work)
-  const tail = next.then(
-    () => {},
-    () => {},
-  )
-  locks.set(key, tail)
-  return next.finally(() => {
-    if (locks.get(key) === tail) locks.delete(key)
-  })
-}
 
 function validatePath(raw: string): VaultRelPath {
   const path = vaultRelPath(raw)
@@ -62,7 +49,7 @@ export function createVaultStorage(
   const rootPath = () => (canonical ??= adapter.canonicalRoot(vault.root))
   const serialize = <T>(work: (root: string) => Promise<T>) =>
     rootPath().then((resolved) =>
-      locked(resolved, async () => {
+      withVaultLock(resolved, async () => {
         await recoverMoves(adapter, resolved, validatePath, options.checkpoint)
         return work(resolved)
       }),
