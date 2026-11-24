@@ -532,7 +532,7 @@
   }
   const setupMultiline = async (markup: string, point: string) => {
     await field(
-      `(() => { const h=document.querySelector('${multiline}'); h.innerHTML=${JSON.stringify(markup)}; h.focus(); const [node,offset]=((h)=>${point})(h); const r=document.createRange(); r.setStart(node,offset); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r); })()`,
+      `(() => { const h=document.querySelector('${multiline}'); h.innerHTML=${JSON.stringify(markup)}; h.focus(); h.scrollIntoView({block:'center'}); const [node,offset]=((h)=>${point})(h); const r=document.createRange(); r.setStart(node,offset); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r); })()`,
     )
   }
   const caretLine = async (line: number, offset: number) => {
@@ -542,6 +542,7 @@
       ),
       { line, offset },
     )
+    await pause(180)
   }
   const markup =
     '<p>  <strong>café</strong><a href="/next">🙂 two</a></p><div>x</div><p><br></p><p>long enough</p>'
@@ -594,9 +595,9 @@
   recordMultiline('paragraph-div-empty-line-grapheme-column-line-and-word-motions-preserve-dom')
 
   for (const mixed of [
-    { html: '<span>one<br></span>two', inline: true },
-    { html: '<p>one</p><span></span><p>two</p>', inline: false },
-    { html: 'one<br><p>two</p>', inline: false },
+    { html: '<span>one<br></span>two' },
+    { html: '<p>one</p><span></span><p>two</p>' },
+    { html: 'one<br><p>two</p>' },
   ]) {
     await setupMultiline(
       mixed.html,
