@@ -7,7 +7,7 @@
  * `buildRfc822` as something that looks like a header. No network: these are
  * about the seam, not about Gmail.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyVaultSnapshot } from '@holi/shared'
 import type { MailMarkerPreferences } from '../shared/mail-markers'
 import { resolveArgv } from '../../../main/bridge/cli'
@@ -26,6 +26,7 @@ import { GoogleApi } from '../main/api'
 import { openGoogleCache } from '../main/cache'
 import { createGoogleData } from '../main/data'
 import { createMailMarkerStore } from '../main/markers'
+import { createPermissionReceipts } from '../main/permission-receipts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -55,6 +56,7 @@ interface RigOptions {
     ) => Promise<void>
   }
   dataForSession?: (session: { accountSub: string | null }) => GoogleData
+  permissionReceipts?: ReturnType<typeof createPermissionReceipts>
 }
 
 /** The capabilities over a fake data layer and accounts manager, recording
@@ -63,6 +65,7 @@ function rig({
   data = {},
   accounts = {},
   dataForSession,
+  permissionReceipts,
   settings = {
     read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
     write: async () => {},
@@ -94,6 +97,7 @@ function rig({
     } as GoogleAccountsManager,
     dataFor: async () => googleData,
     dataForSession: (session) => (dataForSession?.(session) ?? googleData) as GoogleData,
+    permissionReceipts,
     settings,
   })
   registry.register(GOOGLE_NAMESPACES, capabilities)
@@ -130,6 +134,7 @@ const CALENDAR_READ = 'https://www.googleapis.com/auth/calendar.readonly'
 const CALENDAR_WRITE = 'https://www.googleapis.com/auth/calendar.events'
 const DRIVE_FULL = 'https://www.googleapis.com/auth/drive'
 const DRIVE_READ = 'https://www.googleapis.com/auth/drive.readonly'
+let attachmentUserData: string
 
 function attachmentRig({
   scopes,
@@ -209,6 +214,7 @@ function attachmentRig({
   })
   const holder = rig({
     data: null,
+    permissionReceipts: createPermissionReceipts(attachmentUserData),
     accounts: {
       sessionFor: async (requestedRemote) =>
         linked && requestedRemote === remote ? session : null,
@@ -226,7 +232,13 @@ function attachmentRig({
 }
 
 describe('event attachment capabilities', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  beforeEach(async () => {
+    attachmentUserData = await mkdtemp(join(tmpdir(), 'holi-attachment-capabilities-'))
+  })
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await rm(attachmentUserData, { recursive: true, force: true })
+  })
 
   it('reads with Calendar access, but rejects readonly Drive, stale targets and non-UI doors', async () => {
     const { invoke, requests } = attachmentRig({
@@ -238,7 +250,7 @@ describe('event attachment capabilities', () => {
     await expect(invoke('driveFiles')).rejects.toMatchObject({ code: 'FORBIDDEN' })
     await expect(
       invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    ).resolves.toMatchObject({ attachmentStatus: 'failed', reconnect: true, sharing: [] })
     await expect(
       invoke('eventAttachments', { ...ATTACHMENT_TARGET, expectedAccountSub: 'other' }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' })
@@ -274,10 +286,33 @@ describe('event attachment capabilities', () => {
       })
       await expect(
         rig.invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }),
-      ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+      ).resolves.toMatchObject({
+        attachmentStatus: 'failed',
+        sharing: [],
+        ...(change === 'narrower grant' ? { reconnect: true } : {}),
+      })
       expect(rig.requests.filter(({ method }) => method !== 'GET')).toEqual([])
     },
   )
+
+  it('returns a known no-write result for a deleted event before looking up Drive files', async () => {
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      onRequest: (path) => {
+        if (path.endsWith('/events/deleted')) return new Response(null, { status: 404 })
+      },
+    })
+    await expect(
+      invoke('attachEventFiles', {
+        ...ATTACHMENT_TARGET,
+        eventId: 'deleted',
+        fileIds: ['selected'],
+      }),
+    ).resolves.toMatchObject({ attachmentStatus: 'failed', sharing: [] })
+    expect(
+      requests.every(({ path, method }) => path.startsWith('/calendar/') && method === 'GET'),
+    ).toBe(true)
+  })
 
   it('refuses a stale event on the first page and rechecks editability before pagination', async () => {
     let locked = false
