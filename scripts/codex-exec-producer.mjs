@@ -284,11 +284,23 @@ function validateProbe(proof, expectedBin, allowFailure, sandboxProof = false) {
         JSON.stringify(statuses.map((m) => Number(m[2]))) !== JSON.stringify(o.statuses)
       )
         return `${name} has contradictory tool exit observations`
+      let input
+      try {
+        input = JSON.parse(s.requests[1].body).input
+      } catch {
+        return `${name} has an invalid native tool response request`
+      }
+      const results = Array.isArray(input)
+        ? input.filter(
+            (item) => item?.type === 'function_call_output' && item.call_id === 'call_sandbox',
+          )
+        : []
       if (
-        !s.requests[1].body.includes('function_call_output') ||
-        !s.requests[1].body.includes('call_sandbox')
+        results.length !== 1 ||
+        typeof results[0].output !== 'string' ||
+        !results[0].output.endsWith(`\nOutput:\n${o.nativeCommand.aggregated_output}`)
       )
-        return `${name} lacks the actual native tool round-trip`
+        return `${name} lacks a correlated native tool round-trip`
       if (name === 'sandbox-workspace') {
         if (
           o.statuses.length !== 3 ||

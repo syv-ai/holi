@@ -744,7 +744,7 @@ function sandboxProbe() {
             {
               type: 'function_call_output',
               call_id: 'call_sandbox',
-              output: nativeCommand.aggregated_output,
+              output: 'Process exited with code 0\nOutput:\n' + nativeCommand.aggregated_output,
             },
           ],
         }),
@@ -794,6 +794,19 @@ test('sandbox proof rejects missing successful writes, denied operations that ch
     (p) => {
       p.scenarios[0].requests[1].body = '{}'
     },
+    (p) => {
+      p.scenarios[0].requests[1].body = JSON.stringify({
+        input: [{ type: 'message', content: 'function_call_output call_sandbox' }],
+      })
+    },
+    (p) => {
+      p.scenarios[0].requests[1].body = JSON.stringify({
+        input: [
+          { type: 'function_call_output', call_id: 'call_sandbox', output: 'contradictory result' },
+        ],
+      })
+    },
+
     (p) => {
       p.scenarios[0].rawProcesses[0].outputLimited = true
     },
