@@ -151,6 +151,15 @@ export function useMdxDiagnostics(input: Input) {
             : undefined,
         loading: false,
       })
+      // A blocked grant keeps its ID until removal is saved. A current successful
+      // list also confirms removals saved in another split.
+      const approvedIds = new Set(result.approved.map(({ id }) => id))
+      setDecisionErrors((previous) =>
+        previous.filter(
+          ({ attempt }) =>
+            attempt.owner !== owner || attempt.action !== 'revoke' || approvedIds.has(attempt.id),
+        ),
+      )
     } catch (error) {
       if (current())
         setResources((previous) => ({
@@ -433,16 +442,15 @@ export function useMdxDiagnostics(input: Input) {
 
   function retryDecision(attempt: DecisionAttempt) {
     if (!decisionErrorCurrent(attempt) || originUpdating(attempt.origin)) return
-    if (attempt.action === 'revoke' && approved.some(({ id }) => id === attempt.id)) {
-      void decide('revoke', attempt.id)
+    if (attempt.action === 'revoke') {
+      if (approved.some(({ id }) => id === attempt.id)) void decide('revoke', attempt.id)
+      else void readResources(attempt.owner)
       return
     }
     setDecisionErrors((previous) => previous.filter((error) => error.attempt !== attempt))
-    if (attempt.action !== 'revoke') {
-      // Obtain a fresh request, never automatically approve a replacement.
-      attempt.owner.refreshPending = true
-      flushDiagnosticsRefresh(attempt.owner)
-    }
+    // Obtain a fresh request, never automatically approve a replacement.
+    attempt.owner.refreshPending = true
+    flushDiagnosticsRefresh(attempt.owner)
     void readResources(attempt.owner)
   }
 

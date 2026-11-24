@@ -203,6 +203,10 @@ export function createMdxConsentCoordinator(external?: {
               'MDX resource access was blocked for this run, but revocation could not be saved',
             )
           })
+          // A split may have completed its compile while the durable removal was
+          // waiting in the store queue. Its pre-save refresh was suppressed by the
+          // revision change; publish again now that the removal is visible on disk.
+          external.changed?.(scope.remote)
           return { ok: true }
         },
         close() {

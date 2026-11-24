@@ -1,7 +1,7 @@
 import { createMdxSmokeClient } from './mdx-native-smoke-client.mjs'
 import assert from 'node:assert/strict'
 import { runDocumentNativeAcceptance } from './mdx-document-native-smoke.mjs'
-import { fixtureOrigins } from './mdx-native-network-observation.ts'
+import { fixtureOrigins } from './mdx-native-fixture-constants.mts'
 
 export async function runExternalNativeAcceptance(
   page,
@@ -58,8 +58,7 @@ export async function runExternalNativeAcceptance(
     )
     await clickAt(point, deadline)
   }
-  const openResources = async (expected) => {
-    const deadline = performance.now() + 30000
+  const openResources = async (expected, deadline = performance.now() + 30000) => {
     for (;;) {
       const state = await waitFor(
         async () => {
@@ -121,6 +120,11 @@ export async function runExternalNativeAcceptance(
     const isolated = await windowStatus(page)
     assert.equal(isolated.ambientCookieHosts, 3)
     const before = await capture('beforeEditing')
+    noNewTraffic(
+      external.snapshots.beforeVaultTrust,
+      before,
+      'trusted local source before external editing',
+    )
     await editAndWaitForSave(source, 'unapproved external source')
     try {
       await findInFile(page, 'External diagnostics fixture')
@@ -182,8 +186,8 @@ export async function runExternalNativeAcceptance(
     let lease
     external.stage = 'relative and transitive graph'
     await click(allow(rawOrigin))
-    await openResources(allow(redirectOrigin))
     const transitiveDeadline = performance.now() + 30000
+    await openResources(allow(redirectOrigin), transitiveDeadline)
     await waitFor(
       () => button(allow(redirectOrigin)),
       'transitive approval',
@@ -202,10 +206,10 @@ export async function runExternalNativeAcceptance(
 
     external.stage = 'cross-origin redirect'
     await click(allow(redirectOrigin), transitiveDeadline)
-    await openResources(allow(cdnOrigin))
+    const redirectDeadline = performance.now() + 30000
+    await openResources(allow(cdnOrigin), redirectDeadline)
     const video = record ? await record() : null
     if (video) await delay(700)
-    const redirectDeadline = performance.now() + 30000
     await waitFor(
       () => button(allow(cdnOrigin)),
       'redirect target approval',

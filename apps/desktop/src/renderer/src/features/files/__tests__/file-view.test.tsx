@@ -1146,11 +1146,13 @@ function setupMdxResources({
   approved = false,
   revokeFailures = 0,
   beforeApprove,
+  beforeRevokeSave,
   sendChange = (deliver) => deliver(),
 }: {
   approved?: boolean
   revokeFailures?: number
   beforeApprove?: (origin: string) => Promise<void> | undefined
+  beforeRevokeSave?: () => Promise<void>
   sendChange?: (deliver: () => void) => void
 } = {}) {
   read.mockResolvedValue(`import Widget from '${resourceOrigin}/widget.mjs'\n\n# Source`)
@@ -1261,7 +1263,9 @@ function setupMdxResources({
       revokeFailures -= 1
       throw new Error('MDX resource revocation could not be saved')
     }
+    if (beforeRevokeSave) await beforeRevokeSave()
     grants.delete(origin)
+    changed()
     return { ok: true }
   })
   return { snapshot, changed }
@@ -1566,6 +1570,62 @@ test('failed revocation stays blocked and its retries target the same grant', as
   expect(await panel.findByRole('button', resourceButton('Allow'))).toBeEnabled()
   expect(panel.queryByText('Access blocked; revocation not saved')).not.toBeInTheDocument()
   expect(panel.queryByRole('button', resourceButton('Retry revocation'))).not.toBeInTheDocument()
+})
+
+test('a saved revocation in another split clears only the resolved decision error', async () => {
+  const otherOrigin = 'https://other-modules.example.test'
+  const save = deferredMdxWork()
+  const { snapshot } = setupMdxResources({
+    approved: true,
+    revokeFailures: 1,
+    beforeApprove: async () => {
+      throw new Error('Could not save MDX resource approval')
+    },
+    beforeRevokeSave: () => save.promise,
+  })
+  read.mockImplementation(async ({ path }) => {
+    const origin = path === 'content/other.mdx' ? otherOrigin : resourceOrigin
+    return `import Widget from '${origin}/widget.mjs'\n\n# Source`
+  })
+  const left = setup('content/other.mdx')
+  const right = render(
+    <Provider store={lastStore}>
+      <FileView path="content/page.mdx" />
+    </Provider>,
+  )
+
+  let panel = await openResources(left.container)
+  await userEvent.click(await panel.findByRole('button', resourceButton('Allow', otherOrigin)))
+  expect(await panel.findByRole('button', retryDecision(otherOrigin))).toBeEnabled()
+  await userEvent.click(panel.getByRole('button', resourceButton('Revoke')))
+  expect(await panel.findByRole('button', retryDecision())).toBeEnabled()
+  expect(await panel.findByRole('button', resourceButton('Retry revocation'))).toBeEnabled()
+  await userEvent.keyboard('{Escape}')
+
+  const rightPanel = await openResources(right.container)
+  const retryRevocation = await rightPanel.findByRole('button', resourceButton('Retry revocation'))
+  let readable = false
+  mdxResources.mockImplementation(async (input) => {
+    if (!readable) throw new Error('Resource grants could not be read')
+    return snapshot(input)
+  })
+  await userEvent.click(retryRevocation)
+  await userEvent.keyboard('{Escape}')
+
+  panel = await openResources(left.container)
+  expect(await panel.findByRole('button', retryResourceList)).toBeEnabled()
+  expect(panel.getByRole('button', retryDecision())).toBeEnabled()
+  expect(panel.getByRole('button', retryDecision(otherOrigin))).toBeEnabled()
+  expect(panel.getByRole('button', resourceButton('Retry revocation'))).toBeEnabled()
+
+  // The save in the right split triggers a fresh read in the left without a local retry.
+  readable = true
+  await act(async () => save.resolve())
+  expect(await panel.findByRole('button', resourceButton('Allow', otherOrigin))).toBeEnabled()
+  expect(panel.queryByRole('button', resourceButton('Retry revocation'))).not.toBeInTheDocument()
+  expect(panel.queryByRole('button', retryDecision())).not.toBeInTheDocument()
+  expect(panel.getByRole('button', retryDecision(otherOrigin))).toBeEnabled()
+  expect(panel.getByRole('alert')).toHaveTextContent(otherOrigin)
 })
 
 test('held and failed resource refreshes keep grants actionable without restoring stale grants', async () => {

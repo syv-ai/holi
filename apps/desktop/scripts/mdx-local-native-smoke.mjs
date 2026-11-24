@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { fixtureOrigins } from './mdx-native-network-observation.ts'
+import { fixtureOrigins } from './mdx-native-fixture-constants.mts'
 
 export async function runLocalNativeAcceptance(
   page,

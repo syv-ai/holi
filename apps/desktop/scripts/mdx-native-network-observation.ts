@@ -6,12 +6,9 @@ import type { ClientRequest, IncomingMessage } from 'node:http'
 import { isIP } from 'node:net'
 import tls, { type TLSSocket } from 'node:tls'
 import { resolveMdxExternalModule } from '../src/main/mdx-external-policy'
+import { fixtureOrigins } from './mdx-native-fixture-constants.mjs'
 
-export const fixtureOrigins = [
-  'https://raw.githubusercontent.com',
-  'https://esm.run',
-  'https://cdn.jsdelivr.net',
-] as const
+export { fixtureOrigins } from './mdx-native-fixture-constants.mjs'
 const [rawOrigin, redirectOrigin, cdnOrigin] = fixtureOrigins
 const redirectPath = '/nanoid@5.1.5/url-alphabet/index.js'
 const redirectSource = new URL(redirectPath, redirectOrigin)
