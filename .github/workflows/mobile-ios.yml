@@ -38,6 +38,12 @@ jobs:
     needs: changes
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      TZ: UTC
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - name: Fail if change detection failed
         if: needs.changes.result != 'success'
@@ -69,7 +75,7 @@ jobs:
           pnpm --filter @holi/mobile test
       - name: Native simulator coverage deferred
         if: needs.changes.outputs.run == 'true'
-        run: echo 'Portable checks passed; native iOS simulator coverage was not run on this event.' >> "$GITHUB_STEP_SUMMARY"
+        run: echo 'This status covers portable checks only. Native iOS verification runs separately on main/manual dispatch, never on pull requests.' >> "$GITHUB_STEP_SUMMARY"
 
   native:
     name: Native iOS simulator

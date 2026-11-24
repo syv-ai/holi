@@ -89,7 +89,7 @@ test('workflow dispatch always requests native compatibility', async () => {
         },
       },
     )
-    assert.equal(await readFile(outputPath, 'utf8'), 'run=true\\n')
+    assert.equal(await readFile(outputPath, 'utf8'), 'run=true\n')
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
