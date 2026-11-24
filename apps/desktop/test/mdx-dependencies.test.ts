@@ -69,7 +69,7 @@ describe('inspectMdxDependencies', () => {
         join(root, directory, 'private.js'),
         "export const privateMarker = 'MACHINE_STATE_BYTES'\n",
       )
-      const source = `import Private from '../${directory}/private.js'`
+      const source = `import Private from './${directory}/private.js'`
       const diagnostics = await run(source)
       expect(diagnostics).toHaveLength(1)
       expect(inspected).toEqual([source])
