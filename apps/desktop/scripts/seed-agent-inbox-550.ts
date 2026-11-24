@@ -1,6 +1,7 @@
-import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { lstat, realpath, writeFile } from 'node:fs/promises'
+import { dirname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { ownedFixtureDirectory } from './owned-fixture-directory'
 import { VaultRegistry } from '../src/main/vault/registry'
 
 const remotes = ['holi-550-fixture/vault-a', 'holi-550-fixture/vault-b'] as const
@@ -22,7 +23,7 @@ async function main(): Promise<void> {
   const remoteRoot = join(runtime, 'remotes')
   const userData = join(runtime, 'user-data')
   for (const directory of [home, vaultRoot, remoteRoot, userData])
-    await mkdir(directory, { recursive: true })
+    ownedFixtureDirectory(runtime, relative(runtime, directory))
 
   const gitConfig = join(home, '.gitconfig')
   const rewrite = pathToFileURL(`${remoteRoot}/`).href
@@ -65,8 +66,8 @@ async function main(): Promise<void> {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
     }
-    await mkdir(dirname(clone), { recursive: true })
-    await mkdir(dirname(bare), { recursive: true })
+    ownedFixtureDirectory(runtime, relative(runtime, dirname(clone)))
+    ownedFixtureDirectory(runtime, relative(runtime, dirname(bare)))
     await runGit(runtime, 'init', '--bare', '--initial-branch=main', bare)
     const canonical = `https://github.com/${remote}.git`
     await runGit(runtime, 'clone', canonical, clone)
