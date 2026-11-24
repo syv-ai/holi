@@ -26,6 +26,12 @@ interface Result {
   dependencies: Dependency[]
 }
 
+type MarkdownNode = {
+  type: string
+  children?: MarkdownNode[]
+  data?: { estree?: { body: unknown[] } }
+}
+
 type Location = { line?: unknown; column?: unknown }
 type ParserError = {
   message?: unknown
@@ -49,6 +55,14 @@ function commonJsMember(node: Record<string, unknown>): boolean {
 
 const unsupportedImportAttributes =
   'Unsupported import attributes; only plain ECMAScript modules are supported.'
+
+function sourcePosition(node: Record<string, unknown>) {
+  const start = (node.loc as { start?: Location } | undefined)?.start
+  return {
+    line: typeof start?.line === 'number' ? start.line : 1,
+    column: typeof start?.column === 'number' ? start.column + 1 : 1,
+  }
+}
 
 function moduleSource(node: Record<string, unknown>) {
   if (
@@ -104,48 +118,50 @@ root.__holiMdxReceive = (encoded) => {
   root.__holiMdxResult = undefined
   const diagnostics: Diagnostic[] = []
   const dependencies: Dependency[] = []
-  const inspectDependencies = () => (tree: unknown) => {
+  const inspectDeclarations = (body: readonly unknown[], input: string) => {
+    for (const node of body) {
+      const declaration = node as Record<string, unknown>
+      const source = moduleSource(declaration)
+      if (!source) continue
+      const position = sourcePosition(declaration)
+      if (hasImportAttributes(declaration, source.end, input)) {
+        if (request.format === 'mdx') {
+          // As with other MDX parse failures, do not return a partial set of dependencies.
+          throw Object.assign(new SyntaxError(unsupportedImportAttributes), {
+            position: declaration.loc,
+          })
+        }
+        diagnostics.push({ message: unsupportedImportAttributes, ...position })
+      } else if (/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(source.value)) {
+        dependencies.push({ specifier: source.value, ...position })
+      } else {
+        diagnostics.push({
+          message:
+            'Unsupported module specifier; use a relative path or an explicit HTTPS module URL.',
+          ...position,
+        })
+      }
+    }
+  }
+  const inspectExpressions = (tree: unknown) => {
     const visit = (node: unknown): void => {
       if (!node || typeof node !== 'object') return
       const value = node as Record<string, unknown>
-      const location = value.loc as { start?: Location } | undefined
-      const start = location?.start
-      const line = typeof start?.line === 'number' ? start.line : 1
-      const column = typeof start?.column === 'number' ? start.column + 1 : 1
       const type = value.type
-      const source = moduleSource(value)
-      if (source) {
-        // MDX clauses are checked on the original declarations before recma rewrites them.
-        if (request.format !== 'mdx' && hasImportAttributes(value, source.end, request.source)) {
-          diagnostics.push({ message: unsupportedImportAttributes, line, column })
-          return
-        }
-        const specifier = source.value
-        if (/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(specifier)) {
-          dependencies.push({ specifier, line, column })
-        } else {
-          diagnostics.push({
-            message:
-              'Unsupported module specifier; use a relative path or an explicit HTTPS module URL.',
-            line,
-            column,
-          })
-        }
-      } else if (
+      if (
         type === 'ImportExpression' ||
         (type === 'CallExpression' &&
           (value.callee as { type?: unknown } | undefined)?.type === 'Import')
       ) {
         diagnostics.push({
           message: 'Dynamic imports are not supported; use a static import.',
-          line,
-          column,
+          ...sourcePosition(value),
         })
       } else if (
         type === 'MetaProperty' &&
         (value.meta as { name?: unknown } | undefined)?.name === 'import'
       ) {
-        diagnostics.push({ message: 'import.meta is not supported.', line, column })
+        diagnostics.push({ message: 'import.meta is not supported.', ...sourcePosition(value) })
       } else if (
         (type === 'CallExpression' &&
           (value.callee as { name?: unknown } | undefined)?.name === 'require') ||
@@ -153,8 +169,7 @@ root.__holiMdxReceive = (encoded) => {
       ) {
         diagnostics.push({
           message: 'CommonJS is not supported; use ECMAScript modules.',
-          line,
-          column,
+          ...sourcePosition(value),
         })
       }
       for (const [key, child] of Object.entries(value)) {
@@ -173,7 +188,8 @@ root.__holiMdxReceive = (encoded) => {
         sourceType: 'module',
         locations: true,
       })
-      inspectDependencies()(tree)
+      inspectDeclarations(tree.body, request.source)
+      inspectExpressions(tree)
       root.__holiMdxResult = { id: request.id, diagnostics, dependencies }
     } catch (error) {
       const candidate = error as ParserError
@@ -211,30 +227,20 @@ root.__holiMdxReceive = (encoded) => {
     jsx: true,
     jsxImportSource: 'react',
     remarkPlugins: [
-      () =>
-        (tree: {
-          children: { type: string; data?: { estree?: { body: Record<string, unknown>[] } } }[]
-        }) => {
-          // Micromark's offsets exclude an initial BOM. Check before MDX can rewrite
-          // a re-export into a layout import and discard the original clause.
-          const input = request.source.startsWith('\uFEFF')
-            ? request.source.slice(1)
-            : request.source
-          for (const child of tree.children) {
-            if (child.type !== 'mdxjsEsm') continue
-            for (const declaration of child.data?.estree?.body ?? []) {
-              const source = moduleSource(declaration)
-              if (source && hasImportAttributes(declaration, source.end, input)) {
-                throw Object.assign(new SyntaxError(unsupportedImportAttributes), {
-                  position: declaration.loc,
-                })
-              }
-            }
-          }
-        },
+      () => (tree: MarkdownNode) => {
+        // Only scan original declarations: MDX can drop an empty re-export or
+        // split a re-export into a layout import and a named re-export.
+        // Micromark's offsets exclude an initial BOM.
+        const input = request.source.startsWith('\uFEFF') ? request.source.slice(1) : request.source
+        const visit = (node: MarkdownNode): void => {
+          if (node.type === 'mdxjsEsm') inspectDeclarations(node.data?.estree?.body ?? [], input)
+          node.children?.forEach(visit)
+        }
+        visit(tree)
+      },
     ],
     rehypePlugins: [],
-    recmaPlugins: [inspectDependencies],
+    recmaPlugins: [() => inspectExpressions],
   }).then(
     () => {
       root.__holiMdxResult = { id: request.id, diagnostics, dependencies }

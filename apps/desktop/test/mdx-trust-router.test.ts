@@ -717,6 +717,70 @@ it('opens a consent request for the production fetcher without resolving DNS', a
   }
 })
 
+it('requires origin consent for an empty MDX re-export and diagnoses its dependency', async () => {
+  const { mdx, acquire, contacts, routes } = await resourceRig()
+  const owner = await acquire()
+  const source = `# Preview\n\nexport {} from '${entry}'\n`
+  routes.set(entry, { text: 'export const = 1' })
+  try {
+    const diagnose = (generation: number) => mdx.compile({ ...owner, generation, source })
+    expect(await diagnose(1)).toMatchObject([{ line: 3 }])
+    const { pending } = await mdx.externalResources(owner)
+    expect(pending).toMatchObject([
+      { origin: 'https://one.example', purpose: 'mdx-dependency-diagnostics' },
+    ])
+    expect(contacts).toEqual([])
+
+    await mdx.approveExternalResource({ ...owner, requestId: pending[0]!.id })
+    expect(await diagnose(2)).toMatchObject([
+      { line: 3, message: expect.stringMatching(/invalid javascript syntax/i) },
+    ])
+    expect(contacts).toEqual([entry])
+    expect((await mdx.externalResources(owner)).pending).toEqual([])
+
+    await expect(
+      mdx.compile({
+        ...owner,
+        generation: 3,
+        source: "# Preview\n\nexport {} from './missing.js'\n",
+      }),
+    ).resolves.toMatchObject([{ line: 3, message: expect.stringContaining('missing.js') }])
+    expect(contacts).toEqual([entry])
+  } finally {
+    await mdx.releaseDiagnosticsLease(owner)
+  }
+})
+
+it('reports consent at each original MDX declaration, including one that supplies the layout', async () => {
+  const { mdx, acquire, contacts } = await resourceRig()
+  const owner = await acquire()
+  try {
+    const source = [
+      '# Preview',
+      '',
+      `import { feature } from '${entry}'`,
+      `export { default, helper } from 'https://one.example/layout.js'`,
+      `export * from 'https://one.example/widgets.js'`,
+      '',
+      '<div>',
+      '',
+      `import '${entry}'`,
+      '',
+      '</div>',
+    ].join('\n')
+    const diagnostics = await mdx.compile({ ...owner, generation: 1, source })
+    expect(diagnostics).toMatchObject(
+      [3, 4, 5, 9].map((line) => ({ line, message: expect.stringMatching(/consent/i) })),
+    )
+    expect((await mdx.externalResources(owner)).pending).toMatchObject([
+      { origin: 'https://one.example' },
+    ])
+    expect(contacts).toEqual([])
+  } finally {
+    await mdx.releaseDiagnosticsLease(owner)
+  }
+})
+
 it('diagnoses empty and populated import attributes before requesting consent or contacting an origin', async () => {
   const { root, mdx, acquire, contacts, routes } = await resourceRig()
   const owner = await acquire()
@@ -735,6 +799,7 @@ it('diagnoses empty and populated import attributes before requesting consent or
       `import payload from '${approved}' with { type: 'json' };`,
       `export { default as metadata } from '${unapproved}' with {};`,
       `export * from '${approved}&kind=star' /* gap */ with { /* empty */ };`,
+      `export {} from '${approved}&kind=empty' with {};`,
       `import '${withInUrl}' /* with {} */;`,
     ].join('\n'),
   )
@@ -755,7 +820,7 @@ it('diagnoses empty and populated import attributes before requesting consent or
   })
   expect(diagnostics.map(({ message }) => message)).toEqual(
     ['js', 'jsx'].flatMap((format) =>
-      [1, 2, 3].map((line) =>
+      (format === 'js' ? [1, 2, 3, 4] : [1, 2, 3]).map((line) =>
         expect.stringMatching(
           new RegExp(`child\\.${format}:${line}:1: .*unsupported import attributes`, 'i'),
         ),
@@ -774,6 +839,7 @@ it('diagnoses empty and populated import attributes before requesting consent or
     `import '${approved}' with {};`,
     `export { default } from '${unapproved}' with {};`,
     `export * from '${approved}&kind=star' with {};`,
+    `export {} from '${approved}&kind=empty' with {};`,
   ].entries()) {
     const invalidMdx = await mdx.compile({
       ...owner,
