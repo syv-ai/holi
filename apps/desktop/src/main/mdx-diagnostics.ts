@@ -497,6 +497,7 @@ export function createMdxDiagnostics(options: {
       epoch += 1
       closed = true
       for (const lease of [...leases.values()]) drop(lease)
+      coordinator.close()
     },
   }
 }

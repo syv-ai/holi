@@ -1,3 +1,4 @@
+import { mkdirSync, renameSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
@@ -175,25 +176,46 @@ it.skipIf(process.getuid === undefined || process.getuid() === 0)(
   },
 )
 
-it('drains only captured revocations after storage is repaired', async () => {
+it('publishes only saved removals, even when a drain partially succeeds', async () => {
   const store = createMdxConsentStore(file)
-  const alsoRevoked = { ...scope, origin: 'https://cdn.example' }
-  const kept = { ...scope, accountId: '456' }
+  const alsoRevoked = { ...scope, origin: 'https://cdn.example', accountId: '456' }
+  const kept = { ...scope, accountId: '789' }
   for (const grant of [scope, alsoRevoked, kept]) await store.grant(grant)
   const backup = `${file}.backup`
+  const saved: (typeof scope)[] = []
+  const stop = store.onRevocationSaved((removed) => {
+    saved.push(removed)
+    if (saved.length === 1) {
+      // Storage fails again as soon as one removal is published.
+      renameSync(file, backup)
+      mkdirSync(file)
+    }
+  })
   await rename(file, backup)
   await mkdir(file)
   await expect(store.revoke(scope)).rejects.toThrow()
   await expect(store.revoke(alsoRevoked)).rejects.toThrow()
   await expect(store.drain()).rejects.toThrow()
+  expect(saved).toEqual([])
   await rm(file, { recursive: true })
   await rename(backup, file)
 
+  await expect(store.drain()).rejects.toThrow()
+  expect(saved).toHaveLength(1)
+  await rm(file, { recursive: true })
+  await rename(backup, file)
   for (const revoked of [scope, alsoRevoked]) {
-    expect(await createMdxConsentStore(file).allows(revoked)).toBe(true)
+    const published = saved.some(({ origin }) => origin === revoked.origin)
+    expect(await createMdxConsentStore(file).allows(revoked)).toBe(!published)
     expect(await store.allows(revoked)).toBe(false)
+    expect(await store.listGrants(revoked)).toEqual(
+      published ? [] : [{ origin: revoked.origin, revocationPending: true }],
+    )
   }
   await expect(store.drain()).resolves.toBeUndefined()
+  expect(saved).toHaveLength(2)
+  expect(saved).toEqual(expect.arrayContaining([scope, alsoRevoked]))
+  stop()
   const reopened = createMdxConsentStore(file)
   for (const revoked of [scope, alsoRevoked]) {
     expect(await store.allows(revoked)).toBe(false)

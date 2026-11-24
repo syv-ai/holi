@@ -2,7 +2,13 @@ import { compile } from '@mdx-js/mdx'
 import { Parser, tokenizer, tokTypes } from 'acorn'
 import jsx from 'acorn-jsx'
 import { analyze } from 'eslint-scope'
-import { MAX_MDX_SPECIFIER_LENGTH } from '@holi/shared'
+import {
+  MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH,
+  MAX_MDX_INSPECTION_DEPENDENCIES,
+  MAX_MDX_INSPECTION_DIAGNOSTICS,
+  MAX_MDX_SPECIFIER_LENGTH,
+  type MdxDiagnostic,
+} from '@holi/shared'
 
 interface Request {
   id: string
@@ -16,15 +22,9 @@ interface Dependency {
   column: number
 }
 
-interface Diagnostic {
-  message: string
-  line: number
-  column: number
-}
-
 interface Result {
   id: string
-  diagnostics: Diagnostic[]
+  diagnostics: MdxDiagnostic[]
   dependencies: Dependency[]
 }
 
@@ -112,7 +112,7 @@ root.__holiMdxReceive = (encoded) => {
     return
   }
   root.__holiMdxResult = undefined
-  const diagnostics: Diagnostic[] = []
+  const diagnostics: MdxDiagnostic[] = []
   const dependencies: Dependency[] = []
   const inspectDeclarations = (body: readonly unknown[], input: string) => {
     for (const node of body) {
@@ -131,7 +131,9 @@ root.__holiMdxReceive = (encoded) => {
       } else if (source.value.length > MAX_MDX_SPECIFIER_LENGTH) {
         diagnostics.push({ message: 'Module specifier exceeds the length limit.', ...position })
       } else if (/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(source.value)) {
-        dependencies.push({ specifier: source.value, ...position })
+        // Keep one extra edge so main rejects an over-limit graph rather than using a partial one.
+        if (dependencies.length <= MAX_MDX_INSPECTION_DEPENDENCIES)
+          dependencies.push({ specifier: source.value, ...position })
       } else {
         diagnostics.push({
           message:
@@ -287,7 +289,14 @@ root.__holiMdxReceive = (encoded) => {
 }
 
 root.__holiMdxTakeResult = () => {
-  const result = root.__holiMdxResult ?? null
+  const result = root.__holiMdxResult
   root.__holiMdxResult = undefined
-  return result
+  if (!result) return null
+  return {
+    ...result,
+    diagnostics: result.diagnostics.slice(0, MAX_MDX_INSPECTION_DIAGNOSTICS).map((diagnostic) => ({
+      ...diagnostic,
+      message: diagnostic.message.slice(0, MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH),
+    })),
+  }
 }

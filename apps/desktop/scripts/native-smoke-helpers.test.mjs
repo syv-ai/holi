@@ -66,6 +66,31 @@ test('native mdx input never presses a button after cancellation during pointer 
   assert.deepEqual(events, ['mouseMoved'])
 })
 
+test(
+  'native mdx input never presses after a late pointer acknowledgement',
+  { timeout: 5000 },
+  async () => {
+    const { clickPointerAt } = createMdxSmokeUi(new AbortController().signal)
+    const events = []
+    let finishMovement
+    const movement = new Promise((resolve) => {
+      finishMovement = resolve
+    })
+    const page = {
+      call: async (_method, event) => {
+        events.push(event.type)
+        if (event.type === 'mouseMoved') await movement
+      },
+    }
+    const clicking = clickPointerAt(page, { x: 10, y: 20 }, performance.now() + 100)
+    const rejected = assert.rejects(clicking, /Timed out/)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    finishMovement()
+    await rejected
+    assert.deepEqual(events, ['mouseMoved'])
+  },
+)
+
 test('snapshots folder and file rows through one path-parameterized browser expression', () => {
   for (const path of ['nested', 'notes/brief.md']) {
     const expectedSelector = `[role="treeitem"][aria-label=${JSON.stringify(path)}]`

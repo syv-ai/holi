@@ -28,6 +28,7 @@ type ScopedConsent = {
 }
 
 const opaqueId = () => randomBytes(32).toString('hex')
+const ownerKey = (scope: Scope) => JSON.stringify([scope.root, scope.remote, scope.accountId])
 
 /** One coordinator per diagnostics root. Each lease attaches once and closes on retirement.
  * The lease owns file, document, trust and graph checks; the store owns durable grants and
@@ -37,9 +38,25 @@ export function createMdxConsentCoordinator(external?: {
   changed?(remote: string): void
 }) {
   const scopes = new Map<string, ScopedConsent>()
+  const unsubscribe = external?.consent.onRevocationSaved((scope) => {
+    const scoped = scopes.get(ownerKey(scope))
+    if (!scoped) return
+    // Retire IDs in every split before a replacement can be approved, including
+    // when shutdown saves a blocked removal and then resumes admission.
+    // A read spanning this publication must not recreate a retired ID.
+    scoped.grantRevision++
+    for (const member of scoped.members) {
+      for (const [id, origin] of member.grantIds) {
+        if (origin === scope.origin) member.grantIds.delete(id)
+      }
+    }
+  })
   return {
+    close() {
+      unsubscribe?.()
+    },
     attach(scope: Scope, owner: Owner) {
-      const key = JSON.stringify([scope.root, scope.remote, scope.accountId])
+      const key = ownerKey(scope)
       const scoped = scopes.get(key) ?? {
         members: new Set<Member>(),
         grantRevision: 0,
@@ -179,11 +196,6 @@ export function createMdxConsentCoordinator(external?: {
               'MDX resource access was blocked for this run, but revocation could not be saved',
             )
           })
-          for (const other of scoped.members) {
-            for (const [id, grantedOrigin] of other.grantIds) {
-              if (grantedOrigin === origin) other.grantIds.delete(id)
-            }
-          }
           return { ok: true }
         },
         close() {

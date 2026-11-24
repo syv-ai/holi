@@ -64,7 +64,7 @@ vi.mock('electron', async () => {
   }
 })
 
-it('keeps valid long import URLs and diagnoses oversized URLs without dropping other edges', async () => {
+it('keeps consent offers and independent diagnostics alongside multiple oversized URLs', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'holi-mdx-resources-'))
   onTestFinished(() => rm(dir, { recursive: true, force: true }))
   const root = await realpath(dir)
@@ -100,32 +100,36 @@ it('keeps valid long import URLs and diagnoses oversized URLs without dropping o
   const lease = await broker.acquire({ remote, path, context: 'active-document' })
   const privateMarker = 'PRIVATE_QUERY_MARKER'
   const query = `opaque=${privateMarker}`
-  const atLength = (origin: string, length: number) => {
+  const atLength = (origin: string, length: number, fill = 'x') => {
     const prefix = `https://${origin}/entry.js?${query}`
-    return prefix + 'x'.repeat(length - prefix.length)
+    return prefix + fill.repeat(length - prefix.length)
   }
   const long = atLength('long.example', 4096)
   const overRaw = atLength('raw-limit.example', 4097)
-  const overCanonical = `https://canonical-limit.example/entry.js?${query}${'é'.repeat(700)}`
+  // Each raw URL fits; percent encoding expands it past 4096 and the combined raw
+  // UTF-8 reply is already over the old 32 KiB cap before main can vet individual URLs.
+  const overCanonical = Array.from({ length: 5 }, (_, index) =>
+    atLength(`canonical-limit-${index}.example`, 4096, 'é'),
+  )
   const other = 'https://other.example/entry.js'
   const source = [
     `import '${overRaw}'`,
-    `import '${overCanonical}'`,
+    ...overCanonical.map((url) => `  import '${url}'`),
     `export { kept } from '${long}'`,
     `import '${other}'`,
     "import 'some-package'",
   ].join('\n')
 
   const diagnostics = await broker.compile({ ...lease, generation: 1, source })
-  expect(diagnostics).toHaveLength(5)
-  for (const [line, message] of [
-    [1, /length limit/i],
-    [2, /unsupported/i],
-    [3, /consent/i],
-    [4, /consent/i],
-    [5, /unsupported/i],
+  expect(diagnostics).toHaveLength(9)
+  for (const [line, column, message] of [
+    [1, 1, /length limit/i],
+    ...overCanonical.map((_, index) => [index + 2, 3, /unsupported/i] as const),
+    [7, 1, /consent/i],
+    [8, 1, /consent/i],
+    [9, 1, /unsupported/i],
   ] as const) {
-    expect(diagnostics).toContainEqual({ line, column: 1, message: expect.stringMatching(message) })
+    expect(diagnostics).toContainEqual({ line, column, message: expect.stringMatching(message) })
   }
   const { pending } = await broker.externalResources(lease)
   expect(pending.map((request) => request.origin).sort()).toEqual([

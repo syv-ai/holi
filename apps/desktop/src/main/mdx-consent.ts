@@ -24,6 +24,9 @@ export interface MdxConsentStore {
   /** Pass a synchronous lifetime check for a document-bound approval. A retired approval rejects. */
   grant(scope: MdxConsentScope, stillOwned?: () => boolean): Promise<void>
   revoke(scope: MdxConsentScope): Promise<void>
+  /** Synchronously observe each saved removal, including retries during drain.
+   * Listeners must not throw. Returns an unsubscribe. */
+  onRevocationSaved(listener: (scope: Readonly<MdxConsentScope>) => void): () => void
   /** After closing admission, wait for accepted operations and retry captured removals.
    * Reject if any revocation remains unsaved. No current owner is needed to remove an old grant. */
   drain(): Promise<void>
@@ -85,6 +88,7 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
   let queue = Promise.resolve()
   const denied = new Set<string>()
   const revocations = new Map<string, Revocation>()
+  const removalListeners = new Set<(scope: Readonly<MdxConsentScope>) => void>()
   const key = (scope: MdxConsentScope) =>
     JSON.stringify([scope.origin, MDX_RESOURCE_PURPOSE, scope.root, scope.remote, scope.accountId])
 
@@ -149,6 +153,7 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
         state.grants = state.grants.filter((grant) => key(grant) !== id)
         await persist(state)
         revocations.delete(id)
+        for (const listener of removalListeners) listener(revocation.scope)
       } finally {
         revocation.write = undefined
       }
@@ -221,6 +226,10 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
       revocations.set(id, revocation)
       denied.add(id)
       return saveRevocation(id, revocation)
+    },
+    onRevocationSaved(listener) {
+      removalListeners.add(listener)
+      return () => removalListeners.delete(listener)
     },
     async drain() {
       await queue

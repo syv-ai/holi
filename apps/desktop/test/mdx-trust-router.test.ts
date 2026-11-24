@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { BrowserWindow, WebContents } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createRouter } from '../src/main/router'
+import { requestFlush } from '../src/main/flush'
 import { GitHubSession } from '../src/main/github/session'
 import { TokenStore, type SafeStorageLike, type StoredAuth } from '../src/main/github/token-store'
 import { createMdxTrustStore, type MdxTrustStore } from '../src/main/mdx-trust'
@@ -1409,6 +1410,84 @@ it('drains a revocation accepted before document retirement and denies new admis
   await expect(mdx.revokeExternalResource(revoke)).rejects.toThrow()
   await revoked
   await mdx.releaseDiagnosticsLease(owner)
+})
+
+it('retires drained grant IDs in every split when a failed buffer flush vetoes quit', async () => {
+  const { mdx, acquire, root, consentFile, shutdown, contacts, routes } = await resourceRig()
+  const owner = await acquire()
+  const other = await acquire()
+  const observing = await acquire()
+  const url = `${entry}?opaque=value`
+  routes.set(url, { text: 'export const value = true' })
+  const scope = {
+    root: await realpath(root),
+    remote: REMOTE,
+    accountId: '42',
+    origin: new URL(entry).origin,
+  }
+  const stored = () => createMdxConsentStore(consentFile).allows(scope)
+  const approve = async (split: { lease: string }, generation: number) => {
+    await mdx.compile({ ...split, generation, source: externalSource })
+    const { pending } = await mdx.externalResources(split)
+    await mdx.approveExternalResource({ ...split, requestId: pending[0]!.id })
+  }
+  try {
+    await approve(owner, 1)
+    const grant = (await mdx.externalResources(owner)).approved[0]!
+    const observed = (await mdx.externalResources(observing)).approved[0]!
+    const revoke = { ...owner, grantId: grant.id }
+    const backup = `${consentFile}.backup`
+    await rename(consentFile, backup)
+    await mkdir(consentFile)
+    await expect(mdx.revokeExternalResource(revoke)).rejects.toThrow()
+    await expect(mdx.externalResources(owner)).resolves.toMatchObject({
+      approved: [{ ...grant, revocationPending: true }],
+    })
+    await rm(consentFile, { recursive: true })
+    await rename(backup, consentFile)
+    expect(await stored()).toBe(true)
+
+    const renderer = new EventEmitter()
+    await expect(
+      shutdown(async () => {
+        expect(await stored()).toBe(false)
+        await expect(mdx.status({ remote: REMOTE })).rejects.toThrow()
+        const result = await requestFlush({
+          send: (id) => renderer.emit('done', id, 'write failed'),
+          onDone(done) {
+            renderer.on('done', done)
+            return () => renderer.off('done', done)
+          },
+        })
+        return result === 'flushed'
+      }),
+    ).resolves.toBe(false)
+
+    await approve(other, 1)
+    // Don't refresh either split before trying its old ID: the views can still
+    // hold IDs issued before the quit attempt.
+    await expect(mdx.revokeExternalResource(revoke)).rejects.toThrow()
+    await expect(
+      mdx.revokeExternalResource({ ...observing, grantId: observed.id }),
+    ).rejects.toThrow()
+    expect(await stored()).toBe(true)
+    await expect(mdx.compile({ ...owner, generation: 2, source: externalSource })).resolves.toEqual(
+      [],
+    )
+    expect(contacts).toContain(url)
+
+    const { approved } = await mdx.externalResources(owner)
+    expect(approved).toMatchObject([{ origin: scope.origin }])
+    expect(approved[0]!.id).not.toBe(revoke.grantId)
+    await expect(
+      mdx.revokeExternalResource({ ...owner, grantId: approved[0]!.id }),
+    ).resolves.toEqual({ ok: true })
+    expect(await stored()).toBe(false)
+  } finally {
+    await mdx.releaseDiagnosticsLease(owner)
+    await mdx.releaseDiagnosticsLease(other)
+    await mdx.releaseDiagnosticsLease(observing)
+  }
 })
 
 it('retries an unsaved revocation on quit even after sign-out and vault removal', async () => {

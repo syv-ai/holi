@@ -42,16 +42,23 @@ export function createMdxSmokeUi(signal) {
     }
   }
 
-  async function clickPointerAt(page, point) {
-    signal.throwIfAborted()
+  async function clickPointerAt(page, point, deadline = performance.now() + 30000) {
+    const check = () => {
+      signal.throwIfAborted()
+      if (performance.now() >= deadline)
+        throw new Error('Timed out dispatching native pointer input')
+    }
+    check()
     await page.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
     for (const type of ['mousePressed', 'mouseReleased']) {
-      signal.throwIfAborted()
+      check()
       await page.call('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 })
     }
+    check()
   }
 
   async function findInFile(page, text) {
+    const deadline = performance.now() + 30000
     const point = await waitFor(
       () =>
         page.evaluate(`(() => {
@@ -62,8 +69,9 @@ export function createMdxSmokeUi(signal) {
         return editor.contains(document.elementFromPoint(x, y)) ? { x, y } : null;
       })()`),
       'visible CodeMirror content to click before Find',
+      Math.max(0, deadline - performance.now()),
     )
-    await clickPointerAt(page, point)
+    await clickPointerAt(page, point, deadline)
     const editorFocused = `document.hasFocus() && document.activeElement?.matches('.cm-content')`
     await waitFor(() => page.evaluate(editorFocused), 'CodeMirror focus after pointer click')
     const press = async (key, code, windowsVirtualKeyCode, modifiers = 0) => {
