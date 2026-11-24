@@ -60,6 +60,22 @@ describe('inspectMdxDependencies', () => {
     expect(inspected).toEqual([])
   })
 
+  it('rejects a shared diamond dependency changed while another branch is inspected', async () => {
+    const { root } = await setup()
+    const shared = join(root, 'shared.mdx')
+    await writeFile(shared, 'shared source')
+    await writeFile(join(root, 'left.mdx'), "import Shared from './shared.mdx'")
+    await writeFile(join(root, 'right.mdx'), 'right source')
+    await expect(inspectMdxDependencies({
+      root, path: 'entry.mdx', source: "import Left from './left.mdx'\\nimport Right from './right.mdx'",
+      signal: new AbortController().signal, assertCurrent: async () => {}, owner: {},
+      inspect: async (_owner, source) => {
+        if (source === 'right source') await writeFile(shared, 'changed source')
+        return { diagnostics: [], dependencies: [...source.matchAll(/import\\s+[^'"\\n]*?from\\s+['"]([^'"]+)['"]/g)].map(m => ({ specifier: m[1], line: 1 })) }
+      },
+    })).rejects.toBeDefined()
+  })
+
   it('rejects a dependency changed after it was inspected', async () => {
     const { root } = await setup()
     const child = join(root, 'child.mdx')
