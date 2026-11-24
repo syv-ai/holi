@@ -2,11 +2,11 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { createMdxConsentStore, type MdxConsentScope } from '../src/main/mdx-consent'
+import { createMdxConsentStore } from '../src/main/mdx-consent'
 
 let dir: string
 let file: string
-let scope: MdxConsentScope
+let scope: Parameters<ReturnType<typeof createMdxConsentStore>['grant']>[0]
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-mdx-consent-'))
   file = join(dir, 'consent.json')

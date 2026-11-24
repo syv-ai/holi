@@ -7,7 +7,7 @@ import { MDX_RESOURCE_PURPOSE } from '@holi/shared'
 const VERSION = 1
 
 /** The trusted main caller supplies the canonical vault root, remote and verified account. */
-export interface MdxConsentScope {
+interface MdxConsentScope {
   origin: string
   root: string
   remote: string

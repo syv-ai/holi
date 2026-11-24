@@ -4,11 +4,15 @@
  * text as code in the plain editor, which saves it, but not while json does
  * not parse; and History, the file's commits, each opening its changes.
  */
-import { emptyVaultSnapshot } from '@holi/shared'
+import {
+  emptyVaultSnapshot,
+  MDX_RESOURCE_EVENTS,
+  type MdxExternalResourceState,
+} from '@holi/shared'
 import { createStore, Provider } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { act, fireEvent, render, screen, waitFor } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import {
   flushAllBuffers,
   freezeBuffers,
@@ -37,6 +41,12 @@ const mdxCompile = vi.fn()
 const mdxAcquire = vi.fn()
 const mdxCancel = vi.fn()
 const mdxRelease = vi.fn()
+const mdxResources = vi.fn<(input: { lease: string }) => Promise<MdxExternalResourceState>>()
+const mdxAllow = vi.fn<(input: { lease: string; requestId: string }) => Promise<{ ok: true }>>()
+const mdxDeny = vi.fn<(input: { lease: string; requestId: string }) => Promise<{ ok: true }>>()
+const mdxRevokeResource =
+  vi.fn<(input: { lease: string; grantId: string }) => Promise<{ ok: true }>>()
+const compiledGeneration = new Map<string, number>()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -55,7 +65,22 @@ vi.mock('@/lib/trpc', () => ({
       status: { query: (input: unknown) => mdxStatus(input) },
       approve: { mutate: (input: unknown) => mdxApprove(input) },
       revoke: { mutate: (input: unknown) => mdxRevoke(input) },
-      compile: { mutate: (input: unknown) => mdxCompile(input) },
+      compile: {
+        mutate: (input: { lease: string; generation: number; source: string }) => {
+          compiledGeneration.set(input.lease, input.generation)
+          return mdxCompile(input)
+        },
+      },
+      externalResources: { query: (input: { lease: string }) => mdxResources(input) },
+      approveExternalResource: {
+        mutate: (input: { lease: string; requestId: string }) => mdxAllow(input),
+      },
+      rejectExternalResource: {
+        mutate: (input: { lease: string; requestId: string }) => mdxDeny(input),
+      },
+      revokeExternalResource: {
+        mutate: (input: { lease: string; grantId: string }) => mdxRevokeResource(input),
+      },
       acquireDiagnosticsLease: { mutate: (input: unknown) => mdxAcquire(input) },
       cancelCompile: { mutate: (input: unknown) => mdxCancel(input) },
       releaseDiagnosticsLease: { mutate: (input: unknown) => mdxRelease(input) },
@@ -71,7 +96,17 @@ afterEach(() => {
   mdxStatus.mockReset()
   mdxApprove.mockReset()
   mdxRevoke.mockReset()
-  mdxCompile.mockReset()
+  vi.unstubAllGlobals()
+  compiledGeneration.clear()
+  mdxCompile.mockReset().mockResolvedValue([])
+  mdxResources.mockReset().mockImplementation(async ({ lease }) => ({
+    generation: compiledGeneration.get(lease)!,
+    pending: [],
+    approved: [],
+  }))
+  mdxAllow.mockReset()
+  mdxDeny.mockReset()
+  mdxRevokeResource.mockReset()
   mdxAcquire.mockReset().mockResolvedValue({ lease: 'test-lease' })
   mdxCancel.mockReset().mockResolvedValue({ ok: true })
   mdxRelease.mockReset().mockResolvedValue({ ok: true })
@@ -175,8 +210,7 @@ test('code opens straight into the editor, with its latest commit', async () => 
     {
       sha: '4a14110aaaa',
       subject: 'Update',
-      // The history fixture uses the current clock to exercise the relative timestamp.
-      date: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+      date: new Date().toISOString(),
       author: 'Ana',
       added: 1,
       removed: 0,
@@ -1093,4 +1127,187 @@ test('MDX trust reports status failure with a retry action', async () => {
   expect(await screen.findByText(/MDX trust unavailable/)).toBeInTheDocument()
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
   expect(await screen.findByText('Not approved')).toBeInTheDocument()
+})
+
+const resourceOrigin = 'https://modules.example.test'
+
+function setupMdxResources() {
+  read.mockResolvedValue(`import Widget from '${resourceOrigin}/widget.mjs'\n\n# Source`)
+  historyList.mockResolvedValue([])
+  write.mockResolvedValue(undefined)
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'trusted' })
+  let nextLease = 0
+  mdxAcquire.mockImplementation(async () => ({ lease: `lease-${++nextLease}` }))
+  const requests = new Map<string, string>()
+  let approved = false
+  const listeners = new Set<(event: { remote: string; name: string; payload: null }) => void>()
+  vi.stubGlobal('holi', {
+    plugin: {
+      on(
+        channel: string,
+        receive: (event: { remote: string; name: string; payload: null }) => void,
+      ) {
+        if (channel === MDX_RESOURCE_EVENTS) listeners.add(receive)
+        return () => listeners.delete(receive)
+      },
+    },
+  })
+  const changed = () => {
+    requests.clear()
+    for (const receive of listeners)
+      receive({ remote: 'syv-ai/site', name: 'changed', payload: null })
+  }
+  mdxCompile.mockImplementation(async ({ lease, generation, source }) => {
+    requests.delete(lease)
+    if (!approved && source.includes(resourceOrigin)) {
+      requests.set(lease, `${lease}-request-${generation}`)
+      return [
+        { message: 'Approval is required for the external MDX dependency', line: 1, column: 1 },
+      ]
+    }
+    return []
+  })
+  const snapshot = ({ lease }: { lease: string }): MdxExternalResourceState => {
+    const request = requests.get(lease)
+    const origin = { origin: resourceOrigin, purpose: 'mdx-dependency-diagnostics' } as const
+    return {
+      generation: compiledGeneration.get(lease)!,
+      pending: request ? [{ ...origin, id: request }] : [],
+      approved: approved ? [{ ...origin, id: `${lease}-grant` }] : [],
+    }
+  }
+  mdxResources.mockImplementation(async (input) => snapshot(input))
+  const consume = ({ lease, requestId }: { lease: string; requestId: string }) => {
+    if (requests.get(lease) !== requestId) throw new Error('MDX resource request unavailable')
+    requests.delete(lease)
+  }
+  mdxDeny.mockImplementation(async (input) => {
+    consume(input)
+    return { ok: true }
+  })
+  mdxAllow.mockImplementation(async (input) => {
+    consume(input)
+    approved = true
+    changed()
+    return { ok: true }
+  })
+  mdxRevokeResource.mockImplementation(async ({ lease, grantId }) => {
+    if (!approved || grantId !== `${lease}-grant`) throw new Error('MDX resource grant unavailable')
+    approved = false
+    changed()
+    return { ok: true }
+  })
+  return snapshot
+}
+
+const resourceButton = (action: 'Allow' | 'Deny' | 'Revoke') => ({
+  name: `${action} ${resourceOrigin}`,
+})
+
+async function openResources(container: HTMLElement = document.body) {
+  await userEvent.click(await within(container).findByRole('button', { name: 'MDX resources' }))
+  return within(await screen.findByRole('dialog', { name: 'MDX resources' }))
+}
+
+test('MDX resource decisions are explicit and committed changes refresh both open views', async () => {
+  setupMdxResources()
+  const left = setup('content/page.mdx')
+  const right = render(
+    <Provider store={lastStore}>
+      <FileView path="content/page.mdx" />
+    </Provider>,
+  )
+  let panel = await openResources(left.container)
+  expect(await panel.findByRole('button', resourceButton('Allow'))).toBeEnabled()
+  expect(panel.getByText(/exact HTTPS origin.*module data/)).toHaveTextContent(
+    /vault.*signed-in account/,
+  )
+  expect(panel.queryByRole('button', resourceButton('Revoke'))).not.toBeInTheDocument()
+
+  await userEvent.click(panel.getByRole('button', resourceButton('Deny')))
+  expect(await panel.findByRole('button', { name: 'Run diagnostics' })).toBeEnabled()
+  expect(panel.queryByRole('button', resourceButton('Allow'))).not.toBeInTheDocument()
+  expect(within(left.container).getByText('1 MDX diagnostic')).toBeInTheDocument()
+
+  // Editing and saving reruns diagnostics, but doesn't offer a denied origin again.
+  await act(async () => typeInto(`import Widget from '${resourceOrigin}/widget.mjs'\n\n# Edited`))
+  await act(() => saveAllBuffers())
+  panel = await openResources(left.container)
+  expect(await panel.findByRole('button', { name: 'Run diagnostics' })).toBeEnabled()
+  expect(panel.queryByRole('button', resourceButton('Allow'))).not.toBeInTheDocument()
+
+  await userEvent.click(panel.getByRole('button', { name: 'Run diagnostics' }))
+  await userEvent.click(await panel.findByRole('button', resourceButton('Allow')))
+  expect(await panel.findByRole('button', resourceButton('Revoke'))).toBeEnabled()
+  expect(await within(right.container).findByText('MDX syntax is valid')).toBeInTheDocument()
+
+  await userEvent.keyboard('{Escape}')
+  const rightPanel = await openResources(right.container)
+  await userEvent.click(await rightPanel.findByRole('button', resourceButton('Revoke')))
+  expect(await rightPanel.findByRole('button', resourceButton('Allow'))).toBeEnabled()
+  expect(rightPanel.queryByRole('button', resourceButton('Revoke'))).not.toBeInTheDocument()
+  expect(await within(left.container).findByText('1 MDX diagnostic')).toBeInTheDocument()
+})
+
+test('MDX resource Retry recovers a failed query without approving the origin', async () => {
+  setupMdxResources()
+  mdxResources.mockRejectedValueOnce(new Error('Resource grants could not be read'))
+  setup('content/page.mdx')
+  const panel = await openResources()
+  expect(await panel.findByRole('alert')).toHaveTextContent('Resource grants could not be read')
+  expect(panel.queryByRole('button', resourceButton('Allow'))).not.toBeInTheDocument()
+  await userEvent.click(panel.getByRole('button', { name: 'Retry' }))
+  expect(await panel.findByRole('button', resourceButton('Allow'))).toBeEnabled()
+  expect(panel.queryByRole('button', resourceButton('Revoke'))).not.toBeInTheDocument()
+})
+
+test('Retry after a rejected Allow refreshes the request without replaying approval', async () => {
+  setupMdxResources()
+  mdxAllow.mockRejectedValueOnce(new Error('Could not save MDX resource approval'))
+  setup('content/page.mdx')
+  const panel = await openResources()
+  await userEvent.click(await panel.findByRole('button', resourceButton('Allow')))
+  expect(await panel.findByRole('alert')).toHaveTextContent('Could not save MDX resource approval')
+  await userEvent.click(panel.getByRole('button', { name: 'Retry' }))
+  expect(await panel.findByRole('button', resourceButton('Allow'))).toBeEnabled()
+  expect(panel.queryByRole('button', resourceButton('Revoke'))).not.toBeInTheDocument()
+})
+
+test('editing MDX retires consent controls and ignores a late query for the previous source', async () => {
+  const snapshot = setupMdxResources()
+  setup('content/page.mdx')
+  const panel = await openResources()
+  expect(await panel.findByRole('button', resourceButton('Allow'))).toBeEnabled()
+
+  let deliverOldQuery!: () => void
+  mdxResources.mockImplementationOnce(
+    (input) =>
+      new Promise((resolve) => {
+        const old = snapshot(input)
+        deliverOldQuery = () => resolve(old)
+      }),
+  )
+  await userEvent.click(panel.getByRole('button', { name: 'Run diagnostics' }))
+  // Deliver the previous source's response only after the new source has settled.
+  await waitFor(() => expect(deliverOldQuery).toBeDefined())
+  await act(async () => typeInto('# Updated source'))
+  expect(screen.queryByRole('dialog', { name: 'MDX resources' })).not.toBeInTheDocument()
+  await act(() => saveAllBuffers())
+  expect(write).toHaveBeenCalledWith({
+    remote: 'syv-ai/site',
+    path: 'content/page.mdx',
+    text: '# Updated source',
+  })
+
+  const editor = document.querySelector<HTMLElement>('.cm-content')!
+  editor.focus()
+  await userEvent.keyboard('{Meta>}f{/Meta}')
+  expect(await screen.findByRole('textbox', { name: 'Find' })).toBeEnabled()
+  await userEvent.keyboard('{Escape}')
+  const freshPanel = await openResources()
+  expect(await freshPanel.findByRole('button', { name: 'Run diagnostics' })).toBeEnabled()
+  expect(await screen.findByText('MDX syntax is valid')).toBeInTheDocument()
+  await act(async () => deliverOldQuery())
+  expect(freshPanel.queryByRole('button', resourceButton('Allow'))).not.toBeInTheDocument()
+  expect(freshPanel.getByRole('button', { name: 'Run diagnostics' })).toBeEnabled()
 })

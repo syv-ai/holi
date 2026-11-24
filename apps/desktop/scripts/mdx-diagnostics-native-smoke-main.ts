@@ -1,20 +1,45 @@
 import assert from 'node:assert/strict'
+import { createHook } from 'node:async_hooks'
+import { subscribe, unsubscribe } from 'node:diagnostics_channel'
+import { mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import type { ClientRequest, IncomingMessage } from 'node:http'
+import { basename, dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, ipcMain, session, type WebContents } from 'electron'
+import { emptyVaultSnapshot, MDX_RESOURCE_EVENTS } from '@holi/shared'
+import {
+  isApplicationSender,
+  unauthorizedApplicationSender,
+  type SenderEvent,
+} from '../src/main/application-sender'
+import { GitHubSession } from '../src/main/github/session'
+import { TokenStore } from '../src/main/github/token-store'
+import { registerIpc } from '../src/main/ipc'
+import { createMdxConsentStore } from '../src/main/mdx-consent'
+import { createRouter } from '../src/main/router'
+import type { ActiveVault, VaultHost } from '../src/main/vault/active-vault'
+import { VaultRegistry } from '../src/main/vault/registry'
 import { createGuestProbes } from './mdx-compiler-guest-probes'
-import { mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { createMdxResources } from '../src/main/mdx-resources'
 import { createMdxDiagnostics } from '../src/main/mdx-diagnostics'
 import { createMdxTrustStore } from '../src/main/mdx-trust'
 
-const profile = process.env.HOLI_507_PROFILE!
-const vault = process.env.HOLI_507_VAULT!
+const { HOLI_MDX_SMOKE_PROFILE, HOLI_MDX_SMOKE_VAULT } = process.env
+assert(HOLI_MDX_SMOKE_PROFILE && HOLI_MDX_SMOKE_VAULT, 'Dedicated fixture paths are required')
+const profile = HOLI_MDX_SMOKE_PROFILE
+const vault = HOLI_MDX_SMOKE_VAULT
+app.setName(basename(dirname(profile)))
 app.setPath('userData', join(profile, 'userData'))
 app.setPath('sessionData', join(profile, 'sessionData'))
 
 const remote = 'fixture/isolated-mdx'
 const context = 'fixture-context-507'
-const file = join(vault, 'notes/fixture.mdx')
+const path = 'notes/fixture.mdx'
+const file = join(vault, path)
+const entry = join(app.getAppPath(), 'renderer/index.html')
+const entryDocument = pathToFileURL(entry).href
+const otherDocument = join(app.getAppPath(), 'renderer/other.html')
+const preload = join(app.getAppPath(), 'preload.cjs')
 let accountGeneration = 1
 let openRevision = 1
 let identity = {
@@ -26,10 +51,13 @@ let identity = {
 }
 let win: BrowserWindow | null = null
 let recoveredWindows = 0
-let savedWrites = 0
 let guestCreations = 0
 let inspectedSources = 0
-let installedSessionPolicy = false
+let documentReady = false
+let retireDocument = () => {}
+let closeRouter = () => {}
+let resourcePushes = 0
+let ambientCookieHosts = 0
 const blockedRequests: string[] = []
 const guestProbes: Array<{ url: string; result: Record<string, unknown> }> = []
 let adversaries: Awaited<ReturnType<typeof createGuestProbes>> | null = null
@@ -38,6 +66,16 @@ const trustStore = createMdxTrustStore(join(profile, 'mdx-trust.json'))
 const owner = () => ({ accountId: identity.accountId, remote })
 let dependencyRaceChild: string | null = null
 let graphMutation: ((source: string) => Promise<void>) | null = null
+const observedCompiler: typeof compiler = {
+  ...compiler,
+  inspect(...args) {
+    inspectedSources += 1
+    return compiler.inspect(...args)
+  },
+}
+
+// Keep the original injected local graph/guest scenarios separate from the
+// application router. The FileView and external driver never call this instance.
 const diagnostics = createMdxDiagnostics({
   authorize: (candidate, requested) => requested === remote && candidate === identity,
   context: (token, requested) => (token === context && requested === remote ? identity : null),
@@ -46,27 +84,70 @@ const diagnostics = createMdxDiagnostics({
     return vault
   },
   trusted: async (candidate) => candidate === identity && trustStore.status(owner()),
-  createResourceOwner: (isCurrent) => compiler.createOwner(isCurrent),
-  retireResourceOwner: (resourceOwner) => compiler.retireOwner(resourceOwner),
-  inspect: (resourceOwner, source, signal, format) => {
-    inspectedSources += 1
-    return compiler.inspect(resourceOwner, source, signal, format).then(async (result) => {
-      await graphMutation?.(source)
-      if (source.includes('HOLI_NATIVE_DEPENDENCY_REPLACEMENT_RACE') && dependencyRaceChild) {
-        await writeFile(dependencyRaceChild, '# changed after inspection\n')
-        dependencyRaceChild = null
-      }
-      return result
-    })
+  createResourceOwner: compiler.createOwner,
+  retireResourceOwner: compiler.retireOwner,
+  async inspect(resourceOwner, source, signal, format) {
+    const result = await observedCompiler.inspect(resourceOwner, source, signal, format)
+    await graphMutation?.(source)
+    if (source.includes('HOLI_NATIVE_DEPENDENCY_REPLACEMENT_RACE') && dependencyRaceChild) {
+      await writeFile(dependencyRaceChild, '# changed after inspection\n')
+      dependencyRaceChild = null
+    }
+    return result
   },
 })
 
-const invoke = (channel: string, handler: (...args: any[]) => any) =>
-  ipcMain.handle(channel, (event, ...args) => {
-    if (event.sender !== win?.webContents || event.senderFrame !== event.sender.mainFrame)
-      throw new Error('Fixture caller is not the current application document')
-    return handler(...args)
+const authorizeSender = (event: SenderEvent) =>
+  documentReady &&
+  isApplicationSender(event, win && !win.isDestroyed() ? win.webContents : null, entryDocument)
+
+const invoke = (channel: string, handler: (input: unknown) => unknown) =>
+  ipcMain.handle(channel, (event, input) => {
+    if (!authorizeSender(event)) throw unauthorizedApplicationSender()
+    return handler(input)
   })
+
+// Only counters, fixed fixture route labels, response codes and booleans cross
+// the bridge. Never record a request path, header value or response body.
+const hosts = ['raw.githubusercontent.com', 'esm.run', 'cdn.jsdelivr.net']
+const network = {
+  dns: 0,
+  socket: 0,
+  requests: [] as Array<{ route: string; get: boolean; credentials: boolean }>,
+  responses: [] as Array<{ route: string; status: number | undefined }>,
+}
+const networkHook = createHook({
+  init(_id, type) {
+    if (type === 'QUERYWRAP' || type === 'GETADDRINFOREQWRAP') network.dns += 1
+    if (type === 'TCPWRAP' || type === 'TCPCONNECTWRAP' || type === 'TLSWRAP') network.socket += 1
+  },
+}).enable()
+function routeOf(request: ClientRequest) {
+  const host = request.getHeader('host')
+  if (host === 'raw.githubusercontent.com') {
+    if (request.path.endsWith('/entry.js')) return 'entry'
+    if (request.path.endsWith('/relative.js')) return 'relative'
+  }
+  if (host === 'esm.run') return 'redirect'
+  if (host === 'cdn.jsdelivr.net') return 'cdn'
+  return 'unexpected'
+}
+const onRequest = (event: unknown) => {
+  const { request } = event as { request: ClientRequest }
+  network.requests.push({
+    route: routeOf(request),
+    get: request.method === 'GET',
+    credentials: ['cookie', 'authorization', 'proxy-authorization'].some((name) =>
+      request.hasHeader(name),
+    ),
+  })
+}
+const onResponse = (event: unknown) => {
+  const { request, response } = event as { request: ClientRequest; response: IncomingMessage }
+  network.responses.push({ route: routeOf(request), status: response.statusCode })
+}
+subscribe('http.client.request.start', onRequest)
+subscribe('http.client.response.finish', onResponse)
 
 invoke('smoke:status', async () => ({
   runtime: process.versions,
@@ -75,9 +156,11 @@ invoke('smoke:status', async () => ({
   appPath: app.getAppPath(),
   vault,
   recoveredWindows,
-  savedWrites,
   guestCreations,
   inspectedSources,
+  network,
+  resourcePushes,
+  ambientCookieHosts,
   blockedRequests,
   guestProbes,
   accountGeneration,
@@ -89,34 +172,30 @@ invoke('smoke:status', async () => ({
     })),
   ),
 }))
-invoke('smoke:trpc', async (request: { path: string; operation: string; input?: any }) => {
-  const input = request.input ?? {}
-  if (request.path === 'notes.read') return readFile(file, 'utf8')
-  if (request.path === 'notes.write') {
-    if (typeof input.text !== 'string') throw new Error('Fixture note write requires text')
-    const temporary = `${file}.${process.pid}.tmp`
-    await writeFile(temporary, input.text, { flag: 'wx' })
-    await rename(temporary, file)
-    savedWrites += 1
-    return { ok: true }
+// Use the same preload and a real local document in a different WebContents.
+// The production IPC guard must reject it even when handed valid current IDs.
+invoke('smoke:other-document', async (operation: unknown) => {
+  const other = new BrowserWindow({ show: false, webPreferences })
+  try {
+    await other.loadFile(otherDocument)
+    return await other.webContents.executeJavaScript(
+      `window.holi.trpc(${JSON.stringify(operation)})`,
+    )
+  } finally {
+    other.destroy()
   }
-  if (request.path === 'mdxTrust.status') {
-    return { trusted: await trustStore.status(owner()), identityAvailable: true, context }
-  }
-  if (request.path === 'mdxTrust.approve' || request.path === 'mdxTrust.revoke') {
-    if (input.context !== context) throw new Error('MDX trust context changed')
-    if (request.path.endsWith('.approve')) await trustStore.approve(owner())
-    else await trustStore.revoke(owner())
-    // The trust store mutation completes before the renderer can observe the new status.
-    if (request.path.endsWith('.revoke')) diagnostics.invalidate()
-    return { ok: true }
-  }
-  if (request.path === 'mdxTrust.acquireDiagnosticsLease') return diagnostics.acquire(input)
-  if (request.path === 'mdxTrust.cancelCompile') return diagnostics.cancel(input)
-  if (request.path === 'mdxTrust.compile') return diagnostics.compile(input)
-  if (request.path === 'mdxTrust.releaseDiagnosticsLease') return diagnostics.release(input)
-  if (request.path === 'history.list' || request.path === 'github.fileContributors') return []
-  throw new Error(`Unsupported fixture tRPC operation: ${request.path}`)
+})
+
+invoke('smoke:guest-healthy', () => {
+  assert(adversaries)
+  adversaries.assertHealthy()
+  return true
+})
+
+invoke('smoke:hold-compiler', async () => {
+  assert(adversaries)
+  await adversaries.hold()
+  return true
 })
 
 invoke('smoke:scenarios', async () => {
@@ -464,8 +543,6 @@ invoke('smoke:scenarios', async () => {
     await rename(`${file}.replacement`, file)
   })
   probes.assertHealthy()
-  await probes.close()
-  adversaries = null
   return { policy, recovery, stale, graphCases }
 })
 
@@ -478,8 +555,8 @@ app.on('web-contents-created', (_event, contents: WebContents) => {
         .executeJavaScript(
           `(() => ({
         globals: { process: typeof process, require: typeof require, holi: typeof holi, electron: typeof electron, bridge: typeof holiSmoke },
-        storage: { cookies: document.cookie, local: localStorage.length, session: sessionStorage.length },
-        credentialMarker: localStorage.getItem('holi-native-default-credential-507'),
+        storage: { hasCookies: document.cookie !== '', local: localStorage.length, session: sessionStorage.length },
+        hasCredentialMarker: localStorage.getItem('holi-native-default-credential-507') !== null,
       }))()`,
         )
         .then((result) => {
@@ -494,6 +571,8 @@ app.on('web-contents-created', (_event, contents: WebContents) => {
   }
   contents.on('render-process-gone', (_event, details) => {
     if (win?.webContents === contents) {
+      documentReady = false
+      retireDocument()
       win = null
       recoveredWindows += 1
       console.log(`SMOKE_RENDERER_CRASH_RECOVERY:${details.reason}:${recoveredWindows}`)
@@ -501,69 +580,180 @@ app.on('web-contents-created', (_event, contents: WebContents) => {
     }
   })
   contents.on('will-navigate', (event, url) => {
-    if (
-      win?.webContents === contents &&
-      url === `file://${join(app.getAppPath(), 'renderer/index.html')}`
-    )
-      return
+    if (win?.webContents === contents && url === entryDocument) return
     event.preventDefault()
   })
   contents.setWindowOpenHandler(() => ({ action: 'deny' }))
 })
 
+const webPreferences = {
+  preload,
+  contextIsolation: true,
+  nodeIntegration: false,
+  sandbox: true,
+  webSecurity: true,
+}
+
 async function createEditorWindow() {
-  const created = new BrowserWindow({
-    width: 1120,
-    height: 820,
-    show: true,
-    webPreferences: {
-      preload: join(app.getAppPath(), 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-    },
+  const created = new BrowserWindow({ width: 1120, height: 820, show: true, webPreferences })
+  win = created
+  const retire = () => {
+    if (win !== created) return
+    documentReady = false
+    retireDocument()
+  }
+  retire()
+  created.on('closed', retire)
+  created.webContents.on('did-start-navigation', (event) => {
+    if (event.isMainFrame && !event.isSameDocument) retire()
   })
-  if (!installedSessionPolicy) {
+  created.webContents.on('did-navigate', () => {
+    if (win === created) documentReady = true
+  })
+  await created.loadFile(entry)
+}
+
+app
+  .whenReady()
+  .then(async () => {
     const defaultSession = session.defaultSession
     defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
     defaultSession.setPermissionCheckHandler(() => false)
     defaultSession.on('will-download', (event) => event.preventDefault())
-    const rendererAssets = new Set(
-      ['renderer/index.html', 'renderer/renderer.js', 'renderer/renderer.css'].map((path) =>
-        join(app.getAppPath(), path),
-      ),
-    )
+    const extraAssets = join(app.getAppPath(), 'renderer/assets')
+    const rendererAssets = new Set([
+      ...(await readdir(extraAssets).catch(() => [])).map((name) => join(extraAssets, name)),
+      entry,
+      otherDocument,
+      join(app.getAppPath(), 'renderer/renderer.js'),
+      join(app.getAppPath(), 'renderer/renderer.css'),
+    ])
     defaultSession.webRequest.onBeforeRequest((details, callback) => {
       let localPath = ''
       try {
-        localPath = details.url.startsWith('file://')
-          ? decodeURIComponent(new URL(details.url).pathname)
-          : ''
-      } catch (error) {
-        blockedRequests.push(`invalid URL ${String(error)}`)
+        if (details.url.startsWith('file://'))
+          localPath = decodeURIComponent(new URL(details.url).pathname)
+      } catch {
+        // Malformed URL, still denied below.
       }
       if (details.method === 'GET' && rendererAssets.has(localPath)) callback({})
       else {
-        blockedRequests.push(`${details.method} ${details.url.split('?')[0]}`)
+        blockedRequests.push(details.resourceType)
         callback({ cancel: true })
       }
     })
-    installedSessionPolicy = true
-  }
-  win = created
-  await created.loadFile(join(app.getAppPath(), 'renderer/index.html'))
-}
-
-app.whenReady().then(async () => {
-  adversaries = await createGuestProbes()
-  await mkdir(join(profile, 'sessionData'), { recursive: true })
-  await mkdir(join(vault, 'notes'), { recursive: true })
-  await writeFile(file, '# Café 🪿\n\nCafé 🪿 {1 + }\n')
-  await createEditorWindow()
-})
+    for (const host of hosts) {
+      const url = `https://${host}/`
+      const name = 'mdx-fixture-cookie'
+      await defaultSession.cookies.set({
+        url,
+        name,
+        value: 'synthetic-only',
+        secure: true,
+        httpOnly: true,
+      })
+      if ((await defaultSession.cookies.get({ url, name })).length === 1) ambientCookieHosts += 1
+    }
+    adversaries = await createGuestProbes()
+    await mkdir(join(vault, 'notes'), { recursive: true })
+    await writeFile(file, '# Café 🪿\n\nCafé 🪿 {1 + }\n')
+    await writeFile(join(vault, 'notes/probe.mdx'), '# Isolated diagnostics ownership probe\n')
+    const registry = new VaultRegistry(join(profile, 'vaults.json'))
+    await registry.add({ remote, path: vault, name: 'isolated-mdx', lastOpenedAt: '2026-01-01' })
+    // Synthetic, ephemeral credential only. Never open an OS keychain or allow
+    // the unrelated GitHub API to contact the network from the fixture.
+    const token = new TokenStore(join(profile, 'synthetic-auth.enc'), {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain) => Buffer.from(plain),
+      decryptString: (bytes) => bytes.toString('utf8'),
+    })
+    await token.write({
+      accountId: 507,
+      login: 'fixture-user',
+      token: 'synthetic-only',
+      scopes: [],
+    })
+    const github = await GitHubSession.load({
+      store: token,
+      fetch: async () => {
+        throw new Error('Fixture GitHub API is offline')
+      },
+    })
+    const activeVault = {
+      remote,
+      root: vault,
+      repo: { root: vault, log: async () => [] },
+      snapshot: async () => emptyVaultSnapshot(),
+      refresh: async () => {},
+    } as unknown as ActiveVault
+    let active: ActiveVault | null = null
+    const host = {
+      active: () => active,
+      get: (requested: string) => (requested === remote ? active : null),
+      prepare: async () => {}, // The fixture vault already exists and never syncs.
+      open: async (requested: string) => {
+        assert.equal(requested, remote)
+        return (active = activeVault)
+      },
+    } as unknown as VaultHost
+    const router = createRouter({
+      registry,
+      session: github,
+      host,
+      mdxTrust: trustStore,
+      mdxConsent: createMdxConsentStore(join(profile, 'mdx-consent.json')),
+      mdxCompiler: observedCompiler,
+      mdxApplicationReady: () => documentReady,
+      onMdxDiagnosticsInvalidate: (invalidate) => {
+        retireDocument = invalidate
+      },
+      onMdxDiagnosticsClose: (close) => {
+        closeRouter = close
+      },
+      onMdxResourcesChanged: (remote) => {
+        if (!win || win.isDestroyed()) return
+        const contents = win.webContents
+        if (!authorizeSender({ sender: contents, senderFrame: contents.mainFrame })) return
+        resourcePushes += 1
+        contents.send(`plugin:${MDX_RESOURCE_EVENTS}`, { remote, name: 'changed', payload: null })
+      },
+      plugins: {
+        reconcile: async () => {},
+        invalidate: () => {},
+        setDisplayed: () => {},
+        syncBackground: async () => {},
+        failures: () => ({}),
+        scanClaimsFor: async () => [],
+      },
+      vaultRoot: dirname(vault),
+      seed: async () => ({ written: [], merged: [], unchanged: [] }),
+      openExternal: async () => {
+        throw new Error('Fixture external navigation is disabled')
+      },
+      trashItem: async () => {
+        throw new Error('Fixture system trash is disabled')
+      },
+      showItemInFolder: () => {},
+    })
+    registerIpc({
+      router,
+      rootFor: async (requested) => (requested === remote ? vault : null),
+      authorizeSender,
+    })
+    await router.createCaller({}).vaults.open({ remote })
+    await createEditorWindow()
+  })
+  .catch(() => {
+    console.error('Packaged MDX fixture startup failed')
+    app.exit(1)
+  })
 app.on('before-quit', () => {
+  documentReady = false
+  closeRouter()
   diagnostics.close()
   compiler.close()
+  networkHook.disable()
+  unsubscribe('http.client.request.start', onRequest)
+  unsubscribe('http.client.response.finish', onResponse)
   void adversaries?.close()
 })

@@ -1,23 +1,46 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { externalizeDepsPlugin } from 'electron-vite'
+import { MDX_RESOURCE_EVENTS } from '../../../packages/shared/src/mdx-diagnostics.ts'
 import { createCdpClient } from './native-smoke-cdp.mjs'
+import { encodeScreencast } from './native-smoke-recording.mjs'
+import { createOwnedProcesses } from './owned-processes.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const evidence = resolve(process.argv[2] ?? '/tmp/holi-507-mdx-diagnostics-evidence')
-const root = await mkdtemp(join(tmpdir(), 'holi-507-native-'))
+const buildOnly = process.argv[2] === '--build-only'
+const fixtureSha = process.env.HOLI_MDX_SMOKE_FIXTURE_SHA
+const recordVideo = process.env.HOLI_MDX_SMOKE_VIDEO === '1'
+if (!buildOnly) {
+  assert(
+    /^[a-f0-9]{40}$/.test(fixtureSha ?? ''),
+    'Set HOLI_MDX_SMOKE_FIXTURE_SHA to the public commit containing the synthetic ESM fixtures',
+  )
+  assert(
+    ['darwin', 'linux'].includes(process.platform),
+    'Native fixture cleanup requires a POSIX process group',
+  )
+}
+const evidenceArgument = process.argv[buildOnly ? 3 : 2]
+const evidence = evidenceArgument
+  ? resolve(evidenceArgument)
+  : await mkdtemp(join(tmpdir(), 'holi-665-evidence-'))
+await mkdir(evidence, { recursive: true })
+assert.deepEqual(await readdir(evidence), [], 'Use a new or empty evidence directory')
+const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-665-mdx-native-')))
 const profile = join(root, 'profile')
 const vault = join(root, 'vault')
 const appDir = join(root, 'app')
+const owned = createOwnedProcesses()
+const cleanup = { processGroupGone: false, temporaryRootRemoved: false, parentPortClosed: false }
 let child
 let socket
 let cdp
@@ -26,17 +49,36 @@ let outcome = 'failed'
 let nativeScenarios = null
 let runtime = null
 let positionedDiagnostics = null
+const external = { stage: 'not started', snapshots: {} }
+const evidenceFiles = ['result.json', 'electron-smoke.log']
 const checks = []
 const portServer = createServer()
-let childClosed = Promise.resolve(null)
-await mkdir(evidence, { recursive: true })
-for (const name of [
-  'result.json',
-  'electron-smoke.log',
-  'diagnostics-light.png',
-  'diagnostics-dark.png',
-])
-  await rm(join(evidence, name), { force: true })
+
+// Never inherit provider/CI tokens, NODE_OPTIONS, custom trust roots or proxies.
+const desktopEnv = Object.fromEntries(
+  ['PATH', 'LANG', 'LC_ALL', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'XAUTHORITY'].flatMap(
+    (key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]]),
+  ),
+)
+const childEnv = {
+  ...desktopEnv,
+  HOME: profile,
+  USERPROFILE: profile,
+  TMPDIR: join(root, 'tmp'),
+  XDG_CONFIG_HOME: join(profile, 'config'),
+  XDG_CACHE_HOME: join(profile, 'cache'),
+  XDG_DATA_HOME: join(profile, 'data'),
+}
+const shutdown = new AbortController()
+const interrupted = (signal) => {
+  // A caller interrupt also goes through finally rather than leaving the app and profile behind.
+  logs += `\nRunner interrupted by ${signal}\n`
+  cdp?.close()
+  socket?.close()
+  shutdown.abort(new Error('MDX fixture interrupted'))
+}
+process.once('SIGINT', interrupted)
+process.once('SIGTERM', interrupted)
 
 async function freePort() {
   await new Promise((resolve, reject) =>
@@ -48,15 +90,6 @@ async function freePort() {
   )
   return port
 }
-function ownedKill(signal) {
-  if (!child?.pid) return
-  try {
-    if (process.platform === 'win32') child.kill(signal)
-    else process.kill(-child.pid, signal)
-  } catch (error) {
-    if (error?.code !== 'ESRCH') throw error
-  }
-}
 async function delay(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -64,6 +97,7 @@ async function waitFor(fn, label, timeout = 30000) {
   const deadline = Date.now() + timeout
   let last
   while (Date.now() < deadline) {
+    shutdown.signal.throwIfAborted()
     try {
       last = await fn()
       if (last) return last
@@ -74,8 +108,13 @@ async function waitFor(fn, label, timeout = 30000) {
 }
 
 try {
-  await mkdir(evidence, { recursive: true })
   await mkdir(join(vault, 'notes'), { recursive: true })
+  await Promise.all(
+    ['userData', 'sessionData', 'config', 'cache', 'data'].map((name) =>
+      mkdir(join(profile, name), { recursive: true }),
+    ),
+  )
+  await mkdir(childEnv.TMPDIR)
   await mkdir(join(appDir, 'renderer'), { recursive: true })
   await writeFile(join(vault, 'notes', 'fixture.mdx'), '# fixture\n')
 
@@ -83,12 +122,7 @@ try {
     configFile: false,
     root: desktop,
     base: './',
-    resolve: {
-      alias: [
-        { find: '@/lib/trpc', replacement: join(desktop, 'scripts/mdx-diagnostics-smoke-trpc.ts') },
-        { find: '@', replacement: join(desktop, 'src/renderer/src') },
-      ],
-    },
+    resolve: { alias: { '@': join(desktop, 'src/renderer/src') } },
     plugins: [react(), tailwindcss()],
     build: {
       target: 'chrome140',
@@ -103,6 +137,10 @@ try {
   await writeFile(
     join(appDir, 'renderer', 'index.html'),
     `<!doctype html><html data-theme="light"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'"><title>MDX diagnostics smoke</title><link rel="stylesheet" href="./renderer.css"></head><body><div id="root"></div><script type="module" src="./renderer.js"></script></body></html>`,
+  )
+  await writeFile(
+    join(appDir, 'renderer', 'other.html'),
+    '<!doctype html><meta charset="utf-8"><title>Other fixture document</title>',
   )
   await build({
     configFile: false,
@@ -126,14 +164,34 @@ try {
   })
   await writeFile(
     join(appDir, 'preload.cjs'),
-    `const { contextBridge, ipcRenderer } = require('electron'); contextBridge.exposeInMainWorld('holiSmoke', { call: (channel, input) => { if (!['smoke:status','smoke:trpc','smoke:scenarios'].includes(channel)) return Promise.reject(Error('Denied fixture operation')); return ipcRenderer.invoke(channel, input) } });`,
+    `const { contextBridge, ipcRenderer } = require('electron');
+    const resourceEvents = ${JSON.stringify(MDX_RESOURCE_EVENTS)};
+    const subscribers = new Set();
+    ipcRenderer.on('plugin:' + resourceEvents, (_event, message) => {
+      for (const cb of subscribers) cb(message);
+    });
+    contextBridge.exposeInMainWorld('holi', {
+      trpc: (op) => ipcRenderer.invoke('holi:trpc', op),
+      plugin: { on: (id, cb) => {
+        if (id !== resourceEvents) return () => {};
+        subscribers.add(cb);
+        return () => { subscribers.delete(cb); };
+      } },
+    });
+    contextBridge.exposeInMainWorld('holiSmoke', {
+      call: (channel, input) => {
+        if (!['smoke:status', 'smoke:scenarios', 'smoke:other-document', 'smoke:hold-compiler', 'smoke:guest-healthy'].includes(channel))
+          return Promise.reject(Error('Denied fixture operation'));
+        return ipcRenderer.invoke(channel, input);
+      },
+    });`,
   )
   await build({
     configFile: join(desktop, 'vite.mdx-compiler.config.ts'),
     build: { outDir: join(appDir, 'out/mdx-compiler'), emptyOutDir: true },
   })
   const appMetadata = {
-    name: 'holi-mdx-diagnostics-native-smoke-507',
+    name: 'holi-mdx-diagnostics-native-smoke-665',
     version: '0.0.0',
     main: 'main.cjs',
   }
@@ -147,49 +205,67 @@ try {
     assert(packaged.includes(path), `packaged app.asar missing production compiler asset ${path}`)
   checks.push('production compiler assets present in app.asar')
 
-  const electron = require('electron')
-  const port = await freePort()
-  const env = {
-    ...process.env,
-    HOLI_507_PROFILE: profile,
-    HOLI_507_VAULT: vault,
-    HOME: profile,
-    USERPROFILE: profile,
-    NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
-      .filter(Boolean)
-      .join(delimiter),
+  shutdown.signal.throwIfAborted()
+  if (buildOnly) outcome = 'built, not executed'
+  else {
+    // Don't invoke Electron's lazy installer (or its environment overrides) from the smoke runner.
+    const installed = dirname(require.resolve('electron/package.json'))
+    const binary = await readFile(join(installed, 'path.txt'), 'utf8').catch(() => null)
+    assert(binary, 'Install the workspace Electron binary before running native acceptance')
+    await runNative(join(installed, 'dist', binary.trim()), artifact)
   }
-  delete env.ELECTRON_RUN_AS_NODE
-  child = spawn(electron, [artifact, `--remote-debugging-port=${port}`], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
-  })
-  child.stdout.on('data', (chunk) => {
-    logs += chunk
-    process.stdout.write(chunk)
-  })
-  child.stderr.on('data', (chunk) => {
-    logs += chunk
-    process.stderr.write(chunk)
-  })
-  childClosed = new Promise((resolve) =>
-    child.once('close', (code, signal) => resolve({ code, signal })),
+} catch (error) {
+  logs += `\nSMOKE ERROR: ${error?.stack ?? error}\n`
+  throw error
+} finally {
+  await finalize()
+}
+
+async function runNative(electron, artifact) {
+  const port = await freePort()
+  shutdown.signal.throwIfAborted()
+  child = owned.start(
+    electron,
+    [artifact, `--remote-debugging-port=${port}`, '--disable-background-networking'],
+    {
+      env: { ...childEnv, HOLI_MDX_SMOKE_PROFILE: profile, HOLI_MDX_SMOKE_VAULT: vault },
+    },
+  )
+  let exited
+  child.exited.then(
+    (status) => {
+      exited = status
+    },
+    () => {
+      exited = { code: 'spawn error' }
+    },
   )
   const version = await waitFor(async () => {
+    if (exited) return { childExited: exited }
     const response = await fetch(`http://127.0.0.1:${port}/json/version`)
     return response.ok ? response.json() : null
   }, 'packaged Electron DevTools')
-  socket = new WebSocket(version.webSocketDebuggerUrl)
+  assert(
+    !version.childExited,
+    `Packaged Electron exited before DevTools were available (${version.childExited?.code})`,
+  )
+  const debugEndpoint = new URL(version.webSocketDebuggerUrl)
+  assert(
+    debugEndpoint.protocol === 'ws:' && debugEndpoint.host === `127.0.0.1:${port}`,
+    'Not the isolated DevTools endpoint',
+  )
+  socket = new WebSocket(debugEndpoint)
   await new Promise((resolve, reject) => {
     socket.addEventListener('open', resolve, { once: true })
     socket.addEventListener('error', reject, { once: true })
   })
-  cdp = createCdpClient(socket, { timeoutMs: 30000 })
+  let onCdpEvent = () => {}
+  cdp = createCdpClient(socket, { timeoutMs: 90000, onEvent: (event) => onCdpEvent(event) })
+  const entryUrl = pathToFileURL(join(artifact, 'renderer/index.html')).href
   const targets = await waitFor(
     async () =>
       (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(
-        (target) => target.type === 'page',
+        (target) => target.type === 'page' && target.url === entryUrl,
       ),
     'fixture editor page',
   )
@@ -205,10 +281,11 @@ try {
   assert.equal(isolation.userData, join(profile, 'userData'))
   assert.equal(isolation.sessionData, join(profile, 'sessionData'))
   assert.equal(isolation.vault, vault)
+  assert.equal(isolation.appPath, artifact)
   assert(isolation.compilerAssets.every((asset) => asset.bytes > 0))
   assert.equal(
     await evaluate(
-      `typeof require==='undefined' && typeof process==='undefined' && !window.holi && !window.__TAURI__`,
+      `typeof require==='undefined' && typeof process==='undefined' && !window.__TAURI__ && !window.ipcRenderer && !window.electron && typeof window.holi?.trpc === 'function'`,
     ),
     true,
     'renderer exposed privileged globals',
@@ -240,6 +317,9 @@ try {
   assert.equal(preApproval.guestCreations, 0, 'compiler guest existed before approval')
   assert.equal(preApproval.inspectedSources, 0, 'source was delivered before approval')
   assert.equal(preApproval.guestProbes.length, 0, 'compiler guest was probed before approval')
+  for (const field of ['dns', 'socket'])
+    assert.equal(preApproval.network[field], isolation.network[field])
+  assert.equal(preApproval.network.requests.length, 0)
   await click('Approve vault')
   const guest = await waitFor(async () => {
     const state = await windowStatus(page)
@@ -254,10 +334,10 @@ try {
     electron: 'undefined',
     bridge: 'undefined',
   })
-  assert.deepEqual(guest.result.storage, { cookies: '', local: 0, session: 0 })
+  assert.deepEqual(guest.result.storage, { hasCookies: false, local: 0, session: 0 })
   assert.equal(
-    guest.result.credentialMarker,
-    null,
+    guest.result.hasCredentialMarker,
+    false,
     'default-session fixture credential leaked into compiler guest',
   )
   checks.push('actual compiler guest has no privileged globals or session data')
@@ -267,12 +347,7 @@ try {
         `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>/^\\d+ MDX diagnostic/.test(el.textContent.trim()))`,
       ),
     'production FileView compiler diagnostic',
-  ).catch(async (error) => {
-    const state = await evaluate(
-      `JSON.stringify({status:[...document.querySelectorAll('[aria-live="polite"]')].map((el)=>el.textContent),body:document.body.innerText,errors:window.__mdxSmoke.errors})`,
-    )
-    throw new Error(`Production diagnostic failure ${state}: ${error.message}`)
-  })
+  )
   const diagnostic = await evaluate(
     `JSON.stringify({source:window.__mdxSmoke.source(),message:[...document.querySelectorAll('[aria-live="polite"]')].map((el)=>el.textContent).find((text)=>/^\\d+ MDX diagnostic/.test(text.trim())),underlines:document.querySelectorAll('.cm-lintRange-error').length,classes:[...document.querySelectorAll('.cm-editor *')].map((node)=>node.className?.baseVal??node.className).filter((name)=>String(name).includes('lint')||String(name).includes('diagnostic'))})`,
   ).then(JSON.parse)
@@ -281,7 +356,7 @@ try {
   assert.equal(positionedDiagnostics[0].line, 3)
   assert.equal(positionedDiagnostics[0].column, 14)
   assert.match(positionedDiagnostics[0].message, /expression|acorn/i)
-  await screenshot(page, join(evidence, 'diagnostics-light.png'))
+  await saveScreenshot(page, 'diagnostics-light.png')
   await evaluate(`window.__mdxSmoke.theme('dark')`)
   await evaluate(
     `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`,
@@ -289,7 +364,7 @@ try {
   await evaluate(
     `Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})))`,
   )
-  await screenshot(page, join(evidence, 'diagnostics-dark.png'))
+  await saveScreenshot(page, 'diagnostics-dark.png')
   assert(diagnostic.source.includes('Café 🪿'), 'Unicode source was changed')
   assert(
     diagnostic.message.includes('MDX diagnostic'),
@@ -304,11 +379,11 @@ try {
     'Unicode diagnostic shown in production FileView',
   )
 
+  const vaultRoot = isolation.vault
   const editAndWaitForSave = async (source, label) => {
-    const previous = (await windowStatus(page)).savedWrites
     await evaluate(`window.__mdxSmoke.setSource(${JSON.stringify(source)})`)
     await waitFor(
-      async () => (await windowStatus(page)).savedWrites > previous,
+      async () => (await readFile(join(vaultRoot, 'notes/fixture.mdx'), 'utf8')) === source,
       `${label} durable save`,
     )
   }
@@ -320,7 +395,6 @@ try {
       ),
     'production editor clean compile',
   )
-  const vaultRoot = (await windowStatus(page)).vault
   await mkdir(join(vaultRoot, 'notes/graph'), { recursive: true })
   await writeFile(join(vaultRoot, 'notes/graph/root.jsx'), "export { value } from './nested.js'\n")
   await writeFile(join(vaultRoot, 'notes/graph/nested.js'), "export { value } from './leaf.js'\n")
@@ -377,8 +451,12 @@ try {
     checks.push(`${label}: FileView source remains editable and saved`)
   }
   await editAndWaitForSave('# recovered source\n', 'source recovery after dependency refusals')
-  const runtimeErrors = await evaluate(`JSON.stringify(window.__mdxSmoke.errors)`)
-  assert.deepEqual(JSON.parse(runtimeErrors), [], 'fixture renderer reported runtime errors')
+  await waitFor(() => cleanDiagnostics(page), 'clean editor before separate local scenarios')
+  assert.equal(
+    await evaluate('window.__mdxSmoke.errors.length'),
+    0,
+    'fixture renderer reported runtime errors',
+  )
 
   nativeScenarios = await evaluate(`window.holiSmoke.call('smoke:scenarios')`)
   assert(nativeScenarios.policy.executionChecks > 0)
@@ -408,72 +486,444 @@ try {
     'real guest crash and deadline recover with fresh successful compilations',
     ...nativeScenarios.stale.map((item) => `native held compile rejects stale ${item.name}`),
   )
+  await runExternal(page, editAndWaitForSave, (handler) => {
+    onCdpEvent = handler
+  })
+  assert.equal(
+    await evaluate('window.__mdxSmoke.errors.length'),
+    0,
+    'fixture renderer reported runtime errors',
+  )
   outcome = 'passed'
-} catch (error) {
-  logs += `\nSMOKE ERROR: ${error?.stack ?? error}\n`
-  throw error
-} finally {
+}
+
+async function runExternal(page, editAndWaitForSave, onEvent) {
+  const remote = 'fixture/isolated-mdx'
+  const probePath = 'notes/probe.mdx'
+  const rawOrigin = 'https://raw.githubusercontent.com'
+  const redirectOrigin = 'https://esm.run'
+  const cdnOrigin = 'https://cdn.jsdelivr.net'
+  const publicEntry = `${rawOrigin}/syv-ai/holi/${fixtureSha}/apps/desktop/scripts/fixtures/mdx-external/entry.js`
+  const source = `import '${publicEntry}'\n\n# External diagnostics fixture\n`
+  const allow = (origin) => `Allow ${origin}`
+  const deny = (origin) => `Deny ${origin}`
+  const revoke = (origin) => `Revoke ${origin}`
+  const trigger = 'MDX resources'
+  const parts = ['entry', 'relative', 'redirect', 'cdn']
+  const button = (label) =>
+    page.evaluate(`(() => {
+    const match = Array.from(document.querySelectorAll('button,[role="button"]')).find(item =>
+      (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(label)} &&
+      !item.closest('[aria-hidden="true"],[inert]') && item.getClientRects().length &&
+      getComputedStyle(item).visibility === 'visible' && !item.matches(':disabled,[aria-disabled="true"]'));
+    if (!match) return null;
+    const {x, y, width, height} = match.getBoundingClientRect();
+    return {x: x + width / 2, y: y + height / 2};
+  })()`)
+  const clickAt = async (point) => {
+    await page.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+    await page.call('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      ...point,
+      button: 'left',
+      clickCount: 1,
+    })
+    await page.call('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      ...point,
+      button: 'left',
+      clickCount: 1,
+    })
+  }
+  const click = async (label) => clickAt(await waitFor(() => button(label), label))
+  const openResources = (expected) =>
+    waitFor(async () => {
+      if (await button(expected)) return true
+      // Mutations may close the panel or leave it open while state refreshes.
+      const open = await page.evaluate(`Array.from(document.querySelectorAll('button')).some(item =>
+        (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(trigger)} &&
+        (item.getAttribute('aria-expanded') === 'true' || item.getAttribute('data-state') === 'open'))`)
+      const point = !open && (await button(trigger))
+      if (point) await clickAt(point)
+      return false
+    }, expected)
+  const ready = () =>
+    waitFor(
+      () => page.evaluate('!!window.__mdxSmoke && !!document.querySelector(".cm-editor")'),
+      'current FileView document',
+    )
+  const wire = (name, input, type = 'mutation') => ({ path: `mdxTrust.${name}`, type, input })
+  const rpc = (operation) => page.evaluate(`window.holi.trpc(${JSON.stringify(operation)})`)
+  const call = async (name, input, type) => {
+    const response = await rpc(wire(name, input, type))
+    assert(response?.ok, `${name} refused by the application router`)
+    return response.data
+  }
+  const refuse = async (response, label, message) => {
+    const result = await response
+    assert(result?.ok === false && message.test(result.message), label)
+  }
+  const staleResource = /MDX (?:lease|resource request) unavailable|MDX context changed/i
+  const probeLease = async () => {
+    const { context } = await call('status', { remote }, 'query')
+    assert(context, 'Current trusted document has no context')
+    return (await call('acquireDiagnosticsLease', { remote, context, path: probePath })).lease
+  }
+  const pending = async (lease, generation) => {
+    const diagnostics = await call('compile', { lease, generation, source })
+    assert(diagnostics.length > 0, 'An unapproved graph must report diagnostics')
+    const state = await call('externalResources', { lease }, 'query')
+    assert.equal(state.generation, generation)
+    assert.deepEqual(
+      state.pending.map(({ origin }) => origin),
+      [rawOrigin],
+    )
+    assert.equal(state.approved.length, 0)
+    assert(state.pending[0].purpose, 'The server did not describe the purpose')
+    return state.pending[0].id
+  }
+  const capture = async (stage) => {
+    const status = await windowStatus(page)
+    external.snapshots[stage] = { ...status.network, pushes: status.resourcePushes }
+    return external.snapshots[stage]
+  }
+  const noNewTraffic = (before, after, label) => {
+    for (const field of ['dns', 'socket'])
+      assert.equal(after[field], before[field], `${label}: ${field} activity`)
+    assert.equal(after.requests.length, before.requests.length, `${label}: HTTP activity`)
+  }
+  const requireRoutes = (snapshot, start, allowed) => {
+    const sent = snapshot.requests.slice(start.requests.length)
+    assert(
+      sent.every(({ route, get, credentials }) => allowed.includes(route) && get && !credentials),
+      'An unapproved route or credential-bearing/non-GET request reached Node HTTPS',
+    )
+    assert.deepEqual(
+      [...new Set(sent.map(({ route }) => route))].sort(),
+      [...allowed].sort(),
+      'Expected production HTTPS requests were not observed',
+    )
+  }
+  const requireResponse = (snapshot, route, test) => {
+    assert(
+      snapshot.responses.some((entry) => entry.route === route && test(entry.status)),
+      `No expected public HTTPS response for ${route}`,
+    )
+  }
+
+  try {
+    external.stage = 'pre-consent and denial'
+    const isolated = await windowStatus(page)
+    assert.equal(isolated.ambientCookieHosts, 3)
+    const before = await capture('beforeEditing')
+    await editAndWaitForSave(source, 'unapproved external source')
+    await openResources(allow(rawOrigin))
+    await waitFor(
+      () => page.evaluate('window.__mdxSmoke.diagnostics().length > 0'),
+      'unapproved external import diagnostic',
+    )
+    await page.evaluate(`window.__mdxSmoke.theme('light')`)
+    await settledPaint(page)
+    await saveScreenshot(page, 'resources-light.png')
+    await page.evaluate(`window.__mdxSmoke.theme('dark')`)
+    await settledPaint(page)
+    await saveScreenshot(page, 'resources-dark.png')
+    await click(deny(rawOrigin))
+    await waitFor(
+      async () => !(await button(allow(rawOrigin))),
+      'denied origin no longer actionable',
+    )
+    noNewTraffic(
+      before,
+      await capture('denied'),
+      'vault trust and explicit denial do not authorize the public origin',
+    )
+    checks.push(
+      'unapproved source remains editable and saved with zero observed Node DNS, socket and HTTP activity',
+      'production resource denial does not authorize traffic',
+    )
+
+    external.stage = 'stale requests and application ownership'
+    let lease = await probeLease()
+    let requestId = await pending(lease, 1)
+    const approval = () => wire('approveExternalResource', { lease, requestId })
+    await refuse(
+      page.evaluate(`window.holiSmoke.call('smoke:other-document', ${JSON.stringify(approval())})`),
+      'A different native document could use the current view approval',
+      /only to the current Holi application document/i,
+    )
+    await call('cancelCompile', { lease, generation: 2 })
+    await refuse(rpc(approval()), 'An older source generation could be approved', staleResource)
+    requestId = await pending(lease, 2)
+    const write = await rpc({
+      path: 'notes.write',
+      type: 'mutation',
+      input: { remote, path: probePath, text: '# Changed on disk\n' },
+    })
+    assert(write?.ok, 'The probe source was not saved through the router')
+    await refuse(
+      rpc(approval()),
+      'The previous saved source could still be approved',
+      staleResource,
+    )
+    lease = await probeLease()
+    requestId = await pending(lease, 1)
+    const retiredDocument = approval()
+    await page.call('Page.enable')
+    await page.call('Page.reload')
+    await waitFor(
+      () => page.evaluate('performance.getEntriesByType("navigation")[0]?.type === "reload"'),
+      'new native application document',
+    )
+    await ready()
+    await refuse(
+      rpc(retiredDocument),
+      'A reloaded application document could approve an old request',
+      staleResource,
+    )
+    await openResources(allow(rawOrigin))
+    noNewTraffic(before, await capture('staleRequests'), 'stale or wrong native ownership')
+    checks.push(
+      'wrong native document, superseded generation, saved-source replacement and document reload refuse stale approval IDs',
+    )
+
+    external.stage = 'relative and transitive graph'
+    await click(allow(rawOrigin))
+    await openResources(allow(redirectOrigin))
+    const transitive = await capture('transitiveConsentPending')
+    requireRoutes(transitive, before, ['entry', 'relative'])
+    for (const route of ['entry', 'relative'])
+      requireResponse(transitive, route, (code) => code === 200)
+    assert(
+      transitive.dns > before.dns && transitive.socket > before.socket,
+      'Node DNS/socket counters were not calibrated by real traffic',
+    )
+    assert(transitive.pushes > before.pushes, 'Production approval did not push invalidation')
+    checks.push(
+      'approved HTTPS entry and relative child fetched; distinct transitive origin offered before any observed HTTP to it',
+    )
+
+    external.stage = 'cross-origin redirect'
+    await click(allow(redirectOrigin))
+    await openResources(allow(cdnOrigin))
+    const redirect = await capture('redirectConsentPending')
+    requireRoutes(redirect, transitive, ['entry', 'relative', 'redirect'])
+    requireResponse(redirect, 'redirect', (code) => [301, 302, 303, 307, 308].includes(code))
+    checks.push(
+      'actual HTTPS redirect response discovered a new origin without sending an observed HTTP request to it',
+    )
+
+    external.stage = 'approved dependency success'
+    const video = recordVideo ? await startVideo(page, onEvent) : null
+    if (video) await delay(700)
+    await click(allow(cdnOrigin))
+    await waitFor(
+      () => cleanDiagnostics(page),
+      'clean FileView diagnostics after approval of all three public origins',
+    )
+    const approved = await capture('allApproved')
+    requireRoutes(approved, redirect, parts)
+    requireResponse(approved, 'cdn', (code) => code === 200)
+    assert(approved.pushes > redirect.pushes, 'Final approval did not push invalidation')
+    assert.equal(
+      await page.evaluate('globalThis.__mdxSmokeExecuted === undefined'),
+      true,
+      'External fixture code executed in FileView',
+    )
+    assert.equal(
+      await page.evaluate(`window.holiSmoke.call('smoke:guest-healthy')`),
+      true,
+      'The compiler guest policy probe failed during external diagnostics',
+    )
+    checks.push(
+      'all three approved origins produced clean diagnostics with no cookie, authorization or proxy-authorization headers on observed Node HTTPS requests',
+    )
+
+    external.stage = 'userinfo rejection and in-flight revoke'
+    lease = await probeLease()
+    const credentialUrl = publicEntry.replace('https://', 'https://synthetic-user:synthetic-only@')
+    const unsafe = await call('compile', {
+      lease,
+      generation: 1,
+      source: `import '${credentialUrl}'`,
+    })
+    assert(unsafe.length > 0, 'A credential-bearing URL was accepted')
+    assert.equal((await call('externalResources', { lease }, 'query')).pending.length, 0)
+    noNewTraffic(approved, await capture('userinfoRejected'), 'credential-bearing URL')
+    checks.push(
+      'URL userinfo is rejected even for an approved origin without observed Node DNS, socket or HTTP activity',
+    )
+
+    await openResources(revoke(rawOrigin))
+    if (video) await delay(700)
+    const held = wire('compile', { lease, generation: 2, source })
+    await page.evaluate(`(async () => {
+      const ready = window.holiSmoke.call('smoke:hold-compiler');
+      window.__mdxHeld = window.holi.trpc(${JSON.stringify(held)});
+      return ready;
+    })()`)
+    await click(revoke(rawOrigin))
+    await refuse(
+      page.evaluate('window.__mdxHeld'),
+      'The revoked native compile returned stale diagnostics',
+      /cancel|supersed|unavailable|invalidated/i,
+    )
+    await openResources(allow(rawOrigin))
+    const revoked = await capture('originRevoked')
+    noNewTraffic(
+      approved,
+      revoked,
+      'revoked origin including in-flight native compiler and pushed retry',
+    )
+    assert(revoked.pushes > approved.pushes, 'Revocation did not push invalidation')
+    assert.equal(await button(revoke(rawOrigin)), null, 'Revoked origin still appeared granted')
+    const remaining = await call('externalResources', { lease }, 'query')
+    assert.deepEqual(remaining.approved.map(({ origin }) => origin).sort(), [
+      cdnOrigin,
+      redirectOrigin,
+    ])
+    await waitFor(
+      () => page.evaluate('window.__mdxSmoke.diagnostics().length > 0'),
+      'diagnostic restored after revocation',
+    )
+    await saveScreenshot(page, 'resources-revoked.png')
+    if (video) {
+      await delay(700)
+      await video()
+    }
+    await call('releaseDiagnosticsLease', { lease })
+    await editAndWaitForSave(
+      '# Editable after resource revocation\n',
+      'source after resource revocation',
+    )
+    await waitFor(
+      () => cleanDiagnostics(page),
+      'local diagnostics remain usable after resource revocation',
+    )
+    assert.equal(
+      await page.evaluate(
+        'window.__mdxSmoke.source() === "# Editable after resource revocation\\n"',
+      ),
+      true,
+    )
+    checks.push(
+      'revocation cancels a held native compiler before transport; push restores the request without traffic and editing/saving still work',
+    )
+    external.stage = 'complete'
+  } finally {
+    // Preserve only bounded counts and booleans even on public DNS/CDN failures.
+    await capture('finalObservation').catch(() => {})
+  }
+}
+
+function cleanDiagnostics(page) {
+  return page.evaluate(`
+    [...document.querySelectorAll('[aria-live="polite"]')].some(el => el.textContent.includes('syntax is valid')) &&
+    window.__mdxSmoke.diagnostics().length === 0
+  `)
+}
+
+async function settledPaint(page) {
+  await page.evaluate(
+    `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`,
+  )
+}
+
+async function startVideo(page, onEvent) {
+  const frames = []
+  let firstTime
+  onEvent(({ method, params }) => {
+    if (method !== 'Page.screencastFrame') return
+    void page.call('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {})
+    const time = params.metadata.timestamp
+    firstTime ??= time
+    if (frames.length < 500)
+      frames.push({ image: Buffer.from(params.data, 'base64'), timestamp: time - firstTime })
+  })
+  await page.call('Page.startScreencast', {
+    format: 'png',
+    maxWidth: 960,
+    maxHeight: 720,
+    everyNthFrame: 2,
+  })
+  return async () => {
+    await page.call('Page.stopScreencast')
+    onEvent(() => {})
+    assert(frames.length >= 3, 'Only a few actual Chromium frames were captured')
+    const filename = 'resources-approval-revoke.webm'
+    await encodeScreencast(frames, {
+      root,
+      evidence,
+      filename,
+      run: (file, args, options) => spawnSync(file, args, { ...options, env: childEnv }),
+    })
+    assert((await stat(join(evidence, filename))).size > 0)
+    evidenceFiles.push(filename)
+  }
+}
+
+async function finalize() {
+  process.removeListener('SIGINT', interrupted)
+  process.removeListener('SIGTERM', interrupted)
   cdp?.close()
   socket?.close()
-  if (child?.pid) {
-    ownedKill('SIGTERM')
-    await Promise.race([delay(3000), childClosed ?? Promise.resolve()])
-    if (child.exitCode === null && child.signalCode === null) {
-      ownedKill('SIGKILL')
-      await childClosed
-    }
-  }
-  await writeFile(join(evidence, 'electron-smoke.log'), logs)
+  const steps = await Promise.allSettled([
+    (async () => {
+      await owned.stopAll()
+      cleanup.processGroupGone = true
+      await rm(root, { recursive: true, force: true })
+      cleanup.temporaryRootRemoved = true
+    })(),
+    (async () => {
+      if (portServer.listening) {
+        await new Promise((resolve, reject) =>
+          portServer.close((error) => (error ? reject(error) : resolve())),
+        )
+      }
+      cleanup.parentPortClosed = !portServer.listening
+    })(),
+  ])
+  if (steps.some((step) => step.status === 'rejected')) outcome = 'failed'
+  const diagnosticLog = ((child?.output ?? '') + logs).replace(
+    /ws:\/\/127\.0\.0\.1:\d+\/devtools\/\S+/g,
+    '[local DevTools endpoint]',
+  )
+  await writeFile(join(evidence, 'electron-smoke.log'), diagnosticLog)
   await writeFile(
     join(evidence, 'result.json'),
     JSON.stringify(
       {
-        issue: 507,
+        issue: 665,
         outcome,
         checks: { passed: checks.length, names: checks },
         nativeScenarios,
+        external: { ...external, fixtureSha: fixtureSha ?? null },
         runtime,
         positionedDiagnostics,
         artifact: 'unsigned Electron app.asar',
+        cleanup,
         resources: {
           temporaryRoot: root,
           userData: join(profile, 'userData'),
           sessionData: join(profile, 'sessionData'),
           vault,
           appAsar: join(root, 'app.asar'),
-          cdpPort: 'allocated from port 0',
-          listeners: 'runner-owned child and CDP socket',
         },
-        commands: [
-          'pnpm --filter @holi/desktop smoke:mdx-diagnostics:typecheck',
-          'pnpm --filter @holi/desktop smoke:mdx-diagnostics:native <evidence-dir>',
-        ],
-        evidence: [
-          'result.json',
-          'electron-smoke.log',
-          'diagnostics-light.png',
-          'diagnostics-dark.png',
-        ],
+        evidence: evidenceFiles,
       },
       null,
       2,
-    ),
+    ) + '\n',
   )
-  await rm(root, { recursive: true, force: true })
-  if (portServer.listening) {
-    await new Promise((resolve, reject) =>
-      portServer.close((error) => (error ? reject(error) : resolve())),
-    ).catch((error) => {
-      logs += `\nPORT SERVER CLOSE ERROR: ${error?.stack ?? error}\n`
-      outcome = 'failed'
-    })
-  }
+  console.log(`MDX fixture evidence: ${evidence}`)
+  if (steps.some((step) => step.status === 'rejected')) throw new Error('Fixture cleanup failed')
 }
 
 async function windowStatus(page) {
   return await page.evaluate(`window.holiSmoke.call('smoke:status')`)
 }
-async function screenshot(page, destination) {
+async function saveScreenshot(page, name) {
   const { data } = await page.call('Page.captureScreenshot', { format: 'png', fromSurface: true })
-  await writeFile(destination, Buffer.from(data, 'base64'))
+  await writeFile(join(evidence, name), Buffer.from(data, 'base64'))
+  evidenceFiles.push(name)
 }
