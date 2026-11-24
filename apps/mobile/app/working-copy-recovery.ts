@@ -7,10 +7,7 @@ export function recoveryArtifactNames(current: string[], legacy: string[]): stri
       (name) => stageNamePattern.test(name) || /^move-[0-9a-f-]+\.json$/i.test(name),
     ),
     ...legacy.filter(
-      (name) =>
-        stageNamePattern.test(name) ||
-        /^move-[0-9a-f-]+\.json$/i.test(name) ||
-        name.endsWith('.journal'),
+      (name) => stageNamePattern.test(name) || /^move-[0-9a-f-]+\.json$/i.test(name),
     ),
   ]
 }

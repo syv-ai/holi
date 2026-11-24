@@ -120,6 +120,9 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
   const cases = []
   const specs = [
     ['clean', async () => {}],
+    ['pending-save', async () => {}],
+    ['pending-move', async () => {}],
+    ['pending-legacy', async () => {}],
     [
       'staged',
       async (r) => {
@@ -206,10 +209,7 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
         }
       },
     ],
-    [
-      'spaced-name',
-      async (r) => put(r, 'notes with spaces.md', 'spaced\n'),
-    ],
+    ['spaced-name', async (r) => put(r, 'notes with spaces.md', 'spaced\n')],
     ['detached', async (r) => git(r, 'checkout', '--detach', 'HEAD')],
     ['unborn', async (r) => git(r, 'checkout', '--orphan', 'unborn')],
     [
@@ -229,6 +229,7 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
     ],
   ]
   for (const [name, mutate] of specs) {
+    if (name.startsWith('pending-') && !libraryRoot) continue
     const root = await mkdtemp(join(parent, `holi-${runId}-${name}-`))
     await git(root, 'init', '-b', 'fixture-start')
     await git(root, 'config', 'user.name', 'Holi fixture')
@@ -244,6 +245,12 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
       'identity',
       'unsafe-config',
       'metadata',
+      'autocrlf',
+      'attributes',
+      'skip-worktree',
+      'pending-save',
+      'pending-move',
+      'pending-legacy',
     ].includes(name)
     const expectedChanges = expectedRefusal
       ? null
@@ -258,20 +265,19 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
           ),
         )
     const recovery = []
-    if (libraryRoot) {
-      const stageRoot = stagingDirectory(libraryRoot, root)
-      const legacyRoot = legacyStagingDirectory(libraryRoot, root)
-      await mkdir(stageRoot, { recursive: true })
-      await mkdir(legacyRoot, { recursive: true })
-      const pending = [
-        [stageRoot, 'stage-00000000-0000-0000-0000-000000000001.tmp', 'pending stage'],
-        [legacyRoot, 'stage-00000000-0000-0000-0000-000000000002.tmp', 'legacy stage'],
-        [libraryRoot, 'move-00000000-0000-0000-0000-000000000003.json', '{"pending":true}'],
-      ]
-      for (const [directory, name, contents] of pending) {
-        await writeFile(join(directory, name), contents)
-        recovery.push({ name, bytes: Buffer.from(contents).toString('base64') })
-      }
+    if (libraryRoot && name.startsWith('pending-')) {
+      const directory =
+        name === 'pending-legacy'
+          ? legacyStagingDirectory(libraryRoot, root)
+          : stagingDirectory(libraryRoot, root)
+      await mkdir(directory, { recursive: true })
+      const filename =
+        name === 'pending-move'
+          ? 'move-00000000-0000-0000-0000-000000000003.json'
+          : 'stage-00000000-0000-0000-0000-000000000001.tmp'
+      const path = join(directory, filename)
+      await writeFile(path, 'pending fixture')
+      recovery.push({ path, bytes: Buffer.from('pending fixture').toString('base64') })
     }
     cases.push({
       name,

@@ -32,11 +32,19 @@ describe('working-copy fixture', () => {
     assert.equal(cases.find(({ name }) => name === 'unsafe-config').expectedChanges, null)
     assert.ok(cases.find(({ name }) => name === 'autocrlf').expectedRefusal)
     assert.ok(cases.find(({ name }) => name === 'skip-worktree').expectedRefusal)
-    assert.ok(cases.find(({ name }) => name === 'ignored-untracked').expectedChanges.every(({ path }) => path !== 'ignored.md'))
-    assert.ok(cases.find(({ name }) => name === 'spaced-name').expectedChanges.some(({ path }) => path === 'notes with spaces.md'))
-    for (const fixture of cases) {
+    assert.ok(
+      cases
+        .find(({ name }) => name === 'ignored-untracked')
+        .expectedChanges.every(({ path }) => path !== 'ignored.md'),
+    )
+    assert.ok(
+      cases
+        .find(({ name }) => name === 'spaced-name')
+        .expectedChanges.some(({ path }) => path === 'notes with spaces.md'),
+    )
+    for (const fixture of cases.filter((item) => item.name.startsWith('pending-'))) {
       assert.equal(fixture.expectedRefusal, true, `${fixture.name} has pending recovery`)
-      assert.equal(fixture.recovery.length, 3)
+      assert.equal(fixture.recovery.length, 1)
     }
     assert.ok(cases.find(({ name }) => name === 'file-directory').expectedChanges.length > 0)
     const before = await snapshotWorkingCopy(staged.root)

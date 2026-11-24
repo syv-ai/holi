@@ -21,7 +21,7 @@ static BOOL Same(const struct stat *a, const struct stat *b) {
 }
 
 static BOOL Forbidden(NSString *name) {
-    return [@[@"alternates", @"http-alternates", @"commondir", @"gitdir", @"config.worktree", @"grafts", @"shallow"] containsObject:name] || [name isEqualToString:@"replace"];
+    return [@[@"alternates", @"http-alternates", @"commondir", @"gitdir", @"config.worktree", @"grafts", @"shallow", @"attributes"] containsObject:name] || [name isEqualToString:@"replace"];
 }
 
 static BOOL CopyDirectory(int source, int target, NSError **error, off_t *totalBytes) {

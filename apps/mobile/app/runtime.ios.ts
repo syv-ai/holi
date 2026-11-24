@@ -89,11 +89,6 @@ export async function checkCompatibility(): Promise<string> {
     phase = 'native-working-copy-status'
     operation = 'runWorkingCopyCheck'
     const gitEnvironment = NSProcessInfo.processInfo.environment
-    const workingCopyRoot = gitEnvironment.objectForKey('HOLI_GIT_FIXTURE_ROOT')
-    const workingCopyRemote = gitEnvironment.objectForKey('HOLI_GIT_FIXTURE_URL')
-    if (typeof workingCopyRoot !== 'string' || typeof workingCopyRemote !== 'string')
-      throw new Error('Missing working-copy fixture identity')
-    workingCopy = await runWorkingCopyCheck(workingCopyRoot, workingCopyRemote, 'fixture-start')
     const manifestPath = gitEnvironment.objectForKey('HOLI_GIT_FIXTURE_MANIFEST')
     if (typeof manifestPath !== 'string') throw new Error('Missing working-copy fixture manifest')
     const manifestText = File.fromPath(manifestPath).readTextSync((error) => {
@@ -110,7 +105,8 @@ export async function checkCompatibility(): Promise<string> {
         await runWorkingCopyCheck(item.root, item.remote, item.branch ?? 'fixture-start'),
       )
     }
-    workingCopy = { ...workingCopy, cases: results }
+    if (!results[0]) throw new Error('Missing status matrix results')
+    workingCopy = { ...results[0], cases: results }
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'

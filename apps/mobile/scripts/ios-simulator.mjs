@@ -145,6 +145,7 @@ try {
   const workingCopyFixture = await createWorkingCopyFixture(
     join(canonicalContainer, 'Documents'),
     runId,
+    await realpath(join(canonicalContainer, 'Library')),
   )
   const workingCopyManifest = join(canonicalContainer, 'Documents/working-copy-manifest.json')
   await writeFile(workingCopyManifest, JSON.stringify(workingCopyFixture, null, 2))
@@ -200,8 +201,8 @@ try {
         ...(phase === 'normal'
           ? {
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_MANIFEST: workingCopyManifest,
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: workingCopyFixture.cases[0].root,
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: workingCopyFixture.cases[0].remote,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: `${canonicalContainer}/Documents/holi-git-${runId}`,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: gitFixture.url,
               SIMCTL_CHILD_HOLI_GIT_INVALID_TLS_URL: gitFixture.invalidUrl,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_USER: gitFixture.username,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_PASSWORD: gitFixture.password,
@@ -255,6 +256,14 @@ try {
       true,
       `Status mutated ${item.name}`,
     )
+  }
+  for (const item of workingCopyFixture.cases) {
+    for (const artifact of item.recovery)
+      assert.equal(
+        (await readFile(artifact.path)).toString('base64'),
+        artifact.bytes,
+        'Recovery artifact mutated',
+      )
   }
   await writeFile(
     join(artifacts, 'working-copy-evidence.json'),

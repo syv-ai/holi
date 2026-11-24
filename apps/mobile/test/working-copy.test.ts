@@ -90,7 +90,7 @@ describe('working copy status', () => {
   })
 
   it('shares the storage lock across canonical root aliases and releases it after storage failure', async () => {
-    const { mkdtemp, rm, mkdir } = await import('node:fs/promises')
+    const { mkdtemp, rm, mkdir, realpath } = await import('node:fs/promises')
     const { join } = await import('node:path')
     const root = await mkdtemp('/tmp/holi-working-copy-lock-')
     const aliasParent = await mkdtemp('/tmp/holi-working-copy-alias-')
@@ -117,7 +117,7 @@ describe('working copy status', () => {
       }
       const storage = createVaultStorage(nativeFiles, { remote: 'holi/vault', root })
       const { native } = adapter({
-        canonicalRoot: async (path) => (path === alias ? root : path),
+        canonicalRoot: async (path) => (path === alias || path === root ? realpath(root) : path),
       })
       const initial = await storage.create('note.md', new TextEncoder().encode('before'))
       const saving = storage.save('note.md', new TextEncoder().encode('after'), initial.revision)

@@ -373,6 +373,36 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
   }
   return fd;
 }
+static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, int rootFD, NSArray<NSString *> *paths, NSError **error) {
+  for (NSString *path in paths) {
+    if ([path.lastPathComponent isEqualToString:@".gitattributes"]) { if (error) *error = HNGPathError(EINVAL, @"Attributes are unsupported in read-only status"); return NO; }
+    if (![path.lastPathComponent isEqualToString:@".gitignore"]) continue;
+    NSArray<NSString *> *parts = nil;
+    if (!HNGPathParts(path, &parts)) return NO;
+    int parent = HNGOpenParent(rootFD, parts);
+    int fd = parent >= 0 ? openat(parent, parts.lastObject.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) : -1;
+    int saved = errno;
+    if (parent >= 0) close(parent);
+    if (fd < 0 && (saved == ENOENT || saved == ENOTDIR)) continue;
+    struct stat st;
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size > 1024 * 1024) {
+      if (fd >= 0) close(fd);
+      if (error) *error = HNGPathError(EINVAL, @"Cannot inspect ignore rules safely"); return NO;
+    }
+    NSMutableData *data = [NSMutableData data]; uint8_t buffer[4096]; ssize_t n;
+    while ((n = read(fd, buffer, sizeof(buffer))) > 0) {
+      [data appendBytes:buffer length:(NSUInteger)n];
+      if (data.length > 1024 * 1024) { n = -1; break; }
+    }
+    close(fd);
+    if (n < 0) { if (error) *error = HNGPathError(EIO, @"Cannot read ignore rules"); return NO; }
+    NSString *target = [snapshot.path stringByAppendingPathComponent:path];
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:target.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error] || ![data writeToFile:target options:0 error:error]) return NO;
+  }
+  int rc = git_repository_set_workdir(repo, snapshot.path.fileSystemRepresentation, 0);
+  if (rc < 0) { HNGError(error, rc); return NO; }
+  return YES;
+}
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyStatus:(NSArray<NSString *> *)paths root:(NSString *)root error:(NSError **)error {
   HoliGitSnapshot *snapshot = nil; git_repository *repo=[self openSafeRepository:root snapshot:&snapshot error:error]; if(!repo)return nil;
   int workdirResult = git_repository_set_workdir(repo, snapshot.path.fileSystemRepresentation, 0);
@@ -398,11 +428,27 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
   if(rc==0 && commit) rc=git_commit_tree(&tree,commit);
   if(rc<0){ if(error)HNGError(error,rc); close(rootFD); git_index_free(index); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); [snapshot close]; return nil; }
   git_config *config=NULL; BOOL filemode=YES; if(git_repository_config(&config,repo)==0){ int value=1; if(git_config_get_bool(&value,config,"core.filemode")==0)filemode=value; const char *unsupported[] = {"core.autocrlf", "core.eol", "core.attributesfile", "core.excludesfile"}; for (NSUInteger i=0; i<4; i++) { const char *setting=NULL; if (git_config_get_string(&setting,config,unsupported[i])==0) { if(error)*error=HNGPathError(EINVAL,@"Working-copy normalization or global ignore settings are unsupported"); git_config_free(config); close(rootFD); git_repository_free(repo); [snapshot close]; return nil; } } git_config_free(config); }
+  if (!HNGPrepareIgnores(repo, snapshot, rootFD, paths, error)) {
+    close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); [snapshot close]; return nil;
+  }
+  for (size_t i = 0; i < git_index_entrycount(index); i++) {
+    const git_index_entry *entry = git_index_get_byindex(index, i);
+    if ((entry->flags & GIT_INDEX_ENTRY_VALID) || (entry->flags_extended & (GIT_INDEX_ENTRY_SKIP_WORKTREE | GIT_INDEX_ENTRY_INTENT_TO_ADD)) || entry->mode == GIT_FILEMODE_COMMIT || entry->mode == GIT_FILEMODE_LINK) {
+      if (error) *error = HNGPathError(EINVAL, @"Unsupported index state");
+      close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); [snapshot close]; return nil;
+    }
+  }
   NSMutableArray *changes=[NSMutableArray array];
   for(NSString *path in paths){
     NSArray<NSString *> *parts=nil; if(!HNGPathParts(path,&parts)){ if(error)*error=HNGPathError(EINVAL,@"Invalid working-tree path"); changes=nil; break; }
     const char *p=path.fileSystemRepresentation; const git_index_entry *stage0=git_index_get_bypath(index,p,0); BOOL conflict=NO;
     for(int stage=1;stage<=3;stage++) if(git_index_get_bypath(index,p,stage)){conflict=YES;break;}
+    if (!stage0 && !conflict) {
+      int ignored = 0;
+      rc = git_ignore_path_is_ignored(&ignored, repo, p);
+      if (rc < 0) { HNGError(error, rc); changes = nil; break; }
+      if (ignored) continue;
+    }
     const git_tree_entry *headEntry=NULL; if(tree){ rc=git_tree_entry_bypath((git_tree_entry **)&headEntry,tree,p); if(rc==GIT_ENOTFOUND)rc=0; else if(rc<0){if(error)HNGError(error,rc);changes=nil;break;} }
     if (headEntry && git_tree_entry_type(headEntry) == GIT_OBJECT_TREE) { git_tree_entry_free((git_tree_entry *)headEntry); headEntry = NULL; }
     BOOL staged = conflict || ((headEntry!=NULL)!=(stage0!=NULL)) || (headEntry&&stage0&&(!git_oid_equal(git_tree_entry_id(headEntry),&stage0->id)||git_tree_entry_filemode(headEntry)!=stage0->mode));
