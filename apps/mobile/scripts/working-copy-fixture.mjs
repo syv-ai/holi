@@ -69,7 +69,7 @@ async function tree(root) {
   await walk(root)
   return entries
 }
-export async function snapshotWorkingCopy(root) {
+async function snapshotWorkingCopy(root) {
   return tree(root)
 }
 export async function verifyWorkingCopyUnchanged(root, snapshot) {

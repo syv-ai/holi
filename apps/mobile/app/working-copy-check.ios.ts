@@ -1,5 +1,5 @@
 import { createWorkingCopy } from './working-copy'
-import { nativeWorkingCopy } from './working-copy.ios'
+import { nativeWorkingCopy } from './native-working-copy.ios'
 
 /** Exercise the public status interface against a managed clone supplied by the native fixture. */
 export async function runWorkingCopyCheck(root: string, remote: string, branch: string) {

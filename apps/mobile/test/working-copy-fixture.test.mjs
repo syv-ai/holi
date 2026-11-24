@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   createWorkingCopyFixture,
-  snapshotWorkingCopy,
   verifyWorkingCopyUnchanged,
 } from '../scripts/working-copy-fixture.mjs'
 
@@ -47,7 +46,7 @@ describe('working-copy fixture', () => {
       assert.equal(fixture.recovery.length, 1)
     }
     assert.ok(cases.find(({ name }) => name === 'file-directory').expectedChanges.length > 0)
-    const before = await snapshotWorkingCopy(staged.root)
+    const before = staged.before
     assert.equal(await verifyWorkingCopyUnchanged(staged.root, before), true)
     assert.equal(await verifyWorkingCopyUnchanged(staged.root, []), false)
   })

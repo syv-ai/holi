@@ -59,8 +59,7 @@ async function hasPendingRecovery(root: string): Promise<boolean> {
       const entryKind = nativeIO.kind(entry)
       if (directory === legacy && /^[0-9a-f]{1,64}$/.test(name) && entryKind === 'directory')
         continue
-      if (entryKind !== 'regular' || nativeIO.canonical(entry) !== entry)
-        throw new Error('Unsafe recovery entry')
+      if (entryKind !== 'regular') throw new Error('Unsafe recovery entry')
     }
     found.push(artifacts)
   }

@@ -463,6 +463,21 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
     if (ignoredAbsent) { if (staged) [changes addObject:@{@"path":path,@"staged":@YES,@"worktree":@NO,@"conflict":@NO}]; continue; }
     BOOL worktree=NO; int parent=HNGOpenParent(rootFD,parts); struct stat st; int parentError = errno; int statResult=parent<0?-1:fstatat(parent,parts.lastObject.fileSystemRepresentation,&st,AT_SYMLINK_NOFOLLOW);
     BOOL missing = (statResult < 0 && (errno == ENOENT || errno == ENOTDIR)) || (parent < 0 && (parentError == ENOENT || parentError == ENOTDIR));
+    if (missing && stage0 && (git_index_caps(index) & GIT_INDEX_CAPABILITY_IGNORE_CASE)) {
+      for (NSString *alias in paths) {
+        if ([alias isEqualToString:path] || [alias caseInsensitiveCompare:path] != NSOrderedSame) continue;
+        NSArray<NSString *> *aliasParts = nil;
+        if (!HNGPathParts(alias, &aliasParts)) continue;
+        int aliasParent = HNGOpenParent(rootFD, aliasParts);
+        struct stat aliasStat;
+        if (aliasParent >= 0 && fstatat(aliasParent, aliasParts.lastObject.fileSystemRepresentation, &aliasStat, AT_SYMLINK_NOFOLLOW) == 0) {
+          if (parent >= 0) close(parent);
+          parent = aliasParent; parts = aliasParts; st = aliasStat; statResult = 0; missing = NO;
+          break;
+        }
+        if (aliasParent >= 0) close(aliasParent);
+      }
+    }
     if(statResult<0 && !missing){ if(error)*error=HNGPathError(errno,@"Cannot inspect working-tree path"); changes=nil; if(parent>=0)close(parent); break; }
     if (statResult == 0 && S_ISDIR(st.st_mode)) { statResult = -1; missing = YES; }
     if(statResult==0){
