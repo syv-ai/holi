@@ -86,18 +86,18 @@ export function AttachmentOutcome({
   const submittedMissing = driveIds && submission?.files.filter(({ id }) => !driveIds.has(id))
   const title = !active
     ? 'Earlier attachment submission'
-    : stillAttached
-      ? incomplete
-        ? 'At last check: Guest access incomplete'
-        : checked
-          ? 'Guest access checked'
-          : writeStatus === 'not-written'
-            ? 'Files already on the event'
-            : writeStatus === 'unknown'
-              ? 'Files on the event'
-              : 'Files attached'
-      : noWrite
-        ? 'Attachment failed'
+    : noWrite
+      ? 'Attachment update refused'
+      : stillAttached
+        ? incomplete
+          ? 'At last check: Guest access incomplete'
+          : checked
+            ? 'Guest access checked'
+            : writeStatus === 'not-written'
+              ? 'Files already on the event'
+              : writeStatus === 'unknown'
+                ? 'Files on the event'
+                : 'Files attached'
         : unresolvedIdentity
           ? 'Drive attachment identity not confirmed'
           : !checked && writeStatus === 'confirmed'
@@ -129,6 +129,7 @@ export function AttachmentOutcome({
         {!checked && !showHistory && (noWrite || writeStatus === 'not-written') && (
           <p>This request did not update Calendar.</p>
         )}
+        {noWrite && <p>Guest access was not checked.</p>}
         {missingFromCalendar &&
           !noWrite &&
           (unresolvedIdentity ? (
