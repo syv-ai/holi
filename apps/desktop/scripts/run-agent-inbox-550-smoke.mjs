@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,8 +9,14 @@ const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? join(process.cwd(), 'agent-inbox-550-evidence'))
 const root = await mkdtemp(join(tmpdir(), 'holi-550-'))
 const nonce = randomUUID()
-await mkdir(evidence, { recursive: true })
 try {
+  try {
+    await lstat(evidence)
+    throw new Error(`Evidence path already exists; refusing to overwrite: ${evidence}`)
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+  await mkdir(evidence, { recursive: false, mode: 0o700 })
   const build = spawnSync('pnpm', ['exec', 'electron-vite', 'build'], {
     cwd: desktop,
     stdio: 'inherit',
@@ -35,5 +41,5 @@ try {
     `Production build completed. Bootstrap artifacts/evidence: ${evidence}; isolated root: ${root}`,
   )
 } finally {
-  // Preserve the isolated root for inspection; callers may remove this disposable directory.
+  await rm(root, { recursive: true, force: true })
 }
