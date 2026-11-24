@@ -63,10 +63,14 @@ export function DriveFilesDialog({
   const [confirming, setConfirming] = useState(false)
   const title = useRef<HTMLHeadingElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
-  const adding = selection.filter(({ id }) => !attachedIds.has(id)).length
-  const remaining = Math.max(0, slots - adding)
-  const canConfirm = canSubmit && !loading && !failure && selection.length > 0 && adding <= slots
-  const revisableIds = new Set(initialFiles.map(({ id }) => id))
+  const remaining = Math.max(0, slots - selection.length)
+  const canConfirm =
+    canSubmit &&
+    !loading &&
+    !failure &&
+    selection.length > 0 &&
+    selection.length <= slots &&
+    selection.every(({ id }) => !attachedIds.has(id))
   // Keep selected files reachable even if they are on a different search page.
   const candidates = [
     ...new Map(
@@ -164,9 +168,7 @@ export function DriveFilesDialog({
             <DialogDescription>
               {confirming ? (
                 <>
-                  {adding === 0
-                    ? `Holi will try to give guests viewer access to these files on “${eventTitle}”.`
-                    : `Holi will attach these files to “${eventTitle}” and try to give event guests viewer access.`}{' '}
+                  {`Holi will attach these files to “${eventTitle}” and try to give event guests viewer access.`}{' '}
                   Google may email guests about new access.
                 </>
               ) : (
@@ -219,24 +221,20 @@ export function DriveFilesDialog({
                     {candidates.map((file) => {
                       const attached = attachedIds.has(file.id)
                       const selected = selection.some(({ id }) => id === file.id)
-                      const alreadyAttached = attached && !revisableIds.has(file.id)
                       return (
                         <li key={file.id}>
                           <FieldLabel className="items-center">
                             <Checkbox
                               type="button"
-                              checked={alreadyAttached || selected}
-                              disabled={
-                                alreadyAttached || (!selected && !attached && remaining === 0)
-                              }
+                              checked={attached || selected}
+                              disabled={attached || (!selected && remaining === 0)}
                               onCheckedChange={(checked) =>
                                 setSelection((previous) => {
                                   if (!checked) return previous.filter(({ id }) => id !== file.id)
-                                  if (previous.some(({ id }) => id === file.id)) return previous
                                   if (
-                                    !attached &&
-                                    previous.filter(({ id }) => !attachedIds.has(id)).length >=
-                                      slots
+                                    attached ||
+                                    previous.length >= slots ||
+                                    previous.some(({ id }) => id === file.id)
                                   )
                                     return previous
                                   return [...previous, file]
@@ -325,7 +323,9 @@ export function DriveFilesDialog({
                 <span role="status" className="text-muted-foreground text-xs tabular-nums">
                   {selection.length} selected · {remaining} attachment{' '}
                   {remaining === 1 ? 'slot' : 'slots'} left
-                  {adding > slots ? ` · Remove ${adding - slots} to continue` : ''}
+                  {selection.length > slots
+                    ? ` · Remove ${selection.length - slots} to continue`
+                    : ''}
                 </span>
                 {selection.length > 0 && (
                   <Button type="button" variant="ghost" size="sm" onClick={() => setSelection([])}>

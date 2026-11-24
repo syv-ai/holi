@@ -15,6 +15,7 @@ import {
 import { googleAccountRevisionAtom, useGoogleAccount } from '../account'
 import { googleCap } from '../google-cap'
 import { attachmentConsentNeeded, messageOf } from '../google-errors'
+import { AttachmentOutcome } from './attachment-outcome'
 import { DriveFilesDialog, type DriveFileChoice } from './drive-files-dialog'
 
 type Read = { data: AttachmentList } | { error: unknown }
@@ -22,6 +23,7 @@ type Attempt = {
   files: DriveFileChoice[]
   result: AttachEventFilesResult
   checked?: boolean
+  attachmentUnconfirmed?: boolean
 }
 interface Recovery {
   attempt: Attempt | null
@@ -33,39 +35,25 @@ interface Recovery {
 // not the open picker or its unsubmitted selection, in the window's store.
 const recoveryAtom = atom(new Map<string, Recovery>())
 
-const needsCheck = (result: AttachEventFilesResult) =>
-  result.attachmentStatus === 'unknown' ||
-  result.sharing.some(({ status }) => status === 'unknown') ||
-  (result.reconnect === true && result.attachmentStatus !== 'failed')
-
-const needsAttention = (result: AttachEventFilesResult) =>
-  result.attachmentStatus !== 'attached' ||
-  result.sharingComplete === false ||
-  result.sharing.some(({ status }) => status === 'failed' || status === 'unknown') ||
-  result.reconnect === true ||
-  Boolean(result.message)
-
-function reconcile(
-  previous: AttachEventFilesResult,
-  checked: AttachEventFilesResult,
-): AttachEventFilesResult {
-  const sharing = [...checked.sharing]
-  for (const row of previous.sharing) {
-    if (row.status !== 'unknown') continue
+function reconcile(result: AttachEventFilesResult, previous?: Attempt): AttachEventFilesResult {
+  const guests = result.guestsChecked && new Set(result.guestsChecked)
+  const sharing = result.sharing.filter(({ guest }) => !guests || guests.has(guest))
+  for (const row of previous?.result.sharing ?? []) {
+    if (row.status !== 'unknown' || (guests && !guests.has(row.guest))) continue
     const index = sharing.findIndex(
       ({ fileId, guest }) => fileId === row.fileId && guest === row.guest,
     )
-    // Do not treat absence or a partial read as proof that an uncertain
-    // permission write failed. Main owns the durable per-file barrier.
+    // An incomplete read cannot establish that a guest left or an uncertain
+    // grant failed. Main owns the durable per-file write barrier.
     if (index === -1) sharing.push(row)
     else if (sharing[index]?.status === 'failed') sharing[index] = row
   }
   return {
-    ...checked,
+    ...result,
     attachmentStatus:
-      checked.attachmentStatus !== 'attached' && previous.attachmentStatus === 'unknown'
+      previous?.attachmentUnconfirmed && result.attachmentStatus !== 'attached'
         ? 'unknown'
-        : checked.attachmentStatus,
+        : result.attachmentStatus,
     sharing,
   }
 }
@@ -170,29 +158,27 @@ export function EventAttachments({
   const attachedIds = new Set(data?.attachments.flatMap(({ fileId }) => (fileId ? [fileId] : [])))
   const existingFiles = driveAttachments(data?.attachments ?? [])
   const slots = Math.max(0, ATTACHMENT_LIMIT - (data?.attachments.length ?? 0))
+  // An unknown Calendar write still needs reconciliation. Drive outcomes,
+  // including quarantined grants, are file-specific and don't block Add.
   const canSubmit =
-    data?.canAttach === true &&
-    !(attempt && needsCheck(attempt.result)) &&
-    !recovery?.pending &&
-    checkError === null
-  const checkAttempt =
-    attempt &&
-    (needsCheck(attempt.result) ||
-      (needsAttention(attempt.result) && attempt.result.attachmentStatus === 'attached'))
-  const retryFiles = attempt?.checked
-    ? attempt.files.filter(
-        ({ id }) =>
-          existingFiles.some((file) => file.id === id) &&
-          attempt.result.sharing.some((row) => row.fileId === id && row.status === 'failed'),
-      )
-    : (attempt?.files ?? [])
+    data?.canAttach === true && !attempt?.attachmentUnconfirmed && !recovery?.pending
+  const checkAttempt = attempt && attempt.result.attachmentStatus !== 'failed' ? attempt : undefined
+  const filesToCheck =
+    checkAttempt && (checkAttempt.attachmentUnconfirmed || !data)
+      ? checkAttempt.files
+      : existingFiles
+  const revisable =
+    attempt?.result.attachmentStatus === 'failed' && !attempt.checked
+      ? attempt.files.filter(({ id }) => !attachedIds.has(id))
+      : []
   const confirm = async (files: DriveFileChoice[]) => {
     if (
       !canStart() ||
       !canSubmit ||
       files.length === 0 ||
       files.length > ATTACHMENT_LIMIT ||
-      files.filter(({ id }) => !attachedIds.has(id)).length > slots
+      files.length > slots ||
+      files.some(({ id }) => attachedIds.has(id))
     )
       return
     saveRecovery({ attempt, pending: 'submit', checkError: null })
@@ -215,7 +201,14 @@ export function EventAttachments({
       }
     }
     setDialog(null)
-    saveRecovery({ attempt: { files, result }, checkError: null })
+    saveRecovery({
+      attempt: {
+        files,
+        result: reconcile(result),
+        attachmentUnconfirmed: result.attachmentStatus === 'unknown',
+      },
+      checkError: null,
+    })
   }
 
   const check = async (files: DriveFileChoice[], previous?: Attempt) => {
@@ -229,7 +222,9 @@ export function EventAttachments({
       saveRecovery({
         attempt: {
           files,
-          result: previous ? reconcile(previous.result, result) : result,
+          result: reconcile(result, previous),
+          attachmentUnconfirmed:
+            previous?.attachmentUnconfirmed && result.attachmentStatus !== 'attached',
           checked: true,
         },
         checkError: null,
@@ -262,13 +257,13 @@ export function EventAttachments({
             Add from Drive
           </Button>
         )}
-        {!checkAttempt && !checkError && existingFiles.length > 0 && (
+        {!checkAttempt && !checkError && filesToCheck.length > 0 && (
           <Button
             type="button"
             variant="outline"
             size="sm"
             disabled={busy || checking}
-            onClick={() => void check(existingFiles)}
+            onClick={() => void check(filesToCheck)}
           >
             Check guest access
           </Button>
@@ -372,19 +367,24 @@ export function EventAttachments({
       )}
       {attempt && !checkError && (
         <AttachmentOutcome
-          attempt={attempt}
+          files={attempt.files}
+          result={attempt.result}
+          checked={attempt.checked}
           data={data}
-          canRevise={
-            canSubmit &&
-            retryFiles.length > 0 &&
-            (slots > 0 || retryFiles.some(({ id }) => attachedIds.has(id)))
-          }
           canCheck={currentAccount && !recovery?.pending}
-          onCheck={checkAttempt ? () => void check(attempt.files, attempt) : undefined}
-          onRevise={(button) => {
-            trigger.current = button
-            setDialog('revise')
-          }}
+          onCheck={
+            checkAttempt && filesToCheck.length > 0
+              ? () => void check(filesToCheck, checkAttempt)
+              : undefined
+          }
+          onRevise={
+            canSubmit && slots > 0 && revisable.length > 0
+              ? (button) => {
+                  trigger.current = button
+                  setDialog('revise')
+                }
+              : undefined
+          }
           onOpenConnections={onOpenConnections}
         />
       )}
@@ -395,7 +395,7 @@ export function EventAttachments({
           eventTitle={eventTitle}
           attachedIds={attachedIds}
           slots={slots}
-          initialFiles={dialog === 'revise' ? retryFiles : undefined}
+          initialFiles={dialog === 'revise' ? revisable : undefined}
           busy={busy}
           canSubmit={canSubmit}
           onConfirm={(files) => void confirm(files)}
@@ -429,125 +429,5 @@ function AttachmentRow({
         name
       )}
     </li>
-  )
-}
-
-function AttachmentOutcome({
-  attempt,
-  data,
-  canRevise,
-  canCheck,
-  onCheck,
-  onRevise,
-  onOpenConnections,
-}: {
-  attempt: Attempt
-  data: AttachmentList | null
-  canRevise: boolean
-  canCheck: boolean
-  onCheck?: () => void
-  onRevise: (button: HTMLButtonElement) => void
-  onOpenConnections: () => void
-}) {
-  const { attachmentStatus, message, sharing, reconnect } = attempt.result
-  const present = new Set(data?.attachments.map(({ fileId }) => fileId))
-  const observed = new Set(attempt.result.attachments.map(({ fileId }) => fileId))
-  // The outcome and the card list can arrive independently. Never let an
-  // earlier positive result promote a file absent from fresh Calendar data.
-  const missingFromCalendar = data !== null && attempt.files.some(({ id }) => !present.has(id))
-  const stillAttached = data !== null && !missingFromCalendar && attachmentStatus === 'attached'
-  const accessible = sharing.filter(
-    ({ fileId, status }) =>
-      observed.has(fileId) &&
-      present.has(fileId) &&
-      (status === 'granted' || status === 'already-accessible'),
-  )
-  const incomplete = needsAttention(attempt.result)
-  const checkNeeded = needsCheck(attempt.result)
-  const title = stillAttached
-    ? incomplete
-      ? 'Guest access incomplete'
-      : attempt.checked
-        ? 'Guest access checked'
-        : 'Files attached'
-    : attachmentStatus === 'failed'
-      ? 'Attachment failed'
-      : 'Attachment not confirmed'
-  return (
-    <Alert
-      variant={
-        attachmentStatus === 'failed'
-          ? 'destructive'
-          : incomplete || !stillAttached
-            ? 'warning'
-            : 'success'
-      }
-    >
-      <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>
-        {stillAttached && incomplete && !attempt.checked && <p>Files attached.</p>}
-        {missingFromCalendar && (attempt.checked || attachmentStatus === 'attached') && (
-          <p>One or more checked files aren’t on the event.</p>
-        )}
-        {message && <p>{message}</p>}
-        {accessible.length > 0 && (
-          <p className="tabular-nums">
-            {`Guest access confirmed for ${accessible.length} file–guest ${accessible.length === 1 ? 'pair' : 'pairs'}.`}
-          </p>
-        )}
-        {sharing
-          .filter(({ status }) => status === 'failed' || status === 'unknown')
-          .map(({ fileId, guest, status, message }) => (
-            <p key={JSON.stringify([fileId, guest])} className="wrap-anywhere">
-              {status === 'failed' ? 'Guest access incomplete' : 'Sharing not confirmed'}:{' '}
-              {attempt.files.find(({ id }) => id === fileId)?.name ?? fileId} · {guest}
-              {message ? ` — ${message}` : ''}
-            </p>
-          ))}
-        {attachmentStatus === 'failed' && reconnect && (
-          <p>
-            Reconnect Google before confirming again. No files were attached or shared by this
-            request.
-          </p>
-        )}
-        {checkNeeded && (
-          <p>
-            {reconnect
-              ? 'Reconnect Google, then check guest access again.'
-              : sharing.some(({ status }) => status === 'unknown')
-                ? 'An unconfirmed sharing request cannot be retried. Checking access does not share files or notify guests.'
-                : 'Checking access does not share files or notify guests.'}
-          </p>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {reconnect && (
-            <Button type="button" variant="outline" size="sm" onClick={onOpenConnections}>
-              Open Connections
-            </Button>
-          )}
-          {onCheck && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!canCheck}
-              onClick={onCheck}
-            >
-              {attempt.checked ? 'Check guest access' : 'Check file access'}
-            </Button>
-          )}
-          {incomplete && canRevise && !checkNeeded && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={(event) => onRevise(event.currentTarget)}
-            >
-              {attempt.checked ? 'Review sharing retry' : 'Revise selection'}
-            </Button>
-          )}
-        </div>
-      </AlertDescription>
-    </Alert>
   )
 }
