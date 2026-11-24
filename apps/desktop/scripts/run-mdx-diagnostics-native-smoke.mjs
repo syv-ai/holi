@@ -238,7 +238,7 @@ try {
   )
   const preApproval = await windowStatus(page)
   assert.equal(preApproval.guestCreations, 0, 'compiler guest existed before approval')
-  assert.equal(preApproval.compileSources, 0, 'source was delivered before approval')
+  assert.equal(preApproval.inspectedSources, 0, 'source was delivered before approval')
   assert.equal(preApproval.guestProbes.length, 0, 'compiler guest was probed before approval')
   await click('Approve vault')
   const guest = await waitFor(async () => {

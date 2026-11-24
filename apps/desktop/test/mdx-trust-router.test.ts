@@ -88,6 +88,10 @@ async function fixture(
       createOwner: () => ({}),
       retireOwner: vi.fn(),
       compile: vi.fn((_owner, source) => compile(source)),
+      inspect: vi.fn(async (_owner, source) => ({
+        diagnostics: await compile(source),
+        dependencies: [],
+      })),
       invalidate: vi.fn(),
       close: vi.fn(),
     },
