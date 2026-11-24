@@ -29,7 +29,7 @@ window.addEventListener('error', (event) => {
   if (
     event.message === 'ResizeObserver loop completed with undelivered notifications.' &&
     !event.error &&
-    !event.filename &&
+    (!event.filename || event.filename === window.location.href) &&
     event.lineno === 0 &&
     event.colno === 0
   ) {
