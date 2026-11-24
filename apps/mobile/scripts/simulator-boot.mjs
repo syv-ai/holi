@@ -316,6 +316,7 @@ export async function bootSimulator({
       record({ event: 'command-started', stage })
       await command('xcrun', ['simctl', ...args], {
         signal,
+        timeout: stage === 'bootstatus' ? 300_000 : undefined,
         outputLimit,
         env: { ...process.env, NSUnbufferedIO: 'YES' },
         onOutput: (data, stream) => {
