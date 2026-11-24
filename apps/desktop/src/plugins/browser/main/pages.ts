@@ -344,43 +344,48 @@ export function createPages(deps: PagesDeps): Pages & {
     const attachment = tab.attachmentId
     if (attachment === null) return
     const generation = tab.vimGeneration
+    const configuration = tab.vimRevision
+    const requestOwner = tab.vimRequestOwner
+    const requestRevision = tab.vimRequestRevision
     const sequence = ++tab.vimModeSequence
     const focused = tab.view.webContents.focusedFrame
     if (tab.vimFocusedFrame !== (focused ?? null)) {
       tab.vimFocusedFrame = focused ?? null
       tab.vimLastSnapshot = null
     }
+    const owns = () =>
+      isPresented(tab) &&
+      tab.attachmentId === attachment &&
+      tab.vimNonce === nonce &&
+      tab.vimGeneration === generation &&
+      tab.vimRevision === configuration &&
+      tab.vimRequestOwner === requestOwner &&
+      tab.vimRequestRevision === requestRevision &&
+      tab.view.webContents.focusedFrame === focused
     const child = focused && focused !== tab.view.webContents.mainFrame
     const sampled = child
-      ? tab
-          .childVim!.mode()
-          .then((state) =>
-            state
-              ? { revision: tab.vimRevision, mode: state.mode }
-              : !tab.vimEnabled
-                ? { revision: tab.vimRevision, mode: 'insert' as const }
-                : null,
-          )
-      : inPage<{ revision: number; mode: 'insert' | 'normal' }>(tab, '__holiPage.vim.mode()')
+      ? tab.childVim!.mode().then((state) =>
+          state
+            ? { revision: configuration, mode: state.mode, current: state.current }
+            : !tab.vimEnabled
+              ? {
+                  revision: configuration,
+                  mode: 'insert' as const,
+                  current: () => !tab.vimEnabled,
+                }
+              : null,
+        )
+      : inPage<{ revision: number; mode: 'insert' | 'normal' }>(tab, '__holiPage.vim.mode()').then(
+          (state) => ({ ...state, current: () => true }),
+        )
     void sampled
       .then((mode) => {
-        if (
-          mode === null ||
-          !isPresented(tab) ||
-          tab.vimNonce !== nonce ||
-          tab.vimGeneration !== generation ||
-          sequence !== tab.vimModeSequence ||
-          tab.view.webContents.focusedFrame !== focused
-        )
-          return
-        const snapshot = JSON.stringify({ nonce, attachment, ...mode })
-        if (tab.vimLastSnapshot === snapshot) return
-        tab.vimLastSnapshot = snapshot
-        deps.vimMode?.(
-          tab.id,
-          { nonce, attachment, ...mode },
-          () => isPresented(tab) && tab.attachmentId === attachment,
-        )
+        if (!mode || !owns() || !mode.current() || sequence !== tab.vimModeSequence) return
+        const snapshot = { nonce, attachment, revision: mode.revision, mode: mode.mode }
+        const key = JSON.stringify(snapshot)
+        if (tab.vimLastSnapshot === key) return
+        tab.vimLastSnapshot = key
+        deps.vimMode?.(tab.id, snapshot, () => owns() && mode.current())
       })
       .catch(() => {})
   }
@@ -590,11 +595,6 @@ export function createPages(deps: PagesDeps): Pages & {
       requestRevision < 1
     )
       return
-    if (!enabled) {
-      revokeHints(tab)
-      tab.vimEnabled = false
-      tab.childVim?.configure(false)
-    }
     const owner = `${nonce}:${attachment}`
     if (tab.vimRequestOwner !== owner) {
       tab.vimRequestOwner = owner
@@ -602,6 +602,11 @@ export function createPages(deps: PagesDeps): Pages & {
     }
     if (requestRevision <= tab.vimRequestRevision) return
     tab.vimRequestRevision = requestRevision
+    if (!enabled) {
+      revokeHints(tab)
+      tab.vimEnabled = false
+      void tab.childVim?.configure(false)
+    }
     const generation = tab.vimGeneration
     const attachmentId = tab.attachmentId
     const ownerRevision = tab.vimRequestRevision

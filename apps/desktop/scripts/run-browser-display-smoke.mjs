@@ -295,6 +295,12 @@ try {
           'apps/desktop/src/plugins/browser/main/page-script.js',
           'apps/desktop/src/plugins/browser/main/pages.ts',
           'apps/desktop/src/plugins/browser/main/child-frame-vim.ts',
+          'apps/desktop/src/plugins/browser/main/frame-addressing.ts',
+          'apps/desktop/src/plugins/browser/main/frame-context-runtime.ts',
+          'apps/desktop/src/plugins/browser/main/frame-context-metadata.ts',
+          'apps/desktop/src/plugins/browser/main/frame-context-native-probes.ts',
+          'apps/desktop/src/plugins/browser/main/frame-context-session-owner.ts',
+          'apps/desktop/src/plugins/browser/main/frame-context-cancellation.ts',
           'apps/desktop/src/plugins/browser/main/capabilities.ts',
           'apps/desktop/src/plugins/browser/renderer/browser-hints.ts',
           'apps/desktop/src/renderer/src/features/shell/host-hint-layer.tsx',
@@ -469,14 +475,24 @@ try {
     'foreign-window-app-request-denied-b',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
-  if (childVimAcceptance)
+  if (childVimAcceptance) {
     for (const check of [
       'native-child-vim-same-origin-frame-insert-report',
       'native-child-vim-nested-oopif-and-duplicate-owner-isolation',
       'native-child-vim-replacement-reset-and-preference-passthrough',
       'native-child-vim-late-mode-result-cannot-outlive-disable',
+      'native-child-vim-held-normal-result-rejected-after-focus-aba',
+      'native-child-vim-stale-disable-rejected-after-enable',
     ])
       assert(result.checks.includes(check), `missing native child editing check: ${check}`)
+    const receipt = JSON.parse(await readFile(join(evidence, 'child-vim.json'), 'utf8'))
+    assert.equal(receipt.ok, true)
+    assert.equal(receipt.source, env.HOLI_553_SHA)
+    assert.equal(receipt.sourceHash, env.HOLI_553_SOURCE_HASH)
+    assert.equal(receipt.worktreeStatus, env.HOLI_553_STATUS)
+    for (const theme of ['light', 'dark'])
+      assert((await readFile(join(evidence, `child-vim-${theme}.png`))).length > 0)
+  }
   assert(
     result.checks.length >= (toolbarAcceptance ? 47 : 30),
     'native smoke produced too few assertions',

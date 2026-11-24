@@ -610,9 +610,71 @@ async function run(): Promise<void> {
       assert.equal(a.webContents.focusedFrame, frame)
       await freshMode(after, 'insert')
     }
+    const holdNormalRead = async (work: (release: () => void) => Promise<void>) => {
+      let enter!: () => void
+      let release!: () => void
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve
+      })
+      const delayed = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const originalCommand = a.webContents.debugger.sendCommand.bind(a.webContents.debugger)
+      let holdNextEvaluation = true
+      a.webContents.debugger.sendCommand = async (method, params, sessionId) => {
+        const result = await originalCommand(method, params, sessionId)
+        const observed = result?.result?.value
+        if (
+          holdNextEvaluation &&
+          method === 'Runtime.evaluate' &&
+          observed?.enabled === true &&
+          observed.mode === 'normal'
+        ) {
+          holdNextEvaluation = false
+          enter()
+          await delayed
+        }
+        return result
+      }
+      let deadline: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          entered,
+          new Promise<never>((_, reject) => {
+            deadline = setTimeout(
+              () => reject(new Error('timed out after 5000ms waiting for native child evaluation')),
+              5000,
+            )
+          }),
+        ])
+        clearTimeout(deadline)
+        await work(release)
+      } finally {
+        clearTimeout(deadline)
+        release()
+        a.webContents.debugger.sendCommand = originalCommand
+      }
+    }
+    assert(
+      mixed.every(
+        (frame) =>
+          frame.parent?.url === `${url}/671-parent` &&
+          frame.parent.parent === a.webContents.mainFrame,
+      ),
+      'nested native ancestry required',
+    )
+    assert.equal(mixed[0]!.name, mixed[1]!.name, 'duplicate frame names required')
     const nativeFrames = mixed.map((frame) => ({
       processId: frame.processId,
       routingId: frame.routingId,
+      frameToken: frame.frameToken,
+      url: frame.url,
+      name: frame.name,
+      parent: {
+        processId: frame.parent!.processId,
+        routingId: frame.parent!.routingId,
+        url: frame.parent!.url,
+      },
     }))
     await focusChild(mixed[0]!)
     let after = sent.length
@@ -635,6 +697,26 @@ async function run(): Promise<void> {
       'one two',
     )
     mark('native-child-vim-nested-oopif-and-duplicate-owner-isolation')
+    after = sent.length
+    await childPress('Escape')
+    await freshMode(after, 'normal')
+    await holdNormalRead(async (release) => {
+      const resumed = sent.length
+      await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').focus()`)
+      await mixed[0]!.executeJavaScript(
+        `document.querySelector('#child-field').focus();document.querySelector('#child-field').setSelectionRange(4,4)`,
+      )
+      assert.equal(a.webContents.focusedFrame, mixed[0])
+      release()
+      await freshMode(resumed, 'insert')
+      await childPress('h')
+      assert.equal(
+        await mixed[0]!.executeJavaScript(`document.querySelector('#child-field').value`),
+        'one hxtwo',
+      )
+    })
+    await mixed[0]!.executeJavaScript(`document.querySelector('#child-field').value='one xtwo'`)
+    mark('native-child-vim-held-normal-result-rejected-after-focus-aba')
     await focusChild(mixed[1]!)
     await childPress('h')
     assert.equal(
@@ -645,38 +727,7 @@ async function run(): Promise<void> {
     after = sent.length
     await childPress('Escape')
     await freshMode(after, 'normal')
-    let enter!: () => void
-    let release!: () => void
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve
-    })
-    const delayed = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const originalCommand = a.webContents.debugger.sendCommand.bind(a.webContents.debugger)
-    let holdNextEvaluation = true
-    a.webContents.debugger.sendCommand = async (method, params, sessionId) => {
-      const held = holdNextEvaluation && method === 'Runtime.evaluate'
-      if (held) holdNextEvaluation = false
-      const result = await originalCommand(method, params, sessionId)
-      if (held) {
-        enter()
-        await delayed
-      }
-      return result
-    }
-    let deadline: ReturnType<typeof setTimeout> | undefined
-    try {
-      await Promise.race([
-        entered,
-        new Promise<never>((_, reject) => {
-          deadline = setTimeout(
-            () => reject(new Error('timed out after 5000ms waiting for native child evaluation')),
-            5000,
-          )
-        }),
-      ])
-      clearTimeout(deadline)
+    await holdNormalRead(async (release) => {
       await applyVimConfig(vimSnapshot, false, 5)
       const off = sent.length
       release()
@@ -693,11 +744,7 @@ async function run(): Promise<void> {
         'late native mode result cannot re-enable or publish normal after disable',
       )
       mark('native-child-vim-late-mode-result-cannot-outlive-disable')
-    } finally {
-      clearTimeout(deadline)
-      release()
-      a.webContents.debugger.sendCommand = originalCommand
-    }
+    })
     await childPress('h')
     assert.equal(
       await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').value`),
@@ -705,6 +752,21 @@ async function run(): Promise<void> {
       'preference off restores native typing',
     )
     await applyVimConfig(vimSnapshot, true, 6)
+    configureVim(vimSnapshot, false, 5)
+    after = sent.length
+    await childPress('Escape')
+    await childPress('h')
+    assert.equal(
+      await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').value`),
+      'one hhtwo',
+      'stale disable cannot restore native typing over current enable',
+    )
+    assert.equal(
+      await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').selectionStart`),
+      5,
+    )
+    await freshMode(after, 'normal')
+    mark('native-child-vim-stale-disable-rejected-after-enable')
     const peer = mixed[0]!
     const departed = mixed[1]!
     await departed.parent!.executeJavaScript(
@@ -749,6 +811,8 @@ async function run(): Promise<void> {
         {
           ok: true,
           source: process.env.HOLI_553_SHA,
+          sourceHash: process.env.HOLI_553_SOURCE_HASH,
+          worktreeStatus: process.env.HOLI_553_STATUS,
           electron: process.versions.electron,
           nativeFrames,
           events: observed,

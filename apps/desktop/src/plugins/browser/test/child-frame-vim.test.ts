@@ -26,8 +26,7 @@ async function setup() {
   const contents = { focusedFrame: frame, mainFrame: {}, isDestroyed: () => false }
   let presented = true
   let resolution: Deferred<void> | null = null
-  let evaluation: Deferred<void> | null = null
-  const entered = deferred<void>()
+  let evaluation: (Deferred<void> & { entered: Deferred<void> }) | null = null
   const resolutionEntered = deferred<void>()
   addressing.createFrameAddressing.mockImplementation((_contents, current) => {
     const revoked = new WeakSet<object>()
@@ -60,10 +59,43 @@ async function setup() {
         // Native evaluation dispatches before awaiting its response. Run the
         // actual expression in its own DOM world, including nonce validation.
         const result = dom.window.eval(expression)
-        entered.resolve()
-        if (evaluation) await evaluation.promise
+        const paused = evaluation
+        if (paused) {
+          paused.entered.resolve()
+          await paused.promise
+        }
         valid(capture)
         return result
+      },
+      isCurrent(address: object) {
+        const capture = addresses.get(address)
+        if (!capture) return false
+        try {
+          valid(capture)
+          return true
+        } catch {
+          return false
+        }
+      },
+      async observeFocus(address: object, onChange: (focused: boolean) => void) {
+        const capture = addresses.get(address)
+        if (!capture) throw new Error('unknown address')
+        valid(capture)
+        const report = (event: Event) => {
+          if (!event.isTrusted) return
+          try {
+            valid(capture)
+          } catch {
+            return
+          }
+          onChange(event.type === 'focus')
+        }
+        dom.window.addEventListener('focus', report, true)
+        dom.window.addEventListener('blur', report, true)
+        return () => {
+          dom.window.removeEventListener('focus', report, true)
+          dom.window.removeEventListener('blur', report, true)
+        }
       },
       revoke(capture: object) {
         revoked.add(capture)
@@ -83,13 +115,13 @@ async function setup() {
     dom,
     contents,
     vim,
-    entered,
     resolutionEntered,
     depart: () => {
       presented = false
     },
     pauseResolution: () => (resolution = deferred<void>()),
-    pauseEvaluation: () => (evaluation = deferred<void>()),
+    pauseEvaluation: () =>
+      (evaluation = Object.assign(deferred<void>(), { entered: deferred<void>() })),
   }
 }
 
@@ -110,11 +142,47 @@ describe('child-frame editing ownership', () => {
     const h = await setup()
     const gate = h.pauseEvaluation()
     const pending = h.vim.mode()
-    await h.entered.promise
+    await gate.entered.promise
     h.depart()
     h.contents.focusedFrame = { detached: false }
     gate.resolve()
     expect(await pending).toBeNull()
+    h.vim.dispose()
+  })
+
+  it('can refocus a document whose arming response arrived during focus departure', async () => {
+    const h = await setup()
+    const frame = h.contents.focusedFrame
+    const field = h.dom.window.document.querySelector('input')!
+    field.focus()
+    const gate = h.pauseEvaluation()
+    const pending = h.vim.mode()
+    await gate.entered.promise
+    field.blur()
+    h.contents.focusedFrame = { detached: false }
+    gate.resolve()
+    expect(await pending).toBeNull()
+    h.contents.focusedFrame = frame
+    field.focus()
+    expect(await h.vim.mode()).toMatchObject({ mode: 'insert', enabled: true })
+    h.vim.dispose()
+  })
+
+  it('rejects pending and queued observations after focus leaves and returns', async () => {
+    const h = await setup()
+    const field = h.dom.window.document.querySelector('input')!
+    field.focus()
+    const queued = await h.vim.mode()
+    expect(queued?.current()).toBe(true)
+    const gate = h.pauseEvaluation()
+    const pending = h.vim.mode()
+    await gate.entered.promise
+    field.blur()
+    field.focus()
+    gate.resolve()
+    expect(await pending).toBeNull()
+    expect(queued?.current()).toBe(false)
+    expect(await h.vim.mode()).toMatchObject({ mode: 'insert', enabled: true })
     h.vim.dispose()
   })
 

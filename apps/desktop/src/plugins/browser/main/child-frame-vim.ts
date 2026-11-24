@@ -3,7 +3,14 @@ import { createFrameAddressing, type FrameAddress, type FrameCapture } from './f
 import PAGE_SCRIPT from './page-script.js?raw'
 
 type EditingState = { revision: number; mode: 'insert' | 'normal'; enabled: boolean }
-type Child = { address: FrameAddress; frame: WebFrameMain; nonce: string }
+type Child = {
+  address: FrameAddress
+  frame: WebFrameMain
+  nonce: string
+  focus: number
+  unobserve?: () => void
+}
+type ModeSnapshot = EditingState & { current: () => boolean }
 
 /** Owns editing-only child worlds; frame and protocol identities never leave main. */
 export function createChildFrameVim(
@@ -19,7 +26,7 @@ export function createChildFrameVim(
   let revision = 0
   let disposed = false
   let draining: Promise<void> = Promise.resolve()
-  let sampling: Promise<EditingState | null> | null = null
+  let sampling: Promise<ModeSnapshot | null> | null = null
 
   const current = (owner: FrameCapture): boolean =>
     !disposed && owner === capture && enabled && presented() && !contents.isDestroyed()
@@ -34,6 +41,7 @@ export function createChildFrameVim(
     const pending: Promise<unknown>[] = [draining]
     if (before) {
       for (const child of children.values()) {
+        child.unobserve?.()
         pending.push(
           before
             .evaluate(
@@ -62,16 +70,15 @@ export function createChildFrameVim(
       return
     enabled = true
     capture = Object.freeze({ tab, document: {}, presentation: {} })
-    addressing ??= createFrameAddressing(contents, current)
   }
 
-  async function sample(): Promise<EditingState | null> {
+  async function sample(): Promise<ModeSnapshot | null> {
     await draining
     const owner = capture
-    const adapter = addressing
-    if (!owner || !adapter || !current(owner)) return null
+    if (!owner || !current(owner)) return null
     const frame = contents.focusedFrame
     if (!frame || frame === contents.mainFrame || frame.detached) return null
+    const adapter = (addressing ??= createFrameAddressing(contents, current))
     const focused = (): boolean =>
       current(owner) && contents.focusedFrame === frame && !frame.detached
     try {
@@ -81,26 +88,42 @@ export function createChildFrameVim(
       if (!child || child.address !== address) {
         // Remember the address before dispatch so revoke can disable a pending
         // initialization without waiting for its nonce to return.
-        child = { frame, address, nonce: '' }
+        child = { frame, address, nonce: '', focus: 0 }
         children.set(frame, child)
         const nonce = await adapter.evaluate<string>(
           address,
           `${PAGE_SCRIPT}\n__holiPage.vim.armChild()`,
         )
-        if (!focused() || children.get(frame) !== child) return null
+        if (!current(owner) || children.get(frame) !== child || !adapter.isCurrent(address))
+          return null
         child.nonce = nonce
       }
-      const state = await adapter.evaluate<EditingState>(address, '__holiPage.vim.editingState()')
       if (!focused()) return null
+      if (!child.unobserve) {
+        const observed = child
+        child.unobserve = await adapter.observeFocus(address, () => {
+          observed.focus++
+        })
+      }
+      const observed = child
+      const tenure = child.focus
+      const live = () =>
+        focused() &&
+        children.get(frame) === observed &&
+        observed.focus === tenure &&
+        adapter.isCurrent(address)
+      if (!live()) return null
+      let state = await adapter.evaluate<EditingState>(address, '__holiPage.vim.editingState()')
+      if (!live()) return null
       if (!state.enabled) {
         const applied = await adapter.evaluate<boolean>(
           address,
           `document.hasFocus() && __holiPage.vim.configure(true, ${++revision}, ${JSON.stringify(child.nonce)})`,
         )
-        if (!focused() || !applied) return null
+        if (!live() || !applied) return null
+        state = await adapter.evaluate<EditingState>(address, '__holiPage.vim.editingState()')
       }
-      const result = await adapter.evaluate<EditingState>(address, '__holiPage.vim.editingState()')
-      return focused() ? result : null
+      return live() ? { ...state, current: live } : null
     } catch {
       // A document can depart while resolving its native ownership. Do not use a
       // cached mode or a guessed frame after an addressing failure.
@@ -113,7 +136,7 @@ export function createChildFrameVim(
     }
   }
 
-  function mode(): Promise<EditingState | null> {
+  function mode(): Promise<ModeSnapshot | null> {
     if (sampling) return sampling
     const pending = sample()
     sampling = pending
