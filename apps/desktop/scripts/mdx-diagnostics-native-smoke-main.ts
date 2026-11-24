@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { app, BrowserWindow, ipcMain, session, type WebContents } from 'electron'
 import { createGuestProbes } from './mdx-compiler-guest-probes'
-import { mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createMdxResources } from '../src/main/mdx-resources'
 import { createMdxDiagnostics } from '../src/main/mdx-diagnostics'
@@ -248,13 +248,17 @@ invoke('smoke:scenarios', async () => {
       )
     ).length > 0,
   )
-  await writeFile(join(vault, 'notes/graph/aggregate-a.js'), 'x'.repeat(600 * 1024))
-  await writeFile(join(vault, 'notes/graph/aggregate-b.js'), 'x'.repeat(600 * 1024))
+  const aggregateFiles = Array.from({ length: 6 }, (_, i) => `aggregate${i}.js`)
+  for (const name of aggregateFiles)
+    await writeFile(
+      join(vault, 'notes/graph', name),
+      '/*' + ' '.repeat(200 * 1024) + '*/\nexport const value = 1',
+    )
   assert(
     (
       await compileGraphCase(
         'aggregate size budget',
-        "import './graph/aggregate-a.js'\nimport './graph/aggregate-b.js'\n",
+        aggregateFiles.map((name) => `import './graph/${name}'`).join('\n'),
       )
     ).length > 0,
   )
@@ -359,14 +363,32 @@ invoke('smoke:scenarios', async () => {
   )
   await writeFile(join(graphDir, 'case.js'), 'export const value = 1')
   await writeFile(join(graphDir, 'CASE.js'), 'export const value = ;')
-  assert(
-    (
-      await compileGraphCase(
-        'case-distinct dependency paths',
-        "import './graph/case.js'\nimport './graph/CASE.js'\n",
-      )
-    ).length > 0,
-  )
+  const caseSensitive =
+    (await stat(join(graphDir, 'case.js'))).ino !== (await stat(join(graphDir, 'CASE.js'))).ino
+  if (caseSensitive) {
+    assert(
+      (
+        await compileGraphCase(
+          'case-distinct dependency paths',
+          "import './graph/case.js'\nimport './graph/CASE.js'\n",
+        )
+      ).length > 0,
+    )
+  } else {
+    await writeFile(join(graphDir, 'case.js'), 'export const value = 1')
+    const canonicalCase = await import('node:fs/promises').then((fs) =>
+      fs.realpath(join(graphDir, 'case.js')),
+    )
+    const alias = canonicalCase.endsWith('/case.js') ? 'CASE.js' : 'case.js'
+    assert(
+      (await compileGraphCase('case-insensitive alias rejected', `import './graph/${alias}'\n`))
+        .length > 0,
+    )
+    graphCases.push({
+      name: 'case-distinct files',
+      outcome: 'inapplicable: case-insensitive filesystem',
+    })
+  }
   assert.deepEqual(
     await compileGraphCase('fresh source after graph races', '# source remains usable'),
     [],

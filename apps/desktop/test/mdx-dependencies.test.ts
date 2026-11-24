@@ -57,7 +57,7 @@ describe('inspectMdxDependencies', () => {
     await symlink(join(root, 'secret.mdx'), join(root, 'linked.mdx'))
     const diagnostics = await run("import Secret from './.ENV'\nimport Linked from './linked.mdx'")
     expect(diagnostics).toHaveLength(2)
-    expect(inspected).toEqual([])
+    expect(inspected).toEqual(["import Secret from './.ENV'\nimport Linked from './linked.mdx'"])
   })
 
   it('rejects a shared diamond dependency changed while another branch is inspected', async () => {
@@ -65,15 +65,26 @@ describe('inspectMdxDependencies', () => {
     const shared = join(root, 'shared.mdx')
     await writeFile(shared, 'shared source')
     await writeFile(join(root, 'left.mdx'), "import Shared from './shared.mdx'")
-    await writeFile(join(root, 'right.mdx'), 'right source')
-    await expect(inspectMdxDependencies({
-      root, path: 'entry.mdx', source: "import Left from './left.mdx'\\nimport Right from './right.mdx'",
-      signal: new AbortController().signal, assertCurrent: async () => {}, owner: {},
-      inspect: async (_owner, source) => {
-        if (source === 'right source') await writeFile(shared, 'changed source')
-        return { diagnostics: [], dependencies: [...source.matchAll(/import\\s+[^'"\\n]*?from\\s+['"]([^'"]+)['"]/g)].map(m => ({ specifier: m[1], line: 1 })) }
-      },
-    })).rejects.toBeDefined()
+    await writeFile(join(root, 'right.mdx'), "import Shared from './shared.mdx'\n// right source")
+    await expect(
+      inspectMdxDependencies({
+        root,
+        path: 'entry.mdx',
+        source: "import Left from './left.mdx'\nimport Right from './right.mdx'",
+        signal: new AbortController().signal,
+        assertCurrent: async () => {},
+        owner: {},
+        inspect: async (_owner, source) => {
+          if (source.includes('// right source')) await writeFile(shared, 'changed source')
+          return {
+            diagnostics: [],
+            dependencies: [...source.matchAll(/import\s+[^'"\n]*?from\s+['"]([^'"]+)['"]/g)].map(
+              (m) => ({ specifier: m[1], line: 1, column: 1 }),
+            ),
+          }
+        },
+      }),
+    ).rejects.toBeDefined()
   })
 
   it('rejects a dependency changed after it was inspected', async () => {
@@ -93,7 +104,7 @@ describe('inspectMdxDependencies', () => {
           return {
             diagnostics: [],
             dependencies: [...source.matchAll(/import\s+[^'"\n]*?from\s+['"]([^'"]+)['"]/g)].map(
-              (m) => ({ specifier: m[1], line: 1 }),
+              (m) => ({ specifier: m[1], line: 1, column: 1 }),
             ),
           }
         },
