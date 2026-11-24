@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "scripts/agent-inbox-550-*.ts",
+    "scripts/seed-agent-inbox-550.ts"
+  ]
+}
