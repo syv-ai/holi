@@ -126,6 +126,7 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
   return {
     key: event.id,
     googleId: event.data?.googleId,
+    calendarId: event.resourceId,
     title: event.title,
     location: event.data?.location ?? '',
     date: localDate(start),
@@ -141,13 +142,18 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
 
 export function CalendarView({ visible = true }: { visible?: boolean }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
-  const { account, currentSub } = useGoogleAccount()
+  const {
+    account,
+    currentSub,
+    loading: accountLoading,
+    readError: accountReadError,
+  } = useGoogleAccount()
   const accountIdentity = account ? `${account.email}:${currentSub ?? ''}` : null
   const calendar = useGoogleCalendar(remote, accountIdentity)
+  const currentContext = JSON.stringify([remote, accountIdentity])
   useEffect(() => {
-    const nextIdentity = `${remote ?? ''}:${accountIdentity ?? ''}`
-    if (contextIdentity.current !== nextIdentity) {
-      contextIdentity.current = nextIdentity
+    if (contextIdentity.current !== currentContext) {
+      contextIdentity.current = currentContext
       cardIdentity.current += 1
       pending.current = false
       setSaving(false)
@@ -159,7 +165,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
     return () => {
       cardIdentity.current += 1
     }
-  }, [remote, accountIdentity])
+  }, [currentContext])
   const openSettings = useSetAtom(openSettingsSectionAtom)
   const openNote = useSetAtom(openDocumentAtom)
   const canCreateTask = useHasCapability(TASKS_CREATE) && remote !== null
@@ -175,7 +181,16 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
   const [saving, setSaving] = useState(false)
   const cardIdentity = useRef(0)
   const pending = useRef(false)
-  const contextIdentity = useRef(`${remote ?? ''}:${accountIdentity ?? ''}`)
+  const contextIdentity = useRef(currentContext)
+  // A held connection (or an event card awaiting the reset above) cannot authorise a write.
+  const attachmentContext =
+    remote &&
+    currentSub &&
+    !accountLoading &&
+    !accountReadError &&
+    contextIdentity.current === currentContext
+      ? { remote, sub: currentSub, openConnections: () => openSettings('connections') }
+      : null
   const newEventTrigger = useRef<HTMLButtonElement>(null)
   // The visible date, shared by the rail's mini calendar and the grid. One
   // source of truth: the mini calendar and grid nav both write it, both read it.
@@ -717,6 +732,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
 
         <EventCard
           meetingIdentity={remote && currentSub ? { remote, sub: currentSub } : null}
+          attachmentContext={attachmentContext}
           onCreated={calendar.reload}
           meetingDraft={cardMeetingDraft.current}
           onMeetingDraftChange={updateMeetingDraft}
