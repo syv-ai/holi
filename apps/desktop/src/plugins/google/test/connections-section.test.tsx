@@ -110,6 +110,19 @@ beforeEach(() => {
 })
 
 describe('ConnectionsSection', () => {
+  it('names only attachment and sharing features when the Drive grant is missing', async () => {
+    status.mockResolvedValue({
+      account: ADA,
+      missingScopes: ['https://www.googleapis.com/auth/drive'],
+    })
+    accounts.mockResolvedValue({ accounts: [ADA], current: ADA.sub })
+    render()
+    expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeEnabled()
+    const warning = screen.getByRole('alert')
+    expect(warning).toHaveTextContent(/attaching Google Drive files to events.*sharing.*guests/i)
+    expect(warning).not.toHaveTextContent(/Gmail|marking read|contacts/i)
+  })
+
   it('shows a settings read retry and retries a failed write without racing the switch', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/vault')
@@ -453,6 +466,9 @@ describe('the OAuth client', () => {
       await screen.findByText(/Holi’s client, which accepts syv.ai accounts only/),
     ).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Use your own client…' }))
+    expect(
+      screen.getByRole('dialog', { name: 'Your own OAuth client' }),
+    ).toHaveAccessibleDescription(/enable.*Google Drive.*APIs/i)
     await user.type(screen.getByLabelText('Client ID'), 'mine.apps.googleusercontent.com')
     await user.type(screen.getByLabelText('Client secret'), 's3cret')
     await user.click(screen.getByRole('button', { name: 'Save and disconnect 2 accounts' }))

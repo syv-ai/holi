@@ -64,7 +64,7 @@ export function DriveFilesDialog({
   const searchInput = useRef<HTMLInputElement>(null)
   const adding = selection.filter(({ id }) => !attachedIds.has(id)).length
   const remaining = Math.max(0, slots - adding)
-  const canConfirm = canSubmit && selection.length > 0 && adding <= slots
+  const canConfirm = canSubmit && !loading && !failure && selection.length > 0 && adding <= slots
   const revisableIds = new Set(initialFiles.map(({ id }) => id))
   // Keep selected files reachable even if they are on a different search page.
   const candidates = [

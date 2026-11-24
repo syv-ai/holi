@@ -2,9 +2,9 @@
  * The calendar view (ReUI's event calendar over Google): what it asks Google
  * for, what it draws, and which writes it sends through which capability.
  */
-import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, fireEvent, render as renderUi, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
-import { getDefaultStore } from 'jotai'
+import { createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { localDate } from '@holi/shared'
 import { activeRemoteAtom } from '@/plugin-api'
@@ -126,9 +126,17 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+async function confirmDriveFiles(user: ReturnType<typeof userEvent.setup>, names: string[]) {
+  await user.click(await screen.findByRole('button', { name: 'Add from Drive' }))
+  for (const name of names) await user.click(await screen.findByRole('checkbox', { name }))
+  await user.click(screen.getByRole('button', { name: 'Review files' }))
+  await user.click(screen.getByRole('button', { name: 'Attach and share with guests' }))
+}
+
 const statusMock = vi.fn()
 const allAccountsMock = vi.fn()
 const agendaMock = vi.fn()
+const agendaCachedMock = vi.fn()
 const scheduleMock = vi.fn()
 const rescheduleMock = vi.fn()
 const unscheduleMock = vi.fn()
@@ -141,12 +149,13 @@ const eventAttachmentsMock = vi.fn()
 const driveFilesMock = vi.fn()
 const attachEventFilesMock = vi.fn()
 const checkEventFileAccessMock = vi.fn()
+const finishConsentMock = vi.fn()
 
 const google: Record<string, (params: Record<string, unknown>, remote: string) => unknown> = {
   'google.status': (_p, remote) => statusMock(remote),
   'google.allAccounts': (_p, remote) => allAccountsMock(remote),
   'google.agenda': (p, remote) => agendaMock(p, remote),
-  'google.agendaCached': () => null,
+  'google.agendaCached': (p, remote) => agendaCachedMock(p, remote),
   'google.calendars': () => [
     { id: ME, name: 'Me', mine: true, color: '#039be5', enabled: true },
     { id: 'team', name: 'Team', mine: false, color: '#7986cb', enabled: false },
@@ -161,6 +170,8 @@ const google: Record<string, (params: Record<string, unknown>, remote: string) =
   'google.driveFiles': (p, remote) => driveFilesMock(remote, p),
   'google.attachEventFiles': (p, remote) => attachEventFilesMock(remote, p),
   'google.checkEventFileAccess': (p, remote) => checkEventFileAccessMock(remote, p),
+  'google.connect': () => ({ url: 'https://accounts.google.com/' }),
+  'google.awaitConnect': () => finishConsentMock(),
   'google.client': () => ({ id: 'example.apps.googleusercontent.com', source: 'shipped' }),
   'google.mailMarkerPreferences': () => ({ enabledOrder: ['yellow-star'] }),
   'google.reschedule': (p) => rescheduleMock(p),
@@ -191,12 +202,22 @@ vi.mock('@/lib/trpc', () => ({
   },
 }))
 
+let store: ReturnType<typeof createStore>
+
+function render(ui: React.ReactElement) {
+  const withStore = (child: React.ReactElement) => <Provider store={store}>{child}</Provider>
+  const result = renderUi(withStore(ui))
+  return { ...result, rerender: (next: React.ReactElement) => result.rerender(withStore(next)) }
+}
+
 beforeEach(() => {
+  store = createStore()
   statusMock.mockReset().mockResolvedValue({ account: { email: ME }, missingScopes: [] })
   allAccountsMock
     .mockReset()
     .mockResolvedValue({ accounts: [{ sub: '1', email: ME }], current: '1' })
   agendaMock.mockReset().mockResolvedValue([FOCUS, SYNC])
+  agendaCachedMock.mockReset().mockResolvedValue(null)
   scheduleMock
     .mockReset()
     .mockImplementation(async (input: MeetingInput): Promise<MeetingOperation> => ({
@@ -221,14 +242,14 @@ beforeEach(() => {
   driveFilesMock.mockReset()
   attachEventFilesMock.mockReset()
   checkEventFileAccessMock.mockReset()
-  getDefaultStore().set(activeRemoteAtom, NOTES)
+  finishConsentMock.mockReset()
+  store.set(activeRemoteAtom, NOTES)
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal: vi.fn() }
 })
 afterEach(() => {
   // @ts-expect-error — as above.
   delete window.holi
-  getDefaultStore().set(activeRemoteAtom, null)
 })
 
 describe('mapping Google onto the calendar', () => {
@@ -750,7 +771,6 @@ describe('the calendar view', () => {
       agendaMock.mockClear().mockReturnValue(newAgenda.promise)
       allAccountsMock.mockResolvedValue({ accounts: [{ sub: '2', email: ME }], current: '2' })
       await act(async () => {
-        const store = getDefaultStore()
         if (changed === 'vault') store.set(activeRemoteAtom, nextRemote)
         else store.set(refreshGoogleAtom)
       })
@@ -772,6 +792,61 @@ describe('the calendar view', () => {
       })
     },
   )
+
+  test('rejects both cached and live agenda rows when the mapping changes before their reads finish', async () => {
+    const user = userEvent.setup()
+    const cached = deferred<void>()
+    const live = deferred<void>()
+    let mappedSub = '1'
+    const sharedFrom = (title: string) => [{ ...SYNC, calendarId: 'team', title }]
+    const read = async (
+      release: Promise<void>,
+      { expectedAccountSub }: { expectedAccountSub?: string },
+      title: string,
+    ) => {
+      await release
+      if (expectedAccountSub !== undefined && expectedAccountSub !== mappedSub) {
+        throw Object.assign(new Error('Google account changed.'), { data: { code: 'FORBIDDEN' } })
+      }
+      return sharedFrom(title)
+    }
+    agendaCachedMock.mockImplementationOnce((params) =>
+      read(cached.promise, params, 'Wrong cached workshop'),
+    )
+    agendaMock.mockImplementationOnce((params) => read(live.promise, params, 'Wrong live workshop'))
+    render(<CalendarView />)
+    await waitFor(() => {
+      for (const request of [agendaMock, agendaCachedMock]) {
+        expect(request).toHaveBeenCalledWith(
+          expect.objectContaining({ expectedAccountSub: '1' }),
+          NOTES,
+        )
+      }
+    })
+
+    // Main learns of the new mapping while the renderer still holds account 1.
+    mappedSub = '2'
+    allAccountsMock.mockResolvedValue({
+      accounts: [{ sub: mappedSub, email: ME }],
+      current: mappedSub,
+    })
+    await act(async () => cached.resolve())
+    expect(screen.queryByText('Wrong cached workshop')).not.toBeInTheDocument()
+    await act(async () => live.resolve())
+    const alert = await screen.findByRole('alert')
+    expect(screen.queryByText('Wrong live workshop')).not.toBeInTheDocument()
+
+    agendaMock.mockResolvedValue(sharedFrom('Current workshop'))
+    await user.click(within(alert).getByRole('button', { name: 'Retry' }))
+    await user.click((await screen.findAllByText('Current workshop'))[0]!)
+    const card = await screen.findByRole('dialog', { name: 'Current workshop' })
+    expect(await within(card).findByText('No attachments')).toBeInTheDocument()
+    expect(eventAttachmentsMock).toHaveBeenCalledWith(NOTES, {
+      expectedAccountSub: '2',
+      calendarId: 'team',
+      eventId: SYNC.id,
+    })
+  })
 
   test('attaches selected Drive search results only after confirming guest access', async () => {
     const user = userEvent.setup()
@@ -904,51 +979,182 @@ describe('the calendar view', () => {
     )
   })
 
-  test.each([false, true])(
-    'reports incomplete guest access even when no refusal rows were returned (reconnect: %s)',
-    async (reconnect) => {
-      const user = userEvent.setup()
-      const actual = [attachmentOf(BRIEF)]
-      eventAttachmentsMock
-        .mockResolvedValueOnce({ attachments: [], canAttach: true })
-        .mockResolvedValue({ attachments: actual, canAttach: true })
-      driveFilesMock.mockResolvedValue({ files: [BRIEF] })
-      attachEventFilesMock.mockResolvedValue({
+  test('returns from Connections with a read-only check and explicit retry for attached files', async () => {
+    const user = userEvent.setup()
+    const actual = [attachmentOf(BRIEF)]
+    const grant = { fileId: BRIEF.id, guest: 'first@example.test', status: 'granted' }
+    const refusal = { fileId: BRIEF.id, guest: 'second@example.test', status: 'failed' }
+    eventAttachmentsMock
+      .mockResolvedValueOnce({ attachments: [], canAttach: true })
+      .mockResolvedValue({ attachments: actual, canAttach: true })
+    driveFilesMock.mockResolvedValue({ files: [BRIEF] })
+    attachEventFilesMock
+      .mockResolvedValueOnce({
         attachments: actual,
         attachmentStatus: 'attached',
         sharingComplete: false,
-        reconnect,
-        sharing: [{ fileId: BRIEF.id, guest: 'first@example.test', status: 'granted' }],
+        reconnect: true,
+        sharing: [grant],
       })
-      render(
-        <>
-          <CalendarView />
-          <ConnectionsSection />
-        </>,
-      )
-      await user.click((await screen.findAllByText('Team sync'))[0]!)
-      const detail = within(await screen.findByRole('dialog', { name: 'Team sync' }))
-      await user.click(await detail.findByRole('button', { name: 'Add from Drive' }))
-      await user.click(await screen.findByRole('checkbox', { name: BRIEF.name }))
-      await user.click(screen.getByRole('button', { name: 'Review files' }))
-      await user.click(screen.getByRole('button', { name: 'Attach and share with guests' }))
+      .mockResolvedValue({ attachments: actual, attachmentStatus: 'attached', sharing: [grant] })
+    checkEventFileAccessMock.mockResolvedValue({
+      attachments: actual,
+      attachmentStatus: 'attached',
+      sharingComplete: false,
+      sharing: [grant, refusal],
+    })
+    finishConsentMock.mockImplementation(async () => {
+      statusMock.mockResolvedValue({ account: { email: ME }, missingScopes: [] })
+      return { kind: 'granted' }
+    })
+    const shell = (settingsOpen: boolean) => (
+      <>
+        <div hidden={settingsOpen}>
+          <CalendarView visible={!settingsOpen} />
+        </div>
+        {settingsOpen && <ConnectionsSection />}
+      </>
+    )
+    const view = render(shell(false))
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await confirmDriveFiles(user, [BRIEF.name])
+    const partial = await screen.findByRole('alert')
+    expect(partial).toHaveTextContent(/guest access incomplete/i)
+    expect(partial).toHaveTextContent(/files attached/i)
+    expect(partial).toHaveTextContent(/guest access confirmed for 1/i)
+    statusMock.mockResolvedValue({
+      account: { email: ME },
+      missingScopes: ['https://www.googleapis.com/auth/drive'],
+    })
+    await user.click(within(partial).getByRole('button', { name: 'Open Connections' }))
+    // Mirror the shell parking Calendar when the Settings tab takes focus.
+    view.rerender(shell(true))
+    expect(partial).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Team sync' })).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'Reconnect' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull())
 
-      const partial = await detail.findByRole('alert')
-      expect(partial).toHaveTextContent(/guest access incomplete/i)
-      expect(partial).toHaveTextContent(/files attached/i)
-      expect(partial).toHaveTextContent(/guest access confirmed for 1/i)
-      expect(await detail.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
-      if (!reconnect) return
-      expect(screen.queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument()
-      const newStatus = deferred<{ account: { email: string }; missingScopes: string[] }>()
-      statusMock.mockReturnValue(newStatus.promise)
-      await user.click(within(partial).getByRole('button', { name: 'Open Connections' }))
-      await act(async () => newStatus.resolve({ account: { email: ME }, missingScopes: ['drive'] }))
-      expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeEnabled()
-      expect(partial).toHaveTextContent(/guest access confirmed for 1/i)
-      expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
-    },
-  )
+    view.rerender(shell(false))
+    const returned = within(await screen.findByRole('dialog', { name: 'Team sync' }))
+    expect(await returned.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+    expect(checkEventFileAccessMock).not.toHaveBeenCalled()
+    await user.click(returned.getByRole('button', { name: 'Check file access' }))
+    expect(await returned.findByRole('alert')).toHaveTextContent('second@example.test')
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+
+    await user.click(await returned.findByRole('button', { name: 'Revise selection' }))
+    const revised = within(await screen.findByRole('dialog', { name: 'Add from Google Drive' }))
+    expect(
+      revised.getByRole('checkbox', { name: /Workshop brief.*already attached/i }),
+    ).toBeChecked()
+    await waitFor(() => expect(revised.getByRole('button', { name: 'Review files' })).toBeEnabled())
+    await user.click(revised.getByRole('button', { name: 'Review files' }))
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Attach and share with guests' }))
+    await waitFor(() =>
+      expect(attachEventFilesMock).toHaveBeenLastCalledWith(NOTES, {
+        expectedAccountSub: '1',
+        calendarId: ME,
+        eventId: SYNC.id,
+        fileIds: [BRIEF.id],
+      }),
+    )
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not call a removed attachment attached when the access check also needs reconnect', async () => {
+    const user = userEvent.setup()
+    const actual = [attachmentOf(BRIEF), attachmentOf(AGENDA)]
+    const remaining = [attachmentOf(BRIEF)]
+    eventAttachmentsMock
+      .mockResolvedValueOnce({ attachments: [], canAttach: true })
+      .mockResolvedValueOnce({ attachments: actual, canAttach: true })
+      .mockResolvedValue({ attachments: remaining, canAttach: true })
+    driveFilesMock.mockResolvedValue({ files: [BRIEF, AGENDA] })
+    attachEventFilesMock.mockResolvedValue({
+      attachments: actual,
+      attachmentStatus: 'attached',
+      sharingComplete: false,
+      sharing: [{ fileId: AGENDA.id, guest: 'guest@example.test', status: 'granted' }],
+    })
+    checkEventFileAccessMock.mockResolvedValue({
+      attachments: remaining,
+      attachmentStatus: 'unknown',
+      sharingComplete: false,
+      reconnect: true,
+      sharing: [],
+    })
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await confirmDriveFiles(user, [BRIEF.name, AGENDA.name])
+    expect(await screen.findByRole('button', { name: AGENDA.name })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Check file access' }))
+    expect(await screen.findByRole('button', { name: 'Open Connections' })).toBeEnabled()
+    expect(screen.getByRole('alert')).not.toHaveTextContent(
+      /files attached|guest access confirmed/i,
+    )
+    expect(await screen.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: AGENDA.name })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Revise selection' })).not.toBeInTheDocument()
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('allows explicit confirmation after a known no-write preflight and a fresh event read', async () => {
+    const user = userEvent.setup()
+    const refreshed = deferred<{ attachments: []; canAttach: boolean }>()
+    eventAttachmentsMock
+      .mockResolvedValueOnce({ attachments: [], canAttach: true })
+      .mockReturnValueOnce(refreshed.promise)
+      .mockResolvedValue({ attachments: [attachmentOf(BRIEF)], canAttach: true })
+    driveFilesMock.mockResolvedValue({ files: [BRIEF] })
+    attachEventFilesMock
+      .mockResolvedValueOnce({
+        attachments: [],
+        attachmentStatus: 'failed',
+        sharing: [],
+        reconnect: true,
+      })
+      .mockResolvedValue({
+        attachments: [attachmentOf(BRIEF)],
+        attachmentStatus: 'attached',
+        sharing: [],
+      })
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await confirmDriveFiles(user, [BRIEF.name])
+    expect(await screen.findByRole('alert')).toHaveTextContent(/attachment failed/i)
+    expect(screen.queryByRole('button', { name: 'Revise selection' })).not.toBeInTheDocument()
+    await act(async () => refreshed.resolve({ attachments: [], canAttach: true }))
+    await user.click(await screen.findByRole('button', { name: 'Revise selection' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review files' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Review files' }))
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+    expect(checkEventFileAccessMock).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Attach and share with guests' }))
+    expect(await screen.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('keeps a lost submit response locked for a read-only check', async () => {
+    const user = userEvent.setup()
+    eventAttachmentsMock.mockResolvedValue({ attachments: [], canAttach: true })
+    driveFilesMock.mockResolvedValue({ files: [BRIEF] })
+    attachEventFilesMock.mockRejectedValue(new Error('Connection to Holi was interrupted.'))
+    checkEventFileAccessMock.mockResolvedValue({
+      attachments: [],
+      attachmentStatus: 'unknown',
+      sharing: [],
+    })
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await confirmDriveFiles(user, [BRIEF.name])
+    expect(await screen.findByRole('alert')).toHaveTextContent(/attachment not confirmed/i)
+    await user.click(await screen.findByRole('button', { name: 'Check file access' }))
+    expect(await screen.findByRole('button', { name: 'Add from Drive' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Revise selection' })).not.toBeInTheDocument()
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+  })
 
   test('counts all existing attachments and lets people revise a selection after the limit changes', async () => {
     const user = userEvent.setup()
@@ -1053,7 +1259,7 @@ describe('the calendar view', () => {
     expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('button', { name: BRIEF.name })).not.toBeInTheDocument()
 
-    await act(async () => getDefaultStore().set(activeRemoteAtom, otherVault))
+    await act(async () => store.set(activeRemoteAtom, otherVault))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await user.click((await screen.findAllByText('Team sync'))[0]!)
     const detail = within(await screen.findByRole('dialog', { name: 'Team sync' }))
@@ -1346,7 +1552,7 @@ describe('the calendar view', () => {
     await user.click(screen.getByRole('button', { name: 'Add event' }))
     expect(screen.getByRole('dialog', { name: 'New event' })).toBeInTheDocument()
 
-    getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
+    store.set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(screen.getByRole('button', { name: 'New event' }))
     const currentCard = await screen.findByRole('dialog', { name: 'New event' })
@@ -1482,7 +1688,7 @@ describe('the calendar view', () => {
     view.rerender(<CalendarView visible />)
     expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Edited focus')
 
-    getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
+    store.set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(screen.getByRole('button', { name: 'New event' }))
     expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('')

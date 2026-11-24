@@ -150,8 +150,9 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
     refresh: refreshAccount,
   } = useGoogleAccount()
   const accountIdentity = account ? `${account.email}:${currentSub ?? ''}` : null
-  const accountReady = account != null && !accountLoading && !accountReadError
-  const calendar = useGoogleCalendar(remote, accountIdentity, accountReady)
+  const accountReady =
+    account != null && currentSub !== null && !accountLoading && !accountReadError
+  const calendar = useGoogleCalendar(remote, currentSub, accountReady)
   const currentContext = JSON.stringify([remote, accountIdentity])
   useEffect(() => {
     if (contextIdentity.current !== currentContext) {
@@ -747,7 +748,12 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={accountReadError ? refreshAccount : calendar.reload}
+                onClick={
+                  accountReadError ||
+                  (calendar.status.kind === 'error' && calendar.status.refreshConnection)
+                    ? refreshAccount
+                    : calendar.reload
+                }
               >
                 Retry
               </Button>
