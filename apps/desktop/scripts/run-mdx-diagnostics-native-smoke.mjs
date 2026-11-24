@@ -52,6 +52,7 @@ let outcome = 'failed'
 let nativeScenarios = null
 let runtime = null
 let positionedDiagnostics = null
+let renderer = null
 const external = {
   stage: 'not started',
   observation: {
@@ -337,11 +338,11 @@ async function runNative(electron, artifact) {
       logs += message
     },
   })
-  assert.equal(
-    await evaluate('window.__mdxSmoke.errors.length'),
-    0,
-    'fixture renderer reported runtime errors',
-  )
+  renderer = await evaluate(`({
+    errors: window.__mdxSmoke.errors.slice(0, 10),
+    deferredResizeNotifications: window.__mdxSmoke.layoutNotifications.length,
+  })`)
+  assert.deepEqual(renderer.errors, [], 'fixture renderer reported runtime errors')
   outcome = 'passed'
 }
 
@@ -416,6 +417,7 @@ async function finalize() {
         external: { ...external, fixtureSha: fixtureSha ?? null },
         runtime,
         positionedDiagnostics,
+        renderer,
         artifact: 'unsigned Electron app.asar',
         cleanup,
         retained: {

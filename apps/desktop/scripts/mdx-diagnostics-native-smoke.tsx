@@ -23,7 +23,19 @@ store.set(snapshotAtom, {
 })
 
 const errors: string[] = []
-window.addEventListener('error', (event) => errors.push(event.message))
+const layoutNotifications: string[] = []
+window.addEventListener('error', (event) => {
+  // Chromium defers remaining resize delivery to the next frame, without throwing.
+  if (
+    event.message === 'ResizeObserver loop completed with undelivered notifications.' &&
+    !event.error &&
+    !event.filename &&
+    event.lineno === 0 &&
+    event.colno === 0
+  ) {
+    layoutNotifications.push(event.message)
+  } else errors.push(event.message)
+})
 window.addEventListener('unhandledrejection', (event) => errors.push(String(event.reason)))
 
 function Fixture() {
@@ -31,6 +43,7 @@ function Fixture() {
     Object.assign(window, {
       __mdxSmoke: {
         errors,
+        layoutNotifications,
         editor() {
           const element = document.querySelector('.cm-editor') as HTMLElement | null
           const view = element ? EditorView.findFromDOM(element) : null
@@ -84,6 +97,7 @@ declare global {
   interface Window {
     __mdxSmoke: {
       errors: string[]
+      layoutNotifications: string[]
       editor(): EditorView
       state(): string | null
       source(): string
