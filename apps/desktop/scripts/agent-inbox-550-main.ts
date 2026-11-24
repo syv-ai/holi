@@ -66,6 +66,8 @@ try {
           'document.body?.innerText?.trim() ?? ""',
           true,
         )
+        if (bodyText && /no vault is open\s*retry/i.test(bodyText))
+          return fail('Production renderer still reports that no vault is open')
         if (bodyText) {
           completed = true
           writeFileSync(
