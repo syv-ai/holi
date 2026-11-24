@@ -93,16 +93,16 @@ describe('inspectMdxDependencies', () => {
     await writeFile(originalChild, 'ORIGINAL_BYTES')
     const movedRoot = `${root}-moved`
     roots.push(movedRoot)
-    let checks = 0
+    let replaceRoot = false
     const inspected: string[] = []
-    const result = await inspectMdxDependencies({
+    const request = inspectMdxDependencies({
       root,
       path: 'entry.mdx',
       source: "import Child from './child.mdx'",
       signal: new AbortController().signal,
       assertCurrent: async () => {
-        checks++
-        if (checks === 5) {
+        if (replaceRoot) {
+          replaceRoot = false
           await rename(root, movedRoot)
           await mkdir(root)
           await writeFile(join(root, 'child.mdx'), 'REPLACEMENT_BYTES')
@@ -111,10 +111,17 @@ describe('inspectMdxDependencies', () => {
       owner: {},
       inspect: async (_owner, source) => {
         inspected.push(source)
+        if (source.includes('import Child')) {
+          replaceRoot = true
+          return {
+            diagnostics: [],
+            dependencies: [{ specifier: './child.mdx', line: 1, column: 1 }],
+          }
+        }
         return { diagnostics: [], dependencies: [] }
       },
     })
-    expect(result).not.toEqual([])
+    await expect(request).rejects.toBeDefined()
     expect(inspected).not.toContain('REPLACEMENT_BYTES')
   })
 
