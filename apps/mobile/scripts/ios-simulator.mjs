@@ -142,6 +142,8 @@ try {
   canonicalContainer = await realpath(container)
   const reportPath = join(canonicalContainer, 'Documents/vault-format-report.json')
   const workingCopyFixture = await createWorkingCopyFixture(join(canonicalContainer, 'Documents'), runId)
+  const workingCopyManifest = join(canonicalContainer, 'Documents/working-copy-manifest.json')
+  await writeFile(workingCopyManifest, JSON.stringify(workingCopyFixture, null, 2))
   await writeFile(join(artifacts, 'working-copy-fixture.json'), JSON.stringify(workingCopyFixture, null, 2))
   for (const [index, name] of ['Café.md', 'Cafe\u0301.md'].entries()) {
     const directory = join(canonicalContainer, `Documents/holi-raw-${runId}-${index}`)
@@ -190,8 +192,9 @@ try {
         SIMCTL_CHILD_HOLI_STORAGE_PHASE: phase,
         ...(phase === 'normal'
           ? {
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: workingCopyFixture.root,
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: workingCopyFixture.remote,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_MANIFEST: workingCopyManifest,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: workingCopyFixture.cases[0].root,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: workingCopyFixture.cases[0].remote,
               SIMCTL_CHILD_HOLI_GIT_INVALID_TLS_URL: gitFixture.invalidUrl,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_USER: gitFixture.username,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_PASSWORD: gitFixture.password,

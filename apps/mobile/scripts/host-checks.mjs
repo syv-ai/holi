@@ -12,6 +12,23 @@ import {
   stageNamePattern,
 } from '../app/storage-staging.ts'
 
+export function validateWorkingCopyResults(results, cases, runId) {
+  assert.ok(Array.isArray(results) && results.length > 0, 'Working-copy results are missing')
+  assert.equal(results.length, cases.length, 'Working-copy result count mismatch')
+  for (const [index, result] of results.entries()) {
+    const expected = cases[index]
+    assert.equal(result.root, expected.root, `Working-copy root mismatch: ${expected.name}`)
+    assert.equal(result.refused, expected.expectedRefusal, `Working-copy refusal mismatch: ${expected.name}`)
+    if (expected.expectedRefusal) {
+      assert.ok(typeof result.refusal === 'string' && result.refusal.length > 0)
+    } else {
+      assert.ok(Array.isArray(result.changes), `Working-copy changes missing: ${expected.name}`)
+      assert.deepEqual(result.changes, expected.changes, `Working-copy changes mismatch: ${expected.name}`)
+    }
+  }
+  return { runId, roots: results.map(({ root }) => root), cases: results }
+}
+
 export function validateReport(report, context) {
   const { runId, launchedAt, now, osVersion, storageRoot, library, phase = 'normal' } = context
   assert.match(runId, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i)
