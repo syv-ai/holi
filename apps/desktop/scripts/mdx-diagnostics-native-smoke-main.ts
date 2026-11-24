@@ -189,7 +189,7 @@ invoke('smoke:scenarios', async () => {
   assert((await compileGraphCase('cycle', "import './graph/a.jsx'\n")).length > 0)
   for (const [name, path] of [
     ['protected dot-local', 'notes/graph/secret.local.jsx'],
-    ['agent surface', 'AGENTS.mdx'],
+    ['protected memory', '.holi/memory/secret.mdx'],
   ] as const) {
     let rejected = false
     try {
@@ -209,6 +209,16 @@ invoke('smoke:scenarios', async () => {
   ] as const) {
     assert((await compileGraphCase(name, source)).length > 0, `${name} must produce diagnostics`)
   }
+  await mkdir(join(vault, '.holi/memory'), { recursive: true })
+  await writeFile(join(vault, '.holi/memory/secret.mdx'), 'do not inspect fixture content\n')
+  assert(
+    (await compileGraphCase('protected memory import', "import '../.holi/memory/secret.mdx'\n")).length >
+      0,
+  )
+  assert(
+    (await compileGraphCase('protected memory case alias', "import '../.HOLI/memory/secret.mdx'\n"))
+      .length > 0,
+  )
   await writeFile(
     join(vault, 'notes/graph/secret.local.jsx'),
     'throw new Error("must never evaluate")',
@@ -221,6 +231,17 @@ invoke('smoke:scenarios', async () => {
   assert((await compileGraphCase('symlink alias', "import './graph/alias.jsx'\n")).length > 0)
   await writeFile(join(vault, 'notes/graph/large.jsx'), ' '.repeat(256 * 1024 + 1))
   assert((await compileGraphCase('file size limit', "import './graph/large.jsx'\n")).length > 0)
+  const budgetFiles = Array.from({ length: 64 }, (_, index) => `budget${index}.js`)
+  for (const name of budgetFiles)
+    await writeFile(join(vault, 'notes/graph', name), 'export const value = 1\n')
+  assert(
+    (await compileGraphCase('module count budget', "import './graph/budget0.js'\n" + budgetFiles.slice(1).map((name) => `import './graph/${name}'`).join('\n'))).length > 0,
+  )
+  await writeFile(join(vault, 'notes/graph/aggregate-a.js'), 'x'.repeat(600 * 1024))
+  await writeFile(join(vault, 'notes/graph/aggregate-b.js'), 'x'.repeat(600 * 1024))
+  assert(
+    (await compileGraphCase('aggregate size budget', "import './graph/aggregate-a.js'\nimport './graph/aggregate-b.js'\n")).length > 0,
+  )
   for (let index = 0; index < 18; index++) {
     await writeFile(
       join(vault, `notes/graph/depth${index}.js`),
