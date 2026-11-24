@@ -917,13 +917,15 @@ describe('the calendar view', () => {
 
     const write = { ...target, fileIds: [AGENDA.id, BRIEF.id] }
     expect(attachEventFilesMock).toHaveBeenCalledExactlyOnceWith(NOTES, write)
-    const outcome = await detail.findByRole('alert')
+    expect(await detail.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
+    const outcome = detail.getByRole('alert')
     expect(outcome).toHaveTextContent('Files attached')
     expect(outcome).toHaveTextContent(/guest access incomplete.*workshop brief.*team@example.test/i)
     expect(outcome).toHaveTextContent(/sharing not confirmed.*guest@example.test/i)
-    expect(await detail.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
     expect(detail.getByRole('button', { name: 'Add from Drive' })).toBeDisabled()
-    expect(detail.queryByRole('button', { name: 'Revise selection' })).not.toBeInTheDocument()
+    expect(
+      detail.queryByRole('button', { name: /revise selection|review sharing retry/i }),
+    ).not.toBeInTheDocument()
 
     const checked = {
       attachments: actual,
@@ -942,13 +944,14 @@ describe('the calendar view', () => {
         { ...checked.sharing[2], status: 'already-accessible' },
       ],
     })
-    const check = detail.getByRole('button', { name: 'Check file access' })
-    await user.click(check)
-    await waitFor(() => expect(check).toBeEnabled())
+    await user.click(detail.getByRole('button', { name: 'Check file access' }))
+    const check = await detail.findByRole('button', { name: 'Check guest access' })
     expect(detail.getByRole('alert')).toHaveTextContent(
       /sharing not confirmed.*guest@example.test/i,
     )
-    expect(detail.queryByRole('button', { name: 'Revise selection' })).not.toBeInTheDocument()
+    expect(
+      detail.queryByRole('button', { name: /revise selection|review sharing retry/i }),
+    ).not.toBeInTheDocument()
     expect(checkEventFileAccessMock).toHaveBeenCalledExactlyOnceWith(NOTES, write)
     await user.click(check)
     await waitFor(() =>
@@ -957,9 +960,8 @@ describe('the calendar view', () => {
     expect(detail.getByRole('alert')).not.toHaveTextContent(/sharing not confirmed/i)
     expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
 
-    await user.click(await detail.findByRole('button', { name: 'Revise selection' }))
+    await user.click(await detail.findByRole('button', { name: 'Review sharing retry' }))
     const revised = within(await screen.findByRole('dialog', { name: 'Add from Google Drive' }))
-    await user.click(revised.getByRole('checkbox', { name: /Workshop agenda/ }))
     await user.click(revised.getByRole('button', { name: 'Review files' }))
     const retry = within(await screen.findByRole('dialog', { name: 'Confirm file sharing' }))
     expect(retry.queryByText(AGENDA.name)).not.toBeInTheDocument()
@@ -1018,7 +1020,8 @@ describe('the calendar view', () => {
     const view = render(shell(false))
     await user.click((await screen.findAllByText('Team sync'))[0]!)
     await confirmDriveFiles(user, [BRIEF.name])
-    const partial = await screen.findByRole('alert')
+    expect(await screen.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
+    const partial = screen.getByRole('alert')
     expect(partial).toHaveTextContent(/guest access incomplete/i)
     expect(partial).toHaveTextContent(/files attached/i)
     expect(partial).toHaveTextContent(/guest access confirmed for 1/i)
@@ -1032,7 +1035,10 @@ describe('the calendar view', () => {
     expect(partial).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Team sync' })).not.toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Reconnect' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull())
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Reconnect' })).toBeEnabled()
+      expect(screen.queryByText('Holi needs new permissions')).not.toBeInTheDocument()
+    })
 
     view.rerender(shell(false))
     const returned = within(await screen.findByRole('dialog', { name: 'Team sync' }))
@@ -1043,7 +1049,7 @@ describe('the calendar view', () => {
     expect(await returned.findByRole('alert')).toHaveTextContent('second@example.test')
     expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
 
-    await user.click(await returned.findByRole('button', { name: 'Revise selection' }))
+    await user.click(await returned.findByRole('button', { name: 'Review sharing retry' }))
     const revised = within(await screen.findByRole('dialog', { name: 'Add from Google Drive' }))
     expect(
       revised.getByRole('checkbox', { name: /Workshop brief.*already attached/i }),
@@ -1063,14 +1069,83 @@ describe('the calendar view', () => {
     expect(attachEventFilesMock).toHaveBeenCalledTimes(2)
   })
 
-  test('does not call a removed attachment attached when the access check also needs reconnect', async () => {
+  test('finds guest access after a fresh mount and retries only through explicit confirmation', async () => {
+    const user = userEvent.setup()
+    const actual = [
+      attachmentOf(BRIEF),
+      { title: 'Reference link', fileUrl: 'https://example.test/ref' },
+    ]
+    const pending = { fileId: BRIEF.id, guest: 'first@example.test', status: 'unknown' }
+    const refused = { fileId: BRIEF.id, guest: 'second@example.test', status: 'failed' }
+    eventAttachmentsMock.mockResolvedValue({ attachments: actual, canAttach: true })
+    driveFilesMock.mockResolvedValue({ files: [BRIEF] })
+    checkEventFileAccessMock
+      .mockResolvedValueOnce({
+        attachments: actual,
+        attachmentStatus: 'attached',
+        sharingComplete: false,
+        sharing: [pending, refused],
+      })
+      .mockResolvedValueOnce({
+        attachments: actual,
+        attachmentStatus: 'attached',
+        sharingComplete: false,
+        sharing: [{ ...pending, status: 'already-accessible' }, refused],
+      })
+    attachEventFilesMock.mockResolvedValue({
+      attachments: actual,
+      attachmentStatus: 'attached',
+      sharingComplete: true,
+      sharing: [
+        { ...pending, status: 'already-accessible' },
+        { ...refused, status: 'granted' },
+      ],
+    })
+
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    const check = await screen.findByRole('button', { name: 'Check guest access' })
+    expect(checkEventFileAccessMock).not.toHaveBeenCalled()
+    await user.click(check)
+    expect(
+      await screen.findByText(/sharing not confirmed.*first@example.test/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /revise selection|review sharing retry/i }),
+    ).not.toBeInTheDocument()
+    expect(attachEventFilesMock).not.toHaveBeenCalled()
+    const target = {
+      expectedAccountSub: '1',
+      calendarId: ME,
+      eventId: SYNC.id,
+      fileIds: [BRIEF.id],
+    }
+    expect(checkEventFileAccessMock).toHaveBeenCalledExactlyOnceWith(NOTES, target)
+
+    // Google now reports access for the formerly uncertain guest. The other
+    // guest still lacks access; that file may be selected for an explicit retry.
+    await user.click(screen.getByRole('button', { name: 'Check guest access' }))
+    await user.click(await screen.findByRole('button', { name: 'Review sharing retry' }))
+    expect(
+      screen.getByRole('checkbox', { name: /Workshop brief.*already attached/i }),
+    ).toBeChecked()
+    await user.click(await screen.findByRole('button', { name: 'Review files' }))
+    const confirm = within(await screen.findByRole('dialog', { name: 'Confirm file sharing' }))
+    expect(attachEventFilesMock).not.toHaveBeenCalled()
+    await user.click(confirm.getByRole('button', { name: 'Attach and share with guests' }))
+    expect(attachEventFilesMock).toHaveBeenCalledExactlyOnceWith(NOTES, target)
+  })
+
+  test('keeps a removed file off the card when the access check needs reconnect and a list read is late', async () => {
     const user = userEvent.setup()
     const actual = [attachmentOf(BRIEF), attachmentOf(AGENDA)]
     const remaining = [attachmentOf(BRIEF)]
+    const beforeCheck = deferred<{ attachments: typeof actual; canAttach: boolean }>()
+    const afterCheck = deferred<{ attachments: typeof actual; canAttach: boolean }>()
     eventAttachmentsMock
       .mockResolvedValueOnce({ attachments: [], canAttach: true })
-      .mockResolvedValueOnce({ attachments: actual, canAttach: true })
-      .mockResolvedValue({ attachments: remaining, canAttach: true })
+      .mockReturnValueOnce(beforeCheck.promise)
+      .mockReturnValue(afterCheck.promise)
     driveFilesMock.mockResolvedValue({ files: [BRIEF, AGENDA] })
     attachEventFilesMock.mockResolvedValue({
       attachments: actual,
@@ -1088,15 +1163,19 @@ describe('the calendar view', () => {
     render(<CalendarView />)
     await user.click((await screen.findAllByText('Team sync'))[0]!)
     await confirmDriveFiles(user, [BRIEF.name, AGENDA.name])
-    expect(await screen.findByRole('button', { name: AGENDA.name })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Check file access' }))
+    await user.click(await screen.findByRole('button', { name: 'Check file access' }))
     expect(await screen.findByRole('button', { name: 'Open Connections' })).toBeEnabled()
+    await act(async () => beforeCheck.resolve({ attachments: actual, canAttach: true }))
     expect(screen.getByRole('alert')).not.toHaveTextContent(
       /files attached|guest access confirmed/i,
     )
+    expect(screen.queryByRole('button', { name: AGENDA.name })).not.toBeInTheDocument()
+    await act(async () => afterCheck.resolve({ attachments: remaining, canAttach: true }))
     expect(await screen.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: AGENDA.name })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Revise selection' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /revise selection|review sharing retry/i }),
+    ).not.toBeInTheDocument()
     expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
   })
 
@@ -1124,7 +1203,9 @@ describe('the calendar view', () => {
     await user.click((await screen.findAllByText('Team sync'))[0]!)
     await confirmDriveFiles(user, [BRIEF.name])
     expect(await screen.findByRole('alert')).toHaveTextContent(/attachment failed/i)
-    expect(screen.queryByRole('button', { name: 'Revise selection' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /revise selection|review sharing retry/i }),
+    ).not.toBeInTheDocument()
     await act(async () => refreshed.resolve({ attachments: [], canAttach: true }))
     await user.click(await screen.findByRole('button', { name: 'Revise selection' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Review files' })).toBeEnabled())
@@ -1152,7 +1233,9 @@ describe('the calendar view', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/attachment not confirmed/i)
     await user.click(await screen.findByRole('button', { name: 'Check file access' }))
     expect(await screen.findByRole('button', { name: 'Add from Drive' })).toBeDisabled()
-    expect(screen.queryByRole('button', { name: 'Revise selection' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /revise selection|review sharing retry/i }),
+    ).not.toBeInTheDocument()
     expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
   })
 
@@ -1213,11 +1296,36 @@ describe('the calendar view', () => {
     expect(await detail.findByRole('button', { name: AGENDA.name })).toBeInTheDocument()
   })
 
-  test('retries a failed Drive read and offers Connections for a missing grant', async () => {
+  test('can start a reconnect after a runtime scope refusal even with no stored scope gaps', async () => {
+    const user = userEvent.setup()
+    eventAttachmentsMock.mockResolvedValue({ attachments: [], canAttach: true })
+    driveFilesMock.mockRejectedValue(
+      Object.assign(new Error('this Google permission was not granted'), {
+        data: { code: 'FORBIDDEN' },
+      }),
+    )
+    const consent = deferred<{ kind: 'denied' }>()
+    finishConsentMock.mockReturnValue(consent.promise)
+    const view = render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await user.click(await screen.findByRole('button', { name: 'Add from Drive' }))
+    const picker = within(await screen.findByRole('dialog', { name: 'Add from Google Drive' }))
+    await user.click(await picker.findByRole('button', { name: 'Open Connections' }))
+    // Mirror the shell switching to Connections.
+    view.rerender(<ConnectionsSection />)
+    expect(await screen.findByText('What Holi may do')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Reconnect' }))
+    expect(screen.getByRole('button', { name: 'Connecting…' })).toBeDisabled()
+    await act(async () => consent.resolve({ kind: 'denied' }))
+    expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeEnabled()
+    expect(attachEventFilesMock).not.toHaveBeenCalled()
+  })
+
+  test('offers Drive read retry without suggesting reconnect when event editability changed', async () => {
     const user = userEvent.setup()
     eventAttachmentsMock.mockResolvedValue({ attachments: [], canAttach: true })
     driveFilesMock.mockRejectedValueOnce(
-      Object.assign(new Error('Reconnect Google to grant Drive access.'), {
+      Object.assign(new Error('This event cannot be changed by this account.'), {
         data: { code: 'FORBIDDEN' },
       }),
     )
@@ -1227,7 +1335,7 @@ describe('the calendar view', () => {
     await user.click(await screen.findByRole('button', { name: 'Add from Drive' }))
     const dialog = within(await screen.findByRole('dialog', { name: 'Add from Google Drive' }))
     expect(await dialog.findByRole('alert')).toBeInTheDocument()
-    expect(dialog.getByRole('button', { name: 'Open Connections' })).toBeEnabled()
+    expect(dialog.queryByRole('button', { name: 'Open Connections' })).not.toBeInTheDocument()
     await user.click(dialog.getByRole('button', { name: 'Retry' }))
     expect(await dialog.findByRole('button', { name: 'Refresh files' })).toBeEnabled()
     expect(dialog.getByRole('button', { name: 'Review files' })).toBeDisabled()
