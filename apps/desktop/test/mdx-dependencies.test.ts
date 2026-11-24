@@ -60,6 +60,19 @@ describe('inspectMdxDependencies', () => {
     expect(inspected).toEqual(["import Secret from './.ENV'\nimport Linked from './linked.mdx'"])
   })
 
+  it.each(['../.holi/state/private.js', '../.HOLI/STATE/private.js'])(
+    'does not read or inspect machine state at %s',
+    async (specifier) => {
+      const { root, run, inspected } = await setup()
+      await mkdir(join(root, '.holi', 'state'), { recursive: true })
+      await writeFile(join(root, '.holi', 'state', 'private.js'), 'MACHINE_STATE_BYTES')
+      const diagnostics = await run(`import Private from '${specifier}'`)
+      expect(diagnostics).toHaveLength(1)
+      expect(inspected).toEqual([`import Private from '${specifier}'`])
+      expect(inspected).not.toContain('MACHINE_STATE_BYTES')
+    },
+  )
+
   it('rejects a shared diamond dependency changed while another branch is inspected', async () => {
     const { root } = await setup()
     const shared = join(root, 'shared.mdx')
