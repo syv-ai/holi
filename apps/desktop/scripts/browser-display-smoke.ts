@@ -107,6 +107,7 @@ async function run(): Promise<void> {
       <label>Editable <div aria-label="Editable" id="editable" contenteditable="true">edit me</div></label>
       <label>Plain text <div aria-label="Plain text" id="plaintext" contenteditable="plaintext-only">café🙂 two</div></label>
       <label>Rich text <div aria-label="Rich text" id="rich" contenteditable="true" style="border:1px solid currentColor;padding:8px"><strong>bold</strong> <a href="/next">café🙂 link</a><em></em></div></label>
+      <label>Multiline rich text <div aria-label="Multiline rich text" id="multiline" contenteditable="true" style="border:1px solid currentColor;padding:8px"><p>first <strong>bold</strong></p><p><br></p><div>third <a href="/next">linked</a></div></div></label>
       <label>Empty plain text <div aria-label="Empty plain text" id="plaintext-empty" contenteditable="plaintext-only"></div></label>
       <label>Block-shaped rich host <div id="rich-block" contenteditable="true" style="display:block"><span style="display:block">one</span><span style="display:block">two</span></div></label>
       <label>Atomic rich host <div id="rich-atom" contenteditable="true">one<img src="data:," alt="atom">two</div></label>
