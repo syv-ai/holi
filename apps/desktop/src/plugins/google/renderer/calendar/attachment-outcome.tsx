@@ -70,6 +70,7 @@ export function AttachmentOutcome({
       .filter((row) => !guests && relevant(row))
       .map((row) => ({ row, label: 'Prior result: ' })),
   ]
+  // A fresh Calendar list can confirm which files are attached, not who can open them.
   const confirmed =
     !earlierOnly && calendar?.live
       ? rows.filter(({ fileId, status }) => observed.has(fileId) && accessible(status)).length
@@ -87,7 +88,7 @@ export function AttachmentOutcome({
     ? 'Earlier attachment submission'
     : stillAttached
       ? incomplete
-        ? 'Guest access incomplete'
+        ? 'At last check: Guest access incomplete'
         : checked
           ? 'Guest access checked'
           : writeStatus === 'not-written'
@@ -139,18 +140,21 @@ export function AttachmentOutcome({
           ))}
         {message && (
           <p>
-            {stillAttached && attachmentStatus !== 'attached' && 'Earlier result: '}
+            {!noWrite &&
+              (stillAttached && attachmentStatus !== 'attached'
+                ? 'Earlier result: '
+                : 'At last check: ')}
             {message}
           </p>
         )}
         {confirmed > 0 && (
           <p className="tabular-nums">
-            {`Guest access confirmed for ${confirmed} file–guest ${confirmed === 1 ? 'pair' : 'pairs'}.`}
+            {`At last check: Guest access confirmed for ${confirmed} file–guest ${confirmed === 1 ? 'pair' : 'pairs'}.`}
           </p>
         )}{' '}
         {accessRows.map(({ row: { fileId, guest, status, message }, label }) => (
           <p key={JSON.stringify([fileId, guest])} className="wrap-anywhere">
-            {label}
+            {label || 'At last check: '}
             {status === 'granted'
               ? 'Viewer access granted'
               : status === 'already-accessible'

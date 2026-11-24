@@ -73,12 +73,9 @@ export function DriveFilesDialog({
     selection.length > 0 &&
     selection.length <= slots &&
     selection.every(({ id }) => !attachedIds.has(id) && !unconfirmedIds.has(id))
-  // Keep selected files reachable even if they are on a different search page.
-  const candidates = [
-    ...new Map(
-      [...selection, ...initialFiles, ...page.files].map((file) => [file.id, file]),
-    ).values(),
-  ]
+  // Pin only off-page selections so toggling results doesn't move them.
+  const pageIds = new Set(page.files.map(({ id }) => id))
+  const candidates = [...selection.filter(({ id }) => !pageIds.has(id)), ...page.files]
 
   useEffect(() => {
     let current = true
