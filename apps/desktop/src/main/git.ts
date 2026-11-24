@@ -252,6 +252,8 @@ export interface GitRepo {
   historicalHead(): Promise<
     { kind: 'commit'; sha: string } | { kind: 'unborn' } | { kind: 'unavailable' }
   >
+  /** Local-only ancestry check between full commit object ids. */
+  isAncestor(ancestor: string, descendant: string): Promise<boolean>
   /** The paths changed across `from..to`, with line counts. Missing or invalid
    *  history is empty; an exhausted execution budget throws GitResourceError. */
   rangeFiles(
@@ -283,6 +285,8 @@ export interface GitRepo {
     path: string,
     executionBudget?: { maxBuffer: number; timeout: number },
   ): Promise<string>
+  /** Bounded local-only receipt proof; preserves exact blob text and throws when unavailable. */
+  readReceiptText(revision: string, path: string): Promise<string>
   /** One commit's exact metadata and churn, even when it is outside a recent
    * history listing. Null when the object is unavailable. */
   commit(sha: string): Promise<Commit | null>
@@ -1257,6 +1261,48 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return res.stdout
   }
 
+  async function readReceiptText(revision: string, path: string): Promise<string> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(revision)) throw new GitHistoricalObjectError()
+    if (
+      path === '' ||
+      path.startsWith('/') ||
+      path.includes('\\') ||
+      path.split('/').some((part) => !part || part === '.' || part === '..')
+    )
+      throw new GitHistoricalPathMissingError()
+    const deadline = Date.now() + 1000
+    let remaining = 1024 * 1024
+    const env = {
+      ...opts.env,
+      GIT_NO_REPLACE_OBJECTS: '1',
+      GIT_NO_LAZY_FETCH: '1',
+      GIT_TERMINAL_PROMPT: '0',
+    }
+    const run = async (args: string[]) => {
+      const timeout = deadline - Date.now()
+      if (timeout <= 0) throw new GitResourceError('time')
+      const result = await runGitOnce(root, args, {
+        ...opts,
+        env,
+        executionBudget: { maxBuffer: remaining, timeout },
+      })
+      remaining -= Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)
+      if (remaining < 0) throw new GitResourceError('output')
+      return result
+    }
+    const endpoint = await run(['--no-replace-objects', 'cat-file', '-e', `${revision}^{commit}`])
+    if (!endpoint.ok) throw new GitHistoricalObjectError()
+    const result = await run([
+      '--no-replace-objects',
+      '--literal-pathspecs',
+      'show',
+      '--end-of-options',
+      `${revision}:${path}`,
+    ])
+    if (!result.ok) throw new GitHistoricalPathMissingError()
+    return result.stdout
+  }
+
   async function commit(sha: string): Promise<Commit | null> {
     if (!/^[0-9a-f]{4,64}$/i.test(sha)) throw new Error('Invalid commit SHA')
     // Resolve the input specifically as a commit. Git rejects ambiguous
@@ -1395,6 +1441,45 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       return result.kind === 'commit' ? { kind: 'commit', sha: result.sha! } : { kind: result.kind }
     } catch {
       return { kind: 'unavailable' }
+    }
+  }
+
+  async function isAncestor(ancestor: string, descendant: string): Promise<boolean> {
+    if (
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(ancestor) ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(descendant)
+    ) {
+      throw new GitHistoricalObjectError()
+    }
+    const deadline = Date.now() + 1000
+    const verify = async (sha: string) => {
+      const type = await readGitEvidence(
+        root,
+        ['cat-file', '-t', sha],
+        {
+          ...opts,
+          env: { ...opts.env, GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' },
+        },
+        deadline,
+      )
+      if (type !== 'commit') throw new GitEvidenceCommandError(1)
+    }
+    await verify(ancestor)
+    await verify(descendant)
+    try {
+      await readGitEvidence(
+        root,
+        ['merge-base', '--is-ancestor', ancestor, descendant],
+        {
+          ...opts,
+          env: { ...opts.env, GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' },
+        },
+        deadline,
+      )
+      return true
+    } catch (error) {
+      if (error instanceof GitEvidenceCommandError && error.code === 1) return false
+      throw error
     }
   }
 
@@ -1959,11 +2044,13 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     status,
     log,
     show,
+    readReceiptText,
     changedFiles,
     commit,
     commitFiles,
     head,
     historicalHead,
+    isAncestor,
     rangeFiles,
     revisionChanges,
     commitAll,

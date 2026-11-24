@@ -777,6 +777,181 @@ describe('subscriptions IPC', () => {
     expect(host.active()?.remote).toBe('syv-ai/beta-subscriptions')
   })
 
+  it('acknowledges only a receipt returned by the active display query', async () => {
+    const { caller, host, session } = await realRepo('notes')
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+    const active = host.active()!
+    await mkdir(join(active.root, 'notes'), { recursive: true })
+    await addFile(active.root, 'notes/display.md', 'displayed text\n')
+    const revision = await gitCommit(active.root, ['notes/display.md'], 'display')
+    await caller.subscriptions.set({ remote: REMOTE, path: 'notes', enabled: true })
+    const display = await caller.subscriptions.readForDisplay({
+      remote: REMOTE,
+      path: 'notes/display.md',
+    })
+    expect(display).toMatchObject({ text: 'displayed text\n', receipt: expect.any(String) })
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({
+        remote: REMOTE,
+        path: 'notes/display.md',
+        receipt: display.receipt!,
+      }),
+    ).resolves.toMatchObject({ seen: revision, previous: null })
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({
+        remote: REMOTE,
+        path: 'notes/display.md',
+        receipt: display.receipt!,
+      }),
+    ).rejects.toThrow()
+  })
+
+  it('acknowledges only committed displays and never regresses an already-seen revision', async () => {
+    const { caller, host, session, userData } = await realRepo('notes')
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+    const active = host.active()!
+    await addFile(active.root, 'notes/display.md', 'revision A\n')
+    const revisionA = await gitCommit(active.root, ['notes/display.md'], 'revision A')
+    await caller.subscriptions.set({ remote: REMOTE, path: 'notes', enabled: true })
+    const displayA = await caller.subscriptions.readForDisplay({
+      remote: REMOTE,
+      path: 'notes/display.md',
+    })
+    expect(displayA.text).toBe('revision A\n')
+    expect(displayA.receipt).toBeTruthy()
+    expect(
+      await readFile(join(userData, 'subscription-seen.json'), 'utf8').catch(() => null),
+    ).toBeNull()
+
+    await addFile(active.root, 'notes/display.md', 'revision B\n')
+    const revisionB = await gitCommit(active.root, ['notes/display.md'], 'revision B')
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({
+        remote: REMOTE,
+        path: 'notes/display.md',
+        receipt: displayA.receipt!,
+      }),
+    ).resolves.toMatchObject({ seen: revisionA, previous: null })
+    const displayB = await caller.subscriptions.readForDisplay({
+      remote: REMOTE,
+      path: 'notes/display.md',
+    })
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({
+        remote: REMOTE,
+        path: 'notes/display.md',
+        receipt: displayB.receipt!,
+      }),
+    ).resolves.toMatchObject({ seen: revisionB, previous: revisionA })
+    const older = await caller.subscriptions.readForDisplay({
+      remote: REMOTE,
+      path: 'notes/display.md',
+    })
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({
+        remote: REMOTE,
+        path: 'notes/display.md',
+        receipt: older.receipt!,
+      }),
+    ).resolves.toMatchObject({ seen: revisionB, previous: revisionA })
+  })
+
+  it.each(['subscription', 'account', 'vault', 'origin', 'rewrite'] as const)(
+    'rejects a receipt after %s context changes without changing durable state',
+    async (change) => {
+      const { caller, host, session, userData, base, registry } = await realRepo('notes')
+      Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+      const active = host.active()!
+      const path = 'notes/display.md'
+      await addFile(active.root, path, 'revision A\n')
+      await gitCommit(active.root, [path], 'revision A')
+      const display = await caller.subscriptions.readForDisplay({ remote: REMOTE, path })
+      expect(display.receipt).toBeTruthy()
+      const before = await readFile(join(userData, 'subscription-seen.json'), 'utf8').catch(
+        () => null,
+      )
+      if (change === 'subscription') {
+        await caller.subscriptions.set({ remote: REMOTE, path: 'notes', enabled: false })
+        await caller.subscriptions.set({ remote: REMOTE, path: 'notes', enabled: true })
+      } else if (change === 'account') {
+        Object.defineProperty(session, 'generation', {
+          configurable: true,
+          value: session.generation + 1,
+        })
+      } else if (change === 'vault') {
+        const betaRoot = join(base, 'receipt-beta')
+        await exec('git', ['clone', active.root, betaRoot])
+        await exec('git', [
+          '-C',
+          betaRoot,
+          'remote',
+          'set-url',
+          'origin',
+          'https://github.com/test/receipt-beta.git',
+        ])
+        await exec('git', ['-C', betaRoot, 'config', '--local', 'protocol.https.allow', 'never'])
+        await registry.add({
+          remote: 'test/receipt-beta',
+          path: betaRoot,
+          name: 'receipt-beta',
+          lastOpenedAt: '2026-07-01T00:00:00Z',
+        })
+        await caller.vaults.open({ remote: 'test/receipt-beta' })
+        host.active()!.pause('receipt context fixture')
+        await host.active()!.drainSync()
+        await caller.vaults.open({ remote: REMOTE })
+      } else if (change === 'origin') {
+        await exec('git', [
+          '-C',
+          active.root,
+          'remote',
+          'set-url',
+          'origin',
+          'https://github.com/other/vault.git',
+        ])
+      } else {
+        await exec('git', ['-C', active.root, 'checkout', '--orphan', 'rewritten'])
+        await gitCommit(active.root, [path], 'unrelated history')
+      }
+      await expect(
+        caller.subscriptions.acknowledgeDisplay({
+          remote: REMOTE,
+          path,
+          receipt: display.receipt!,
+        }),
+      ).rejects.toThrow()
+      expect(
+        await readFile(join(userData, 'subscription-seen.json'), 'utf8').catch(() => null),
+      ).toBe(before)
+    },
+  )
+
+  it('refuses a rewrite during ancestry validation without losing the preceding checkpoint', async () => {
+    const { caller, host, session, userData } = await realRepo('notes')
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+    const active = host.active()!
+    const path = 'notes/display.md'
+    await addFile(active.root, path, 'revision A\n')
+    const revisionA = await gitCommit(active.root, [path], 'revision A')
+    const first = await caller.subscriptions.readForDisplay({ remote: REMOTE, path })
+    await caller.subscriptions.acknowledgeDisplay({ remote: REMOTE, path, receipt: first.receipt! })
+    const before = await readFile(join(userData, 'subscription-seen.json'), 'utf8')
+    await addFile(active.root, path, 'revision B\n')
+    const revisionB = await gitCommit(active.root, [path], 'revision B')
+    const second = await caller.subscriptions.readForDisplay({ remote: REMOTE, path })
+    const realAncestry = active.repo.isAncestor.bind(active.repo)
+    active.repo.isAncestor = async (ancestor, descendant) => {
+      const answer = await realAncestry(ancestor, descendant)
+      if (ancestor === revisionB && descendant === revisionB)
+        await exec('git', ['-C', active.root, 'reset', '--hard', revisionA])
+      return answer
+    }
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({ remote: REMOTE, path, receipt: second.receipt! }),
+    ).rejects.toThrow()
+    expect(await readFile(join(userData, 'subscription-seen.json'), 'utf8')).toBe(before)
+  })
+
   it('rejects a wrong active remote and validates set inputs through the caller', async () => {
     const { caller } = await rig()
     await caller.vaults.open({ remote: REMOTE })
