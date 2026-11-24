@@ -100,6 +100,8 @@
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/headless": "^5.5.0",
     "@xterm/xterm": "^5.5.0",
+    "acorn": "^8.19.0",
+    "acorn-jsx": "^5.3.2",
     "chokidar": "^5.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
