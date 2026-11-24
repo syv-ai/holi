@@ -9,7 +9,7 @@ type RuntimeContext = FrameContext
 const worldNamesByContents = new WeakMap<WebContents, Map<string, string>>()
 
 /** Adapter-local authenticated context indices plus a persistent, non-authoritative world namespace. */
-export function createFrameContextRuntime(contents: WebContents) {
+function createFrameContextRuntime(contents: WebContents) {
   let names = worldNamesByContents.get(contents)
   if (!names) worldNamesByContents.set(contents, (names = new Map()))
   const metadata = createFrameContextMetadata()

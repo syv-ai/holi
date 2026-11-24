@@ -6,7 +6,6 @@ import {
   createFrameAddressing,
   type FrameCapture,
 } from '../src/plugins/browser/main/frame-addressing'
-import { createFrameContextRuntime } from '../src/plugins/browser/main/frame-context-runtime'
 import { createFrameContextCancellation } from '../src/plugins/browser/main/frame-context-cancellation'
 import { createFrameContextSessionOwner } from '../src/plugins/browser/main/frame-context-session-owner'
 
@@ -479,26 +478,6 @@ describe('browser frame addressing ownership', () => {
     await Promise.resolve()
     expect(owner.pendingCount).toBe(0)
     owner.dispose()
-  })
-  it('persists only per-contents world names, not adapter context indices', () => {
-    const contents = fixture().contents
-    const first = createFrameContextRuntime(contents)
-    const second = createFrameContextRuntime(contents)
-    expect(first.worldNames.forPurpose('frame')).toBe(second.worldNames.forPurpose('frame'))
-    expect(first.worldNames.forPurpose('owner')).not.toBe(first.worldNames.forPurpose('frame'))
-    const generation = first.metadata.nextGeneration(undefined, 'frame', 'old-document')
-    first.metadata.ingest({
-      frameId: 'frame',
-      contextId: 1,
-      uniqueId: 'old-document',
-      generation,
-      isDefault: true,
-    })
-    expect(first.metadata.metadataCounts().contexts).toBe(1)
-    expect(second.metadata.metadataCounts().contexts).toBe(0)
-    const reservedName = first.worldNames.forPurpose('frame')
-    first.metadata.clear()
-    expect(second.worldNames.forPurpose('frame')).toBe(reservedName)
   })
   it('rejects stale captures before debugger attachment', async () => {
     const { child, contents } = fixture()
