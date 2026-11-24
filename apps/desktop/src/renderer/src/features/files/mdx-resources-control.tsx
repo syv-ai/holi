@@ -5,10 +5,10 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/composites/empty-state'
-import type { useMdxDiagnostics } from './use-mdx-diagnostics'
+import type { useMdxResources } from './use-mdx-resources'
 
 type Props = {
-  resources: NonNullable<ReturnType<typeof useMdxDiagnostics>['resources']>
+  resources: NonNullable<ReturnType<typeof useMdxResources>['model']>
   onRun: () => void
 }
 
@@ -52,7 +52,12 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
               <Alert variant="destructive">
                 <AlertDescription className="break-words">{queryError.message}</AlertDescription>
               </Alert>
-              <Button type="button" variant="outline" onClick={queryError.retry}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={queryError.retrying}
+                onClick={queryError.retry}
+              >
                 Retry resource list
               </Button>
             </div>
@@ -135,7 +140,7 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
           ) : null}
           {approved.length > 0 ? (
             <section className="flex flex-col gap-2">
-              <h2 className="font-medium">Approved origins</h2>
+              <h2 className="font-medium">{queryError ? 'Known approvals' : 'Approved origins'}</h2>
               <p className="text-muted-foreground">
                 Manage which origins may supply module data for MDX dependency diagnostics in this
                 vault.

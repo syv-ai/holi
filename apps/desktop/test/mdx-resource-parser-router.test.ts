@@ -166,17 +166,20 @@ it('accepts CommonJS spellings bound by browser ESM in JS, JSX and MDX', async (
       ].join('\n'),
     )
     const source = [
-      "import { value as module } from './local.js'",
+      "import * as module from './local.js'",
       "import './view.jsx'",
       '',
-      'export const exports = { value: module }',
-      'export function require({ value }) { return value }',
+      'export const exports = { View: module.View, value: module.value }',
+      'export const require = Object.assign(({ value }) => value, { View: module.View })',
       '',
       '# Preview',
       '',
-      '<exports require={require(exports)} {...{ module }} />',
+      '<module.View>',
+      '<exports.View require={require(exports)} {...{ module }} />',
       '',
-      '{exports.value + require({ value: module })}',
+      'Inline <require.View /> and {exports.value + require({ value: module.value })}.',
+      '',
+      '</module.View>',
     ].join('\n')
     await expect(mdx.compile({ ...owner, generation: 1, source })).resolves.toEqual([])
     expect(contacts).toEqual([])
@@ -197,14 +200,23 @@ it('diagnoses free CommonJS references without echoing source', async () => {
     const alias = '  {...(() => { const loader = require; return { exports: 1, module: 2 } })()}'
     const destructure =
       '  require={(() => { const { privateValue } = exports; return privateValue })()}'
+    const inlineTags =
+      'Preview <\u00a0exports . PrivateGroup.View /> <UI.require.module.exports /> <module />'
     const source = [
       "import './child.js'",
       "import './child.jsx'",
       '',
-      '<exports',
+      '<module.PrivateModuleView',
       alias,
       destructure,
-      '/>',
+      '>',
+      '<>',
+      '  <require.PrivateLoader />',
+      '',
+      inlineTags,
+      '',
+      '</>',
+      '</module.PrivateModuleView>',
       '',
       `{import('${entry}')}`,
       '',
@@ -212,7 +224,7 @@ it('diagnoses free CommonJS references without echoing source', async () => {
     ].join('\n')
     const diagnostics = await mdx.compile({ ...owner, generation: 1, source })
     const position = (line: string, name: string) => line.indexOf(name) + 1
-    expect(diagnostics).toHaveLength(7)
+    expect(diagnostics).toHaveLength(10)
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         ...[
@@ -226,24 +238,29 @@ it('diagnoses free CommonJS references without echoing source', async () => {
           }),
         ),
         ...[
+          [4, 2],
           [5, position(alias, 'require')],
           [6, position(destructure, 'exports')],
+          [9, 4],
+          [11, position(inlineTags, 'exports')],
         ].map(([line, column]) =>
           expect.objectContaining({ line, column, message: expect.stringMatching(/CommonJS/) }),
         ),
         expect.objectContaining({
-          line: 9,
+          line: 16,
           column: 2,
           message: expect.stringMatching(/dynamic import/i),
         }),
         expect.objectContaining({
-          line: 11,
+          line: 18,
           column: 2,
           message: expect.stringMatching(/import\.meta/),
         }),
       ]),
     )
-    expect(JSON.stringify(diagnostics)).not.toMatch(/private-guest-value|privateValue|one\.example/)
+    expect(JSON.stringify(diagnostics)).not.toMatch(
+      /private-guest-value|privateValue|PrivateModuleView|PrivateLoader|PrivateGroup|one\.example/,
+    )
     expect((await mdx.externalResources(owner)).pending).toEqual([])
     expect(contacts).toEqual([])
   } finally {

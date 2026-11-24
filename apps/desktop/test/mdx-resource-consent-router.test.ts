@@ -1,5 +1,5 @@
 import { Resolver } from 'node:dns/promises'
-import { mkdir, realpath, rename, rm } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { expect, it, vi } from 'vitest'
 import { createMdxConsentStore } from '../src/main/mdx-consent'
 import { createMdxExternalNetworkFixture } from './fixtures/mdx-external-network'
@@ -153,7 +153,10 @@ it('closes a streaming HTTPS response on revoke and retains the same blocked gra
       compiling,
     ])
     const blocked = { ...grant, revocationPending: true }
-    expect((await mdx.externalResources(other)).approved).toEqual([blocked])
+    expect(await mdx.externalResources(other)).toMatchObject({
+      approved: [blocked],
+      listError: expect.any(String),
+    })
     await rm(consentFile, { recursive: true })
     await rename(backup, consentFile)
     expect(await createMdxConsentStore(consentFile).allows(scope)).toBe(true)
@@ -172,6 +175,57 @@ it('closes a streaming HTTPS response on revoke and retains the same blocked gra
     await mdx.releaseDiagnosticsLease(owner)
     await mdx.releaseDiagnosticsLease(other)
     await network.close()
+  }
+})
+
+it('keeps both origins revocable while the saved grant list is corrupt, without fetching', async () => {
+  const { mdx, acquire, consentFile, root } = await resourceRig(true)
+  const owner = await acquire()
+  const scope = { root: await realpath(root), remote: REMOTE, accountId: '42' }
+  const first = { ...scope, origin: new URL(entry).origin }
+  const second = { ...scope, origin: 'https://two.example' }
+  const stored = createMdxConsentStore(consentFile)
+  await stored.grant(first)
+  await stored.grant(second)
+  const disk = await readFile(consentFile)
+  const dns4 = vi.spyOn(Resolver.prototype, 'resolve4').mockRejectedValue({ code: 'ENODATA' })
+  const dns6 = vi.spyOn(Resolver.prototype, 'resolve6').mockRejectedValue({ code: 'ENODATA' })
+  const source = `${externalSource}import '${second.origin}/lib.js'\n`
+  const revoke = (grant: { id: string }) =>
+    mdx.revokeExternalResource({ ...owner, grantId: grant.id })
+  try {
+    const initial = await mdx.externalResources(owner)
+    expect(initial.listError).toBeUndefined()
+    const [a, b] = initial.approved
+    expect([a?.origin, b?.origin]).toEqual([first.origin, second.origin])
+
+    await writeFile(consentFile, '{')
+    await expect(revoke(a!)).rejects.toThrow(/revocation could not be saved/)
+    expect(await mdx.compile({ ...owner, generation: 1, source })).toHaveLength(2)
+    expect(dns4).not.toHaveBeenCalled()
+    expect(dns6).not.toHaveBeenCalled()
+    expect(await mdx.externalResources(owner)).toMatchObject({
+      listError: expect.any(String),
+      pending: [],
+      approved: [{ ...a, revocationPending: true }, b],
+    })
+    // The original ID is accepted while storage is down; only saving the removal fails.
+    await expect(revoke(b!)).rejects.toThrow(/revocation could not be saved/)
+
+    await writeFile(consentFile, disk)
+    expect(await stored.allows(first)).toBe(true)
+    expect(await stored.allows(second)).toBe(true)
+    await expect(revoke(a!)).resolves.toEqual({ ok: true })
+    await expect(revoke(b!)).resolves.toEqual({ ok: true })
+    expect(await stored.allows(first)).toBe(false)
+    expect(await stored.allows(second)).toBe(false)
+    const repaired = await mdx.externalResources(owner)
+    expect(repaired.listError).toBeUndefined()
+    expect(repaired.approved).toEqual([])
+  } finally {
+    await mdx.releaseDiagnosticsLease(owner)
+    dns4.mockRestore()
+    dns6.mockRestore()
   }
 })
 

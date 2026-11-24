@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
@@ -34,7 +34,10 @@ it('reopens a grant only for the exact vault root, remote, account and HTTPS ori
   await store.grant(foreign)
   const reopened = createMdxConsentStore(file)
   expect(await reopened.allows(foreign)).toBe(true)
-  expect(await reopened.listGrants(scope)).toEqual([{ origin: scope.origin }])
+  expect(await reopened.listGrants(scope)).toEqual({
+    complete: true,
+    grants: [{ origin: scope.origin }],
+  })
   expect(await reopened.allows({ ...scope })).toBe(true)
   for (const changed of [
     { root: join(dir, 'another-clone') },
@@ -59,6 +62,8 @@ it('reopens a grant only for the exact vault root, remote, account and HTTPS ori
 
 it('denies missing, corrupt, and malformed state, even beside a valid entry', async () => {
   const store = createMdxConsentStore(file)
+  const saved: (typeof scope)[] = []
+  store.onSavedApproval((approval) => saved.push(approval))
   expect(await store.allows(scope)).toBe(false)
   const invalid = [
     { accountId: 123 },
@@ -87,8 +92,10 @@ it('denies missing, corrupt, and malformed state, even beside a valid entry', as
   ]) {
     await writeFile(file, text)
     expect(await store.allows(scope)).toBe(false)
-    await expect(store.listGrants(scope)).rejects.toThrow()
+    expect(await store.listGrants(scope)).toEqual({ complete: false, grants: [] })
   }
+  await expect(store.grant(scope)).rejects.toThrow()
+  expect(saved).toEqual([])
 })
 
 it('allows canonical Windows drive and UNC paths but denies mixed files with malformed components', async () => {
@@ -162,16 +169,20 @@ it.skipIf(process.getuid === undefined || process.getuid() === 0)(
     expect(await reopened.allows(revoked)).toBe(true)
     expect(await store.allows(scope)).toBe(false)
     expect(await store.allows(revoked)).toBe(false)
-    expect(await store.listGrants(scope)).toEqual([
-      { origin: revoked.origin, revocationPending: true },
-    ])
+    expect(await store.listGrants(scope)).toEqual({
+      complete: true,
+      grants: [{ origin: revoked.origin, revocationPending: true }],
+    })
 
     await expect(store.grant(revoked)).rejects.toThrow()
     await store.grant(scope)
     expect(await store.allows(scope)).toBe(true)
     expect(await store.allows(revoked)).toBe(false)
     await store.revoke(revoked)
-    expect(await store.listGrants(scope)).toEqual([{ origin: scope.origin }])
+    expect(await store.listGrants(scope)).toEqual({
+      complete: true,
+      grants: [{ origin: scope.origin }],
+    })
     expect(await createMdxConsentStore(file).allows(revoked)).toBe(false)
   },
 )
@@ -208,9 +219,10 @@ it('publishes only saved removals, even when a drain partially succeeds', async 
     const published = saved.some(({ origin }) => origin === revoked.origin)
     expect(await createMdxConsentStore(file).allows(revoked)).toBe(!published)
     expect(await store.allows(revoked)).toBe(false)
-    expect(await store.listGrants(revoked)).toEqual(
-      published ? [] : [{ origin: revoked.origin, revocationPending: true }],
-    )
+    expect(await store.listGrants(revoked)).toEqual({
+      complete: true,
+      grants: published ? [] : [{ origin: revoked.origin, revocationPending: true }],
+    })
   }
   await expect(store.drain()).resolves.toBeUndefined()
   expect(saved).toHaveLength(2)
@@ -224,13 +236,40 @@ it('publishes only saved removals, even when a drain partially succeeds', async 
   expect(await reopened.allows(kept)).toBe(true)
 })
 
+it('notifies observers after publication and before queued reads can see the approval', async () => {
+  const store = createMdxConsentStore(file)
+  const saved: { approval: typeof scope; filePublished: boolean }[] = []
+  const stop = store.onSavedApproval((approval) => {
+    saved.push({ approval, filePublished: existsSync(file) })
+  })
+  const expected = [{ approval: scope, filePublished: true }]
+  const approval = store.grant(scope)
+  const access = store.allows(scope).then((allowed) => {
+    expect(saved).toEqual(expected)
+    expect(allowed).toBe(true)
+  })
+  const listing = store.listGrants(scope).then((list) => {
+    expect(saved).toEqual(expected)
+    expect(list).toEqual({ complete: true, grants: [{ origin: scope.origin }] })
+  })
+  await Promise.all([approval, access, listing])
+  expect(await createMdxConsentStore(file).allows(scope)).toBe(true)
+
+  stop()
+  await store.grant({ ...scope, origin: 'https://cdn.example' })
+  expect(saved).toEqual(expected)
+})
+
 it('does not publish an approval after its owner retires during the grant', async () => {
   const store = createMdxConsentStore(file)
+  const saved: (typeof scope)[] = []
+  store.onSavedApproval((approval) => saved.push(approval))
   const lifetime = new AbortController()
   const approval = store.grant(scope, () => !lifetime.signal.aborted)
   await Promise.resolve()
   lifetime.abort()
   await expect(approval).rejects.toThrow()
+  expect(saved).toEqual([])
   expect(await store.allows(scope)).toBe(false)
   expect(await createMdxConsentStore(file).allows(scope)).toBe(false)
 })

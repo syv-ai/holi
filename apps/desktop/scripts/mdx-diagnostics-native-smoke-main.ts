@@ -38,6 +38,7 @@ app.setPath('userData', join(profile, 'userData'))
 app.setPath('sessionData', join(profile, 'sessionData'))
 
 const remote = 'fixture/isolated-mdx'
+const fixtureAccountId = 507
 const path = 'notes/fixture.mdx'
 const file = join(vault, path)
 const entry = join(app.getAppPath(), 'renderer/index.html')
@@ -65,6 +66,10 @@ let adversaries: Awaited<ReturnType<typeof createGuestProbes>> | null = null
 const compiler = createMdxResources(join(app.getAppPath(), 'out/mdx-compiler'))
 const trustStore = createMdxTrustStore(join(profile, 'mdx-trust.json'))
 const consent = createMdxConsentStore(join(profile, 'mdx-consent.json'))
+// The store supports only the MDX dependency diagnostics purpose. Match the rest
+// of its scope here; the runner supplies the canonical isolated fixture root.
+const isFixtureScope = (scope: Parameters<typeof consent.grant>[0]) =>
+  scope.root === vault && scope.remote === remote && scope.accountId === String(fixtureAccountId)
 const observedConsent: typeof consent = {
   ...consent,
   async grant(scope, stillOwned) {
@@ -76,6 +81,12 @@ const observedConsent: typeof consent = {
       await race.releaseApproval.promise
     }
     return consent.grant(scope, stillOwned)
+  },
+  revoke(scope) {
+    // The store blocks new access synchronously at admission, not at disk removal.
+    const removal = consent.revoke(scope)
+    if (isFixtureScope(scope)) observedNetwork.admittedRevocation(scope.origin)
+    return removal
   },
 }
 const observedCompiler: typeof compiler = {
@@ -107,6 +118,9 @@ const invoke = (channel: string, handler: (input: unknown) => unknown) =>
   })
 
 const observedNetwork = observeMdxNativeNetwork(fixtureSha)
+const stopObservingApprovals = consent.onSavedApproval((scope) => {
+  if (isFixtureScope(scope)) observedNetwork.savedApproval(scope.origin)
+})
 invoke('smoke:arm-stream', () => observedNetwork.armStream())
 invoke('smoke:stream-status', () => observedNetwork.streamStatus())
 
@@ -408,7 +422,7 @@ app
       decryptString: (bytes) => bytes.toString('utf8'),
     })
     await token.write({
-      accountId: 507,
+      accountId: fixtureAccountId,
       login: 'fixture-user',
       token: 'synthetic-only',
       scopes: [],
@@ -499,6 +513,7 @@ app.on('before-quit', () => {
   closeRouter()
   legacyScenarios.close()
   compiler.close()
+  stopObservingApprovals()
   observedNetwork.close()
   void adversaries?.close()
 })
