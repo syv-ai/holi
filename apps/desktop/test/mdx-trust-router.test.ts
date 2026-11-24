@@ -1061,8 +1061,9 @@ it('closes a streaming HTTPS response on revoke and retains the same blocked gra
       ...owner,
       requestId: (await mdx.externalResources(owner)).pending[0]!.id,
     })
+    const failedSave = await approval()
     await mkdir(consentFile) // A real filesystem failure, even if tests are run as root.
-    await expect(mdx.approveExternalResource(await approval())).rejects.toThrow()
+    await expect(mdx.approveExternalResource(failedSave)).rejects.toThrow()
     await rm(consentFile, { recursive: true })
     await compile(2)
     expect(network.dials).toEqual([])
