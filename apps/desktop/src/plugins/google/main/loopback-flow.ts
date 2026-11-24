@@ -279,10 +279,24 @@ function identityFrom(idToken: unknown): { sub: string; email: string } {
 
 class GoogleHttpError extends Error {
   status: number
+  oauthError: string | null
   constructor(status: number, body: string) {
     super(`Google returned ${status}: ${body}`)
     this.name = 'GoogleHttpError'
     this.status = status
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(body)
+    } catch {
+      parsed = null
+    }
+    this.oauthError =
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'error' in parsed &&
+      typeof parsed.error === 'string'
+        ? parsed.error
+        : null
   }
 }
 

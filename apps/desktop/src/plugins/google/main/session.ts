@@ -250,7 +250,13 @@ export class GoogleSession {
       // `invalid_grant` is the one refusal that means the grant itself is dead
       // (revoked, expired, password changed); everything else is transient and
       // must NOT drop a working connection. Google reports it as a 400.
-      if (err instanceof Error && 'status' in err && err.status === 400) {
+      if (
+        err instanceof Error &&
+        'status' in err &&
+        err.status === 400 &&
+        'oauthError' in err &&
+        err.oauthError === 'invalid_grant'
+      ) {
         // This account's record goes; every other account's is untouched.
         await this.#deps.account.expire(generation)
         this.#emit()
