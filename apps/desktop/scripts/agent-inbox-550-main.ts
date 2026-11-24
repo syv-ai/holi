@@ -38,6 +38,11 @@ try {
   writeFileSync(join(root, 'paths.json'), JSON.stringify({ ...paths, logs }), { flag: 'wx' })
   const expectedUrl = pathToFileURL(join(root, '../out/renderer/index.html')).href
   let completed = false
+  const openedContents = new Set<number>()
+  ipcMain.on('vault:open-ready', (event) => {
+    if (event.senderFrame === event.sender.mainFrame && event.senderFrame?.url === expectedUrl)
+      openedContents.add(event.sender.id)
+  })
   const fail = (reason: string) => {
     if (completed) return
     completed = true
@@ -66,9 +71,11 @@ try {
           'document.body?.innerText?.trim() ?? ""',
           true,
         )
-        if (bodyText && /no vault is open\s*retry/i.test(bodyText))
-          return fail('Production renderer still reports that no vault is open')
-        if (bodyText) {
+        if (
+          bodyText &&
+          openedContents.has(contents.id) &&
+          !/no vault is open\s*retry/i.test(bodyText)
+        ) {
           completed = true
           writeFileSync(
             join(root, 'startup-ready.json'),
@@ -76,6 +83,7 @@ try {
               rendererLoaded: true,
               sandboxed: true,
               contextIsolated: true,
+              vaultOpened: true,
               url: contents.getURL(),
               bodyText,
             }),
@@ -86,18 +94,18 @@ try {
         return fail(`Could not inspect the loaded production renderer: ${String(error)}`)
       }
       if (Date.now() >= deadline)
-        return fail('Production renderer body remained empty before timeout')
+        return fail('Production vault did not become ready before timeout')
       setTimeout(poll, 100)
     }
-    const deadline = Date.now() + 15000
+    const deadline = Date.now() + 45000
     poll()
   })
   app.on('web-contents-created', (_event, contents) => {
     contents.once('did-finish-load', () => {
       if (contents.getURL() === expectedUrl && !completed) {
         setTimeout(() => {
-          if (!completed) fail('Production renderer did not report preload instrumentation')
-        }, 15000)
+          if (!completed) fail('Production renderer/vault startup did not become ready')
+        }, 50000)
       }
     })
   })

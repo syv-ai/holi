@@ -29,6 +29,7 @@ let child
 let failure
 let proof
 let paths
+let inspectedDocument
 let buildLog = ''
 try {
   const build = await processes.run(
@@ -90,8 +91,30 @@ try {
       throw new Error(`Electron exited before renderer readiness: ${child.output}`)
     await pause(100, undefined, { signal: controller.signal })
   }
-  if (!proof || !proof.rendererLoaded || !proof.sandboxed || !proof.contextIsolated)
-    throw new Error('Production renderer/sandbox startup proof missing after 90,000ms')
+  if (
+    !proof ||
+    !proof.rendererLoaded ||
+    !proof.sandboxed ||
+    !proof.contextIsolated ||
+    !proof.vaultOpened
+  )
+    throw new Error('Production renderer/sandbox/vault startup proof missing after 90,000ms')
+  const vault = join(profile, 'vaults/holi-550-fixture/vault-a')
+  const inspected = await processes.run(
+    join(profile, 'user-data/bin/holi'),
+    ['docs', 'inspect', 'Welcome.md', '--json'],
+    {
+      cwd: vault,
+      env,
+      timeoutMs: 10_000,
+    },
+  )
+  inspectedDocument = JSON.parse(inspected.output)
+  if (
+    inspectedDocument.body !== (await readFile(join(vault, 'Welcome.md'), 'utf8')) ||
+    typeof inspectedDocument.revision !== 'string'
+  )
+    throw new Error('Production docs.inspect did not read the owned welcome document')
   paths = JSON.parse(await readFile(join(profile, 'paths.json'), 'utf8'))
   for (const path of Object.values(paths))
     if (typeof path !== 'string' || !(await realpath(path)).startsWith(`${profile}/`))
@@ -118,6 +141,7 @@ try {
         runtimeRoot: runtime,
         isolatedPaths: paths,
         proof,
+        inspectedDocument,
         providerExecutablesEnabled: false,
         mainProcessOsNetworkContainment: false,
         buildLog: buildLog.slice(-8000),
