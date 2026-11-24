@@ -52,6 +52,23 @@ static int HNGCollectTree(const char *rootPath, const git_tree_entry *entry, voi
   const char *name=git_tree_entry_name(entry); if(git_tree_entry_type(entry)==GIT_OBJECT_BLOB && name){NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,name]; if(![p hasPrefix:@".git/"])[paths addObject:p];}
   return 0;
 }
+static BOOL HNGConfigHasForbiddenMetadata(NSString *text) {
+  for (NSString *rawLine in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+    NSString *line = [rawLine stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    if (!line.length || [line hasPrefix:@"#"] || [line hasPrefix:@";"]) continue;
+    if ([line hasPrefix:@"["]) {
+      NSRange close = [line rangeOfString:@"]"];
+      if (close.location == NSNotFound) return YES;
+      NSString *section = [[line substringWithRange:NSMakeRange(1, close.location - 1)] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].lowercaseString;
+      if ([section isEqualToString:@"include"] || [section hasPrefix:@"include "] || [section hasPrefix:@"includeif "]) return YES;
+      continue;
+    }
+    NSRange equals = [line rangeOfString:@"="];
+    NSString *key = [[(equals.location == NSNotFound ? line : [line substringToIndex:equals.location]) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] lowercaseString];
+    if ([key isEqualToString:@"core.worktree"] || [key hasPrefix:@"extensions."]) return YES;
+  }
+  return NO;
+}
 static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   HNGUnsafeConfig *unsafe = payload;
   if (!entry->name) return 0;
@@ -232,7 +249,7 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
         if (validConfig) while ((configRead = read(configFD, configBuffer, sizeof(configBuffer))) > 0) [data appendBytes:configBuffer length:(NSUInteger)configRead];
         if (configFD >= 0) close(configFD);
         NSString *text = validConfig && configRead == 0 ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
-        if (!text || [text rangeOfString:@"include" options:NSCaseInsensitiveSearch].location != NSNotFound || [text rangeOfString:@"core.worktree" options:NSCaseInsensitiveSearch].location != NSNotFound || [text rangeOfString:@"extensions." options:NSCaseInsensitiveSearch].location != NSNotFound) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+        if (!text || HNGConfigHasForbiddenMetadata(text)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
       }
     }
   }
