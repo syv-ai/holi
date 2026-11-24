@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { BrowserWindow, session as electronSession, webContents } from 'electron'
 import type { Session } from 'electron'
-import type { MdxDiagnostic } from '@holi/shared'
+import { MAX_MDX_SPECIFIER_LENGTH, type MdxDiagnostic } from '@holi/shared'
 
 const MAX_SOURCE_BYTES = 256 * 1024
 const MAX_RESULT_BYTES = 32 * 1024
@@ -398,7 +398,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
               const value = item as MdxDependency
               if (
                 typeof value.specifier !== 'string' ||
-                value.specifier.length > MAX_MESSAGE ||
+                value.specifier.length > MAX_MDX_SPECIFIER_LENGTH ||
                 !/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(value.specifier) ||
                 !Number.isSafeInteger(value.line) ||
                 value.line < 1 ||

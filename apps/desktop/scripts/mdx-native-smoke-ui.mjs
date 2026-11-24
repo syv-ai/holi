@@ -43,9 +43,12 @@ export function createMdxSmokeUi(signal) {
   }
 
   async function clickPointerAt(page, point) {
+    signal.throwIfAborted()
     await page.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
-    for (const type of ['mousePressed', 'mouseReleased'])
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      signal.throwIfAborted()
       await page.call('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 })
+    }
   }
 
   async function findInFile(page, text) {

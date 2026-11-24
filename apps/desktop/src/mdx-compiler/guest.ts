@@ -2,6 +2,7 @@ import { compile } from '@mdx-js/mdx'
 import { Parser, tokenizer, tokTypes } from 'acorn'
 import jsx from 'acorn-jsx'
 import { analyze } from 'eslint-scope'
+import { MAX_MDX_SPECIFIER_LENGTH } from '@holi/shared'
 
 interface Request {
   id: string
@@ -127,6 +128,8 @@ root.__holiMdxReceive = (encoded) => {
           })
         }
         diagnostics.push({ message: unsupportedImportAttributes, ...position })
+      } else if (source.value.length > MAX_MDX_SPECIFIER_LENGTH) {
+        diagnostics.push({ message: 'Module specifier exceeds the length limit.', ...position })
       } else if (/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(source.value)) {
         dependencies.push({ specifier: source.value, ...position })
       } else {

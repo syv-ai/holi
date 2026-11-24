@@ -1,5 +1,6 @@
 import { isIP } from 'node:net'
 import { posix } from 'node:path'
+import { MAX_MDX_SPECIFIER_LENGTH } from '@holi/shared'
 
 const DNS_NAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 
@@ -37,7 +38,8 @@ export function resolveMdxExternalModule(
 
 function parseDestination(raw: string, base?: URL): URL | null {
   // WHATWG URL silently repairs backslashes, missing slashes and control characters.
-  if (!raw || raw.length > 4096 || /[\s\\\u0000-\u001f\u007f]/u.test(raw)) return null
+  if (!raw || raw.length > MAX_MDX_SPECIFIER_LENGTH || /[\s\\\u0000-\u001f\u007f]/u.test(raw))
+    return null
   const input = base && raw.startsWith('//') ? `https:${raw}` : raw
   const absolute = !base || /^[a-z][a-z\d+.-]*:/i.test(input)
   let origin = base?.origin
@@ -52,7 +54,7 @@ function parseDestination(raw: string, base?: URL): URL | null {
     const url = new URL(input, base)
     if (url.origin !== origin || url.username || url.password) return null
     url.hash = ''
-    return url.href.length <= 4096 ? url : null
+    return url.href.length <= MAX_MDX_SPECIFIER_LENGTH ? url : null
   } catch {
     return null
   }

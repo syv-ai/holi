@@ -641,7 +641,12 @@ it('keeps the validated identity pending adoption and retires its context on pub
 // Use the real guest message interface and parser without launching Electron.
 async function resourceRig(
   useProductionFetcher = false,
-  options: Pick<NonNullable<Parameters<typeof fixture>[0]>, 'onResourceChange' | 'consent'> = {},
+  {
+    holdInspection,
+    ...options
+  }: Pick<NonNullable<Parameters<typeof fixture>[0]>, 'onResourceChange' | 'consent'> & {
+    holdInspection?: (signal: AbortSignal) => Promise<void>
+  } = {},
 ) {
   await import('../src/mdx-compiler/guest')
   type Result = Awaited<ReturnType<MdxResources['inspect']>>
@@ -677,7 +682,10 @@ async function resourceRig(
       for (;;) {
         signal?.throwIfAborted()
         const result = guest.__holiMdxTakeResult()
-        if (result?.id === requestId) return result
+        if (result?.id === requestId) {
+          if (holdInspection) await holdInspection(signal!)
+          return result
+        }
         await new Promise<void>((resolve) => setImmediate(resolve))
       }
     },
@@ -1038,9 +1046,12 @@ it('retires requests on rejection, edits, saves, document replacement and vault 
   await expect(mdx.approveExternalResource(rejected)).rejects.toThrow()
   const edited = await pending(2)
   const staleApproval = expect(mdx.approveExternalResource(edited)).rejects.toThrow()
-  await mdx.cancelCompile({ ...owner, generation: 3 })
+  const reading = mdx.externalResources(owner)
+  await mdx.cancelCompile({ ...owner, generation: 2 })
+  expect(await reading).toMatchObject({ approved: [], pending: [] })
   await staleApproval
-  expect((await mdx.externalResources(owner)).approved).toEqual([])
+  await pending(2)
+  await expect(mdx.approveExternalResource(edited)).rejects.toThrow()
   const saved = await pending(3)
   await caller.notes.write({ remote: REMOTE, path: 'page.mdx', text: '# saved independently' })
   await expect(mdx.approveExternalResource(saved)).rejects.toThrow()
@@ -1246,6 +1257,52 @@ it.each(['transitive import', 'redirect chain'] as const)(
     }
   },
 )
+
+it('publishes the first grant read across compile startup and can revoke while inspection is held', async () => {
+  const inspecting = gate()
+  const { mdx, acquire, root, consentFile } = await resourceRig(true, {
+    holdInspection: (signal) => {
+      signal.throwIfAborted()
+      const held = new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+      inspecting.resolve()
+      return held
+    },
+  })
+  const scope = {
+    root: await realpath(root),
+    remote: REMOTE,
+    accountId: '42',
+    origin: new URL(entry).origin,
+  }
+  await createMdxConsentStore(consentFile).grant(scope)
+  const owner = await acquire()
+  // Start both routes in the same turn: the first grant read must await real
+  // filesystem I/O while compile retires the source, before native inspection.
+  const reading = mdx.externalResources(owner)
+  const compiling = mdx.compile({ ...owner, generation: 1, source: externalSource }).then(
+    () => 'completed',
+    () => 'cancelled',
+  )
+  try {
+    const [{ approved, pending }] = await Promise.all([
+      within(reading, 3_000, 'read the first grant list'),
+      within(inspecting.promise, 3_000, 'hold the inspection response'),
+    ])
+    expect(pending).toEqual([])
+    expect(approved).toMatchObject([{ origin: scope.origin }])
+    await expect(
+      mdx.revokeExternalResource({ ...owner, grantId: approved[0]!.id }),
+    ).resolves.toEqual({ ok: true })
+    await expect(within(compiling, 2_000, 'cancel inspection on revoke')).resolves.toBe('cancelled')
+    expect(await createMdxConsentStore(consentFile).allows(scope)).toBe(false)
+    expect((await mdx.externalResources(owner)).approved).toEqual([])
+  } finally {
+    await mdx.releaseDiagnosticsLease(owner)
+    await compiling
+  }
+})
 
 it('closes a streaming HTTPS response on revoke and retains the same blocked grant for a save retry', async () => {
   const { mdx, acquire, consentFile, root } = await resourceRig(true)

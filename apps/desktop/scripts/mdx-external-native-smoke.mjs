@@ -51,17 +51,28 @@ export async function runExternalNativeAcceptance(
   })()`)
   const clickAt = (point) => clickPointerAt(page, point)
   const click = async (label) => clickAt(await waitFor(() => button(label), label))
-  const openResources = (expected) =>
-    waitFor(async () => {
-      if (await button(expected)) return true
-      // Mutations may close the panel or leave it open while state refreshes.
-      const open = await page.evaluate(`Array.from(document.querySelectorAll('button')).some(item =>
-        (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(trigger)} &&
-        (item.getAttribute('aria-expanded') === 'true' || item.getAttribute('data-state') === 'open'))`)
-      const point = !open && (await button(trigger))
-      if (point) await clickAt(point)
-      return false
-    }, expected)
+  const openResources = async (expected) => {
+    const deadline = performance.now() + 30000
+    for (;;) {
+      const state = await waitFor(
+        async () => {
+          if (await button(expected)) return { ready: true }
+          // Mutations may close the panel or leave it open while state refreshes.
+          const open =
+            await page.evaluate(`Array.from(document.querySelectorAll('button')).some(item =>
+          (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(trigger)} &&
+          (item.getAttribute('aria-expanded') === 'true' || item.getAttribute('data-state') === 'open'))`)
+          const point = !open && (await button(trigger))
+          return point ? { point } : false
+        },
+        expected,
+        Math.max(0, deadline - performance.now()),
+      )
+      if (state.ready) return
+      if (performance.now() >= deadline) throw new Error(`Timed out opening ${expected}`)
+      await clickAt(state.point)
+    }
+  }
   const ready = () =>
     waitFor(
       () => page.evaluate('!!window.__mdxSmoke && !!document.querySelector(".cm-editor")'),

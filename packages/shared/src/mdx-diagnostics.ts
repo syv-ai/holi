@@ -4,6 +4,9 @@ export interface MdxDiagnostic {
   column: number
 }
 
+// The compiler transports raw specifiers; the broker also caps the canonical HTTPS URL.
+export const MAX_MDX_SPECIFIER_LENGTH = 4096
+
 export const MDX_RESOURCE_PURPOSE = 'mdx-dependency-diagnostics'
 
 export interface MdxExternalResourceRequest {
