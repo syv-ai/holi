@@ -8,6 +8,7 @@ import {
   type VaultRelPath,
 } from '@holi/shared/mobile-path-safety'
 import type { StorageCheckpointCallback } from './native-files'
+import { withVaultLock } from './vault-lock'
 
 export function validateStoragePath(raw: string): VaultRelPath {
   const path = vaultRelPath(raw)
@@ -22,21 +23,6 @@ export function validateStoragePath(raw: string): VaultRelPath {
   return path
 }
 
-const queues = new Map<string, Promise<void>>()
-
-function enqueue<T>(key: string, work: () => Promise<T>): Promise<T> {
-  const previous = queues.get(key) ?? Promise.resolve()
-  const next = previous.then(work, work)
-  const tail = next.then(
-    () => {},
-    () => {},
-  )
-  queues.set(key, tail)
-  return next.finally(() => {
-    if (queues.get(key) === tail) queues.delete(key)
-  })
-}
-
 /** Serializes all work on the same canonical checkout and recovers interrupted moves first. */
 export async function withVaultOperation<T>(
   adapter: NativeFiles,
@@ -45,7 +31,7 @@ export async function withVaultOperation<T>(
   checkpoint?: StorageCheckpointCallback,
 ): Promise<T> {
   const canonicalRoot = await adapter.canonicalRoot(root)
-  return enqueue(canonicalRoot, async () => {
+  return withVaultLock(canonicalRoot, async () => {
     await recoverMoves(adapter, canonicalRoot, validateStoragePath, checkpoint)
     return work(canonicalRoot)
   })
