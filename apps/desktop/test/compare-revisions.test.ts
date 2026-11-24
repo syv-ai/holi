@@ -25,7 +25,23 @@ async function commit(root: string, message: string) {
 }
 afterEach(async () => {
   vi.unstubAllEnvs()
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  for (const root of roots.splice(0)) {
+    const pids = await readFile(join(root, 'proxy-pids'), 'utf8').catch(() => '')
+    for (const pid of pids.trim().split('\n').filter(Boolean).map(Number)) {
+      const command = await exec('/bin/ps', ['-p', String(pid), '-o', 'args=']).then(
+        (result) => result.stdout,
+        () => '',
+      )
+      if (command.includes(root)) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+        }
+      }
+    }
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 describe('compareRevisions', () => {
@@ -234,6 +250,55 @@ describe('compareRevisions', () => {
       reason: 'error',
     })
   })
+
+  it.skipIf(process.platform === 'win32').each(['unresponsive', 'successive'])(
+    'bounds %s Git processes with one comparison deadline',
+    async (mode) => {
+      const root = await repository()
+      await writeFile(join(root, 'note.md'), 'bounded text')
+      const sha = await commit(root, 'snapshot')
+      const realGit = (await exec('/usr/bin/which', ['git'])).stdout.trim()
+      const bin = join(root, 'bin')
+      await mkdir(bin)
+      const pids = join(root, 'proxy-pids')
+      // Model an unresponsive executable or delay genuine Git; no Git results are fabricated.
+      await writeFile(
+        join(bin, 'git'),
+        `#!/usr/bin/env node
+const fs = require('node:fs')
+const { spawn } = require('node:child_process')
+const record = pid => fs.appendFileSync(${JSON.stringify(pids)}, String(pid) + '\\n')
+record(process.pid)
+if (${JSON.stringify(mode)} === 'unresponsive') {
+  process.on('SIGTERM', () => {})
+  setInterval(() => {}, 1000)
+} else {
+  setTimeout(() => {
+    const child = spawn(${JSON.stringify(realGit)}, process.argv.slice(2), { stdio: ['pipe', 'inherit', 'inherit'] })
+    if (child.pid) record(child.pid)
+    child.stdin.on('error', () => {})
+    process.stdin.pipe(child.stdin)
+    child.on('error', () => process.exit(1))
+    child.on('exit', code => process.exit(code ?? 1))
+  }, 800)
+}
+`,
+        { mode: 0o700 },
+      )
+      vi.stubEnv('PATH', `${bin}${delimiter}${process.env.PATH ?? ''}`)
+      await expect(compareRevisions(root, 'note.md', sha, sha)).resolves.toEqual({
+        kind: 'unavailable',
+        reason: 'limit',
+      })
+      const owned = (await readFile(pids, 'utf8')).trim().split('\n').map(Number)
+      await vi.waitFor(() => {
+        for (const pid of owned) {
+          expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        }
+      })
+    },
+    15_000,
+  )
 
   it('reports absent paths and rejects unsupported entries and invalid endpoints', async () => {
     const root = await repository()
