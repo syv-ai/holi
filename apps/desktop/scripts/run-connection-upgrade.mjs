@@ -281,11 +281,24 @@ async function observeBeforeUpgrade() {
     const visible = (element) => { const style = getComputedStyle(element), rect = element.getBoundingClientRect(); return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0; };
     const heading = [...document.querySelectorAll('h1,h2,h3,[role=heading]')].some(e => visible(e) && e.textContent.trim() === 'Connections');
     const control = [...document.querySelectorAll('button[aria-label="Disconnect this vault"]')].find(e => visible(e) && !e.disabled);
-    const row = control?.closest('[data-slot="item"]');
+    const displayedControl = [...document.querySelectorAll('button[aria-label="Disconnect this vault"]')].find(visible);
+    const row = (control ?? displayedControl)?.closest('[data-slot="item"]');
     const google = row && [...row.querySelectorAll('[data-slot="item-title"]')].some(e => visible(e) && e.textContent.trim() === 'Google');
     const email = row && [...row.querySelectorAll('span')].some(e => visible(e) && e.textContent.trim() === 'holi-upgrade-fixture@example.invalid');
     const dialog = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].some(visible);
-    return Boolean(heading && control && google && email && !dialog);
+    const navigation = [...document.querySelectorAll('[aria-label="Settings"] button')].filter(e => e.textContent.trim() === 'Connections');
+    return {
+      connected: Boolean(heading && control && google && email && !dialog),
+      headingVisible: Boolean(heading),
+      disconnectEnabled: Boolean(control),
+      disconnectPresent: [...document.querySelectorAll('button[aria-label="Disconnect this vault"]')].some(visible),
+      googleVisible: Boolean(google),
+      emailVisible: Boolean(email),
+      blockingDialog: Boolean(dialog),
+      connectionsNavigationPresent: navigation.some(visible),
+      connectionsNavigationCurrent: navigation.some(e => visible(e) && e.getAttribute('aria-current') === 'page'),
+      settingsInert: [...document.querySelectorAll('[data-slot="settings-view"]')].some(e => e.inert || e.getAttribute('aria-hidden') === 'true'),
+    };
   })()`
   await wait('connections-navigation', () => click('Connections'))
   await wait('visible-google-connections', async () => {
@@ -299,16 +312,50 @@ async function observeBeforeUpgrade() {
       receipt.before.updateDeferred = true
       return false
     }
-    return renderer(connectedBefore)
+    const probe = await renderer(connectedBefore)
+    receipt.before.uiProbe = probe
+    return probe?.connected === true
+  }).catch(async (error) => {
+    if (receipt.timedOut?.phase === 'visible-google-connections') {
+      try {
+        const diagnostic = await evaluate(`(async () => {
+          const windows = require('electron').BrowserWindow.getAllWindows().filter(window => !window.isDestroyed() && !window.webContents.isLoading());
+          if (windows.length !== 1) return null;
+          const window = windows[0];
+          return { windowId: window.id, png: (await window.capturePage()).toPNG().toString('base64') };
+        })()`)
+        if (diagnostic) {
+          await writeFile(
+            join(evidence, 'before-panel-unasserted.png'),
+            Buffer.from(diagnostic.png, 'base64'),
+            { mode: 0o600, flag: 'wx' },
+          )
+          receipt.before.failureImage = {
+            file: 'before-panel-unasserted.png',
+            windowId: diagnostic.windowId,
+            googleConnectionsPanelAsserted: false,
+          }
+        } else receipt.before.failureImage = { outcome: 'unavailable' }
+      } catch {
+        receipt.before.failureImage = { outcome: 'unavailable' }
+      }
+    }
+    throw error
   })
   await renderer(
     'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
   )
-  assert(await renderer(connectedBefore), 'Connections view changed before capture')
+  assert(
+    (await renderer(connectedBefore))?.connected === true,
+    'Connections view changed before capture',
+  )
   const image = await evaluate(
     `(async () => (await require('electron').BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'))()`,
   )
-  assert(await renderer(connectedBefore), 'Connections view changed during capture')
+  assert(
+    (await renderer(connectedBefore))?.connected === true,
+    'Connections view changed during capture',
+  )
   receipt.before.googleUiConnected = true
   await writeFile(join(evidence, 'before-google-connected.png'), Buffer.from(image, 'base64'))
   await wait('updates-navigation', () => click('Updates'))
