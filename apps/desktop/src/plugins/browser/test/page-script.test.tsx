@@ -872,6 +872,56 @@ test.each(['input', 'textarea'] as const)(
   },
 )
 
+test('rich block lines keep grapheme columns and edit only the current logical line', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'true')
+  host.setAttribute('tabindex', '0')
+  host.style.display = 'block'
+  host.innerHTML =
+    '<p style="display:block"><strong style="display:inline">  café</strong><a href="/next" style="display:inline">🙂</a></p><div style="display:block">x</div><p style="display:block"><br style="display:inline"></p><p style="display:block">long enough</p>'
+  Object.defineProperty(host, 'isContentEditable', { value: true })
+  document.body.append(host)
+  host.focus()
+  const original = host.innerHTML
+  const first = host.querySelector('strong')!.firstChild!
+  const select = (node: Node, offset: number) => {
+    const range = document.createRange()
+    range.setStart(node, offset)
+    range.collapse(true)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(range)
+  }
+  select(first, 3)
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 64, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  expect(press('Escape').defaultPrevented).toBe(true)
+  expect(press('j').defaultPrevented).toBe(true)
+  expect(getSelection()!.anchorNode).toBe(host.querySelector('div')!.firstChild)
+  expect(press('j').defaultPrevented).toBe(true)
+  expect(press('j').defaultPrevented).toBe(true)
+  expect(getSelection()!.anchorNode).toBe(host.lastElementChild!.firstChild)
+  expect(getSelection()!.anchorOffset).toBe(3)
+  expect(press('k').defaultPrevented).toBe(true)
+  expect(getSelection()!.anchorNode).toBe(
+    host.querySelector('p:nth-of-type(2)')!.firstChild ?? host.querySelector('p:nth-of-type(2)'),
+  )
+  expect(press('0').defaultPrevented).toBe(true)
+  expect(press('^').defaultPrevented).toBe(true)
+  expect(press('$').defaultPrevented).toBe(true)
+  expect(press('I').defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(getSelection()!.anchorNode).toBe(host.lastElementChild!.firstChild)
+  expect(getSelection()!.anchorOffset).toBe(0)
+  expect(host.innerHTML).toBe(original)
+  expect(host.querySelector('strong')).toBeTruthy()
+  expect(host.querySelector('a')).toBeTruthy()
+})
+
 test('rich inline native hosts retain formatting and links while motions cross nodes', () => {
   const host = document.createElement('div')
   host.setAttribute('contenteditable', 'true')
@@ -920,6 +970,48 @@ test('rich inline native hosts retain formatting and links while motions cross n
   const typing = new KeyboardEvent('keydown', { key: '!', bubbles: true, cancelable: true })
   host.dispatchEvent(typing)
   expect(typing.defaultPrevented).toBe(false)
+})
+
+test('rich BR lines accept native element selections and retire after reverted edits', async () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'true')
+  host.setAttribute('tabindex', '0')
+  host.style.display = 'block'
+  host.innerHTML = 'alpha<br><br>omega<br>'
+  Object.defineProperty(host, 'isContentEditable', { value: true })
+  document.body.append(host)
+  host.focus()
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 65, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  const select = (node: Node, offset: number) => {
+    const range = document.createRange()
+    range.setStart(node, offset)
+    range.collapse(true)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(range)
+  }
+  select(host, host.childNodes.length)
+  expect(press('Escape').defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('normal')
+  expect(press('k').defaultPrevented).toBe(true)
+  expect(press('j').defaultPrevented).toBe(true)
+  const original = host.innerHTML
+  const text = host.firstChild!
+  text.textContent = 'changed'
+  text.textContent = 'alpha'
+  expect(press('h').defaultPrevented).toBe(false)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(host.innerHTML).toBe(original)
+  select(host, host.childNodes.length)
+  expect(press('Escape').defaultPrevented).toBe(true)
+  for (const key of ['x', 'd', 'd']) expect(press(key).defaultPrevented).toBe(true)
+  expect(host.innerHTML).toBe(original)
+  await Promise.resolve()
 })
 
 test('rich host ownership retires for synchronous and asynchronous DOM transitions', async () => {
@@ -1003,8 +1095,6 @@ test('rich host structure is revalidated before each command and unsupported DOM
   const nonce = holi().vim.documentNonce()
   holi().vim.configure(true, 61, nonce)
   const cases = [
-    '<div contenteditable="true" tabindex="0">one<br>two</div>',
-    '<div contenteditable="true" tabindex="0"><p>block</p></div>',
     '<div contenteditable="true" tabindex="0"><span style="display:block">block span</span></div>',
     '<div contenteditable="true" tabindex="0">atom<span contenteditable="false">x</span></div>',
     '<div contenteditable="true" tabindex="0">one<span inert>skip</span> two</div>',
