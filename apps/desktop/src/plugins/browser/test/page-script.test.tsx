@@ -32,8 +32,6 @@ interface HoliPage {
     enterInsert(owner: HintOwner, id: string): boolean
   }
   vim: {
-    armChild(): string
-    editingState(): { revision: number; mode: 'insert' | 'normal'; enabled: boolean }
     documentNonce(): string
     rearm(): string
     configure(enabled: boolean, revision: number, nonce: string): boolean
@@ -1312,46 +1310,6 @@ function armHints() {
   const nonce = holi().vim.rearm()
   expect(holi().vim.configure(true, ++hintTestRevision, nonce)).toBe(true)
 }
-
-test('child editing arms only Vim ownership and keeps page hints untouched', () => {
-  const field = document.querySelector<HTMLInputElement>('#email')!
-  field.value = 'alpha beta'
-  field.focus()
-  const nonce = holi().vim.armChild()
-  expect(holi().vim.editingState()).toMatchObject({ enabled: false, mode: 'insert' })
-  expect(holi().vim.configure(true, ++hintTestRevision, nonce)).toBe(true)
-  expect(holi().vim.editingState()).toMatchObject({ enabled: true, mode: 'insert' })
-
-  expect(nativeKey('Escape', field).defaultPrevented).toBe(true)
-  expect(nativeKey('w', field).defaultPrevented).toBe(true)
-  expect(field.selectionStart).toBe(6)
-  expect(field.value).toBe('alpha beta')
-  expect(nativeKey('f', field).defaultPrevented).toBe(false)
-  expect(holi().hints.poll()).toEqual([])
-})
-
-test('child Vim yields to blur and rejects configuration from an earlier document', () => {
-  const first = document.createElement('textarea')
-  const second = document.createElement('textarea')
-  first.value = 'first'
-  document.body.append(first, second)
-  first.focus()
-  const oldNonce = holi().vim.armChild()
-  expect(holi().vim.configure(true, ++hintTestRevision, oldNonce)).toBe(true)
-  expect(nativeKey('Escape', first).defaultPrevented).toBe(true)
-  expect(holi().vim.mode().mode).toBe('normal')
-
-  window.dispatchEvent(new Event('blur'))
-  expect(holi().vim.editingState()).toMatchObject({ enabled: false, mode: 'insert' })
-  expect(nativeKey('x', first).defaultPrevented).toBe(false)
-  const newNonce = holi().vim.armChild()
-  expect(newNonce).not.toBe(oldNonce)
-  expect(holi().vim.configure(true, ++hintTestRevision, oldNonce)).toBe(false)
-  second.focus()
-  expect(nativeKey('Escape', second).defaultPrevented).toBe(false)
-  expect(holi().vim.configure(true, ++hintTestRevision, newNonce)).toBe(true)
-  expect(nativeKey('Escape', second).defaultPrevented).toBe(true)
-})
 
 test.each(['body', 'button', 'a'])(
   'ordinary focused %s requests hints without field normal mode',
