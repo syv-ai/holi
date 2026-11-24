@@ -75,6 +75,7 @@ let child
 let artifactsCreated = false
 let registered = false
 let permissionOutcome
+let notificationSettings
 let cleanup = {}
 const capture = async (name, operation) => {
   try {
@@ -117,7 +118,10 @@ try {
   const plist = join(ownedApp, 'Contents/Info.plist')
   const setPlist = async (key, value) =>
     exec('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist])
+  const addPlist = async (key, type, value) =>
+    exec('/usr/libexec/PlistBuddy', ['-c', `Add :${key} ${type} ${value}`, plist])
   await setPlist('CFBundleIdentifier', bundleId)
+  await addPlist('NSUserNotificationAlertStyle', 'string', 'banner')
   for (const key of ['CFBundleName', 'CFBundleDisplayName']) {
     try {
       await exec('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${appName}`, plist])
@@ -150,6 +154,12 @@ try {
       main: 'main.cjs',
     }),
   )
+  await exec('/usr/bin/xcrun', [
+    'swiftc',
+    resolve(dirname(fileURLToPath(import.meta.url)), 'notification-settings.swift'),
+    '-o',
+    join(ownedApp, 'Contents/MacOS/notification-settings'),
+  ])
   await exec('/usr/bin/codesign', [
     '--force',
     '--sign',
@@ -206,6 +216,22 @@ try {
   }
   const state = await readFile(result, 'utf8').catch(() => '')
   if (state !== 'shown-native') throw new Error(`fixture did not become ready: ${child.output}`)
+  try {
+    const settings = await owned.run(
+      join(ownedApp, 'Contents/MacOS/notification-settings'),
+      [bundleId],
+      { timeoutMs: 10_000, label: 'owned app notification settings' },
+    )
+    notificationSettings = JSON.parse(settings.output.trim())
+  } catch (error) {
+    notificationSettings = { error: String(error) }
+    throw error
+  } finally {
+    await writeFile(
+      join(evidence, 'notification-settings.json'),
+      `${JSON.stringify({ declaration: { NSUserNotificationAlertStyle: 'banner' }, observed: notificationSettings })}\n`,
+    )
+  }
   const click = await clickNativeBanner({
     appName,
     title,
@@ -224,13 +250,20 @@ try {
     throw new Error(`native click did not activate fixture window (state=${outcome})`)
   await writeFile(
     join(evidence, 'result.json'),
-    `${JSON.stringify({ appName, bundleId, title, permissionOutcome, click, outcome })}\n`,
+    `${JSON.stringify({ appName, bundleId, title, permissionOutcome, notificationSettings, click, outcome })}\n`,
   )
 } catch (error) {
+  if (artifactsCreated && notificationSettings === undefined) {
+    notificationSettings = { error: 'settings inspection did not complete' }
+    await writeFile(
+      join(evidence, 'notification-settings.json'),
+      `${JSON.stringify({ declaration: { NSUserNotificationAlertStyle: 'banner' }, observed: notificationSettings })}\n`,
+    )
+  }
   if (artifactsCreated)
     await writeFile(
       join(evidence, 'result.json'),
-      `${JSON.stringify({ appName, bundleId, title, error: String(error), permissionOutcome, nativeLog: await readFile(join(root, 'native.log'), 'utf8').catch(() => null), output: child?.output, nativeState: await readFile(result, 'utf8').catch(() => null) })}\n`,
+      `${JSON.stringify({ appName, bundleId, title, error: String(error), permissionOutcome, notificationSettings, nativeLog: await readFile(join(root, 'native.log'), 'utf8').catch(() => null), output: child?.output, nativeState: await readFile(result, 'utf8').catch(() => null) })}\n`,
     )
   throw error
 } finally {
