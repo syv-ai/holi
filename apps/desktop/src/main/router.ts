@@ -1978,11 +1978,14 @@ export function createRouter(deps: RouterDeps) {
           const accountGeneration = deps.session.generation
           const accountId = String(deps.session.viewer?.accountId)
           const openRevision = vaultOpenRevision
+          const transitionEpoch = mdxTrustTransitionEpoch
           const root = active.repo.root
-          if (completedVaultOpenRevision !== openRevision)
+          if (mdxTrustTransition > 0 || completedVaultOpenRevision !== openRevision)
             return { kind: 'unavailable', reason: 'stale' }
           const result = await compareRevisions(root, rel, input.before, input.after)
           if (
+            mdxTrustTransition > 0 ||
+            mdxTrustTransitionEpoch !== transitionEpoch ||
             deps.session.generation !== accountGeneration ||
             String(deps.session.viewer?.accountId) !== accountId ||
             deps.host.active() !== active ||

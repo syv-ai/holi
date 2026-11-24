@@ -99,7 +99,11 @@ async function fixture(reconcile: (vault: { remote: string }) => Promise<void> =
     active: () => selected,
     get: (remote: string) => running.get(remote) ?? null,
     prepare: async () => {},
-    open: async (remote: string) => (selected = await getOrOpen(remote)),
+    open: async (remote: string, prepare?: (coldStart: boolean) => Promise<void>) => {
+      await prepare?.(!running.has(remote))
+      selected = await getOrOpen(remote)
+      return selected
+    },
     getOrOpen,
     close: async (remote = selected?.remote) => {
       if (remote) running.delete(remote)
@@ -183,38 +187,50 @@ describe('history.compareRevisions through the public router', () => {
     },
   )
 
-  it('rejects both an earlier read and a new read during an unfinished vault open', async () => {
-    const opening = gate()
-    const finishOpen = gate()
-    const { caller, before, after } = await fixture(async (vault) => {
-      if (vault.remote === 'syv-ai/other') {
-        opening.resolve()
-        await finishOpen.promise
+  it.each(['open', 'add'])(
+    'rejects earlier and new reads during an unfinished vault %s',
+    async (action) => {
+      const opening = gate()
+      const finishOpen = gate()
+      const { caller, before, after, host } = await fixture(async (vault) => {
+        if (vault.remote === 'syv-ai/other') {
+          opening.resolve()
+          await finishOpen.promise
+        }
+      })
+      await host.getOrOpen('syv-ai/other')
+      const pending = pendingComparison()
+      const result = caller.history.compareRevisions({
+        remote: REMOTE,
+        path: 'note.md',
+        before,
+        after,
+      })
+      let switched: Promise<unknown> | undefined
+      try {
+        await pending.entered
+        switched =
+          action === 'open'
+            ? caller.vaults.open({ remote: 'syv-ai/other' })
+            : caller.vaults.add({ remote: 'syv-ai/other' })
+        await opening.promise
+        await expect(
+          caller.history.compareRevisions({
+            remote: 'syv-ai/other',
+            path: 'note.md',
+            before,
+            after,
+          }),
+        ).resolves.toEqual({ kind: 'unavailable', reason: 'stale' })
+        pending.release()
+        await expect(result).resolves.toEqual({ kind: 'unavailable', reason: 'stale' })
+      } finally {
+        pending.release()
+        finishOpen.resolve()
+        await switched
       }
-    })
-    const pending = pendingComparison()
-    const result = caller.history.compareRevisions({
-      remote: REMOTE,
-      path: 'note.md',
-      before,
-      after,
-    })
-    let switched: Promise<unknown> | undefined
-    try {
-      await pending.entered
-      switched = caller.vaults.open({ remote: 'syv-ai/other' })
-      await opening.promise
-      await expect(
-        caller.history.compareRevisions({ remote: 'syv-ai/other', path: 'note.md', before, after }),
-      ).resolves.toEqual({ kind: 'unavailable', reason: 'stale' })
-      pending.release()
-      await expect(result).resolves.toEqual({ kind: 'unavailable', reason: 'stale' })
-    } finally {
-      pending.release()
-      finishOpen.resolve()
-      await switched
-    }
-  })
+    },
+  )
 
   it('rejects when no vault is active', async () => {
     const { caller, before, after, host } = await fixture()
