@@ -271,10 +271,56 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   for(size_t i=0;i<5;i++){ char p[PATH_MAX]; snprintf(p,sizeof(p),"%s%s",dir,names[i]); struct stat st; if(lstat(p,&st)==0){ pending=YES; break; } }
   git_repository_free(repo); return pending;
 }
+static NSError *HNGPathError(int code, NSString *message) {
+  return [NSError errorWithDomain:HoliNativeGitErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey:message}];
+}
+static BOOL HNGPathParts(NSString *path, NSArray<NSString *> **parts) {
+  if (!path.length || [path hasPrefix:@"/"] || [path containsString:@"\\"] || [path containsString:@"\0"]) return NO;
+  NSArray *items = [path componentsSeparatedByString:@"/"];
+  for (NSString *item in items) if (!item.length || [item isEqualToString:@"."] || [item isEqualToString:@".."] || [item isEqualToString:@".git"]) return NO;
+  *parts = items; return YES;
+}
+static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
+  int fd = dup(rootFD); if (fd < 0) return -1;
+  for (NSUInteger i=0; i+1<parts.count; i++) {
+    int next = openat(fd, parts[i].fileSystemRepresentation, O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+    close(fd); if (next < 0) return -1; fd = next;
+  }
+  return fd;
+}
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyStatus:(NSArray<NSString *> *)paths root:(NSString *)root error:(NSError **)error {
   git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return nil;
-  git_repository_free(repo);
-  if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:ENOTSUP userInfo:@{NSLocalizedDescriptionKey:@"Safe explicit-path status comparison is unavailable"}];
-  return nil;
+  int rootFD=open(root.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+  if(rootFD<0){ if(error)*error=HNGPathError(errno,@"Cannot safely open working tree"); git_repository_free(repo); return nil; }
+  git_index *index=NULL; git_reference *head=NULL; git_commit *commit=NULL; git_tree *tree=NULL;
+  int rc=git_repository_index(&index,repo);
+  if(rc==0 && git_repository_head(&head,repo)==0) rc=git_reference_peel((git_object **)&commit,head,GIT_OBJECT_COMMIT);
+  if(rc==0 && commit) rc=git_commit_tree(&tree,commit);
+  if(rc<0){ if(error)HNGError(error,rc); close(rootFD); git_index_free(index); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); return nil; }
+  git_config *config=NULL; BOOL filemode=YES; if(git_repository_config(&config,repo)==0){ int value=1; if(git_config_get_bool(&value,config,"core.filemode")==0)filemode=value; git_config_free(config); }
+  NSMutableArray *changes=[NSMutableArray array];
+  for(NSString *path in paths){
+    NSArray<NSString *> *parts=nil; if(!HNGPathParts(path,&parts)){ if(error)*error=HNGPathError(EINVAL,@"Invalid working-tree path"); changes=nil; break; }
+    const char *p=path.fileSystemRepresentation; const git_index_entry *stage0=git_index_get_bypath(index,p,0); BOOL conflict=NO;
+    for(int stage=1;stage<=3;stage++) if(git_index_get_bypath(index,p,stage)){conflict=YES;break;}
+    const git_tree_entry *headEntry=tree?git_tree_entry_bypath(tree,p):NULL;
+    BOOL staged = conflict || ((headEntry!=NULL)!=(stage0!=NULL)) || (headEntry&&stage0&&(!git_oid_equal(git_tree_entry_id(headEntry),&stage0->id)||git_tree_entry_filemode(headEntry)!=stage0->mode));
+    BOOL worktree=NO; int parent=HNGOpenParent(rootFD,parts); struct stat st; int statResult=parent<0?-1:fstatat(parent,parts.lastObject.fileSystemRepresentation,&st,AT_SYMLINK_NOFOLLOW);
+    if(statResult<0 && errno!=ENOENT){ if(error)*error=HNGPathError(errno,@"Cannot inspect working-tree path"); changes=nil; if(parent>=0)close(parent); break; }
+    if(statResult==0){
+      if(S_ISLNK(st.st_mode)){ if(error)*error=HNGPathError(EINVAL,@"Symbolic links are not supported in status paths"); changes=nil; close(parent); break; }
+      if(!S_ISREG(st.st_mode)){ if(error)*error=HNGPathError(EINVAL,@"Only regular files are supported in status paths"); changes=nil; close(parent); break; }
+      int fd=openat(parent,parts.lastObject.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW); close(parent);
+      if(fd<0){if(error)*error=HNGPathError(errno,@"Cannot safely read working-tree file");changes=nil;break;}
+      struct stat opened; if(fstat(fd,&opened)||!S_ISREG(opened.st_mode)){close(fd);if(error)*error=HNGPathError(EINVAL,@"Working-tree file changed during status");changes=nil;break;}
+      NSMutableData *data=[NSMutableData data]; uint8_t buffer[16384]; ssize_t n; while((n=read(fd,buffer,sizeof(buffer)))>0)[data appendBytes:buffer length:(NSUInteger)n]; int readError=errno; close(fd);
+      if(n<0){if(error)*error=HNGPathError(readError,@"Cannot read working-tree file");changes=nil;break;}
+      git_oid oid; git_odb *odb=NULL; rc=git_repository_odb(&odb,repo); if(rc==0)rc=git_odb_hash(&oid,data.bytes,data.length,GIT_OBJECT_BLOB); git_odb_free(odb);
+      uint32_t mode=(opened.st_mode & S_IXUSR)?GIT_FILEMODE_BLOB_EXECUTABLE:GIT_FILEMODE_BLOB;
+      worktree=!stage0 || !git_oid_equal(&oid,&stage0->id) || (filemode && mode!=stage0->mode);
+    } else { if(parent>=0)close(parent); worktree=stage0!=NULL; }
+    if(staged||worktree||conflict)[changes addObject:@{@"path":path,@"staged":@(staged),@"worktree":@(worktree),@"conflict":@(conflict)}];
+  }
+  close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); return changes;
 }
 @end
