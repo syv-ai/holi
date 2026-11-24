@@ -862,31 +862,39 @@ export function createRouter(deps: RouterDeps) {
         // Opening is what starts the watcher and the sync loop — the snapshot
         // is a by-product, and comes from the vault that is now live rather
         // than from a second read that could already disagree with it.
-        const root = await rootFor(input.remote)
-        /**
-         * Seed on **open**, not only on clone, for what an open may still
-         * do: create a missing once-file and merge `.claude/settings.json`.
-         * Skills and hooks are written only at creation.
-         *
-         * Before `host.open`, for `addVault`'s reason: nothing can be committed
-         * ahead of the `.gitignore`.
-         */
-        if (deps.host.get(input.remote) === null) {
-          await deps.host.prepare(input.remote, (coldStart) =>
-            coldStart ? (deps.prepareClone ?? prepareManagedClone)(root) : Promise.resolve(),
-          )
+        try {
+          const root = await rootFor(input.remote)
+          /**
+           * Seed on **open**, not only on clone, for what an open may still
+           * do: create a missing once-file and merge `.claude/settings.json`.
+           * Skills and hooks are written only at creation.
+           *
+           * Before `host.open`, for `addVault`'s reason: nothing can be committed
+           * ahead of the `.gitignore`.
+           */
+          if (deps.host.get(input.remote) === null) {
+            await deps.host.prepare(input.remote, (coldStart) =>
+              coldStart ? (deps.prepareClone ?? prepareManagedClone)(root) : Promise.resolve(),
+            )
+          }
+          await deps.seed(root)
+          await deps.registry.touch(input.remote, now())
+          if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
+          const active = await deps.host.open(input.remote)
+          if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
+          deps.plugins.setDisplayed(input.remote)
+          await deps.plugins.reconcile(active, 'open')
+          if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
+          deps.opened?.(input.remote)
+          if (revision === vaultOpenRevision) completedVaultOpenRevision = revision
+          return active.snapshot()
+        } catch (error) {
+          // A failed open still settles this activation attempt. Leaving its
+          // revision permanently incomplete would fence reads from the still-
+          // active vault until another successful open.
+          if (revision === vaultOpenRevision) completedVaultOpenRevision = revision
+          throw error
         }
-        await deps.seed(root)
-        await deps.registry.touch(input.remote, now())
-        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
-        const active = await deps.host.open(input.remote)
-        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
-        deps.plugins.setDisplayed(input.remote)
-        await deps.plugins.reconcile(active, 'open')
-        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
-        deps.opened?.(input.remote)
-        if (revision === vaultOpenRevision) completedVaultOpenRevision = revision
-        return active.snapshot()
       }),
 
     add: t.procedure
