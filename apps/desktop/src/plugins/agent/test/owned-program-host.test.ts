@@ -17,6 +17,7 @@ import {
   UnconfirmedOwnedProgramError,
   type execProgram,
   type ManagedOwnedChild,
+  ownedProcessDrain,
   type OwnedCompletion,
 } from '../../../main/plugin-api'
 import { createPluginHost, type OpenVault } from '../../../main/plugin-host/host'
@@ -143,6 +144,8 @@ class FakeNativeChild extends EventEmitter {
   readonly stderr = new PassThrough()
   readonly stdin = new PassThrough()
   readonly ownedCompletion: Promise<OwnedCompletion>
+  readonly [ownedProcessDrain]: { drain: () => Promise<void> }
+  drainRequests = 0
   stopRequests = 0
   exited = false
   closed = false
@@ -153,6 +156,8 @@ class FakeNativeChild extends EventEmitter {
     observed?: UnconfirmedOwnedProgramError
   }
   private receipt: 'pending' | 'settled' = 'pending'
+  private drain!: () => void
+  private settleDrain!: () => void
   private settle!: (value: OwnedCompletion) => void
   private fail!: (error: Error) => void
 
@@ -163,10 +168,21 @@ class FakeNativeChild extends EventEmitter {
     readonly env: NodeJS.ProcessEnv,
   ) {
     super()
+    const drainProof = new Promise<void>((resolve) => {
+      this.settleDrain = resolve
+    })
+    this.drain = () => this.settleDrain()
     this.ownedCompletion = new Promise((resolve, reject) => {
       this.settle = resolve
       this.fail = reject
     })
+    this[ownedProcessDrain] = {
+      drain: () => {
+        this.drainRequests += 1
+        if (process.platform === 'win32') return Promise.resolve()
+        return drainProof
+      },
+    }
   }
 
   kill() {
@@ -207,6 +223,7 @@ class FakeNativeChild extends EventEmitter {
     this.receipt = 'settled'
     this.releaseResources()
     this.settle('empty')
+    this.drain()
   }
 
   rejectProof(cause: NativeProofFailure, commandError: Error | null = null) {
@@ -404,7 +421,9 @@ async function rig() {
     const error = await rejected(host.stopAll())
     expect(failures).toHaveLength(1)
     const { cwd, proof } = failures[0]!
-    const remote = remotes.find((remote) => dirname(cwd) === scratch[remote])
+    const remote = remotes.find(
+      (remote) => cwd === vaults[remote].root || dirname(cwd) === scratch[remote],
+    )
     if (remote === undefined) throw new Error('Failed receipt has no originating vault')
     const scoped = onlyFailure(error, 'one or more plugin lifetimes failed to stop')
     expectProof(vaultStopCause(scoped, remote), proof)
@@ -454,6 +473,7 @@ async function rig() {
     host,
     bridge,
     call,
+    dispatch: capabilities.dispatch,
     job,
     rows,
     http: (remote: Remote, ...argv: string[]) =>
