@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { vaultLinks } from '../renderer/lib/terminal-links'
+import { vaultLinks, windowsIndex } from '../renderer/lib/terminal-links'
 import { contextLine, withContext } from '../renderer/state/session-view'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
@@ -34,5 +34,95 @@ describe('a first message about an app', () => {
     expect(withContext('Add a column', [app])).toBe(`${contextLine(app)}\n\nAdd a column`)
     expect(withContext('Add a column', undefined)).toBe('Add a column')
     expect(withContext('', [app])).toBe(contextLine(app))
+  })
+})
+
+describe('vault paths in a terminal on Windows', () => {
+  const WIN_ROOT = 'C:\\Users\\ada\\Holi\\syv\\vault'
+  const FILES = new Set(['AGENTS.md', 'docs/guide.md', 'notes/a.md', 'src/a.ts'])
+  const has = (p: string) => FILES.has(p)
+  const paths = (line: string, root: string | null = WIN_ROOT) =>
+    vaultLinks(line, has, root).map((l) => l.path)
+
+  it('links an absolute path with backslashes, to the file it names', () => {
+    expect(paths(`Read ${WIN_ROOT}\\docs\\guide.md`)).toEqual(['docs/guide.md'])
+    expect(paths(`see ${WIN_ROOT}\\notes\\a.md:12`)).toEqual(['notes/a.md'])
+  })
+
+  it('does not link the vault-root file a longer path ends with', () => {
+    expect(paths('Edited C:\\Users\\ada\\other\\AGENTS.md')).toEqual([])
+    expect(paths('Edited D:\\docs\\AGENTS.md')).toEqual([])
+    expect(paths('Edited ..\\docs\\AGENTS.md')).toEqual([])
+    expect(paths(`Edited ${WIN_ROOT}-other\\AGENTS.md`)).toEqual([])
+  })
+
+  it('reads either slash, either drive-letter case, and the MSYS drive form', () => {
+    expect(paths('Read C:/Users/ada/Holi/syv/vault/notes/a.md')).toEqual(['notes/a.md'])
+    expect(paths('Read c:\\users\\ada\\holi\\syv\\vault\\notes\\a.md')).toEqual(['notes/a.md'])
+    expect(paths('Read /c/Users/ada/Holi/syv/vault/notes/a.md')).toEqual(['notes/a.md'])
+  })
+
+  it('reads a relative path with backslashes or a leading .\\', () => {
+    expect(paths('see src\\a.ts')).toEqual(['src/a.ts'])
+    expect(paths('see .\\notes\\a.md')).toEqual(['notes/a.md'])
+    expect(paths('see src/a.ts')).toEqual(['src/a.ts'])
+  })
+
+  it('links a path under a profile folder that holds a space', () => {
+    const root = 'C:\\Users\\Ada Lovelace\\Holi\\syv\\vault'
+    const line = `Read ${root}\\docs\\guide.md and C:\\Users\\Ada Lovelace\\other\\AGENTS.md`
+    expect(vaultLinks(line, has, root)).toEqual([{ path: 'docs/guide.md', start: 5, end: 55 }])
+    expect(paths(`see c:/users/ada lovelace/holi/syv/vault/notes/a.md:3`, root)).toEqual([
+      'notes/a.md',
+    ])
+  })
+
+  it("links a path under a profile folder that holds a space in Git Bash's /c/ spelling", () => {
+    const root = 'C:\\Users\\Ada Lovelace\\Holi\\syv\\vault'
+    expect(vaultLinks('Read /c/Users/Ada Lovelace/Holi/syv/vault/notes/a.md', has, root)).toEqual([
+      { path: 'notes/a.md', start: 5, end: 52 },
+    ])
+    // Another drive, or a sibling folder of the clone, is still no file of the vault.
+    expect(paths('Read /d/Users/Ada Lovelace/Holi/syv/vault/notes/a.md', root)).toEqual([])
+    expect(paths('Read /c/Users/Ada Lovelace/Holi/syv/other/notes/a.md', root)).toEqual([])
+  })
+
+  it('keeps each link where it is in the line', () => {
+    expect(vaultLinks('see src\\a.ts now', has, WIN_ROOT)).toEqual([
+      { path: 'src/a.ts', start: 4, end: 12 },
+    ])
+  })
+
+  it('leaves the POSIX reading alone, backslash included', () => {
+    const posixRoot = '/Users/ada/Holi/syv/vault'
+    const only = (p: string) => p === 'a.ts'
+    expect(vaultLinks('see src\\a.ts', only, posixRoot).map((l) => l.path)).toEqual(['a.ts'])
+    expect(vaultLinks('see src/a.ts', has, null).map((l) => l.path)).toEqual(['src/a.ts'])
+  })
+})
+
+describe('a Windows path whose case differs from the vault', () => {
+  const WIN = String.raw`C:\Users\ada\Holi\r`
+  const known = new Set(['Notes/Plan.md', 'a.md'])
+  const links = (line: string) =>
+    vaultLinks(line, (path) => known.has(path), WIN, windowsIndex(known, WIN))
+
+  it('links the file under the spelling the vault has', () => {
+    expect(links(String.raw`see C:\Users\ada\Holi\r\notes\PLAN.md now`)).toEqual([
+      { path: 'Notes/Plan.md', start: 4, end: 37 },
+    ])
+    expect(links('see /c/users/ada/holi/r/A.MD')).toEqual([{ path: 'a.md', start: 4, end: 28 }])
+  })
+
+  it('still links nothing for a name the vault lacks', () => {
+    expect(links(String.raw`see C:\Users\ada\Holi\r\notes\other.md`)).toEqual([])
+  })
+
+  it('reads a POSIX clone exactly', () => {
+    const index = windowsIndex(known, '/home/ada/Holi/r')
+    expect(index).toBeUndefined()
+    expect(
+      vaultLinks('see /home/ada/Holi/r/notes/plan.md', (p) => known.has(p), '/home/ada/Holi/r'),
+    ).toEqual([])
   })
 })
