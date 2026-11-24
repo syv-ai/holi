@@ -150,7 +150,7 @@ root.__holiMdxReceive = (encoded) => {
                   : 1,
             column:
               typeof start?.column === 'number'
-                ? start.column
+                ? start.column + 1
                 : typeof candidate.column === 'number'
                   ? candidate.column
                   : 1,

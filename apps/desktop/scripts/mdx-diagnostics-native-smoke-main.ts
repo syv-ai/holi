@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { app, BrowserWindow, ipcMain, session, type WebContents } from 'electron'
 import { createGuestProbes } from './mdx-compiler-guest-probes'
-import { mkdir, readFile, rename, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createMdxResources } from '../src/main/mdx-resources'
 import { createMdxDiagnostics } from '../src/main/mdx-diagnostics'
@@ -37,6 +37,7 @@ const compiler = createMdxResources(join(app.getAppPath(), 'out/mdx-compiler'))
 const trustStore = createMdxTrustStore(join(profile, 'mdx-trust.json'))
 const owner = () => ({ accountId: identity.accountId, remote })
 let dependencyRaceChild: string | null = null
+let graphMutation: ((source: string) => Promise<void>) | null = null
 const diagnostics = createMdxDiagnostics({
   authorize: (candidate, requested) => requested === remote && candidate === identity,
   context: (token, requested) => (token === context && requested === remote ? identity : null),
@@ -50,6 +51,7 @@ const diagnostics = createMdxDiagnostics({
   inspect: (resourceOwner, source, signal, format) => {
     inspectedSources += 1
     return compiler.inspect(resourceOwner, source, signal, format).then(async (result) => {
+      await graphMutation?.(source)
       if (source.includes('HOLI_NATIVE_DEPENDENCY_REPLACEMENT_RACE') && dependencyRaceChild) {
         await writeFile(dependencyRaceChild, '# changed after inspection\n')
         dependencyRaceChild = null
@@ -212,8 +214,8 @@ invoke('smoke:scenarios', async () => {
   await mkdir(join(vault, '.holi/memory'), { recursive: true })
   await writeFile(join(vault, '.holi/memory/secret.mdx'), 'do not inspect fixture content\n')
   assert(
-    (await compileGraphCase('protected memory import', "import '../.holi/memory/secret.mdx'\n")).length >
-      0,
+    (await compileGraphCase('protected memory import', "import '../.holi/memory/secret.mdx'\n"))
+      .length > 0,
   )
   assert(
     (await compileGraphCase('protected memory case alias', "import '../.HOLI/memory/secret.mdx'\n"))
@@ -235,12 +237,26 @@ invoke('smoke:scenarios', async () => {
   for (const name of budgetFiles)
     await writeFile(join(vault, 'notes/graph', name), 'export const value = 1\n')
   assert(
-    (await compileGraphCase('module count budget', "import './graph/budget0.js'\n" + budgetFiles.slice(1).map((name) => `import './graph/${name}'`).join('\n'))).length > 0,
+    (
+      await compileGraphCase(
+        'module count budget',
+        "import './graph/budget0.js'\n" +
+          budgetFiles
+            .slice(1)
+            .map((name) => `import './graph/${name}'`)
+            .join('\n'),
+      )
+    ).length > 0,
   )
   await writeFile(join(vault, 'notes/graph/aggregate-a.js'), 'x'.repeat(600 * 1024))
   await writeFile(join(vault, 'notes/graph/aggregate-b.js'), 'x'.repeat(600 * 1024))
   assert(
-    (await compileGraphCase('aggregate size budget', "import './graph/aggregate-a.js'\nimport './graph/aggregate-b.js'\n")).length > 0,
+    (
+      await compileGraphCase(
+        'aggregate size budget',
+        "import './graph/aggregate-a.js'\nimport './graph/aggregate-b.js'\n",
+      )
+    ).length > 0,
   )
   for (let index = 0; index < 18; index++) {
     await writeFile(
@@ -271,6 +287,90 @@ invoke('smoke:scenarios', async () => {
   assert(raceRejected, 'dependency replacement during inspection must invalidate graph snapshot')
   graphCases.push({ name: 'dependency replacement race', outcome: 'refused' })
   assert.deepEqual(await compileGraphCase('fresh source after race', '# valid source\n'), [])
+
+  const graphRace = async (
+    name: string,
+    source: string,
+    mutate: () => Promise<void>,
+    restore: () => Promise<void>,
+  ) => {
+    graphMutation = async (parsed) => {
+      if (!parsed.includes('HOLI_GRAPH_RACE_CHILD')) return
+      graphMutation = null
+      await mutate()
+    }
+    let refused = false
+    try {
+      await compileGraphCase(name, source)
+    } catch {
+      refused = true
+    } finally {
+      graphMutation = null
+      await restore()
+    }
+    assert(refused, `${name} must reject stale diagnostics`)
+    graphCases.push({ name, outcome: 'refused' })
+  }
+  await writeFile(
+    join(vault, 'notes/graph/race.js'),
+    "export const value = 'HOLI_GRAPH_RACE_CHILD'",
+  )
+  const backupVault = `${vault}-graph-race-backup`
+  await graphRace(
+    'root replacement',
+    "import './graph/race.js'\n",
+    async () => {
+      await rename(vault, backupVault)
+      await mkdir(join(vault, 'notes'), { recursive: true })
+      await writeFile(file, '# replacement root')
+    },
+    async () => {
+      await rm(vault, { recursive: true, force: true })
+      await rename(backupVault, vault)
+    },
+  )
+  const graphDir = join(vault, 'notes/graph')
+  const backupGraph = join(vault, 'notes/graph-backup')
+  await graphRace(
+    'ancestor replacement',
+    "import './graph/race.js'\n",
+    async () => {
+      await rename(graphDir, backupGraph)
+      await mkdir(graphDir)
+    },
+    async () => {
+      await rm(graphDir, { recursive: true, force: true })
+      await rename(backupGraph, graphDir)
+    },
+  )
+  await writeFile(join(graphDir, 'shared.js'), 'export const shared = 1')
+  await writeFile(join(graphDir, 'left.js'), "export * from './shared.js'")
+  await writeFile(
+    join(graphDir, 'right.js'),
+    "export * from './shared.js'\nexport const marker = 'HOLI_GRAPH_RACE_CHILD'",
+  )
+  await graphRace(
+    'diamond snapshot replacement',
+    "import './graph/left.js'\nimport './graph/right.js'\n",
+    async () => {
+      await writeFile(join(graphDir, 'shared.js'), 'export const shared = 200')
+    },
+    async () => {},
+  )
+  await writeFile(join(graphDir, 'case.js'), 'export const value = 1')
+  await writeFile(join(graphDir, 'CASE.js'), 'export const value = ;')
+  assert(
+    (
+      await compileGraphCase(
+        'case-distinct dependency paths',
+        "import './graph/case.js'\nimport './graph/CASE.js'\n",
+      )
+    ).length > 0,
+  )
+  assert.deepEqual(
+    await compileGraphCase('fresh source after graph races', '# source remains usable'),
+    [],
+  )
 
   const activeOwner = await diagnostics.acquire({ remote, path: 'notes/fixture.mdx', context })
   const activeReady = probes.hold()

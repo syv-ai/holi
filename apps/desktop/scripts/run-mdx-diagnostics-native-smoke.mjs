@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -363,6 +363,20 @@ try {
     'hostile MDX dependency refused',
     'hostile MDX expression not evaluated by the renderer',
   )
+  for (const [label, source] of [
+    ['missing dependency', "import './graph/missing.jsx'\n"],
+    ['protected dependency', "import './graph/secret.local.jsx'\n"],
+    ['external dependency', "import 'https://example.invalid/module.js'\n"],
+  ]) {
+    await editAndWaitForSave(source, `${label} editable source`)
+    await waitFor(
+      () => evaluate('window.__mdxSmoke.diagnostics().length > 0'),
+      `${label} diagnostic`,
+    )
+    assert.equal(await readFile(join(vaultRoot, 'notes/fixture.mdx'), 'utf8'), source)
+    checks.push(`${label}: FileView source remains editable and saved`)
+  }
+  await editAndWaitForSave('# recovered source\n', 'source recovery after dependency refusals')
   const runtimeErrors = await evaluate(`JSON.stringify(window.__mdxSmoke.errors)`)
   assert.deepEqual(JSON.parse(runtimeErrors), [], 'fixture renderer reported runtime errors')
 
