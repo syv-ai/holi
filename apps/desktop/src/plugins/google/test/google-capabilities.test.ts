@@ -135,10 +135,12 @@ function attachmentRig({
   scopes,
   onRefresh = () => scopes,
   expired = false,
+  onRequest,
 }: {
   scopes: string[]
   onRefresh?: () => string[]
   expired?: boolean
+  onRequest?: (path: string, init: RequestInit, expireToken: () => void) => Response | undefined
 }) {
   let now = expired ? 100_000 : 0
   const remote = 'owner/vault'
@@ -178,6 +180,10 @@ function attachmentRig({
     const { pathname: path } = new URL(input)
     const method = init.method ?? 'GET'
     requests.push({ path, method })
+    const result = onRequest?.(path, init, () => {
+      now = 100_000
+    })
+    if (result) return result
     if (method !== 'GET') return new Response(null, { status: 500 })
     if (path === '/calendar/v3/users/me/calendarList/primary')
       return Response.json({ accessRole: 'owner' })
@@ -242,6 +248,11 @@ describe('event attachment capabilities', () => {
     await expect(
       invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }, 'cli'),
     ).rejects.toThrow()
+    for (const door of ['cli', 'app'] as const) {
+      await expect(
+        invoke('checkEventFileAccess', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }, door),
+      ).rejects.toThrow()
+    }
     expect(
       requests.every(({ path, method }) => path.startsWith('/calendar/v3/') && method === 'GET'),
     ).toBe(true)
@@ -268,13 +279,94 @@ describe('event attachment capabilities', () => {
     },
   )
 
+  it('refuses a stale event on the first page and rechecks editability before pagination', async () => {
+    let locked = false
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      onRequest: (path) => {
+        if (path.endsWith('/events/deleted') || path.endsWith('/calendarList/retired'))
+          return new Response(null, { status: 404 })
+        if (path.endsWith('/events/event1'))
+          return Response.json({ id: 'event1', etag: '"v1"', organizer: { self: true }, locked })
+        if (path === '/drive/v3/files') return Response.json({ files: [], nextPageToken: 'next' })
+      },
+    })
+    for (const stale of [{ eventId: 'deleted' }, { calendarId: 'retired' }]) {
+      await expect(invoke('driveFiles', { ...ATTACHMENT_TARGET, ...stale })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      })
+      expect(requests.filter(({ path }) => path.startsWith('/drive/'))).toEqual([])
+    }
+    await expect(invoke('driveFiles')).resolves.toEqual({ files: [], nextPageToken: 'next' })
+    requests.length = 0
+    locked = true
+    await expect(
+      invoke('driveFiles', { ...ATTACHMENT_TARGET, pageToken: 'next' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(requests.filter(({ path }) => path.startsWith('/drive/'))).toEqual([])
+  })
+
+  it('preserves confirmed guest access and reports reconnect if refresh narrows the grant mid-sharing', async () => {
+    const first = 'one@example.com'
+    const second = 'two@example.com'
+    const selected = 'narrow-refresh'
+    const metadata = {
+      id: selected,
+      name: 'Selected',
+      webViewLink: 'https://example.com/file',
+      mimeType: 'application/pdf',
+      capabilities: { canShare: true },
+    }
+    const attachment = { fileId: selected, fileUrl: metadata.webViewLink, title: metadata.name }
+    const grants: object[] = []
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      onRefresh: () => [CALENDAR_READ, CALENDAR_WRITE, DRIVE_READ],
+      onRequest: (path, init, expireToken) => {
+        if (path.endsWith('/events/event1'))
+          return Response.json({
+            id: 'event1',
+            etag: '"v1"',
+            organizer: { self: true },
+            attachments: [attachment],
+            attendees: [{ email: first }, { email: second }],
+          })
+        if (path.endsWith(`/files/${selected}`)) return Response.json(metadata)
+        if (path.endsWith('/permissions')) {
+          if (init.method === 'POST') {
+            grants.push({ ...JSON.parse(String(init.body)), id: 'created' })
+            return Response.json({ id: 'created' })
+          }
+          if (grants.length > 0) expireToken()
+          return Response.json({ permissions: grants })
+        }
+      },
+    })
+    await expect(
+      invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: [selected] }),
+    ).resolves.toMatchObject({
+      attachmentStatus: 'attached',
+      attachments: [attachment],
+      sharingComplete: false,
+      reconnect: true,
+      sharing: [
+        { guest: first, status: 'granted' },
+        { guest: second, status: 'failed' },
+      ],
+    })
+    expect(requests.filter(({ method }) => method !== 'GET')).toEqual([
+      { path: `/drive/v3/files/${selected}/permissions`, method: 'POST' },
+    ])
+  })
+
   it('does not send a Drive search when the plugin stops during refresh', async () => {
+    const scopes = [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL]
     const rig = attachmentRig({
-      scopes: [DRIVE_FULL],
+      scopes,
       expired: true,
       onRefresh: () => {
         rig.dispose()
-        return [DRIVE_FULL]
+        return scopes
       },
     })
     await expect(rig.invoke('driveFiles')).rejects.toMatchObject({ code: 'UNAVAILABLE' })

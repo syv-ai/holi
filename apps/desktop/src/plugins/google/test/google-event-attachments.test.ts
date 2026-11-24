@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { GoogleApi } from '../main/api'
-import { attachEventFiles, driveFiles, eventAttachments } from '../main/event-attachments'
+import {
+  attachEventFiles,
+  checkEventFileAccess,
+  driveFiles,
+  eventAttachments,
+} from '../main/event-attachments'
 import type { EventAttachment } from '../shared/event-attachments'
 
 const target = {
@@ -45,7 +50,7 @@ const resource = { resource: true, email: 'room@example.com' }
 const json = (body: unknown, status = 200) => Response.json(body, { status })
 const validate = async () => {}
 
-function transport(handle: (url: URL, request: RequestInit) => Response) {
+function transport(handle: (url: URL, request: RequestInit) => Response | Promise<Response>) {
   return new GoogleApi({
     accessToken: async () => 'synthetic-token',
     fetch: async (input, init) => handle(new URL(String(input)), init ?? {}),
@@ -108,13 +113,14 @@ describe('Calendar attachments over Google transport', () => {
       attachmentStatus: 'attached',
       attachments: [original, attachment('selected')],
       sharing: [],
+      sharingComplete: true,
     })
     expect(event.description).toBe(solo.description)
   })
 
   it('re-merges a 412 without duplicates and shares only with the latest real guest', async () => {
     let event = { ...solo, attendees: [{ email: 'old@example.com' }] }
-    const grants: unknown[] = []
+    const grants: Record<string, unknown>[] = []
     const api = transport((url, req) => {
       if (calendarList(url) && !req.method) return json({ accessRole: 'writer' })
       if (calendarEvent(url)) {
@@ -143,7 +149,7 @@ describe('Calendar attachments over Google transport', () => {
           if (grants.length > 0) {
             event = { ...event, etag: '"1004"', attendees: [{ email: 'new@example.com' }] }
           }
-          return json({ permissions: [] })
+          return json({ permissions: grants.map((grant) => ({ ...grant, id: 'new-permission' })) })
         }
         if (req.method === 'POST') {
           grants.push(JSON.parse(String(req.body)))
@@ -156,6 +162,7 @@ describe('Calendar attachments over Google transport', () => {
     expect(result).toMatchObject({
       attachmentStatus: 'attached',
       attachments: [original, attachment('concurrent'), attachment('selected')],
+      sharingComplete: false,
       sharing: [
         { status: 'granted', fileId: 'selected', guest: 'new@example.com' },
         { status: 'failed', fileId: 'selected', guest: 'leaving@example.com' },
@@ -236,12 +243,15 @@ describe('Calendar attachments over Google transport', () => {
 
 it('quotes the Drive search term, preserves pagination, and excludes unusable results', async () => {
   const api = transport((url) => {
+    if (calendarList(url)) return json({ accessRole: 'owner' })
+    if (calendarEvent(url)) return json(solo)
     expect(url.searchParams.get('q')).toContain(String.raw`name contains 'O\'Neil\\Draft'`)
     if (url.searchParams.get('pageToken') === 'next') return json({ files: [file('usable')] })
     return json({
       nextPageToken: 'next',
       files: [
         { ...file('folder'), mimeType: 'application/vnd.google-apps.folder' },
+        { ...file('shortcut'), mimeType: 'application/vnd.google-apps.shortcut' },
         { ...file('trash'), trashed: true },
         { ...file('unshareable'), capabilities: { canShare: false } },
         { ...file('no_link'), webViewLink: undefined },
@@ -249,9 +259,157 @@ it('quotes the Drive search term, preserves pagination, and excludes unusable re
     })
   })
   const query = String.raw`O'Neil\Draft`
-  const page = await driveFiles(api, query, undefined, validate)
+  const page = await driveFiles(api, target, query, undefined, validate)
   expect(page).toEqual({ files: [], nextPageToken: 'next' })
-  await expect(driveFiles(api, query, page.nextPageToken, validate)).resolves.toEqual({
+  await expect(driveFiles(api, target, query, page.nextPageToken, validate)).resolves.toEqual({
     files: [{ id: 'usable', name: file('usable').name, mimeType: file('usable').mimeType }],
   })
+})
+
+it('refuses a submitted shortcut without changing the event or creating permissions', async () => {
+  const writes: string[] = []
+  const api = transport((url, req) => {
+    if (req.method === 'PATCH' || req.method === 'POST') writes.push(req.method)
+    if (calendarList(url)) return json({ accessRole: 'owner' })
+    if (calendarEvent(url)) return json(solo)
+    return json({ ...file('shortcut'), mimeType: 'application/vnd.google-apps.shortcut' })
+  })
+  await expect(attachEventFiles(api, target, ['shortcut'], validate)).resolves.toMatchObject({
+    attachmentStatus: 'failed',
+    attachments: [original],
+    sharingComplete: false,
+  })
+  expect(writes).toEqual([])
+})
+
+it('does not replay an unverified permission and checks the current attachment and access without writing', async () => {
+  const guest = 'verify@example.com'
+  let event = { ...solo, attendees: [{ email: guest }] }
+  const notifications: string[] = []
+  let patches = 0
+  let permissionVisible = false
+  const api = transport((url, req) => {
+    if (calendarList(url)) return json({ accessRole: 'owner' })
+    if (calendarEvent(url)) {
+      if (req.method === 'PATCH') {
+        patches++
+        event = { ...event, ...patched(event, url, req) }
+      }
+      return json(event)
+    }
+    if (url.pathname.endsWith('/permissions')) {
+      if (req.method === 'POST') {
+        notifications.push(JSON.parse(String(req.body)).emailAddress)
+        // A write response does not establish that Drive's ACL has this guest.
+        return json({ id: 'not-yet-visible' })
+      }
+      return json({
+        permissions: permissionVisible
+          ? [{ id: 'not-yet-visible', type: 'user', role: 'reader', emailAddress: guest }]
+          : [],
+      })
+    }
+    return json(file('uncertain'))
+  })
+  const submit = () => attachEventFiles(api, target, ['uncertain'], validate)
+  const check = () => checkEventFileAccess(api, target, ['uncertain'], validate)
+  for (const run of [submit, submit]) {
+    await expect(run()).resolves.toMatchObject({
+      attachmentStatus: 'attached',
+      sharingComplete: false,
+      sharing: [{ guest, status: 'unknown' }],
+    })
+  }
+  const newGuest = 'not-shared@example.com'
+  event = { ...event, attendees: [{ email: guest }, { email: newGuest }] }
+  await expect(check()).resolves.toMatchObject({
+    attachmentStatus: 'attached',
+    sharingComplete: false,
+    sharing: [
+      { guest, status: 'unknown' },
+      { guest: newGuest, status: 'failed' },
+    ],
+  })
+  event = { ...event, attendees: [{ email: guest }] }
+  permissionVisible = true
+  await expect(check()).resolves.toMatchObject({
+    attachmentStatus: 'attached',
+    sharingComplete: true,
+    sharing: [{ guest, status: 'already-accessible' }],
+  })
+  event = { ...event, attachments: [original] }
+  await expect(check()).resolves.toMatchObject({
+    attachments: [original],
+    attachmentStatus: 'unknown',
+    sharingComplete: false,
+    sharing: [],
+  })
+  expect(patches).toBe(1)
+  expect(notifications).toEqual([guest])
+})
+
+it.each([
+  { attendees: [{ email: 'existing@example.com' }, { email: 'joined@example.com' }] },
+  { attendeesOmitted: true },
+])('reports incomplete access when the event changes during an ACL read (%j)', async (change) => {
+  const guest = 'existing@example.com'
+  let event = { ...solo, attachments: [attachment('in-change')], attendees: [{ email: guest }] }
+  const notifications: unknown[] = []
+  const api = transport((url, req) => {
+    if (calendarList(url)) return json({ accessRole: 'owner' })
+    if (calendarEvent(url)) return json(event)
+    if (url.pathname.endsWith('/permissions')) {
+      if (req.method === 'POST') notifications.push(req.body)
+      event = { ...event, ...change }
+      return json({ permissions: [{ type: 'user', emailAddress: guest, role: 'writer' }] })
+    }
+    return json(file('in-change'))
+  })
+  await expect(attachEventFiles(api, target, ['in-change'], validate)).resolves.toMatchObject({
+    attachmentStatus: 'attached',
+    sharingComplete: false,
+    message: expect.any(String),
+    sharing: [{ guest, status: 'already-accessible' }],
+  })
+  expect(notifications).toEqual([])
+})
+
+it('preserves verified access and an uncertain POST at the deadline without attempting later guests', async () => {
+  const guests = ['verified@example.com', 'in-flight@example.com', 'not-started@example.com']
+  const event = {
+    ...solo,
+    attendees: guests.map((email) => ({ email })),
+    attachments: [attachment('deadline')],
+  }
+  const deadline = new AbortController()
+  const permissions: object[] = []
+  const notifications: string[] = []
+  const api = transport((url, req) => {
+    if (calendarList(url)) return json({ accessRole: 'owner' })
+    if (calendarEvent(url)) return json(event)
+    if (url.pathname.endsWith('/permissions')) {
+      if (req.method === 'GET') return json({ permissions })
+      const body = JSON.parse(String(req.body))
+      notifications.push(body.emailAddress)
+      if (notifications.length === 2) {
+        deadline.abort(new DOMException('Operation expired', 'TimeoutError'))
+        return Promise.reject(req.signal?.reason)
+      }
+      permissions.push({ id: 'created', ...body })
+      return json({ id: 'created' })
+    }
+    return json(file('deadline'))
+  })
+  await expect(
+    attachEventFiles(api, target, ['deadline'], validate, { signal: deadline.signal }),
+  ).resolves.toMatchObject({
+    attachmentStatus: 'attached',
+    sharingComplete: false,
+    sharing: [
+      { guest: guests[0], status: 'granted' },
+      { guest: guests[1], status: 'unknown' },
+      { guest: guests[2], status: 'failed' },
+    ],
+  })
+  expect(notifications).toEqual(guests.slice(0, 2))
 })

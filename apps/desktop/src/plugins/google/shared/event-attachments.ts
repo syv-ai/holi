@@ -41,4 +41,8 @@ export interface AttachEventFilesResult {
   attachmentStatus: 'attached' | 'failed' | 'unknown'
   message?: string
   sharing: AttachmentSharingResult[]
+  /** The attachment and guest outcomes still apply; further work needs Google consent. */
+  reconnect?: boolean
+  /** Whether access was confirmed for every selected attachment and current guest. */
+  sharingComplete?: boolean
 }
