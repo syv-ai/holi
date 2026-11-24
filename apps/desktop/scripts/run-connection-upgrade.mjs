@@ -587,13 +587,19 @@ try {
       deletionAllowed = true
     })
   }
+  receipt.cleanup = {
+    failures,
+    filesRetained: !deletionAllowed,
+    resourcesDeleted: deletionAllowed,
+    root: !deletionAllowed ? root : undefined,
+  }
+  if (evidence) await checkpoint(receipt.phase).catch(() => {})
   if (failures.length) {
     receipt.cleanup = {
       failures,
       filesRetained: !deletionAllowed,
       root: !deletionAllowed ? root : undefined,
     }
-    if (evidence) await checkpoint(receipt.phase).catch(() => {})
     console.error('Owned upgrade fixture cleanup failed; see sanitised cleanup receipt')
     process.exitCode = 1
   }
