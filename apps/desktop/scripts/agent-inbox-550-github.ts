@@ -21,19 +21,26 @@ const safeStorage: SafeStorageLike = {
   },
 }
 export const store = new TokenStore(join(root, 'userData/github-auth.enc'), safeStorage)
-export async function seedSession(): Promise<GitHubSession> {
+export async function createSession(): Promise<GitHubSession> {
   await mkdir(dirname(join(root, 'userData/github-auth.enc')), { recursive: true })
   const auth: StoredAuth = {
     token: 'fixture-token',
     accountId: 55001,
     login: 'smoke-550',
+    name: 'Smoke 550',
+    avatarUrl: 'https://avatars.githubusercontent.com/u/55001?v=4',
     scopes: ['repo'],
   }
   await store.write(auth)
   const fetch = async (input: string | URL | Request): Promise<Response> => {
     const url = String(input)
-    if (url.endsWith('/user'))
-      return Response.json({ id: 55001, login: 'smoke-550', name: 'Smoke 550' })
+    if (url === 'https://api.github.com/user')
+      return Response.json({
+        id: 55001,
+        login: 'smoke-550',
+        name: 'Smoke 550',
+        avatar_url: 'https://avatars.githubusercontent.com/u/55001?v=4',
+      })
     throw new Error(`Unowned GitHub request denied: ${url}`)
   }
   return GitHubSession.load({ store, fetch })
