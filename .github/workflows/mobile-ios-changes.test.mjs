@@ -73,6 +73,28 @@ for (const [name, before, after, expected] of [
   })
 }
 
+test('workflow dispatch always requests native compatibility', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mobile-ios-changes-'))
+  try {
+    const outputPath = join(directory, 'output')
+    execFileSync(
+      process.execPath,
+      [new URL('./mobile-ios-changes.mjs', import.meta.url).pathname],
+      {
+        env: {
+          ...process.env,
+          GITHUB_EVENT_NAME: 'workflow_dispatch',
+          GITHUB_EVENT_PATH: join(directory, 'event.json'),
+          GITHUB_OUTPUT: outputPath,
+        },
+      },
+    )
+    assert.equal(await readFile(outputPath, 'utf8'), 'run=true\\n')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('main pushes always request native compatibility', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mobile-ios-changes-'))
   try {
