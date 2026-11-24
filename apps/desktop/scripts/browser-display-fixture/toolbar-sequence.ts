@@ -526,6 +526,10 @@
   assert.equal(await field(`document.querySelector('#rich').innerHTML`), changedRichMarkup)
   const multiline = '#multiline'
   const observed: string[] = []
+  const recordMultiline = (outcome: string) => {
+    observed.push(outcome)
+    mark(outcome)
+  }
   const setupMultiline = async (markup: string, point: string) => {
     await field(
       `(() => { const h=document.querySelector('${multiline}'); h.innerHTML=${JSON.stringify(markup)}; h.focus(); const [node,offset]=((h)=>${point})(h); const r=document.createRange(); r.setStart(node,offset); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r); })()`,
@@ -587,7 +591,7 @@
     ),
     true,
   )
-  observed.push('paragraph-div-empty-line-grapheme-column-line-and-word-motions-preserve-dom')
+  recordMultiline('paragraph-div-empty-line-grapheme-column-line-and-word-motions-preserve-dom')
 
   // Compare exact native edit results with Vim disabled, rather than inventing
   // Blink's insertion affinity, paragraph splitting or edit-history semantics.
@@ -639,9 +643,8 @@
       results.push({ edited, undone })
     }
     assert.deepEqual(results[1], results[0], scenario.name + ' native baseline')
-    observed.push(scenario.name + '-matches-native-baseline-and-history')
+    recordMultiline(scenario.name + '-matches-native-baseline-and-history')
   }
-  await pref(true)
   await setupMultiline('<p>alpha</p><p><br></p>', '[h.lastChild,0]')
   await trustedPress(view, 'Escape')
   await badge('normal')
@@ -657,7 +660,7 @@
     await field(`document.querySelector('${multiline}').lastChild.textContent`),
     '日本語',
   )
-  observed.push('multiline-native-ime-insertion')
+  recordMultiline('multiline-native-ime-insertion')
 
   await setupMultiline('<p>alpha</p><p>beta</p>', '[h.firstChild.firstChild,0]')
   await trustedPress(view, 'Escape')
@@ -684,7 +687,7 @@
   const beforeUnsupported = await field(`document.querySelector('${multiline}').innerHTML`)
   for (const key of ['x', 'd', 'd']) await trustedPress(view, key)
   assert.equal(await field(`document.querySelector('${multiline}').innerHTML`), beforeUnsupported)
-  observed.push('controlled-sync-async-updates-atom-refusal-rearm-unsupported-normal-commands')
+  recordMultiline('controlled-sync-async-updates-atom-refusal-rearm-unsupported-normal-commands')
 
   await setupMultiline(markup, '[h.firstChild.firstChild,0]')
   await trustedPress(view, 'Escape')
