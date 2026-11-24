@@ -20,17 +20,26 @@ const MAX_OUTPUT = 2 * 1024 * 1024
 const MAX_EVIDENCE = 1024 * 1024
 const TOTAL_TIMEOUT = 180_000
 const TEST_TIMEOUT = 100_000
-const scenarioNames = ['initial-turn', 'follow-up', 'http-400', 'stall-stop', 'stall-leave']
+const baseNames = ['initial-turn', 'follow-up', 'http-400', 'stall-stop', 'stall-leave']
+const sandboxNames = [
+  'sandbox-read-only',
+  'sandbox-workspace',
+  'sandbox-outside',
+  'sandbox-network',
+]
+const namesFor = (sandboxProof) => (sandboxProof ? [...sandboxNames, ...baseNames] : baseNames)
 
-const leaseRoles = [
+const baseLeaseRoles = [
   'initial-turn-version',
   'initial-turn',
   'follow-up',
   'follow-up-resume',
-  ...scenarioNames.slice(2),
+  ...baseNames.slice(2),
 ]
 
-function hasFinalSettlement(root, identity, workerTmp, bytes, requireComplete) {
+function hasFinalSettlement(root, identity, workerTmp, bytes, requireComplete, sandboxProof) {
+  const scenarioNames = namesFor(sandboxProof)
+  const leaseRoles = sandboxProof ? [...sandboxNames, ...baseLeaseRoles] : baseLeaseRoles
   const receipt = readFinalSettlement(root, identity, leaseRoles, bytes, requireComplete)
   return (
     receipt &&
@@ -100,7 +109,8 @@ function validFailedScenario(scenario, bin) {
   )
 }
 
-function validateProbe(proof, expectedBin, allowFailure) {
+function validateProbe(proof, expectedBin, allowFailure, sandboxProof = false) {
+  const scenarioNames = namesFor(sandboxProof)
   if (
     !proof ||
     proof.schema !== 'holi.codex-exec-producer.v1' ||
@@ -237,6 +247,92 @@ function validateProbe(proof, expectedBin, allowFailure) {
       !s.brackets.some((b) => b.id === s.sessionId && b.edge === 'end')
     )
       return `${name} lacks the host turn bracket`
+    if (sandboxNames.includes(name)) {
+      const o = s.sandbox
+      const rawEvents = s.rawProcesses.flatMap((p) =>
+        p.stdout
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line)),
+      )
+      const commands = rawEvents.filter(
+        (e) => e.type === 'item.completed' && e.item?.type === 'command_execution',
+      )
+      if (
+        s.platform !== 'darwin' ||
+        !s.platformRelease ||
+        !s.arch ||
+        s.outcome !== 'completed' ||
+        s.processes.length !== 1 ||
+        s.requests.length !== 2 ||
+        !o ||
+        typeof o.command !== 'string' ||
+        !o.command ||
+        typeof o.nonce !== 'string' ||
+        !o.nonce ||
+        o.before !== 'original' ||
+        commands.length !== 1 ||
+        JSON.stringify(commands[0].item) !== JSON.stringify(o.nativeCommand) ||
+        o.nativeCommand?.status !== 'completed' ||
+        o.nativeCommand?.exit_code !== 0 ||
+        !Array.isArray(o.statuses)
+      )
+        return `${name} has incomplete native sandbox observations`
+      const statuses = [...o.nativeCommand.aggregated_output.matchAll(/HOLI_ATTEMPT_(\d+)=(\d+)/g)]
+      if (
+        statuses.some((m, i) => Number(m[1]) !== i) ||
+        JSON.stringify(statuses.map((m) => Number(m[2]))) !== JSON.stringify(o.statuses)
+      )
+        return `${name} has contradictory tool exit observations`
+      let input
+      try {
+        input = JSON.parse(s.requests[1].body).input
+      } catch {
+        return `${name} has an invalid native tool response request`
+      }
+      const results = Array.isArray(input)
+        ? input.filter(
+            (item) => item?.type === 'function_call_output' && item.call_id === 'call_sandbox',
+          )
+        : []
+      if (
+        results.length !== 1 ||
+        typeof results[0].output !== 'string' ||
+        !results[0].output.endsWith(`\nOutput:\n${o.nativeCommand.aggregated_output}`)
+      )
+        return `${name} lacks a correlated native tool round-trip`
+      if (name === 'sandbox-workspace') {
+        if (
+          o.statuses.length !== 3 ||
+          o.statuses.some((c) => c !== 0) ||
+          o.after !== o.nonce ||
+          o.createdContent !== o.nonce ||
+          o.additionalContent !== o.nonce ||
+          o.created !== true
+        )
+          return `${name} lacks the successful writable-root control`
+      } else {
+        if (
+          o.after !== 'original' ||
+          o.created !== false ||
+          o.createdContent !== null ||
+          o.statuses.some((c) => c === 0)
+        )
+          return `${name} did not deny the observed operations`
+        if (name === 'sandbox-network') {
+          if (
+            o.statuses.length !== 1 ||
+            o.statuses[0] !== 7 ||
+            o.controlRequests !== 1 ||
+            o.networkRequests !== 0 ||
+            !/^http:\/\/127\.0\.0\.1:\d+\/tool-/.test(o.url) ||
+            !o.nativeCommand.command.includes(o.url)
+          )
+            return `${name} lacks bounded network denial and its reachability control`
+        } else if (o.statuses.length !== 2 || !o.nativeCommand.command.includes(o.nonce))
+          return `${name} lacks both actual write attempts`
+      }
+    }
     if (
       name === 'initial-turn' &&
       (s.outcome !== 'completed' ||
@@ -295,13 +391,14 @@ function validateProbe(proof, expectedBin, allowFailure) {
   return null
 }
 
-export function validateNativeProof(proof, expectedBin) {
-  return validateProbe(proof, expectedBin, false)
+export function validateNativeProof(proof, expectedBin, sandboxProof = false) {
+  return validateProbe(proof, expectedBin, false, sandboxProof)
 }
 
 // Cleanup can follow a failed probe, but it still requires the complete terminal
 // artifact, not a progress snapshot or a success envelope with missing observations.
-function validFinalArtifact(proof, bin, issue) {
+function validFinalArtifact(proof, bin, issue, sandboxProof) {
+  const scenarioNames = namesFor(sandboxProof)
   return (
     exactKeys(proof, [
       'schema',
@@ -325,7 +422,7 @@ function validFinalArtifact(proof, bin, issue) {
           (scenario.failure === undefined && scenario.failureKind === undefined))
       )
     }) &&
-    (!issue || !validateProbe(proof, bin, true))
+    (!issue || !validateProbe(proof, bin, true, sandboxProof))
   )
 }
 
@@ -335,7 +432,9 @@ export async function runProducerProof({
   timeout = TOTAL_TIMEOUT,
   testEnv = {},
   adapter,
+  sandboxProof = false,
 } = {}) {
+  const expectedCount = namesFor(sandboxProof).length
   const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-codex-exec-proof-')))
   const deadline = Date.now() + timeout
   const proofPath = join(root, 'native-evidence.json')
@@ -487,6 +586,7 @@ export async function runProducerProof({
           TMPDIR: workerTmp,
           TMP: workerTmp,
           TEMP: workerTmp,
+          HOLI_CODEX_SANDBOX_PROOF: sandboxProof ? '1' : '0',
           HOLI_CODEX_BIN: bin,
           HOLI_CODEX_PROOF_OUTPUT: proofPath,
           HOLI_CODEX_PROOF_RUN_ID: identity.runId,
@@ -520,7 +620,7 @@ export async function runProducerProof({
     evidence.native = proof
     let issue
     try {
-      issue = validateNativeProof(proof, bin)
+      issue = validateNativeProof(proof, bin, sandboxProof)
     } catch {
       issue = 'native evidence is malformed'
     }
@@ -530,8 +630,8 @@ export async function runProducerProof({
         // authorize cleanup, even if an earlier diagnostic snapshot parses.
         if (
           bytes.equals(Buffer.from(JSON.stringify(proof))) &&
-          validFinalArtifact(proof, bin, issue) &&
-          hasFinalSettlement(root, identity, workerTmp, bytes, !issue)
+          validFinalArtifact(proof, bin, issue, sandboxProof) &&
+          hasFinalSettlement(root, identity, workerTmp, bytes, !issue, sandboxProof)
         )
           unsettled = undefined
       } catch {
@@ -540,7 +640,7 @@ export async function runProducerProof({
     }
     const testsPassed =
       !runnerFailure &&
-      /\b5 passed\b/.test(test.stdout) &&
+      new RegExp(`\\b${expectedCount} passed\\b`).test(test.stdout) &&
       !/\b[1-9]\d* skipped\b/.test(test.stdout)
     const scenarios = Array.isArray(proof?.scenarios) ? proof.scenarios : []
     const credibleAttempt = (scenario) =>
@@ -597,7 +697,7 @@ export async function runProducerProof({
     else if (issue) evidence.detail = issue
     else if (runnerFailure) evidence.detail = runnerFailure
     else if (!testsPassed)
-      evidence.detail = 'Vitest did not report five executed, non-skipped scenarios'
+      evidence.detail = `Vitest did not report ${expectedCount} executed, non-skipped scenarios`
     return result
   } catch (error) {
     evidence.detail = String(error)
@@ -639,7 +739,7 @@ export async function runProducerProof({
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
-  const result = await runProducerProof()
+  const result = await runProducerProof({ sandboxProof: process.argv.includes('--sandbox-proof') })
   process.stdout.write(`${JSON.stringify(result.evidence, null, 2)}\n`)
   process.exitCode = result.failed ? 1 : 0
 }
