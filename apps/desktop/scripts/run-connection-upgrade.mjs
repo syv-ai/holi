@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createServer } from 'node:http'
 import { createReadStream } from 'node:fs'
-import { lstat, mkdir, mkdtemp, realpath, rm, statfs, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, mkdtemp, realpath, rm, statfs, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +13,7 @@ import { externalizeDepsPlugin } from 'electron-vite'
 import { createOwnedProcesses } from './owned-processes.mjs'
 import { createUpgradeProviders } from './connection-upgrade-provider.mjs'
 import { connectUpgradeInspector } from './upgrade-inspector.mjs'
+import { observeFirstTargetConnections } from './upgrade-first-target.mjs'
 import {
   createUpgradeInstaller,
   installerStatePath,
@@ -38,6 +39,9 @@ let artifact
 let installer
 let installerGuardReady = false
 let appStarted = false
+let firstObserverBinary
+let firstTargetPid
+let upgradeNotBeforeMicros
 let providers
 let feed
 const launchKeys = []
@@ -171,6 +175,18 @@ async function main() {
     '-o',
     binary,
   ])
+  firstObserverBinary = join(scratch, 'upgrade-first-target')
+  await owned.run(
+    '/usr/bin/xcrun',
+    [
+      'swiftc',
+      '-parse-as-library',
+      join(desktop, 'scripts', 'upgrade-first-target.swift'),
+      '-o',
+      firstObserverBinary,
+    ],
+    { timeoutMs: 60_000, signal: abort.signal, label: 'compile owned first-target observer' },
+  )
   const label = 'ai.syv.holi.ShipIt'
   installer = createUpgradeInstaller({
     binary,
@@ -394,6 +410,7 @@ async function main() {
   )
   // A normal DOM click invokes the renderer's install atom, tRPC mutation and
   // main's guarded shutdown. No installer/download method is replaced.
+  upgradeNotBeforeMicros = Date.now() * 1000
   assert(await click('Restart to update'), 'normal install action unavailable')
   inspector.close()
   inspector = null
@@ -404,6 +421,7 @@ async function main() {
     async () => (await ownAppPids()).find((pid) => pid !== child.child.pid),
     180_000,
   )
+  firstTargetPid = newPid
   const installedBuild = (
     await command('/usr/bin/plutil', [
       '-extract',
@@ -419,19 +437,59 @@ async function main() {
   const afterSignature = await command('/usr/bin/codesign', ['-dv', '--verbose=4', artifact])
   assert(afterSignature.stderr.includes(`TeamIdentifier=${team}`), 'updated app identity changed')
   receipt.upgrade = { installedBuild, freshProcess: true, signatureVerified: true }
-  // A PID and a CLI response cannot prove that the response came from this process,
-  // and renderer text cannot prove the Google connection is in the Connections panel.
-  // Until the bounded, permission-gated native observer is integrated, fail closed:
-  // do not report restoration or terminate the first relaunch for the later audit.
-  receipt.firstTargetObservation = {
-    outcome: 'observation-unavailable',
+  const firstEvidence = join(root, 'first-target-evidence')
+  await mkdir(firstEvidence, { mode: 0o700 })
+  receipt.firstTargetObservation = await observeFirstTargetConnections({
+    run: owned.run,
+    helper: firstObserverBinary,
+    fixtureRoot: root,
+    bundlePath: artifact,
+    teamIdentifier: team,
     pid: newPid,
-    backendBoundToTarget: false,
-    googleConnectionsPanelAsserted: false,
-    screenshot: null,
-  }
-  await checkpoint('first-target-observation-required')
-  assert.fail('first-target CLI and Connections-panel observation is unavailable')
+    notBeforeMicros: upgradeNotBeforeMicros,
+    profile,
+    vaultPath: seeded.path,
+    remote: seeded.remote,
+    evidenceDirectory: firstEvidence,
+    email: 'holi-upgrade-fixture@example.invalid',
+    signal: abort.signal,
+  })
+  await checkpoint('first-target-observation')
+  assert(
+    receipt.firstTargetObservation.outcome === 'observed',
+    'first-target observation incomplete',
+  )
+  await copyFile(
+    join(firstEvidence, receipt.firstTargetObservation.screenshot),
+    join(evidence, receipt.firstTargetObservation.screenshot),
+  )
+  receipt.providerRequests = providers.stats.requests
+  receipt.restored = { googleAccountStateStored: true, ownClientSelected: true }
+  receipt.newProcessObserved = true
+  const proof = JSON.parse(
+    (
+      await owned.run(firstObserverBinary, [], {
+        input: JSON.stringify({
+          action: 'identify',
+          fixtureRoot: root,
+          bundlePath: artifact,
+          teamIdentifier: team,
+          pid: newPid,
+          notBeforeMicros: upgradeNotBeforeMicros,
+          expectedStartMicros: receipt.firstTargetObservation.startMicros,
+        }),
+        signal: abort.signal,
+        label: 'confirm first-target exit ownership',
+      })
+    ).output,
+  )
+  assert(
+    proof.outcome === 'identified' &&
+      proof.pid === newPid &&
+      proof.startMicros === receipt.firstTargetObservation.startMicros,
+    'first target changed before cleanup',
+  )
+  process.kill(newPid, 'SIGTERM')
   await wait('first-relaunch-exit', async () => (await ownAppPids()).length === 0, 30_000)
   const audit = owned.start(
     join(artifact, 'Contents', 'MacOS', 'Holi'),
@@ -534,6 +592,31 @@ try {
     await attempt('signal-owned-runtime', async () => {
       for (const pid of await ownRuntimePids()) {
         try {
+          if (pid === firstTargetPid) {
+            const proof = JSON.parse(
+              (
+                await owned.run(firstObserverBinary, [], {
+                  input: JSON.stringify({
+                    action: 'identify',
+                    fixtureRoot: root,
+                    bundlePath: artifact,
+                    teamIdentifier: team,
+                    pid,
+                    notBeforeMicros: upgradeNotBeforeMicros,
+                    expectedStartMicros: receipt.firstTargetObservation?.startMicros,
+                  }),
+                  label: 'confirm failed first-target cleanup ownership',
+                })
+              ).output,
+            )
+            assert(
+              proof.outcome === 'identified' &&
+                proof.pid === pid &&
+                proof.signatureVerified === true &&
+                proof.uid === process.getuid(),
+              'first-target cleanup ownership unavailable',
+            )
+          }
           process.kill(pid, 'SIGTERM')
         } catch (error) {
           if (error.code !== 'ESRCH') throw error

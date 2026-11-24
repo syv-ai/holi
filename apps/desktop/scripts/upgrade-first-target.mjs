@@ -1,121 +1,264 @@
-import { execFile } from 'node:child_process'
-import { lstat, readFile, realpath } from 'node:fs/promises'
-import { createRequire } from 'node:module'
-import { isAbsolute, relative, resolve } from 'node:path'
-import { promisify } from 'node:util'
+import { constants } from 'node:fs'
+import { lstat, open, realpath } from 'node:fs/promises'
+import { isAbsolute, join, relative } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
-const exec = promisify(execFile)
+const nativeReasons = new Set([
+  'invalid-observation-request',
+  'fixture-ownership',
+  'process-identity',
+  'process-changed',
+  'missing-start-identity',
+  'screen-capture-permission',
+  'accessibility-permission',
+  'evidence-directory',
+  'evidence-already-exists',
+  'ambiguous-accessibility-window',
+  'blocking-modal',
+  'connections-panel-not-asserted',
+  'ambiguous-capture-window',
+  'image-encoding',
+  'image-output',
+  'window-capture-failed',
+])
 
-/** Observe a single signed first relaunch without restarting or instrumenting it. */
+async function privateDirectory(path) {
+  const info = await lstat(path)
+  return (
+    info.isDirectory() &&
+    !info.isSymbolicLink() &&
+    info.uid === process.getuid() &&
+    (info.mode & 0o077) === 0
+  )
+}
+
+async function endpointAt(profile) {
+  if (!(await privateDirectory(profile))) throw new Error('unsafe endpoint')
+  const file = await open(
+    join(profile, 'cli-endpoint.json'),
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  )
+  try {
+    const info = await file.stat()
+    if (
+      !info.isFile() ||
+      info.uid !== process.getuid() ||
+      (info.mode & 0o077) !== 0 ||
+      info.size > 8192
+    )
+      throw new Error('unsafe endpoint')
+    const endpoint = JSON.parse(await file.readFile('utf8'))
+    if (
+      endpoint.host !== '127.0.0.1' ||
+      !Number.isInteger(endpoint.port) ||
+      endpoint.port < 1 ||
+      endpoint.port > 65535 ||
+      !/^[a-f0-9]{64}$/.test(endpoint.token)
+    )
+      throw new Error('unsafe endpoint')
+    return endpoint
+  } finally {
+    await file.close()
+  }
+}
+
+/** Bind the shipped app's backend and visible Google panel to one owned first launch. */
 export async function observeFirstTargetConnections({
+  run,
   helper,
   fixtureRoot,
   bundlePath,
   teamIdentifier,
   pid,
   notBeforeMicros,
-  expectedStartMicros,
+  profile,
+  vaultPath,
+  remote,
   evidenceDirectory,
   email,
-  remote,
+  signal,
 }) {
-  const unavailable = (outcome, reason) => ({ outcome, reason })
+  let identity
+  const failed = (outcome, reason) => ({
+    outcome,
+    reason,
+    ...(identity ? { pid, startMicros: identity.startMicros, signatureVerified: true } : {}),
+    backendBoundToTarget: false,
+    googleConnectionsPanelAsserted: false,
+    screenshot: null,
+  })
+  const request = { fixtureRoot, bundlePath, teamIdentifier, pid, notBeforeMicros }
+  async function native(action) {
+    const result = await run(helper, [], {
+      input: JSON.stringify({
+        ...request,
+        action,
+        expectedStartMicros: identity?.startMicros,
+        email,
+        evidenceDirectory,
+      }),
+      signal,
+      timeoutMs: 30_000,
+      label: 'owned first-target observer',
+    })
+    return JSON.parse(result.output)
+  }
+  async function sameIdentity() {
+    const result = await native('identify')
+    return (
+      result.outcome === 'identified' &&
+      result.pid === pid &&
+      result.startMicros === identity.startMicros &&
+      result.signatureVerified === true &&
+      result.uid === process.getuid()
+    )
+  }
+  async function listenerOwned(endpoint) {
+    const result = await run(
+      '/usr/sbin/lsof',
+      ['-nP', '-a', `-iTCP@127.0.0.1:${endpoint.port}`, '-sTCP:LISTEN', '-Fp'],
+      { signal, timeoutMs: 10_000, label: 'owned first-target listener' },
+    )
+    const owners = new Set(
+      [...result.output.matchAll(/^p(\d+)$/gm)].map((match) => Number(match[1])),
+    )
+    return owners.size === 1 && owners.has(pid)
+  }
   try {
     const root = await realpath(fixtureRoot)
     const evidence = await realpath(evidenceDirectory)
+    const vault = await realpath(vaultPath)
+    if (!(await privateDirectory(profile)) || !(await privateDirectory(evidenceDirectory)))
+      return failed('ownership-refused', 'unsafe-endpoint-descriptor')
+    const localProfile = await realpath(profile)
     const rel = relative(root, evidence)
-    if (!rel || rel.startsWith('..') || isAbsolute(rel))
-      return unavailable('ownership-refused', 'evidence-directory-outside-fixture')
-    const descriptorPath = resolve(
-      process.env.HOME ?? '',
-      'Library/Application Support/Holi/cli-endpoint.json',
+    if (!rel || rel.startsWith('..') || isAbsolute(rel) || !(await privateDirectory(evidence)))
+      return failed('ownership-refused', 'evidence-directory')
+    request.fixtureRoot = root
+    const initial = await native('identify')
+    if (
+      initial.outcome !== 'identified' ||
+      initial.pid !== pid ||
+      initial.signatureVerified !== true ||
+      initial.uid !== process.getuid() ||
+      !Number.isSafeInteger(initial.startMicros) ||
+      initial.startMicros < notBeforeMicros
     )
-    const info = await lstat(descriptorPath)
-    if (
-      !info.isFile() ||
-      info.isSymbolicLink() ||
-      (typeof process.getuid === 'function' && info.uid !== process.getuid()) ||
-      (info.mode & 0o077) !== 0
-    ) {
-      return unavailable('ownership-refused', 'unsafe-endpoint-descriptor')
+      return failed('ownership-refused', 'process-identity')
+    identity = initial
+    let endpoint
+    const deadline = Date.now() + 15_000
+    while (!endpoint) {
+      try {
+        endpoint = await endpointAt(localProfile)
+      } catch (error) {
+        if (error.code !== 'ENOENT')
+          return failed('ownership-refused', 'unsafe-endpoint-descriptor')
+        if (Date.now() >= deadline) return failed('observation-unavailable', 'endpoint-not-ready')
+        await delay(200, undefined, { signal })
+      }
     }
-    const endpoint = JSON.parse(await readFile(descriptorPath, 'utf8'))
-    if (
-      endpoint.host !== '127.0.0.1' ||
-      !Number.isInteger(endpoint.port) ||
-      endpoint.port < 1 ||
-      endpoint.port > 65535 ||
-      typeof endpoint.token !== 'string'
-    ) {
-      return unavailable('ownership-refused', 'invalid-endpoint-descriptor')
-    }
-    const request = {
-      action: 'identify',
-      fixtureRoot: root,
-      bundlePath,
-      teamIdentifier,
-      pid,
-      notBeforeMicros,
-    }
-    const identify = await exec(helper, [], {
-      input: JSON.stringify(request),
-      timeout: 15000,
-      maxBuffer: 200000,
-    })
-    const identity = JSON.parse(identify.stdout)
-    if (
-      identity.outcome !== 'identified' ||
-      identity.pid !== pid ||
-      identity.startMicros !== expectedStartMicros ||
-      identity.signatureVerified !== true
-    ) {
-      return unavailable('ownership-refused', 'first-target-identity-mismatch')
-    }
-    const target = new URL(`http://127.0.0.1:${endpoint.port}/cli`)
-    const params = new URLSearchParams()
+    if (!(await sameIdentity()) || !(await listenerOwned(endpoint)))
+      return failed('ownership-refused', 'backend-listener')
+    // This is the released .276 machine CLI transport, including its explicit vault selector.
+    const form = new URLSearchParams({ cwd: vault })
     for (const value of ['google', 'accounts', '--json', '--vault', remote])
-      params.append('argv', value)
-    // The endpoint's authenticated machine route resolves the target from cwd; only fixture paths are sent.
-    params.set('cwd', root)
-    const response = await fetch(target, {
+      form.append('argv', value)
+    const timeout = AbortSignal.timeout(15_000)
+    const response = await fetch(`http://127.0.0.1:${endpoint.port}/cli`, {
       method: 'POST',
+      redirect: 'error',
       headers: {
         'x-holi-cli-token': endpoint.token,
         'content-type': 'application/x-www-form-urlencoded',
       },
-      body: params,
-      signal: AbortSignal.timeout(15000),
+      body: form,
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
-    if (!response.ok) return unavailable('ownership-refused', 'target-cli-refused')
-    const overview = JSON.parse(await response.text())
-    if (overview.state !== 'connected' || overview.current !== email)
-      return unavailable('assertion-failed', 'google-account-not-connected')
-    const observed = await exec(helper, [], {
-      input: JSON.stringify({
-        action: 'observe',
-        fixtureRoot: root,
-        bundlePath,
-        teamIdentifier,
-        pid,
-        notBeforeMicros,
-        expectedStartMicros,
-        email,
-        evidenceDirectory: evidence,
-      }),
-      timeout: 30000,
-      maxBuffer: 200000,
-    })
-    const result = JSON.parse(observed.stdout)
+    if (!(await sameIdentity()) || !(await listenerOwned(endpoint)))
+      return failed('ownership-refused', 'backend-listener-changed')
+    const current = await endpointAt(localProfile)
+    if (current.port !== endpoint.port || current.token !== endpoint.token)
+      return failed('ownership-refused', 'endpoint-changed')
+    if (!response.ok) return failed('observation-unavailable', 'target-cli-refused')
+    const overview = await response.json()
     if (
-      result.outcome !== 'observed' ||
-      result.pid !== pid ||
-      result.startMicros !== expectedStartMicros ||
-      result.signatureVerified !== true ||
-      result.googleConnectionsPanelAsserted !== true
+      overview.remote !== remote ||
+      overview.state !== 'connected' ||
+      overview.account?.email !== email ||
+      overview.client?.source !== 'own'
     )
+      return failed('assertion-failed', 'google-account-not-connected')
+    const observed = await native('observe')
+    if (observed.outcome !== 'observed') {
+      const outcomes = new Set([
+        'precondition-unavailable',
+        'observation-unavailable',
+        'assertion-failed',
+        'ownership-refused',
+      ])
+      const result = failed(
+        outcomes.has(observed.outcome) ? observed.outcome : 'observation-unavailable',
+        nativeReasons.has(observed.reason) ? observed.reason : 'invalid-native-result',
+      )
+      result.backendBoundToTarget = true
+      if (
+        typeof observed.permissions?.screenCapture === 'boolean' &&
+        typeof observed.permissions?.accessibility === 'boolean'
+      )
+        result.permissions = {
+          screenCapture: observed.permissions.screenCapture,
+          accessibility: observed.permissions.accessibility,
+        }
       return result
-    return result
+    }
+    if (
+      observed.pid !== pid ||
+      observed.startMicros !== identity.startMicros ||
+      observed.signatureVerified !== true ||
+      observed.googleConnectionsPanelAsserted !== true ||
+      !Number.isSafeInteger(observed.windowId) ||
+      observed.windowId <= 0 ||
+      observed.permissions?.screenCapture !== true ||
+      observed.permissions?.accessibility !== true ||
+      observed.screenshot !== 'first-target-google-connected.png' ||
+      !(await sameIdentity()) ||
+      !(await listenerOwned(endpoint))
+    )
+      return failed('ownership-refused', 'invalid-native-result')
+    const image = await open(
+      join(evidence, observed.screenshot),
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    )
+    try {
+      const info = await image.stat()
+      if (
+        !info.isFile() ||
+        info.uid !== process.getuid() ||
+        (info.mode & 0o077) !== 0 ||
+        info.size < 8 ||
+        info.size > 20_000_000
+      )
+        return failed('ownership-refused', 'unsafe-image')
+      const header = Buffer.alloc(8)
+      await image.read(header, 0, 8, 0)
+      if (!header.equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
+        return failed('observation-unavailable', 'invalid-image')
+    } finally {
+      await image.close()
+    }
+    return {
+      outcome: 'observed',
+      pid,
+      startMicros: identity.startMicros,
+      signatureVerified: true,
+      backendBoundToTarget: true,
+      googleConnectionsPanelAsserted: true,
+      windowId: observed.windowId,
+      screenshot: observed.screenshot,
+      permissions: { screenCapture: true, accessibility: true },
+    }
   } catch {
-    return unavailable('observation-unavailable', 'first-target-observation-failed')
+    return failed('observation-unavailable', 'first-target-observation-failed')
   }
 }
