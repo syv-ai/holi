@@ -43,6 +43,7 @@ import {
   FileTextIcon,
   InfoIcon,
   MapPinIcon,
+  PaperclipIcon,
   PencilIcon,
   Trash2Icon,
   UserIcon,
@@ -56,6 +57,7 @@ import { SandboxedHtml } from '../sandboxed-html'
 import { dayMonth, longDay, timeOf, type TimeFormat } from './calendar-format'
 import { useTimeFormat } from './calendar-settings'
 import { CalendarDot, DateField, TimeSelect } from './event-fields'
+import { EventAttachments } from './event-attachments'
 
 /** The edit buffer. Dates are "yyyy-MM-dd", times are "HH:mm". */
 export interface EventDraft {
@@ -63,6 +65,7 @@ export interface EventDraft {
   key?: string
   /** Google's id, which the writes take. */
   googleId?: string
+  calendarId?: string
   title: string
   location: string
   date: string
@@ -98,6 +101,7 @@ export interface MeetingFormDraft {
 
 interface EventCardProps {
   meetingIdentity: MeetingIdentity | null
+  attachmentContext?: { remote: string; sub: string; openConnections: () => void } | null
   meetingDraft: MeetingFormDraft
   onMeetingDraftChange: (draft: MeetingFormDraft) => void
   onCreated: () => void
@@ -215,6 +219,7 @@ function WhenDetail({ draft }: { draft: EventDraft }) {
 
 export function EventCard({
   meetingIdentity,
+  attachmentContext,
   meetingDraft,
   onMeetingDraftChange,
   onCreated,
@@ -330,6 +335,7 @@ export function EventCard({
           ) : (
             <EventView
               draft={state.draft}
+              attachmentContext={attachmentContext}
               error={error}
               canCreateTask={canCreateTask}
               saving={saving}
@@ -381,6 +387,7 @@ function DetailRow({ icon, children }: { icon: React.ReactNode; children: React.
 
 function EventView({
   draft,
+  attachmentContext,
   error,
   canCreateTask,
   saving,
@@ -391,6 +398,7 @@ function EventView({
   onClose,
 }: {
   draft: EventDraft
+  attachmentContext: EventCardProps['attachmentContext']
   error: string | null
   canCreateTask: boolean
   saving: boolean
@@ -518,6 +526,29 @@ function EventView({
                   />
                 </div>
               </div>
+            )}
+
+            {attachmentContext && data && draft.calendarId && draft.googleId && (
+              <DetailRow icon={<PaperclipIcon />}>
+                <EventAttachments
+                  key={JSON.stringify([
+                    attachmentContext.remote,
+                    attachmentContext.sub,
+                    draft.calendarId,
+                    draft.googleId,
+                  ])}
+                  remote={attachmentContext.remote}
+                  target={{
+                    expectedAccountSub: attachmentContext.sub,
+                    calendarId: draft.calendarId,
+                    eventId: draft.googleId,
+                  }}
+                  eventTitle={draft.title}
+                  onOpenExternal={onOpenExternal}
+                  onOpenConnections={attachmentContext.openConnections}
+                  openCalendar={() => onOpenExternal(data.htmlLink)}
+                />
+              </DetailRow>
             )}
 
             {error && (

@@ -13,6 +13,11 @@ import { clockLabel, type TimeFormat } from '../renderer/calendar/calendar-forma
 import { GOOGLE_INFO } from '../info'
 import { rangeWindow, toCalendarItem, type GoogleEvent } from '../renderer/calendar-data'
 import type { MeetingInput, MeetingOperation } from '../main/meeting-creation'
+import type {
+  AttachEventFilesResult,
+  DriveFilePage,
+  EventAttachmentTarget,
+} from '../shared/event-attachments'
 
 /** The clock the view writes on when no settings file answers. */
 const clock = GOOGLE_INFO.settings?.find((s) => s.key === 'timeFormat')?.default as TimeFormat
@@ -55,6 +60,19 @@ vi.mock('../renderer/calendar/event-fields', async (importOriginal) => {
 })
 
 const ME = 'me@example.com'
+const NOTES = 'git@github.com:syv-ai/notes.git'
+const BRIEF = { id: 'brief', name: 'Workshop brief', mimeType: 'application/pdf' }
+const AGENDA = { id: 'agenda', name: 'Workshop agenda', mimeType: 'application/pdf' }
+const HANDOUT = {
+  fileId: 'handout',
+  title: 'Existing handout',
+  fileUrl: 'https://drive.google.com/open?id=handout',
+}
+const attachmentOf = (file: { id: string; name: string }) => ({
+  fileId: file.id,
+  title: file.name,
+  fileUrl: `https://drive.google.com/open?id=${file.id}`,
+})
 
 const at = (hour: number, minute = 0): string => {
   const now = new Date()
@@ -107,8 +125,11 @@ const namesMock = vi.fn()
 const taskMock = vi.fn()
 const meetingStateMock = vi.fn()
 const checkMeetingMock = vi.fn()
+const eventAttachmentsMock = vi.fn()
+const driveFilesMock = vi.fn()
+const attachEventFilesMock = vi.fn()
 
-const google: Record<string, (params: Record<string, unknown>) => unknown> = {
+const google: Record<string, (params: Record<string, unknown>, remote: string) => unknown> = {
   'google.status': () => ({ account: { email: ME }, missingScopes: [] }),
   'google.allAccounts': () => ({ accounts: [{ sub: '1', email: ME }], current: '1' }),
   'google.agenda': (p) => agendaMock(p),
@@ -123,6 +144,9 @@ const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.createMeeting': (p) => scheduleMock(p),
   'google.checkMeeting': (p) => checkMeetingMock(p),
   'google.finishMeeting': () => ({ ok: true }),
+  'google.eventAttachments': (p, remote) => eventAttachmentsMock(remote, p),
+  'google.driveFiles': (p, remote) => driveFilesMock(remote, p),
+  'google.attachEventFiles': (p, remote) => attachEventFilesMock(remote, p),
   'google.reschedule': (p) => rescheduleMock(p),
   'google.unschedule': (p) => unscheduleMock(p),
   'google.imageSenders': () => ({ senders: [], allSenders: false }),
@@ -133,10 +157,18 @@ vi.mock('@/lib/trpc', () => ({
     cap: {
       names: { query: async () => namesMock() },
       run: {
-        mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
+        mutate: async ({
+          name,
+          paramsJson,
+          remote,
+        }: {
+          name: string
+          paramsJson?: string
+          remote: string
+        }) => {
           const verb = google[name]
           if (verb === undefined) throw new Error(`no such method: ${name}`)
-          return verb(JSON.parse(paramsJson ?? '{}') as Record<string, unknown>)
+          return verb(JSON.parse(paramsJson ?? '{}') as Record<string, unknown>, remote)
         },
       },
     },
@@ -165,7 +197,10 @@ beforeEach(() => {
   taskMock.mockReset().mockResolvedValue({ path: 'Tasks/focus.md' })
   meetingStateMock.mockReset().mockResolvedValue({ meetSupported: true, operation: null })
   checkMeetingMock.mockReset()
-  getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/notes.git')
+  eventAttachmentsMock.mockReset().mockResolvedValue({ attachments: [], canAttach: false })
+  driveFilesMock.mockReset()
+  attachEventFilesMock.mockReset()
+  getDefaultStore().set(activeRemoteAtom, NOTES)
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal: vi.fn() }
 })
@@ -678,6 +713,161 @@ describe('the calendar view', () => {
     expect(within(sheet).getByText('3 people')).toBeInTheDocument()
     await user.click(within(sheet).getByRole('button', { name: 'Join the call' }))
     expect(window.holi.openExternal).toHaveBeenCalledWith('https://meet.google.com/abc')
+  })
+
+  test('attaches selected Drive search results only after confirming guest access', async () => {
+    const user = userEvent.setup()
+    const target: EventAttachmentTarget = {
+      expectedAccountSub: '1',
+      calendarId: ME,
+      eventId: SYNC.id,
+    }
+    const actual = [HANDOUT, attachmentOf(AGENDA), attachmentOf(BRIEF)]
+    let written = false
+    eventAttachmentsMock.mockImplementation(async () => ({
+      attachments: written ? actual : [HANDOUT],
+      canAttach: true,
+    }))
+    let resolveBrowsing!: (page: DriveFilePage) => void
+    driveFilesMock.mockImplementation(async (_remote, { query, pageToken }) => {
+      if (!query)
+        return new Promise<DriveFilePage>((resolve) => {
+          resolveBrowsing = resolve
+        })
+      return pageToken === 'next-workshop'
+        ? { files: [BRIEF] }
+        : { files: [AGENDA], nextPageToken: 'next-workshop' }
+    })
+    attachEventFilesMock.mockImplementation(async (): Promise<AttachEventFilesResult> => {
+      written = true
+      return {
+        attachments: actual,
+        attachmentStatus: 'attached',
+        sharing: [
+          { fileId: AGENDA.id, guest: 'team@example.test', status: 'granted' },
+          { fileId: BRIEF.id, guest: 'team@example.test', status: 'failed' },
+          { fileId: BRIEF.id, guest: 'guest@example.test', status: 'unknown' },
+        ],
+      }
+    })
+
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    const detail = within(await screen.findByRole('dialog', { name: 'Team sync' }))
+    await user.click(await detail.findByRole('button', { name: HANDOUT.title }))
+    expect(window.holi.openExternal).toHaveBeenCalledWith(HANDOUT.fileUrl)
+    expect(eventAttachmentsMock).toHaveBeenCalledWith(NOTES, target)
+    expect(detail.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+    await user.click(detail.getByRole('button', { name: 'Add from Drive' }))
+
+    const picker = within(await screen.findByRole('dialog', { name: 'Add from Google Drive' }))
+    await user.type(picker.getByRole('searchbox'), 'workshop{Enter}')
+    await user.click(await picker.findByRole('checkbox', { name: AGENDA.name }))
+    await act(async () => resolveBrowsing({ files: [{ ...BRIEF, name: 'Stale browsing result' }] }))
+    expect(
+      picker.queryByRole('checkbox', { name: 'Stale browsing result' }),
+    ).not.toBeInTheDocument()
+    await user.click(picker.getByRole('button', { name: 'Load more' }))
+    await user.click(await picker.findByRole('checkbox', { name: BRIEF.name }))
+    expect(picker.getByRole('checkbox', { name: AGENDA.name })).toBeChecked()
+    expect(driveFilesMock).toHaveBeenCalledWith(NOTES, {
+      ...target,
+      query: 'workshop',
+      pageToken: 'next-workshop',
+    })
+    await user.click(picker.getByRole('button', { name: 'Review files' }))
+    const confirmation = within(await screen.findByRole('dialog', { name: 'Confirm file sharing' }))
+    expect(confirmation.getByText(AGENDA.name)).toBeInTheDocument()
+    expect(confirmation.getByText(BRIEF.name)).toBeInTheDocument()
+    expect(attachEventFilesMock).not.toHaveBeenCalled()
+    await user.click(confirmation.getByRole('button', { name: 'Attach and share with guests' }))
+
+    const write = { ...target, fileIds: [AGENDA.id, BRIEF.id] }
+    expect(attachEventFilesMock).toHaveBeenCalledExactlyOnceWith(NOTES, write)
+    const outcome = await detail.findByRole('alert')
+    expect(outcome).toHaveTextContent('Files attached')
+    expect(outcome).toHaveTextContent(/sharing failed.*workshop brief.*team@example.test/i)
+    expect(outcome).toHaveTextContent(/sharing not confirmed.*guest@example.test/i)
+    expect(await detail.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
+    await user.click(detail.getByRole('button', { name: 'Retry same files' }))
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+    attachEventFilesMock.mockResolvedValueOnce({
+      attachments: actual,
+      attachmentStatus: 'attached',
+      sharing: [
+        { fileId: AGENDA.id, guest: 'team@example.test', status: 'already-accessible' },
+        { fileId: BRIEF.id, guest: 'team@example.test', status: 'granted' },
+        { fileId: BRIEF.id, guest: 'guest@example.test', status: 'already-accessible' },
+      ],
+    })
+    await user.click(await screen.findByRole('button', { name: 'Retry attaching and sharing' }))
+    expect(attachEventFilesMock).toHaveBeenLastCalledWith(NOTES, write)
+    await waitFor(() =>
+      expect(detail.getByRole('alert')).toHaveTextContent(/guest access confirmed for 3/i),
+    )
+    expect(detail.queryByRole('button', { name: 'Retry same files' })).not.toBeInTheDocument()
+  })
+
+  test('retries a failed Drive read and offers Connections for a missing grant', async () => {
+    const user = userEvent.setup()
+    eventAttachmentsMock.mockResolvedValue({ attachments: [], canAttach: true })
+    driveFilesMock.mockRejectedValueOnce(
+      Object.assign(new Error('Reconnect Google to grant Drive access.'), {
+        data: { code: 'FORBIDDEN' },
+      }),
+    )
+    driveFilesMock.mockResolvedValueOnce({ files: [] })
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await user.click(await screen.findByRole('button', { name: 'Add from Drive' }))
+    const dialog = within(await screen.findByRole('dialog', { name: 'Add from Google Drive' }))
+    expect(await dialog.findByRole('alert')).toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: 'Open Connections' })).toBeEnabled()
+    await user.click(dialog.getByRole('button', { name: 'Retry' }))
+    expect(await dialog.findByRole('button', { name: 'Refresh files' })).toBeEnabled()
+    expect(dialog.getByRole('button', { name: 'Review files' })).toBeDisabled()
+    expect(attachEventFilesMock).not.toHaveBeenCalled()
+  })
+
+  test('does not show the outcome of a write from a vault left while it was pending', async () => {
+    const user = userEvent.setup()
+    const otherVault = 'git@github.com:syv-ai/other.git'
+    eventAttachmentsMock.mockImplementation(async (remote: string) => ({
+      canAttach: true,
+      attachments: remote === NOTES ? [] : [HANDOUT],
+    }))
+    driveFilesMock.mockResolvedValue({ files: [BRIEF] })
+    let finishOldWrite!: (result: AttachEventFilesResult) => void
+    attachEventFilesMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishOldWrite = resolve
+        }),
+    )
+
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await user.click(await screen.findByRole('button', { name: 'Add from Drive' }))
+    await user.click(await screen.findByRole('checkbox', { name: BRIEF.name }))
+    await user.click(screen.getByRole('button', { name: 'Review files' }))
+    await user.click(screen.getByRole('button', { name: 'Attach and share with guests' }))
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: BRIEF.name })).not.toBeInTheDocument()
+
+    await act(async () => getDefaultStore().set(activeRemoteAtom, otherVault))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    const detail = within(await screen.findByRole('dialog', { name: 'Team sync' }))
+    expect(await detail.findByRole('button', { name: HANDOUT.title })).toBeInTheDocument()
+    await act(async () =>
+      finishOldWrite({
+        attachments: [attachmentOf(BRIEF)],
+        attachmentStatus: 'attached',
+        sharing: [],
+      }),
+    )
+    expect(detail.queryByRole('button', { name: BRIEF.name })).not.toBeInTheDocument()
+    expect(detail.queryByText('Files attached')).not.toBeInTheDocument()
   })
 
   test('New event creates a solo event only after explicit send', async () => {
