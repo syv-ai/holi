@@ -18,12 +18,26 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { build } from 'vite'
 import { createOwnedProcesses } from './owned-processes.mjs'
-import { allowNativeNotificationPermission, clickNativeBanner } from './notification-os.mjs'
+import {
+  allowNativeNotificationPermission,
+  assertMacDesktopAvailable,
+  clickNativeBanner,
+} from './notification-os.mjs'
 
 if (process.platform !== 'darwin') throw new Error('notification readiness requires macOS')
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(join(desktop, 'package.json'))
 const evidence = resolve(process.argv[2] ?? '/tmp/holi-notification-readiness')
+const preflightController = new AbortController()
+const preflightInterrupt = () => preflightController.abort(new Error('notification fixture interrupted'))
+process.once('SIGINT', preflightInterrupt)
+process.once('SIGTERM', preflightInterrupt)
+try {
+  await assertMacDesktopAvailable({ signal: preflightController.signal })
+} finally {
+  process.removeListener('SIGINT', preflightInterrupt)
+  process.removeListener('SIGTERM', preflightInterrupt)
+}
 const root = await mkdtemp(join(tmpdir(), 'holi-notification-fixture-'))
 const profile = join(root, 'profile')
 const result = join(root, 'result')

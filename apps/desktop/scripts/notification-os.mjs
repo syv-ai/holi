@@ -5,6 +5,36 @@ import { createOwnedProcesses } from './owned-processes.mjs'
  * Requires Automation/Accessibility permission for the invoking process. It
  * never falls back to dispatching a DOM, Electron, or Notification callback.
  */
+export async function assertMacDesktopAvailable({ signal } = {}) {
+  if (process.platform !== 'darwin') throw new Error('desktop availability requires macOS')
+  signal?.throwIfAborted()
+  const processes = createOwnedProcesses()
+  try {
+    let output
+    try {
+      const result = await processes.run('/usr/sbin/ioreg', ['-n', 'Root', '-d1'], {
+        timeoutMs: 5000,
+        signal,
+        label: 'macOS desktop availability check',
+      })
+      output = result.output
+    } catch (error) {
+      signal?.throwIfAborted()
+      throw new Error('unable to determine macOS desktop availability: ioreg query failed', {
+        cause: error,
+      })
+    }
+    signal?.throwIfAborted()
+    const matches = [...output.matchAll(/"CGSSessionScreenIsLocked"\s*=\s*(Yes|No)\b/g)]
+    if (matches.length !== 1)
+      throw new Error('unable to determine macOS desktop availability: session lock state is missing or ambiguous')
+    if (matches[0][1] === 'Yes')
+      throw new Error('macOS desktop is locked; unlock the desktop and rerun the notification fixture')
+  } finally {
+    await processes.stopAll()
+  }
+}
+
 export async function clickNativeBanner({ appName, title, timeoutMs = 12_000, signal }) {
   if (typeof appName !== 'string' || !appName || typeof title !== 'string' || !title)
     throw new TypeError('appName and title are required')
