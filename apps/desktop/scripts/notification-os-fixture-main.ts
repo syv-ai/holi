@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Notification } from 'electron'
-import { writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, unwatchFile, watchFile, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { showNotification } from '../src/main/notifications'
 
 const result = process.env.HOLI_NOTIFICATION_RESULT!
@@ -14,32 +15,63 @@ Notification.prototype.show = function () {
   return nativeShow.call(this)
 }
 app.setName(process.env.HOLI_NOTIFICATION_APP_NAME!)
-app.setPath('userData', process.env.HOLI_NOTIFICATION_USER_DATA!)
-app.setPath('sessionData', process.env.HOLI_NOTIFICATION_SESSION_DATA!)
-void app.whenReady().then(() => {
+const userData = process.env.HOLI_NOTIFICATION_USER_DATA!
+const sessionData = process.env.HOLI_NOTIFICATION_SESSION_DATA!
+const appData = dirname(userData)
+for (const directory of [appData, userData, sessionData])
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+app.setPath('appData', appData)
+app.setPath('userData', userData)
+app.setPath('sessionData', sessionData)
+void app.whenReady().then(async () => {
   const window = new BrowserWindow({
     width: 520,
     height: 220,
     show: true,
     title: `READY ${title}`,
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+    },
   })
-  window.loadURL(`data:text/html,<h1>${encodeURIComponent(`READY ${title}`)}</h1>`)
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event) => event.preventDefault())
+  await window.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'"><h1>READY ${title}</h1>`)}`,
+  )
+  writeFileSync(
+    `${result}.paths`,
+    JSON.stringify({
+      appData: app.getPath('appData'),
+      userData: app.getPath('userData'),
+      sessionData: app.getPath('sessionData'),
+    }),
+  )
   let clicked = false
   window.on('focus', () => {
     if (clicked) report('clicked-and-window-activated')
   })
-  window.hide()
-  showNotification({
-    title,
-    body: 'Holi native notification readiness probe',
-    onClick: () => {
-      clicked = true
-      window.show()
-      window.focus()
-      if (window.isFocused()) report('clicked-and-window-activated')
-    },
+  const sendSignal = `${result}.send`
+  watchFile(sendSignal, { interval: 100 }, () => {
+    if (!existsSync(sendSignal)) return
+    unwatchFile(sendSignal)
+    window.hide()
+    report('notification-requested')
+    showNotification({
+      title,
+      body: 'Holi native notification readiness probe',
+      onClick: () => {
+        clicked = true
+        window.show()
+        window.focus()
+        if (window.isFocused()) report('clicked-and-window-activated')
+      },
+    })
   })
-  report('shown')
+  app.once('before-quit', () => unwatchFile(sendSignal))
+  if (!Notification.isSupported()) throw new Error('Native notifications unsupported')
+  report('permission-requested')
 })
 app.on('window-all-closed', () => app.quit())
