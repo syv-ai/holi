@@ -31,7 +31,7 @@ type CancellationSignal = {
   removeEventListener(type: 'abort', listener: () => void): void
 }
 export type DeviceAuthorizationSession = DeviceAuthorization & { wait(): Promise<string> }
-function createCancellation() {
+export function createCancellation() {
   let aborted = false
   const listeners = new Set<() => void>()
   return {
