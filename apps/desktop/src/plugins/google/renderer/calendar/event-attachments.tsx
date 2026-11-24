@@ -8,22 +8,25 @@ import { ExternalLinkIcon, PlusIcon } from 'lucide-react'
 import {
   ATTACHMENT_LIMIT,
   type AttachEventFilesResult,
-  type DriveFile,
   type EventAttachment,
   type EventAttachments as AttachmentList,
   type EventAttachmentTarget,
 } from '../../shared/event-attachments'
 import { googleAccountRevisionAtom, useGoogleAccount } from '../account'
 import { googleCap } from '../google-cap'
-import { codeOf, isDisconnected, messageOf } from '../google-errors'
-import { DriveFilesDialog } from './drive-files-dialog'
+import { attachmentConsentNeeded, messageOf } from '../google-errors'
+import { DriveFilesDialog, type DriveFileChoice } from './drive-files-dialog'
 
 type Read = { data: AttachmentList } | { error: unknown }
-type Attempt = { files: DriveFile[]; result: AttachEventFilesResult }
+type Attempt = {
+  files: DriveFileChoice[]
+  result: AttachEventFilesResult
+  checked?: boolean
+}
 interface Recovery {
   attempt: Attempt | null
   pending?: 'submit' | 'check'
-  checkError: { cause: unknown } | null
+  checkError: { cause: unknown; files: DriveFileChoice[]; previous?: Attempt } | null
 }
 
 // Settings parks Calendar and unmounts the card content. Keep only recovery,
@@ -47,26 +50,15 @@ function reconcile(
   checked: AttachEventFilesResult,
 ): AttachEventFilesResult {
   const sharing = [...checked.sharing]
-  const present = new Set(checked.attachments.map(({ fileId }) => fileId))
   for (const row of previous.sharing) {
+    if (row.status !== 'unknown') continue
     const index = sharing.findIndex(
       ({ fileId, guest }) => fileId === row.fileId && guest === row.guest,
     )
-    const observed = sharing[index]
-    // A missing permission does not prove an in-flight POST failed. Only
-    // observing access clears that uncertainty. Keep completed rows if the
-    // check stopped partway through (for example, due to a scope refusal).
-    if (
-      (row.status === 'unknown' &&
-        (observed?.status === 'failed' || (!observed && checked.sharingComplete !== true))) ||
-      (checked.reconnect &&
-        !observed &&
-        present.has(row.fileId) &&
-        (row.status === 'granted' || row.status === 'already-accessible'))
-    ) {
-      if (index === -1) sharing.push(row)
-      else sharing[index] = row
-    }
+    // Do not treat absence or a partial read as proof that an uncertain
+    // permission write failed. Main owns the durable per-file barrier.
+    if (index === -1) sharing.push(row)
+    else if (sharing[index]?.status === 'failed') sharing[index] = row
   }
   return {
     ...checked,
@@ -78,7 +70,16 @@ function reconcile(
   }
 }
 
-const reconnectFor = (error: unknown) => codeOf(error) === 'FORBIDDEN' || isDisconnected(error)
+function driveAttachments(attachments: AttachmentList['attachments']): DriveFileChoice[] {
+  const files = new Map<string, DriveFileChoice>()
+  for (const { fileId, title, mimeType } of attachments) {
+    // Calendar supplies a resolved Drive ID. Do not extract IDs from links.
+    if (fileId && /^[\w-]+$/.test(fileId) && mimeType !== 'application/vnd.google-apps.shortcut') {
+      files.set(fileId, { id: fileId, name: title })
+    }
+  }
+  return [...files.values()].slice(0, ATTACHMENT_LIMIT)
+}
 
 /** The caller keys this section by the vault, account, calendar and event. */
 export function EventAttachments({
@@ -120,6 +121,7 @@ export function EventAttachments({
   const [snapshot, setSnapshot] = useState<{
     read: Read
     attempt: Attempt | null
+    checkError: Recovery['checkError']
     accountRevision: number
   } | null>(null)
   const [revision, setRevision] = useState(0)
@@ -129,7 +131,7 @@ export function EventAttachments({
     if (!currentAccount) return
     let current = true
     const accept = (read: Read) => {
-      if (current) setSnapshot({ read, attempt, accountRevision })
+      if (current) setSnapshot({ read, attempt, checkError, accountRevision })
     }
     void googleCap.eventAttachments(remote, { expectedAccountSub, calendarId, eventId }).then(
       (data) => accept({ data }),
@@ -145,6 +147,7 @@ export function EventAttachments({
     eventId,
     revision,
     attempt,
+    checkError,
     currentAccount,
     accountRevision,
   ])
@@ -156,19 +159,34 @@ export function EventAttachments({
   // Only a fresh Calendar read can re-enable confirmation after an attempt or
   // when a connection is refreshed. The outcome itself isn't the live list.
   const read =
-    currentAccount && snapshot?.attempt === attempt && snapshot.accountRevision === accountRevision
+    currentAccount &&
+    snapshot?.attempt === attempt &&
+    snapshot.checkError === checkError &&
+    snapshot.accountRevision === accountRevision
       ? snapshot.read
       : null
   const data = read && 'data' in read ? read.data : null
   const readError = read && 'error' in read ? read : null
   const attachedIds = new Set(data?.attachments.flatMap(({ fileId }) => (fileId ? [fileId] : [])))
+  const existingFiles = driveAttachments(data?.attachments ?? [])
   const slots = Math.max(0, ATTACHMENT_LIMIT - (data?.attachments.length ?? 0))
   const canSubmit =
     data?.canAttach === true &&
     !(attempt && needsCheck(attempt.result)) &&
     !recovery?.pending &&
     checkError === null
-  const confirm = async (files: DriveFile[]) => {
+  const checkAttempt =
+    attempt &&
+    (needsCheck(attempt.result) ||
+      (needsAttention(attempt.result) && attempt.result.attachmentStatus === 'attached'))
+  const retryFiles = attempt?.checked
+    ? attempt.files.filter(
+        ({ id }) =>
+          existingFiles.some((file) => file.id === id) &&
+          attempt.result.sharing.some((row) => row.fileId === id && row.status === 'failed'),
+      )
+    : (attempt?.files ?? [])
+  const confirm = async (files: DriveFileChoice[]) => {
     if (
       !canStart() ||
       !canSubmit ||
@@ -193,27 +211,33 @@ export function EventAttachments({
         attachmentStatus: 'unknown',
         sharing: [],
         message: messageOf(error, 'Google did not return an attachment result.'),
-        reconnect: reconnectFor(error),
+        reconnect: attachmentConsentNeeded(error),
       }
     }
     setDialog(null)
     saveRecovery({ attempt: { files, result }, checkError: null })
   }
 
-  const check = async () => {
-    if (!attempt || !currentAccount || !canStart()) return
-    saveRecovery({ attempt, pending: 'check', checkError: null })
+  const check = async (files: DriveFileChoice[], previous?: Attempt) => {
+    if (!files.length || !currentAccount || !canStart()) return
+    saveRecovery({ attempt, pending: 'check', checkError })
     try {
       const result = await googleCap.checkEventFileAccess(remote, {
         ...target,
-        fileIds: attempt.files.map(({ id }) => id),
+        fileIds: files.map(({ id }) => id),
       })
       saveRecovery({
-        attempt: { ...attempt, result: reconcile(attempt.result, result) },
+        attempt: {
+          files,
+          result: previous ? reconcile(previous.result, result) : result,
+          checked: true,
+        },
         checkError: null,
       })
     } catch (error) {
-      saveRecovery({ attempt, checkError: { cause: error } })
+      // A Drive refusal leaves Calendar readable. Refresh its list even when
+      // the access call could not return a Calendar snapshot at all.
+      saveRecovery({ attempt, checkError: { cause: error, files, previous } })
     }
   }
 
@@ -238,6 +262,17 @@ export function EventAttachments({
             Add from Drive
           </Button>
         )}
+        {!checkAttempt && !checkError && existingFiles.length > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy || checking}
+            onClick={() => void check(existingFiles)}
+          >
+            Check guest access
+          </Button>
+        )}
       </div>
       {!read && <Skeleton className="h-7 w-full" role="status" aria-label="Loading attachments" />}
       {readError && (
@@ -248,7 +283,7 @@ export function EventAttachments({
             message={messageOf(readError.error, 'Google did not return the event attachments.')}
             onRetry={reload}
           />
-          {reconnectFor(readError.error) && (
+          {attachmentConsentNeeded(readError.error) && (
             <Button type="button" size="sm" variant="outline" onClick={onOpenConnections}>
               Open Connections
             </Button>
@@ -306,16 +341,46 @@ export function EventAttachments({
           Waiting for Google to confirm attachments and guest access…
         </p>
       )}
-      {attempt && (
+      {checking && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Checking guest access without sharing or emailing guests…
+        </p>
+      )}
+      {checkError && (
+        <Alert variant="destructive">
+          <AlertTitle>Could not check guest access</AlertTitle>
+          <AlertDescription>
+            <p>{messageOf(checkError.cause, 'Google did not return the guest access result.')}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!currentAccount || checking}
+                onClick={() => void check(checkError.files, checkError.previous)}
+              >
+                Retry check
+              </Button>
+              {attachmentConsentNeeded(checkError.cause) && (
+                <Button type="button" variant="outline" size="sm" onClick={onOpenConnections}>
+                  Open Connections
+                </Button>
+              )}
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+      {attempt && !checkError && (
         <AttachmentOutcome
           attempt={attempt}
+          data={data}
           canRevise={
-            canSubmit && (slots > 0 || attempt.files.some(({ id }) => attachedIds.has(id)))
+            canSubmit &&
+            retryFiles.length > 0 &&
+            (slots > 0 || retryFiles.some(({ id }) => attachedIds.has(id)))
           }
-          checking={checking}
-          canCheck={currentAccount && !busy}
-          checkError={checkError}
-          onCheck={() => void check()}
+          canCheck={currentAccount && !recovery?.pending}
+          onCheck={checkAttempt ? () => void check(attempt.files, attempt) : undefined}
           onRevise={(button) => {
             trigger.current = button
             setDialog('revise')
@@ -330,7 +395,7 @@ export function EventAttachments({
           eventTitle={eventTitle}
           attachedIds={attachedIds}
           slots={slots}
-          initialFiles={dialog === 'revise' ? attempt?.files : undefined}
+          initialFiles={dialog === 'revise' ? retryFiles : undefined}
           busy={busy}
           canSubmit={canSubmit}
           onConfirm={(files) => void confirm(files)}
@@ -369,45 +434,61 @@ function AttachmentRow({
 
 function AttachmentOutcome({
   attempt,
+  data,
   canRevise,
-  checking,
   canCheck,
-  checkError,
   onCheck,
   onRevise,
   onOpenConnections,
 }: {
   attempt: Attempt
+  data: AttachmentList | null
   canRevise: boolean
-  checking: boolean
   canCheck: boolean
-  checkError: Recovery['checkError']
-  onCheck: () => void
+  onCheck?: () => void
   onRevise: (button: HTMLButtonElement) => void
   onOpenConnections: () => void
 }) {
   const { attachmentStatus, message, sharing, reconnect } = attempt.result
+  const present = new Set(data?.attachments.map(({ fileId }) => fileId))
+  const observed = new Set(attempt.result.attachments.map(({ fileId }) => fileId))
+  // The outcome and the card list can arrive independently. Never let an
+  // earlier positive result promote a file absent from fresh Calendar data.
+  const missingFromCalendar = data !== null && attempt.files.some(({ id }) => !present.has(id))
+  const stillAttached = data !== null && !missingFromCalendar && attachmentStatus === 'attached'
   const accessible = sharing.filter(
-    ({ status }) => status === 'granted' || status === 'already-accessible',
+    ({ fileId, status }) =>
+      observed.has(fileId) &&
+      present.has(fileId) &&
+      (status === 'granted' || status === 'already-accessible'),
   )
   const incomplete = needsAttention(attempt.result)
-  const checkNeeded = needsCheck(attempt.result) || checkError !== null
-  const canReconcile = checkNeeded || (incomplete && attachmentStatus === 'attached')
+  const checkNeeded = needsCheck(attempt.result)
+  const title = stillAttached
+    ? incomplete
+      ? 'Guest access incomplete'
+      : attempt.checked
+        ? 'Guest access checked'
+        : 'Files attached'
+    : attachmentStatus === 'failed'
+      ? 'Attachment failed'
+      : 'Attachment not confirmed'
   return (
     <Alert
-      variant={attachmentStatus === 'failed' ? 'destructive' : incomplete ? 'warning' : 'success'}
+      variant={
+        attachmentStatus === 'failed'
+          ? 'destructive'
+          : incomplete || !stillAttached
+            ? 'warning'
+            : 'success'
+      }
     >
-      <AlertTitle>
-        {attachmentStatus === 'attached'
-          ? incomplete
-            ? 'Guest access incomplete'
-            : 'Files attached'
-          : attachmentStatus === 'failed'
-            ? 'Attachment failed'
-            : 'Attachment not confirmed'}
-      </AlertTitle>
+      <AlertTitle>{title}</AlertTitle>
       <AlertDescription>
-        {attachmentStatus === 'attached' && incomplete && <p>Files attached.</p>}
+        {stillAttached && incomplete && !attempt.checked && <p>Files attached.</p>}
+        {missingFromCalendar && (attempt.checked || attachmentStatus === 'attached') && (
+          <p>One or more checked files aren’t on the event.</p>
+        )}
         {message && <p>{message}</p>}
         {accessible.length > 0 && (
           <p className="tabular-nums">
@@ -423,10 +504,6 @@ function AttachmentOutcome({
               {message ? ` — ${message}` : ''}
             </p>
           ))}
-        {checking && <p role="status">Checking attachments and guest access…</p>}
-        {checkError !== null && (
-          <p>{messageOf(checkError.cause, 'Could not check attachments and guest access.')}</p>
-        )}
         {attachmentStatus === 'failed' && reconnect && (
           <p>
             Reconnect Google before confirming again. No files were attached or shared by this
@@ -435,26 +512,28 @@ function AttachmentOutcome({
         )}
         {checkNeeded && (
           <p>
-            {reconnect || reconnectFor(checkError?.cause)
-              ? 'Reconnect Google, then check file access before trying again.'
-              : 'Check access before trying again. Google may still be processing the previous request.'}
+            {reconnect
+              ? 'Reconnect Google, then check guest access again.'
+              : sharing.some(({ status }) => status === 'unknown')
+                ? 'An unconfirmed sharing request cannot be retried. Checking access does not share files or notify guests.'
+                : 'Checking access does not share files or notify guests.'}
           </p>
         )}
         <div className="flex flex-wrap gap-2">
-          {(reconnect || reconnectFor(checkError?.cause)) && (
+          {reconnect && (
             <Button type="button" variant="outline" size="sm" onClick={onOpenConnections}>
               Open Connections
             </Button>
           )}
-          {canReconcile && (
+          {onCheck && (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              disabled={checking || !canCheck}
+              disabled={!canCheck}
               onClick={onCheck}
             >
-              Check file access
+              {attempt.checked ? 'Check guest access' : 'Check file access'}
             </Button>
           )}
           {incomplete && canRevise && !checkNeeded && (
@@ -464,7 +543,7 @@ function AttachmentOutcome({
               size="sm"
               onClick={(event) => onRevise(event.currentTarget)}
             >
-              Revise selection
+              {attempt.checked ? 'Review sharing retry' : 'Revise selection'}
             </Button>
           )}
         </div>

@@ -258,7 +258,7 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                   'Read and triage your Gmail, read your Calendar. This vault only.'
                 )}
               </ItemDescription>
-              {!connected && phase.kind === 'idle' && phase.error !== undefined && (
+              {phase.kind === 'idle' && phase.error !== undefined && (
                 <p role="alert" className="text-sm text-pretty text-destructive">
                   {phase.error}
                 </p>
@@ -268,11 +268,15 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
             <ItemActions>
               {connected ? (
                 <>
-                  {needsReconsent && (
-                    <Button size="sm" disabled={busy} onClick={() => void connect()}>
-                      {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
-                    </Button>
-                  )}
+                  <Button
+                    type="button"
+                    variant={needsReconsent ? 'default' : 'outline'}
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void connect()}
+                  >
+                    {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
@@ -286,7 +290,11 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
               ) : (
                 <>
                   <Button size="sm" disabled={busy} onClick={() => void connect()}>
-                    {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
+                    {phase.kind === 'connecting'
+                      ? 'Connecting…'
+                      : needsReconnect
+                        ? 'Reconnect'
+                        : connectLabel}
                   </Button>
                   {needsReconnect && (
                     <Button
@@ -337,8 +345,10 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                 <ItemContent>
                   <ItemTitle>What Holi may do</ItemTitle>
                   <ItemDescription>
-                    Read your mail and calendar, and mark read, star, archive or trash a thread. It
-                    cannot delete mail permanently or change your calendar.
+                    Read Gmail and calendars, and mark read, star, archive or trash mail. Holi
+                    cannot permanently delete mail. You can explicitly change eligible Calendar
+                    events, create meetings and send invitations, and select Drive files to attach
+                    and share with event guests.
                   </ItemDescription>
                 </ItemContent>
               </Item>

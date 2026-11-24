@@ -19,10 +19,11 @@ import type {
   EventAttachmentTarget,
 } from '../../shared/event-attachments'
 import { googleCap } from '../google-cap'
-import { codeOf, isDisconnected, messageOf } from '../google-errors'
+import { attachmentConsentNeeded, messageOf } from '../google-errors'
 
+export type DriveFileChoice = Pick<DriveFile, 'id' | 'name'>
 type PageRequest = { query: string; pageToken?: string }
-const NO_FILES: DriveFile[] = []
+const NO_FILES: DriveFileChoice[] = []
 
 export function DriveFilesDialog({
   remote,
@@ -43,10 +44,10 @@ export function DriveFilesDialog({
   eventTitle: string
   attachedIds: ReadonlySet<string>
   slots: number
-  initialFiles?: DriveFile[]
+  initialFiles?: DriveFileChoice[]
   busy: boolean
   canSubmit: boolean
-  onConfirm: (files: DriveFile[]) => void
+  onConfirm: (files: DriveFileChoice[]) => void
   onClose: () => void
   onRestoreFocus: () => void
   onOpenConnections: () => void
@@ -163,8 +164,10 @@ export function DriveFilesDialog({
             <DialogDescription>
               {confirming ? (
                 <>
-                  Holi will attach these files to “{eventTitle}” and try to give event guests viewer
-                  access. Google may email guests about new access.
+                  {adding === 0
+                    ? `Holi will try to give guests viewer access to these files on “${eventTitle}”.`
+                    : `Holi will attach these files to “${eventTitle}” and try to give event guests viewer access.`}{' '}
+                  Google may email guests about new access.
                 </>
               ) : (
                 'Choose the files you want to attach. Nothing is shared until you confirm.'
@@ -270,7 +273,7 @@ export function DriveFilesDialog({
                       message={messageOf(failure.cause, 'Google did not return a page of files.')}
                       onRetry={() => load({ ...request })}
                     />
-                    {(codeOf(failure.cause) === 'FORBIDDEN' || isDisconnected(failure.cause)) && (
+                    {attachmentConsentNeeded(failure.cause) && (
                       <Button
                         type="button"
                         variant="outline"
