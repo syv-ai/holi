@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { MdxResourceOwner } from './mdx-resources'
+import { inspectMdxDependencies } from './mdx-dependencies'
 import { realpathSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
@@ -53,7 +54,12 @@ export function createMdxDiagnostics(options: {
   trusted(identity: Identity): Promise<boolean>
   createResourceOwner(isCurrent: () => Promise<boolean>): MdxResourceOwner
   retireResourceOwner(owner: MdxResourceOwner): void
-  compile(owner: MdxResourceOwner, source: string, signal: AbortSignal): Promise<MdxDiagnostic[]>
+  inspect(
+    owner: MdxResourceOwner,
+    source: string,
+    signal: AbortSignal,
+    format: 'mdx' | 'jsx' | 'js',
+  ): Promise<import('./mdx-resources').MdxInspectResult>
 }): MdxDiagnostics {
   const leases = new Map<string, Lease>()
   let pending = 0
@@ -299,7 +305,26 @@ export function createMdxDiagnostics(options: {
       try {
         if (!current(lease) || lease.controller !== controller || controller.signal.aborted)
           fail('MDX compile superseded')
-        const result = await options.compile(lease.resourceOwner, input.source, controller.signal)
+        const diagnostics = await inspectMdxDependencies({
+          root: lease.root,
+          path: lease.path,
+          source: input.source,
+          signal: controller.signal,
+          owner: lease.resourceOwner,
+          assertCurrent: async () => {
+            if (
+              !current(lease) ||
+              lease.controller !== controller ||
+              input.generation !== lease.highGeneration ||
+              controller.signal.aborted
+            )
+              fail('MDX compile superseded')
+            const trusted = await options.trusted(lease.identity)
+            if (!current(lease) || !trusted) fail('MDX context changed')
+          },
+          inspect: (owner, source, signal, format) =>
+            options.inspect(owner, source, signal, format),
+        })
         if (
           lease.controller !== controller ||
           input.generation !== lease.highGeneration ||
@@ -317,7 +342,7 @@ export function createMdxDiagnostics(options: {
           drop(lease)
           fail('MDX context changed')
         }
-        return result
+        return diagnostics
       } finally {
         if (lease.controller === controller) lease.controller = null
       }

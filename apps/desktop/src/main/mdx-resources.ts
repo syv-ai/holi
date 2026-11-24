@@ -19,10 +19,27 @@ const CSP = `default-src 'none'; script-src ${SCRIPT_URL}; connect-src 'none'; i
 
 export type MdxResourceOwner = object
 
+interface MdxDependency {
+  specifier: string
+  line: number
+  column: number
+}
+
+export interface MdxInspectResult {
+  diagnostics: MdxDiagnostic[]
+  dependencies: MdxDependency[]
+}
+
 export interface MdxResources {
   createOwner(isCurrent: () => Promise<boolean>): MdxResourceOwner
   retireOwner(owner: MdxResourceOwner): void
   compile(owner: MdxResourceOwner, source: string, signal?: AbortSignal): Promise<MdxDiagnostic[]>
+  inspect(
+    owner: MdxResourceOwner,
+    source: string,
+    signal?: AbortSignal,
+    format?: 'mdx' | 'jsx' | 'js',
+  ): Promise<MdxInspectResult>
   invalidate(): void
   close(): void
 }
@@ -30,9 +47,10 @@ export interface MdxResources {
 interface Request {
   owner: MdxResourceOwner
   source: string
+  format: 'mdx' | 'jsx' | 'js'
   signal?: AbortSignal
   epoch: number
-  resolve(value: MdxDiagnostic[]): void
+  resolve(value: MdxInspectResult): void
   reject(error: Error): void
   settled: boolean
   timer?: ReturnType<typeof setTimeout>
@@ -60,7 +78,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
     return new Error(message.slice(0, MAX_MESSAGE))
   }
 
-  function settle(request: Request, error?: Error, diagnostics?: MdxDiagnostic[]): void {
+  function settle(request: Request, error?: Error, result?: MdxInspectResult): void {
     if (request.settled) return
     request.settled = true
     if (request.timer) clearTimeout(request.timer)
@@ -68,7 +86,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
     request.cancel = undefined
     running.delete(request)
     if (error) request.reject(error)
-    else request.resolve(diagnostics ?? [])
+    else request.resolve(result ?? { diagnostics: [], dependencies: [] })
   }
 
   async function assertCurrent(request: Request): Promise<void> {
@@ -310,7 +328,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
       if (!event.isMainFrame || event.url !== HTML_URL || !initialNavigation) event.preventDefault()
     })
 
-    const finish = async (error?: Error, result?: MdxDiagnostic[]) => {
+    const finish = async (error?: Error, result?: MdxInspectResult) => {
       if (finishing) return
       finishing = true
       if (timer) clearTimeout(timer)
@@ -354,9 +372,10 @@ export function createMdxResources(assetDirectory: string): MdxResources {
       await assertCurrent(request)
       initialNavigation = false
       const id = randomUUID()
-      const payload = Buffer.from(JSON.stringify({ id, source: request.source }), 'utf8').toString(
-        'base64',
-      )
+      const payload = Buffer.from(
+        JSON.stringify({ id, source: request.source, format: request.format }),
+        'utf8',
+      ).toString('base64')
       await guest.webContents.executeJavaScript(`window.__holiMdxReceive('${payload}')`)
       await assertCurrent(request)
       const deadline = Date.now() + COMPILE_TIMEOUT_MS
@@ -370,9 +389,29 @@ export function createMdxResources(assetDirectory: string): MdxResources {
           const serialized = JSON.stringify(result)
           if (Buffer.byteLength(serialized, 'utf8') > MAX_RESULT_BYTES)
             throw makeError('MDX compiler result exceeds 32 KiB')
-          const envelope = result as { id?: unknown; diagnostics?: unknown }
+          const envelope = result as { id?: unknown; diagnostics?: unknown; dependencies?: unknown }
           if (envelope.id === id) {
-            await finish(undefined, cleanDiagnostics(envelope.diagnostics))
+            if (!Array.isArray(envelope.dependencies) || envelope.dependencies.length > 64)
+              throw makeError('MDX compiler dependency limit or invalid result')
+            const dependencies = envelope.dependencies.map((item): MdxDependency => {
+              if (!item || typeof item !== 'object') throw makeError('Invalid MDX dependency')
+              const value = item as MdxDependency
+              if (
+                typeof value.specifier !== 'string' ||
+                value.specifier.length > MAX_MESSAGE ||
+                (!value.specifier.startsWith('./') && !value.specifier.startsWith('../')) ||
+                !Number.isSafeInteger(value.line) ||
+                value.line < 1 ||
+                !Number.isSafeInteger(value.column) ||
+                value.column < 1
+              )
+                throw makeError('Invalid MDX dependency')
+              return { specifier: value.specifier, line: value.line, column: value.column }
+            })
+            await finish(undefined, {
+              diagnostics: cleanDiagnostics(envelope.diagnostics),
+              dependencies,
+            })
             return
           }
         }
@@ -450,11 +489,12 @@ export function createMdxResources(assetDirectory: string): MdxResources {
     schedule()
   }
 
-  function compile(
+  function inspect(
     owner: MdxResourceOwner,
     source: string,
     signal?: AbortSignal,
-  ): Promise<MdxDiagnostic[]> {
+    format: 'mdx' | 'jsx' | 'js' = 'mdx',
+  ): Promise<MdxInspectResult> {
     if (closed) return Promise.reject(makeError('MDX compiler is unavailable'))
     if (!owners.has(owner)) return Promise.reject(makeError('MDX resource owner unavailable'))
     if (typeof source !== 'string' || Buffer.byteLength(source, 'utf8') > MAX_SOURCE_BYTES)
@@ -470,6 +510,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
       const request: Request = {
         owner,
         source,
+        format,
         signal,
         epoch,
         resolve,
@@ -500,10 +541,19 @@ export function createMdxResources(assetDirectory: string): MdxResources {
     })
   }
 
+  function compile(
+    owner: MdxResourceOwner,
+    source: string,
+    signal?: AbortSignal,
+  ): Promise<MdxDiagnostic[]> {
+    return inspect(owner, source, signal).then((result) => result.diagnostics)
+  }
+
   return {
     createOwner,
     retireOwner,
     compile,
+    inspect,
     invalidate() {
       if (closed) return
       epoch++
