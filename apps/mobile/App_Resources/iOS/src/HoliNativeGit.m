@@ -79,6 +79,35 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   return 0;
 }
 
+static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSError **error) {
+  int copy = dup(fd);
+  DIR *dir = copy >= 0 ? fdopendir(copy) : NULL;
+  if (!dir) { if (copy >= 0) close(copy); if (error) *error = HNGPathError(errno, @"Cannot enumerate working tree"); return NO; }
+  BOOL ok = YES;
+  struct dirent *entry;
+  errno = 0;
+  while ((entry = readdir(dir))) {
+    NSString *name = [NSString stringWithUTF8String:entry->d_name];
+    if (!name) { ok = NO; break; }
+    if ([name isEqualToString:@"."] || [name isEqualToString:@".."] || [name isEqualToString:@".git"]) continue;
+    NSString *path = prefix.length ? [prefix stringByAppendingFormat:@"/%@", name] : name;
+    struct stat st;
+    if (fstatat(fd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW)) { ok = NO; break; }
+    if (S_ISDIR(st.st_mode)) {
+      int child = openat(fd, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+      if (child < 0) { ok = NO; break; }
+      ok = HNGCollectNames(child, path, paths, error);
+      close(child);
+      if (!ok) break;
+    } else [paths addObject:path];
+    errno = 0;
+  }
+  if (errno) ok = NO;
+  if (!ok && error && !*error) *error = HNGPathError(EIO, @"Cannot enumerate working tree safely");
+  closedir(dir);
+  return ok;
+}
+
 @implementation HoliNativeGit
 - (NSString *)embeddedVersion {
   HNGInitializeLibgit2();
@@ -250,27 +279,75 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   return repo;
 }
 - (NSDictionary *)workingCopyIdentity:(NSString *)root error:(NSError **)error {
-  HoliGitSnapshot *snapshot = nil; git_repository *repo = [self openSafeRepository:root snapshot:&snapshot error:error]; if (!repo) return nil;
-  git_reference *head = NULL; BOOL hasHead = git_repository_head(&head, repo) == 0; BOOL attached = hasHead && git_reference_is_branch(head); const char *name = attached ? git_reference_shorthand(head) : NULL;
-  NSString *branch = name ? [NSString stringWithUTF8String:name] : @""; NSMutableArray *remotes = [NSMutableArray array]; git_strarray names = {0};
-  if (git_remote_list(&names, repo) == 0) for (size_t i=0;i<names.count;i++) { git_remote *r=NULL; if (git_remote_lookup(&r,repo,names.strings[i])==0) { const char *url=git_remote_url(r); if(url && !strcmp(names.strings[i], "origin")) { NSString *value=[NSString stringWithUTF8String:url]; NSURL *parsed=[NSURL URLWithString:value]; NSArray *parts=[parsed.path componentsSeparatedByString:@"/"]; if ([parsed.host.lowercaseString isEqualToString:@"github.com"] && parts.count==3 && [parts[1] length] && [parts[2] length]) { NSString *repoName = parts[2]; if ([repoName hasSuffix:@".git"]) repoName = [repoName substringToIndex:repoName.length - 4]; [remotes addObject:[NSString stringWithFormat:@"%@/%@", parts[1], repoName]]; } } git_remote_free(r); } }
-  git_strarray_dispose(&names); git_reference_free(head); git_repository_free(repo); [snapshot close];
-  return @{ @"remotes":remotes, @"branch":attached ? branch : [NSNull null], @"attached":@(attached) };
+  HoliGitSnapshot *snapshot = nil;
+  git_repository *repo = [self openSafeRepository:root snapshot:&snapshot error:error];
+  if (!repo) return nil;
+  git_reference *head = NULL;
+  git_remote *origin = NULL;
+  int rc = git_repository_head(&head, repo);
+  if (rc == 0) rc = git_remote_lookup(&origin, repo, "origin");
+  NSDictionary *result = nil;
+  if (rc == 0) {
+    const char *raw = git_remote_url(origin);
+    NSString *url = raw ? [NSString stringWithUTF8String:raw] : nil;
+    NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^(?:https://github\\.com/|git@github\\.com:)([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)$" options:NSRegularExpressionCaseInsensitive error:nil];
+    NSTextCheckingResult *match = url ? [pattern firstMatchInString:url options:0 range:NSMakeRange(0,url.length)] : nil;
+    if (!match) { if (error) *error = HNGPathError(EINVAL, @"Unsupported origin identity"); }
+    else {
+      NSString *owner = [url substringWithRange:[match rangeAtIndex:1]];
+      NSString *name = [url substringWithRange:[match rangeAtIndex:2]];
+      if ([name hasSuffix:@".git"]) name = [name substringToIndex:name.length - 4];
+      BOOL attached = git_reference_is_branch(head);
+      const char *branch = attached ? git_reference_shorthand(head) : NULL;
+      if (!name.length || [name isEqualToString:@"."] || [name isEqualToString:@".."]) { if (error) *error = HNGPathError(EINVAL, @"Invalid origin identity"); }
+      else result = @{@"remotes":@[[owner stringByAppendingFormat:@"/%@", name]], @"branch":branch ? [NSString stringWithUTF8String:branch] : [NSNull null], @"attached":@(attached)};
+    }
+  } else HNGError(error, rc);
+  git_remote_free(origin);
+  git_reference_free(head);
+  git_repository_free(repo);
+  [snapshot close];
+  return result;
 }
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyCandidates:(NSString *)root error:(NSError **)error {
-  HoliGitSnapshot *snapshot = nil; git_repository *repo=[self openSafeRepository:root snapshot:&snapshot error:error]; if(!repo)return nil;
-  NSMutableSet<NSString *> *paths=[NSMutableSet set]; git_index *index=NULL; int rc=git_repository_index(&index,repo);
-  if(rc==0) for(size_t i=0;i<git_index_entrycount(index);i++){const git_index_entry *e=git_index_get_byindex(index,i); if(e && e->path)[paths addObject:[NSString stringWithUTF8String:e->path]];}
-  git_index_free(index);
-  git_reference *head=NULL; git_commit *commit=NULL; git_tree *tree=NULL;
-  if(git_repository_head(&head,repo)==0 && git_reference_peel((git_object **)&commit,head,GIT_OBJECT_COMMIT)==0 && git_commit_tree(&tree,commit)==0) {
-    git_tree_walk(tree,GIT_TREEWALK_PRE,HNGCollectTree,(__bridge void *)paths);
+  HoliGitSnapshot *snapshot = nil;
+  git_repository *repo = [self openSafeRepository:root snapshot:&snapshot error:error];
+  if (!repo) return nil;
+  git_index *index = NULL;
+  git_reference *head = NULL;
+  git_commit *commit = NULL;
+  git_tree *tree = NULL;
+  NSMutableSet *paths = [NSMutableSet set];
+  int rc = git_repository_index(&index, repo);
+  if (rc == 0) rc = git_repository_head(&head, repo);
+  if (rc == 0) rc = git_reference_peel((git_object **)&commit, head, GIT_OBJECT_COMMIT);
+  if (rc == 0) rc = git_commit_tree(&tree, commit);
+  if (rc == 0) rc = git_tree_walk(tree, GIT_TREEWALK_PRE, HNGCollectTree, (__bridge void *)paths);
+  if (rc == 0) {
+    for (size_t i = 0; i < git_index_entrycount(index); i++) {
+      const git_index_entry *entry = git_index_get_byindex(index, i);
+      NSString *path = entry && entry->path ? [NSString stringWithUTF8String:entry->path] : nil;
+      if (!path) { rc = GIT_ERROR; break; }
+      [paths addObject:path];
+    }
   }
-  NSString *gitdir=[NSString stringWithUTF8String:git_repository_path(repo)];
-  NSMutableArray *dirs=[NSMutableArray arrayWithObject:root]; NSFileManager *fm=NSFileManager.defaultManager;
-  while(dirs.count){NSString *dir=dirs.lastObject; [dirs removeLastObject]; NSArray *items=[fm contentsOfDirectoryAtPath:dir error:nil]; for(NSString *name in items){if([dir isEqualToString:root] && [name isEqualToString:@".git"])continue; NSString *full=[dir stringByAppendingPathComponent:name]; struct stat st; if(lstat(full.fileSystemRepresentation,&st))continue; if(S_ISDIR(st.st_mode))[dirs addObject:full]; else {NSString *rel=[full substringFromIndex:root.length+1]; if(rel.length && ![rel hasPrefix:@".git/"])[paths addObject:rel];}}}
-  NSMutableArray *out=[NSMutableArray array]; for(NSString *p in paths)[out addObject:@{@"path":p}];
-  git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); [snapshot close]; return out;
+  NSMutableArray *out = nil;
+  if (rc == 0) {
+    int fd = open(root.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    BOOL ok = fd >= 0 && HNGCollectNames(fd, @"", paths, error);
+    if (fd >= 0) close(fd);
+    if (ok) {
+      out = [NSMutableArray array];
+      for (NSString *path in paths) [out addObject:@{@"path":path}];
+    } else if (error && !*error) *error = HNGPathError(EIO, @"Cannot open working tree");
+  } else HNGError(error, rc);
+  git_tree_free(tree);
+  git_commit_free(commit);
+  git_reference_free(head);
+  git_index_free(index);
+  git_repository_free(repo);
+  [snapshot close];
+  return out;
 }
 - (BOOL)authorizeWorkingCopyPath:(NSString *)path root:(NSString *)root error:(NSError **)error {
   NSArray<NSString *> *parts = nil;
@@ -298,25 +375,25 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyStatus:(NSArray<NSString *> *)paths root:(NSString *)root error:(NSError **)error {
   HoliGitSnapshot *snapshot = nil; git_repository *repo=[self openSafeRepository:root snapshot:&snapshot error:error]; if(!repo)return nil;
   int rootFD=open(root.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
-  if(rootFD<0){ if(error)*error=HNGPathError(errno,@"Cannot safely open working tree"); git_repository_free(repo); return nil; }
+  if(rootFD<0){ if(error)*error=HNGPathError(errno,@"Cannot safely open working tree"); git_repository_free(repo); [snapshot close]; return nil; }
   git_index *index=NULL; git_reference *head=NULL; git_commit *commit=NULL; git_tree *tree=NULL;
   int rc=git_repository_index(&index,repo);
   if (rc == 0) {
     rc = git_repository_head(&head, repo);
     if (rc == GIT_EUNBORNBRANCH || rc == GIT_ENOTFOUND) {
       if (error) *error = HNGPathError(ENODATA, @"Working-copy status requires an existing HEAD commit");
-      close(rootFD); git_index_free(index); git_repository_free(repo); return nil;
+      close(rootFD); git_index_free(index); git_repository_free(repo); [snapshot close]; return nil;
     }
   }
   if (rc == 0) {
     if (!git_reference_is_branch(head)) {
       if (error) *error = HNGPathError(EINVAL, @"Working-copy status requires an attached branch");
-      close(rootFD); git_reference_free(head); git_index_free(index); git_repository_free(repo); return nil;
+      close(rootFD); git_reference_free(head); git_index_free(index); git_repository_free(repo); [snapshot close]; return nil;
     }
     rc = git_reference_peel((git_object **)&commit, head, GIT_OBJECT_COMMIT);
   }
   if(rc==0 && commit) rc=git_commit_tree(&tree,commit);
-  if(rc<0){ if(error)HNGError(error,rc); close(rootFD); git_index_free(index); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); return nil; }
+  if(rc<0){ if(error)HNGError(error,rc); close(rootFD); git_index_free(index); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); [snapshot close]; return nil; }
   git_config *config=NULL; BOOL filemode=YES; if(git_repository_config(&config,repo)==0){ int value=1; if(git_config_get_bool(&value,config,"core.filemode")==0)filemode=value; git_config_free(config); }
   NSMutableArray *changes=[NSMutableArray array];
   for(NSString *path in paths){
@@ -324,10 +401,13 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
     const char *p=path.fileSystemRepresentation; const git_index_entry *stage0=git_index_get_bypath(index,p,0); BOOL conflict=NO;
     for(int stage=1;stage<=3;stage++) if(git_index_get_bypath(index,p,stage)){conflict=YES;break;}
     const git_tree_entry *headEntry=NULL; if(tree){ rc=git_tree_entry_bypath((git_tree_entry **)&headEntry,tree,p); if(rc==GIT_ENOTFOUND)rc=0; else if(rc<0){if(error)HNGError(error,rc);changes=nil;break;} }
+    if (headEntry && git_tree_entry_type(headEntry) == GIT_OBJECT_TREE) { git_tree_entry_free((git_tree_entry *)headEntry); headEntry = NULL; }
     BOOL staged = conflict || ((headEntry!=NULL)!=(stage0!=NULL)) || (headEntry&&stage0&&(!git_oid_equal(git_tree_entry_id(headEntry),&stage0->id)||git_tree_entry_filemode(headEntry)!=stage0->mode));
+    git_tree_entry_free((git_tree_entry *)headEntry);
     BOOL worktree=NO; int parent=HNGOpenParent(rootFD,parts); struct stat st; int parentError = errno; int statResult=parent<0?-1:fstatat(parent,parts.lastObject.fileSystemRepresentation,&st,AT_SYMLINK_NOFOLLOW);
     BOOL missing = (statResult < 0 && (errno == ENOENT || errno == ENOTDIR)) || (parent < 0 && (parentError == ENOENT || parentError == ENOTDIR));
     if(statResult<0 && !missing){ if(error)*error=HNGPathError(errno,@"Cannot inspect working-tree path"); changes=nil; if(parent>=0)close(parent); break; }
+    if (statResult == 0 && S_ISDIR(st.st_mode)) { statResult = -1; missing = YES; }
     if(statResult==0){
       if(S_ISLNK(st.st_mode)){ if(error)*error=HNGPathError(EINVAL,@"Symbolic links are not supported in status paths"); changes=nil; close(parent); break; }
       if(!S_ISREG(st.st_mode)){ if(error)*error=HNGPathError(EINVAL,@"Only regular files are supported in status paths"); changes=nil; close(parent); break; }
@@ -341,7 +421,6 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
       uint32_t mode=(opened.st_mode & S_IXUSR)?GIT_FILEMODE_BLOB_EXECUTABLE:GIT_FILEMODE_BLOB;
       if(rc<0){if(error)HNGError(error,rc);changes=nil;break;} worktree=!stage0 || !git_oid_equal(&oid,&stage0->id) || (filemode && mode!=stage0->mode);
     } else { if(parent>=0)close(parent); worktree=stage0!=NULL; }
-    git_tree_entry_free((git_tree_entry *)headEntry);
     if(staged||worktree||conflict)[changes addObject:@{@"path":path,@"staged":@(staged),@"worktree":@(worktree),@"conflict":@(conflict)}];
   }
   close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); [snapshot close]; return changes;

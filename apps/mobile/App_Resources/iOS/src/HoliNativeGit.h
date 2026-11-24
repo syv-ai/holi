@@ -8,7 +8,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSDictionary<NSString *, id> *)workingCopyIdentity:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSArray<NSDictionary<NSString *, id> *> *)workingCopyCandidates:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (BOOL)authorizeWorkingCopyPath:(NSString *)path root:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
-- (BOOL)hasPendingRecovery:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSArray<NSDictionary<NSString *, id> *> *)workingCopyStatus:(NSArray<NSString *> *)paths root:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSDictionary<NSString *, id> *)runOperation:(NSString *)operation
                                                    root:(NSString *)root
