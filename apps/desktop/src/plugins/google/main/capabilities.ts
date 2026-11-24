@@ -87,7 +87,12 @@ import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 import { isMailMarker, validateBatch, validateThreadId, type MarkerValue } from './markers'
 import { normalizeMailMarkerPreferences, type MailMarkerPreferences } from '../shared/mail-markers'
-import { eventAttachments, driveFiles, attachEventFiles } from './event-attachments'
+import {
+  eventAttachments,
+  driveFiles,
+  attachEventFiles,
+  checkEventFileAccess,
+} from './event-attachments'
 import type { EventAttachmentTarget } from '../shared/event-attachments'
 
 const attachmentTarget = (raw: unknown): EventAttachmentTarget => {
@@ -101,6 +106,14 @@ const attachmentTarget = (raw: unknown): EventAttachmentTarget => {
     throw new CapabilityError('BAD_REQUEST', 'invalid Google resource id')
   }
   return { expectedAccountSub, calendarId, eventId }
+}
+
+function attachmentSelection(raw: unknown): EventAttachmentTarget & { fileIds: string[] } {
+  const p = paramsObject(raw)
+  const target = attachmentTarget(p)
+  if (!Array.isArray(p.fileIds) || p.fileIds.some((id) => typeof id !== 'string'))
+    throw new CapabilityError('BAD_REQUEST', 'fileIds must be a list')
+  return { ...target, fileIds: p.fileIds as string[] }
 }
 
 /** Longest calendar window one call may ask for. */
@@ -535,11 +548,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       if (session.accountSub !== expectedAccountSub) throw accountChanged()
       const missing = session.missingScopes()
       if (scopes.some((scope) => missing.includes(scope))) {
-        throw new CapabilityError(
-          'FORBIDDEN',
-          'Reconnect Google to grant attachment access.',
-          RECONNECT,
-        )
+        throw new GoogleApiError('scope', 403, 'Reconnect Google to grant attachment access.')
       }
     }
     requireGrant()
@@ -1314,25 +1323,21 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         query: optionalStringParam(paramsObject(raw), 'query'),
         pageToken: optionalStringParam(paramsObject(raw), 'pageToken'),
       }),
-      run: (ctx, { expectedAccountSub, query, pageToken }) =>
+      run: (ctx, { query, pageToken, ...target }) =>
         attachmentRequest(async () => {
-          const { api, validate } = await attachmentSession(ctx.remote, expectedAccountSub, [
+          const { api, validate } = await attachmentSession(ctx.remote, target.expectedAccountSub, [
+            GOOGLE_CALENDAR_READ_SCOPE,
+            GOOGLE_CALENDAR_WRITE_SCOPE,
             GOOGLE_DRIVE_SCOPE,
           ])
-          const result = await driveFiles(api, query ?? '', pageToken, validate)
+          const result = await driveFiles(api, target, query ?? '', pageToken, validate)
           await validate()
           return result
         }),
     }),
     'google.attachEventFiles': cap({
       doors: ['ui'],
-      params: (raw) => {
-        const p = paramsObject(raw)
-        const target = attachmentTarget(p)
-        if (!Array.isArray(p.fileIds) || p.fileIds.some((id) => typeof id !== 'string'))
-          throw new CapabilityError('BAD_REQUEST', 'fileIds must be a list')
-        return { ...target, fileIds: p.fileIds as string[] }
-      },
+      params: attachmentSelection,
       run: (ctx, { fileIds, ...target }) =>
         attachmentRequest(async () => {
           const { api, validate } = await attachmentSession(ctx.remote, target.expectedAccountSub, [
@@ -1341,6 +1346,18 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
             GOOGLE_DRIVE_SCOPE,
           ])
           return attachEventFiles(api, target, fileIds, validate)
+        }),
+    }),
+    'google.checkEventFileAccess': cap({
+      doors: ['ui'],
+      params: attachmentSelection,
+      run: (ctx, { fileIds, ...target }) =>
+        attachmentRequest(async () => {
+          const { api, validate } = await attachmentSession(ctx.remote, target.expectedAccountSub, [
+            GOOGLE_CALENDAR_READ_SCOPE,
+            GOOGLE_DRIVE_SCOPE,
+          ])
+          return checkEventFileAccess(api, target, fileIds, validate)
         }),
     }),
 
