@@ -208,7 +208,25 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
 - (git_repository *)openSafeRepository:(NSString *)root error:(NSError **)error {
   HNGInitializeLibgit2();
   struct stat metadataStat; NSString *metadata=[root stringByAppendingPathComponent:@".git"];
-  if(lstat(metadata.fileSystemRepresentation,&metadataStat)!=0 || !S_ISDIR(metadataStat.st_mode)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:@{NSLocalizedDescriptionKey:@"Repository metadata must be a real directory"}]; return NULL; }
+  if(lstat(metadata.fileSystemRepresentation,&metadataStat)!=0 || !S_ISDIR(metadataStat.st_mode) || S_ISLNK(metadataStat.st_mode)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:@{NSLocalizedDescriptionKey:@"Repository metadata must be a real directory"}]; return NULL; }
+  // Inspect the metadata tree without following links before libgit2 can interpret it.
+  NSMutableArray<NSString *> *directories = [NSMutableArray arrayWithObject:metadata];
+  NSFileManager *fileManager = NSFileManager.defaultManager;
+  while (directories.count) {
+    NSString *directory = directories.lastObject; [directories removeLastObject];
+    NSArray<NSString *> *entries = [fileManager contentsOfDirectoryAtPath:directory error:nil];
+    if (!entries) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+    for (NSString *entry in entries) {
+      NSString *path = [directory stringByAppendingPathComponent:entry]; struct stat item;
+      if (lstat(path.fileSystemRepresentation, &item) != 0 || S_ISLNK(item.st_mode)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+      if (S_ISDIR(item.st_mode)) [directories addObject:path];
+      if ([entry isEqualToString:@"commondir"] || [entry isEqualToString:@"alternates"] || [entry isEqualToString:@"http-alternates"] || [entry isEqualToString:@"config.worktree"] || [entry isEqualToString:@"worktrees"] || [entry isEqualToString:@"info"] && [directory.lastPathComponent isEqualToString:@"objects"]) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+      if ([entry isEqualToString:@"config"]) {
+        NSData *data = [NSData dataWithContentsOfFile:path]; NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+        if (!text || [text rangeOfString:@"include" options:NSCaseInsensitiveSearch].location != NSNotFound || [text rangeOfString:@"core.worktree" options:NSCaseInsensitiveSearch].location != NSNotFound || [text rangeOfString:@"extensions." options:NSCaseInsensitiveSearch].location != NSNotFound) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+      }
+    }
+  }
   git_repository *repo = NULL; int rc = git_repository_open_ext(&repo, root.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH, NULL);
   if (rc < 0) { HNGError(error, rc); return NULL; }
   if (git_repository_is_bare(repo)) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
@@ -221,9 +239,9 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
 }
 - (NSDictionary *)workingCopyIdentity:(NSString *)root error:(NSError **)error {
   git_repository *repo = [self openSafeRepository:root error:error]; if (!repo) return nil;
-  git_reference *head = NULL; BOOL attached = git_repository_head(&head, repo) == 0; const char *name = head ? git_reference_name(head) : NULL;
+  git_reference *head = NULL; BOOL hasHead = git_repository_head(&head, repo) == 0; BOOL attached = hasHead && git_reference_is_branch(head); const char *name = attached ? git_reference_shorthand(head) : NULL;
   NSString *branch = name ? [NSString stringWithUTF8String:name] : @""; NSMutableArray *remotes = [NSMutableArray array]; git_strarray names = {0};
-  if (git_remote_list(&names, repo) == 0) for (size_t i=0;i<names.count;i++) { git_remote *r=NULL; if (git_remote_lookup(&r,repo,names.strings[i])==0) { const char *url=git_remote_url(r); if(url) [remotes addObject:[NSString stringWithUTF8String:url]]; git_remote_free(r); } }
+  if (git_remote_list(&names, repo) == 0) for (size_t i=0;i<names.count;i++) { git_remote *r=NULL; if (git_remote_lookup(&r,repo,names.strings[i])==0) { const char *url=git_remote_url(r); if(url && !strcmp(names.strings[i], "origin")) { NSString *value=[NSString stringWithUTF8String:url]; NSURL *parsed=[NSURL URLWithString:value]; NSArray *parts=[parsed.path componentsSeparatedByString:@"/"]; if ([parsed.host.lowercaseString isEqualToString:@"github.com"] && parts.count==3 && [parts[1] length] && [parts[2] length]) [remotes addObject:[NSString stringWithFormat:@"%@/%@", parts[1], [parts[2] stringByDeletingPathExtension]]]; } git_remote_free(r); } }
   git_strarray_dispose(&names); git_reference_free(head); git_repository_free(repo);
   return @{ @"remotes":remotes, @"branch":attached ? branch : [NSNull null], @"attached":@(attached) };
 }
