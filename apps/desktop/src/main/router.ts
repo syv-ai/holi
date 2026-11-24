@@ -1979,8 +1979,22 @@ export function createRouter(deps: RouterDeps) {
           const rel = safe(input.path)
           if (isSecretPath(rel))
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'Secret paths cannot be compared' })
-          const result = await compareRevisions(active.repo.root, rel, input.before, input.after)
-          if (deps.host.active() !== active || active.remote !== input.remote)
+          const accountGeneration = deps.session.generation
+          const accountId = String(deps.session.viewer?.accountId)
+          const openRevision = vaultOpenRevision
+          const root = active.repo.root
+          if (completedVaultOpenRevision !== openRevision)
+            return { kind: 'unavailable', reason: 'stale' }
+          const result = await compareRevisions(root, rel, input.before, input.after)
+          if (
+            deps.session.generation !== accountGeneration ||
+            String(deps.session.viewer?.accountId) !== accountId ||
+            deps.host.active() !== active ||
+            active.remote !== input.remote ||
+            active.repo.root !== root ||
+            vaultOpenRevision !== openRevision ||
+            completedVaultOpenRevision !== openRevision
+          )
             return { kind: 'unavailable', reason: 'stale' }
           return result
         },
