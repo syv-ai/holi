@@ -115,7 +115,8 @@ function displayed(event: CalendarEvent): EventAttachment[] {
   }))
 }
 
-function editability({ calendar, event }: Snapshot): { reason: string } | { guests: string[] } {
+function editability(current: Snapshot): { reason: string } | { guests: string[] } {
+  const { calendar, event } = current
   if (
     (calendar.accessRole !== 'owner' && calendar.accessRole !== 'writer') ||
     event.organizer?.self !== true ||
@@ -129,6 +130,13 @@ function editability({ calendar, event }: Snapshot): { reason: string } | { gues
   if (typeof event.etag !== 'string' || !/^"[\x21\x23-\x7e]+"$/.test(event.etag)) {
     return { reason: 'The event has no usable version tag.' }
   }
+  return guestList(current)
+}
+
+function guestList({ calendar, event }: Snapshot): { reason: string } | { guests: string[] } {
+  if (!['reader', 'writer', 'owner'].includes(calendar.accessRole ?? '')) {
+    return { reason: 'This account cannot read the event guest list.' }
+  }
   const reason = 'Google did not provide a complete guest list.'
   if (
     event.attendeesOmitted ||
@@ -136,10 +144,13 @@ function editability({ calendar, event }: Snapshot): { reason: string } | { gues
   ) {
     return { reason }
   }
+  const organizerEmail = event.organizer?.email
+  if (organizerEmail !== undefined && typeof organizerEmail !== 'string') return { reason }
+  const organizer = organizerEmail?.toLowerCase()
   const guests = new Set<string>()
-  const organizer = event.organizer.email?.toLowerCase()
   for (const person of event.attendees ?? []) {
-    if (person?.resource || person?.self || person?.organizer) continue
+    if (person?.resource || person?.organizer || (event.organizer?.self === true && person?.self))
+      continue
     if (typeof person?.email !== 'string' || !/^[^\s@<>]+@[^\s@<>]+$/.test(person.email)) {
       return { reason }
     }
@@ -407,16 +418,17 @@ async function reconcileGuestAccess(
   const confirmed = new Map(
     files.filter((file) => attached(current.event, file)).map((file) => [file.id, file]),
   )
-  const editable = editability(current)
-  const guests = 'guests' in editable ? editable.guests : []
+  const accessFor = mode === 'share' ? editability : guestList
+  const initial = accessFor(current)
+  const guests = 'guests' in initial ? initial.guests : []
   const startedWith = new Set(guests)
   let changed = false
   let unverified = false
-  let reason = 'reason' in editable ? editable.reason : undefined
+  let reason = 'reason' in initial ? initial.reason : undefined
 
   const refresh = async () => {
     current = await snapshot(api, target, validate, signal)
-    const access = editability(current)
+    const access = accessFor(current)
     if ('reason' in access) {
       reason = access.reason
       changed = true
@@ -460,10 +472,13 @@ async function reconcileGuestAccess(
       reconnect ||= googleReconnectNeeded(error)
     }
   }
+  let guestsChecked: string[] | undefined
   try {
-    // Calendar, not Drive, determines what's attached. Always try one final
-    // read, even after a Drive refusal. Don't grant to newly added guests.
+    // Calendar, not Drive, determines what's attached and who's still a guest.
+    // Report the latest complete list, not the guests we attempted to share with.
     await refresh()
+    const latest = guestList(current)
+    if ('guests' in latest) guestsChecked = latest.guests
   } catch (error) {
     reconnect ||= googleReconnectNeeded(error)
     unverified = true
@@ -495,6 +510,7 @@ async function reconcileGuestAccess(
     attachmentStatus: complete ? 'attached' : 'unknown',
     sharing: result.sharing,
     sharingComplete,
+    ...(guestsChecked === undefined ? {} : { guestsChecked }),
     ...(message ? { message } : {}),
     ...(reconnect ? { reconnect: true } : {}),
   }

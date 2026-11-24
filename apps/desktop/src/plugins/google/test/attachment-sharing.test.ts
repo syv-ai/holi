@@ -135,26 +135,25 @@ describe('ensureGuestViewers', () => {
     // retained state from the first account).
     const other = setup(handler, 'b')
     const check = () =>
-      ensureGuestViewers(other, fileIds, [firstGuest], {
+      ensureGuestViewers(other, fileIds, [firstGuest, secondGuest], {
         ...share(),
         validateGuest: undefined,
       })
-    await expect(check()).resolves.toMatchObject({ sharing: [{ status: 'unknown' }] })
-    await expect(ensureGuestViewers(other, fileIds, [secondGuest], share())).resolves.toMatchObject(
-      { sharing: [{ guest: secondGuest, status: 'failed' }] },
-    )
+    const grant = (guests: string[]) => ensureGuestViewers(other, fileIds, guests, share())
+    const blocked = { guest: secondGuest, status: 'blocked', message: expect.any(String) }
+    await expect(check()).resolves.toMatchObject({
+      sharing: [{ guest: firstGuest, status: 'unknown' }, blocked],
+    })
     expect(notified).toEqual([firstGuest])
 
     permissions.push({ id: 'independent', type: 'user', emailAddress: firstGuest, role: 'writer' })
-    await expect(check()).resolves.toMatchObject({ sharing: [{ status: 'already-accessible' }] })
-    await expect(
-      ensureGuestViewers(other, fileIds, [firstGuest, secondGuest], share()),
-    ).resolves.toMatchObject({
-      sharing: [
-        { guest: firstGuest, status: 'already-accessible' },
-        { guest: secondGuest, status: 'failed' },
-      ],
-    })
+    for (const run of [check, () => grant([firstGuest, secondGuest])]) {
+      await expect(run()).resolves.toMatchObject({
+        sharing: [{ guest: firstGuest, status: 'already-accessible' }, blocked],
+      })
+    }
+    // A later event need not include the original guest for the file to stay blocked.
+    await expect(grant([secondGuest])).resolves.toMatchObject({ sharing: [blocked] })
     expect(notified).toEqual([firstGuest])
   })
 

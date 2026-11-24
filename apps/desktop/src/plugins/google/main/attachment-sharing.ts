@@ -20,6 +20,11 @@ const ACCESS_ROLES = new Set([
   'owner',
 ])
 
+const blockedSharing = {
+  status: 'blocked',
+  message: 'Holi cannot grant access to this file while a previous sharing request is unconfirmed.',
+} as const
+
 type Validate = () => Promise<void>
 type Permission = {
   id?: string
@@ -170,6 +175,7 @@ export async function ensureGuestViewers(
             const target = { fileId, guest }
             const recipient = guest.toLowerCase()
             let unconfirmed = false
+            let blocked = false
             try {
               const before = (receipt ??= await untilGoogleAbort(signal, () =>
                 receipts.read(fileId),
@@ -177,6 +183,7 @@ export async function ensureGuestViewers(
               pendingGuest = before.pending
               const acknowledged = before.acknowledged.includes(recipient)
               unconfirmed = pendingGuest === recipient || acknowledged
+              blocked = pendingGuest !== null && pendingGuest !== recipient
               list ??= await permissions(api, url, options)
               const existing = access(list, recipient)
               if (typeof existing !== 'string') {
@@ -193,17 +200,19 @@ export async function ensureGuestViewers(
                 }
                 continue
               }
+              if (blocked) {
+                sharing.push({ ...target, ...blockedSharing })
+                continue
+              }
               if (unconfirmed || existing === 'unverified') {
                 sharing.push({ ...target, status: 'unknown', message: message() })
                 continue
               }
-              if (!validateGuest || pendingGuest !== null) {
+              if (!validateGuest) {
                 sharing.push({
                   ...target,
                   status: 'failed',
-                  message: validateGuest
-                    ? 'A previous guest access update for this file is not confirmed.'
-                    : 'No viewer access was found.',
+                  message: 'No viewer access was found.',
                 })
                 continue
               }
@@ -279,8 +288,14 @@ export async function ensureGuestViewers(
               reconnect ||= googleReconnectNeeded(error)
               sharing.push({
                 ...target,
-                status: unconfirmed ? 'unknown' : 'failed',
-                message: signal.aborted ? 'The guest access check timed out.' : message(error),
+                ...(blocked
+                  ? blockedSharing
+                  : {
+                      status: unconfirmed ? 'unknown' : 'failed',
+                      message: signal.aborted
+                        ? 'The guest access check timed out.'
+                        : message(error),
+                    }),
               })
             }
           }
@@ -295,8 +310,12 @@ export async function ensureGuestViewers(
       sharing.push({
         fileId,
         guest,
-        status: uncertain ? 'unknown' : 'failed',
-        message: uncertain ? message() : 'Guest access was not checked.',
+        ...(pendingGuest !== null && !uncertain
+          ? blockedSharing
+          : {
+              status: uncertain ? 'unknown' : 'failed',
+              message: uncertain ? message() : 'Guest access was not checked.',
+            }),
       })
     }
   }

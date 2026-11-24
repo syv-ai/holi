@@ -34,7 +34,8 @@ export interface DriveFilePage {
 export interface AttachmentSharingResult {
   fileId: string
   guest: string
-  status: 'granted' | 'already-accessible' | 'failed' | 'unknown'
+  /** `blocked` means an unresolved write prevents new grants on this file. */
+  status: 'granted' | 'already-accessible' | 'failed' | 'unknown' | 'blocked'
   message?: string
 }
 
@@ -43,6 +44,8 @@ export interface AttachEventFilesResult {
   attachmentStatus: 'attached' | 'failed' | 'unknown'
   message?: string
   sharing: AttachmentSharingResult[]
+  /** The complete current guest list, even if empty. Omitted when it could not be confirmed. */
+  guestsChecked?: string[]
   /** The attachment and guest outcomes still apply; further work needs Google consent. */
   reconnect?: boolean
   /** Whether access was confirmed for every selected attachment and current guest. */
