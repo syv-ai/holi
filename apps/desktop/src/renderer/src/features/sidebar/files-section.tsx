@@ -20,7 +20,7 @@ import {
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { toast } from 'sonner'
-import { GITKEEP, holiWebLink, isSecretPath, TASKS_CLAIM } from '@holi/shared'
+import { GITKEEP, holiWebLink, isSecretPath, TASKS_CLAIM, vaultPathIndex } from '@holi/shared'
 import { cn } from '@/lib/cn'
 
 import { ConfirmDialog } from '@/composites/confirm-dialog'
@@ -49,8 +49,15 @@ import { Tree, TreeDragLine, TreeItem, TreeItemLabel } from '@/components/ui/tre
 import { folderDocumentAt } from '@/state/folder-documents'
 import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
-import { planMoveInto, planRenameFolder, type Move } from '@/lib/tree-actions'
-import { basename, joinPath, parentOf } from '@/lib/tree-paths'
+import { planMoveFolders, planMoveInto, planRenameFolder, type Move } from '@/lib/tree-actions'
+import {
+  basename,
+  isWindowsPath,
+  joinPath,
+  parentOf,
+  sourceInside,
+  sourceName,
+} from '@/lib/tree-paths'
 import { canMoveInto } from '@/lib/tree-view'
 import { trpc } from '@/lib/trpc'
 import { useTabDrag } from '@/features/shell/use-tab-drag'
@@ -332,29 +339,40 @@ export function FilesSection({
   const folderOf = (item: ItemInstance<TreeItemData>) =>
     item.getId() === ROOT_ID ? '' : item.getId()
 
-  async function move(moves: Move[]) {
+  async function move(moves: Move[], folders: Move[] = []) {
     const remote = files.remote
-    await moveNotes({ moves })
+    await moveNotes({ moves, folders })
     if (stillCurrent(remote)) onMoved(moves)
   }
 
   /** Move `sources` into `dest`; the paths they land at, for the caller to land. */
   async function moveInto(sources: string[], dest: string): Promise<string[]> {
-    if (!canMoveInto(sources, dest)) return []
-    await move(planMoveInto(files.allPaths, sources, dest))
+    const remote = files.remote
+    if (remote === null || !canMoveInto(sources, dest)) return []
+    const dirs = await trpc.notes.directories.query({
+      remote,
+      paths: sources,
+    })
+    if (!stillCurrent(remote)) return []
+    const moves = planMoveInto(files.allPaths, sources, dest)
+    const folders = planMoveFolders(dirs, sources, dest)
+    if (moves.length === 0 && folders.length === 0) return []
+    await move(moves, folders)
     return sources.map((source) => joinPath(dest, basename(source)))
   }
 
   /** Rows from this vault move; anything else is copied in from outside. */
   async function dropPaths(sources: string[], dest: string) {
     const root = vaults.find((vault) => vault.remote === files.remote)?.path
-    const prefix = root ? `${root}/` : null
-    const inside = prefix
-      ? sources
-          .filter((source) => source.startsWith(prefix))
-          .map((source) => source.slice(prefix.length))
-      : []
-    const outside = sources.filter((source) => !prefix || !source.startsWith(prefix))
+    const inside: string[] = []
+    const outside: string[] = []
+    // Files and folders as the vault spells them, read the way the dropped OS does.
+    const index = vaultPathIndex(files.taken, sources.some(isWindowsPath) ? 'win32' : 'posix')
+    for (const source of sources) {
+      const rel = root ? sourceInside(root, source, index) : null
+      if (rel === null) outside.push(source)
+      else inside.push(rel)
+    }
     const moved = inside.length > 0 ? await moveInto(inside, dest) : []
     const copied: string[] = []
     if (outside.length > 0) {
@@ -362,7 +380,7 @@ export function FilesSection({
       for (const { name, reason } of skipped) toast.error(`${name}: ${reason}`)
       const took = new Set(skipped.map((skip) => skip.name))
       for (const source of outside) {
-        if (!took.has(basename(source))) copied.push(joinPath(dest, basename(source)))
+        if (!took.has(sourceName(source))) copied.push(joinPath(dest, sourceName(source)))
       }
     }
     land([...moved, ...copied])
