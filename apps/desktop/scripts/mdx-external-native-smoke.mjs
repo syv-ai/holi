@@ -79,7 +79,7 @@ export async function runExternalNativeAcceptance(
       await clickAt(trigger, state.point, deadline)
     }
   }
-  const cancelled = /cancel|supersed|unavailable|invalidated/i
+  const cancelled = /abort|cancel|supersed|unavailable|invalidated/i
   const lifecycle = [
     ['approval', rawOrigin],
     ['approval', redirectOrigin],
