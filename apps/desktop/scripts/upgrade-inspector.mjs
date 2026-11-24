@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 
-/** Caller owns the process: stop it before close unless deliberately resuming startup. */
 function classifyProtocolError(code, message) {
   if (code === -32000 && /execution context was destroyed/i.test(message || ''))
     return 'context-destroyed'
@@ -10,6 +9,7 @@ function classifyProtocolError(code, message) {
   return 'protocol-error'
 }
 
+/** Caller owns the process: stop it before close unless deliberately resuming startup. */
 export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_000 } = {}) {
   const deadline = Date.now() + timeoutMs
   let url
@@ -26,7 +26,15 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   const contexts = new Map()
   let nextId = 0
   let closed = false
-  let lifecycle = 'connected'
+  const observations = {
+    entryContextDestroyed: false,
+    contextsCleared: false,
+    targetCrashed: false,
+    targetDetached: false,
+    debuggerDisconnected: false,
+    childExit: null,
+  }
+  let entryContextId
   let frame
   let paused = true
   let resolvePause
@@ -37,8 +45,10 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   })
   pause.catch(() => {})
   function fail(message) {
+    if (record.child.exitCode !== null && observations.childExit === null)
+      observations.childExit = { code: record.child.exitCode, signal: record.child.signalCode }
     const error = new Error(message)
-    error.details = { method: null, kind: message, lifecycle }
+    error.details = { method: null, kind: message, observations: { ...observations } }
     failure.abort(error)
     for (const { reject, timer } of requests.values()) {
       clearTimeout(timer)
@@ -65,18 +75,22 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
           method: /^[A-Za-z]+\.[A-Za-z]+$/.test(pending.method) ? pending.method : null,
           code: Number.isInteger(message.error.code) ? message.error.code : null,
           kind: classifyProtocolError(message.error.code, message.error.message),
-          lifecycle,
+          observations: { ...observations },
         }
         pending.reject(error)
       } else pending.resolve(message.result)
     }
-    if (message.method === 'Runtime.executionContextDestroyed') lifecycle = 'context-destroyed'
+    if (
+      message.method === 'Runtime.executionContextDestroyed' &&
+      message.params?.executionContextId === entryContextId
+    )
+      observations.entryContextDestroyed = true
     if (message.method === 'Runtime.executionContextsCleared') {
       contexts.clear()
-      lifecycle = 'contexts-cleared'
+      observations.contextsCleared = true
     }
-    if (message.method === 'Inspector.targetCrashed') lifecycle = 'target-crashed'
-    if (message.method === 'Target.detachedFromTarget') lifecycle = 'target-detached'
+    if (message.method === 'Inspector.targetCrashed') observations.targetCrashed = true
+    if (message.method === 'Target.detachedFromTarget') observations.targetDetached = true
     if (message.method === 'Debugger.scriptParsed' && !frame)
       contexts.set(message.params.scriptId, message.params.executionContextId)
     if (message.method === 'Debugger.paused') resolvePause(message.params)
@@ -84,7 +98,8 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   const onAbort = () => fail('inspector operation aborted')
   const onClose = () => {
     if (!closed) {
-      lifecycle = 'debugger-disconnected'
+      observations.debuggerDisconnected = true
+      observations.childExit = { code: record.child.exitCode, signal: record.child.signalCode }
       fail('inspector connection closed')
     }
   }
@@ -160,6 +175,7 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   assert(frame && state.reason === 'Break on start', 'inspector did not pause at application entry')
   const contextId = contexts.get(frame.location.scriptId)
   assert(Number.isInteger(contextId), 'entry script execution context was not reported')
+  entryContextId = contextId
   contexts.clear()
   return {
     frame: { ...frame, reason: state.reason },
