@@ -1,6 +1,7 @@
 import { compile } from '@mdx-js/mdx'
 import { Parser, tokenizer, tokTypes } from 'acorn'
 import jsx from 'acorn-jsx'
+import { analyze } from 'eslint-scope'
 
 interface Request {
   id: string
@@ -26,10 +27,14 @@ interface Result {
   dependencies: Dependency[]
 }
 
+type Program = Parameters<typeof analyze>[0]
+
 type MarkdownNode = {
   type: string
   children?: MarkdownNode[]
-  data?: { estree?: { body: unknown[] } }
+  attributes?: MarkdownNode[]
+  value?: string | MarkdownNode | null
+  data?: { estree?: Pick<Program, 'body'> }
 }
 
 type Location = { line?: unknown; column?: unknown }
@@ -42,22 +47,12 @@ type ParserError = {
   column?: unknown
 }
 
-function commonJsMember(node: Record<string, unknown>): boolean {
-  const owner = node.object as { name?: unknown } | undefined
-  const property = node.property as { name?: unknown; value?: unknown } | undefined
-  const member = node.computed ? property?.value : property?.name
-  return (
-    owner?.name === 'exports' ||
-    owner?.name === 'require' ||
-    (owner?.name === 'module' && (member === 'exports' || member === 'require'))
-  )
-}
-
+const commonJsGlobals = new Set(['exports', 'module', 'require'])
 const unsupportedImportAttributes =
   'Unsupported import attributes; only plain ECMAScript modules are supported.'
 
-function sourcePosition(node: Record<string, unknown>) {
-  const start = (node.loc as { start?: Location } | undefined)?.start
+function sourcePosition(location: unknown) {
+  const start = (location as { start?: Location } | undefined)?.start
   return {
     line: typeof start?.line === 'number' ? start.line : 1,
     column: typeof start?.column === 'number' ? start.column + 1 : 1,
@@ -123,7 +118,7 @@ root.__holiMdxReceive = (encoded) => {
       const declaration = node as Record<string, unknown>
       const source = moduleSource(declaration)
       if (!source) continue
-      const position = sourcePosition(declaration)
+      const position = sourcePosition(declaration.loc)
       if (hasImportAttributes(declaration, source.end, input)) {
         if (request.format === 'mdx') {
           // As with other MDX parse failures, do not return a partial set of dependencies.
@@ -143,7 +138,7 @@ root.__holiMdxReceive = (encoded) => {
       }
     }
   }
-  const inspectExpressions = (tree: unknown) => {
+  const inspectProgram = (tree: Program) => {
     const visit = (node: unknown): void => {
       if (!node || typeof node !== 'object') return
       const value = node as Record<string, unknown>
@@ -155,22 +150,13 @@ root.__holiMdxReceive = (encoded) => {
       ) {
         diagnostics.push({
           message: 'Dynamic imports are not supported; use a static import.',
-          ...sourcePosition(value),
+          ...sourcePosition(value.loc),
         })
       } else if (
         type === 'MetaProperty' &&
         (value.meta as { name?: unknown } | undefined)?.name === 'import'
       ) {
-        diagnostics.push({ message: 'import.meta is not supported.', ...sourcePosition(value) })
-      } else if (
-        (type === 'CallExpression' &&
-          (value.callee as { name?: unknown } | undefined)?.name === 'require') ||
-        (type === 'MemberExpression' && commonJsMember(value))
-      ) {
-        diagnostics.push({
-          message: 'CommonJS is not supported; use ECMAScript modules.',
-          ...sourcePosition(value),
-        })
+        diagnostics.push({ message: 'import.meta is not supported.', ...sourcePosition(value.loc) })
       }
       for (const [key, child] of Object.entries(value)) {
         if (key === 'loc' || key === 'start' || key === 'end') continue
@@ -179,6 +165,22 @@ root.__holiMdxReceive = (encoded) => {
       }
     }
     visit(tree)
+    // In strict ESM, direct eval cannot introduce bindings into the surrounding scope.
+    const { globalScope } = analyze(tree, {
+      ecmaVersion: 2026,
+      sourceType: 'module',
+      jsx: true,
+      ignoreEval: true,
+    })
+    const reported = new Set<object>()
+    for (const { identifier } of globalScope?.through ?? []) {
+      if (!commonJsGlobals.has(identifier.name) || reported.has(identifier)) continue
+      reported.add(identifier)
+      diagnostics.push({
+        message: 'CommonJS is not supported; use ECMAScript modules.',
+        ...sourcePosition(identifier.loc),
+      })
+    }
   }
   if (request.format === 'js' || request.format === 'jsx') {
     try {
@@ -187,9 +189,10 @@ root.__holiMdxReceive = (encoded) => {
         ecmaVersion: 'latest',
         sourceType: 'module',
         locations: true,
+        ranges: true,
       })
       inspectDeclarations(tree.body, request.source)
-      inspectExpressions(tree)
+      inspectProgram(tree as unknown as Program)
       root.__holiMdxResult = { id: request.id, diagnostics, dependencies }
     } catch (error) {
       const candidate = error as ParserError
@@ -228,19 +231,25 @@ root.__holiMdxReceive = (encoded) => {
     jsxImportSource: 'react',
     remarkPlugins: [
       () => (tree: MarkdownNode) => {
-        // Only scan original declarations: MDX can drop an empty re-export or
-        // split a re-export into a layout import and a named re-export.
+        // Analyze the original ranged ESTree fragments as one module so that
+        // MDX expressions share the bindings from every ESM block. Do this before
+        // MDX inserts unranged code, drops empty re-exports, or rewrites layouts.
+        const body: Program['body'] = []
         // Micromark's offsets exclude an initial BOM.
         const input = request.source.startsWith('\uFEFF') ? request.source.slice(1) : request.source
         const visit = (node: MarkdownNode): void => {
-          if (node.type === 'mdxjsEsm') inspectDeclarations(node.data?.estree?.body ?? [], input)
+          const statements = node.data?.estree?.body ?? []
+          if (node.type === 'mdxjsEsm') inspectDeclarations(statements, input)
+          for (const statement of statements) body.push(statement)
+          node.attributes?.forEach(visit)
+          if (node.value && typeof node.value === 'object') visit(node.value)
           node.children?.forEach(visit)
         }
         visit(tree)
+        inspectProgram({ type: 'Program', sourceType: 'module', range: [0, input.length], body })
       },
     ],
     rehypePlugins: [],
-    recmaPlugins: [() => inspectExpressions],
   }).then(
     () => {
       root.__holiMdxResult = { id: request.id, diagnostics, dependencies }
