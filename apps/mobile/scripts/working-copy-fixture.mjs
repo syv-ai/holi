@@ -116,7 +116,7 @@ function semanticEntries(raw) {
   return out.filter((entry) => entry.path !== 'outside.md')
 }
 
-export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
+export async function createWorkingCopyFixture(parent, runId, libraryRoot, selectedNames) {
   const cases = []
   const base = await mkdtemp(join(parent, `holi-${runId}-base-`))
   await git(base, 'init', '-b', 'fixture-start')
@@ -301,6 +301,7 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
     ],
   ]
   for (const [name, mutate] of specs) {
+    if (selectedNames && !selectedNames.includes(name)) continue
     if (name.startsWith('pending-') && !libraryRoot) continue
     const root = await mkdtemp(join(parent, `holi-${runId}-${name}-`))
     // A local clone copies objects into its own object database (unlike alternates).

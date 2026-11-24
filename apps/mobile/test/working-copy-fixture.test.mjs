@@ -17,7 +17,18 @@ describe('working-copy fixture', () => {
   it('creates independent persistent repositories with host-derived expectations', async () => {
     parent = await mkdtemp(join(tmpdir(), 'holi-working-copy-'))
     const libraryRoot = join(parent, 'library')
-    const { cases } = await createWorkingCopyFixture(parent, 'host-test', libraryRoot)
+    const { cases } = await createWorkingCopyFixture(parent, 'host-test', libraryRoot, [
+      'clean',
+      'staged',
+      'autocrlf',
+      'skip-worktree',
+      'identity',
+      'unsafe-config',
+      'ignored-untracked',
+      'spaced-name',
+      'pending-save',
+      'file-directory',
+    ])
     assert.equal(new Set(cases.map(({ root }) => root)).size, cases.length)
     const staged = cases.find(({ name }) => name === 'staged')
     const clean = cases.find(({ name }) => name === 'clean')
