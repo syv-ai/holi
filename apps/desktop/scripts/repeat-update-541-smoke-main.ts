@@ -10,6 +10,8 @@ import { isApplicationSender } from '../src/main/application-sender'
 
 // Package/distribution and download/install are controlled. Candidate selection
 // and Holi's updater are real; this does not exercise native bundle replacement.
+// The authorization adapter intentionally accepts the hidden fixture window;
+// it proves sender authorization, not native window visibility.
 async function run(): Promise<void> {
   const config = JSON.parse(await readFile(process.argv.at(-1)!, 'utf8')) as {
     root: string
@@ -136,6 +138,25 @@ async function run(): Promise<void> {
     if (config.expected !== null) {
       await waitFor('document.querySelector("[data-update-dot]")')
       if (config.prompt) await waitFor('document.querySelector("[role=alertdialog]")')
+      if (!config.consent && config.install) {
+        // Declining must leave a freshly queried ready status and a usable restart affordance.
+        await waitFor('!document.querySelector("[role=alertdialog]")')
+        const declinedStatus = await window.webContents.executeJavaScript(
+          'window.holi.trpc.updates.status.query()',
+        )
+        assert.equal(declinedStatus.availableVersion, config.expected)
+        assert.equal(declinedStatus.state, 'ready')
+        await window.webContents.executeJavaScript(
+          `document.querySelector('[aria-label^="Account menu"]').dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,button:0,ctrlKey:false}))`,
+        )
+        await waitFor('document.querySelector("[role=menuitem]")')
+        assert.equal(
+          await window.webContents.executeJavaScript(
+            `Array.from(document.querySelectorAll('[role=menuitem]')).some(b => b.textContent.includes('Restart to update'))`,
+          ),
+          true,
+        )
+      }
       if (config.install) {
         if (config.action === 'dialog') {
           await window.webContents.executeJavaScript(
@@ -196,6 +217,8 @@ async function run(): Promise<void> {
         guards,
         flushed,
         simulation: 'package flag, download and installer; no native bundle replacement',
+        visibility:
+          'fixture window is hidden; sender authorization does not prove native visibility',
       }),
     )
   } finally {

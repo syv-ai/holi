@@ -50,7 +50,11 @@ const server = createServer((request, response) => {
   )
 })
 console.log(`Evidence: ${evidence}`)
+const throwIfAborted = () => {
+  if (cancellation.signal.aborted) throw cancellation.signal.reason
+}
 try {
+  throwIfAborted()
   await new Promise((resolve, reject) => {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
@@ -58,6 +62,7 @@ try {
   const address = server.address()
   assert(address && typeof address === 'object')
   const output = join(root, 'bundle')
+  throwIfAborted()
   await build({
     configFile: false,
     root: desktop,
@@ -79,6 +84,7 @@ try {
       },
     },
   })
+  throwIfAborted()
   await build({
     configFile: false,
     root: desktop,
@@ -100,6 +106,7 @@ try {
     `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"></head><body><div id="root"></div><script type="module" src="${join(desktop, 'scripts/repeat-update-541-smoke-renderer.tsx')}"></script></body></html>`,
   )
   await symlink(join(desktop, 'node_modules'), join(root, 'node_modules'), 'dir')
+  throwIfAborted()
   await build({
     configFile: false,
     root,
@@ -111,6 +118,7 @@ try {
     plugins: [react(), tailwindcss()],
     build: { outDir: join(output, 'renderer'), rollupOptions: { input: html } },
   })
+  throwIfAborted()
   const electron = createRequire(import.meta.url)('electron')
   for (const scenario of [
     {
