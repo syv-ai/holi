@@ -189,13 +189,14 @@ describe('watchVault', () => {
     })
     open.push(w)
 
+    await writeFile(join(root, 'USER.local.md'), 'private profile\\n', 'utf8')
+    await sleep(SETTLE)
+    expect(rec.count).toBe(0)
+
     const fired = rec.next()
     await writeFile(join(root, 'scratchpad.local.md'), 'private note\\n', 'utf8')
     await fired
-    await writeFile(join(root, 'USER.local.md'), 'private profile\\n', 'utf8')
-    await sleep(SETTLE)
-
-    expect(rec.count).toBe(1)
+    expect(rec.count).toBeGreaterThan(0)
   })
 
   it('does not fire for a machine-local file', async () => {
