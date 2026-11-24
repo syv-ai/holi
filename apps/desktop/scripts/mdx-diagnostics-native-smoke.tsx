@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { EditorView } from '@codemirror/view'
 import { forEachDiagnostic } from '@codemirror/lint'
 import { emptyVaultSnapshot } from '@holi/shared'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { FileView } from '@/features/files/file-view'
 import { activeRemoteAtom, openedRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { sessionAtom } from '@/state/session'
@@ -69,7 +70,10 @@ function Fixture() {
   }, [])
   return (
     <Provider store={store}>
-      <FileView path={path} visible focused />
+      {/* FileView's Find bar uses the same tooltip context as the app shell. */}
+      <TooltipProvider>
+        <FileView path={path} visible focused />
+      </TooltipProvider>
     </Provider>
   )
 }

@@ -549,21 +549,7 @@ async function runExternal(page, artifact, editAndWaitForSave, onEvent) {
     const {x, y, width, height} = match.getBoundingClientRect();
     return {x: x + width / 2, y: y + height / 2};
   })()`)
-  const clickAt = async (point) => {
-    await page.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
-    await page.call('Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      ...point,
-      button: 'left',
-      clickCount: 1,
-    })
-    await page.call('Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      ...point,
-      button: 'left',
-      clickCount: 1,
-    })
-  }
+  const clickAt = (point) => clickPointerAt(page, point)
   const click = async (label) => clickAt(await waitFor(() => button(label), label))
   const openResources = (expected) =>
     waitFor(async () => {
@@ -661,7 +647,14 @@ async function runExternal(page, artifact, editAndWaitForSave, onEvent) {
     assert.equal(isolated.ambientCookieHosts, 3)
     const before = await capture('beforeEditing')
     await editAndWaitForSave(source, 'unapproved external source')
-    await findInFile(page, 'External diagnostics fixture')
+    try {
+      await findInFile(page, 'External diagnostics fixture')
+    } catch (error) {
+      await saveScreenshot(page, 'find-failure.png').catch(() => {})
+      const errors = await page.evaluate('window.__mdxSmoke?.errors').catch(() => null)
+      if (errors?.length) logs += `\nFind renderer errors: ${JSON.stringify(errors)}\n`
+      throw error
+    }
     await openResources(allow(rawOrigin))
     await waitFor(
       () => page.evaluate('window.__mdxSmoke.diagnostics().length > 0'),
@@ -1042,8 +1035,27 @@ async function runExternal(page, artifact, editAndWaitForSave, onEvent) {
   }
 }
 
+async function clickPointerAt(page, point) {
+  await page.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+  for (const type of ['mousePressed', 'mouseReleased'])
+    await page.call('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 })
+}
+
 async function findInFile(page, text) {
-  await page.evaluate(`document.querySelector('.cm-content').focus()`)
+  const point = await waitFor(
+    () =>
+      page.evaluate(`(() => {
+      const editor = document.querySelector('.cm-content');
+      if (!editor) return null;
+      const { left, top, width, height } = editor.getBoundingClientRect();
+      const x = left + width / 2, y = top + height / 2;
+      return editor.contains(document.elementFromPoint(x, y)) ? { x, y } : null;
+    })()`),
+    'visible CodeMirror content to click before Find',
+  )
+  await clickPointerAt(page, point)
+  const editorFocused = `document.hasFocus() && document.activeElement?.matches('.cm-content')`
+  await waitFor(() => page.evaluate(editorFocused), 'CodeMirror focus after pointer click')
   const press = async (key, code, windowsVirtualKeyCode, modifiers = 0) => {
     for (const type of ['keyDown', 'keyUp'])
       await page.call('Input.dispatchKeyEvent', {
@@ -1061,19 +1073,22 @@ async function findInFile(page, text) {
     'focused Find in file field',
   )
   await page.call('Input.insertText', { text })
+  const selectionMatches = `(() => {
+    const { state } = window.__mdxSmoke.editor();
+    const { from, to } = state.selection.main;
+    return state.sliceDoc(from, to) === ${JSON.stringify(text)};
+  })()`
   await waitFor(
-    () =>
-      page.evaluate(`(() => {
-      const { state } = window.__mdxSmoke.editor();
-      const { from, to } = state.selection.main;
-      return state.sliceDoc(from, to) === ${JSON.stringify(text)};
-    })()`),
+    () => page.evaluate(selectionMatches),
     'Find in file selects the matching MDX source text',
   )
   await press('Escape', 'Escape', 27)
   await waitFor(
-    () => page.evaluate(`!document.querySelector(${JSON.stringify(bar)})`),
-    'Find in file closed',
+    () =>
+      page.evaluate(
+        `!document.querySelector(${JSON.stringify(bar)}) && ${editorFocused} && ${selectionMatches}`,
+      ),
+    'Find in file closed and returned focus to the selected MDX match',
   )
 }
 
