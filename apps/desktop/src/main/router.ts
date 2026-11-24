@@ -52,6 +52,7 @@ import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
 import {
   BranchRefusedError,
+  GitHistoricalPathMissingError,
   openRepo,
   remoteUrl,
   validBranchName,
@@ -1954,6 +1955,47 @@ export function createRouter(deps: RouterDeps) {
         const before = await repo.show(`${input.sha}^`, rel).catch(() => '')
         return { before, after }
       }),
+
+    /** Compare exact immutable revisions without substituting HEAD or a parent. */
+    compareRevisions: t.procedure
+      .input(fields({ remote: 'string', path: 'string', before: 'string', after: 'string' }))
+      .query(
+        async ({
+          input,
+        }): Promise<{
+          kind: 'text' | 'unavailable'
+          before?: string
+          after?: string
+          reason?: 'missing' | 'unsupported' | 'limit' | 'stale'
+        }> => {
+          if (
+            !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(input.before) ||
+            !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(input.after)
+          ) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid commit object id' })
+          }
+          const active = activeOrThrow()
+          if (active.remote !== input.remote) throw new TRPCError({ code: 'PRECONDITION_FAILED' })
+          const rel = safe(input.path)
+          if (isSecretPath(rel))
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Secret paths cannot be compared' })
+          try {
+            const [before, after] = await Promise.all([
+              active.repo.show(input.before, rel, { maxBuffer: 1024 * 1024, timeout: 5000 }),
+              active.repo.show(input.after, rel, { maxBuffer: 1024 * 1024, timeout: 5000 }),
+            ])
+            if (deps.host.active() !== active || active.remote !== input.remote)
+              return { kind: 'unavailable', reason: 'stale' }
+            return { kind: 'text', before, after }
+          } catch (error) {
+            if (deps.host.active() !== active) return { kind: 'unavailable', reason: 'stale' }
+            return {
+              kind: 'unavailable',
+              reason: error instanceof GitHistoricalPathMissingError ? 'missing' : 'limit',
+            }
+          }
+        },
+      ),
 
     /** Restore writes the old content as a **new commit**, never a rewrite of
      *  history (docs/features/history.md). Lands as an autosave `Update`
