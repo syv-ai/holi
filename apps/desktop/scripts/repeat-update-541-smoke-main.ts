@@ -71,6 +71,7 @@ async function run(): Promise<void> {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
       preload: join(app.getAppPath(), 'preload.cjs'),
     },
   })
@@ -177,6 +178,9 @@ async function run(): Promise<void> {
     assert.equal(installs, installed ? 1 : 0)
     assert.equal(guards, config.install && config.expected !== null ? 1 : 0)
     assert.equal(flushed, installed)
+    await window.webContents.executeJavaScript(
+      `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))).then(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))))`,
+    )
     await writeFile(config.result + '.png', (await window.capturePage()).toPNG())
     await writeFile(
       config.result,

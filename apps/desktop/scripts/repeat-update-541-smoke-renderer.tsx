@@ -6,7 +6,7 @@ import { ReadyUpdateDialog } from '../src/renderer/src/features/shell/ready-upda
 import { sessionAtom } from '../src/renderer/src/state/session'
 import { subscribeToUpdates } from '../src/renderer/src/state/updates'
 import { listenForQuitFlush } from '../src/renderer/src/lib/quit-flush'
-import '../src/renderer/src/index.css'
+import './repeat-update-541-smoke.css'
 
 const store = createStore()
 store.set(sessionAtom, { login: 'fixture-user', name: 'Synthetic update account' })
