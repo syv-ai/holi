@@ -428,8 +428,14 @@ async function rig() {
     if (remote === undefined) throw new Error('Failed receipt has no originating vault')
     const scoped = onlyFailure(error, 'one or more plugin lifetimes failed to stop')
     const original = vaultStopCause(scoped, remote)
-    if (process.platform === 'win32') expectProof(original, proof)
-    else expect(original).toMatchObject({ cause: proof.receipt })
+    const retained = failureLeaves(original)
+    if (process.platform === 'win32') {
+      expect(retained).toContain(proof.receipt)
+      expect(retained).toContain(proof.receipt.cause)
+    } else {
+      expect(retained).toContain(proof.receipt)
+      expect(retained).toContainEqual(expect.objectContaining({ cause: proof.receipt }))
+    }
     expect(await rejected(host.stop(remote))).toBe(scoped)
   })
   await host.reconcile(vaults[A], 'open')
@@ -595,26 +601,26 @@ afterEach(async () => {
   if (errors.length > 0) throw new AggregateError(errors, 'Owned host fixture cleanup failed')
 })
 
+let gitTemp: string | undefined
+beforeAll(async () => {
+  // The real Git adapter caches its askpass path for this isolated suite.
+  gitTemp = await mkdtemp(join(tmpdir(), 'holi-owned-git-'))
+  const previous = process.env['TEMP']
+  process.env['TEMP'] = gitTemp
+  try {
+    await ensureAskpass()
+  } finally {
+    if (previous === undefined) delete process.env['TEMP']
+    else process.env['TEMP'] = previous
+  }
+})
+afterAll(async () => {
+  if (gitTemp !== undefined) await rm(gitTemp, { recursive: true, force: true, maxRetries: 5 })
+})
+
 describe.skipIf(process.platform !== 'win32')(
   'owned process receipts through real agent host',
   () => {
-    let gitTemp: string | undefined
-    beforeAll(async () => {
-      // The real Git adapter caches its askpass path for this isolated suite.
-      gitTemp = await mkdtemp(join(tmpdir(), 'holi-owned-git-'))
-      const previous = process.env['TEMP']
-      process.env['TEMP'] = gitTemp
-      try {
-        await ensureAskpass()
-      } finally {
-        if (previous === undefined) delete process.env['TEMP']
-        else process.env['TEMP'] = previous
-      }
-    })
-    afterAll(async () => {
-      if (gitTemp !== undefined) await rm(gitTemp, { recursive: true, force: true, maxRetries: 5 })
-    })
-
     it('launches Pi through the UI door and refuses the same launch through CLI', async () => {
       const f = await rig()
       expect(
@@ -962,6 +968,10 @@ describe.skipIf(process.platform !== 'win32')(
   },
 )
 
+function failureLeaves(error: unknown): unknown[] {
+  return error instanceof AggregateError ? error.errors.flatMap(failureLeaves) : [error]
+}
+
 // These scenarios cross the production Settings UI door and authenticated HTTP
 // transport; only the owned native program is controlled by the fixture.
 describe('Settings Test through real activation and capability hosts', () => {
@@ -1015,6 +1025,7 @@ describe('Settings Test through real activation and capability hosts', () => {
     await expect(f.call(A, 'agent.harnessTest', { id: 'fixture' })).rejects.toThrow()
     a.child.exit()
     a.child.endOutput()
+    a.child.close()
     await tick()
     expect(stopped).toBe(false)
     expect(b.child.stopRequests).toBe(0)
@@ -1030,11 +1041,13 @@ describe('Settings Test through real activation and capability hosts', () => {
     replacement.child.stdout.write('replacement version\n')
     replacement.child.exit()
     replacement.child.endOutput()
+    replacement.child.close()
     replacement.child.proveEmpty()
     await expect(replacement.answer).resolves.toEqual({ ok: true, output: 'replacement version\n' })
     b.child.stdout.write('original B version\n')
     b.child.exit()
     b.child.endOutput()
+    b.child.close()
     b.child.proveEmpty()
     await expect(b.answer).resolves.toEqual({ ok: true, output: 'original B version\n' })
   })
@@ -1074,6 +1087,7 @@ describe('Settings Test through real activation and capability hosts', () => {
       const next = await f.probe(remote)
       next.child.exit()
       next.child.endOutput()
+      next.child.close()
       next.child.proveEmpty()
       await expect(next.answer).resolves.toMatchObject({ ok: true })
       expect(await httpRows(f, remote)).toEqual([])
@@ -1101,7 +1115,11 @@ describe('Settings Test through real activation and capability hosts', () => {
         authority: a.child[ownedProcessDrain],
       })
     const original = await stopping
-    expect(vaultStopCause(original, A)).toBe(error)
+    const retained = failureLeaves(vaultStopCause(original, A))
+    expect(retained).toContain(error)
+    expect(retained).toContain(
+      process.platform === 'win32' ? expected.receipt.cause : expected.receipt,
+    )
     expect(a.child.closed).toBe(false)
     expect(a.child.exited).toBe(false)
     expect(await rejected(f.host.stop(A))).toBe(original)
@@ -1110,6 +1128,7 @@ describe('Settings Test through real activation and capability hosts', () => {
     b.child.stdout.write('B unaffected\n')
     b.child.exit()
     b.child.endOutput()
+    b.child.close()
     b.child.proveEmpty()
     await expect(b.answer).resolves.toEqual({ ok: true, output: 'B unaffected\n' })
     expect(await httpRows(f, B)).toEqual([])
