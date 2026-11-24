@@ -394,12 +394,11 @@
   }
   const plainHost = (el) =>
     eligibleEnvelope(el, 'plaintext-only') &&
-    [...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE) &&
-    !/[\r\n]/u.test(el.textContent)
+    [...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE)
   const richHost = (el) => {
     if (!eligibleEnvelope(el, 'true') || el.closest('[inert]')) return false
     const visit = (node) => {
-      if (node.nodeType === Node.TEXT_NODE) return !/[\r\n]/u.test(node.nodeValue || '')
+      if (node.nodeType === Node.TEXT_NODE) return true
       if (node.nodeType !== Node.ELEMENT_NODE) return false
       const child = node
       if (
@@ -723,11 +722,13 @@
     else if (key === 'w') destination = wordForward(value, at)
     else if (key === 'b') destination = wordBackward(value, at)
     else if (key === 'e') destination = wordEnd(value, at)
-    else if (key === 'j' && target instanceof HTMLTextAreaElement)
-      destination = verticalMove(target, at, 'down')
-    else if (key === 'k' && target instanceof HTMLTextAreaElement)
-      destination = verticalMove(target, at, 'up')
-    else if (key === 'Escape') {
+    else if (key === 'j' && (target instanceof HTMLTextAreaElement || isNativeHost(target))) {
+      const field = isNativeHost(target) ? { value: fieldValue(target) } : target
+      destination = verticalMove(field, at, 'down')
+    } else if (key === 'k' && (target instanceof HTMLTextAreaElement || isNativeHost(target))) {
+      const field = isNativeHost(target) ? { value: fieldValue(target) } : target
+      destination = verticalMove(field, at, 'up')
+    } else if (key === 'Escape') {
       event.preventDefault()
       return
     } else {

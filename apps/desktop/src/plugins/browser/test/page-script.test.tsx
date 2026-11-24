@@ -594,6 +594,34 @@ test('plaintext-only single-line hosts use native selection for Vim motions', ()
   expect(host.textContent).toBe('café🙂 two')
 })
 
+test('plaintext-only text newlines use logical vertical motions and retain native insertion', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  host.setAttribute('tabindex', '0')
+  host.append(document.createTextNode('ab\\nc\\nwide'))
+  document.body.append(host)
+  host.focus()
+  const range = document.createRange()
+  range.setStart(host.firstChild!, 1)
+  range.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(range)
+  holi().vim.configure(true, 47, holi().vim.documentNonce())
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  expect(press('Escape').defaultPrevented).toBe(true)
+  expect(press('j').defaultPrevented).toBe(true)
+  expect(getSelection()!.anchorNode).toBe(host.firstChild)
+  expect(getSelection()!.anchorOffset).toBe(4)
+  expect(press('i').defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(press('x').defaultPrevented).toBe(false)
+  expect(host.textContent).toBe('ab\\nc\\nwide')
+})
+
 test('plaintext-only i collapses a normal-mode selection before native insertion', () => {
   const host = document.createElement('div')
   host.setAttribute('contenteditable', 'plaintext-only')
