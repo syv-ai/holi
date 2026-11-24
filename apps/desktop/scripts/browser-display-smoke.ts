@@ -528,10 +528,25 @@ async function run(): Promise<void> {
     }, 'fresh insert-mode report after native child-frame focus')
     assert.equal((childInsertMode.payload as { mode: string }).mode, 'insert')
     const childPress = async (key: string) => {
-      a.webContents.sendInputEvent({ type: 'keyDown', keyCode: key })
-      if (key.length === 1) a.webContents.sendInputEvent({ type: 'char', keyCode: key })
-      a.webContents.sendInputEvent({ type: 'keyUp', keyCode: key })
-      await new Promise((resolve) => setTimeout(resolve, 30))
+      // Electron sendInputEvent targets the root widget. CDP's native keyboard
+      // dispatch follows the browser's focused widget, including an OOPIF.
+      assert(a.webContents.debugger.isAttached(), 'child readiness owns the debugger')
+      const printable = key.length === 1
+      const code = printable ? `Key${key.toUpperCase()}` : key
+      const windowsVirtualKeyCode = printable ? key.toUpperCase().charCodeAt(0) : 27
+      await a.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: printable ? 'keyDown' : 'rawKeyDown',
+        key,
+        code,
+        windowsVirtualKeyCode,
+        ...(printable ? { text: key, unmodifiedText: key } : {}),
+      })
+      await a.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key,
+        code,
+        windowsVirtualKeyCode,
+      })
     }
     await childPress('Escape')
     await waitFor(() => {
@@ -590,6 +605,50 @@ async function run(): Promise<void> {
           return
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
+      const read = async (frame: (typeof mixed)[number], expression: string) =>
+        Promise.race([
+          frame.executeJavaScript(expression).catch((error) => ({ error: String(error) })),
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ error: 'diagnostic read timed out' }), 1000),
+          ),
+        ])
+      writeFileSync(
+        join(evidence, 'child-vim-failure.json'),
+        JSON.stringify(
+          {
+            expected: mode,
+            focused: a.webContents.isFocused(),
+            windowFocused: win.isFocused(),
+            focusedFrame: a.webContents.focusedFrame && {
+              processId: a.webContents.focusedFrame.processId,
+              routingId: a.webContents.focusedFrame.routingId,
+            },
+            modes: sent
+              .filter((event) => event.remote === 'A' && event.name === 'vim-mode')
+              .slice(-12)
+              .map((event) => ({
+                payload: event.payload,
+                currentFrame: reportFrames.get(event) === a.webContents.focusedFrame,
+              })),
+            root: await read(
+              a.webContents.mainFrame,
+              `({ hasFocus:document.hasFocus(), active:document.activeElement?.tagName, events:window.__holiSmokeNativeEvents })`,
+            ),
+            children: await Promise.all(
+              mixed.map(async (frame) => ({
+                processId: frame.processId,
+                routingId: frame.routingId,
+                page: await read(
+                  frame,
+                  `({ hasFocus:document.hasFocus(), active:document.activeElement?.id, value:document.querySelector('#child-field')?.value, selection:document.querySelector('#child-field')?.selectionStart, events:window.nativeEvents })`,
+                ),
+              })),
+            ),
+          },
+          null,
+          2,
+        ),
+      )
       throw new Error(`timed out after 5000ms waiting for current child ${mode} mode`)
     }
     const focusChild = async (frame: (typeof mixed)[number]) => {
