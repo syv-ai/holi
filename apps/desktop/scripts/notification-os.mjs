@@ -1,38 +1,52 @@
 import { createOwnedProcesses } from './owned-processes.mjs'
 
+async function runConsoleStateQuery({ signal }) {
+  const processes = createOwnedProcesses()
+  try {
+    const query = await processes.run('/usr/sbin/ioreg', ['-a', '-n', 'Root', '-d1'], {
+      timeoutMs: 5000, signal, label: 'macOS console state query',
+    })
+    const result = await processes.run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], {
+      input: query.output, timeoutMs: 5000, signal, label: 'macOS console state conversion',
+    })
+    return parseConsoleState(result.output)
+  } finally {
+    await processes.stopAll()
+  }
+}
+
+function parseConsoleState(output) {
+  let root
+  try { root = JSON.parse(output) } catch { return 'unknown' }
+  if (typeof root.IOConsoleLocked !== 'boolean' || !Array.isArray(root.IOConsoleUsers)) return 'unknown'
+  const active = root.IOConsoleUsers.filter((user) => user?.kCGSessionOnConsoleKey === true)
+  if (active.length !== 1 || active[0].kCGSessionLoginDoneKey !== true) return 'unknown'
+  if (root.IOConsoleLocked || active[0].CGSSessionScreenIsLocked === true) return 'locked'
+  if (active[0].CGSSessionScreenIsLocked === false || active[0].CGSSessionScreenIsLocked === undefined)
+    return 'unlocked'
+  return 'unknown'
+}
+
 /**
  * Inspect and click an exact macOS notification through Accessibility.
  * Requires Automation/Accessibility permission for the invoking process. It
  * never falls back to dispatching a DOM, Electron, or Notification callback.
  */
-export async function assertMacDesktopAvailable({ signal } = {}) {
+export async function assertMacDesktopAvailable({ signal, run = runConsoleStateQuery } = {}) {
   if (process.platform !== 'darwin') throw new Error('desktop availability requires macOS')
   signal?.throwIfAborted()
-  const processes = createOwnedProcesses()
+  let state
   try {
-    let output
-    try {
-      const result = await processes.run('/usr/sbin/ioreg', ['-n', 'Root', '-d1'], {
-        timeoutMs: 5000,
-        signal,
-        label: 'macOS desktop availability check',
-      })
-      output = result.output
-    } catch (error) {
-      signal?.throwIfAborted()
-      throw new Error('unable to determine macOS desktop availability: ioreg query failed', {
-        cause: error,
-      })
-    }
+    state = await run({ signal })
+  } catch (error) {
     signal?.throwIfAborted()
-    const matches = [...output.matchAll(/"CGSSessionScreenIsLocked"\s*=\s*(Yes|No)\b/g)]
-    if (matches.length !== 1)
-      throw new Error('unable to determine macOS desktop availability: session lock state is missing or ambiguous')
-    if (matches[0][1] === 'Yes')
-      throw new Error('macOS desktop is locked; unlock the desktop and rerun the notification fixture')
-  } finally {
-    await processes.stopAll()
+    throw new Error('unable to determine macOS desktop availability: ioreg query failed', { cause: error })
   }
+  signal?.throwIfAborted()
+  if (state !== 'unlocked')
+    throw new Error(state === 'locked'
+      ? 'macOS desktop is locked; unlock the desktop and rerun the notification fixture'
+      : 'unable to determine macOS desktop availability: session lock state is missing or ambiguous')
 }
 
 export async function clickNativeBanner({ appName, title, timeoutMs = 12_000, signal }) {

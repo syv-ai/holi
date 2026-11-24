@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import { createFixtureSession } from '../scripts/agent-inbox-550-session'
 
+const supportsPosixOwnership = process.platform !== 'win32' && typeof process.getuid === 'function'
+
 const owned: string[] = []
 async function directory(): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'holi550-profile-')))
@@ -14,13 +16,13 @@ afterEach(async () => {
   for (const root of owned.splice(0)) await rm(root, { recursive: true, force: true })
 })
 
-test('loads an authenticated fixture session from its owned encrypted store', async () => {
+test.skipIf(!supportsPosixOwnership)('loads an authenticated fixture session from its owned encrypted store', async () => {
   const session = await createFixtureSession(await directory())
   expect(session.viewer).not.toBeNull()
   expect(session.token()).not.toBeNull()
 })
 
-test('refuses a linked profile without replacing external credentials', async () => {
+test.skipIf(!supportsPosixOwnership)('refuses a linked profile without replacing external credentials', async () => {
   const root = await directory()
   const external = await directory()
   const credentials = join(external, 'github-auth.enc')
