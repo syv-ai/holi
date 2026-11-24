@@ -717,36 +717,48 @@ it('opens a consent request for the production fetcher without resolving DNS', a
   }
 })
 
-it('diagnoses import attributes without requesting consent or contacting an approved origin for them', async () => {
+it('diagnoses empty and populated import attributes before requesting consent or contacting an origin', async () => {
   const { root, mdx, acquire, contacts, routes } = await resourceRig()
   const owner = await acquire()
-  routes.set(entry, { text: 'export const plain = 1' })
-  const plainImport = `import '${entry}'\n`
-  await mdx.compile({ ...owner, generation: 1, source: plainImport })
+  const withInUrl = 'https://one.example/plain.js?note=with{}'
+  routes.set(withInUrl, { text: 'export const plain = 1' })
+  routes.set(entry, { text: 'export const other = 2' })
+  await mdx.compile({ ...owner, generation: 1, source: `import '${entry}'\n` })
   const { pending } = await mdx.externalResources(owner)
   await mdx.approveExternalResource({ ...owner, requestId: pending[0]!.id })
 
-  const attributed = 'https://one.example/data.js?token=private-url-value'
+  const approved = 'https://one.example/data.js?token=private-url-value'
   const unapproved = 'https://two.example/data.js'
+  await writeFile(
+    join(root, 'child.js'),
+    [
+      `import payload from '${approved}' with { type: 'json' };`,
+      `export { default as metadata } from '${unapproved}' with {};`,
+      `export * from '${approved}&kind=star' /* gap */ with { /* empty */ };`,
+      `import '${withInUrl}' /* with {} */;`,
+    ].join('\n'),
+  )
   await writeFile(
     join(root, 'child.jsx'),
     [
-      `import payload from '${attributed}' with { type: 'json' };`,
-      `export { default as metadata } from '${unapproved}' with { loader: 'private-loader-value' };`,
-      `export * from './not-installed.js' with { type: 'json' };`,
-      'export const view = <div />;',
-      plainImport,
+      `import '${unapproved}?kind=side-effect' with {}`,
+      `export { default as metadata } from '${approved}&kind=named' with { loader: 'private-loader-value' };`,
+      `export * from '${unapproved}?kind=star' with { type: 'json' };`,
+      `export * from '${entry}' // with {}`,
+      'export const view = <div>{"with {}"}</div>;',
     ].join('\n'),
   )
   const diagnostics = await mdx.compile({
     ...owner,
     generation: 2,
-    source: "import './child.jsx'\n\n# Preview",
+    source: "import './child.js'\nimport './child.jsx'\n\n# Preview",
   })
   expect(diagnostics.map(({ message }) => message)).toEqual(
-    [1, 2, 3].map((line) =>
-      expect.stringMatching(
-        new RegExp(`child\\.jsx:${line}:1: .*unsupported import attributes`, 'i'),
+    ['js', 'jsx'].flatMap((format) =>
+      [1, 2, 3].map((line) =>
+        expect.stringMatching(
+          new RegExp(`child\\.${format}:${line}:1: .*unsupported import attributes`, 'i'),
+        ),
       ),
     ),
   )
@@ -754,7 +766,25 @@ it('diagnoses import attributes without requesting consent or contacting an appr
     /https:\/\/|private-url-value|private-loader-value/,
   )
   expect((await mdx.externalResources(owner)).pending).toEqual([])
-  expect(contacts).toEqual([entry])
+  expect(contacts).toEqual([withInUrl, entry])
+
+  // MDX's parser may reject the syntax itself. Even if it accepts the clause,
+  // neither an ordinary dependency nor a rewritten layout import may escape.
+  for (const [index, declaration] of [
+    `import '${approved}' with {};`,
+    `export { default } from '${unapproved}' with {};`,
+    `export * from '${approved}&kind=star' with {};`,
+  ].entries()) {
+    const invalidMdx = await mdx.compile({
+      ...owner,
+      generation: index + 3,
+      source: `# Preview\n\n${declaration}\n`,
+    })
+    expect(invalidMdx).toMatchObject([{ line: 3, column: expect.any(Number) }])
+    expect(JSON.stringify(invalidMdx)).not.toMatch(/https:\/\/|private-url-value/)
+    expect((await mdx.externalResources(owner)).pending).toEqual([])
+    expect(contacts).toEqual([withInUrl, entry])
+  }
   await mdx.releaseDiagnosticsLease(owner)
 })
 
