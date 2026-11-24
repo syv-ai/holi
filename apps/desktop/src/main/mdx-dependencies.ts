@@ -122,6 +122,7 @@ export async function inspectMdxDependencies(options: {
       active.add(safe)
       try {
         await check()
+        await validateRootAndAncestors()
         const result = await options.inspect(options.owner, source, signal, format)
         await check()
         const diagnostics = [...result.diagnostics]
@@ -175,6 +176,7 @@ export async function inspectMdxDependencies(options: {
               parent = dirname(parent)
             }
             await check()
+            await validateRootAndAncestors()
             const handle = await open(
               target,
               constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),

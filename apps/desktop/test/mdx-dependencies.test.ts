@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, symlink, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -85,6 +85,37 @@ describe('inspectMdxDependencies', () => {
         },
       }),
     ).rejects.toBeDefined()
+  })
+
+  it('does not inspect replacement-root bytes after ownership validation', async () => {
+    const { root } = await setup()
+    const originalChild = join(root, 'child.mdx')
+    await writeFile(originalChild, 'ORIGINAL_BYTES')
+    const movedRoot = `${root}-moved`
+    roots.push(movedRoot)
+    let checks = 0
+    const inspected: string[] = []
+    const result = await inspectMdxDependencies({
+      root,
+      path: 'entry.mdx',
+      source: "import Child from './child.mdx'",
+      signal: new AbortController().signal,
+      assertCurrent: async () => {
+        checks++
+        if (checks === 5) {
+          await rename(root, movedRoot)
+          await mkdir(root)
+          await writeFile(join(root, 'child.mdx'), 'REPLACEMENT_BYTES')
+        }
+      },
+      owner: {},
+      inspect: async (_owner, source) => {
+        inspected.push(source)
+        return { diagnostics: [], dependencies: [] }
+      },
+    })
+    expect(result).not.toEqual([])
+    expect(inspected).not.toContain('REPLACEMENT_BYTES')
   })
 
   it('rejects a dependency changed after it was inspected', async () => {
