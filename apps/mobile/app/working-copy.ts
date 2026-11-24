@@ -26,7 +26,7 @@ export interface NativeWorkingCopy {
   canonicalRoot(root: string): Promise<string>
   identity(root: string): Promise<{ remotes: string[]; branch: string | null; attached: boolean }>
   /** Metadata only: must not read or hash working-tree file contents. */
-  candidates(root: string): Promise<Array<{ path: string; staged: boolean; worktree: boolean; conflict: boolean }>>
+  candidates(root: string): Promise<Array<{ path: string }>>
   /** Inspect an authorized path (e.g. detect symlink escape) without running hooks or filters. */
   authorize(root: string, path: VaultRelPath): Promise<boolean>
   hasPendingRecovery(root: string): Promise<boolean>
