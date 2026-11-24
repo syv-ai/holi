@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -238,7 +238,7 @@ try {
   )
   const preApproval = await windowStatus(page)
   assert.equal(preApproval.guestCreations, 0, 'compiler guest existed before approval')
-  assert.equal(preApproval.compileSources, 0, 'source was delivered before approval')
+  assert.equal(preApproval.inspectedSources, 0, 'source was delivered before approval')
   assert.equal(preApproval.guestProbes.length, 0, 'compiler guest was probed before approval')
   await click('Approve vault')
   const guest = await waitFor(async () => {
@@ -320,22 +320,63 @@ try {
       ),
     'production editor clean compile',
   )
+  const vaultRoot = (await windowStatus(page)).vault
+  await mkdir(join(vaultRoot, 'notes/graph'), { recursive: true })
+  await writeFile(join(vaultRoot, 'notes/graph/root.jsx'), "export { value } from './nested.js'\n")
+  await writeFile(join(vaultRoot, 'notes/graph/nested.js'), "export { value } from './leaf.js'\n")
+  await writeFile(join(vaultRoot, 'notes/graph/leaf.js'), 'export const value = 1\n')
+  await editAndWaitForSave(
+    "import { value } from './graph/root.jsx'\n\nA valid graph.\n",
+    'dependency graph',
+  )
+  await waitFor(
+    () =>
+      evaluate(
+        `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>el.textContent.includes('syntax is valid')) && document.querySelector('.cm-lintRange-error') === null`,
+      ),
+    'production diagnostics accept a nested MDX to JavaScript dependency graph',
+  )
+  checks.push(
+    'nested MDX-to-JavaScript static dependency graph accepted through production FileView',
+  )
   const hostile =
     "import Evil from 'file:///etc/passwd'\n\n{globalThis.__mdxSmokeExecuted = true}\n"
   await editAndWaitForSave(hostile, 'hostile source')
   await waitFor(
     () =>
       evaluate(
-        `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>el.textContent.includes('syntax is valid')) && document.querySelector('.cm-lintRange-error') === null`,
+        `window.__mdxSmoke.diagnostics().some((item)=>/dependency|file|module/i.test(item.message))`,
       ),
-    'valid hostile MDX compiles cleanly after source save without Retry',
+    'hostile file dependency is rejected with a diagnostic',
+  )
+  assert(
+    (await evaluate('window.__mdxSmoke.diagnostics()')).length > 0,
+    'hostile dependency produced no diagnostic',
   )
   assert.equal(
     await evaluate(`globalThis.__mdxSmokeExecuted===true`),
     false,
     'compiled MDX expression was evaluated in FileView',
   )
-  checks.push('valid source clean', 'hostile MDX expression not evaluated by the renderer')
+  checks.push(
+    'valid source clean',
+    'hostile MDX dependency refused',
+    'hostile MDX expression not evaluated by the renderer',
+  )
+  for (const [label, source] of [
+    ['missing dependency', "import './graph/missing.jsx'\n"],
+    ['protected dependency', "import './graph/secret.local.jsx'\n"],
+    ['external dependency', "import 'https://example.invalid/module.js'\n"],
+  ]) {
+    await editAndWaitForSave(source, `${label} editable source`)
+    await waitFor(
+      () => evaluate('window.__mdxSmoke.diagnostics().length > 0'),
+      `${label} diagnostic`,
+    )
+    assert.equal(await readFile(join(vaultRoot, 'notes/fixture.mdx'), 'utf8'), source)
+    checks.push(`${label}: FileView source remains editable and saved`)
+  }
+  await editAndWaitForSave('# recovered source\n', 'source recovery after dependency refusals')
   const runtimeErrors = await evaluate(`JSON.stringify(window.__mdxSmoke.errors)`)
   assert.deepEqual(JSON.parse(runtimeErrors), [], 'fixture renderer reported runtime errors')
 
@@ -356,6 +397,10 @@ try {
       'vault A–B–A',
       'native filesystem replacement watcher',
     ].sort(),
+  )
+  assert(Array.isArray(nativeScenarios.graphCases) && nativeScenarios.graphCases.length >= 8)
+  checks.push(
+    ...nativeScenarios.graphCases.map((item) => `native graph ${item.name}: ${item.outcome}`),
   )
   checks.push(
     'real guest policy denies network, files, app URLs, popup, permission, media, navigation and download traffic',
