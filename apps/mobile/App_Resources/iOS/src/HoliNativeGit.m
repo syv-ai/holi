@@ -426,24 +426,25 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
     NSArray<NSString *> *parts=nil; if(!HNGPathParts(path,&parts)){ if(error)*error=HNGPathError(EINVAL,@"Invalid working-tree path"); changes=nil; break; }
     const char *p=path.fileSystemRepresentation; const git_index_entry *stage0=git_index_get_bypath(index,p,0); BOOL conflict=NO;
     for(int stage=1;stage<=3;stage++) if(git_index_get_bypath(index,p,stage)){conflict=YES;break;}
+    BOOL ignoredAbsent = NO;
     if (!stage0 && !conflict) {
       git_tree_entry *tracked = NULL;
       int trackedResult = git_tree_entry_bypath(&tracked, tree, p);
       BOOL inHead = trackedResult == 0;
       git_tree_entry_free(tracked);
       if (trackedResult != 0 && trackedResult != GIT_ENOTFOUND) { HNGError(error, trackedResult); changes = nil; break; }
-      if (!inHead) {
       int ignored = 0;
       rc = git_ignore_path_is_ignored(&ignored, repo, p);
       if (rc < 0) { HNGError(error, rc); changes = nil; break; }
-      if (ignored) continue;
-      }
+      ignoredAbsent = ignored;
+      if (ignored && !inHead) continue;
     }
     const git_tree_entry *headEntry=NULL; if(tree){ rc=git_tree_entry_bypath((git_tree_entry **)&headEntry,tree,p); if(rc==GIT_ENOTFOUND)rc=0; else if(rc<0){if(error)HNGError(error,rc);changes=nil;break;} }
     if (headEntry && git_tree_entry_filemode(headEntry) == GIT_FILEMODE_COMMIT) { git_tree_entry_free((git_tree_entry *)headEntry); if(error)*error=HNGPathError(EINVAL,@"Unsupported HEAD gitlink"); changes=nil; break; }
     if (headEntry && git_tree_entry_type(headEntry) == GIT_OBJECT_TREE) { git_tree_entry_free((git_tree_entry *)headEntry); headEntry = NULL; }
     BOOL staged = conflict || ((headEntry!=NULL)!=(stage0!=NULL)) || (headEntry&&stage0&&(!git_oid_equal(git_tree_entry_id(headEntry),&stage0->id)||git_tree_entry_filemode(headEntry)!=stage0->mode));
     git_tree_entry_free((git_tree_entry *)headEntry);
+    if (ignoredAbsent) { if (staged) [changes addObject:@{@"path":path,@"staged":@YES,@"worktree":@NO,@"conflict":@NO}]; continue; }
     BOOL worktree=NO; int parent=HNGOpenParent(rootFD,parts); struct stat st; int parentError = errno; int statResult=parent<0?-1:fstatat(parent,parts.lastObject.fileSystemRepresentation,&st,AT_SYMLINK_NOFOLLOW);
     BOOL missing = (statResult < 0 && (errno == ENOENT || errno == ENOTDIR)) || (parent < 0 && (parentError == ENOENT || parentError == ENOTDIR));
     if(statResult<0 && !missing){ if(error)*error=HNGPathError(errno,@"Cannot inspect working-tree path"); changes=nil; if(parent>=0)close(parent); break; }
