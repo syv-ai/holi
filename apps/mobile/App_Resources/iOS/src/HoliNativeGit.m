@@ -423,11 +423,14 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   }
   NSMutableArray *changes=[NSMutableArray array];
   NSMutableSet *seen = [NSMutableSet set];
+  NSSet *authorized = [NSSet setWithArray:paths];
   for(NSString *requestedPath in paths){
     NSString *path = requestedPath;
     NSArray<NSString *> *parts=nil; if(!HNGPathParts(path,&parts)){ if(error)*error=HNGPathError(EINVAL,@"Invalid working-tree path"); changes=nil; break; }
     const char *p=path.fileSystemRepresentation; const git_index_entry *stage0=git_index_get_bypath(index,p,0); BOOL conflict=NO;
     if (stage0 && strcmp(p, stage0->path)) {
+      NSString *canonicalPath = [NSString stringWithUTF8String:stage0->path];
+      if (![authorized containsObject:canonicalPath]) continue;
       git_tree_entry *original = NULL;
       int lookup = git_tree_entry_bypath(&original, tree, stage0->path);
       git_tree_entry_free(original);

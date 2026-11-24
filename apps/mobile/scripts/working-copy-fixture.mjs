@@ -121,6 +121,20 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
   const specs = [
     ['clean', async () => {}],
     [
+      'local-case-alias',
+      async (r) => {
+        await git(r, 'config', 'core.ignorecase', 'true')
+        await put(r, 'note.local.md', 'protected')
+        await git(r, 'add', 'note.local.md')
+        await git(r, 'commit', '-m', 'private alias fixture')
+        const fs = await import('node:fs/promises')
+        await fs.rename(join(r, 'note.local.md'), join(r, 'local-temp'))
+        await fs.rename(join(r, 'local-temp'), join(r, 'NOTE.LOCAL.MD'))
+        await chmod(join(r, 'NOTE.LOCAL.MD'), 0)
+      },
+    ],
+    ['mixed-alternates', async (r) => put(r, '.git/objects/info/ALTERNATES', parent + '\n')],
+    [
       'case-alias',
       async (r) => {
         await git(r, 'config', 'core.ignorecase', 'true')
@@ -284,6 +298,7 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
       'unsafe-config',
       'metadata',
       'same-line-config',
+      'mixed-alternates',
       'autocrlf',
       'attributes',
       'skip-worktree',
@@ -329,8 +344,8 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
         ? 'Vault recovery is pending'
         : name === 'identity' || name === 'detached'
           ? 'identity does not match'
-          : name === 'metadata'
-            ? 'Git metadata'
+          : name === 'metadata' || name === 'mixed-alternates'
+            ? 'Git metadata|metadata indirection'
             : name === 'unborn'
               ? 'unborn|not found|reference'
               : name === 'skip-worktree'

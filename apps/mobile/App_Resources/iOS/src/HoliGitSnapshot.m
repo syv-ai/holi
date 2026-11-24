@@ -21,7 +21,7 @@ static BOOL Same(const struct stat *a, const struct stat *b) {
 }
 
 static BOOL Forbidden(NSString *path) {
-    return [@[@"objects/info/alternates", @"objects/info/http-alternates", @"commondir", @"gitdir", @"config.worktree", @"info/grafts", @"shallow", @"info/attributes", @"worktrees", @"refs/replace"] containsObject:path];
+    return [@[@"objects/info/alternates", @"objects/info/http-alternates", @"commondir", @"gitdir", @"config.worktree", @"info/grafts", @"shallow", @"info/attributes", @"worktrees", @"refs/replace"] containsObject:path.lowercaseString];
 }
 
 static BOOL SafeConfig(NSString *text) {
