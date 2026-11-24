@@ -64,6 +64,22 @@ async function fixture() {
 }
 
 describe('subscription change publication guard', () => {
+  it('checks ancestry only for available local commits', async () => {
+    const root = await makeClone(await makeRemote())
+    roots.push(root)
+    const repo = openRepo(root)
+    const ancestor = (await repo.head())!
+    await writeFile(join(root, 'later.md'), 'later\n')
+    await plainGit(root, ['add', 'later.md'])
+    await plainGit(root, ['commit', '-m', 'later'])
+    const descendant = (await repo.head())!
+
+    expect(await repo.isAncestor(ancestor, descendant)).toBe(true)
+    expect(await repo.isAncestor(descendant, ancestor)).toBe(false)
+    expect(await repo.isAncestor(ancestor, ancestor)).toBe(true)
+    await expect(repo.isAncestor('not-a-commit', descendant)).rejects.toThrow()
+    await expect(repo.isAncestor('f'.repeat(40), descendant)).rejects.toThrow()
+  })
   it('keeps bounded local HEAD capture distinct for unborn and missing-object repositories', async () => {
     const unborn = await makeClone(await makeEmptyRemote())
     roots.push(unborn)
