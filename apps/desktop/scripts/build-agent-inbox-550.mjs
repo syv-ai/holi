@@ -13,7 +13,8 @@ try {
 } catch (error) {
   if (error.code !== 'ENOENT') throw error
 }
-await mkdir(resolve(destination), { mode: 0o700 })
+// Caller must provide a freshly-created parent; mkdir without recursive deliberately
+// rejects reused build destinations rather than overwriting prior evidence.
 const target = await realpath(resolve(destination))
 const out = join(target, 'out')
 const configFile = join(desktop, 'scripts/agent-inbox-550.vite.config.ts')
