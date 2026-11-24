@@ -13,15 +13,18 @@ try {
   evidence.start = start.ok ? { ok: true, id: start.id } : { ok: false, message: start.message }
   if (!start.ok) throw new Error(start.message)
   const id = start.id
-  const listing = await cli.list(target)
-  evidence.list = JSON.parse(listing)
-  if (
+  const listing = await cli.list(target)    evidence.list = JSON.parse(listing)
+if (
     !Array.isArray(evidence.list) ||
     !evidence.list.some(
       (row) => row.id === id && row.cwd === target.root && row.kind === 'background',
     )
   )
     throw new Error('Native listing did not preserve session and vault')
+  const observation = await cli.run(target, ['--print', '--resume', id, 'Reply with the exact marker HOLI_NATIVE_STREAM_MARKER_7f3c'])
+  evidence.nativeObservation = observation.output
+  if (!observation.output.includes('HOLI_NATIVE_STREAM_MARKER_7f3c'))
+    throw new Error('Native CLI did not observe the completed streamed response marker')
 } catch (error) {
   evidence.error = String(error)
   process.exitCode = 1
