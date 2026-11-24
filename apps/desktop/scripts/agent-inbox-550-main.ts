@@ -1,4 +1,6 @@
-import { app, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
+import { startInboxNavigation } from './agent-inbox-550-navigation'
+
 import { lstatSync, realpathSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
@@ -88,6 +90,13 @@ try {
               bodyText,
             }),
           )
+          if (process.env.HOLI_550_SCENARIO === 'inbox-path')
+            void startInboxNavigation(contents, root).catch((error) => {
+              writeFileSync(
+                join(root, 'inbox-navigation.json'),
+                JSON.stringify({ ok: false, error: String(error) }),
+              )
+            })
           return
         }
       } catch (error) {

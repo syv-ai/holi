@@ -12,6 +12,8 @@ import { createOwnedProcesses } from './owned-processes.mjs'
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(join(desktop, 'package.json'))
 const destination = process.argv[2]
+const scenario = process.argv[3] ?? 'startup'
+if (!['startup', 'inbox-path'].includes(scenario)) throw new Error('Unknown scenario')
 if (destination && !isAbsolute(destination)) throw new Error('Evidence path must be absolute')
 const evidence = destination
   ? (await mkdir(destination, { mode: 0o700 }), await realpath(destination))
@@ -65,6 +67,7 @@ try {
     HOLI_CLAUDE_BIN: join(bin, 'claude'),
     HOLI_CODEX_BIN: join(bin, 'codex'),
     HOLI_550_ROOT: profile,
+    HOLI_550_SCENARIO: scenario,
     HOLI_550_APP_NAME: `Holi550-${randomUUID().replaceAll('-', '')}`,
     HOLI_VAULT_ROOT: join(profile, 'vaults'),
   }
@@ -73,6 +76,20 @@ try {
     env,
     timeoutMs: 30_000,
   })
+  const vault = join(profile, 'vaults/holi-550-fixture/vault-a')
+  let notification
+  if (scenario === 'inbox-path') {
+    notification = { title: `Holi 550 ${randomUUID()}`, line: `Inbox path proof ${randomUUID()}` }
+    await writeFile(join(profile, 'inbox-notification.json'), JSON.stringify(notification), {
+      mode: 0o600,
+      flag: 'wx',
+    })
+    await processes.run(
+      join(profile, 'user-data/bin/holi'),
+      ['agent', 'notify', notification.title, notification.line, '--path', 'Welcome.md'],
+      { cwd: vault, env, timeoutMs: 10_000 },
+    )
+  }
   const electron = require('electron')
   if (typeof electron !== 'string' || !electron) throw new Error('Electron executable unavailable')
   child = processes.start(electron, [join(buildRoot, 'out/main/bootstrap.js')], {
@@ -116,6 +133,33 @@ try {
   )
     throw new Error('Production docs.inspect did not read the owned welcome document')
   paths = JSON.parse(await readFile(join(profile, 'paths.json'), 'utf8'))
+  if (scenario === 'inbox-path') {
+    const receiptPath = join(profile, 'inbox-navigation.json')
+    const deadline = Date.now() + 30_000
+    while (Date.now() < deadline) {
+      const result = await readFile(receiptPath, 'utf8')
+        .then(JSON.parse)
+        .catch(() => null)
+      if (result) {
+        if (!result.ok) throw new Error(`Inbox navigation failed: ${result.error}`)
+        if (result.title !== notification.title || !result.document.includes(notification.line))
+          throw new Error('Inbox navigation receipt mismatch')
+        await writeFile(join(evidence, 'inbox-navigation.json'), JSON.stringify(result, null, 2), {
+          flag: 'wx',
+          mode: 0o600,
+        })
+        await writeFile(
+          join(evidence, 'inbox-navigation.png'),
+          Buffer.from(result.screenshot, 'base64'),
+          { flag: 'wx', mode: 0o600 },
+        )
+        break
+      }
+      await pause(100, undefined, { signal: controller.signal })
+    }
+    if (!(await readFile(join(evidence, 'inbox-navigation.json')).catch(() => null)))
+      throw new Error('Inbox navigation receipt timed out')
+  }
   for (const path of Object.values(paths))
     if (typeof path !== 'string' || !(await realpath(path)).startsWith(`${profile}/`))
       throw new Error('Electron path escaped the owned profile')
