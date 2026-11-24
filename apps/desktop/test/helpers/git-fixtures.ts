@@ -11,20 +11,32 @@
  * GitHub, with no network and no credentials.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { afterAll } from 'vitest'
 
 const exec = promisify(execFile)
 
 const dirs: string[] = []
+// Keep the seed across per-test cleanup; every caller gets an independent copy.
+let remoteTemplate: Promise<string> | undefined
+let remoteTemplateDir: string | undefined
 
 /** Call from each consuming file's `afterAll`. */
 export async function cleanupFixtures(): Promise<void> {
   for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => {})
   dirs.length = 0
 }
+
+afterAll(async () => {
+  if (remoteTemplateDir) {
+    await rm(remoteTemplateDir, { recursive: true, force: true }).catch(() => {})
+  }
+  remoteTemplateDir = undefined
+  remoteTemplate = undefined
+})
 
 export async function tmp(prefix: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix))
@@ -56,8 +68,9 @@ export async function plainGit(cwd: string, args: string[]): Promise<string> {
  * Seeded rather than left empty on purpose: a truly empty bare repo has no
  * default branch, and every test past this one wants `origin/HEAD` to resolve.
  */
-export async function makeRemote(): Promise<string> {
-  const base = await tmp('holi-git-remote-')
+async function makeRemoteTemplate(): Promise<string> {
+  const base = await mkdtemp(join(tmpdir(), 'holi-git-remote-template-'))
+  remoteTemplateDir = base
   const bare = join(base, 'origin.git')
   await exec('git', ['init', '--bare', '-b', 'main', bare])
 
@@ -72,6 +85,15 @@ export async function makeRemote(): Promise<string> {
   await plainGit(seed, ['add', '-A'])
   await plainGit(seed, ['commit', '-m', 'seed'])
   await plainGit(seed, ['push', 'origin', 'main'])
+  return bare
+}
+
+export async function makeRemote(): Promise<string> {
+  remoteTemplate ??= makeRemoteTemplate()
+  const template = await remoteTemplate
+  const base = await tmp('holi-git-remote-')
+  const bare = join(base, 'origin.git')
+  await cp(template, bare, { recursive: true })
   return bare
 }
 
