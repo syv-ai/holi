@@ -539,6 +539,10 @@ try {
     })
   }
   await attempt('stop-owned-groups', () => owned.stopAll())
+  receipt.ownedProcessDrain = {
+    acknowledged: owned.size === 0,
+    remainingGroupCount: owned.remainingPids.length,
+  }
   await attempt('confirm-process-drain', async () => {
     if (artifact)
       await wait('runtime-cleanup', async () => (await ownRuntimePids()).length === 0, 15_000, true)
