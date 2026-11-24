@@ -53,6 +53,7 @@ export const GOOGLE_SCOPES = [
   // API writes can modify them. `calendar.readonly` stays alongside this scope
   // because the events scope does not read the full list.
   'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/drive.readonly',
 ]
 
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'

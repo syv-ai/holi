@@ -82,8 +82,22 @@ import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 import { isMailMarker, validateBatch, validateThreadId, type MarkerValue } from './markers'
 import { normalizeMailMarkerPreferences, type MailMarkerPreferences } from '../shared/mail-markers'
+import { eventAttachments, driveFiles, attachEventFiles } from './event-attachments'
+import type { EventAttachmentTarget } from '../shared/event-attachments'
 
 /** Longest calendar window one call may ask for. */
+const attachmentTarget = (raw: unknown): EventAttachmentTarget => {
+  const p = paramsObject(raw)
+  const expectedAccountSub = expectedAccountParam(p)
+  if (expectedAccountSub === undefined)
+    throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+  return {
+    expectedAccountSub,
+    calendarId: stringParam(p, 'calendarId'),
+    eventId: stringParam(p, 'eventId'),
+  }
+}
+
 const MAX_AGENDA_DAYS = 92
 const DAY_MS = 24 * 60 * 60 * 1000
 /** `agenda` with no window: the next week. */
@@ -1226,6 +1240,54 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         if (!deps.meetings) throw new Error('Meeting creation is unavailable.')
         await google(() => deps.meetings!.finish(ctx.remote, sub, operation))
         return ok
+      },
+    }),
+
+    'google.eventAttachments': cap({
+      doors: ['ui'],
+      params: (raw) => attachmentTarget(raw),
+      run: async (ctx, target) => {
+        const { session } = await accountOf(ctx.remote, target.expectedAccountSub)
+        return google(() =>
+          eventAttachments(apiForSession(session), target, validateSession(ctx.remote, session)),
+        )
+      },
+    }),
+    'google.driveFiles': cap({
+      doors: ['ui'],
+      params: (raw) => ({
+        ...attachmentTarget(raw),
+        query: optionalStringParam(paramsObject(raw), 'query'),
+        pageToken: optionalStringParam(paramsObject(raw), 'pageToken'),
+      }),
+      run: async (ctx, { expectedAccountSub, query, pageToken }) => {
+        const { session } = await accountOf(ctx.remote, expectedAccountSub)
+        if (session.missingScopes().includes('https://www.googleapis.com/auth/drive.readonly'))
+          throw new CapabilityError('FORBIDDEN', 'Reconnect Google to grant Drive read access.')
+        return google(() => driveFiles(apiForSession(session), query, pageToken))
+      },
+    }),
+    'google.attachEventFiles': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const target = attachmentTarget(p)
+        if (!Array.isArray(p.fileIds) || p.fileIds.some((id) => typeof id !== 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'fileIds must be a list')
+        return { ...target, fileIds: p.fileIds as string[] }
+      },
+      run: async (ctx, { expectedAccountSub, fileIds, ...target }) => {
+        const { session } = await accountOf(ctx.remote, expectedAccountSub)
+        if (session.missingScopes().includes('https://www.googleapis.com/auth/drive.readonly'))
+          throw new CapabilityError('FORBIDDEN', 'Reconnect Google to grant Drive access.')
+        return google(() =>
+          attachEventFiles(
+            apiForSession(session),
+            { ...target, expectedAccountSub },
+            fileIds,
+            validateSession(ctx.remote, session),
+          ),
+        )
       },
     }),
 

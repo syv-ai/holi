@@ -107,6 +107,7 @@ export class GoogleApi {
     url: string,
     body?: unknown,
     validate?: () => Promise<void>,
+    options?: { ifMatch?: string },
   ): Promise<Response> {
     let token: string
     try {
@@ -129,6 +130,7 @@ export class GoogleApi {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(options?.ifMatch ? { 'If-Match': options.ifMatch } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -217,8 +219,9 @@ export class GoogleApi {
     url: string,
     body?: unknown,
     validate?: () => Promise<void>,
+    options?: { ifMatch?: string },
   ): Promise<unknown> {
-    const res = await this.#write(method, url, body, validate)
+    const res = await this.#write(method, url, body, validate, options)
     const text = await res.text().catch(() => '')
     if (text === '') return null
     try {
