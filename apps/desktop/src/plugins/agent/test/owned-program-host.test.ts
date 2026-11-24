@@ -429,7 +429,9 @@ async function rig() {
     const scoped = onlyFailure(error, 'one or more plugin lifetimes failed to stop')
     const original = vaultStopCause(scoped, remote)
     const retained = failureLeaves(original)
-    if (process.platform === 'win32') {
+    if (cwd !== vaults[remote].root) {
+      expectProof(original, proof)
+    } else if (process.platform === 'win32') {
       expect(retained).toContain(proof.receipt)
       expect(retained).toContain(proof.receipt.cause)
     } else {
@@ -603,16 +605,8 @@ afterEach(async () => {
 
 let gitTemp: string | undefined
 beforeAll(async () => {
-  // The real Git adapter caches its askpass path for this isolated suite.
-  gitTemp = await mkdtemp(join(tmpdir(), 'holi-owned-git-'))
-  const previous = process.env['TEMP']
-  process.env['TEMP'] = gitTemp
-  try {
-    await ensureAskpass()
-  } finally {
-    if (previous === undefined) delete process.env['TEMP']
-    else process.env['TEMP'] = previous
-  }
+  // This module owns the first initialization of the cached Git helper.
+  gitTemp = dirname(await ensureAskpass())
 })
 afterAll(async () => {
   if (gitTemp !== undefined) await rm(gitTemp, { recursive: true, force: true, maxRetries: 5 })
