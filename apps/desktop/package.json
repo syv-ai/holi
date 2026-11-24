@@ -10,7 +10,7 @@
     "dev": "node scripts/build-posix-lease.mjs && vite build --config vite.mdx-compiler.config.ts && electron-vite dev",
     "dev:debug": "node scripts/build-posix-lease.mjs && vite build --config vite.mdx-compiler.config.ts && electron-vite dev -- --remote-debugging-port=9333",
     "build": "node scripts/build-posix-lease.mjs && vite build --config vite.mdx-compiler.config.ts && electron-vite build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm run smoke:agent-inbox-550:typecheck",
     "smoke:agent-inbox-550:typecheck": "tsc --noEmit --project tsconfig.agent-inbox-550.json",
     "test": "node scripts/build-posix-lease.mjs && vitest run",
     "rebuild:natives": "electron-rebuild -f -w node-pty",
