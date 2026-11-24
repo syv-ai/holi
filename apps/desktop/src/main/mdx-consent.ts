@@ -59,14 +59,30 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
       throw new Error('MDX consent state version is unsupported')
     const grants = (value as State).grants
     if (
-      grants.some(
-        (g) =>
+      grants.some((g) => {
+        if (
           !g ||
           typeof g.origin !== 'string' ||
           typeof g.root !== 'string' ||
           typeof g.remote !== 'string' ||
-          typeof g.accountId !== 'string',
-      )
+          typeof g.accountId !== 'string' ||
+          !g.root ||
+          !g.remote ||
+          !g.accountId
+        )
+          return true
+        try {
+          const origin = new URL(g.origin)
+          return (
+            origin.protocol !== 'https:' ||
+            origin.origin !== g.origin ||
+            origin.username !== '' ||
+            origin.password !== ''
+          )
+        } catch {
+          return true
+        }
+      })
     )
       throw new Error('MDX consent state is corrupt')
     return { version: VERSION, grants }
