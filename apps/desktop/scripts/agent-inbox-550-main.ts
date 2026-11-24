@@ -1,4 +1,4 @@
-import { app, ipcMain, type WebContents } from 'electron'
+import { app, ipcMain } from 'electron'
 import { lstatSync, realpathSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
@@ -36,7 +36,6 @@ try {
   const logs = ownedFixtureDirectory(root, 'logs')
   app.setAppLogsPath(logs)
   writeFileSync(join(root, 'paths.json'), JSON.stringify({ ...paths, logs }), { flag: 'wx' })
-  const expectedPreload = join(root, '../out/preload/index.js')
   const expectedUrl = pathToFileURL(join(root, '../out/renderer/index.html')).href
   let completed = false
   const fail = (reason: string) => {
@@ -44,7 +43,7 @@ try {
     completed = true
     writeFileSync(join(root, 'startup-failure.json'), JSON.stringify({ reason }))
     console.error(reason)
-    app.exit(0)
+    app.exit(1)
   }
   ipcMain.on('holi-550:preload', (event, report) => {
     if (event.senderFrame !== event.sender.mainFrame)
@@ -55,11 +54,11 @@ try {
     if (contents.getType() !== 'window') return fail('Preload report did not come from a window')
     if (report?.sandboxed !== true || report?.contextIsolated !== true)
       return fail('Production preload did not confirm sandbox and context isolation')
-    const preloadPath = (
-      contents as WebContents & { getLastWebPreferences(): { preload?: string } }
-    ).getLastWebPreferences().preload
-    if (preloadPath !== expectedPreload)
-      return fail('Renderer did not use the expected fixture preload')
+    // The fixture preload alone owns this channel. Its production document
+    // and native main-frame identity are public Electron checks; private
+    // getLastWebPreferences() does not expose a stable preload-path contract.
+    if (event.senderFrame?.url !== expectedUrl)
+      return fail('Preload frame did not load the production document')
     const poll = async () => {
       if (completed) return
       try {

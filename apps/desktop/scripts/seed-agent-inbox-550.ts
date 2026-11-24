@@ -1,4 +1,4 @@
-import { lstat, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ownedFixtureDirectory } from './owned-fixture-directory'
@@ -71,6 +71,28 @@ async function main(): Promise<void> {
     await runGit(runtime, 'init', '--bare', '--initial-branch=main', bare)
     const canonical = `https://github.com/${remote}.git`
     await runGit(runtime, 'clone', canonical, clone)
+    const settings = join(clone, '.holi/settings')
+    await mkdir(settings, { recursive: true })
+    await writeFile(
+      join(settings, 'plugins.local.yaml'),
+      'plugins:\n' +
+        [
+          'automations',
+          'holis',
+          'tasks',
+          'pdf',
+          'reader',
+          'links',
+          'browser',
+          'google',
+          'apps',
+          'community',
+          'transcribe',
+        ]
+          .map((id) => `  ${id}: false\n`)
+          .join(''),
+      { flag: 'wx' },
+    )
     await writeFile(
       join(clone, 'Welcome.md'),
       `# Welcome to ${repo}\n\nThis is an owned Holi 550 fixture vault.\n`,
