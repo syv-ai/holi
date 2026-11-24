@@ -99,7 +99,14 @@ export function createUpdater(deps: {
    * quitting; that error, caught while the call runs, is the install's. True
    * when the installer took over the quit.
    */
-  const quitAndInstall = (): boolean => {
+  const quitAndInstall = (route: 'quit' | 'explicit'): boolean => {
+    console.info('[updates] handing update to installer', {
+      observedAt: new Date().toISOString(),
+      route,
+      runningVersion: status.version,
+      offeredVersion: status.availableVersion,
+      channel: status.channel,
+    })
     let failure: Error | null = null
     const onError = (err: Error): void => {
       failure = err
@@ -203,7 +210,7 @@ export function createUpdater(deps: {
         return false
       // A failed installer is reported and `installFailed` ends the quit, so
       // either way the quit is no longer the caller's to finish.
-      quitAndInstall()
+      quitAndInstall('quit')
       return true
     },
     async install() {
@@ -240,13 +247,7 @@ export function createUpdater(deps: {
         })
         return false
       }
-      console.info('[updates] handing update to installer', {
-        observedAt: new Date().toISOString(),
-        runningVersion: status.version,
-        offeredVersion: status.availableVersion,
-        channel: status.channel,
-      })
-      return quitAndInstall()
+      return quitAndInstall('explicit')
     },
     setChannel(channel) {
       const request = channelQueue.then(() => switchChannel(channel))
