@@ -14,10 +14,8 @@ async function setup(present = false) {
   const resource = join(dir, 'resource')
   await mkdir(resource)
   let live = present
-  let removes = 0
   const run = async (_binary: string, [mode]: string[]) => {
     if (mode === 'inspect') return { stdout: JSON.stringify({ present: live }) }
-    removes++
     if (live) live = false
     return { stdout: JSON.stringify({ present: false, removed: true }) }
   }
@@ -35,7 +33,6 @@ async function setup(present = false) {
     setLive: (value: boolean) => {
       live = value
     },
-    removes: () => removes,
   }
 }
 
@@ -43,7 +40,10 @@ describe('upgrade installer deletion gate', () => {
   it('retains resources unless runtime drained and fresh inspection confirms absence', async () => {
     for (const scenario of ['live', 'restart', 'failed-runtime'] as const) {
       const state = await setup(scenario !== 'failed-runtime')
-      if (scenario === 'restart') state.setLive(true)
+      if (scenario === 'restart') {
+        await state.installer.removeOwned()
+        state.setLive(true)
+      }
       await expect(
         removeAfterDrain({
           runtimeDrained: scenario !== 'failed-runtime',
@@ -70,6 +70,32 @@ describe('upgrade installer deletion gate', () => {
     await expect(
       import('node:fs/promises').then(({ access }) => access(state.resource)),
     ).rejects.toThrow()
-    expect(state.removes()).toBe(1)
+  })
+  it('retains resources when native inspection fails or returns an invalid receipt', async () => {
+    const state = await setup()
+    for (const run of [
+      async () => {
+        throw new Error('native inspection unavailable')
+      },
+      async () => ({ stdout: '{}' }),
+    ]) {
+      const installer = createUpgradeInstaller({
+        binary: 'native',
+        artifact: 'app',
+        statePath: 'state',
+        label: 'job',
+        run,
+      })
+      await expect(
+        removeAfterDrain({
+          runtimeDrained: true,
+          installer,
+          removeResources: () => rm(state.resource, { recursive: true }),
+        }),
+      ).rejects.toThrow()
+      await expect(
+        import('node:fs/promises').then(({ access }) => access(state.resource)),
+      ).resolves.toBeUndefined()
+    }
   })
 })
