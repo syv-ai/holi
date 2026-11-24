@@ -898,7 +898,7 @@ test('rich block lines keep grapheme columns and edit only the current logical l
     host.dispatchEvent(event)
     return event
   }
-  const lines = [...host.children]
+  const lines = [...host.children] as [Element, Element, Element, Element]
   const caret = (line: Element, offset: number) => {
     const selection = getSelection()!
     expect(line === selection.anchorNode || line.contains(selection.anchorNode)).toBe(true)
