@@ -60,16 +60,19 @@ describe('inspectMdxDependencies', () => {
     expect(inspected).toEqual(["import Secret from './.ENV'\nimport Linked from './linked.mdx'"])
   })
 
-  it.each(['../.holi/state/private.js', '../.HOLI/STATE/private.js'])(
+  it.each(['.holi/state', '.HOLI/STATE'])(
     'does not read or inspect machine state at %s',
-    async (specifier) => {
+    async (directory) => {
       const { root, run, inspected } = await setup()
-      await mkdir(join(root, '.holi', 'state'), { recursive: true })
-      await writeFile(join(root, '.holi', 'state', 'private.js'), 'MACHINE_STATE_BYTES')
-      const diagnostics = await run(`import Private from '${specifier}'`)
+      await mkdir(join(root, directory), { recursive: true })
+      await writeFile(
+        join(root, directory, 'private.js'),
+        "export const privateMarker = 'MACHINE_STATE_BYTES'\n",
+      )
+      const source = `import Private from '../${directory}/private.js'`
+      const diagnostics = await run(source)
       expect(diagnostics).toHaveLength(1)
-      expect(inspected).toEqual([`import Private from '${specifier}'`])
-      expect(inspected).not.toContain('MACHINE_STATE_BYTES')
+      expect(inspected).toEqual([source])
     },
   )
 

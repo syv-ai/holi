@@ -214,7 +214,7 @@ invoke('smoke:scenarios', async () => {
   await mkdir(join(vault, '.holi/state'), { recursive: true })
   await writeFile(
     join(vault, '.holi/state/private.js'),
-    'MACHINE_STATE_BYTES_MUST_NOT_BE_INSPECTED\n',
+    "export const privateMarker = 'MACHINE_STATE_BYTES_MUST_NOT_BE_INSPECTED'\n",
   )
   assert(
     (
