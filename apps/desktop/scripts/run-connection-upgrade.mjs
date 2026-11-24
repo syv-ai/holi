@@ -419,16 +419,19 @@ async function main() {
   const afterSignature = await command('/usr/bin/codesign', ['-dv', '--verbose=4', artifact])
   assert(afterSignature.stderr.includes(`TeamIdentifier=${team}`), 'updated app identity changed')
   receipt.upgrade = { installedBuild, freshProcess: true, signatureVerified: true }
-  await wait('new-process-google-restoration', async () => {
-    const overview = await accounts(seeded.path)
-    return overview?.state === 'connected' && overview.client?.source === 'own'
-  })
-  receipt.providerRequests = providers.stats.requests
-  receipt.restored = { googleAccountStateStored: true, ownClientSelected: true }
-  receipt.newProcessObserved = Number.isSafeInteger(newPid)
-  // The uninspected first post-update process must restore stored Google account state.
-  // A subsequent cold start independently checks every native encrypted store.
-  process.kill(newPid, 'SIGTERM')
+  // A PID and a CLI response cannot prove that the response came from this process,
+  // and renderer text cannot prove the Google connection is in the Connections panel.
+  // Until the bounded, permission-gated native observer is integrated, fail closed:
+  // do not report restoration or terminate the first relaunch for the later audit.
+  receipt.firstTargetObservation = {
+    outcome: 'observation-unavailable',
+    pid: newPid,
+    backendBoundToTarget: false,
+    googleConnectionsPanelAsserted: false,
+    screenshot: null,
+  }
+  await checkpoint('first-target-observation-required')
+  assert.fail('first-target CLI and Connections-panel observation is unavailable')
   await wait('first-relaunch-exit', async () => (await ownAppPids()).length === 0, 30_000)
   const audit = owned.start(
     join(artifact, 'Contents', 'MacOS', 'Holi'),
