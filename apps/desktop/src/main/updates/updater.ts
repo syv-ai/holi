@@ -117,12 +117,6 @@ export function createUpdater(deps: {
     return false
   }
 
-  console.info('[updates] updater initialized', {
-    supported: status.supported,
-    version: status.version,
-    channel: status.channel,
-  })
-
   if (status.supported) {
     // Squirrel cannot unstage ZIPs; install only the selected one after quit teardown.
     autoUpdater.autoInstallOnAppQuit = false
@@ -133,6 +127,7 @@ export function createUpdater(deps: {
     }
     autoUpdater.on('update-available', (info: UpdateInfo) => {
       console.info('[updates] update offered', {
+        observedAt: new Date().toISOString(),
         channel: status.channel,
         runningVersion: status.version,
         offeredVersion: info.version,
@@ -144,7 +139,16 @@ export function createUpdater(deps: {
     autoUpdater.on('download-progress', (p: ProgressInfo) =>
       apply({ type: 'progress', percent: p.percent }),
     )
-    autoUpdater.on('update-downloaded', () => apply({ type: 'downloaded' }))
+    autoUpdater.on('update-downloaded', (info?: UpdateInfo) => {
+      console.info('[updates] update downloaded', {
+        observedAt: new Date().toISOString(),
+        runningVersion: status.version,
+        offeredVersion: info?.version ?? status.availableVersion,
+        releaseDate: info?.releaseDate ?? null,
+        channel: status.channel,
+      })
+      apply({ type: 'downloaded' })
+    })
     autoUpdater.on('error', (err: Error) => apply({ type: 'error', message: err.message }))
 
     // A laptop shut for a week notices on the way back, not hours later;
@@ -162,6 +166,12 @@ export function createUpdater(deps: {
       autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
       autoUpdater.allowPrerelease = channel === 'dev'
       initialized = true
+      console.info('[updates] updater initialized', {
+        observedAt: new Date().toISOString(),
+        supported: status.supported,
+        runningVersion: status.version,
+        channel: status.channel,
+      })
       deps.send(status)
     },
     (err: unknown) => {
@@ -199,6 +209,9 @@ export function createUpdater(deps: {
     async install() {
       if (!status.supported || status.state !== 'ready') {
         console.info('[updates] install ignored', {
+          observedAt: new Date().toISOString(),
+          runningVersion: status.version,
+          offeredVersion: status.availableVersion,
           supported: status.supported,
           state: status.state,
           channel: status.channel,
@@ -216,6 +229,9 @@ export function createUpdater(deps: {
       }
       if (!go || switching || status.state !== 'ready' || installChannel !== status.channel) {
         console.info('[updates] install cancelled before handoff', {
+          observedAt: new Date().toISOString(),
+          runningVersion: status.version,
+          offeredVersion: status.availableVersion,
           confirmed: go,
           switching,
           state: status.state,
@@ -225,6 +241,7 @@ export function createUpdater(deps: {
         return false
       }
       console.info('[updates] handing update to installer', {
+        observedAt: new Date().toISOString(),
         runningVersion: status.version,
         offeredVersion: status.availableVersion,
         channel: status.channel,
