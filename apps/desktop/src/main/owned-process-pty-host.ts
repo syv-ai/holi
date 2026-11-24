@@ -31,6 +31,13 @@ function flush() {
     blocked = !process.stdout.write(bytes);
   }
   if (blocked) process.stdout.once('drain', flush);
+  else if (ending) finish();
+}
+function finish() {
+  if (pending.length || blocked) return;
+  process.stdin.pause();
+  process.stdin.destroy();
+  process.stdout.end();
 }
 function fail(message) {
   if (failed) return;
@@ -56,16 +63,23 @@ function frame(line) {
     try {
       terminal = pty.spawn(value.file, value.args, { cwd: value.cwd, env: value.env, cols: value.cols, rows: value.rows, useConpty: true });
       terminal.onData(data => emit({ type: 'data', data: Buffer.from(data, 'utf8').toString('base64') }));
-      terminal.onExit(({ exitCode, signal }) => { emit({ type: 'exit', exitCode, signal }); ending = true; process.stdin.pause(); });
+      terminal.onExit(({ exitCode, signal }) => {
+        emit({ type: 'exit', exitCode, signal });
+        ending = true;
+        finish();
+      });
       ready = true;
       emit({ type: 'ready', pid: terminal.pid });
     } catch { fail('PTY spawn failed'); }
     return;
   }
   if (!value || typeof value.type !== 'string') return fail('invalid command');
-  if (value.type === 'input' && typeof value.data === 'string' && Buffer.byteLength(value.data) <= MAX_FRAME) terminal.write(value.data);
-  else if (value.type === 'resize' && Number.isInteger(value.cols) && Number.isInteger(value.rows) && value.cols > 0 && value.rows > 0 && value.cols <= 1000 && value.rows <= 1000) terminal.resize(value.cols, value.rows);
-  else if (value.type === 'close') { ending = true; terminal.kill(); }
+  try {
+    if (value.type === 'input' && typeof value.data === 'string' && Buffer.byteLength(value.data) <= MAX_FRAME) terminal.write(value.data);
+    else if (value.type === 'resize' && Number.isInteger(value.cols) && Number.isInteger(value.rows) && value.cols > 0 && value.rows > 0 && value.cols <= 1000 && value.rows <= 1000) terminal.resize(value.cols, value.rows);
+    else if (value.type === 'close') { ending = true; terminal.kill(); }
+    else fail('invalid command');
+  } catch { fail('PTY command failed'); }
   else fail('invalid command');
 }
 process.stdin.on('data', chunk => {
