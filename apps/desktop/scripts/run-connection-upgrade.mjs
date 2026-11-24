@@ -13,6 +13,7 @@ import { externalizeDepsPlugin } from 'electron-vite'
 import { createOwnedProcesses } from './owned-processes.mjs'
 import { createUpgradeProviders } from './connection-upgrade-provider.mjs'
 import { connectUpgradeInspector } from './upgrade-inspector.mjs'
+import { createUpgradeInstaller, installerStatePath } from './upgrade-installer.mjs'
 
 const exec = promisify(execFile)
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -30,6 +31,8 @@ let profile
 let vaultRoot
 let ownsProfile = false
 let artifact
+let installer
+let installerGuardReady = false
 let providers
 let feed
 const launchKeys = []
@@ -154,6 +157,24 @@ async function main() {
   evidence = join(process.env.RUNNER_TEMP, 'holi-565-evidence')
   await mkdir(evidence, { mode: 0o700 })
   root = await realpath(await mkdtemp(join(tmpdir(), 'holi-565-native-')))
+  const scratch = join(root, 'installer-guard')
+  await mkdir(scratch, { mode: 0o700 })
+  const binary = join(scratch, 'upgrade-installer')
+  await command('/usr/bin/xcrun', [
+    'swiftc',
+    join(desktop, 'scripts', 'upgrade-installer.swift'),
+    '-o',
+    binary,
+  ])
+  const label = 'ai.syv.holi.ShipIt'
+  installer = createUpgradeInstaller({
+    binary,
+    artifact: join(root, 'installed', 'Holi.app'),
+    statePath: installerStatePath(label),
+    label,
+  })
+  await installer.assertAbsent()
+  installerGuardReady = true
   await checkpoint('download-signed-artifact')
   const old = JSON.parse(
     (await command('gh', ['release', 'view', oldTag, '--repo', 'syv-ai/holi', '--json', 'assets']))
@@ -397,7 +418,7 @@ async function main() {
     return overview?.state === 'connected' && overview.client?.source === 'own'
   })
   receipt.providerRequests = providers.stats.requests
-  receipt.restored = { googleConnected: true, ownClientSelected: true, productionCapability: true }
+  receipt.restored = { googleAccountStateStored: true, ownClientSelected: true }
   receipt.newProcessObserved = Number.isSafeInteger(newPid)
   // The uninspected first post-update process above must restore Google itself.
   // A subsequent cold start independently checks every native encrypted store.
@@ -440,12 +461,12 @@ async function main() {
   })()`,
   )
   await inspector.resume()
-  receipt.coldReaders = await wait('cold-native-readers', () =>
+  receipt.nativeDecryptionCompatibility = await wait('updated-electron-native-readers', () =>
     evaluate('globalThis.__holi565Audit'),
   )
   assert(
     ['github', 'google', 'client', 'vaultBinding', 'speech'].every(
-      (key) => receipt.coldReaders[key] === true,
+      (key) => receipt.nativeDecryptionCompatibility[key] === true,
     ),
     'a native credential reader did not restore its fixture connection',
   )
@@ -487,6 +508,15 @@ try {
     }
   }
   let drained = false
+  let installerDrained = false
+  if (installerGuardReady) {
+    await attempt('remove-validated-squirrel-job', async () => {
+      await installer.removeOwned()
+      installerDrained = true
+    })
+  } else if (!artifact) {
+    installerDrained = true
+  }
   if (artifact) {
     await attempt('signal-owned-runtime', async () => {
       for (const pid of await ownRuntimePids()) {
@@ -526,7 +556,7 @@ try {
     )
   if (providers) await attempt('provider-shutdown', () => providers.close())
   if (feed) await attempt('feed-shutdown', () => feed.stop())
-  if (drained) {
+  if (drained && installerDrained) {
     if (ownsProfile) {
       await attempt('remove-profile', () => rm(profile, { recursive: true, force: true }))
       await attempt('remove-vaults', () => rm(vaultRoot, { recursive: true, force: true }))
@@ -534,7 +564,11 @@ try {
     if (root) await attempt('remove-artifacts', () => rm(root, { recursive: true, force: true }))
   }
   if (failures.length) {
-    receipt.cleanup = { failures, filesRetained: !drained, root: !drained ? root : undefined }
+    receipt.cleanup = {
+      failures,
+      filesRetained: !(drained && installerDrained),
+      root: !(drained && installerDrained) ? root : undefined,
+    }
     if (evidence) await checkpoint(receipt.phase).catch(() => {})
     console.error('Owned upgrade fixture cleanup failed; see sanitised cleanup receipt')
     process.exitCode = 1

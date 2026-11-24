@@ -95,7 +95,7 @@ export async function seedConnections(
   return { remote, path: clonePath, userData }
 }
 
-/** Cold readers in the updated signed app return only the fixture's restoration outcomes. */
+/** Readers executed inside the updated Electron return fixture decryption compatibility outcomes. */
 export async function inspectConnections(userData: string, remote: string) {
   if (!app.isReady() || !safeStorage.isEncryptionAvailable()) {
     throw new Error('Native credential inspection is unavailable')
