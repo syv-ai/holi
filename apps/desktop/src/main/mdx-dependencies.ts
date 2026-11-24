@@ -5,6 +5,7 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import {
   isAgentSurfacePath,
   isLocalOnlyPath,
+  isMachineStatePath,
   isSecretPath,
   vaultRelPath,
   type MdxDiagnostic,
@@ -94,7 +95,11 @@ export async function inspectMdxDependencies(options: {
     }
     const safePolicy = (path: string) =>
       [path, path.toLowerCase()].every(
-        (p) => !isSecretPath(p) && !isLocalOnlyPath(p) && !isAgentSurfacePath(p),
+        (p) =>
+          !isSecretPath(p) &&
+          !isLocalOnlyPath(p) &&
+          !isAgentSurfacePath(p) &&
+          !isMachineStatePath(p),
       )
     const failure = (message: string, line: number): MdxDiagnostic => ({
       message,
