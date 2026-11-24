@@ -37,7 +37,11 @@ export default defineConfig({
   }),
   preload: mergeConfig(production.preload ?? {}, {
     root: desktop,
-    build: { outDir: join(target, 'out/preload') },
+    build: {
+      outDir: join(target, 'out/preload'),
+      lib: { entry: join(desktop, 'scripts/agent-inbox-550-preload.ts'), formats: ['cjs'] },
+      rollupOptions: { output: { entryFileNames: 'index.js' } },
+    },
   }),
   renderer: mergeConfig(production.renderer ?? {}, {
     root: join(desktop, 'src/renderer'),
