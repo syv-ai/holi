@@ -16,6 +16,7 @@ try {
   if (!start.ok) throw new Error(start.message)
   const id = start.id
   const listing = await cli.list(target)
+  if (listing === null) throw new Error('Native session listing unavailable')
   evidence.list = JSON.parse(listing)
   if (
     !Array.isArray(evidence.list) ||
@@ -49,7 +50,8 @@ try {
           record.message?.role === 'assistant' &&
           record.message.stop_reason === 'end_turn' &&
           record.message.content?.some(
-            (part) => part.type === 'text' && part.text === process.env.HOLI_NATIVE_EXPECTED_REPLY,
+            (part: { type?: string; text?: string }) =>
+              part.type === 'text' && part.text === process.env.HOLI_NATIVE_EXPECTED_REPLY,
           )
         ) {
           completion = {
