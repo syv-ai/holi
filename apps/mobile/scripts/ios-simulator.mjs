@@ -27,6 +27,7 @@ import {
 import { captureStorageEvidence, readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
 import { createGitFixture } from './git-fixture.mjs'
+import { createWorkingCopyFixture } from './working-copy-fixture.mjs'
 import {
   interruptionBefore,
   interruptionPending,
@@ -140,6 +141,8 @@ try {
   const container = await simctl('get_app_container', simulator, bundleId, 'data')
   canonicalContainer = await realpath(container)
   const reportPath = join(canonicalContainer, 'Documents/vault-format-report.json')
+  const workingCopyFixture = await createWorkingCopyFixture(join(canonicalContainer, 'Documents'), runId)
+  await writeFile(join(artifacts, 'working-copy-fixture.json'), JSON.stringify(workingCopyFixture, null, 2))
   for (const [index, name] of ['Café.md', 'Cafe\u0301.md'].entries()) {
     const directory = join(canonicalContainer, `Documents/holi-raw-${runId}-${index}`)
     await mkdir(directory)
@@ -187,8 +190,8 @@ try {
         SIMCTL_CHILD_HOLI_STORAGE_PHASE: phase,
         ...(phase === 'normal'
           ? {
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: `${canonicalContainer}/Documents/holi-git-${runId}`,
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: gitFixture.url,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: workingCopyFixture.root,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: workingCopyFixture.remote,
               SIMCTL_CHILD_HOLI_GIT_INVALID_TLS_URL: gitFixture.invalidUrl,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_USER: gitFixture.username,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_PASSWORD: gitFixture.password,
