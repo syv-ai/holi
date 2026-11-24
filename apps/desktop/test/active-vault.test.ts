@@ -3156,6 +3156,23 @@ describe('VaultHost', () => {
     expect(closedB).toBe(true)
   })
 
+  it('keeps a clone registered and reopenable when trash refuses it', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    const b = await h.open('syv-ai/b')
+    await h.getOrOpen('syv-ai/a')
+
+    await expect(
+      h.remove('syv-ai/a', async () => {
+        throw new Error('fixture trash refused')
+      }),
+    ).rejects.toThrow('fixture trash refused')
+
+    expect((await registry.list()).some((entry) => entry.remote === 'syv-ai/a')).toBe(true)
+    await expect(h.getOrOpen('syv-ai/a')).resolves.toMatchObject({ remote: 'syv-ai/a' })
+    expect(h.active()).toBe(b)
+  })
+
   it('drains startup activation before unregistering and refuses queued resurrection', async () => {
     const { registry } = await twoVaults()
     const original = (await registry.list()).find((entry) => entry.remote === 'syv-ai/a')!
