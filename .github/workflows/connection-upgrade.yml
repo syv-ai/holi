@@ -1,0 +1,56 @@
+name: Connection upgrade restoration
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/connection-upgrade.yml
+      - apps/desktop/scripts/inspect-upgrade-connections.mjs
+      - apps/desktop/scripts/upgrade-connection-fixture.ts
+      - apps/desktop/scripts/run-connection-upgrade.mjs
+      - apps/desktop/scripts/tsconfig.upgrade-connections.json
+      - apps/desktop/scripts/connection-upgrade-provider.mjs
+      - apps/desktop/scripts/upgrade-inspector.mjs
+      - apps/desktop/test/upgrade-connection-safety.test.ts
+      - apps/desktop/test/upgrade-providers.test.ts
+
+permissions:
+  contents: read
+
+jobs:
+  connection-upgrade:
+    name: Native connection upgrade restoration
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check fixture types
+        run: pnpm --filter @holi/desktop exec tsc --noEmit --project scripts/tsconfig.upgrade-connections.json
+
+      - name: Run isolated connection upgrade
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node apps/desktop/scripts/run-connection-upgrade.mjs
+
+      - name: Upload connection upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: connection-upgrade-evidence
+          path: ${{ runner.temp }}/holi-565-evidence/
+          if-no-files-found: error

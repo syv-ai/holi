@@ -1,0 +1,163 @@
+import assert from 'node:assert/strict'
+import { once } from 'node:events'
+
+/** Caller owns the process: stop it before close unless deliberately resuming startup. */
+export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  let url
+  while (!url && Date.now() < deadline) {
+    signal?.throwIfAborted()
+    assert(record.child.exitCode === null, 'owned app exited before inspector connection')
+    url = record.output.match(/Debugger listening on (ws:\/\/127\.0\.0\.1:\d+\/[^\s]+)/)?.[1]
+    if (!url) await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  assert(url, 'owned app inspector did not open before deadline')
+  const socket = new WebSocket(url)
+  const failure = new AbortController()
+  const requests = new Map()
+  const contexts = new Map()
+  let nextId = 0
+  let closed = false
+  let frame
+  let paused = true
+  let resolvePause
+  let rejectPause
+  const pause = new Promise((resolve, reject) => {
+    resolvePause = resolve
+    rejectPause = reject
+  })
+  pause.catch(() => {})
+  function fail(message) {
+    const error = new Error(message)
+    failure.abort(error)
+    for (const { reject, timer } of requests.values()) {
+      clearTimeout(timer)
+      reject(error)
+    }
+    requests.clear()
+    rejectPause(error)
+  }
+  function onMessage(event) {
+    let message
+    try {
+      message = JSON.parse(event.data)
+    } catch {
+      fail('invalid inspector message')
+      return
+    }
+    const pending = requests.get(message.id)
+    if (pending) {
+      requests.delete(message.id)
+      clearTimeout(pending.timer)
+      message.error
+        ? pending.reject(new Error('inspector command rejected'))
+        : pending.resolve(message.result)
+    }
+    if (message.method === 'Debugger.scriptParsed' && !frame)
+      contexts.set(message.params.scriptId, message.params.executionContextId)
+    if (message.method === 'Debugger.paused') resolvePause(message.params)
+  }
+  const onAbort = () => fail('inspector operation aborted')
+  const onClose = () => {
+    if (!closed) fail('inspector connection closed')
+  }
+  const onError = () => fail('inspector connection failed')
+  socket.addEventListener('message', onMessage)
+  socket.addEventListener('close', onClose)
+  socket.addEventListener('error', onError)
+  signal?.addEventListener('abort', onAbort, { once: true })
+  function close() {
+    if (closed) return
+    closed = true
+    fail('inspector disposed')
+    signal?.removeEventListener('abort', onAbort)
+    socket.removeEventListener('message', onMessage)
+    socket.removeEventListener('close', onClose)
+    // Keep the error listener until the closing handshake settles.
+    socket.close()
+  }
+  // A failed connection must not disconnect a paused app before its owner can
+  // stop it. Its inspector is disposed once the actual owned process exits.
+  record.exited.then(close, close)
+  function command(method, params = {}) {
+    signal?.throwIfAborted()
+    failure.signal.throwIfAborted()
+    return new Promise((resolve, reject) => {
+      const id = ++nextId
+      const timer = setTimeout(() => {
+        requests.delete(id)
+        reject(new Error('inspector command timed out'))
+      }, timeoutMs)
+      requests.set(id, { resolve, reject, timer })
+      try {
+        socket.send(JSON.stringify({ id, method, params }))
+      } catch {
+        clearTimeout(timer)
+        requests.delete(id)
+        reject(new Error('inspector send failed'))
+      }
+    })
+  }
+  await once(socket, 'open', {
+    signal: AbortSignal.any(
+      [signal, failure.signal, AbortSignal.timeout(timeoutMs)].filter(Boolean),
+    ),
+  })
+  await command('Debugger.enable')
+  await command('Runtime.enable')
+  await command('Runtime.runIfWaitingForDebugger')
+  let timer
+  let state
+  try {
+    state = await Promise.race([
+      pause,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('entry pause timed out')), timeoutMs)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+  frame = state.callFrames?.[0]
+  assert(frame && state.reason === 'Break on start', 'inspector did not pause at application entry')
+  const contextId = contexts.get(frame.location.scriptId)
+  assert(Number.isInteger(contextId), 'entry script execution context was not reported')
+  contexts.clear()
+  return {
+    frame: { ...frame, reason: state.reason },
+    async evaluate(expression) {
+      const result = await command(paused ? 'Debugger.evaluateOnCallFrame' : 'Runtime.evaluate', {
+        expression: paused
+          ? expression
+          : `(require => eval(${JSON.stringify(expression)}))(globalThis.__holiUpgradeFixtureRequire)`,
+        returnByValue: true,
+        ...(paused ? { callFrameId: frame.callFrameId } : { awaitPromise: true, contextId }),
+      })
+      if (result.exceptionDetails) {
+        const error = new Error('fixture evaluation failed; native details withheld')
+        error.details = {
+          type: result.exceptionDetails.exception?.className,
+          line: result.exceptionDetails.lineNumber,
+          column: result.exceptionDetails.columnNumber,
+        }
+        throw error
+      }
+      return result.result?.value
+    },
+    async resume() {
+      assert(paused, 'inspector session already resumed')
+      const captured = await command('Debugger.evaluateOnCallFrame', {
+        callFrameId: frame.callFrameId,
+        expression: 'globalThis.__holiUpgradeFixtureRequire = require; true',
+        returnByValue: true,
+      })
+      assert(
+        !captured.exceptionDetails && captured.result?.value === true,
+        'fixture require capture failed',
+      )
+      await command('Debugger.resume')
+      paused = false
+    },
+    close,
+  }
+}
