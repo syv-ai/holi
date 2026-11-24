@@ -141,10 +141,12 @@ function attachmentRig({
   onRefresh = () => scopes,
   expired = false,
   onRequest,
+  waitForAccount,
 }: {
   scopes: string[]
   onRefresh?: () => string[]
   expired?: boolean
+  waitForAccount?: () => Promise<void>
   onRequest?: (path: string, init: RequestInit, expireToken: () => void) => Response | undefined
 }) {
   let now = expired ? 100_000 : 0
@@ -216,8 +218,10 @@ function attachmentRig({
     data: null,
     permissionReceipts: createPermissionReceipts(attachmentUserData),
     accounts: {
-      sessionFor: async (requestedRemote) =>
-        linked && requestedRemote === remote ? session : null,
+      sessionFor: async (requestedRemote) => {
+        await waitForAccount?.()
+        return linked && requestedRemote === remote ? session : null
+      },
     },
   })
   return {
@@ -392,6 +396,124 @@ describe('event attachment capabilities', () => {
     expect(requests.filter(({ method }) => method !== 'GET')).toEqual([
       { path: `/drive/v3/files/${selected}/permissions`, method: 'POST' },
     ])
+  })
+
+  it('checks current attachments with Calendar-only consent and never sends a grant', async () => {
+    const attachment = {
+      fileId: 'selected',
+      fileUrl: 'https://example.com/file',
+      title: 'Selected',
+    }
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ],
+      onRequest: (path) => {
+        if (path.endsWith('/events/event1'))
+          return Response.json({
+            id: 'event1',
+            etag: '"v1"',
+            organizer: { self: true },
+            attachments: [attachment],
+            attendees: [{ email: 'guest@example.com' }],
+          })
+      },
+    })
+    await expect(
+      invoke('checkEventFileAccess', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }),
+    ).resolves.toMatchObject({
+      attachments: [attachment],
+      attachmentStatus: 'attached',
+      sharingComplete: false,
+      reconnect: true,
+      sharing: [{ fileId: 'selected', guest: 'guest@example.com', status: 'failed' }],
+    })
+    expect(
+      requests.filter(({ path, method }) => method !== 'GET' || path.startsWith('/drive/')),
+    ).toEqual([])
+  })
+
+  it('reports a Calendar removal that occurs while Drive refuses a guest grant', async () => {
+    const guest = 'guest@example.com'
+    const metadata = {
+      id: 'selected',
+      name: 'Selected',
+      webViewLink: 'https://example.com/file',
+      mimeType: 'application/pdf',
+      capabilities: { canShare: true },
+    }
+    const agenda = { fileUrl: 'https://example.com/agenda', title: 'Agenda' }
+    const attachment = { fileId: metadata.id, fileUrl: metadata.webViewLink, title: metadata.name }
+    let removed = false
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      onRequest: (path, init) => {
+        if (path.endsWith('/events/event1'))
+          return Response.json({
+            id: 'event1',
+            etag: removed ? '"v2"' : '"v1"',
+            organizer: { self: true },
+            attachments: removed ? [agenda] : [agenda, attachment],
+            attendees: [{ email: guest }],
+          })
+        if (path.endsWith('/files/selected')) return Response.json(metadata)
+        if (path.endsWith('/permissions')) {
+          if (init.method === 'GET') return Response.json({ permissions: [] })
+          if (init.method === 'POST') {
+            removed = true
+            return Response.json(
+              { error: { errors: [{ reason: 'insufficientPermissions' }] } },
+              { status: 403 },
+            )
+          }
+        }
+      },
+    })
+    await expect(
+      invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: [metadata.id] }),
+    ).resolves.toMatchObject({
+      attachments: [agenda],
+      attachmentStatus: 'unknown',
+      reconnect: true,
+      sharingComplete: false,
+      sharing: [{ fileId: metadata.id, guest, status: 'failed' }],
+    })
+    expect(requests.filter(({ method }) => method !== 'GET')).toEqual([
+      { path: '/drive/v3/files/selected/permissions', method: 'POST' },
+    ])
+  })
+
+  it('expires a stalled account lookup without a write, even when the lookup later succeeds', async () => {
+    vi.useFakeTimers()
+    // Native AbortSignal timers are outside Vitest's clock. Adapt them to it.
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new DOMException('Expired', 'TimeoutError')), ms)
+      return controller.signal
+    })
+    let resume!: () => void
+    const stalled = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      waitForAccount: () => stalled,
+    })
+    try {
+      const update = invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] })
+      await vi.advanceTimersByTimeAsync(30_000)
+      await expect(Promise.race([update, Promise.resolve('still waiting')])).resolves.toMatchObject(
+        {
+          attachmentStatus: 'failed',
+          sharing: [],
+        },
+      )
+      resume()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(requests).toEqual([])
+    } finally {
+      resume()
+      timeout.mockRestore()
+      vi.useRealTimers()
+    }
   })
 
   it('does not send a Drive search when the plugin stops during refresh', async () => {

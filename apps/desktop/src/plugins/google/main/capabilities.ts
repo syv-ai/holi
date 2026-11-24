@@ -42,7 +42,7 @@ import {
 } from '../../../main/plugin-api'
 import type { GoogleAccountsManager, GoogleAccountsOverview } from './accounts'
 import { vaultAttachments } from './attachments'
-import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './api'
+import { GoogleApi, GoogleApiError, untilGoogleAbort, type GoogleErrorCode } from './api'
 import {
   createEvent,
   deleteEvent,
@@ -93,9 +93,14 @@ import {
   attachEventFiles,
   checkEventFileAccess,
   attachmentUpdateRefused,
+  attachmentDeadline,
 } from './event-attachments'
 import type { PermissionReceipts } from './permission-receipts'
 import type { EventAttachmentTarget } from '../shared/event-attachments'
+
+const ATTACHMENT_READ_SCOPES = [GOOGLE_CALENDAR_READ_SCOPE]
+const ATTACHMENT_DRIVE_SCOPES = [...ATTACHMENT_READ_SCOPES, GOOGLE_DRIVE_SCOPE]
+const ATTACHMENT_WRITE_SCOPES = [...ATTACHMENT_DRIVE_SCOPES, GOOGLE_CALENDAR_WRITE_SCOPE]
 
 const attachmentTarget = (raw: unknown): EventAttachmentTarget => {
   const p = paramsObject(raw)
@@ -552,27 +557,30 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     remote: string,
     expectedAccountSub: string,
     scopes: readonly string[],
+    signal: AbortSignal,
   ) => {
     if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-    const session = await deps.accounts.sessionFor(remote)
+    const lookup = () => untilGoogleAbort(signal, () => deps.accounts.sessionFor(remote))
+    const session = await lookup()
     const accountChanged = () =>
       new CapabilityError('FORBIDDEN', 'Google account changed; reload the event.')
     if (session?.accountSub !== expectedAccountSub) throw accountChanged()
-    const requireGrant = () => {
+    const requireGrant = (required: readonly string[]) => {
+      signal.throwIfAborted()
       if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
       if (session.accountSub !== expectedAccountSub) throw accountChanged()
       const missing = session.missingScopes()
-      if (scopes.some((scope) => missing.includes(scope))) {
+      if (required.some((scope) => missing.includes(scope))) {
         throw new GoogleApiError('scope', 403, 'Reconnect Google to grant attachment access.')
       }
     }
-    requireGrant()
-    const validate = async () => {
+    requireGrant(scopes)
+    const validateFor = (required: readonly string[]) => async () => {
       if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-      if ((await deps.accounts.sessionFor(remote)) !== session) throw accountChanged()
-      requireGrant()
+      if ((await lookup()) !== session) throw accountChanged()
+      requireGrant(required)
     }
-    return { api: apiForSession(session), validate }
+    return { api: apiForSession(session), validate: validateFor(scopes), validateFor }
   }
 
   const dataOf = async (remote: string): Promise<GoogleData> => {
@@ -1361,10 +1369,14 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: (raw) => attachmentTarget(raw),
       run: (ctx, target) =>
         attachmentRequest(async () => {
-          const { api, validate } = await attachmentSession(ctx.remote, target.expectedAccountSub, [
-            GOOGLE_CALENDAR_READ_SCOPE,
-          ])
-          return eventAttachments(api, target, validate)
+          const signal = attachmentDeadline()
+          const { api, validate } = await attachmentSession(
+            ctx.remote,
+            target.expectedAccountSub,
+            ATTACHMENT_READ_SCOPES,
+            signal,
+          )
+          return eventAttachments(api, target, validate, signal)
         }),
     }),
     'google.driveFiles': cap({
@@ -1376,12 +1388,14 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       }),
       run: (ctx, { query, pageToken, ...target }) =>
         attachmentRequest(async () => {
-          const { api, validate } = await attachmentSession(ctx.remote, target.expectedAccountSub, [
-            GOOGLE_CALENDAR_READ_SCOPE,
-            GOOGLE_CALENDAR_WRITE_SCOPE,
-            GOOGLE_DRIVE_SCOPE,
-          ])
-          const result = await driveFiles(api, target, query ?? '', pageToken, validate)
+          const signal = attachmentDeadline()
+          const { api, validate } = await attachmentSession(
+            ctx.remote,
+            target.expectedAccountSub,
+            ATTACHMENT_WRITE_SCOPES,
+            signal,
+          )
+          const result = await driveFiles(api, target, query ?? '', pageToken, validate, signal)
           await validate()
           return result
         }),
@@ -1390,20 +1404,26 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: attachmentSelection,
       run: async (ctx, { fileIds, ...target }) => {
+        const signal = attachmentDeadline()
         const receipts = deps.permissionReceipts
         if (!receipts) return attachmentUpdateRefused(null)
         let bound: Awaited<ReturnType<typeof attachmentSession>>
         try {
-          bound = await attachmentSession(ctx.remote, target.expectedAccountSub, [
-            GOOGLE_CALENDAR_READ_SCOPE,
-            GOOGLE_CALENDAR_WRITE_SCOPE,
-            GOOGLE_DRIVE_SCOPE,
-          ])
+          bound = await attachmentSession(
+            ctx.remote,
+            target.expectedAccountSub,
+            ATTACHMENT_READ_SCOPES,
+            signal,
+          )
         } catch (error) {
           return attachmentUpdateRefused(error)
         }
         return attachmentRequest(() =>
-          attachEventFiles(bound.api, target, fileIds, bound.validate, { receipts }),
+          attachEventFiles(bound.api, target, fileIds, bound.validate, {
+            receipts,
+            signal,
+            validateDrive: bound.validateFor(ATTACHMENT_WRITE_SCOPES),
+          }),
         )
       },
     }),
@@ -1412,14 +1432,21 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: attachmentSelection,
       run: (ctx, { fileIds, ...target }) =>
         attachmentRequest(async () => {
-          const { api, validate } = await attachmentSession(ctx.remote, target.expectedAccountSub, [
-            GOOGLE_CALENDAR_READ_SCOPE,
-            GOOGLE_DRIVE_SCOPE,
-          ])
+          const signal = attachmentDeadline()
+          const { api, validate, validateFor } = await attachmentSession(
+            ctx.remote,
+            target.expectedAccountSub,
+            ATTACHMENT_READ_SCOPES,
+            signal,
+          )
           const receipts = deps.permissionReceipts
           if (!receipts)
             throw new CapabilityError('UNAVAILABLE', 'Guest access checks are unavailable.')
-          return checkEventFileAccess(api, target, fileIds, validate, { receipts })
+          return checkEventFileAccess(api, target, fileIds, validate, {
+            receipts,
+            signal,
+            validateDrive: validateFor(ATTACHMENT_DRIVE_SCOPES),
+          })
         }),
     }),
 

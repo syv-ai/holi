@@ -6,7 +6,7 @@ import {
   untilGoogleAbort,
   type GoogleApi,
 } from './api'
-import type { PermissionReceipts } from './permission-receipts'
+import type { PermissionReceipt, PermissionReceipts } from './permission-receipts'
 
 const DRIVE = 'https://www.googleapis.com/drive/v3'
 // Drive reports the effective role here, including permissions inherited from
@@ -155,34 +155,45 @@ export async function ensureGuestViewers(
       if (!reconnect && !signal.aborted) {
         await withFilePermissions(fileId, signal, async (holdUntil) => {
           let list: Permission[] | undefined
-          let receiptRead = false
-          const clearReceipt = async () => {
-            const clearing = receipts.clear(fileId)
-            holdUntil(clearing)
-            await untilGoogleAbort(signal, () => clearing)
-            pendingGuest = null
+          let receipt: PermissionReceipt | undefined
+          const persist = (next: PermissionReceipt) => {
+            receipt = undefined
+            const saving = receipts.write(fileId, next).then(() => {
+              receipt = next
+              pendingGuest = next.pending
+            })
+            holdUntil(saving)
+            return saving
           }
           for (; index < guests.length && !signal.aborted && !reconnect; index++) {
             const guest = guests[index]!
             const target = { fileId, guest }
             const recipient = guest.toLowerCase()
+            let unconfirmed = false
             try {
-              if (!receiptRead) {
-                pendingGuest = await untilGoogleAbort(signal, () => receipts.read(fileId))
-                receiptRead = true
-              }
+              const before = (receipt ??= await untilGoogleAbort(signal, () =>
+                receipts.read(fileId),
+              ))
+              pendingGuest = before.pending
+              const acknowledged = before.acknowledged.includes(recipient)
+              unconfirmed = pendingGuest === recipient || acknowledged
               list ??= await permissions(api, url, options)
-              // The evidence must be for the pending recipient, even if the
-              // current account or event guests differ. An empty ACL proves nothing.
-              if (pendingGuest !== null && typeof access(list, pendingGuest) !== 'string') {
-                await clearReceipt()
-              }
               const existing = access(list, recipient)
               if (typeof existing !== 'string') {
                 sharing.push({ ...target, status: 'already-accessible' })
+                // This can retire a settled guest's replay guard, never the
+                // file-wide barrier: another actor may have granted access.
+                if (acknowledged && validateGuest) {
+                  await untilGoogleAbort(signal, () =>
+                    persist({
+                      ...before,
+                      acknowledged: before.acknowledged.filter((email) => email !== recipient),
+                    }),
+                  ).catch(() => {})
+                }
                 continue
               }
-              if (pendingGuest === recipient || existing === 'unverified') {
+              if (unconfirmed || existing === 'unverified') {
                 sharing.push({ ...target, status: 'unknown', message: message() })
                 continue
               }
@@ -200,19 +211,18 @@ export async function ensureGuestViewers(
               // Persist before entering transport. If committing the
               // receipt errors after rename, re-read before any later write.
               signal.throwIfAborted()
-              receiptRead = false
-              const saving = receipts.begin(fileId, recipient)
+              const saving = persist({ ...before, pending: recipient })
               try {
                 await untilGoogleAbort(signal, () => saving)
               } catch (error) {
                 // No request has started. If the local save finishes late,
-                // clear it before handing the file to the next waiter.
-                if (signal.aborted) holdUntil(saving.then(() => receipts.clear(fileId)))
+                // restore the original receipt before the next waiter.
+                if (signal.aborted) holdUntil(saving.then(() => receipts.write(fileId, before)))
                 throw error
               }
-              receiptRead = true
-              pendingGuest = recipient
+              unconfirmed = true
               let createdId: unknown
+              let acknowledgedWrite = false
               try {
                 const permission = (await api.request(
                   'POST',
@@ -224,26 +234,39 @@ export async function ensureGuestViewers(
                   },
                   { signal },
                 )) as { id?: string } | null
+                acknowledgedWrite = true
                 createdId = permission?.id
               } catch (error) {
                 if (!isUncertainGoogleWrite(error)) {
                   reconnect ||= googleReconnectNeeded(error)
                   // A definitive refusal (including pre-dispatch validation)
                   // means there is no remote operation left to reconcile.
-                  pendingGuest = null
-                  receiptRead = false
-                  await clearReceipt()
-                  receiptRead = true
+                  unconfirmed = false
+                  const restored = persist(before)
+                  await untilGoogleAbort(signal, () => restored).catch(() => {})
                   throw error
                 }
               }
 
               // Even a successful response isn't proof of current access.
-              list = undefined
-              list = await permissions(api, url, options)
-              const verified = access(list, recipient)
+              let verified: ReturnType<typeof access> = 'unverified'
+              try {
+                list = undefined
+                list = await permissions(api, url, options)
+                verified = access(list, recipient)
+              } finally {
+                if (acknowledgedWrite) {
+                  // Only our POST's response can settle the file-wide barrier.
+                  // If access isn't visible yet, don't replay for this guest.
+                  const settled = persist(
+                    typeof verified === 'string'
+                      ? { ...before, acknowledged: [...before.acknowledged, recipient] }
+                      : before,
+                  )
+                  await untilGoogleAbort(signal, () => settled).catch(() => {})
+                }
+              }
               if (typeof verified !== 'string') {
-                await clearReceipt()
                 const matched =
                   typeof createdId === 'string' &&
                   verified.id === createdId &&
@@ -256,7 +279,7 @@ export async function ensureGuestViewers(
               reconnect ||= googleReconnectNeeded(error)
               sharing.push({
                 ...target,
-                status: pendingGuest === recipient ? 'unknown' : 'failed',
+                status: unconfirmed ? 'unknown' : 'failed',
                 message: signal.aborted ? 'The guest access check timed out.' : message(error),
               })
             }
