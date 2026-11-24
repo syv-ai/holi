@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { externalizeDepsPlugin } from 'electron-vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { createOwnedProcesses } from './owned-processes.mjs'
 
 assert.equal(process.platform, 'darwin', 'This fixture exercises the macOS updater')
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const root = await mkdtemp(join(tmpdir(), 'holi-541-smoke-'))
+const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-541-smoke-')))
 const evidence = await mkdtemp(join(tmpdir(), 'holi-541-evidence-'))
 const processes = createOwnedProcesses()
 const results = []
@@ -60,6 +62,38 @@ try {
       },
     },
   })
+  await build({
+    configFile: false,
+    root: desktop,
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      ssr: true,
+      outDir: output,
+      emptyOutDir: false,
+      rollupOptions: {
+        input: join(desktop, 'src/preload/index.ts'),
+        external: ['electron'],
+        output: { format: 'cjs', entryFileNames: 'preload.cjs' },
+      },
+    },
+  })
+  const html = join(root, 'index.html')
+  await writeFile(
+    html,
+    `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"></head><body><div id="root"></div><script type="module" src="${join(desktop, 'scripts/repeat-update-541-smoke-renderer.tsx')}"></script></body></html>`,
+  )
+  await symlink(join(desktop, 'node_modules'), join(root, 'node_modules'), 'dir')
+  await build({
+    configFile: false,
+    root,
+    base: './',
+    resolve: {
+      alias: { '@': join(desktop, 'src/renderer/src') },
+      dedupe: ['react', 'react-dom', 'jotai'],
+    },
+    plugins: [react(), tailwindcss()],
+    build: { outDir: join(output, 'renderer'), rollupOptions: { input: html } },
+  })
   const electron = createRequire(import.meta.url)('electron')
   for (const scenario of [
     {
@@ -72,7 +106,7 @@ try {
     },
     {
       name: 'after-simulated-upgrade',
-      version: '0.7.1-dev.194',
+      version: process.argv.includes('--failed-install') ? '0.7.1-dev.193' : '0.7.1-dev.194',
       offer: '0.7.1-dev.194',
       consent: true,
       install: false,
@@ -93,6 +127,14 @@ try {
       consent: true,
       install: false,
       expected: '0.7.1-dev.195',
+    },
+    {
+      name: 'older-release-control',
+      version: '0.7.1-dev.194',
+      offer: '0.7.1-dev.193',
+      consent: true,
+      install: false,
+      expected: '0.7.1-dev.193',
     },
     {
       name: 'declined-guard-control',
@@ -122,6 +164,7 @@ try {
         expected: scenario.expected,
         consent: scenario.consent,
         install: scenario.install,
+        prompt: scenario.name !== 'failed-install-control',
         result,
       }),
     )
@@ -147,6 +190,21 @@ try {
     JSON.stringify({ ok: true, results, requests }, null, 2),
   )
   console.log(`Updater fresh-process smoke: ${results.length} scenarios passed`)
+} catch (error) {
+  await writeFile(
+    join(evidence, 'result.json'),
+    JSON.stringify(
+      {
+        ok: false,
+        results,
+        requests,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      null,
+      2,
+    ),
+  )
+  throw error
 } finally {
   try {
     await processes.stopAll()
