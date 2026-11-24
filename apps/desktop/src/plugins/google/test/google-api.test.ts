@@ -37,6 +37,29 @@ function apiWith(response: Parameters<typeof fetchWith>[0], token = 'at-1') {
 const MODIFY = 'https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/modify'
 const SEND = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
 
+it('checks a GET request again after obtaining the bearer token and before exposing it to transport', async () => {
+  let refreshed!: (value: string) => void
+  const token = new Promise<string>((resolve) => {
+    refreshed = resolve
+  })
+  const refusal = new Error('request no longer authorized')
+  let allowed = true
+  const { fetch, calls } = fetchWith({ text: async () => '{"files":[]}' })
+  const api = new GoogleApi({ accessToken: () => token, fetch })
+  const read = api.request(
+    'GET',
+    'https://www.googleapis.com/drive/v3/files',
+    undefined,
+    async () => {
+      if (!allowed) throw refusal
+    },
+  )
+  allowed = false
+  refreshed('refreshed-token')
+  await expect(read).rejects.toBe(refusal)
+  expect(calls).toEqual([])
+})
+
 describe('post', () => {
   it('sends a POST carrying the bearer token and a JSON body', async () => {
     const { calls, api } = apiWith({ json: async () => ({ id: 't1' }) })

@@ -7,7 +7,7 @@
  * `buildRfc822` as something that looks like a header. No network: these are
  * about the seam, not about Gmail.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { emptyVaultSnapshot } from '@holi/shared'
 import type { MailMarkerPreferences } from '../shared/mail-markers'
 import { resolveArgv } from '../../../main/bridge/cli'
@@ -31,6 +31,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fenceThread } from '../main/untrusted'
 import type { GoogleData } from '../main/data'
+import { GoogleSession } from '../main/session'
+import type { StoredGoogleAuth } from '../main/token-store'
 
 const MAIL = { to: ['bo@example.com'], subject: 'Q2 budget', body: 'Here it is.' }
 
@@ -122,6 +124,163 @@ function rig({
     dispose: () => disposeGoogleCapabilities(capabilities),
   }
 }
+
+const ATTACHMENT_TARGET = { expectedAccountSub: 'sub-1', calendarId: 'primary', eventId: 'event1' }
+const CALENDAR_READ = 'https://www.googleapis.com/auth/calendar.readonly'
+const CALENDAR_WRITE = 'https://www.googleapis.com/auth/calendar.events'
+const DRIVE_FULL = 'https://www.googleapis.com/auth/drive'
+const DRIVE_READ = 'https://www.googleapis.com/auth/drive.readonly'
+
+function attachmentRig({
+  scopes,
+  onRefresh = () => scopes,
+  expired = false,
+}: {
+  scopes: string[]
+  onRefresh?: () => string[]
+  expired?: boolean
+}) {
+  let now = expired ? 100_000 : 0
+  const remote = 'owner/vault'
+  let linked = true
+  let auth: StoredGoogleAuth | null = {
+    sub: ATTACHMENT_TARGET.expectedAccountSub,
+    email: 'organizer@example.com',
+    refreshToken: 'old-refresh',
+    accessToken: 'old-access',
+    expiresAt: 100_000,
+    scopes,
+  }
+  let generation = 0
+  const discard = async () => {
+    auth = null
+    generation += 1
+  }
+  const session = new GoogleSession({
+    account: {
+      read: () => auth,
+      generation: () => generation,
+      write: async (updated, expected) => {
+        if (generation === expected) auth = updated
+      },
+      remove: discard,
+      expire: async (expected) => {
+        if (generation === expected) await discard()
+      },
+    },
+    client: () => ({ id: 'synthetic-client' }),
+    now: () => now,
+    fetch: async () =>
+      Response.json({ access_token: 'refreshed', expires_in: 3600, scope: onRefresh().join(' ') }),
+  })
+  const requests: Array<{ path: string; method: string }> = []
+  vi.stubGlobal('fetch', async (input: URL | string, init: RequestInit) => {
+    const { pathname: path } = new URL(input)
+    const method = init.method ?? 'GET'
+    requests.push({ path, method })
+    if (method !== 'GET') return new Response(null, { status: 500 })
+    if (path === '/calendar/v3/users/me/calendarList/primary')
+      return Response.json({ accessRole: 'owner' })
+    if (path === '/calendar/v3/calendars/primary/events/event1')
+      return Response.json({
+        id: 'event1',
+        etag: '"v1"',
+        organizer: { self: true },
+        attachments: [{ fileUrl: 'https://example.com/agenda', title: 'Agenda' }],
+      })
+    if (path === '/drive/v3/files/selected') {
+      now = 100_000 // Expire the token after resolving the selection, before PATCH.
+      return Response.json({
+        id: 'selected',
+        name: 'Selected',
+        webViewLink: 'https://example.com/file',
+        mimeType: 'application/pdf',
+        capabilities: { canShare: true },
+        trashed: false,
+      })
+    }
+    throw new Error(`Unexpected request: ${path}`)
+  })
+  const holder = rig({
+    data: null,
+    accounts: {
+      sessionFor: async (requestedRemote) =>
+        linked && requestedRemote === remote ? session : null,
+    },
+  })
+  return {
+    ...holder,
+    invoke: (name: string, params: object = ATTACHMENT_TARGET, door: Door = 'ui') =>
+      holder.run(name, params, remote, door).then((result) => result.value),
+    unlink: () => {
+      linked = false
+    },
+    requests,
+  }
+}
+
+describe('event attachment capabilities', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reads with Calendar access, but rejects readonly Drive, stale targets and non-UI doors', async () => {
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_READ],
+    })
+    await expect(invoke('eventAttachments')).resolves.toMatchObject({
+      attachments: [{ title: 'Agenda' }],
+    })
+    await expect(invoke('driveFiles')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(
+      invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(
+      invoke('eventAttachments', { ...ATTACHMENT_TARGET, expectedAccountSub: 'other' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(
+      invoke('driveFiles', { calendarId: 'primary', eventId: 'event1' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(
+      invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }, 'cli'),
+    ).rejects.toThrow()
+    expect(
+      requests.every(({ path, method }) => path.startsWith('/calendar/v3/') && method === 'GET'),
+    ).toBe(true)
+  })
+
+  it.each(['remapped', 'narrower grant'] as const)(
+    'refuses a pending PATCH if refresh leaves authority %s',
+    async (change) => {
+      const full = [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL]
+      const rig = attachmentRig({
+        scopes: full,
+        onRefresh: () => {
+          if (change === 'remapped') {
+            rig.unlink()
+            return full
+          }
+          return [CALENDAR_READ, CALENDAR_WRITE, DRIVE_READ]
+        },
+      })
+      await expect(
+        rig.invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+      expect(rig.requests.filter(({ method }) => method !== 'GET')).toEqual([])
+    },
+  )
+
+  it('does not send a Drive search when the plugin stops during refresh', async () => {
+    const rig = attachmentRig({
+      scopes: [DRIVE_FULL],
+      expired: true,
+      onRefresh: () => {
+        rig.dispose()
+        return [DRIVE_FULL]
+      },
+    })
+    await expect(rig.invoke('driveFiles')).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+    expect(rig.requests).toEqual([])
+  })
+})
 
 it('lists --full in the generated usage for google read', () => {
   const read = googleCapabilities({

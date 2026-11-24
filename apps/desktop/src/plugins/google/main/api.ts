@@ -40,6 +40,14 @@ export class GoogleApiError extends Error {
   }
 }
 
+/** A write that reached the transport but did not receive a definitive verdict. */
+export function isUncertainGoogleWrite(error: unknown): boolean {
+  return (
+    error instanceof GoogleApiError &&
+    (error.status === 0 || error.status === 408 || error.status >= 500)
+  )
+}
+
 export interface GoogleApiDeps {
   /** `GoogleSession.getAccessToken` — refreshes and single-flights on its own. */
   accessToken: () => Promise<string>
@@ -86,8 +94,8 @@ export class GoogleApi {
       )
     }
 
-    this.#deps.beforeRequest?.()
     await validate?.()
+    this.#deps.beforeRequest?.()
     const res = await (this.#deps.fetch ?? globalThis.fetch)(full, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -98,13 +106,11 @@ export class GoogleApi {
   }
 
   /**
-   * The shared write path: token, request, and Google's refusal turned into a
-   * `GoogleApiError`. Each verb only decides what to do with a success.
-   *
-   * No query-parameter path, deliberately: every write carries its arguments in
-   * the body, bar the literal `?sendUpdates=none` the calendar appends itself.
+   * The transport for verbs other than the typed `get`: mint the token, then
+   * validate before sending it. A validation refusal is not an uncertain write.
+   * Each caller decides what to do with the response.
    */
-  async #write(
+  async #send(
     method: string,
     url: string,
     body?: unknown,
@@ -124,9 +130,7 @@ export class GoogleApi {
       )
     }
 
-    this.#deps.beforeRequest?.()
-    await validate?.()
-    const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
+    const init: RequestInit = {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -135,8 +139,18 @@ export class GoogleApi {
         ...(options?.ifMatch ? { 'If-Match': options.ifMatch } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+    }
+    await validate?.()
+    this.#deps.beforeRequest?.()
+    let res: Response
+    try {
+      res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
+        ...init,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+    } catch {
+      throw new GoogleApiError('unknown', 0, 'Google did not return a response')
+    }
 
     // A 403 here is most often `insufficientPermissions` (a grant older than
     // GOOGLE_SCOPES), which `classify` maps to `scope` so the UI can offer the
@@ -154,7 +168,7 @@ export class GoogleApi {
    * mailbox no longer has.
    */
   async post(url: string, body: unknown): Promise<void> {
-    const res = await this.#write('POST', url, body)
+    const res = await this.#send('POST', url, body)
     // Drained rather than ignored: leaving a body unread holds the connection
     // open. Whether it parses is not this function's business.
     await res.text().catch(() => '')
@@ -168,13 +182,13 @@ export class GoogleApi {
    * event must not be able to erase its description.
    */
   async patch(url: string, body: unknown): Promise<void> {
-    const res = await this.#write('PATCH', url, body)
+    const res = await this.#send('PATCH', url, body)
     await res.text().catch(() => '')
   }
 
   /** A delete: `events.delete`. Answers 204 with no body. */
   async del(url: string): Promise<void> {
-    const res = await this.#write('DELETE', url)
+    const res = await this.#send('DELETE', url)
     await res.text().catch(() => '')
   }
 
@@ -189,7 +203,7 @@ export class GoogleApi {
    * email to a real person once the caller retries.
    */
   async postJson<T>(url: string, body: unknown): Promise<T | null> {
-    const res = await this.#write('POST', url, body)
+    const res = await this.#send('POST', url, body)
     // The catch is the design, not defensiveness: past this line Google has
     // already done the thing.
     return await res.json().catch(() => null)
@@ -206,7 +220,7 @@ export class GoogleApi {
    * worked, and we could not read what it said.
    */
   async putJson<T>(url: string, body: unknown): Promise<T | null> {
-    const res = await this.#write('PUT', url, body)
+    const res = await this.#send('PUT', url, body)
     return await res.json().catch(() => null)
   }
 
@@ -215,6 +229,7 @@ export class GoogleApi {
    * `passthrough.ts` has already built and judged. JSON comes back parsed, an
    * empty answer (a 204) as `null`, anything else as its text. Read as text
    * first because a 2xx is a done thing whether or not its body parses.
+   * `validate` also applies to GET, after token refresh and before I/O.
    */
   async request(
     method: string,
@@ -223,7 +238,7 @@ export class GoogleApi {
     validate?: () => Promise<void>,
     options?: { ifMatch?: string },
   ): Promise<unknown> {
-    const res = await this.#write(method, url, body, validate, options)
+    const res = await this.#send(method, url, body, validate, options)
     const text = await res.text().catch(() => '')
     if (text === '') return null
     try {

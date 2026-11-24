@@ -24,7 +24,13 @@ describe('ensureGuestViewers', () => {
       if (init.method === 'GET')
         return ok({
           permissions: [
-            { id: 'p', type: 'user', emailAddress: 'guest@example.com', role: 'writer' },
+            {
+              id: 'p',
+              type: 'user',
+              emailAddress: 'Guest@example.com',
+              role: 'writer',
+              permissionDetails: [{ permissionType: 'file', inherited: true, role: 'writer' }],
+            },
           ],
         })
       return ok({ id: 'new' })
@@ -37,7 +43,9 @@ describe('ensureGuestViewers', () => {
       async () => {},
     )
     expect(result.map((r) => r.status)).toEqual(['already-accessible', 'granted'])
-    const created = calls.find(({ init }) => init.method === 'POST')!
+    const writes = calls.filter(({ init }) => init.method !== 'GET')
+    expect(writes.map(({ init }) => init.method)).toEqual(['POST'])
+    const created = writes[0]!
     expect(JSON.parse(String(created.init.body))).toEqual({
       type: 'user',
       role: 'reader',
@@ -48,7 +56,7 @@ describe('ensureGuestViewers', () => {
 
   it('reports permission denial without granting and does not replay an ambiguous write', async () => {
     let posts = 0
-    const api = setup((url, init) => {
+    const api = setup((_url, init) => {
       if (init.method === 'GET') return ok({ permissions: [] })
       posts++
       if (posts === 1) return new Response('{}', { status: 403 })
@@ -80,7 +88,7 @@ describe('ensureGuestViewers', () => {
         throw new Error('stale event')
       },
     )
-    expect(result[0]?.status).toBe('unknown')
+    expect(result[0]?.status).toBe('failed')
     expect(writes).toBe(0)
   })
 })
