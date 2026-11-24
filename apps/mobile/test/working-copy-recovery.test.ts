@@ -5,7 +5,11 @@ describe('working-copy recovery namespaces', () => {
   it('recognizes actual save stages and move journals, not unrelated names', () => {
     expect(
       recoveryArtifactNames(
-        ['stage-00000000-0000-0000-0000-000000000000.tmp', 'move-00000000-0000-0000-0000-000000000000.json', 'notes.md'],
+        [
+          'stage-00000000-0000-0000-0000-000000000000.tmp',
+          'move-00000000-0000-0000-0000-000000000000.json',
+          'notes.md',
+        ],
         ['stage-FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF.tmp', 'unrelated.journal'],
       ),
     ).toHaveLength(3)

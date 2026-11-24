@@ -50,7 +50,11 @@ export async function checkCompatibility(): Promise<string> {
   let rawNames: unknown
   let prefixNamespace: Record<string, unknown>
   let git: Awaited<ReturnType<typeof runGitCompatibilityCheck>> | undefined
-  let workingCopy: Awaited<ReturnType<typeof runWorkingCopyCheck>> | undefined
+  let workingCopy:
+    | (Awaited<ReturnType<typeof runWorkingCopyCheck>> & {
+        cases?: Awaited<ReturnType<typeof runWorkingCopyCheck>>[]
+      })
+    | undefined
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
@@ -102,7 +106,9 @@ export async function checkCompatibility(): Promise<string> {
       throw new Error('Working-copy fixture manifest has no cases')
     const results = []
     for (const item of fixture.cases) {
-      results.push(await runWorkingCopyCheck(item.root, item.remote, item.branch ?? 'fixture-start'))
+      results.push(
+        await runWorkingCopyCheck(item.root, item.remote, item.branch ?? 'fixture-start'),
+      )
     }
     workingCopy = { ...workingCopy, cases: results }
     const documents = knownFolders.documents().path

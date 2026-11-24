@@ -3,7 +3,9 @@ import { legacyStagingDirectory, stagingDirectory, stageNamePattern } from './st
 /** Recovery namespace entries shared with the durable storage writers. */
 export function recoveryArtifactNames(current: string[], legacy: string[]): string[] {
   return [
-    ...current.filter((name) => stageNamePattern.test(name) || /^move-[0-9a-f-]+\.json$/i.test(name)),
+    ...current.filter(
+      (name) => stageNamePattern.test(name) || /^move-[0-9a-f-]+\.json$/i.test(name),
+    ),
     ...legacy.filter(
       (name) =>
         stageNamePattern.test(name) ||
@@ -13,6 +15,6 @@ export function recoveryArtifactNames(current: string[], legacy: string[]): stri
   ]
 }
 
-export function recoveryDirectories(library: string, canonicalRoot: string): string[] {
+export function recoveryDirectories(library: string, canonicalRoot: string): [string, string] {
   return [stagingDirectory(library, canonicalRoot), legacyStagingDirectory(library, canonicalRoot)]
 }

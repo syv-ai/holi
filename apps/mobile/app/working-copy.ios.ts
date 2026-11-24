@@ -43,16 +43,24 @@ async function hasPendingRecovery(root: string): Promise<boolean> {
   const found: string[][] = []
   for (const directory of [current, legacy]) {
     const kind = nativeIO.kind(directory)
-    if (kind === null) { found.push([]); continue }
+    if (kind === null) {
+      found.push([])
+      continue
+    }
     if (kind !== 'directory') throw new Error('Unsafe working-copy recovery namespace')
-    if (nativeIO.canonical(directory) !== directory) throw new Error('Unsafe working-copy recovery namespace')
+    if (nativeIO.canonical(directory) !== directory)
+      throw new Error('Unsafe working-copy recovery namespace')
     const names = nativeIO.names(directory)
     const artifacts = directory === legacy ? names.filter((name) => name !== 'artifacts') : names
     for (const name of artifacts) {
-      if (name === '.' || name === '..' || name.includes('/')) throw new Error('Unsafe recovery entry')
+      if (name === '.' || name === '..' || name.includes('/'))
+        throw new Error('Unsafe recovery entry')
       const entry = `${directory}/${name}`
       const entryKind = nativeIO.kind(entry)
-      if (entryKind !== 'regular' || nativeIO.canonical(entry) !== entry) throw new Error('Unsafe recovery entry')
+      if (directory === legacy && /^[0-9a-f]{1,64}$/.test(name) && entryKind === 'directory')
+        continue
+      if (entryKind !== 'regular' || nativeIO.canonical(entry) !== entry)
+        throw new Error('Unsafe recovery entry')
     }
     found.push(artifacts)
   }
@@ -67,7 +75,6 @@ function statusRows(rows: Record<string, unknown>[]) {
     conflict: flag(row.conflict),
   }))
 }
-
 
 /** iOS implementation of the semantic working-copy interface. */
 export const nativeWorkingCopy: NativeWorkingCopy = {
@@ -89,7 +96,7 @@ export const nativeWorkingCopy: NativeWorkingCopy = {
             String(remotes.objectAtIndex(index)),
           )
         : [],
-      branch: text(result.branch ?? '') || null,
+      branch: result.branch === NSNull.null() ? null : text(result.branch ?? '') || null,
       attached: flag(result.attached),
     }
   },
