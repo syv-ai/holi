@@ -354,7 +354,7 @@
   const vimTypes = new Set(['text', 'search', 'url', 'tel'])
   const nativeTextTags = new Set(['DIV', 'SPAN', 'P', 'LABEL'])
   // Rich hosts stay page-owned. Only this small inline-tag vocabulary is
-  // eligible; any block, atom, custom editor, or nested editable host stays native.
+  // eligible; direct native block lines are supported, nested/custom structures stay native.
   const richInlineTags = new Set([
     'A',
     'B',
@@ -394,40 +394,39 @@
   }
   const plainHost = (el) =>
     eligibleEnvelope(el, 'plaintext-only') &&
-    [...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE) &&
-    !/[\r\n]/u.test(el.textContent)
+    [...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE)
   const richHost = (el) => {
     if (!eligibleEnvelope(el, 'true') || el.closest('[inert]')) return false
-    const visit = (node) => {
-      if (node.nodeType === Node.TEXT_NODE) return !/[\r\n]/u.test(node.nodeValue || '')
-      if (node.nodeType !== Node.ELEMENT_NODE) return false
-      const child = node
-      if (
-        !richInlineTags.has(child.tagName) ||
-        child.getAttribute('contenteditable') != null ||
-        child.hasAttribute('inert')
-      )
-        return false
+    const visible = (child, display) => {
       const style = getComputedStyle(child)
-      if (
-        style.display !== 'inline' ||
-        style.visibility === 'hidden' ||
-        style.visibility === 'collapse' ||
-        style.userSelect === 'none' ||
-        child.matches(
-          'img, br, input, button, select, textarea, iframe, video, audio, canvas, svg, [contenteditable="false"]',
-        )
+      return (
+        child.getAttribute('contenteditable') == null &&
+        !child.hasAttribute('inert') &&
+        style.display === display &&
+        !['hidden', 'collapse'].includes(style.visibility) &&
+        style.userSelect !== 'none'
       )
-        return false
-      if (child.tagName === 'A' && !child.hasAttribute('href')) return false
-      return [...child.childNodes].every(visit)
     }
-    if (![...el.childNodes].every(visit)) return false
+    const inline = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return true
+      if (node.nodeType !== Node.ELEMENT_NODE || !visible(node, 'inline')) return false
+      if (node.tagName === 'BR') return true
+      return (
+        richInlineTags.has(node.tagName) &&
+        (node.tagName !== 'A' || node.hasAttribute('href')) &&
+        [...node.childNodes].every(inline)
+      )
+    }
+    const block = (node) =>
+      node.nodeType === Node.ELEMENT_NODE &&
+      ['P', 'DIV'].includes(node.tagName) &&
+      visible(node, 'block') &&
+      [...node.childNodes].every(inline)
     const style = getComputedStyle(el)
     return (
+      [...el.childNodes].every((node) => inline(node) || block(node)) &&
       style.display === 'block' &&
-      style.visibility !== 'hidden' &&
-      style.visibility !== 'collapse' &&
+      !['hidden', 'collapse'].includes(style.visibility) &&
       style.userSelect !== 'none'
     )
   }
@@ -506,6 +505,91 @@
     }
     return eligible
   }
+  // Logical separators are positions in native DOM, never replacement content.
+  // A final BR is Blink's caret placeholder; repeated BRs retain empty lines.
+  const logicalProjection = (host) => {
+    let value = ''
+    const carets = []
+    const offsets = new Map()
+    const point = (node, offset) => ({ node, offset })
+    const isBlock = (node) =>
+      node.nodeType === Node.ELEMENT_NODE && ['P', 'DIV'].includes(node.tagName)
+    const hasContent = (node) =>
+      node.nodeType === Node.TEXT_NODE
+        ? node.length > 0
+        : node.nodeName === 'BR' || [...node.childNodes].some(hasContent)
+    const walk = (node, terminal = true) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const start = value.length
+        const indices = []
+        for (let i = 0; i <= node.length; i++) {
+          indices.push(start + i)
+          if (node.length || !carets[start + i]) carets[start + i] = point(node, i)
+        }
+        offsets.set(node, indices)
+        value += node.data
+        return node.length ? false : null
+      }
+      const children = [...node.childNodes]
+      const indices = []
+      const blocksOnly =
+        node === host &&
+        children.some(isBlock) &&
+        children.every(
+          (child) =>
+            isBlock(child) ||
+            !hasContent(child) ||
+            (child.nodeType === Node.TEXT_NODE && !child.data.trim()),
+        )
+      let seenLine = false
+      let afterBlock = false
+      let placeholderTail = false
+      children.forEach((child, i) => {
+        if (blocksOnly && child.nodeType === Node.TEXT_NODE) {
+          offsets.set(child, Array(child.length + 1).fill(value.length))
+          indices[i] = value.length
+          return
+        }
+        const block = node === host && isBlock(child)
+        const content = hasContent(child)
+        if (node === host && (block || content) && ((block && seenLine) || (!block && afterBlock)))
+          value += '\n'
+        indices[i] = value.length
+        const following = children
+          .slice(i + 1)
+          .find((next) => hasContent(next) || (node === host && isBlock(next)))
+        const childTerminal =
+          block || (terminal && (!following || (node === host && isBlock(following))))
+        if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'BR') {
+          carets[value.length] = point(node, i)
+          offsets.set(child, [value.length])
+          if (!childTerminal) {
+            value += '\n'
+            carets[value.length] = point(node, i + 1)
+          }
+          placeholderTail = childTerminal
+        } else {
+          const tail = walk(child, childTerminal)
+          if (tail !== null) placeholderTail = tail
+        }
+        if (block || content) {
+          seenLine = true
+          afterBlock = block
+        }
+      })
+      indices[children.length] = value.length
+      offsets.set(node, indices)
+      if (!hasContent(node)) {
+        carets[value.length] ??= point(node, 0)
+        return null
+      }
+      if (!placeholderTail && (node !== host || !afterBlock))
+        carets[value.length] = point(node, children.length)
+      return placeholderTail
+    }
+    walk(host)
+    return { value, carets, offsets }
+  }
   const selectionFor = (host) => {
     if (!plainHost(host) && !richHost(host)) return null
     const selection = host.ownerDocument.getSelection()
@@ -518,61 +602,28 @@
       (!host.contains(selection.focusNode) && selection.focusNode !== host)
     )
       return null
-    const textNodes = []
-    const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_TEXT)
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) textNodes.push(node)
-    const offsetOf = (node, offset) => {
-      let total = 0
-      for (const text of textNodes) {
-        if (text === node) return total + offset
-        if (text.contains?.(node)) return null
-        total += text.textContent.length
-      }
-      if (node === host) {
-        const range = host.ownerDocument.createRange()
-        range.setStart(host, 0)
-        range.setEnd(host, offset)
-        return range.toString().length
-      }
-      if (node.nodeType === Node.ELEMENT_NODE && host.contains(node)) {
-        const range = host.ownerDocument.createRange()
-        range.setStart(host, 0)
-        range.setEnd(node, offset)
-        return range.toString().length
-      }
-      return null
-    }
+    const projection = logicalProjection(host)
+    const offsetOf = (node, offset) => projection.offsets.get(node)?.[offset] ?? null
     const range = selection.getRangeAt(0)
     const start = offsetOf(range.startContainer, range.startOffset)
     const end = offsetOf(range.endContainer, range.endOffset)
     return start === null || end === null ? null : { selection, start, end }
   }
   const placeCaret = (host, offset) => {
-    let remaining = Math.max(0, Math.min(host.textContent.length, offset))
-    const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_TEXT)
-    const nodes = []
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node)
+    const projection = logicalProjection(host)
+    const at = Math.max(0, Math.min(projection.value.length, offset))
+    const position = projection.carets[at]
     const range = host.ownerDocument.createRange()
-    for (const node of nodes) {
-      const length = node.textContent.length
-      if (remaining < length || (remaining === 0 && length === 0)) {
-        range.setStart(node, remaining)
-        range.collapse(true)
-        const selection = host.ownerDocument.getSelection()
-        selection.removeAllRanges()
-        selection.addRange(range)
-        return
-      }
-      remaining -= length
-    }
-    range.setStart(host, host.childNodes.length)
+    if (position) range.setStart(position.node, position.offset)
+    else range.setStart(host, 0)
     range.collapse(true)
     const selection = host.ownerDocument.getSelection()
     selection.removeAllRanges()
     selection.addRange(range)
   }
   const isNativeHost = (el) => plainHost(el) || richHost(el)
-  const fieldValue = (el) => (isNativeHost(el) ? el.textContent : el.value)
+  const fieldValue = (el) =>
+    isNativeHost(el) ? (richHost(el) ? logicalProjection(el).value : el.textContent) : el.value
   const fieldSelection = (el) => {
     if (!isNativeHost(el))
       return { start: el.selectionStart ?? 0, end: el.selectionEnd ?? el.selectionStart ?? 0 }
@@ -723,11 +774,13 @@
     else if (key === 'w') destination = wordForward(value, at)
     else if (key === 'b') destination = wordBackward(value, at)
     else if (key === 'e') destination = wordEnd(value, at)
-    else if (key === 'j' && target instanceof HTMLTextAreaElement)
-      destination = verticalMove(target, at, 'down')
-    else if (key === 'k' && target instanceof HTMLTextAreaElement)
-      destination = verticalMove(target, at, 'up')
-    else if (key === 'Escape') {
+    else if (key === 'j' && (target instanceof HTMLTextAreaElement || isNativeHost(target))) {
+      const field = isNativeHost(target) ? { value: fieldValue(target) } : target
+      destination = verticalMove(field, at, 'down')
+    } else if (key === 'k' && (target instanceof HTMLTextAreaElement || isNativeHost(target))) {
+      const field = isNativeHost(target) ? { value: fieldValue(target) } : target
+      destination = verticalMove(field, at, 'up')
+    } else if (key === 'Escape') {
       event.preventDefault()
       return
     } else {
