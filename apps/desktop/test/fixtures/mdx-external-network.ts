@@ -5,22 +5,23 @@ import { connect } from 'node:net'
 import tls from 'node:tls'
 import { vi } from 'vitest'
 
-// Public test fixture, valid only for the reserved names one.example and two.example.
+// Public unit-fixture certificate, trusted only by this modeled network adapter.
 const key = `-----BEGIN EC PRIVATE KEY-----
 MHcCAQEEIFbtFoP/7xss62YuffZkAvn8+1jm0FFte4BkcJHb2csJoAoGCCqGSM49
 AwEHoUQDQgAEkRXrvSG6dtk5PvhH83B7A4v1gEsMaY8hWhT8QamyRMMM8GVw6otU
 BbznjRXHeAwJ8up9RufaieRZXsD/P5oTcQ==
 -----END EC PRIVATE KEY-----`
 const cert = `-----BEGIN CERTIFICATE-----
-MIIBmTCCAT+gAwIBAgIUQZtLp4oDUk+bjK1296/7FehGpjswCgYIKoZIzj0EAwIw
-FjEUMBIGA1UEAwwLb25lLmV4YW1wbGUwIBcNMjAwMTAxMDAwMDAwWhgPMjEyMDAx
-MDEwMDAwMDBaMBYxFDASBgNVBAMMC29uZS5leGFtcGxlMFkwEwYHKoZIzj0CAQYI
+MIIBtzCCAVygAwIBAgIUNEY8ZZhcRoBZ7nIezh0TsUxsFAowCgYIKoZIzj0EAwIw
+FjEUMBIGA1UEAwwLb25lLmV4YW1wbGUwIBcNMjYxMTI0MTgzNjM5WhgPMjEyNjEw
+MzExODM2MzlaMBYxFDASBgNVBAMMC29uZS5leGFtcGxlMFkwEwYHKoZIzj0CAQYI
 KoZIzj0DAQcDQgAEkRXrvSG6dtk5PvhH83B7A4v1gEsMaY8hWhT8QamyRMMM8GVw
-6otUBbznjRXHeAwJ8up9RufaieRZXsD/P5oTcaNpMGcwHQYDVR0OBBYEFB8YkXjZ
-pVmCONZBKYHteCFaxXZjMCMGA1UdEQQcMBqCC29uZS5leGFtcGxlggt0d28uZXhh
-bXBsZTAMBgNVHRMBAf8EAjAAMBMGA1UdJQQMMAoGCCsGAQUFBwMBMAoGCCqGSM49
-BAMCA0gAMEUCIDXb+CajVPWP/QwXm0ZUU2brUZMLtY94EqKHuI3NRmSrAiEA8K6d
-a2l11piAxwsSy2hOah7eWqscrFppzWf8e8CLm48=
+6otUBbznjRXHeAwJ8up9RufaieRZXsD/P5oTcaOBhTCBgjAdBgNVHQ4EFgQUHxiR
+eNmlWYI41kEpge14IVrFdmMwPgYDVR0RBDcwNYILb25lLmV4YW1wbGWCC3R3by5l
+eGFtcGxlghlyYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tMAwGA1UdEwEB/wQCMAAw
+EwYDVR0lBAwwCgYIKwYBBQUHAwEwCgYIKoZIzj0EAwIDSQAwRgIhAMpPbTRXqGUz
+FDnMMxjW69D1FodJau0fHTWvEbHgczENAiEAz3l/hPOhIrEsD3bObrnzfqDFo+6T
++k+APgdjVZuXg10=
 -----END CERTIFICATE-----`
 
 const source = 'export default 42\n'

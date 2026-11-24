@@ -13,7 +13,6 @@ const MODULE_MEDIA_TYPES = new Set([
   'application/javascript',
   'text/ecmascript',
   'application/ecmascript',
-  'text/plain', // Raw GitHub serves module source as plain text.
 ])
 // Match the whole field, not just its essence: malformed parameters and coalesced
 // Content-Type values must not turn an ambiguous response into module text.
@@ -256,8 +255,12 @@ async function fetchHop(
     if (response.statusCode !== 200 || (encoding && encoding.toLowerCase() !== 'identity'))
       throw new MdxExternalDataError('response')
     const types = response.headersDistinct['content-type']
-    const mediaType = types?.length === 1 ? CONTENT_TYPE.exec(types[0] ?? '')?.[1] : undefined
-    if (!mediaType || !MODULE_MEDIA_TYPES.has(mediaType.toLowerCase()))
+    const mediaType =
+      types?.length === 1 ? CONTENT_TYPE.exec(types[0] ?? '')?.[1]?.toLowerCase() : undefined
+    // Raw GitHub serves source as plain text; redirects must end at this exact origin.
+    const rawGitHubSource =
+      mediaType === 'text/plain' && target.origin === 'https://raw.githubusercontent.com'
+    if (!mediaType || (!MODULE_MEDIA_TYPES.has(mediaType) && !rawGitHubSource))
       throw new MdxExternalDataError('unsupported-format')
     if (Number(response.headers['content-length']) > BODY_LIMIT)
       throw new MdxExternalDataError('too-large')

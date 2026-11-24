@@ -225,7 +225,7 @@ describe('fetchMdxExternalData', () => {
     expect(network.requests.length).toBeLessThanOrEqual(4)
   })
 
-  it.each(['Application/JavaScript; charset="UTF-8"', 'text/plain; charset=utf-8'])(
+  it.each(['Application/JavaScript; charset="UTF-8"', 'application/ecmascript'])(
     'fetches extensionless module source served as %s',
     async (contentType) => {
       network.routes.respond = (_, res) => {
@@ -237,7 +237,37 @@ describe('fetchMdxExternalData', () => {
     },
   )
 
+  it.each([false, true])('accepts Raw GitHub plain source with redirect=%s', async (redirect) => {
+    const url = 'https://raw.githubusercontent.com/example/repo/main/module.js'
+    network.routes.respond = (req, res) => {
+      if (req.headers.host !== 'raw.githubusercontent.com') return redirectTo(res, url)
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+      res.end(source)
+    }
+    await expect(fetchText({ url: redirect ? network.entryURL : url })).resolves.toEqual({
+      url,
+      text: source,
+    })
+  })
+
+  it('does not carry the Raw GitHub plain-text exception through a redirect', async () => {
+    network.routes.respond = (req, res) => {
+      if (req.headers.host === 'raw.githubusercontent.com')
+        return redirectTo(res, 'https://two.example/module.js')
+      res.setHeader('Content-Type', 'text/plain')
+      res.write(source)
+    }
+    await expect(
+      fetchText({ url: 'https://raw.githubusercontent.com/example/repo/main/module.js' }),
+    ).rejects.toMatchObject({ code: 'unsupported-format' })
+    expect(network.requests.map((req) => req.headers.host)).toEqual([
+      'raw.githubusercontent.com',
+      'two.example',
+    ])
+  })
+
   it.each([
+    { label: 'plain text outside Raw GitHub', contentType: 'text/plain; charset=utf-8' },
     { label: 'JSON', contentType: 'application/json' },
     { label: 'CSS', contentType: 'text/css' },
     { label: 'HTML', contentType: 'text/html' },
