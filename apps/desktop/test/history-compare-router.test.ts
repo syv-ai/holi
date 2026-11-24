@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as comparisons from '../src/main/vault/compare-revisions'
 import { createRouter } from '../src/main/router'
 import { GitHubSession } from '../src/main/github/session'
 import { TokenStore, type SafeStorageLike } from '../src/main/github/token-store'
@@ -19,11 +20,33 @@ const storage: SafeStorageLike = {
   decryptString: (value) => value.toString(),
 }
 const dirs: string[] = []
-afterEach(async () =>
-  Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))),
-)
+afterEach(async () => {
+  vi.restoreAllMocks()
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
 
-async function fixture() {
+function gate() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+function pendingComparison() {
+  const entered = gate()
+  const release = gate()
+  const compare = comparisons.compareRevisions
+  vi.spyOn(comparisons, 'compareRevisions').mockImplementation(async (...args) => {
+    const result = await compare(...args)
+    entered.resolve()
+    await release.promise
+    return result
+  })
+  return { entered: entered.promise, release: release.resolve }
+}
+
+async function fixture(reconcile: (vault: { remote: string }) => Promise<void> = async () => {}) {
   const dir = await mkdtemp(join(tmpdir(), 'holi-history-router-'))
   dirs.push(dir)
   const root = join(dir, 'vault')
@@ -47,32 +70,46 @@ async function fixture() {
       throw new Error('unexpected network')
     }) as typeof fetch,
   })
+  const otherRoot = join(dir, 'other-vault')
+  await exec('git', ['init', '-q', otherRoot])
+  await registry.add({
+    remote: 'syv-ai/other',
+    path: otherRoot,
+    name: 'other',
+    lastOpenedAt: '2026-01-01',
+  })
+  const running = new Map<string, ActiveVault>()
   let selected: ActiveVault | null = null
+  const getOrOpen = async (remote: string) => {
+    if (running.has(remote)) return running.get(remote)!
+    const path = (await registry.list()).find((entry) => entry.remote === remote)!.path
+    const active = {
+      remote,
+      root: path,
+      repo: openRepo(path),
+      snapshot: async () => ({}) as never,
+      refresh: async () => {},
+    } as ActiveVault
+    running.set(remote, active)
+    return active
+  }
   const host = {
     active: () => selected,
-    get: () => null,
+    get: (remote: string) => running.get(remote) ?? null,
     prepare: async () => {},
-    open: async (remote: string) => {
-      const active = {
-        remote,
-        root,
-        repo: openRepo(root),
-        snapshot: async () => ({}) as never,
-        refresh: async () => {},
-      } as ActiveVault
-      selected = active
-      return active
-    },
-    getOrOpen: async () => selected,
-    close: async () => {
-      selected = null
+    open: async (remote: string) => (selected = await getOrOpen(remote)),
+    getOrOpen,
+    close: async (remote = selected?.remote) => {
+      if (remote) running.delete(remote)
+      if (selected?.remote === remote) selected = null
     },
     closeAll: async () => {
       selected = null
+      running.clear()
     },
-  } as unknown as VaultHost
+  } as VaultHost
   const plugins = {
-    reconcile: async () => {},
+    reconcile,
     invalidate: () => {},
     setDisplayed: () => {},
     syncBackground: async () => {},
@@ -92,7 +129,7 @@ async function fixture() {
     showItemInFolder: () => {},
   }).createCaller({})
   await caller.vaults.open({ remote: REMOTE })
-  return { caller, before, after }
+  return { caller, before, after, session }
 }
 
 describe('history.compareRevisions through the public router', () => {
@@ -113,6 +150,68 @@ describe('history.compareRevisions through the public router', () => {
     await expect(
       caller.history.compareRevisions({ remote: REMOTE, path: '../secret', before, after }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it.each(['return visit', 'reopened repository', 'account change'])(
+    'rejects an earlier result after a %s',
+    async (transition) => {
+      const { caller, before, after, session } = await fixture()
+      const pending = pendingComparison()
+      const result = caller.history.compareRevisions({
+        remote: REMOTE,
+        path: 'note.md',
+        before,
+        after,
+      })
+      try {
+        await pending.entered
+        if (transition === 'return visit') {
+          await caller.vaults.open({ remote: 'syv-ai/other' })
+          await caller.vaults.open({ remote: REMOTE })
+        } else if (transition === 'reopened repository') {
+          await caller.vaults.close()
+          await caller.vaults.open({ remote: REMOTE })
+        } else {
+          await session.signOut()
+        }
+      } finally {
+        pending.release()
+      }
+      await expect(result).resolves.toEqual({ kind: 'unavailable', reason: 'stale' })
+    },
+  )
+
+  it('rejects both an earlier read and a new read during an unfinished vault open', async () => {
+    const opening = gate()
+    const finishOpen = gate()
+    const { caller, before, after } = await fixture(async (vault) => {
+      if (vault.remote === 'syv-ai/other') {
+        opening.resolve()
+        await finishOpen.promise
+      }
+    })
+    const pending = pendingComparison()
+    const result = caller.history.compareRevisions({
+      remote: REMOTE,
+      path: 'note.md',
+      before,
+      after,
+    })
+    let switched: Promise<unknown> | undefined
+    try {
+      await pending.entered
+      switched = caller.vaults.open({ remote: 'syv-ai/other' })
+      await opening.promise
+      await expect(
+        caller.history.compareRevisions({ remote: 'syv-ai/other', path: 'note.md', before, after }),
+      ).resolves.toEqual({ kind: 'unavailable', reason: 'stale' })
+      pending.release()
+      await expect(result).resolves.toEqual({ kind: 'unavailable', reason: 'stale' })
+    } finally {
+      pending.release()
+      finishOpen.resolve()
+      await switched
+    }
   })
 
   it('rejects when no vault is active', async () => {

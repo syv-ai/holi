@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, mkdir, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
@@ -8,10 +8,10 @@ import { compareRevisions } from '../src/main/vault/compare-revisions'
 
 const exec = promisify(execFile)
 const roots: string[] = []
-async function repository() {
+async function repository(format = 'sha1') {
   const root = await mkdtemp(join(tmpdir(), 'holi-revisions-'))
   roots.push(root)
-  await exec('git', ['init', '-q', root])
+  await exec('git', ['init', '-q', `--object-format=${format}`, root])
   await exec('git', ['-C', root, 'config', 'user.email', 'test@example.com'])
   await exec('git', ['-C', root, 'config', 'user.name', 'Test'])
   return root
@@ -41,6 +41,31 @@ describe('compareRevisions', () => {
     })
   })
 
+  it('compares snapshots in a SHA-256 repository', async () => {
+    const root = await repository('sha256')
+    await writeFile(join(root, 'note.md'), 'before')
+    const before = await commit(root, 'first')
+    await writeFile(join(root, 'note.md'), 'after')
+    const after = await commit(root, 'second')
+    await expect(compareRevisions(root, 'note.md', before, after)).resolves.toEqual({
+      kind: 'text',
+      before: 'before',
+      after: 'after',
+    })
+  })
+
+  it('reports a missing historical blob without using the working copy', async () => {
+    const root = await repository()
+    await writeFile(join(root, 'note.md'), 'still on disk')
+    const sha = await commit(root, 'first')
+    const blob = (await exec('git', ['-C', root, 'rev-parse', `${sha}:note.md`])).stdout.trim()
+    await rm(join(root, '.git', 'objects', blob.slice(0, 2), blob.slice(2)))
+    await expect(compareRevisions(root, 'note.md', sha, sha)).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'missing',
+    })
+  })
+
   it('preserves content equal to the old sentinel and ignores replacement refs', async () => {
     const root = await repository()
     await writeFile(join(root, 'note.md'), 'unsupported')
@@ -52,6 +77,99 @@ describe('compareRevisions', () => {
       kind: 'text',
       before: 'unsupported',
       after: 'unsupported',
+    })
+  })
+
+  it('does not infer comparisons for renamed or deleted paths', async () => {
+    const root = await repository()
+    await writeFile(join(root, 'old.md'), 'original\n')
+    const before = await commit(root, 'original')
+    await rename(join(root, 'old.md'), join(root, 'new.md'))
+    const renamed = await commit(root, 'rename')
+    await rm(join(root, 'new.md'))
+    const deleted = await commit(root, 'delete')
+    for (const [path, start, end] of [
+      ['old.md', before, renamed],
+      ['new.md', before, renamed],
+      ['new.md', renamed, deleted],
+    ]) {
+      await expect(compareRevisions(root, path, start, end)).resolves.toEqual({
+        kind: 'unavailable',
+        reason: 'missing',
+      })
+    }
+  })
+
+  it('rejects symlinks, gitlinks and non-commit endpoints without following them', async () => {
+    const root = await repository()
+    await writeFile(join(root, 'note.md'), 'target')
+    const first = await commit(root, 'regular')
+    const blob = (await exec('git', ['-C', root, 'rev-parse', `${first}:note.md`])).stdout.trim()
+    await exec('git', [
+      '-C',
+      root,
+      'update-index',
+      '--add',
+      '--cacheinfo',
+      `120000,${blob},link.md`,
+    ])
+    await exec('git', [
+      '-C',
+      root,
+      'update-index',
+      '--add',
+      '--cacheinfo',
+      `160000,${first},nested`,
+    ])
+    await exec('git', ['-C', root, 'commit', '-qm', 'special entries'])
+    const special = (await exec('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()
+    for (const path of ['link.md', 'nested']) {
+      await expect(compareRevisions(root, path, special, special)).resolves.toEqual({
+        kind: 'unavailable',
+        reason: 'unsupported',
+      })
+    }
+    await expect(compareRevisions(root, 'note.md', blob, first)).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'unsupported',
+    })
+    await exec('git', ['-C', root, 'tag', '-am', 'tag', 'annotated', first])
+    const tag = (await exec('git', ['-C', root, 'rev-parse', 'annotated'])).stdout.trim()
+    await expect(compareRevisions(root, 'note.md', tag, first)).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'unsupported',
+    })
+  })
+
+  it('preserves UTF-8 text and literal pathspec characters while bounding unsupported content', async () => {
+    const root = await repository()
+    const text = '\ufeffæøå\n'
+    await writeFile(join(root, 'a[1].md'), text)
+    await writeFile(join(root, 'a1.md'), 'not this file')
+    await writeFile(join(root, 'large.md'), Buffer.alloc(1024 * 1024 + 1, 65))
+    await writeFile(join(root, 'binary.md'), Buffer.from([0, 65]))
+    await writeFile(join(root, 'invalid.md'), Buffer.from([0xff]))
+    const sha = await commit(root, 'content boundaries')
+    await expect(compareRevisions(root, 'a[1].md', sha.toUpperCase(), sha)).resolves.toEqual({
+      kind: 'text',
+      before: text,
+      after: text,
+    })
+    await expect(compareRevisions(root, 'large.md', sha, sha)).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'limit',
+    })
+    for (const path of ['binary.md', 'invalid.md']) {
+      await expect(compareRevisions(root, path, sha, sha)).resolves.toEqual({
+        kind: 'unavailable',
+        reason: 'unsupported',
+      })
+    }
+    await expect(
+      compareRevisions(join(root, 'absent-repository'), 'a[1].md', sha, sha),
+    ).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'error',
     })
   })
 
@@ -82,7 +200,7 @@ describe('compareRevisions', () => {
     })
     await expect(compareRevisions(root, 'x', 'HEAD', first)).resolves.toEqual({
       kind: 'unavailable',
-      reason: 'missing',
+      reason: 'unsupported',
     })
   })
 })

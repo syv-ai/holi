@@ -31,6 +31,7 @@ import {
   MEMORY_DIR,
   MEMORY_INDEX,
   isHiddenPath,
+  isSecretPath,
   SCRATCHPAD_PATH,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
