@@ -1,17 +1,32 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ensureGuestViewers } from '../main/attachment-sharing'
 import { GoogleApi } from '../main/api'
+import { createPermissionReceipts } from '../main/permission-receipts'
 
-function setup(handler: (url: URL, init: RequestInit) => Response | Promise<Response>) {
+function setup(
+  handler: (url: URL, init: RequestInit) => Response | Promise<Response>,
+  account = 'a',
+) {
   return new GoogleApi({
-    accessToken: async () => 'token',
+    accessToken: async () => `token-${account}`,
     fetch: async (input, init) => handler(new URL(String(input)), init ?? {}),
   })
 }
 const ok = (body: unknown) => Response.json(body)
-const share = (accountSub: string, signal = AbortSignal.timeout(4_000)) => ({
-  accountSub,
+let userData: string
+beforeEach(async () => {
+  userData = await mkdtemp(join(tmpdir(), 'holi-attachment-sharing-'))
+})
+afterEach(async () => {
+  await rm(userData, { recursive: true, force: true })
+})
+
+const share = (signal = AbortSignal.timeout(4_000)) => ({
+  receipts: createPermissionReceipts(userData),
   signal,
   validate: async () => {},
   validateGuest: async () => {},
@@ -47,7 +62,7 @@ describe('ensureGuestViewers', () => {
       api,
       ['paginated'],
       ['guest@example.com', 'new@example.com'],
-      share('a'),
+      share(),
     )
     expect(sharing.map((r) => r.status)).toEqual(['already-accessible', 'granted'])
     expect(notifications).toEqual(['new@example.com'])
@@ -71,12 +86,12 @@ describe('ensureGuestViewers', () => {
       return ok({ id })
     }
     const [first, second] = await Promise.all([
-      ensureGuestViewers(setup(handler), ['same-file'], ['one@example.com'], share('a')),
+      ensureGuestViewers(setup(handler), ['same-file'], ['one@example.com'], share()),
       ensureGuestViewers(
-        setup(handler),
+        setup(handler, 'b'),
         ['same-file'],
         ['one@example.com', 'two@example.com'],
-        share('b'),
+        share(),
       ),
     ])
     expect(first.sharing[0]?.status).toMatch(/^(granted|already-accessible)$/)
@@ -85,6 +100,78 @@ describe('ensureGuestViewers', () => {
     ).toBe(true)
     expect([...permissions.keys()].sort()).toEqual(['one@example.com', 'two@example.com'])
     expect(notifications.sort()).toEqual(['one@example.com', 'two@example.com'])
+  })
+
+  it('blocks another account and guest after a lost POST until a read confirms the pending guest', async () => {
+    const firstGuest = 'first@example.com'
+    const secondGuest = 'second@example.com'
+    const notified: string[] = []
+    const permissions: object[] = []
+    const deadline = new AbortController()
+    const fileIds = ['late-write']
+    let commit: (() => void) | undefined
+    let durableAtDispatch: string | null = null
+    let lostResponse = true
+    const handler = async (_url: URL, req: RequestInit) => {
+      if (req.method === 'GET') return ok({ permissions })
+      const grant = JSON.parse(String(req.body))
+      const id = grant.emailAddress as string
+      notified.push(id)
+      if (lostResponse) {
+        // Drive can still commit after the client quits waiting. Keep it
+        // pending while the other account reads the (still empty) ACL.
+        lostResponse = false
+        durableAtDispatch = await createPermissionReceipts(userData).read(fileIds[0]!)
+        deadline.abort(new DOMException('Expired', 'TimeoutError'))
+        return new Promise<Response>((resolve) => {
+          commit = () => {
+            permissions.push({ ...grant, id })
+            resolve(ok({ id }))
+          }
+        })
+      }
+      permissions.push({ ...grant, id })
+      return ok({ id })
+    }
+    await expect(
+      ensureGuestViewers(setup(handler), fileIds, [firstGuest], share(deadline.signal)),
+    ).resolves.toMatchObject({ sharing: [{ guest: firstGuest, status: 'unknown' }] })
+    expect(durableAtDispatch).toBe(firstGuest)
+
+    // Each call opens the same profile through a fresh store adapter (no
+    // retained state from the first account).
+    const other = setup(handler, 'b')
+    const check = () =>
+      ensureGuestViewers(other, fileIds, [firstGuest], {
+        ...share(),
+        validateGuest: undefined,
+      })
+    await expect(check()).resolves.toMatchObject({ sharing: [{ status: 'unknown' }] })
+    await expect(ensureGuestViewers(other, fileIds, [secondGuest], share())).resolves.toMatchObject(
+      { sharing: [{ guest: secondGuest, status: 'failed' }] },
+    )
+    expect(notified).toEqual([firstGuest])
+
+    commit!()
+    await expect(check()).resolves.toMatchObject({ sharing: [{ status: 'already-accessible' }] })
+    await expect(ensureGuestViewers(other, fileIds, [secondGuest], share())).resolves.toMatchObject(
+      { sharing: [{ guest: secondGuest, status: 'granted' }] },
+    )
+    expect(notified).toEqual([firstGuest, secondGuest])
+  })
+
+  it('does not send a grant if it cannot first save a receipt', async () => {
+    const writes: unknown[] = []
+    const api = setup((_url, req) => {
+      if (req.method === 'GET') return ok({ permissions: [] })
+      writes.push(req.body)
+      return ok({ id: 'unexpected-grant' })
+    })
+    const receipts = createPermissionReceipts(join(userData, 'missing'))
+    await expect(
+      ensureGuestViewers(api, ['file'], ['one@example.com'], { ...share(), receipts }),
+    ).resolves.toMatchObject({ sharing: [{ status: 'failed' }] })
+    expect(writes).toEqual([])
   })
 
   it('counts time waiting for a file queue against the operation deadline and does not grant later', async () => {
@@ -110,14 +197,14 @@ describe('ensureGuestViewers', () => {
       permissions.push({ ...body, id })
       return ok({ id })
     })
-    const first = ensureGuestViewers(api, ['queued'], ['holder@example.com'], share('holder'))
+    const first = ensureGuestViewers(api, ['queued'], ['holder@example.com'], share())
     try {
       await started
       const expired = await ensureGuestViewers(
         api,
         ['queued', 'another-file'],
         ['queued@example.com'],
-        share('queued', AbortSignal.timeout(20)),
+        share(AbortSignal.timeout(20)),
       )
       expect(expired.sharing).toMatchObject([
         { fileId: 'queued', status: 'failed' },
@@ -129,7 +216,7 @@ describe('ensureGuestViewers', () => {
     }
     // A subsequent check drains the queue behind the cancelled waiter.
     const checked = await ensureGuestViewers(api, ['queued'], ['queued@example.com'], {
-      ...share('queued'),
+      ...share(),
       validateGuest: undefined,
     })
     expect(checked.sharing[0]?.status).toBe('failed')

@@ -92,7 +92,9 @@ import {
   driveFiles,
   attachEventFiles,
   checkEventFileAccess,
+  attachmentUpdateRefused,
 } from './event-attachments'
+import type { PermissionReceipts } from './permission-receipts'
 import type { EventAttachmentTarget } from '../shared/event-attachments'
 
 const attachmentTarget = (raw: unknown): EventAttachmentTarget => {
@@ -127,6 +129,7 @@ export const GOOGLE_NAMESPACES = ['google'] as const
 export interface GoogleCapabilityDeps {
   accounts: GoogleAccountsManager
   meetings?: MeetingCreation
+  permissionReceipts?: PermissionReceipts
   /** The vault's cached data layer; null when no account is connected to it. */
   dataFor(remote: string): Promise<GoogleData | null>
   /** Cached data permanently bound to this resolved account session. */
@@ -223,6 +226,13 @@ function windowParams(raw: unknown): { from: string; to: string } {
     throw new CapabilityError('BAD_REQUEST', `at most ${MAX_AGENDA_DAYS} days at a time`)
   }
   return { from: new Date(start).toISOString(), to: new Date(end).toISOString() }
+}
+
+function agendaParams(
+  raw: unknown,
+): ReturnType<typeof windowParams> & { expectedAccountSub?: string } {
+  const sub = expectedAccountParam(paramsObject(raw))
+  return { ...windowParams(raw), ...(sub === undefined ? {} : { expectedAccountSub: sub }) }
 }
 
 const agendaWindow = ({ from, to }: { from: string; to: string }): AgendaWindow => ({
@@ -525,13 +535,18 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     return { session, data }
   }
 
-  const validateSession = (remote: string, session: GoogleSession) => async () => {
-    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-    const current = await deps.accounts.sessionFor(remote)
-    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-    if (current !== session)
-      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
-  }
+  const validateSession =
+    (
+      remote: string,
+      session: GoogleSession,
+      message = 'Google account changed; reload the composer',
+    ) =>
+    async () => {
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      const current = await deps.accounts.sessionFor(remote)
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      if (current !== session) throw new CapabilityError('FORBIDDEN', message)
+    }
 
   const attachmentSession = async (
     remote: string,
@@ -580,6 +595,26 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     })
 
   const overrides = async (root: string) => (await deps.settings.read(root)).calendars
+
+  // The renderer may tag rows with this account. Don't let either the cached
+  // paint or the live fetch re-resolve to a different account across an await.
+  const boundAgenda = async <T>(
+    { remote, root }: { remote: string; root: string },
+    sub: string,
+    read: (data: GoogleData, calendars: CalendarOverrides) => T | Promise<T>,
+  ): Promise<T> => {
+    const message = 'Google account changed; reload the calendar.'
+    const session = await deps.accounts.sessionFor(remote)
+    if (session?.accountSub !== sub) throw new CapabilityError('FORBIDDEN', message)
+    if (!deps.dataForSession)
+      throw new CapabilityError('UNAVAILABLE', 'account-bound Google data is unavailable')
+    const validate = validateSession(remote, session, message)
+    const calendars = await overrides(root)
+    await validate()
+    const result = await read(deps.dataForSession(session), calendars)
+    await validate()
+    return result
+  }
 
   const capabilities = {
     /**
@@ -760,8 +795,16 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         args: ['from?', 'to?'],
         summary: 'the agenda, from and to ISO instants (next 7 days)',
       },
-      params: windowParams,
+      params: agendaParams,
       run: async (ctx, window) => {
+        const sub = window.expectedAccountSub
+        if (ctx.door === 'ui' && sub !== undefined) {
+          return google(() =>
+            boundAgenda(ctx, sub, (data, calendars) =>
+              data.agenda(agendaWindow(window), calendars),
+            ),
+          )
+        }
         const data = await dataOf(ctx.remote)
         return google(async () => data.agenda(agendaWindow(window), await overrides(ctx.root)))
       },
@@ -772,12 +815,20 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
      *  a request: the view paints it while `agenda` is in flight. */
     'google.agendaCached': cap({
       doors: ['ui'],
-      params: windowParams,
-      run: async (ctx, window) =>
-        (await deps.dataFor(ctx.remote))?.cachedAgenda(
-          agendaWindow(window),
-          await overrides(ctx.root),
-        ) ?? null,
+      params: agendaParams,
+      run: async (ctx, window) => {
+        if (window.expectedAccountSub !== undefined) {
+          return boundAgenda(ctx, window.expectedAccountSub, (data, calendars) =>
+            data.cachedAgenda(agendaWindow(window), calendars),
+          )
+        }
+        return (
+          (await deps.dataFor(ctx.remote))?.cachedAgenda(
+            agendaWindow(window),
+            await overrides(ctx.root),
+          ) ?? null
+        )
+      },
     }),
 
     /** Every calendar the account draws from, with its colour and whether it
@@ -1338,15 +1389,23 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.attachEventFiles': cap({
       doors: ['ui'],
       params: attachmentSelection,
-      run: (ctx, { fileIds, ...target }) =>
-        attachmentRequest(async () => {
-          const { api, validate } = await attachmentSession(ctx.remote, target.expectedAccountSub, [
+      run: async (ctx, { fileIds, ...target }) => {
+        const receipts = deps.permissionReceipts
+        if (!receipts) return attachmentUpdateRefused(null)
+        let bound: Awaited<ReturnType<typeof attachmentSession>>
+        try {
+          bound = await attachmentSession(ctx.remote, target.expectedAccountSub, [
             GOOGLE_CALENDAR_READ_SCOPE,
             GOOGLE_CALENDAR_WRITE_SCOPE,
             GOOGLE_DRIVE_SCOPE,
           ])
-          return attachEventFiles(api, target, fileIds, validate)
-        }),
+        } catch (error) {
+          return attachmentUpdateRefused(error)
+        }
+        return attachmentRequest(() =>
+          attachEventFiles(bound.api, target, fileIds, bound.validate, { receipts }),
+        )
+      },
     }),
     'google.checkEventFileAccess': cap({
       doors: ['ui'],
@@ -1357,7 +1416,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
             GOOGLE_CALENDAR_READ_SCOPE,
             GOOGLE_DRIVE_SCOPE,
           ])
-          return checkEventFileAccess(api, target, fileIds, validate)
+          const receipts = deps.permissionReceipts
+          if (!receipts)
+            throw new CapabilityError('UNAVAILABLE', 'Guest access checks are unavailable.')
+          return checkEventFileAccess(api, target, fileIds, validate, { receipts })
         }),
     }),
 

@@ -6,6 +6,7 @@ import {
   untilGoogleAbort,
   type GoogleApi,
 } from './api'
+import type { PermissionReceipts } from './permission-receipts'
 
 const DRIVE = 'https://www.googleapis.com/drive/v3'
 // Drive reports the effective role here, including permissions inherited from
@@ -93,7 +94,7 @@ function message(error?: unknown): string {
 }
 
 type SharingOptions = {
-  accountSub: string
+  receipts: PermissionReceipts
   signal: AbortSignal
   validate: Validate
   /** Omit for an access check that never writes. */
@@ -103,13 +104,13 @@ type SharingOptions = {
 // Drive forbids concurrent permission operations on one file, even across
 // accounts. Keep the read, decision, create and read-back in the same queue.
 const fileQueues = new Map<string, Promise<void>>()
-const uncertainGrants = new Set<string>()
 
 async function withFilePermissions(
   fileId: string,
   signal: AbortSignal,
-  work: () => Promise<void>,
+  work: (holdUntil: (mutation: Promise<void>) => void) => Promise<void>,
 ): Promise<void> {
+  let mutation: Promise<void> | undefined
   const previous = fileQueues.get(fileId) ?? Promise.resolve()
   let release!: () => void
   const done = new Promise<void>((resolve) => {
@@ -123,15 +124,16 @@ async function withFilePermissions(
   try {
     await untilGoogleAbort(signal, () => previous)
     signal.throwIfAborted()
-    await work()
+    await work((pending) => {
+      mutation = pending
+    })
   } finally {
-    // A cancelled waiter releases its own slot, not the one ahead of it.
-    release()
+    // A local receipt mutation may outlast the caller's budget but must
+    // settle before the next operation reads or replaces that receipt.
+    if (mutation) void mutation.then(release, release)
+    else release()
   }
 }
-
-const grantKey = (accountSub: string, fileId: string, guest: string) =>
-  JSON.stringify([accountSub, fileId, guest.toLowerCase()])
 
 /** Broadcast grants are never created or inferred. Each result describes one
  * Google Drive file and one Calendar guest, not a guess about group membership. */
@@ -141,42 +143,75 @@ export async function ensureGuestViewers(
   guests: readonly string[],
   options: SharingOptions,
 ): Promise<{ sharing: AttachmentSharingResult[]; reconnect: boolean }> {
-  const { signal, accountSub, validate, validateGuest } = options
+  const { signal, receipts, validate, validateGuest } = options
   const sharing: AttachmentSharingResult[] = []
   let reconnect = false
   for (const fileId of fileIds) {
     if (!guests.length) break
     const url = `${DRIVE}/files/${encodeURIComponent(fileId)}/permissions`
     let index = 0
+    let pendingGuest: string | null = null
     try {
       if (!reconnect && !signal.aborted) {
-        await withFilePermissions(fileId, signal, async () => {
+        await withFilePermissions(fileId, signal, async (holdUntil) => {
           let list: Permission[] | undefined
+          let receiptRead = false
+          const clearReceipt = async () => {
+            const clearing = receipts.clear(fileId)
+            holdUntil(clearing)
+            await untilGoogleAbort(signal, () => clearing)
+            pendingGuest = null
+          }
           for (; index < guests.length && !signal.aborted && !reconnect; index++) {
             const guest = guests[index]!
             const target = { fileId, guest }
-            const key = grantKey(accountSub, fileId, guest)
+            const recipient = guest.toLowerCase()
             try {
+              if (!receiptRead) {
+                pendingGuest = await untilGoogleAbort(signal, () => receipts.read(fileId))
+                receiptRead = true
+              }
               list ??= await permissions(api, url, options)
-              const existing = access(list, guest)
+              // The evidence must be for the pending recipient, even if the
+              // current account or event guests differ. An empty ACL proves nothing.
+              if (pendingGuest !== null && typeof access(list, pendingGuest) !== 'string') {
+                await clearReceipt()
+              }
+              const existing = access(list, recipient)
               if (typeof existing !== 'string') {
-                uncertainGrants.delete(key)
                 sharing.push({ ...target, status: 'already-accessible' })
                 continue
               }
-              if (uncertainGrants.has(key) || existing === 'unverified') {
+              if (pendingGuest === recipient || existing === 'unverified') {
                 sharing.push({ ...target, status: 'unknown', message: message() })
                 continue
               }
-              if (!validateGuest) {
+              if (!validateGuest || pendingGuest !== null) {
                 sharing.push({
                   ...target,
                   status: 'failed',
-                  message: 'No viewer access was found.',
+                  message: validateGuest
+                    ? 'A previous guest access update for this file is not confirmed.'
+                    : 'No viewer access was found.',
                 })
                 continue
               }
 
+              // Persist before entering transport. If committing the
+              // receipt errors after rename, re-read before any later write.
+              signal.throwIfAborted()
+              receiptRead = false
+              const saving = receipts.begin(fileId, recipient)
+              try {
+                await untilGoogleAbort(signal, () => saving)
+              } catch (error) {
+                // No request has started. If the local save finishes late,
+                // clear it before handing the file to the next waiter.
+                if (signal.aborted) holdUntil(saving.then(() => receipts.clear(fileId)))
+                throw error
+              }
+              receiptRead = true
+              pendingGuest = recipient
               let createdId: unknown
               try {
                 const permission = (await api.request(
@@ -191,18 +226,24 @@ export async function ensureGuestViewers(
                 )) as { id?: string } | null
                 createdId = permission?.id
               } catch (error) {
-                if (!isUncertainGoogleWrite(error)) throw error
+                if (!isUncertainGoogleWrite(error)) {
+                  reconnect ||= googleReconnectNeeded(error)
+                  // A definitive refusal (including pre-dispatch validation)
+                  // means there is no remote operation left to reconcile.
+                  pendingGuest = null
+                  receiptRead = false
+                  await clearReceipt()
+                  receiptRead = true
+                  throw error
+                }
               }
 
-              // A successful response is not proof of the user's current role.
-              // Keep the receipt until a read confirms access, including across
-              // vaults, retries and reconnects for this account in this process.
-              uncertainGrants.add(key)
+              // Even a successful response isn't proof of current access.
               list = undefined
               list = await permissions(api, url, options)
-              const verified = access(list, guest)
+              const verified = access(list, recipient)
               if (typeof verified !== 'string') {
-                uncertainGrants.delete(key)
+                await clearReceipt()
                 const matched =
                   typeof createdId === 'string' &&
                   verified.id === createdId &&
@@ -215,7 +256,7 @@ export async function ensureGuestViewers(
               reconnect ||= googleReconnectNeeded(error)
               sharing.push({
                 ...target,
-                status: uncertainGrants.has(key) ? 'unknown' : 'failed',
+                status: pendingGuest === recipient ? 'unknown' : 'failed',
                 message: signal.aborted ? 'The guest access check timed out.' : message(error),
               })
             }
@@ -227,7 +268,7 @@ export async function ensureGuestViewers(
     }
     for (; index < guests.length; index++) {
       const guest = guests[index]!
-      const uncertain = uncertainGrants.has(grantKey(accountSub, fileId, guest))
+      const uncertain = pendingGuest === guest.toLowerCase()
       sharing.push({
         fileId,
         guest,

@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { GoogleApi } from '../main/api'
 import {
   attachEventFiles,
@@ -6,6 +9,7 @@ import {
   driveFiles,
   eventAttachments,
 } from '../main/event-attachments'
+import { createPermissionReceipts } from '../main/permission-receipts'
 import type { EventAttachment } from '../shared/event-attachments'
 
 const target = {
@@ -49,6 +53,16 @@ const solo = {
 const resource = { resource: true, email: 'room@example.com' }
 const json = (body: unknown, status = 200) => Response.json(body, { status })
 const validate = async () => {}
+
+let userData: string
+let receipts: ReturnType<typeof createPermissionReceipts>
+beforeEach(async () => {
+  userData = await mkdtemp(join(tmpdir(), 'holi-event-attachments-'))
+  receipts = createPermissionReceipts(userData)
+})
+afterEach(async () => {
+  await rm(userData, { recursive: true, force: true })
+})
 
 function transport(handle: (url: URL, request: RequestInit) => Response | Promise<Response>) {
   return new GoogleApi({
@@ -108,7 +122,7 @@ describe('Calendar attachments over Google transport', () => {
       canAttach: true,
       attachments: [original],
     })
-    const result = await attachEventFiles(api, target, ['selected'], validate)
+    const result = await attachEventFiles(api, target, ['selected'], validate, { receipts })
     expect(result).toEqual({
       attachmentStatus: 'attached',
       attachments: [original, attachment('selected')],
@@ -158,7 +172,9 @@ describe('Calendar attachments over Google transport', () => {
       }
       throw new Error('Unexpected Google request')
     })
-    const result = await attachEventFiles(api, target, ['selected', 'selected'], validate)
+    const result = await attachEventFiles(api, target, ['selected', 'selected'], validate, {
+      receipts,
+    })
     expect(result).toMatchObject({
       attachmentStatus: 'attached',
       attachments: [original, attachment('concurrent'), attachment('selected')],
@@ -189,7 +205,7 @@ describe('Calendar attachments over Google transport', () => {
       if (calendarEvent(url)) return json({ ...solo, ...change })
       return json(file('selected'))
     })
-    const result = await attachEventFiles(api, target, ['selected'], validate)
+    const result = await attachEventFiles(api, target, ['selected'], validate, { receipts })
     expect(result).toMatchObject({ attachmentStatus: 'failed', sharing: [] })
     expect(result.attachments).toEqual(change.attachments ?? solo.attachments)
     expect(writes).toEqual([])
@@ -223,7 +239,7 @@ describe('Calendar attachments over Google transport', () => {
       }
       return json(file(url.pathname.split('/').at(-1)!))
     })
-    const result = await attachEventFiles(api, target, ['found', 'missing'], validate)
+    const result = await attachEventFiles(api, target, ['found', 'missing'], validate, { receipts })
     expect(result).toMatchObject({
       attachmentStatus: 'unknown',
       attachments: [original, attachment('found')],
@@ -274,7 +290,9 @@ it('refuses a submitted shortcut without changing the event or creating permissi
     if (calendarEvent(url)) return json(solo)
     return json({ ...file('shortcut'), mimeType: 'application/vnd.google-apps.shortcut' })
   })
-  await expect(attachEventFiles(api, target, ['shortcut'], validate)).resolves.toMatchObject({
+  await expect(
+    attachEventFiles(api, target, ['shortcut'], validate, { receipts }),
+  ).resolves.toMatchObject({
     attachmentStatus: 'failed',
     attachments: [original],
     sharingComplete: false,
@@ -311,8 +329,8 @@ it('does not replay an unverified permission and checks the current attachment a
     }
     return json(file('uncertain'))
   })
-  const submit = () => attachEventFiles(api, target, ['uncertain'], validate)
-  const check = () => checkEventFileAccess(api, target, ['uncertain'], validate)
+  const submit = () => attachEventFiles(api, target, ['uncertain'], validate, { receipts })
+  const check = () => checkEventFileAccess(api, target, ['uncertain'], validate, { receipts })
   for (const run of [submit, submit]) {
     await expect(run()).resolves.toMatchObject({
       attachmentStatus: 'attached',
@@ -365,7 +383,9 @@ it.each([
     }
     return json(file('in-change'))
   })
-  await expect(attachEventFiles(api, target, ['in-change'], validate)).resolves.toMatchObject({
+  await expect(
+    attachEventFiles(api, target, ['in-change'], validate, { receipts }),
+  ).resolves.toMatchObject({
     attachmentStatus: 'attached',
     sharingComplete: false,
     message: expect.any(String),
@@ -401,7 +421,7 @@ it('preserves verified access and an uncertain POST at the deadline without atte
     return json(file('deadline'))
   })
   await expect(
-    attachEventFiles(api, target, ['deadline'], validate, { signal: deadline.signal }),
+    attachEventFiles(api, target, ['deadline'], validate, { receipts, signal: deadline.signal }),
   ).resolves.toMatchObject({
     attachmentStatus: 'attached',
     sharingComplete: false,

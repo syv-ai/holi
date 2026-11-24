@@ -1,3 +1,5 @@
+export const ATTACHMENT_LIMIT = 25
+
 export interface EventAttachmentTarget {
   expectedAccountSub: string
   calendarId: string

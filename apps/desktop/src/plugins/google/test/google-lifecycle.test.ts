@@ -314,6 +314,42 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
     expect(await r.call(B, 'status')).toMatchObject({ account: { email: 'two@example.test' } })
   })
 
+  it('never returns agenda rows for a stale account, from a live fetch or from cache', async () => {
+    const r = await rig()
+    await r.enter(B)
+    const oldWindow = { ...WINDOW, expectedAccountSub: 'one' }
+    const newWindow = { ...WINDOW, expectedAccountSub: 'two' }
+    const oldAgenda = await r.call(B, 'agenda', oldWindow)
+    expect(oldAgenda).toEqual([expect.objectContaining({ title: 'one' })])
+    await expect(r.call(B, 'agendaCached', oldWindow)).resolves.toEqual(oldAgenda)
+
+    const original = fetcher.getMockImplementation()!
+    const gate = deferred<void>()
+    const started = deferred<void>()
+    fetcher.mockImplementation(async (url, init) => {
+      if (String(url).includes('/calendars/')) {
+        started.resolve()
+        await gate.promise
+      }
+      return original(url, init)
+    })
+    const pending = expect(r.call(B, 'agenda', oldWindow)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    })
+    await started.promise
+    try {
+      await manager.link(B, 'two')
+    } finally {
+      gate.resolve()
+      fetcher.mockImplementation(original)
+    }
+    await pending
+    const newAgenda = await r.call(B, 'agenda', newWindow)
+    expect(newAgenda).toEqual([expect.objectContaining({ title: 'two' })])
+    await expect(r.call(B, 'agendaCached', oldWindow)).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(r.call(B, 'agendaCached', newWindow)).resolves.toEqual(newAgenda)
+  })
+
   it('drops a late agenda result after removal and does not recreate its cache', async () => {
     const r = await rig()
     await Promise.all([r.enter(A), r.enter(B)])

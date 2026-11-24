@@ -21,6 +21,7 @@ import { createGoogleData, type GoogleData } from './data'
 import { createMailMarkerStore } from './markers'
 import { googleSeed } from './seed'
 import { createMeetingCreation } from './meeting-creation'
+import { createPermissionReceipts } from './permission-receipts'
 import type { GoogleSession } from './session'
 import { startGoogleTriggers } from './triggers'
 
@@ -52,7 +53,8 @@ export const googleMain: MainPlugin = {
           if (sub === null || accounts.sessionForSub(sub) !== session)
             throw new Error('that Google account is no longer connected')
           const held = bySub.get(sub)
-          if (held !== undefined) return held.data
+          if (held?.session === session) return held.data
+          if (held !== undefined) throw new Error('the Google account session is changing')
           // `sub` becomes a filename. It is a numeric string from Google today, but
           // build a path out of it only after saying so.
           if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
@@ -139,6 +141,7 @@ export const googleMain: MainPlugin = {
     const capabilities = googleCapabilities({
       accounts,
       meetings: createMeetingCreation({ userData: ctx.userData, accounts }),
+      permissionReceipts: createPermissionReceipts(ctx.userData),
       dataFor,
       dataForSession,
       settings: {
