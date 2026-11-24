@@ -444,6 +444,8 @@ export {
 } from './owned-program-lifetime'
 export { defaultProbePid, killChildTree, killTree, type PidState } from './process-group'
 export { writeScreenshot } from './screenshot-files'
+export { launchOwnedWindowsPty } from './owned-windows-pty'
+export type { OwnedWindowsPtyOptions, OwnedPtyProcess, OwnedPtyLaunch } from './owned-windows-pty'
 export {
   defaultSpawnPty,
   signalPty,
