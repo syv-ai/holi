@@ -41,6 +41,20 @@ describe('compareRevisions', () => {
     })
   })
 
+  it('preserves content equal to the old sentinel and ignores replacement refs', async () => {
+    const root = await repository()
+    await writeFile(join(root, 'note.md'), 'unsupported')
+    const original = await commit(root, 'original')
+    await writeFile(join(root, 'note.md'), 'replacement')
+    const replacement = await commit(root, 'replacement')
+    await exec('git', ['-C', root, 'replace', original, replacement])
+    await expect(compareRevisions(root, 'note.md', original, original)).resolves.toEqual({
+      kind: 'text',
+      before: 'unsupported',
+      after: 'unsupported',
+    })
+  })
+
   it('reports absent paths and rejects unsupported entries and invalid endpoints', async () => {
     const root = await repository()
     await mkdir(join(root, 'folder'))
@@ -58,6 +72,17 @@ describe('compareRevisions', () => {
       kind: 'unavailable',
       reason: 'missing',
     })
-    await expect(compareRevisions(root, 'x', 'HEAD', first)).rejects.toThrow()
+    await expect(compareRevisions(root, '../note.md', first, first)).resolves.toMatchObject({
+      kind: 'unavailable',
+      reason: 'unsupported',
+    })
+    await expect(compareRevisions(root, '.env', first, first)).resolves.toMatchObject({
+      kind: 'unavailable',
+      reason: 'unsupported',
+    })
+    await expect(compareRevisions(root, 'x', 'HEAD', first)).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'missing',
+    })
   })
 })
