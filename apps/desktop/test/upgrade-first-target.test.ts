@@ -13,6 +13,9 @@ type Scenario =
   | 'startup'
   | 'stale-endpoint'
   | 'malformed-native'
+  | 'navigation-unavailable'
+  | 'unsafe-navigation'
+  | 'navigation-replaced'
 
 // Native signing, AX and real capture remain the hosted fixture's responsibility.
 async function fixture(scenario: Scenario) {
@@ -25,6 +28,7 @@ async function fixture(scenario: Scenario) {
   const email = 'holi-upgrade-fixture@example.invalid'
   const remote = 'fixture/upgrade'
   let requests = 0
+  let observationReturned = false
   const server = createServer(async (request, response) => {
     requests++
     const chunks = []
@@ -93,7 +97,10 @@ async function fixture(scenario: Scenario) {
         output: JSON.stringify({ outcome: 'ownership-refused', reason: 'process-identity' }),
       }
     if (request.action === 'identify') {
-      if (scenario === 'process-changed' && requests > 0)
+      if (
+        (scenario === 'process-changed' && requests > 0) ||
+        (scenario === 'navigation-replaced' && observationReturned)
+      )
         return {
           output: JSON.stringify({ outcome: 'ownership-refused', reason: 'process-changed' }),
         }
@@ -116,6 +123,48 @@ async function fixture(scenario: Scenario) {
           permissions: { screenCapture: false, accessibility: false, unrelated: token },
         }),
       }
+    if (['navigation-unavailable', 'unsafe-navigation', 'navigation-replaced'].includes(scenario)) {
+      observationReturned = true
+      const navigationStats: Record<string, unknown> = {
+        activationSucceeded: true,
+        expectedTriggerByRole: false,
+        expectedTriggerByLabel: false,
+        triggerTitleSeen: false,
+        triggerDescriptionSeen: false,
+        triggerValueSeen: false,
+        settingsMenuSeen: false,
+        connectionsControlSeen: true,
+        connectionsHeadingSeen: false,
+        googleSeen: false,
+        emailSeen: false,
+        emailWithinLabelSeen: false,
+        disconnectSeen: false,
+        disconnectDescriptionSeen: false,
+        accountPressSucceeded: false,
+        settingsPressSucceeded: false,
+        connectionsPressSucceeded: false,
+        deadlineReached: true,
+        childrenReadAttempted: true,
+        windowsSeen: 1,
+        visited: 42,
+        windowsStatus: 0,
+        childrenStatus: 0,
+      }
+      if (scenario === 'unsafe-navigation') navigationStats.rawLabel = token
+      return {
+        output: JSON.stringify({
+          outcome: 'observation-unavailable',
+          reason: 'connections-panel-not-asserted',
+          pid,
+          startMicros,
+          signatureVerified: true,
+          googleConnectionsPanelAsserted: false,
+          permissions: { screenCapture: true, accessibility: true },
+          navigationStats,
+          unrelated: token,
+        }),
+      }
+    }
     if (scenario === 'malformed-native')
       return {
         output: JSON.stringify({
@@ -131,7 +180,7 @@ async function fixture(scenario: Scenario) {
     await writeFile(
       join(evidenceDirectory, 'first-target-google-connected.png'),
       Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR7kAAAAASUVORK5CYII=',
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=',
         'base64',
       ),
       { mode: 0o600 },
@@ -249,6 +298,31 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
           backendBoundToTarget: true,
         })
         expect(app.requests()).toBe(scenario === 'startup' ? 2 : 1)
+      } finally {
+        await app.close()
+      }
+    },
+  )
+
+  it.each(['navigation-unavailable', 'unsafe-navigation', 'navigation-replaced'] as const)(
+    'keeps %s incomplete and exposes only bound structured diagnostics',
+    async (scenario) => {
+      const app = await fixture(scenario)
+      try {
+        const result = await app.observe()
+        expect(result).toMatchObject({
+          outcome:
+            scenario === 'navigation-replaced' ? 'ownership-refused' : 'observation-unavailable',
+          googleConnectionsPanelAsserted: false,
+          screenshot: null,
+        })
+        if (scenario === 'navigation-unavailable') {
+          expect(result).toMatchObject({
+            navigationStats: { connectionsControlSeen: true, deadlineReached: true },
+          })
+        } else expect(result).not.toHaveProperty('navigationStats')
+        expect(JSON.stringify(result)).not.toContain(app.token)
+        expect(await readdir(app.evidenceDirectory)).toEqual([])
       } finally {
         await app.close()
       }

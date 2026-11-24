@@ -10,6 +10,7 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
     'clear',
     'unacknowledged',
     'installer-returned',
+    'installer-unavailable',
     'missing-anchor',
     'replacement',
   ] as const)(
@@ -38,7 +39,14 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
       }
       const installer = {
         removeOwned: async () => {},
-        inspect: async () => ({ present: scenario === 'installer-returned' }),
+        inspect: async () => {
+          if (scenario === 'installer-unavailable')
+            throw Object.assign(new Error('inspection unavailable'), {
+              code: 'INSTALLER_STATE_OWNERSHIP_MISMATCH',
+              exitCode: 1,
+            })
+          return { present: scenario === 'installer-returned' }
+        },
       }
       try {
         const result = await cleanupUpgradeFixture({
@@ -67,11 +75,31 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
           runtimePids: async () => [],
           command: async () => ({ stdout: '' }),
         })
+        if (['clear', 'installer-returned', 'installer-unavailable'].includes(scenario)) {
+          expect(result.report.installerAbsence).toMatchObject({
+            outcome:
+              scenario === 'clear'
+                ? 'absent'
+                : scenario === 'installer-returned'
+                  ? 'present'
+                  : 'unavailable',
+          })
+        }
+        if (scenario === 'installer-unavailable')
+          expect(result.report.cleanup.failures).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ code: 'INSTALLER_STATE_OWNERSHIP_MISMATCH', exitCode: 1 }),
+            ]),
+          )
         if (scenario === 'clear') {
           expect(result.failed).toBe(false)
           expect(result.report.cleanup).toMatchObject({
             filesRetained: false,
             resourcesDeleted: true,
+          })
+          expect(result.report.firstTargetDrain).toEqual({
+            outcome: 'not-applicable',
+            reason: 'no-target',
           })
           await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
         } else {

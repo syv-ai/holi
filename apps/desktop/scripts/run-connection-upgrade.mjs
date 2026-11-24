@@ -16,6 +16,7 @@ import { connectUpgradeInspector } from './upgrade-inspector.mjs'
 import { observeFirstTargetConnections } from './upgrade-first-target.mjs'
 import { cleanupUpgradeFixture } from './upgrade-cleanup.mjs'
 import { createUpgradeInstaller, installerStatePath } from './upgrade-installer.mjs'
+import { waitForBeforePanel } from './upgrade-before-panel.mjs'
 
 const exec = promisify(execFile)
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -301,46 +302,24 @@ async function observeBeforeUpgrade() {
     };
   })()`
   await wait('connections-navigation', () => click('Connections'))
-  await wait('visible-google-connections', async () => {
-    const deferred = await renderer(`(() => {
-      const dialog = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].find(element => element.getBoundingClientRect().width > 0 && element.textContent.includes('Restart Holi to install this update.'));
-      const later = dialog && [...dialog.querySelectorAll('button')].find(button => button.textContent.trim() === 'Later' && !button.disabled);
-      if (!later) return false;
-      later.click(); return true;
-    })()`)
-    if (deferred) {
-      receipt.before.updateDeferred = true
-      return false
-    }
-    const probe = await renderer(connectedBefore)
-    receipt.before.uiProbe = probe
-    return probe?.connected === true
-  }).catch(async (error) => {
-    if (receipt.timedOut?.phase === 'visible-google-connections') {
-      try {
-        const diagnostic = await evaluate(`(async () => {
-          const windows = require('electron').BrowserWindow.getAllWindows().filter(window => !window.isDestroyed() && !window.webContents.isLoading());
-          if (windows.length !== 1) return null;
-          const window = windows[0];
-          return { windowId: window.id, png: (await window.capturePage()).toPNG().toString('base64') };
-        })()`)
-        if (diagnostic) {
-          await writeFile(
-            join(evidence, 'before-panel-unasserted.png'),
-            Buffer.from(diagnostic.png, 'base64'),
-            { mode: 0o600, flag: 'wx' },
-          )
-          receipt.before.failureImage = {
-            file: 'before-panel-unasserted.png',
-            windowId: diagnostic.windowId,
-            googleConnectionsPanelAsserted: false,
-          }
-        } else receipt.before.failureImage = { outcome: 'unavailable' }
-      } catch {
-        receipt.before.failureImage = { outcome: 'unavailable' }
+  await waitForBeforePanel({
+    wait,
+    receipt,
+    evidenceDirectory: evidence,
+    probe: async () => {
+      const deferred = await renderer(`(() => {
+        const dialog = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].find(element => element.getBoundingClientRect().width > 0 && element.textContent.includes('Restart Holi to install this update.'));
+        const later = dialog && [...dialog.querySelectorAll('button')].find(button => button.textContent.trim() === 'Later' && !button.disabled);
+        if (!later) return false;
+        later.click(); return true;
+      })()`)
+      if (deferred) {
+        receipt.before.updateDeferred = true
+        return false
       }
-    }
-    throw error
+      return renderer(connectedBefore)
+    },
+    execute: (expression) => evaluate(expression),
   })
   await renderer(
     'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',

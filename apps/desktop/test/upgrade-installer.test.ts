@@ -71,6 +71,34 @@ describe('upgrade installer deletion gate', () => {
       import('node:fs/promises').then(({ access }) => access(state.resource)),
     ).rejects.toThrow()
   })
+  it.each(['state ownership mismatch', 'untrusted fixture payload'])(
+    'reports only allowlisted native command failures: %s',
+    async (stderr) => {
+      const installer = createUpgradeInstaller({
+        binary: 'native',
+        artifact: 'app',
+        statePath: 'state',
+        label: 'job',
+        run: async () => {
+          throw Object.assign(new Error('untrusted fixture payload'), { stderr, code: 1 })
+        },
+      })
+      const failure = await installer.inspect().then(
+        () => undefined,
+        (error: Error) => error,
+      )
+      expect(failure).toMatchObject({
+        code:
+          stderr === 'state ownership mismatch'
+            ? 'INSTALLER_STATE_OWNERSHIP_MISMATCH'
+            : 'INSTALLER_COMMAND_FAILED',
+        exitCode: 1,
+      })
+      expect(String(failure)).not.toContain('untrusted fixture payload')
+      expect(failure).not.toHaveProperty('stderr')
+    },
+  )
+
   it('retains resources when native inspection fails or returns an invalid receipt', async () => {
     const state = await setup()
     for (const run of [

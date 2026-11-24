@@ -75,33 +75,92 @@ func identity(_ r: Request, bundle: String) -> Identity? {
   return Identity(start: start, uid: info.pbi_uid)
 }
 
-func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+final class NavigationStats {
+  var activationSucceeded = false
+  var expectedTriggerByRole = false
+  var expectedTriggerByLabel = false
+  var triggerTitleSeen = false
+  var triggerDescriptionSeen = false
+  var triggerValueSeen = false
+  var settingsMenuSeen = false
+  var connectionsControlSeen = false
+  var connectionsHeadingSeen = false
+  var googleSeen = false
+  var emailSeen = false
+  var emailWithinLabelSeen = false
+  var disconnectSeen = false
+  var disconnectDescriptionSeen = false
+  var accountPressSucceeded = false
+  var settingsPressSucceeded = false
+  var connectionsPressSucceeded = false
+  var deadlineReached = false
+  var childrenReadAttempted = false
+  var windowsSeen = 0
+  var visited = 0
+  var windowsStatus: Int32 = 0
+  var childrenStatus: Int32 = 0
+  let accountNames = ["Account menu", "Open account menu", "Account menu, an update to look at", "Open account menu, an update to look at"]
+
+  func record(_ value: String) {
+    expectedTriggerByLabel = expectedTriggerByLabel || accountNames.contains(value)
+    googleSeen = googleSeen || value == "Google"
+    emailSeen = emailSeen || value == "holi-upgrade-fixture@example.invalid"
+    emailWithinLabelSeen = emailWithinLabelSeen || value.contains("holi-upgrade-fixture@example.invalid")
+    disconnectSeen = disconnectSeen || value == "Disconnect this vault"
+  }
+
+  var json: [String: Any] {
+    ["activationSucceeded": activationSucceeded, "expectedTriggerByRole": expectedTriggerByRole,
+      "expectedTriggerByLabel": expectedTriggerByLabel, "triggerTitleSeen": triggerTitleSeen,
+      "triggerDescriptionSeen": triggerDescriptionSeen, "triggerValueSeen": triggerValueSeen,
+      "settingsMenuSeen": settingsMenuSeen, "connectionsControlSeen": connectionsControlSeen,
+      "connectionsHeadingSeen": connectionsHeadingSeen, "googleSeen": googleSeen,
+      "emailSeen": emailSeen, "emailWithinLabelSeen": emailWithinLabelSeen,
+      "disconnectSeen": disconnectSeen, "disconnectDescriptionSeen": disconnectDescriptionSeen,
+      "accountPressSucceeded": accountPressSucceeded, "settingsPressSucceeded": settingsPressSucceeded,
+      "connectionsPressSucceeded": connectionsPressSucceeded, "deadlineReached": deadlineReached,
+      "childrenReadAttempted": childrenReadAttempted, "windowsSeen": windowsSeen,
+      "visited": visited, "windowsStatus": windowsStatus, "childrenStatus": childrenStatus]
+  }
+}
+
+func readAttribute(_ element: AXUIElement, _ name: String) -> (CFTypeRef?, AXError) {
   var value: CFTypeRef?
-  guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-  return value
+  let status = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+  return (status == .success ? value : nil, status)
+}
+
+func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+  readAttribute(element, name).0
 }
 
 func text(_ element: AXUIElement, _ name: String) -> String {
   attribute(element, name) as? String ?? ""
 }
 
-func label(_ element: AXUIElement) -> String {
+func label(_ element: AXUIElement, stats: NavigationStats? = nil) -> String {
   if text(element, kAXSubroleAttribute) == "AXSecureTextField" { return "" }
   for key in [kAXTitleAttribute, kAXValueAttribute, kAXDescriptionAttribute] {
     let value = text(element, key).trimmingCharacters(in: .whitespacesAndNewlines)
-    if !value.isEmpty { return value }
+    if !value.isEmpty { stats?.record(value); return value }
   }
   return ""
 }
 
-func nodes(_ root: AXUIElement, pid: pid_t, deadline: Date) -> [AXUIElement] {
+func nodes(_ root: AXUIElement, pid: pid_t, deadline: Date, stats: NavigationStats? = nil) -> [AXUIElement] {
   var stack: [(AXUIElement, Int)] = [(root, 0)]
   var result: [AXUIElement] = []
   while let (element, depth) = stack.popLast(), result.count < 1000, Date() < deadline {
     var owner: pid_t = 0
     guard depth <= 35, AXUIElementGetPid(element, &owner) == .success, owner == pid else { continue }
     result.append(element)
-    if let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] {
+    if let stats { stats.visited = min(10000, stats.visited + 1) }
+    let (childValue, childStatus) = readAttribute(element, kAXChildrenAttribute)
+    if let stats, !stats.childrenReadAttempted {
+      stats.childrenReadAttempted = true
+      stats.childrenStatus = childStatus.rawValue
+    }
+    if let children = childValue as? [AXUIElement] {
       stack.append(contentsOf: children.reversed().map { ($0, depth + 1) })
     }
   }
@@ -132,16 +191,18 @@ func matches(_ left: CGRect, _ right: CGRect) -> Bool {
     && abs(left.width - right.width) <= 2 && abs(left.height - right.height) <= 2
 }
 
-func connectedPanel(_ window: AXUIElement, pid: pid_t, email: String, deadline: Date) -> Bool {
-  let content = nodes(window, pid: pid, deadline: deadline)
+func connectedPanel(_ window: AXUIElement, pid: pid_t, email: String, deadline: Date, stats: NavigationStats? = nil) -> Bool {
+  let content = nodes(window, pid: pid, deadline: deadline, stats: stats)
   if content.contains(where: { [kAXSheetRole, "AXDialog"].contains(text($0, kAXRoleAttribute)) || text($0, kAXSubroleAttribute) == kAXDialogSubrole }) { return false }
-  guard content.contains(where: { text($0, kAXRoleAttribute) == "AXHeading" && label($0) == "Connections" }) else { return false }
+  let heading = content.contains(where: { text($0, kAXRoleAttribute) == "AXHeading" && label($0, stats: stats) == "Connections" })
+  if heading { stats?.connectionsHeadingSeen = true }
+  guard heading else { return false }
   return content.filter { [kAXGroupRole, "AXWebArea"].contains(text($0, kAXRoleAttribute)) }.contains { group in
-    let scoped = nodes(group, pid: pid, deadline: deadline)
-    return scoped.contains { label($0) == "Google" }
-      && scoped.contains { label($0) == email }
-      && scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0) == "Disconnect this vault" }
-      && !scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0) == "Reconnect" }
+    let scoped = nodes(group, pid: pid, deadline: deadline, stats: stats)
+    return scoped.contains { label($0, stats: stats) == "Google" }
+      && scoped.contains { label($0, stats: stats) == email }
+      && scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0, stats: stats) == "Disconnect this vault" }
+      && !scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0, stats: stats) == "Reconnect" }
   }
 }
 
@@ -181,7 +242,8 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
   let deadline = Date().addingTimeInterval(20)
   let app = AXUIElementCreateApplication(r.pid)
   AXUIElementSetMessagingTimeout(app, 0.3)
-  NSRunningApplication(processIdentifier: r.pid)?.activate(options: [])
+  let stats = NavigationStats()
+  stats.activationSucceeded = NSRunningApplication(processIdentifier: r.pid)?.activate(options: []) ?? false
   var selectedWindow: AXUIElement?
   var selectedBounds: CGRect?
   var requestedSettings = false
@@ -190,40 +252,63 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
   for _ in 0..<50 {
     guard Date() < deadline else { break }
     guard identity(r, bundle: bundle)?.start == id.start else { reject("ownership-refused", "process-changed") }
-    let windows = attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
+    let (windowValue, windowStatus) = readAttribute(app, kAXWindowsAttribute)
+    stats.windowsStatus = windowStatus.rawValue
+    let windows = windowValue as? [AXUIElement] ?? []
+    stats.windowsSeen = max(stats.windowsSeen, min(10000, windows.count))
     let candidates = windows.filter { text($0, kAXRoleAttribute) == kAXWindowRole && rectangle($0) != nil }
     guard candidates.count <= 1 else { reject("observation-unavailable", "ambiguous-accessibility-window") }
     if let window = candidates.first {
-      let content = nodes(window, pid: r.pid, deadline: deadline)
+      let content = nodes(window, pid: r.pid, deadline: deadline, stats: stats)
       if content.contains(where: { [kAXSheetRole, "AXDialog"].contains(text($0, kAXRoleAttribute)) || text($0, kAXSubroleAttribute) == kAXDialogSubrole }) {
         reject("observation-unavailable", "blocking-modal")
       }
-      if connectedPanel(window, pid: r.pid, email: email, deadline: deadline) {
+      if connectedPanel(window, pid: r.pid, email: email, deadline: deadline, stats: stats) {
         selectedWindow = window; selectedBounds = rectangle(window); break
       }
       if !requestedSettings {
-        let triggers = content.filter {
-          [kAXButtonRole, kAXPopUpButtonRole].contains(text($0, kAXRoleAttribute))
-            && ["Account menu", "Open account menu", "Account menu, an update to look at", "Open account menu, an update to look at"].contains(label($0))
+        let triggers = content.filter { element in
+          guard [kAXButtonRole, kAXPopUpButtonRole].contains(text(element, kAXRoleAttribute)) else { return false }
+          let name = label(element, stats: stats)
+          let matched = stats.accountNames.contains(name)
+          stats.expectedTriggerByRole = stats.expectedTriggerByRole || matched
+          stats.triggerTitleSeen = stats.triggerTitleSeen || stats.accountNames.contains(text(element, kAXTitleAttribute))
+          stats.triggerDescriptionSeen = stats.triggerDescriptionSeen || stats.accountNames.contains(text(element, kAXDescriptionAttribute))
+          stats.triggerValueSeen = stats.triggerValueSeen || stats.accountNames.contains(text(element, kAXValueAttribute))
+          if name == "Disconnect" {
+            stats.disconnectDescriptionSeen = stats.disconnectDescriptionSeen || text(element, kAXDescriptionAttribute) == "Disconnect this vault"
+          }
+          if name == "Connections" { stats.connectionsControlSeen = true }
+          return matched
         }
         if !accountMenuOpened, triggers.count == 1 {
           accountMenuOpened = press(triggers[0])
+          stats.accountPressSucceeded = stats.accountPressSucceeded || accountMenuOpened
         } else if accountMenuOpened {
-          let menuItems = nodes(window, pid: r.pid, deadline: deadline).filter {
+          let menuItems = nodes(window, pid: r.pid, deadline: deadline, stats: stats).filter {
             text($0, kAXRoleAttribute) == kAXMenuItemRole && ["Settings", "Settings ⌘,", "Settings⌘,"].contains(label($0).split(whereSeparator: \.isWhitespace).joined(separator: " "))
           }
+          stats.settingsMenuSeen = stats.settingsMenuSeen || !menuItems.isEmpty
           if menuItems.count == 1 { requestedSettings = press(menuItems[0]) }
+          stats.settingsPressSucceeded = stats.settingsPressSucceeded || requestedSettings
         }
       } else if !requestedConnections {
         if let connection = content.first(where: { label($0) == "Connections" && [kAXButtonRole, "AXLink", kAXRadioButtonRole].contains(text($0, kAXRoleAttribute)) }) {
+          stats.connectionsControlSeen = true
           requestedConnections = press(connection)
+          stats.connectionsPressSucceeded = stats.connectionsPressSucceeded || requestedConnections
         }
       }
     }
     try? await Task.sleep(nanoseconds: 200_000_000)
   }
   guard let window = selectedWindow, let bounds = selectedBounds else {
-    reject("observation-unavailable", "connections-panel-not-asserted")
+    stats.deadlineReached = Date() >= deadline
+    guard identity(r, bundle: bundle)?.start == id.start else { reject("ownership-refused", "process-changed") }
+    emit(["outcome": "observation-unavailable", "reason": "connections-panel-not-asserted",
+      "pid": r.pid, "startMicros": id.start, "signatureVerified": true,
+      "googleConnectionsPanelAsserted": false, "permissions": permissions,
+      "navigationStats": stats.json])
   }
   guard identity(r, bundle: bundle)?.start == id.start else { reject("ownership-refused", "process-changed") }
   do {

@@ -23,6 +23,45 @@ const nativeReasons = new Set([
   'window-capture-failed',
 ])
 
+function validNavigationStats(stats) {
+  const booleans = [
+    'activationSucceeded',
+    'expectedTriggerByRole',
+    'expectedTriggerByLabel',
+    'triggerTitleSeen',
+    'triggerDescriptionSeen',
+    'triggerValueSeen',
+    'settingsMenuSeen',
+    'connectionsControlSeen',
+    'connectionsHeadingSeen',
+    'googleSeen',
+    'emailSeen',
+    'emailWithinLabelSeen',
+    'disconnectSeen',
+    'disconnectDescriptionSeen',
+    'accountPressSucceeded',
+    'settingsPressSucceeded',
+    'connectionsPressSucceeded',
+    'deadlineReached',
+    'childrenReadAttempted',
+  ]
+  const counts = ['windowsSeen', 'visited']
+  const codes = ['windowsStatus', 'childrenStatus']
+  return (
+    stats &&
+    typeof stats === 'object' &&
+    !Array.isArray(stats) &&
+    Object.keys(stats).every((key) => [...booleans, ...counts, ...codes].includes(key)) &&
+    booleans.every((key) => typeof stats[key] === 'boolean') &&
+    counts.every(
+      (key) => Number.isSafeInteger(stats[key]) && stats[key] >= 0 && stats[key] <= 10000,
+    ) &&
+    codes.every(
+      (key) => Number.isInteger(stats[key]) && stats[key] >= -32768 && stats[key] <= 32767,
+    )
+  )
+}
+
 async function privateDirectory(path) {
   const info = await lstat(path)
   return (
@@ -244,6 +283,20 @@ export async function observeFirstTargetConnections({
         nativeReasons.has(observed.reason) ? observed.reason : 'invalid-native-result',
       )
       result.backendBoundToTarget = true
+      if (
+        observed.outcome === 'observation-unavailable' &&
+        observed.reason === 'connections-panel-not-asserted' &&
+        observed.pid === pid &&
+        observed.startMicros === identity.startMicros &&
+        observed.signatureVerified === true &&
+        observed.permissions?.screenCapture === true &&
+        observed.permissions?.accessibility === true &&
+        validNavigationStats(observed.navigationStats)
+      ) {
+        if (!(await sameIdentity()) || (await listenerState(endpoint)) !== 'owned')
+          return failed('ownership-refused', 'process-changed')
+        result.navigationStats = observed.navigationStats
+      }
       if (
         typeof observed.permissions?.screenCapture === 'boolean' &&
         typeof observed.permissions?.accessibility === 'boolean'

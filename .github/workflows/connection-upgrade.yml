@@ -15,9 +15,11 @@ on:
       - apps/desktop/scripts/upgrade-first-target.mjs
       - apps/desktop/scripts/upgrade-first-target.swift
       - apps/desktop/scripts/upgrade-cleanup.mjs
+      - apps/desktop/scripts/upgrade-before-panel.mjs
       - apps/desktop/scripts/owned-processes.mjs
       - apps/desktop/test/upgrade-first-target.test.ts
       - apps/desktop/test/upgrade-cleanup.test.ts
+      - apps/desktop/test/upgrade-before-panel.test.ts
       - apps/desktop/test/owned-processes.test.ts
       - apps/desktop/test/upgrade-installer.test.ts
       - apps/desktop/test/upgrade-connection-safety.test.ts

@@ -5,7 +5,25 @@ import { join } from 'node:path'
 const exec = promisify(execFile)
 export function createUpgradeInstaller({ binary, artifact, statePath, label, run = exec }) {
   const invoke = async (mode) => {
-    const { stdout } = await run(binary, [mode, label, artifact, statePath], { timeout: 15_000 })
+    let stdout
+    try {
+      ;({ stdout } = await run(binary, [mode, label, artifact, statePath], { timeout: 15_000 }))
+    } catch (error) {
+      const codes = new Map([
+        ['launchd inspection failed', 'INSTALLER_INSPECTION_FAILED'],
+        ['invalid arguments', 'INSTALLER_ARGUMENTS_INVALID'],
+        ['job ownership mismatch', 'INSTALLER_JOB_OWNERSHIP_MISMATCH'],
+        ['state ownership mismatch', 'INSTALLER_STATE_OWNERSHIP_MISMATCH'],
+        ['job removal failed', 'INSTALLER_REMOVAL_FAILED'],
+        ['job restarted or remains', 'INSTALLER_REAPPEARED'],
+      ])
+      const failure = new Error('native installer command unavailable')
+      failure.code =
+        codes.get(typeof error.stderr === 'string' ? error.stderr.trim() : '') ??
+        'INSTALLER_COMMAND_FAILED'
+      if (Number.isInteger(error.code)) failure.exitCode = error.code
+      throw failure
+    }
     const result = JSON.parse(stdout)
     if (!result || typeof result.present !== 'boolean') throw new Error('invalid installer receipt')
     return result

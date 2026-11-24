@@ -44,6 +44,7 @@ export async function cleanupUpgradeFixture({ resources, owned, command, runtime
         phase,
         type: error.name,
         code: /^[A-Z_]+$/.test(error.code || '') ? error.code : null,
+        exitCode: Number.isInteger(error.exitCode) ? error.exitCode : null,
       })
       return false
     }
@@ -58,7 +59,7 @@ export async function cleanupUpgradeFixture({ resources, owned, command, runtime
   } else if (!artifact) {
     installerDrained = true
   }
-  let firstTargetDrained = !firstTargetPid
+  let firstTargetDrained = false
   if (firstTargetPid) {
     await attempt('drain-anchored-first-target', async () => {
       assert(
@@ -117,10 +118,15 @@ export async function cleanupUpgradeFixture({ resources, owned, command, runtime
       firstTargetDrained = true
     })
   }
-  report.firstTargetDrain = { acknowledged: firstTargetDrained }
+  report.firstTargetDrain = firstTargetPid
+    ? {
+        outcome: firstTargetDrained ? 'acknowledged' : 'unacknowledged',
+        acknowledged: firstTargetDrained,
+      }
+    : { outcome: 'not-applicable', reason: 'no-target' }
   await attempt('stop-owned-groups', () => owned.stopAll())
   await attempt('confirm-process-drain', async () => {
-    assert(firstTargetDrained, 'first-target drainage not acknowledged')
+    assert(!firstTargetPid || firstTargetDrained, 'first-target drainage not acknowledged')
     if (artifact) await waitForRuntimeDrain()
     assert(owned.size === 0, 'owned process groups remain')
     drained = true
@@ -155,7 +161,29 @@ export async function cleanupUpgradeFixture({ resources, owned, command, runtime
     await attempt('confirmed-absence-and-remove-resources', async () => {
       await removeAfterDrain({
         runtimeDrained: true,
-        installer: installer ?? { inspect: async () => ({ present: false }) },
+        installer: {
+          inspect: async () => {
+            if (!installer) {
+              report.installerAbsence = { outcome: 'not-applicable' }
+              return { present: false }
+            }
+            try {
+              const state = await installer.inspect()
+              report.installerAbsence = {
+                outcome:
+                  state.present === true
+                    ? 'present'
+                    : state.present === false
+                      ? 'absent'
+                      : 'unavailable',
+              }
+              return state
+            } catch (error) {
+              report.installerAbsence = { outcome: 'unavailable' }
+              throw error
+            }
+          },
+        },
         removeResources: async () => {
           if (ownsProfile) {
             await rm(profile, { recursive: true, force: true })
