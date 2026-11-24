@@ -1,4 +1,6 @@
-import { writeFile } from 'node:fs/promises'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { createClaudeCli } from '../src/plugins/agent/main/claude/cli'
 
 const cli = createClaudeCli({
@@ -13,18 +15,56 @@ try {
   evidence.start = start.ok ? { ok: true, id: start.id } : { ok: false, message: start.message }
   if (!start.ok) throw new Error(start.message)
   const id = start.id
-  const listing = await cli.list(target)    evidence.list = JSON.parse(listing)
-if (
+  const listing = await cli.list(target)
+  evidence.list = JSON.parse(listing)
+  if (
     !Array.isArray(evidence.list) ||
     !evidence.list.some(
       (row) => row.id === id && row.cwd === target.root && row.kind === 'background',
     )
   )
     throw new Error('Native listing did not preserve session and vault')
-  const observation = await cli.run(target, ['--print', '--resume', id, 'Reply with the exact marker HOLI_NATIVE_STREAM_MARKER_7f3c'])
-  evidence.nativeObservation = observation.output
-  if (!observation.output.includes('HOLI_NATIVE_STREAM_MARKER_7f3c'))
-    throw new Error('Native CLI did not observe the completed streamed response marker')
+  const row = evidence.list.find((entry) => entry.id === id)
+  if (!/^[0-9a-f-]{36}$/.test(row.sessionId)) throw new Error('Native conversation id missing')
+  const projects = join(target.configDir, 'projects')
+  const deadline = Date.now() + 15_000
+  let completion
+  while (Date.now() < deadline && !completion) {
+    const dirs = await readdir(projects, { withFileTypes: true }).catch(() => [])
+    for (const dir of dirs.slice(0, 16)) {
+      if (!dir.isDirectory()) continue
+      const text = await readFile(join(projects, dir.name, `${row.sessionId}.jsonl`), 'utf8').catch(
+        () => '',
+      )
+      for (const line of text.split('\n')) {
+        let record
+        try {
+          record = JSON.parse(line)
+        } catch {
+          continue
+        }
+        if (
+          record.sessionId === row.sessionId &&
+          record.type === 'assistant' &&
+          record.message?.role === 'assistant' &&
+          record.message.stop_reason === 'end_turn' &&
+          record.message.content?.some(
+            (part) => part.type === 'text' && part.text === process.env.HOLI_NATIVE_EXPECTED_REPLY,
+          )
+        ) {
+          completion = {
+            sessionId: row.sessionId,
+            messageId: record.message.id,
+            stopReason: record.message.stop_reason,
+            text: process.env.HOLI_NATIVE_EXPECTED_REPLY,
+          }
+        }
+      }
+    }
+    if (!completion) await delay(100)
+  }
+  if (!completion) throw new Error('Completed native background assistant response not observed')
+  evidence.nativeModelCompletion = completion
 } catch (error) {
   evidence.error = String(error)
   process.exitCode = 1

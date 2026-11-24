@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -40,6 +40,7 @@ const evidence = {
   requests: [],
   cleanup: {},
 }
+const marker = `HOLI_NATIVE_STREAM_${randomUUID()}`
 let namespace
 let server
 let env
@@ -77,73 +78,132 @@ try {
     const record = (status) => {
       if (evidence.requests.length < 32) evidence.requests.push({ method, path, status })
     }
-    if (method === 'GET' && path === '/inference-profiles') {
-      record(200)
-      response.writeHead(200, { 'content-type': 'application/json' }).end('{"inferenceProfileSummaries":[]}')
-      return
-    }
-    if (method === 'POST' && /^\/model\/[^/]+\/invoke-with-response-stream$/.test(path)) {
-      let size = 0
-      for await (const chunk of request) {
-        size += chunk.length
-        if (size > 1024 * 1024) {
-          record(413)
-          response.writeHead(413).end()
-          return
+    try {
+      if (method === 'GET' && path === '/inference-profiles') {
+        record(200)
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end('{"inferenceProfileSummaries":[]}')
+        return
+      }
+      if (method === 'POST' && /^\/model\/[^/]+\/invoke-with-response-stream$/.test(path)) {
+        let size = 0
+        for await (const chunk of request) {
+          size += chunk.length
+          if (size > 1024 * 1024) {
+            record(413)
+            response.writeHead(413).end()
+            return
+          }
         }
-      }
-      const crc32 = (bytes) => {
-        let crc = 0xffffffff
-        for (const byte of bytes) {
-          crc ^= byte
-          for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+        const crc32 = (bytes) => {
+          let crc = 0xffffffff
+          for (const byte of bytes) {
+            crc ^= byte
+            for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+          }
+          return (crc ^ 0xffffffff) >>> 0
         }
-        return (crc ^ 0xffffffff) >>> 0
+        const header = (name, value) => {
+          const n = Buffer.from(name)
+          const v = Buffer.from(value)
+          return Buffer.concat([
+            Buffer.from([n.length]),
+            n,
+            Buffer.from([7, v.length >>> 8, v.length & 255]),
+            v,
+          ])
+        }
+        const event = (value) => {
+          const headers = Buffer.concat([
+            header(':message-type', 'event'),
+            header(':event-type', 'chunk'),
+            header(':content-type', 'application/json'),
+          ])
+          const payload = Buffer.from(
+            JSON.stringify({ bytes: Buffer.from(JSON.stringify(value)).toString('base64') }),
+          )
+          const prelude = Buffer.alloc(8)
+          prelude.writeUInt32BE(16 + headers.length + payload.length)
+          prelude.writeUInt32BE(headers.length, 4)
+          return Buffer.concat([prelude, Buffer.alloc(4), headers, payload, Buffer.alloc(4)])
+        }
+        evidence.streamMarker = marker
+        const messages = [
+          {
+            type: 'message_start',
+            message: {
+              id: 'msg_holi_fixture',
+              type: 'message',
+              role: 'assistant',
+              model: 'claude-opus-5-5',
+              content: [],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 0 },
+            },
+          },
+          { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+          { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: marker } },
+          { type: 'content_block_stop', index: 0 },
+          {
+            type: 'message_delta',
+            delta: { stop_reason: 'end_turn', stop_sequence: null },
+            usage: { output_tokens: 2 },
+          },
+          { type: 'message_stop' },
+        ]
+        const frames = messages.map(event)
+        for (const frame of frames) {
+          frame.writeUInt32BE(crc32(frame.subarray(0, 8)), 8)
+          frame.writeUInt32BE(crc32(frame.subarray(0, frame.length - 4)), frame.length - 4)
+        }
+        record(200)
+        response.writeHead(200, {
+          'content-type': 'application/vnd.amazon.eventstream',
+          'x-amzn-bedrock-content-type': 'application/json',
+          'x-amzn-requestid': 'holi-fixture',
+        })
+        response.end(Buffer.concat(frames))
+        return
       }
-      const header = (name, value) => {
-        const n = Buffer.from(name)
-        const v = Buffer.from(value)
-        return Buffer.concat([Buffer.from([n.length]), n, Buffer.from([7, v.length >>> 8, v.length & 255]), v])
+      if (method === 'POST' && /^\/model\/[^/]+\/invoke$/.test(path)) {
+        let size = 0
+        for await (const chunk of request) {
+          size += chunk.length
+          if (size > 1024 * 1024) {
+            record(413)
+            response.writeHead(413).end()
+            return
+          }
+        }
+        record(size <= 1024 * 1024 ? 200 : 413)
+        response.writeHead(size <= 1024 * 1024 ? 200 : 413, {
+          'content-type': 'application/json',
+          'x-amzn-requestid': 'holi-fixture',
+        })
+        response.end(
+          size <= 1024 * 1024
+            ? JSON.stringify({
+                id: 'msg_holi_fixture',
+                type: 'message',
+                role: 'assistant',
+                model: 'claude-opus-5-5',
+                content: [{ type: 'text', text: marker }],
+                stop_reason: 'end_turn',
+                stop_sequence: null,
+                usage: { input_tokens: 1, output_tokens: 2 },
+              })
+            : '',
+        )
+        return
       }
-      const event = (value) => {
-        const headers = Buffer.concat([header(':message-type', 'event'), header(':event-type', 'chunk'), header(':content-type', 'application/json')])
-        const payload = Buffer.from(JSON.stringify({ bytes: Buffer.from(JSON.stringify(value)).toString('base64') }))
-        const prelude = Buffer.alloc(8)
-        prelude.writeUInt32BE(16 + headers.length + payload.length + 4)
-        prelude.writeUInt32BE(headers.length, 4)
-        return Buffer.concat([prelude, Buffer.alloc(4), headers, payload, Buffer.alloc(4)])
-      }
-      const marker = 'HOLI_NATIVE_STREAM_MARKER_7f3c'
-      evidence.streamMarker = marker
-      const messages = [
-        { type: 'message_start', message: { id: 'msg_holi_fixture', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
-        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: marker } },
-        { type: 'content_block_stop', index: 0 },
-        { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 2 } },
-        { type: 'message_stop' },
-      ]
-      const frames = messages.map(event)
-      for (const frame of frames) {
-        const hdr = frame.subarray(12, frame.length - 4)
-        frame.writeUInt32BE(crc32(frame.subarray(0, 8)), 8)
-        frame.writeUInt32BE(crc32(Buffer.concat([frame.subarray(0, 12), hdr, frame.subarray(frame.length - 4)])), frame.length - 4)
-      }
-      record(200)
-      response.writeHead(200, { 'content-type': 'application/vnd.amazon.eventstream', 'x-amzn-bedrock-content-type': 'application/json', 'x-amzn-requestid': 'holi-fixture' })
-      response.end(Buffer.concat(frames))
-      return
+      record(404)
+      response.writeHead(404).end()
+    } catch {
+      record(400)
+      response.destroy()
     }
-    if (method === 'POST' && /^\/model\/[^/]+\/invoke$/.test(path)) {
-      let size = 0
-      for await (const chunk of request) size += chunk.length
-      record(size <= 1024 * 1024 ? 200 : 413)
-      response.writeHead(size <= 1024 * 1024 ? 200 : 413, { 'content-type': 'application/json', 'x-amzn-requestid': 'holi-fixture' })
-      response.end(size <= 1024 * 1024 ? JSON.stringify({ id: 'msg_holi_fixture', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'Fixture response' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 2 } }) : '')
-      return
-    }
-    record(404)
-    response.writeHead(404).end()
   })
   await new Promise((resolve, reject) => {
     server.once('error', reject)
@@ -241,10 +301,17 @@ try {
   const workerResult = join(root, 'worker-result.json')
   await processes.run(process.execPath, [join(root, 'bundle/worker.mjs')], {
     cwd,
-    env: { ...env, HOLI_NATIVE_WRAPPER: wrapper, HOLI_NATIVE_WORKER_RESULT: workerResult },
+    env: {
+      ...env,
+      HOLI_NATIVE_WRAPPER: wrapper,
+      HOLI_NATIVE_WORKER_RESULT: workerResult,
+      HOLI_NATIVE_EXPECTED_REPLY: marker,
+    },
     timeoutMs: 30_000,
   })
   evidence.lifecycle = JSON.parse(await readFile(workerResult, 'utf8'))
+  if (evidence.lifecycle.nativeModelCompletion)
+    evidence.modelTurn = 'completed native background assistant response'
 } catch (error) {
   failure = error
   evidence.error = String(error)
