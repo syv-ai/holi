@@ -42,7 +42,7 @@ async function fixture(
       return {}
     },
     retireResourceOwner: overrides.retireResourceOwner ?? (() => {}),
-    compile: async () => [],
+    inspect: async () => ({ diagnostics: [], dependencies: [] }),
   })
   return { diagnostics, root, revoke: () => (allowed = false), ownerCurrent: () => ownerCurrent }
 }

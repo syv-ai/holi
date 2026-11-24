@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { app, BrowserWindow, ipcMain, session, type WebContents } from 'electron'
 import { createGuestProbes } from './mdx-compiler-guest-probes'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createMdxResources } from '../src/main/mdx-resources'
 import { createMdxDiagnostics } from '../src/main/mdx-diagnostics'
@@ -28,7 +28,7 @@ let win: BrowserWindow | null = null
 let recoveredWindows = 0
 let savedWrites = 0
 let guestCreations = 0
-let compileSources = 0
+let inspectedSources = 0
 let installedSessionPolicy = false
 const blockedRequests: string[] = []
 const guestProbes: Array<{ url: string; result: Record<string, unknown> }> = []
@@ -36,6 +36,7 @@ let adversaries: Awaited<ReturnType<typeof createGuestProbes>> | null = null
 const compiler = createMdxResources(join(app.getAppPath(), 'out/mdx-compiler'))
 const trustStore = createMdxTrustStore(join(profile, 'mdx-trust.json'))
 const owner = () => ({ accountId: identity.accountId, remote })
+let dependencyRaceChild: string | null = null
 const diagnostics = createMdxDiagnostics({
   authorize: (candidate, requested) => requested === remote && candidate === identity,
   context: (token, requested) => (token === context && requested === remote ? identity : null),
@@ -46,9 +47,15 @@ const diagnostics = createMdxDiagnostics({
   trusted: async (candidate) => candidate === identity && trustStore.status(owner()),
   createResourceOwner: (isCurrent) => compiler.createOwner(isCurrent),
   retireResourceOwner: (resourceOwner) => compiler.retireOwner(resourceOwner),
-  compile: (resourceOwner, source, signal) => {
-    compileSources += 1
-    return compiler.compile(resourceOwner, source, signal)
+  inspect: (resourceOwner, source, signal, format) => {
+    inspectedSources += 1
+    return compiler.inspect(resourceOwner, source, signal, format).then(async (result) => {
+      if (source.includes('HOLI_NATIVE_DEPENDENCY_REPLACEMENT_RACE') && dependencyRaceChild) {
+        await writeFile(dependencyRaceChild, '# changed after inspection\n')
+        dependencyRaceChild = null
+      }
+      return result
+    })
   },
 })
 
@@ -68,7 +75,7 @@ invoke('smoke:status', async () => ({
   recoveredWindows,
   savedWrites,
   guestCreations,
-  compileSources,
+  inspectedSources,
   blockedRequests,
   guestProbes,
   accountGeneration,
@@ -155,6 +162,95 @@ invoke('smoke:scenarios', async () => {
       diagnostics.release(fresh)
     }
   }
+  const graphCases: Array<{ name: string; outcome: string }> = []
+  const compileGraphCase = async (name: string, source: string) => {
+    const lease = await diagnostics.acquire({ remote, path: 'notes/fixture.mdx', context })
+    try {
+      const result = await diagnostics.compile({ lease: lease.lease, generation: 1, source })
+      graphCases.push({ name, outcome: result.length ? 'diagnostics' : 'clean' })
+      return result
+    } finally {
+      diagnostics.release(lease)
+    }
+  }
+  await mkdir(join(vault, 'notes/graph'), { recursive: true })
+  await writeFile(join(vault, 'notes/graph/child.jsx'), 'export default <\n')
+  const missing = await compileGraphCase(
+    'missing dependency',
+    "import Child from './graph/missing.jsx'\n<Child />",
+  )
+  assert(missing.length > 0)
+  const syntaxChild = await compileGraphCase('syntax child', "import './graph/child.jsx'\n")
+  assert(syntaxChild.length > 0)
+  const cycleA = join(vault, 'notes/graph/a.jsx')
+  const cycleB = join(vault, 'notes/graph/b.jsx')
+  await writeFile(cycleA, "import './b.jsx'\nexport default 1\n")
+  await writeFile(cycleB, "import './a.jsx'\nexport default 2\n")
+  assert((await compileGraphCase('cycle', "import './graph/a.jsx'\n")).length > 0)
+  for (const [name, path] of [
+    ['protected dot-local', 'notes/graph/secret.local.jsx'],
+    ['agent surface', 'AGENTS.mdx'],
+  ] as const) {
+    let rejected = false
+    try {
+      await diagnostics.acquire({ remote, path, context })
+    } catch {
+      rejected = true
+    }
+    assert(rejected, `${name} path must be refused`)
+    graphCases.push({ name, outcome: 'refused' })
+  }
+  for (const [name, source] of [
+    ['external URL', "import 'https://example.invalid/x.jsx'"],
+    ['dynamic import', "{import('./graph/child.jsx')}"],
+    ['CommonJS', "{require('./graph/child.jsx')}"],
+    ['unsupported formats', "import './graph/child.mjs'"],
+    ['outward traversal', "import '../../../outside.jsx'"],
+  ] as const) {
+    assert((await compileGraphCase(name, source)).length > 0, `${name} must produce diagnostics`)
+  }
+  await writeFile(
+    join(vault, 'notes/graph/secret.local.jsx'),
+    'throw new Error("must never evaluate")',
+  )
+  assert(
+    (await compileGraphCase('protected dependency', "import './graph/secret.local.jsx'\n")).length >
+      0,
+  )
+  await symlink(join(vault, 'notes/graph/secret.local.jsx'), join(vault, 'notes/graph/alias.jsx'))
+  assert((await compileGraphCase('symlink alias', "import './graph/alias.jsx'\n")).length > 0)
+  await writeFile(join(vault, 'notes/graph/large.jsx'), ' '.repeat(256 * 1024 + 1))
+  assert((await compileGraphCase('file size limit', "import './graph/large.jsx'\n")).length > 0)
+  for (let index = 0; index < 18; index++) {
+    await writeFile(
+      join(vault, `notes/graph/depth${index}.js`),
+      index === 17 ? 'export const leaf = 1' : `export * from './depth${index + 1}.js'`,
+    )
+  }
+  assert((await compileGraphCase('graph depth limit', "import './graph/depth0.js'\n")).length > 0)
+  await writeFile(
+    join(vault, 'notes/graph/child.jsx'),
+    "export const marker = 'HOLI_NATIVE_DEPENDENCY_REPLACEMENT_RACE'",
+  )
+  const raceLease = await diagnostics.acquire({ remote, path: 'notes/fixture.mdx', context })
+  dependencyRaceChild = join(vault, 'notes/graph/child.jsx')
+  let raceRejected = false
+  try {
+    await diagnostics.compile({
+      lease: raceLease.lease,
+      generation: 1,
+      source: "import './graph/child.jsx'\n",
+    })
+  } catch {
+    raceRejected = true
+  } finally {
+    dependencyRaceChild = null
+    diagnostics.release(raceLease)
+  }
+  assert(raceRejected, 'dependency replacement during inspection must invalidate graph snapshot')
+  graphCases.push({ name: 'dependency replacement race', outcome: 'refused' })
+  assert.deepEqual(await compileGraphCase('fresh source after race', '# valid source\n'), [])
+
   const activeOwner = await diagnostics.acquire({ remote, path: 'notes/fixture.mdx', context })
   const activeReady = probes.hold()
   const activeResult = diagnostics
@@ -165,14 +261,14 @@ invoke('smoke:scenarios', async () => {
     )
   await activeReady
   const queuedOwner = await diagnostics.acquire({ remote, path: 'notes/fixture.mdx', context })
-  const compileCount = compileSources
+  const inspectedCount = inspectedSources
   const queuedResult = diagnostics
     .compile({ lease: queuedOwner.lease, generation: 1, source: '# revoked while queued\n' })
     .then(
       () => false,
       () => true,
     )
-  for (let attempt = 0; attempt < 100 && compileSources === compileCount; attempt++)
+  for (let attempt = 0; attempt < 100 && inspectedSources === inspectedCount; attempt++)
     await new Promise((resolve) => setTimeout(resolve, 10))
   diagnostics.release({ lease: queuedOwner.lease })
   assert.equal(
@@ -227,7 +323,7 @@ invoke('smoke:scenarios', async () => {
   probes.assertHealthy()
   await probes.close()
   adversaries = null
-  return { policy, recovery, stale }
+  return { policy, recovery, stale, graphCases }
 })
 
 app.on('web-contents-created', (_event, contents: WebContents) => {
