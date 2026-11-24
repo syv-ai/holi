@@ -30,6 +30,7 @@ export function DriveFilesDialog({
   target,
   eventTitle,
   attachedIds,
+  unconfirmedIds,
   slots,
   initialFiles = NO_FILES,
   busy,
@@ -43,6 +44,7 @@ export function DriveFilesDialog({
   target: EventAttachmentTarget
   eventTitle: string
   attachedIds: ReadonlySet<string>
+  unconfirmedIds: ReadonlySet<string>
   slots: number
   initialFiles?: DriveFileChoice[]
   busy: boolean
@@ -70,7 +72,7 @@ export function DriveFilesDialog({
     !failure &&
     selection.length > 0 &&
     selection.length <= slots &&
-    selection.every(({ id }) => !attachedIds.has(id))
+    selection.every(({ id }) => !attachedIds.has(id) && !unconfirmedIds.has(id))
   // Keep selected files reachable even if they are on a different search page.
   const candidates = [
     ...new Map(
@@ -220,6 +222,7 @@ export function DriveFilesDialog({
                   <ul className="flex flex-col gap-2" aria-label="Drive files">
                     {candidates.map((file) => {
                       const attached = attachedIds.has(file.id)
+                      const unconfirmed = unconfirmedIds.has(file.id)
                       const selected = selection.some(({ id }) => id === file.id)
                       return (
                         <li key={file.id}>
@@ -227,12 +230,13 @@ export function DriveFilesDialog({
                             <Checkbox
                               type="button"
                               checked={attached || selected}
-                              disabled={attached || (!selected && remaining === 0)}
+                              disabled={attached || unconfirmed || (!selected && remaining === 0)}
                               onCheckedChange={(checked) =>
                                 setSelection((previous) => {
                                   if (!checked) return previous.filter(({ id }) => id !== file.id)
                                   if (
                                     attached ||
+                                    unconfirmed ||
                                     previous.length >= slots ||
                                     previous.some(({ id }) => id === file.id)
                                   )
@@ -242,9 +246,11 @@ export function DriveFilesDialog({
                               }
                             />
                             <span className="min-w-0 wrap-anywhere">{file.name}</span>
-                            {attached && (
-                              <span className="text-muted-foreground shrink-0 text-xs">
-                                Already attached
+                            {(attached || unconfirmed) && (
+                              <span className="text-muted-foreground text-xs">
+                                {attached
+                                  ? 'Already attached'
+                                  : 'Previous Calendar update not confirmed'}
                               </span>
                             )}
                           </FieldLabel>
