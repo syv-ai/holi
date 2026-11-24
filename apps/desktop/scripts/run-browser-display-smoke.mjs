@@ -120,6 +120,8 @@ try {
     'recording.json',
     'rich-affinity.json',
     'multiline-native-interactions.json',
+    'multiline-light.png',
+    'multiline-dark.png',
     'ui-light.png',
     'ui-dark.png',
     'interaction.mp4',

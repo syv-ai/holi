@@ -524,95 +524,198 @@
   view.webContents.redo()
   await pause(500)
   assert.equal(await field(`document.querySelector('#rich').innerHTML`), changedRichMarkup)
-  // Exercise real multiline contenteditable input through the native view. The
-  // fixture intentionally retains paragraph, div, BR, link and inline markup.
-  const multilineInitial =
-    '<p>first <strong>bold</strong></p><p><br></p><div>third <a href="/next">linked</a></div>'
-  await field(`document.querySelector('#multiline').innerHTML=${JSON.stringify(multilineInitial)}`)
+  const multiline = '#multiline'
+  const observed: string[] = []
+  const setupMultiline = async (markup: string, point: string) => {
+    await field(
+      `(() => { const h=document.querySelector('${multiline}'); h.innerHTML=${JSON.stringify(markup)}; h.focus(); const [node,offset]=((h)=>${point})(h); const r=document.createRange(); r.setStart(node,offset); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r); })()`,
+    )
+  }
+  const caretLine = async (line: number, offset: number) => {
+    assert.deepEqual(
+      await field(
+        `(() => {const h=document.querySelector('${multiline}'),s=getSelection(),lines=[...h.children],i=lines.findIndex(n=>n===s.anchorNode||n.contains(s.anchorNode));if(i<0)return {line:i,offset:-1}; const r=document.createRange();r.setStart(lines[i],0);r.setEnd(s.anchorNode,s.anchorOffset);return {line:i,offset:r.toString().length}})()`,
+      ),
+      { line, offset },
+    )
+  }
+  const markup =
+    '<p>  <strong>café</strong><a href="/next">🙂 two</a></p><div>x</div><p><br></p><p>long enough</p>'
+  await setupMultiline(markup, '[h.querySelector("strong").firstChild,1]')
   await field(
-    `(() => { const h=document.querySelector('#multiline'); const n=h.querySelector('strong').firstChild; h.focus(); const r=document.createRange(); r.setStart(n,2); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r) })()`,
+    `window.qaMultilineNodes=[...document.querySelector('${multiline}').querySelectorAll('*')]`,
   )
   await trustedPress(view, 'Escape')
   await badge('normal')
   await trustedPress(view, 'j')
-  assert.equal(
-    await field(`getSelection().anchorNode.parentElement.closest('p')?.innerHTML`),
-    '<br>',
-  )
+  await caretLine(1, 1)
   await trustedPress(view, 'j')
-  await trustedPress(view, 'i')
-  await badge('insert')
-  await trustedPress(view, 'X')
-  await trustedPress(view, 'Enter')
-  await trustedPress(view, 'Y')
-  const multilineEdited = await field(`document.querySelector('#multiline').innerHTML`)
-  assert(multilineEdited.includes('third X') && multilineEdited.includes('Y'))
-  await trustedPress(view, 'Escape')
-  view.webContents.undo()
-  await pause(250)
-  assert.equal(await field(`document.querySelector('#multiline').innerHTML`), multilineInitial)
-  view.webContents.redo()
-  await pause(250)
-  assert.equal(await field(`document.querySelector('#multiline').innerHTML`), multilineEdited)
-  mark('production-multiline-paragraph-div-br-inline-contenteditable-edit-history')
-  // Dedicated multiline native-input acceptance capture. Keep node references
-  // across motions so an implementation that rebuilds/ flattens the host fails.
-  await field(`(() => {
-    const host=document.querySelector('#multiline');
-    host.innerHTML='<p>  alpha <strong>bold</strong></p><div>beta <a href="/next">linked</a></div><p><br></p><p>z</p>';
-    window.qaMultilineNodes={strong:host.querySelector('strong'),link:host.querySelector('a'),blocks:[...host.children]};
-  })()`)
-  await field(
-    `(() => { const h=document.querySelector('#multiline'), n=h.querySelector('p').firstChild; h.focus(); const r=document.createRange(); r.setStart(n,2); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r) })()`,
-  )
-  await trustedPress(view, 'Escape')
+  await caretLine(2, 0)
   await trustedPress(view, 'j')
-  assert.equal(
-    await field(`document.querySelector('#multiline').children[1].textContent`),
-    'beta linked',
-  )
-  assert.equal(
-    await field(
-      `document.querySelector('#multiline').querySelector('strong')===window.qaMultilineNodes.strong`,
-    ),
-    true,
-  )
-  await trustedPress(view, 'j')
+  await caretLine(3, 3)
   await trustedPress(view, 'k')
+  await caretLine(2, 0)
+  await trustedPress(view, 'k')
+  await caretLine(1, 1)
+  await trustedPress(view, 'k')
+  await caretLine(0, 3)
+  await trustedPress(view, '0')
+  await caretLine(0, 0)
+  await trustedPress(view, '^')
+  await caretLine(0, 2)
+  await trustedPress(view, '$')
+  await caretLine(0, 13)
+  await trustedPress(view, 'I')
+  await caretLine(0, 2)
+  await badge('insert')
+  await trustedPress(view, 'Escape')
+  await trustedPress(view, 'A')
+  await caretLine(0, 13)
+  await badge('insert')
+  await trustedPress(view, 'Escape')
+  await trustedPress(view, '^')
+  await trustedPress(view, 'w')
+  await caretLine(0, 10)
+  await trustedPress(view, 'b')
+  await caretLine(0, 2)
+  await trustedPress(view, 'e')
+  await caretLine(0, 5)
+  assert.equal(await field(`document.querySelector('${multiline}').innerHTML`), markup)
   assert.equal(
     await field(
-      `document.querySelector('#multiline').children[1].querySelector('a')===document.querySelector('#multiline').querySelector('a')`,
+      `window.qaMultilineNodes.every((n,i)=>n===document.querySelector('${multiline}').querySelectorAll('*')[i])`,
     ),
     true,
   )
-  assert.equal(await field(`document.querySelector('#multiline').children.length`), 4)
-  await trustedPress(view, '0')
-  await trustedPress(view, '^')
-  await trustedPress(view, '$')
+  observed.push('paragraph-div-empty-line-grapheme-column-line-and-word-motions-preserve-dom')
+
+  // Compare exact native edit results with Vim disabled, rather than inventing
+  // Blink's insertion affinity, paragraph splitting or edit-history semantics.
+  const scenarios = [
+    {
+      name: 'link-insertion',
+      html: '<p>one <a href="/next">café🙂 link</a></p>',
+      point: '[h.querySelector("a").firstChild,7]',
+      keys: ['X'],
+    },
+    { name: 'br-insertion', html: '<p>one<br>two<br></p>', point: '[h.firstChild,1]', keys: ['X'] },
+    {
+      name: 'paragraph-enter-backspace-merge',
+      html: '<p>alpha</p><p>beta</p>',
+      point: '[h.lastChild.firstChild,0]',
+      keys: ['Enter', 'Backspace', 'Backspace'],
+    },
+    {
+      name: 'paragraph-forward-delete',
+      html: '<p>alpha</p><p>beta</p>',
+      point: '[h.firstChild.firstChild,5]',
+      keys: ['Delete'],
+    },
+  ]
+  for (const scenario of scenarios) {
+    const results = []
+    for (const enabled of [false, true]) {
+      await pref(enabled)
+      await setupMultiline(scenario.html, scenario.point)
+      if (enabled) {
+        await trustedPress(view, 'Escape')
+        await badge('normal')
+        await trustedPress(view, 'i')
+        await badge('insert')
+      }
+      for (const key of scenario.keys) await trustedPress(view, key)
+      const edited = await field(`document.querySelector('${multiline}').innerHTML`)
+      assert.notEqual(edited, scenario.html, scenario.name + ' must really edit')
+      view.webContents.undo()
+      await pause(150)
+      const undone = await field(`document.querySelector('${multiline}').innerHTML`)
+      view.webContents.redo()
+      await pause(150)
+      assert.equal(
+        await field(`document.querySelector('${multiline}').innerHTML`),
+        edited,
+        scenario.name + ' redo',
+      )
+      results.push({ edited, undone })
+    }
+    assert.deepEqual(results[1], results[0], scenario.name + ' native baseline')
+    observed.push(scenario.name + '-matches-native-baseline-and-history')
+  }
+  await pref(true)
+  await setupMultiline('<p>alpha</p><p><br></p>', '[h.lastChild,0]')
+  await trustedPress(view, 'Escape')
+  await badge('normal')
   await trustedPress(view, 'I')
   await badge('insert')
-  await trustedPress(view, 'A')
+  await view.webContents.debugger.sendCommand('Input.imeSetComposition', {
+    text: '日本語',
+    selectionStart: 3,
+    selectionEnd: 3,
+  })
+  await view.webContents.debugger.sendCommand('Input.insertText', { text: '日本語' })
+  assert.equal(
+    await field(`document.querySelector('${multiline}').lastChild.textContent`),
+    '日本語',
+  )
+  observed.push('multiline-native-ime-insertion')
+
+  await setupMultiline('<p>alpha</p><p>beta</p>', '[h.firstChild.firstChild,0]')
   await trustedPress(view, 'Escape')
-  const acceptance = {
-    assertions: [
-      'native-selection-paragraph-div-br-text-newline',
-      'empty-short-terminal-lines',
-      'j-k-preferred-grapheme-column',
-      '0-caret-dollar-I-A',
-      'word-motion-inline-link-boundary',
-      'dom-node-identity-preserved',
-      'native-enter-backspace-delete-and-undo-redo',
-      'ime-composition-native',
-      'controlled-update-eligibility-loss-rearm',
-    ],
-    capture: 'multiline-native-interactions.json',
-    source: process.env.HOLI_553_SHA,
-    sourceHash: process.env.HOLI_553_SOURCE_HASH,
-    worktree: process.env.HOLI_553_WORKTREE,
-    worktreeStatus: process.env.HOLI_553_STATUS,
-    status: 'authored; native outcome verification requires running smoke command',
-  }
-  writeFileSync(join(evidence, acceptance.capture), JSON.stringify(acceptance, null, 2))
+  await badge('normal')
+  await field(
+    `(() => {const n=document.querySelector('${multiline}').firstChild.firstChild;n.data='changed';n.data='alpha'})()`,
+  )
+  await badge('insert')
+  await trustedPress(view, 'X')
+  assert.equal(
+    await field(`document.querySelector('${multiline}').firstChild.textContent`),
+    'Xalpha',
+  )
+  await trustedPress(view, 'Escape')
+  await badge('normal')
+  await field(
+    `new Promise(resolve=>setTimeout(()=>{document.querySelector('${multiline}').firstChild.append(document.createElement('img'));resolve(true)},0))`,
+  )
+  await trustedPress(view, 'Escape')
+  await badge('insert')
+  await field(`document.querySelector('${multiline}').querySelector('img').remove()`)
+  await trustedPress(view, 'Escape')
+  await badge('normal')
+  const beforeUnsupported = await field(`document.querySelector('${multiline}').innerHTML`)
+  for (const key of ['x', 'd', 'd']) await trustedPress(view, key)
+  assert.equal(await field(`document.querySelector('${multiline}').innerHTML`), beforeUnsupported)
+  observed.push('controlled-sync-async-updates-atom-refusal-rearm-unsupported-normal-commands')
+
+  await setupMultiline(markup, '[h.firstChild.firstChild,0]')
+  await trustedPress(view, 'Escape')
+  await badge('normal')
+  await trustedPress(view, 'j')
+  await trustedPress(view, 'j')
+  await trustedPress(view, 'j')
+  await ui('document.documentElement.dataset.theme="light"')
+  await field(
+    `document.documentElement.style.colorScheme='light';document.querySelector('${multiline}').scrollIntoView()`,
+  )
+  await composed('multiline-light.png')
+  await ui('document.documentElement.dataset.theme="dark"')
+  await field(`document.documentElement.style.colorScheme='dark'`)
+  await pause(150)
+  await composed('multiline-dark.png')
+  writeFileSync(
+    join(evidence, 'multiline-native-interactions.json'),
+    JSON.stringify(
+      {
+        observed,
+        source: process.env.HOLI_553_SHA,
+        sourceHash: process.env.HOLI_553_SOURCE_HASH,
+        worktree: process.env.HOLI_553_WORKTREE,
+        worktreeStatus: process.env.HOLI_553_STATUS,
+      },
+      null,
+      2,
+    ),
+  )
+  mark('production-multiline-paragraph-div-br-inline-contenteditable-edit-history')
   mark('native-multiline-capture-with-source-hash-provenance')
   await pause(800)
   recording = false

@@ -354,7 +354,7 @@
   const vimTypes = new Set(['text', 'search', 'url', 'tel'])
   const nativeTextTags = new Set(['DIV', 'SPAN', 'P', 'LABEL'])
   // Rich hosts stay page-owned. Only this small inline-tag vocabulary is
-  // eligible; any block, atom, custom editor, or nested editable host stays native.
+  // eligible; direct native block lines are supported, nested/custom structures stay native.
   const richInlineTags = new Set([
     'A',
     'B',
@@ -397,46 +397,36 @@
     [...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE)
   const richHost = (el) => {
     if (!eligibleEnvelope(el, 'true') || el.closest('[inert]')) return false
+    const visible = (child, display) => {
+      const style = getComputedStyle(child)
+      return (
+        child.getAttribute('contenteditable') == null &&
+        !child.hasAttribute('inert') &&
+        style.display === display &&
+        !['hidden', 'collapse'].includes(style.visibility) &&
+        style.userSelect !== 'none'
+      )
+    }
     const inline = (node) => {
       if (node.nodeType === Node.TEXT_NODE) return true
-      if (node.nodeType !== Node.ELEMENT_NODE) return false
-      const child = node
-      if (child.tagName === 'BR') return true
-      if (
-        !richInlineTags.has(child.tagName) ||
-        child.getAttribute('contenteditable') != null ||
-        child.hasAttribute('inert')
+      if (node.nodeType !== Node.ELEMENT_NODE || !visible(node, 'inline')) return false
+      if (node.tagName === 'BR') return true
+      return (
+        richInlineTags.has(node.tagName) &&
+        (node.tagName !== 'A' || node.hasAttribute('href')) &&
+        [...node.childNodes].every(inline)
       )
-        return false
-      const style = getComputedStyle(child)
-      if (
-        style.display !== 'inline' ||
-        style.visibility === 'hidden' ||
-        style.visibility === 'collapse' ||
-        style.userSelect === 'none' ||
-        child.matches(
-          'img, input, button, select, textarea, iframe, video, audio, canvas, svg, [contenteditable="false"]',
-        )
-      )
-        return false
-      if (child.tagName === 'A' && !child.hasAttribute('href')) return false
-      return [...child.childNodes].every(inline)
     }
-    const lines = [...el.childNodes]
-    const blockLine = (node) =>
+    const block = (node) =>
       node.nodeType === Node.ELEMENT_NODE &&
       ['P', 'DIV'].includes(node.tagName) &&
-      getComputedStyle(node).display === 'block' &&
+      visible(node, 'block') &&
       [...node.childNodes].every(inline)
-    const valid = lines.every(
-      (node) => node.nodeType === Node.TEXT_NODE || inline(node) || blockLine(node),
-    )
     const style = getComputedStyle(el)
     return (
-      valid &&
+      [...el.childNodes].every((node) => inline(node) || block(node)) &&
       style.display === 'block' &&
-      style.visibility !== 'hidden' &&
-      style.visibility !== 'collapse' &&
+      !['hidden', 'collapse'].includes(style.visibility) &&
       style.userSelect !== 'none'
     )
   }
@@ -515,36 +505,65 @@
     }
     return eligible
   }
+  // Logical separators are positions in native DOM, never replacement content.
+  // A final BR is Blink's caret placeholder; repeated BRs retain empty lines.
   const logicalProjection = (host) => {
-    const pieces = []
-    const lines = [...host.childNodes]
-    const blocks = lines.some(
-      (node) => node.nodeType === Node.ELEMENT_NODE && ['P', 'DIV'].includes(node.tagName),
-    )
-    const lineNodes = blocks ? lines : [host]
     let value = ''
-    const positions = []
-    const addPosition = (node, offset, index) => positions.push({ node, offset, index })
+    const carets = []
+    const offsets = new Map()
+    const point = (node, offset) => ({ node, offset })
+    const isBlock = (node) =>
+      node.nodeType === Node.ELEMENT_NODE && ['P', 'DIV'].includes(node.tagName)
     const walk = (node) => {
       if (node.nodeType === Node.TEXT_NODE) {
-        for (let i = 0; i <= node.textContent.length; i++) addPosition(node, i, value.length + i)
-        value += node.textContent
-      } else if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
-        addPosition(node.parentNode, [...node.parentNode.childNodes].indexOf(node), value.length)
-        value += '\\n'
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        for (const child of node.childNodes) walk(child)
-        if (!node.childNodes.length) addPosition(node, 0, value.length)
+        const start = value.length
+        const indices = []
+        for (let i = 0; i <= node.length; i++) {
+          indices.push(start + i)
+          carets[start + i] = point(node, i)
+        }
+        offsets.set(node, indices)
+        value += node.data
+        return
       }
+      const children = [...node.childNodes]
+      const indices = []
+      const blocksOnly =
+        node === host &&
+        children.some(isBlock) &&
+        children.every(
+          (child) => isBlock(child) || (child.nodeType === Node.TEXT_NODE && !child.data.trim()),
+        )
+      let seenLine = false
+      let afterBlock = false
+      children.forEach((child, i) => {
+        if (blocksOnly && child.nodeType === Node.TEXT_NODE) {
+          offsets.set(child, Array(child.length + 1).fill(value.length))
+          indices[i] = value.length
+          return
+        }
+        const block = node === host && isBlock(child)
+        if (node === host && ((block && seenLine) || (!block && afterBlock))) value += '\n'
+        indices[i] = value.length
+        if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'BR') {
+          carets[value.length] = point(node, i)
+          offsets.set(child, [value.length])
+          if (i !== children.length - 1) {
+            value += '\n'
+            carets[value.length] = point(node, i + 1)
+          }
+        } else walk(child)
+        seenLine = true
+        afterBlock = block
+      })
+      indices[children.length] = value.length
+      offsets.set(node, indices)
+      if ((node !== host || !afterBlock) && children.at(-1)?.nodeName !== 'BR')
+        carets[value.length] = point(node, children.length)
+      if (!children.length) carets[value.length] = point(node, 0)
     }
-    lineNodes.forEach((line, index) => {
-      if (index) value += '\\n'
-      if (line.nodeType === Node.ELEMENT_NODE && ['P', 'DIV'].includes(line.tagName)) {
-        for (const child of line.childNodes) walk(child)
-        if (!line.childNodes.length) addPosition(line, 0, value.length)
-      } else walk(line)
-    })
-    return { value, positions }
+    walk(host)
+    return { value, carets, offsets }
   }
   const selectionFor = (host) => {
     if (!plainHost(host) && !richHost(host)) return null
@@ -559,20 +578,7 @@
     )
       return null
     const projection = logicalProjection(host)
-    const offsetOf = (node, offset) => {
-      const exact = projection.positions.find(
-        (position) => position.node === node && position.offset === offset,
-      )
-      if (exact) return exact.index
-      if (node.nodeType === Node.ELEMENT_NODE && host.contains(node)) {
-        const child = node.childNodes[offset]
-        const candidate = projection.positions.find(
-          (position) => child && (position.node === child || child.contains?.(position.node)),
-        )
-        return candidate?.index ?? null
-      }
-      return null
-    }
+    const offsetOf = (node, offset) => projection.offsets.get(node)?.[offset] ?? null
     const range = selection.getRangeAt(0)
     const start = offsetOf(range.startContainer, range.startOffset)
     const end = offsetOf(range.endContainer, range.endOffset)
@@ -581,8 +587,7 @@
   const placeCaret = (host, offset) => {
     const projection = logicalProjection(host)
     const at = Math.max(0, Math.min(projection.value.length, offset))
-    const position =
-      projection.positions.find((item) => item.index === at) ?? projection.positions.at(-1)
+    const position = projection.carets[at]
     const range = host.ownerDocument.createRange()
     if (position) range.setStart(position.node, position.offset)
     else range.setStart(host, 0)

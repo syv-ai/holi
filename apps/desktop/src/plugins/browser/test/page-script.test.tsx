@@ -598,7 +598,7 @@ test('plaintext-only text newlines use logical vertical motions and retain nativ
   const host = document.createElement('div')
   host.setAttribute('contenteditable', 'plaintext-only')
   host.setAttribute('tabindex', '0')
-  host.append(document.createTextNode('ab\\nc\\nwide'))
+  host.append(document.createTextNode('ab\nc\nwide'))
   document.body.append(host)
   host.focus()
   const range = document.createRange()
@@ -619,7 +619,7 @@ test('plaintext-only text newlines use logical vertical motions and retain nativ
   expect(press('i').defaultPrevented).toBe(true)
   expect(holi().vim.mode().mode).toBe('insert')
   expect(press('x').defaultPrevented).toBe(false)
-  expect(host.textContent).toBe('ab\\nc\\nwide')
+  expect(host.textContent).toBe('ab\nc\nwide')
 })
 
 test('plaintext-only i collapses a normal-mode selection before native insertion', () => {
@@ -702,7 +702,6 @@ test('plaintext-only host bounds and inherited editing are conservative', () => 
     '<my-editor contenteditable="plaintext-only">plain</my-editor>',
     '<div contenteditable="plaintext-only" role="textbox">plain</div>',
     '<div contenteditable="plaintext-only"><span>nested</span></div>',
-    '<div contenteditable="plaintext-only">line\nbreak</div>',
   ]
   for (const html of cases) {
     const wrapper = document.createElement('section')
@@ -899,27 +898,43 @@ test('rich block lines keep grapheme columns and edit only the current logical l
     host.dispatchEvent(event)
     return event
   }
+  const lines = [...host.children]
+  const caret = (line: Element, offset: number) => {
+    const selection = getSelection()!
+    expect(line === selection.anchorNode || line.contains(selection.anchorNode)).toBe(true)
+    const prefix = document.createRange()
+    prefix.setStart(line, 0)
+    prefix.setEnd(selection.anchorNode!, selection.anchorOffset)
+    expect(prefix.toString().length).toBe(offset)
+  }
   expect(press('Escape').defaultPrevented).toBe(true)
-  expect(press('j').defaultPrevented).toBe(true)
-  expect(getSelection()!.anchorNode).toBe(host.querySelector('div')!.firstChild)
-  expect(press('j').defaultPrevented).toBe(true)
-  expect(press('j').defaultPrevented).toBe(true)
-  expect(getSelection()!.anchorNode).toBe(host.lastElementChild!.firstChild)
-  expect(getSelection()!.anchorOffset).toBe(3)
-  expect(press('k').defaultPrevented).toBe(true)
-  expect(getSelection()!.anchorNode).toBe(
-    host.querySelector('p:nth-of-type(2)')!.firstChild ?? host.querySelector('p:nth-of-type(2)'),
-  )
-  expect(press('0').defaultPrevented).toBe(true)
-  expect(press('^').defaultPrevented).toBe(true)
-  expect(press('$').defaultPrevented).toBe(true)
-  expect(press('I').defaultPrevented).toBe(true)
+  press('j')
+  caret(lines[1], 1)
+  press('j')
+  caret(lines[2], 0)
+  press('j')
+  caret(lines[3], 3)
+  press('k')
+  caret(lines[2], 0)
+  press('k')
+  caret(lines[1], 1)
+  press('k')
+  caret(lines[0], 3)
+  press('0')
+  caret(lines[0], 0)
+  press('^')
+  caret(lines[0], 2)
+  press('$')
+  caret(lines[0], lines[0].textContent!.length)
+  press('I')
+  caret(lines[0], 2)
   expect(holi().vim.mode().mode).toBe('insert')
-  expect(getSelection()!.anchorNode).toBe(host.lastElementChild!.firstChild)
-  expect(getSelection()!.anchorOffset).toBe(0)
+  press('Escape')
+  press('A')
+  caret(lines[0], lines[0].textContent!.length)
+  expect(holi().vim.mode().mode).toBe('insert')
   expect(host.innerHTML).toBe(original)
-  expect(host.querySelector('strong')).toBeTruthy()
-  expect(host.querySelector('a')).toBeTruthy()
+  expect([...host.children]).toEqual(lines)
 })
 
 test('rich inline native hosts retain formatting and links while motions cross nodes', () => {
@@ -977,7 +992,8 @@ test('rich BR lines accept native element selections and retire after reverted e
   host.setAttribute('contenteditable', 'true')
   host.setAttribute('tabindex', '0')
   host.style.display = 'block'
-  host.innerHTML = 'alpha<br><br>omega<br>'
+  host.innerHTML =
+    'alpha<br style="display:inline"><br style="display:inline">omega<br style="display:inline">'
   Object.defineProperty(host, 'isContentEditable', { value: true })
   document.body.append(host)
   host.focus()
@@ -1100,7 +1116,6 @@ test('rich host structure is revalidated before each command and unsupported DOM
     '<div contenteditable="true" tabindex="0">one<span inert>skip</span> two</div>',
     '<div contenteditable="true" tabindex="0" inert>inactive host</div>',
     '<div contenteditable="true" tabindex="0"><span contenteditable="true">nested</span></div>',
-    '<div contenteditable="true" tabindex="0">line\nbreak</div>',
   ]
   for (const html of cases) {
     const host = document.createElement('div')
