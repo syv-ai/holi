@@ -1332,6 +1332,62 @@ describe('the calendar view', () => {
     expect(attachEventFilesMock).toHaveBeenCalledTimes(2)
   })
 
+  test('keeps the submitted file and its write outcome separate from a later check of another file', async () => {
+    const user = userEvent.setup()
+    const guest = 'guest@example.test'
+    let current: ReturnType<typeof attachmentOf>[] = []
+    eventAttachmentsMock.mockImplementation(async () => ({ attachments: current, canAttach: true }))
+    driveFilesMock.mockResolvedValue({ files: [BRIEF, AGENDA] })
+    attachEventFilesMock.mockImplementation(async (): Promise<AttachEventFilesResult> => {
+      current = [attachmentOf(BRIEF)]
+      return {
+        attachments: current,
+        attachmentsVerified: true,
+        attachmentStatus: 'attached',
+        calendarWriteStatus: 'confirmed',
+        guestsChecked: [guest],
+        sharingComplete: true,
+        sharing: [{ fileId: BRIEF.id, guest, status: 'granted' }],
+      }
+    })
+    checkEventFileAccessMock.mockImplementation(async (): Promise<AttachEventFilesResult> => ({
+      attachments: current,
+      attachmentsVerified: true,
+      attachmentStatus: 'attached',
+      guestsChecked: [guest],
+      sharingComplete: true,
+      sharing: [{ fileId: AGENDA.id, guest, status: 'already-accessible' }],
+    }))
+
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await confirmDriveFiles(user, [BRIEF.name])
+    expect(await screen.findByText('Files attached')).toBeInTheDocument()
+
+    // Someone replaces the attachment in Calendar while the event card is closed.
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Team sync' })).not.toBeInTheDocument()
+    current = [attachmentOf(AGENDA)]
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    expect(await screen.findByRole('button', { name: AGENDA.name })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Check guest access' }))
+
+    expect(await screen.findByText('Guest access checked')).toBeInTheDocument()
+    const outcome = screen.getByRole('alert')
+    expect(outcome).toHaveTextContent(/checked files: workshop agenda/i)
+    expect(outcome).toHaveTextContent(/guest access confirmed for 1/i)
+    expect(outcome).toHaveTextContent(/confirmed the earlier calendar update/i)
+    expect(outcome).toHaveTextContent(/earlier files not on the event: workshop brief/i)
+    expect(screen.queryByRole('button', { name: BRIEF.name })).not.toBeInTheDocument()
+    expect(checkEventFileAccessMock).toHaveBeenCalledExactlyOnceWith(NOTES, {
+      expectedAccountSub: '1',
+      calendarId: ME,
+      eventId: SYNC.id,
+      fileIds: [AGENDA.id],
+    })
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+  })
+
   test('lets people add an unrelated file after a confirmed Calendar write and a Drive timeout', async () => {
     const user = userEvent.setup()
     let current = [HANDOUT]
@@ -1346,7 +1402,11 @@ describe('the calendar view', () => {
         attachmentStatus: 'unknown',
         calendarWriteStatus: 'confirmed',
         sharingComplete: false,
-        sharing: [],
+        sharing: [
+          { fileId: BRIEF.id, guest: 'granted@example.test', status: 'granted' },
+          { fileId: BRIEF.id, guest: 'existing@example.test', status: 'already-accessible' },
+          { fileId: BRIEF.id, guest: 'pending@example.test', status: 'unknown' },
+        ],
         message:
           'Could not confirm that all selected files were attached. Guest access check timed out.',
       }
@@ -1364,6 +1424,20 @@ describe('the calendar view', () => {
     await confirmDriveFiles(user, [BRIEF.name])
     expect(await screen.findByText('Could not load attachments')).toBeInTheDocument()
     expect(screen.getByText('Current attachments not confirmed')).toBeInTheDocument()
+    expect(
+      screen.getByText(/earlier Drive observation: viewer access granted.*granted@example.test/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /earlier Drive observation: guest already had access.*existing@example.test/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/earlier Drive observation: sharing not confirmed.*pending@example.test/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/guest access confirmed for|selected files are on the event/i),
+    ).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: BRIEF.name })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
@@ -1446,6 +1520,39 @@ describe('the calendar view', () => {
       eventId: SYNC.id,
       fileIds: [BRIEF.id],
     })
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('opens a URL-only Calendar entry but does not use its link to authorize a guest access check', async () => {
+    const user = userEvent.setup()
+    const { title, fileUrl } = attachmentOf(BRIEF)
+    const attachments = [{ title, fileUrl }]
+    eventAttachmentsMock
+      .mockResolvedValueOnce({ attachments: [], canAttach: true })
+      .mockResolvedValue({ attachments, canAttach: true })
+    driveFilesMock.mockResolvedValue({ files: [BRIEF] })
+    // Main refused the selection without writing because the exact Drive URL
+    // was already on the event without an ID.
+    attachEventFilesMock.mockResolvedValue({
+      attachments,
+      attachmentStatus: 'failed',
+      calendarWriteStatus: 'not-written',
+      sharingComplete: false,
+      sharing: [],
+    } satisfies AttachEventFilesResult)
+
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await confirmDriveFiles(user, [BRIEF.name])
+    await user.click(await screen.findByRole('button', { name: BRIEF.name }))
+    expect(window.holi.openExternal).toHaveBeenCalledWith(fileUrl)
+    expect(screen.getByText(/can’t check guest access to it/i)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/did not update Calendar/i)
+    expect(screen.getByRole('alert')).not.toHaveTextContent(
+      /aren’t on the event|guest access confirmed for/i,
+    )
+    expect(screen.queryByRole('button', { name: 'Check guest access' })).not.toBeInTheDocument()
+    expect(checkEventFileAccessMock).not.toHaveBeenCalled()
     expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
   })
 
