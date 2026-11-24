@@ -121,6 +121,18 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
   const specs = [
     ['clean', async () => {}],
     [
+      'unicode-case',
+      async (r) => {
+        await git(r, 'config', 'core.ignorecase', 'true')
+        await put(r, 'Ä.md', 'unicode')
+        await git(r, 'add', 'Ä.md')
+        await git(r, 'commit', '-m', 'unicode fixture')
+        const fs = await import('node:fs/promises')
+        await fs.rename(join(r, 'Ä.md'), join(r, 'unicode-temp'))
+        await fs.rename(join(r, 'unicode-temp'), join(r, 'ä.md'))
+      },
+    ],
+    [
       'local-case-alias',
       async (r) => {
         await git(r, 'config', 'core.ignorecase', 'true')

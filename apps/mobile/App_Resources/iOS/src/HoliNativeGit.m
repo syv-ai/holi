@@ -465,7 +465,7 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
     BOOL missing = (statResult < 0 && (errno == ENOENT || errno == ENOTDIR)) || (parent < 0 && (parentError == ENOENT || parentError == ENOTDIR));
     if (missing && stage0 && (git_index_caps(index) & GIT_INDEX_CAPABILITY_IGNORE_CASE)) {
       for (NSString *alias in paths) {
-        if ([alias isEqualToString:path] || [alias caseInsensitiveCompare:path] != NSOrderedSame) continue;
+        if ([alias isEqualToString:path] || git_index_get_bypath(index, alias.fileSystemRepresentation, 0) != stage0) continue;
         NSArray<NSString *> *aliasParts = nil;
         if (!HNGPathParts(alias, &aliasParts)) continue;
         int aliasParent = HNGOpenParent(rootFD, aliasParts);
