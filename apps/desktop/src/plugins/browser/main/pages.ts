@@ -1007,7 +1007,10 @@ export function createPages(deps: PagesDeps): Pages & {
       changed()
     })
     wc.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
-      if (!isMainFrame) return
+      if (!isMainFrame) {
+        if (isPresented(tab) && tab.vimEnabled) tab.childVim?.configure(true)
+        return
+      }
       tab.vimNavigationPending = false
       if (code !== ERR_ABORTED) {
         tab.error = { code, description, url }
@@ -1035,7 +1038,6 @@ export function createPages(deps: PagesDeps): Pages & {
       wc.on(name as 'did-start-loading', changed)
     }
     wc.on('did-stop-loading', () => {
-      if (isPresented(tab) && tab.vimEnabled) tab.childVim?.configure(true)
       if (tab.vimNavigationPending) {
         tab.vimNavigationPending = false
         void initializeVim(tab)
