@@ -937,6 +937,50 @@ test('rich block lines keep grapheme columns and edit only the current logical l
   expect([...host.children]).toEqual(lines)
 })
 
+test.each([
+  ['<span style="display:inline">one<br style="display:inline"></span>two', 'span'],
+  ['<p>one</p><span style="display:inline"></span><p>two</p>', 'p'],
+])('mixed native line runs preserve logical breaks: %s', (markup, selector) => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'true')
+  host.tabIndex = 0
+  host.style.display = 'block'
+  host.innerHTML = markup
+  document.body.append(host)
+  host.focus()
+  const start = host.querySelector(selector)!.firstChild!
+  const target = selector === 'span' ? host.lastChild! : host.lastChild!.firstChild!
+  const select = (node: Node, offset: number) => {
+    const range = document.createRange()
+    range.setStart(node, offset)
+    range.collapse(true)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(range)
+  }
+  select(start, 1)
+  holi().vim.configure(true, 68, holi().vim.documentNonce())
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  expect(press('Escape').defaultPrevented).toBe(true)
+  expect(press('j').defaultPrevented).toBe(true)
+  expect(getSelection()!.anchorNode).toBe(target)
+  expect(getSelection()!.anchorOffset).toBe(1)
+  press('k')
+  expect(getSelection()!.anchorNode).toBe(start)
+  expect(getSelection()!.anchorOffset).toBe(1)
+  if (selector === 'p') {
+    select(host, 1)
+    press('0')
+    press('j')
+    expect(getSelection()!.anchorNode).toBe(target)
+    expect(getSelection()!.anchorOffset).toBe(0)
+  }
+  expect(host.innerHTML).toBe(markup)
+})
+
 test('rich inline native hosts retain formatting and links while motions cross nodes', () => {
   const host = document.createElement('div')
   host.setAttribute('contenteditable', 'true')

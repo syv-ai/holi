@@ -593,6 +593,38 @@
   )
   recordMultiline('paragraph-div-empty-line-grapheme-column-line-and-word-motions-preserve-dom')
 
+  for (const mixed of [
+    { html: '<span>one<br></span>two', inline: true },
+    { html: '<p>one</p><span></span><p>two</p>', inline: false },
+    { html: 'one<br><p>two</p>', inline: false },
+  ]) {
+    await setupMultiline(
+      mixed.html,
+      '[h.firstChild.nodeType===3?h.firstChild:h.firstChild.firstChild,1]',
+    )
+    await trustedPress(view, 'Escape')
+    await badge('normal')
+    await trustedPress(view, 'j')
+    assert.deepEqual(
+      await field(
+        `(() => {const h=document.querySelector('${multiline}'),s=getSelection();return {target:s.anchorNode===(h.lastChild.nodeType===3?h.lastChild:h.lastChild.firstChild),offset:s.anchorOffset}})()`,
+      ),
+      { target: true, offset: 1 },
+    )
+    await trustedPress(view, 'k')
+    assert.equal(await field('getSelection().anchorOffset'), 1)
+    if (mixed.html.startsWith('<p>')) {
+      await field(
+        `(() => {const h=document.querySelector('${multiline}'),r=document.createRange();r.setStart(h,1);r.collapse(true);getSelection().removeAllRanges();getSelection().addRange(r)})()`,
+      )
+      await trustedPress(view, '0')
+      await trustedPress(view, 'j')
+      await caretLine(2, 0)
+    }
+    assert.equal(await field(`document.querySelector('${multiline}').innerHTML`), mixed.html)
+  }
+  recordMultiline('inline-nested-br-mixed-empty-wrappers-and-element-offsets')
+
   // Compare exact native edit results with Vim disabled, rather than inventing
   // Blink's insertion affinity, paragraph splitting or edit-history semantics.
   const scenarios = [

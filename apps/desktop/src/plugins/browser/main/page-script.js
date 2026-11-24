@@ -514,17 +514,21 @@
     const point = (node, offset) => ({ node, offset })
     const isBlock = (node) =>
       node.nodeType === Node.ELEMENT_NODE && ['P', 'DIV'].includes(node.tagName)
-    const walk = (node) => {
+    const hasContent = (node) =>
+      node.nodeType === Node.TEXT_NODE
+        ? node.length > 0
+        : node.nodeName === 'BR' || [...node.childNodes].some(hasContent)
+    const walk = (node, terminal = true) => {
       if (node.nodeType === Node.TEXT_NODE) {
         const start = value.length
         const indices = []
         for (let i = 0; i <= node.length; i++) {
           indices.push(start + i)
-          carets[start + i] = point(node, i)
+          if (node.length || !carets[start + i]) carets[start + i] = point(node, i)
         }
         offsets.set(node, indices)
         value += node.data
-        return
+        return node.length ? false : null
       }
       const children = [...node.childNodes]
       const indices = []
@@ -532,10 +536,14 @@
         node === host &&
         children.some(isBlock) &&
         children.every(
-          (child) => isBlock(child) || (child.nodeType === Node.TEXT_NODE && !child.data.trim()),
+          (child) =>
+            isBlock(child) ||
+            !hasContent(child) ||
+            (child.nodeType === Node.TEXT_NODE && !child.data.trim()),
         )
       let seenLine = false
       let afterBlock = false
+      let placeholderTail = false
       children.forEach((child, i) => {
         if (blocksOnly && child.nodeType === Node.TEXT_NODE) {
           offsets.set(child, Array(child.length + 1).fill(value.length))
@@ -543,24 +551,41 @@
           return
         }
         const block = node === host && isBlock(child)
-        if (node === host && ((block && seenLine) || (!block && afterBlock))) value += '\n'
+        const content = hasContent(child)
+        if (node === host && (block || content) && ((block && seenLine) || (!block && afterBlock)))
+          value += '\n'
         indices[i] = value.length
+        const following = children
+          .slice(i + 1)
+          .find((next) => hasContent(next) || (node === host && isBlock(next)))
+        const childTerminal =
+          block || (terminal && (!following || (node === host && isBlock(following))))
         if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'BR') {
           carets[value.length] = point(node, i)
           offsets.set(child, [value.length])
-          if (i !== children.length - 1) {
+          if (!childTerminal) {
             value += '\n'
             carets[value.length] = point(node, i + 1)
           }
-        } else walk(child)
-        seenLine = true
-        afterBlock = block
+          placeholderTail = childTerminal
+        } else {
+          const tail = walk(child, childTerminal)
+          if (tail !== null) placeholderTail = tail
+        }
+        if (block || content) {
+          seenLine = true
+          afterBlock = block
+        }
       })
       indices[children.length] = value.length
       offsets.set(node, indices)
-      if ((node !== host || !afterBlock) && children.at(-1)?.nodeName !== 'BR')
+      if (!hasContent(node)) {
+        carets[value.length] ??= point(node, 0)
+        return null
+      }
+      if (!placeholderTail && (node !== host || !afterBlock))
         carets[value.length] = point(node, children.length)
-      if (!children.length) carets[value.length] = point(node, 0)
+      return placeholderTail
     }
     walk(host)
     return { value, carets, offsets }
