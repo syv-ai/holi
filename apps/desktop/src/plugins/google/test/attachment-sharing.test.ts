@@ -102,14 +102,13 @@ describe('ensureGuestViewers', () => {
     expect(notifications.sort()).toEqual(['one@example.com', 'two@example.com'])
   })
 
-  it('blocks another account and guest after a lost POST until a read confirms the pending guest', async () => {
+  it('blocks other grants after a lost POST even when an independent grant is visible', async () => {
     const firstGuest = 'first@example.com'
     const secondGuest = 'second@example.com'
     const notified: string[] = []
     const permissions: object[] = []
     const deadline = new AbortController()
     const fileIds = ['late-write']
-    let commit: (() => void) | undefined
     let durableAtDispatch: string | null = null
     let lostResponse = true
     const handler = async (_url: URL, req: RequestInit) => {
@@ -118,17 +117,11 @@ describe('ensureGuestViewers', () => {
       const id = grant.emailAddress as string
       notified.push(id)
       if (lostResponse) {
-        // Drive can still commit after the client quits waiting. Keep it
-        // pending while the other account reads the (still empty) ACL.
+        // The client stops waiting, but this POST never returns a verdict.
         lostResponse = false
-        durableAtDispatch = await createPermissionReceipts(userData).read(fileIds[0]!)
+        durableAtDispatch = (await createPermissionReceipts(userData).read(fileIds[0]!)).pending
         deadline.abort(new DOMException('Expired', 'TimeoutError'))
-        return new Promise<Response>((resolve) => {
-          commit = () => {
-            permissions.push({ ...grant, id })
-            resolve(ok({ id }))
-          }
-        })
+        return new Promise<Response>(() => {})
       }
       permissions.push({ ...grant, id })
       return ok({ id })
@@ -152,12 +145,17 @@ describe('ensureGuestViewers', () => {
     )
     expect(notified).toEqual([firstGuest])
 
-    commit!()
+    permissions.push({ id: 'independent', type: 'user', emailAddress: firstGuest, role: 'writer' })
     await expect(check()).resolves.toMatchObject({ sharing: [{ status: 'already-accessible' }] })
-    await expect(ensureGuestViewers(other, fileIds, [secondGuest], share())).resolves.toMatchObject(
-      { sharing: [{ guest: secondGuest, status: 'granted' }] },
-    )
-    expect(notified).toEqual([firstGuest, secondGuest])
+    await expect(
+      ensureGuestViewers(other, fileIds, [firstGuest, secondGuest], share()),
+    ).resolves.toMatchObject({
+      sharing: [
+        { guest: firstGuest, status: 'already-accessible' },
+        { guest: secondGuest, status: 'failed' },
+      ],
+    })
+    expect(notified).toEqual([firstGuest])
   })
 
   it('does not send a grant if it cannot first save a receipt', async () => {

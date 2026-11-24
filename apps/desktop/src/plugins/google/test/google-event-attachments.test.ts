@@ -302,6 +302,8 @@ it('refuses a submitted shortcut without changing the event or creating permissi
 
 it('does not replay an unverified permission and checks the current attachment and access without writing', async () => {
   const guest = 'verify@example.com'
+  const newGuest = 'not-shared@example.com'
+  const newGrant = { id: 'new-guest', type: 'user', role: 'reader', emailAddress: newGuest }
   let event = { ...solo, attendees: [{ email: guest }] }
   const notifications: string[] = []
   let patches = 0
@@ -317,14 +319,18 @@ it('does not replay an unverified permission and checks the current attachment a
     }
     if (url.pathname.endsWith('/permissions')) {
       if (req.method === 'POST') {
-        notifications.push(JSON.parse(String(req.body)).emailAddress)
+        const recipient = JSON.parse(String(req.body)).emailAddress as string
+        notifications.push(recipient)
         // A write response does not establish that Drive's ACL has this guest.
-        return json({ id: 'not-yet-visible' })
+        return json({ id: recipient === guest ? 'not-yet-visible' : newGrant.id })
       }
       return json({
-        permissions: permissionVisible
-          ? [{ id: 'not-yet-visible', type: 'user', role: 'reader', emailAddress: guest }]
-          : [],
+        permissions: [
+          ...(permissionVisible
+            ? [{ id: 'not-yet-visible', type: 'user', role: 'reader', emailAddress: guest }]
+            : []),
+          ...(notifications.includes(newGuest) ? [newGrant] : []),
+        ],
       })
     }
     return json(file('uncertain'))
@@ -338,7 +344,6 @@ it('does not replay an unverified permission and checks the current attachment a
       sharing: [{ guest, status: 'unknown' }],
     })
   }
-  const newGuest = 'not-shared@example.com'
   event = { ...event, attendees: [{ email: guest }, { email: newGuest }] }
   await expect(check()).resolves.toMatchObject({
     attachmentStatus: 'attached',
@@ -346,6 +351,15 @@ it('does not replay an unverified permission and checks the current attachment a
     sharing: [
       { guest, status: 'unknown' },
       { guest: newGuest, status: 'failed' },
+    ],
+  })
+  expect(notifications).toEqual([guest])
+  // Our definite 2xx settles the file-wide barrier, but does not allow a
+  // duplicate notification to the guest whose ACL entry is still absent.
+  await expect(submit()).resolves.toMatchObject({
+    sharing: [
+      { guest, status: 'unknown' },
+      { guest: newGuest, status: 'granted' },
     ],
   })
   event = { ...event, attendees: [{ email: guest }] }
@@ -363,7 +377,7 @@ it('does not replay an unverified permission and checks the current attachment a
     sharing: [],
   })
   expect(patches).toBe(1)
-  expect(notifications).toEqual([guest])
+  expect(notifications).toEqual([guest, newGuest])
 })
 
 it.each([
@@ -423,7 +437,8 @@ it('preserves verified access and an uncertain POST at the deadline without atte
   await expect(
     attachEventFiles(api, target, ['deadline'], validate, { receipts, signal: deadline.signal }),
   ).resolves.toMatchObject({
-    attachmentStatus: 'attached',
+    attachmentStatus: 'unknown',
+    attachments: [],
     sharingComplete: false,
     sharing: [
       { guest: guests[0], status: 'granted' },
