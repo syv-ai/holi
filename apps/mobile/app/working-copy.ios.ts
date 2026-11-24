@@ -1,5 +1,5 @@
 import type { NativeWorkingCopy } from './working-copy'
-import { legacyStagingDirectory, stagingDirectory } from './storage-staging'
+import { recoveryArtifactNames, recoveryDirectories } from './working-copy-recovery'
 import { nativeIO } from './native-posix.ios'
 import { knownFolders } from '@nativescript/core'
 
@@ -39,32 +39,35 @@ function flag(value: unknown): boolean {
 async function hasPendingRecovery(root: string): Promise<boolean> {
   const library = nativeIO.canonical(knownFolders.ios.library().path)
   const canonicalRoot = nativeIO.canonical(root)
-  const current = stagingDirectory(library, canonicalRoot)
-  const legacy = legacyStagingDirectory(library, canonicalRoot)
+  const [current, legacy] = recoveryDirectories(library, canonicalRoot)
+  const found: string[][] = []
   for (const directory of [current, legacy]) {
     const kind = nativeIO.kind(directory)
-    if (kind === null) continue
+    if (kind === null) { found.push([]); continue }
     if (kind !== 'directory') throw new Error('Unsafe working-copy recovery namespace')
     if (nativeIO.canonical(directory) !== directory) throw new Error('Unsafe working-copy recovery namespace')
-    for (const name of nativeIO.names(directory)) {
+    const names = nativeIO.names(directory)
+    const artifacts = directory === legacy ? names.filter((name) => name !== 'artifacts') : names
+    for (const name of artifacts) {
       if (name === '.' || name === '..' || name.includes('/')) throw new Error('Unsafe recovery entry')
       const entry = `${directory}/${name}`
       const entryKind = nativeIO.kind(entry)
-      if (entryKind !== 'file' || nativeIO.canonical(entry) !== entry) throw new Error('Unsafe recovery entry')
-      if (name.endsWith('.journal')) return true
+      if (entryKind !== 'regular' || nativeIO.canonical(entry) !== entry) throw new Error('Unsafe recovery entry')
     }
+    found.push(artifacts)
   }
-  return false
+  return recoveryArtifactNames(found[0] ?? [], found[1] ?? []).length > 0
 }
 
 function statusRows(rows: Record<string, unknown>[]) {
   return rows.map((row) => ({
-    path: text(row.path),
+    path: row.path === NSNull.null() ? '' : text(row.path),
     staged: flag(row.staged),
     worktree: flag(row.worktree),
     conflict: flag(row.conflict),
   }))
 }
+
 
 /** iOS implementation of the semantic working-copy interface. */
 export const nativeWorkingCopy: NativeWorkingCopy = {
