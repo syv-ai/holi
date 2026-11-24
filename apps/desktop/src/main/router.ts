@@ -1217,7 +1217,8 @@ export function createRouter(deps: RouterDeps) {
       Promise.resolve(false),
     createResourceOwner: (isCurrent) => deps.mdxCompiler!.createOwner(isCurrent),
     retireResourceOwner: (owner) => deps.mdxCompiler!.retireOwner(owner),
-    compile: (owner, source, signal) => deps.mdxCompiler!.compile(owner, source, signal),
+    inspect: (owner, source, signal, format) =>
+      deps.mdxCompiler!.inspect(owner, source, signal, format),
   })
   function beginMdxTrustTransition(): () => void {
     mdxTrustTransition += 1
