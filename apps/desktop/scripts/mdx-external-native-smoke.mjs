@@ -383,8 +383,7 @@ export async function runExternalNativeAcceptance(
       )
       await refuse(
         page.evaluate('window.__mdxStreaming'),
-        'The native compile streaming over HTTPS returned stale diagnostics',
-        cancelled,
+        'The native compile streaming over HTTPS returned diagnostics instead of rejecting',
       )
       streamEvidence.compileRejected = true
     } finally {
