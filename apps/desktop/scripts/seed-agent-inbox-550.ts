@@ -1,0 +1,84 @@
+import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { VaultRegistry } from '../src/main/vault/registry'
+
+const remotes = ['holi-550-fixture/vault-a', 'holi-550-fixture/vault-b'] as const
+
+async function main(): Promise<void> {
+  const argument = process.argv[2]
+  if (!argument) throw new Error('Usage: seed-agent-inbox-550 <existing-owned-runtime-directory>')
+  const runtime = resolve(argument)
+  const stat = await lstat(runtime)
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid())
+    throw new Error(`Runtime must be an existing directory owned by uid ${process.getuid()}: ${runtime}`)
+  if ((await realpath(runtime)) !== runtime)
+    throw new Error(`Runtime path must be canonical: ${runtime}`)
+
+  const home = join(runtime, 'home')
+  const vaultRoot = join(runtime, 'vaults')
+  const remoteRoot = join(runtime, 'remotes')
+  const userData = join(runtime, 'user-data')
+  for (const directory of [home, vaultRoot, remoteRoot, userData]) await mkdir(directory, { recursive: true })
+
+  const gitConfig = join(home, '.gitconfig')
+  const rewrite = pathToFileURL(`${remoteRoot}/`).href
+  await writeFile(
+    gitConfig,
+    `[url "${rewrite}"]\n\tinsteadOf = https://github.com/holi-550-fixture/\n`,
+    { flag: 'wx' },
+  )
+  const env = {
+    HOME: home,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: gitConfig,
+    GIT_AUTHOR_NAME: 'Holi 550 Fixture',
+    GIT_AUTHOR_EMAIL: 'holi-550-fixture@example.invalid',
+    GIT_COMMITTER_NAME: 'Holi 550 Fixture',
+    GIT_COMMITTER_EMAIL: 'holi-550-fixture@example.invalid',
+    PATH: process.env.PATH ?? '',
+  }
+
+  const runGit = async (cwd: string, ...args: string[]) => {
+    const { spawnSync } = await import('node:child_process')
+    const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' })
+    if (result.error || result.status !== 0)
+      throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.error?.message || result.status}`)
+  }
+
+  const registry = new VaultRegistry(join(userData, 'vaults.json'))
+  const now = Date.now()
+  for (const [index, remote] of remotes.entries()) {
+    const [owner, repo] = remote.split('/') as [string, string]
+    const clone = join(vaultRoot, owner, repo)
+    const bare = join(remoteRoot, `${repo}.git`)
+    for (const target of [clone, bare]) {
+      try {
+        await lstat(target)
+        throw new Error(`Refusing to overwrite existing fixture path: ${target}`)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    await mkdir(dirname(clone), { recursive: true })
+    await mkdir(dirname(bare), { recursive: true })
+    await runGit(runtime, 'init', '--bare', bare)
+    const canonical = `https://github.com/${remote}.git`
+    await runGit(runtime, 'clone', canonical, clone)
+    await writeFile(join(clone, 'Welcome.md'), `# Welcome to ${repo}\n\nThis is an owned Holi 550 fixture vault.\n`)
+    await runGit(clone, 'add', 'Welcome.md')
+    await runGit(clone, 'commit', '-m', 'Add welcome note')
+    await runGit(clone, 'push', '-u', 'origin', 'HEAD')
+    await registry.add({
+      remote,
+      path: clone,
+      name: repo,
+      lastOpenedAt: new Date(now + index).toISOString(),
+    })
+  }
+}
+
+main().catch((error: unknown) => {
+  console.error(`Could not seed agent inbox fixture. Partial owned paths remain under runtime: ${error instanceof Error ? error.message : String(error)}`)
+  process.exitCode = 1
+})
