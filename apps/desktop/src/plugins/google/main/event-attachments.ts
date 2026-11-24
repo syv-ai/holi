@@ -285,6 +285,9 @@ export async function attachEventFiles(
         { ifMatch: current.event.etag, signal },
       )
       calendarWriteStatus = 'confirmed'
+      for (const file of newFiles) {
+        if (!alreadyAttached.has(file.id)) grantIds.add(file.id)
+      }
     } catch (error) {
       if (error instanceof GoogleApiError && error.status === 412) {
         // Google rejected the stale precondition. Only this known refusal
@@ -298,9 +301,6 @@ export async function attachEventFiles(
       }
       if (!isUncertainGoogleWrite(error)) return attachmentUpdateRefused(error, current.event)
       calendarWriteStatus = 'unknown'
-    }
-    for (const file of newFiles) {
-      if (!alreadyAttached.has(file.id)) grantIds.add(file.id)
     }
     // Verify the current event before sharing. A read can show the files are
     // present, but cannot attribute them to a PATCH whose response was lost.
@@ -454,7 +454,7 @@ async function reconcileGuestAccess(
     signal.aborted ? TIMEOUT_MESSAGE : undefined,
     reason ? `Guest access is incomplete. ${reason}` : undefined,
     incompleteAccess.some(({ fileId }) => readOnlyFileIds?.has(fileId))
-      ? 'Holi only checks guest access for files that were already attached.'
+      ? 'Holi checks guest access without granting it when it cannot confirm that it attached the file in this update.'
       : undefined,
     changed && !reason
       ? 'The attachments or guest list changed. Some access may not have been checked.'

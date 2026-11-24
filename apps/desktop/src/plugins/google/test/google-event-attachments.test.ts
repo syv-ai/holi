@@ -317,57 +317,64 @@ describe('Calendar attachments over Google transport', () => {
     expect(writes).toEqual([])
   })
 
-  it('reads back a lost PATCH and reports partial attachment and sharing outcomes without replay', async () => {
-    let event = {
-      ...solo,
-      attendees: [{ email: 'denied@example.com' }, { email: 'uncertain@example.com' }],
-    }
-    const patches: unknown[] = []
-    const permissionCreates: string[] = []
-    const api = transport((url, req) => {
-      if (calendarList(url)) return json({ accessRole: 'owner' })
-      if (calendarEvent(url)) {
-        if (req.method === 'PATCH') {
-          patches.push(req.body)
-          event = { ...event, etag: '"1003"', attachments: [original, attachment('found')] }
-          throw new Error('connection lost')
+  it.each([
+    { reply: '412 response to a stale write', concurrent: true },
+    { reply: 'success response to our own write', concurrent: false },
+  ])(
+    'checks attachment presence and access without writing again after losing the $reply',
+    async ({ concurrent }) => {
+      const existing = 'existing@example.com'
+      const withoutAccess = 'without-access@example.com'
+      const selected = concurrent ? ['found', 'missing'] : ['found']
+      let event = { ...solo, attendees: [{ email: existing }, { email: withoutAccess }] }
+      const patchTags: Array<string | null> = []
+      const permissionCreates: string[] = []
+      const api = transport((url, req) => {
+        if (calendarList(url)) return json({ accessRole: 'owner' })
+        if (calendarEvent(url)) {
+          if (req.method !== 'PATCH') return json(event)
+          const ifMatch = new Headers(req.headers).get('If-Match')
+          patchTags.push(ifMatch)
+          if (concurrent && patchTags.length === 1) {
+            event = { ...event, etag: '"1002"', attachments: [original, attachment('found')] }
+          }
+          const stale = ifMatch !== null && ifMatch !== event.etag
+          if (!stale) event = { ...event, ...patched(event, url, req) }
+          const reply = stale
+            ? json({ error: { code: 412, message: 'Precondition Failed' } }, 412)
+            : json(event)
+          if (patchTags.length === 1) throw new Error('connection lost before receiving the reply')
+          return reply
         }
-        return json(event)
-      }
-      if (url.pathname.endsWith('/permissions') && req.method === 'GET')
-        return json({ permissions: [] })
-      if (url.pathname.endsWith('/permissions') && req.method === 'POST') {
-        const guest = JSON.parse(String(req.body)).emailAddress as string
-        permissionCreates.push(`${url.pathname}:${guest}`)
-        if (guest === 'denied@example.com')
-          return json({ error: { message: 'private details' } }, 403)
-        throw new Error('connection lost')
-      }
-      return json(file(url.pathname.split('/').at(-1)!))
-    })
-    const result = await attachEventFiles(api, target, ['found', 'missing'], validate, { receipts })
-    expect(result).toMatchObject({
-      attachmentStatus: 'unknown',
-      calendarWriteStatus: 'unknown',
-      attachmentsVerified: true,
-      attachments: [original, attachment('found')],
-      sharing: [
-        {
-          fileId: 'found',
-          guest: 'denied@example.com',
-          status: 'failed',
-          message: expect.stringMatching(/share/i),
-        },
-        { fileId: 'found', guest: 'uncertain@example.com', status: 'unknown' },
-      ],
-    })
-    expect(JSON.stringify(result)).not.toContain('private details')
-    expect(patches).toHaveLength(1)
-    expect(permissionCreates).toEqual([
-      '/drive/v3/files/found/permissions:denied@example.com',
-      '/drive/v3/files/found/permissions:uncertain@example.com',
-    ])
-  })
+        if (req.method === 'POST' && url.pathname.endsWith('/permissions')) {
+          permissionCreates.push(url.pathname)
+          return json({ error: { message: 'Permission denied' } }, 403)
+        }
+        if (req.method === 'GET' && url.pathname === '/drive/v3/files/found/permissions') {
+          return json({
+            permissions: [{ id: 'existing', type: 'user', emailAddress: existing, role: 'reader' }],
+          })
+        }
+        const id = selected.find((id) => url.pathname === `/drive/v3/files/${id}`)
+        if (id && !req.method) return json(file(id))
+        throw new Error('Unexpected Google request')
+      })
+      const result = await attachEventFiles(api, target, selected, validate, { receipts })
+      expect(result).toMatchObject({
+        attachmentStatus: concurrent ? 'unknown' : 'attached',
+        calendarWriteStatus: 'unknown',
+        attachmentsVerified: true,
+        attachments: [original, attachment('found')],
+        sharingComplete: false,
+        sharing: [
+          { fileId: 'found', guest: existing, status: 'already-accessible' },
+          { fileId: 'found', guest: withoutAccess, status: 'failed' },
+        ],
+      })
+      expect(patchTags).toEqual([solo.etag])
+      expect(permissionCreates).toEqual([])
+    },
+  )
 })
 
 it('quotes the Drive search term, preserves pagination, and excludes unusable results', async () => {
