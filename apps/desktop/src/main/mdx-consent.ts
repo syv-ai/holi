@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { renameSync } from 'node:fs'
-import { mkdir, open, readFile, rm } from 'node:fs/promises'
+import { constants, renameSync } from 'node:fs'
+import { lstat, open, readFile, rm, type FileHandle } from 'node:fs/promises'
 import { dirname, posix, win32 } from 'node:path'
+import { promisify, TextDecoder } from 'node:util'
 import { isRemote, MDX_RESOURCE_PURPOSE } from '@holi/shared'
 import { isMdxExternalOrigin } from './mdx-external-policy'
 import { canonicalGitHubRemote } from './mdx-trust'
@@ -40,6 +42,48 @@ export interface MdxConsentStore {
 
 type State = { version: 1; grants: MdxConsentScope[] }
 type Revocation = { scope: MdxConsentScope; write?: Promise<void> }
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+
+// libuv uses MOVEFILE_REPLACE_EXISTING alone; syncing a regular file on Windows
+// does not confirm its new name, and Node cannot open and flush a directory there.
+// Use the system's write-through move, with no copy/delete fallback. Pass the
+// paths as data, never as PowerShell source.
+async function replaceOnWindows(source: string, target: string) {
+  const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
+  if (!win32.isAbsolute(systemRoot)) throw new Error('Cannot locate system PowerShell')
+  const shell = win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -Namespace Holi -Name ConsentMove -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", ExactSpelling = true,
+    CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+public static extern bool MoveFileExW(string source, string target, uint flags);
+'@
+# MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+if (![Holi.ConsentMove]::MoveFileExW($env:HOLI_CONSENT_SOURCE, $env:HOLI_CONSENT_TARGET, 0x9)) {
+  throw [System.ComponentModel.Win32Exception]::new([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+}
+`
+  await promisify(execFile)(
+    shell,
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(script, 'utf16le').toString('base64'),
+    ],
+    {
+      cwd: win32.dirname(shell),
+      windowsHide: true,
+      env: {
+        ...process.env,
+        HOLI_CONSENT_SOURCE: win32.toNamespacedPath(source),
+        HOLI_CONSENT_TARGET: win32.toNamespacedPath(target),
+      },
+    },
+  )
+}
 
 function validScope(value: unknown): value is MdxConsentScope {
   if (!value || typeof value !== 'object') return false
@@ -108,9 +152,9 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
     return result
   }
   const read = async (): Promise<State> => {
-    let raw: string
+    let raw: Buffer
     try {
-      raw = await readFile(file, 'utf8')
+      raw = await readFile(file)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT')
         return { version: VERSION, grants: [] }
@@ -118,7 +162,7 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
     }
     let value: unknown
     try {
-      value = JSON.parse(raw)
+      value = JSON.parse(utf8.decode(raw))
     } catch {
       throw new Error('MDX consent state is corrupt')
     }
@@ -133,26 +177,84 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
     if (!grants.every(validScope)) throw new Error('MDX consent state is corrupt')
     return { version: VERSION, grants }
   }
-  const persist = async (state: State, publication?: { before(): void; after(): void }) => {
-    await mkdir(dirname(file), { recursive: true })
+  const persist = async (
+    state: State,
+    approval?: { previous?: State; check(): void; saved(): void; unconfirmed(): void },
+  ) => {
     const temp = `${file}.${randomUUID()}.tmp`
-    const handle = await open(temp, 'wx', 0o600)
-    try {
-      try {
-        await handle.writeFile(JSON.stringify(state))
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-      // A queued asynchronous rename could run after ownership expires.
-      publication?.before()
-      renameSync(temp, file)
-    } catch (error) {
-      await rm(temp, { force: true }).catch(() => undefined)
-      throw error
+    const previous = approval?.previous
+    const rollback = previous && `${temp}.rollback`
+    const opened: FileHandle[] = []
+    const staged: string[] = []
+    const stage = async (path: string, value: State) => {
+      const handle = await open(path, 'wx', 0o600)
+      opened.push(handle)
+      staged.push(path)
+      await handle.writeFile(JSON.stringify(value))
+      await handle.sync()
+      return handle
     }
-    // Notify without yielding after the last ownership check and the write.
-    publication?.after()
+    try {
+      // The profile directory belongs to Electron and must already exist. A
+      // flush here cannot make an unsynced new ancestor directory durable.
+      const directory =
+        process.platform === 'win32' ? undefined : await open(dirname(file), constants.O_DIRECTORY)
+      if (directory) opened.push(directory)
+      const candidate = await stage(temp, state)
+      if (rollback && previous) await stage(rollback, previous)
+      let mayHaveReplaced = false
+      const replace = async (path: string) => {
+        if (directory) {
+          renameSync(path, file)
+          mayHaveReplaced = true
+          await directory.sync()
+        } else {
+          // A failed helper can leave the move's result unknown.
+          mayHaveReplaced = true
+          await replaceOnWindows(path, file)
+        }
+      }
+      approval?.check()
+      try {
+        await replace(temp)
+        approval?.check()
+      } catch (error) {
+        if (rollback && mayHaveReplaced) {
+          // The same-volume Windows move cannot have installed a copy if its
+          // original name is still present (e.g. PowerShell was unavailable).
+          if (
+            !directory &&
+            (await lstat(temp).then(
+              () => true,
+              () => false,
+            ))
+          )
+            throw error
+          try {
+            await replace(rollback)
+          } catch (restoreError) {
+            // Even if the directory cannot be committed, invalidate the failed
+            // candidate itself so a reader cannot pick it up after a reopen.
+            approval?.unconfirmed()
+            try {
+              await candidate.truncate(0)
+              await candidate.sync()
+            } catch (invalidateError) {
+              throw new AggregateError(
+                [error, restoreError, invalidateError],
+                'MDX approval rollback failed',
+              )
+            }
+          }
+        }
+        throw error
+      }
+      // Publish within the queue, synchronously with the final ownership check.
+      approval?.saved()
+    } finally {
+      for (const handle of opened) await handle.close().catch(() => undefined)
+      for (const path of staged) await rm(path, { force: true }).catch(() => undefined)
+    }
   }
   const saveRevocation = (id: string, revocation: Revocation): Promise<void> => {
     if (revocation.write) return revocation.write
@@ -219,14 +321,17 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
         assertCurrent()
         denied.add(id)
         const state = await read()
-        if (!state.grants.some((grant) => key(grant) === id)) {
-          state.grants.push({ origin, root, remote, accountId })
-        }
-        await persist(state, {
-          before: assertCurrent,
-          after() {
+        const approved = { origin, root, remote, accountId }
+        const isNew = !state.grants.some((grant) => key(grant) === id)
+        await persist(isNew ? { ...state, grants: [...state.grants, approved] } : state, {
+          previous: isNew ? state : undefined,
+          check: assertCurrent,
+          saved() {
             denied.delete(id)
-            for (const listener of approvalListeners) listener({ origin, root, remote, accountId })
+            for (const listener of approvalListeners) listener({ ...approved })
+          },
+          unconfirmed() {
+            if (!revocations.has(id)) revocations.set(id, { scope: approved })
           },
         })
       })

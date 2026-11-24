@@ -1,5 +1,6 @@
 import { Resolver } from 'node:dns/promises'
 import type { ServerResponse } from 'node:http'
+import os, { type NetworkInterfaceInfo } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchMdxExternalData, MdxExternalDataError } from '../src/main/mdx-external-data'
 
@@ -17,8 +18,31 @@ const redirectTo = (res: ServerResponse, location: string) => {
   res.end('<p>Redirecting</p>')
 }
 
+function interfaceAddress(address: string): NetworkInterfaceInfo {
+  const adapter = { address, mac: '02:00:00:00:00:01', internal: false }
+  return address.includes(':')
+    ? {
+        ...adapter,
+        family: 'IPv6',
+        netmask: 'ffff:ffff:ffff:ffff::',
+        cidr: `${address}/64`,
+        scopeid: 0,
+      }
+    : { ...adapter, family: 'IPv4', netmask: '255.255.255.0', cidr: `${address}/24` }
+}
+
 let network: Awaited<ReturnType<typeof createMdxExternalNetworkFixture>>
 beforeEach(async () => {
+  vi.spyOn(os, 'networkInterfaces').mockReturnValue({
+    lo0: [
+      {
+        ...interfaceAddress('127.0.0.1'),
+        internal: true,
+        netmask: '255.0.0.0',
+        cidr: '127.0.0.1/8',
+      },
+    ],
+  })
   network = await createMdxExternalNetworkFixture()
 })
 afterEach(async () => {
@@ -55,10 +79,16 @@ function stalledDns() {
   return { started, pending }
 }
 
+function expectNoDial() {
+  expect(network.dials).toEqual([])
+  expect(network.names).toEqual([])
+  expect(network.requests).toEqual([])
+}
+
 function expectNoContact() {
   expect(network.dns4).not.toHaveBeenCalled()
   expect(network.dns6).not.toHaveBeenCalled()
-  expect(network.dials).toEqual([])
+  expectNoDial()
 }
 
 describe('fetchMdxExternalData', () => {
@@ -118,6 +148,53 @@ describe('fetchMdxExternalData', () => {
     expect(network.dials).toEqual([])
   })
 
+  it.each([
+    { name: 'IPv4', assigned: v4, a: [v4], aaaa: [v6] },
+    {
+      name: 'IPv6 in another spelling, after an eligible IPv4 answer',
+      assigned: '2606:4700::abcd',
+      a: [v4],
+      aaaa: ['2606:4700:0000:0000:0000:0000:0000:ABCD'],
+    },
+    {
+      name: 'IPv4 with an IPv4-mapped interface alias, after an eligible IPv4 answer',
+      assigned: '::ffff:8.8.4.4',
+      a: [v4, '8.8.4.4'],
+      aaaa: [v6],
+    },
+  ])(
+    'rejects machine-assigned public $name without contacting TLS',
+    async ({ assigned, a, aaaa }) => {
+      vi.mocked(os.networkInterfaces).mockReturnValue({ en0: [interfaceAddress(assigned)] })
+      network.dns4.mockResolvedValue(a)
+      network.dns6.mockResolvedValue(aaaa)
+      await expect(fetchText()).rejects.toMatchObject({ code: 'unsafe-address' })
+      expectNoDial()
+    },
+  )
+
+  it('rechecks local assignments after resolving a redirect', async () => {
+    network.routes.respond = (_, res) => redirectTo(res, 'https://two.example/module.js')
+    network.dns4.mockImplementation(async (hostname) => {
+      if (hostname === 'two.example') {
+        vi.mocked(os.networkInterfaces).mockReturnValue({ en0: [interfaceAddress(v4)] })
+      }
+      return [v4]
+    })
+    await expect(fetchText()).rejects.toMatchObject({ code: 'unsafe-address' })
+    expect(network.dials).toEqual([v4])
+    expect(network.names).toEqual(['one.example'])
+    expect(network.requests.map((req) => req.headers.host)).toEqual(['one.example'])
+  })
+
+  it('does not dial if interface enumeration fails', async () => {
+    vi.mocked(os.networkInterfaces).mockImplementation(() => {
+      throw new Error('interface details')
+    })
+    await expect(fetchText()).rejects.toMatchObject({ code: 'network' })
+    expectNoDial()
+  })
+
   it('makes no socket contact if access has been revoked while the lookup runs', async () => {
     let allowed = true
     network.dns6.mockImplementation(async () => {
@@ -163,6 +240,9 @@ describe('fetchMdxExternalData', () => {
   })
 
   it('follows authorized redirects over pinned TLS and returns the relative-import base', async () => {
+    vi.mocked(os.networkInterfaces).mockReturnValue({
+      en0: [interfaceAddress('93.184.216.35'), interfaceAddress('2606:2800:220:1::1')],
+    })
     network.dns4.mockImplementation(async (host) => {
       if (host === 'one.example') return [v4]
       throw { code: 'ENODATA' }

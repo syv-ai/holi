@@ -178,8 +178,8 @@ it('closes a streaming HTTPS response on revoke and retains the same blocked gra
   }
 })
 
-it('keeps both origins revocable while the saved grant list is corrupt, without fetching', async () => {
-  const { mdx, acquire, consentFile, root } = await resourceRig(true)
+it('keeps both origins revocable after saving an MDX document while the grant list is corrupt', async () => {
+  const { caller, mdx, acquire, consentFile, root } = await resourceRig(true)
   const owner = await acquire()
   const scope = { root: await realpath(root), remote: REMOTE, accountId: '42' }
   const first = { ...scope, origin: new URL(entry).origin }
@@ -191,8 +191,10 @@ it('keeps both origins revocable while the saved grant list is corrupt, without 
   const dns4 = vi.spyOn(Resolver.prototype, 'resolve4').mockRejectedValue({ code: 'ENODATA' })
   const dns6 = vi.spyOn(Resolver.prototype, 'resolve6').mockRejectedValue({ code: 'ENODATA' })
   const source = `${externalSource}import '${second.origin}/lib.js'\n`
-  const revoke = (grant: { id: string }) =>
-    mdx.revokeExternalResource({ ...owner, grantId: grant.id })
+  type Lease = typeof owner
+  let replacement: Lease | undefined
+  const revoke = (lease: Lease, grant: { id: string }) =>
+    mdx.revokeExternalResource({ ...lease, grantId: grant.id })
   try {
     const initial = await mdx.externalResources(owner)
     expect(initial.listError).toBeUndefined()
@@ -200,32 +202,90 @@ it('keeps both origins revocable while the saved grant list is corrupt, without 
     expect([a?.origin, b?.origin]).toEqual([first.origin, second.origin])
 
     await writeFile(consentFile, '{')
-    await expect(revoke(a!)).rejects.toThrow(/revocation could not be saved/)
-    expect(await mdx.compile({ ...owner, generation: 1, source })).toHaveLength(2)
-    expect(dns4).not.toHaveBeenCalled()
-    expect(dns6).not.toHaveBeenCalled()
-    expect(await mdx.externalResources(owner)).toMatchObject({
+    await expect(revoke(owner, a!)).rejects.toThrow(/revocation could not be saved/)
+    await caller.notes.write({ remote: REMOTE, path: 'page.mdx', text: source })
+    await expect(mdx.externalResources(owner)).rejects.toThrow()
+    replacement = await acquire()
+
+    expect(await mdx.compile({ ...replacement, generation: 1, source })).toHaveLength(2)
+    const unreadable = await mdx.externalResources(replacement)
+    expect(unreadable).toMatchObject({
       listError: expect.any(String),
       pending: [],
-      approved: [{ ...a, revocationPending: true }, b],
+      approved: [{ origin: first.origin, revocationPending: true }, { origin: second.origin }],
     })
-    // The original ID is accepted while storage is down; only saving the removal fails.
-    await expect(revoke(b!)).rejects.toThrow(/revocation could not be saved/)
+    const [newA, newB] = unreadable.approved
+    const retiredIds = [a!.id, b!.id]
+    expect(retiredIds).not.toContain(newA!.id)
+    expect(retiredIds).not.toContain(newB!.id)
+    await expect(revoke(replacement, a!)).rejects.toThrow(/grant unavailable/)
+    await expect(revoke(replacement, b!)).rejects.toThrow(/grant unavailable/)
+    // B can be revoked now, even though only A had a captured removal at lease acquisition.
+    await expect(revoke(replacement, newB!)).rejects.toThrow(/revocation could not be saved/)
 
     await writeFile(consentFile, disk)
     expect(await stored.allows(first)).toBe(true)
     expect(await stored.allows(second)).toBe(true)
-    await expect(revoke(a!)).resolves.toEqual({ ok: true })
-    await expect(revoke(b!)).resolves.toEqual({ ok: true })
+    // Repair alone must not resume access to either origin, before either retry saves.
+    expect(await mdx.compile({ ...replacement, generation: 2, source })).toHaveLength(2)
+    expect(await mdx.externalResources(replacement)).toMatchObject({
+      pending: [],
+      approved: [newA, { ...newB, revocationPending: true }],
+    })
+    await expect(revoke(replacement, newA!)).resolves.toEqual({ ok: true })
+    await expect(revoke(replacement, newB!)).resolves.toEqual({ ok: true })
     expect(await stored.allows(first)).toBe(false)
     expect(await stored.allows(second)).toBe(false)
-    const repaired = await mdx.externalResources(owner)
+    expect(dns4).not.toHaveBeenCalled()
+    expect(dns6).not.toHaveBeenCalled()
+
+    // Saved removals retire known origins without waiting for another complete list.
+    const repairedDisk = await readFile(consentFile)
+    await writeFile(consentFile, '{')
+    expect(await mdx.externalResources(replacement)).toMatchObject({
+      listError: expect.any(String),
+      approved: [],
+    })
+    await writeFile(consentFile, repairedDisk)
+    const repaired = await mdx.externalResources(replacement)
     expect(repaired.listError).toBeUndefined()
     expect(repaired.approved).toEqual([])
   } finally {
+    if (replacement) await mdx.releaseDiagnosticsLease(replacement)
     await mdx.releaseDiagnosticsLease(owner)
     dns4.mockRestore()
     dns6.mockRestore()
+  }
+})
+
+it('does not resurrect an origin omitted by a complete grant read', async () => {
+  const { mdx, acquire, root, consentFile } = await resourceRig()
+  const scope = { root: await realpath(root), remote: REMOTE, accountId: '42' }
+  const grant = { ...scope, origin: new URL(entry).origin }
+  const stored = createMdxConsentStore(consentFile)
+  await stored.grant(grant)
+  const owner = await acquire()
+  try {
+    expect((await mdx.externalResources(owner)).approved).toMatchObject([{ origin: grant.origin }])
+    // Simulate an out-of-band repair that removes the grant without a router notification.
+    await stored.revoke(grant)
+    const complete = await mdx.externalResources(owner)
+    expect(complete.listError).toBeUndefined()
+    expect(complete.approved).toEqual([])
+  } finally {
+    await mdx.releaseDiagnosticsLease(owner)
+  }
+
+  await writeFile(consentFile, '{')
+  const replacement = await acquire()
+  try {
+    expect(await mdx.externalResources(replacement)).toMatchObject({
+      listError: expect.any(String),
+      approved: [],
+      pending: [],
+    })
+  } finally {
+    await mdx.releaseDiagnosticsLease(replacement)
   }
 })
 

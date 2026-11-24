@@ -2,8 +2,29 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
-import { afterEach, beforeEach, expect, it } from 'vitest'
-import { createMdxConsentStore } from '../src/main/mdx-consent'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { createMdxConsentStore, withMdxConsentQuit } from '../src/main/mdx-consent'
+
+const storage = vi.hoisted(() => ({
+  syncDirectory: undefined as ((sync: () => Promise<void>) => Promise<void>) | undefined,
+}))
+vi.mock('node:fs/promises', async (original) => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return {
+    ...fs,
+    async open(...args: Parameters<typeof fs.open>) {
+      const handle = await fs.open(...args)
+      if (storage.syncDirectory && (await handle.stat()).isDirectory()) {
+        const sync = handle.sync.bind(handle)
+        handle.sync = () => storage.syncDirectory?.(sync) ?? sync()
+      }
+      return handle
+    },
+  }
+})
+
+const refuseDirectoryFlush = () =>
+  Promise.reject(Object.assign(new Error('I/O error'), { code: 'EIO' }))
 
 let dir: string
 let file: string
@@ -19,6 +40,7 @@ beforeEach(async () => {
   }
 })
 afterEach(async () => {
+  storage.syncDirectory = undefined
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -96,6 +118,26 @@ it('denies missing, corrupt, and malformed state, even beside a valid entry', as
   }
   await expect(store.grant(scope)).rejects.toThrow()
   expect(saved).toEqual([])
+})
+
+it('denies every grant when one otherwise valid record contains malformed UTF-8', async () => {
+  const store = createMdxConsentStore(file)
+  const foreign = { ...scope, root: join(dir, 'bad-\ufffd-vault'), origin: 'https://cdn.example' }
+  const text = JSON.stringify({ version: 1, grants: [scope, foreign] })
+  await writeFile(file, text)
+  expect(await store.allows(scope)).toBe(true)
+  expect(await store.allows(foreign)).toBe(true)
+
+  // An invalid UTF-8 byte would silently turn back into the same legal path if
+  // readFile decoded the whole JSON document using replacement characters.
+  const [before, after] = text.split('\ufffd')
+  await writeFile(
+    file,
+    Buffer.concat([Buffer.from(before!), Buffer.from([0xff]), Buffer.from(after!)]),
+  )
+  expect(await store.allows(scope)).toBe(false)
+  expect(await store.allows(foreign)).toBe(false)
+  expect(await store.listGrants(scope)).toEqual({ complete: false, grants: [] })
 })
 
 it('allows canonical Windows drive and UNC paths but denies mixed files with malformed components', async () => {
@@ -184,6 +226,119 @@ it.skipIf(process.getuid === undefined || process.getuid() === 0)(
       grants: [{ origin: scope.origin }],
     })
     expect(await createMdxConsentStore(file).allows(revoked)).toBe(false)
+  },
+)
+
+it.skipIf(process.platform === 'win32')(
+  'keeps a revocation pending until the replacement is durable, even after the grant disappears from disk',
+  async () => {
+    const store = createMdxConsentStore(file)
+    await store.grant(scope)
+    const saved: (typeof scope)[] = []
+    store.onRevocationSaved((removed) => saved.push(removed))
+
+    storage.syncDirectory = refuseDirectoryFlush
+    await expect(store.revoke(scope)).rejects.toThrow()
+    expect(await createMdxConsentStore(file).listGrants(scope)).toEqual({
+      complete: true,
+      grants: [],
+    })
+    expect(await store.allows(scope)).toBe(false)
+    expect(await store.listGrants(scope)).toEqual({
+      complete: true,
+      grants: [{ origin: scope.origin, revocationPending: true }],
+    })
+    await expect(store.grant(scope)).rejects.toThrow()
+    expect(saved).toEqual([])
+
+    const blocked: unknown[] = []
+    let proceeded = false
+    const quit = () =>
+      withMdxConsentQuit({
+        consent: store,
+        pauseAdmission() {},
+        resumeAdmission() {},
+        async reportBlocked(error) {
+          blocked.push(error)
+        },
+        async proceed() {
+          expect(saved).toEqual([scope])
+          expect(await createMdxConsentStore(file).allows(scope)).toBe(false)
+          proceeded = true
+          return true
+        },
+      })
+    expect(await quit()).toBe(false)
+    expect(blocked).toHaveLength(1)
+    expect(proceeded).toBe(false)
+    expect(saved).toEqual([])
+
+    storage.syncDirectory = undefined
+    expect(await quit()).toBe(true)
+    expect(proceeded).toBe(true)
+    expect(await store.listGrants(scope)).toEqual({ complete: true, grants: [] })
+  },
+)
+
+it.skipIf(process.platform === 'win32')(
+  'does not expose an approval after a post-rename durability failure, even on reopen',
+  async () => {
+    const store = createMdxConsentStore(file)
+    const kept = { ...scope, origin: 'https://cdn.example' }
+    await store.grant(kept)
+    const saved: (typeof scope)[] = []
+    store.onSavedApproval((approval) => saved.push(approval))
+
+    // Both the approval and its rollback hit the same directory flush failure.
+    storage.syncDirectory = refuseDirectoryFlush
+    await expect(store.grant(scope)).rejects.toThrow()
+    expect(saved).toEqual([])
+    expect(await store.allows(scope)).toBe(false)
+    const reopened = createMdxConsentStore(file)
+    expect(await reopened.allows(scope)).toBe(false)
+    expect(await reopened.allows(kept)).toBe(true)
+    await expect(store.drain()).rejects.toThrow()
+
+    storage.syncDirectory = undefined
+    await store.drain()
+    await store.grant(scope)
+    expect(saved).toEqual([scope])
+    expect(await reopened.allows(scope)).toBe(true)
+  },
+)
+
+it.skipIf(process.platform === 'win32')(
+  'rolls back an approval if the owner retires while the replacement is being flushed',
+  async () => {
+    const store = createMdxConsentStore(file)
+    const lifetime = new AbortController()
+    const saved: (typeof scope)[] = []
+    store.onSavedApproval((approval) => saved.push(approval))
+    let entered!: () => void
+    const flushing = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    storage.syncDirectory = async (sync) => {
+      entered()
+      await wait
+      await sync()
+    }
+    const approval = store.grant(scope, () => !lifetime.signal.aborted)
+    try {
+      await Promise.race([flushing, approval])
+      expect(saved).toEqual([])
+      lifetime.abort()
+    } finally {
+      release()
+    }
+    await expect(approval).rejects.toThrow()
+    expect(saved).toEqual([])
+    expect(await store.listGrants(scope)).toEqual({ complete: true, grants: [] })
+    expect(await createMdxConsentStore(file).allows(scope)).toBe(false)
   },
 )
 

@@ -28,7 +28,8 @@ type ScopedConsent = {
 }
 
 const opaqueId = () => randomBytes(32).toString('hex')
-const ownerKey = (scope: Scope) => JSON.stringify([scope.root, scope.remote, scope.accountId])
+const ownerKey = (scope: Scope) =>
+  JSON.stringify([scope.root, scope.remote, scope.accountId, MDX_RESOURCE_PURPOSE])
 
 /** One coordinator per diagnostics root. Each lease attaches once and closes on retirement.
  * The lease owns file, document, trust and graph checks; the store owns durable grants and
@@ -38,8 +39,14 @@ export function createMdxConsentCoordinator(external?: {
   changed?(remote: string): void
 }) {
   const scopes = new Map<string, ScopedConsent>()
+  // Remember only origins for Revoke across lease retirement (including a document save).
+  // IDs and offers stay with each lease, and only the store can authorize access.
+  const knownOrigins = new Map<string, Set<string>>()
   const unsubscribe = external?.consent.onRevocationSaved((scope) => {
-    const scoped = scopes.get(ownerKey(scope))
+    const key = ownerKey(scope)
+    const known = knownOrigins.get(key)
+    if (known?.delete(scope.origin) && !known.size) knownOrigins.delete(key)
+    const scoped = scopes.get(key)
     if (!scoped) return
     // Retire IDs in every split before a replacement can be approved, including
     // when shutdown saves a blocked removal and then resumes admission.
@@ -54,6 +61,7 @@ export function createMdxConsentCoordinator(external?: {
   return {
     close() {
       unsubscribe?.()
+      knownOrigins.clear()
     },
     attach(scope: Scope, owner: Owner) {
       const key = ownerKey(scope)
@@ -133,21 +141,21 @@ export function createMdxConsentCoordinator(external?: {
           // A source retirement cannot invalidate an unchanged grant list or its Revoke
           // actions. It only suppresses pending offers from a superseded publication.
           const ids = new Map([...member.grantIds].map(([id, origin]) => [origin, id]))
-          const approved = new Map<string, MdxExternalResourceState['approved'][number]>()
-          if (!complete) {
-            // Known IDs still authorize Revoke, not network access. Only a complete read
-            // or a saved-removal notification can retire them.
-            for (const [origin, id] of ids)
-              approved.set(origin, { id, origin, purpose: MDX_RESOURCE_PURPOSE })
-          }
-          for (const grant of grants) {
-            approved.set(grant.origin, {
-              ...grant,
-              id: ids.get(grant.origin) ?? opaqueId(),
+          const listed = new Map(grants.map((grant) => [grant.origin, grant]))
+          // Incomplete reads report captured removals, not absence of other grants.
+          const known = (complete ? undefined : knownOrigins.get(key)) ?? new Set<string>()
+          for (const origin of listed.keys()) known.add(origin)
+          if (known.size) knownOrigins.set(key, known)
+          else knownOrigins.delete(key)
+          const approved: MdxExternalResourceState['approved'] = [...known]
+            .sort()
+            .map((origin) => ({
+              ...listed.get(origin),
+              id: ids.get(origin) ?? opaqueId(),
+              origin,
               purpose: MDX_RESOURCE_PURPOSE,
-            })
-          }
-          member.grantIds = new Map([...approved.values()].map(({ id, origin }) => [id, origin]))
+            }))
+          member.grantIds = new Map(approved.map(({ id, origin }) => [id, origin]))
           const blocked = new Set(
             grants.filter((grant) => grant.revocationPending).map((grant) => grant.origin),
           )
@@ -159,7 +167,7 @@ export function createMdxConsentCoordinator(external?: {
                     blocked.has(origin) ? [] : [{ id, origin, purpose: MDX_RESOURCE_PURPOSE }],
                   )
                 : [],
-            approved: [...approved.values()],
+            approved,
             ...(!complete && { listError: 'Could not read the full MDX resource grant list' }),
           }
         },

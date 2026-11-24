@@ -2,6 +2,7 @@ import { Resolver } from 'node:dns/promises'
 import { Agent, request } from 'node:https'
 import type { IncomingMessage } from 'node:http'
 import { BlockList, isIP } from 'node:net'
+import os from 'node:os'
 import { resolveMdxExternalModule } from './mdx-external-policy'
 
 const DEADLINE_MS = 8_000
@@ -28,7 +29,8 @@ const errorMessages = {
   'access-changed': 'External MDX dependency access is unavailable',
   'unsafe-url': 'External MDX dependency URL is not supported',
   'unsupported-format': 'External MDX dependency module format is not supported',
-  'unsafe-address': 'External MDX dependency did not resolve exclusively to public addresses',
+  'unsafe-address':
+    'External MDX dependency did not resolve exclusively to remote public addresses',
   'unsafe-peer': 'External MDX dependency TLS peer did not match the vetted address',
   redirect: 'External MDX dependency redirect is invalid or exceeds the limit',
   response: 'External MDX dependency did not return an unencoded UTF-8 response',
@@ -72,9 +74,10 @@ export async function fetchMdxExternalData(options: {
       const { origin, hostname } = target
       const check = () => assertAccess(() => options.assertAccess(origin, signal), origin, signal)
       await check()
-      const address = await publicAddress(hostname, signal)
+      const { first, answers } = await resolvePublicAddresses(hostname, signal)
       await check()
-      const result = await fetchHop(target, address, check, signal)
+      rejectLocalAddresses(answers)
+      const result = await fetchHop(target, first, check, signal)
       await check()
       if ('text' in result) return { url: target.href, text: result.text }
       if (redirects >= REDIRECT_LIMIT) throw new MdxExternalDataError('redirect')
@@ -150,7 +153,10 @@ for (const [network, prefix] of [
 ] as const)
   nonPublic.addSubnet(network, prefix, 'ipv6')
 
-async function publicAddress(hostname: string, signal: AbortSignal): Promise<string> {
+async function resolvePublicAddresses(
+  hostname: string,
+  signal: AbortSignal,
+): Promise<{ first: string; answers: string[] }> {
   const resolver = new Resolver()
   const cancel = () => resolver.cancel()
   const emptyIfNoRecords = (error: NodeJS.ErrnoException) => {
@@ -178,11 +184,26 @@ async function publicAddress(hostname: string, signal: AbortSignal): Promise<str
       )
     )
       throw new MdxExternalDataError('unsafe-address')
-    return first
+    return { first, answers: [...v4, ...v6] }
   } finally {
     signal.removeEventListener('abort', cancel)
     cancel()
   }
+}
+
+function rejectLocalAddresses(answers: string[]): void {
+  // Refresh after DNS and authorization on every hop, immediately before TLS can dial.
+  // A globally routable address can still terminate here. Check every answer by IP bytes,
+  // not interface subnet or text spelling (including mapped IPv4 and IPv6 zone suffixes).
+  const local = new BlockList()
+  for (const addresses of Object.values(os.networkInterfaces())) {
+    for (const { address } of addresses ?? []) {
+      const ip = address.replace(/%.*/, '')
+      local.addAddress(ip, isIP(ip) === 4 ? 'ipv4' : 'ipv6')
+    }
+  }
+  if (answers.some((ip) => local.check(ip, isIP(ip) === 4 ? 'ipv4' : 'ipv6')))
+    throw new MdxExternalDataError('unsafe-address')
 }
 
 async function fetchHop(
