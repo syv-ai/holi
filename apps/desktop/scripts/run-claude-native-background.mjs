@@ -315,6 +315,14 @@ try {
 } catch (error) {
   failure = error
   evidence.error = String(error)
+  const workerResult = join(root, 'worker-result.json')
+  try {
+    evidence.lifecycle = JSON.parse(await readFile(workerResult, 'utf8'))
+    if (evidence.lifecycle.nativeModelCompletion)
+      evidence.modelTurn = 'completed native background assistant response'
+  } catch {
+    // The worker may have failed before it could write a result.
+  }
 } finally {
   clearTimeout(watchdog)
   if (daemonMayExist)
@@ -342,7 +350,11 @@ try {
     if (namespace) await capture('namespace', () => rm(namespace, { recursive: true, force: true }))
     await capture('runtime', () => rm(root, { recursive: true, force: true }))
   } else evidence.retainedRuntime = root
-  await writeFile(join(evidenceDir, 'result.json'), JSON.stringify(evidence, null, 2))
+  try {
+    await writeFile(join(evidenceDir, 'result.json'), JSON.stringify(evidence, null, 2))
+  } catch (error) {
+    if (!failure) failure = error
+  }
   process.removeListener('SIGINT', interrupt)
   process.removeListener('SIGTERM', interrupt)
 }
