@@ -158,6 +158,41 @@ describe('compareRevisions', () => {
     })
   })
 
+  it('ignores inherited Git repository overrides and replacement refs at every object level', async () => {
+    const root = await repository()
+    await writeFile(join(root, 'note.md'), 'original')
+    const original = await commit(root, 'original')
+    const originalTree = (
+      await exec('git', ['-C', root, 'rev-parse', `${original}^{tree}`])
+    ).stdout.trim()
+    const originalBlob = (
+      await exec('git', ['-C', root, 'rev-parse', `${original}:note.md`])
+    ).stdout.trim()
+    await writeFile(join(root, 'note.md'), 'replacement')
+    const replacement = await commit(root, 'replacement')
+    const replacementTree = (
+      await exec('git', ['-C', root, 'rev-parse', `${replacement}^{tree}`])
+    ).stdout.trim()
+    const replacementBlob = (
+      await exec('git', ['-C', root, 'rev-parse', `${replacement}:note.md`])
+    ).stdout.trim()
+    await exec('git', ['-C', root, 'replace', original, replacement])
+    await exec('git', ['-C', root, 'replace', originalTree, replacementTree])
+    await exec('git', ['-C', root, 'replace', originalBlob, replacementBlob])
+
+    const other = await repository()
+    await writeFile(join(other, 'note.md'), 'redirected')
+    await commit(other, 'other repository')
+    vi.stubEnv('GIT_DIR', join(other, '.git'))
+    vi.stubEnv('GIT_OBJECT_DIRECTORY', join(other, '.git', 'objects'))
+    vi.stubEnv('GIT_ALTERNATE_OBJECT_DIRECTORIES', join(other, '.git', 'objects'))
+    await expect(compareRevisions(root, 'note.md', original, original)).resolves.toEqual({
+      kind: 'text',
+      before: 'original',
+      after: 'original',
+    })
+  })
+
   it('does not infer comparisons for renamed or deleted paths', async () => {
     const root = await repository()
     await writeFile(join(root, 'old.md'), 'original\n')
