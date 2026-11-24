@@ -91,8 +91,9 @@ describe('watchVault', () => {
     const rec = recorder()
     await start(root, rec.onChange)
 
+    const fired = rec.next()
     await writeFile(join(root, 'note.md'), 'hi\n', 'utf8')
-    await rec.next()
+    await fired
     expect(rec.count).toBe(1)
   })
 
@@ -101,8 +102,9 @@ describe('watchVault', () => {
     const rec = recorder()
     await start(root, rec.onChange)
 
+    const fired = rec.next()
     await writeFile(join(root, 'README.md'), '# Changed\n', 'utf8')
-    await rec.next()
+    await fired
   })
 
   it('fires when a file is unlinked', async () => {
@@ -110,8 +112,9 @@ describe('watchVault', () => {
     const rec = recorder()
     await start(root, rec.onChange)
 
+    const fired = rec.next()
     await rm(join(root, 'README.md'))
-    await rec.next()
+    await fired
   })
 
   it('fires for a file in a new subdirectory', async () => {
@@ -119,9 +122,10 @@ describe('watchVault', () => {
     const rec = recorder()
     await start(root, rec.onChange)
 
+    const fired = rec.next()
     await mkdir(join(root, 'projects', 'q2'), { recursive: true })
     await writeFile(join(root, 'projects/q2/roadmap.md'), 'plans\n', 'utf8')
-    await rec.next()
+    await fired
   })
 
   it('coalesces a burst into ONE call', async () => {
@@ -139,8 +143,9 @@ describe('watchVault', () => {
     const w = await watchVault({ root, onChange: rec.onChange }) // default debounce
     open.push(w)
 
+    const fired = rec.next()
     for (let i = 0; i < 10; i++) await writeFile(join(root, `n${i}.md`), `${i}\n`, 'utf8')
-    await rec.next()
+    await fired
     await sleep(SETTLE)
 
     expect(rec.count).toBe(1)
@@ -184,8 +189,9 @@ describe('watchVault', () => {
     })
     open.push(w)
 
+    const fired = rec.next()
     await writeFile(join(root, 'scratchpad.local.md'), 'private note\\n', 'utf8')
-    await rec.next()
+    await fired
     await writeFile(join(root, 'USER.local.md'), 'private profile\\n', 'utf8')
     await sleep(SETTLE)
 
