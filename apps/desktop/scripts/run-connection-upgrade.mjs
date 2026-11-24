@@ -290,7 +290,7 @@ async function observeBeforeUpgrade() {
   await wait('connections-navigation', () => click('Connections'))
   await wait('visible-google-connections', async () => {
     const deferred = await renderer(`(() => {
-      const dialog = [...document.querySelectorAll('[role=dialog]')].find(element => element.getBoundingClientRect().width > 0 && element.textContent.includes('Restart Holi to install this update.'));
+      const dialog = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].find(element => element.getBoundingClientRect().width > 0 && element.textContent.includes('Restart Holi to install this update.'));
       const later = dialog && [...dialog.querySelectorAll('button')].find(button => button.textContent.trim() === 'Later' && !button.disabled);
       if (!later) return false;
       later.click(); return true;
