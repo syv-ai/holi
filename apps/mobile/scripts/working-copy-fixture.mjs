@@ -120,6 +120,15 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
   const cases = []
   const specs = [
     ['clean', async () => {}],
+    [
+      'case-alias',
+      async (r) => {
+        await git(r, 'config', 'core.ignorecase', 'true')
+        const fs = await import('node:fs/promises')
+        await fs.rename(join(r, 'tracked.md'), join(r, 'case-temp'))
+        await fs.rename(join(r, 'case-temp'), join(r, 'TRACKED.md'))
+      },
+    ],
     ['attributes', async (r) => put(r, '.gitattributes', '*.md text\n')],
     [
       'tracked-spaces',
@@ -134,6 +143,7 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
       async (r) => {
         await git(r, 'rm', '--cached', 'tracked.md')
         await put(r, '.gitignore', 'tracked.md\n')
+        await chmod(join(r, 'tracked.md'), 0)
       },
     ],
     [

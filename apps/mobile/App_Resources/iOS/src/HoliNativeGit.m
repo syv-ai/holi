@@ -422,9 +422,21 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
     }
   }
   NSMutableArray *changes=[NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
   for(NSString *path in paths){
     NSArray<NSString *> *parts=nil; if(!HNGPathParts(path,&parts)){ if(error)*error=HNGPathError(EINVAL,@"Invalid working-tree path"); changes=nil; break; }
     const char *p=path.fileSystemRepresentation; const git_index_entry *stage0=git_index_get_bypath(index,p,0); BOOL conflict=NO;
+    if (stage0 && strcmp(p, stage0->path)) {
+      git_tree_entry *original = NULL;
+      int lookup = git_tree_entry_bypath(&original, tree, stage0->path);
+      git_tree_entry_free(original);
+      if (lookup != 0) { if(error)*error=HNGPathError(EINVAL,@"Case-only staged renames are unsupported"); changes=nil; break; }
+      path = [NSString stringWithUTF8String:stage0->path];
+      if (!HNGPathParts(path, &parts)) { if(error)*error=HNGPathError(EINVAL,@"Invalid index path"); changes=nil; break; }
+      p = stage0->path;
+    }
+    if ([seen containsObject:path]) continue;
+    [seen addObject:path];
     for(int stage=1;stage<=3;stage++) if(git_index_get_bypath(index,p,stage)){conflict=YES;break;}
     BOOL ignoredAbsent = NO;
     if (!stage0 && !conflict) {
