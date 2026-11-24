@@ -66,7 +66,7 @@ export function createChildFrameVim(
     const settled = revoke()
     const requested = revision
     await settled
-    if (requested !== revision || !next || disposed || !presented() || contents.isDestroyed())
+    if (requested !== revision || !next || disposed || contents.isDestroyed() || !presented())
       return
     enabled = true
     capture = Object.freeze({ tab, document: {}, presentation: {} })

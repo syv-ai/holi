@@ -126,6 +126,24 @@ async function setup() {
 }
 
 describe('child-frame editing ownership', () => {
+  it('settles pending configuration when native contents disappear before presentation can be read', async () => {
+    let destroyed = false
+    const contents = { isDestroyed: () => destroyed }
+    const vim = createChildFrameVim(
+      contents as never,
+      () => {
+        if (destroyed) throw new Error('native view presentation is unavailable after destruction')
+        return true
+      },
+      () => {},
+    )
+    const pending = vim.configure(true)
+    destroyed = true
+    await expect(pending).resolves.toBeUndefined()
+    expect(await vim.mode()).toBeNull()
+    vim.dispose()
+  })
+
   it('rejects pending resolution after revocation', async () => {
     const h = await setup()
     const gate = h.pauseResolution()

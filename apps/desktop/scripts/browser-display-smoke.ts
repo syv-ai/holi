@@ -592,19 +592,7 @@ async function run(): Promise<void> {
       mixed.every((frame) => frame.parent && frame.processId !== frame.parent.processId),
       'actual cross-process nested frames required',
     )
-    const freshMode = async (after: number, mode: 'insert' | 'normal') => {
-      for (let attempt = 0; attempt < 250; attempt++) {
-        const event = sent
-          .slice(after)
-          .findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
-        if (
-          (event?.payload as { mode?: string } | undefined)?.mode === mode &&
-          event &&
-          reportFrames.get(event) === a.webContents.focusedFrame
-        )
-          return
-        await new Promise((resolve) => setTimeout(resolve, 20))
-      }
+    const recordChildFailure = async (expected: string) => {
       const read = async (frame: (typeof mixed)[number], expression: string) =>
         Promise.race([
           frame.executeJavaScript(expression).catch((error) => ({ error: String(error) })),
@@ -616,7 +604,7 @@ async function run(): Promise<void> {
         join(evidence, 'child-vim-failure.json'),
         JSON.stringify(
           {
-            expected: mode,
+            expected,
             focused: a.webContents.isFocused(),
             windowFocused: win.isFocused(),
             focusedFrame: a.webContents.focusedFrame && {
@@ -635,20 +623,37 @@ async function run(): Promise<void> {
               `({ hasFocus:document.hasFocus(), active:document.activeElement?.tagName, events:window.__holiSmokeNativeEvents })`,
             ),
             children: await Promise.all(
-              mixed.map(async (frame) => ({
-                processId: frame.processId,
-                routingId: frame.routingId,
-                page: await read(
-                  frame,
-                  `({ hasFocus:document.hasFocus(), active:document.activeElement?.id, value:document.querySelector('#child-field')?.value, selection:document.querySelector('#child-field')?.selectionStart, events:window.nativeEvents })`,
-                ),
-              })),
+              a.webContents.mainFrame.framesInSubtree
+                .filter((frame) => frame.url === `http://localhost:${address.port}/671-cross`)
+                .map(async (frame) => ({
+                  processId: frame.processId,
+                  routingId: frame.routingId,
+                  page: await read(
+                    frame,
+                    `({ hasFocus:document.hasFocus(), active:document.activeElement?.id, value:document.querySelector('#child-field')?.value, selection:document.querySelector('#child-field')?.selectionStart, events:window.nativeEvents })`,
+                  ),
+                })),
             ),
           },
           null,
           2,
         ),
       )
+    }
+    const freshMode = async (after: number, mode: 'insert' | 'normal') => {
+      for (let attempt = 0; attempt < 250; attempt++) {
+        const event = sent
+          .slice(after)
+          .findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+        if (
+          (event?.payload as { mode?: string } | undefined)?.mode === mode &&
+          event &&
+          reportFrames.get(event) === a.webContents.focusedFrame
+        )
+          return
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      await recordChildFailure(mode)
       throw new Error(`timed out after 5000ms waiting for current child ${mode} mode`)
     }
     const focusChild = async (frame: (typeof mixed)[number]) => {
@@ -666,7 +671,13 @@ async function run(): Promise<void> {
       await frame.executeJavaScript(
         `document.querySelector('#child-field').focus();document.querySelector('#child-field').setSelectionRange(4,4)`,
       )
-      assert.equal(a.webContents.focusedFrame, frame)
+      await waitFor(
+        () => (a.webContents.focusedFrame === frame ? true : undefined),
+        'native focus confirmation for the loaded child',
+      ).catch(async (error) => {
+        await recordChildFailure('native child focus')
+        throw error
+      })
       await freshMode(after, 'insert')
     }
     const holdNormalRead = async (work: (release: () => void) => Promise<void>) => {
