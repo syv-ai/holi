@@ -50,6 +50,7 @@ export async function checkCompatibility(): Promise<string> {
   let rawNames: unknown
   let prefixNamespace: Record<string, unknown>
   let git: Awaited<ReturnType<typeof runGitCompatibilityCheck>> | undefined
+  let workingCopy: Awaited<ReturnType<typeof runWorkingCopyCheck>> | undefined
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
@@ -88,7 +89,7 @@ export async function checkCompatibility(): Promise<string> {
     const workingCopyRemote = gitEnvironment.objectForKey('HOLI_GIT_FIXTURE_URL')
     if (typeof workingCopyRoot !== 'string' || typeof workingCopyRemote !== 'string')
       throw new Error('Missing working-copy fixture identity')
-    const workingCopy = await runWorkingCopyCheck(workingCopyRoot, workingCopyRemote, 'fixture-start')
+    workingCopy = await runWorkingCopyCheck(workingCopyRoot, workingCopyRemote, 'fixture-start')
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
