@@ -21,7 +21,7 @@ import {
 } from '../../../main/plugin-api'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, release, arch } from 'node:os'
 import { dirname, join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { codexProvider } from '../main/codex/index'
@@ -54,7 +54,15 @@ const { cacheLeaseProof, publishFinalSettlement, readFinalSettlement } = createR
 
 const version = '0.169.0'
 const bin = process.env.HOLI_CODEX_BIN
+const sandboxNames = [
+  'sandbox-read-only',
+  'sandbox-workspace',
+  'sandbox-outside',
+  'sandbox-network',
+] as const
+const sandboxMode = process.env.HOLI_CODEX_SANDBOX_PROOF === '1'
 const scenarioNames = [
+  ...(sandboxMode ? sandboxNames : []),
   'initial-turn',
   'follow-up',
   'http-400',
@@ -68,6 +76,10 @@ const leasePlan: Record<ScenarioName, readonly string[]> = {
   'http-400': ['http-400'],
   'stall-stop': ['stall-stop'],
   'stall-leave': ['stall-leave'],
+  'sandbox-read-only': ['sandbox-read-only'],
+  'sandbox-workspace': ['sandbox-workspace'],
+  'sandbox-outside': ['sandbox-outside'],
+  'sandbox-network': ['sandbox-network'],
 }
 const leaseRoles = scenarioNames.flatMap((name) => leasePlan[name])
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -274,7 +286,7 @@ function captureScenarioFailure(title: string, error: unknown) {
     'stops a stalled native run and drains its state and process': 'stall-stop',
     'leave drains a stalled native run and clears all job sessions': 'stall-leave',
   }
-  const scenario = proof.scenarios.find((row) => row.name === names[title])
+  const scenario = proof.scenarios.find((row) => row.name === (names[title] ?? title))
   if (
     !scenario ||
     (scenario.status !== 'pending' &&
@@ -319,6 +331,7 @@ async function fixture(
   name: ScenarioName,
   mode: 'success' | 'failure' | 'stall' = 'success',
   delayBracketEnd = false,
+  tool?: { command?: string },
 ) {
   const root = worker!.createWork(name)
   const home = join(root, 'home')
@@ -415,6 +428,40 @@ async function fixture(
       res.end(JSON.stringify({ error: { message: 'fixture rejected request' } }))
       return
     }
+    if (tool && requests.length === 1) {
+      if (!tool.command) throw new Error('Missing native sandbox command')
+      const item = {
+        id: 'fc_sandbox',
+        type: 'function_call',
+        call_id: 'call_sandbox',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: tool.command, max_output_tokens: 1024 }),
+        status: 'completed',
+      }
+      const response = {
+        id: 'resp_sandbox',
+        object: 'response',
+        model: body.model,
+        status: 'completed',
+        output: [item],
+        usage: { input_tokens: 9, output_tokens: 4, total_tokens: 13 },
+      }
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      for (const event of [
+        { type: 'response.created', response: { ...response, status: 'in_progress', output: [] } },
+        {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { ...item, status: 'in_progress' },
+        },
+        { type: 'response.output_item.done', output_index: 0, item },
+        { type: 'response.completed', response },
+      ])
+        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+      res.end()
+      return
+    }
+    if (tool && requests.length !== 2) throw new Error('Unexpected sandbox model request')
     const model = body.model
     const msg = {
       id: 'msg_fixture',
@@ -788,6 +835,167 @@ if (bin) {
       proofClosed = true
       return worker.finish(() => proof)
     })
+    if (sandboxMode)
+      for (const name of sandboxNames) {
+        it(name, async () => {
+          const scenario = beginScenario(name)
+          onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
+          if (process.platform !== 'darwin') throw new Error('Sandbox proof supports macOS only')
+          const tool: { command?: string } = {}
+          const f = await fixture(name, 'success', false, tool)
+          Object.assign(scenario, {
+            processes: f.processes,
+            rawProcesses: f.rawProcesses,
+            jsonl: f.jsonl,
+            requests: f.requests,
+            host: f.host,
+            brackets: f.brackets,
+            platform: process.platform,
+            platformRelease: release(),
+            arch: arch(),
+          })
+          const nonce = randomUUID()
+          const target =
+            name === 'sandbox-outside' ? join(f.root, 'outside') : join(f.work, 'allowed')
+          const additional = join(f.work, 'additional')
+          await mkdir(target, { recursive: true })
+          await mkdir(additional, { recursive: true })
+          const sentinel = join(target, 'sentinel')
+          const created = join(target, 'created')
+          await writeFile(sentinel, 'original')
+          const observations: Record<string, unknown> = {
+            target,
+            additional,
+            nonce,
+            before: await readFile(sentinel, 'utf8'),
+          }
+          scenario.sandbox = observations
+          // JSON strings quote these controlled, canonical fixture paths for the shell.
+          const q = (value: string) => JSON.stringify(value)
+          const attempts =
+            name === 'sandbox-network'
+              ? []
+              : [
+                  `printf '%s' ${q(nonce)} > ${q(sentinel)}`,
+                  `printf '%s' ${q(nonce)} > ${q(created)}`,
+                  ...(name === 'sandbox-workspace'
+                    ? [`printf '%s' ${q(nonce)} > ${q(join(additional, 'created'))}`]
+                    : []),
+                ]
+          let networkRequests = 0
+          let controlRequests = 0
+          if (name === 'sandbox-network') {
+            const token = randomUUID()
+            const sentinelServer = createServer((req, res) => {
+              if (req.url === `/control-${token}`) controlRequests++
+              else networkRequests++
+              res.end('sentinel')
+            })
+            servers.push(async () => {
+              sentinelServer.closeAllConnections()
+              await new Promise<void>((resolve, reject) =>
+                sentinelServer.close((error) => (error ? reject(error) : resolve())),
+              )
+            })
+            await new Promise<void>((resolve) => sentinelServer.listen(0, '127.0.0.1', resolve))
+            const address = sentinelServer.address()
+            if (!address || typeof address === 'string')
+              throw new Error('Network sentinel did not bind')
+            const base = `http://127.0.0.1:${address.port}`
+            const control = await fetch(`${base}/control-${token}`)
+            expect(await control.text()).toBe('sentinel')
+            observations.controlRequests = controlRequests
+            observations.url = `${base}/tool-${token}`
+            // curl is a real sandboxed tool process; connect/max-time bounds are not the denial assertion.
+            attempts.push(
+              `/usr/bin/curl --noproxy '*' --connect-timeout 2 --max-time 3 --fail ${q(String(observations.url))}`,
+            )
+          }
+          // Keep each operation's own exit code, even when the last command succeeds.
+          if (name === 'sandbox-network') {
+            tool.command = `${attempts[0]}; holi_rc=$?; printf '\nHOLI_ATTEMPT_0=%s\n' "$holi_rc"`
+          } else {
+            const files = [
+              sentinel,
+              created,
+              ...(name === 'sandbox-workspace' ? [join(additional, 'created')] : []),
+            ]
+            const program = `const fs = require('node:fs'); ${JSON.stringify(files)}.forEach((file, i) => {let code = 0; try {fs.writeFileSync(file, ${JSON.stringify(nonce)})} catch (error) {console.log(error.code); code = 1} console.log('HOLI_ATTEMPT_' + i + '=' + code)})`
+            tool.command = `${q(process.execPath)} -e ${q(program)}`
+          }
+          observations.command = tool.command
+          progress(scenario, 'native-launch')
+          const result = await f.jobs.start({
+            provider: f.provider,
+            name,
+            prompt: 'Execute the fixture tool request',
+            allow: name === 'sandbox-read-only' ? [] : ['Edit(allowed/**)', 'Edit(additional/**)'],
+          })
+          expect(result.ok).toBe(true)
+          if (!result.ok) return
+          const row = await ended(f.jobs, result.sessionId, f.brackets)
+          scenario.sessionId = result.sessionId
+          scenario.outcome = row.outcome
+          progress(scenario, 'native-contract')
+          expect(row.outcome).toBe('completed')
+          expect(f.requests).toHaveLength(2)
+          const commandEvents = f.rawProcesses
+            .flatMap((raw) =>
+              String(raw.stdout)
+                .split('\n')
+                .filter(Boolean)
+                .map((line) => JSON.parse(line) as Record<string, unknown>),
+            )
+            .filter(
+              (event) =>
+                event.type === 'item.completed' &&
+                (event.item as { type?: string })?.type === 'command_execution',
+            )
+          expect(commandEvents).toHaveLength(1)
+          const item = commandEvents[0]!.item as {
+            command: string
+            aggregated_output: string
+            status: string
+            exit_code: number
+          }
+          observations.nativeCommand = item
+          observations.after = await readFile(sentinel, 'utf8')
+          observations.created = existsSync(created)
+          observations.networkRequests = networkRequests
+          observations.additionalContent = existsSync(join(additional, 'created'))
+            ? await readFile(join(additional, 'created'), 'utf8')
+            : null
+          observations.createdContent = existsSync(created) ? await readFile(created, 'utf8') : null
+          expect(item.command).toContain(
+            name === 'sandbox-network' ? String(observations.url) : nonce,
+          )
+          expect(item.status).toBe('completed')
+          expect(item.exit_code).toBe(0)
+          const statuses = [...item.aggregated_output.matchAll(/HOLI_ATTEMPT_(\d+)=(\d+)/g)].map(
+            (match) => Number(match[2]),
+          )
+          observations.statuses = statuses
+          expect(statuses).toHaveLength(attempts.length)
+          expect(
+            statuses.every((code) => (name === 'sandbox-workspace' ? code === 0 : code !== 0)),
+          ).toBe(true)
+          if (name === 'sandbox-workspace') {
+            expect(observations.after).toBe(nonce)
+            expect(observations.createdContent).toBe(nonce)
+            expect(observations.additionalContent).toBe(nonce)
+          } else {
+            expect(observations.after).toBe('original')
+            expect(observations.created).toBe(false)
+          }
+          if (name === 'sandbox-network') {
+            expect(controlRequests).toBe(1)
+            expect(networkRequests).toBe(0)
+            // A connect timeout is incomplete evidence, not a demonstrated sandbox denial.
+            expect(statuses).toEqual([7])
+          }
+          finishScenario(scenario, 'pass')
+        })
+      }
     it('consumes the pinned CLI version and native initial-turn events', async () => {
       const scenario = beginScenario('initial-turn')
       onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))

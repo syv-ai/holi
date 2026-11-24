@@ -1,3 +1,6 @@
+import { withVaultOperation } from './operation-gate'
+import { nativeFiles } from './native-files.ios'
+
 class NativeGitError extends Error {
   constructor(
     message: string,
@@ -38,13 +41,13 @@ export const nativeGit = {
   version(): string {
     return HoliNativeGit.alloc().init().embeddedVersion()
   },
-  run(
+  async run(
     operation: 'clone' | 'fetch' | 'push' | 'poison',
     root: string,
     remote: string,
     username: string,
     password: string,
-  ): NativeGitResult {
+  ): Promise<NativeGitResult> {
     if (
       root.length > 4096 ||
       remote.length > 4096 ||
@@ -52,30 +55,36 @@ export const nativeGit = {
       password.length > 1024
     )
       throw new Error('Native Git input exceeds the compatibility-test bound')
-    const result = checked((error) =>
-      HoliNativeGit.alloc()
-        .init()
-        .runOperationRootRemoteUsernamePasswordError(
-          operation,
-          root,
-          remote,
-          username,
-          password,
-          error,
-        ),
-    )
-    if (!result) throw new Error('Native Git returned no operation result')
-    return {
-      operation: String(result.objectForKey('operation')),
-      credentialChallenge: Boolean(result.objectForKey('credentialChallenge')),
-      success: Boolean(result.objectForKey('success')),
-      branch: String(result.objectForKey('branch')),
-      fetchTarget: String(result.objectForKey('fetchTarget')),
-      headTarget: String(result.objectForKey('headTarget')),
-      hooksDisabled: Boolean(result.objectForKey('hooksDisabled')),
-      filtersDisabled: Boolean(result.objectForKey('filtersDisabled')),
-      helpersDisabled: Boolean(result.objectForKey('helpersDisabled')),
-      remoteConstrained: Boolean(result.objectForKey('remoteConstrained')),
+    const invoke = (operationRoot: string) => {
+      const result = checked((error) =>
+        HoliNativeGit.alloc()
+          .init()
+          .runOperationRootRemoteUsernamePasswordError(
+            operation,
+            operationRoot,
+            remote,
+            username,
+            password,
+            error,
+          ),
+      )
+      if (!result) throw new Error('Native Git returned no operation result')
+      return {
+        operation: String(result.objectForKey('operation')),
+        credentialChallenge: Boolean(result.objectForKey('credentialChallenge')),
+        success: Boolean(result.objectForKey('success')),
+        branch: String(result.objectForKey('branch')),
+        fetchTarget: String(result.objectForKey('fetchTarget')),
+        headTarget: String(result.objectForKey('headTarget')),
+        hooksDisabled: Boolean(result.objectForKey('hooksDisabled')),
+        filtersDisabled: Boolean(result.objectForKey('filtersDisabled')),
+        helpersDisabled: Boolean(result.objectForKey('helpersDisabled')),
+        remoteConstrained: Boolean(result.objectForKey('remoteConstrained')),
+      }
     }
+    if (operation === 'clone') return invoke(root)
+    return withVaultOperation(nativeFiles, root, (canonicalRoot) =>
+      Promise.resolve(invoke(canonicalRoot)),
+    )
   },
 }

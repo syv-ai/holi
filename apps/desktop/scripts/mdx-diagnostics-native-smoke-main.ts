@@ -211,6 +211,27 @@ invoke('smoke:scenarios', async () => {
   ] as const) {
     assert((await compileGraphCase(name, source)).length > 0, `${name} must produce diagnostics`)
   }
+  await mkdir(join(vault, '.holi/state'), { recursive: true })
+  await writeFile(
+    join(vault, '.holi/state/private.js'),
+    "export const privateMarker = 'MACHINE_STATE_BYTES_MUST_NOT_BE_INSPECTED'\n",
+  )
+  assert(
+    (
+      await compileGraphCase(
+        'protected machine state import',
+        "import '../.holi/state/private.js'\n",
+      )
+    ).length > 0,
+  )
+  assert(
+    (
+      await compileGraphCase(
+        'protected machine state case alias',
+        "import '../.HOLI/STATE/private.js'\n",
+      )
+    ).length > 0,
+  )
   await mkdir(join(vault, '.holi/memory'), { recursive: true })
   await writeFile(join(vault, '.holi/memory/secret.mdx'), 'do not inspect fixture content\n')
   assert(
