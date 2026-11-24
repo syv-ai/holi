@@ -854,6 +854,115 @@ it('diagnoses empty and populated import attributes before requesting consent or
   await mdx.releaseDiagnosticsLease(owner)
 })
 
+it('accepts CommonJS spellings bound by browser ESM in JS, JSX and MDX', async () => {
+  const { root, mdx, acquire, contacts } = await resourceRig()
+  const owner = await acquire()
+  try {
+    await writeFile(
+      join(root, 'local.js'),
+      [
+        'const exports = { value: 1 };',
+        'const module = { exports };',
+        'module.exports.value = require();',
+        'function require() { if (exports.value) { var module = exports; } return module.value; }',
+        'export const value = exports.value;',
+        'export const View = () => null;',
+      ].join('\n'),
+    )
+    await writeFile(
+      join(root, 'view.jsx'),
+      [
+        "import * as exports from './local.js';",
+        'export const view = ({ module }, require = (value) => value) =>',
+        '  <exports require="module.exports"><exports.View />{require(module.exports)}{exports.value}</exports>;',
+      ].join('\n'),
+    )
+    const source = [
+      "import { value as module } from './local.js'",
+      "import './view.jsx'",
+      '',
+      'export const exports = { value: module }',
+      'export function require({ value }) { return value }',
+      '',
+      '# Preview',
+      '',
+      '<exports require={require(exports)} {...{ module }} />',
+      '',
+      '{exports.value + require({ value: module })}',
+    ].join('\n')
+    await expect(mdx.compile({ ...owner, generation: 1, source })).resolves.toEqual([])
+    expect(contacts).toEqual([])
+  } finally {
+    await mdx.releaseDiagnosticsLease(owner)
+  }
+})
+
+it('diagnoses free CommonJS references without echoing source', async () => {
+  const { root, mdx, acquire, contacts } = await resourceRig()
+  const owner = await acquire()
+  try {
+    const define = "Object.defineProperty(exports, 'private-guest-value', { value: 1 });"
+    const initialize = 'export function load(loader = require) { var require = () => null; }'
+    await writeFile(join(root, 'child.js'), `${define}\n${initialize}`)
+    const view = 'export const view = <exports require="module"><module.View /></exports>;'
+    await writeFile(join(root, 'child.jsx'), view)
+    const alias = '  {...(() => { const loader = require; return { exports: 1, module: 2 } })()}'
+    const destructure =
+      '  require={(() => { const { privateValue } = exports; return privateValue })()}'
+    const source = [
+      "import './child.js'",
+      "import './child.jsx'",
+      '',
+      '<exports',
+      alias,
+      destructure,
+      '/>',
+      '',
+      `{import('${entry}')}`,
+      '',
+      '{import.meta.url}',
+    ].join('\n')
+    const diagnostics = await mdx.compile({ ...owner, generation: 1, source })
+    const position = (line: string, name: string) => line.indexOf(name) + 1
+    expect(diagnostics).toHaveLength(7)
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        ...[
+          [1, 'js', 1, position(define, 'exports')],
+          [1, 'js', 2, position(initialize, 'require')],
+          [2, 'jsx', 1, position(view, 'module.View')],
+        ].map(([line, format, moduleLine, column]) =>
+          expect.objectContaining({
+            line,
+            message: expect.stringMatching(`child\\.${format}:${moduleLine}:${column}: .*CommonJS`),
+          }),
+        ),
+        ...[
+          [5, position(alias, 'require')],
+          [6, position(destructure, 'exports')],
+        ].map(([line, column]) =>
+          expect.objectContaining({ line, column, message: expect.stringMatching(/CommonJS/) }),
+        ),
+        expect.objectContaining({
+          line: 9,
+          column: 2,
+          message: expect.stringMatching(/dynamic import/i),
+        }),
+        expect.objectContaining({
+          line: 11,
+          column: 2,
+          message: expect.stringMatching(/import\.meta/),
+        }),
+      ]),
+    )
+    expect(JSON.stringify(diagnostics)).not.toMatch(/private-guest-value|privateValue|one\.example/)
+    expect((await mdx.externalResources(owner)).pending).toEqual([])
+    expect(contacts).toEqual([])
+  } finally {
+    await mdx.releaseDiagnosticsLease(owner)
+  }
+})
+
 it('requires separate consent for a static import, its redirect, and a transitive external re-export', async () => {
   const { root, mdx, acquire, contacts, routes, changed } = await resourceRig()
   const owner = await acquire()
