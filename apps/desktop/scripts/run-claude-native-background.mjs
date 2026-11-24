@@ -71,13 +71,25 @@ try {
   const candidate = join(parent, createHash('sha256').update(configDir).digest('hex').slice(0, 8))
   await mkdir(candidate, { mode: 0o700 })
   namespace = candidate
-  server = createServer((request, response) => {
-    if (evidence.requests.length < 32)
-      evidence.requests.push({
-        method: request.method,
-        path: new URL(request.url, 'http://127.0.0.1').pathname,
-        status: 404,
-      })
+  server = createServer(async (request, response) => {
+    const path = new URL(request.url, 'http://127.0.0.1').pathname
+    const method = request.method ?? 'GET'
+    const record = (status) => {
+      if (evidence.requests.length < 32) evidence.requests.push({ method, path, status })
+    }
+    if (method === 'GET' && path === '/inference-profiles') {
+      record(200)
+      response.writeHead(200, { 'content-type': 'application/json' }).end('{"inferenceProfileSummaries":[]}')
+      return
+    }
+    if (method === 'POST' && /^\/model\/.+\/invoke$/.test(path)) {
+      for await (const _chunk of request) void _chunk
+      record(200)
+      response.writeHead(200, { 'content-type': 'application/json', 'x-amzn-requestid': 'holi-fixture' })
+      response.end(JSON.stringify({ id: 'msg_holi_fixture', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'Fixture response' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 2 } }))
+      return
+    }
+    record(404)
     response.writeHead(404).end()
   })
   await new Promise((resolve, reject) => {
