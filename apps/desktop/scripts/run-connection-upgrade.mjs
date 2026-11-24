@@ -402,7 +402,19 @@ async function main() {
     return Boolean(heading && control && google && email && !dialog);
   })()`
   await wait('connections-navigation', () => click('Connections'))
-  await wait('visible-google-connections', () => renderer(connectedBefore))
+  await wait('visible-google-connections', async () => {
+    const deferred = await renderer(`(() => {
+      const dialog = [...document.querySelectorAll('[role=dialog]')].find(element => element.getBoundingClientRect().width > 0 && element.textContent.includes('Restart Holi to install this update.'));
+      const later = dialog && [...dialog.querySelectorAll('button')].find(button => button.textContent.trim() === 'Later' && !button.disabled);
+      if (!later) return false;
+      later.click(); return true;
+    })()`)
+    if (deferred) {
+      receipt.before.updateDeferred = true
+      return false
+    }
+    return renderer(connectedBefore)
+  })
   await renderer(
     'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
   )

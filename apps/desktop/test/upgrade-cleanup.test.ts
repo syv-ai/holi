@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { cleanupUpgradeFixture } from '../scripts/upgrade-cleanup.mjs'
 import { createOwnedProcesses } from '../scripts/owned-processes.mjs'
 
-describe('upgrade fixture cleanup', () => {
+describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
   it.each([
     'clear',
     'unacknowledged',

@@ -203,7 +203,7 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
       }
       if !requestedSettings {
         let triggers = content.filter {
-          text($0, kAXRoleAttribute) == kAXButtonRole
+          [kAXButtonRole, kAXPopUpButtonRole].contains(text($0, kAXRoleAttribute))
             && ["Account menu", "Open account menu", "Account menu, an update to look at", "Open account menu, an update to look at"].contains(label($0))
         }
         if !accountMenuOpened, triggers.count == 1 {
