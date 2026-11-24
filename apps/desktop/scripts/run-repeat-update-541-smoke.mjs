@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
+import { writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -15,7 +16,23 @@ assert.equal(process.platform, 'darwin', 'This fixture exercises the macOS updat
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-541-smoke-')))
 const evidence = await mkdtemp(join(tmpdir(), 'holi-541-evidence-'))
-const processes = createOwnedProcesses()
+const cancellation = new AbortController()
+const processes = createOwnedProcesses({
+  signal: cancellation.signal,
+  onChange: (pids) => writeFileSync(join(evidence, 'owned-pids.json'), JSON.stringify(pids)),
+})
+const cancel = (signal) => {
+  process.exitCode = signal === 'SIGINT' ? 130 : 143
+  cancellation.abort(new Error(`Fixture interrupted by ${signal}`))
+}
+const handlers = ['SIGINT', 'SIGTERM'].map((signal) => {
+  const handler = () => cancel(signal)
+  process.on(signal, handler)
+  return [signal, handler]
+})
+let failure
+let scratchRemoved = false
+const cleanupErrors = []
 const results = []
 let candidate = '0.7.1-dev.194'
 const requests = []
@@ -144,6 +161,14 @@ try {
       install: true,
       expected: '0.7.1-dev.195',
     },
+    {
+      name: 'dialog-restart-control',
+      version: '0.7.1-dev.195',
+      offer: '0.7.1-dev.196',
+      consent: true,
+      install: true,
+      expected: '0.7.1-dev.196',
+    },
   ]) {
     candidate = scenario.offer
     const result = join(evidence, `${scenario.name}.json`)
@@ -165,13 +190,19 @@ try {
         consent: scenario.consent,
         install: scenario.install,
         prompt: scenario.name !== 'failed-install-control',
+        action: scenario.name === 'dialog-restart-control' ? 'dialog' : 'account',
         result,
       }),
     )
     const home = join(root, 'home')
     await mkdir(home, { recursive: true })
-    const env = { ...process.env, HOME: home, USERPROFILE: home }
-    delete env.ELECTRON_RUN_AS_NODE
+    const env = {
+      PATH: process.env.PATH,
+      LANG: 'en_US.UTF-8',
+      HOME: home,
+      USERPROFILE: home,
+      TMPDIR: root,
+    }
     const before = requests.length
     const run = await processes.run(electron, [output, config], {
       env,
@@ -185,32 +216,47 @@ try {
     assert.equal(receipt.ok, true)
     results.push({ name: scenario.name, ...receipt })
   }
-  await writeFile(
-    join(evidence, 'result.json'),
-    JSON.stringify({ ok: true, results, requests }, null, 2),
-  )
-  console.log(`Updater fresh-process smoke: ${results.length} scenarios passed`)
 } catch (error) {
+  failure = error
+} finally {
+  try {
+    await processes.stopAll()
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  server.closeAllConnections()
+  await new Promise((resolve) => server.close(resolve))
+  // Never remove files beneath a process whose termination is unconfirmed.
+  if (processes.size === 0) {
+    try {
+      await rm(root, { recursive: true, force: true })
+      scratchRemoved = true
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+  }
   await writeFile(
     join(evidence, 'result.json'),
     JSON.stringify(
       {
-        ok: false,
+        ok: !failure && cleanupErrors.length === 0 && !cancellation.signal.aborted,
         results,
         requests,
-        error: error instanceof Error ? error.message : String(error),
+        error: failure instanceof Error ? failure.message : failure,
+        interrupted: cancellation.signal.aborted,
+        cleanup: {
+          remainingPids: processes.remainingPids,
+          retainedScratch: scratchRemoved ? null : root,
+          errors: cleanupErrors.map((error) => String(error)),
+        },
       },
       null,
       2,
     ),
   )
-  throw error
-} finally {
-  try {
-    await processes.stopAll()
-  } finally {
-    server.closeAllConnections()
-    await new Promise((resolve) => server.close(resolve))
-    await rm(root, { recursive: true, force: true })
-  }
+  for (const [signal, handler] of handlers) process.removeListener(signal, handler)
 }
+if (failure) throw failure
+if (cleanupErrors.length) throw new AggregateError(cleanupErrors, 'Fixture cleanup failed')
+if (cancellation.signal.aborted) throw cancellation.signal.reason
+console.log(`Updater fresh-process smoke: ${results.length} scenarios passed; cleanup confirmed`)

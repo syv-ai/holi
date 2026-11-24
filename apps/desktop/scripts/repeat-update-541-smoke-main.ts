@@ -17,6 +17,7 @@ async function run(): Promise<void> {
     install: boolean
     consent: boolean
     prompt: boolean
+    action: 'account' | 'dialog'
     result: string
   }
   assert(resolve(config.root) === config.root)
@@ -132,19 +133,25 @@ async function run(): Promise<void> {
       await waitFor('document.querySelector("[data-update-dot]")')
       if (config.prompt) await waitFor('document.querySelector("[role=alertdialog]")')
       if (config.install) {
-        if (config.prompt) {
+        if (config.action === 'dialog') {
           await window.webContents.executeJavaScript(
-            `Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Later').click()`,
+            `Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Restart now').click()`,
           )
-          await waitFor('!document.querySelector("[role=alertdialog]")')
+        } else {
+          if (config.prompt) {
+            await window.webContents.executeJavaScript(
+              `Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Later').click()`,
+            )
+            await waitFor('!document.querySelector("[role=alertdialog]")')
+          }
+          await window.webContents.executeJavaScript(
+            `document.querySelector('[aria-label^="Account menu"]').dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,button:0,ctrlKey:false}))`,
+          )
+          await waitFor('document.querySelector("[role=menuitem]")')
+          await window.webContents.executeJavaScript(
+            `Array.from(document.querySelectorAll('[role=menuitem]')).find(b => b.textContent.includes('Restart to update')).click()`,
+          )
         }
-        await window.webContents.executeJavaScript(
-          `document.querySelector('[aria-label^="Account menu"]').dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,button:0,ctrlKey:false}))`,
-        )
-        await waitFor('document.querySelector("[role=menuitem]")')
-        await window.webContents.executeJavaScript(
-          `Array.from(document.querySelectorAll('[role=menuitem]')).find(b => b.textContent.includes('Restart to update')).click()`,
-        )
 
         const deadline = Date.now() + 5_000
         while (guards === 0 && Date.now() < deadline)
