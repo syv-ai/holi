@@ -1,107 +1,31 @@
 import { Resolver } from 'node:dns/promises'
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createServer } from 'node:https'
-import { connect } from 'node:net'
-import tls from 'node:tls'
+import type { ServerResponse } from 'node:http'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchMdxExternalData, MdxExternalDataError } from '../src/main/mdx-external-data'
 
-// Public test fixture, valid only for the reserved names one.example and two.example.
-const key = `-----BEGIN EC PRIVATE KEY-----
-MHcCAQEEIFbtFoP/7xss62YuffZkAvn8+1jm0FFte4BkcJHb2csJoAoGCCqGSM49
-AwEHoUQDQgAEkRXrvSG6dtk5PvhH83B7A4v1gEsMaY8hWhT8QamyRMMM8GVw6otU
-BbznjRXHeAwJ8up9RufaieRZXsD/P5oTcQ==
------END EC PRIVATE KEY-----`
-const cert = `-----BEGIN CERTIFICATE-----
-MIIBmTCCAT+gAwIBAgIUQZtLp4oDUk+bjK1296/7FehGpjswCgYIKoZIzj0EAwIw
-FjEUMBIGA1UEAwwLb25lLmV4YW1wbGUwIBcNMjAwMTAxMDAwMDAwWhgPMjEyMDAx
-MDEwMDAwMDBaMBYxFDASBgNVBAMMC29uZS5leGFtcGxlMFkwEwYHKoZIzj0CAQYI
-KoZIzj0DAQcDQgAEkRXrvSG6dtk5PvhH83B7A4v1gEsMaY8hWhT8QamyRMMM8GVw
-6otUBbznjRXHeAwJ8up9RufaieRZXsD/P5oTcaNpMGcwHQYDVR0OBBYEFB8YkXjZ
-pVmCONZBKYHteCFaxXZjMCMGA1UdEQQcMBqCC29uZS5leGFtcGxlggt0d28uZXhh
-bXBsZTAMBgNVHRMBAf8EAjAAMBMGA1UdJQQMMAoGCCsGAQUFBwMBMAoGCCqGSM49
-BAMCA0gAMEUCIDXb+CajVPWP/QwXm0ZUU2brUZMLtY94EqKHuI3NRmSrAiEA8K6d
-a2l11piAxwsSy2hOah7eWqscrFppzWf8e8CLm48=
------END CERTIFICATE-----`
+import { createMdxExternalNetworkFixture } from './fixtures/mdx-external-network'
 
 const source = 'export default 42\n'
 const v4 = '93.184.216.34'
 const v6 = '2606:2800:220:1:248:1893:25c8:1946'
-const entry = 'https://one.example/index.js'
 const redirectTo = (res: ServerResponse, location: string) => {
   res.writeHead(302, { Location: location, 'Set-Cookie': 'session=not-for-the-next-hop' })
   res.end('not module text')
 }
 
-async function fixture() {
-  const dns4 = vi.spyOn(Resolver.prototype, 'resolve4').mockResolvedValue([v4])
-  const dns6 = vi.spyOn(Resolver.prototype, 'resolve6').mockRejectedValue({ code: 'ENODATA' })
-  const requests: IncomingMessage[] = []
-  const names: string[] = []
-  const dials: (string | undefined)[] = []
-  const routes = {
-    respond: (_: IncomingMessage, res: ServerResponse) => {
-      res.end(source)
-    },
-    handshake: () => {},
-  }
-  const context = tls.createSecureContext({ key, cert })
-  const server = createServer(
-    {
-      key,
-      cert,
-      SNICallback: (name, done) => {
-        names.push(name)
-        routes.handshake()
-        done(null, context)
-      },
-    },
-    (req, res) => {
-      requests.push(req)
-      routes.respond(req, res)
-    },
-  )
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject).listen(0, '127.0.0.1', resolve)
-  })
-  const addr = server.address()
-  if (!addr || typeof addr === 'string') throw new Error('HTTPS fixture has no TCP address')
-  const tlsConnect = tls.connect
-  // Route the TCP leg to the fixture and trust only its certificate. Keep Node's HTTPS and
-  // TLS implementation (including SNI and hostname verification), and observe the intended dial.
-  vi.spyOn(tls, 'connect').mockImplementation((options: tls.ConnectionOptions | number) => {
-    if (typeof options !== 'object') throw new Error('Expected HTTPS connection options')
-    dials.push(options.host)
-    return tlsConnect({ ...options, ca: cert, socket: connect(addr.port, '127.0.0.1') })
-  })
-  return {
-    dns4,
-    dns6,
-    requests,
-    names,
-    dials,
-    routes,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()))
-        server.closeAllConnections()
-      }),
-  }
-}
-
-let network: Awaited<ReturnType<typeof fixture>>
+let network: Awaited<ReturnType<typeof createMdxExternalNetworkFixture>>
 beforeEach(async () => {
-  network = await fixture()
+  network = await createMdxExternalNetworkFixture()
 })
 afterEach(async () => {
-  vi.restoreAllMocks()
   vi.useRealTimers()
   await network?.close()
+  vi.restoreAllMocks()
 })
 
 const fetchText = (overrides: Partial<Parameters<typeof fetchMdxExternalData>[0]> = {}) =>
   fetchMdxExternalData({
-    url: entry,
+    url: network.entryURL,
     signal: new AbortController().signal,
     assertAccess: () => true,
     ...overrides,
@@ -216,15 +140,35 @@ describe('fetchMdxExternalData', () => {
     expect(network.dials).toEqual([v4])
   })
 
+  it.each([
+    ['https://%74wo.example/module.js', 'unsafe-url'],
+    ['https://two.example/data%2Ejson', 'unsupported-format'],
+    ['https://two.example/style.css', 'unsupported-format'],
+    ['https://two.example/page.html', 'unsupported-format'],
+    ['https://two.example/photo.webp', 'unsupported-format'],
+    ['https://two.example/native.node', 'unsupported-format'],
+  ])('rejects redirect destination %s before authorization or contact', async (url, code) => {
+    network.routes.respond = (_, res) => redirectTo(res, url)
+    const assertAccess = vi.fn((_origin: string) => true)
+    await expect(fetchText({ assertAccess })).rejects.toMatchObject({ code })
+    expect(assertAccess.mock.calls.every(([origin]) => origin === 'https://one.example')).toBe(true)
+    expect(network.dns4).not.toHaveBeenCalledWith('two.example')
+    expect(network.dns6).not.toHaveBeenCalledWith('two.example')
+    expect(network.dials).toEqual([v4])
+    expect(network.requests).toHaveLength(1)
+  })
+
   it('follows authorized redirects over pinned TLS and returns the relative-import base', async () => {
     network.dns4.mockImplementation(async (host) => {
       if (host === 'one.example') return [v4]
       throw { code: 'ENODATA' }
     })
     network.dns6.mockResolvedValue([v6])
+    network.routes.peerAddress = (address) =>
+      address === v4 ? `::ffff:${v4}` : '2606:2800:0220:0001:0248:1893:25C8:1946'
     network.routes.respond = (req, res) => {
-      if (req.headers.host === 'one.example') redirectTo(res, 'https://two.example/first.js')
-      else if (req.url === '/first.js') redirectTo(res, './modules/final.js?version=1')
+      if (req.headers.host === 'one.example') redirectTo(res, 'https://two.example/pkg@5.1.5')
+      else if (req.url === '/pkg@5.1.5') redirectTo(res, './modules/final.js?version=1')
       else res.end(source)
     }
     const result = await fetchText()
@@ -239,6 +183,16 @@ describe('fetchMdxExternalData', () => {
       expect(req.headers).not.toHaveProperty('authorization')
       expect(req.headers).not.toHaveProperty('referer')
     }
+  })
+
+  it.each([
+    ['the actual loopback peer', null],
+    ['a simulated public peer that was not selected', '8.8.8.8'],
+  ])('does not send HTTP to %s, even with a valid certificate', async (_, peer) => {
+    network.routes.peerAddress = peer === null ? null : () => peer
+    await expect(fetchText()).rejects.toMatchObject({ code: 'unsafe-peer' })
+    expect(network.names).toEqual(['one.example'])
+    expect(network.requests).toEqual([])
   })
 
   it('does not send an HTTP request if consent is revoked during TLS setup', async () => {

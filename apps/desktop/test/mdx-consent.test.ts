@@ -11,7 +11,7 @@ beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-mdx-consent-'))
   file = join(dir, 'consent.json')
   scope = {
-    origin: 'https://packages.example:8443',
+    origin: 'https://packages.example',
     root: join(dir, 'vault'),
     remote: 'octocat/notes',
     accountId: '123',
@@ -29,15 +29,17 @@ it('reopens a grant only for the exact vault root, remote, account and HTTPS ori
     { root: join(dir, 'another-clone') },
     { remote: 'octocat/other-notes' },
     { accountId: '456' },
-    { origin: 'https://packages.example' },
+    { origin: 'https://cdn.example' },
   ]) {
     expect(await reopened.allows({ ...scope, ...changed })).toBe(false)
   }
 
   for (const origin of [
-    'http://packages.example:8443',
-    'https://user@packages.example:8443',
-    'https://packages.example:8443/dependency',
+    'http://packages.example',
+    'https://user@packages.example',
+    'https://packages.example/dependency',
+    'https://packages.example:8443',
+    'https://*.packages.example',
   ]) {
     await expect(reopened.grant({ ...scope, origin })).rejects.toThrow()
   }
@@ -51,10 +53,13 @@ it('denies missing, corrupt, and malformed state, even beside a valid entry', as
     '{',
     JSON.stringify({ version: 2, grants: [scope] }),
     JSON.stringify({ version: 1, grants: [scope, { ...scope, accountId: 123 }] }),
-    JSON.stringify({ version: 1, grants: [scope, { ...scope, origin: `${scope.origin}/` }] }),
+    ...[`${scope.origin}/`, `${scope.origin}:8443`, 'https://*.example'].map((origin) =>
+      JSON.stringify({ version: 1, grants: [scope, { ...scope, origin }] }),
+    ),
   ]) {
     await writeFile(file, text)
     expect(await store.allows(scope)).toBe(false)
+    await expect(store.listGrants(scope)).rejects.toThrow()
   }
 })
 
@@ -65,7 +70,6 @@ it.skipIf(process.getuid === undefined || process.getuid() === 0)(
   async () => {
     const revoked = { ...scope, origin: 'https://cdn.example' }
     const store = createMdxConsentStore(file)
-    await store.grant(scope)
     await store.grant(revoked)
 
     await chmod(dir, 0o500)
@@ -77,14 +81,21 @@ it.skipIf(process.getuid === undefined || process.getuid() === 0)(
     }
 
     const reopened = createMdxConsentStore(file)
-    expect(await reopened.allows(scope)).toBe(true)
+    expect(await reopened.allows(scope)).toBe(false)
     expect(await reopened.allows(revoked)).toBe(true)
     expect(await store.allows(scope)).toBe(false)
     expect(await store.allows(revoked)).toBe(false)
+    expect(await store.listGrants(scope)).toEqual([
+      { origin: revoked.origin, revocationPending: true },
+    ])
 
+    await expect(store.grant(revoked)).rejects.toThrow()
     await store.grant(scope)
     expect(await store.allows(scope)).toBe(true)
     expect(await store.allows(revoked)).toBe(false)
+    await store.revoke(revoked)
+    expect(await store.listGrants(scope)).toEqual([{ origin: scope.origin }])
+    expect(await createMdxConsentStore(file).allows(revoked)).toBe(false)
   },
 )
 

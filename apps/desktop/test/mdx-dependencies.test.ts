@@ -1,15 +1,26 @@
 import { mkdtemp, mkdir, writeFile, rm, symlink, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { inspectMdxDependencies } from '../src/main/mdx-dependencies'
+import { fetchMdxExternalData } from '../src/main/mdx-external-data'
+import type { MdxInspectResult } from '../src/main/mdx-resources'
+import { createMdxExternalNetworkFixture } from './fixtures/mdx-external-network'
 
 const roots: string[] = []
 afterEach(async () =>
   Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))),
 )
 
-async function setup() {
+type GraphOptions = Parameters<typeof inspectMdxDependencies>[0]
+
+function imports(source: string, line: number): MdxInspectResult['dependencies'] {
+  return [...source.matchAll(/import\s+[^'"\n]*?from\s+['"]([^'"]+)['"]/g)].flatMap(
+    ([, specifier]) => (specifier === undefined ? [] : [{ specifier, line, column: 1 }]),
+  )
+}
+
+async function setup(overrides: Partial<Pick<GraphOptions, 'inspect' | 'external'>> = {}) {
   const inspected: string[] = []
   const root = await mkdtemp(join(tmpdir(), 'holi-mdx-'))
   roots.push(root)
@@ -17,13 +28,7 @@ async function setup() {
     inspected.push(source)
     return {
       diagnostics: [],
-      dependencies: [...source.matchAll(/import\s+[^'"\n]*?from\s+['"]([^'"]+)['"]/g)].map(
-        (match) => ({
-          specifier: match[1],
-          line: 2,
-          column: 1,
-        }),
-      ),
+      dependencies: imports(source, 2),
     }
   }
   const run = (source: string) =>
@@ -35,11 +40,71 @@ async function setup() {
       assertCurrent: async () => {},
       owner: {},
       inspect,
+      ...overrides,
     })
   return { root, run, inspected }
 }
 
+async function setupExternal(inspect?: GraphOptions['inspect']) {
+  const network = await createMdxExternalNetworkFixture()
+  onTestFinished(() => network.close())
+  const { run } = await setup({
+    ...(inspect && { inspect }),
+    external: {
+      fetch: (url, signal) => fetchMdxExternalData({ url, signal, assertAccess: () => true }),
+      retainSnapshot: () => {},
+    },
+  })
+  return { network, run }
+}
+
 describe('inspectMdxDependencies', () => {
+  it('rejects an invalid raw spelling even if its canonical URL was already inspected', async () => {
+    const { network, run } = await setupExternal()
+    const result = await run(
+      `import A from '${network.entryURL}'\nimport B from 'https://%6fne.example/index.js'`,
+    )
+    expect(result).toEqual([
+      expect.objectContaining({ message: expect.stringMatching(/unsupported/i) }),
+    ])
+    expect(network.requests).toHaveLength(1)
+  })
+
+  it('reports unsupported specifiers and remote syntax errors without reproducing private input', async () => {
+    // Exercise the real browser guest's request/result protocol under Node, not a native window.
+    await import('../src/mdx-compiler/guest')
+    const guest = globalThis as typeof globalThis & {
+      __holiMdxReceive(encoded: string): void
+      __holiMdxTakeResult(): (MdxInspectResult & { id: string }) | null
+    }
+    const { network, run } = await setupExternal(async (_owner, source, _signal, format) => {
+      guest.__holiMdxReceive(
+        Buffer.from(JSON.stringify({ id: 'inspection', source, format })).toString('base64'),
+      )
+      return vi.waitFor(() => {
+        const result = guest.__holiMdxTakeResult()
+        if (!result) throw new Error('Compiler guest has not replied')
+        return result
+      })
+    })
+    const secret = 'SYNTHETIC_MDX_SECRET'
+    network.routes.respond = (_, res) => res.end(`// first line\nexport default /${secret}[z-a]/;`)
+    const result = await run(
+      [
+        `import './child.js?token=${secret}'`,
+        `import 'https://user:${secret}@one.example/blocked.js?key=${secret}'`,
+        `import '${network.entryURL}'`,
+      ].join('\n'),
+    )
+    expect(result).toHaveLength(3)
+    expect(result[2]).toMatchObject({
+      line: 3,
+      message: expect.stringMatching(/^https:\/\/one\.example:2:\d+: Invalid JavaScript syntax/),
+    })
+    expect(JSON.stringify(result)).not.toContain(secret)
+    expect(network.requests).toHaveLength(1)
+  })
+
   it('returns no diagnostics for a safe nested graph and diagnoses a missing child', async () => {
     const { root, run } = await setup()
     await mkdir(join(root, 'nested'))
@@ -47,7 +112,7 @@ describe('inspectMdxDependencies', () => {
     expect(await run("import Child from './nested/child.mdx'")).toEqual([])
     const missing = await run("import Missing from './nested/absent.mdx'")
     expect(missing).toHaveLength(1)
-    expect(missing[0].line).toBe(2)
+    expect(missing[0]).toMatchObject({ line: 2 })
   })
 
   it('refuses protected paths, lowercase aliases, and symlink targets without inspecting them', async () => {
@@ -76,12 +141,7 @@ describe('inspectMdxDependencies', () => {
         owner: {},
         inspect: async (_owner, source) => {
           if (source.includes('// right source')) await writeFile(shared, 'changed source')
-          return {
-            diagnostics: [],
-            dependencies: [...source.matchAll(/import\s+[^'"\n]*?from\s+['"]([^'"]+)['"]/g)].map(
-              (m) => ({ specifier: m[1], line: 1, column: 1 }),
-            ),
-          }
+          return { diagnostics: [], dependencies: imports(source, 1) }
         },
       }),
     ).rejects.toBeDefined()
@@ -139,12 +199,7 @@ describe('inspectMdxDependencies', () => {
         owner: {},
         inspect: async (_owner, source) => {
           if (source === 'DISTINCT_CHILD_SOURCE') await writeFile(child, 'changed after inspection')
-          return {
-            diagnostics: [],
-            dependencies: [...source.matchAll(/import\s+[^'"\n]*?from\s+['"]([^'"]+)['"]/g)].map(
-              (m) => ({ specifier: m[1], line: 1, column: 1 }),
-            ),
-          }
+          return { diagnostics: [], dependencies: imports(source, 1) }
         },
       }),
     ).rejects.toBeDefined()

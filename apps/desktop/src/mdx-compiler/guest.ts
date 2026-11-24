@@ -153,8 +153,8 @@ root.__holiMdxReceive = (encoded) => {
         dependencies: [],
         diagnostics: [
           {
-            message:
-              typeof candidate.message === 'string' ? candidate.message : 'Invalid JavaScript',
+            // Acorn messages can quote source (including a remote module's regexp body).
+            message: request.format === 'jsx' ? 'Invalid JSX syntax' : 'Invalid JavaScript syntax',
             line:
               typeof start?.line === 'number'
                 ? start.line

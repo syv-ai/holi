@@ -2,17 +2,19 @@ import { Resolver } from 'node:dns/promises'
 import { Agent, request } from 'node:https'
 import type { IncomingMessage } from 'node:http'
 import { BlockList, isIP } from 'node:net'
+import { resolveMdxExternalModule } from './mdx-external-policy'
 
 const DEADLINE_MS = 8_000
 const BODY_LIMIT = 256 * 1024
 const REDIRECT_LIMIT = 3
-const DNS_NAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i
 
 const errorMessages = {
   'consent-needed': 'External MDX dependency requires consent',
   'access-changed': 'External MDX dependency access is unavailable',
   'unsafe-url': 'External MDX dependency URL is not supported',
+  'unsupported-format': 'External MDX dependency module format is not supported',
   'unsafe-address': 'External MDX dependency did not resolve exclusively to public addresses',
+  'unsafe-peer': 'External MDX dependency TLS peer did not match the vetted address',
   redirect: 'External MDX dependency redirect is invalid or exceeds the limit',
   response: 'External MDX dependency did not return an unencoded UTF-8 response',
   'too-large': 'External MDX dependency exceeds the size limit',
@@ -47,8 +49,10 @@ export async function fetchMdxExternalData(options: {
   const signal = AbortSignal.any([options.signal, deadline.signal])
   try {
     signal.throwIfAborted()
-    let target = parseDestination(options.url)
+    let destination = resolveMdxExternalModule(options.url)
     for (let redirects = 0; ; redirects++) {
+      if ('error' in destination) throw new MdxExternalDataError(destination.error)
+      const target = destination.url
       const { origin, hostname } = target
       const check = () => assertAccess(() => options.assertAccess(origin, signal), origin, signal)
       await check()
@@ -58,7 +62,7 @@ export async function fetchMdxExternalData(options: {
       await check()
       if ('text' in result) return { url: target.href, text: result.text }
       if (redirects >= REDIRECT_LIMIT) throw new MdxExternalDataError('redirect')
-      target = parseDestination(result.location, target)
+      destination = resolveMdxExternalModule(result.location, target)
     }
   } catch (error) {
     // Do not propagate URL parse errors, DNS/TLS errors, callback exceptions or abort reasons.
@@ -69,39 +73,6 @@ export async function fetchMdxExternalData(options: {
   } finally {
     clearTimeout(timer)
   }
-}
-
-function parseDestination(raw: string, base?: URL): URL {
-  const invalid = () => new MdxExternalDataError('unsafe-url')
-  // WHATWG URL silently repairs backslashes, missing slashes and control characters.
-  if (!raw || raw.length > 4096 || /[\s\\\u0000-\u001f\u007f]/u.test(raw)) throw invalid()
-  const input = base && raw.startsWith('//') ? `https:${raw}` : raw
-  const absolute = !base || /^[a-z][a-z\d+.-]*:/i.test(input)
-  let hostname: string | undefined
-  if (absolute) {
-    const authority = /^https:\/\/([^/?#]+)/i.exec(input)?.[1]
-    hostname = authority?.replace(/:443$/, '')
-    if (!hostname || hostname.length > 253 || !DNS_NAME.test(hostname)) throw invalid()
-  }
-  let target: URL
-  try {
-    target = new URL(input, base)
-  } catch {
-    throw invalid()
-  }
-  if (
-    target.protocol !== 'https:' ||
-    target.port ||
-    target.username ||
-    target.password ||
-    target.hostname !== (hostname?.toLowerCase() ?? base?.hostname) ||
-    isIP(target.hostname) ||
-    /\.(?:localhost|local|internal|onion)$|(?:^|\.)home\.arpa$/i.test(target.hostname)
-  )
-    throw invalid()
-  target.hash = ''
-  if (target.href.length > 4096) throw invalid()
-  return target
 }
 
 async function assertAccess(
@@ -205,6 +176,9 @@ async function fetchHop(
   signal: AbortSignal,
 ): Promise<{ text: string } | { location: string }> {
   signal.throwIfAborted()
+  // Exact address matching by bytes, including IPv6 spellings and IPv4-mapped IPv6.
+  const pinned = new BlockList()
+  pinned.addAddress(address, isIP(address) === 6 ? 'ipv6' : 'ipv4')
   // Never use the global Agent (which can inherit proxy settings), pool, or resume TLS sessions.
   const agent = new Agent({ keepAlive: false, maxCachedSessions: 0 })
   try {
@@ -235,7 +209,18 @@ async function fetchHop(
       })
       req.once('socket', (socket) => {
         socket.once('secureConnect', () => {
-          // No HTTP bytes have been sent yet. Check again after the TLS handshake.
+          // No HTTP bytes have been sent yet. Verify the connected peer and current grant.
+          const peer = socket.remoteAddress
+          const family = peer && isIP(peer)
+          if (
+            !peer ||
+            !family ||
+            peer.includes('%') ||
+            !pinned.check(peer, family === 6 ? 'ipv6' : 'ipv4')
+          ) {
+            reject(new MdxExternalDataError('unsafe-peer'))
+            return
+          }
           void check()
             .then(() => {
               if (!req.destroyed && !signal.aborted) req.end()

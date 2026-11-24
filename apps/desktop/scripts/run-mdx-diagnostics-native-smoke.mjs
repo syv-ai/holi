@@ -11,6 +11,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { externalizeDepsPlugin } from 'electron-vite'
 import { MDX_RESOURCE_EVENTS } from '../../../packages/shared/src/mdx-diagnostics.ts'
+import { fixtureOrigins } from './mdx-native-network-observation.ts'
 import { createCdpClient } from './native-smoke-cdp.mjs'
 import { encodeScreencast } from './native-smoke-recording.mjs'
 import { createOwnedProcesses } from './owned-processes.mjs'
@@ -49,7 +50,20 @@ let outcome = 'failed'
 let nativeScenarios = null
 let runtime = null
 let positionedDiagnostics = null
-const external = { stage: 'not started', snapshots: {} }
+const external = {
+  stage: 'not started',
+  observation: {
+    scope:
+      'Electron main-process Node transport only; no Chromium, OS DNS packet, or server-side observation',
+    dns: 'Public Resolver.resolve4/resolve6 invocations and aggregate Node DNS async resources; not DNS packets or cache misses',
+    tls: 'Public tls.connect invocations by SNI; verifiedPeer requires an authorized handshake at the original numeric address and port 443',
+    socket:
+      'Aggregate Node TCP/TLS async resources, not a count of connections; unattributed resources fail traffic checks',
+    http: 'Public Node HTTP diagnostics channels; evidence contains fixed route labels, statuses, and header presence booleans, not header values or bodies',
+  },
+  snapshots: {},
+  streamRevocation: null,
+}
 const evidenceFiles = ['result.json', 'electron-smoke.log']
 const checks = []
 const portServer = createServer()
@@ -180,7 +194,7 @@ try {
     });
     contextBridge.exposeInMainWorld('holiSmoke', {
       call: (channel, input) => {
-        if (!['smoke:status', 'smoke:scenarios', 'smoke:other-document', 'smoke:hold-compiler', 'smoke:guest-healthy'].includes(channel))
+        if (!['smoke:status', 'smoke:scenarios', 'smoke:other-document', 'smoke:hold-compiler', 'smoke:guest-healthy', 'smoke:arm-stream', 'smoke:stream-status'].includes(channel))
           return Promise.reject(Error('Denied fixture operation'));
         return ipcRenderer.invoke(channel, input);
       },
@@ -320,6 +334,7 @@ async function runNative(electron, artifact) {
   for (const field of ['dns', 'socket'])
     assert.equal(preApproval.network[field], isolation.network[field])
   assert.equal(preApproval.network.requests.length, 0)
+  requireOnlyDestinations(preApproval.network, isolation.network, [], 'before vault trust')
   await click('Approve vault')
   const guest = await waitFor(async () => {
     const state = await windowStatus(page)
@@ -500,9 +515,7 @@ async function runNative(electron, artifact) {
 async function runExternal(page, editAndWaitForSave, onEvent) {
   const remote = 'fixture/isolated-mdx'
   const probePath = 'notes/probe.mdx'
-  const rawOrigin = 'https://raw.githubusercontent.com'
-  const redirectOrigin = 'https://esm.run'
-  const cdnOrigin = 'https://cdn.jsdelivr.net'
+  const [rawOrigin, redirectOrigin, cdnOrigin] = fixtureOrigins
   const publicEntry = `${rawOrigin}/syv-ai/holi/${fixtureSha}/apps/desktop/scripts/fixtures/mdx-external/entry.js`
   const source = `import '${publicEntry}'\n\n# External diagnostics fixture\n`
   const allow = (origin) => `Allow ${origin}`
@@ -564,6 +577,7 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
     assert(result?.ok === false && message.test(result.message), label)
   }
   const staleResource = /MDX (?:lease|resource request) unavailable|MDX context changed/i
+  const cancelled = /cancel|supersed|unavailable|invalidated/i
   const probeLease = async () => {
     const { context } = await call('status', { remote }, 'query')
     assert(context, 'Current trusted document has no context')
@@ -591,6 +605,7 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
     for (const field of ['dns', 'socket'])
       assert.equal(after[field], before[field], `${label}: ${field} activity`)
     assert.equal(after.requests.length, before.requests.length, `${label}: HTTP activity`)
+    requireOnlyDestinations(after, before, [], label)
   }
   const requireRoutes = (snapshot, start, allowed) => {
     const sent = snapshot.requests.slice(start.requests.length)
@@ -690,38 +705,54 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
     external.stage = 'relative and transitive graph'
     await click(allow(rawOrigin))
     await openResources(allow(redirectOrigin))
+    const allowTransitive = await waitFor(
+      () => button(allow(redirectOrigin)),
+      'transitive approval',
+    )
     const transitive = await capture('transitiveConsentPending')
+    requireOnlyDestinations(transitive, before, [rawOrigin], 'before transitive origin consent')
+    requireTransport(transitive, before, [rawOrigin])
     requireRoutes(transitive, before, ['entry', 'relative'])
     for (const route of ['entry', 'relative'])
       requireResponse(transitive, route, (code) => code === 200)
-    assert(
-      transitive.dns > before.dns && transitive.socket > before.socket,
-      'Node DNS/socket counters were not calibrated by real traffic',
-    )
     assert(transitive.pushes > before.pushes, 'Production approval did not push invalidation')
     checks.push(
-      'approved HTTPS entry and relative child fetched; distinct transitive origin offered before any observed HTTP to it',
+      'approved HTTPS entry and relative child fetched; zero observed Node DNS, TLS/socket or HTTP for the transitive origin, redirect target or unexpected/unattributed traffic',
     )
 
     external.stage = 'cross-origin redirect'
-    await click(allow(redirectOrigin))
+    await clickAt(allowTransitive)
     await openResources(allow(cdnOrigin))
+    const video = recordVideo ? await startVideo(page, onEvent) : null
+    if (video) await delay(700)
+    const allowRedirectTarget = await waitFor(
+      () => button(allow(cdnOrigin)),
+      'redirect target approval',
+    )
     const redirect = await capture('redirectConsentPending')
+    requireOnlyDestinations(
+      redirect,
+      transitive,
+      [rawOrigin, redirectOrigin],
+      'before redirect target consent',
+    )
+    requireTransport(redirect, transitive, [rawOrigin, redirectOrigin])
     requireRoutes(redirect, transitive, ['entry', 'relative', 'redirect'])
     requireResponse(redirect, 'redirect', (code) => [301, 302, 303, 307, 308].includes(code))
     checks.push(
-      'actual HTTPS redirect response discovered a new origin without sending an observed HTTP request to it',
+      'actual HTTPS redirect discovered a new origin with zero observed Node DNS, TLS/socket or HTTP for it or unexpected/unattributed traffic',
     )
 
     external.stage = 'approved dependency success'
-    const video = recordVideo ? await startVideo(page, onEvent) : null
-    if (video) await delay(700)
-    await click(allow(cdnOrigin))
+    await clickAt(allowRedirectTarget)
     await waitFor(
       () => cleanDiagnostics(page),
       'clean FileView diagnostics after approval of all three public origins',
     )
     const approved = await capture('allApproved')
+    const origins = [rawOrigin, redirectOrigin, cdnOrigin]
+    requireOnlyDestinations(approved, redirect, origins, 'after all origins approved')
+    requireTransport(approved, redirect, origins)
     requireRoutes(approved, redirect, parts)
     requireResponse(approved, 'cdn', (code) => code === 200)
     assert(approved.pushes > redirect.pushes, 'Final approval did not push invalidation')
@@ -739,7 +770,7 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
       'all three approved origins produced clean diagnostics with no cookie, authorization or proxy-authorization headers on observed Node HTTPS requests',
     )
 
-    external.stage = 'userinfo rejection and in-flight revoke'
+    external.stage = 'userinfo rejection and pre-transport revoke'
     lease = await probeLease()
     const credentialUrl = publicEntry.replace('https://', 'https://synthetic-user:synthetic-only@')
     const unsafe = await call('compile', {
@@ -765,8 +796,8 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
     await click(revoke(rawOrigin))
     await refuse(
       page.evaluate('window.__mdxHeld'),
-      'The revoked native compile returned stale diagnostics',
-      /cancel|supersed|unavailable|invalidated/i,
+      'The native compile held before transport returned stale diagnostics',
+      cancelled,
     )
     await openResources(allow(rawOrigin))
     const revoked = await capture('originRevoked')
@@ -787,10 +818,7 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
       'diagnostic restored after revocation',
     )
     await saveScreenshot(page, 'resources-revoked.png')
-    if (video) {
-      await delay(700)
-      await video()
-    }
+    if (video) await delay(700)
     await call('releaseDiagnosticsLease', { lease })
     await editAndWaitForSave(
       '# Editable after resource revocation\n',
@@ -809,10 +837,166 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
     checks.push(
       'revocation cancels a held native compiler before transport; push restores the request without traffic and editing/saving still work',
     )
+    external.stage = 'client-side HTTPS stream revocation'
+    // The FileView is on a clean local source; the probe lease streams using
+    // the same account/vault approval while the real revoke control stays ready.
+    await openResources(revoke(cdnOrigin))
+    if (video) await delay(700)
+    lease = await probeLease()
+    const streamUrl = await page.evaluate(`window.holiSmoke.call('smoke:arm-stream')`)
+    const observeStream = () => page.evaluate(`window.holiSmoke.call('smoke:stream-status')`)
+    const beforeStream = await capture('beforeStream')
+    const streaming = wire('compile', { lease, generation: 1, source: `import '${streamUrl}'` })
+    const streamEvidence = {
+      backpressure:
+        'Fixture paused one real TLS socket after a buffered body chunk, suppressing socket resumes until close; client-side evidence only',
+      beforeRevoke: null,
+      afterRevoke: null,
+      compileRejected: false,
+    }
+    external.streamRevocation = streamEvidence
+    const started = performance.now()
+    await page.evaluate(
+      `void (window.__mdxStreaming = window.holi.trpc(${JSON.stringify(streaming)}))`,
+    )
+    try {
+      await waitFor(
+        async () => {
+          const observed = await observeStream()
+          return (observed?.active || observed?.closed) && observed
+        },
+        'authorized TLS socket with a buffered incomplete response',
+        6500,
+      )
+      const point = await button(revoke(cdnOrigin))
+      assert(point, 'The FileView revoke control is not actionable while the probe streams')
+      streamEvidence.beforeRevoke = await observeStream()
+      assert(
+        streamEvidence.beforeRevoke?.active && streamEvidence.beforeRevoke.requests === 1,
+        'Did not observe exactly one active, paused HTTPS stream at the revoke click',
+      )
+      await clickAt(point)
+      streamEvidence.afterRevoke = await waitFor(
+        async () => {
+          const observed = await observeStream()
+          return observed?.closed && observed
+        },
+        'revocation-driven TLS socket close',
+        2000,
+      )
+      // Do not credit an AbortError/close from the independent 8-second fetch deadline.
+      streamEvidence.closeObservedWithinMs = Math.ceil(performance.now() - started)
+      assert(
+        streamEvidence.closeObservedWithinMs < 8000,
+        'Closure was not observed before the transport deadline',
+      )
+      assert(streamEvidence.afterRevoke.abortError, 'Client transport reported no AbortError')
+      assert(
+        streamEvidence.afterRevoke.incompleteAtClose,
+        'HTTPS response completed instead of being cancelled',
+      )
+      await refuse(
+        page.evaluate('window.__mdxStreaming'),
+        'The native compile streaming over HTTPS returned stale diagnostics',
+        cancelled,
+      )
+      streamEvidence.compileRejected = true
+    } finally {
+      streamEvidence.lastObservation = await observeStream().catch(() => null)
+    }
+
+    const retrySource = `import '${streamUrl}'\n\n# Stalled stream retry requires consent\n`
+    await editAndWaitForSave(retrySource, 'source after streaming origin was revoked')
+    await openResources(allow(cdnOrigin))
+    const streamRevoked = await capture('streamOriginRevoked')
+    requireOnlyDestinations(
+      streamRevoked,
+      beforeStream,
+      [cdnOrigin],
+      'HTTPS stream and revoked retry',
+    )
+    requireTransport(streamRevoked, beforeStream, [cdnOrigin])
+    requireRoutes(streamRevoked, beforeStream, ['stream'])
+    for (const field of ['resolve4', 'resolve6', 'tls', 'httpCreated', 'httpStarted']) {
+      assert.equal(
+        streamRevoked.destinations[cdnOrigin][field] - beforeStream.destinations[cdnOrigin][field],
+        1,
+        `More than one operation for the streamed or revoked origin: ${field}`,
+      )
+    }
+    assert(
+      streamRevoked.pushes > beforeStream.pushes,
+      'Stream revocation did not push invalidation',
+    )
+    assert.deepEqual(
+      (await call('externalResources', { lease }, 'query')).approved.map(({ origin }) => origin),
+      [redirectOrigin],
+    )
+    await saveScreenshot(page, 'resources-stream-revoked.png')
+    checks.push(
+      'FileView revocation aborts a real authorized HTTPS stream stalled by forced client backpressure, closes its socket before response completion/deadline, rejects the compile, and prevents a subsequent fetch',
+    )
+    await call('releaseDiagnosticsLease', { lease })
+    if (video) {
+      await delay(700)
+      await video()
+    }
     external.stage = 'complete'
   } finally {
     // Preserve only bounded counts and booleans even on public DNS/CDN failures.
     await capture('finalObservation').catch(() => {})
+  }
+}
+
+function requireOnlyDestinations(current, baseline, allowed, label) {
+  const destinations = [...fixtureOrigins, 'unexpected', 'unattributed']
+  for (const destination of destinations) {
+    assert(current.destinations?.[destination], `${label}: destination observation unavailable`)
+    if (!allowed.includes(destination)) {
+      assert.deepEqual(
+        current.destinations[destination],
+        baseline.destinations[destination],
+        `${label}: unexpected Node network activity for ${destination}`,
+      )
+    }
+  }
+  for (const [field, total] of [
+    ['dnsResources', current.dns],
+    ['socketResources', current.socket],
+    ['httpStarted', current.requests.length],
+  ]) {
+    assert.equal(
+      destinations.reduce((sum, origin) => sum + current.destinations[origin][field], 0),
+      total,
+      `${label}: ${field} observations do not account for the aggregate`,
+    )
+  }
+}
+
+function requireTransport(current, baseline, origins) {
+  for (const origin of origins) {
+    for (const field of [
+      'resolve4',
+      'resolve6',
+      'dnsResources',
+      'socketResources',
+      'tls',
+      'verifiedPeer',
+      'httpCreated',
+      'httpStarted',
+    ]) {
+      assert(
+        current.destinations[origin]?.[field] > baseline.destinations[origin]?.[field],
+        `Actual ${field} observation unavailable for ${origin}`,
+      )
+    }
+    const now = current.destinations[origin]
+    const before = baseline.destinations[origin]
+    assert.equal(
+      now.verifiedPeer - before.verifiedPeer,
+      now.tls - before.tls,
+      `Not all TLS connections for ${origin} had a verified matching peer`,
+    )
   }
 }
 
@@ -902,6 +1086,10 @@ async function finalize() {
         positionedDiagnostics,
         artifact: 'unsigned Electron app.asar',
         cleanup,
+        retained: {
+          processGroups: owned.remainingPids,
+          temporaryRoot: cleanup.temporaryRootRemoved ? null : root,
+        },
         resources: {
           temporaryRoot: root,
           userData: join(profile, 'userData'),

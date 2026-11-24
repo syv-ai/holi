@@ -35,6 +35,7 @@ import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { canonicalGitHubRemote, createMdxTrustStore } from './mdx-trust'
 import { createMdxConsentStore } from './mdx-consent'
+import { trackMdxDocument } from './mdx-document-lifetime'
 import { createMdxResources } from './mdx-resources'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
@@ -112,7 +113,7 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
 let mainWindow: BrowserWindow | null = null
-let mdxDocumentReady = false
+let mdxDocumentReady = () => false
 let invalidateMdxDiagnostics = (_retireDocument?: boolean): void => {}
 let closeMdxDiagnostics = (): void => {}
 let appFrameLeases: ReturnType<typeof createAppFrameLeases> | null = null
@@ -252,21 +253,9 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
-  const retireMdxDocument = () => {
-    if (mainWindow !== win) return
-    mdxDocumentReady = false
-    invalidateMdxDiagnostics()
-  }
-  retireMdxDocument()
-  win.once('closed', retireMdxDocument)
-  win.webContents.on('did-start-navigation', (event) => {
-    if (event.isMainFrame && !event.isSameDocument) retireMdxDocument()
+  mdxDocumentReady = trackMdxDocument(win.webContents, (retireDocument) => {
+    if (mainWindow === win) invalidateMdxDiagnostics(retireDocument)
   })
-  win.webContents.on('did-navigate', () => {
-    if (mainWindow === win) mdxDocumentReady = true
-  })
-  win.webContents.on('render-process-gone', retireMdxDocument)
-  win.webContents.once('destroyed', retireMdxDocument)
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   // Pin authorization to the intended application document, never to a URL
   // supplied by an IPC sender.
@@ -291,7 +280,10 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   }
   if (liquid) applyLiquidGlass(win)
   win.on('closed', () => {
-    if (mainWindow === win) mainWindow = null
+    if (mainWindow !== win) return
+    mainWindow = null
+    mdxDocumentReady = () => false
+    invalidateMdxDiagnostics()
   })
   // The window's console joins main's in the Logs tab.
   win.webContents.on('console-message', (details) =>
@@ -440,7 +432,7 @@ async function main(): Promise<void> {
   }
   const mdxEvents = pluginEvents(eventsDeps, MDX_RESOURCE_EVENTS)
   const notifyMdxResourcesChanged = (remote: string) => {
-    if (!mdxDocumentReady || mdxShuttingDown || !mainWindow || mainWindow.isDestroyed()) return
+    if (!mdxDocumentReady() || mdxShuttingDown || !mainWindow || mainWindow.isDestroyed()) return
     try {
       const contents = mainWindow.webContents
       if (
@@ -1047,7 +1039,7 @@ async function main(): Promise<void> {
     mdxTrust,
     mdxConsent,
     mdxCompiler,
-    mdxApplicationReady: () => mdxDocumentReady && !mdxShuttingDown,
+    mdxApplicationReady: () => mdxDocumentReady() && !mdxShuttingDown,
     onMdxResourcesChanged: notifyMdxResourcesChanged,
     onMdxDiagnosticsInvalidate: (invalidate) => {
       invalidateMdxDiagnostics = invalidate
@@ -1229,14 +1221,8 @@ async function main(): Promise<void> {
   })
 
   async function teardownAndQuit(): Promise<void> {
-    mdxShuttingDown = true
-    // A failed flush leaves this document open; only its diagnostics leases retire.
-    invalidateMdxDiagnostics(false)
     if (!(await teardown())) {
-      mdxShuttingDown = false
       quitting = false
-      const active = host.active()
-      if (active) notifyMdxResourcesChanged(canonicalGitHubRemote(active.remote))
       return
     }
     quitting = true
@@ -1250,7 +1236,12 @@ async function main(): Promise<void> {
    *  update's restart. Never throws. */
   async function teardown(): Promise<boolean> {
     const channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
+    let complete = false
     try {
+      mdxShuttingDown = true
+      // Close admission on both ordinary and updater quit. Accepted revocations
+      // must still finish even though their document leases have retired.
+      invalidateMdxDiagnostics(false)
       // Ask before tearing down anything: a failed flush must leave the app
       // usable so the person can correct the problem and retry quit.
       const result = await requestFlush(channel)
@@ -1258,6 +1249,7 @@ async function main(): Promise<void> {
         console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
         return false
       }
+      await mdxConsent.drain()
       // Stop the work across vaults and in the active vault only after dirty
       // buffers are safe on disk. A failed drain keeps quit cancellable and
       // leaves the updater and vault infrastructure available for a retry.
@@ -1275,12 +1267,19 @@ async function main(): Promise<void> {
           await bridge.stop()
         },
       })
+      complete = true
+      return true
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
       channel.cancel?.()
       return false
+    } finally {
+      if (!complete) {
+        mdxShuttingDown = false
+        const active = host.active()
+        if (active) notifyMdxResourcesChanged(canonicalGitHubRemote(active.remote))
+      }
     }
-    return true
   }
 }
 

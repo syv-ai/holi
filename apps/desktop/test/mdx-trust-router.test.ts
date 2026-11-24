@@ -1,13 +1,19 @@
 import { Resolver } from 'node:dns/promises'
-import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { EventEmitter } from 'node:events'
+import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { BrowserWindow, WebContents } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createRouter } from '../src/main/router'
 import { GitHubSession } from '../src/main/github/session'
 import { TokenStore, type SafeStorageLike, type StoredAuth } from '../src/main/github/token-store'
 import { createMdxTrustStore, type MdxTrustStore } from '../src/main/mdx-trust'
 import { createMdxConsentStore } from '../src/main/mdx-consent'
+import { trackMdxDocument } from '../src/main/mdx-document-lifetime'
+import { guardNavigation } from '../src/main/window-guard'
+import { createMdxExternalNetworkFixture } from './fixtures/mdx-external-network'
+import { within } from './fixtures/fixture-deadline'
 import { MdxExternalDataError, type fetchMdxExternalData } from '../src/main/mdx-external-data'
 import type { MdxResources } from '../src/main/mdx-resources'
 import { VaultRegistry } from '../src/main/vault/registry'
@@ -38,6 +44,8 @@ async function fixture(
     trust?: (store: MdxTrustStore) => MdxTrustStore
     inspect?: MdxResources['inspect']
     externalFetch?: typeof fetchMdxExternalData
+    document?: WebContents
+    onResourceChange?: () => void
   } = {},
 ) {
   const dir = await mkdtemp(join(tmpdir(), 'holi-mdx-router-'))
@@ -89,18 +97,27 @@ async function fixture(
     scanClaimsFor: async () => [],
   }
   const consentFile = join(dir, 'mdx-consent.json')
+  const consent = createMdxConsentStore(consentFile)
   const changed: string[] = []
-  let retireDocument = () => {}
+  let retireDocument = (_retireDocument?: boolean) => {}
+  let shuttingDown = false
+  const documentReady = options.document
+    ? trackMdxDocument(options.document, (retire) => retireDocument(retire))
+    : () => true
   const caller = createRouter({
     registry,
     session,
     mdxTrust: options.trust?.(mdxTrust) ?? mdxTrust,
-    mdxConsent: createMdxConsentStore(consentFile),
+    mdxConsent: consent,
     mdxExternalFetch: options.externalFetch,
+    mdxApplicationReady: () => !shuttingDown && documentReady(),
     onMdxDiagnosticsInvalidate: (invalidate) => {
       retireDocument = invalidate
     },
-    onMdxResourcesChanged: (remote) => changed.push(remote),
+    onMdxResourcesChanged: (remote) => {
+      changed.push(remote)
+      options.onResourceChange?.()
+    },
     mdxCompiler: {
       createOwner: () => ({}),
       retireOwner: vi.fn(),
@@ -137,6 +154,11 @@ async function fixture(
     consentFile,
     changed,
     retireDocument,
+    shutdown: () => {
+      shuttingDown = true
+      retireDocument(false)
+      return consent.drain()
+    },
   }
 }
 
@@ -603,7 +625,10 @@ it('keeps the validated identity pending adoption and retires its context on pub
 })
 
 // Use the real guest message interface and parser without launching Electron.
-async function resourceRig(useProductionFetcher = false) {
+async function resourceRig(
+  useProductionFetcher = false,
+  options: Pick<NonNullable<Parameters<typeof fixture>[0]>, 'onResourceChange'> = {},
+) {
   await import('../src/mdx-compiler/guest')
   type Result = Awaited<ReturnType<MdxResources['inspect']>>
   const guest = globalThis as typeof globalThis & {
@@ -613,10 +638,6 @@ async function resourceRig(useProductionFetcher = false) {
   let id = 0
   const contacts: string[] = []
   const routes = new Map<string, { redirect: string } | { text: string }>()
-  let hold: {
-    started: ReturnType<typeof gate<void>>
-    cancelled: ReturnType<typeof gate<void>>
-  } | null = null
   const externalFetch: typeof fetchMdxExternalData = async ({ url, signal, assertAccess }) => {
     let target = new URL(url)
     for (let redirects = 0; redirects <= 3; redirects++) {
@@ -625,21 +646,6 @@ async function resourceRig(useProductionFetcher = false) {
         throw new MdxExternalDataError('consent-needed', target.origin)
       signal.throwIfAborted()
       contacts.push(target.href)
-      const held = hold
-      if (held) {
-        hold = null
-        return new Promise((_, reject) => {
-          signal.addEventListener(
-            'abort',
-            () => {
-              held.cancelled.resolve()
-              reject(new MdxExternalDataError('aborted'))
-            },
-            { once: true },
-          )
-          held.started.resolve()
-        })
-      }
       const response = routes.get(target.href)
       if (!response) throw new MdxExternalDataError('response')
       if ('redirect' in response) target = new URL(response.redirect, target)
@@ -662,6 +668,7 @@ async function resourceRig(useProductionFetcher = false) {
       }
     },
     externalFetch: useProductionFetcher ? undefined : externalFetch,
+    ...options,
   })
   const mdx = fixture.caller.mdxTrust
   await writeFile(join(fixture.root, 'page.mdx'), '# source')
@@ -671,11 +678,7 @@ async function resourceRig(useProductionFetcher = false) {
     const { context } = await mdx.status({ remote: REMOTE })
     return mdx.acquireDiagnosticsLease({ remote: REMOTE, path: 'page.mdx', context: context! })
   }
-  const stallContact = () => {
-    hold = { started: gate(), cancelled: gate() }
-    return { started: hold.started.promise, cancelled: hold.cancelled.promise }
-  }
-  return { ...fixture, mdx, acquire, contacts, routes, stallContact }
+  return { ...fixture, mdx, acquire, contacts, routes }
 }
 
 const entry = 'https://one.example/entry.js'
@@ -800,41 +803,177 @@ it('retires requests on rejection, edits, saves, document replacement and vault 
   expect(contacts).toEqual([])
 })
 
-it('cannot contact an origin after failed approval or failed revocation, and aborts active access', async () => {
-  const { mdx, acquire, consentFile, contacts, stallContact } = await resourceRig()
+it('allows a diagnostics retry after prevented navigation and retires it on a committed reload', async () => {
+  const contents = Object.assign(new EventEmitter(), { setWindowOpenHandler: () => {} })
+  const document = contents as unknown as WebContents
+  const appUrl = 'file:///holi/index.html'
+  guardNavigation({ webContents: document } as BrowserWindow, appUrl, () => {}, new Set())
+  const { caller, root } = await rig({ document, signedIn: auth(42, 'alice') })
+  const mdx = caller.mdxTrust
+  const start = (url: string) =>
+    contents.emit('did-start-navigation', { url, isMainFrame: true, isSameDocument: false })
+  const commit = () => contents.emit('did-navigate', {}, appUrl, -1, '')
+  start(appUrl)
+  await expect(mdx.status({ remote: REMOTE })).rejects.toThrow()
+  commit()
+  await writeFile(join(root, 'page.mdx'), '# source')
+  const { context } = await mdx.status({ remote: REMOTE })
+  await mdx.approve({ remote: REMOTE, context: context! })
+  const acquire = (context: string) =>
+    mdx.acquireDiagnosticsLease({ remote: REMOTE, path: 'page.mdx', context })
+  const trusted = (await mdx.status({ remote: REMOTE })).context!
+  const compile = (owner: { lease: string }) =>
+    mdx.compile({ ...owner, generation: 1, source: '# source' })
+  const initial = await acquire(trusted)
+
+  const away = 'file:///dropped.txt'
+  start(away)
+  let prevented = false
+  contents.emit('will-navigate', { url: away, preventDefault: () => (prevented = true) }, away)
+  expect(prevented).toBe(true)
+  // Electron does not emit did-navigate for the cancelled attempt.
+  await expect(compile(initial)).rejects.toThrow()
+  const retried = await acquire(trusted)
+  await expect(compile(retried)).resolves.toHaveLength(1)
+
+  // A programmatic reload has no cancellable will-navigate. Model a retry from
+  // the still-committed document before Chromium commits the replacement.
+  start(appUrl)
+  await expect(compile(retried)).rejects.toThrow()
+  const provisional = await acquire(trusted)
+  commit()
+  await expect(compile(provisional)).rejects.toThrow()
+  await expect(acquire(trusted)).rejects.toThrow()
+  const replacement = await acquire((await mdx.status({ remote: REMOTE })).context!)
+  await expect(compile(replacement)).resolves.toHaveLength(1)
+  await mdx.releaseDiagnosticsLease(replacement)
+})
+
+it('persists concurrently approved distinct origins from two splits on the same source', async () => {
+  const { mdx, acquire, routes } = await resourceRig()
+  const one = await acquire()
+  const two = await acquire()
+  const secondEntry = 'https://two.example/lib.js'
+  const source = `${externalSource}import '${secondEntry}'\n`
+  routes.set(`${entry}?opaque=value`, { text: 'export const x = 1' })
+  routes.set(secondEntry, { text: 'export const y = 2' })
+  const compile = (owner: { lease: string }, generation: number) =>
+    mdx.compile({ ...owner, generation, source })
+  await compile(one, 1)
+  await compile(two, 1)
+  const approve = async (owner: { lease: string }, origin: string) => {
+    const { pending } = await mdx.externalResources(owner)
+    return { ...owner, requestId: pending.find((request) => request.origin === origin)!.id }
+  }
+  const first = await approve(one, 'https://one.example')
+  const second = await approve(two, 'https://two.example')
+  await expect(
+    Promise.all([mdx.approveExternalResource(first), mdx.approveExternalResource(second)]),
+  ).resolves.toEqual([{ ok: true }, { ok: true }])
+  await expect(compile(one, 2)).resolves.toEqual([])
+  expect(await mdx.externalResources(two)).toMatchObject({
+    pending: [],
+    approved: [{ origin: 'https://one.example' }, { origin: 'https://two.example' }],
+  })
+  await mdx.releaseDiagnosticsLease(one)
+  await mdx.releaseDiagnosticsLease(two)
+})
+
+it('closes a streaming HTTPS response on revoke and retains the same blocked grant for a save retry', async () => {
+  const { mdx, acquire, consentFile, root } = await resourceRig(true)
+  const network = await createMdxExternalNetworkFixture()
   const owner = await acquire()
   const other = await acquire()
   const compile = (generation: number) =>
     mdx.compile({ ...owner, generation, source: externalSource })
-  await compile(1)
-  const descriptor = (await mdx.externalResources(owner)).pending[0]!
-  const approval = { ...owner, requestId: descriptor.id }
-  await mkdir(consentFile) // A real filesystem failure, even if tests are run as root.
-  await expect(mdx.approveExternalResource(approval)).rejects.toThrow()
-  await rm(consentFile, { recursive: true })
-  await compile(2)
-  expect(contacts).toEqual([])
-  await mdx.approveExternalResource({
-    ...owner,
-    requestId: (await mdx.externalResources(owner)).pending[0]!.id,
+  const scope = {
+    root: await realpath(root),
+    remote: REMOTE,
+    accountId: '42',
+    origin: new URL(entry).origin,
+  }
+  try {
+    await compile(1)
+    const approval = async () => ({
+      ...owner,
+      requestId: (await mdx.externalResources(owner)).pending[0]!.id,
+    })
+    await mkdir(consentFile) // A real filesystem failure, even if tests are run as root.
+    await expect(mdx.approveExternalResource(await approval())).rejects.toThrow()
+    await rm(consentFile, { recursive: true })
+    await compile(2)
+    expect(network.dials).toEqual([])
+    expect((await mdx.externalResources(owner)).approved).toEqual([])
+    await mdx.approveExternalResource(await approval())
+
+    const grant = (await mdx.externalResources(other)).approved[0]!
+    const receiving = gate()
+    const closed = gate()
+    network.routes.respond = (req, res) => {
+      req.socket.once('close', () => closed.resolve())
+      res.write('export const partial = ', () => receiving.resolve())
+    }
+    const compiling = expect(compile(3)).rejects.toThrow()
+    await within(receiving.promise, 3_000, 'receive first HTTPS chunk')
+    // Make the store unreadable during revocation; the old grant remains on disk.
+    const backup = `${consentFile}.backup`
+    await rename(consentFile, backup)
+    await mkdir(consentFile)
+    const revoke = { ...other, grantId: grant.id }
+    await Promise.all([
+      expect(mdx.revokeExternalResource(revoke)).rejects.toThrow(/revocation could not be saved/),
+      // An eventual transport timeout is not evidence of revocation-driven cancellation.
+      within(closed.promise, 2_000, 'disconnect revoked HTTPS response'),
+      compiling,
+    ])
+    const blocked = { ...grant, revocationPending: true }
+    expect((await mdx.externalResources(other)).approved).toEqual([blocked])
+    await rm(consentFile, { recursive: true })
+    await rename(backup, consentFile)
+    expect(await createMdxConsentStore(consentFile).allows(scope)).toBe(true)
+    await compile(4)
+    expect(await mdx.externalResources(other)).toMatchObject({ approved: [blocked] })
+    expect((await mdx.externalResources(owner)).pending).toEqual([])
+    await expect(mdx.revokeExternalResource(revoke)).resolves.toEqual({ ok: true })
+    expect(await createMdxConsentStore(consentFile).allows(scope)).toBe(false)
+    await compile(5)
+    expect(await mdx.externalResources(owner)).toMatchObject({
+      approved: [],
+      pending: [{ origin: grant.origin }],
+    })
+    expect(network.requests.map(({ url }) => url)).toEqual(['/entry.js?opaque=value'])
+  } finally {
+    await mdx.releaseDiagnosticsLease(owner)
+    await mdx.releaseDiagnosticsLease(other)
+    await network.close()
+  }
+})
+
+it('drains a revocation accepted before document retirement and denies new admissions on shutdown', async () => {
+  let onChange = () => {}
+  const { mdx, acquire, root, consentFile, shutdown } = await resourceRig(false, {
+    onResourceChange: () => onChange(),
   })
-  const grant = (await mdx.externalResources(other)).approved[0]!
-  const stalled = stallContact()
-  const compiling = expect(compile(3)).rejects.toThrow()
-  await stalled.started
-  // Make the store unreadable for the duration of revoke, then restore the old
-  // on-disk grant. The running app must still deny it.
-  const backup = `${consentFile}.backup`
-  await rename(consentFile, backup)
-  await mkdir(consentFile)
-  await expect(mdx.revokeExternalResource({ ...other, grantId: grant.id })).rejects.toThrow()
-  await stalled.cancelled
-  await compiling
-  await rm(consentFile, { recursive: true })
-  await rename(backup, consentFile)
-  await compile(4)
-  expect(contacts).toEqual([`${entry}?opaque=value`])
-  expect((await mdx.externalResources(owner)).approved).toEqual([])
-  await mdx.releaseDiagnosticsLease(owner)
-  await mdx.releaseDiagnosticsLease(other)
+  const owner = await acquire()
+  await mdx.compile({ ...owner, generation: 1, source: externalSource })
+  const requestId = (await mdx.externalResources(owner)).pending[0]!.id
+  await mdx.approveExternalResource({ ...owner, requestId })
+  const grant = (await mdx.externalResources(owner)).approved[0]!
+  const accepted = gate()
+  // Close admission synchronously on the revocation's invalidation push, before its write can start.
+  onChange = () => accepted.resolve(shutdown())
+  const revoke = { ...owner, grantId: grant.id }
+  const revoked = expect(mdx.revokeExternalResource(revoke)).resolves.toEqual({ ok: true })
+  await within(accepted.promise, 3_000, 'drain accepted revocation on shutdown')
+  await expect(mdx.status({ remote: REMOTE })).rejects.toThrow()
+  await expect(mdx.revokeExternalResource(revoke)).rejects.toThrow()
+  expect(
+    await createMdxConsentStore(consentFile).allows({
+      root: await realpath(root),
+      remote: REMOTE,
+      accountId: '42',
+      origin: grant.origin,
+    }),
+  ).toBe(false)
+  await revoked
 })

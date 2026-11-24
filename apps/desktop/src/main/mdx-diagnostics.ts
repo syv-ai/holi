@@ -15,6 +15,7 @@ import {
   MDX_RESOURCE_PURPOSE,
   vaultRelPath,
   type MdxDiagnostic,
+  type MdxExternalResourceGrant,
   type MdxExternalResourceRequest,
   type MdxExternalResourceState,
 } from '@holi/shared'
@@ -82,7 +83,7 @@ export function createMdxDiagnostics(options: {
   ): Promise<import('./mdx-resources').MdxInspectResult>
 }): MdxDiagnostics {
   const leases = new Map<string, Lease>()
-  const approvals = new Set<string>()
+  const decisions = new Map<string, { approvals: Set<string>; changed: boolean }>()
   let pending = 0
   let epoch = 0
   let closed = false
@@ -101,12 +102,15 @@ export function createMdxDiagnostics(options: {
     !lease.closed &&
     leases.get(lease.id) === lease &&
     options.authorize(lease.identity, lease.identity.remote)
+  const abortCompile = (lease: Lease) => {
+    lease.controller?.abort()
+    lease.controller = null
+  }
   const retireSource = (lease: Lease) => {
     lease.resourceRevision++
     lease.pendingResources.clear()
     lease.graphCurrent = null
-    lease.controller?.abort()
-    lease.controller = null
+    abortCompile(lease)
   }
   const drop = (lease: Lease) => {
     if (lease.closed) return
@@ -121,18 +125,24 @@ export function createMdxDiagnostics(options: {
     remote: lease.identity.remote,
     accountId: lease.identity.accountId,
   })
-  const resourceChange = (lease: Lease) => {
-    for (const other of leases.values()) {
-      if (
-        other.root === lease.root &&
-        other.identity.remote === lease.identity.remote &&
-        other.identity.accountId === lease.identity.accountId
-      ) {
-        retireSource(other)
-        other.grants.clear()
+  const scopeKey = (lease: Lease) => JSON.stringify(scopeFor(lease))
+  const scopedLeases = (lease: Lease) => {
+    const key = scopeKey(lease)
+    return [...leases.values()].filter((other) => scopeKey(other) === key)
+  }
+  const resourceChange = (lease: Lease, origin: string) => {
+    for (const other of scopedLeases(lease)) {
+      other.resourceRevision++
+      abortCompile(other)
+      // An access change isn't a source change. Only retire requests for this origin.
+      for (const [id, request] of other.pendingResources) {
+        if (request.origin === origin) other.pendingResources.delete(id)
       }
     }
-    options.external?.changed?.(lease.identity.remote)
+    const decision = decisions.get(scopeKey(lease))
+    // A push asks every split to recompile, which would retire another split's admitted approval.
+    if (decision) decision.changed = true
+    else options.external?.changed?.(lease.identity.remote)
   }
   const fingerprint = (info: {
     dev: number
@@ -475,7 +485,7 @@ export function createMdxDiagnostics(options: {
     async externalResources(input) {
       const lease = getResourceLease(input.lease)
       const revision = lease.resourceRevision
-      const origins = await (options.external?.consent.listOrigins(scopeFor(lease)).catch(() => {
+      const grants = await (options.external?.consent.listGrants(scopeFor(lease)).catch(() => {
         throw new Error('Could not read MDX resource grants')
       }) ?? [])
       const state = await pathState(lease)
@@ -486,19 +496,24 @@ export function createMdxDiagnostics(options: {
         !fileCurrent(lease)
       )
         fail('MDX context changed')
-      // Keep IDs stable for still-approved origins; revoke never accepts a renderer-supplied scope.
+      // Keep IDs stable for approved and blocked-but-unsaved grants. Revoke never accepts a
+      // renderer-supplied scope.
       const ids = new Map([...lease.grants].map(([id, origin]) => [origin, id]))
-      lease.grants = new Map(
-        origins.map((origin) => [ids.get(origin) ?? randomBytes(32).toString('hex'), origin]),
+      const approved = grants.map<MdxExternalResourceGrant>((grant) => ({
+        ...grant,
+        id: ids.get(grant.origin) ?? randomBytes(32).toString('hex'),
+        purpose: MDX_RESOURCE_PURPOSE,
+      }))
+      lease.grants = new Map(approved.map(({ id, origin }) => [id, origin]))
+      const blocked = new Set(
+        grants.filter((grant) => grant.revocationPending).map((grant) => grant.origin),
       )
       return {
         generation: lease.highGeneration,
-        pending: lease.graphCurrent?.() ? [...lease.pendingResources.values()] : [],
-        approved: [...lease.grants].map(([id, origin]) => ({
-          id,
-          origin,
-          purpose: MDX_RESOURCE_PURPOSE,
-        })),
+        pending: lease.graphCurrent?.()
+          ? [...lease.pendingResources.values()].filter((request) => !blocked.has(request.origin))
+          : [],
+        approved,
       }
     },
     async approveExternalResource(input) {
@@ -508,9 +523,11 @@ export function createMdxDiagnostics(options: {
       if (!external || !request || !lease.graphCurrent?.())
         throw new Error('MDX resource request unavailable')
       const scope = { ...scopeFor(lease), origin: request.origin }
-      const key = JSON.stringify(scope)
-      if (approvals.has(key)) fail('MDX resource approval already in progress')
-      approvals.add(key)
+      const key = scopeKey(lease)
+      const decision = decisions.get(key) ?? { approvals: new Set<string>(), changed: false }
+      if (decision.approvals.has(request.origin)) fail('MDX resource approval already in progress')
+      decision.approvals.add(request.origin)
+      decisions.set(key, decision)
       const stillOwned = () =>
         current(lease) &&
         lease.pendingResources.get(input.requestId) === request &&
@@ -527,10 +544,14 @@ export function createMdxDiagnostics(options: {
           )
         })
         // Publication already happened atomically while owned, even if the view has since retired.
-        resourceChange(lease)
+        resourceChange(lease, request.origin)
         return { ok: true }
       } finally {
-        approvals.delete(key)
+        decision.approvals.delete(request.origin)
+        if (decision.approvals.size === 0) {
+          decisions.delete(key)
+          if (decision.changed) external.changed?.(lease.identity.remote)
+        }
       }
     },
     rejectExternalResource(input) {
@@ -546,13 +567,17 @@ export function createMdxDiagnostics(options: {
       if (!external || !origin) throw new Error('MDX resource grant unavailable')
       // The store denies this key synchronously, including while persistence is queued.
       const revoked = external.consent.revoke({ ...scopeFor(lease), origin })
-      lease.grants.delete(input.grantId)
-      resourceChange(lease)
+      resourceChange(lease, origin)
       await revoked.catch(() => {
         throw new Error(
           'MDX resource access was blocked for this run, but revocation could not be saved',
         )
       })
+      for (const other of scopedLeases(lease)) {
+        for (const [id, grantedOrigin] of other.grants) {
+          if (grantedOrigin === origin) other.grants.delete(id)
+        }
+      }
       return { ok: true }
     },
     invalidate() {

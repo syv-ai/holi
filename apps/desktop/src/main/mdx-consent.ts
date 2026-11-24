@@ -3,6 +3,7 @@ import { renameSync } from 'node:fs'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { MDX_RESOURCE_PURPOSE } from '@holi/shared'
+import { isMdxExternalOrigin } from './mdx-external-policy'
 
 const VERSION = 1
 
@@ -14,12 +15,16 @@ interface MdxConsentScope {
   accountId: string
 }
 
+type Grant = { origin: string; revocationPending?: true }
+
 export interface MdxConsentStore {
   allows(scope: MdxConsentScope): Promise<boolean>
-  listOrigins(owner: Omit<MdxConsentScope, 'origin'>): Promise<string[]>
+  listGrants(owner: Omit<MdxConsentScope, 'origin'>): Promise<Grant[]>
   /** Pass a synchronous lifetime check for a document-bound approval. A retired approval rejects. */
   grant(scope: MdxConsentScope, stillOwned?: () => boolean): Promise<void>
   revoke(scope: MdxConsentScope): Promise<void>
+  /** Wait for accepted operations to settle, after closing admission at the caller. */
+  drain(): Promise<void>
 }
 
 type State = { version: 1; grants: MdxConsentScope[] }
@@ -28,7 +33,7 @@ function validScope(value: unknown): value is MdxConsentScope {
   if (!value || typeof value !== 'object') return false
   const { origin, root, remote, accountId } = value as Partial<MdxConsentScope>
   if (
-    typeof origin !== 'string' ||
+    !isMdxExternalOrigin(origin) ||
     typeof root !== 'string' ||
     typeof remote !== 'string' ||
     typeof accountId !== 'string' ||
@@ -37,19 +42,14 @@ function validScope(value: unknown): value is MdxConsentScope {
     !accountId
   )
     return false
-  try {
-    const url = new URL(origin)
-    return url.protocol === 'https:' && url.origin === origin
-  } catch {
-    return false
-  }
+  return true
 }
 
 /** Machine-local, fail-closed HTTPS grants. Main keeps one store instance per file. */
 export function createMdxConsentStore(file: string): MdxConsentStore {
   let queue = Promise.resolve()
   const denied = new Set<string>()
-  const revocations = new Map<string, symbol>()
+  const revocations = new Map<string, { scope: MdxConsentScope; write?: Promise<void> }>()
   const key = (scope: MdxConsentScope) =>
     JSON.stringify([scope.origin, MDX_RESOURCE_PURPOSE, scope.root, scope.remote, scope.accountId])
 
@@ -120,29 +120,39 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
         }
       })
     },
-    listOrigins(owner) {
+    listGrants(owner) {
       return transact(async () => {
-        const { grants } = await read()
-        return [
-          ...new Set(
-            grants.flatMap((grant) => {
-              if (key({ ...owner, origin: grant.origin }) !== key(grant) || denied.has(key(grant)))
-                return []
-              return [grant.origin]
-            }),
-          ),
-        ].sort()
+        const matches = (scope: MdxConsentScope) =>
+          key({ ...owner, origin: scope.origin }) === key(scope)
+        const pending = (): Grant[] =>
+          [...revocations.values()].flatMap(({ scope }) =>
+            matches(scope) ? [{ origin: scope.origin, revocationPending: true }] : [],
+          )
+        const listed = new Map<string, Grant>()
+        try {
+          for (const scope of (await read()).grants) {
+            if (matches(scope) && !denied.has(key(scope)))
+              listed.set(scope.origin, { origin: scope.origin })
+          }
+        } catch (error) {
+          // An unreadable file must not hide the only way to retry a blocked grant.
+          if (pending().length === 0) throw error
+        }
+        for (const grant of pending()) listed.set(grant.origin, grant)
+        return [...listed.keys()].sort().map((origin) => listed.get(origin)!)
       })
     },
     async grant(scope, stillOwned) {
       if (!validScope(scope)) throw new Error('Invalid MDX consent scope')
       const { origin, root, remote, accountId } = scope
       const id = key(scope)
-      const revocation = revocations.get(id)
       const assertCurrent = () => {
         if (stillOwned && stillOwned() !== true) throw new Error('MDX consent owner changed')
-        if (revocations.get(id) !== revocation) throw new Error('MDX consent was revoked')
+        if (revocations.has(id)) throw new Error('MDX consent was revoked')
       }
+      // Reject during admission and publication. If a revocation starts after admission,
+      // the serialized write cannot clear its marker before this grant checks it.
+      assertCurrent()
       return transact(async () => {
         assertCurrent()
         denied.add(id)
@@ -152,19 +162,29 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
         }
         await persist(state, assertCurrent)
         // Revoke denies immediately, even if it arrives just after publication.
-        if (revocations.get(id) === revocation) denied.delete(id)
+        if (!revocations.has(id)) denied.delete(id)
       })
     },
     async revoke(scope) {
       if (!validScope(scope)) throw new Error('Invalid MDX consent scope')
       const id = key(scope)
-      revocations.set(id, Symbol())
+      const existing = revocations.get(id)
+      if (existing?.write) return existing.write
+      const revocation = { scope: { ...scope }, write: undefined as Promise<void> | undefined }
+      revocations.set(id, revocation)
       denied.add(id)
-      return transact(async () => {
-        const state = await read()
-        state.grants = state.grants.filter((grant) => key(grant) !== id)
-        await persist(state)
+      revocation.write = transact(async () => {
+        try {
+          const state = await read()
+          state.grants = state.grants.filter((grant) => key(grant) !== id)
+          await persist(state)
+          revocations.delete(id)
+        } finally {
+          revocation.write = undefined
+        }
       })
+      return revocation.write
     },
+    drain: () => queue,
   }
 }

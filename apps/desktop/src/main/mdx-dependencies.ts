@@ -10,6 +10,7 @@ import {
   type MdxDiagnostic,
 } from '@holi/shared'
 import { MdxExternalDataError } from './mdx-external-data'
+import { resolveMdxExternalModule } from './mdx-external-policy'
 import type { MdxResourceOwner, MdxInspectResult } from './mdx-resources'
 
 const FILE_LIMIT = 256 * 1024
@@ -24,14 +25,6 @@ type ModuleFormat = 'mdx' | 'jsx' | 'js'
 // same-origin relative URLs, but never resolve to a vault path or a package.
 function relativeUrl(specifier: string): boolean {
   return /^(?:\.\.?\/|\/(?!\/))/.test(specifier)
-}
-
-function remoteFormat(url: URL): ModuleFormat | null {
-  const file = posix.basename(url.pathname)
-  const ext = posix.extname(file).toLowerCase()
-  if (ext === '.jsx') return 'jsx'
-  if (!ext || ext === '.js' || ext === '.mjs') return 'js'
-  return null
 }
 
 export async function inspectMdxDependencies(options: {
@@ -141,10 +134,10 @@ export async function inspectMdxDependencies(options: {
       [path, path.toLowerCase()].every(
         (p) => !isSecretPath(p) && !isLocalOnlyPath(p) && !isAgentSurfacePath(p),
       )
-    const failure = (message: string, line: number): MdxDiagnostic => ({
+    const failure = (message: string, line: number, column = 1): MdxDiagnostic => ({
       message,
       line: Math.max(1, line),
-      column: 1,
+      column: Math.max(1, column),
     })
     const visit = async (
       path: string,
@@ -180,20 +173,18 @@ export async function inspectMdxDependencies(options: {
             spec = dep.specifier
           const absolute = /^https:\/\//i.test(spec)
           if (remote || absolute) {
-            let target: URL
-            try {
-              if (
-                (!absolute && (!remote || !relativeUrl(spec))) ||
-                /[\s\\\u0000-\u001f\u007f]/u.test(spec)
+            // Validate the raw spelling before consulting either canonical graph cache.
+            const destination =
+              absolute || (remote && relativeUrl(spec))
+                ? resolveMdxExternalModule(spec, remote)
+                : null
+            if (!destination || 'error' in destination) {
+              diagnostics.push(
+                failure('Unsupported external MDX module specifier', line, dep.column),
               )
-                throw new Error('unsupported dependency')
-              target = new URL(spec, remote)
-              target.hash = ''
-              if (!remoteFormat(target)) throw new Error('unsupported dependency')
-            } catch {
-              diagnostics.push(failure('Unsupported external MDX module specifier', line))
               continue
             }
+            const target = destination.url
             const resolved = redirects.get(target.href) ?? target.href
             if (active.has(resolved)) {
               diagnostics.push(failure(`Dependency cycle involving ${target.origin}`, line))
@@ -214,7 +205,6 @@ export async function inspectMdxDependencies(options: {
             remoteAttempts++
             let fetched: { url: string; text: string }
             try {
-              // Let the fetcher validate the raw absolute URL; URL parsing alone silently repairs it.
               fetched = await options.external.fetch(
                 absolute ? spec : target.href,
                 signal,
@@ -236,13 +226,15 @@ export async function inspectMdxDependencies(options: {
               continue
             }
             await check()
-            const final = new URL(fetched.url)
-            const childFormat = remoteFormat(final)
+            const destinationAfterRedirects = resolveMdxExternalModule(fetched.url)
             readBudget -= Math.min(FILE_LIMIT, Buffer.byteLength(fetched.text) + 3) // Possible UTF-8 BOM.
-            if (!childFormat) {
-              diagnostics.push(failure('Unsupported external MDX module destination', line))
+            if ('error' in destinationAfterRedirects) {
+              diagnostics.push(
+                failure('Unsupported external MDX module destination', line, dep.column),
+              )
               continue
             }
+            const { url: final, format: childFormat } = destinationAfterRedirects
             redirects.set(target.href, final.href)
             diagnostics.push(
               ...(await visit(final.href, fetched.text, childFormat, depth + 1, final)).map(
@@ -257,14 +249,14 @@ export async function inspectMdxDependencies(options: {
           }
           const ext = spec.match(/\.(mdx|jsx|js)$/i)?.[1]?.toLowerCase()
           if ((!spec.startsWith('./') && !spec.startsWith('../')) || /[?#]/.test(spec) || !ext) {
-            diagnostics.push(failure(`Dependency ${spec} is unavailable`, line))
+            diagnostics.push(failure('Unsupported local MDX module specifier', line, dep.column))
             continue
           }
           let child: string
           try {
             child = vaultRelPath(posix.normalize(posix.join(posix.dirname(safe), spec)))
           } catch {
-            diagnostics.push(failure(`Dependency ${spec} is unavailable`, line))
+            diagnostics.push(failure('Unsupported local MDX module specifier', line, dep.column))
             continue
           }
           if (!safePolicy(child)) {

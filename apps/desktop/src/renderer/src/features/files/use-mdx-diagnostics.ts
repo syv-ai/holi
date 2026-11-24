@@ -3,7 +3,8 @@ import {
   MDX_RESOURCE_EVENTS,
   type MdxCompileState,
   type MdxDiagnostic,
-  type MdxExternalResourceState,
+  type MdxExternalResourceGrant,
+  type MdxExternalResourceRequest,
 } from '@holi/shared'
 import { useAtomValue, useStore } from 'jotai'
 import { setDiagnostics } from '@codemirror/lint'
@@ -25,12 +26,29 @@ type Input = {
 }
 
 type Scope = Input & { identityCurrent: () => boolean; vaultOpen: boolean }
-type Run = { current: () => boolean; readResources: () => Promise<void>; lease: string }
-type Resources =
-  | { kind: 'loading' }
-  | { kind: 'ready'; result: MdxExternalResourceState }
-  | { kind: 'error'; message: string }
+type Lease = {
+  id: string
+  current: () => boolean
+  generation: number
+  compiled: number | null
+  query: number
+  reading: boolean
+}
+type Pending = { generation: number; query: number; items: MdxExternalResourceRequest[] }
+type Resources = {
+  owner: Lease
+  approved: MdxExternalResourceGrant[]
+  pending?: Pending
+  loading: boolean
+  error?: string
+}
 type Decision = 'allow' | 'deny' | 'revoke'
+type DecisionAttempt = {
+  owner: Lease
+  sourceVersion: number
+  action: Decision
+  id: string
+}
 
 /** Owns diagnostics and external resource decisions for one visible source editor. */
 export function useMdxDiagnostics(input: Input) {
@@ -70,26 +88,25 @@ export function useMdxDiagnostics(input: Input) {
   })
   const [retryRevision, setRetryRevision] = useState(0)
   const [ownershipRevision, setOwnershipRevision] = useState(0)
-  const lease = useRef<string | null>(null)
-  const generation = useRef(0)
+  const lease = useRef<Lease | null>(null)
   const lifetime = useRef(0)
   const timer = useRef<number | undefined>(undefined)
   const latestSource = useRef<string | null>(null)
   const active = useRef(true)
   const refreshAttempt = useRef('')
-  const [resources, setResources] = useState<{ run: Run; load: Resources } | null>(null)
+  const [resources, setResources] = useState<Resources | null>(null)
   const sourceVersion = useRef(0)
   const [renderedSourceVersion, setRenderedSourceVersion] = useState(0)
   const visit = useMemo(
     () => ({ scope, ownershipRevision, renderedSourceVersion }),
     [scope, ownershipRevision, renderedSourceVersion],
   )
-  const [decision, setDecision] = useState<{
-    ticket: object
-    visit: object
-    message?: string
+  const [decisionError, setDecisionError] = useState<{
+    attempt: DecisionAttempt
+    message: string
   } | null>(null)
-  const deciding = useRef<{ ticket: object; scope: Scope; sourceVersion: number } | null>(null)
+  const [decision, setDecision] = useState<DecisionAttempt | null>(null)
+  const deciding = useRef<DecisionAttempt | null>(null)
   // Denial dismisses this origin in this view even if an autosave or another
   // view's event reruns diagnostics. Only an explicit run offers it here again.
   const dismissed = useRef<{ identity: object; origins: Set<string> } | null>(null)
@@ -105,28 +122,58 @@ export function useMdxDiagnostics(input: Input) {
       target.dispatch(setDiagnostics(target.state, []))
   }, [])
 
+  const readResources = useCallback(async (owner: Lease) => {
+    if (!owner.current()) return
+    const version = sourceVersion.current
+    // Grant IDs belong to the lease. Only a read begun after the current
+    // compile can offer new approvals for that source generation.
+    const generation = owner.compiled
+    const query = ++owner.query
+    owner.reading = true
+    const current = () =>
+      owner.current() && owner.query === query && sourceVersion.current === version
+    const approvedFor = (previous: Resources | null) =>
+      previous?.owner === owner ? previous.approved : []
+    setResources((previous) => ({ owner, approved: approvedFor(previous), loading: true }))
+    try {
+      const result = await trpc.mdxTrust.externalResources.query({ lease: owner.id })
+      if (!current()) return
+      setResources({
+        owner,
+        approved: result.approved,
+        pending:
+          generation !== null && generation === owner.generation && generation === result.generation
+            ? { generation, query, items: result.pending }
+            : undefined,
+        loading: false,
+      })
+    } catch (error) {
+      if (current())
+        setResources((previous) => ({
+          owner,
+          approved: approvedFor(previous),
+          loading: false,
+          error: errorMessage(error),
+        }))
+    } finally {
+      if (owner.query === query) owner.reading = false
+    }
+  }, [])
+
   const schedule = useCallback(
     (
       target: EditorView,
       source: string,
-      owner: number,
-      currentLease: string,
+      owner: Lease,
       immediate: boolean,
       expectedScope: Scope,
     ) => {
-      const next = ++generation.current
+      const next = ++owner.generation
+      owner.compiled = null
       latestSource.current = source
       window.clearTimeout(timer.current)
       setState({ kind: 'checking' })
-      const current = () =>
-        active.current &&
-        lifetime.current === owner &&
-        generation.current === next &&
-        latestSource.current === source &&
-        lease.current === currentLease &&
-        renderedScope.current === expectedScope &&
-        ownerScope.current === expectedScope &&
-        expectedScope.identityCurrent()
+      const current = () => owner.current() && owner.generation === next
       // Source changes arrive inside CodeMirror's update listener, which cannot
       // dispatch another transaction until the current one has finished.
       queueMicrotask(() => {
@@ -148,32 +195,8 @@ export function useMdxDiagnostics(input: Input) {
         setState({ kind: 'checking' })
         setOwnershipRevision((revision) => revision + 1)
       }
-      const job: Run = {
-        current,
-        lease: currentLease,
-        async readResources() {
-          if (!current()) return
-          setResources({ run: job, load: { kind: 'loading' } })
-          try {
-            const result = await trpc.mdxTrust.externalResources.query({ lease: currentLease })
-            if (!current()) return
-            const load: Resources =
-              result.generation === next
-                ? { kind: 'ready', result }
-                : {
-                    kind: 'error',
-                    message: 'The diagnostics changed. Run them again to review resources.',
-                  }
-            setResources({ run: job, load })
-          } catch (error) {
-            if (current())
-              setResources({ run: job, load: { kind: 'error', message: errorMessage(error) } })
-          }
-        },
-      }
-      setResources({ run: job, load: { kind: 'loading' } })
       void trpc.mdxTrust.cancelCompile
-        .mutate({ lease: currentLease, generation: next })
+        .mutate({ lease: owner.id, generation: next })
         .then(
           () => true,
           (error: unknown) => {
@@ -186,7 +209,7 @@ export function useMdxDiagnostics(input: Input) {
           timer.current = window.setTimeout(
             () => {
               void trpc.mdxTrust.compile
-                .mutate({ lease: currentLease, generation: next, source })
+                .mutate({ lease: owner.id, generation: next, source })
                 .then((diagnostics) => {
                   if (!current() || !target.dom.isConnected) return
                   const mapped = diagnostics.map((diagnostic) => mapDiagnostic(target, diagnostic))
@@ -194,7 +217,8 @@ export function useMdxDiagnostics(input: Input) {
                   setState(
                     mapped.length ? { kind: 'syntax-error', diagnostics } : { kind: 'clean' },
                   )
-                  void job.readResources()
+                  owner.compiled = next
+                  void readResources(owner)
                 })
                 .catch((error: unknown) => refreshInvalidatedOwner(error))
             },
@@ -202,7 +226,7 @@ export function useMdxDiagnostics(input: Input) {
           )
         })
     },
-    [clear],
+    [clear, readResources],
   )
 
   useEffect(() => {
@@ -214,7 +238,6 @@ export function useMdxDiagnostics(input: Input) {
     ownerScope.current = scope
     active.current = true
     latestSource.current = eligible && view ? view.state.doc.toString() : null
-    generation.current = 0
     setResources(null)
     window.clearTimeout(timer.current)
     clear(view, scope)
@@ -229,7 +252,7 @@ export function useMdxDiagnostics(input: Input) {
       lease.current = null
       ownerScope.current = null
       if (old)
-        void trpc.mdxTrust.releaseDiagnosticsLease.mutate({ lease: old }).catch(() => undefined)
+        void trpc.mdxTrust.releaseDiagnosticsLease.mutate({ lease: old.id }).catch(() => undefined)
       return () => {
         active.current = false
       }
@@ -255,8 +278,23 @@ export function useMdxDiagnostics(input: Input) {
           release(acquired)
           return
         }
-        lease.current = acquired
-        schedule(view, latestSource.current, id, acquired, false, scope)
+        const owner: Lease = {
+          id: acquired,
+          current: () =>
+            active.current &&
+            lifetime.current === id &&
+            lease.current === owner &&
+            renderedScope.current === scope &&
+            ownerScope.current === scope &&
+            scope.identityCurrent(),
+          generation: 0,
+          compiled: null,
+          query: 0,
+          reading: false,
+        }
+        lease.current = owner
+        schedule(view, latestSource.current, owner, false, scope)
+        void readResources(owner)
       })
       .catch((error: unknown) => {
         if (
@@ -276,28 +314,23 @@ export function useMdxDiagnostics(input: Input) {
       clear(view, scope)
       const current = lease.current
       lease.current = null
-      if (current) release(current)
+      if (current) release(current.id)
     }
     // `view` identity intentionally scopes lease; new editors receive new leases.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, clear, schedule, retryRevision, ownershipRevision])
+  }, [scope, clear, schedule, readResources, retryRevision, ownershipRevision])
 
   useEffect(() => {
     if (!remote || !trusted || !visible || !view) return
     return window.holi?.plugin?.on(MDX_RESOURCE_EVENTS, (event) => {
       if (event.name !== 'changed' || event.remote !== remote.toLowerCase()) return
-      const currentLease = lease.current
-      if (
-        ownerScope.current !== scope ||
-        renderedScope.current !== scope ||
-        !active.current ||
-        !scope.identityCurrent()
-      )
+      const owner = lease.current
+      if (!owner?.current() || renderedScope.current !== scope || latestSource.current === null)
         return
-      if (currentLease && latestSource.current !== null)
-        schedule(view, latestSource.current, lifetime.current, currentLease, false, scope)
+      schedule(view, latestSource.current, owner, false, scope)
+      void readResources(owner)
     })
-  }, [remote, trusted, visible, view, scope, schedule])
+  }, [remote, trusted, visible, view, scope, schedule, readResources])
 
   const sourceChanged = useCallback(
     (target: EditorView, source: string) => {
@@ -311,21 +344,24 @@ export function useMdxDiagnostics(input: Input) {
         return
       setRenderedSourceVersion(++sourceVersion.current)
       latestSource.current = source
-      const currentLease = lease.current
-      if (!currentLease) return
-      schedule(target, source, lifetime.current, currentLease, false, currentScope)
+      const owner = lease.current
+      if (!owner?.current()) return
+      schedule(target, source, owner, false, currentScope)
+      // Replace any query retired by the edit without waiting for the next compile.
+      if (owner.reading) void readResources(owner)
     },
-    [schedule],
+    [schedule, readResources],
   )
 
   function retry() {
     if (ownerScope.current !== scope || !scope.identityCurrent()) return
     dismissed.current = null
-    setDecision(null)
+    setDecisionError(null)
     refreshAttempt.current = ''
-    const currentLease = lease.current
-    if (view && currentLease && latestSource.current !== null) {
-      schedule(view, latestSource.current, lifetime.current, currentLease, true, scope)
+    const owner = lease.current
+    if (view && owner?.current() && latestSource.current !== null) {
+      schedule(view, latestSource.current, owner, true, scope)
+      void readResources(owner)
     } else {
       setState({ kind: 'checking' })
       setRetryRevision((value) => value + 1)
@@ -343,70 +379,96 @@ export function useMdxDiagnostics(input: Input) {
     : ownerScope.current === scope || !view
       ? state
       : { kind: 'checking' }
-  const currentResources = resources?.run.current() ? resources.load : null
-  const currentDecision = decision?.visit === visit ? decision : null
-  const pendingDecision = currentDecision !== null && currentDecision.message === undefined
-  const load: Resources = currentDecision?.message
-    ? { kind: 'error', message: currentDecision.message }
-    : currentState.kind === 'unavailable'
-      ? { kind: 'error', message: currentState.message }
-      : (currentResources ?? { kind: 'loading' })
-  const pending =
-    load.kind === 'ready'
-      ? load.result.pending.filter(
-          ({ origin }) =>
-            dismissed.current?.identity !== identity || !dismissed.current.origins.has(origin),
-        )
-      : []
+  const owner = lease.current
+  const currentResources = owner?.current() && resources?.owner === owner ? resources : null
+  const approved = currentResources?.approved ?? []
+  const pendingSnapshot = currentResources?.pending
+  const pendingCurrent = () =>
+    owner?.current() &&
+    pendingSnapshot?.generation === owner.generation &&
+    pendingSnapshot.query === owner.query
+  const pending = pendingCurrent()
+    ? (pendingSnapshot?.items ?? []).filter(
+        ({ origin }) =>
+          dismissed.current?.identity !== identity || !dismissed.current.origins.has(origin),
+      )
+    : []
+  const pendingDecision = decision !== null && attemptCurrent(decision)
+  const failed = decisionError?.attempt
+  const currentError =
+    failed &&
+    attemptCurrent(failed) &&
+    (failed.action === 'revoke' ? approved : pending).some((item) => item.id === failed.id)
+      ? decisionError
+      : null
+  const error = currentError
+    ? {
+        message: currentError.message,
+        retry: () => {
+          if (currentError.attempt.action === 'revoke') {
+            void decide('revoke', currentError.attempt.id)
+          } else if (owner?.current()) {
+            // Only the origin's decision button can grant consent.
+            setDecisionError(null)
+            void readResources(owner)
+          }
+        },
+      }
+    : currentResources?.error && owner
+      ? { message: currentResources.error, retry: () => void readResources(owner) }
+      : currentState.kind === 'unavailable'
+        ? { message: currentState.message, retry }
+        : null
+
+  function attemptCurrent(attempt: DecisionAttempt) {
+    return (
+      attempt.owner.current() &&
+      (attempt.action === 'revoke' || attempt.sourceVersion === sourceVersion.current)
+    )
+  }
 
   async function decide(action: Decision, id: string) {
-    const job = resources?.run
-    if (!job?.current() || load.kind !== 'ready') return
-    const existing = deciding.current
-    const version = sourceVersion.current
-    if (existing?.scope === scope && existing.sourceVersion === version) return
-    const item = (action === 'revoke' ? load.result.approved : pending).find(
-      (item) => item.id === id,
-    )
+    if (!owner?.current() || (deciding.current && attemptCurrent(deciding.current))) return
+    if (action !== 'revoke' && !pendingCurrent()) return
+    const item = (action === 'revoke' ? approved : pending).find((item) => item.id === id)
     if (!item) return
-    const ticket = {}
-    const owner = lifetime.current
-    const stillHere = () =>
-      active.current &&
-      lifetime.current === owner &&
-      renderedScope.current === scope &&
-      sourceVersion.current === version &&
-      scope.identityCurrent()
-    deciding.current = { ticket, scope, sourceVersion: version }
-    setDecision({ ticket, visit })
+    const attempt = { owner, sourceVersion: sourceVersion.current, action, id }
+    const startedGeneration = owner.generation
+    deciding.current = attempt
+    setDecision(attempt)
+    setDecisionError(null)
     try {
       if (action === 'deny') {
-        await trpc.mdxTrust.rejectExternalResource.mutate({ lease: job.lease, requestId: id })
-        if (!stillHere()) return
+        await trpc.mdxTrust.rejectExternalResource.mutate({ lease: owner.id, requestId: id })
+        if (!attemptCurrent(attempt)) return
         if (dismissed.current?.identity !== identity)
           dismissed.current = { identity, origins: new Set() }
         dismissed.current.origins.add(item.origin)
-        if (job.current()) await job.readResources()
+        void readResources(owner)
       } else {
         if (action === 'allow') {
-          await trpc.mdxTrust.approveExternalResource.mutate({ lease: job.lease, requestId: id })
+          await trpc.mdxTrust.approveExternalResource.mutate({ lease: owner.id, requestId: id })
         } else {
-          await trpc.mdxTrust.revokeExternalResource.mutate({ lease: job.lease, grantId: id })
+          await trpc.mdxTrust.revokeExternalResource.mutate({ lease: owner.id, grantId: id })
         }
-        // The event normally starts the refresh, including in other splits.
-        // If this reply arrives first, don't leave the clicked controls live.
-        if (job.current() && view && latestSource.current !== null)
-          schedule(view, latestSource.current, owner, job.lease, false, scope)
+        if (!attemptCurrent(attempt)) return
+        // Push events normally refresh both splits. Read again after revoke because
+        // the first event can arrive before the persistence attempt has settled.
+        if (owner.generation === startedGeneration && view && latestSource.current !== null) {
+          schedule(view, latestSource.current, owner, false, scope)
+          void readResources(owner)
+        } else if (action === 'revoke') {
+          void readResources(owner)
+        }
       }
-      setDecision((previous) => (previous?.ticket === ticket ? null : previous))
     } catch (error) {
-      // Revocation invalidates all splits before persistence finishes; report
-      // a failure even if the push has already started a new generation here.
-      if (stillHere() && (job.current() || action === 'revoke'))
-        setDecision({ ticket, visit, message: errorMessage(error) })
-      else setDecision((previous) => (previous?.ticket === ticket ? null : previous))
+      if (attemptCurrent(attempt) && (action === 'revoke' || pendingCurrent())) {
+        setDecisionError({ attempt, message: errorMessage(error) })
+        if (action === 'revoke') void readResources(owner)
+      }
     } finally {
-      if (deciding.current?.ticket === ticket) deciding.current = null
+      if (deciding.current === attempt) deciding.current = null
+      setDecision((previous) => (previous === attempt ? null : previous))
     }
   }
 
@@ -416,10 +478,10 @@ export function useMdxDiagnostics(input: Input) {
     retry,
     resources: enabled
       ? {
-          load:
-            load.kind === 'ready'
-              ? { kind: 'ready' as const, pending, approved: load.result.approved }
-              : load,
+          approved,
+          pending,
+          loading: currentState.kind === 'checking' || currentResources?.loading === true,
+          error,
           pendingDecision,
           visit,
           decide,

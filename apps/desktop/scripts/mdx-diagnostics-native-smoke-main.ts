@@ -1,8 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHook } from 'node:async_hooks'
-import { subscribe, unsubscribe } from 'node:diagnostics_channel'
 import { mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import type { ClientRequest, IncomingMessage } from 'node:http'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, ipcMain, session, type WebContents } from 'electron'
@@ -20,6 +17,7 @@ import { createRouter } from '../src/main/router'
 import type { ActiveVault, VaultHost } from '../src/main/vault/active-vault'
 import { VaultRegistry } from '../src/main/vault/registry'
 import { createGuestProbes } from './mdx-compiler-guest-probes'
+import { fixtureOrigins, observeMdxNativeNetwork } from './mdx-native-network-observation'
 import { createMdxResources } from '../src/main/mdx-resources'
 import { createMdxDiagnostics } from '../src/main/mdx-diagnostics'
 import { createMdxTrustStore } from '../src/main/mdx-trust'
@@ -107,47 +105,9 @@ const invoke = (channel: string, handler: (input: unknown) => unknown) =>
     return handler(input)
   })
 
-// Only counters, fixed fixture route labels, response codes and booleans cross
-// the bridge. Never record a request path, header value or response body.
-const hosts = ['raw.githubusercontent.com', 'esm.run', 'cdn.jsdelivr.net']
-const network = {
-  dns: 0,
-  socket: 0,
-  requests: [] as Array<{ route: string; get: boolean; credentials: boolean }>,
-  responses: [] as Array<{ route: string; status: number | undefined }>,
-}
-const networkHook = createHook({
-  init(_id, type) {
-    if (type === 'QUERYWRAP' || type === 'GETADDRINFOREQWRAP') network.dns += 1
-    if (type === 'TCPWRAP' || type === 'TCPCONNECTWRAP' || type === 'TLSWRAP') network.socket += 1
-  },
-}).enable()
-function routeOf(request: ClientRequest) {
-  const host = request.getHeader('host')
-  if (host === 'raw.githubusercontent.com') {
-    if (request.path.endsWith('/entry.js')) return 'entry'
-    if (request.path.endsWith('/relative.js')) return 'relative'
-  }
-  if (host === 'esm.run') return 'redirect'
-  if (host === 'cdn.jsdelivr.net') return 'cdn'
-  return 'unexpected'
-}
-const onRequest = (event: unknown) => {
-  const { request } = event as { request: ClientRequest }
-  network.requests.push({
-    route: routeOf(request),
-    get: request.method === 'GET',
-    credentials: ['cookie', 'authorization', 'proxy-authorization'].some((name) =>
-      request.hasHeader(name),
-    ),
-  })
-}
-const onResponse = (event: unknown) => {
-  const { request, response } = event as { request: ClientRequest; response: IncomingMessage }
-  network.responses.push({ route: routeOf(request), status: response.statusCode })
-}
-subscribe('http.client.request.start', onRequest)
-subscribe('http.client.response.finish', onResponse)
+const observedNetwork = observeMdxNativeNetwork()
+invoke('smoke:arm-stream', () => observedNetwork.armStream())
+invoke('smoke:stream-status', () => observedNetwork.streamStatus())
 
 invoke('smoke:status', async () => ({
   runtime: process.versions,
@@ -158,7 +118,7 @@ invoke('smoke:status', async () => ({
   recoveredWindows,
   guestCreations,
   inspectedSources,
-  network,
+  network: observedNetwork.network,
   resourcePushes,
   ambientCookieHosts,
   blockedRequests,
@@ -642,8 +602,8 @@ app
         callback({ cancel: true })
       }
     })
-    for (const host of hosts) {
-      const url = `https://${host}/`
+    for (const origin of fixtureOrigins) {
+      const url = `${origin}/`
       const name = 'mdx-fixture-cookie'
       await defaultSession.cookies.set({
         url,
@@ -752,8 +712,6 @@ app.on('before-quit', () => {
   closeRouter()
   diagnostics.close()
   compiler.close()
-  networkHook.disable()
-  unsubscribe('http.client.request.start', onRequest)
-  unsubscribe('http.client.response.finish', onResponse)
+  observedNetwork.close()
   void adversaries?.close()
 })

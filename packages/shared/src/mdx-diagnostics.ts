@@ -16,6 +16,8 @@ export interface MdxExternalResourceGrant {
   id: string
   origin: string
   purpose: typeof MDX_RESOURCE_PURPOSE
+  /** Access is already blocked; revoke this same ID again to save the removal. */
+  revocationPending?: boolean
 }
 
 /** External dependency controls for one diagnostics lease and source generation. */
