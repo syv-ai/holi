@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { createVaultStorage } from '../app/vault-storage'
+import { createNodeFiles } from './native-files-node'
 import { createWorkingCopy, type NativeWorkingCopy } from '../app/working-copy'
 
 function adapter(overrides: Partial<NativeWorkingCopy> = {}) {
@@ -85,6 +87,58 @@ describe('working copy status', () => {
     release()
     await expect(first).rejects.toThrow('temporary failure')
     await expect(second).resolves.toEqual({ changes: [] })
+  })
+
+  it('shares the storage lock across canonical root aliases and releases it after storage failure', async () => {
+    const { mkdtemp, rm, mkdir } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const root = await mkdtemp('/tmp/holi-working-copy-lock-')
+    const aliasParent = await mkdtemp('/tmp/holi-working-copy-alias-')
+    const alias = join(aliasParent, 'alias')
+    await mkdir(alias)
+    await rm(alias, { recursive: true })
+    const { symlink } = await import('node:fs/promises')
+    await symlink(root, alias)
+    try {
+      let release!: () => void
+      let entered!: () => void
+      const blocked = new Promise<void>((resolve) => (release = resolve))
+      const publishing = new Promise<void>((resolve) => (entered = resolve))
+      let failPublish = true
+      const files = createNodeFiles()
+      const nativeFiles = {
+        ...files,
+        async publish(...args: Parameters<typeof files.publish>) {
+          entered()
+          await blocked
+          if (failPublish) throw new Error('injected save failure')
+          return files.publish(...args)
+        },
+      }
+      const storage = createVaultStorage(nativeFiles, { remote: 'holi/vault', root })
+      const { native } = adapter({
+        canonicalRoot: async (path) => (path === alias ? root : path),
+      })
+      const initial = await storage.create('note.md', new TextEncoder().encode('before'))
+      const saving = storage.save('note.md', new TextEncoder().encode('after'), initial.revision)
+      await publishing
+      const status = createWorkingCopy(native, { ...vault, root: alias }).status()
+      await expect(
+        createWorkingCopy(native, { ...vault, root: '/independent-root' }).status(),
+      ).resolves.toEqual({ changes: [] })
+      let statusFinished = false
+      const waitingStatus = status.finally(() => (statusFinished = true))
+      await Promise.resolve()
+      expect(statusFinished).toBe(false)
+      release()
+      await expect(saving).rejects.toThrow('injected save failure')
+      failPublish = false
+      await expect(waitingStatus).resolves.toEqual({ changes: [] })
+      expect((await storage.read('note.md')).bytes).toEqual(new TextEncoder().encode('before'))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(aliasParent, { recursive: true, force: true })
+    }
   })
 
   it('rejects an invalid vault identity at construction', () => {
