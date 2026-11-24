@@ -26,7 +26,7 @@ async function main() {
   if (!GITHUB_EVENT_NAME || !GITHUB_EVENT_PATH || !GITHUB_OUTPUT) {
     throw new Error('GitHub event environment is required for change detection')
   }
-  if (GITHUB_EVENT_NAME === 'push') {
+  if (GITHUB_EVENT_NAME === 'push' || GITHUB_EVENT_NAME === 'workflow_dispatch') {
     await appendFile(GITHUB_OUTPUT, 'run=true\n')
   } else if (GITHUB_EVENT_NAME === 'pull_request') {
     const event = JSON.parse(await readFile(GITHUB_EVENT_PATH, 'utf8'))

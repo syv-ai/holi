@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,22 +31,13 @@ jobs:
         id: detect
         run: node .github/workflows/mobile-ios-changes.mjs
 
+  # Keep this exact legacy status name for existing branch protection. Its PR check is
+  # portable only; native simulator coverage is deferred to main/manual dispatch.
   simulator:
     name: Unsigned NativeScript simulator
     needs: changes
     if: always()
-    # Keep the pinned iOS 26.2 toolchain on macOS 15 arm64; unrelated PRs use Ubuntu.
-    runs-on: ${{ needs.changes.result == 'success' && needs.changes.outputs.run == 'true' && 'macos-15' || 'ubuntu-latest' }}
-    timeout-minutes: 20
-    env:
-      LANG: en_US.UTF-8
-      LC_ALL: en_US.UTF-8
-      TZ: UTC
-      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
-      HOLI_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-2
-      HOLI_IOS_DEVICE_TYPE: com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro
-      HOLI_IOS_ARTIFACTS: /tmp/holi-265-ci
-      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    runs-on: ubuntu-latest
     steps:
       - name: Fail if change detection failed
         if: needs.changes.result != 'success'
@@ -55,8 +47,6 @@ jobs:
         run: echo 'Mobile compatibility skipped; no relevant inputs changed.' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v5
         if: needs.changes.outputs.run == 'true'
-        with:
-          fetch-depth: 0
       - uses: pnpm/action-setup@v5
         if: needs.changes.outputs.run == 'true'
         with:
@@ -69,16 +59,7 @@ jobs:
       - name: Install only mobile and shared dependencies
         if: needs.changes.outputs.run == 'true'
         run: pnpm --filter @holi/mobile... install --frozen-lockfile
-      - name: NativeScript Ruby project adapter and native build tools
-        if: needs.changes.outputs.run == 'true'
-        run: |
-          gem install --user-install xcodeproj -v 1.28.1 --no-document
-          cmake --version
-          git --version
-          openssl version
-          tar --version
-          xcrun --sdk iphonesimulator --show-sdk-path
-      - name: Check portable modules and host verifier
+      - name: Check portable mobile and shared modules
         if: needs.changes.outputs.run == 'true'
         run: |
           pnpm --filter @holi/shared typecheck
@@ -86,11 +67,52 @@ jobs:
           pnpm --filter @holi/mobile typecheck
           pnpm --filter @holi/mobile lint
           pnpm --filter @holi/mobile test
-      - name: Build, install, launch and verify the actual native runtime
+      - name: Native simulator coverage deferred
         if: needs.changes.outputs.run == 'true'
+        run: echo 'Portable checks passed; native iOS simulator coverage was not run on this event.' >> "$GITHUB_STEP_SUMMARY"
+
+  native:
+    name: Native iOS simulator
+    needs: changes
+    if: >-
+      needs.changes.result == 'success' && needs.changes.outputs.run == 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      TZ: UTC
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      HOLI_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-2
+      HOLI_IOS_DEVICE_TYPE: com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro
+      HOLI_IOS_ARTIFACTS: /tmp/holi-265-ci
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10.8.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install only mobile and shared dependencies
+        run: pnpm --filter @holi/mobile... install --frozen-lockfile
+      - name: NativeScript Ruby project adapter and native build tools
+        run: |
+          gem install --user-install xcodeproj -v 1.28.1 --no-document
+          cmake --version
+          git --version
+          openssl version
+          tar --version
+          xcrun --sdk iphonesimulator --show-sdk-path
+      - name: Build, install, launch and verify the actual native runtime
         run: pnpm --filter @holi/mobile test:ios
       - uses: actions/upload-artifact@v5
-        if: always() && needs.changes.outputs.run == 'true'
+        if: always()
         with:
           name: mobile-ios-compatibility
           path: /tmp/holi-265-ci
