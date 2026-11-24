@@ -156,8 +156,8 @@ class FakeNativeChild extends EventEmitter {
     observed?: UnconfirmedOwnedProgramError
   }
   private receipt: 'pending' | 'settled' = 'pending'
-  private drain!: () => void
   private settleDrain!: () => void
+  private failDrain!: (error: Error) => void
   private settle!: (value: OwnedCompletion) => void
   private fail!: (error: Error) => void
 
@@ -168,10 +168,10 @@ class FakeNativeChild extends EventEmitter {
     readonly env: NodeJS.ProcessEnv,
   ) {
     super()
-    const drainProof = new Promise<void>((resolve) => {
+    const drainProof = new Promise<void>((resolve, reject) => {
       this.settleDrain = resolve
+      this.failDrain = reject
     })
-    this.drain = () => this.settleDrain()
     this.ownedCompletion = new Promise((resolve, reject) => {
       this.settle = resolve
       this.fail = reject
@@ -223,7 +223,7 @@ class FakeNativeChild extends EventEmitter {
     this.receipt = 'settled'
     this.releaseResources()
     this.settle('empty')
-    this.drain()
+    this.settleDrain()
   }
 
   rejectProof(cause: NativeProofFailure, commandError: Error | null = null) {
@@ -238,7 +238,8 @@ class FakeNativeChild extends EventEmitter {
     const receipt = new UnconfirmedOwnedProgramError(cause, lease)
     this.failure = { receipt, commandError }
     this.receipt = 'settled'
-    this.fail(receipt)
+    if (process.platform === 'win32') this.fail(receipt)
+    else this.failDrain(receipt)
     return this.failure
   }
 
@@ -426,7 +427,9 @@ async function rig() {
     )
     if (remote === undefined) throw new Error('Failed receipt has no originating vault')
     const scoped = onlyFailure(error, 'one or more plugin lifetimes failed to stop')
-    expectProof(vaultStopCause(scoped, remote), proof)
+    const original = vaultStopCause(scoped, remote)
+    if (process.platform === 'win32') expectProof(original, proof)
+    else expect(original).toMatchObject({ cause: proof.receipt })
     expect(await rejected(host.stop(remote))).toBe(scoped)
   })
   await host.reconcile(vaults[A], 'open')
@@ -958,3 +961,157 @@ describe.skipIf(process.platform !== 'win32')(
     })
   },
 )
+
+// These scenarios cross the production Settings UI door and authenticated HTTP
+// transport; only the owned native program is controlled by the fixture.
+describe('Settings Test through real activation and capability hosts', () => {
+  async function settingsRig() {
+    const f = await rig()
+    await f.call(A, 'agent.harnessSave', {
+      create: true,
+      harness: {
+        id: 'fixture',
+        label: 'Fixture',
+        command: { bin: process.execPath, args: [] },
+        test: ['--version', 'fixture argument'],
+        env: { FIXTURE_PROBE: 'preserved' },
+      },
+    })
+    async function probe(remote: Remote) {
+      const previous = native.children.length
+      const answer = f.call(remote, 'agent.harnessTest', { id: 'fixture' })
+      void answer.catch(() => {})
+      await vi.waitFor(() => expect(native.children.length).toBe(previous + 1))
+      return { answer, child: native.children[previous]! }
+    }
+    return { ...f, probe }
+  }
+
+  it('cancels and drains A without cancelling B, then admits a replacement with the same harness id', async () => {
+    const f = await settingsRig()
+    const a = await f.probe(A)
+    const b = await f.probe(B)
+    for (const [remote, child] of [
+      [A, a.child],
+      [B, b.child],
+    ] as const) {
+      expect(child.cwd).toBe(f.vaults[remote].root)
+      expect(child.bin).toBe(process.execPath)
+      expect(child.args).toEqual(['--version', 'fixture argument'])
+      expect(child.env['FIXTURE_PROBE']).toBe('preserved')
+      safeArgs(child.args)
+      await cliRefuses(f, remote, 'agent', 'harnessTest', 'fixture')
+      expect(await httpRows(f, remote)).toEqual([])
+    }
+    let stopped = false
+    const stop = f.host.stop(A).then(() => {
+      stopped = true
+    })
+    await vi.waitFor(() =>
+      expect(
+        process.platform === 'win32' ? a.child.stopRequests : a.child.drainRequests,
+      ).toBeGreaterThan(0),
+    )
+    await expect(f.call(A, 'agent.harnessTest', { id: 'fixture' })).rejects.toThrow()
+    a.child.exit()
+    a.child.endOutput()
+    await tick()
+    expect(stopped).toBe(false)
+    expect(b.child.stopRequests).toBe(0)
+    expect(b.child.drainRequests).toBe(0)
+    a.child.proveEmpty()
+    await expect(a.answer).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringMatching(/cancel/i),
+    })
+    await stop
+    await f.host.reconcile(f.vaults[A], 'open')
+    const replacement = await f.probe(A)
+    replacement.child.stdout.write('replacement version\n')
+    replacement.child.exit()
+    replacement.child.endOutput()
+    replacement.child.proveEmpty()
+    await expect(replacement.answer).resolves.toEqual({ ok: true, output: 'replacement version\n' })
+    b.child.stdout.write('original B version\n')
+    b.child.exit()
+    b.child.endOutput()
+    b.child.proveEmpty()
+    await expect(b.answer).resolves.toEqual({ ok: true, output: 'original B version\n' })
+  })
+
+  it('rejects delayed dispatch from A after stop and same-id restart without launching against the replacement', async () => {
+    const f = await settingsRig()
+    let resume!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const admission = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const stale = rejected(
+      f.dispatch({
+        door: 'ui',
+        remote: A,
+        name: 'agent.harnessTest',
+        params: { id: 'fixture' },
+        beforeInvoke: async () => {
+          entered()
+          await waiting
+        },
+      }),
+    )
+    try {
+      await admission
+      await f.host.stop(A)
+      await f.host.reconcile(f.vaults[A], 'open')
+    } finally {
+      resume()
+    }
+    expect(await stale).toBeInstanceOf(Error)
+    expect(native.children).toHaveLength(0)
+    for (const remote of remotes) {
+      const next = await f.probe(remote)
+      next.child.exit()
+      next.child.endOutput()
+      next.child.proveEmpty()
+      await expect(next.answer).resolves.toMatchObject({ ok: true })
+      expect(await httpRows(f, remote)).toEqual([])
+    }
+  })
+
+  it('retains the original failed cleanup through repeated stop and restart without waiting for root close', async () => {
+    const f = await settingsRig()
+    const a = await f.probe(A)
+    const b = await f.probe(B)
+    const stopping = rejected(f.host.stop(A))
+    await vi.waitFor(() =>
+      expect(
+        process.platform === 'win32' ? a.child.stopRequests : a.child.drainRequests,
+      ).toBeGreaterThan(0),
+    )
+    const expected = a.child.rejectProof(
+      new NativeProofFailure('fixture physical cleanup unavailable'),
+    )
+    const error = await rejected(a.answer)
+    if (process.platform === 'win32') expectProof(error, expected)
+    else
+      expect(error).toMatchObject({
+        cause: expected.receipt,
+        authority: a.child[ownedProcessDrain],
+      })
+    const original = await stopping
+    expect(vaultStopCause(original, A)).toBe(error)
+    expect(a.child.closed).toBe(false)
+    expect(a.child.exited).toBe(false)
+    expect(await rejected(f.host.stop(A))).toBe(original)
+    expect(await rejected(f.host.reconcile(f.vaults[A], 'open'))).toBe(original)
+    await expect(f.call(A, 'agent.harnessTest', { id: 'fixture' })).rejects.toThrow()
+    b.child.stdout.write('B unaffected\n')
+    b.child.exit()
+    b.child.endOutput()
+    b.child.proveEmpty()
+    await expect(b.answer).resolves.toEqual({ ok: true, output: 'B unaffected\n' })
+    expect(await httpRows(f, B)).toEqual([])
+  })
+})
