@@ -79,16 +79,18 @@ try {
   const vault = join(profile, 'vaults/holi-550-fixture/vault-a')
   let notification
   if (scenario === 'inbox-path') {
-    notification = { title: `Holi 550 ${randomUUID()}`, line: `Inbox path proof ${randomUUID()}` }
+    notification = {
+      title: `Holi 550 ${randomUUID()}`,
+      line: `Inbox path proof ${randomUUID()}`,
+      expectedParagraphs: (await readFile(join(vault, 'Welcome.md'), 'utf8'))
+        .split('\n')
+        .map((line) => line.replace(/^#+\s*/, '').trim())
+        .filter(Boolean),
+    }
     await writeFile(join(profile, 'inbox-notification.json'), JSON.stringify(notification), {
       mode: 0o600,
       flag: 'wx',
     })
-    await processes.run(
-      join(profile, 'user-data/bin/holi'),
-      ['agent', 'notify', notification.title, notification.line, '--path', 'Welcome.md'],
-      { cwd: vault, env, timeoutMs: 10_000 },
-    )
   }
   const electron = require('electron')
   if (typeof electron !== 'string' || !electron) throw new Error('Electron executable unavailable')
@@ -116,7 +118,6 @@ try {
     !proof.vaultOpened
   )
     throw new Error('Production renderer/sandbox/vault startup proof missing after 90,000ms')
-  const vault = join(profile, 'vaults/holi-550-fixture/vault-a')
   const inspected = await processes.run(
     join(profile, 'user-data/bin/holi'),
     ['docs', 'inspect', 'Welcome.md', '--json'],
@@ -134,6 +135,21 @@ try {
     throw new Error('Production docs.inspect did not read the owned welcome document')
   paths = JSON.parse(await readFile(join(profile, 'paths.json'), 'utf8'))
   if (scenario === 'inbox-path') {
+    const focusedDeadline = Date.now() + 5_000
+    while (!(await readFile(join(profile, 'inbox-focus-ready.json')).catch(() => null))) {
+      if (Date.now() > focusedDeadline) throw new Error('Owned fixture window did not gain focus')
+      await pause(100, undefined, { signal: controller.signal })
+    }
+    const submitted = await processes.run(
+      join(profile, 'user-data/bin/holi'),
+      ['agent', 'notify', notification.title, notification.line, '--path', 'Welcome.md'],
+      { cwd: vault, env, timeoutMs: 10_000 },
+    )
+    await writeFile(
+      join(profile, 'inbox-submitted.json'),
+      JSON.stringify({ response: submitted.output }),
+      { flag: 'wx' },
+    )
     const receiptPath = join(profile, 'inbox-navigation.json')
     const deadline = Date.now() + 30_000
     while (Date.now() < deadline) {
@@ -141,18 +157,27 @@ try {
         .then(JSON.parse)
         .catch(() => null)
       if (result) {
+        const { screenshot, ...receipt } = result
+        await writeFile(
+          join(evidence, 'inbox-navigation.json'),
+          JSON.stringify({ ...receipt, submitted: submitted.output }, null, 2),
+          {
+            flag: 'wx',
+            mode: 0o600,
+          },
+        )
         if (!result.ok) throw new Error(`Inbox navigation failed: ${result.error}`)
-        if (result.title !== notification.title || !result.document.includes(notification.line))
+        if (
+          result.title !== notification.title ||
+          !result.destination?.editorTexts.some((text) =>
+            notification.expectedParagraphs.every((part) => text.includes(part)),
+          )
+        )
           throw new Error('Inbox navigation receipt mismatch')
-        await writeFile(join(evidence, 'inbox-navigation.json'), JSON.stringify(result, null, 2), {
+        await writeFile(join(evidence, 'inbox-navigation.png'), Buffer.from(screenshot, 'base64'), {
           flag: 'wx',
           mode: 0o600,
         })
-        await writeFile(
-          join(evidence, 'inbox-navigation.png'),
-          Buffer.from(result.screenshot, 'base64'),
-          { flag: 'wx', mode: 0o600 },
-        )
         break
       }
       await pause(100, undefined, { signal: controller.signal })

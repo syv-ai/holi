@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import { startInboxNavigation } from './agent-inbox-550-navigation'
 
 import { lstatSync, realpathSync, writeFileSync } from 'node:fs'
