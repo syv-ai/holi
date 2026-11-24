@@ -154,11 +154,29 @@ try {
       main: 'main.cjs',
     }),
   )
+  const electronVersion = require('electron/package.json').version
+  const nodeHeaders = join(homedir(), '.electron-gyp', electronVersion, 'include/node')
+  const nodeApiHeader = join(nodeHeaders, 'node_api.h')
+  await readFile(nodeApiHeader).catch(() => {
+    throw new Error(`Electron ${electronVersion} Node-API header missing: ${nodeApiHeader}`)
+  })
   await exec('/usr/bin/xcrun', [
-    'swiftc',
-    resolve(dirname(fileURLToPath(import.meta.url)), 'notification-settings.swift'),
+    'clang++',
+    '-std=c++17',
+    '-DNODE_GYP_MODULE_NAME=notification_settings',
+    '-bundle',
+    '-undefined',
+    'dynamic_lookup',
+    '-fobjc-arc',
+    '-framework',
+    'Foundation',
+    '-framework',
+    'UserNotifications',
+    '-I',
+    nodeHeaders,
+    resolve(dirname(fileURLToPath(import.meta.url)), 'notification-settings.mm'),
     '-o',
-    join(ownedApp, 'Contents/MacOS/notification-settings'),
+    join(appResources, 'notification-settings.node'),
   ])
   await exec('/usr/bin/codesign', [
     '--force',
@@ -217,14 +235,23 @@ try {
   const state = await readFile(result, 'utf8').catch(() => '')
   if (state !== 'shown-native') throw new Error(`fixture did not become ready: ${child.output}`)
   try {
-    const settings = await owned.run(
-      join(ownedApp, 'Contents/MacOS/notification-settings'),
-      [bundleId],
-      { timeoutMs: 10_000, label: 'owned app notification settings' },
-    )
-    notificationSettings = JSON.parse(settings.output.trim())
+    const settingsDeadline = Date.now() + 10_000
+    let settingsText = ''
+    while (Date.now() < settingsDeadline) {
+      controller.signal.throwIfAborted()
+      settingsText = await readFile(`${result}.settings`, 'utf8').catch(() => '')
+      if (settingsText) break
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    if (!settingsText) throw new Error('in-process notification settings query timed out')
+    notificationSettings = JSON.parse(settingsText)
+    if (notificationSettings.bundleIdentifier !== bundleId)
+      throw new Error('in-process notification settings bundle identity mismatch')
+    if (notificationSettings.pid !== child.child.pid)
+      throw new Error('in-process notification settings PID mismatch')
+    notificationSettings.provenance = 'in-process Electron Node-API addon'
   } catch (error) {
-    notificationSettings = { error: String(error) }
+    notificationSettings ??= { error: String(error) }
     throw error
   } finally {
     await writeFile(
@@ -254,7 +281,10 @@ try {
   )
 } catch (error) {
   if (artifactsCreated && notificationSettings === undefined) {
-    notificationSettings = { error: 'settings inspection did not complete' }
+    notificationSettings = {
+      error: 'settings inspection did not complete',
+      provenance: 'in-process Electron Node-API addon',
+    }
     await writeFile(
       join(evidence, 'notification-settings.json'),
       `${JSON.stringify({ declaration: { NSUserNotificationAlertStyle: 'banner' }, observed: notificationSettings })}\n`,
