@@ -71,10 +71,8 @@ static BOOL CopyDirectory(int source, int target, NSError **error, off_t *totalB
 
 @implementation HoliGitSnapshot {
     NSString *_path;
-    NSData *_configData;
 }
 - (NSString *)path { return _path; }
-- (NSData *)configData { return _configData; }
 - (nullable instancetype)initWithRoot:(NSString *)root error:(NSError **)error {
     self=[super init]; if(!self)return nil;
     int base=open(root.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
@@ -98,7 +96,6 @@ static BOOL CopyDirectory(int source, int target, NSError **error, off_t *totalB
         NSRegularExpression *bad=[NSRegularExpression regularExpressionWithPattern:@"(?im)^\\s*\\[\\s*(include(?:if)?|extensions)(?:\\s+[^\\]]*)?\\s*\\]" options:0 error:nil];
         NSRegularExpression *worktree=[NSRegularExpression regularExpressionWithPattern:@"(?im)^\\s*worktree\\s*=" options:0 error:nil];
         if(!data || !text || [bad numberOfMatchesInString:text options:0 range:NSMakeRange(0,text.length)] || [worktree numberOfMatchesInString:text options:0 range:NSMakeRange(0,text.length)]) ok=Fail(error,@"Git config contains unsupported directives");
-        else _configData=data;
     }
     if(!ok){[self close];return nil;}
     return self;

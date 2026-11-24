@@ -260,7 +260,8 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   NSString *configPath = [snapshot.path stringByAppendingPathComponent:@".git/config"];
   if (rc == 0) rc = git_config_add_file_ondisk(config, configPath.fileSystemRepresentation, GIT_CONFIG_LEVEL_LOCAL, NULL, 0);
   git_repository *repo = NULL;
-  if (rc == 0) rc = git_repository_open_holi(&repo, snapshot.path.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH | GIT_REPOSITORY_OPEN_BARE, NULL, config);
+  NSString *gitDir = [snapshot.path stringByAppendingPathComponent:@".git"];
+  if (rc == 0) rc = git_repository_open_holi(&repo, gitDir.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH | GIT_REPOSITORY_OPEN_BARE, NULL, config);
   git_config_free(config);
   if (rc < 0) { HNGError(error, rc); [snapshot close]; return NULL; }
   git_config *readConfig = NULL;
@@ -374,6 +375,8 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
 }
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyStatus:(NSArray<NSString *> *)paths root:(NSString *)root error:(NSError **)error {
   HoliGitSnapshot *snapshot = nil; git_repository *repo=[self openSafeRepository:root snapshot:&snapshot error:error]; if(!repo)return nil;
+  int workdirResult = git_repository_set_workdir(repo, snapshot.path.fileSystemRepresentation, 0);
+  if (workdirResult < 0) { if (error) HNGError(error, workdirResult); git_repository_free(repo); [snapshot close]; return nil; }
   int rootFD=open(root.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
   if(rootFD<0){ if(error)*error=HNGPathError(errno,@"Cannot safely open working tree"); git_repository_free(repo); [snapshot close]; return nil; }
   git_index *index=NULL; git_reference *head=NULL; git_commit *commit=NULL; git_tree *tree=NULL;
@@ -394,7 +397,7 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
   }
   if(rc==0 && commit) rc=git_commit_tree(&tree,commit);
   if(rc<0){ if(error)HNGError(error,rc); close(rootFD); git_index_free(index); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); [snapshot close]; return nil; }
-  git_config *config=NULL; BOOL filemode=YES; if(git_repository_config(&config,repo)==0){ int value=1; if(git_config_get_bool(&value,config,"core.filemode")==0)filemode=value; git_config_free(config); }
+  git_config *config=NULL; BOOL filemode=YES; if(git_repository_config(&config,repo)==0){ int value=1; if(git_config_get_bool(&value,config,"core.filemode")==0)filemode=value; const char *unsupported[] = {"core.autocrlf", "core.eol", "core.attributesfile", "core.excludesfile"}; for (NSUInteger i=0; i<4; i++) { const char *setting=NULL; if (git_config_get_string(&setting,config,unsupported[i])==0) { if(error)*error=HNGPathError(EINVAL,@"Working-copy normalization or global ignore settings are unsupported"); git_config_free(config); close(rootFD); git_repository_free(repo); [snapshot close]; return nil; } } git_config_free(config); }
   NSMutableArray *changes=[NSMutableArray array];
   for(NSString *path in paths){
     NSArray<NSString *> *parts=nil; if(!HNGPathParts(path,&parts)){ if(error)*error=HNGPathError(EINVAL,@"Invalid working-tree path"); changes=nil; break; }
