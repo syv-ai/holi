@@ -117,6 +117,12 @@ export function createUpdater(deps: {
     return false
   }
 
+  console.info('[updates] updater initialized', {
+    supported: status.supported,
+    version: status.version,
+    channel: status.channel,
+  })
+
   if (status.supported) {
     // Squirrel cannot unstage ZIPs; install only the selected one after quit teardown.
     autoUpdater.autoInstallOnAppQuit = false
@@ -125,9 +131,15 @@ export function createUpdater(deps: {
       warn: (m: unknown) => console.warn('[updates]', m),
       error: (m: unknown) => console.error('[updates]', m),
     }
-    autoUpdater.on('update-available', (info: UpdateInfo) =>
-      apply({ type: 'available', version: info.version }),
-    )
+    autoUpdater.on('update-available', (info: UpdateInfo) => {
+      console.info('[updates] update offered', {
+        channel: status.channel,
+        runningVersion: status.version,
+        offeredVersion: info.version,
+        releaseDate: info.releaseDate ?? null,
+      })
+      apply({ type: 'available', version: info.version })
+    })
     autoUpdater.on('update-not-available', () => apply({ type: 'not-available' }))
     autoUpdater.on('download-progress', (p: ProgressInfo) =>
       apply({ type: 'progress', percent: p.percent }),
@@ -185,7 +197,14 @@ export function createUpdater(deps: {
       return true
     },
     async install() {
-      if (!status.supported || status.state !== 'ready') return false
+      if (!status.supported || status.state !== 'ready') {
+        console.info('[updates] install ignored', {
+          supported: status.supported,
+          state: status.state,
+          channel: status.channel,
+        })
+        return false
+      }
       // The person clicked "Restart to update": that is the confirmation. The
       // vault is flushed, committed and pushed first, as on any quit.
       let go: boolean
@@ -195,8 +214,21 @@ export function createUpdater(deps: {
         console.error('[updates] teardown before install failed:', err)
         go = true
       }
-      if (!go || switching || status.state !== 'ready' || installChannel !== status.channel)
+      if (!go || switching || status.state !== 'ready' || installChannel !== status.channel) {
+        console.info('[updates] install cancelled before handoff', {
+          confirmed: go,
+          switching,
+          state: status.state,
+          channel: status.channel,
+          offeredChannel: installChannel,
+        })
         return false
+      }
+      console.info('[updates] handing update to installer', {
+        runningVersion: status.version,
+        offeredVersion: status.availableVersion,
+        channel: status.channel,
+      })
       return quitAndInstall()
     },
     setChannel(channel) {
