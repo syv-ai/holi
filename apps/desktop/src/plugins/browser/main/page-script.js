@@ -397,10 +397,11 @@
     [...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE)
   const richHost = (el) => {
     if (!eligibleEnvelope(el, 'true') || el.closest('[inert]')) return false
-    const visit = (node) => {
+    const inline = (node) => {
       if (node.nodeType === Node.TEXT_NODE) return true
       if (node.nodeType !== Node.ELEMENT_NODE) return false
       const child = node
+      if (child.tagName === 'BR') return true
       if (
         !richInlineTags.has(child.tagName) ||
         child.getAttribute('contenteditable') != null ||
@@ -414,16 +415,25 @@
         style.visibility === 'collapse' ||
         style.userSelect === 'none' ||
         child.matches(
-          'img, br, input, button, select, textarea, iframe, video, audio, canvas, svg, [contenteditable="false"]',
+          'img, input, button, select, textarea, iframe, video, audio, canvas, svg, [contenteditable="false"]',
         )
       )
         return false
       if (child.tagName === 'A' && !child.hasAttribute('href')) return false
-      return [...child.childNodes].every(visit)
+      return [...child.childNodes].every(inline)
     }
-    if (![...el.childNodes].every(visit)) return false
+    const lines = [...el.childNodes]
+    const blockLine = (node) =>
+      node.nodeType === Node.ELEMENT_NODE &&
+      ['P', 'DIV'].includes(node.tagName) &&
+      getComputedStyle(node).display === 'block' &&
+      [...node.childNodes].every(inline)
+    const valid = lines.every(
+      (node) => node.nodeType === Node.TEXT_NODE || inline(node) || blockLine(node),
+    )
     const style = getComputedStyle(el)
     return (
+      valid &&
       style.display === 'block' &&
       style.visibility !== 'hidden' &&
       style.visibility !== 'collapse' &&
@@ -505,6 +515,37 @@
     }
     return eligible
   }
+  const logicalProjection = (host) => {
+    const pieces = []
+    const lines = [...host.childNodes]
+    const blocks = lines.some(
+      (node) => node.nodeType === Node.ELEMENT_NODE && ['P', 'DIV'].includes(node.tagName),
+    )
+    const lineNodes = blocks ? lines : [host]
+    let value = ''
+    const positions = []
+    const addPosition = (node, offset, index) => positions.push({ node, offset, index })
+    const walk = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        for (let i = 0; i <= node.textContent.length; i++) addPosition(node, i, value.length + i)
+        value += node.textContent
+      } else if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+        addPosition(node.parentNode, [...node.parentNode.childNodes].indexOf(node), value.length)
+        value += '\\n'
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        for (const child of node.childNodes) walk(child)
+        if (!node.childNodes.length) addPosition(node, 0, value.length)
+      }
+    }
+    lineNodes.forEach((line, index) => {
+      if (index) value += '\\n'
+      if (line.nodeType === Node.ELEMENT_NODE && ['P', 'DIV'].includes(line.tagName)) {
+        for (const child of line.childNodes) walk(child)
+        if (!line.childNodes.length) addPosition(line, 0, value.length)
+      } else walk(line)
+    })
+    return { value, positions }
+  }
   const selectionFor = (host) => {
     if (!plainHost(host) && !richHost(host)) return null
     const selection = host.ownerDocument.getSelection()
@@ -517,27 +558,18 @@
       (!host.contains(selection.focusNode) && selection.focusNode !== host)
     )
       return null
-    const textNodes = []
-    const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_TEXT)
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) textNodes.push(node)
+    const projection = logicalProjection(host)
     const offsetOf = (node, offset) => {
-      let total = 0
-      for (const text of textNodes) {
-        if (text === node) return total + offset
-        if (text.contains?.(node)) return null
-        total += text.textContent.length
-      }
-      if (node === host) {
-        const range = host.ownerDocument.createRange()
-        range.setStart(host, 0)
-        range.setEnd(host, offset)
-        return range.toString().length
-      }
+      const exact = projection.positions.find(
+        (position) => position.node === node && position.offset === offset,
+      )
+      if (exact) return exact.index
       if (node.nodeType === Node.ELEMENT_NODE && host.contains(node)) {
-        const range = host.ownerDocument.createRange()
-        range.setStart(host, 0)
-        range.setEnd(node, offset)
-        return range.toString().length
+        const child = node.childNodes[offset]
+        const candidate = projection.positions.find(
+          (position) => child && (position.node === child || child.contains?.(position.node)),
+        )
+        return candidate?.index ?? null
       }
       return null
     }
@@ -547,31 +579,21 @@
     return start === null || end === null ? null : { selection, start, end }
   }
   const placeCaret = (host, offset) => {
-    let remaining = Math.max(0, Math.min(host.textContent.length, offset))
-    const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_TEXT)
-    const nodes = []
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node)
+    const projection = logicalProjection(host)
+    const at = Math.max(0, Math.min(projection.value.length, offset))
+    const position =
+      projection.positions.find((item) => item.index === at) ?? projection.positions.at(-1)
     const range = host.ownerDocument.createRange()
-    for (const node of nodes) {
-      const length = node.textContent.length
-      if (remaining < length || (remaining === 0 && length === 0)) {
-        range.setStart(node, remaining)
-        range.collapse(true)
-        const selection = host.ownerDocument.getSelection()
-        selection.removeAllRanges()
-        selection.addRange(range)
-        return
-      }
-      remaining -= length
-    }
-    range.setStart(host, host.childNodes.length)
+    if (position) range.setStart(position.node, position.offset)
+    else range.setStart(host, 0)
     range.collapse(true)
     const selection = host.ownerDocument.getSelection()
     selection.removeAllRanges()
     selection.addRange(range)
   }
   const isNativeHost = (el) => plainHost(el) || richHost(el)
-  const fieldValue = (el) => (isNativeHost(el) ? el.textContent : el.value)
+  const fieldValue = (el) =>
+    isNativeHost(el) ? (richHost(el) ? logicalProjection(el).value : el.textContent) : el.value
   const fieldSelection = (el) => {
     if (!isNativeHost(el))
       return { start: el.selectionStart ?? 0, end: el.selectionEnd ?? el.selectionStart ?? 0 }
