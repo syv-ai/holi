@@ -20,6 +20,7 @@ function protocol(polls: unknown[], urls: string[] = []): DeviceAuthHttp {
     const body = new URLSearchParams(init.body)
     expect(body.get('client_id')).toBe('public-id')
     expect(body.get('scope')).toBe(count === 0 ? 'repo' : null)
+    expect(body.get('device_code')).toBe(count === 0 ? null : device.device_code)
     expect(body.get('grant_type')).toBe(
       count === 0 ? null : 'urn:ietf:params:oauth:grant-type:device_code',
     )
@@ -30,6 +31,7 @@ function protocol(polls: unknown[], urls: string[] = []): DeviceAuthHttp {
 
 describe('authorizeWithGitHub', () => {
   it('returns the granted token after pending and slow-down responses', async () => {
+    let time = 0
     const delays: number[] = []
     const urls: string[] = []
     const session = await authorizeWithGitHub({
@@ -42,7 +44,9 @@ describe('authorizeWithGitHub', () => {
         ],
         urls,
       ),
+      now: () => time,
       wait: async (ms) => {
+        time += ms
         delays.push(ms)
       },
     })

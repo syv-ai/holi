@@ -146,35 +146,40 @@ export async function authorizeWithGitHub(
     return {
       ...code,
       wait: async () => {
-        while (now() < expiresAt) {
-          await wait(Math.min(delay, expiresAt - now()), signal)
-          if (signal.aborted) throw new Error('Authorization cancelled')
-          if (now() >= expiresAt) break
-          const result = await request(
-            tokenEndpoint,
-            new URLSearchParams({
-              client_id: options.clientId,
-              device_code: deviceCode,
-              grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-            }),
-          )
-          const error = safeString(result.error)
-          if (error === 'authorization_pending') continue
-          if (error === 'slow_down') {
-            delay += 5000
-            continue
+        try {
+          while (now() < expiresAt) {
+            await wait(Math.min(delay, expiresAt - now()), signal)
+            if (signal.aborted) throw new Error('Authorization cancelled')
+            if (now() >= expiresAt) break
+            const result = await request(
+              tokenEndpoint,
+              new URLSearchParams({
+                client_id: options.clientId,
+                device_code: deviceCode,
+                grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+              }),
+            )
+            const error = safeString(result.error)
+            if (error === 'authorization_pending') continue
+            if (error === 'slow_down') {
+              delay += 5000
+              continue
+            }
+            if (error === 'access_denied') throw new Error('GitHub authorization was denied')
+            if (error === 'expired_token') throw new Error('GitHub authorization expired')
+            const token = safeString(result.access_token)
+            if (!token) throw new Error('GitHub authorization returned an invalid response')
+            if (signal.aborted) throw new Error('Authorization cancelled')
+            return token
           }
-          if (error === 'access_denied') throw new Error('GitHub authorization was denied')
-          if (error === 'expired_token') throw new Error('GitHub authorization expired')
-          const token = safeString(result.access_token)
-          if (!token) throw new Error('GitHub authorization returned an invalid response')
-          if (signal.aborted) throw new Error('Authorization cancelled')
-          return token
+          throw new Error('GitHub authorization expired')
+        } finally {
+          options.signal?.removeEventListener('abort', abort)
         }
-        throw new Error('GitHub authorization expired')
       },
     }
-  } finally {
+  } catch (error) {
     options.signal?.removeEventListener('abort', abort)
+    throw error
   }
 }
