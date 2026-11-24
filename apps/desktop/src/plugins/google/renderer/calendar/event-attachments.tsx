@@ -1,49 +1,53 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
-import { capClient, type UiCapability } from '@/plugin-api'
+import { atom, useAtomValue, useStore } from 'jotai'
 import { ExternalLinkIcon, PlusIcon } from 'lucide-react'
-import type {
-  AttachEventFilesResult,
-  DriveFile,
-  EventAttachment,
-  EventAttachments as AttachmentList,
-  EventAttachmentTarget,
+import {
+  ATTACHMENT_LIMIT,
+  type AttachEventFilesResult,
+  type DriveFile,
+  type EventAttachment,
+  type EventAttachments as AttachmentList,
+  type EventAttachmentTarget,
 } from '../../shared/event-attachments'
-import { useGoogleAccount } from '../account'
+import { googleAccountRevisionAtom, useGoogleAccount } from '../account'
 import { googleCap } from '../google-cap'
 import { codeOf, isDisconnected, messageOf } from '../google-errors'
 import { DriveFilesDialog } from './drive-files-dialog'
 
-const ATTACHMENT_LIMIT = 25
-
 type Read = { data: AttachmentList } | { error: unknown }
-type Outcome = AttachEventFilesResult & { reconnect?: boolean; sharingComplete?: boolean }
-type Attempt = { files: DriveFile[]; result: Outcome }
+type Attempt = { files: DriveFile[]; result: AttachEventFilesResult }
+interface Recovery {
+  attempt: Attempt | null
+  pending?: 'submit' | 'check'
+  checkError: { cause: unknown } | null
+}
 
-const { checkEventFileAccess } = capClient<{
-  'google.checkEventFileAccess': UiCapability<
-    EventAttachmentTarget & { fileIds: string[] },
-    Outcome
-  >
-}>('google')
+// Settings parks Calendar and unmounts the card content. Keep only recovery,
+// not the open picker or its unsubmitted selection, in the window's store.
+const recoveryAtom = atom(new Map<string, Recovery>())
 
-const needsCheck = (result: Outcome) =>
+const needsCheck = (result: AttachEventFilesResult) =>
   result.attachmentStatus === 'unknown' ||
   result.sharing.some(({ status }) => status === 'unknown') ||
-  result.reconnect === true
+  (result.reconnect === true && result.attachmentStatus !== 'failed')
 
-const needsAttention = (result: Outcome) =>
+const needsAttention = (result: AttachEventFilesResult) =>
   result.attachmentStatus !== 'attached' ||
   result.sharingComplete === false ||
   result.sharing.some(({ status }) => status === 'failed' || status === 'unknown') ||
   result.reconnect === true ||
   Boolean(result.message)
 
-function reconcile(previous: Outcome, checked: Outcome): Outcome {
+function reconcile(
+  previous: AttachEventFilesResult,
+  checked: AttachEventFilesResult,
+): AttachEventFilesResult {
   const sharing = [...checked.sharing]
+  const present = new Set(checked.attachments.map(({ fileId }) => fileId))
   for (const row of previous.sharing) {
     const index = sharing.findIndex(
       ({ fileId, guest }) => fileId === row.fileId && guest === row.guest,
@@ -57,6 +61,7 @@ function reconcile(previous: Outcome, checked: Outcome): Outcome {
         (observed?.status === 'failed' || (!observed && checked.sharingComplete !== true))) ||
       (checked.reconnect &&
         !observed &&
+        present.has(row.fileId) &&
         (row.status === 'granted' || row.status === 'already-accessible'))
     ) {
       if (index === -1) sharing.push(row)
@@ -68,9 +73,7 @@ function reconcile(previous: Outcome, checked: Outcome): Outcome {
     attachmentStatus:
       checked.attachmentStatus !== 'attached' && previous.attachmentStatus === 'unknown'
         ? 'unknown'
-        : checked.reconnect && previous.attachmentStatus === 'attached'
-          ? 'attached'
-          : checked.attachmentStatus,
+        : checked.attachmentStatus,
     sharing,
   }
 }
@@ -96,118 +99,121 @@ export function EventAttachments({
   const { expectedAccountSub, calendarId, eventId } = target
   const { currentSub, loading: accountLoading, readError: accountReadError } = useGoogleAccount()
   const currentAccount = currentSub === expectedAccountSub && !accountLoading && !accountReadError
+  const accountRevision = useAtomValue(googleAccountRevisionAtom)
+  const store = useStore()
+  const key = JSON.stringify([remote, expectedAccountSub, calendarId, eventId])
+  const recovery = useAtomValue(recoveryAtom).get(key)
+  const attempt = recovery?.attempt ?? null
+  const busy = recovery?.pending === 'submit'
+  const checking = recovery?.pending === 'check'
+  const checkError = recovery?.checkError ?? null
+  const saveRecovery = (next: Recovery) => {
+    store.set(recoveryAtom, (previous) => new Map(previous).set(key, next))
+  }
+  // Guard against a second click or another view of the same event, including
+  // while the original card is hidden and the request is still in flight.
+  const canStart = () => !recovery?.pending && store.get(recoveryAtom).get(key) === recovery
+
   const headingId = useId()
   const heading = useRef<HTMLHeadingElement>(null)
   const trigger = useRef<HTMLButtonElement | null>(null)
-  const [read, setRead] = useState<Read | null>(null)
+  const [snapshot, setSnapshot] = useState<{
+    read: Read
+    attempt: Attempt | null
+    accountRevision: number
+  } | null>(null)
   const [revision, setRevision] = useState(0)
   const [dialog, setDialog] = useState<'pick' | 'revise' | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [attempt, setAttempt] = useState<Attempt | null>(null)
-  const [checking, setChecking] = useState(false)
-  const [checkError, setCheckError] = useState<unknown>(null)
-  const inFlight = useRef(false)
-  const mounted = useRef(false)
-
-  useLayoutEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
 
   useEffect(() => {
+    if (!currentAccount) return
     let current = true
+    const accept = (read: Read) => {
+      if (current) setSnapshot({ read, attempt, accountRevision })
+    }
     void googleCap.eventAttachments(remote, { expectedAccountSub, calendarId, eventId }).then(
-      (data) => {
-        if (current) setRead({ data })
-      },
-      (error: unknown) => {
-        if (current) setRead({ error })
-      },
+      (data) => accept({ data }),
+      (error: unknown) => accept({ error }),
     )
     return () => {
       current = false
     }
-  }, [remote, expectedAccountSub, calendarId, eventId, revision])
+  }, [
+    remote,
+    expectedAccountSub,
+    calendarId,
+    eventId,
+    revision,
+    attempt,
+    currentAccount,
+    accountRevision,
+  ])
 
   const reload = () => {
-    setRead(null)
+    setSnapshot(null)
     setRevision((previous) => previous + 1)
   }
+  // Only a fresh Calendar read can re-enable confirmation after an attempt or
+  // when a connection is refreshed. The outcome itself isn't the live list.
+  const read =
+    currentAccount && snapshot?.attempt === attempt && snapshot.accountRevision === accountRevision
+      ? snapshot.read
+      : null
   const data = read && 'data' in read ? read.data : null
   const readError = read && 'error' in read ? read : null
   const attachedIds = new Set(data?.attachments.flatMap(({ fileId }) => (fileId ? [fileId] : [])))
   const slots = Math.max(0, ATTACHMENT_LIMIT - (data?.attachments.length ?? 0))
   const canSubmit =
-    currentAccount &&
     data?.canAttach === true &&
     !(attempt && needsCheck(attempt.result)) &&
-    !checking &&
+    !recovery?.pending &&
     checkError === null
   const confirm = async (files: DriveFile[]) => {
     if (
-      inFlight.current ||
-      !mounted.current ||
+      !canStart() ||
       !canSubmit ||
       files.length === 0 ||
       files.length > ATTACHMENT_LIMIT ||
       files.filter(({ id }) => !attachedIds.has(id)).length > slots
     )
       return
-    inFlight.current = true
-    setCheckError(null)
-    setBusy(true)
+    saveRecovery({ attempt, pending: 'submit', checkError: null })
+    let result: AttachEventFilesResult
     try {
-      const result: Outcome = await googleCap.attachEventFiles(remote, {
+      // A refused preflight returns a definite failure, so users may choose
+      // to confirm again once the event is re-read and still eligible.
+      result = await googleCap.attachEventFiles(remote, {
         ...target,
         fileIds: files.map(({ id }) => id),
       })
-      if (!mounted.current) return
-      setAttempt({ files, result })
     } catch (error) {
-      if (!mounted.current) return
-      setAttempt({
-        files,
-        result: {
-          attachments: [],
-          attachmentStatus: 'unknown',
-          sharing: [],
-          message: messageOf(error, 'Google did not return an attachment result.'),
-          reconnect: reconnectFor(error),
-        },
-      })
-    } finally {
-      inFlight.current = false
-      if (mounted.current) {
-        setBusy(false)
-        setDialog(null)
-        // The write's snapshot is not always authoritative. Read the event again,
-        // even if the write failed, without turning that read into a retry.
-        reload()
+      // A rejected call may have lost the reply after sending the write.
+      result = {
+        attachments: [],
+        attachmentStatus: 'unknown',
+        sharing: [],
+        message: messageOf(error, 'Google did not return an attachment result.'),
+        reconnect: reconnectFor(error),
       }
     }
+    setDialog(null)
+    saveRecovery({ attempt: { files, result }, checkError: null })
   }
 
   const check = async () => {
-    if (!attempt || !currentAccount || inFlight.current || !mounted.current) return
-    inFlight.current = true
-    setChecking(true)
-    setCheckError(null)
+    if (!attempt || !currentAccount || !canStart()) return
+    saveRecovery({ attempt, pending: 'check', checkError: null })
     try {
-      const result = await checkEventFileAccess(remote, {
+      const result = await googleCap.checkEventFileAccess(remote, {
         ...target,
         fileIds: attempt.files.map(({ id }) => id),
       })
-      if (!mounted.current) return
-      setAttempt({ ...attempt, result: reconcile(attempt.result, result) })
-      reload()
+      saveRecovery({
+        attempt: { ...attempt, result: reconcile(attempt.result, result) },
+        checkError: null,
+      })
     } catch (error) {
-      if (!mounted.current) return
-      setCheckError(error)
-    } finally {
-      inFlight.current = false
-      if (mounted.current) setChecking(false)
+      saveRecovery({ attempt, checkError: { cause: error } })
     }
   }
 
@@ -295,6 +301,11 @@ export function EventAttachments({
           {data.reason ?? 'You can’t add files to this event.'}
         </p>
       )}
+      {busy && !dialog && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Waiting for Google to confirm attachments and guest access…
+        </p>
+      )}
       {attempt && (
         <AttachmentOutcome
           attempt={attempt}
@@ -302,7 +313,7 @@ export function EventAttachments({
             canSubmit && (slots > 0 || attempt.files.some(({ id }) => attachedIds.has(id)))
           }
           checking={checking}
-          canCheck={currentAccount}
+          canCheck={currentAccount && !busy}
           checkError={checkError}
           onCheck={() => void check()}
           onRevise={(button) => {
@@ -370,7 +381,7 @@ function AttachmentOutcome({
   canRevise: boolean
   checking: boolean
   canCheck: boolean
-  checkError: unknown
+  checkError: Recovery['checkError']
   onCheck: () => void
   onRevise: (button: HTMLButtonElement) => void
   onOpenConnections: () => void
@@ -414,17 +425,23 @@ function AttachmentOutcome({
           ))}
         {checking && <p role="status">Checking attachments and guest access…</p>}
         {checkError !== null && (
-          <p>{messageOf(checkError, 'Could not check attachments and guest access.')}</p>
+          <p>{messageOf(checkError.cause, 'Could not check attachments and guest access.')}</p>
+        )}
+        {attachmentStatus === 'failed' && reconnect && (
+          <p>
+            Reconnect Google before confirming again. No files were attached or shared by this
+            request.
+          </p>
         )}
         {checkNeeded && (
           <p>
-            {reconnect || reconnectFor(checkError)
+            {reconnect || reconnectFor(checkError?.cause)
               ? 'Reconnect Google, then check file access before trying again.'
               : 'Check access before trying again. Google may still be processing the previous request.'}
           </p>
         )}
         <div className="flex flex-wrap gap-2">
-          {(reconnect || reconnectFor(checkError)) && (
+          {(reconnect || reconnectFor(checkError?.cause)) && (
             <Button type="button" variant="outline" size="sm" onClick={onOpenConnections}>
               Open Connections
             </Button>

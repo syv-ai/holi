@@ -222,6 +222,15 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
    * button doing nothing.
    */
   const needsReconsent = connected && missingScopes.length > 0
+  const scopeGaps = new Set(missingScopes.map((scope) => scope.split('/').at(-1)))
+  const affectedFeatures = [
+    scopeGaps.has('gmail.modify') && 'Gmail actions such as marking read, starring and archiving',
+    (scopeGaps.has('contacts.readonly') || scopeGaps.has('contacts.other.readonly')) &&
+      'Google contact suggestions',
+    scopeGaps.has('calendar.readonly') && 'viewing Google Calendar',
+    scopeGaps.has('calendar.events') && 'changing Google Calendar events',
+    scopeGaps.has('drive') && 'attaching Google Drive files to events and sharing them with guests',
+  ].filter((feature): feature is string => typeof feature === 'string')
 
   return (
     <Frame>
@@ -315,8 +324,9 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
               <Alert variant="destructive">
                 <AlertTitle>Holi needs new permissions</AlertTitle>
                 <AlertDescription>
-                  Mail still loads, but marking read, starring, archiving and contacts will not work
-                  until you reconnect.
+                  {affectedFeatures.length > 0
+                    ? `Reconnect to enable ${new Intl.ListFormat('en').format(affectedFeatures)}.`
+                    : 'Reconnect to grant the missing permissions.'}
                 </AlertDescription>
               </Alert>
             ) : (

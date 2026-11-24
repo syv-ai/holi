@@ -186,9 +186,9 @@ export function OAuthClient({
             <DialogHeader>
               <DialogTitle>Your own OAuth client</DialogTitle>
               <DialogDescription>
-                For a Google account outside syv.ai: an OAuth client of type Desktop app, with the
-                Gmail, Google Calendar and People APIs enabled. Kept on this machine only, and used
-                by every vault here.
+                For a Google account outside syv.ai, create an OAuth client of type Desktop app.
+                Enable the Gmail, Google Calendar, Google Drive and People APIs in Google Cloud. The
+                client is kept on this machine and used by every vault here.
               </DialogDescription>
             </DialogHeader>
             <Button
