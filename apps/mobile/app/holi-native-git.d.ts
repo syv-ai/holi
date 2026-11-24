@@ -21,10 +21,6 @@ declare class HoliNativeGit extends NSObject {
     root: string,
     error: interop.Pointer | interop.Reference<NSError>,
   ): boolean
-  hasPendingRecoveryError(
-    root: string,
-    error: interop.Pointer | interop.Reference<NSError>,
-  ): boolean
   workingCopyStatusRootError(
     paths: NSArray<string>,
     root: string,

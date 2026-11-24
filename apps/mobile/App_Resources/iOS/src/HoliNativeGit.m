@@ -81,8 +81,6 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
     return nil;
   }
   HNGInitializeLibgit2();
-  git_libgit2_opts(GIT_OPT_SET_SEARCH_PATH, GIT_CONFIG_LEVEL_SYSTEM, "/dev/null");
-  git_libgit2_opts(GIT_OPT_SET_SEARCH_PATH, GIT_CONFIG_LEVEL_GLOBAL, "/dev/null");
   const char *rootPath = root.fileSystemRepresentation;
   git_repository *repository = NULL;
   int result = 0;
@@ -257,7 +255,7 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   git_repository *repo = [self openSafeRepository:root error:error]; if (!repo) return nil;
   git_reference *head = NULL; BOOL hasHead = git_repository_head(&head, repo) == 0; BOOL attached = hasHead && git_reference_is_branch(head); const char *name = attached ? git_reference_shorthand(head) : NULL;
   NSString *branch = name ? [NSString stringWithUTF8String:name] : @""; NSMutableArray *remotes = [NSMutableArray array]; git_strarray names = {0};
-  if (git_remote_list(&names, repo) == 0) for (size_t i=0;i<names.count;i++) { git_remote *r=NULL; if (git_remote_lookup(&r,repo,names.strings[i])==0) { const char *url=git_remote_url(r); if(url && !strcmp(names.strings[i], "origin")) { NSString *value=[NSString stringWithUTF8String:url]; NSURL *parsed=[NSURL URLWithString:value]; NSArray *parts=[parsed.path componentsSeparatedByString:@"/"]; if ([parsed.host.lowercaseString isEqualToString:@"github.com"] && parts.count==3 && [parts[1] length] && [parts[2] length]) [remotes addObject:[NSString stringWithFormat:@"%@/%@", parts[1], [parts[2] stringByDeletingPathExtension]]]; } git_remote_free(r); } }
+  if (git_remote_list(&names, repo) == 0) for (size_t i=0;i<names.count;i++) { git_remote *r=NULL; if (git_remote_lookup(&r,repo,names.strings[i])==0) { const char *url=git_remote_url(r); if(url && !strcmp(names.strings[i], "origin")) { NSString *value=[NSString stringWithUTF8String:url]; NSURL *parsed=[NSURL URLWithString:value]; NSArray *parts=[parsed.path componentsSeparatedByString:@"/"]; if ([parsed.host.lowercaseString isEqualToString:@"github.com"] && parts.count==3 && [parts[1] length] && [parts[2] length]) { NSString *repoName = parts[2]; if ([repoName hasSuffix:@".git"]) repoName = [repoName substringToIndex:repoName.length - 4]; [remotes addObject:[NSString stringWithFormat:@"%@/%@", parts[1], repoName]]; } } git_remote_free(r); } }
   git_strarray_dispose(&names); git_reference_free(head); git_repository_free(repo);
   return @{ @"remotes":remotes, @"branch":attached ? branch : [NSNull null], @"attached":@(attached) };
 }
@@ -281,14 +279,6 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   if (!HNGPathParts(path, &parts)) { if(error)*error=HNGPathError(EINVAL,@"Invalid working-tree path"); return NO; }
   NSString *full=[root stringByAppendingPathComponent:path]; char resolved[PATH_MAX]; if(!realpath(full.fileSystemRepresentation,resolved)) { if(errno==ENOENT)return YES; if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:errno userInfo:nil]; return NO; }
   NSString *canonicalRoot=[self canonicalRoot:root error:error]; return canonicalRoot && [[NSString stringWithUTF8String:resolved] hasPrefix:[canonicalRoot stringByAppendingString:@"/"]];
-}
-- (BOOL)hasPendingRecovery:(NSString *)root error:(NSError **)error {
-  git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return YES;
-  git_repository_free(repo);
-  NSString *privateDirectory = [root stringByAppendingPathComponent:@".holi-storage-private"];
-  NSArray<NSString *> *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:privateDirectory error:nil];
-  for (NSString *entry in entries) if ([entry hasPrefix:@"move-"] && [entry hasSuffix:@".json"]) return YES;
-  return NO;
 }
 static NSError *HNGPathError(int code, NSString *message) {
   return [NSError errorWithDomain:HoliNativeGitErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey:message}];
