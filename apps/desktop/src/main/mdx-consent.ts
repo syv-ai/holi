@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { renameSync } from 'node:fs'
+import { mkdir, open, readFile, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 const VERSION = 1
 const PURPOSE = 'mdx-dependency-diagnostics' as const
 
+/** The trusted main caller supplies the canonical vault root, remote and verified account. */
 export interface MdxConsentScope {
   origin: string
   root: string
@@ -14,16 +16,39 @@ export interface MdxConsentScope {
 
 export interface MdxConsentStore {
   allows(scope: MdxConsentScope): Promise<boolean>
-  grant(scope: MdxConsentScope): Promise<void>
+  /** Pass a synchronous lifetime check for a document-bound approval. A retired approval rejects. */
+  grant(scope: MdxConsentScope, stillOwned?: () => boolean): Promise<void>
   revoke(scope: MdxConsentScope): Promise<void>
 }
 
 type State = { version: 1; grants: MdxConsentScope[] }
 
-/** Machine-local, fail-closed grants for one canonical HTTPS origin and Holi identity. */
+function validScope(value: unknown): value is MdxConsentScope {
+  if (!value || typeof value !== 'object') return false
+  const { origin, root, remote, accountId } = value as Partial<MdxConsentScope>
+  if (
+    typeof origin !== 'string' ||
+    typeof root !== 'string' ||
+    typeof remote !== 'string' ||
+    typeof accountId !== 'string' ||
+    !root ||
+    !remote ||
+    !accountId
+  )
+    return false
+  try {
+    const url = new URL(origin)
+    return url.protocol === 'https:' && url.origin === origin
+  } catch {
+    return false
+  }
+}
+
+/** Machine-local, fail-closed HTTPS grants. Main keeps one store instance per file. */
 export function createMdxConsentStore(file: string): MdxConsentStore {
   let queue = Promise.resolve()
-  let denied = new Set<string>()
+  const denied = new Set<string>()
+  const revocations = new Map<string, symbol>()
   const key = (scope: MdxConsentScope) =>
     JSON.stringify([scope.origin, PURPOSE, scope.root, scope.remote, scope.accountId])
 
@@ -58,83 +83,71 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
     )
       throw new Error('MDX consent state version is unsupported')
     const grants = (value as State).grants
-    if (
-      grants.some((g) => {
-        if (
-          !g ||
-          typeof g.origin !== 'string' ||
-          typeof g.root !== 'string' ||
-          typeof g.remote !== 'string' ||
-          typeof g.accountId !== 'string' ||
-          !g.root ||
-          !g.remote ||
-          !g.accountId
-        )
-          return true
-        try {
-          const origin = new URL(g.origin)
-          return (
-            origin.protocol !== 'https:' ||
-            origin.origin !== g.origin ||
-            origin.username !== '' ||
-            origin.password !== ''
-          )
-        } catch {
-          return true
-        }
-      })
-    )
-      throw new Error('MDX consent state is corrupt')
+    if (!grants.every(validScope)) throw new Error('MDX consent state is corrupt')
     return { version: VERSION, grants }
   }
-  const persist = async (state: State) => {
+  const persist = async (state: State, beforePublish?: () => void) => {
     await mkdir(dirname(file), { recursive: true })
     const temp = `${file}.${randomUUID()}.tmp`
+    const handle = await open(temp, 'wx', 0o600)
     try {
-      const handle = await open(temp, 'wx', 0o600)
       try {
         await handle.writeFile(JSON.stringify(state))
         await handle.sync()
       } finally {
         await handle.close()
       }
-      await rename(temp, file)
-    } finally {
-      await rm(temp, { force: true })
+      // A queued asynchronous rename could run after ownership expires.
+      beforePublish?.()
+      renameSync(temp, file)
+    } catch (error) {
+      await rm(temp, { force: true }).catch(() => undefined)
+      throw error
     }
   }
   return {
-    allows: (scope) =>
-      transact(async () => {
-        if (denied.has(key(scope))) return false
+    async allows(scope) {
+      if (!validScope(scope)) return false
+      const id = key(scope)
+      return transact(async () => {
+        if (denied.has(id)) return false
         try {
-          return (await read()).grants.some((grant) => key(grant) === key(scope))
+          const state = await read()
+          return !denied.has(id) && state.grants.some((grant) => key(grant) === id)
         } catch {
           return false
         }
-      }),
-    grant: (scope) =>
-      transact(async () => {
-        if (
-          scope.origin !== new URL(scope.origin).origin ||
-          new URL(scope.origin).protocol !== 'https:' ||
-          !scope.accountId ||
-          !scope.root ||
-          !scope.remote
-        )
-          throw new Error('Invalid MDX consent scope')
-        const id = key(scope)
+      })
+    },
+    async grant(scope, stillOwned) {
+      if (!validScope(scope)) throw new Error('Invalid MDX consent scope')
+      const { origin, root, remote, accountId } = scope
+      const id = key(scope)
+      const revocation = revocations.get(id)
+      const assertCurrent = () => {
+        if (stillOwned && stillOwned() !== true) throw new Error('MDX consent owner changed')
+        if (revocations.get(id) !== revocation) throw new Error('MDX consent was revoked')
+      }
+      return transact(async () => {
+        assertCurrent()
         denied.add(id)
         const state = await read()
-        if (!state.grants.some((grant) => key(grant) === id)) state.grants.push(scope)
-        await persist(state)
-        denied.delete(id)
-      }),
-    revoke: (scope) => {
-      denied.add(key(scope))
+        if (!state.grants.some((grant) => key(grant) === id)) {
+          state.grants.push({ origin, root, remote, accountId })
+        }
+        await persist(state, assertCurrent)
+        // Revoke denies immediately, even if it arrives just after publication.
+        if (revocations.get(id) === revocation) denied.delete(id)
+      })
+    },
+    async revoke(scope) {
+      if (!validScope(scope)) throw new Error('Invalid MDX consent scope')
+      const id = key(scope)
+      revocations.set(id, Symbol())
+      denied.add(id)
       return transact(async () => {
         const state = await read()
-        state.grants = state.grants.filter((grant) => key(grant) !== key(scope))
+        state.grants = state.grants.filter((grant) => key(grant) !== id)
         await persist(state)
       })
     },
