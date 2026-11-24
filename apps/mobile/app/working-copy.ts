@@ -23,13 +23,13 @@ export type WorkingCopyStatus = {
 
 /** Native adapter exposes semantic identity and status, never libgit2 constants. */
 export interface NativeWorkingCopy {
+  recoveryPending(root: string): Promise<boolean>
   canonicalRoot(root: string): Promise<string>
   identity(root: string): Promise<{ remotes: string[]; branch: string | null; attached: boolean }>
   /** Metadata only: must not read or hash working-tree file contents. */
   candidates(root: string): Promise<Array<{ path: string }>>
   /** Inspect an authorized path (e.g. detect symlink escape) without running hooks or filters. */
   authorize(root: string, path: VaultRelPath): Promise<boolean>
-  hasPendingRecovery(root: string): Promise<boolean>
   status(
     root: string,
     paths: VaultRelPath[],
@@ -61,7 +61,7 @@ export function createWorkingCopy(
     async status(): Promise<WorkingCopyStatus> {
       const root = await rootPath()
       return withVaultLock(root, async () => {
-        if (await native.hasPendingRecovery(root)) throw new Error('Vault recovery is pending')
+        if (await native.recoveryPending(root)) throw new Error('Vault recovery is pending')
         const identity = await native.identity(root)
         if (
           !identity.attached ||
