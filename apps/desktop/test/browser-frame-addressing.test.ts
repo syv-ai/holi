@@ -1,10 +1,13 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import type { WebContents, WebFrameMain } from 'electron'
-import { createFrameAddressing, type FrameCapture } from '../scripts/browser-frame-addressing'
-import { createFrameContextRuntime } from '../scripts/frame-context-runtime'
-import { createFrameContextCancellation } from '../scripts/frame-context-cancellation'
-import { createFrameContextSessionOwner } from '../scripts/frame-context-session-owner'
+import {
+  createFrameAddressing,
+  type FrameCapture,
+} from '../src/plugins/browser/main/frame-addressing'
+import { createFrameContextRuntime } from '../src/plugins/browser/main/frame-context-runtime'
+import { createFrameContextCancellation } from '../src/plugins/browser/main/frame-context-cancellation'
+import { createFrameContextSessionOwner } from '../src/plugins/browser/main/frame-context-session-owner'
 
 const capture = (): FrameCapture => Object.freeze({ tab: {}, document: {}, presentation: {} })
 

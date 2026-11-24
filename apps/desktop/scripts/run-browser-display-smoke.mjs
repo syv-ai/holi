@@ -34,6 +34,7 @@ const evidence = resolve(
 const fixture = join(desktop, 'scripts/browser-display-fixture')
 const appHintsOnly = process.env.HOLI_509_APP_HINTS_ONLY === '1'
 const appHintVideo = appHintsOnly && process.env.HOLI_509_RECORD_VIDEO === '1'
+const childVimAcceptance = process.env.HOLI_671_CHILD_VIM === '1'
 const hintsAcceptance = process.env.HOLI_524_HINTS === '1'
 const toolbarAcceptance = !appHintsOnly && (process.env.HOLI_553_UI === '1' || hintsAcceptance)
 const recordingPath = join(evidence, 'interaction.mp4')
@@ -293,6 +294,7 @@ try {
         [
           'apps/desktop/src/plugins/browser/main/page-script.js',
           'apps/desktop/src/plugins/browser/main/pages.ts',
+          'apps/desktop/src/plugins/browser/main/child-frame-vim.ts',
           'apps/desktop/src/plugins/browser/main/capabilities.ts',
           'apps/desktop/src/plugins/browser/renderer/browser-hints.ts',
           'apps/desktop/src/renderer/src/features/shell/host-hint-layer.tsx',
@@ -310,11 +312,15 @@ try {
       .digest('hex'),
   }
   delete env.ELECTRON_RUN_AS_NODE
-  const launch = spawn(launchBinary, [root], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
-  })
+  const launch = spawn(
+    launchBinary,
+    [...(childVimAcceptance ? ['--site-per-process'] : []), root],
+    {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    },
+  )
   child = launch
   child.stdout.on('data', (chunk) => {
     log += chunk
@@ -463,6 +469,14 @@ try {
     'foreign-window-app-request-denied-b',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
+  if (childVimAcceptance)
+    for (const check of [
+      'native-child-vim-same-origin-frame-insert-report',
+      'native-child-vim-nested-oopif-and-duplicate-owner-isolation',
+      'native-child-vim-replacement-reset-and-preference-passthrough',
+      'native-child-vim-late-mode-result-cannot-outlive-disable',
+    ])
+      assert(result.checks.includes(check), `missing native child editing check: ${check}`)
   assert(
     result.checks.length >= (toolbarAcceptance ? 47 : 30),
     'native smoke produced too few assertions',
