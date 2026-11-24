@@ -1,4 +1,3 @@
-import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { createStore, Provider } from 'jotai'
 import { SidebarProvider } from '../src/renderer/src/components/ui/sidebar'

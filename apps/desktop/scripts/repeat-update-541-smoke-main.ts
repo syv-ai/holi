@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { app, BrowserWindow, ipcMain, session } from 'electron'
+import type { UpdateInfo } from 'electron-updater'
 import { pathToFileURL } from 'node:url'
 import { registerIpc, createRendererFlushChannel } from '../src/main/ipc'
 import { requestFlush } from '../src/main/flush'
@@ -36,17 +37,19 @@ async function run(): Promise<void> {
   await app.whenReady()
   const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
   autoUpdater.setFeedURL({ provider: 'generic', url: config.feed })
-  let offered: unknown = null
+  let offered: UpdateInfo | null = null
   let installs = 0
   let guards = 0
   let flushed = false
   autoUpdater.on('update-available', (info) => {
-    offered = { version: info.version, releaseDate: info.releaseDate }
+    offered = info
   })
   autoUpdater.downloadUpdate = async () => {
     // A download adapter must still deliver the real selected candidate.
     assert(offered)
-    autoUpdater.emit('update-downloaded', offered)
+    const downloadedFile = join(config.root, 'synthetic.zip')
+    await writeFile(downloadedFile, '')
+    autoUpdater.emit('update-downloaded', { ...offered, downloadedFile })
     return []
   }
   autoUpdater.quitAndInstall = () => {
