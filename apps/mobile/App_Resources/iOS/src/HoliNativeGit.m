@@ -1,4 +1,5 @@
 #import "HoliNativeGit.h"
+#import "HoliGitSnapshot.h"
 #import <git2.h>
 #import <sys/stat.h>
 #import <errno.h>
@@ -221,63 +222,43 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   struct stat st; if (lstat(resolved, &st) || !S_ISDIR(st.st_mode)) { if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return nil; }
   return [NSString stringWithUTF8String:resolved];
 }
-- (git_repository *)openSafeRepository:(NSString *)root error:(NSError **)error {
+- (git_repository *)openSafeRepository:(NSString *)root snapshot:(HoliGitSnapshot **)snapshotOut error:(NSError **)error {
   HNGInitializeLibgit2();
-  struct stat metadataStat; NSString *metadata=[root stringByAppendingPathComponent:@".git"];
-  if(lstat(metadata.fileSystemRepresentation,&metadataStat)!=0 || !S_ISDIR(metadataStat.st_mode) || S_ISLNK(metadataStat.st_mode)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:@{NSLocalizedDescriptionKey:@"Repository metadata must be a real directory"}]; return NULL; }
-  // Inspect the metadata tree without following links before libgit2 can interpret it.
-  NSMutableArray<NSString *> *directories = [NSMutableArray arrayWithObject:metadata];
-  NSFileManager *fileManager = NSFileManager.defaultManager;
-  while (directories.count) {
-    NSString *directory = directories.lastObject; [directories removeLastObject];
-    NSError *listingError = nil;
-    NSArray<NSString *> *entries = [fileManager contentsOfDirectoryAtPath:directory error:&listingError];
-    if (!entries) { if(error)*error=listingError ?: HNGPathError(EIO,@"Cannot inspect repository metadata"); return NULL; }
-    for (NSString *entry in entries) {
-      NSString *path = [directory stringByAppendingPathComponent:entry]; struct stat item;
-      if (lstat(path.fileSystemRepresentation, &item) != 0 || S_ISLNK(item.st_mode)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
-      if (S_ISDIR(item.st_mode)) [directories addObject:path];
-      else if (!S_ISREG(item.st_mode)) { if(error)*error=HNGPathError(EINVAL,@"Repository metadata must contain only regular files and directories"); return NULL; }
-      if ([path isEqualToString:[metadata stringByAppendingPathComponent:@"objects/info/alternates"]] || [path isEqualToString:[metadata stringByAppendingPathComponent:@"objects/info/http-alternates"]]) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
-      if ([entry isEqualToString:@"commondir"] || [entry isEqualToString:@"config.worktree"] || [entry isEqualToString:@"worktrees"]) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
-      if ([entry isEqualToString:@"config"]) {
-        int configDirFD = open(directory.fileSystemRepresentation, O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
-        int configFD = configDirFD >= 0 ? openat(configDirFD, entry.fileSystemRepresentation, O_RDONLY|O_NOFOLLOW|O_NONBLOCK) : -1;
-        if (configDirFD >= 0) close(configDirFD);
-        struct stat configStat; NSMutableData *data = [NSMutableData data]; uint8_t configBuffer[4096]; ssize_t configRead = 0;
-        BOOL validConfig = configFD >= 0 && fstat(configFD, &configStat) == 0 && S_ISREG(configStat.st_mode) && configStat.st_size <= 1024 * 1024;
-        if (validConfig) while ((configRead = read(configFD, configBuffer, sizeof(configBuffer))) > 0) [data appendBytes:configBuffer length:(NSUInteger)configRead];
-        if (configFD >= 0) close(configFD);
-        NSString *text = validConfig && configRead == 0 ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
-        if (!text || HNGConfigHasForbiddenMetadata(text)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
-      }
-    }
-  }
-  git_repository *repo = NULL; int rc = git_repository_open_ext(&repo, root.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH, NULL);
-  if (rc < 0) { HNGError(error, rc); return NULL; }
-  if (git_repository_is_bare(repo)) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
-  char canonicalRoot[PATH_MAX]; const char *workdir = git_repository_workdir(repo);
-  if (!workdir || !realpath(root.fileSystemRepresentation, canonicalRoot)) { git_repository_free(repo); if (error) *error = HNGPathError(EINVAL, @"Invalid repository worktree"); return NULL; }
-  char canonicalWorkdir[PATH_MAX]; if (!realpath(workdir, canonicalWorkdir) || strcmp(canonicalRoot, canonicalWorkdir)) { git_repository_free(repo); if (error) *error = HNGPathError(EINVAL, @"Repository worktree does not match root"); return NULL; }
+  HoliGitSnapshot *snapshot = [[HoliGitSnapshot alloc] initWithRoot:root error:error];
+  if (!snapshot) return NULL;
+  git_config *config = NULL;
+  int rc = git_config_new(&config);
+  NSString *configPath = [snapshot.path stringByAppendingPathComponent:@".git/config"];
+  if (rc == 0) rc = git_config_add_file_ondisk(config, configPath.fileSystemRepresentation, GIT_CONFIG_LEVEL_LOCAL, NULL, 0);
+  git_repository *repo = NULL;
+  if (rc == 0) rc = git_repository_open_holi(&repo, snapshot.path.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH | GIT_REPOSITORY_OPEN_BARE, NULL, config);
+  git_config_free(config);
+  if (rc < 0) { HNGError(error, rc); [snapshot close]; return NULL; }
+  git_config *readConfig = NULL;
+  HNGUnsafeConfig unsafe = {0};
+  rc = git_repository_config(&readConfig, repo);
+  if (rc == 0) { git_config_foreach(readConfig, HNGInspectConfig, &unsafe); git_config_free(readConfig); }
+  git_config *local = NULL; int bare = 1;
+  if (rc == 0) rc = git_config_new(&local);
+  if (rc == 0) rc = git_config_add_file_ondisk(local, configPath.fileSystemRepresentation, GIT_CONFIG_LEVEL_LOCAL, NULL, 0);
+  if (rc == 0) { int value = 1; if (git_config_get_bool(&value, local, "core.bare") == 0) bare = value; }
+  git_config_free(local);
+  if (rc < 0 || bare || unsafe.hooks || unsafe.filters || unsafe.helpers) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository configuration"); return NULL; }
   git_repository_state_t state = git_repository_state(repo);
-  if (state != GIT_REPOSITORY_STATE_NONE && state != GIT_REPOSITORY_STATE_MERGE) { git_repository_free(repo); if (error) *error = HNGPathError(EINVAL, @"Unsupported repository state"); return NULL; }
-  const char *gitdir = git_repository_path(repo); struct stat st;
-  if (!gitdir || lstat(gitdir, &st) || !S_ISDIR(st.st_mode)) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
-  git_config *cfg = NULL; rc = git_repository_config(&cfg, repo); HNGUnsafeConfig unsafe = {0};
-  if (rc == 0) { git_config_foreach(cfg, HNGInspectConfig, &unsafe); git_config_free(cfg); }
-  if (rc < 0 || unsafe.hooks || unsafe.filters || unsafe.helpers) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:@{NSLocalizedDescriptionKey:@"Unsafe repository configuration"}]; return NULL; }
+  if (state != GIT_REPOSITORY_STATE_NONE && state != GIT_REPOSITORY_STATE_MERGE) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository state"); return NULL; }
+  *snapshotOut = snapshot;
   return repo;
 }
 - (NSDictionary *)workingCopyIdentity:(NSString *)root error:(NSError **)error {
-  git_repository *repo = [self openSafeRepository:root error:error]; if (!repo) return nil;
+  HoliGitSnapshot *snapshot = nil; git_repository *repo = [self openSafeRepository:root snapshot:&snapshot error:error]; if (!repo) return nil;
   git_reference *head = NULL; BOOL hasHead = git_repository_head(&head, repo) == 0; BOOL attached = hasHead && git_reference_is_branch(head); const char *name = attached ? git_reference_shorthand(head) : NULL;
   NSString *branch = name ? [NSString stringWithUTF8String:name] : @""; NSMutableArray *remotes = [NSMutableArray array]; git_strarray names = {0};
   if (git_remote_list(&names, repo) == 0) for (size_t i=0;i<names.count;i++) { git_remote *r=NULL; if (git_remote_lookup(&r,repo,names.strings[i])==0) { const char *url=git_remote_url(r); if(url && !strcmp(names.strings[i], "origin")) { NSString *value=[NSString stringWithUTF8String:url]; NSURL *parsed=[NSURL URLWithString:value]; NSArray *parts=[parsed.path componentsSeparatedByString:@"/"]; if ([parsed.host.lowercaseString isEqualToString:@"github.com"] && parts.count==3 && [parts[1] length] && [parts[2] length]) { NSString *repoName = parts[2]; if ([repoName hasSuffix:@".git"]) repoName = [repoName substringToIndex:repoName.length - 4]; [remotes addObject:[NSString stringWithFormat:@"%@/%@", parts[1], repoName]]; } } git_remote_free(r); } }
-  git_strarray_dispose(&names); git_reference_free(head); git_repository_free(repo);
+  git_strarray_dispose(&names); git_reference_free(head); git_repository_free(repo); [snapshot close];
   return @{ @"remotes":remotes, @"branch":attached ? branch : [NSNull null], @"attached":@(attached) };
 }
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyCandidates:(NSString *)root error:(NSError **)error {
-  git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return nil;
+  HoliGitSnapshot *snapshot = nil; git_repository *repo=[self openSafeRepository:root snapshot:&snapshot error:error]; if(!repo)return nil;
   NSMutableSet<NSString *> *paths=[NSMutableSet set]; git_index *index=NULL; int rc=git_repository_index(&index,repo);
   if(rc==0) for(size_t i=0;i<git_index_entrycount(index);i++){const git_index_entry *e=git_index_get_byindex(index,i); if(e && e->path)[paths addObject:[NSString stringWithUTF8String:e->path]];}
   git_index_free(index);
@@ -289,7 +270,7 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   NSMutableArray *dirs=[NSMutableArray arrayWithObject:root]; NSFileManager *fm=NSFileManager.defaultManager;
   while(dirs.count){NSString *dir=dirs.lastObject; [dirs removeLastObject]; NSArray *items=[fm contentsOfDirectoryAtPath:dir error:nil]; for(NSString *name in items){if([dir isEqualToString:root] && [name isEqualToString:@".git"])continue; NSString *full=[dir stringByAppendingPathComponent:name]; struct stat st; if(lstat(full.fileSystemRepresentation,&st))continue; if(S_ISDIR(st.st_mode))[dirs addObject:full]; else {NSString *rel=[full substringFromIndex:root.length+1]; if(rel.length && ![rel hasPrefix:@".git/"])[paths addObject:rel];}}}
   NSMutableArray *out=[NSMutableArray array]; for(NSString *p in paths)[out addObject:@{@"path":p}];
-  git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); return out;
+  git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); [snapshot close]; return out;
 }
 - (BOOL)authorizeWorkingCopyPath:(NSString *)path root:(NSString *)root error:(NSError **)error {
   NSArray<NSString *> *parts = nil;
@@ -315,7 +296,7 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
   return fd;
 }
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyStatus:(NSArray<NSString *> *)paths root:(NSString *)root error:(NSError **)error {
-  git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return nil;
+  HoliGitSnapshot *snapshot = nil; git_repository *repo=[self openSafeRepository:root snapshot:&snapshot error:error]; if(!repo)return nil;
   int rootFD=open(root.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
   if(rootFD<0){ if(error)*error=HNGPathError(errno,@"Cannot safely open working tree"); git_repository_free(repo); return nil; }
   git_index *index=NULL; git_reference *head=NULL; git_commit *commit=NULL; git_tree *tree=NULL;
@@ -363,6 +344,6 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
     git_tree_entry_free((git_tree_entry *)headEntry);
     if(staged||worktree||conflict)[changes addObject:@{@"path":path,@"staged":@(staged),@"worktree":@(worktree),@"conflict":@(conflict)}];
   }
-  close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); return changes;
+  close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); [snapshot close]; return changes;
 }
 @end
