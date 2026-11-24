@@ -48,7 +48,7 @@ static int HNGDisableUnsafeConfig(git_repository *repository) {
 }
 static int HNGCollectTree(const char *rootPath, const git_tree_entry *entry, void *payload) {
   NSMutableSet *paths=(__bridge NSMutableSet *)payload;
-  if(git_tree_entry_type(entry)==GIT_OBJECT_BLOB && entry->name){NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,entry->name]; if(![p hasPrefix:@".git/"])[paths addObject:p];}
+  const char *name=git_tree_entry_name(entry); if(git_tree_entry_type(entry)==GIT_OBJECT_BLOB && name){NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,name]; if(![p hasPrefix:@".git/"])[paths addObject:p];}
   return 0;
 }
 static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
@@ -220,7 +220,7 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
       NSString *path = [directory stringByAppendingPathComponent:entry]; struct stat item;
       if (lstat(path.fileSystemRepresentation, &item) != 0 || S_ISLNK(item.st_mode)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
       if (S_ISDIR(item.st_mode)) [directories addObject:path];
-      if ([entry isEqualToString:@"commondir"] || [entry isEqualToString:@"alternates"] || [entry isEqualToString:@"http-alternates"] || [entry isEqualToString:@"config.worktree"] || [entry isEqualToString:@"worktrees"] || [entry isEqualToString:@"info"] && [directory.lastPathComponent isEqualToString:@"objects"]) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+      if ([entry isEqualToString:@"commondir"] || [entry isEqualToString:@"config.worktree"] || [entry isEqualToString:@"worktrees"]) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
       if ([entry isEqualToString:@"config"]) {
         NSData *data = [NSData dataWithContentsOfFile:path]; NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
         if (!text || [text rangeOfString:@"include" options:NSCaseInsensitiveSearch].location != NSNotFound || [text rangeOfString:@"core.worktree" options:NSCaseInsensitiveSearch].location != NSNotFound || [text rangeOfString:@"extensions." options:NSCaseInsensitiveSearch].location != NSNotFound) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
@@ -303,7 +303,7 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
     NSArray<NSString *> *parts=nil; if(!HNGPathParts(path,&parts)){ if(error)*error=HNGPathError(EINVAL,@"Invalid working-tree path"); changes=nil; break; }
     const char *p=path.fileSystemRepresentation; const git_index_entry *stage0=git_index_get_bypath(index,p,0); BOOL conflict=NO;
     for(int stage=1;stage<=3;stage++) if(git_index_get_bypath(index,p,stage)){conflict=YES;break;}
-    const git_tree_entry *headEntry=tree?git_tree_entry_bypath(tree,p):NULL;
+    const git_tree_entry *headEntry=NULL; if(tree){ rc=git_tree_entry_bypath((git_tree_entry **)&headEntry,tree,p); if(rc==GIT_ENOTFOUND)rc=0; else if(rc<0){if(error)HNGError(error,rc);changes=nil;break;} }
     BOOL staged = conflict || ((headEntry!=NULL)!=(stage0!=NULL)) || (headEntry&&stage0&&(!git_oid_equal(git_tree_entry_id(headEntry),&stage0->id)||git_tree_entry_filemode(headEntry)!=stage0->mode));
     BOOL worktree=NO; int parent=HNGOpenParent(rootFD,parts); struct stat st; int statResult=parent<0?-1:fstatat(parent,parts.lastObject.fileSystemRepresentation,&st,AT_SYMLINK_NOFOLLOW);
     if(statResult<0 && errno!=ENOENT){ if(error)*error=HNGPathError(errno,@"Cannot inspect working-tree path"); changes=nil; if(parent>=0)close(parent); break; }
@@ -317,8 +317,9 @@ static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
       if(n<0){if(error)*error=HNGPathError(readError,@"Cannot read working-tree file");changes=nil;break;}
       git_oid oid; git_odb *odb=NULL; rc=git_repository_odb(&odb,repo); if(rc==0)rc=git_odb_hash(&oid,data.bytes,data.length,GIT_OBJECT_BLOB); git_odb_free(odb);
       uint32_t mode=(opened.st_mode & S_IXUSR)?GIT_FILEMODE_BLOB_EXECUTABLE:GIT_FILEMODE_BLOB;
-      worktree=!stage0 || !git_oid_equal(&oid,&stage0->id) || (filemode && mode!=stage0->mode);
+      if(rc<0){if(error)HNGError(error,rc);changes=nil;break;} worktree=!stage0 || !git_oid_equal(&oid,&stage0->id) || (filemode && mode!=stage0->mode);
     } else { if(parent>=0)close(parent); worktree=stage0!=NULL; }
+    git_tree_entry_free((git_tree_entry *)headEntry);
     if(staged||worktree||conflict)[changes addObject:@{@"path":path,@"staged":@(staged),@"worktree":@(worktree),@"conflict":@(conflict)}];
   }
   close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); return changes;
