@@ -79,7 +79,9 @@ describe('upgrade inspector diagnostics', () => {
       InspectorSocket.instance.emit('Target.detachedFromTarget')
       InspectorSocket.instance.emit('Runtime.executionContextsCleared')
       record.child.exitCode = 17
-      record.child.signalCode = 'SIGTERM'
+      record.child.signalCode = null
+      const refreshed = await inspector.evaluate('sentinel').catch((reason) => reason)
+      expect(refreshed.details.observations.childExit).toEqual({ code: 17, signal: null })
       InspectorSocket.instance.close()
       const disconnected = await inspector.evaluate('sentinel').catch((reason) => reason)
       expect(disconnected.details.observations).toMatchObject({
@@ -90,6 +92,29 @@ describe('upgrade inspector diagnostics', () => {
         debuggerDisconnected: true,
         childExit: { code: 17, signal: 'SIGTERM' },
       })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps a signal exit observed from record.exited when disposal wins the socket-close race', async () => {
+    vi.stubGlobal('WebSocket', InspectorSocket)
+    let resolveExit!: (exit: { code: number | null; signal: string | null }) => void
+    const record = {
+      output: 'Debugger listening on ws://127.0.0.1:1234/devtools/page/1',
+      child: { exitCode: null, signalCode: null },
+      exited: new Promise<{ code: number | null; signal: string | null }>((resolve) => {
+        resolveExit = resolve
+      }),
+    }
+    try {
+      const inspector = await connectUpgradeInspector(record, { timeoutMs: 1000 })
+      record.child.signalCode = 'SIGTERM'
+      resolveExit({ code: null, signal: 'SIGTERM' })
+      await record.exited
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const error = await inspector.evaluate('sentinel').catch((reason) => reason)
+      expect(error.details.observations.childExit).toEqual({ code: null, signal: 'SIGTERM' })
     } finally {
       vi.unstubAllGlobals()
     }
@@ -108,7 +133,15 @@ describe('upgrade inspector diagnostics', () => {
       inspector = await connectUpgradeInspector(record, { timeoutMs: 1500 })
       await inspector.resume()
       await expect(inspector.evaluate(expression)).rejects.toMatchObject({
-        details: { method: 'Runtime.evaluate', kind: 'timeout', timeoutMs: 1500 },
+        details: {
+          method: 'Runtime.evaluate',
+          kind: 'timeout',
+          timeoutMs: 1500,
+          observations: expect.objectContaining({
+            entryContextDestroyed: false,
+            childExit: null,
+          }),
+        },
         message: expect.not.stringContaining(expression),
       })
     } finally {

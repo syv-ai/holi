@@ -44,11 +44,23 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
     rejectPause = reject
   })
   pause.catch(() => {})
+  function refreshChildExit(exit) {
+    if (observations.childExit !== null) return
+    if (exit && (Number.isInteger(exit.code) || typeof exit.signal === 'string')) {
+      observations.childExit = { code: exit.code, signal: exit.signal }
+      return
+    }
+    const { exitCode, signalCode } = record.child
+    if (Number.isInteger(exitCode) || typeof signalCode === 'string')
+      observations.childExit = { code: exitCode, signal: signalCode }
+  }
+  function snapshot() {
+    refreshChildExit()
+    return { ...observations, childExit: observations.childExit && { ...observations.childExit } }
+  }
   function fail(message) {
-    if (record.child.exitCode !== null && observations.childExit === null)
-      observations.childExit = { code: record.child.exitCode, signal: record.child.signalCode }
     const error = new Error(message)
-    error.details = { method: null, kind: message, observations: { ...observations } }
+    error.details = { method: null, kind: message, observations: snapshot() }
     failure.abort(error)
     for (const { reject, timer } of requests.values()) {
       clearTimeout(timer)
@@ -75,7 +87,7 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
           method: /^[A-Za-z]+\.[A-Za-z]+$/.test(pending.method) ? pending.method : null,
           code: Number.isInteger(message.error.code) ? message.error.code : null,
           kind: classifyProtocolError(message.error.code, message.error.message),
-          observations: { ...observations },
+          observations: snapshot(),
         }
         pending.reject(error)
       } else pending.resolve(message.result)
@@ -99,7 +111,6 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   const onClose = () => {
     if (!closed) {
       observations.debuggerDisconnected = true
-      observations.childExit = { code: record.child.exitCode, signal: record.child.signalCode }
       fail('inspector connection closed')
     }
   }
@@ -120,7 +131,10 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   }
   // A failed connection must not disconnect a paused app before its owner can
   // stop it. Its inspector is disposed once the actual owned process exits.
-  record.exited.then(close, close)
+  record.exited.then((exit) => {
+    refreshChildExit(exit)
+    close()
+  }, close)
   function command(method, params = {}) {
     signal?.throwIfAborted()
     failure.signal.throwIfAborted()
@@ -133,6 +147,7 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
           method: /^[A-Za-z]+\.[A-Za-z]+$/.test(method) ? method : null,
           kind: 'timeout',
           timeoutMs,
+          observations: snapshot(),
         }
         reject(error)
       }, timeoutMs)
@@ -146,6 +161,7 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
         error.details = {
           method: /^[A-Za-z]+\.[A-Za-z]+$/.test(method) ? method : null,
           kind: 'send-failed',
+          observations: snapshot(),
         }
         reject(error)
       }
