@@ -1,7 +1,8 @@
-import { app } from 'electron'
+import { app, ipcMain, type WebContents } from 'electron'
 import { lstatSync, realpathSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { ownedFixtureDirectory } from './owned-fixture-directory'
 
 try {
@@ -35,8 +36,71 @@ try {
   const logs = ownedFixtureDirectory(root, 'logs')
   app.setAppLogsPath(logs)
   writeFileSync(join(root, 'paths.json'), JSON.stringify({ ...paths, logs }), { flag: 'wx' })
-  // A runtime require keeps production module side effects after isolation,
-  // and before Electron readiness and privileged protocol registration.
+  const expectedPreload = join(root, '../out/preload/index.js')
+  const expectedUrl = pathToFileURL(join(root, '../out/renderer/index.html')).href
+  let completed = false
+  const fail = (reason: string) => {
+    if (completed) return
+    completed = true
+    writeFileSync(join(root, 'startup-failure.json'), JSON.stringify({ reason }))
+    console.error(reason)
+    app.exit(0)
+  }
+  ipcMain.on('holi-550:preload', (event, report) => {
+    if (event.senderFrame !== event.sender.mainFrame)
+      return fail('Preload report came from a non-main frame')
+    const contents = event.sender
+    if (contents.getURL() !== expectedUrl)
+      return fail('Preload report came from an unexpected renderer URL')
+    if (contents.getType() !== 'window') return fail('Preload report did not come from a window')
+    if (report?.sandboxed !== true || report?.contextIsolated !== true)
+      return fail('Production preload did not confirm sandbox and context isolation')
+    const preloadPath = (
+      contents as WebContents & { getLastWebPreferences(): { preload?: string } }
+    ).getLastWebPreferences().preload
+    if (preloadPath !== expectedPreload)
+      return fail('Renderer did not use the expected fixture preload')
+    const poll = async () => {
+      if (completed) return
+      try {
+        const bodyText = await contents.executeJavaScript(
+          'document.body?.innerText?.trim() ?? ""',
+          true,
+        )
+        if (bodyText) {
+          completed = true
+          writeFileSync(
+            join(root, 'startup-ready.json'),
+            JSON.stringify({
+              rendererLoaded: true,
+              sandboxed: true,
+              contextIsolated: true,
+              url: contents.getURL(),
+              bodyText,
+            }),
+          )
+          return
+        }
+      } catch (error) {
+        return fail(`Could not inspect the loaded production renderer: ${String(error)}`)
+      }
+      if (Date.now() >= deadline)
+        return fail('Production renderer body remained empty before timeout')
+      setTimeout(poll, 100)
+    }
+    const deadline = Date.now() + 15000
+    poll()
+  })
+  app.on('web-contents-created', (_event, contents) => {
+    contents.once('did-finish-load', () => {
+      if (contents.getURL() === expectedUrl && !completed) {
+        setTimeout(() => {
+          if (!completed) fail('Production renderer did not report preload instrumentation')
+        }, 15000)
+      }
+    })
+  })
+  // Register evidence listeners before production startup creates its window.
   createRequire(__filename)(join(__dirname, 'index.js'))
 } catch (error) {
   console.error(error)
