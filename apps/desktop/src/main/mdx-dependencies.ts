@@ -1,5 +1,5 @@
 import { open, realpath, stat } from 'node:fs/promises'
-import { constants } from 'node:fs'
+import { constants, realpathSync, statSync } from 'node:fs'
 import { join, posix, dirname } from 'node:path'
 import { exactPath } from '@holi/shared/path-safety-node'
 import {
@@ -9,6 +9,7 @@ import {
   vaultRelPath,
   type MdxDiagnostic,
 } from '@holi/shared'
+import { MdxExternalDataError } from './mdx-external-data'
 import type { MdxResourceOwner, MdxInspectResult } from './mdx-resources'
 
 const FILE_LIMIT = 256 * 1024
@@ -17,6 +18,22 @@ const MODULE_LIMIT = 64
 const DEPTH_LIMIT = 16
 const REQUEST_LIMIT = 10_000
 
+type ModuleFormat = 'mdx' | 'jsx' | 'js'
+
+// Explicit HTTPS is the only network entry point. Remote children can name
+// same-origin relative URLs, but never resolve to a vault path or a package.
+function relativeUrl(specifier: string): boolean {
+  return /^(?:\.\.?\/|\/(?!\/))/.test(specifier)
+}
+
+function remoteFormat(url: URL): ModuleFormat | null {
+  const file = posix.basename(url.pathname)
+  const ext = posix.extname(file).toLowerCase()
+  if (ext === '.jsx') return 'jsx'
+  if (!ext || ext === '.js' || ext === '.mjs') return 'js'
+  return null
+}
+
 export async function inspectMdxDependencies(options: {
   root: string
   path: string
@@ -24,6 +41,14 @@ export async function inspectMdxDependencies(options: {
   signal: AbortSignal
   assertCurrent(): Promise<void>
   owner: MdxResourceOwner
+  external?: {
+    fetch(
+      url: string,
+      signal: AbortSignal,
+      localTreeCurrent: () => boolean,
+    ): Promise<{ url: string; text: string }>
+    retainSnapshot(localTreeCurrent: () => boolean): void
+  }
   inspect(
     owner: MdxResourceOwner,
     source: string,
@@ -50,6 +75,8 @@ export async function inspectMdxDependencies(options: {
       active = new Set<string>()
     const snapshots = new Map<string, string>()
     const ancestors = new Map<string, string>()
+    const redirects = new Map<string, string>()
+    let remoteAttempts = 0
     let readBudget = TOTAL_LIMIT - Buffer.byteLength(options.source)
     let total = 0,
       count = 0
@@ -92,6 +119,24 @@ export async function inspectMdxDependencies(options: {
         }
       }
     }
+    // The consent store's atomic publication guard cannot await filesystem I/O.
+    const localTreeCurrent = () => {
+      try {
+        return (
+          realpathSync(options.root) === rootCanonical &&
+          id(statSync(rootCanonical)) === rootIdentity &&
+          [...ancestors].every(
+            ([path, expected]) => realpathSync(path) === path && id(statSync(path)) === expected,
+          ) &&
+          [...snapshots].every(([path, expected]) => {
+            const target = join(rootCanonical, path)
+            return realpathSync(target) === target && fileId(statSync(target)) === expected
+          })
+        )
+      } catch {
+        return false
+      }
+    }
     const safePolicy = (path: string) =>
       [path, path.toLowerCase()].every(
         (p) => !isSecretPath(p) && !isLocalOnlyPath(p) && !isAgentSurfacePath(p),
@@ -104,22 +149,25 @@ export async function inspectMdxDependencies(options: {
     const visit = async (
       path: string,
       source: string,
-      format: 'mdx' | 'jsx' | 'js',
+      format: ModuleFormat,
       depth: number,
+      remote?: URL,
     ): Promise<MdxDiagnostic[]> => {
       await check()
-      const safe = vaultRelPath(path)
-      if (!safePolicy(safe)) return [failure(`Dependency ${safe} is protected or unavailable`, 1)]
-      if (active.has(safe)) return [failure(`Dependency cycle involving ${safe}`, 1)]
-      if (completed.has(safe)) return []
-      if (depth > DEPTH_LIMIT || count >= MODULE_LIMIT)
+      const safe = remote ? remote.origin : vaultRelPath(path)
+      const key = remote?.href ?? safe
+      if (!remote && !safePolicy(safe))
+        return [failure(`Dependency ${safe} is protected or unavailable`, 1)]
+      if (active.has(key)) return [failure(`Dependency cycle involving ${safe}`, 1)]
+      if (completed.has(key)) return []
+      if (depth > DEPTH_LIMIT || (!remote && count >= MODULE_LIMIT))
         return [failure(`Dependency graph limit reached at ${safe}`, 1)]
       const size = Buffer.byteLength(source)
       if (size > FILE_LIMIT || total + size > TOTAL_LIMIT)
         return [failure(`Dependency size limit reached at ${safe}`, 1)]
-      count++
+      if (!remote) count++
       total += size
-      active.add(safe)
+      active.add(key)
       try {
         await check()
         await validateRootAndAncestors()
@@ -130,6 +178,83 @@ export async function inspectMdxDependencies(options: {
           await check()
           const line = dep.line ?? 1,
             spec = dep.specifier
+          const absolute = /^https:\/\//i.test(spec)
+          if (remote || absolute) {
+            let target: URL
+            try {
+              if (
+                (!absolute && (!remote || !relativeUrl(spec))) ||
+                /[\s\\\u0000-\u001f\u007f]/u.test(spec)
+              )
+                throw new Error('unsupported dependency')
+              target = new URL(spec, remote)
+              target.hash = ''
+              if (!remoteFormat(target)) throw new Error('unsupported dependency')
+            } catch {
+              diagnostics.push(failure('Unsupported external MDX module specifier', line))
+              continue
+            }
+            const resolved = redirects.get(target.href) ?? target.href
+            if (active.has(resolved)) {
+              diagnostics.push(failure(`Dependency cycle involving ${target.origin}`, line))
+              continue
+            }
+            if (completed.has(resolved)) continue
+            if (!options.external) {
+              diagnostics.push(failure('External MDX dependency access is unavailable', line))
+              continue
+            }
+            // Reserve the fetcher's maximum body size before contacting a server.
+            // Failed/aliased fetches also consume a graph slot, not just parsed modules.
+            if (depth + 1 > DEPTH_LIMIT || count >= MODULE_LIMIT || readBudget < FILE_LIMIT) {
+              diagnostics.push(failure(`Dependency graph limit reached at ${target.origin}`, line))
+              continue
+            }
+            count++
+            remoteAttempts++
+            let fetched: { url: string; text: string }
+            try {
+              // Let the fetcher validate the raw absolute URL; URL parsing alone silently repairs it.
+              fetched = await options.external.fetch(
+                absolute ? spec : target.href,
+                signal,
+                localTreeCurrent,
+              )
+            } catch (error) {
+              await check()
+              diagnostics.push(
+                failure(
+                  error instanceof MdxExternalDataError
+                    ? error.message
+                    : 'External MDX dependency access is unavailable',
+                  line,
+                ),
+              )
+              // A partial failed response has no trusted byte count.
+              if (!(error instanceof MdxExternalDataError && error.code === 'consent-needed'))
+                readBudget -= FILE_LIMIT
+              continue
+            }
+            await check()
+            const final = new URL(fetched.url)
+            const childFormat = remoteFormat(final)
+            readBudget -= Math.min(FILE_LIMIT, Buffer.byteLength(fetched.text) + 3) // Possible UTF-8 BOM.
+            if (!childFormat) {
+              diagnostics.push(failure('Unsupported external MDX module destination', line))
+              continue
+            }
+            redirects.set(target.href, final.href)
+            diagnostics.push(
+              ...(await visit(final.href, fetched.text, childFormat, depth + 1, final)).map(
+                (d) => ({
+                  ...d,
+                  message: `${final.origin}:${d.line}:${d.column}: ${d.message}`,
+                  line,
+                }),
+              ),
+            )
+            continue
+          }
           const ext = spec.match(/\.(mdx|jsx|js)$/i)?.[1]?.toLowerCase()
           if ((!spec.startsWith('./') && !spec.startsWith('../')) || /[?#]/.test(spec) || !ext) {
             diagnostics.push(failure(`Dependency ${spec} is unavailable`, line))
@@ -231,22 +356,24 @@ export async function inspectMdxDependencies(options: {
             continue
           }
           diagnostics.push(
-            ...(await visit(child, text, ext as 'mdx' | 'jsx' | 'js', depth + 1)).map((d) => ({
+            ...(await visit(child, text, ext as ModuleFormat, depth + 1)).map((d) => ({
               ...d,
               message: `${child}:${d.line}:${d.column}: ${d.message}`,
               line,
             })),
           )
         }
-        completed.add(safe)
+        completed.add(key)
         return diagnostics
       } finally {
-        active.delete(safe)
+        active.delete(key)
       }
     }
     const result = await visit(options.path, options.source, 'mdx', 0)
     await check()
     await validateTree()
+    await check()
+    if (remoteAttempts > 0) options.external?.retainSnapshot(localTreeCurrent)
     return result
   } finally {
     clearTimeout(timer)

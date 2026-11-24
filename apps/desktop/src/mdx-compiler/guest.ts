@@ -36,6 +36,17 @@ type ParserError = {
   column?: unknown
 }
 
+function commonJsMember(node: Record<string, unknown>): boolean {
+  const owner = node.object as { name?: unknown } | undefined
+  const property = node.property as { name?: unknown; value?: unknown } | undefined
+  const member = node.computed ? property?.value : property?.name
+  return (
+    owner?.name === 'exports' ||
+    owner?.name === 'require' ||
+    (owner?.name === 'module' && (member === 'exports' || member === 'require'))
+  )
+}
+
 const root = globalThis as typeof globalThis & {
   __holiMdxReceive?: (encoded: string) => void
   __holiMdxTakeResult?: () => Result | null
@@ -78,11 +89,12 @@ root.__holiMdxReceive = (encoded) => {
         const source = value.source as { type?: unknown; value?: unknown } | null
         if (source?.type === 'Literal' && typeof source.value === 'string') {
           const specifier = source.value
-          if (specifier.startsWith('./') || specifier.startsWith('../')) {
+          if (/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(specifier)) {
             dependencies.push({ specifier, line, column })
           } else {
             diagnostics.push({
-              message: `External module "${specifier}" is not allowed; use a relative import.`,
+              message:
+                'Unsupported module specifier; use a relative path or an explicit HTTPS module URL.',
               line,
               column,
             })
@@ -94,7 +106,7 @@ root.__holiMdxReceive = (encoded) => {
           (value.callee as { type?: unknown } | undefined)?.type === 'Import')
       ) {
         diagnostics.push({
-          message: 'Dynamic imports are not supported; use a static relative import.',
+          message: 'Dynamic imports are not supported; use a static import.',
           line,
           column,
         })
@@ -104,11 +116,12 @@ root.__holiMdxReceive = (encoded) => {
       ) {
         diagnostics.push({ message: 'import.meta is not supported.', line, column })
       } else if (
-        type === 'CallExpression' &&
-        (value.callee as { type?: unknown; name?: unknown } | undefined)?.name === 'require'
+        (type === 'CallExpression' &&
+          (value.callee as { name?: unknown } | undefined)?.name === 'require') ||
+        (type === 'MemberExpression' && commonJsMember(value))
       ) {
         diagnostics.push({
-          message: 'CommonJS require() is not supported; use a static relative import.',
+          message: 'CommonJS is not supported; use ECMAScript modules.',
           line,
           column,
         })

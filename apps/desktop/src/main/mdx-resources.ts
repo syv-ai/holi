@@ -399,7 +399,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
               if (
                 typeof value.specifier !== 'string' ||
                 value.specifier.length > MAX_MESSAGE ||
-                (!value.specifier.startsWith('./') && !value.specifier.startsWith('../')) ||
+                !/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(value.specifier) ||
                 !Number.isSafeInteger(value.line) ||
                 value.line < 1 ||
                 !Number.isSafeInteger(value.column) ||

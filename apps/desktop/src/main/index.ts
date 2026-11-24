@@ -26,14 +26,15 @@ import {
   shell,
   type Tray,
 } from 'electron'
-import { HOLI_LINK_SCHEME, holiLinkInArgv } from '@holi/shared'
+import { HOLI_LINK_SCHEME, MDX_RESOURCE_EVENTS, holiLinkInArgv } from '@holi/shared'
 import { openHoliLink as openCheckedHoliLink } from './holi-link-opener'
 import { requestFlush } from './flush'
 import { captureTab } from './tab-capture'
 import { isApplicationSender, unauthorizedApplicationSender } from './application-sender'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
-import { createMdxTrustStore } from './mdx-trust'
+import { canonicalGitHubRemote, createMdxTrustStore } from './mdx-trust'
+import { createMdxConsentStore } from './mdx-consent'
 import { createMdxResources } from './mdx-resources'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
@@ -54,7 +55,7 @@ import { createAppFrameLeases } from './plugin-host/app-frame-leases'
 import { trackAppFrameDocuments } from './plugin-host/app-frame-navigation'
 import { appLeaseFromHost } from '../plugins/apps/shared/bundle'
 import { createNativeRequestWindows } from './plugin-host/native-request-windows'
-import type { PluginEventsDeps } from './plugin-host/events'
+import { pluginEvents, type PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
   changedBy,
@@ -111,7 +112,8 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
 let mainWindow: BrowserWindow | null = null
-let invalidateMdxDiagnostics = (): void => {}
+let mdxDocumentReady = false
+let invalidateMdxDiagnostics = (_retireDocument?: boolean): void => {}
 let closeMdxDiagnostics = (): void => {}
 let appFrameLeases: ReturnType<typeof createAppFrameLeases> | null = null
 let mainEntryDocument: string | null = null
@@ -250,12 +252,21 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
-  win.once('closed', () => invalidateMdxDiagnostics())
+  const retireMdxDocument = () => {
+    if (mainWindow !== win) return
+    mdxDocumentReady = false
+    invalidateMdxDiagnostics()
+  }
+  retireMdxDocument()
+  win.once('closed', retireMdxDocument)
   win.webContents.on('did-start-navigation', (event) => {
-    if (event.isMainFrame && !event.isSameDocument) invalidateMdxDiagnostics()
+    if (event.isMainFrame && !event.isSameDocument) retireMdxDocument()
   })
-  win.webContents.on('render-process-gone', () => invalidateMdxDiagnostics())
-  win.webContents.once('destroyed', () => invalidateMdxDiagnostics())
+  win.webContents.on('did-navigate', () => {
+    if (mainWindow === win) mdxDocumentReady = true
+  })
+  win.webContents.on('render-process-gone', retireMdxDocument)
+  win.webContents.once('destroyed', retireMdxDocument)
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   // Pin authorization to the intended application document, never to a URL
   // supplied by an IPC sender.
@@ -352,6 +363,8 @@ async function main(): Promise<void> {
   const session = await createSession()
   // One app-owned handle; never construct a separate trust store per renderer request.
   const mdxTrust = createMdxTrustStore(join(app.getPath('userData'), 'mdx-trust.json'))
+  const mdxConsent = createMdxConsentStore(join(app.getPath('userData'), 'mdx-consent.json'))
+  let mdxShuttingDown = false
   const mdxCompiler = createMdxResources(join(app.getAppPath(), 'out/mdx-compiler'))
   session.onGenerationChange(() => mdxCompiler.invalidate())
   app.on('will-quit', () => {
@@ -424,6 +437,23 @@ async function main(): Promise<void> {
     listen: (channel, handler) =>
       listenForPluginMessages(channel, handler, authorizeApplicationSender),
     liveRemote: () => plugins.displayed(),
+  }
+  const mdxEvents = pluginEvents(eventsDeps, MDX_RESOURCE_EVENTS)
+  const notifyMdxResourcesChanged = (remote: string) => {
+    if (!mdxDocumentReady || mdxShuttingDown || !mainWindow || mainWindow.isDestroyed()) return
+    try {
+      const contents = mainWindow.webContents
+      if (
+        isApplicationSender(
+          { sender: contents, senderFrame: contents.mainFrame },
+          contents,
+          mainEntryDocument,
+        )
+      )
+        mdxEvents.emit(remote, 'changed', null)
+    } catch {
+      // The application document can disappear independently of a completed store write.
+    }
   }
 
   // Every capability, from every door. Created ahead of the vault host so
@@ -1015,7 +1045,10 @@ async function main(): Promise<void> {
     registry,
     session,
     mdxTrust,
+    mdxConsent,
     mdxCompiler,
+    mdxApplicationReady: () => mdxDocumentReady && !mdxShuttingDown,
+    onMdxResourcesChanged: notifyMdxResourcesChanged,
     onMdxDiagnosticsInvalidate: (invalidate) => {
       invalidateMdxDiagnostics = invalidate
     },
@@ -1196,8 +1229,14 @@ async function main(): Promise<void> {
   })
 
   async function teardownAndQuit(): Promise<void> {
+    mdxShuttingDown = true
+    // A failed flush leaves this document open; only its diagnostics leases retire.
+    invalidateMdxDiagnostics(false)
     if (!(await teardown())) {
+      mdxShuttingDown = false
       quitting = false
+      const active = host.active()
+      if (active) notifyMdxResourcesChanged(canonicalGitHubRemote(active.remote))
       return
     }
     quitting = true
