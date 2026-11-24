@@ -755,6 +755,7 @@ async function run(): Promise<void> {
       await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').value`),
       'one two',
     )
+    await freshMode(after, 'insert')
     mark('native-child-vim-nested-oopif-and-duplicate-owner-isolation')
     after = sent.length
     await childPress('Escape')
