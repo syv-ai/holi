@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -78,11 +78,18 @@ describe('exactPath (the path is what it says on disk)', () => {
     await expect(exactPath(vault, 'App.app/dangling.json')).resolves.toBeNull()
   })
 
-  it('refuses a name whose case differs from the one on disk', async () => {
+  it('refuses a case alias but permits a distinct path on case-sensitive filesystems', async () => {
     await mkdir(join(vault, 'data'))
     await writeFile(join(vault, 'data', 'a.json'), '{}')
-    // Only a case-insensitive filesystem (macOS by default) opens the alias.
-    await expect(exactPath(vault, 'Data/a.json')).resolves.toBeNull()
+    const candidate = join(vault, 'Data', 'a.json')
+    const aliasesExistingFile = await access(candidate).then(
+      () => true,
+      () => false,
+    )
+    // A case-sensitive filesystem treats Data as a new directory, not an alias.
+    await expect(exactPath(vault, 'Data/a.json')).resolves.toBe(
+      aliasesExistingFile ? null : candidate,
+    )
   })
 
   it('refuses what vaultRelPath refuses', async () => {
