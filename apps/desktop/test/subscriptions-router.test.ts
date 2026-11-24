@@ -819,6 +819,10 @@ describe('subscriptions IPC', () => {
     })
     expect(displayA.text).toBe('revision A\n')
     expect(displayA.receipt).toBeTruthy()
+    const delayedA = await caller.subscriptions.readForDisplay({
+      remote: REMOTE,
+      path: 'notes/display.md',
+    })
     expect(
       await readFile(join(userData, 'subscription-seen.json'), 'utf8').catch(() => null),
     ).toBeNull()
@@ -843,17 +847,90 @@ describe('subscriptions IPC', () => {
         receipt: displayB.receipt!,
       }),
     ).resolves.toMatchObject({ seen: revisionB, previous: revisionA })
-    const older = await caller.subscriptions.readForDisplay({
-      remote: REMOTE,
-      path: 'notes/display.md',
-    })
     await expect(
       caller.subscriptions.acknowledgeDisplay({
         remote: REMOTE,
         path: 'notes/display.md',
-        receipt: older.receipt!,
+        receipt: delayedA.receipt!,
       }),
     ).resolves.toMatchObject({ seen: revisionB, previous: revisionA })
+  })
+
+  it('acknowledges a mixed-case GitHub remote through the registered router', async () => {
+    const { caller, host, session, root, registry } = await realRepo('notes')
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+    const remote = REMOTE.toUpperCase()
+    await registry.add({
+      remote,
+      path: root,
+      name: 'mixed-case',
+      lastOpenedAt: '2026-07-01T00:00:00Z',
+    })
+    await caller.vaults.open({ remote })
+    const active = host.active()!
+    active.pause('mixed-case receipt fixture')
+    await active.drainSync()
+    await addFile(root, 'notes/display.md', 'mixed-case\n')
+    const revision = await gitCommit(root, ['notes/display.md'], 'mixed-case')
+    await caller.subscriptions.set({ remote, path: 'notes', enabled: true })
+    const display = await caller.subscriptions.readForDisplay({ remote, path: 'notes/display.md' })
+    expect(display.receipt).toBeTruthy()
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({
+        remote,
+        path: 'notes/display.md',
+        receipt: display.receipt!,
+      }),
+    ).resolves.toMatchObject({ seen: revision, previous: null })
+  })
+
+  it('rejects invented, mismatched, and outdated overlapping-scope receipts without publishing state', async () => {
+    const { caller, host, session, userData } = await realRepo('notes')
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+    const root = host.active()!.root
+    const path = 'notes/display.md'
+    await addFile(root, path, 'display\n')
+    await addFile(root, 'notes/other.md', 'other\n')
+    await gitCommit(root, [path, 'notes/other.md'], 'display')
+    await caller.subscriptions.set({ remote: REMOTE, path: '', enabled: true })
+    const display = await caller.subscriptions.readForDisplay({ remote: REMOTE, path })
+    expect(display.receipt).toBeTruthy()
+    for (const input of [
+      { path, receipt: 'invented' },
+      { path: 'notes/other.md', receipt: display.receipt! },
+    ])
+      await expect(
+        caller.subscriptions.acknowledgeDisplay({ remote: REMOTE, ...input }),
+      ).rejects.toThrow()
+    const beforeScopeChange = await caller.subscriptions.readForDisplay({ remote: REMOTE, path })
+    // Removing the nearer scope falls back to an older root baseline, not the captured context.
+    await caller.subscriptions.set({ remote: REMOTE, path: 'notes', enabled: false })
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({
+        remote: REMOTE,
+        path,
+        receipt: beforeScopeChange.receipt!,
+      }),
+    ).rejects.toThrow()
+    const inherited = await caller.subscriptions.readForDisplay({ remote: REMOTE, path })
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({
+        remote: REMOTE,
+        path,
+        receipt: inherited.receipt!,
+      }),
+    ).resolves.toMatchObject({ seen: expect.any(String), previous: null })
+    const before = await readFile(join(userData, 'subscription-seen.json'), 'utf8')
+    const missingHistory = await caller.subscriptions.readForDisplay({ remote: REMOTE, path })
+    await rm(join(root, '.git', 'objects'), { recursive: true, force: true })
+    await expect(
+      caller.subscriptions.acknowledgeDisplay({
+        remote: REMOTE,
+        path,
+        receipt: missingHistory.receipt!,
+      }),
+    ).rejects.toThrow()
+    expect(await readFile(join(userData, 'subscription-seen.json'), 'utf8')).toBe(before)
   })
 
   it.each(['subscription', 'account', 'vault', 'origin', 'rewrite'] as const)(

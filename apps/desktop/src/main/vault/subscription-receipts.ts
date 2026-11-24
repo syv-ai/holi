@@ -98,8 +98,14 @@ export function createSubscriptionReceipts() {
     ): { revision: string; valid: () => boolean } | null {
       const saved = receipts.get(token)
       receipts.delete(token)
+      let remote: string
+      try {
+        remote = canonicalGitHubRemote(expected.remote)
+      } catch {
+        return null
+      }
       return saved &&
-        saved.remote === expected.remote &&
+        saved.remote === remote &&
         saved.root === expected.root &&
         saved.path === expected.path &&
         saved.scope === expected.scope &&
