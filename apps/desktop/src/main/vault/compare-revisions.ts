@@ -57,12 +57,15 @@ async function git(
 ) {
   const remaining = deadline - Date.now()
   if (remaining <= 0) throw new ReadLimit()
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
+  )
   const pending = exec('git', ['-C', root, ...args], {
     encoding: 'buffer',
     maxBuffer,
     timeout: remaining,
     killSignal: 'SIGKILL',
-    env: { ...process.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
+    env: { ...env, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
   })
   // Git may exit before consuming batch input; the process result remains authoritative.
   pending.child.stdin?.on('error', () => {})
