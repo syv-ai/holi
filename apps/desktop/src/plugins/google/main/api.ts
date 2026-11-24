@@ -60,7 +60,7 @@ export class GoogleApi {
     this.#deps = deps
   }
 
-  async get<T>(url: string, params: GoogleParams = {}): Promise<T> {
+  async get<T>(url: string, params: GoogleParams = {}, validate?: () => Promise<void>): Promise<T> {
     const query = new URLSearchParams()
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined) continue
@@ -86,6 +86,8 @@ export class GoogleApi {
       )
     }
 
+    this.#deps.beforeRequest?.()
+    await validate?.()
     const res = await (this.#deps.fetch ?? globalThis.fetch)(full, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),

@@ -22,7 +22,7 @@ type Event = {
     mimeType?: string
     iconLink?: string
   }>
-  supportsAttachments?: boolean
+  status?: string
 }
 
 export async function eventAttachments(
@@ -31,13 +31,18 @@ export async function eventAttachments(
   validate: () => Promise<void>,
 ): Promise<EventAttachments> {
   await validate()
-  const event = await api.get<Event>(
-    `${CALENDAR}/calendars/${encodeURIComponent(target.calendarId)}/events/${encodeURIComponent(target.eventId)}`,
-    { supportsAttachments: 'true' },
-  )
+  const [calendar, event] = await Promise.all([
+    api.get<{ accessRole?: string }>(
+      `${CALENDAR}/users/me/calendarList/${encodeURIComponent(target.calendarId)}`,
+    ),
+    api.get<Event>(
+      `${CALENDAR}/calendars/${encodeURIComponent(target.calendarId)}/events/${encodeURIComponent(target.eventId)}`,
+    ),
+  ])
+  const editable = calendar.accessRole === 'owner' || calendar.accessRole === 'writer'
   return {
     attachments: event.attachments ?? [],
-    canAttach: event.supportsAttachments === true && event.organizer?.self === true,
+    canAttach: editable && event.organizer?.self === true && event.status !== 'cancelled',
   }
 }
 
@@ -50,7 +55,7 @@ export async function driveFiles(
   const params: Record<string, string> = {
     q: `trashed = false${escaped ? ` and name contains '${escaped}'` : ''}`,
     pageSize: '100',
-    fields: 'nextPageToken,files(id,name,mimeType)',
+    fields: 'nextPageToken,files(id,name,mimeType,webViewLink,iconLink,trashed,mimeType)',
   }
   if (pageToken) params.pageToken = pageToken
   const result = await api.get<{ files?: DriveFilePage['files']; nextPageToken?: string }>(
@@ -90,17 +95,11 @@ export async function attachEventFiles(
       message: 'Could not read the calendar event.',
     }
   }
-  if (event.supportsAttachments !== true || event.organizer?.self !== true)
+  if (event.organizer?.self !== true || event.status === 'cancelled')
     return {
       attachments: event.attachments ?? [],
       attachmentStatus: 'failed',
       message: 'This event cannot be changed by this account.',
-    }
-  if ((event.attendees ?? []).length === 0 && event.attendees === undefined)
-    return {
-      attachments: event.attachments ?? [],
-      attachmentStatus: 'failed',
-      message: 'Guest information is incomplete.',
     }
   const resolved = await Promise.all(
     ids.map(async (id) => {
@@ -127,11 +126,25 @@ export async function attachEventFiles(
     ...current,
     ...resolved.filter((item) => !current.some((existing) => existing.fileId === item.fileId)),
   ]
+  if (merged.length > LIMIT)
+    return {
+      attachments: current,
+      attachmentStatus: 'failed',
+      sharing: [],
+      message: 'Google Calendar supports at most 25 attachments.',
+    }
+  if (!event.etag)
+    return {
+      attachments: current,
+      attachmentStatus: 'failed',
+      sharing: [],
+      message: 'The event has no version tag; no changes were made.',
+    }
   await validate()
   try {
     await api.request(
       'PATCH',
-      `${CALENDAR}/calendars/${encodeURIComponent(target.calendarId)}/events/${encodeURIComponent(target.eventId)}?supportsAttachments=true`,
+      `${CALENDAR}/calendars/${encodeURIComponent(target.calendarId)}/events/${encodeURIComponent(target.eventId)}?supportsAttachments=true&sendUpdates=none`,
       { attachments: merged },
       validate,
       { ifMatch: event.etag },
@@ -143,5 +156,24 @@ export async function attachEventFiles(
       message: 'The attachment update could not be confirmed.',
     }
   }
-  return { attachments: merged, attachmentStatus: 'attached', sharing: [] }
+  try {
+    const actual = await api.get<Event>(
+      `${CALENDAR}/calendars/${encodeURIComponent(target.calendarId)}/events/${encodeURIComponent(target.eventId)}`,
+    )
+    const actualAttachments = actual.attachments ?? []
+    const confirmed = ids.every((id) => actualAttachments.some((item) => item.fileId === id))
+    return {
+      attachments: actualAttachments,
+      attachmentStatus: confirmed ? 'attached' : 'unknown',
+      sharing: [],
+      ...(confirmed ? {} : { message: 'The attachment update could not be confirmed.' }),
+    }
+  } catch {
+    return {
+      attachments: current,
+      attachmentStatus: 'unknown',
+      sharing: [],
+      message: 'The attachment update could not be confirmed.',
+    }
+  }
 }
