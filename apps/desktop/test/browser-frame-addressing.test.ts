@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { describe, expect, it, vi } from 'vitest'
+import { JSDOM } from 'jsdom'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WebContents, WebFrameMain } from 'electron'
 import {
   createFrameAddressing,
@@ -11,7 +12,16 @@ import { createFrameContextSessionOwner } from '../src/plugins/browser/main/fram
 
 const capture = (): FrameCapture => Object.freeze({ tab: {}, document: {}, presentation: {} })
 
-type FixtureOptions = { preAttached?: boolean; delayedWorld?: boolean; reuseWorld?: boolean }
+const doms: JSDOM[] = []
+afterEach(() => {
+  for (const dom of doms.splice(0)) dom.window.close()
+})
+type FixtureOptions = {
+  preAttached?: boolean
+  delayedWorld?: boolean
+  reuseWorld?: boolean
+  focusWorlds?: boolean
+}
 function fixture(options: FixtureOptions = {}) {
   const events = new EventEmitter()
   let attached = options.preAttached ?? false
@@ -20,6 +30,56 @@ function fixture(options: FixtureOptions = {}) {
   let worldContext = 13
   let releaseWorld: ((value: unknown) => void) | undefined
   const namedWorlds = new Map<string, number>()
+  type World = {
+    dom: JSDOM
+    id: number
+    uniqueId: string
+    session?: string
+    frameId: string
+    name: string
+  }
+  const worlds = new Map<number, World>()
+  const bindings = new Map<string, { name: string; worldName: string; session?: string }>()
+  const nativeReports: Array<{
+    name: string
+    executionContextId: number
+    payload: string
+    session?: string
+  }> = []
+  type Gate = { entered(): void; released: Promise<void>; completed(): void }
+  let nextEvaluation: Gate | undefined
+  const installBinding = (
+    world: World,
+    key: string,
+    binding: { name: string; worldName: string; session?: string },
+  ) => {
+    if (world.name !== binding.worldName || world.session !== binding.session) return
+    Object.defineProperty(world.dom.window, binding.name, {
+      configurable: true,
+      writable: true,
+      value: (payload: string) => {
+        if (!attached || bindings.get(key) !== binding) return
+        const report = {
+          name: binding.name,
+          payload,
+          executionContextId: world.id,
+          session: world.session,
+        }
+        nativeReports.push(report)
+        events.emit('message', {}, 'Runtime.bindingCalled', report, world.session)
+      },
+    })
+  }
+  const evaluateNative = (world: World, params?: Record<string, unknown>) => {
+    try {
+      const value = world.dom.window.eval(String(params?.expression))
+      return value instanceof world.dom.window.Node
+        ? { result: { objectId: 'owner-object' } }
+        : { result: { value } }
+    } catch (error) {
+      return { exceptionDetails: { text: String(error) } }
+    }
+  }
   const root = { detached: false, frames: [] as WebFrameMain[] } as unknown as WebFrameMain
   const parent = { detached: false, frames: [] as WebFrameMain[] } as unknown as WebFrameMain
   const makeProbe = (frameId: string, getContext: () => number) =>
@@ -120,6 +180,7 @@ function fixture(options: FixtureOptions = {}) {
     }),
     detach: vi.fn(() => {
       attached = false
+      bindings.clear()
       events.emit('detach')
     }),
     sendCommand: vi.fn((method: string, params?: Record<string, unknown>, session?: string) => {
@@ -134,6 +195,24 @@ function fixture(options: FixtureOptions = {}) {
           }
           const id = worldContext++
           namedWorlds.set(worldKey, id)
+          const uniqueId = `unique-world-${id}`
+          if (options.focusWorlds) {
+            const dom = new JSDOM(
+              '<!doctype html><input id="focus-target"><iframe class="target"></iframe>',
+              { runScripts: 'outside-only' },
+            )
+            doms.push(dom)
+            const world = {
+              dom,
+              id,
+              uniqueId,
+              session,
+              frameId: String(params?.frameId),
+              name: String(params?.worldName),
+            }
+            worlds.set(id, world)
+            for (const [key, binding] of bindings) installBinding(world, key, binding)
+          }
           events.emit(
             'message',
             {},
@@ -141,7 +220,7 @@ function fixture(options: FixtureOptions = {}) {
             {
               context: {
                 id,
-                uniqueId: `unique-world-${id}`,
+                uniqueId,
                 name: params?.worldName,
                 auxData: { isDefault: false, frameId: params?.frameId },
               },
@@ -157,9 +236,36 @@ function fixture(options: FixtureOptions = {}) {
         return new Promise((resolve) => create(resolve))
       }
       if (method === 'DOM.getFrameOwner') return Promise.resolve({ backendNodeId: 91 })
-      if (method === 'Runtime.evaluate')
-        return Promise.resolve({ result: { objectId: 'owner-object' } })
+      if (method === 'Runtime.addBinding') {
+        const name = String(params?.name)
+        const key = `${session ?? ''}\0${name}`
+        if (!bindings.has(key)) {
+          const binding = { name, worldName: String(params?.executionContextName), session }
+          bindings.set(key, binding)
+          for (const world of worlds.values()) installBinding(world, key, binding)
+        }
+        return Promise.resolve({})
+      }
+      if (method === 'Runtime.evaluate') {
+        const world = [...worlds.values()].find(
+          (candidate) =>
+            candidate.uniqueId === params?.uniqueContextId && candidate.session === session,
+        )
+        if (!world) return Promise.resolve({ result: { objectId: 'owner-object' } })
+        const gate = nextEvaluation
+        if (gate) {
+          nextEvaluation = undefined
+          gate.entered()
+          return gate.released.then(() => {
+            const result = evaluateNative(world, params)
+            gate.completed()
+            return result
+          })
+        }
+        return Promise.resolve(evaluateNative(world, params))
+      }
       if (method === 'DOM.describeNode') return Promise.resolve({ node: { backendNodeId: 91 } })
+      if (method === 'Runtime.releaseObject') return Promise.resolve({})
       return Promise.resolve({})
     }),
   })
@@ -180,6 +286,36 @@ function fixture(options: FixtureOptions = {}) {
       attached = value
     },
     releaseWorld: () => releaseWorld?.(undefined),
+    focusNativeWorld: () => {
+      const world = [...worlds.values()].find((value) => value.frameId === 'child-frame')
+      if (!world) throw new Error('native child world not created')
+      const input = world.dom.window.document.querySelector('input')!
+      input.focus()
+      input.blur()
+    },
+    untrustedFocus: () => {
+      const world = [...worlds.values()].find((value) => value.frameId === 'child-frame')!
+      world.dom.window.dispatchEvent(new world.dom.window.Event('focus'))
+    },
+    pauseNextEvaluation: () => {
+      let entered!: () => void
+      let release!: () => void
+      let completed!: () => void
+      const waiting = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const finished = new Promise<void>((resolve) => {
+        completed = resolve
+      })
+      nextEvaluation = { entered, released, completed }
+      return { waiting, release, finished }
+    },
+    nativeReports,
+    dispatch: (session: string | undefined, params: Record<string, unknown>) =>
+      events.emit('message', {}, 'Runtime.bindingCalled', params, session),
     replaceChildContext: () => {
       events.emit(
         'message',
@@ -207,6 +343,76 @@ function fixture(options: FixtureOptions = {}) {
 }
 
 describe('browser frame addressing ownership', () => {
+  it('accepts native focus but rejects unauthenticated and retired observations', async () => {
+    const f = fixture({ focusWorlds: true })
+    const addressing = createFrameAddressing(f.contents, () => true)
+    try {
+      const owner = capture()
+      const address = await addressing.resolve(f.child, owner)
+      const changes: boolean[] = []
+      await addressing.observeFocus(address, (focused) => changes.push(focused))
+      f.focusNativeWorld()
+      expect(changes).toContain(true)
+      expect(changes).toContain(false)
+      const before = changes.length
+      const report = f.nativeReports[0]!
+      f.dispatch('wrong-session', report)
+      f.dispatch(report.session, { ...report, name: `${report.name}-other` })
+      f.dispatch(report.session, { ...report, executionContextId: 11 })
+      f.dispatch(report.session, { ...report, executionContextId: report.executionContextId + 100 })
+      f.dispatch(report.session, {
+        ...report,
+        payload: JSON.stringify({ type: 'focus', token: 'wrong-token' }),
+      })
+      f.untrustedFocus()
+      expect(changes).toHaveLength(before)
+      addressing.revoke(owner)
+      expect(addressing.isCurrent(address)).toBe(false)
+      f.dispatch(report.session, report)
+      f.focusNativeWorld()
+      expect(changes).toHaveLength(before)
+    } finally {
+      addressing.dispose()
+    }
+  })
+
+  it('keeps a returning owner live when an unsubscribed owner cleanup arrives late', async () => {
+    const f = fixture({ focusWorlds: true, reuseWorld: true })
+    const addressing = createFrameAddressing(f.contents, () => true)
+    let blocked: ReturnType<typeof f.pauseNextEvaluation> | undefined
+    try {
+      const oldAddress = await addressing.resolve(f.child, capture())
+      const oldChanges: boolean[] = []
+      const unsubscribe = await addressing.observeFocus(oldAddress, (focused) =>
+        oldChanges.push(focused),
+      )
+      f.focusNativeWorld()
+      const before = oldChanges.length
+      const gate = (blocked = f.pauseNextEvaluation())
+      unsubscribe()
+      await gate.waiting
+      const returning = await addressing.resolve(f.child, capture())
+      const newChanges: boolean[] = []
+      await addressing.observeFocus(returning, (focused) => newChanges.push(focused))
+      gate.release()
+      await gate.finished
+      expect(addressing.isCurrent(returning)).toBe(true)
+      f.focusNativeWorld()
+      expect(newChanges).toContain(true)
+      expect(newChanges).toContain(false)
+      expect(oldChanges).toHaveLength(before)
+      const beforeRetirement = newChanges.length
+      const queued = f.nativeReports.at(-1)!
+      f.replaceChildContext()
+      expect(addressing.isCurrent(returning)).toBe(false)
+      f.dispatch(queued.session, queued)
+      expect(newChanges).toHaveLength(beforeRetirement)
+    } finally {
+      blocked?.release()
+      addressing.dispose()
+    }
+  })
+
   it('releases thousands of settled cancellation registrations while live', async () => {
     const scope = createFrameContextCancellation()
     for (let index = 0; index < 2_000; index++) {

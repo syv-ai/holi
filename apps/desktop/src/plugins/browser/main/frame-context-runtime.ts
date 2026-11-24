@@ -624,8 +624,11 @@ export function createFrameAddressingRuntime(
         const installed = await evaluate<boolean>(
           address,
           `(() => {
-            const send = globalThis[${JSON.stringify(focusBindingName)}];
+            const name = ${JSON.stringify(focusBindingName)};
+            const remembered = globalThis.__holiFrameFocusBinding;
+            const send = globalThis[name] ?? (remembered?.name === name ? remembered.send : undefined);
             if (typeof send !== 'function') throw new Error('focus binding missing');
+            globalThis.__holiFrameFocusBinding = { name, send };
             globalThis.__holiFrameFocusObserver?.cleanup();
             const token = ${JSON.stringify(token)};
             const report = event => { if (event.isTrusted) send(JSON.stringify({type:event.type,token})); };
