@@ -14,11 +14,8 @@ import { createOwnedProcesses } from './owned-processes.mjs'
 import { createUpgradeProviders } from './connection-upgrade-provider.mjs'
 import { connectUpgradeInspector } from './upgrade-inspector.mjs'
 import { observeFirstTargetConnections } from './upgrade-first-target.mjs'
-import {
-  createUpgradeInstaller,
-  installerStatePath,
-  removeAfterDrain,
-} from './upgrade-installer.mjs'
+import { cleanupUpgradeFixture } from './upgrade-cleanup.mjs'
+import { createUpgradeInstaller, installerStatePath } from './upgrade-installer.mjs'
 
 const exec = promisify(execFile)
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -393,14 +390,38 @@ async function main() {
   await evaluate(
     `(() => { const win = require('electron').BrowserWindow.getAllWindows()[0]; win.webContents.sendInputEvent({type:'keyDown', keyCode:',', modifiers:['meta']}); win.webContents.sendInputEvent({type:'keyUp', keyCode:',', modifiers:['meta']}); })()`,
   )
-  await wait('connections-navigation', () => click('Connections'))
-  await wait('google-connected-ui', () =>
-    renderer('document.body.innerText.includes("holi-upgrade-fixture@example.invalid")'),
+  const navigateConnections = async () => {
+    await wait('connections-navigation', () => click('Connections'))
+    await wait('visible-google-connections', () =>
+      renderer(`(() => {
+      const visible = (element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+      };
+      const heading = [...document.querySelectorAll('h1,h2,h3,[role=heading]')].some(e => visible(e) && e.textContent.trim() === 'Connections');
+      const control = [...document.querySelectorAll('button[aria-label="Disconnect this vault"]')].find(visible);
+      const email = [...document.querySelectorAll('p,span,div')].some(e => visible(e) && e.childElementCount === 0 && e.textContent.trim() === 'holi-upgrade-fixture@example.invalid');
+      const dialog = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].some(visible);
+      return heading && control && email && !dialog;
+    })()`),
+    )
+  }
+  await navigateConnections()
+  await evaluate(
+    `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`,
   )
-  receipt.before.googleUiConnected = true
   const image = await evaluate(
     `(async () => (await require('electron').BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'))()`,
   )
+  assert(
+    await renderer(`(() => {
+    const visible = (e) => { const s=getComputedStyle(e), r=e.getBoundingClientRect(); return s.visibility!=='hidden' && s.display!=='none' && r.width>0 && r.height>0 };
+    return [...document.querySelectorAll('h1,h2,h3,[role=heading]')].some(e=>visible(e)&&e.textContent.trim()==='Connections') && [...document.querySelectorAll('button[aria-label="Disconnect this vault"]')].some(visible) && [...document.querySelectorAll('p,span,div')].some(e=>visible(e)&&e.childElementCount===0&&e.textContent.trim()==='holi-upgrade-fixture@example.invalid') && ![...document.querySelectorAll('[role=dialog],[role=alertdialog]')].some(visible);
+  })()`),
+    'Connections view changed during capture',
+  )
+  receipt.before.googleUiConnected = true
   await writeFile(join(evidence, 'before-google-connected.png'), Buffer.from(image, 'base64'))
   await wait('updates-navigation', () => click('Updates'))
   await wait(
@@ -564,128 +585,33 @@ try {
   console.error('Connection upgrade did not complete; see sanitised result.json')
   process.exitCode = 1
 } finally {
-  const failures = []
-  async function attempt(phase, action) {
-    try {
-      await action()
-      return true
-    } catch (error) {
-      failures.push({
-        phase,
-        type: error.name,
-        code: /^[A-Z_]+$/.test(error.code || '') ? error.code : null,
-      })
-      return false
-    }
-  }
-  let drained = false
-  let installerDrained = false
-  if (installerGuardReady) {
-    await attempt('remove-validated-squirrel-job', async () => {
-      await installer.removeOwned()
-      installerDrained = true
-    })
-  } else if (!artifact) {
-    installerDrained = true
-  }
-  if (artifact) {
-    await attempt('signal-owned-runtime', async () => {
-      for (const pid of await ownRuntimePids()) {
-        try {
-          if (pid === firstTargetPid) {
-            const proof = JSON.parse(
-              (
-                await owned.run(firstObserverBinary, [], {
-                  input: JSON.stringify({
-                    action: 'identify',
-                    fixtureRoot: root,
-                    bundlePath: artifact,
-                    teamIdentifier: team,
-                    pid,
-                    notBeforeMicros: upgradeNotBeforeMicros,
-                    expectedStartMicros: receipt.firstTargetObservation?.startMicros,
-                  }),
-                  label: 'confirm failed first-target cleanup ownership',
-                })
-              ).output,
-            )
-            assert(
-              proof.outcome === 'identified' &&
-                proof.pid === pid &&
-                proof.signatureVerified === true &&
-                proof.uid === process.getuid(),
-              'first-target cleanup ownership unavailable',
-            )
-          }
-          process.kill(pid, 'SIGTERM')
-        } catch (error) {
-          if (error.code !== 'ESRCH') throw error
-        }
-      }
-    })
-  }
-  await attempt('stop-owned-groups', () => owned.stopAll())
-  receipt.ownedProcessDrain = {
-    acknowledged: owned.size === 0,
-    remainingGroupCount: owned.remainingPids.length,
-  }
-  await attempt('confirm-process-drain', async () => {
-    if (artifact)
-      await wait('runtime-cleanup', async () => (await ownRuntimePids()).length === 0, 15_000, true)
-    assert(owned.size === 0, 'owned process groups remain')
-    drained = true
-    inspector?.close()
+  const cleanup = await cleanupUpgradeFixture({
+    resources: {
+      installerGuardReady,
+      installer,
+      artifact,
+      firstTargetPid,
+      firstObserverBinary,
+      upgradeNotBeforeMicros,
+      firstTargetStartMicros: receipt.firstTargetObservation?.startMicros,
+      team,
+      root,
+      inspector,
+      launchKeys,
+      providers,
+      feed,
+      appStarted,
+      ownsProfile,
+      profile,
+      vaultRoot,
+    },
+    owned,
+    command,
+    runtimePids: ownRuntimePids,
   })
-  if (!drained && owned.size) {
-    await attempt('inspect-owned-group-states', async () => {
-      const groups = new Set(owned.remainingPids)
-      const states = { live: 0, zombie: 0 }
-      const result = await command('/bin/ps', ['-axo', 'pgid=,stat='], { cleanup: true })
-      for (const line of result.stdout.split('\n')) {
-        const match = line.trim().match(/^(\d+)\s+(\S+)/)
-        if (match && groups.has(Number(match[1]))) {
-          states[match[2].startsWith('Z') ? 'zombie' : 'live']++
-        }
-      }
-      receipt.cleanupGroupStates = states
-    })
-  }
-  for (const key of launchKeys)
-    await attempt(`unset-${key}`, () =>
-      command('/bin/launchctl', ['unsetenv', key], { cleanup: true }),
-    )
-  if (providers) await attempt('provider-shutdown', () => providers.close())
-  if (feed) await attempt('feed-shutdown', () => feed.stop())
-  let deletionAllowed = false
-  if (drained && installerDrained && (!appStarted || installerGuardReady)) {
-    await attempt('confirmed-absence-and-remove-resources', async () => {
-      await removeAfterDrain({
-        runtimeDrained: true,
-        installer: installer ?? { inspect: async () => ({ present: false }) },
-        removeResources: async () => {
-          if (ownsProfile) {
-            await rm(profile, { recursive: true, force: true })
-            await rm(vaultRoot, { recursive: true, force: true })
-          }
-          if (root) await rm(root, { recursive: true, force: true })
-        },
-      })
-      deletionAllowed = true
-    })
-  }
-  receipt.cleanup = {
-    failures,
-    filesRetained: !deletionAllowed,
-    resourcesDeleted: deletionAllowed,
-    root: !deletionAllowed ? root : undefined,
-  }
+  Object.assign(receipt, cleanup.report)
   if (evidence) await checkpoint(receipt.phase).catch(() => {})
-  if (failures.length) {
-    receipt.cleanup = {
-      failures,
-      filesRetained: !deletionAllowed,
-      root: !deletionAllowed ? root : undefined,
-    }
+  if (cleanup.failed) {
     console.error('Owned upgrade fixture cleanup failed; see sanitised cleanup receipt')
     process.exitCode = 1
   }

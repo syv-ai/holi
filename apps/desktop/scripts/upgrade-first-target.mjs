@@ -113,16 +113,23 @@ export async function observeFirstTargetConnections({
       result.uid === process.getuid()
     )
   }
-  async function listenerOwned(endpoint) {
-    const result = await run(
-      '/usr/sbin/lsof',
-      ['-nP', '-a', `-iTCP@127.0.0.1:${endpoint.port}`, '-sTCP:LISTEN', '-Fp'],
-      { signal, timeoutMs: 10_000, label: 'owned first-target listener' },
-    )
+  async function listenerState(endpoint) {
+    let result
+    try {
+      result = await run(
+        '/usr/sbin/lsof',
+        ['-nP', '-a', `-iTCP@127.0.0.1:${endpoint.port}`, '-sTCP:LISTEN', '-Fp'],
+        { signal, timeoutMs: 10_000, label: 'owned first-target listener' },
+      )
+    } catch (error) {
+      if (error.exitCode === 1) return 'absent'
+      throw error
+    }
     const owners = new Set(
       [...result.output.matchAll(/^p(\d+)$/gm)].map((match) => Number(match[1])),
     )
-    return owners.size === 1 && owners.has(pid)
+    if (!owners.size) return 'absent'
+    return owners.size === 1 && owners.has(pid) ? 'owned' : 'foreign'
   }
   try {
     const root = await realpath(fixtureRoot)
@@ -147,41 +154,73 @@ export async function observeFirstTargetConnections({
       return failed('ownership-refused', 'process-identity')
     identity = initial
     let endpoint
-    const deadline = Date.now() + 15_000
-    while (!endpoint) {
+    let usedEndpoint
+    let overview
+    const deadline = Date.now() + 30_000
+    const pause = () => delay(200, undefined, { signal })
+    while (Date.now() < deadline && !overview) {
+      if (!(await sameIdentity())) return failed('ownership-refused', 'process-changed')
       try {
         endpoint = await endpointAt(localProfile)
       } catch (error) {
         if (error.code !== 'ENOENT')
           return failed('ownership-refused', 'unsafe-endpoint-descriptor')
-        if (Date.now() >= deadline) return failed('observation-unavailable', 'endpoint-not-ready')
-        await delay(200, undefined, { signal })
+        await pause()
+        continue
       }
+      if (
+        usedEndpoint &&
+        (usedEndpoint.port !== endpoint.port || usedEndpoint.token !== endpoint.token)
+      )
+        return failed('ownership-refused', 'endpoint-changed')
+      const listener = await listenerState(endpoint)
+      if (listener === 'foreign') return failed('ownership-refused', 'backend-listener')
+      if (listener === 'absent') {
+        await pause()
+        continue
+      }
+      const latest = await endpointAt(localProfile)
+      if (latest.port !== endpoint.port || latest.token !== endpoint.token) {
+        if (usedEndpoint) return failed('ownership-refused', 'endpoint-changed')
+        await pause()
+        continue
+      }
+      if (!(await sameIdentity())) return failed('ownership-refused', 'process-changed')
+      // Released .276's authenticated machine CLI transport resolves this exact vault.
+      const form = new URLSearchParams({ cwd: vault })
+      for (const value of ['google', 'accounts', '--json', '--vault', remote])
+        form.append('argv', value)
+      const timeout = AbortSignal.timeout(Math.max(1, Math.min(15_000, deadline - Date.now())))
+      usedEndpoint = endpoint
+      const response = await fetch(`http://127.0.0.1:${endpoint.port}/cli`, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'x-holi-cli-token': endpoint.token,
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: form,
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      })
+      if (!(await sameIdentity()) || (await listenerState(endpoint)) !== 'owned')
+        return failed('ownership-refused', 'backend-listener-changed')
+      const current = await endpointAt(localProfile)
+      if (current.port !== endpoint.port || current.token !== endpoint.token)
+        return failed('ownership-refused', 'endpoint-changed')
+      if (!response.ok) {
+        const message = await response.text()
+        const starting =
+          response.status === 422 &&
+          (message === 'holi: unknown vault target; check --vault owner/repo' ||
+            message ===
+              'holi google.accounts: vault is closed; open it in Holi before running this command')
+        if (!starting) return failed('observation-unavailable', 'target-cli-refused')
+        await pause()
+        continue
+      }
+      overview = await response.json()
     }
-    if (!(await sameIdentity()) || !(await listenerOwned(endpoint)))
-      return failed('ownership-refused', 'backend-listener')
-    // This is the released .276 machine CLI transport, including its explicit vault selector.
-    const form = new URLSearchParams({ cwd: vault })
-    for (const value of ['google', 'accounts', '--json', '--vault', remote])
-      form.append('argv', value)
-    const timeout = AbortSignal.timeout(15_000)
-    const response = await fetch(`http://127.0.0.1:${endpoint.port}/cli`, {
-      method: 'POST',
-      redirect: 'error',
-      headers: {
-        'x-holi-cli-token': endpoint.token,
-        'content-type': 'application/x-www-form-urlencoded',
-      },
-      body: form,
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-    })
-    if (!(await sameIdentity()) || !(await listenerOwned(endpoint)))
-      return failed('ownership-refused', 'backend-listener-changed')
-    const current = await endpointAt(localProfile)
-    if (current.port !== endpoint.port || current.token !== endpoint.token)
-      return failed('ownership-refused', 'endpoint-changed')
-    if (!response.ok) return failed('observation-unavailable', 'target-cli-refused')
-    const overview = await response.json()
+    if (!overview) return failed('observation-unavailable', 'backend-startup-timeout')
     if (
       overview.remote !== remote ||
       overview.state !== 'connected' ||
@@ -223,7 +262,7 @@ export async function observeFirstTargetConnections({
       observed.permissions?.accessibility !== true ||
       observed.screenshot !== 'first-target-google-connected.png' ||
       !(await sameIdentity()) ||
-      !(await listenerOwned(endpoint))
+      (await listenerState(endpoint)) !== 'owned'
     )
       return failed('ownership-refused', 'invalid-native-result')
     const image = await open(

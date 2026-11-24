@@ -157,6 +157,7 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
   var selectedWindow: AXUIElement?
   var selectedBounds: CGRect?
   var requestedSettings = false
+  var accountMenuOpened = false
   var requestedConnections = false
   for _ in 0..<50 {
     guard Date() < deadline else { break }
@@ -176,24 +177,27 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
           let scoped = nodes(group, pid: r.pid, deadline: deadline)
           return scoped.contains { label($0) == "Google" }
             && scoped.contains { label($0) == email }
-            && scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0) == "Disconnect" }
+            && scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0) == "Disconnect this vault" }
             && !scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0) == "Reconnect" }
         }
         if connected { selectedWindow = window; selectedBounds = rectangle(window); break }
       }
-      if !requestedConnections, let connection = content.first(where: { label($0) == "Connections" && [kAXButtonRole, "AXLink", kAXRadioButtonRole].contains(text($0, kAXRoleAttribute)) }) {
-        requestedConnections = press(connection)
-      } else if !requestedSettings {
-        if let settings = content.first(where: { label($0) == "Settings" && text($0, kAXRoleAttribute) == kAXButtonRole }) {
-          requestedSettings = press(settings)
-        } else if let menu = attribute(app, kAXMenuBarAttribute) {
-          let appItems = nodes(menu as! AXUIElement, pid: r.pid, deadline: deadline).filter { label($0) == "Holi" && text($0, kAXRoleAttribute) == kAXMenuBarItemRole }
-          if appItems.count == 1 {
-            let settings = nodes(appItems[0], pid: r.pid, deadline: deadline).filter {
-              text($0, kAXRoleAttribute) == kAXMenuItemRole && ["Settings…", "Settings...", "Preferences…", "Preferences..."].contains(label($0))
-            }
-            if settings.count == 1 { requestedSettings = press(settings[0]) }
+      if !requestedSettings {
+        let triggers = content.filter {
+          text($0, kAXRoleAttribute) == kAXButtonRole
+            && ["Account menu", "Open account menu"].contains(label($0))
+        }
+        if !accountMenuOpened, triggers.count == 1 {
+          accountMenuOpened = press(triggers[0])
+        } else if accountMenuOpened {
+          let menuItems = nodes(window, pid: r.pid, deadline: deadline).filter {
+            text($0, kAXRoleAttribute) == kAXMenuItemRole && label($0) == "Settings"
           }
+          if menuItems.count == 1 { requestedSettings = press(menuItems[0]) }
+        }
+      } else if !requestedConnections {
+        if let connection = content.first(where: { label($0) == "Connections" && [kAXButtonRole, "AXLink", kAXRadioButtonRole].contains(text($0, kAXRoleAttribute)) }) {
+          requestedConnections = press(connection)
         }
       }
     }
