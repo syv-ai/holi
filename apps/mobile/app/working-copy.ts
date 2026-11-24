@@ -30,7 +30,10 @@ export interface NativeWorkingCopy {
   /** Inspect an authorized path (e.g. detect symlink escape) without running hooks or filters. */
   authorize(root: string, path: VaultRelPath): Promise<boolean>
   hasPendingRecovery(root: string): Promise<boolean>
-  status(root: string, paths: VaultRelPath[]): Promise<Array<{ path: string; staged: boolean; worktree: boolean; conflict: boolean }>>
+  status(
+    root: string,
+    paths: VaultRelPath[],
+  ): Promise<Array<{ path: string; staged: boolean; worktree: boolean; conflict: boolean }>>
 }
 
 function safePath(raw: string): VaultRelPath | null {
@@ -42,11 +45,14 @@ function safePath(raw: string): VaultRelPath | null {
 }
 
 /** Read-only status for an already-attached managed clone. Never performs storage recovery. */
-export function createWorkingCopy(native: NativeWorkingCopy, vault: {
-  remote: string
-  root: string
-  branch: string
-}) {
+export function createWorkingCopy(
+  native: NativeWorkingCopy,
+  vault: {
+    remote: string
+    root: string
+    branch: string
+  },
+) {
   if (!isRemote(vault.remote)) throw new Error('Invalid vault identity')
   let canonical: Promise<string> | undefined
   const rootPath = () => (canonical ??= native.canonicalRoot(vault.root))
@@ -57,13 +63,17 @@ export function createWorkingCopy(native: NativeWorkingCopy, vault: {
       return withVaultLock(root, async () => {
         if (await native.hasPendingRecovery(root)) throw new Error('Vault recovery is pending')
         const identity = await native.identity(root)
-        if (!identity.attached || identity.branch !== vault.branch || !identity.remotes.includes(vault.remote))
+        if (
+          !identity.attached ||
+          identity.branch !== vault.branch ||
+          !identity.remotes.includes(vault.remote)
+        )
           throw new Error('Working copy identity does not match vault')
         const candidates = await native.candidates(root)
         const authorized: VaultRelPath[] = []
         for (const candidate of candidates) {
           const path = safePath(candidate.path)
-          if (path && await native.authorize(root, path)) authorized.push(path)
+          if (path && (await native.authorize(root, path))) authorized.push(path)
         }
         const changes = await native.status(root, authorized)
         return {
