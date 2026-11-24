@@ -3,9 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { cleanupUpgradeFixture } from '../scripts/upgrade-cleanup.mjs'
+import { createOwnedProcesses } from '../scripts/owned-processes.mjs'
 
 describe('upgrade fixture cleanup', () => {
-  it.each(['clear', 'unacknowledged', 'installer-returned'] as const)(
+  it.each([
+    'clear',
+    'unacknowledged',
+    'installer-returned',
+    'missing-anchor',
+    'replacement',
+  ] as const)(
     'deletes fixture data only with acknowledged drainage and fresh installer absence: %s',
     async (scenario) => {
       const root = await mkdtemp(join(tmpdir(), 'holi-565-cleanup-'))
@@ -15,9 +22,16 @@ describe('upgrade fixture cleanup', () => {
       await mkdir(vaultRoot)
       const sentinel = join(profile, 'fixture-data')
       await writeFile(sentinel, 'retained credential fixture')
+      const childProcesses = createOwnedProcesses()
+      const child = ['missing-anchor', 'replacement'].includes(scenario)
+        ? childProcesses.start(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+        : undefined
       const owned = {
         size: scenario === 'unacknowledged' ? 1 : 0,
         remainingPids: scenario === 'unacknowledged' ? [12345] : [],
+        run: async () => ({
+          output: JSON.stringify({ outcome: 'ownership-refused', reason: 'process-changed' }),
+        }),
         stopAll: async () => {
           if (scenario === 'unacknowledged') throw new Error('drain not acknowledged')
         },
@@ -37,6 +51,17 @@ describe('upgrade fixture cleanup', () => {
             installer,
             installerGuardReady: true,
             appStarted: false,
+            firstTargetPid: child?.child.pid,
+            firstTargetIdentity:
+              scenario === 'replacement'
+                ? {
+                    pid: child?.child.pid,
+                    startMicros: Date.now() * 1000,
+                    uid: process.getuid!(),
+                    signatureVerified: true,
+                  }
+                : undefined,
+            upgradeNotBeforeMicros: 0,
           },
           owned,
           runtimePids: async () => [],
@@ -59,6 +84,7 @@ describe('upgrade fixture cleanup', () => {
           }
         }
       } finally {
+        await childProcesses.stopAll()
         await rm(root, { recursive: true, force: true })
       }
     },

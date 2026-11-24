@@ -11,7 +11,7 @@ export async function cleanupUpgradeFixture({ resources, owned, command, runtime
     firstTargetPid,
     firstObserverBinary,
     upgradeNotBeforeMicros,
-    firstTargetStartMicros,
+    firstTargetIdentity,
     team,
     root,
     inspector,
@@ -59,53 +59,78 @@ export async function cleanupUpgradeFixture({ resources, owned, command, runtime
   } else if (!artifact) {
     installerDrained = true
   }
-  if (artifact) {
-    await attempt('signal-owned-runtime', async () => {
-      for (const pid of await ownRuntimePids()) {
+  let firstTargetDrained = !firstTargetPid
+  if (firstTargetPid) {
+    await attempt('drain-anchored-first-target', async () => {
+      assert(
+        firstTargetIdentity?.pid === firstTargetPid &&
+          firstTargetIdentity.signatureVerified === true &&
+          firstTargetIdentity.uid === process.getuid() &&
+          Number.isSafeInteger(firstTargetIdentity.startMicros) &&
+          firstTargetIdentity.startMicros >= upgradeNotBeforeMicros,
+        'first-target cleanup anchor unavailable',
+      )
+      async function probe(action) {
+        return JSON.parse(
+          (
+            await owned.run(firstObserverBinary, [], {
+              input: JSON.stringify({
+                action,
+                fixtureRoot: root,
+                bundlePath: artifact,
+                teamIdentifier: team,
+                pid: firstTargetPid,
+                notBeforeMicros: upgradeNotBeforeMicros,
+                expectedStartMicros: firstTargetIdentity.startMicros,
+              }),
+              label: 'confirm anchored first-target drainage',
+            })
+          ).output,
+        )
+      }
+      function matching(result) {
+        return (
+          result.pid === firstTargetPid && result.startMicros === firstTargetIdentity.startMicros
+        )
+      }
+      let exit = await probe('confirm-exit')
+      if (exit.outcome === 'still-running' && matching(exit)) {
+        const proof = await probe('identify')
+        assert(
+          proof.outcome === 'identified' &&
+            matching(proof) &&
+            proof.signatureVerified === true &&
+            proof.uid === process.getuid(),
+          'first-target cleanup ownership changed',
+        )
         try {
-          if (pid === firstTargetPid) {
-            const proof = JSON.parse(
-              (
-                await owned.run(firstObserverBinary, [], {
-                  input: JSON.stringify({
-                    action: 'identify',
-                    fixtureRoot: root,
-                    bundlePath: artifact,
-                    teamIdentifier: team,
-                    pid,
-                    notBeforeMicros: upgradeNotBeforeMicros,
-                    expectedStartMicros: firstTargetStartMicros,
-                  }),
-                  label: 'confirm failed first-target cleanup ownership',
-                })
-              ).output,
-            )
-            assert(
-              proof.outcome === 'identified' &&
-                proof.pid === pid &&
-                proof.signatureVerified === true &&
-                proof.uid === process.getuid(),
-              'first-target cleanup ownership unavailable',
-            )
-          }
-          process.kill(pid, 'SIGTERM')
+          process.kill(firstTargetPid, 'SIGTERM')
         } catch (error) {
           if (error.code !== 'ESRCH') throw error
         }
       }
+      const deadline = Date.now() + 15_000
+      while (exit.outcome === 'still-running' && matching(exit) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        exit = await probe('confirm-exit')
+      }
+      assert(exit.outcome === 'exited' && matching(exit), 'first-target exit not acknowledged')
+      firstTargetDrained = true
     })
   }
+  report.firstTargetDrain = { acknowledged: firstTargetDrained }
   await attempt('stop-owned-groups', () => owned.stopAll())
-  report.ownedProcessDrain = {
-    acknowledged: owned.size === 0,
-    remainingGroupCount: owned.remainingPids.length,
-  }
   await attempt('confirm-process-drain', async () => {
+    assert(firstTargetDrained, 'first-target drainage not acknowledged')
     if (artifact) await waitForRuntimeDrain()
     assert(owned.size === 0, 'owned process groups remain')
     drained = true
     inspector?.close()
   })
+  report.ownedProcessDrain = {
+    acknowledged: drained,
+    remainingGroupCount: owned.remainingPids.length,
+  }
   if (!drained && owned.size) {
     await attempt('inspect-owned-group-states', async () => {
       const groups = new Set(owned.remainingPids)

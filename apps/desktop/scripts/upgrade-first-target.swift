@@ -132,6 +132,34 @@ func matches(_ left: CGRect, _ right: CGRect) -> Bool {
     && abs(left.width - right.width) <= 2 && abs(left.height - right.height) <= 2
 }
 
+func connectedPanel(_ window: AXUIElement, pid: pid_t, email: String, deadline: Date) -> Bool {
+  let content = nodes(window, pid: pid, deadline: deadline)
+  if content.contains(where: { [kAXSheetRole, "AXDialog"].contains(text($0, kAXRoleAttribute)) || text($0, kAXSubroleAttribute) == kAXDialogSubrole }) { return false }
+  guard content.contains(where: { text($0, kAXRoleAttribute) == "AXHeading" && label($0) == "Connections" }) else { return false }
+  return content.filter { [kAXGroupRole, "AXWebArea"].contains(text($0, kAXRoleAttribute)) }.contains { group in
+    let scoped = nodes(group, pid: pid, deadline: deadline)
+    return scoped.contains { label($0) == "Google" }
+      && scoped.contains { label($0) == email }
+      && scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0) == "Disconnect this vault" }
+      && !scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0) == "Reconnect" }
+  }
+}
+
+func confirmExit(_ r: Request) -> Never {
+  guard let expected = r.expectedStartMicros, expected >= r.notBeforeMicros else { reject("ownership-refused", "missing-start-identity") }
+  var info = proc_bsdinfo()
+  errno = 0
+  let count = proc_pidinfo(r.pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
+  if count == 0 && errno == ESRCH {
+    emit(["outcome": "exited", "pid": r.pid, "startMicros": expected])
+  }
+  guard count == MemoryLayout<proc_bsdinfo>.size, info.pbi_uid == getuid(),
+    UInt64(info.pbi_start_tvsec) * 1_000_000 + UInt64(info.pbi_start_tvusec) == expected else {
+    reject("ownership-refused", "process-changed")
+  }
+  emit(["outcome": "still-running", "pid": r.pid, "startMicros": expected])
+}
+
 @MainActor
 func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> Never {
   guard r.expectedStartMicros == id.start else { reject("ownership-refused", "missing-start-identity") }
@@ -170,28 +198,19 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
       if content.contains(where: { [kAXSheetRole, "AXDialog"].contains(text($0, kAXRoleAttribute)) || text($0, kAXSubroleAttribute) == kAXDialogSubrole }) {
         reject("observation-unavailable", "blocking-modal")
       }
-      let heading = content.contains { text($0, kAXRoleAttribute) == "AXHeading" && label($0) == "Connections" }
-      if heading {
-        let groups = content.filter { [kAXGroupRole, "AXWebArea"].contains(text($0, kAXRoleAttribute)) }
-        let connected = groups.contains { group in
-          let scoped = nodes(group, pid: r.pid, deadline: deadline)
-          return scoped.contains { label($0) == "Google" }
-            && scoped.contains { label($0) == email }
-            && scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0) == "Disconnect this vault" }
-            && !scoped.contains { text($0, kAXRoleAttribute) == kAXButtonRole && label($0) == "Reconnect" }
-        }
-        if connected { selectedWindow = window; selectedBounds = rectangle(window); break }
+      if connectedPanel(window, pid: r.pid, email: email, deadline: deadline) {
+        selectedWindow = window; selectedBounds = rectangle(window); break
       }
       if !requestedSettings {
         let triggers = content.filter {
           text($0, kAXRoleAttribute) == kAXButtonRole
-            && ["Account menu", "Open account menu"].contains(label($0))
+            && ["Account menu", "Open account menu", "Account menu, an update to look at", "Open account menu, an update to look at"].contains(label($0))
         }
         if !accountMenuOpened, triggers.count == 1 {
           accountMenuOpened = press(triggers[0])
         } else if accountMenuOpened {
           let menuItems = nodes(window, pid: r.pid, deadline: deadline).filter {
-            text($0, kAXRoleAttribute) == kAXMenuItemRole && label($0) == "Settings"
+            text($0, kAXRoleAttribute) == kAXMenuItemRole && ["Settings", "Settings ⌘,", "Settings⌘,"].contains(label($0).split(whereSeparator: \.isWhitespace).joined(separator: " "))
           }
           if menuItems.count == 1 { requestedSettings = press(menuItems[0]) }
         }
@@ -223,6 +242,10 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
     let image = try await SCScreenshotManager.captureImage(
       contentFilter: SCContentFilter(desktopIndependentWindow: target), configuration: configuration)
     guard identity(r, bundle: bundle)?.start == id.start else { reject("ownership-refused", "process-changed") }
+    guard let currentBounds = rectangle(window), matches(currentBounds, bounds),
+      connectedPanel(window, pid: r.pid, email: email, deadline: Date().addingTimeInterval(3)) else {
+      reject("assertion-failed", "connections-panel-changed")
+    }
     let data = NSMutableData()
     guard let writer = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else {
       reject("observation-unavailable", "image-encoding")
@@ -251,7 +274,7 @@ struct Observer {
   static func main() async {
     let data = FileHandle.standardInput.readDataToEndOfFile()
     guard let r = try? JSONDecoder().decode(Request.self, from: data),
-      ["identify", "observe"].contains(r.action), r.pid > 0 else {
+      ["identify", "observe", "confirm-exit"].contains(r.action), r.pid > 0 else {
       fputs("invalid request\n", stderr)
       exit(1)
     }
@@ -261,6 +284,7 @@ struct Observer {
       URL(fileURLWithPath: root).deletingLastPathComponent().path == canonical(NSTemporaryDirectory()),
       URL(fileURLWithPath: root).lastPathComponent.hasPrefix("holi-565-native-"),
       bundle.hasPrefix(root + "/") else { reject("ownership-refused", "fixture-ownership") }
+    if r.action == "confirm-exit" { confirmExit(r) }
     guard let id = identity(r, bundle: bundle) else { reject("ownership-refused", "process-identity") }
     if r.action == "identify" {
       emit(["outcome": "identified", "pid": r.pid, "startMicros": id.start, "signatureVerified": true, "uid": id.uid])

@@ -16,6 +16,7 @@ const nativeReasons = new Set([
   'ambiguous-accessibility-window',
   'blocking-modal',
   'connections-panel-not-asserted',
+  'connections-panel-changed',
   'ambiguous-capture-window',
   'image-encoding',
   'image-output',
@@ -71,6 +72,7 @@ export async function observeFirstTargetConnections({
   teamIdentifier,
   pid,
   notBeforeMicros,
+  expectedStartMicros,
   profile,
   vaultPath,
   remote,
@@ -93,7 +95,7 @@ export async function observeFirstTargetConnections({
       input: JSON.stringify({
         ...request,
         action,
-        expectedStartMicros: identity?.startMicros,
+        expectedStartMicros: identity?.startMicros ?? expectedStartMicros,
         email,
         evidenceDirectory,
       }),
@@ -149,7 +151,8 @@ export async function observeFirstTargetConnections({
       initial.signatureVerified !== true ||
       initial.uid !== process.getuid() ||
       !Number.isSafeInteger(initial.startMicros) ||
-      initial.startMicros < notBeforeMicros
+      initial.startMicros < notBeforeMicros ||
+      initial.startMicros !== expectedStartMicros
     )
       return failed('ownership-refused', 'process-identity')
     identity = initial

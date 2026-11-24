@@ -38,6 +38,7 @@ let installerGuardReady = false
 let appStarted = false
 let firstObserverBinary
 let firstTargetPid
+let firstTargetIdentity
 let upgradeNotBeforeMicros
 let providers
 let feed
@@ -390,37 +391,26 @@ async function main() {
   await evaluate(
     `(() => { const win = require('electron').BrowserWindow.getAllWindows()[0]; win.webContents.sendInputEvent({type:'keyDown', keyCode:',', modifiers:['meta']}); win.webContents.sendInputEvent({type:'keyUp', keyCode:',', modifiers:['meta']}); })()`,
   )
-  const navigateConnections = async () => {
-    await wait('connections-navigation', () => click('Connections'))
-    await wait('visible-google-connections', () =>
-      renderer(`(() => {
-      const visible = (element) => {
-        const style = getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
-      };
-      const heading = [...document.querySelectorAll('h1,h2,h3,[role=heading]')].some(e => visible(e) && e.textContent.trim() === 'Connections');
-      const control = [...document.querySelectorAll('button[aria-label="Disconnect this vault"]')].find(visible);
-      const email = [...document.querySelectorAll('p,span,div')].some(e => visible(e) && e.childElementCount === 0 && e.textContent.trim() === 'holi-upgrade-fixture@example.invalid');
-      const dialog = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].some(visible);
-      return heading && control && email && !dialog;
-    })()`),
-    )
-  }
-  await navigateConnections()
-  await evaluate(
-    `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`,
+  const connectedBefore = `(() => {
+    const visible = (element) => { const style = getComputedStyle(element), rect = element.getBoundingClientRect(); return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0; };
+    const heading = [...document.querySelectorAll('h1,h2,h3,[role=heading]')].some(e => visible(e) && e.textContent.trim() === 'Connections');
+    const control = [...document.querySelectorAll('button[aria-label="Disconnect this vault"]')].find(e => visible(e) && !e.disabled);
+    const row = control?.closest('[data-slot="item"]');
+    const google = row && [...row.querySelectorAll('[data-slot="item-title"]')].some(e => visible(e) && e.textContent.trim() === 'Google');
+    const email = row && [...row.querySelectorAll('span')].some(e => visible(e) && e.textContent.trim() === 'holi-upgrade-fixture@example.invalid');
+    const dialog = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].some(visible);
+    return Boolean(heading && control && google && email && !dialog);
+  })()`
+  await wait('connections-navigation', () => click('Connections'))
+  await wait('visible-google-connections', () => renderer(connectedBefore))
+  await renderer(
+    'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
   )
+  assert(await renderer(connectedBefore), 'Connections view changed before capture')
   const image = await evaluate(
     `(async () => (await require('electron').BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'))()`,
   )
-  assert(
-    await renderer(`(() => {
-    const visible = (e) => { const s=getComputedStyle(e), r=e.getBoundingClientRect(); return s.visibility!=='hidden' && s.display!=='none' && r.width>0 && r.height>0 };
-    return [...document.querySelectorAll('h1,h2,h3,[role=heading]')].some(e=>visible(e)&&e.textContent.trim()==='Connections') && [...document.querySelectorAll('button[aria-label="Disconnect this vault"]')].some(visible) && [...document.querySelectorAll('p,span,div')].some(e=>visible(e)&&e.childElementCount===0&&e.textContent.trim()==='holi-upgrade-fixture@example.invalid') && ![...document.querySelectorAll('[role=dialog],[role=alertdialog]')].some(visible);
-  })()`),
-    'Connections view changed during capture',
-  )
+  assert(await renderer(connectedBefore), 'Connections view changed during capture')
   receipt.before.googleUiConnected = true
   await writeFile(join(evidence, 'before-google-connected.png'), Buffer.from(image, 'base64'))
   await wait('updates-navigation', () => click('Updates'))
@@ -443,6 +433,33 @@ async function main() {
     180_000,
   )
   firstTargetPid = newPid
+  const firstIdentity = JSON.parse(
+    (
+      await owned.run(firstObserverBinary, [], {
+        input: JSON.stringify({
+          action: 'identify',
+          fixtureRoot: root,
+          bundlePath: artifact,
+          teamIdentifier: team,
+          pid: newPid,
+          notBeforeMicros: upgradeNotBeforeMicros,
+        }),
+        signal: abort.signal,
+        label: 'anchor first-target identity',
+      })
+    ).output,
+  )
+  assert(
+    firstIdentity.outcome === 'identified' &&
+      firstIdentity.pid === newPid &&
+      firstIdentity.uid === process.getuid() &&
+      firstIdentity.signatureVerified === true &&
+      Number.isSafeInteger(firstIdentity.startMicros) &&
+      firstIdentity.startMicros >= upgradeNotBeforeMicros,
+    'first-target identity unavailable',
+  )
+  firstTargetIdentity = firstIdentity
+  receipt.firstTargetIdentity = firstIdentity
   const installedBuild = (
     await command('/usr/bin/plutil', [
       '-extract',
@@ -468,6 +485,7 @@ async function main() {
     teamIdentifier: team,
     pid: newPid,
     notBeforeMicros: upgradeNotBeforeMicros,
+    expectedStartMicros: firstTargetIdentity.startMicros,
     profile,
     vaultPath: seeded.path,
     remote: seeded.remote,
@@ -593,7 +611,7 @@ try {
       firstTargetPid,
       firstObserverBinary,
       upgradeNotBeforeMicros,
-      firstTargetStartMicros: receipt.firstTargetObservation?.startMicros,
+      firstTargetIdentity,
       team,
       root,
       inspector,

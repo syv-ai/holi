@@ -66,7 +66,6 @@ async function fixture(scenario: Scenario) {
   const startMicros = Date.now() * 1000
   const pid = process.pid
   const helper = join(root, 'observer')
-  let identified = false
   async function run(command: string, args: string[], options: { input?: string }) {
     if (command === '/usr/sbin/lsof') {
       if (scenario === 'stale-endpoint' && args.includes(`-iTCP@127.0.0.1:${stalePort}`)) {
@@ -88,15 +87,12 @@ async function fixture(scenario: Scenario) {
       request.notBeforeMicros === startMicros - 1000 &&
       request.email === email &&
       request.evidenceDirectory === evidenceDirectory &&
-      (!identified
-        ? request.expectedStartMicros === undefined
-        : request.expectedStartMicros === startMicros)
+      request.expectedStartMicros === startMicros
     if (!valid)
       return {
         output: JSON.stringify({ outcome: 'ownership-refused', reason: 'process-identity' }),
       }
     if (request.action === 'identify') {
-      identified = true
       if (scenario === 'process-changed' && requests > 0)
         return {
           output: JSON.stringify({ outcome: 'ownership-refused', reason: 'process-changed' }),
@@ -166,6 +162,7 @@ async function fixture(scenario: Scenario) {
         teamIdentifier: 'AAAAAAAAAA',
         pid,
         notBeforeMicros: startMicros - 1000,
+        expectedStartMicros: startMicros,
         profile,
         vaultPath,
         remote,
