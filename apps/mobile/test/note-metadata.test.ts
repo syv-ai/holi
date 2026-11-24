@@ -22,14 +22,29 @@ describe('note metadata', () => {
     a.setFavourite('notes/1.md', false)
     a.move('notes/50.md', 'renamed/50.md')
     const restarted = createNoteMetadata(settings, 'owner/a')
-    expect(restarted.visible(['renamed/50.md', 'notes/51.md']).recents).toEqual([
+    const allPaths = Array.from({ length: 52 }, (_, i) => `notes/${i}.md`)
+    const visible = [...allPaths, 'renamed/50.md', 'renamed/0.md']
+    expect(restarted.visible(visible).recents).toEqual([
       'renamed/50.md',
       'notes/51.md',
+      ...Array.from({ length: 48 }, (_, i) => `notes/${49 - i}.md`),
     ])
-    expect(restarted.visible(['notes/0.md']).favourites).toEqual(['notes/0.md'])
+    expect(restarted.visible(visible).favourites).toEqual(['notes/0.md'])
+    restarted.move('notes/0.md', 'renamed/0.md')
+    expect(restarted.visible(visible).favourites).toEqual(['renamed/0.md'])
+    restarted.remove('renamed/0.md')
     restarted.remove('renamed/50.md')
-    expect(createNoteMetadata(settings, 'owner/a').visible(['renamed/50.md']).recents).toEqual([])
-    expect(createNoteMetadata(settings, 'owner/b').visible(['notes/0.md']).favourites).toEqual([])
+    const removed = createNoteMetadata(settings, 'owner/a').visible(visible)
+    expect(removed.recents).not.toContain('renamed/50.md')
+    expect(removed.favourites).toEqual([])
+    expect(createNoteMetadata(settings, 'owner/b').visible(visible)).toEqual({
+      recents: [],
+      favourites: [],
+    })
+    expect(restarted.visible(['notes/51.md', '../escape.md', '.env.md', 'image.png'])).toEqual({
+      recents: ['notes/51.md'],
+      favourites: [],
+    })
   })
 
   it('preserves malformed stored data and rejects invalid identities and paths', () => {
