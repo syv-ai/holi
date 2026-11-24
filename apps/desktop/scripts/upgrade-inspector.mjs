@@ -216,13 +216,32 @@ export async function connectUpgradeInspector(record, { signal, timeoutMs = 15_0
   return {
     frame: { ...frame, reason: state.reason },
     async evaluate(expression) {
-      const result = await command(paused ? 'Debugger.evaluateOnCallFrame' : 'Runtime.evaluate', {
-        expression: paused
-          ? expression
-          : `(require => eval(${JSON.stringify(expression)}))(globalThis.__holiUpgradeFixtureRequire)`,
-        returnByValue: true,
-        ...(paused ? { callFrameId: frame.callFrameId } : { awaitPromise: true, contextId }),
-      })
+      const resumed = !paused
+      const evaluationId = `evaluation-${nextId + 1}`
+      const evaluatedExpression = resumed
+        ? `(() => {
+            const roots = globalThis.__holiUpgradeEvaluationRoots ??= new Map();
+            const value = Promise.resolve((require => eval(${JSON.stringify(expression)}))(globalThis.__holiUpgradeFixtureRequire));
+            roots.set(${JSON.stringify(evaluationId)}, value);
+            return value;
+          })()`
+        : expression
+      let result
+      try {
+        result = await command(resumed ? 'Runtime.evaluate' : 'Debugger.evaluateOnCallFrame', {
+          expression: evaluatedExpression,
+          returnByValue: true,
+          ...(paused ? { callFrameId: frame.callFrameId } : { awaitPromise: true, contextId }),
+        })
+      } finally {
+        if (resumed && !failure.signal.aborted) {
+          await command('Runtime.evaluate', {
+            expression: `globalThis.__holiUpgradeEvaluationRoots?.delete(${JSON.stringify(evaluationId)})`,
+            returnByValue: true,
+            contextId,
+          }).catch(() => {})
+        }
+      }
       if (result.exceptionDetails) {
         const error = new Error('fixture evaluation failed; native details withheld')
         error.details = {
