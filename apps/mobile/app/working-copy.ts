@@ -79,6 +79,7 @@ export function createWorkingCopy(
         return {
           changes: changes
             .map((change) => ({ ...change, path: safePath(change.path) }))
+            .filter((change) => authorized.includes(change.path as VaultRelPath))
             .filter((change): change is WorkingCopyChange => change.path !== null)
             .sort((left, right) => left.path.localeCompare(right.path)),
         }
