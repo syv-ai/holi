@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
 import { atom, useAtomValue, useStore } from 'jotai'
 import { ExternalLinkIcon, PlusIcon } from 'lucide-react'
+import { DRIVE_SHORTCUT_MIME, isDriveFileId } from '../../shared/drive-files'
 import {
   ATTACHMENT_LIMIT,
   type AttachEventFilesResult,
@@ -66,11 +67,11 @@ function driveAttachments(attachments: AttachmentList['attachments']): DriveFile
   const files = new Map<string, DriveFileChoice>()
   for (const { fileId, title, mimeType } of attachments) {
     // Calendar supplies a resolved Drive ID. Do not extract IDs from links.
-    if (fileId && /^[\w-]+$/.test(fileId) && mimeType !== 'application/vnd.google-apps.shortcut') {
+    if (isDriveFileId(fileId) && mimeType !== DRIVE_SHORTCUT_MIME) {
       files.set(fileId, { id: fileId, name: title })
     }
   }
-  return [...files.values()].slice(0, ATTACHMENT_LIMIT)
+  return [...files.values()]
 }
 
 /** The caller keys this section by the vault, account, calendar and event. */
@@ -159,8 +160,8 @@ export function EventAttachments({
       : null
   const data = read && 'data' in read ? read.data : null
   const readError = read && 'error' in read ? read : null
-  const attachedIds = new Set(data?.attachments.flatMap(({ fileId }) => (fileId ? [fileId] : [])))
   const existingFiles = driveAttachments(data?.attachments ?? [])
+  const attachedIds = new Set(existingFiles.map(({ id }) => id))
   const slots = Math.max(0, ATTACHMENT_LIMIT - (data?.attachments.length ?? 0))
   const unconfirmedFiles = recovery?.unconfirmedFiles ?? []
   const unconfirmedIds = new Set(unconfirmedFiles.map(({ id }) => id))
@@ -177,9 +178,12 @@ export function EventAttachments({
   const knownFiles = data ? existingFiles : driveAttachments(checkAttempt?.result.attachments ?? [])
   const fallbackFiles =
     data || checkAttempt?.result.attachmentsVerified
-      ? unconfirmedFiles.slice(0, ATTACHMENT_LIMIT)
+      ? unconfirmedFiles
       : (checkAttempt?.files ?? [])
-  const filesToCheck = knownFiles.length > 0 ? knownFiles : fallbackFiles
+  const filesToCheck = (knownFiles.length > 0 ? knownFiles : fallbackFiles).slice(
+    0,
+    ATTACHMENT_LIMIT,
+  )
   const revisable = noWrite ? attempt.files.filter(({ id }) => !unavailable(id)) : []
   const confirm = async (files: DriveFileChoice[]) => {
     if (
@@ -386,7 +390,7 @@ export function EventAttachments({
           priorSharing={attempt.priorSharing}
           writeStatus={attempt.writeStatus}
           checked={attempt.checked}
-          data={data}
+          currentDriveIds={data ? attachedIds : null}
           canCheck={currentAccount && !recovery?.pending}
           onCheck={
             checkAttempt && filesToCheck.length > 0
