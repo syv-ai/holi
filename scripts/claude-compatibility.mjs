@@ -50,7 +50,7 @@ async function readManifest(path) {
   return JSON.parse(await readFile(path, 'utf8'))
 }
 
-async function resolveNativeBinary(install, version, os = platform(), cpu = arch()) {
+export async function resolveNativeBinary(install, version, os = platform(), cpu = arch()) {
   const wrapper = join(install, 'node_modules', '@anthropic-ai', 'claude-code')
   const wrapperManifest = await readManifest(join(wrapper, 'package.json'))
   if (
