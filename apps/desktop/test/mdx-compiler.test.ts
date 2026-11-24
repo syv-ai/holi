@@ -39,7 +39,7 @@ class FakeGuest extends EventEmitter {
           id: string
           source: string
         }
-        this.result = { id: payload.id, diagnostics: [] }
+        this.result = { id: payload.id, diagnostics: [], dependencies: [] }
         this.receivedSource = true
         this.source = payload.source
       }
