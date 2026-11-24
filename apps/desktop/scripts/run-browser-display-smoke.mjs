@@ -188,7 +188,8 @@ try {
           )
           return forwarding.replace(
             '  assert.equal(listeners.size, 0)',
-            `${toolbarAcceptance || hintsAcceptance ? sequence : ''}\n  assert.equal(listeners.size, 0)`,
+            () =>
+              `${toolbarAcceptance || hintsAcceptance ? sequence : ''}\n  assert.equal(listeners.size, 0)`,
           )
         },
       },
