@@ -2,6 +2,9 @@
 #import <git2.h>
 #import <sys/stat.h>
 #import <errno.h>
+#import <fcntl.h>
+#import <unistd.h>
+#import <dirent.h>
 
 static NSString *const HoliNativeGitErrorDomain = @"HoliNativeGitErrorDomain";
 static void HNGInitializeLibgit2(void) {
@@ -42,6 +45,11 @@ static int HNGDisableUnsafeConfig(git_repository *repository) {
   }
   git_config_free(config);
   return result;
+}
+static int HNGCollectTree(const char *rootPath, const git_tree_entry *entry, void *payload) {
+  NSMutableSet *paths=(__bridge NSMutableSet *)payload;
+  if(git_tree_entry_type(entry)==GIT_OBJECT_BLOB && entry->name){NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,entry->name]; if(![p hasPrefix:@".git/"])[paths addObject:p];}
+  return 0;
 }
 static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   HNGUnsafeConfig *unsafe = payload;
@@ -199,6 +207,8 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
 }
 - (git_repository *)openSafeRepository:(NSString *)root error:(NSError **)error {
   HNGInitializeLibgit2();
+  struct stat metadataStat; NSString *metadata=[root stringByAppendingPathComponent:@".git"];
+  if(lstat(metadata.fileSystemRepresentation,&metadataStat)!=0 || !S_ISDIR(metadataStat.st_mode)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:@{NSLocalizedDescriptionKey:@"Repository metadata must be a real directory"}]; return NULL; }
   git_repository *repo = NULL; int rc = git_repository_open_ext(&repo, root.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH, NULL);
   if (rc < 0) { HNGError(error, rc); return NULL; }
   if (git_repository_is_bare(repo)) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
@@ -219,10 +229,18 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
 }
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyCandidates:(NSString *)root error:(NSError **)error {
   git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return nil;
-  git_status_options opts=GIT_STATUS_OPTIONS_INIT; opts.show=GIT_STATUS_SHOW_INDEX_AND_WORKDIR; opts.flags=GIT_STATUS_OPT_INCLUDE_UNTRACKED|GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS|GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX|GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR;
-  git_status_list *list=NULL; int rc=git_status_list_new(&list,repo,&opts); NSMutableArray *out=[NSMutableArray array];
-  if(rc==0) for(size_t i=0;i<git_status_list_entrycount(list);i++){ const git_status_entry *e=git_status_byindex(list,i); const char *p=e->index_to_workdir->new_file.path ?: e->head_to_index->new_file.path; if(!p)continue; unsigned s=e->status; [out addObject:@{@"path":[NSString stringWithUTF8String:p],@"staged":@((s&(GIT_STATUS_INDEX_NEW|GIT_STATUS_INDEX_MODIFIED|GIT_STATUS_INDEX_DELETED|GIT_STATUS_INDEX_RENAMED|GIT_STATUS_INDEX_TYPECHANGE))!=0),@"worktree":@((s&(GIT_STATUS_WT_NEW|GIT_STATUS_WT_MODIFIED|GIT_STATUS_WT_DELETED|GIT_STATUS_WT_RENAMED|GIT_STATUS_WT_TYPECHANGE))!=0),@"conflict":@((s&GIT_STATUS_CONFLICTED)!=0)}]; }
-  git_status_list_free(list); git_repository_free(repo); if(rc<0){HNGError(error,rc);return nil;} return out;
+  NSMutableSet<NSString *> *paths=[NSMutableSet set]; git_index *index=NULL; int rc=git_repository_index(&index,repo);
+  if(rc==0) for(size_t i=0;i<git_index_entrycount(index);i++){const git_index_entry *e=git_index_get_byindex(index,i); if(e && e->path)[paths addObject:[NSString stringWithUTF8String:e->path]];}
+  git_index_free(index);
+  git_reference *head=NULL; git_commit *commit=NULL; git_tree *tree=NULL;
+  if(git_repository_head(&head,repo)==0 && git_reference_peel((git_object **)&commit,head,GIT_OBJECT_COMMIT)==0 && git_commit_tree(&tree,commit)==0) {
+    git_tree_walk(tree,GIT_TREEWALK_PRE,HNGCollectTree,(__bridge void *)paths);
+  }
+  NSString *gitdir=[NSString stringWithUTF8String:git_repository_path(repo)];
+  NSMutableArray *dirs=[NSMutableArray arrayWithObject:root]; NSFileManager *fm=NSFileManager.defaultManager;
+  while(dirs.count){NSString *dir=dirs.lastObject; [dirs removeLastObject]; NSArray *items=[fm contentsOfDirectoryAtPath:dir error:nil]; for(NSString *name in items){if([dir isEqualToString:root] && [name isEqualToString:@".git"])continue; NSString *full=[dir stringByAppendingPathComponent:name]; struct stat st; if(lstat(full.fileSystemRepresentation,&st))continue; if(S_ISDIR(st.st_mode))[dirs addObject:full]; else {NSString *rel=[full substringFromIndex:root.length+1]; if(rel.length && ![rel hasPrefix:@".git/"])[paths addObject:rel];}}}
+  NSMutableArray *out=[NSMutableArray array]; for(NSString *p in paths)[out addObject:@{@"path":p}];
+  git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); return out;
 }
 - (BOOL)authorizeWorkingCopyPath:(NSString *)path root:(NSString *)root error:(NSError **)error {
   if(path.length==0 || [path hasPrefix:@"/"] || [path containsString:@".."] || [path containsString:@"\\"]){ if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NO; }
@@ -236,8 +254,9 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   git_repository_free(repo); return pending;
 }
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyStatus:(NSArray<NSString *> *)paths root:(NSString *)root error:(NSError **)error {
-  git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return nil; NSMutableArray *out=[NSMutableArray array]; int rc=0;
-  for(NSString *path in paths){ if(![self authorizeWorkingCopyPath:path root:root error:error]){git_repository_free(repo);return nil;} git_status_options opts=GIT_STATUS_OPTIONS_INIT; char *pathSpec=(char *)path.fileSystemRepresentation; opts.pathspec.strings=&pathSpec; opts.pathspec.count=1; git_status_list *list=NULL; rc=git_status_list_new(&list,repo,&opts); if(rc<0)break; unsigned s=0; for(size_t i=0;i<git_status_list_entrycount(list);i++){const git_status_entry *e=git_status_byindex(list,i);s|=e->status;} git_status_list_free(list); [out addObject:@{@"path":path,@"staged":@((s&0x00ff)!=0),@"worktree":@((s&0xff00)!=0),@"conflict":@((s&GIT_STATUS_CONFLICTED)!=0)}]; }
-  git_repository_free(repo); if(rc<0){HNGError(error,rc);return nil;} return out;
+  git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return nil;
+  git_repository_free(repo);
+  if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:ENOTSUP userInfo:@{NSLocalizedDescriptionKey:@"Safe explicit-path status comparison is unavailable"}];
+  return nil;
 }
 @end
