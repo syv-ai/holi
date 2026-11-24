@@ -45,7 +45,9 @@ export async function runExternalNativeAcceptance(
       getComputedStyle(item).visibility === 'visible' && !item.matches(':disabled,[aria-disabled="true"]'));
     if (!match) return null;
     const {x, y, width, height} = match.getBoundingClientRect();
-    return {x: x + width / 2, y: y + height / 2};
+    const point = {x: x + width / 2, y: y + height / 2};
+    const hit = document.elementFromPoint(point.x, point.y);
+    return hit && match.contains(hit) ? point : null;
   })()`)
   const clickAt = (point) => clickPointerAt(page, point)
   const click = async (label) => clickAt(await waitFor(() => button(label), label))

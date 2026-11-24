@@ -1411,16 +1411,19 @@ it.each(['local', 'external'] as const)(
     if (kind === 'local') await writeFile(join(root, 'broken.js'), syntax)
     else routes.set(entry, { text: syntax })
     const owner = await acquire()
-    const source = `import '${kind === 'local' ? './broken.js' : entry}'\n`
+    const prefix = 'export const beforeDeclaration = true; '
+    const source = `${prefix}import '${kind === 'local' ? './broken.js' : entry}'\n`
+    const parentColumn = prefix.length + 1
     try {
       let diagnostics = await mdx.compile({ ...owner, generation: 1, source })
       if (kind === 'external') {
+        expect(diagnostics[0]).toMatchObject({ line: 1, column: parentColumn })
         const requestId = (await mdx.externalResources(owner)).pending[0]!.id
         await mdx.approveExternalResource({ ...owner, requestId })
         diagnostics = await mdx.compile({ ...owner, generation: 2, source })
       }
       expect(diagnostics).toHaveLength(1)
-      expect(diagnostics[0]).toMatchObject({ line: 1, column: 1 })
+      expect(diagnostics[0]).toMatchObject({ line: 1, column: parentColumn })
       expect(diagnostics[0]!.message).toContain(`:1:${syntax.indexOf(';') + 1}:`)
     } finally {
       await mdx.releaseDiagnosticsLease(owner)
