@@ -29,7 +29,8 @@ const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(join(desktop, 'package.json'))
 const evidence = resolve(process.argv[2] ?? '/tmp/holi-notification-readiness')
 const preflightController = new AbortController()
-const preflightInterrupt = () => preflightController.abort(new Error('notification fixture interrupted'))
+const preflightInterrupt = () =>
+  preflightController.abort(new Error('notification fixture interrupted'))
 process.once('SIGINT', preflightInterrupt)
 process.once('SIGTERM', preflightInterrupt)
 try {

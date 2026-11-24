@@ -16,18 +16,24 @@ afterEach(async () => {
   for (const root of owned.splice(0)) await rm(root, { recursive: true, force: true })
 })
 
-test.skipIf(!supportsPosixOwnership)('loads an authenticated fixture session from its owned encrypted store', async () => {
-  const session = await createFixtureSession(await directory())
-  expect(session.viewer).not.toBeNull()
-  expect(session.token()).not.toBeNull()
-})
+test.skipIf(!supportsPosixOwnership)(
+  'loads an authenticated fixture session from its owned encrypted store',
+  async () => {
+    const session = await createFixtureSession(await directory())
+    expect(session.viewer).not.toBeNull()
+    expect(session.token()).not.toBeNull()
+  },
+)
 
-test.skipIf(!supportsPosixOwnership)('refuses a linked profile without replacing external credentials', async () => {
-  const root = await directory()
-  const external = await directory()
-  const credentials = join(external, 'github-auth.enc')
-  await writeFile(credentials, 'existing external credentials')
-  await symlink(external, join(root, 'user-data'), 'dir')
-  await expect(createFixtureSession(root)).rejects.toThrow()
-  expect(await readFile(credentials, 'utf8')).toBe('existing external credentials')
-})
+test.skipIf(!supportsPosixOwnership)(
+  'refuses a linked profile without replacing external credentials',
+  async () => {
+    const root = await directory()
+    const external = await directory()
+    const credentials = join(external, 'github-auth.enc')
+    await writeFile(credentials, 'existing external credentials')
+    await symlink(external, join(root, 'user-data'), 'dir')
+    await expect(createFixtureSession(root)).rejects.toThrow()
+    expect(await readFile(credentials, 'utf8')).toBe('existing external credentials')
+  },
+)

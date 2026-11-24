@@ -4,12 +4,17 @@ async function runConsoleStateQuery({ signal }) {
   const processes = createOwnedProcesses()
   try {
     const query = await processes.run('/usr/sbin/ioreg', ['-a', '-n', 'Root', '-d1'], {
-      timeoutMs: 5000, signal, label: 'macOS console state query',
+      timeoutMs: 5000,
+      signal,
+      label: 'macOS console state query',
     })
     const result = await processes.run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], {
-      input: query.output, timeoutMs: 5000, signal, label: 'macOS console state conversion',
+      input: query.output,
+      timeoutMs: 5000,
+      signal,
+      label: 'macOS console state conversion',
     })
-    return parseConsoleState(result.output)
+    return result.output
   } finally {
     await processes.stopAll()
   }
@@ -17,12 +22,20 @@ async function runConsoleStateQuery({ signal }) {
 
 function parseConsoleState(output) {
   let root
-  try { root = JSON.parse(output) } catch { return 'unknown' }
-  if (typeof root.IOConsoleLocked !== 'boolean' || !Array.isArray(root.IOConsoleUsers)) return 'unknown'
-  const active = root.IOConsoleUsers.filter((user) => user?.kCGSessionOnConsoleKey === true)
+  try {
+    root = JSON.parse(output)
+  } catch {
+    return 'unknown'
+  }
+  if (!root || typeof root.IOConsoleLocked !== 'boolean' || !Array.isArray(root.IOConsoleUsers))
+    return 'unknown'
+  const active = root.IOConsoleUsers.filter((user) => user?.kCGSSessionOnConsoleKey === true)
   if (active.length !== 1 || active[0].kCGSessionLoginDoneKey !== true) return 'unknown'
   if (root.IOConsoleLocked || active[0].CGSSessionScreenIsLocked === true) return 'locked'
-  if (active[0].CGSSessionScreenIsLocked === false || active[0].CGSSessionScreenIsLocked === undefined)
+  if (
+    active[0].CGSSessionScreenIsLocked === false ||
+    active[0].CGSSessionScreenIsLocked === undefined
+  )
     return 'unlocked'
   return 'unknown'
 }
@@ -37,16 +50,20 @@ export async function assertMacDesktopAvailable({ signal, run = runConsoleStateQ
   signal?.throwIfAborted()
   let state
   try {
-    state = await run({ signal })
+    state = parseConsoleState(await run({ signal }))
   } catch (error) {
     signal?.throwIfAborted()
-    throw new Error('unable to determine macOS desktop availability: ioreg query failed', { cause: error })
+    throw new Error('unable to determine macOS desktop availability: ioreg query failed', {
+      cause: error,
+    })
   }
   signal?.throwIfAborted()
   if (state !== 'unlocked')
-    throw new Error(state === 'locked'
-      ? 'macOS desktop is locked; unlock the desktop and rerun the notification fixture'
-      : 'unable to determine macOS desktop availability: session lock state is missing or ambiguous')
+    throw new Error(
+      state === 'locked'
+        ? 'macOS desktop is locked; unlock the desktop and rerun the notification fixture'
+        : 'unable to determine macOS desktop availability: session lock state is missing or ambiguous',
+    )
 }
 
 export async function clickNativeBanner({ appName, title, timeoutMs = 12_000, signal }) {
