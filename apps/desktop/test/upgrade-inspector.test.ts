@@ -152,15 +152,16 @@ describe('upgrade inspector diagnostics', () => {
     }
   })
 
-  it('reports a bounded Runtime.evaluate timeout without exposing the expression', async () => {
+  it('keeps awaited promises alive while garbage collection runs', async () => {
     const owned = createOwnedProcesses()
     const record = owned.start(process.execPath, [
+      '--expose-gc',
       '--inspect-brk=127.0.0.1:0',
       '-e',
-      'setInterval(() => {}, 1000)',
+      'setInterval(() => global.gc(), 10)',
     ])
     let inspector: Awaited<ReturnType<typeof connectUpgradeInspector>> | undefined
-    const expression = 'globalThis.secretFixtureExpression; new Promise(() => {})'
+    const expression = 'new Promise(() => {})'
     try {
       inspector = await connectUpgradeInspector(record, { timeoutMs: 1500 })
       await inspector.resume()
