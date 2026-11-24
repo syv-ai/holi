@@ -47,8 +47,11 @@ async function git(root: string, args: string[], maxBuffer = 64 * 1024, input = 
     encoding: 'buffer',
     maxBuffer,
     timeout: TIMEOUT,
+    killSignal: 'SIGKILL',
     env: { ...process.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
   })
+  // Git may exit before consuming batch input; the process result remains authoritative.
+  pending.child.stdin?.on('error', () => {})
   pending.child.stdin?.end(input)
   return pending
 }

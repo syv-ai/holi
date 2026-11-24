@@ -53,6 +53,8 @@ async function fixture(reconcile: (vault: { remote: string }) => Promise<void> =
   await exec('git', ['init', '-q', root])
   await exec('git', ['-C', root, 'config', 'user.email', 'test@example.com'])
   await exec('git', ['-C', root, 'config', 'user.name', 'Test'])
+  await exec('git', ['-C', root, 'config', 'commit.gpgsign', 'false'])
+  await exec('git', ['-C', root, 'config', 'tag.gpgsign', 'false'])
   const commit = async (text: string) => {
     await writeFile(join(root, 'note.md'), text)
     await exec('git', ['-C', root, 'add', '-A'])
@@ -129,7 +131,7 @@ async function fixture(reconcile: (vault: { remote: string }) => Promise<void> =
     showItemInFolder: () => {},
   }).createCaller({})
   await caller.vaults.open({ remote: REMOTE })
-  return { caller, before, after, session }
+  return { caller, before, after, session, host }
 }
 
 describe('history.compareRevisions through the public router', () => {
@@ -155,7 +157,7 @@ describe('history.compareRevisions through the public router', () => {
   it.each(['return visit', 'reopened repository', 'account change'])(
     'rejects an earlier result after a %s',
     async (transition) => {
-      const { caller, before, after, session } = await fixture()
+      const { caller, before, after, session, host } = await fixture()
       const pending = pendingComparison()
       const result = caller.history.compareRevisions({
         remote: REMOTE,
@@ -169,7 +171,7 @@ describe('history.compareRevisions through the public router', () => {
           await caller.vaults.open({ remote: 'syv-ai/other' })
           await caller.vaults.open({ remote: REMOTE })
         } else if (transition === 'reopened repository') {
-          await caller.vaults.close()
+          await host.close()
           await caller.vaults.open({ remote: REMOTE })
         } else {
           await session.signOut()
@@ -215,10 +217,10 @@ describe('history.compareRevisions through the public router', () => {
   })
 
   it('rejects when no vault is active', async () => {
-    const { caller, before, after } = await fixture()
-    await caller.vaults.close()
+    const { caller, before, after, host } = await fixture()
+    await host.close()
     await expect(
       caller.history.compareRevisions({ remote: REMOTE, path: 'note.md', before, after }),
-    ).rejects.toBeDefined()
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' })
   })
 })

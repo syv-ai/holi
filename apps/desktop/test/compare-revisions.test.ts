@@ -1,9 +1,9 @@
-import { mkdtemp, rm, writeFile, mkdir, rename } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, mkdir, rename, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, delimiter } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { compareRevisions } from '../src/main/vault/compare-revisions'
 
 const exec = promisify(execFile)
@@ -14,6 +14,8 @@ async function repository(format = 'sha1') {
   await exec('git', ['init', '-q', `--object-format=${format}`, root])
   await exec('git', ['-C', root, 'config', 'user.email', 'test@example.com'])
   await exec('git', ['-C', root, 'config', 'user.name', 'Test'])
+  await exec('git', ['-C', root, 'config', 'commit.gpgsign', 'false'])
+  await exec('git', ['-C', root, 'config', 'tag.gpgsign', 'false'])
   return root
 }
 async function commit(root: string, message: string) {
@@ -21,9 +23,10 @@ async function commit(root: string, message: string) {
   await exec('git', ['-C', root, 'commit', '-qm', message])
   return (await exec('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()
 }
-afterEach(async () =>
-  Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))),
-)
+afterEach(async () => {
+  vi.unstubAllEnvs()
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
 
 describe('compareRevisions', () => {
   it('compares exact non-adjacent snapshots, preserving empty content and newlines', async () => {
@@ -64,6 +67,46 @@ describe('compareRevisions', () => {
       kind: 'unavailable',
       reason: 'missing',
     })
+  })
+
+  it('never fetches a missing promisor blob through a reachable transport', async () => {
+    const root = await repository()
+    await writeFile(join(root, 'note.md'), 'promised content')
+    const sha = await commit(root, 'promisor snapshot')
+    const blob = (await exec('git', ['-C', root, 'rev-parse', `${sha}:note.md`])).stdout.trim()
+    await rm(join(root, '.git', 'objects', blob.slice(0, 2), blob.slice(2)))
+    const bin = join(root, 'bin')
+    await mkdir(bin)
+    const marker = join(root, 'fetch-attempt')
+    const quotedMarker = `'${marker.replaceAll("'", "'\\''")}'`
+    await writeFile(
+      join(bin, 'git-remote-holi-test'),
+      `#!/bin/sh\nprintf attempted > ${quotedMarker}\nexit 1\n`,
+      { mode: 0o700 },
+    )
+    for (const [key, value] of [
+      ['core.repositoryformatversion', '1'],
+      ['extensions.partialClone', 'origin'],
+      ['remote.origin.url', 'holi-test::fixture'],
+      ['remote.origin.promisor', 'true'],
+      ['remote.origin.partialclonefilter', 'blob:none'],
+      ['protocol.holi-test.allow', 'always'],
+    ])
+      await exec('git', ['-C', root, 'config', key!, value!])
+    vi.stubEnv('PATH', `${bin}${delimiter}${process.env.PATH ?? ''}`)
+    // Positive control proves this repository would use the transport for the same missing blob.
+    await expect(
+      exec('git', ['-C', root, 'cat-file', '-p', blob], {
+        env: { ...process.env, GIT_NO_LAZY_FETCH: '0' },
+      }),
+    ).rejects.toBeDefined()
+    expect(await readFile(marker, 'utf8')).toBe('attempted')
+    await rm(marker)
+    await expect(compareRevisions(root, 'note.md', sha, sha)).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'missing',
+    })
+    await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('preserves content equal to the old sentinel and ignores replacement refs', async () => {
