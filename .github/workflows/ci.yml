@@ -25,6 +25,14 @@ env:
   ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
 
 jobs:
+  release-build:
+    name: macOS release build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Exercise the release build without packaging, signing or publishing.
+      - uses: ./.github/actions/setup
+
   checks:
     name: Typecheck, lint, structure
     runs-on: ubuntu-24.04
