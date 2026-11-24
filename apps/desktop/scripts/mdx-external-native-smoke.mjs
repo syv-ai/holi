@@ -1,3 +1,4 @@
+import { createMdxSmokeClient } from './mdx-native-smoke-client.mjs'
 import assert from 'node:assert/strict'
 import { runDocumentNativeAcceptance } from './mdx-document-native-smoke.mjs'
 import { fixtureOrigins } from './mdx-native-network-observation.ts'
@@ -16,6 +17,8 @@ export async function runExternalNativeAcceptance(
     ui,
   },
 ) {
+  const { wire, call, refuse } = createMdxSmokeClient(page)
+
   const {
     delay,
     waitFor,
@@ -47,8 +50,7 @@ export async function runExternalNativeAcceptance(
     return hit && match.contains(hit) ? point : null;
   })()`)
   const clickAt = (point, deadline) => clickPointerAt(page, point, deadline)
-  const click = async (label) => {
-    const deadline = performance.now() + 30000
+  const click = async (label, deadline = performance.now() + 30000) => {
     const point = await waitFor(
       () => button(label),
       label,
@@ -77,17 +79,6 @@ export async function runExternalNativeAcceptance(
       if (performance.now() >= deadline) throw new Error(`Timed out opening ${expected}`)
       await clickAt(state.point, deadline)
     }
-  }
-  const wire = (name, input, type = 'mutation') => ({ path: `mdxTrust.${name}`, type, input })
-  const rpc = (operation) => page.evaluate(`window.holi.trpc(${JSON.stringify(operation)})`)
-  const call = async (name, input, type) => {
-    const response = await rpc(wire(name, input, type))
-    assert(response?.ok, `${name} refused by the application router`)
-    return response.data
-  }
-  const refuse = async (response, label, message) => {
-    const result = await response
-    assert(result?.ok === false && message.test(result.message), label)
   }
   const cancelled = /cancel|supersed|unavailable|invalidated/i
   const capture = async (stage) => {
@@ -192,9 +183,11 @@ export async function runExternalNativeAcceptance(
     external.stage = 'relative and transitive graph'
     await click(allow(rawOrigin))
     await openResources(allow(redirectOrigin))
-    const allowTransitive = await waitFor(
+    const transitiveDeadline = performance.now() + 30000
+    await waitFor(
       () => button(allow(redirectOrigin)),
       'transitive approval',
+      Math.max(0, transitiveDeadline - performance.now()),
     )
     const transitive = await capture('transitiveConsentPending')
     requireOnlyDestinations(transitive, before, [rawOrigin], 'before transitive origin consent')
@@ -208,13 +201,15 @@ export async function runExternalNativeAcceptance(
     )
 
     external.stage = 'cross-origin redirect'
-    await clickAt(allowTransitive)
+    await click(allow(redirectOrigin), transitiveDeadline)
     await openResources(allow(cdnOrigin))
     const video = record ? await record() : null
     if (video) await delay(700)
-    const allowRedirectTarget = await waitFor(
+    const redirectDeadline = performance.now() + 30000
+    await waitFor(
       () => button(allow(cdnOrigin)),
       'redirect target approval',
+      Math.max(0, redirectDeadline - performance.now()),
     )
     const redirect = await capture('redirectConsentPending')
     requireOnlyDestinations(
@@ -231,7 +226,7 @@ export async function runExternalNativeAcceptance(
     )
 
     external.stage = 'approved dependency success'
-    await clickAt(allowRedirectTarget)
+    await click(allow(cdnOrigin), redirectDeadline)
     await waitFor(
       () => cleanDiagnostics(page),
       'clean FileView diagnostics after approval of all three public origins',
@@ -353,7 +348,7 @@ export async function runExternalNativeAcceptance(
           return (observed?.active || observed?.closed) && observed
         },
         'authorized TLS socket with a buffered incomplete response',
-        6500,
+        Math.max(0, started + 6500 - performance.now()),
       )
       const point = await button(revoke(cdnOrigin))
       assert(point, 'The FileView revoke control is not actionable while the probe streams')
@@ -362,14 +357,14 @@ export async function runExternalNativeAcceptance(
         streamEvidence.beforeRevoke?.active && streamEvidence.beforeRevoke.requests === 1,
         'Did not observe exactly one active, paused HTTPS stream at the revoke click',
       )
-      await clickAt(point)
+      await click(revoke(cdnOrigin), started + 6500)
       streamEvidence.afterRevoke = await waitFor(
         async () => {
           const observed = await observeStream()
           return observed?.closed && observed
         },
         'revocation-driven TLS socket close',
-        2000,
+        Math.max(0, Math.min(2000, started + 8000 - performance.now())),
       )
       // Do not credit an AbortError/close from the independent 8-second fetch deadline.
       streamEvidence.closeObservedWithinMs = Math.ceil(performance.now() - started)

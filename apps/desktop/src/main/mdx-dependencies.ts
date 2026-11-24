@@ -20,6 +20,10 @@ const DEPTH_LIMIT = 16
 const REQUEST_LIMIT = 10_000
 
 type ModuleFormat = 'mdx' | 'jsx' | 'js'
+type RemoteProvenance = {
+  hops: Set<string>
+  parents: Set<RemoteProvenance>
+}
 
 // Explicit HTTPS is the only network entry point. Remote children can name
 // same-origin relative URLs, but never resolve to a vault path or a package.
@@ -39,7 +43,8 @@ export async function inspectMdxDependencies(options: {
       url: string,
       signal: AbortSignal,
       localTreeCurrent: () => boolean,
-      // Inherited discovery path; the fetcher adds the origins of its authorized hops.
+      // Collects authorized hops for this fetch. For a consent discovery, the graph
+      // adds inherited origins to the same set before inspection returns.
       discoveryOrigins: Set<string>,
     ): Promise<{ url: string; text: string }>
     retainSnapshot(localTreeCurrent: () => boolean): void
@@ -71,6 +76,19 @@ export async function inspectMdxDependencies(options: {
     const snapshots = new Map<string, string>()
     const ancestors = new Map<string, string>()
     const redirects = new Map<string, string>()
+    const provenance = new Map<string, RemoteProvenance>()
+    const discoveries: { from: RemoteProvenance; origins: Set<string> }[] = []
+    const recordRemotePath = (
+      url: string,
+      from?: RemoteProvenance,
+      hops?: ReadonlySet<string>,
+    ): RemoteProvenance => {
+      const node: RemoteProvenance = provenance.get(url) ?? { hops: new Set(), parents: new Set() }
+      if (from) node.parents.add(from)
+      for (const hop of hops ?? []) node.hops.add(hop)
+      provenance.set(url, node)
+      return node
+    }
     let remoteAttempts = 0
     let readBudget = TOTAL_LIMIT - Buffer.byteLength(options.source)
     let total = 0,
@@ -146,7 +164,7 @@ export async function inspectMdxDependencies(options: {
       source: string,
       format: ModuleFormat,
       depth: number,
-      remote?: { url: URL; discoveryOrigins: ReadonlySet<string> },
+      remote?: { url: URL; provenance: RemoteProvenance },
     ): Promise<MdxDiagnostic[]> => {
       await check()
       const safe = remote ? remote.url.origin : vaultRelPath(path)
@@ -188,13 +206,15 @@ export async function inspectMdxDependencies(options: {
             }
             const target = destination.url
             const resolved = redirects.get(target.href) ?? target.href
-            if (active.has(resolved)) {
-              diagnostics.push(
-                failure(`Dependency cycle involving ${target.origin}`, line, dep.column),
-              )
+            const cycle = active.has(resolved)
+            if (cycle || completed.has(resolved)) {
+              recordRemotePath(resolved, remote?.provenance)
+              if (cycle)
+                diagnostics.push(
+                  failure(`Dependency cycle involving ${target.origin}`, line, dep.column),
+                )
               continue
             }
-            if (completed.has(resolved)) continue
             if (!options.external) {
               diagnostics.push(
                 failure('External MDX dependency access is unavailable', line, dep.column),
@@ -212,7 +232,7 @@ export async function inspectMdxDependencies(options: {
             count++
             remoteAttempts++
             let fetched: { url: string; text: string }
-            const discoveryOrigins = new Set(remote?.discoveryOrigins)
+            const discoveryOrigins = new Set<string>()
             try {
               fetched = await options.external.fetch(
                 absolute ? spec : target.href,
@@ -231,9 +251,13 @@ export async function inspectMdxDependencies(options: {
                   dep.column,
                 ),
               )
-              // A partial failed response has no trusted byte count.
-              if (!(error instanceof MdxExternalDataError && error.code === 'consent-needed'))
+              if (error instanceof MdxExternalDataError && error.code === 'consent-needed') {
+                if (remote && error.origin)
+                  discoveries.push({ from: remote.provenance, origins: discoveryOrigins })
+              } else {
+                // A partial failed response has no trusted byte count.
                 readBudget -= FILE_LIMIT
+              }
               continue
             }
             await check()
@@ -251,7 +275,7 @@ export async function inspectMdxDependencies(options: {
               ...(
                 await visit(final.href, fetched.text, childFormat, depth + 1, {
                   url: final,
-                  discoveryOrigins,
+                  provenance: recordRemotePath(final.href, remote?.provenance, discoveryOrigins),
                 })
               ).map((d) => ({
                 ...d,
@@ -387,6 +411,19 @@ export async function inspectMdxDependencies(options: {
     await check()
     await validateTree()
     await check()
+    // An earlier traversal may have discovered consent before another path to the
+    // same canonical module was visited. Walk the recorded paths, not the network.
+    for (const { from, origins } of discoveries) {
+      const seen = new Set<RemoteProvenance>()
+      const upstream = [from]
+      while (upstream.length) {
+        const node = upstream.pop()!
+        if (seen.has(node)) continue
+        seen.add(node)
+        for (const hop of node.hops) origins.add(hop)
+        for (const parent of node.parents) upstream.push(parent)
+      }
+    }
     if (remoteAttempts > 0) options.external?.retainSnapshot(localTreeCurrent)
     return result
   } finally {

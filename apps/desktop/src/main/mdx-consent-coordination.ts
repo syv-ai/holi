@@ -97,18 +97,25 @@ export function createMdxConsentCoordinator(external?: {
           // reused). Private discoveries don't become offers until a current compile ends.
           const empty = new Map<string, Offer>()
           member.offers = empty
-          const discoveries = new Map<string, Offer>()
+          const discoveries = new Map<string, ReadonlySet<string>[]>()
           return {
             discover(origin: string, through: ReadonlySet<string>) {
-              const offer = discoveries.get(origin) ?? { origin, discoveryOrigins: new Set() }
-              // One offer may represent several discoveries. Revoke it if any reviewed
-              // path depended on the origin; we can't know which path the person reviewed.
-              for (const hop of through) offer.discoveryOrigins.add(hop)
-              discoveries.set(origin, offer)
+              // Inspection finishes adding provenance from cached paths before publication.
+              const paths = discoveries.get(origin) ?? []
+              paths.push(through)
+              discoveries.set(origin, paths)
             },
             publish() {
               if (member.offers !== empty) return
-              member.offers = new Map([...discoveries.values()].map((offer) => [opaqueId(), offer]))
+              const offers = new Map<string, Offer>()
+              for (const [origin, paths] of discoveries) {
+                const discoveryOrigins = new Set<string>()
+                // One offer represents all discoveries for an origin. Revoke it if any
+                // reviewed path depended on the revoked origin.
+                for (const path of paths) for (const hop of path) discoveryOrigins.add(hop)
+                offers.set(opaqueId(), { origin, discoveryOrigins })
+              }
+              member.offers = offers
             },
           }
         },

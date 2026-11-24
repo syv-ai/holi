@@ -5,6 +5,7 @@ import { errorMonitor } from 'node:events'
 import type { ClientRequest, IncomingMessage } from 'node:http'
 import { isIP } from 'node:net'
 import tls, { type TLSSocket } from 'node:tls'
+import { resolveMdxExternalModule } from '../src/main/mdx-external-policy'
 
 export const fixtureOrigins = [
   'https://raw.githubusercontent.com',
@@ -12,10 +13,16 @@ export const fixtureOrigins = [
   'https://cdn.jsdelivr.net',
 ] as const
 const [rawOrigin, redirectOrigin, cdnOrigin] = fixtureOrigins
+const redirectPath = '/nanoid@5.1.5/url-alphabet/index.js'
+const redirectSource = new URL(redirectPath, redirectOrigin)
+const cdnPath = `/npm${redirectPath}/+esm`
+const cdnTarget = `${cdnOrigin}${cdnPath}`
+const redirectStatuses = new Set([301, 302, 303, 307, 308])
 // Large enough to span TLS records but below the production 256 KiB cap.
 const streamPath = '/npm/lodash@4.17.21/lodash.min.js'
 const labels = [...fixtureOrigins, 'unexpected', 'unattributed'] as const
 type Destination = (typeof labels)[number]
+type Route = 'entry' | 'relative' | 'redirect' | 'cdn' | 'stream' | 'unexpected' | 'unattributed'
 
 function destination(host: unknown): Destination {
   if (typeof host !== 'string' || !host) return 'unattributed'
@@ -23,18 +30,12 @@ function destination(host: unknown): Destination {
   return fixtureOrigins.find((expected) => expected === origin) ?? 'unexpected'
 }
 
-function routeOf(request: ClientRequest) {
-  switch (destination(request.getHeader('host'))) {
-    case rawOrigin:
-      if (request.path?.endsWith('/entry.js')) return 'entry'
-      if (request.path?.endsWith('/relative.js')) return 'relative'
-      break
-    case redirectOrigin:
-      return 'redirect'
-    case cdnOrigin:
-      return request.path === streamPath ? 'stream' : 'cdn'
-  }
-  return 'unexpected'
+function expectedRedirect(response: IncomingMessage) {
+  if (!redirectStatuses.has(response.statusCode ?? 0)) return false
+  const locations = response.headersDistinct.location
+  if (locations?.length !== 1 || !locations[0] || locations[0].includes('#')) return false
+  const target = resolveMdxExternalModule(locations[0], redirectSource)
+  return 'url' in target && target.url.href === cdnTarget
 }
 
 function sameIp(left: unknown, right: string | undefined) {
@@ -48,8 +49,35 @@ function sameIp(left: unknown, right: string | undefined) {
   }
 }
 
-/** Observe only this Electron main process's Node transport, not Chromium, OS DNS packets or the server. */
-export function observeMdxNativeNetwork() {
+/** Observe only this process's Node transport. The fixture SHA comes from the validated native runner. */
+export function observeMdxNativeNetwork(fixtureSha: string) {
+  const fixturePath = `/syv-ai/holi/${fixtureSha}/apps/desktop/scripts/fixtures/mdx-external`
+  // A CDN request needs a preceding, as-yet-unmatched redirect response from
+  // the exact fixture source. Only the exact expected target earns that credit.
+  // Count matching observations, not logical fetch IDs or raw Location values.
+  let observedRedirects = 0
+  function routeOf(request: ClientRequest, origin: Destination): Route {
+    if (origin === 'unattributed' || origin === 'unexpected') return origin
+    if (request.protocol !== 'https:') return 'unexpected'
+    switch (origin) {
+      case rawOrigin:
+        if (request.path === `${fixturePath}/entry.js`) return 'entry'
+        if (request.path === `${fixturePath}/relative.js`) return 'relative'
+        break
+      case redirectOrigin:
+        if (request.path === redirectPath) return 'redirect'
+        break
+      case cdnOrigin:
+        if (request.path === cdnPath && observedRedirects > 0) return 'cdn'
+        if (request.path === streamPath) return 'stream'
+    }
+    return 'unexpected'
+  }
+  const requestDestination = (route: Route, origin: Destination) =>
+    route === 'unexpected' || route === 'unattributed' ? route : origin
+  const credentials = (request: ClientRequest) =>
+    ['cookie', 'authorization', 'proxy-authorization'].some((name) => request.hasHeader(name))
+
   const counters = () => ({
     resolve4: 0,
     resolve6: 0,
@@ -59,6 +87,7 @@ export function observeMdxNativeNetwork() {
     verifiedPeer: 0,
     httpCreated: 0,
     httpStarted: 0,
+    httpResponses: 0,
   })
   const destinations = Object.fromEntries(labels.map((label) => [label, counters()])) as Record<
     Destination,
@@ -68,8 +97,8 @@ export function observeMdxNativeNetwork() {
     dns: 0,
     socket: 0,
     destinations,
-    requests: [] as Array<{ route: string; get: boolean; credentials: boolean }>,
-    responses: [] as Array<{ route: string; status: number | undefined }>,
+    requests: [] as Array<{ route: Route; get: boolean; credentials: boolean }>,
+    responses: [] as Array<{ route: Route; status: number | undefined }>,
   }
 
   // Node 24.18's documented diagnostics channels expose HTTP requests/responses,
@@ -176,9 +205,11 @@ export function observeMdxNativeNetwork() {
     | undefined
   const onCreated = (event: unknown) => {
     const { request } = event as { request: ClientRequest }
-    destinations[destination(request.getHeader('host'))].httpCreated += 1
+    const origin = destination(request.getHeader('host'))
+    const route = routeOf(request, origin)
+    destinations[requestDestination(route, origin)].httpCreated += 1
     const hold = stream
-    if (!hold || routeOf(request) !== 'stream') return
+    if (!hold || route !== 'stream') return
     if (++hold.requests !== 1) return
     const recordAbort = (error: NodeJS.ErrnoException) => {
       if (error.code === 'ABORT_ERR') hold.abortError = true
@@ -221,20 +252,38 @@ export function observeMdxNativeNetwork() {
       })
     })
   }
+  const started = new WeakMap<ClientRequest, (typeof network.requests)[number]>()
   const onRequest = (event: unknown) => {
     const { request } = event as { request: ClientRequest }
-    destinations[destination(request.getHeader('host'))].httpStarted += 1
-    network.requests.push({
-      route: routeOf(request),
-      get: request.method === 'GET',
-      credentials: ['cookie', 'authorization', 'proxy-authorization'].some((name) =>
-        request.hasHeader(name),
-      ),
-    })
+    const origin = destination(request.getHeader('host'))
+    let route = routeOf(request, origin)
+    if (route !== 'unexpected' && route !== 'unattributed') {
+      // Host alone does not establish identity. Match it to the SNI of the
+      // authorized TLS connection at the actual chosen IP and port.
+      const peer = verifiedSockets.get(request.socket as TLSSocket)
+      if (!peer) route = 'unattributed'
+      else if (peer !== origin) route = 'unexpected'
+    }
+    if (route === 'cdn') observedRedirects -= 1
+    const observation = { route, get: request.method === 'GET', credentials: credentials(request) }
+    destinations[requestDestination(route, origin)].httpStarted += 1
+    network.requests.push(observation)
+    started.set(request, observation)
   }
   const onResponse = (event: unknown) => {
     const { request, response } = event as { request: ClientRequest; response: IncomingMessage }
-    network.responses.push({ route: routeOf(request), status: response.statusCode })
+    const observation = started.get(request)
+    let route = observation?.route ?? 'unattributed'
+    if (route === 'redirect') {
+      if (observation?.get && !observation.credentials && expectedRedirect(response)) {
+        observedRedirects += 1
+      } else {
+        route = 'unexpected'
+      }
+    }
+    const origin = destination(request.getHeader('host'))
+    destinations[requestDestination(route, origin)].httpResponses += 1
+    network.responses.push({ route, status: response.statusCode })
   }
   subscribe('http.client.request.created', onCreated)
   subscribe('http.client.request.start', onRequest)

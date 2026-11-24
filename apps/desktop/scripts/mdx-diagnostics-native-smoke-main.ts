@@ -24,8 +24,13 @@ import { createMdxResources } from '../src/main/mdx-resources'
 import { createNativeMdxScenarios } from './mdx-diagnostics-native-scenarios'
 import { createMdxTrustStore } from '../src/main/mdx-trust'
 
-const { HOLI_MDX_SMOKE_PROFILE, HOLI_MDX_SMOKE_VAULT } = process.env
+const {
+  HOLI_MDX_SMOKE_PROFILE,
+  HOLI_MDX_SMOKE_VAULT,
+  HOLI_MDX_SMOKE_FIXTURE_SHA: fixtureSha,
+} = process.env
 assert(HOLI_MDX_SMOKE_PROFILE && HOLI_MDX_SMOKE_VAULT, 'Dedicated fixture paths are required')
+assert(fixtureSha && /^[a-f0-9]{40}$/.test(fixtureSha), 'A pinned public fixture SHA is required')
 const profile = HOLI_MDX_SMOKE_PROFILE
 const vault = HOLI_MDX_SMOKE_VAULT
 app.setName(basename(dirname(profile)))
@@ -101,7 +106,7 @@ const invoke = (channel: string, handler: (input: unknown) => unknown) =>
     return handler(input)
   })
 
-const observedNetwork = observeMdxNativeNetwork()
+const observedNetwork = observeMdxNativeNetwork(fixtureSha)
 invoke('smoke:arm-stream', () => observedNetwork.armStream())
 invoke('smoke:stream-status', () => observedNetwork.streamStatus())
 

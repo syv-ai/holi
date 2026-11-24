@@ -1146,10 +1146,12 @@ function setupMdxResources({
   approved = false,
   revokeFailures = 0,
   beforeApprove,
+  sendChange = (deliver) => deliver(),
 }: {
   approved?: boolean
   revokeFailures?: number
   beforeApprove?: (origin: string) => Promise<void> | undefined
+  sendChange?: (deliver: () => void) => void
 } = {}) {
   read.mockResolvedValue(`import Widget from '${resourceOrigin}/widget.mjs'\n\n# Source`)
   historyList.mockResolvedValue([])
@@ -1175,8 +1177,10 @@ function setupMdxResources({
     },
   })
   const changed = () => {
-    for (const receive of listeners)
-      receive({ remote: 'syv-ai/site', name: 'changed', payload: null })
+    sendChange(() => {
+      for (const receive of listeners)
+        receive({ remote: 'syv-ai/site', name: 'changed', payload: null })
+    })
   }
   const grantChanged = (origin: string) => {
     for (const [lease, request] of requests) if (request.origin === origin) requests.delete(lease)
@@ -1185,6 +1189,8 @@ function setupMdxResources({
   }
   mdxCompile.mockImplementation(async ({ lease, generation, source }) => {
     requests.delete(lease)
+    // This fixture maps the test documents to native diagnostic results and offers;
+    // it does not model the MDX compiler or import grammar.
     const origin = /^import Widget from '(https:\/\/[^/]+)\/widget\.mjs'/m.exec(source)?.[1]
     if (!origin || grants.get(origin) === 'allowed') return []
     if (!grants.has(origin)) requests.set(lease, { id: `${lease}-request-${generation}`, origin })
@@ -1266,6 +1272,9 @@ const resourceButton = (
   origin = resourceOrigin,
 ) => ({ name: `${action} ${origin}` })
 
+const retryResourceList = { name: 'Retry resource list' }
+const retryDecision = (origin = resourceOrigin) => ({ name: `Retry decision for ${origin}` })
+
 async function openResources(container: HTMLElement = document.body) {
   await userEvent.click(await within(container).findByRole('button', { name: 'MDX resources' }))
   return within(await screen.findByRole('dialog', { name: 'MDX resources' }))
@@ -1324,7 +1333,7 @@ test('MDX resource Retry recovers a failed query without approving the origin', 
   expect(panel.queryByRole('button', resourceButton('Allow'))).not.toBeInTheDocument()
   expect(await screen.findByText('1 MDX diagnostic')).toBeInTheDocument()
   readable = true
-  await userEvent.click(await panel.findByRole('button', { name: 'Retry' }))
+  await userEvent.click(await panel.findByRole('button', retryResourceList))
   expect(await panel.findByRole('button', resourceButton('Allow'))).toBeEnabled()
   expect(panel.queryByRole('button', resourceButton('Revoke'))).not.toBeInTheDocument()
 })
@@ -1340,7 +1349,7 @@ test('diagnostics can be retried while the resource list keeps failing', async (
     await panel.findByText('Dependency diagnostics exceeded their time limit'),
   ).toBeInTheDocument()
 
-  await userEvent.click(panel.getByRole('button', { name: 'Retry' }))
+  await userEvent.click(panel.getByRole('button', retryResourceList))
   expect(await panel.findByText('Resource grants could not be read')).toBeInTheDocument()
   expect(panel.getByText('Dependency diagnostics exceeded their time limit')).toBeInTheDocument()
 
@@ -1373,7 +1382,7 @@ test('an independent approval failure survives the other split’s grant refresh
   )
   let panel = await openResources(right.container)
   await userEvent.click(await panel.findByRole('button', resourceButton('Allow', otherOrigin)))
-  expect(await panel.findByText('Updating MDX resources…')).toBeInTheDocument()
+  expect(await panel.findByRole('status')).toHaveTextContent(otherOrigin)
   await userEvent.keyboard('{Escape}')
 
   panel = await openResources(left.container)
@@ -1389,7 +1398,7 @@ test('an independent approval failure survives the other split’s grant refresh
   expect(await panel.findByRole('alert')).toHaveTextContent('Could not save MDX resource approval')
   expect(panel.getByRole('alert')).toHaveTextContent(otherOrigin)
 
-  await userEvent.click(panel.getByRole('button', { name: 'Retry' }))
+  await userEvent.click(panel.getByRole('button', retryDecision(otherOrigin)))
   const confirm = await panel.findByRole('button', resourceButton('Allow', otherOrigin))
   expect(confirm).toBeEnabled()
   expect(panel.queryByRole('button', resourceButton('Revoke', otherOrigin))).not.toBeInTheDocument()
@@ -1398,24 +1407,74 @@ test('an independent approval failure survives the other split’s grant refresh
   expect(await within(right.container).findByText('MDX syntax is valid')).toBeInTheDocument()
 })
 
-test('a late approval failure for edited MDX source is not shown in the new source', async () => {
+test('a queued grant change refreshes grants without cancelling an independent approval', async () => {
+  const otherOrigin = 'https://other-modules.example.test'
+  const persistence = deferredMdxWork()
+  const queued: (() => void)[] = []
+  setupMdxResources({
+    beforeApprove: (origin) => (origin === otherOrigin ? persistence.promise : undefined),
+    sendChange: (deliver) => queued.push(deliver),
+  })
+  read.mockImplementation(async ({ path }) => {
+    const origin = path === 'content/other.mdx' ? otherOrigin : resourceOrigin
+    return `import Widget from '${origin}/widget.mjs'\n\n# Source`
+  })
+  const left = setup('content/page.mdx')
+  const right = render(
+    <Provider store={lastStore}>
+      <FileView path="content/other.mdx" />
+    </Provider>,
+  )
+  let panel = await openResources(left.container)
+  await userEvent.click(await panel.findByRole('button', resourceButton('Allow')))
+  expect(await within(left.container).findByText('MDX syntax is valid')).toBeInTheDocument()
+  await userEvent.keyboard('{Escape}')
+
+  panel = await openResources(right.container)
+  await userEvent.click(await panel.findByRole('button', resourceButton('Allow', otherOrigin)))
+  expect(await panel.findByRole('status')).toHaveTextContent(otherOrigin)
+  const { lease } = mdxAllow.mock.lastCall![0]
+  mdxCancel.mockClear()
+  const deliverEarlierChange = queued.shift()!
+  await act(async () => deliverEarlierChange())
+  expect(await panel.findByRole('button', resourceButton('Revoke'))).toBeEnabled()
+  expect(within(right.container).getByText('1 MDX diagnostic')).toBeInTheDocument()
+  expect(mdxCancel).not.toHaveBeenCalledWith(expect.objectContaining({ lease }))
+
+  await act(async () => persistence.resolve())
+  expect(await panel.findByRole('button', resourceButton('Revoke', otherOrigin))).toBeEnabled()
+  expect(await within(right.container).findByText('MDX syntax is valid')).toBeInTheDocument()
+  expect(panel.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+test('an MDX source edit retires an approval even while a grant-triggered rerun is deferred', async () => {
   const persistence = deferredMdxWork()
   const save = deferredMdxWork()
-  setupMdxResources({ beforeApprove: () => persistence.promise })
-  // Don't let the disk write replace the lease: it's the source edit that must retire the error.
+  const queued: (() => void)[] = []
+  const { changed } = setupMdxResources({
+    beforeApprove: () => persistence.promise,
+    sendChange: (deliver) => queued.push(deliver),
+  })
+  // Keep the lease across the edit so cancellation must retire its offer.
   write.mockReturnValue(save.promise)
   setup('content/page.mdx')
   const panel = await openResources()
+  changed()
   await userEvent.click(await panel.findByRole('button', resourceButton('Allow')))
-  expect(await panel.findByText('Updating MDX resources…')).toBeInTheDocument()
+  expect(await panel.findByRole('status')).toHaveTextContent(resourceOrigin)
+  const { lease } = mdxAllow.mock.lastCall![0]
+  await act(async () => queued.shift()!())
+  mdxCancel.mockClear()
 
   await act(async () => typeInto('# Source without the dependency'))
+  expect(mdxCancel).toHaveBeenCalledWith(expect.objectContaining({ lease }))
   expect(await screen.findByText('MDX syntax is valid')).toBeInTheDocument()
   const freshPanel = await openResources()
-  await act(async () => persistence.reject(new Error('Could not save MDX resource approval')))
+  await act(async () => persistence.resolve())
   expect(freshPanel.queryByRole('alert')).not.toBeInTheDocument()
   expect(freshPanel.queryByRole('button', resourceButton('Allow'))).not.toBeInTheDocument()
   expect(freshPanel.queryByRole('button', resourceButton('Revoke'))).not.toBeInTheDocument()
+  expect(queued).toHaveLength(0)
   await act(async () => save.resolve())
 })
 
@@ -1480,18 +1539,30 @@ test('approved origins can be revoked before diagnostics finish and after they f
   expect(panel.queryByRole('button', resourceButton('Revoke'))).not.toBeInTheDocument()
 })
 
-test('a failed revocation stays blocked and either retry saves the existing grant removal', async () => {
-  setupMdxResources({ approved: true, revokeFailures: 2 })
+test('failed revocation stays blocked and its retries target the same grant', async () => {
+  const { changed, snapshot } = setupMdxResources({ approved: true, revokeFailures: 2 })
   setup('content/page.mdx')
   const panel = await openResources()
   await userEvent.click(await panel.findByRole('button', resourceButton('Revoke')))
+  const originalRevocation = mdxRevokeResource.mock.lastCall![0]
   expect(await panel.findByText('Access blocked; revocation not saved')).toBeInTheDocument()
   expect(panel.queryByRole('button', resourceButton('Revoke'))).not.toBeInTheDocument()
   expect(await panel.findByRole('button', resourceButton('Retry revocation'))).toBeEnabled()
 
-  await userEvent.click(await panel.findByRole('button', { name: 'Retry' }))
+  mdxResources.mockRejectedValue(new Error('Resource grants could not be read'))
+  await act(async () => changed())
+  expect(await panel.findByRole('button', retryResourceList)).toBeEnabled()
+  expect(panel.getByRole('button', retryDecision())).toBeEnabled()
+  mdxResources.mockImplementation(async (input) => snapshot(input))
+  await userEvent.click(panel.getByRole('button', retryResourceList))
+  expect(panel.queryByRole('button', retryResourceList)).not.toBeInTheDocument()
+  expect(panel.getByRole('button', retryDecision())).toBeEnabled()
+
+  await userEvent.click(panel.getByRole('button', retryDecision()))
+  expect(mdxRevokeResource).toHaveBeenLastCalledWith(originalRevocation)
   expect(await panel.findByRole('alert')).toHaveTextContent('revocation could not be saved')
   await userEvent.click(await panel.findByRole('button', resourceButton('Retry revocation')))
+  expect(mdxRevokeResource).toHaveBeenLastCalledWith(originalRevocation)
   expect(await panel.findByRole('button', resourceButton('Allow'))).toBeEnabled()
   expect(panel.queryByText('Access blocked; revocation not saved')).not.toBeInTheDocument()
   expect(panel.queryByRole('button', resourceButton('Retry revocation'))).not.toBeInTheDocument()

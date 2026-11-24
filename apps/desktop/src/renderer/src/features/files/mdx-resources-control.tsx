@@ -13,11 +13,22 @@ type Props = {
 }
 
 export function MdxResourcesControl({ resources, onRun }: Props) {
-  const { approved, pending, loading, error, diagnosticsError, pendingDecision, visit, decide } =
-    resources
+  const {
+    approved,
+    pending,
+    loading,
+    queryError,
+    decisionErrors,
+    diagnosticsError,
+    updatingOrigins,
+    visit,
+    decide,
+  } = resources
   const [opened, setOpened] = useState<object | null>(null)
   const empty = pending.length === 0 && approved.length === 0
-  const showEmptyState = empty && !loading && !error && !diagnosticsError && !pendingDecision
+  const updating = updatingOrigins.length > 0
+  const showEmptyState =
+    empty && !loading && !queryError && !decisionErrors.length && !diagnosticsError && !updating
 
   return (
     <Popover open={opened === visit} onOpenChange={(open) => setOpened(open ? visit : null)}>
@@ -29,34 +40,45 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
       {pending.length > 0 ? <Badge variant="secondary">Approval needed</Badge> : null}
       <PopoverContent align="start" size="calendar" aria-label="MDX resources">
         <div className="flex min-h-0 flex-col gap-4 overflow-auto">
-          {loading && !error && !diagnosticsError && empty ? (
+          {loading && !queryError && !decisionErrors.length && !diagnosticsError && empty ? (
             <div className="flex flex-col gap-2" role="status" aria-label="Checking MDX resources">
               <Skeleton className="h-4 w-1/2" />
               <Skeleton className="h-4 w-3/4" />
               <Skeleton className="h-8 w-1/3" />
             </div>
           ) : null}
-          {error ? (
+          {queryError ? (
             <div className="flex flex-wrap items-center gap-2">
               <Alert variant="destructive">
-                <AlertDescription className="break-words">{error.message}</AlertDescription>
+                <AlertDescription className="break-words">{queryError.message}</AlertDescription>
+              </Alert>
+              <Button type="button" variant="outline" onClick={queryError.retry}>
+                Retry resource list
+              </Button>
+            </div>
+          ) : null}
+          {decisionErrors.map(({ origin, message, retry }) => (
+            <div key={origin} className="flex flex-wrap items-center gap-2">
+              <Alert variant="destructive">
+                <AlertDescription className="break-words">{message}</AlertDescription>
               </Alert>
               <Button
                 type="button"
                 variant="outline"
-                disabled={pendingDecision}
-                onClick={error.retry}
+                aria-label={`Retry decision for ${origin}`}
+                disabled={updatingOrigins.includes(origin)}
+                onClick={retry}
               >
                 Retry
               </Button>
             </div>
-          ) : null}
+          ))}
           {diagnosticsError ? (
             <div className="flex flex-wrap items-center gap-2">
               <Alert variant="destructive">
                 <AlertDescription className="break-words">{diagnosticsError}</AlertDescription>
               </Alert>
-              <Button type="button" variant="outline" onClick={onRun}>
+              <Button type="button" variant="outline" disabled={updating} onClick={onRun}>
                 Retry diagnostics
               </Button>
             </div>
@@ -67,7 +89,11 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
               action={{ label: 'Run diagnostics', onClick: onRun }}
             />
           ) : null}
-          {pendingDecision ? <p role="status">Updating MDX resources…</p> : null}
+          {updatingOrigins.map((origin) => (
+            <p key={origin} role="status">
+              Updating MDX resources: {origin}
+            </p>
+          ))}
           {pending.length > 0 ? (
             <section className="flex flex-col gap-2">
               <h2 className="font-medium">Pending approvals</h2>
@@ -88,7 +114,7 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
                         type="button"
                         variant="outline"
                         aria-label={`Deny ${origin}`}
-                        disabled={pendingDecision}
+                        disabled={updatingOrigins.includes(origin)}
                         onClick={() => void decide('deny', id)}
                       >
                         Deny
@@ -96,7 +122,7 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
                       <Button
                         type="button"
                         aria-label={`Allow ${origin}`}
-                        disabled={pendingDecision}
+                        disabled={updatingOrigins.includes(origin)}
                         onClick={() => void decide('allow', id)}
                       >
                         Allow
@@ -136,7 +162,7 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
                         type="button"
                         variant="outline"
                         aria-label={`${label} ${origin}`}
-                        disabled={pendingDecision}
+                        disabled={updatingOrigins.includes(origin)}
                         onClick={() => void decide('revoke', id)}
                       >
                         {label}
@@ -147,7 +173,7 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
               </ul>
             </section>
           ) : null}
-          {!showEmptyState && !loading && !diagnosticsError && !pendingDecision ? (
+          {!showEmptyState && !loading && !diagnosticsError && !updating ? (
             <div>
               <Button type="button" variant="outline" onClick={onRun}>
                 Run diagnostics

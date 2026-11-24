@@ -1,3 +1,4 @@
+import { createMdxSmokeClient } from './mdx-native-smoke-client.mjs'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -6,23 +7,14 @@ export async function runDocumentNativeAcceptance(
   page,
   { artifact, source, rawOrigin, ui, checks, report: external, resources, assertNoTraffic },
 ) {
+  const { wire, rpc, call, refuse } = createMdxSmokeClient(page)
+
   const { waitFor, windowStatus } = ui
   const { open: openResources, click } = resources
   const remote = 'fixture/isolated-mdx'
   const probePath = 'notes/probe.mdx'
   const runDiagnostics = 'Run diagnostics'
   const allow = (origin) => `Allow ${origin}`
-  const wire = (name, input, type = 'mutation') => ({ path: `mdxTrust.${name}`, type, input })
-  const rpc = (operation) => page.evaluate(`window.holi.trpc(${JSON.stringify(operation)})`)
-  const call = async (name, input, type) => {
-    const response = await rpc(wire(name, input, type))
-    assert(response?.ok, `${name} refused by the application router`)
-    return response.data
-  }
-  const refuse = async (response, label, message) => {
-    const result = await response
-    assert(result?.ok === false && message.test(result.message), label)
-  }
   const staleResource = /MDX (?:lease|resource request) unavailable|MDX context changed/i
   const ready = () =>
     waitFor(

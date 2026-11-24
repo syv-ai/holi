@@ -32,7 +32,7 @@ type Lease = {
   generation: number
   compiled: number | null
   query: number
-  reading: boolean
+  refreshPending: boolean
 }
 type Pending = { generation: number; query: number; items: MdxExternalResourceRequest[] }
 type Resources = {
@@ -46,8 +46,18 @@ type Decision = 'allow' | 'deny' | 'revoke'
 type DecisionAttempt = {
   owner: Lease
   sourceVersion: number
+  generation: number
   action: Decision
   origin: string
+  id: string
+}
+type DecisionError = { attempt: DecisionAttempt; message: string }
+
+function attemptCurrent(attempt: DecisionAttempt) {
+  return (
+    attempt.owner.current() &&
+    (attempt.action === 'revoke' || attempt.generation === attempt.owner.generation)
+  )
 }
 
 /** Owns diagnostics and external resource decisions for one visible source editor. */
@@ -101,12 +111,9 @@ export function useMdxDiagnostics(input: Input) {
     () => ({ scope, ownershipRevision, renderedSourceVersion }),
     [scope, ownershipRevision, renderedSourceVersion],
   )
-  const [decisionError, setDecisionError] = useState<{
-    attempt: DecisionAttempt
-    message: string
-  } | null>(null)
-  const [decision, setDecision] = useState<DecisionAttempt | null>(null)
-  const deciding = useRef<DecisionAttempt | null>(null)
+  const [decisionErrors, setDecisionErrors] = useState<DecisionError[]>([])
+  const [decisions, setDecisions] = useState<DecisionAttempt[]>([])
+  const deciding = useRef(new Map<string, DecisionAttempt>())
   // Denial dismisses this origin in this view even if an autosave or another
   // view's event reruns diagnostics. Only an explicit run offers it here again.
   const dismissed = useRef<{ identity: object; origins: Set<string> } | null>(null)
@@ -124,14 +131,11 @@ export function useMdxDiagnostics(input: Input) {
 
   const readResources = useCallback(async (owner: Lease) => {
     if (!owner.current()) return
-    const version = sourceVersion.current
-    // Grant IDs belong to the lease. Only a read begun after the current
-    // compile can offer new approvals for that source generation.
+    // Grants belong to the lease, even across source edits. Only a read begun
+    // after the current compile can offer approvals for that source generation.
     const generation = owner.compiled
     const query = ++owner.query
-    owner.reading = true
-    const current = () =>
-      owner.current() && owner.query === query && sourceVersion.current === version
+    const current = () => owner.current() && owner.query === query
     const approvedFor = (previous: Resources | null) =>
       previous?.owner === owner ? previous.approved : []
     setResources((previous) => ({ owner, approved: approvedFor(previous), loading: true }))
@@ -155,8 +159,6 @@ export function useMdxDiagnostics(input: Input) {
           loading: false,
           error: errorMessage(error),
         }))
-    } finally {
-      if (owner.query === query) owner.reading = false
     }
   }, [])
 
@@ -170,6 +172,7 @@ export function useMdxDiagnostics(input: Input) {
     ) => {
       const next = ++owner.generation
       owner.compiled = null
+      owner.refreshPending = false
       latestSource.current = source
       window.clearTimeout(timer.current)
       setState({ kind: 'checking' })
@@ -229,6 +232,19 @@ export function useMdxDiagnostics(input: Input) {
     [clear, readResources],
   )
 
+  const flushDiagnosticsRefresh = useCallback(
+    (owner: Lease) => {
+      if (!owner.refreshPending || !owner.current()) return
+      // A push can already be in flight when main admits an unrelated approval.
+      // Refresh grants now, but don't retire its offer until the decision settles.
+      if ([...deciding.current.values()].some(attemptCurrent)) return
+      const currentScope = renderedScope.current
+      if (currentScope.view && latestSource.current !== null)
+        schedule(currentScope.view, latestSource.current, owner, false, currentScope)
+    },
+    [schedule],
+  )
+
   useEffect(() => {
     const eligible = Boolean(
       view && remote && /^.+\.mdx$/i.test(path) && visible && trusted && context && scope.vaultOpen,
@@ -239,6 +255,9 @@ export function useMdxDiagnostics(input: Input) {
     active.current = true
     latestSource.current = eligible && view ? view.state.doc.toString() : null
     setResources(null)
+    deciding.current.clear()
+    setDecisions([])
+    setDecisionErrors([])
     window.clearTimeout(timer.current)
     clear(view, scope)
     if (!eligible || !view || !remote || !context) {
@@ -290,7 +309,7 @@ export function useMdxDiagnostics(input: Input) {
           generation: 0,
           compiled: null,
           query: 0,
-          reading: false,
+          refreshPending: false,
         }
         lease.current = owner
         schedule(view, latestSource.current, owner, false, scope)
@@ -327,10 +346,11 @@ export function useMdxDiagnostics(input: Input) {
       const owner = lease.current
       if (!owner?.current() || renderedScope.current !== scope || latestSource.current === null)
         return
-      schedule(view, latestSource.current, owner, false, scope)
+      owner.refreshPending = true
+      flushDiagnosticsRefresh(owner)
       void readResources(owner)
     })
-  }, [remote, trusted, visible, view, scope, schedule, readResources])
+  }, [remote, trusted, visible, view, scope, flushDiagnosticsRefresh, readResources])
 
   const sourceChanged = useCallback(
     (target: EditorView, source: string) => {
@@ -347,10 +367,8 @@ export function useMdxDiagnostics(input: Input) {
       const owner = lease.current
       if (!owner?.current()) return
       schedule(target, source, owner, false, currentScope)
-      // Replace any query retired by the edit without waiting for the next compile.
-      if (owner.reading) void readResources(owner)
     },
-    [schedule, readResources],
+    [schedule],
   )
 
   function retry() {
@@ -392,86 +410,83 @@ export function useMdxDiagnostics(input: Input) {
           dismissed.current?.identity !== identity || !dismissed.current.origins.has(origin),
       )
     : []
-  const pendingDecision = decision !== null && attemptCurrent(decision)
-  // A grant change can replace the query and generation before an admitted
-  // decision reports its failure. The failure still belongs to this source and origin.
-  const currentError =
-    decisionError && decisionSourceCurrent(decisionError.attempt) ? decisionError : null
-  const error = currentError
-    ? {
-        message: `${currentError.attempt.origin}: ${currentError.message}`,
-        retry: () => {
-          const attempt = currentError.attempt
-          if (!decisionSourceCurrent(attempt)) return
-          if (attempt.action === 'revoke') {
-            const grant = approved.find(({ origin }) => origin === attempt.origin)
-            if (grant) {
-              void decide('revoke', grant.id)
-            } else {
-              setDecisionError(null)
-              void readResources(attempt.owner)
-            }
-          } else if (view && latestSource.current !== null) {
-            // Recompile to obtain a fresh request. Only an explicit decision on
-            // the current request can grant consent.
-            setDecisionError(null)
-            schedule(view, latestSource.current, attempt.owner, true, scope)
-          }
-        },
-      }
-    : currentResources?.error && owner
+  const updatingOrigins = decisions.filter(attemptCurrent).map(({ origin }) => origin)
+  const queryError =
+    currentResources?.error && owner
       ? { message: currentResources.error, retry: () => void readResources(owner) }
       : null
+  // A diagnostic rerun can replace offers; a failure still belongs to the
+  // origin and source that the user reviewed (or to the lease for revocation).
+  const errors = decisionErrors.filter(({ attempt }) => decisionErrorCurrent(attempt))
 
-  function decisionSourceCurrent(attempt: DecisionAttempt) {
-    return attempt.owner.current() && attempt.sourceVersion === sourceVersion.current
+  function decisionErrorCurrent(attempt: DecisionAttempt) {
+    return (
+      attempt.owner.current() &&
+      (attempt.action === 'revoke' || attempt.sourceVersion === sourceVersion.current)
+    )
   }
 
-  function attemptCurrent(attempt: DecisionAttempt) {
-    return attempt.action === 'revoke' ? attempt.owner.current() : decisionSourceCurrent(attempt)
+  function originUpdating(origin: string) {
+    const attempt = deciding.current.get(origin)
+    return attempt !== undefined && attemptCurrent(attempt)
+  }
+
+  function retryDecision(attempt: DecisionAttempt) {
+    if (!decisionErrorCurrent(attempt) || originUpdating(attempt.origin)) return
+    if (attempt.action === 'revoke' && approved.some(({ id }) => id === attempt.id)) {
+      void decide('revoke', attempt.id)
+      return
+    }
+    setDecisionErrors((previous) => previous.filter((error) => error.attempt !== attempt))
+    if (attempt.action !== 'revoke') {
+      // Obtain a fresh request, never automatically approve a replacement.
+      attempt.owner.refreshPending = true
+      flushDiagnosticsRefresh(attempt.owner)
+    }
+    void readResources(attempt.owner)
   }
 
   async function decide(action: Decision, id: string) {
-    if (!owner?.current() || (deciding.current && attemptCurrent(deciding.current))) return
-    if (action !== 'revoke' && !pendingCurrent()) return
+    if (!owner?.current() || (action !== 'revoke' && !pendingCurrent())) return
     const item = (action === 'revoke' ? approved : pending).find((item) => item.id === id)
-    if (!item) return
-    const attempt = { owner, sourceVersion: sourceVersion.current, action, origin: item.origin }
-    const startedGeneration = owner.generation
-    deciding.current = attempt
-    setDecision(attempt)
-    setDecisionError(null)
+    if (!item || originUpdating(item.origin)) return
+    const { origin } = item
+    const attempt = {
+      owner,
+      sourceVersion: sourceVersion.current,
+      generation: owner.generation,
+      action,
+      origin,
+      id,
+    }
+    deciding.current.set(origin, attempt)
+    setDecisions((previous) => [...previous.filter((item) => item.origin !== origin), attempt])
+    setDecisionErrors((previous) => previous.filter((error) => error.attempt.origin !== origin))
     try {
       if (action === 'deny') {
         await trpc.mdxTrust.rejectExternalResource.mutate({ lease: owner.id, requestId: id })
         if (!attemptCurrent(attempt)) return
         if (dismissed.current?.identity !== identity)
           dismissed.current = { identity, origins: new Set() }
-        dismissed.current.origins.add(item.origin)
-        void readResources(owner)
+        dismissed.current.origins.add(origin)
+      } else if (action === 'allow') {
+        await trpc.mdxTrust.approveExternalResource.mutate({ lease: owner.id, requestId: id })
+        if (attemptCurrent(attempt)) owner.refreshPending = true
       } else {
-        if (action === 'allow') {
-          await trpc.mdxTrust.approveExternalResource.mutate({ lease: owner.id, requestId: id })
-        } else {
-          await trpc.mdxTrust.revokeExternalResource.mutate({ lease: owner.id, grantId: id })
-        }
-        if (!attemptCurrent(attempt)) return
-        // Push events normally refresh both splits. Read again after revoke because
-        // the first event can arrive before the persistence attempt has settled.
-        if (owner.generation === startedGeneration && view && latestSource.current !== null) {
-          schedule(view, latestSource.current, owner, false, scope)
-          void readResources(owner)
-        } else if (action === 'revoke') {
-          void readResources(owner)
-        }
+        await trpc.mdxTrust.revokeExternalResource.mutate({ lease: owner.id, grantId: id })
+        if (attemptCurrent(attempt)) owner.refreshPending = true
       }
     } catch (error) {
-      if (decisionSourceCurrent(attempt))
-        setDecisionError({ attempt, message: errorMessage(error) })
-      if (action === 'revoke' && owner.current()) void readResources(owner)
+      if (attemptCurrent(attempt))
+        setDecisionErrors((previous) => [...previous, { attempt, message: errorMessage(error) }])
     } finally {
-      if (deciding.current === attempt) deciding.current = null
-      setDecision((previous) => (previous === attempt ? null : previous))
+      if (deciding.current.get(origin) === attempt) deciding.current.delete(origin)
+      setDecisions((previous) => previous.filter((item) => item !== attempt))
+      if (attemptCurrent(attempt)) {
+        flushDiagnosticsRefresh(owner)
+        // For revoke, the push can arrive before persistence has settled.
+        void readResources(owner)
+      }
     }
   }
 
@@ -484,9 +499,14 @@ export function useMdxDiagnostics(input: Input) {
           approved,
           pending,
           loading: currentState.kind === 'checking' || currentResources?.loading === true,
-          error,
+          queryError,
+          decisionErrors: errors.map(({ attempt, message }) => ({
+            origin: attempt.origin,
+            message: `${attempt.origin}: ${message}`,
+            retry: () => retryDecision(attempt),
+          })),
           diagnosticsError: currentState.kind === 'unavailable' ? currentState.message : null,
-          pendingDecision,
+          updatingOrigins,
           visit,
           decide,
         }

@@ -238,7 +238,12 @@ async function runNative(electron, artifact) {
     electron,
     [artifact, `--remote-debugging-port=${port}`, '--disable-background-networking'],
     {
-      env: { ...childEnv, HOLI_MDX_SMOKE_PROFILE: profile, HOLI_MDX_SMOKE_VAULT: vault },
+      env: {
+        ...childEnv,
+        HOLI_MDX_SMOKE_PROFILE: profile,
+        HOLI_MDX_SMOKE_VAULT: vault,
+        HOLI_MDX_SMOKE_FIXTURE_SHA: fixtureSha,
+      },
     },
   )
   let exited
