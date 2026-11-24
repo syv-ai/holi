@@ -365,6 +365,9 @@ async function main() {
     async () =>
       (await readFile(join(roots.get(A)!, 'teammate.md'), 'utf8').catch(() => '')) === 'teammate\n',
   )
+  // The file arriving proves the merge landed, not that its pull has left the
+  // busy state. CLI settlement explicitly refuses while a pull is in flight.
+  await wait('background A finishes teammate pull', async () => a.syncState().kind !== 'pulling')
   let delivered = await cli(
     ['docs', 'create', 'cli-note.md', '--vault', A, '--json'],
     'CLI background\n',
