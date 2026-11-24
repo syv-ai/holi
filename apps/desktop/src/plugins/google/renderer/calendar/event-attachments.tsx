@@ -22,11 +22,13 @@ type Read = { data: AttachmentList } | { error: unknown }
 type Attempt = {
   files: DriveFileChoice[]
   result: AttachEventFilesResult
+  priorSharing: AttachEventFilesResult['sharing']
+  writeStatus?: AttachEventFilesResult['calendarWriteStatus']
   checked?: boolean
-  attachmentUnconfirmed?: boolean
 }
 interface Recovery {
   attempt: Attempt | null
+  unconfirmedFiles: DriveFileChoice[]
   pending?: 'submit' | 'check'
   checkError: { cause: unknown; files: DriveFileChoice[]; previous?: Attempt } | null
 }
@@ -35,27 +37,29 @@ interface Recovery {
 // not the open picker or its unsubmitted selection, in the window's store.
 const recoveryAtom = atom(new Map<string, Recovery>())
 
-function reconcile(result: AttachEventFilesResult, previous?: Attempt): AttachEventFilesResult {
+function reconcileAccess(result: AttachEventFilesResult, previous?: Attempt) {
+  const files = result.attachmentsVerified
+    ? new Set(result.attachments.map(({ fileId }) => fileId))
+    : null
   const guests = result.guestsChecked && new Set(result.guestsChecked)
-  const sharing = result.sharing.filter(({ guest }) => !guests || guests.has(guest))
-  for (const row of previous?.result.sharing ?? []) {
-    if (row.status !== 'unknown' || (guests && !guests.has(row.guest))) continue
-    const index = sharing.findIndex(
-      ({ fileId, guest }) => fileId === row.fileId && guest === row.guest,
-    )
-    // An incomplete read cannot establish that a guest left or an uncertain
-    // grant failed. Main owns the durable per-file write barrier.
-    if (index === -1) sharing.push(row)
-    else if (sharing[index]?.status === 'failed') sharing[index] = row
+  const relevant = ({ fileId, guest }: AttachEventFilesResult['sharing'][number]) =>
+    (!files || files.has(fileId)) && (!guests || guests.has(guest))
+  const sharing = result.sharing.filter(relevant)
+  // An incomplete read cannot establish that an uncertain grant failed. Keep
+  // that history separate from current results; main owns the durable barrier.
+  const priorSharing: AttachEventFilesResult['sharing'] = []
+  if (previous && (!files || !guests)) {
+    for (const row of [...previous.priorSharing, ...previous.result.sharing]) {
+      if (row.status !== 'unknown' || !relevant(row)) continue
+      const index = sharing.findIndex(
+        ({ fileId, guest }) => fileId === row.fileId && guest === row.guest,
+      )
+      if (index !== -1 && sharing[index]?.status !== 'failed') continue
+      if (index !== -1) sharing.splice(index, 1)
+      priorSharing.push(row)
+    }
   }
-  return {
-    ...result,
-    attachmentStatus:
-      previous?.attachmentUnconfirmed && result.attachmentStatus !== 'attached'
-        ? 'unknown'
-        : result.attachmentStatus,
-    sharing,
-  }
+  return { result: { ...result, sharing }, priorSharing }
 }
 
 function driveAttachments(attachments: AttachmentList['attachments']): DriveFileChoice[] {
@@ -158,19 +162,25 @@ export function EventAttachments({
   const attachedIds = new Set(data?.attachments.flatMap(({ fileId }) => (fileId ? [fileId] : [])))
   const existingFiles = driveAttachments(data?.attachments ?? [])
   const slots = Math.max(0, ATTACHMENT_LIMIT - (data?.attachments.length ?? 0))
-  // An unknown Calendar write still needs reconciliation. Drive outcomes,
-  // including quarantined grants, are file-specific and don't block Add.
-  const canSubmit =
-    data?.canAttach === true && !attempt?.attachmentUnconfirmed && !recovery?.pending
-  const checkAttempt = attempt && attempt.result.attachmentStatus !== 'failed' ? attempt : undefined
-  const filesToCheck =
-    checkAttempt && (checkAttempt.attachmentUnconfirmed || !data)
-      ? checkAttempt.files
-      : existingFiles
-  const revisable =
-    attempt?.result.attachmentStatus === 'failed' && !attempt.checked
-      ? attempt.files.filter(({ id }) => !attachedIds.has(id))
-      : []
+  const unconfirmedFiles = recovery?.unconfirmedFiles ?? []
+  const unconfirmedIds = new Set(unconfirmedFiles.map(({ id }) => id))
+  const unavailable = (id: string) => attachedIds.has(id) || unconfirmedIds.has(id)
+  const canSubmit = data?.canAttach === true && !recovery?.pending
+  const noWrite =
+    attempt &&
+    !attempt.checked &&
+    attempt.result.attachmentStatus === 'failed' &&
+    (attempt.writeStatus === 'not-written' || attempt.writeStatus === undefined)
+  const checkAttempt = attempt && !noWrite ? attempt : undefined
+  // Check the current attachments, not the entire historical selection. If
+  // there's no current list yet, a read-only check can still verify the attempt.
+  const knownFiles = data ? existingFiles : driveAttachments(checkAttempt?.result.attachments ?? [])
+  const fallbackFiles =
+    data || checkAttempt?.result.attachmentsVerified
+      ? unconfirmedFiles.slice(0, ATTACHMENT_LIMIT)
+      : (checkAttempt?.files ?? [])
+  const filesToCheck = knownFiles.length > 0 ? knownFiles : fallbackFiles
+  const revisable = noWrite ? attempt.files.filter(({ id }) => !unavailable(id)) : []
   const confirm = async (files: DriveFileChoice[]) => {
     if (
       !canStart() ||
@@ -178,10 +188,10 @@ export function EventAttachments({
       files.length === 0 ||
       files.length > ATTACHMENT_LIMIT ||
       files.length > slots ||
-      files.some(({ id }) => attachedIds.has(id))
+      files.some(({ id }) => unavailable(id))
     )
       return
-    saveRecovery({ attempt, pending: 'submit', checkError: null })
+    saveRecovery({ attempt, unconfirmedFiles, pending: 'submit', checkError: null })
     let result: AttachEventFilesResult
     try {
       // A refused preflight returns a definite failure, so users may choose
@@ -195,6 +205,8 @@ export function EventAttachments({
       result = {
         attachments: [],
         attachmentStatus: 'unknown',
+        calendarWriteStatus: 'unknown',
+        attachmentsVerified: false,
         sharing: [],
         message: messageOf(error, 'Google did not return an attachment result.'),
         reconnect: attachmentConsentNeeded(error),
@@ -202,18 +214,20 @@ export function EventAttachments({
     }
     setDialog(null)
     saveRecovery({
-      attempt: {
-        files,
-        result: reconcile(result),
-        attachmentUnconfirmed: result.attachmentStatus === 'unknown',
-      },
+      attempt: { files, ...reconcileAccess(result), writeStatus: result.calendarWriteStatus },
+      // A fresh list cannot attribute an attachment to a lost write. Keep
+      // this guard per file across unrelated adds and read-only checks.
+      unconfirmedFiles:
+        result.calendarWriteStatus === 'unknown'
+          ? [...unconfirmedFiles, ...files]
+          : unconfirmedFiles,
       checkError: null,
     })
   }
 
   const check = async (files: DriveFileChoice[], previous?: Attempt) => {
     if (!files.length || !currentAccount || !canStart()) return
-    saveRecovery({ attempt, pending: 'check', checkError })
+    saveRecovery({ attempt, unconfirmedFiles, pending: 'check', checkError })
     try {
       const result = await googleCap.checkEventFileAccess(remote, {
         ...target,
@@ -222,17 +236,17 @@ export function EventAttachments({
       saveRecovery({
         attempt: {
           files,
-          result: reconcile(result, previous),
-          attachmentUnconfirmed:
-            previous?.attachmentUnconfirmed && result.attachmentStatus !== 'attached',
+          ...reconcileAccess(result, previous),
+          writeStatus: previous?.writeStatus,
           checked: true,
         },
+        unconfirmedFiles,
         checkError: null,
       })
     } catch (error) {
       // A Drive refusal leaves Calendar readable. Refresh its list even when
       // the access call could not return a Calendar snapshot at all.
-      saveRecovery({ attempt, checkError: { cause: error, files, previous } })
+      saveRecovery({ attempt, unconfirmedFiles, checkError: { cause: error, files, previous } })
     }
   }
 
@@ -369,6 +383,8 @@ export function EventAttachments({
         <AttachmentOutcome
           files={attempt.files}
           result={attempt.result}
+          priorSharing={attempt.priorSharing}
+          writeStatus={attempt.writeStatus}
           checked={attempt.checked}
           data={data}
           canCheck={currentAccount && !recovery?.pending}
@@ -394,6 +410,7 @@ export function EventAttachments({
           target={target}
           eventTitle={eventTitle}
           attachedIds={attachedIds}
+          unconfirmedIds={unconfirmedIds}
           slots={slots}
           initialFiles={dialog === 'revise' ? revisable : undefined}
           busy={busy}

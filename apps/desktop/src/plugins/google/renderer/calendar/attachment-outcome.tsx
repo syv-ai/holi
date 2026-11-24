@@ -9,6 +9,8 @@ import type { DriveFileChoice } from './drive-files-dialog'
 export function AttachmentOutcome({
   files,
   result,
+  priorSharing,
+  writeStatus,
   checked,
   data,
   canCheck,
@@ -18,6 +20,8 @@ export function AttachmentOutcome({
 }: {
   files: DriveFileChoice[]
   result: AttachEventFilesResult
+  priorSharing: AttachEventFilesResult['sharing']
+  writeStatus?: AttachEventFilesResult['calendarWriteStatus']
   checked?: boolean
   data: AttachmentList | null
   canCheck: boolean
@@ -31,38 +35,50 @@ export function AttachmentOutcome({
   // A previous positive result cannot promote a file absent from Calendar.
   const missingFromCalendar = data !== null && files.some(({ id }) => !present.has(id))
   const stillAttached = data !== null && !missingFromCalendar && attachmentStatus === 'attached'
-  const issues = sharing.filter(
+  const current = sharing.filter(({ fileId }) => !data || present.has(fileId))
+  const issues = current.filter(
     ({ status }) => status === 'failed' || status === 'unknown' || status === 'blocked',
   )
-  const accessible = sharing.filter(
+  const accessRows = [
+    ...issues.map((row) => ({ row, prior: result.attachmentsVerified === false })),
+    ...priorSharing
+      .filter(({ fileId }) => !data || (result.guestsChecked === undefined && present.has(fileId)))
+      .map((row) => ({ row, prior: true })),
+  ]
+  const accessible = current.filter(
     ({ fileId, status }) =>
+      result.attachmentsVerified !== false &&
       observed.has(fileId) &&
       present.has(fileId) &&
       (status === 'granted' || status === 'already-accessible'),
   )
-  const incomplete = result.sharingComplete === false || issues.length > 0 || reconnect || message
+  const incomplete =
+    result.sharingComplete === false || accessRows.length > 0 || reconnect || message
+  const noWrite =
+    !checked &&
+    attachmentStatus === 'failed' &&
+    (writeStatus === 'not-written' || writeStatus === undefined)
   const title = stillAttached
     ? incomplete
       ? 'Guest access incomplete'
       : checked
         ? 'Guest access checked'
         : 'Files attached'
-    : attachmentStatus === 'failed' && !checked
+    : noWrite
       ? 'Attachment failed'
-      : 'Attachment not confirmed'
+      : writeStatus === 'confirmed'
+        ? 'Current attachments not confirmed'
+        : 'Attachment not confirmed'
   return (
-    <Alert
-      variant={
-        attachmentStatus === 'failed'
-          ? 'destructive'
-          : incomplete || !stillAttached
-            ? 'warning'
-            : 'success'
-      }
-    >
+    <Alert variant={noWrite ? 'destructive' : incomplete || !stillAttached ? 'warning' : 'success'}>
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription>
         {stillAttached && incomplete && !checked && <p>Files attached.</p>}
+        {!stillAttached && writeStatus === 'confirmed' && (
+          <p>
+            Google confirmed the earlier Calendar update. It may not reflect what is attached now.
+          </p>
+        )}
         {missingFromCalendar && (checked || attachmentStatus === 'attached') && (
           <p>One or more checked files aren’t on the event.</p>
         )}
@@ -72,8 +88,9 @@ export function AttachmentOutcome({
             {`Guest access confirmed for ${accessible.length} file–guest ${accessible.length === 1 ? 'pair' : 'pairs'}.`}
           </p>
         )}
-        {issues.map(({ fileId, guest, status, message }) => (
+        {accessRows.map(({ row: { fileId, guest, status, message }, prior }) => (
           <p key={JSON.stringify([fileId, guest])} className="wrap-anywhere">
+            {prior && 'Prior result: '}
             {status === 'blocked'
               ? 'Sharing blocked'
               : status === 'unknown'
@@ -83,13 +100,13 @@ export function AttachmentOutcome({
             {message ? ` — ${message}` : ''}
           </p>
         ))}
-        {issues.some(({ status }) => status === 'blocked') && (
+        {accessRows.some(({ row, prior }) => !prior && row.status === 'blocked') && (
           <p>Holi won’t share this file again while a previous sharing request is unconfirmed.</p>
         )}
         {(stillAttached || files.some(({ id }) => present.has(id))) && incomplete && (
           <p>Open the attached file to manage access in Google Drive if you can share it.</p>
         )}
-        {attachmentStatus === 'failed' && !checked && reconnect && (
+        {noWrite && reconnect && (
           <p>
             Reconnect Google before confirming again. No files were attached or shared by this
             request.
