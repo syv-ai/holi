@@ -10,11 +10,11 @@ async function main(): Promise<void> {
   const argument = process.argv[2]
   if (!argument) throw new Error('Usage: seed-agent-inbox-550 <existing-owned-runtime-directory>')
   const runtime = resolve(argument)
+  const uid = process.getuid?.()
+  if (uid === undefined) throw new Error('The agent inbox fixture requires POSIX ownership checks')
   const stat = await lstat(runtime)
-  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid())
-    throw new Error(
-      `Runtime must be an existing directory owned by uid ${process.getuid()}: ${runtime}`,
-    )
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== uid)
+    throw new Error(`Runtime must be an existing directory owned by uid ${uid}: ${runtime}`)
   if ((await realpath(runtime)) !== runtime)
     throw new Error(`Runtime path must be canonical: ${runtime}`)
 
