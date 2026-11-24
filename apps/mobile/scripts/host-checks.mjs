@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
 import { basename, dirname, join } from 'node:path'
 import { storageFaultPhases, storageFixturePaths } from '../app/vault-storage-check.ts'
@@ -49,6 +49,11 @@ export function validateReport(report, context) {
       'helpersDisabled',
       'remoteConstrained',
       'unsafeConfigRejected',
+      'queuedFetchDuringSave',
+      'queuedFetchFinalBytes',
+      'conflictingMoveFetchRejected',
+      'conflictingMoveBytesPreserved',
+      'conflictingMoveJournalPreserved',
     ])
       assert.equal(git[field], true, `Native Git proof failed: ${field}`)
     assert.equal(git.invalidTlsErrorCode, -17, 'Invalid TLS must be a certificate error')
@@ -60,6 +65,29 @@ export function validateReport(report, context) {
     assert.notEqual(git.transportErrorCode, git.invalidTlsErrorCode)
     assert.notEqual(git.transportErrorCode, git.authenticationErrorCode)
     assert.notEqual(git.transportErrorClass, git.invalidTlsErrorClass)
+    assert.equal(
+      readFileSync(join(storageRoot, `holi-git-${runId}-operation-gate`, 'gate.md'), 'utf8'),
+      'after',
+    )
+    const moveRoot = join(storageRoot, `holi-git-move-recovery-${runId}`)
+    assert.equal(git.conflictingMoveRoot, moveRoot)
+    assert.equal(git.conflictingMoveJournalName, 'move-30000000-0000-4000-8000-000000000719.json')
+    assert.equal(readFileSync(join(moveRoot, 'from.md'), 'utf8'), 'newer user bytes')
+    assert.equal(existsSync(join(moveRoot, 'to.md')), false)
+    const journalPath = join(stagingDirectory(library, moveRoot), git.conflictingMoveJournalName)
+    const originalBytes = [...new TextEncoder().encode('original bytes')]
+    const expectedJournal = {
+      schema: 2,
+      root: moveRoot,
+      operationId: '30000000-0000-4000-8000-000000000719',
+      from: 'from.md',
+      to: 'to.md',
+      changes: [
+        { path: 'from.md', before: originalBytes, after: null },
+        { path: 'to.md', before: null, after: originalBytes },
+      ],
+    }
+    assert.deepEqual(readFileSync(journalPath), Buffer.from(JSON.stringify(expectedJournal)))
   }
   const reference = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
   assert.ok(reference.total > 0)
