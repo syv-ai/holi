@@ -45,7 +45,6 @@ export async function inspectMdxDependencies(options: {
       if (signal.aborted) throw signal.reason ?? new Error('MDX compile superseded')
       await options.assertCurrent()
       if (signal.aborted) throw signal.reason ?? new Error('MDX compile superseded')
-      await validateTree()
     }
     const completed = new Set<string>(),
       active = new Set<string>()
@@ -65,7 +64,7 @@ export async function inspectMdxDependencies(options: {
     }) => `${id(s)}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`
     const rootStat = await stat(rootCanonical)
     const rootIdentity = id(rootStat)
-    const validateTree = async () => {
+    const validateRootAndAncestors = async () => {
       if (
         (await realpath(options.root)) !== rootCanonical ||
         id(await stat(rootCanonical)) !== rootIdentity
@@ -75,6 +74,9 @@ export async function inspectMdxDependencies(options: {
         if ((await realpath(path)) !== path || id(await stat(path)) !== expected)
           throw new Error('Dependency ancestor changed during MDX inspection')
       }
+    }
+    const validateTree = async () => {
+      await validateRootAndAncestors()
       for (const [path, expected] of snapshots) {
         const target = join(rootCanonical, path)
         if (
@@ -162,6 +164,7 @@ export async function inspectMdxDependencies(options: {
           try {
             await check()
             if ((await exactPath(rootCanonical, child)) !== target) throw new Error('unsafe path')
+            await validateRootAndAncestors()
             let parent = dirname(target)
             while (parent !== rootCanonical) {
               if ((await realpath(parent)) !== parent) throw new Error('unsafe ancestor')
