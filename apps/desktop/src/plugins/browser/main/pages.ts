@@ -278,7 +278,7 @@ export function createPages(deps: PagesDeps): Pages & {
   }
 
   const isLive = (tab: Tab): boolean =>
-    !disposed && tabs.get(tab.id) === tab && !tab.view.webContents.isDestroyed()
+    !disposed && tabs.get(tab.id) === tab && tab.view.webContents?.isDestroyed() === false
 
   const isPresented = (tab: Tab): boolean =>
     isLive(tab) &&

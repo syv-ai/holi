@@ -29,7 +29,7 @@ export function createChildFrameVim(
   let sampling: Promise<ModeSnapshot | null> | null = null
 
   const current = (owner: FrameCapture): boolean =>
-    !disposed && owner === capture && enabled && presented() && !contents.isDestroyed()
+    !disposed && owner === capture && enabled && !contents.isDestroyed() && presented()
 
   function revoke(blur = false): Promise<void> {
     if (blur && children.size > 0 && !contents.isDestroyed()) releaseFocus()

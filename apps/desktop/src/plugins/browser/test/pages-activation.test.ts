@@ -195,7 +195,7 @@ describe('browser page activation', () => {
     pages.dispose()
   })
 
-  it.each(['configuration', 'focus', 'document'] as const)(
+  it.each(['configuration', 'focus', 'document', 'native-view'] as const)(
     'retires queued Vim mode delivery after %s ownership changes',
     async (change) => {
       const { createPages } = await import('../main/pages')
@@ -210,6 +210,7 @@ describe('browser page activation', () => {
         reveal: () => {},
         vimMode: (_id, snapshot, guard) => emitted.push({ ...snapshot, guard: guard! }),
       })
+      let restoreNativeView: (() => void) | undefined
       try {
         await pages.open({ id: 'queued', reveal: false })
         const wc = native.views[0].webContents
@@ -223,12 +224,18 @@ describe('browser page activation', () => {
           await pages.configureVim('queued', true, 1, queued.nonce, queued.attachment)
         } else if (change === 'focus') {
           wc.focusedFrame = { detached: false }
-        } else {
+        } else if (change === 'document') {
           // Dispatch Electron's public navigation event contract.
           wc.listeners.get('did-start-navigation')({ isMainFrame: true, isSameDocument: false })
+        } else {
+          native.views[0].webContents = undefined
+          restoreNativeView = () => {
+            native.views[0].webContents = wc
+          }
         }
         expect(queued.guard()).toBe(false)
       } finally {
+        restoreNativeView?.()
         pages.dispose()
       }
     },
