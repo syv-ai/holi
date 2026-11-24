@@ -7,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, readonly) NSString *path;
 - (nullable instancetype)initWithRoot:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (void)close;
+- (BOOL)closeWithError:(NSError **)error;
 @end
 
 NS_ASSUME_NONNULL_END

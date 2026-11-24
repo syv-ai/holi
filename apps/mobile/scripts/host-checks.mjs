@@ -25,6 +25,11 @@ export function validateWorkingCopyResults(results, cases, runId) {
     )
     if (expected.expectedRefusal) {
       assert.ok(typeof result.refusal === 'string' && result.refusal.length > 0)
+      assert.match(
+        result.refusal,
+        new RegExp(expected.refusalPattern, 'i'),
+        `Wrong refusal for ${expected.name}`,
+      )
     } else {
       assert.ok(Array.isArray(result.changes), `Working-copy changes missing: ${expected.name}`)
       const changes = expected.expectedChanges

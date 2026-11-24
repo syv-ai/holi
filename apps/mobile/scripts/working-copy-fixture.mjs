@@ -97,29 +97,57 @@ function semanticEntries(raw) {
   for (const row of records) {
     const fields = row.split(' ')
     if (row.startsWith('1 ')) {
-      const p = fields.at(-1)
+      const p = fields.slice(row.startsWith('u ') ? 10 : 8).join(' ')
       if (!exclusions(p))
         out.push({ kind: 'change', path: p, index: fields[1][0], worktree: fields[1][1] })
     } else if (row.startsWith('2 ')) {
-      const p = fields.at(-1),
+      const p = fields.slice(row.startsWith('u ') ? 10 : 8).join(' '),
         original = records[records.indexOf(row) + 1]
       if (!exclusions(p) && !exclusions(original))
         out.push({ kind: 'rename', path: p, original, index: fields[1][0], worktree: fields[1][1] })
     } else if (row.startsWith('u ')) {
-      const p = fields.at(-1)
+      const p = fields.slice(row.startsWith('u ') ? 10 : 8).join(' ')
       if (!exclusions(p)) out.push({ kind: 'conflict', path: p })
     } else if (row.startsWith('? ')) {
       const p = row.slice(2)
       if (!exclusions(p)) out.push({ kind: 'untracked', path: p })
     }
   }
-  return out
+  return out.filter((entry) => entry.path !== 'outside.md')
 }
 
 export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
   const cases = []
   const specs = [
     ['clean', async () => {}],
+    ['attributes', async (r) => put(r, '.gitattributes', '*.md text\n')],
+    [
+      'tracked-spaces',
+      async (r) => {
+        await put(r, 'tracked space.md', 'staged\n')
+        await git(r, 'add', 'tracked space.md')
+        await put(r, 'tracked space.md', 'worktree\n')
+      },
+    ],
+    [
+      'ignored-deletion',
+      async (r) => {
+        await git(r, 'rm', '--cached', 'tracked.md')
+        await put(r, '.gitignore', 'tracked.md\n')
+      },
+    ],
+    [
+      'same-line-config',
+      async (r) =>
+        put(
+          r,
+          '.git/config',
+          (await readFile(join(r, '.git/config'), 'utf8')) +
+            '\n[core] [include]\n path = /outside/config\n',
+        ),
+    ],
+    ['outside-symlink', async (r) => symlink(parent, join(r, 'outside.md'))],
+    ['branch-name', async (r) => git(r, 'checkout', '-b', 'attributes')],
     ['pending-save', async () => {}],
     ['pending-move', async () => {}],
     ['pending-legacy', async () => {}],
@@ -144,7 +172,6 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
       'autocrlf',
       async (r) => {
         await git(r, 'config', 'core.autocrlf', 'true')
-        await put(r, '.gitattributes', '*.md text eol=crlf\n')
       },
     ],
     [
@@ -222,6 +249,7 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
     ],
     [
       'metadata',
+      'same-line-config',
       async (r) => {
         await rm(join(r, '.git'), { recursive: true })
         await symlink(parent, join(r, '.git'))
@@ -236,7 +264,8 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
     await git(root, 'config', 'user.email', 'fixture@invalid')
     await git(root, 'remote', 'add', 'origin', remoteUrl)
     await put(root, 'tracked.md', 'base\n')
-    await git(root, 'add', 'tracked.md')
+    await put(root, 'tracked space.md', 'base\n')
+    await git(root, 'add', 'tracked.md', 'tracked space.md')
     await git(root, 'commit', '-m', 'fixture base')
     await mutate(root)
     const expectedRefusal = [
@@ -245,6 +274,7 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
       'identity',
       'unsafe-config',
       'metadata',
+      'same-line-config',
       'autocrlf',
       'attributes',
       'skip-worktree',
@@ -283,9 +313,24 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
       name,
       root,
       remote: 'fixture/vault',
-      branch: name === 'detached' ? null : 'fixture-start',
+      branch: name === 'detached' ? null : name === 'branch-name' ? 'attributes' : 'fixture-start',
       expectedChanges,
       expectedRefusal,
+      refusalPattern: name.startsWith('pending-')
+        ? 'Vault recovery is pending'
+        : name === 'identity' || name === 'detached'
+          ? 'identity does not match'
+          : name === 'metadata'
+            ? 'Git metadata'
+            : name === 'unborn'
+              ? 'unborn|not found|reference'
+              : name === 'skip-worktree'
+                ? 'Unsupported index'
+                : name === 'attributes'
+                  ? 'Attributes are unsupported'
+                  : name === 'autocrlf'
+                    ? 'normalization'
+                    : 'config|directives',
       recovery,
       before: await snapshotWorkingCopy(root),
     })

@@ -50,25 +50,8 @@ static int HNGDisableUnsafeConfig(git_repository *repository) {
 }
 static int HNGCollectTree(const char *rootPath, const git_tree_entry *entry, void *payload) {
   NSMutableSet *paths=(__bridge NSMutableSet *)payload;
-  const char *name=git_tree_entry_name(entry); if(git_tree_entry_type(entry)==GIT_OBJECT_BLOB && name){NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,name]; if(![p hasPrefix:@".git/"])[paths addObject:p];}
+  const char *name=git_tree_entry_name(entry); if(git_tree_entry_type(entry)!=GIT_OBJECT_TREE && name){NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,name]; if(![p hasPrefix:@".git/"])[paths addObject:p];}
   return 0;
-}
-static BOOL HNGConfigHasForbiddenMetadata(NSString *text) {
-  for (NSString *rawLine in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
-    NSString *line = [rawLine stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
-    if (!line.length || [line hasPrefix:@"#"] || [line hasPrefix:@";"]) continue;
-    if ([line hasPrefix:@"["]) {
-      NSRange close = [line rangeOfString:@"]"];
-      if (close.location == NSNotFound) return YES;
-      NSString *section = [[line substringWithRange:NSMakeRange(1, close.location - 1)] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].lowercaseString;
-      if ([section isEqualToString:@"include"] || [section hasPrefix:@"include "] || [section hasPrefix:@"includeif "]) return YES;
-      continue;
-    }
-    NSRange equals = [line rangeOfString:@"="];
-    NSString *key = [[(equals.location == NSNotFound ? line : [line substringToIndex:equals.location]) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] lowercaseString];
-    if ([key isEqualToString:@"core.worktree"] || [key hasPrefix:@"extensions."]) return YES;
-  }
-  return NO;
 }
 static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   HNGUnsafeConfig *unsafe = payload;
@@ -307,7 +290,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   git_remote_free(origin);
   git_reference_free(head);
   git_repository_free(repo);
-  [snapshot close];
+  if (![snapshot closeWithError:error]) return nil;
   return result;
 }
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyCandidates:(NSString *)root error:(NSError **)error {
@@ -347,7 +330,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   git_reference_free(head);
   git_index_free(index);
   git_repository_free(repo);
-  [snapshot close];
+  if (![snapshot closeWithError:error]) return nil;
   return out;
 }
 - (BOOL)authorizeWorkingCopyPath:(NSString *)path root:(NSString *)root error:(NSError **)error {
@@ -427,7 +410,7 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   }
   if(rc==0 && commit) rc=git_commit_tree(&tree,commit);
   if(rc<0){ if(error)HNGError(error,rc); close(rootFD); git_index_free(index); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_repository_free(repo); [snapshot close]; return nil; }
-  git_config *config=NULL; BOOL filemode=YES; if(git_repository_config(&config,repo)==0){ int value=1; if(git_config_get_bool(&value,config,"core.filemode")==0)filemode=value; const char *unsupported[] = {"core.autocrlf", "core.eol", "core.attributesfile", "core.excludesfile"}; for (NSUInteger i=0; i<4; i++) { const char *setting=NULL; if (git_config_get_string(&setting,config,unsupported[i])==0) { if(error)*error=HNGPathError(EINVAL,@"Working-copy normalization or global ignore settings are unsupported"); git_config_free(config); close(rootFD); git_repository_free(repo); [snapshot close]; return nil; } } git_config_free(config); }
+  git_config *config=NULL; BOOL filemode=YES; if(git_repository_config(&config,repo)==0){ int value=1; if(git_config_get_bool(&value,config,"core.filemode")==0)filemode=value; const char *unsupported[] = {"core.autocrlf", "core.eol", "core.attributesfile", "core.excludesfile"}; for (NSUInteger i=0; i<4; i++) { git_config_entry *setting=NULL; int settingResult = git_config_get_entry(&setting,config,unsupported[i]); git_config_entry_free(setting); if (settingResult != GIT_ENOTFOUND) { if(error)*error=HNGPathError(EINVAL,@"Working-copy normalization or global ignore settings are unsupported"); git_config_free(config); close(rootFD); git_index_free(index); git_reference_free(head); git_commit_free(commit); git_tree_free(tree); git_repository_free(repo); [snapshot close]; return nil; } } git_config_free(config); }
   if (!HNGPrepareIgnores(repo, snapshot, rootFD, paths, error)) {
     close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); [snapshot close]; return nil;
   }
@@ -444,12 +427,20 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
     const char *p=path.fileSystemRepresentation; const git_index_entry *stage0=git_index_get_bypath(index,p,0); BOOL conflict=NO;
     for(int stage=1;stage<=3;stage++) if(git_index_get_bypath(index,p,stage)){conflict=YES;break;}
     if (!stage0 && !conflict) {
+      git_tree_entry *tracked = NULL;
+      int trackedResult = git_tree_entry_bypath(&tracked, tree, p);
+      BOOL inHead = trackedResult == 0;
+      git_tree_entry_free(tracked);
+      if (trackedResult != 0 && trackedResult != GIT_ENOTFOUND) { HNGError(error, trackedResult); changes = nil; break; }
+      if (!inHead) {
       int ignored = 0;
       rc = git_ignore_path_is_ignored(&ignored, repo, p);
       if (rc < 0) { HNGError(error, rc); changes = nil; break; }
       if (ignored) continue;
+      }
     }
     const git_tree_entry *headEntry=NULL; if(tree){ rc=git_tree_entry_bypath((git_tree_entry **)&headEntry,tree,p); if(rc==GIT_ENOTFOUND)rc=0; else if(rc<0){if(error)HNGError(error,rc);changes=nil;break;} }
+    if (headEntry && git_tree_entry_filemode(headEntry) == GIT_FILEMODE_COMMIT) { git_tree_entry_free((git_tree_entry *)headEntry); if(error)*error=HNGPathError(EINVAL,@"Unsupported HEAD gitlink"); changes=nil; break; }
     if (headEntry && git_tree_entry_type(headEntry) == GIT_OBJECT_TREE) { git_tree_entry_free((git_tree_entry *)headEntry); headEntry = NULL; }
     BOOL staged = conflict || ((headEntry!=NULL)!=(stage0!=NULL)) || (headEntry&&stage0&&(!git_oid_equal(git_tree_entry_id(headEntry),&stage0->id)||git_tree_entry_filemode(headEntry)!=stage0->mode));
     git_tree_entry_free((git_tree_entry *)headEntry);
@@ -472,6 +463,6 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
     } else { if(parent>=0)close(parent); worktree=stage0!=NULL; }
     if(staged||worktree||conflict)[changes addObject:@{@"path":path,@"staged":@(staged),@"worktree":@(worktree),@"conflict":@(conflict)}];
   }
-  close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); [snapshot close]; return changes;
+  close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); if (![snapshot closeWithError:error]) return nil; return changes;
 }
 @end
