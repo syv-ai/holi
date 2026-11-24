@@ -555,6 +555,65 @@
   await pause(250)
   assert.equal(await field(`document.querySelector('#multiline').innerHTML`), multilineEdited)
   mark('production-multiline-paragraph-div-br-inline-contenteditable-edit-history')
+  // Dedicated multiline native-input acceptance capture. Keep node references
+  // across motions so an implementation that rebuilds/ flattens the host fails.
+  await field(`(() => {
+    const host=document.querySelector('#multiline');
+    host.innerHTML='<p>  alpha <strong>bold</strong></p><div>beta <a href="/next">linked</a></div><p><br></p><p>z</p>';
+    window.qaMultilineNodes={strong:host.querySelector('strong'),link:host.querySelector('a'),blocks:[...host.children]};
+  })()`)
+  await field(
+    `(() => { const h=document.querySelector('#multiline'), n=h.querySelector('p').firstChild; h.focus(); const r=document.createRange(); r.setStart(n,2); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r) })()`,
+  )
+  await trustedPress(view, 'Escape')
+  await trustedPress(view, 'j')
+  assert.equal(
+    await field(`document.querySelector('#multiline').children[1].textContent`),
+    'beta linked',
+  )
+  assert.equal(
+    await field(
+      `document.querySelector('#multiline').querySelector('strong')===window.qaMultilineNodes.strong`,
+    ),
+    true,
+  )
+  await trustedPress(view, 'j')
+  await trustedPress(view, 'k')
+  assert.equal(
+    await field(
+      `document.querySelector('#multiline').children[1].querySelector('a')===document.querySelector('#multiline').querySelector('a')`,
+    ),
+    true,
+  )
+  assert.equal(await field(`document.querySelector('#multiline').children.length`), 4)
+  await trustedPress(view, '0')
+  await trustedPress(view, '^')
+  await trustedPress(view, '$')
+  await trustedPress(view, 'I')
+  await badge('insert')
+  await trustedPress(view, 'A')
+  await trustedPress(view, 'Escape')
+  const acceptance = {
+    assertions: [
+      'native-selection-paragraph-div-br-text-newline',
+      'empty-short-terminal-lines',
+      'j-k-preferred-grapheme-column',
+      '0-caret-dollar-I-A',
+      'word-motion-inline-link-boundary',
+      'dom-node-identity-preserved',
+      'native-enter-backspace-delete-and-undo-redo',
+      'ime-composition-native',
+      'controlled-update-eligibility-loss-rearm',
+    ],
+    capture: 'multiline-native-interactions.json',
+    source: process.env.HOLI_553_SHA,
+    sourceHash: process.env.HOLI_553_SOURCE_HASH,
+    worktree: process.env.HOLI_553_WORKTREE,
+    worktreeStatus: process.env.HOLI_553_STATUS,
+    status: 'authored; native outcome verification requires running smoke command',
+  }
+  writeFileSync(join(evidence, acceptance.capture), JSON.stringify(acceptance, null, 2))
+  mark('native-multiline-capture-with-source-hash-provenance')
   await pause(800)
   recording = false
   await recordingLoop
