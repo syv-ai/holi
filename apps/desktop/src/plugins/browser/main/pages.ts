@@ -1053,6 +1053,9 @@ export function createPages(deps: PagesDeps): Pages & {
       void initializeVim(tab)
       changed()
     })
+    wc.on('did-frame-finish-load', (_event, isMainFrame) => {
+      if (!isMainFrame && isPresented(tab) && tab.vimEnabled) tab.childVim?.configure(true)
+    })
     wc.on('did-finish-load', () => {
       tab.vimNavigationPending = false
       void initializeVim(tab)
