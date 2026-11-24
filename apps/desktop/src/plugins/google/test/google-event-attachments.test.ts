@@ -131,6 +131,86 @@ describe('Calendar attachments over Google transport', () => {
     expect(event.description).toBe(solo.description)
   })
 
+  it.each([
+    { snapshot: 'initial read', conflict: false, expectedPatches: 0 },
+    { snapshot: '412 refetch', conflict: true, expectedPatches: 1 },
+  ])(
+    'refuses a matching URL-only attachment on the $snapshot',
+    async ({ conflict, expectedPatches }) => {
+      const { fileUrl, title, mimeType } = attachment('selected')
+      const urlOnly = { fileUrl, title, mimeType }
+      const currentAttachments = [original, urlOnly]
+      let event = {
+        ...solo,
+        attachments: conflict ? solo.attachments : currentAttachments,
+        attendees: [{ email: 'guest@example.com' }],
+      }
+      let patches = 0
+      const permissionRequests: string[] = []
+      const api = transport((url, req) => {
+        if (calendarList(url)) return json({ accessRole: 'owner' })
+        if (calendarEvent(url)) {
+          if (req.method === 'PATCH') {
+            patches++
+            if (conflict && patches === 1) {
+              event = { ...event, etag: '"1002"', attachments: currentAttachments }
+              return json({ error: { code: 412, message: 'Precondition Failed' } }, 412)
+            }
+            event = { ...event, ...patched(event, url, req) }
+          }
+          return json(event)
+        }
+        if (url.pathname === '/drive/v3/files/selected' && !req.method)
+          return json(file('selected'))
+        if (url.pathname.endsWith('/permissions')) permissionRequests.push(req.method ?? 'GET')
+        throw new Error('Unexpected Google request')
+      })
+      const result = await attachEventFiles(api, target, ['selected'], validate, { receipts })
+      expect(result).toMatchObject({
+        attachmentStatus: 'failed',
+        calendarWriteStatus: 'not-written',
+        attachmentsVerified: true,
+        sharingComplete: false,
+        sharing: [],
+        message: expect.stringMatching(/without a usable Drive file ID/i),
+      })
+      expect(result.attachments).toEqual(currentAttachments)
+      expect(event.attachments).toEqual(currentAttachments)
+      expect(patches).toBe(expectedPatches)
+      expect(permissionRequests).toEqual([])
+    },
+  )
+
+  it('does not confirm presence or check access if Calendar saves only the URL', async () => {
+    let event = { ...solo, attendees: [{ email: 'guest@example.com' }] }
+    const permissionRequests: string[] = []
+    const api = transport((url, req) => {
+      if (calendarList(url)) return json({ accessRole: 'owner' })
+      if (calendarEvent(url)) {
+        if (req.method === 'PATCH') {
+          // Calendar accepts the write but provides no resolved Drive ID.
+          const { attachments } = JSON.parse(String(req.body)) as { attachments: EventAttachment[] }
+          event = { ...event, etag: '"1002"', attachments }
+        }
+        return json(event)
+      }
+      if (url.pathname === '/drive/v3/files/selected' && !req.method) return json(file('selected'))
+      if (url.pathname.endsWith('/permissions')) permissionRequests.push(req.method ?? 'GET')
+      throw new Error('Unexpected Google request')
+    })
+    const result = await attachEventFiles(api, target, ['selected'], validate, { receipts })
+    expect(result).toMatchObject({
+      attachmentStatus: 'unknown',
+      calendarWriteStatus: 'confirmed',
+      attachmentsVerified: true,
+      sharingComplete: false,
+      sharing: [],
+    })
+    const { fileUrl, title, mimeType } = attachment('selected')
+    expect(result.attachments).toEqual([original, { fileUrl, title, mimeType }])
+    expect(permissionRequests).toEqual([])
+  })
+
   it('re-merges a 412 without sharing the selection another writer attached', async () => {
     const occurrence = { ...target, eventId: 'series_20261124T100000Z' }
     let event = {
