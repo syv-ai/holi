@@ -160,13 +160,9 @@ export async function eventAttachments(
   }
 }
 
-type SelectedFile = { id: string; webViewLink?: string }
-
-const attached = (event: CalendarEvent, file: SelectedFile) =>
+const attached = (event: CalendarEvent, id: string) =>
   event.attachments?.some(
-    (item) =>
-      item.mimeType !== DRIVE_SHORTCUT_MIME &&
-      (item.fileId ? item.fileId === file.id : item.fileUrl === file.webViewLink),
+    ({ fileId, mimeType }) => fileId === id && mimeType !== DRIVE_SHORTCUT_MIME,
   ) === true
 
 const failed = (message: string, event?: CalendarEvent): AttachEventFilesResult => ({
@@ -228,13 +224,13 @@ export async function attachEventFiles(
     'not-written'
   for (let conflicts = 0; ; conflicts++) {
     const { event } = current
-    if (!files.every((file) => attached(event, file))) {
+    if (!files.every(({ id }) => attached(event, id))) {
       const editable = editability(current)
       if ('reason' in editable) return attachFailed(editable.reason, event)
       try {
         files = await Promise.all(
           files.map(async (file) => {
-            if (resolved.has(file.id) || attached(event, file)) return file
+            if (resolved.has(file.id) || attached(event, file.id)) return file
             const candidate = await driveAttachmentCandidate(api, file.id, validateWrite, signal)
             resolved.add(file.id)
             return candidate
@@ -248,11 +244,28 @@ export async function attachEventFiles(
     // A stale selection (including after a rejected ETag) never authorizes
     // sharing files that were already on any prewrite snapshot.
     const newFiles = files.filter((file) => {
-      if (!attached(event, file)) return true
+      if (!attached(event, file.id)) return true
       alreadyAttached.add(file.id)
       return false
     })
     if (newFiles.length === 0) break
+    // A matching URL can prevent a duplicate, but only Calendar's explicit
+    // Drive file ID can establish presence or authorize an access check.
+    if (
+      newFiles.some(({ webViewLink }) =>
+        event.attachments?.some(
+          ({ fileId, fileUrl }) => !isDriveFileId(fileId) && fileUrl === webViewLink,
+        ),
+      )
+    ) {
+      return {
+        ...attachFailed(
+          'A selected file matches an existing Calendar attachment without a usable Drive file ID. No attachments were changed.',
+          event,
+        ),
+        attachmentsVerified: true,
+      }
+    }
     const additions = newFiles.flatMap((file) => (file.attachment ? [file.attachment] : []))
     if (additions.length !== newFiles.length)
       return attachFailed('A selected Drive file cannot be attached and shared.', event)
@@ -311,7 +324,7 @@ export async function attachEventFiles(
   const access = await reconcileGuestAccess(
     api,
     target,
-    files,
+    ids,
     current,
     validate,
     validateWrite,
@@ -341,7 +354,7 @@ export async function checkEventFileAccess(
   return reconcileGuestAccess(
     api,
     target,
-    ids.map((id) => ({ id })),
+    ids,
     current,
     validate,
     options.validateDrive ?? validate,
@@ -353,7 +366,7 @@ export async function checkEventFileAccess(
 async function reconcileGuestAccess(
   api: GoogleApi,
   target: EventAttachmentTarget,
-  files: SelectedFile[],
+  selectedIds: string[],
   current: Snapshot,
   validate: Validate,
   validateDrive: Validate,
@@ -361,10 +374,8 @@ async function reconcileGuestAccess(
   receipts: PermissionReceipts,
   grantIds?: ReadonlySet<string>,
 ): Promise<AttachEventFilesResult> {
-  const confirmed = new Map(
-    files.filter((file) => attached(current.event, file)).map((file) => [file.id, file]),
-  )
-  const fileIds = [...confirmed.keys()]
+  const fileIds = selectedIds.filter((id) => attached(current.event, id))
+  const confirmed = new Set(fileIds)
   const readOnlyFileIds = grantIds && new Set(fileIds.filter((id) => !grantIds.has(id)))
   const canGrant = grantIds && fileIds.some((id) => grantIds.has(id))
   const accessFor = canGrant ? editability : guestList
@@ -387,8 +398,7 @@ async function reconcileGuestAccess(
     ) {
       changed = true
     }
-    if (files.some((file) => attached(current.event, file) !== confirmed.has(file.id)))
-      changed = true
+    if (selectedIds.some((id) => attached(current.event, id) !== confirmed.has(id))) changed = true
     return access
   }
 
@@ -401,10 +411,9 @@ async function reconcileGuestAccess(
       ? {
           validateGuest: async (guest, fileId) => {
             const access = await refresh()
-            const file = confirmed.get(fileId)
             if (
-              !file ||
-              !attached(current.event, file) ||
+              !confirmed.has(fileId) ||
+              !attached(current.event, fileId) ||
               !('guests' in access) ||
               !access.guests.includes(guest)
             )
@@ -434,7 +443,7 @@ async function reconcileGuestAccess(
     unverified = true
   }
 
-  const complete = !unverified && files.every((file) => attached(current.event, file))
+  const complete = !unverified && selectedIds.every((id) => attached(current.event, id))
   const incompleteAccess = result.sharing.filter(
     ({ status }) => status !== 'already-accessible' && status !== 'granted',
   )
