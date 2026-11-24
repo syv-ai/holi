@@ -90,6 +90,21 @@ export async function checkCompatibility(): Promise<string> {
     if (typeof workingCopyRoot !== 'string' || typeof workingCopyRemote !== 'string')
       throw new Error('Missing working-copy fixture identity')
     workingCopy = await runWorkingCopyCheck(workingCopyRoot, workingCopyRemote, 'fixture-start')
+    const manifestPath = gitEnvironment.objectForKey('HOLI_GIT_FIXTURE_MANIFEST')
+    if (typeof manifestPath !== 'string') throw new Error('Missing working-copy fixture manifest')
+    const manifestText = File.fromPath(manifestPath).readTextSync((error) => {
+      if (error) throw error
+    })
+    const fixture = JSON.parse(manifestText) as {
+      cases: Array<{ name: string; root: string; remote: string; branch: string | null }>
+    }
+    if (!Array.isArray(fixture.cases) || fixture.cases.length === 0)
+      throw new Error('Working-copy fixture manifest has no cases')
+    const results = []
+    for (const item of fixture.cases) {
+      results.push(await runWorkingCopyCheck(item.root, item.remote, item.branch ?? 'fixture-start'))
+    }
+    workingCopy = { ...workingCopy, cases: results }
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
