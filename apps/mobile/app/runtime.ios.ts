@@ -4,6 +4,8 @@ import { createNativeFiles, nativeFiles } from './native-files.ios'
 import { runVaultStorageCheck } from './vault-storage-check'
 import { nativeIO } from './native-posix.ios'
 import { createVaultStorage } from './vault-storage'
+import { noteMetadataSettings } from './note-metadata-settings.ios'
+import { createNoteMetadata } from './note-metadata'
 import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
@@ -54,6 +56,18 @@ export async function checkCompatibility(): Promise<string> {
       throw new Error('Invalid compatibility run identity')
     if (!['normal', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(launchPhase))
       throw new Error('Invalid storage phase')
+    phase = 'note-metadata'
+    operation = 'persist/reconstruct/remove'
+    const metadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
+    metadata.recent('diagnostic.md')
+    if (!metadata.visible(['diagnostic.md']).recents.includes('diagnostic.md'))
+      throw new Error('Note metadata persistence check failed')
+    const restoredMetadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
+    if (!restoredMetadata.visible(['diagnostic.md']).recents.includes('diagnostic.md'))
+      throw new Error('Note metadata reconstruction check failed')
+    restoredMetadata.remove('diagnostic.md')
+    phase = 'format-corpus'
+    operation = 'runVaultFormatCorpus'
     const corpus = runVaultFormatCorpus(nativeUtf8)
     if (launchPhase === 'move-stage' || launchPhase === 'move-recovery') {
       phase = launchPhase
