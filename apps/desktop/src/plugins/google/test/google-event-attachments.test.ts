@@ -125,6 +125,8 @@ describe('Calendar attachments over Google transport', () => {
     const result = await attachEventFiles(api, target, ['selected'], validate, { receipts })
     expect(result).toEqual({
       attachmentStatus: 'attached',
+      calendarWriteStatus: 'confirmed',
+      attachmentsVerified: true,
       attachments: [original, attachment('selected')],
       sharing: [],
       guestsChecked: [],
@@ -214,7 +216,11 @@ describe('Calendar attachments over Google transport', () => {
       return json(file('selected'))
     })
     const result = await attachEventFiles(api, target, ['selected'], validate, { receipts })
-    expect(result).toMatchObject({ attachmentStatus: 'failed', sharing: [] })
+    expect(result).toMatchObject({
+      attachmentStatus: 'failed',
+      calendarWriteStatus: 'not-written',
+      sharing: [],
+    })
     expect(result.attachments).toEqual(change.attachments ?? solo.attachments)
     expect(writes).toEqual([])
   })
@@ -250,9 +256,16 @@ describe('Calendar attachments over Google transport', () => {
     const result = await attachEventFiles(api, target, ['found', 'missing'], validate, { receipts })
     expect(result).toMatchObject({
       attachmentStatus: 'unknown',
+      calendarWriteStatus: 'unknown',
+      attachmentsVerified: true,
       attachments: [original, attachment('found')],
       sharing: [
-        { fileId: 'found', guest: 'denied@example.com', status: 'failed' },
+        {
+          fileId: 'found',
+          guest: 'denied@example.com',
+          status: 'failed',
+          message: expect.stringMatching(/share/i),
+        },
         { fileId: 'found', guest: 'uncertain@example.com', status: 'unknown' },
       ],
     })
@@ -377,16 +390,56 @@ it('does not replay an unverified permission and checks the current attachment a
     sharingComplete: true,
     sharing: [{ guest, status: 'already-accessible' }],
   })
-  event = { ...event, attachments: [original], attendees: [] }
-  await expect(check()).resolves.toMatchObject({
-    attachments: [original],
+  // The selected file was removed outside Holi; the current Calendar set is
+  // authoritative even though it cannot confirm the old selection.
+  event = { ...event, attachments: [original, attachment('replacement')] }
+  const afterRemoval = await check()
+  expect(afterRemoval).toMatchObject({
+    attachments: [original, attachment('replacement')],
+    attachmentsVerified: true,
     attachmentStatus: 'unknown',
     sharingComplete: false,
-    guestsChecked: [],
+    guestsChecked: [guest],
     sharing: [],
   })
+  expect(afterRemoval).not.toHaveProperty('calendarWriteStatus')
   expect(patches).toBe(1)
   expect(notifications).toEqual([guest, newGuest])
+})
+
+it('reports a refused read-only Drive permissions check as an access-check failure', async () => {
+  const guest = 'guest@example.com'
+  const event = { ...solo, attachments: [attachment('selected')], attendees: [{ email: guest }] }
+  const writes: string[] = []
+  const api = transport((url, req) => {
+    if (req.method && req.method !== 'GET') writes.push(req.method)
+    if (calendarList(url)) return json({ accessRole: 'reader' })
+    if (calendarEvent(url)) return json(event)
+    if (url.pathname === '/drive/v3/files/selected/permissions' && req.method === 'GET') {
+      return json(
+        { error: { errors: [{ reason: 'insufficientPermissions' }], message: 'private details' } },
+        403,
+      )
+    }
+    throw new Error('Unexpected Google request')
+  })
+  const result = await checkEventFileAccess(api, target, ['selected'], validate, { receipts })
+  expect(result).toMatchObject({
+    attachmentsVerified: true,
+    attachmentStatus: 'attached',
+    reconnect: true,
+    sharingComplete: false,
+    sharing: [
+      {
+        fileId: 'selected',
+        guest,
+        status: 'failed',
+        message: expect.stringMatching(/check access/i),
+      },
+    ],
+  })
+  expect(result.sharing[0]?.message).not.toMatch(/share|private details/i)
+  expect(writes).toEqual([])
 })
 
 it.each([
@@ -409,6 +462,8 @@ it.each([
   const result = await attachEventFiles(api, target, ['in-change'], validate, { receipts })
   expect(result).toMatchObject({
     attachmentStatus: 'attached',
+    calendarWriteStatus: 'not-written',
+    attachmentsVerified: true,
     sharingComplete: false,
     message: expect.any(String),
     sharing: [{ guest, status: 'already-accessible' }],
@@ -418,19 +473,18 @@ it.each([
   expect(notifications).toEqual([])
 })
 
-it('preserves verified access and an uncertain POST at the deadline without attempting later guests', async () => {
+it('preserves the Calendar write and guest access outcomes when Drive exhausts the deadline', async () => {
   const guests = ['verified@example.com', 'in-flight@example.com', 'not-started@example.com']
-  const event = {
-    ...solo,
-    attendees: guests.map((email) => ({ email })),
-    attachments: [attachment('deadline')],
-  }
+  let event = { ...solo, attendees: guests.map((email) => ({ email })) }
   const deadline = new AbortController()
   const permissions: object[] = []
   const notifications: string[] = []
   const api = transport((url, req) => {
     if (calendarList(url)) return json({ accessRole: 'owner' })
-    if (calendarEvent(url)) return json(event)
+    if (calendarEvent(url)) {
+      if (req.method === 'PATCH') event = { ...event, ...patched(event, url, req) }
+      return json(event)
+    }
     if (url.pathname.endsWith('/permissions')) {
       if (req.method === 'GET') return json({ permissions })
       const body = JSON.parse(String(req.body))
@@ -448,6 +502,8 @@ it('preserves verified access and an uncertain POST at the deadline without atte
     attachEventFiles(api, target, ['deadline'], validate, { receipts, signal: deadline.signal }),
   ).resolves.toMatchObject({
     attachmentStatus: 'unknown',
+    calendarWriteStatus: 'confirmed',
+    attachmentsVerified: false,
     attachments: [],
     sharingComplete: false,
     sharing: [

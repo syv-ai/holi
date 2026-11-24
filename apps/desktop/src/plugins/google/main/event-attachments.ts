@@ -245,19 +245,24 @@ const failed = (message: string, event?: CalendarEvent): AttachEventFilesResult 
   message,
 })
 
+const attachFailed = (message: string, event?: CalendarEvent): AttachEventFilesResult => ({
+  ...failed(message, event),
+  calendarWriteStatus: 'not-written',
+})
+
 /** Only for a refusal before any write could have taken effect. */
 export function attachmentUpdateRefused(
   error: unknown,
   event?: CalendarEvent,
 ): AttachEventFilesResult {
   if (googleReconnectNeeded(error) || error instanceof GoogleReconnectRequiredError) {
-    return { ...failed('Reconnect Google before attaching files.', event), reconnect: true }
+    return { ...attachFailed('Reconnect Google before attaching files.', event), reconnect: true }
   }
   const reason =
     error instanceof CapabilityError && error.code === 'FORBIDDEN'
       ? 'Google attachment access changed. Reload the event.'
       : 'Could not complete the attachment update. No files were attached by this update.'
-  return failed(reason, event)
+  return attachFailed(reason, event)
 }
 
 const selection = (fileIds: string[]) => [...new Set(fileIds)]
@@ -279,8 +284,8 @@ export async function attachEventFiles(
   options: OperationOptions,
 ): Promise<AttachEventFilesResult> {
   const ids = selection(fileIds)
-  if (ids.length > ATTACHMENT_LIMIT) return failed(LIMIT_MESSAGE)
-  if (!ids.length || !ids.every(driveId)) return failed('Select valid Google Drive files.')
+  if (ids.length > ATTACHMENT_LIMIT) return attachFailed(LIMIT_MESSAGE)
+  if (!ids.length || !ids.every(driveId)) return attachFailed('Select valid Google Drive files.')
 
   const signal = options.signal ?? attachmentDeadline()
   const validateWrite = options.validateDrive ?? validate
@@ -289,7 +294,7 @@ export async function attachEventFiles(
   try {
     current = await snapshot(api, target, validate, signal)
     const initialAccess = editability(current)
-    if ('reason' in initialAccess) return failed(initialAccess.reason, current.event)
+    if ('reason' in initialAccess) return attachFailed(initialAccess.reason, current.event)
     const resolved = await Promise.all(
       ids.map(async (id) => {
         const file = await driveMetadata(api, id, validateWrite, signal)
@@ -299,14 +304,16 @@ export async function attachEventFiles(
     await untilGoogleAbort(signal, validateWrite)
     files = resolved.filter((file) => file !== null)
     if (files.length !== ids.length)
-      return failed('A selected Drive file cannot be attached and shared.', current.event)
+      return attachFailed('A selected Drive file cannot be attached and shared.', current.event)
   } catch (error) {
     return attachmentUpdateRefused(error, current?.event)
   }
 
+  let calendarWriteStatus: NonNullable<AttachEventFilesResult['calendarWriteStatus']> =
+    'not-written'
   for (let conflicts = 0; ; conflicts++) {
     const editable = editability(current)
-    if ('reason' in editable) return failed(editable.reason, current.event)
+    if ('reason' in editable) return attachFailed(editable.reason, current.event)
     const { event } = current
     const newFiles = files.filter((file) => !attached(event, file))
     // Send the original attachment objects unchanged; Calendar PATCH replaces
@@ -319,10 +326,10 @@ export async function attachEventFiles(
         mimeType: file.mimeType,
       })),
     ]
-    if (merged.length > ATTACHMENT_LIMIT) return failed(LIMIT_MESSAGE, current.event)
+    if (merged.length > ATTACHMENT_LIMIT) return attachFailed(LIMIT_MESSAGE, current.event)
     if (newFiles.length === 0) break
     if (conflicts > CONFLICT_RETRIES)
-      return failed('The event kept changing. No attachment update was made.', current.event)
+      return attachFailed('The event kept changing. No attachment update was made.', current.event)
 
     try {
       await api.request(
@@ -332,6 +339,7 @@ export async function attachEventFiles(
         validateWrite,
         { ifMatch: current.event.etag, signal },
       )
+      calendarWriteStatus = 'confirmed'
     } catch (error) {
       if (error instanceof GoogleApiError && error.status === 412) {
         // Google rejected the stale precondition. Only this known refusal
@@ -344,15 +352,18 @@ export async function attachEventFiles(
         continue
       }
       if (!isUncertainGoogleWrite(error)) return attachmentUpdateRefused(error, current.event)
+      calendarWriteStatus = 'unknown'
     }
-    // A response (or a lost one) isn't the current event. Before sharing,
-    // confirm what is actually attached and which guests it has now.
+    // Verify the current event before sharing. A read can show the files are
+    // present, but cannot attribute them to a PATCH whose response was lost.
     try {
       current = await snapshot(api, target, validate, signal)
     } catch (error) {
       return {
         attachments: [],
         attachmentStatus: 'unknown',
+        calendarWriteStatus,
+        attachmentsVerified: false,
         message: UNKNOWN_MESSAGE,
         sharing: [],
         sharingComplete: false,
@@ -362,7 +373,7 @@ export async function attachEventFiles(
     break
   }
 
-  return reconcileGuestAccess(
+  const access = await reconcileGuestAccess(
     api,
     target,
     files,
@@ -373,6 +384,7 @@ export async function attachEventFiles(
     options.receipts,
     'share',
   )
+  return { ...access, calendarWriteStatus }
 }
 
 /** Check Calendar and Drive state without ever sending an invitation or a grant. */
@@ -508,6 +520,7 @@ async function reconcileGuestAccess(
   return {
     attachments: unverified ? [] : displayed(current.event),
     attachmentStatus: complete ? 'attached' : 'unknown',
+    attachmentsVerified: !unverified,
     sharing: result.sharing,
     sharingComplete,
     ...(guestsChecked === undefined ? {} : { guestsChecked }),

@@ -42,6 +42,11 @@ export interface AttachmentSharingResult {
 export interface AttachEventFilesResult {
   attachments: EventAttachment[]
   attachmentStatus: 'attached' | 'failed' | 'unknown'
+  /** Outcome of this attach attempt's Calendar PATCH, not the current attachment state.
+   * Omitted by read-only access checks, which cannot establish a past write's outcome. */
+  calendarWriteStatus?: 'not-written' | 'confirmed' | 'unknown'
+  /** Whether `attachments` is the complete current Calendar set, even if selections are missing. */
+  attachmentsVerified?: boolean
   message?: string
   sharing: AttachmentSharingResult[]
   /** The complete current guest list, even if empty. Omitted when it could not be confirmed. */
