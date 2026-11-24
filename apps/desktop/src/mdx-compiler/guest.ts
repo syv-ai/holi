@@ -1,5 +1,5 @@
 import { compile } from '@mdx-js/mdx'
-import { Parser } from 'acorn'
+import { Parser, tokenizer, tokTypes } from 'acorn'
 import jsx from 'acorn-jsx'
 
 interface Request {
@@ -47,6 +47,38 @@ function commonJsMember(node: Record<string, unknown>): boolean {
   )
 }
 
+const unsupportedImportAttributes =
+  'Unsupported import attributes; only plain ECMAScript modules are supported.'
+
+function moduleSource(node: Record<string, unknown>) {
+  if (
+    node.type !== 'ImportDeclaration' &&
+    node.type !== 'ExportNamedDeclaration' &&
+    node.type !== 'ExportAllDeclaration'
+  )
+    return
+  const source = node.source as { type?: unknown; value?: unknown; end?: unknown } | null
+  if (source?.type === 'Literal' && typeof source.value === 'string')
+    return { value: source.value, end: source.end }
+}
+
+function hasImportAttributes(node: Record<string, unknown>, sourceEnd: unknown, input: string) {
+  if (
+    (Array.isArray(node.attributes) && node.attributes.length > 0) ||
+    (Array.isArray(node.assertions) && node.assertions.length > 0)
+  )
+    return true
+  if (typeof sourceEnd !== 'number' || typeof node.end !== 'number' || sourceEnd >= node.end)
+    return false
+  // Acorn gives both an absent clause and `with {}` an empty attributes array.
+  // A plain declaration has only trivia and an optional semicolon after its source literal.
+  const { type } = tokenizer(input.slice(sourceEnd, node.end), {
+    ecmaVersion: 'latest',
+    sourceType: 'module',
+  }).getToken()
+  return type !== tokTypes.eof && type !== tokTypes.semi
+}
+
 const root = globalThis as typeof globalThis & {
   __holiMdxReceive?: (encoded: string) => void
   __holiMdxTakeResult?: () => Result | null
@@ -81,37 +113,23 @@ root.__holiMdxReceive = (encoded) => {
       const line = typeof start?.line === 'number' ? start.line : 1
       const column = typeof start?.column === 'number' ? start.column + 1 : 1
       const type = value.type
-      if (
-        type === 'ImportDeclaration' ||
-        type === 'ExportNamedDeclaration' ||
-        type === 'ExportAllDeclaration'
-      ) {
-        const source = value.source as { type?: unknown; value?: unknown } | null
-        if (source?.type === 'Literal' && typeof source.value === 'string') {
-          // Neither attributes nor legacy assertions may change how a module is loaded.
-          if (
-            (Array.isArray(value.attributes) && value.attributes.length > 0) ||
-            (Array.isArray(value.assertions) && value.assertions.length > 0)
-          ) {
-            diagnostics.push({
-              message:
-                'Unsupported import attributes; only plain ECMAScript modules are supported.',
-              line,
-              column,
-            })
-            return
-          }
-          const specifier = source.value
-          if (/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(specifier)) {
-            dependencies.push({ specifier, line, column })
-          } else {
-            diagnostics.push({
-              message:
-                'Unsupported module specifier; use a relative path or an explicit HTTPS module URL.',
-              line,
-              column,
-            })
-          }
+      const source = moduleSource(value)
+      if (source) {
+        // MDX clauses are checked on the original declarations before recma rewrites them.
+        if (request.format !== 'mdx' && hasImportAttributes(value, source.end, request.source)) {
+          diagnostics.push({ message: unsupportedImportAttributes, line, column })
+          return
+        }
+        const specifier = source.value
+        if (/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(specifier)) {
+          dependencies.push({ specifier, line, column })
+        } else {
+          diagnostics.push({
+            message:
+              'Unsupported module specifier; use a relative path or an explicit HTTPS module URL.',
+            line,
+            column,
+          })
         }
       } else if (
         type === 'ImportExpression' ||
@@ -192,7 +210,29 @@ root.__holiMdxReceive = (encoded) => {
     format: 'mdx',
     jsx: true,
     jsxImportSource: 'react',
-    remarkPlugins: [],
+    remarkPlugins: [
+      () =>
+        (tree: {
+          children: { type: string; data?: { estree?: { body: Record<string, unknown>[] } } }[]
+        }) => {
+          // Micromark's offsets exclude an initial BOM. Check before MDX can rewrite
+          // a re-export into a layout import and discard the original clause.
+          const input = request.source.startsWith('\uFEFF')
+            ? request.source.slice(1)
+            : request.source
+          for (const child of tree.children) {
+            if (child.type !== 'mdxjsEsm') continue
+            for (const declaration of child.data?.estree?.body ?? []) {
+              const source = moduleSource(declaration)
+              if (source && hasImportAttributes(declaration, source.end, input)) {
+                throw Object.assign(new SyntaxError(unsupportedImportAttributes), {
+                  position: declaration.loc,
+                })
+              }
+            }
+          }
+        },
+    ],
     rehypePlugins: [],
     recmaPlugins: [inspectDependencies],
   }).then(
