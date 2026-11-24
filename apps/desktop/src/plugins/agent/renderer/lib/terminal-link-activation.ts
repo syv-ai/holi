@@ -1,3 +1,6 @@
+import { pathBelowRoot } from '@holi/shared'
+import { windowsIndex } from './terminal-links'
+
 export interface TerminalLinkActions {
   paths: ReadonlySet<string>
   root: string | null
@@ -49,13 +52,13 @@ export function activateTerminalLink(text: string, actions: TerminalLinkActions)
   // WHATWG URL represents a Windows drive path with a leading slash.
   if (/^\/[a-zA-Z]:\//.test(path)) path = path.slice(1)
 
-  const root = actions.root?.replace(/[\\/]+$/, '')
-  const normalizedRoot = root?.replaceAll('\\', '/')
-  const normalizedPath = path.replaceAll('\\', '/')
-  const prefix = normalizedRoot ? `${normalizedRoot}/` : null
-  if (prefix && normalizedPath.startsWith(prefix)) {
-    const relative = normalizedPath.slice(prefix.length)
-    if (actions.paths.has(relative)) actions.openDocument(relative)
+  // A path in the clone opens when the vault has it, in the vault's spelling;
+  // anywhere else is shown in the file manager.
+  const index = windowsIndex(actions.paths, actions.root)
+  const below = actions.root ? pathBelowRoot(actions.root, path, index ? 'win32' : 'posix') : null
+  if (below !== null) {
+    const spelled = index?.get(below.toLowerCase()) ?? below
+    if (actions.paths.has(spelled)) actions.openDocument(spelled)
     return
   }
 

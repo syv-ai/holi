@@ -20,7 +20,7 @@ import { agentCap } from './agent-cap'
 import { terminalKeyAction } from './lib/terminal-keys'
 import { createPiMouseSelectionFilter } from './lib/pi-mouse-selection'
 import { createPiWheelRouter } from './lib/pi-wheel-routing'
-import { vaultLinks } from './lib/terminal-links'
+import { vaultLinks, windowsIndex } from './lib/terminal-links'
 import {
   activateTerminalLink,
   fileUrlLinks,
@@ -312,7 +312,12 @@ export function SessionTerminal({
         const buffer = term.buffer.active
         const logical = wrappedTerminalLine(y - 1, term.cols, (row) => buffer.getLine(row))
         const { paths: known, root: clone } = linkRef.current
-        const vault = vaultLinks(logical.text, (path) => known.has(path), clone).map((link) => ({
+        const vault = vaultLinks(
+          logical.text,
+          (path) => known.has(path),
+          clone,
+          windowsIndex(known, clone),
+        ).map((link) => ({
           text: link.path,
           start: link.start,
           end: link.end,

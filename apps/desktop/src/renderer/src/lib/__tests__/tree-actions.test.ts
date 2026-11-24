@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planMoveInto, planRenameFolder } from '@/lib/tree-actions'
+import { planMoveFolders, planMoveInto, planRenameFolder } from '@/lib/tree-actions'
 
 const DOCS = ['a.md', 'notes/b.md', 'notes/deep/c.md', 'other/d.md']
 
@@ -12,6 +12,20 @@ describe('planMoveInto', () => {
   })
   it('drops no-op moves (already in the destination)', () => {
     expect(planMoveInto(DOCS, ['notes/b.md'], 'notes')).toEqual([])
+  })
+})
+
+describe('planMoveFolders', () => {
+  const DIRS = ['notes', 'notes/deep', 'other', 'empty']
+
+  it('names each dragged folder, empty or not, where it lands', () => {
+    expect(planMoveFolders(DIRS, ['empty', 'notes'], 'other')).toEqual([
+      { from: 'empty', to: 'other/empty' },
+      { from: 'notes', to: 'other/notes' },
+    ])
+  })
+  it('leaves files out, and a folder already in the destination', () => {
+    expect(planMoveFolders(DIRS, ['a.md', 'notes/deep'], 'notes')).toEqual([])
   })
 })
 
