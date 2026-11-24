@@ -11,7 +11,6 @@ import {
   type TerminalEvent,
   type TerminalsDeps,
 } from '../src/main/terminal/terminals'
-import { delimiter } from 'node:path'
 
 class FakePty implements PtyProcess {
   static nextPid = 1000
@@ -55,6 +54,8 @@ function rig(over: Partial<TerminalsDeps> = {}) {
   const events: TerminalEvent[] = []
   const summaries: string[] = []
   const terminals = createTerminals({
+    // POSIX paths throughout: the rig is a mac's, whatever OS runs the test.
+    platform: 'darwin',
     send: (e) => events.push(e),
     spawnPty: (file, args, opts) => {
       const p = new FakePty(file, args, opts)
@@ -100,7 +101,7 @@ describe('terminals', () => {
     expect(pty.opts.env).toMatchObject({
       TERM: 'xterm-256color',
       HOME: '/home/me',
-      PATH: `/app/bin${delimiter}/usr/bin`,
+      PATH: '/app/bin:/usr/bin',
     })
     expect(pty.opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
   })

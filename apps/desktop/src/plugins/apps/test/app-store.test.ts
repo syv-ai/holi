@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, formatRecord } from '@holi/shared'
-import { storeCapabilities } from '../main/capabilities'
+import { appsCapabilities, bundleArg, storeCapabilities } from '../main/capabilities'
 import { storeDelete, storePut } from '../main/store'
 import { noCoreServices } from '../../../main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../../../main/capabilities/vault-caps'
@@ -15,6 +15,30 @@ import {
 
 const registry = createCapabilityRegistry()
 registry.register(['store'], storeCapabilities())
+// `apps.init`, which the check hook names as the next step.
+registry.register(
+  ['apps'],
+  appsCapabilities({
+    events: { emit: () => {} },
+    appDoor: () => {
+      throw new Error('no app door in this test')
+    },
+    grants: {
+      status: async () => ({ codeHash: '', affordances: [], expiresAt: null }),
+      grant: async () => true,
+    },
+    previewPlacements: new Map(),
+    previews: {
+      read: async () => null,
+      revision: () => 0,
+      save: async () => true,
+      forget: async () => {},
+    },
+    capture: async () => null,
+    issueFrameLease: () => ({ token: '', nonce: '' }),
+    releaseFrameLease: () => true,
+  }),
+)
 // `docs.read`, for the refusal of records read as files.
 registry.register(
   VAULT_NAMESPACES,
@@ -205,6 +229,58 @@ describe('the app store', () => {
     await expect(
       call('store.check', { path: 'Work/Tracker.app/data/items/h.json' }),
     ).rejects.toThrow(/no such method/)
+  })
+
+  it('checks the file by the absolute path the agent’s tool wrote, on any OS', async () => {
+    await mkdir(dataDir(), { recursive: true })
+    await writeFile(join(dataDir(), 'h.json'), '{"done": 1}')
+    const abs = join(dataDir(), 'h.json')
+    expect(await call('store.check', { path: abs }, 'cli')).toEqual([
+      'title: is required',
+      'done: must be a boolean',
+    ])
+  })
+
+  // The hook hands `holi store check` the path as the OS spells it.
+  it.runIf(process.platform === 'win32')(
+    'checks a file named with Windows separators and any drive-letter case',
+    async () => {
+      await mkdir(dataDir(), { recursive: true })
+      await writeFile(join(dataDir(), 'h.json'), '{"done": 1}')
+      const problems = ['title: is required', 'done: must be a boolean']
+      const rel = String.raw`Work\Tracker.app\data\items\h.json`
+      expect(await call('store.check', { path: rel }, 'cli')).toEqual(problems)
+      const swapped = root[0]!.toLowerCase() + root.slice(1)
+      expect(await call('store.check', { path: `${swapped}\\${rel}` }, 'cli')).toEqual(problems)
+    },
+  )
+
+  // The check hook tells the agent to run `holi apps init <bundle>` with the bundle as the OS spells it.
+  it.runIf(process.platform === 'win32')('inits an app named with backslashes', async () => {
+    const result = await call('apps.init', { path: String.raw`Work\New.app` }, 'cli')
+    expect(result).toMatchObject({ created: expect.arrayContaining(['Work/New.app/app.yaml']) })
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'reads a backslash as a character, not a folder',
+    async () => {
+      await expect(
+        call('store.check', { path: String.raw`Work\Tracker.app\data\items\h.json` }, 'cli'),
+      ).rejects.toThrow(/not inside an app/)
+    },
+  )
+
+  // `apps.open` and `apps.init` read the bundle through `bundleArg`; the
+  // platform is injected, so both branches run on any OS.
+  it('reads a bundle written with backslashes or a drive path as its vault path on Windows', () => {
+    const root = String.raw`C:\vault`
+    expect(bundleArg(root, String.raw`Work\New.app`, 'win32')).toBe('Work/New.app')
+    expect(bundleArg(root, String.raw`c:\VAULT\Work\New.app`, 'win32')).toBe('Work/New.app')
+  })
+
+  it('takes a bundle exactly as typed off Windows', () => {
+    expect(bundleArg('/vault', String.raw`Work\New.app`, 'linux')).toBe(String.raw`Work\New.app`)
+    expect(bundleArg('/vault', '/vault/Work/New.app', 'darwin')).toBe('/vault/Work/New.app')
   })
 
   // A committed link would otherwise let an app's store write into the agent
