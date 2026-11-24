@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { renameSync } from 'node:fs'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
-import { dirname, isAbsolute, resolve } from 'node:path'
+import { dirname, posix, win32 } from 'node:path'
 import { isRemote, MDX_RESOURCE_PURPOSE } from '@holi/shared'
 import { isMdxExternalOrigin } from './mdx-external-policy'
 import { canonicalGitHubRemote } from './mdx-trust'
@@ -24,23 +24,27 @@ export interface MdxConsentStore {
   /** Pass a synchronous lifetime check for a document-bound approval. A retired approval rejects. */
   grant(scope: MdxConsentScope, stillOwned?: () => boolean): Promise<void>
   revoke(scope: MdxConsentScope): Promise<void>
-  /** Wait for accepted operations after closing admission; reject if a revocation remains unsaved. */
+  /** After closing admission, wait for accepted operations and retry captured removals.
+   * Reject if any revocation remains unsaved. No current owner is needed to remove an old grant. */
   drain(): Promise<void>
 }
 
 type State = { version: 1; grants: MdxConsentScope[] }
+type Revocation = { scope: MdxConsentScope; write?: Promise<void> }
 
 function validScope(value: unknown): value is MdxConsentScope {
   if (!value || typeof value !== 'object') return false
   const { origin, root, remote, accountId } = value as Partial<MdxConsentScope>
+  const windows = process.platform === 'win32'
+  const path = windows ? win32 : posix
   if (
     !isMdxExternalOrigin(origin) ||
     typeof root !== 'string' ||
     typeof remote !== 'string' ||
     typeof accountId !== 'string' ||
     root.includes('\0') ||
-    !isAbsolute(root) ||
-    resolve(root) !== root ||
+    !path.isAbsolute(root) ||
+    path.resolve(root) !== root ||
     !isRemote(remote) ||
     remote.endsWith('/.') ||
     !Number.isSafeInteger(Number(accountId)) ||
@@ -50,14 +54,25 @@ function validScope(value: unknown): value is MdxConsentScope {
     return false
   // Check spelling only: historical clones may be gone or temporarily offline.
   // The caller verifies the current clone with realpath before using its scope.
-  if (
-    process.platform === 'win32' &&
-    root
-      .replace(/^[a-z]:/i, '')
-      .split('\\')
-      .some((part) => /[ .]$|[<>:"|?*]/.test(part))
-  )
-    return false
+  if (windows) {
+    if (
+      root
+        .replace(/^[a-z]:/i, '')
+        .split('\\')
+        .some((part) => /[ .]$|[\x01-\x1f\x7f<>:"|?*]/.test(part))
+    )
+      return false
+    // The drive or UNC server/share is the namespace, not a DOS filename.
+    const relative = root.slice(win32.parse(root).root.length)
+    if (
+      relative
+        .split('\\')
+        .some((part) =>
+          /^(?:CON(?:IN\$|OUT\$)?|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?: *\.|$)/i.test(part),
+        )
+    )
+      return false
+  }
   try {
     return canonicalGitHubRemote(remote) === remote
   } catch {
@@ -69,7 +84,7 @@ function validScope(value: unknown): value is MdxConsentScope {
 export function createMdxConsentStore(file: string): MdxConsentStore {
   let queue = Promise.resolve()
   const denied = new Set<string>()
-  const revocations = new Map<string, { scope: MdxConsentScope; write?: Promise<void> }>()
+  const revocations = new Map<string, Revocation>()
   const key = (scope: MdxConsentScope) =>
     JSON.stringify([scope.origin, MDX_RESOURCE_PURPOSE, scope.root, scope.remote, scope.accountId])
 
@@ -126,6 +141,20 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
       throw error
     }
   }
+  const saveRevocation = (id: string, revocation: Revocation): Promise<void> => {
+    if (revocation.write) return revocation.write
+    revocation.write = transact(async () => {
+      try {
+        const state = await read()
+        state.grants = state.grants.filter((grant) => key(grant) !== id)
+        await persist(state)
+        revocations.delete(id)
+      } finally {
+        revocation.write = undefined
+      }
+    })
+    return revocation.write
+  }
   return {
     async allows(scope) {
       if (!validScope(scope)) return false
@@ -155,7 +184,7 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
               listed.set(scope.origin, { origin: scope.origin })
           }
         } catch (error) {
-          // An unreadable file must not hide the only way to retry a blocked grant.
+          // Keep the blocked grant visible and retryable even when the file is unreadable.
           if (pending().length === 0) throw error
         }
         for (const grant of pending()) listed.set(grant.origin, grant)
@@ -188,26 +217,24 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
     async revoke(scope) {
       if (!validScope(scope)) throw new Error('Invalid MDX consent scope')
       const id = key(scope)
-      const existing = revocations.get(id)
-      if (existing?.write) return existing.write
-      const revocation = { scope: { ...scope }, write: undefined as Promise<void> | undefined }
+      const revocation = revocations.get(id) ?? { scope: { ...scope } }
       revocations.set(id, revocation)
       denied.add(id)
-      revocation.write = transact(async () => {
-        try {
-          const state = await read()
-          state.grants = state.grants.filter((grant) => key(grant) !== id)
-          await persist(state)
-          revocations.delete(id)
-        } finally {
-          revocation.write = undefined
-        }
-      })
-      return revocation.write
+      return saveRevocation(id, revocation)
     },
     async drain() {
       await queue
-      if (revocations.size > 0) throw new Error('MDX resource revocation could not be saved')
+      // Only retry removals already admitted by main. Retiring a lease, signing out,
+      // or removing a vault does not discard the captured removal or unblock its key.
+      const results = await Promise.allSettled(
+        [...revocations].map(([id, revocation]) => saveRevocation(id, revocation)),
+      )
+      if (revocations.size > 0) {
+        throw new AggregateError(
+          results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
+          'MDX resource revocation could not be saved',
+        )
+      }
     },
   }
 }

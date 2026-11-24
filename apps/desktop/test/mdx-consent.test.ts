@@ -90,6 +90,54 @@ it('denies missing, corrupt, and malformed state, even beside a valid entry', as
   }
 })
 
+it('allows canonical Windows drive and UNC paths but denies mixed files with malformed components', async () => {
+  const platform = process.platform
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  try {
+    const store = createMdxConsentStore(file)
+    const control = { ...scope, root: 'C:\\old\\vault' }
+    const save = (grants: (typeof scope)[]) =>
+      writeFile(file, JSON.stringify({ version: 1, grants }))
+    for (const root of [
+      'C:\\',
+      '\\\\server\\share\\',
+      '\\\\server\\share\\old\\vault',
+      control.root,
+    ]) {
+      const grant = { ...scope, root }
+      await save([grant])
+      expect(await store.allows(grant), root).toBe(true)
+    }
+
+    for (const [anchor, part] of [
+      ['C:\\old\\', 'bad\x01name'],
+      ['C:\\old\\', 'bad\x1fname'],
+      ['C:\\old\\', 'bad\x7fname'],
+      ['C:\\old\\', 'cOn'],
+      ['C:\\old\\', 'CONIN$'],
+      ['C:\\old\\', 'conout$.txt'],
+      ['C:\\old\\', 'PrN.txt'],
+      ['C:\\old\\', 'AUX .txt'],
+      ['C:\\old\\', 'Nul.tar.gz'],
+      ['C:\\old\\', 'COM1'],
+      ['C:\\old\\', 'lpt9.mdx'],
+      ['C:\\old\\', 'COM¹.txt'],
+      ['C:\\old\\', 'LPT²'],
+      ['C:\\old\\', 'folder.'],
+      ['C:\\old\\', 'folder '],
+      ['C:\\old\\', 'file:stream'],
+      ['C:\\old\\', 'file?name'],
+      ['\\\\server\\share\\', 'LPT3.txt'],
+    ]) {
+      const malformed = { ...scope, root: `${anchor}${part}\\vault` }
+      await save([control, malformed])
+      expect(await store.allows(control), malformed.root).toBe(false)
+    }
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform })
+  }
+})
+
 // A readable file in a non-writable directory exercises the actual write failure.
 // Windows chmod and POSIX root do not enforce this fixture's directory permissions.
 it.skipIf(process.getuid === undefined || process.getuid() === 0)(
@@ -103,6 +151,7 @@ it.skipIf(process.getuid === undefined || process.getuid() === 0)(
     try {
       await expect(store.grant(scope)).rejects.toThrow()
       await expect(store.revoke(revoked)).rejects.toThrow()
+      await expect(store.drain()).rejects.toThrow()
     } finally {
       await chmod(dir, 0o700)
     }
@@ -126,24 +175,31 @@ it.skipIf(process.getuid === undefined || process.getuid() === 0)(
   },
 )
 
-it('refuses to drain an unsaved revocation on quit and waits for a successful retry', async () => {
+it('drains only captured revocations after storage is repaired', async () => {
   const store = createMdxConsentStore(file)
-  await store.grant(scope)
+  const alsoRevoked = { ...scope, origin: 'https://cdn.example' }
+  const kept = { ...scope, accountId: '456' }
+  for (const grant of [scope, alsoRevoked, kept]) await store.grant(grant)
   const backup = `${file}.backup`
   await rename(file, backup)
   await mkdir(file)
   await expect(store.revoke(scope)).rejects.toThrow()
+  await expect(store.revoke(alsoRevoked)).rejects.toThrow()
+  await expect(store.drain()).rejects.toThrow()
   await rm(file, { recursive: true })
   await rename(backup, file)
 
-  await expect(store.drain()).rejects.toThrow()
-  expect(await createMdxConsentStore(file).allows(scope)).toBe(true)
-  expect(await store.allows(scope)).toBe(false)
-
-  const retry = store.revoke(scope)
+  for (const revoked of [scope, alsoRevoked]) {
+    expect(await createMdxConsentStore(file).allows(revoked)).toBe(true)
+    expect(await store.allows(revoked)).toBe(false)
+  }
   await expect(store.drain()).resolves.toBeUndefined()
-  expect(await createMdxConsentStore(file).allows(scope)).toBe(false)
-  await retry
+  const reopened = createMdxConsentStore(file)
+  for (const revoked of [scope, alsoRevoked]) {
+    expect(await store.allows(revoked)).toBe(false)
+    expect(await reopened.allows(revoked)).toBe(false)
+  }
+  expect(await reopened.allows(kept)).toBe(true)
 })
 
 it('does not publish an approval after its owner retires during the grant', async () => {

@@ -88,6 +88,19 @@ root.__holiMdxReceive = (encoded) => {
       ) {
         const source = value.source as { type?: unknown; value?: unknown } | null
         if (source?.type === 'Literal' && typeof source.value === 'string') {
+          // Neither attributes nor legacy assertions may change how a module is loaded.
+          if (
+            (Array.isArray(value.attributes) && value.attributes.length > 0) ||
+            (Array.isArray(value.assertions) && value.assertions.length > 0)
+          ) {
+            diagnostics.push({
+              message:
+                'Unsupported import attributes; only plain ECMAScript modules are supported.',
+              line,
+              column,
+            })
+            return
+          }
           const specifier = source.value
           if (/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(specifier)) {
             dependencies.push({ specifier, line, column })

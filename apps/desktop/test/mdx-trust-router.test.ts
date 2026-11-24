@@ -717,6 +717,47 @@ it('opens a consent request for the production fetcher without resolving DNS', a
   }
 })
 
+it('diagnoses import attributes without requesting consent or contacting an approved origin for them', async () => {
+  const { root, mdx, acquire, contacts, routes } = await resourceRig()
+  const owner = await acquire()
+  routes.set(entry, { text: 'export const plain = 1' })
+  const plainImport = `import '${entry}'\n`
+  await mdx.compile({ ...owner, generation: 1, source: plainImport })
+  const { pending } = await mdx.externalResources(owner)
+  await mdx.approveExternalResource({ ...owner, requestId: pending[0]!.id })
+
+  const attributed = 'https://one.example/data.js?token=private-url-value'
+  const unapproved = 'https://two.example/data.js'
+  await writeFile(
+    join(root, 'child.jsx'),
+    [
+      `import payload from '${attributed}' with { type: 'json' };`,
+      `export { default as metadata } from '${unapproved}' with { loader: 'private-loader-value' };`,
+      `export * from './not-installed.js' with { type: 'json' };`,
+      'export const view = <div />;',
+      plainImport,
+    ].join('\n'),
+  )
+  const diagnostics = await mdx.compile({
+    ...owner,
+    generation: 2,
+    source: "import './child.jsx'\n\n# Preview",
+  })
+  expect(diagnostics.map(({ message }) => message)).toEqual(
+    [1, 2, 3].map((line) =>
+      expect.stringMatching(
+        new RegExp(`child\\.jsx:${line}:1: .*unsupported import attributes`, 'i'),
+      ),
+    ),
+  )
+  expect(JSON.stringify(diagnostics)).not.toMatch(
+    /https:\/\/|private-url-value|private-loader-value/,
+  )
+  expect((await mdx.externalResources(owner)).pending).toEqual([])
+  expect(contacts).toEqual([entry])
+  await mdx.releaseDiagnosticsLease(owner)
+})
+
 it('requires separate consent for a static import, its redirect, and a transitive external re-export', async () => {
   const { root, mdx, acquire, contacts, routes, changed } = await resourceRig()
   const owner = await acquire()
@@ -1107,8 +1148,8 @@ it('drains a revocation accepted before document retirement and denies new admis
   await mdx.releaseDiagnosticsLease(owner)
 })
 
-it('keeps diagnostics and revocation Retry usable when an unsaved revocation vetoes quit', async () => {
-  const { mdx, acquire, consentFile, shutdown } = await resourceRig()
+it('retries an unsaved revocation on quit even after sign-out and vault removal', async () => {
+  const { caller, mdx, acquire, root, consentFile, shutdown } = await resourceRig()
   const owner = await acquire()
   try {
     await mdx.compile({ ...owner, generation: 1, source: externalSource })
@@ -1120,20 +1161,37 @@ it('keeps diagnostics and revocation Retry usable when an unsaved revocation vet
     await mkdir(consentFile)
     const revoke = { ...owner, grantId: grant.id }
     await expect(mdx.revokeExternalResource(revoke)).rejects.toThrow()
-    await rm(consentFile, { recursive: true })
-    await rename(backup, consentFile)
 
-    const quit = vi.fn(async () => true)
+    const scope = {
+      root: await realpath(root),
+      remote: REMOTE,
+      accountId: '42',
+      origin: grant.origin,
+    }
+    const stored = () => createMdxConsentStore(consentFile).allows(scope)
+    const quit = vi.fn(async () => {
+      expect(await stored()).toBe(false)
+      return true
+    })
     const reportBlocked = vi.fn(async () => {})
     await expect(shutdown(quit, reportBlocked)).resolves.toBe(false)
     expect(reportBlocked).toHaveBeenCalledOnce()
     expect(quit).not.toHaveBeenCalled()
+    // The failed quit restored admission, but the grant stayed blocked.
     await expect(mdx.externalResources(owner)).resolves.toMatchObject({
       approved: [{ ...grant, revocationPending: true }],
     })
-    await expect(mdx.revokeExternalResource(revoke)).resolves.toEqual({ ok: true })
+
+    await caller.auth.signOut()
+    await caller.vaults.remove({ remote: REMOTE })
+    await expect(mdx.revokeExternalResource(revoke)).rejects.toThrow()
+    await rm(consentFile, { recursive: true })
+    await rename(backup, consentFile)
+    expect(await stored()).toBe(true)
+
     await expect(shutdown(quit, reportBlocked)).resolves.toBe(true)
     expect(quit).toHaveBeenCalledOnce()
+    expect(reportBlocked).toHaveBeenCalledOnce()
   } finally {
     await mdx.releaseDiagnosticsLease(owner)
   }

@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
@@ -47,7 +50,7 @@ vi.mock('../src/main/json-file-store', () => ({
 }))
 
 import { createUpdater } from '../src/main/updates/updater'
-import { withMdxConsentQuit } from '../src/main/mdx-consent'
+import { createMdxConsentStore, withMdxConsentQuit } from '../src/main/mdx-consent'
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 
@@ -197,18 +200,26 @@ describe('updater channel switching', () => {
     updater.dispose()
   })
 
-  it('keeps the ready update without installing when an unsaved MDX revocation vetoes restart', async () => {
+  it('keeps a ready update until an MDX revocation can be saved, even if the vault is gone', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-updater-consent-'))
+    const file = join(dir, 'mdx-consent.json')
+    const scope = {
+      root: join(dir, 'vault'),
+      remote: 'octocat/notes',
+      accountId: '123',
+      origin: 'https://packages.example',
+    }
+    const consent = createMdxConsentStore(file)
     const reportBlocked = vi.fn(async () => {})
-    const teardown = vi.fn(async () => true)
+    const teardown = vi.fn(async () => {
+      expect(await createMdxConsentStore(file).allows(scope)).toBe(false)
+      return true
+    })
     const updater = createUpdater({
       send: vi.fn(),
       beforeInstall: () =>
         withMdxConsentQuit({
-          consent: {
-            drain: async () => {
-              throw new Error('MDX consent could not be saved')
-            },
-          },
+          consent,
           pauseAdmission: () => {},
           resumeAdmission: () => {},
           reportBlocked,
@@ -216,17 +227,33 @@ describe('updater channel switching', () => {
         }),
       installFailed: vi.fn(),
     })
-    await tick()
-    mocks.updater.emit('update-available', { version: '1.1.0' })
-    mocks.updater.emit('update-downloaded')
+    try {
+      await mkdir(scope.root)
+      await consent.grant(scope)
+      const backup = `${file}.backup`
+      await rename(file, backup)
+      await mkdir(file)
+      await expect(consent.revoke(scope)).rejects.toThrow()
+      await rm(scope.root, { recursive: true })
 
-    await expect(updater.install()).resolves.toBe(false)
+      await tick()
+      mocks.updater.emit('update-available', { version: '1.1.0' })
+      mocks.updater.emit('update-downloaded')
+      await expect(updater.install()).resolves.toBe(false)
+      expect(reportBlocked).toHaveBeenCalledOnce()
+      expect(teardown).not.toHaveBeenCalled()
+      expect(updater.status()).toMatchObject({ state: 'ready', availableVersion: '1.1.0' })
+      expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
 
-    expect(reportBlocked).toHaveBeenCalledOnce()
-    expect(teardown).not.toHaveBeenCalled()
-    expect(updater.status()).toMatchObject({ state: 'ready', availableVersion: '1.1.0' })
-    expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
-    updater.dispose()
+      await rm(file, { recursive: true })
+      await rename(backup, file)
+      expect(await consent.allows(scope)).toBe(false)
+      await expect(updater.install()).resolves.toBe(true)
+      expect(mocks.updater.quitAndInstall).toHaveBeenCalledOnce()
+    } finally {
+      updater.dispose()
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   it('waits for the guarded install outcome before reporting success', async () => {

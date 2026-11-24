@@ -1251,14 +1251,14 @@ async function main(): Promise<void> {
             buttons: ['OK'],
             message: 'Holi stayed open because an MDX resource revocation could not be saved.',
             detail:
-              'The resource is blocked for this run, but the saved permission may still allow it on restart. Retry saving the revocation in MDX external resources, then quit or restart to update again.',
+              'The resource is blocked for this run, but the saved permission may still allow it on restart. Check that Holi can write to its local data folder, then try quitting or restarting to update again. Holi will retry saving the revocation.',
           }
           if (mainWindow === null) await dialog.showMessageBox(options)
           else await dialog.showMessageBox(mainWindow, options)
         },
         async proceed() {
-          // Both the consent drain and the buffer flush can veto quit without
-          // tearing down the compiler, plugins, vault or updater.
+          // Retrying pending consent removals and flushing buffers can both veto quit
+          // before tearing down the compiler, plugins, vault or updater.
           channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
           const result = await requestFlush(channel)
           if (result !== 'flushed') {
