@@ -1,179 +1,317 @@
 import type {
-  EventAttachmentTarget,
-  EventAttachments,
-  DriveFilePage,
   AttachEventFilesResult,
+  DriveFile,
+  DriveFilePage,
+  EventAttachment,
+  EventAttachments,
+  EventAttachmentTarget,
 } from '../shared/event-attachments'
-import type { GoogleApi } from './api'
+import { GoogleApiError, isUncertainGoogleWrite, type GoogleApi } from './api'
+import { ensureGuestViewers } from './attachment-sharing'
 
 const CALENDAR = 'https://www.googleapis.com/calendar/v3'
-const DRIVE = 'https://www.googleapis.com/drive/v3'
-const LIMIT = 25
+const DRIVE_FILES = 'https://www.googleapis.com/drive/v3/files'
+const FOLDER = 'application/vnd.google-apps.folder'
+const DRIVE_FIELDS = 'id,name,mimeType,webViewLink,trashed,capabilities(canShare)'
+const ATTACHMENT_LIMIT = 25
+const CONFLICT_RETRIES = 2
+const LIMIT_MESSAGE = 'Google Calendar supports at most 25 attachments.'
+const UNKNOWN_MESSAGE = 'Could not confirm that all selected files were attached.'
 
-type Event = {
+type Validate = () => Promise<void>
+type CalendarAttachment = Omit<EventAttachment, 'title'> & { title?: string }
+type CalendarEvent = {
   id: string
   etag?: string
   organizer?: { self?: boolean; email?: string }
-  attendees?: Array<{ email?: string; resource?: boolean; self?: boolean; responseStatus?: string }>
-  attachments?: Array<{
-    fileId?: string
-    title?: string
-    fileUrl?: string
-    mimeType?: string
-    iconLink?: string
-  }>
+  attendees?: Array<{ email?: string; resource?: boolean; self?: boolean; organizer?: boolean }>
+  attendeesOmitted?: boolean
+  attachments?: CalendarAttachment[]
   status?: string
+  eventType?: string
+  locked?: boolean
+}
+type Snapshot = {
+  calendar: { accessRole?: string }
+  event: CalendarEvent
+}
+type DriveMetadata = {
+  id?: string
+  name?: string
+  mimeType?: string
+  webViewLink?: string
+  trashed?: boolean
+  capabilities?: { canShare?: boolean }
+}
+type ShareableFile = DriveFile & { webViewLink: string }
+
+function segment(id: string): string {
+  // URL normalizes dot segments even when they are percent-encoded.
+  if (!id || id === '.' || id === '..') throw new Error('Invalid Google resource id.')
+  return encodeURIComponent(id)
+}
+
+const eventUrl = (target: EventAttachmentTarget) =>
+  `${CALENDAR}/calendars/${segment(target.calendarId)}/events/${segment(target.eventId)}`
+
+async function snapshot(api: GoogleApi, target: EventAttachmentTarget, validate: Validate) {
+  const calendar = await api.get<Snapshot['calendar']>(
+    `${CALENDAR}/users/me/calendarList/${segment(target.calendarId)}`,
+    {},
+    validate,
+  )
+  // Read the full event, without maxAttendees or a field mask. Solo events
+  // normally omit attendees; attendeesOmitted explicitly says not to trust it.
+  const event = await api.get<CalendarEvent>(eventUrl(target), {}, validate)
+  await validate()
+  if (
+    typeof calendar?.accessRole !== 'string' ||
+    event?.id !== target.eventId ||
+    (event.attachments !== undefined &&
+      (!Array.isArray(event.attachments) ||
+        event.attachments.some((item) => typeof item?.fileUrl !== 'string' || !item.fileUrl)))
+  ) {
+    throw new Error('Could not read the Google event attachments.')
+  }
+  return { calendar, event }
+}
+
+function displayed(event: CalendarEvent): EventAttachment[] {
+  return (event.attachments ?? []).map(({ fileId, fileUrl, title, mimeType, iconLink }) => ({
+    fileUrl,
+    title: typeof title === 'string' && title ? title : 'Attachment',
+    ...(typeof fileId === 'string' ? { fileId } : {}),
+    ...(typeof mimeType === 'string' ? { mimeType } : {}),
+    ...(typeof iconLink === 'string' ? { iconLink } : {}),
+  }))
+}
+
+function editability({ calendar, event }: Snapshot): { reason: string } | { guests: string[] } {
+  if (
+    (calendar.accessRole !== 'owner' && calendar.accessRole !== 'writer') ||
+    event.organizer?.self !== true ||
+    event.status === 'cancelled' ||
+    event.locked === true ||
+    (event.eventType !== undefined && event.eventType !== 'default')
+  ) {
+    return { reason: 'This event cannot be changed by this account.' }
+  }
+  // A wildcard/weak tag is not a precondition on the event we read.
+  if (typeof event.etag !== 'string' || !/^"[\x21\x23-\x7e]+"$/.test(event.etag)) {
+    return { reason: 'The event has no usable version tag.' }
+  }
+  const reason = 'Google did not provide a complete guest list.'
+  if (
+    event.attendeesOmitted ||
+    (event.attendees !== undefined && !Array.isArray(event.attendees))
+  ) {
+    return { reason }
+  }
+  const guests = new Set<string>()
+  const organizer = event.organizer.email?.toLowerCase()
+  for (const person of event.attendees ?? []) {
+    if (person?.resource || person?.self || person?.organizer) continue
+    if (typeof person?.email !== 'string' || !/^[^\s@<>]+@[^\s@<>]+$/.test(person.email)) {
+      return { reason }
+    }
+    const email = person.email.toLowerCase()
+    if (email !== organizer) guests.add(email)
+  }
+  return { guests: [...guests] }
 }
 
 export async function eventAttachments(
   api: GoogleApi,
   target: EventAttachmentTarget,
-  validate: () => Promise<void>,
+  validate: Validate,
 ): Promise<EventAttachments> {
-  await validate()
-  const [calendar, event] = await Promise.all([
-    api.get<{ accessRole?: string }>(
-      `${CALENDAR}/users/me/calendarList/${encodeURIComponent(target.calendarId)}`,
-    ),
-    api.get<Event>(
-      `${CALENDAR}/calendars/${encodeURIComponent(target.calendarId)}/events/${encodeURIComponent(target.eventId)}`,
-    ),
-  ])
-  const editable = calendar.accessRole === 'owner' || calendar.accessRole === 'writer'
+  const current = await snapshot(api, target, validate)
+  const editable = editability(current)
   return {
-    attachments: event.attachments ?? [],
-    canAttach: editable && event.organizer?.self === true && event.status !== 'cancelled',
+    attachments: displayed(current.event),
+    ...('reason' in editable ? { canAttach: false, reason: editable.reason } : { canAttach: true }),
   }
+}
+
+const driveId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]+$/.test(id)
+
+function shareable(file: DriveMetadata | null): file is ShareableFile {
+  if (
+    !driveId(file?.id) ||
+    typeof file.name !== 'string' ||
+    !file.name ||
+    typeof file.mimeType !== 'string' ||
+    !file.mimeType ||
+    file.mimeType === FOLDER ||
+    file.trashed === true ||
+    file.capabilities?.canShare !== true ||
+    typeof file.webViewLink !== 'string'
+  )
+    return false
+  if (!URL.canParse(file.webViewLink)) return false
+  const url = new URL(file.webViewLink)
+  return url.protocol === 'https:' && !url.username && !url.password
 }
 
 export async function driveFiles(
   api: GoogleApi,
-  query = '',
-  pageToken?: string,
+  query: string,
+  pageToken: string | undefined,
+  validate: Validate,
 ): Promise<DriveFilePage> {
   const escaped = query.replace(/[\\']/g, (character) => `\\${character}`)
-  const params: Record<string, string> = {
-    q: `trashed = false${escaped ? ` and name contains '${escaped}'` : ''}`,
-    pageSize: '100',
-    fields: 'nextPageToken,files(id,name,mimeType,webViewLink,iconLink,trashed,mimeType)',
-  }
-  if (pageToken) params.pageToken = pageToken
-  const result = await api.get<{ files?: DriveFilePage['files']; nextPageToken?: string }>(
-    `${DRIVE}/files`,
-    params,
+  const result = await api.get<{ files?: DriveMetadata[]; nextPageToken?: string }>(
+    DRIVE_FILES,
+    {
+      q: `trashed = false and mimeType != '${FOLDER}'${escaped ? ` and name contains '${escaped}'` : ''}`,
+      pageSize: '100',
+      fields: `nextPageToken,files(${DRIVE_FIELDS})`,
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+      pageToken,
+    },
+    validate,
   )
   return {
-    files: result.files ?? [],
+    files: (result.files ?? [])
+      .filter(shareable)
+      .map(({ id, name, mimeType }) => ({ id, name, mimeType })),
     ...(result.nextPageToken ? { nextPageToken: result.nextPageToken } : {}),
   }
 }
+
+const attached = (event: CalendarEvent, file: ShareableFile) =>
+  event.attachments?.some((item) =>
+    item.fileId ? item.fileId === file.id : item.fileUrl === file.webViewLink,
+  ) === true
+
+const failed = (message: string, event?: CalendarEvent): AttachEventFilesResult => ({
+  attachments: event ? displayed(event) : [],
+  attachmentStatus: 'failed',
+  sharing: [],
+  message,
+})
 
 export async function attachEventFiles(
   api: GoogleApi,
   target: EventAttachmentTarget,
   fileIds: string[],
-  validate: () => Promise<void>,
+  validate: Validate,
 ): Promise<AttachEventFilesResult> {
   const ids = [...new Set(fileIds)]
-  if (ids.length > LIMIT)
-    return {
-      attachments: [],
-      attachmentStatus: 'failed',
-      message: 'Google Calendar supports at most 25 attachments.',
-    }
-  await validate()
-  let event: Event
-  try {
-    event = await api.get<Event>(
-      `${CALENDAR}/calendars/${encodeURIComponent(target.calendarId)}/events/${encodeURIComponent(target.eventId)}`,
-      { supportsAttachments: 'true' },
-    )
-  } catch {
-    return {
-      attachments: [],
-      attachmentStatus: 'failed',
-      message: 'Could not read the calendar event.',
-    }
-  }
-  if (event.organizer?.self !== true || event.status === 'cancelled')
-    return {
-      attachments: event.attachments ?? [],
-      attachmentStatus: 'failed',
-      message: 'This event cannot be changed by this account.',
-    }
+  if (ids.length > ATTACHMENT_LIMIT) return failed(LIMIT_MESSAGE)
+  if (!ids.length || !ids.every(driveId)) return failed('Select valid Google Drive files.')
+
+  let current = await snapshot(api, target, validate)
+  const initialAccess = editability(current)
+  if ('reason' in initialAccess) return failed(initialAccess.reason, current.event)
   const resolved = await Promise.all(
     ids.map(async (id) => {
-      const file = await api.get<{
-        id: string
-        name: string
-        mimeType: string
-        webViewLink: string
-        iconLink?: string
-      }>(`${DRIVE}/files/${encodeURIComponent(id)}`, {
-        fields: 'id,name,mimeType,webViewLink,iconLink',
-      })
-      return {
-        fileId: file.id,
-        title: file.name,
-        fileUrl: file.webViewLink,
-        mimeType: file.mimeType,
-        ...(file.iconLink ? { iconLink: file.iconLink } : {}),
-      }
+      const file = await api.get<DriveMetadata>(
+        `${DRIVE_FILES}/${id}`,
+        { fields: DRIVE_FIELDS, supportsAllDrives: 'true' },
+        validate,
+      )
+      return shareable(file) && file.id === id ? file : null
     }),
   )
-  const current = event.attachments ?? []
-  const merged = [
-    ...current,
-    ...resolved.filter((item) => !current.some((existing) => existing.fileId === item.fileId)),
-  ]
-  if (merged.length > LIMIT)
-    return {
-      attachments: current,
-      attachmentStatus: 'failed',
-      sharing: [],
-      message: 'Google Calendar supports at most 25 attachments.',
-    }
-  if (!event.etag)
-    return {
-      attachments: current,
-      attachmentStatus: 'failed',
-      sharing: [],
-      message: 'The event has no version tag; no changes were made.',
-    }
   await validate()
-  try {
-    await api.request(
-      'PATCH',
-      `${CALENDAR}/calendars/${encodeURIComponent(target.calendarId)}/events/${encodeURIComponent(target.eventId)}?supportsAttachments=true&sendUpdates=none`,
-      { attachments: merged },
-      validate,
-      { ifMatch: event.etag },
-    )
-  } catch {
-    return {
-      attachments: current,
-      attachmentStatus: 'unknown',
-      message: 'The attachment update could not be confirmed.',
+  const files = resolved.filter((file) => file !== null)
+  if (files.length !== ids.length)
+    return failed('A selected Drive file cannot be attached and shared.', current.event)
+
+  for (let conflicts = 0; ; conflicts++) {
+    const editable = editability(current)
+    if ('reason' in editable) return failed(editable.reason, current.event)
+    const newFiles = files.filter((file) => !attached(current.event, file))
+    // Send the original attachment objects unchanged; Calendar PATCH replaces
+    // the whole array. fileId is read-only and only Google resolves it.
+    const merged = [
+      ...(current.event.attachments ?? []),
+      ...newFiles.map((file) => ({
+        fileUrl: file.webViewLink,
+        title: file.name,
+        mimeType: file.mimeType,
+      })),
+    ]
+    if (merged.length > ATTACHMENT_LIMIT) return failed(LIMIT_MESSAGE, current.event)
+    if (newFiles.length === 0) break
+    if (conflicts > CONFLICT_RETRIES)
+      return failed('The event kept changing. No attachment update was made.', current.event)
+
+    try {
+      await api.request(
+        'PATCH',
+        `${eventUrl(target)}?supportsAttachments=true&sendUpdates=none`,
+        { attachments: merged },
+        validate,
+        { ifMatch: current.event.etag },
+      )
+    } catch (error) {
+      if (error instanceof GoogleApiError && error.status === 412) {
+        // Google rejected the stale precondition. Only this known refusal
+        // permits an automatic replay, after re-fetching and re-merging.
+        current = await snapshot(api, target, validate)
+        continue
+      }
+      if (!isUncertainGoogleWrite(error)) {
+        if (
+          !(error instanceof GoogleApiError) ||
+          error.code === 'scope' ||
+          error.code === 'reconnect'
+        )
+          throw error
+        return failed('Google refused the attachment update.', current.event)
+      }
     }
+    // A response (or a lost one) isn't the current event. Before sharing,
+    // confirm what is actually attached and which guests it has now.
+    try {
+      current = await snapshot(api, target, validate)
+    } catch {
+      return { attachments: [], attachmentStatus: 'unknown', message: UNKNOWN_MESSAGE, sharing: [] }
+    }
+    break
   }
-  try {
-    const actual = await api.get<Event>(
-      `${CALENDAR}/calendars/${encodeURIComponent(target.calendarId)}/events/${encodeURIComponent(target.eventId)}`,
-    )
-    const actualAttachments = actual.attachments ?? []
-    const confirmed = ids.every((id) => actualAttachments.some((item) => item.fileId === id))
-    return {
-      attachments: actualAttachments,
-      attachmentStatus: confirmed ? 'attached' : 'unknown',
-      sharing: [],
-      ...(confirmed ? {} : { message: 'The attachment update could not be confirmed.' }),
-    }
-  } catch {
-    return {
-      attachments: current,
-      attachmentStatus: 'unknown',
-      sharing: [],
-      message: 'The attachment update could not be confirmed.',
-    }
+
+  const confirmed = files.filter((file) => attached(current.event, file))
+  const complete = confirmed.length === files.length
+  const editable = editability(current)
+  const sharing =
+    'guests' in editable
+      ? await ensureGuestViewers(
+          api,
+          confirmed.map((file) => file.id),
+          editable.guests,
+          validate,
+          async (guest, fileId) => {
+            const latest = await snapshot(api, target, validate)
+            const access = editability(latest)
+            const file = confirmed.find((entry) => entry.id === fileId)
+            if (
+              !file ||
+              !attached(latest.event, file) ||
+              !('guests' in access) ||
+              !access.guests.includes(guest)
+            ) {
+              throw new Error('The guest or attachment is no longer eligible for sharing.')
+            }
+            await validate()
+          },
+        )
+      : []
+  const message = [
+    complete ? undefined : UNKNOWN_MESSAGE,
+    'reason' in editable && confirmed.length > 0
+      ? 'Guest access was not updated. ' + editable.reason
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join(' ')
+  return {
+    attachments: displayed(current.event),
+    attachmentStatus: complete ? 'attached' : 'unknown',
+    sharing,
+    ...(message ? { message } : {}),
   }
 }

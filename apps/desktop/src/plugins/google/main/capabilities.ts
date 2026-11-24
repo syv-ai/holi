@@ -41,7 +41,6 @@ import {
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { GoogleAccountsManager, GoogleAccountsOverview } from './accounts'
-import type { GoogleSession } from './session'
 import { vaultAttachments } from './attachments'
 import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './api'
 import {
@@ -76,7 +75,13 @@ import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
 import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
 import { listContacts } from './people'
-import { GoogleReconnectRequiredError } from './session'
+import {
+  GOOGLE_CALENDAR_READ_SCOPE,
+  GOOGLE_CALENDAR_WRITE_SCOPE,
+  GOOGLE_DRIVE_SCOPE,
+  GoogleReconnectRequiredError,
+  type GoogleSession,
+} from './session'
 import { meetingParams, type MeetingCreation } from './meeting-creation'
 import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
@@ -85,19 +90,20 @@ import { normalizeMailMarkerPreferences, type MailMarkerPreferences } from '../s
 import { eventAttachments, driveFiles, attachEventFiles } from './event-attachments'
 import type { EventAttachmentTarget } from '../shared/event-attachments'
 
-/** Longest calendar window one call may ask for. */
 const attachmentTarget = (raw: unknown): EventAttachmentTarget => {
   const p = paramsObject(raw)
   const expectedAccountSub = expectedAccountParam(p)
   if (expectedAccountSub === undefined)
     throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
-  return {
-    expectedAccountSub,
-    calendarId: stringParam(p, 'calendarId'),
-    eventId: stringParam(p, 'eventId'),
+  const calendarId = stringParam(p, 'calendarId')
+  const eventId = stringParam(p, 'eventId')
+  if ([calendarId, eventId].some((id) => id === '.' || id === '..')) {
+    throw new CapabilityError('BAD_REQUEST', 'invalid Google resource id')
   }
+  return { expectedAccountSub, calendarId, eventId }
 }
 
+/** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
 const DAY_MS = 24 * 60 * 60 * 1000
 /** `agenda` with no window: the next week. */
@@ -164,6 +170,22 @@ async function google<T>(work: () => Promise<T>): Promise<T> {
     const next = error.code === 'reconnect' || error.code === 'scope' ? RECONNECT : undefined
     throw new CapabilityError(codes[error.code], error.message, next)
   }
+}
+
+/** Don't echo Google response bodies, which can carry file and guest details. */
+function attachmentRequest<T>(work: () => Promise<T>): Promise<T> {
+  return google(async () => {
+    try {
+      return await work()
+    } catch (error) {
+      if (error instanceof CapabilityError) throw error
+      if (error instanceof GoogleApiError && error.code === 'reconnect') {
+        throw new GoogleReconnectRequiredError()
+      }
+      if (error instanceof GoogleApiError && error.code !== 'unknown') throw error
+      throw new CapabilityError('UNAVAILABLE', 'Could not read from or update Google attachments.')
+    }
+  })
 }
 
 /** An instant, or a refusal naming the param. */
@@ -496,6 +518,37 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
     if (current !== session)
       throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+  }
+
+  const attachmentSession = async (
+    remote: string,
+    expectedAccountSub: string,
+    scopes: readonly string[],
+  ) => {
+    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+    const session = await deps.accounts.sessionFor(remote)
+    const accountChanged = () =>
+      new CapabilityError('FORBIDDEN', 'Google account changed; reload the event.')
+    if (session?.accountSub !== expectedAccountSub) throw accountChanged()
+    const requireGrant = () => {
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      if (session.accountSub !== expectedAccountSub) throw accountChanged()
+      const missing = session.missingScopes()
+      if (scopes.some((scope) => missing.includes(scope))) {
+        throw new CapabilityError(
+          'FORBIDDEN',
+          'Reconnect Google to grant attachment access.',
+          RECONNECT,
+        )
+      }
+    }
+    requireGrant()
+    const validate = async () => {
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      if ((await deps.accounts.sessionFor(remote)) !== session) throw accountChanged()
+      requireGrant()
+    }
+    return { api: apiForSession(session), validate }
   }
 
   const dataOf = async (remote: string): Promise<GoogleData> => {
@@ -1246,12 +1299,13 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.eventAttachments': cap({
       doors: ['ui'],
       params: (raw) => attachmentTarget(raw),
-      run: async (ctx, target) => {
-        const { session } = await accountOf(ctx.remote, target.expectedAccountSub)
-        return google(() =>
-          eventAttachments(apiForSession(session), target, validateSession(ctx.remote, session)),
-        )
-      },
+      run: (ctx, target) =>
+        attachmentRequest(async () => {
+          const { api, validate } = await attachmentSession(ctx.remote, target.expectedAccountSub, [
+            GOOGLE_CALENDAR_READ_SCOPE,
+          ])
+          return eventAttachments(api, target, validate)
+        }),
     }),
     'google.driveFiles': cap({
       doors: ['ui'],
@@ -1260,12 +1314,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         query: optionalStringParam(paramsObject(raw), 'query'),
         pageToken: optionalStringParam(paramsObject(raw), 'pageToken'),
       }),
-      run: async (ctx, { expectedAccountSub, query, pageToken }) => {
-        const { session } = await accountOf(ctx.remote, expectedAccountSub)
-        if (session.missingScopes().includes('https://www.googleapis.com/auth/drive.readonly'))
-          throw new CapabilityError('FORBIDDEN', 'Reconnect Google to grant Drive read access.')
-        return google(() => driveFiles(apiForSession(session), query, pageToken))
-      },
+      run: (ctx, { expectedAccountSub, query, pageToken }) =>
+        attachmentRequest(async () => {
+          const { api, validate } = await attachmentSession(ctx.remote, expectedAccountSub, [
+            GOOGLE_DRIVE_SCOPE,
+          ])
+          const result = await driveFiles(api, query ?? '', pageToken, validate)
+          await validate()
+          return result
+        }),
     }),
     'google.attachEventFiles': cap({
       doors: ['ui'],
@@ -1276,19 +1333,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           throw new CapabilityError('BAD_REQUEST', 'fileIds must be a list')
         return { ...target, fileIds: p.fileIds as string[] }
       },
-      run: async (ctx, { expectedAccountSub, fileIds, ...target }) => {
-        const { session } = await accountOf(ctx.remote, expectedAccountSub)
-        if (session.missingScopes().includes('https://www.googleapis.com/auth/drive.readonly'))
-          throw new CapabilityError('FORBIDDEN', 'Reconnect Google to grant Drive access.')
-        return google(() =>
-          attachEventFiles(
-            apiForSession(session),
-            { ...target, expectedAccountSub },
-            fileIds,
-            validateSession(ctx.remote, session),
-          ),
-        )
-      },
+      run: (ctx, { fileIds, ...target }) =>
+        attachmentRequest(async () => {
+          const { api, validate } = await attachmentSession(ctx.remote, target.expectedAccountSub, [
+            GOOGLE_CALENDAR_READ_SCOPE,
+            GOOGLE_CALENDAR_WRITE_SCOPE,
+            GOOGLE_DRIVE_SCOPE,
+          ])
+          return attachEventFiles(api, target, fileIds, validate)
+        }),
     }),
 
     /** The agent and Agenda's existing solo-only creation path stays silent. */
