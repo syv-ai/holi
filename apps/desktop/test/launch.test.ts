@@ -753,8 +753,9 @@ describe('execProgram', () => {
       const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true,detached:true});setInterval(()=>0,1000)`
       const { execProgram } = await import('../src/main/launch')
       const timeout = controlledTimeout(60_000)
+      let result: Promise<Error | null> | undefined
       try {
-        const result = new Promise<Error | null>((resolve) => {
+        result = new Promise<Error | null>((resolve) => {
           execProgram(
             process.execPath,
             ['-e', script],
@@ -768,8 +769,9 @@ describe('execProgram', () => {
             (err) => resolve(err),
           )
         })
-        await vi.waitFor(async () =>
-          expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
+        await vi.waitFor(
+          async () => expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
+          { timeout: 10_000 },
         )
         const readyPid = Number(await readFile(pidFile, 'utf8'))
         expect(defaultProbePid(readyPid, 'win32')).toBe('group-leader')
@@ -780,8 +782,13 @@ describe('execProgram', () => {
         const pid = Number(await readFile(pidFile, 'utf8'))
         expect(defaultProbePid(pid, 'win32')).toBe('gone')
       } finally {
-        timeout.restore()
-        await rm(dir, { recursive: true, force: true })
+        try {
+          timeout.expire()
+          if (result) await result
+        } finally {
+          timeout.restore()
+          await rm(dir, { recursive: true, force: true })
+        }
       }
     },
     30_000,
