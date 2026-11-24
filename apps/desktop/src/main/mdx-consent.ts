@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { renameSync } from 'node:fs'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { MDX_RESOURCE_PURPOSE } from '@holi/shared'
+import { dirname, isAbsolute, resolve } from 'node:path'
+import { isRemote, MDX_RESOURCE_PURPOSE } from '@holi/shared'
 import { isMdxExternalOrigin } from './mdx-external-policy'
+import { canonicalGitHubRemote } from './mdx-trust'
 
 const VERSION = 1
 
@@ -23,7 +24,7 @@ export interface MdxConsentStore {
   /** Pass a synchronous lifetime check for a document-bound approval. A retired approval rejects. */
   grant(scope: MdxConsentScope, stillOwned?: () => boolean): Promise<void>
   revoke(scope: MdxConsentScope): Promise<void>
-  /** Wait for accepted operations to settle, after closing admission at the caller. */
+  /** Wait for accepted operations after closing admission; reject if a revocation remains unsaved. */
   drain(): Promise<void>
 }
 
@@ -37,12 +38,31 @@ function validScope(value: unknown): value is MdxConsentScope {
     typeof root !== 'string' ||
     typeof remote !== 'string' ||
     typeof accountId !== 'string' ||
-    !root ||
-    !remote ||
-    !accountId
+    root.includes('\0') ||
+    !isAbsolute(root) ||
+    resolve(root) !== root ||
+    !isRemote(remote) ||
+    remote.endsWith('/.') ||
+    !Number.isSafeInteger(Number(accountId)) ||
+    Number(accountId) <= 0 ||
+    String(Number(accountId)) !== accountId
   )
     return false
-  return true
+  // Check spelling only: historical clones may be gone or temporarily offline.
+  // The caller verifies the current clone with realpath before using its scope.
+  if (
+    process.platform === 'win32' &&
+    root
+      .replace(/^[a-z]:/i, '')
+      .split('\\')
+      .some((part) => /[ .]$|[<>:"|?*]/.test(part))
+  )
+    return false
+  try {
+    return canonicalGitHubRemote(remote) === remote
+  } catch {
+    return false
+  }
 }
 
 /** Machine-local, fail-closed HTTPS grants. Main keeps one store instance per file. */
@@ -185,6 +205,35 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
       })
       return revocation.write
     },
-    drain: () => queue,
+    async drain() {
+      await queue
+      if (revocations.size > 0) throw new Error('MDX resource revocation could not be saved')
+    },
+  }
+}
+
+/** Shared by ordinary quit and Restart to update. Neither may proceed on a failed drain. */
+export async function withMdxConsentQuit(options: {
+  consent: Pick<MdxConsentStore, 'drain'>
+  pauseAdmission(): void
+  resumeAdmission(): void
+  reportBlocked(error: unknown): Promise<void>
+  proceed(): Promise<boolean>
+}): Promise<boolean> {
+  options.pauseAdmission()
+  let accepted = false
+  let blocked: { error: unknown } | undefined
+  try {
+    try {
+      await options.consent.drain()
+    } catch (error) {
+      blocked = { error }
+      return false
+    }
+    accepted = await options.proceed()
+    return accepted
+  } finally {
+    if (!accepted) options.resumeAdmission()
+    if (blocked) await options.reportBlocked(blocked.error)
   }
 }

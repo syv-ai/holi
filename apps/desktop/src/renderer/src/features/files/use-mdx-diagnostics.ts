@@ -47,7 +47,7 @@ type DecisionAttempt = {
   owner: Lease
   sourceVersion: number
   action: Decision
-  id: string
+  origin: string
 }
 
 /** Owns diagnostics and external resource decisions for one visible source editor. */
@@ -356,7 +356,6 @@ export function useMdxDiagnostics(input: Input) {
   function retry() {
     if (ownerScope.current !== scope || !scope.identityCurrent()) return
     dismissed.current = null
-    setDecisionError(null)
     refreshAttempt.current = ''
     const owner = lease.current
     if (view && owner?.current() && latestSource.current !== null) {
@@ -394,37 +393,42 @@ export function useMdxDiagnostics(input: Input) {
       )
     : []
   const pendingDecision = decision !== null && attemptCurrent(decision)
-  const failed = decisionError?.attempt
+  // A grant change can replace the query and generation before an admitted
+  // decision reports its failure. The failure still belongs to this source and origin.
   const currentError =
-    failed &&
-    attemptCurrent(failed) &&
-    (failed.action === 'revoke' ? approved : pending).some((item) => item.id === failed.id)
-      ? decisionError
-      : null
+    decisionError && decisionSourceCurrent(decisionError.attempt) ? decisionError : null
   const error = currentError
     ? {
-        message: currentError.message,
+        message: `${currentError.attempt.origin}: ${currentError.message}`,
         retry: () => {
-          if (currentError.attempt.action === 'revoke') {
-            void decide('revoke', currentError.attempt.id)
-          } else if (owner?.current()) {
-            // Only the origin's decision button can grant consent.
+          const attempt = currentError.attempt
+          if (!decisionSourceCurrent(attempt)) return
+          if (attempt.action === 'revoke') {
+            const grant = approved.find(({ origin }) => origin === attempt.origin)
+            if (grant) {
+              void decide('revoke', grant.id)
+            } else {
+              setDecisionError(null)
+              void readResources(attempt.owner)
+            }
+          } else if (view && latestSource.current !== null) {
+            // Recompile to obtain a fresh request. Only an explicit decision on
+            // the current request can grant consent.
             setDecisionError(null)
-            void readResources(owner)
+            schedule(view, latestSource.current, attempt.owner, true, scope)
           }
         },
       }
     : currentResources?.error && owner
       ? { message: currentResources.error, retry: () => void readResources(owner) }
-      : currentState.kind === 'unavailable'
-        ? { message: currentState.message, retry }
-        : null
+      : null
+
+  function decisionSourceCurrent(attempt: DecisionAttempt) {
+    return attempt.owner.current() && attempt.sourceVersion === sourceVersion.current
+  }
 
   function attemptCurrent(attempt: DecisionAttempt) {
-    return (
-      attempt.owner.current() &&
-      (attempt.action === 'revoke' || attempt.sourceVersion === sourceVersion.current)
-    )
+    return attempt.action === 'revoke' ? attempt.owner.current() : decisionSourceCurrent(attempt)
   }
 
   async function decide(action: Decision, id: string) {
@@ -432,7 +436,7 @@ export function useMdxDiagnostics(input: Input) {
     if (action !== 'revoke' && !pendingCurrent()) return
     const item = (action === 'revoke' ? approved : pending).find((item) => item.id === id)
     if (!item) return
-    const attempt = { owner, sourceVersion: sourceVersion.current, action, id }
+    const attempt = { owner, sourceVersion: sourceVersion.current, action, origin: item.origin }
     const startedGeneration = owner.generation
     deciding.current = attempt
     setDecision(attempt)
@@ -462,10 +466,9 @@ export function useMdxDiagnostics(input: Input) {
         }
       }
     } catch (error) {
-      if (attemptCurrent(attempt) && (action === 'revoke' || pendingCurrent())) {
+      if (decisionSourceCurrent(attempt))
         setDecisionError({ attempt, message: errorMessage(error) })
-        if (action === 'revoke') void readResources(owner)
-      }
+      if (action === 'revoke' && owner.current()) void readResources(owner)
     } finally {
       if (deciding.current === attempt) deciding.current = null
       setDecision((previous) => (previous === attempt ? null : previous))
@@ -482,6 +485,7 @@ export function useMdxDiagnostics(input: Input) {
           pending,
           loading: currentState.kind === 'checking' || currentResources?.loading === true,
           error,
+          diagnosticsError: currentState.kind === 'unavailable' ? currentState.message : null,
           pendingDecision,
           visit,
           decide,

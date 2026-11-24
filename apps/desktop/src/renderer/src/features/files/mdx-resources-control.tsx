@@ -13,9 +13,11 @@ type Props = {
 }
 
 export function MdxResourcesControl({ resources, onRun }: Props) {
-  const { approved, pending, loading, error, pendingDecision, visit, decide } = resources
+  const { approved, pending, loading, error, diagnosticsError, pendingDecision, visit, decide } =
+    resources
   const [opened, setOpened] = useState<object | null>(null)
   const empty = pending.length === 0 && approved.length === 0
+  const showEmptyState = empty && !loading && !error && !diagnosticsError && !pendingDecision
 
   return (
     <Popover open={opened === visit} onOpenChange={(open) => setOpened(open ? visit : null)}>
@@ -27,7 +29,7 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
       {pending.length > 0 ? <Badge variant="secondary">Approval needed</Badge> : null}
       <PopoverContent align="start" size="calendar" aria-label="MDX resources">
         <div className="flex min-h-0 flex-col gap-4 overflow-auto">
-          {loading && !error && empty ? (
+          {loading && !error && !diagnosticsError && empty ? (
             <div className="flex flex-col gap-2" role="status" aria-label="Checking MDX resources">
               <Skeleton className="h-4 w-1/2" />
               <Skeleton className="h-4 w-3/4" />
@@ -49,7 +51,17 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
               </Button>
             </div>
           ) : null}
-          {empty && !loading && !error && !pendingDecision ? (
+          {diagnosticsError ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Alert variant="destructive">
+                <AlertDescription className="break-words">{diagnosticsError}</AlertDescription>
+              </Alert>
+              <Button type="button" variant="outline" onClick={onRun}>
+                Retry diagnostics
+              </Button>
+            </div>
+          ) : null}
+          {showEmptyState ? (
             <EmptyState
               title="No MDX resource requests or approvals"
               action={{ label: 'Run diagnostics', onClick: onRun }}
@@ -135,7 +147,7 @@ export function MdxResourcesControl({ resources, onRun }: Props) {
               </ul>
             </section>
           ) : null}
-          {!empty && !loading && !error && !pendingDecision ? (
+          {!showEmptyState && !loading && !diagnosticsError && !pendingDecision ? (
             <div>
               <Button type="button" variant="outline" onClick={onRun}>
                 Run diagnostics

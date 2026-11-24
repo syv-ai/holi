@@ -184,8 +184,15 @@ try {
     ipcRenderer.on('plugin:' + resourceEvents, (_event, message) => {
       for (const cb of subscribers) cb(message);
     });
+    let denialReceipt = null;
     contextBridge.exposeInMainWorld('holi', {
-      trpc: (op) => ipcRenderer.invoke('holi:trpc', op),
+      trpc: async (op) => {
+        const isDenial = op?.path === 'mdxTrust.rejectExternalResource';
+        if (isDenial) denialReceipt = null;
+        const response = await ipcRenderer.invoke('holi:trpc', op);
+        if (isDenial) denialReceipt = { ok: response?.ok === true && response?.data?.ok === true };
+        return response;
+      },
       plugin: { on: (id, cb) => {
         if (id !== resourceEvents) return () => {};
         subscribers.add(cb);
@@ -193,8 +200,9 @@ try {
       } },
     });
     contextBridge.exposeInMainWorld('holiSmoke', {
+      denialReceipt: () => denialReceipt,
       call: (channel, input) => {
-        if (!['smoke:status', 'smoke:scenarios', 'smoke:other-document', 'smoke:hold-compiler', 'smoke:guest-healthy', 'smoke:arm-stream', 'smoke:stream-status'].includes(channel))
+        if (!['smoke:status', 'smoke:scenarios', 'smoke:other-document', 'smoke:hold-compiler', 'smoke:guest-healthy', 'smoke:arm-stream', 'smoke:stream-status', 'smoke:start-error-page-race', 'smoke:error-page-result'].includes(channel))
           return Promise.reject(Error('Denied fixture operation'));
         return ipcRenderer.invoke(channel, input);
       },
@@ -331,10 +339,17 @@ async function runNative(electron, artifact) {
   assert.equal(preApproval.guestCreations, 0, 'compiler guest existed before approval')
   assert.equal(preApproval.inspectedSources, 0, 'source was delivered before approval')
   assert.equal(preApproval.guestProbes.length, 0, 'compiler guest was probed before approval')
-  for (const field of ['dns', 'socket'])
-    assert.equal(preApproval.network[field], isolation.network[field])
-  assert.equal(preApproval.network.requests.length, 0)
-  requireOnlyDestinations(preApproval.network, isolation.network, [], 'before vault trust')
+  const preTrust = (external.snapshots.beforeVaultTrust = preApproval.network)
+  assert.equal(preTrust.dns, 0, 'Node DNS activity before vault trust')
+  assert.equal(preTrust.socket, 0, 'Node socket activity before vault trust')
+  assert.deepEqual(preTrust.requests, [], 'Node HTTP requests before vault trust')
+  assert.deepEqual(preTrust.responses, [], 'Node HTTP responses before vault trust')
+  for (const destination of [...fixtureOrigins, 'unexpected', 'unattributed']) {
+    assert(preTrust.destinations[destination], `Missing pre-trust observation for ${destination}`)
+    for (const [counter, value] of Object.entries(preTrust.destinations[destination]))
+      assert.equal(value, 0, `Node ${counter} before vault trust for ${destination}`)
+  }
+  checks.push('absolute zero observed Node DNS, TLS/socket or HTTP activity before vault trust')
   await click('Approve vault')
   const guest = await waitFor(async () => {
     const state = await windowStatus(page)
@@ -501,7 +516,7 @@ async function runNative(electron, artifact) {
     'real guest crash and deadline recover with fresh successful compilations',
     ...nativeScenarios.stale.map((item) => `native held compile rejects stale ${item.name}`),
   )
-  await runExternal(page, editAndWaitForSave, (handler) => {
+  await runExternal(page, artifact, editAndWaitForSave, (handler) => {
     onCdpEvent = handler
   })
   assert.equal(
@@ -512,7 +527,7 @@ async function runNative(electron, artifact) {
   outcome = 'passed'
 }
 
-async function runExternal(page, editAndWaitForSave, onEvent) {
+async function runExternal(page, artifact, editAndWaitForSave, onEvent) {
   const remote = 'fixture/isolated-mdx'
   const probePath = 'notes/probe.mdx'
   const [rawOrigin, redirectOrigin, cdnOrigin] = fixtureOrigins
@@ -522,6 +537,7 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
   const deny = (origin) => `Deny ${origin}`
   const revoke = (origin) => `Revoke ${origin}`
   const trigger = 'MDX resources'
+  const runDiagnostics = 'Run diagnostics'
   const parts = ['entry', 'relative', 'redirect', 'cdn']
   const button = (label) =>
     page.evaluate(`(() => {
@@ -578,11 +594,19 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
   }
   const staleResource = /MDX (?:lease|resource request) unavailable|MDX context changed/i
   const cancelled = /cancel|supersed|unavailable|invalidated/i
-  const probeLease = async () => {
+  const currentContext = async () => {
     const { context } = await call('status', { remote }, 'query')
     assert(context, 'Current trusted document has no context')
-    return (await call('acquireDiagnosticsLease', { remote, context, path: probePath })).lease
+    return context
   }
+  const probeLease = async (context) =>
+    (
+      await call('acquireDiagnosticsLease', {
+        remote,
+        context: context ?? (await currentContext()),
+        path: probePath,
+      })
+    ).lease
   const pending = async (lease, generation) => {
     const diagnostics = await call('compile', { lease, generation, source })
     assert(diagnostics.length > 0, 'An unapproved graph must report diagnostics')
@@ -604,7 +628,12 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
   const noNewTraffic = (before, after, label) => {
     for (const field of ['dns', 'socket'])
       assert.equal(after[field], before[field], `${label}: ${field} activity`)
-    assert.equal(after.requests.length, before.requests.length, `${label}: HTTP activity`)
+    assert.equal(after.requests.length, before.requests.length, `${label}: HTTP request activity`)
+    assert.equal(
+      after.responses.length,
+      before.responses.length,
+      `${label}: HTTP response activity`,
+    )
     requireOnlyDestinations(after, before, [], label)
   }
   const requireRoutes = (snapshot, start, allowed) => {
@@ -632,6 +661,7 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
     assert.equal(isolated.ambientCookieHosts, 3)
     const before = await capture('beforeEditing')
     await editAndWaitForSave(source, 'unapproved external source')
+    await findInFile(page, 'External diagnostics fixture')
     await openResources(allow(rawOrigin))
     await waitFor(
       () => page.evaluate('window.__mdxSmoke.diagnostics().length > 0'),
@@ -644,9 +674,21 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
     await settledPaint(page)
     await saveScreenshot(page, 'resources-dark.png')
     await click(deny(rawOrigin))
+    const denial = await waitFor(
+      () => page.evaluate('window.holiSmoke.denialReceipt()'),
+      'production Deny mutation receipt',
+    )
+    assert.deepEqual(denial, { ok: true }, 'The application router did not dismiss the request')
+    await openResources(runDiagnostics)
     await waitFor(
-      async () => !(await button(allow(rawOrigin))),
-      'denied origin no longer actionable',
+      () =>
+        page.evaluate(`(() => {
+        const panel = document.querySelector('[role="dialog"][aria-label="MDX resources"]');
+        return !!panel && !panel.querySelector('[role="alert"],[role="status"]') &&
+          !Array.from(panel.querySelectorAll('button')).some(item => item.getAttribute('aria-label') === ${JSON.stringify(allow(rawOrigin))}) &&
+          Array.from(panel.querySelectorAll('button')).some(item => item.textContent.trim() === ${JSON.stringify(runDiagnostics)} && !item.disabled);
+      })()`),
+      'Deny completed, request absent and idle resource panel without error',
     )
     noNewTraffic(
       before,
@@ -654,8 +696,60 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
       'vault trust and explicit denial do not authorize the public origin',
     )
     checks.push(
-      'unapproved source remains editable and saved with zero observed Node DNS, socket and HTTP activity',
-      'production resource denial does not authorize traffic',
+      'unapproved source remains editable, saved and findable with zero observed Node DNS, socket and HTTP activity',
+      'production resource denial completed and dismissed the request without error or traffic',
+    )
+
+    external.stage = 'prevented navigation and Retry'
+    const priorContext = await currentContext()
+    const priorLease = await probeLease(priorContext)
+    const beforePrevented = (await windowStatus(page)).preventedNavigations
+    const otherUrl = pathToFileURL(join(artifact, 'renderer/other.html')).href
+    await page.evaluate(
+      `window.__mdxPriorDocument = true; location.assign(${JSON.stringify(otherUrl)}); true`,
+    )
+    await waitFor(
+      async () => (await windowStatus(page)).preventedNavigations === beforePrevented + 1,
+      'fixture window prevented a real renderer-initiated navigation',
+    )
+    assert.equal(await page.evaluate('window.__mdxPriorDocument'), true)
+    await refuse(
+      rpc(wire('externalResources', { lease: priorLease }, 'query')),
+      'Provisional navigation did not retire the old lease',
+      staleResource,
+    )
+    // Reacquire as Retry does, without issuing status again (which could mint a new context).
+    await call('releaseDiagnosticsLease', { lease: await probeLease(priorContext) })
+    await openResources(runDiagnostics)
+    await click(runDiagnostics)
+    await openResources(allow(rawOrigin))
+    noNewTraffic(before, await capture('preventedNavigationRetry'), 'prevented navigation Retry')
+    checks.push('real prevented navigation preserves the current document and context for Retry')
+
+    external.stage = 'committed missing-file error page'
+    assert.equal(
+      await page.evaluate(
+        `window.holiSmoke.call('smoke:start-error-page-race', ${JSON.stringify(priorContext)})`,
+      ),
+      true,
+    )
+    await waitFor(
+      () =>
+        page.evaluate(
+          '!window.__mdxPriorDocument && !!window.__mdxSmoke && !!document.querySelector(".cm-editor")',
+        ),
+      'recovered original FileView after the real missing-file navigation',
+    )
+    const errorPage = await page.evaluate(`window.holiSmoke.call('smoke:error-page-result')`)
+    assert(errorPage?.ok, `Real error-page race failed: ${errorPage?.message}`)
+    external.errorPage = errorPage.data
+    const recoveredLease = await probeLease()
+    await pending(recoveredLease, 1) // Fresh request, no grant from the retired approval.
+    await call('releaseDiagnosticsLease', { lease: recoveredLease })
+    await openResources(allow(rawOrigin))
+    noNewTraffic(before, await capture('committedErrorPageRecovery'), 'committed error-page race')
+    checks.push(
+      'owned missing-file error commit without did-navigate retires provisional work and admitted approval before FileView recovers',
     )
 
     external.stage = 'stale requests and application ownership'
@@ -946,6 +1040,41 @@ async function runExternal(page, editAndWaitForSave, onEvent) {
     // Preserve only bounded counts and booleans even on public DNS/CDN failures.
     await capture('finalObservation').catch(() => {})
   }
+}
+
+async function findInFile(page, text) {
+  await page.evaluate(`document.querySelector('.cm-content').focus()`)
+  const press = async (key, code, windowsVirtualKeyCode, modifiers = 0) => {
+    for (const type of ['keyDown', 'keyUp'])
+      await page.call('Input.dispatchKeyEvent', {
+        type,
+        key,
+        code,
+        windowsVirtualKeyCode,
+        modifiers,
+      })
+  }
+  const bar = '[role="search"][aria-label="Find in file"]'
+  await press('f', 'KeyF', 70, process.platform === 'darwin' ? 4 : 2)
+  await waitFor(
+    () => page.evaluate(`!!document.activeElement?.closest(${JSON.stringify(bar)})`),
+    'focused Find in file field',
+  )
+  await page.call('Input.insertText', { text })
+  await waitFor(
+    () =>
+      page.evaluate(`(() => {
+      const { state } = window.__mdxSmoke.editor();
+      const { from, to } = state.selection.main;
+      return state.sliceDoc(from, to) === ${JSON.stringify(text)};
+    })()`),
+    'Find in file selects the matching MDX source text',
+  )
+  await press('Escape', 'Escape', 27)
+  await waitFor(
+    () => page.evaluate(`!document.querySelector(${JSON.stringify(bar)})`),
+    'Find in file closed',
+  )
 }
 
 function requireOnlyDestinations(current, baseline, allowed, label) {

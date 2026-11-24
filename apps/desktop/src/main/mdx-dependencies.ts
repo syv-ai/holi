@@ -39,6 +39,8 @@ export async function inspectMdxDependencies(options: {
       url: string,
       signal: AbortSignal,
       localTreeCurrent: () => boolean,
+      // Inherited discovery path; the fetcher adds the origins of its authorized hops.
+      discoveryOrigins: Set<string>,
     ): Promise<{ url: string; text: string }>
     retainSnapshot(localTreeCurrent: () => boolean): void
   }
@@ -144,11 +146,11 @@ export async function inspectMdxDependencies(options: {
       source: string,
       format: ModuleFormat,
       depth: number,
-      remote?: URL,
+      remote?: { url: URL; discoveryOrigins: ReadonlySet<string> },
     ): Promise<MdxDiagnostic[]> => {
       await check()
-      const safe = remote ? remote.origin : vaultRelPath(path)
-      const key = remote?.href ?? safe
+      const safe = remote ? remote.url.origin : vaultRelPath(path)
+      const key = remote?.url.href ?? safe
       if (!remote && !safePolicy(safe))
         return [failure(`Dependency ${safe} is protected or unavailable`, 1)]
       if (active.has(key)) return [failure(`Dependency cycle involving ${safe}`, 1)]
@@ -176,7 +178,7 @@ export async function inspectMdxDependencies(options: {
             // Validate the raw spelling before consulting either canonical graph cache.
             const destination =
               absolute || (remote && relativeUrl(spec))
-                ? resolveMdxExternalModule(spec, remote)
+                ? resolveMdxExternalModule(spec, remote?.url)
                 : null
             if (!destination || 'error' in destination) {
               diagnostics.push(
@@ -204,11 +206,13 @@ export async function inspectMdxDependencies(options: {
             count++
             remoteAttempts++
             let fetched: { url: string; text: string }
+            const discoveryOrigins = new Set(remote?.discoveryOrigins)
             try {
               fetched = await options.external.fetch(
                 absolute ? spec : target.href,
                 signal,
                 localTreeCurrent,
+                discoveryOrigins,
               )
             } catch (error) {
               await check()
@@ -237,13 +241,16 @@ export async function inspectMdxDependencies(options: {
             const { url: final, format: childFormat } = destinationAfterRedirects
             redirects.set(target.href, final.href)
             diagnostics.push(
-              ...(await visit(final.href, fetched.text, childFormat, depth + 1, final)).map(
-                (d) => ({
-                  ...d,
-                  message: `${final.origin}:${d.line}:${d.column}: ${d.message}`,
-                  line,
-                }),
-              ),
+              ...(
+                await visit(final.href, fetched.text, childFormat, depth + 1, {
+                  url: final,
+                  discoveryOrigins,
+                })
+              ).map((d) => ({
+                ...d,
+                message: `${final.origin}:${d.line}:${d.column}: ${d.message}`,
+                line,
+              })),
             )
             continue
           }

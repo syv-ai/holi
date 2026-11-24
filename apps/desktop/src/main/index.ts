@@ -34,7 +34,7 @@ import { isApplicationSender, unauthorizedApplicationSender } from './applicatio
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { canonicalGitHubRemote, createMdxTrustStore } from './mdx-trust'
-import { createMdxConsentStore } from './mdx-consent'
+import { createMdxConsentStore, withMdxConsentQuit } from './mdx-consent'
 import { trackMdxDocument } from './mdx-document-lifetime'
 import { createMdxResources } from './mdx-resources'
 import { createMembersCache } from './github/members-cache'
@@ -984,15 +984,7 @@ async function main(): Promise<void> {
       }
       loggedUpdate = line
     },
-    beforeInstall: async () => {
-      if (quitting || confirmingQuit) return false
-      confirmingQuit = true
-      const go = await confirmQuit().catch(() => false)
-      const ready = go && (await teardown())
-      quitting = ready
-      confirmingQuit = false
-      return ready
-    },
+    beforeInstall: prepareQuit,
     // The vault, plugins and terminals are already stopped and `quitting` is
     // set, so staying open would leave a window with nothing behind it: say
     // why, then finish the exit. The next launch offers the update again.
@@ -1210,22 +1202,26 @@ async function main(): Promise<void> {
   app.on('before-quit', (event) => {
     if (quitting) return
     event.preventDefault()
-    if (confirmingQuit) return
-    confirmingQuit = true
-    void confirmQuit()
-      .catch(() => false)
-      .then(async (go) => {
-        if (go) await teardownAndQuit()
-        confirmingQuit = false
-      })
+    void teardownAndQuit()
   })
 
-  async function teardownAndQuit(): Promise<void> {
-    if (!(await teardown())) {
-      quitting = false
-      return
+  async function prepareQuit(): Promise<boolean> {
+    if (quitting || confirmingQuit) return false
+    confirmingQuit = true
+    try {
+      quitting = (await confirmQuit()) && (await teardown())
+      return quitting
+    } catch (error) {
+      // In particular, the updater must never interpret a rejected preflight as approval.
+      console.error('[quit] preflight failed; quit cancelled:', error)
+      return false
+    } finally {
+      confirmingQuit = false
     }
-    quitting = true
+  }
+
+  async function teardownAndQuit(): Promise<void> {
+    if (!(await prepareQuit())) return
     // Only install a candidate downloaded from the selected channel. Squirrel
     // may have staged a different channel's candidate during its check.
     if (updater.installOnQuit()) return
@@ -1233,52 +1229,64 @@ async function main(): Promise<void> {
   }
 
   /** Everything a quit does before the process goes: by ⌘Q, the tray, or an
-   *  update's restart. Never throws. */
+   *  update's restart. */
   async function teardown(): Promise<boolean> {
-    const channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
-    let complete = false
+    let channel: ReturnType<typeof createRendererFlushChannel> | undefined
     try {
-      mdxShuttingDown = true
-      // Close admission on both ordinary and updater quit. Accepted revocations
-      // must still finish even though their document leases have retired.
-      invalidateMdxDiagnostics(false)
-      // Ask before tearing down anything: a failed flush must leave the app
-      // usable so the person can correct the problem and retry quit.
-      const result = await requestFlush(channel)
-      if (result !== 'flushed') {
-        console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
-        return false
-      }
-      await mdxConsent.drain()
-      // Stop the work across vaults and in the active vault only after dirty
-      // buffers are safe on disk. A failed drain keeps quit cancellable and
-      // leaves the updater and vault infrastructure available for a retry.
-      await drainShutdown({
-        stopBackground: () => plugins.stopBackground(),
-        stopPlugins: () => plugins.stopAll(),
-        closeTerminals: () => terminals.closeAll(),
-        disposeUpdater: () => updater.dispose(),
-        settleVault: () => settleVaultForQuit(host.active()),
-        closeVaults: () => host.closeAll(),
-        closeBridge: async () => {
-          const endpoint = cliEndpoint
-          await endpoint?.dispose()
-          cliEndpoint = null
-          await bridge.stop()
+      return await withMdxConsentQuit({
+        consent: mdxConsent,
+        pauseAdmission: () => {
+          mdxShuttingDown = true
+        },
+        resumeAdmission: () => {
+          mdxShuttingDown = false
+          const active = host.active()
+          if (active) notifyMdxResourcesChanged(canonicalGitHubRemote(active.remote))
+        },
+        async reportBlocked(error) {
+          console.error('[quit] unsaved MDX resource revocation; quit cancelled:', error)
+          openWindow()
+          const options: Electron.MessageBoxOptions = {
+            type: 'error',
+            buttons: ['OK'],
+            message: 'Holi stayed open because an MDX resource revocation could not be saved.',
+            detail:
+              'The resource is blocked for this run, but the saved permission may still allow it on restart. Retry saving the revocation in MDX external resources, then quit or restart to update again.',
+          }
+          if (mainWindow === null) await dialog.showMessageBox(options)
+          else await dialog.showMessageBox(mainWindow, options)
+        },
+        async proceed() {
+          // Both the consent drain and the buffer flush can veto quit without
+          // tearing down the compiler, plugins, vault or updater.
+          channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
+          const result = await requestFlush(channel)
+          if (result !== 'flushed') {
+            console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
+            return false
+          }
+          invalidateMdxDiagnostics(false)
+          await drainShutdown({
+            stopBackground: () => plugins.stopBackground(),
+            stopPlugins: () => plugins.stopAll(),
+            closeTerminals: () => terminals.closeAll(),
+            disposeUpdater: () => updater.dispose(),
+            settleVault: () => settleVaultForQuit(host.active()),
+            closeVaults: () => host.closeAll(),
+            closeBridge: async () => {
+              const endpoint = cliEndpoint
+              await endpoint?.dispose()
+              cliEndpoint = null
+              await bridge.stop()
+            },
+          })
+          return true
         },
       })
-      complete = true
-      return true
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
-      channel.cancel?.()
+      channel?.cancel?.()
       return false
-    } finally {
-      if (!complete) {
-        mdxShuttingDown = false
-        const active = host.active()
-        if (active) notifyMdxResourcesChanged(canonicalGitHubRemote(active.remote))
-      }
     }
   }
 }

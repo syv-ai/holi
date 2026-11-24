@@ -57,6 +57,7 @@ export async function createMdxExternalNetworkFixture() {
     },
     (req, res) => {
       requests.push(req)
+      res.setHeader('Content-Type', 'text/javascript')
       routes.respond(req, res)
     },
   )

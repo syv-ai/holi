@@ -13,7 +13,9 @@ import { GitHubSession } from '../src/main/github/session'
 import { TokenStore } from '../src/main/github/token-store'
 import { registerIpc } from '../src/main/ipc'
 import { createMdxConsentStore } from '../src/main/mdx-consent'
+import { trackMdxDocument } from '../src/main/mdx-document-lifetime'
 import { createRouter } from '../src/main/router'
+import { toEnvelope, type TrpcEnvelope } from '../src/main/trpc-call'
 import type { ActiveVault, VaultHost } from '../src/main/vault/active-vault'
 import { VaultRegistry } from '../src/main/vault/registry'
 import { createGuestProbes } from './mdx-compiler-guest-probes'
@@ -37,6 +39,9 @@ const file = join(vault, path)
 const entry = join(app.getAppPath(), 'renderer/index.html')
 const entryDocument = pathToFileURL(entry).href
 const otherDocument = join(app.getAppPath(), 'renderer/other.html')
+const otherDocumentUrl = pathToFileURL(otherDocument).href
+// This never exists. Only the current fixture window can request this one local file.
+const missingDocument = pathToFileURL(join(profile, 'missing-navigation.html')).href
 const preload = join(app.getAppPath(), 'preload.cjs')
 let accountGeneration = 1
 let openRevision = 1
@@ -51,8 +56,11 @@ let win: BrowserWindow | null = null
 let recoveredWindows = 0
 let guestCreations = 0
 let inspectedSources = 0
-let documentReady = false
-let retireDocument = () => {}
+let mdxDocumentReady = () => false
+let retireDocument = (_retireDocument: boolean) => {}
+let preventedNavigations = 0
+let errorPageRace: Promise<TrpcEnvelope> | null = null
+let missingNavigation: ReturnType<typeof navigationGate> | null = null
 let closeRouter = () => {}
 let resourcePushes = 0
 let ambientCookieHosts = 0
@@ -61,6 +69,20 @@ const guestProbes: Array<{ url: string; result: Record<string, unknown> }> = []
 let adversaries: Awaited<ReturnType<typeof createGuestProbes>> | null = null
 const compiler = createMdxResources(join(app.getAppPath(), 'out/mdx-compiler'))
 const trustStore = createMdxTrustStore(join(profile, 'mdx-trust.json'))
+const consent = createMdxConsentStore(join(profile, 'mdx-consent.json'))
+const observedConsent: typeof consent = {
+  ...consent,
+  async grant(scope, stillOwned) {
+    // Pause a router-admitted approval at the consent seam. Forward its original
+    // ownership check to the real store; don't fabricate a write or a rejection.
+    const race = missingNavigation
+    if (race) {
+      race.approvalAdmitted.resolve()
+      await race.releaseApproval.promise
+    }
+    return consent.grant(scope, stillOwned)
+  },
+}
 const owner = () => ({ accountId: identity.accountId, remote })
 let dependencyRaceChild: string | null = null
 let graphMutation: ((source: string) => Promise<void>) | null = null
@@ -96,7 +118,7 @@ const diagnostics = createMdxDiagnostics({
 })
 
 const authorizeSender = (event: SenderEvent) =>
-  documentReady &&
+  mdxDocumentReady() &&
   isApplicationSender(event, win && !win.isDestroyed() ? win.webContents : null, entryDocument)
 
 const invoke = (channel: string, handler: (input: unknown) => unknown) =>
@@ -120,6 +142,7 @@ invoke('smoke:status', async () => ({
   inspectedSources,
   network: observedNetwork.network,
   resourcePushes,
+  preventedNavigations,
   ambientCookieHosts,
   blockedRequests,
   guestProbes,
@@ -529,19 +552,10 @@ app.on('web-contents-created', (_event, contents: WebContents) => {
     })
     return
   }
-  contents.on('render-process-gone', (_event, details) => {
-    if (win?.webContents === contents) {
-      documentReady = false
-      retireDocument()
-      win = null
-      recoveredWindows += 1
-      console.log(`SMOKE_RENDERER_CRASH_RECOVERY:${details.reason}:${recoveredWindows}`)
-      setTimeout(() => void createEditorWindow(), 100)
-    }
-  })
-  contents.on('will-navigate', (event, url) => {
-    if (win?.webContents === contents && url === entryDocument) return
+  contents.on('will-navigate', (event) => {
+    if (win?.webContents === contents && event.url === entryDocument) return
     event.preventDefault()
+    if (win?.webContents === contents && event.url === otherDocumentUrl) preventedNavigations += 1
   })
   contents.setWindowOpenHandler(() => ({ action: 'deny' }))
 })
@@ -557,20 +571,137 @@ const webPreferences = {
 async function createEditorWindow() {
   const created = new BrowserWindow({ width: 1120, height: 820, show: true, webPreferences })
   win = created
-  const retire = () => {
-    if (win !== created) return
-    documentReady = false
-    retireDocument()
-  }
-  retire()
-  created.on('closed', retire)
-  created.webContents.on('did-start-navigation', (event) => {
-    if (event.isMainFrame && !event.isSameDocument) retire()
+  mdxDocumentReady = trackMdxDocument(created.webContents, (retire) => {
+    if (win === created) retireDocument(retire)
   })
-  created.webContents.on('did-navigate', () => {
-    if (win === created) documentReady = true
+  created.webContents.on('render-process-gone', (_event, details) => {
+    if (win !== created) return
+    win = null
+    recoveredWindows += 1
+    console.log(`SMOKE_RENDERER_CRASH_RECOVERY:${details.reason}:${recoveredWindows}`)
+    setTimeout(() => void createEditorWindow(), 100)
   })
   await created.loadFile(entry)
+}
+
+function gate() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+function navigationGate(webContentsId: number) {
+  return {
+    webContentsId,
+    requested: gate(),
+    releaseRequest: gate(),
+    approvalAdmitted: gate(),
+    releaseApproval: gate(),
+  }
+}
+
+async function exerciseErrorPage(
+  current: BrowserWindow,
+  routes: ReturnType<ReturnType<typeof createRouter>['createCaller']>['mdxTrust'],
+  priorContext: string,
+) {
+  assert(adversaries)
+  const contents = current.webContents
+  const race = (missingNavigation = navigationGate(contents.id))
+  const started = gate()
+  const onStart = ({ isMainFrame, url }: { isMainFrame: boolean; url: string }) => {
+    if (isMainFrame && url === missingDocument) started.resolve()
+  }
+  let failure: { code: number; description: string } | undefined
+  const onFailure = (
+    _event: unknown,
+    code: number,
+    description: string,
+    url: string,
+    main: boolean,
+  ) => {
+    if (main && url === missingDocument) failure = { code, description }
+  }
+  let didNavigate = false
+  const onNavigate = () => {
+    didNavigate = true
+  }
+  contents.on('did-start-navigation', onStart)
+  contents.on('did-fail-provisional-load', onFailure)
+  contents.on('did-navigate', onNavigate)
+  const loading = toEnvelope(current.loadURL(missingDocument))
+  const senderCurrent = () => authorizeSender({ sender: contents, senderFrame: contents.mainFrame })
+  try {
+    await Promise.race([
+      Promise.all([started.promise, race.requested.promise]),
+      loading.then(() => {
+        throw new Error('Missing-file navigation did not pause in the provisional document')
+      }),
+    ])
+    assert(senderCurrent(), 'The provisional load lost the current application sender')
+    const input = { remote, path: 'notes/probe.mdx', context: priorContext }
+    // Use the real routes on the main side for these two outstanding results:
+    // Electron discards replies to the old renderer when its document commits away.
+    // The context came from the still-current renderer via the guarded IPC route.
+    const { lease } = await routes.acquireDiagnosticsLease(input)
+    const source = await readFile(file, 'utf8')
+    assert((await routes.compile({ lease, generation: 1, source })).length > 0)
+    const state = await routes.externalResources({ lease })
+    assert.deepEqual(
+      state.pending.map(({ origin }) => origin),
+      [fixtureOrigins[0]],
+    )
+    const approval = toEnvelope(
+      routes.approveExternalResource({ lease, requestId: state.pending[0]!.id }),
+    )
+    await Promise.race([
+      race.approvalAdmitted.promise,
+      approval.then((result) => {
+        throw new Error(`Approval did not reach the consent seam: ${JSON.stringify(result)}`)
+      }),
+    ])
+
+    const work = await routes.acquireDiagnosticsLease(input)
+    const held = adversaries.hold()
+    const compile = toEnvelope(
+      routes.compile({ ...work, generation: 1, source: '# Held across the error page\n' }),
+    )
+    await held
+    race.releaseRequest.resolve()
+    assert.equal((await loading).ok, false, 'The owned nonexistent file unexpectedly loaded')
+    assert.deepEqual(failure, { code: -6, description: 'ERR_FILE_NOT_FOUND' })
+    assert.equal(didNavigate, false, 'Electron emitted a successful navigation for the error page')
+    assert(!senderCurrent(), 'The committed error page was accepted as the application sender')
+    await assert.rejects(routes.status({ remote }), /context changed/i)
+    await assert.rejects(routes.acquireDiagnosticsLease(input), /MDX context unavailable/i)
+    race.releaseApproval.resolve()
+    const [approvalResult, compileResult] = await Promise.all([approval, compile])
+    assert(
+      !approvalResult.ok && /MDX resource request unavailable/i.test(approvalResult.message),
+      'The admitted approval survived the committed error page',
+    )
+    assert(
+      !compileResult.ok && /cancel|supersed|unavailable|invalidated/i.test(compileResult.message),
+      'The held compile was not cancelled by the committed error page',
+    )
+    return {
+      error: 'ERR_FILE_NOT_FOUND',
+      didNavigate,
+      approvalRejected: true,
+      compileRejected: true,
+    }
+  } finally {
+    race.releaseRequest.resolve()
+    race.releaseApproval.resolve()
+    missingNavigation = null
+    contents.off('did-start-navigation', onStart)
+    contents.off('did-fail-provisional-load', onFailure)
+    contents.off('did-navigate', onNavigate)
+    await loading
+    await current.loadFile(entry)
+  }
 }
 
 app
@@ -589,6 +720,20 @@ app
       join(app.getAppPath(), 'renderer/renderer.css'),
     ])
     defaultSession.webRequest.onBeforeRequest((details, callback) => {
+      const race = missingNavigation
+      if (
+        race &&
+        details.url === missingDocument &&
+        details.webContentsId === race.webContentsId &&
+        details.method === 'GET' &&
+        details.resourceType === 'mainFrame'
+      ) {
+        race.requested.resolve()
+        // Let Chromium read the real missing file only after the original
+        // document has acquired fresh work during the provisional navigation.
+        void race.releaseRequest.promise.then(() => callback({}))
+        return
+      }
       let localPath = ''
       try {
         if (details.url.startsWith('file://'))
@@ -661,9 +806,9 @@ app
       session: github,
       host,
       mdxTrust: trustStore,
-      mdxConsent: createMdxConsentStore(join(profile, 'mdx-consent.json')),
+      mdxConsent: observedConsent,
       mdxCompiler: observedCompiler,
-      mdxApplicationReady: () => documentReady,
+      mdxApplicationReady: () => mdxDocumentReady(),
       onMdxDiagnosticsInvalidate: (invalidate) => {
         retireDocument = invalidate
       },
@@ -700,7 +845,14 @@ app
       rootFor: async (requested) => (requested === remote ? vault : null),
       authorizeSender,
     })
-    await router.createCaller({}).vaults.open({ remote })
+    const routes = router.createCaller({})
+    invoke('smoke:start-error-page-race', (priorContext) => {
+      assert(win && !win.isDestroyed() && !errorPageRace && typeof priorContext === 'string')
+      errorPageRace = toEnvelope(exerciseErrorPage(win, routes.mdxTrust, priorContext))
+      return true
+    })
+    invoke('smoke:error-page-result', () => errorPageRace)
+    await routes.vaults.open({ remote })
     await createEditorWindow()
   })
   .catch(() => {
@@ -708,7 +860,7 @@ app
     app.exit(1)
   })
 app.on('before-quit', () => {
-  documentReady = false
+  mdxDocumentReady = () => false
   closeRouter()
   diagnostics.close()
   compiler.close()

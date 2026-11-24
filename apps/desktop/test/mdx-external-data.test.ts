@@ -9,8 +9,12 @@ const source = 'export default 42\n'
 const v4 = '93.184.216.34'
 const v6 = '2606:2800:220:1:248:1893:25c8:1946'
 const redirectTo = (res: ServerResponse, location: string) => {
-  res.writeHead(302, { Location: location, 'Set-Cookie': 'session=not-for-the-next-hop' })
-  res.end('not module text')
+  res.writeHead(302, {
+    Location: location,
+    'Content-Type': 'text/html',
+    'Set-Cookie': 'session=not-for-the-next-hop',
+  })
+  res.end('<p>Redirecting</p>')
 }
 
 let network: Awaited<ReturnType<typeof createMdxExternalNetworkFixture>>
@@ -220,6 +224,46 @@ describe('fetchMdxExternalData', () => {
     await expect(fetchText()).rejects.toMatchObject({ code: 'redirect' })
     expect(network.requests.length).toBeLessThanOrEqual(4)
   })
+
+  it.each(['Application/JavaScript; charset="UTF-8"', 'text/plain; charset=utf-8'])(
+    'fetches extensionless module source served as %s',
+    async (contentType) => {
+      network.routes.respond = (_, res) => {
+        res.setHeader('Content-Type', contentType)
+        res.end(source)
+      }
+      const url = 'https://one.example/module'
+      await expect(fetchText({ url })).resolves.toEqual({ url, text: source })
+    },
+  )
+
+  it.each([
+    { label: 'JSON', contentType: 'application/json' },
+    { label: 'CSS', contentType: 'text/css' },
+    { label: 'HTML', contentType: 'text/html' },
+    { label: 'binary data', contentType: 'application/octet-stream' },
+    { label: 'missing', contentType: undefined },
+    { label: 'malformed', contentType: 'text/javascript; private-header-secret' },
+    { label: 'coalesced', contentType: 'text/javascript; charset=utf-8, application/json' },
+    { label: 'duplicate', contentType: ['text/javascript', 'application/json'] },
+  ])(
+    'rejects $label Content-Type without waiting for the response body',
+    async ({ contentType }) => {
+      network.routes.respond = (_, res) => {
+        if (contentType === undefined) res.removeHeader('Content-Type')
+        else res.setHeader('Content-Type', contentType)
+        // Keep the body open: a reader would stall here, not receive an unsupported-format error.
+        res.write('42 /* private-body-secret */')
+      }
+      const error = await fetchText({
+        url: 'https://one.example/module?private-query-secret',
+      }).catch((error: unknown) => error)
+      expect(error).toMatchObject({ code: 'unsupported-format' })
+      expect(`${String(error)} ${JSON.stringify(error)}`).not.toMatch(
+        /private-(body|header|query)-secret/,
+      )
+    },
+  )
 
   it('bounds chunked response bytes without trusting Content-Length', async () => {
     network.routes.respond = (_, res) => {

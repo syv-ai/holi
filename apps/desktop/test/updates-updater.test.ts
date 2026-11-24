@@ -47,6 +47,7 @@ vi.mock('../src/main/json-file-store', () => ({
 }))
 
 import { createUpdater } from '../src/main/updates/updater'
+import { withMdxConsentQuit } from '../src/main/mdx-consent'
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 
@@ -196,16 +197,33 @@ describe('updater channel switching', () => {
     updater.dispose()
   })
 
-  it('keeps the ready update when the guarded restart is cancelled', async () => {
-    const beforeInstall = vi.fn(async () => false)
-    const updater = createUpdater({ send: vi.fn(), beforeInstall, installFailed: vi.fn() })
+  it('keeps the ready update without installing when an unsaved MDX revocation vetoes restart', async () => {
+    const reportBlocked = vi.fn(async () => {})
+    const teardown = vi.fn(async () => true)
+    const updater = createUpdater({
+      send: vi.fn(),
+      beforeInstall: () =>
+        withMdxConsentQuit({
+          consent: {
+            drain: async () => {
+              throw new Error('MDX consent could not be saved')
+            },
+          },
+          pauseAdmission: () => {},
+          resumeAdmission: () => {},
+          reportBlocked,
+          proceed: teardown,
+        }),
+      installFailed: vi.fn(),
+    })
     await tick()
     mocks.updater.emit('update-available', { version: '1.1.0' })
     mocks.updater.emit('update-downloaded')
 
     await expect(updater.install()).resolves.toBe(false)
 
-    expect(beforeInstall).toHaveBeenCalledOnce()
+    expect(reportBlocked).toHaveBeenCalledOnce()
+    expect(teardown).not.toHaveBeenCalled()
     expect(updater.status()).toMatchObject({ state: 'ready', availableVersion: '1.1.0' })
     expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
     updater.dispose()

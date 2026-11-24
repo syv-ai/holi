@@ -8,6 +8,22 @@ const DEADLINE_MS = 8_000
 const BODY_LIMIT = 256 * 1024
 const REDIRECT_LIMIT = 3
 
+const MODULE_MEDIA_TYPES = new Set([
+  'text/javascript',
+  'application/javascript',
+  'text/ecmascript',
+  'application/ecmascript',
+  'text/plain', // Raw GitHub serves module source as plain text.
+])
+// Match the whole field, not just its essence: malformed parameters and coalesced
+// Content-Type values must not turn an ambiguous response into module text.
+const MEDIA_TOKEN = String.raw`[!#$%&'*+.^_\x60|~\da-z-]+`
+const MEDIA_QUOTED = String.raw`"(?:[\t\x20-\x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t\x20-\x7e\x80-\xff])*"`
+const CONTENT_TYPE = new RegExp(
+  String.raw`^[\t ]*(${MEDIA_TOKEN}/${MEDIA_TOKEN})(?:[\t ]*;[\t ]*${MEDIA_TOKEN}=(?:${MEDIA_TOKEN}|${MEDIA_QUOTED}))*[\t ]*$`,
+  'i',
+)
+
 const errorMessages = {
   'consent-needed': 'External MDX dependency requires consent',
   'access-changed': 'External MDX dependency access is unavailable',
@@ -34,9 +50,10 @@ export class MdxExternalDataError extends Error {
 }
 
 /**
- * Fetch UTF-8 module text as inert data. `assertAccess` must check both current ownership and
- * consent for the canonical origin every time it is called. Return false for missing consent
- * (reported with the origin); throw if the caller is no longer current or cannot check access.
+ * Fetch UTF-8 module text as inert data. The final response must declare a supported media type.
+ * `assertAccess` must check both current ownership and consent for the canonical origin every
+ * time it is called. Return false for missing consent (reported with the origin); throw if the
+ * caller is no longer current or cannot check access.
  * The deadline covers authorization, DNS, TLS and response streaming across all redirects.
  */
 export async function fetchMdxExternalData(options: {
@@ -238,6 +255,10 @@ async function fetchHop(
     const encoding = response.headers['content-encoding']
     if (response.statusCode !== 200 || (encoding && encoding.toLowerCase() !== 'identity'))
       throw new MdxExternalDataError('response')
+    const types = response.headersDistinct['content-type']
+    const mediaType = types?.length === 1 ? CONTENT_TYPE.exec(types[0] ?? '')?.[1] : undefined
+    if (!mediaType || !MODULE_MEDIA_TYPES.has(mediaType.toLowerCase()))
+      throw new MdxExternalDataError('unsupported-format')
     if (Number(response.headers['content-length']) > BODY_LIMIT)
       throw new MdxExternalDataError('too-large')
     const chunks: Buffer[] = []

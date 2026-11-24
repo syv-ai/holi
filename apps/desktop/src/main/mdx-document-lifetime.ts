@@ -23,6 +23,12 @@ export function trackMdxDocument(
     discard()
     ready = true
   })
+  contents.on('did-fail-provisional-load', (_event, _code, _description, _url, isMainFrame) => {
+    // Electron 43 emits this from DidFinishNavigation only after an error page
+    // commits, in place of did-navigate. A prevented or aborted navigation that
+    // leaves the old document in place never reaches that committed branch.
+    if (isMainFrame) discard()
+  })
   contents.on('render-process-gone', discard)
   contents.on('destroyed', discard)
   return () => ready

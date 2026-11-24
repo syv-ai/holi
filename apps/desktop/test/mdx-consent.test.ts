@@ -1,6 +1,6 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { createMdxConsentStore } from '../src/main/mdx-consent'
 
@@ -22,8 +22,18 @@ afterEach(async () => {
 })
 
 it('reopens a grant only for the exact vault root, remote, account and HTTPS origin', async () => {
-  await createMdxConsentStore(file).grant(scope)
+  const store = createMdxConsentStore(file)
+  await store.grant(scope)
+  const foreign = {
+    origin: 'https://foreign.example',
+    root: join(dir, 'absent-vault'),
+    remote: 'someone/other',
+    accountId: '456',
+  }
+  await store.grant(foreign)
   const reopened = createMdxConsentStore(file)
+  expect(await reopened.allows(foreign)).toBe(true)
+  expect(await reopened.listGrants(scope)).toEqual([{ origin: scope.origin }])
   expect(await reopened.allows({ ...scope })).toBe(true)
   for (const changed of [
     { root: join(dir, 'another-clone') },
@@ -49,12 +59,29 @@ it('reopens a grant only for the exact vault root, remote, account and HTTPS ori
 it('denies missing, corrupt, and malformed state, even beside a valid entry', async () => {
   const store = createMdxConsentStore(file)
   expect(await store.allows(scope)).toBe(false)
+  const invalid = [
+    { accountId: 123 },
+    { accountId: '0' },
+    { accountId: '0123' },
+    { accountId: '123\n' },
+    { accountId: '9007199254740992' },
+    { root: 'vault' },
+    { root: `${scope.root}${sep}.${sep}folder` },
+    { root: `${scope.root}${sep}..${sep}vault` },
+    { root: `${scope.root}${sep}` },
+    { root: `${scope.root}\0` },
+    { remote: 'Octocat/notes' },
+    { remote: 'https://github.com/octocat/notes.git' },
+    { remote: 'octocat/.' },
+    { origin: `${scope.origin}/` },
+    { origin: `${scope.origin}:8443` },
+    { origin: 'https://*.example' },
+  ]
   for (const text of [
     '{',
     JSON.stringify({ version: 2, grants: [scope] }),
-    JSON.stringify({ version: 1, grants: [scope, { ...scope, accountId: 123 }] }),
-    ...[`${scope.origin}/`, `${scope.origin}:8443`, 'https://*.example'].map((origin) =>
-      JSON.stringify({ version: 1, grants: [scope, { ...scope, origin }] }),
+    ...invalid.map((fields) =>
+      JSON.stringify({ version: 1, grants: [scope, { ...scope, ...fields }] }),
     ),
   ]) {
     await writeFile(file, text)
@@ -98,6 +125,26 @@ it.skipIf(process.getuid === undefined || process.getuid() === 0)(
     expect(await createMdxConsentStore(file).allows(revoked)).toBe(false)
   },
 )
+
+it('refuses to drain an unsaved revocation on quit and waits for a successful retry', async () => {
+  const store = createMdxConsentStore(file)
+  await store.grant(scope)
+  const backup = `${file}.backup`
+  await rename(file, backup)
+  await mkdir(file)
+  await expect(store.revoke(scope)).rejects.toThrow()
+  await rm(file, { recursive: true })
+  await rename(backup, file)
+
+  await expect(store.drain()).rejects.toThrow()
+  expect(await createMdxConsentStore(file).allows(scope)).toBe(true)
+  expect(await store.allows(scope)).toBe(false)
+
+  const retry = store.revoke(scope)
+  await expect(store.drain()).resolves.toBeUndefined()
+  expect(await createMdxConsentStore(file).allows(scope)).toBe(false)
+  await retry
+})
 
 it('does not publish an approval after its owner retires during the grant', async () => {
   const store = createMdxConsentStore(file)
