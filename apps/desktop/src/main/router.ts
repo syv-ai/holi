@@ -42,7 +42,7 @@ import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
 import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
-import { compareRevisions } from './vault/compare-revisions'
+import { compareRevisions, type RevisionComparison } from './vault/compare-revisions'
 import { createSubscriptions } from './vault/subscriptions'
 import { subscriptionChanges } from './vault/subscription-changes'
 import { fileCards, type FileCard } from './vault/file-cards'
@@ -1962,12 +1962,7 @@ export function createRouter(deps: RouterDeps) {
       .query(
         async ({
           input,
-        }): Promise<{
-          kind: 'text' | 'unavailable'
-          before?: string
-          after?: string
-          reason?: 'missing' | 'unsupported' | 'limit' | 'stale'
-        }> => {
+        }): Promise<RevisionComparison | { kind: 'unavailable'; reason: 'stale' }> => {
           if (
             !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(input.before) ||
             !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(input.after)
