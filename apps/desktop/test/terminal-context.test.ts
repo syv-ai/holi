@@ -45,27 +45,27 @@ describe('OSC 7', () => {
   })
 
   it('reads a local file URL as its decoded absolute path', () => {
-    expect(parseOsc7('file://MacBook.local/Users/me/a%20b/%C3%A9', 'MacBook.local')).toBe(
+    expect(parseOsc7('file://MacBook.local/Users/me/a%20b/%C3%A9', 'MacBook.local', 'darwin')).toBe(
       '/Users/me/a b/é',
     )
-    expect(parseOsc7('file://macbook/Users/me/', 'MacBook.local')).toBe('/Users/me')
-    expect(parseOsc7('file:///', 'h')).toBe('/')
-    expect(parseOsc7('file://localhost/a/../b', 'h')).toBe('/b')
+    expect(parseOsc7('file://macbook/Users/me/', 'MacBook.local', 'darwin')).toBe('/Users/me')
+    expect(parseOsc7('file:///', 'h', 'darwin')).toBe('/')
+    expect(parseOsc7('file://localhost/a/../b', 'h', 'darwin')).toBe('/b')
   })
 
   it('refuses another machine, another scheme, and nonsense', () => {
-    expect(parseOsc7('file://server.example/etc', 'MacBook.local')).toBeNull()
-    expect(parseOsc7('https://h/a', 'h')).toBeNull()
-    expect(parseOsc7('not a url', 'h')).toBeNull()
-    expect(parseOsc7('file://h/a%00b', 'h')).toBeNull()
-    expect(parseOsc7('file://h/%E0%A4%A', 'h')).toBeNull()
+    expect(parseOsc7('file://server.example/etc', 'MacBook.local', 'darwin')).toBeNull()
+    expect(parseOsc7('https://h/a', 'h', 'darwin')).toBeNull()
+    expect(parseOsc7('not a url', 'h', 'darwin')).toBeNull()
+    expect(parseOsc7('file://h/a%00b', 'h', 'darwin')).toBeNull()
+    expect(parseOsc7('file://h/%E0%A4%A', 'h', 'darwin')).toBeNull()
   })
 
   it('shows the home folder as ~', () => {
-    expect(homeLabel('/Users/me', '/Users/me')).toBe('~')
-    expect(homeLabel('/Users/me/dev/holi', '/Users/me')).toBe('~/dev/holi')
-    expect(homeLabel('/Users/meg/x', '/Users/me')).toBe('/Users/meg/x')
-    expect(homeLabel('/tmp', '/Users/me')).toBe('/tmp')
+    expect(homeLabel('/Users/me', '/Users/me', 'darwin')).toBe('~')
+    expect(homeLabel('/Users/me/dev/holi', '/Users/me', 'darwin')).toBe('~/dev/holi')
+    expect(homeLabel('/Users/meg/x', '/Users/me', 'darwin')).toBe('/Users/meg/x')
+    expect(homeLabel('/tmp', '/Users/me', 'darwin')).toBe('/tmp')
   })
 })
 

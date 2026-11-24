@@ -1390,6 +1390,15 @@ export function createRouter(deps: RouterDeps) {
   }
 
   const notes = t.router({
+    directories: t.procedure.input(pathsInput).query(async ({ input }) => {
+      const directories: string[] = []
+      for (const path of input.paths) {
+        const abs = await onDisk(input.remote, path)
+        if ((await stat(abs)).isDirectory()) directories.push(path)
+      }
+      return directories
+    }),
+
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
       .query(async ({ input }): Promise<string> => {
