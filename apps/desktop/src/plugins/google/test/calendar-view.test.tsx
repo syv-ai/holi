@@ -961,7 +961,9 @@ describe('the calendar view', () => {
     })
     await user.click(check)
     await waitFor(() =>
-      expect(detail.getByRole('alert')).toHaveTextContent(/guest access confirmed for 2/i),
+      expect(detail.getByRole('alert')).toHaveTextContent(
+        /at last check: guest access confirmed for 2/i,
+      ),
     )
     expect(detail.getByRole('alert')).not.toHaveTextContent(/sharing not confirmed/i)
     expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
@@ -971,6 +973,59 @@ describe('the calendar view', () => {
     expect(
       detail.queryByRole('button', { name: /revise selection|review sharing retry/i }),
     ).not.toBeInTheDocument()
+  })
+
+  test('keeps Drive result rows in keyboard order as a multi-selection changes', async () => {
+    const user = userEvent.setup()
+    const notes = { ...BRIEF, id: 'notes', name: 'Workshop notes' }
+    eventAttachmentsMock.mockResolvedValue({ attachments: [], canAttach: true })
+    driveFilesMock.mockImplementation(async (_remote, { query }): Promise<DriveFilePage> => ({
+      files: [AGENDA, BRIEF, notes].filter(({ name }) => name.toLowerCase().includes(query ?? '')),
+    }))
+
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await user.click(await screen.findByRole('button', { name: 'Add from Drive' }))
+    const picker = within(await screen.findByRole('dialog', { name: 'Add from Google Drive' }))
+    const agenda = await picker.findByRole('checkbox', { name: AGENDA.name })
+    const brief = picker.getByRole('checkbox', { name: BRIEF.name })
+    const notesRow = picker.getByRole('checkbox', { name: notes.name })
+    const search = picker.getByRole('searchbox')
+
+    await user.click(search)
+    await user.tab() // Search button.
+    await user.tab()
+    expect(agenda).toHaveFocus()
+    await user.tab()
+    expect(brief).toHaveFocus()
+    await user.keyboard(' ')
+    expect(brief).toBeChecked()
+    expect(picker.getAllByRole('checkbox')).toEqual([agenda, brief, notesRow])
+    await user.tab()
+    expect(notesRow).toHaveFocus()
+    await user.keyboard(' ')
+    expect(notesRow).toBeChecked()
+    expect(brief).toBeChecked()
+    expect(picker.getAllByRole('checkbox')).toEqual([agenda, brief, notesRow])
+    await user.tab({ shift: true })
+    expect(brief).toHaveFocus()
+    await user.keyboard(' ')
+    expect(brief).not.toBeChecked()
+    expect(picker.getAllByRole('checkbox')).toEqual([agenda, brief, notesRow])
+    await user.tab()
+    expect(notesRow).toHaveFocus()
+
+    await user.type(search, 'agenda{Enter}')
+    expect(await picker.findByRole('checkbox', { name: AGENDA.name })).not.toBeChecked()
+    expect(picker.queryByRole('checkbox', { name: BRIEF.name })).not.toBeInTheDocument()
+    expect(picker.getByRole('checkbox', { name: notes.name })).toBeChecked()
+    await user.click(picker.getByRole('button', { name: 'Review files' }))
+    const confirmation = within(await screen.findByRole('dialog', { name: 'Confirm file sharing' }))
+    expect(confirmation.getByRole('list', { name: 'Files to attach' })).toHaveTextContent(
+      notes.name,
+    )
+    expect(confirmation.queryByText(BRIEF.name)).not.toBeInTheDocument()
+    expect(attachEventFilesMock).not.toHaveBeenCalled()
   })
 
   test('returns from Connections to check access without writing to attached files', async () => {
@@ -1012,9 +1067,9 @@ describe('the calendar view', () => {
     await confirmDriveFiles(user, [BRIEF.name])
     expect(await screen.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
     const partial = screen.getByRole('alert')
-    expect(partial).toHaveTextContent(/guest access incomplete/i)
+    expect(partial).toHaveTextContent(/at last check: guest access incomplete/i)
     expect(partial).toHaveTextContent(/selected files are on the event/i)
-    expect(partial).toHaveTextContent(/guest access confirmed for 1/i)
+    expect(partial).toHaveTextContent(/at last check: guest access confirmed for 1/i)
     statusMock.mockResolvedValue({
       account: { email: ME },
       missingScopes: ['https://www.googleapis.com/auth/drive'],
@@ -1033,6 +1088,9 @@ describe('the calendar view', () => {
     view.rerender(shell(false))
     const returned = within(await screen.findByRole('dialog', { name: 'Team sync' }))
     expect(await returned.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
+    expect(returned.getByRole('alert')).toHaveTextContent(
+      /at last check: guest access confirmed for 1/i,
+    )
     expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
     expect(checkEventFileAccessMock).not.toHaveBeenCalled()
     await user.click(returned.getByRole('button', { name: 'Check guest access' }))
@@ -1134,7 +1192,9 @@ describe('the calendar view', () => {
       await screen.findByText(/sharing not confirmed.*former@example.test/i),
     ).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Check guest access' }))
-    expect(await screen.findByText(partial.message)).toBeInTheDocument()
+    expect(
+      await screen.findByText(/Google did not provide a complete guest list/i),
+    ).toBeInTheDocument()
     expect(
       screen.getByText(/prior result: sharing not confirmed.*former@example.test/i),
     ).toBeInTheDocument()
@@ -1332,6 +1392,75 @@ describe('the calendar view', () => {
     await user.click(screen.getByRole('button', { name: 'Attach and share with guests' }))
     expect(await screen.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
     expect(attachEventFilesMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('reopening unchanged attachments keeps revoked access qualified until an explicit read-only check', async () => {
+    const user = userEvent.setup()
+    const guest = 'guest@example.test'
+    const attachments = [attachmentOf(BRIEF)]
+    let attached = false
+    let hasGuestAccess = false
+    eventAttachmentsMock.mockImplementation(async () => ({
+      attachments: attached ? attachments : [],
+      canAttach: true,
+    }))
+    driveFilesMock.mockResolvedValue({ files: [BRIEF] })
+    attachEventFilesMock.mockImplementation(async (): Promise<AttachEventFilesResult> => {
+      attached = true
+      hasGuestAccess = true
+      return {
+        attachments,
+        attachmentsVerified: true,
+        attachmentStatus: 'attached',
+        calendarWriteStatus: 'confirmed',
+        guestsChecked: [guest],
+        sharingComplete: true,
+        sharing: [{ fileId: BRIEF.id, guest, status: 'granted' }],
+      }
+    })
+    checkEventFileAccessMock.mockImplementation(async (): Promise<AttachEventFilesResult> => ({
+      attachments,
+      attachmentsVerified: true,
+      attachmentStatus: 'attached',
+      guestsChecked: [guest],
+      sharingComplete: hasGuestAccess,
+      sharing: [
+        { fileId: BRIEF.id, guest, status: hasGuestAccess ? 'already-accessible' : 'failed' },
+      ],
+    }))
+
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    await confirmDriveFiles(user, [BRIEF.name])
+    const lastConfirmation = /at last check: guest access confirmed for 1 file–guest pair/i
+    expect(await screen.findByText(lastConfirmation)).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Team sync' })).not.toBeInTheDocument()
+    // Drive access changes independently of the attachment list.
+    hasGuestAccess = false
+    await user.click((await screen.findAllByText('Team sync'))[0]!)
+    expect(await screen.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
+    expect(screen.getByText(lastConfirmation)).toBeInTheDocument()
+    expect(checkEventFileAccessMock).not.toHaveBeenCalled()
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Check guest access' }))
+    expect(
+      await screen.findByText(
+        /at last check: guest access incomplete: workshop brief.*guest@example.test/i,
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/guest access confirmed/i)).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: BRIEF.name })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/previously submitted: workshop brief/i)
+    expect(checkEventFileAccessMock).toHaveBeenCalledExactlyOnceWith(NOTES, {
+      expectedAccountSub: '1',
+      calendarId: ME,
+      eventId: SYNC.id,
+      fileIds: [BRIEF.id],
+    })
+    expect(attachEventFilesMock).toHaveBeenCalledTimes(1)
   })
 
   test('keeps the submitted file and its write outcome separate from a later check of another file', async () => {
