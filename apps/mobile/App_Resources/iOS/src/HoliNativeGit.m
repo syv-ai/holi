@@ -7,6 +7,7 @@
 #import <dirent.h>
 
 static NSString *const HoliNativeGitErrorDomain = @"HoliNativeGitErrorDomain";
+static NSError *HNGPathError(int code, NSString *message);
 static void HNGInitializeLibgit2(void) {
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{ git_libgit2_init(); });
@@ -219,7 +220,8 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
     for (NSString *entry in entries) {
       NSString *path = [directory stringByAppendingPathComponent:entry]; struct stat item;
       if (lstat(path.fileSystemRepresentation, &item) != 0 || S_ISLNK(item.st_mode)) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
-      if (S_ISDIR(item.st_mode)) [directories addObject:path];
+      if (S_ISDIR(item.st_mode) && ![path isEqualToString:[metadata stringByAppendingPathComponent:@"objects/info"]]) [directories addObject:path];
+      if ([path isEqualToString:[metadata stringByAppendingPathComponent:@"objects/info/alternates"]] || [path isEqualToString:[metadata stringByAppendingPathComponent:@"objects/info/http-alternates"]]) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
       if ([entry isEqualToString:@"commondir"] || [entry isEqualToString:@"config.worktree"] || [entry isEqualToString:@"worktrees"]) { if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
       if ([entry isEqualToString:@"config"]) {
         NSData *data = [NSData dataWithContentsOfFile:path]; NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
@@ -230,6 +232,11 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   git_repository *repo = NULL; int rc = git_repository_open_ext(&repo, root.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH, NULL);
   if (rc < 0) { HNGError(error, rc); return NULL; }
   if (git_repository_is_bare(repo)) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+  char canonicalRoot[PATH_MAX]; const char *workdir = git_repository_workdir(repo);
+  if (!workdir || !realpath(root.fileSystemRepresentation, canonicalRoot)) { git_repository_free(repo); if (error) *error = HNGPathError(EINVAL, @"Invalid repository worktree"); return NULL; }
+  char canonicalWorkdir[PATH_MAX]; if (!realpath(workdir, canonicalWorkdir) || strcmp(canonicalRoot, canonicalWorkdir)) { git_repository_free(repo); if (error) *error = HNGPathError(EINVAL, @"Repository worktree does not match root"); return NULL; }
+  git_repository_state_t state = git_repository_state(repo);
+  if (state != GIT_REPOSITORY_STATE_NONE && state != GIT_REPOSITORY_STATE_MERGE) { git_repository_free(repo); if (error) *error = HNGPathError(EINVAL, @"Unsupported repository state"); return NULL; }
   const char *gitdir = git_repository_path(repo); struct stat st;
   if (!gitdir || lstat(gitdir, &st) || !S_ISDIR(st.st_mode)) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
   git_config *cfg = NULL; rc = git_repository_config(&cfg, repo); HNGUnsafeConfig unsafe = {0};
@@ -267,9 +274,11 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
 }
 - (BOOL)hasPendingRecovery:(NSString *)root error:(NSError **)error {
   git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return YES;
-  const char *names[]={"MERGE_HEAD","CHERRY_PICK_HEAD","REVERT_HEAD","rebase-apply","rebase-merge"}; BOOL pending=NO; const char *dir=git_repository_path(repo);
-  for(size_t i=0;i<5;i++){ char p[PATH_MAX]; snprintf(p,sizeof(p),"%s%s",dir,names[i]); struct stat st; if(lstat(p,&st)==0){ pending=YES; break; } }
-  git_repository_free(repo); return pending;
+  git_repository_free(repo);
+  NSString *privateDirectory = [root stringByAppendingPathComponent:@".holi-storage-private"];
+  NSArray<NSString *> *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:privateDirectory error:nil];
+  for (NSString *entry in entries) if ([entry hasPrefix:@"move-"] && [entry hasSuffix:@".json"]) return YES;
+  return NO;
 }
 static NSError *HNGPathError(int code, NSString *message) {
   return [NSError errorWithDomain:HoliNativeGitErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey:message}];
