@@ -131,32 +131,13 @@ async function run(): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, 30))
       }
     }
-    const status = config.expected === null ? updater.status() : await updater.check()
+    let status = config.expected === null ? updater.status() : await updater.check()
     assert.equal(status.lastError, null)
     assert.equal(status.availableVersion, config.expected)
     assert.equal(status.state, config.expected === null ? 'idle' : 'ready')
     if (config.expected !== null) {
       await waitFor('document.querySelector("[data-update-dot]")')
       if (config.prompt) await waitFor('document.querySelector("[role=alertdialog]")')
-      if (!config.consent && config.install) {
-        // Declining must leave a freshly queried ready status and a usable restart affordance.
-        await waitFor('!document.querySelector("[role=alertdialog]")')
-        const declinedStatus = await window.webContents.executeJavaScript(
-          'window.holi.trpc.updates.status.query()',
-        )
-        assert.equal(declinedStatus.availableVersion, config.expected)
-        assert.equal(declinedStatus.state, 'ready')
-        await window.webContents.executeJavaScript(
-          `document.querySelector('[aria-label^="Account menu"]').dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,button:0,ctrlKey:false}))`,
-        )
-        await waitFor('document.querySelector("[role=menuitem]")')
-        assert.equal(
-          await window.webContents.executeJavaScript(
-            `Array.from(document.querySelectorAll('[role=menuitem]')).some(b => b.textContent.includes('Restart to update'))`,
-          ),
-          true,
-        )
-      }
       if (config.install) {
         if (config.action === 'dialog') {
           await window.webContents.executeJavaScript(
@@ -184,6 +165,27 @@ async function run(): Promise<void> {
         while (config.consent && installs === 0 && Date.now() < deadline)
           await new Promise((resolve) => setTimeout(resolve, 20))
         await new Promise((resolve) => setTimeout(resolve, 100))
+        if (!config.consent) {
+          // Declining must leave a freshly queried ready status and a usable restart affordance.
+          await waitFor('!document.querySelector("[role=alertdialog]")')
+          const response = await window.webContents.executeJavaScript(
+            `window.holi.trpc({ path: 'updates.status', type: 'query', input: undefined })`,
+          )
+          assert.equal(response.ok, true, response.message)
+          status = response.data
+          assert.equal(status.availableVersion, config.expected)
+          assert.equal(status.state, 'ready')
+          await window.webContents.executeJavaScript(
+            `document.querySelector('[aria-label^="Account menu"]').dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,button:0,ctrlKey:false}))`,
+          )
+          await waitFor('document.querySelector("[role=menuitem]")')
+          assert.equal(
+            await window.webContents.executeJavaScript(
+              `Array.from(document.querySelectorAll('[role=menuitem]')).some(b => b.textContent.includes('Restart to update'))`,
+            ),
+            true,
+          )
+        }
       }
     } else {
       await new Promise((resolve) => setTimeout(resolve, 100))
