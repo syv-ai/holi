@@ -119,6 +119,9 @@ try {
     'browser-dark.png',
     'recording.json',
     'rich-affinity.json',
+    'multiline-native-interactions.json',
+    'multiline-light.png',
+    'multiline-dark.png',
     'ui-light.png',
     'ui-dark.png',
     'interaction.mp4',
@@ -185,7 +188,8 @@ try {
           )
           return forwarding.replace(
             '  assert.equal(listeners.size, 0)',
-            `${toolbarAcceptance || hintsAcceptance ? sequence : ''}\n  assert.equal(listeners.size, 0)`,
+            () =>
+              `${toolbarAcceptance || hintsAcceptance ? sequence : ''}\n  assert.equal(listeners.size, 0)`,
           )
         },
       },
@@ -383,6 +387,7 @@ try {
                 'native-composition-preserves-unmodified-insert-path',
                 'production-toolbar-native-interaction-light-dark-and-trusted-recording',
                 'native-rich-contenteditable-recorded',
+                'production-multiline-paragraph-div-br-inline-contenteditable-edit-history',
                 'native-baseline-and-vim-rich-link-start-affinity-undo-redo',
                 'plaintext-host-replacement-releases-old-owner',
               ]
