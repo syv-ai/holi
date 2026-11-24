@@ -189,18 +189,24 @@ export async function inspectMdxDependencies(options: {
             const target = destination.url
             const resolved = redirects.get(target.href) ?? target.href
             if (active.has(resolved)) {
-              diagnostics.push(failure(`Dependency cycle involving ${target.origin}`, line))
+              diagnostics.push(
+                failure(`Dependency cycle involving ${target.origin}`, line, dep.column),
+              )
               continue
             }
             if (completed.has(resolved)) continue
             if (!options.external) {
-              diagnostics.push(failure('External MDX dependency access is unavailable', line))
+              diagnostics.push(
+                failure('External MDX dependency access is unavailable', line, dep.column),
+              )
               continue
             }
             // Reserve the fetcher's maximum body size before contacting a server.
             // Failed/aliased fetches also consume a graph slot, not just parsed modules.
             if (depth + 1 > DEPTH_LIMIT || count >= MODULE_LIMIT || readBudget < FILE_LIMIT) {
-              diagnostics.push(failure(`Dependency graph limit reached at ${target.origin}`, line))
+              diagnostics.push(
+                failure(`Dependency graph limit reached at ${target.origin}`, line, dep.column),
+              )
               continue
             }
             count++
@@ -222,6 +228,7 @@ export async function inspectMdxDependencies(options: {
                     ? error.message
                     : 'External MDX dependency access is unavailable',
                   line,
+                  dep.column,
                 ),
               )
               // A partial failed response has no trusted byte count.
@@ -250,6 +257,7 @@ export async function inspectMdxDependencies(options: {
                 ...d,
                 message: `${final.origin}:${d.line}:${d.column}: ${d.message}`,
                 line,
+                column: dep.column ?? 1,
               })),
             )
             continue
@@ -267,11 +275,13 @@ export async function inspectMdxDependencies(options: {
             continue
           }
           if (!safePolicy(child)) {
-            diagnostics.push(failure(`Dependency ${child} is protected or unavailable`, line))
+            diagnostics.push(
+              failure(`Dependency ${child} is protected or unavailable`, line, dep.column),
+            )
             continue
           }
           if (active.has(child)) {
-            diagnostics.push(failure(`Dependency cycle involving ${child}`, line))
+            diagnostics.push(failure(`Dependency cycle involving ${child}`, line, dep.column))
             continue
           }
           if (completed.has(child)) continue
@@ -281,7 +291,9 @@ export async function inspectMdxDependencies(options: {
             total + 1 > TOTAL_LIMIT ||
             readBudget <= 0
           ) {
-            diagnostics.push(failure(`Dependency graph limit reached at ${child}`, line))
+            diagnostics.push(
+              failure(`Dependency graph limit reached at ${child}`, line, dep.column),
+            )
             break
           }
           const target = join(rootCanonical, child)
@@ -351,7 +363,9 @@ export async function inspectMdxDependencies(options: {
             }
           } catch {
             await check()
-            diagnostics.push(failure(`Dependency ${child} could not be safely read`, line))
+            diagnostics.push(
+              failure(`Dependency ${child} could not be safely read`, line, dep.column),
+            )
             continue
           }
           diagnostics.push(
@@ -359,6 +373,7 @@ export async function inspectMdxDependencies(options: {
               ...d,
               message: `${child}:${d.line}:${d.column}: ${d.message}`,
               line,
+              column: dep.column ?? 1,
             })),
           )
         }

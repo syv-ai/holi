@@ -9,16 +9,40 @@ import { encodeScreencast } from './native-smoke-recording.mjs'
 import { rowSnapshotExpression } from './native-smoke-row-snapshot.mjs'
 import { assertExclusiveRowHover, assertStableRowBoxes } from './native-smoke-row-assertions.mjs'
 
-test('native mdx readiness returns its result and stops on run cancellation', async () => {
+test('native mdx readiness cancels an outstanding probe', { timeout: 5000 }, async () => {
   const controller = new AbortController()
   const { waitFor } = createMdxSmokeUi(controller.signal)
   const ready = { ready: true }
   assert.equal(await waitFor(() => ready, 'ready fixture'), ready)
-  const pending = waitFor(() => false, 'pending fixture', 1000)
+  const pending = waitFor(() => new Promise(() => {}), 'pending fixture', 1000)
   const reason = new Error('fixture interrupted')
   controller.abort(reason)
   await assert.rejects(pending, (error) => error === reason)
 })
+
+test(
+  'native mdx readiness rejects pending and late successful probes at its deadline',
+  { timeout: 5000 },
+  async () => {
+    const { waitFor } = createMdxSmokeUi(new AbortController().signal)
+    await assert.rejects(
+      waitFor(() => new Promise(() => {}), 'pending fixture', 10),
+      /Timed out/,
+    )
+    await assert.rejects(
+      waitFor(
+        () => {
+          const until = performance.now() + 10
+          while (performance.now() < until) {}
+          return true
+        },
+        'late fixture',
+        1,
+      ),
+      /Timed out/,
+    )
+  },
+)
 
 test('snapshots folder and file rows through one path-parameterized browser expression', () => {
   for (const path of ['nested', 'notes/brief.md']) {

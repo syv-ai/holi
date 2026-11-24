@@ -1293,3 +1293,28 @@ it('retries an unsaved revocation on quit even after sign-out and vault removal'
     await mdx.releaseDiagnosticsLease(owner)
   }
 })
+
+it.each(['local', 'external'] as const)(
+  'anchors dependency diagnostics at the parent declaration for %s modules',
+  async (kind) => {
+    const { mdx, acquire, root, routes } = await resourceRig()
+    const syntax = 'export const invalid = ;'
+    if (kind === 'local') await writeFile(join(root, 'broken.js'), syntax)
+    else routes.set(entry, { text: syntax })
+    const owner = await acquire()
+    const source = `import '${kind === 'local' ? './broken.js' : entry}'\n`
+    try {
+      let diagnostics = await mdx.compile({ ...owner, generation: 1, source })
+      if (kind === 'external') {
+        const requestId = (await mdx.externalResources(owner)).pending[0]!.id
+        await mdx.approveExternalResource({ ...owner, requestId })
+        diagnostics = await mdx.compile({ ...owner, generation: 2, source })
+      }
+      expect(diagnostics).toHaveLength(1)
+      expect(diagnostics[0]).toMatchObject({ line: 1, column: 1 })
+      expect(diagnostics[0]!.message).toContain(`:1:${syntax.indexOf(';') + 1}:`)
+    } finally {
+      await mdx.releaseDiagnosticsLease(owner)
+    }
+  },
+)

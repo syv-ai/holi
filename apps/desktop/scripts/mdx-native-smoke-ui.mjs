@@ -4,17 +4,42 @@ export function createMdxSmokeUi(signal) {
   }
 
   async function waitFor(fn, label, timeout = 30000) {
-    const deadline = Date.now() + timeout
+    signal.throwIfAborted()
+    const deadline = performance.now() + timeout
     let last
-    while (Date.now() < deadline) {
-      signal.throwIfAborted()
-      try {
-        last = await fn()
+    let finished = false
+    let timer
+    let onAbort
+    const expired = () => new Error(`Timed out waiting for ${label}; last=${JSON.stringify(last)}`)
+    const guard = new Promise((_, reject) => {
+      onAbort = () => reject(signal.reason)
+      signal.addEventListener('abort', onAbort, { once: true })
+      timer = setTimeout(() => reject(expired()), timeout)
+    })
+    const poll = async () => {
+      while (!finished) {
+        signal.throwIfAborted()
+        if (performance.now() >= deadline) throw expired()
+        try {
+          last = await fn()
+        } catch {}
+        signal.throwIfAborted()
+        if (performance.now() >= deadline) throw expired()
+        if (finished) return
         if (last) return last
-      } catch {}
-      await delay(100)
+        await delay(Math.min(100, Math.max(0, deadline - performance.now())))
+      }
     }
-    throw new Error(`Timed out waiting for ${label}; last=${JSON.stringify(last)}`)
+    try {
+      const result = await Promise.race([guard, poll()])
+      signal.throwIfAborted()
+      if (performance.now() >= deadline) throw expired()
+      return result
+    } finally {
+      finished = true
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
   }
 
   async function clickPointerAt(page, point) {
