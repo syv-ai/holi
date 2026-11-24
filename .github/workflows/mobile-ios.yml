@@ -13,11 +13,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Test mobile change detection
+        run: node --test .github/workflows/mobile-ios-changes.test.mjs
+      - name: Detect mobile compatibility inputs
+        id: detect
+        run: node .github/workflows/mobile-ios-changes.mjs
+
   simulator:
     name: Unsigned NativeScript simulator
-    # Keep the pinned iOS 26.2 toolchain on the macOS 15 arm64 image: Tahoe hosts
-    # stall in CoreSimulator runtime discovery and boot before the app can run.
-    runs-on: macos-15
+    needs: changes
+    if: always()
+    # Keep the pinned iOS 26.2 toolchain on macOS 15 arm64; unrelated PRs use Ubuntu.
+    runs-on: ${{ needs.changes.result == 'success' && needs.changes.outputs.run == 'true' && 'macos-15' || 'ubuntu-latest' }}
     timeout-minutes: 20
     env:
       LANG: en_US.UTF-8
@@ -29,17 +47,30 @@ jobs:
       HOLI_IOS_ARTIFACTS: /tmp/holi-265-ci
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
+      - name: Fail if change detection failed
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - name: Skip summary for unrelated changes
+        if: needs.changes.outputs.run != 'true'
+        run: echo 'Mobile compatibility skipped; no relevant inputs changed.' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v5
+        if: needs.changes.outputs.run == 'true'
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v5
+        if: needs.changes.outputs.run == 'true'
         with:
           version: 10.8.1
       - uses: actions/setup-node@v5
+        if: needs.changes.outputs.run == 'true'
         with:
           node-version: 24
           cache: pnpm
       - name: Install only mobile and shared dependencies
+        if: needs.changes.outputs.run == 'true'
         run: pnpm --filter @holi/mobile... install --frozen-lockfile
       - name: NativeScript Ruby project adapter and native build tools
+        if: needs.changes.outputs.run == 'true'
         run: |
           gem install --user-install xcodeproj -v 1.28.1 --no-document
           cmake --version
@@ -48,6 +79,7 @@ jobs:
           tar --version
           xcrun --sdk iphonesimulator --show-sdk-path
       - name: Check portable modules and host verifier
+        if: needs.changes.outputs.run == 'true'
         run: |
           pnpm --filter @holi/shared typecheck
           pnpm --filter @holi/shared test
@@ -55,9 +87,10 @@ jobs:
           pnpm --filter @holi/mobile lint
           pnpm --filter @holi/mobile test
       - name: Build, install, launch and verify the actual native runtime
+        if: needs.changes.outputs.run == 'true'
         run: pnpm --filter @holi/mobile test:ios
       - uses: actions/upload-artifact@v5
-        if: always()
+        if: always() && needs.changes.outputs.run == 'true'
         with:
           name: mobile-ios-compatibility
           path: /tmp/holi-265-ci
