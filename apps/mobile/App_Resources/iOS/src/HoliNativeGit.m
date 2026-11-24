@@ -190,4 +190,54 @@ static int HNGInspectConfig(const git_config_entry *entry, void *payload) {
   git_repository_free(repository);
   return @{ @"operation": operation, @"credentialChallenge": @(credentials.challenged), @"success": @YES, @"branch": branch, @"fetchTarget": fetchTarget, @"headTarget": headTarget, @"hooksDisabled": @(!unsafe.hooks), @"filtersDisabled": @(!unsafe.filters), @"helpersDisabled": @(!unsafe.helpers), @"remoteConstrained": @(remoteConstrained) };
 }
+- (NSString *)canonicalRoot:(NSString *)root error:(NSError **)error {
+  if (![root hasPrefix:@"/"] || root.length > 4096) { if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return nil; }
+  char resolved[PATH_MAX];
+  if (!realpath(root.fileSystemRepresentation, resolved)) { if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:errno userInfo:nil]; return nil; }
+  struct stat st; if (lstat(resolved, &st) || !S_ISDIR(st.st_mode)) { if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return nil; }
+  return [NSString stringWithUTF8String:resolved];
+}
+- (git_repository *)openSafeRepository:(NSString *)root error:(NSError **)error {
+  HNGInitializeLibgit2();
+  git_repository *repo = NULL; int rc = git_repository_open_ext(&repo, root.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH, NULL);
+  if (rc < 0) { HNGError(error, rc); return NULL; }
+  if (git_repository_is_bare(repo)) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+  const char *gitdir = git_repository_path(repo); struct stat st;
+  if (!gitdir || lstat(gitdir, &st) || !S_ISDIR(st.st_mode)) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NULL; }
+  git_config *cfg = NULL; rc = git_repository_config(&cfg, repo); HNGUnsafeConfig unsafe = {0};
+  if (rc == 0) { git_config_foreach(cfg, HNGInspectConfig, &unsafe); git_config_free(cfg); }
+  if (rc < 0 || unsafe.hooks || unsafe.filters || unsafe.helpers) { git_repository_free(repo); if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:@{NSLocalizedDescriptionKey:@"Unsafe repository configuration"}]; return NULL; }
+  return repo;
+}
+- (NSDictionary *)workingCopyIdentity:(NSString *)root error:(NSError **)error {
+  git_repository *repo = [self openSafeRepository:root error:error]; if (!repo) return nil;
+  git_reference *head = NULL; BOOL attached = git_repository_head(&head, repo) == 0; const char *name = head ? git_reference_name(head) : NULL;
+  NSString *branch = name ? [NSString stringWithUTF8String:name] : @""; NSMutableArray *remotes = [NSMutableArray array]; git_strarray names = {0};
+  if (git_remote_list(&names, repo) == 0) for (size_t i=0;i<names.count;i++) { git_remote *r=NULL; if (git_remote_lookup(&r,repo,names.strings[i])==0) { const char *url=git_remote_url(r); if(url) [remotes addObject:[NSString stringWithUTF8String:url]]; git_remote_free(r); } }
+  git_strarray_dispose(&names); git_reference_free(head); git_repository_free(repo);
+  return @{ @"remotes":remotes, @"branch":attached ? branch : [NSNull null], @"attached":@(attached) };
+}
+- (NSArray<NSDictionary<NSString *,id> *> *)workingCopyCandidates:(NSString *)root error:(NSError **)error {
+  git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return nil;
+  git_status_options opts=GIT_STATUS_OPTIONS_INIT; opts.show=GIT_STATUS_SHOW_INDEX_AND_WORKDIR; opts.flags=GIT_STATUS_OPT_INCLUDE_UNTRACKED|GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS|GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX|GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR;
+  git_status_list *list=NULL; int rc=git_status_list_new(&list,repo,&opts); NSMutableArray *out=[NSMutableArray array];
+  if(rc==0) for(size_t i=0;i<git_status_list_entrycount(list);i++){ const git_status_entry *e=git_status_byindex(list,i); const char *p=e->index_to_workdir->new_file.path ?: e->head_to_index->new_file.path; if(!p)continue; unsigned s=e->status; [out addObject:@{@"path":[NSString stringWithUTF8String:p],@"staged":@((s&(GIT_STATUS_INDEX_NEW|GIT_STATUS_INDEX_MODIFIED|GIT_STATUS_INDEX_DELETED|GIT_STATUS_INDEX_RENAMED|GIT_STATUS_INDEX_TYPECHANGE))!=0),@"worktree":@((s&(GIT_STATUS_WT_NEW|GIT_STATUS_WT_MODIFIED|GIT_STATUS_WT_DELETED|GIT_STATUS_WT_RENAMED|GIT_STATUS_WT_TYPECHANGE))!=0),@"conflict":@((s&GIT_STATUS_CONFLICTED)!=0)}]; }
+  git_status_list_free(list); git_repository_free(repo); if(rc<0){HNGError(error,rc);return nil;} return out;
+}
+- (BOOL)authorizeWorkingCopyPath:(NSString *)path root:(NSString *)root error:(NSError **)error {
+  if(path.length==0 || [path hasPrefix:@"/"] || [path containsString:@".."] || [path containsString:@"\\"]){ if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:nil]; return NO; }
+  NSString *full=[root stringByAppendingPathComponent:path]; char resolved[PATH_MAX]; if(!realpath(full.fileSystemRepresentation,resolved)) { if(errno==ENOENT)return YES; if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:errno userInfo:nil]; return NO; }
+  NSString *canonicalRoot=[self canonicalRoot:root error:error]; return canonicalRoot && [[NSString stringWithUTF8String:resolved] hasPrefix:[canonicalRoot stringByAppendingString:@"/"]];
+}
+- (BOOL)hasPendingRecovery:(NSString *)root error:(NSError **)error {
+  git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return YES;
+  const char *names[]={"MERGE_HEAD","CHERRY_PICK_HEAD","REVERT_HEAD","rebase-apply","rebase-merge"}; BOOL pending=NO; const char *dir=git_repository_path(repo);
+  for(size_t i=0;i<5;i++){ char p[PATH_MAX]; snprintf(p,sizeof(p),"%s%s",dir,names[i]); struct stat st; if(lstat(p,&st)==0){ pending=YES; break; } }
+  git_repository_free(repo); return pending;
+}
+- (NSArray<NSDictionary<NSString *,id> *> *)workingCopyStatus:(NSArray<NSString *> *)paths root:(NSString *)root error:(NSError **)error {
+  git_repository *repo=[self openSafeRepository:root error:error]; if(!repo)return nil; NSMutableArray *out=[NSMutableArray array]; int rc=0;
+  for(NSString *path in paths){ if(![self authorizeWorkingCopyPath:path root:root error:error]){git_repository_free(repo);return nil;} git_status_options opts=GIT_STATUS_OPTIONS_INIT; char *pathSpec=(char *)path.fileSystemRepresentation; opts.pathspec.strings=&pathSpec; opts.pathspec.count=1; git_status_list *list=NULL; rc=git_status_list_new(&list,repo,&opts); if(rc<0)break; unsigned s=0; for(size_t i=0;i<git_status_list_entrycount(list);i++){const git_status_entry *e=git_status_byindex(list,i);s|=e->status;} git_status_list_free(list); [out addObject:@{@"path":path,@"staged":@((s&0x00ff)!=0),@"worktree":@((s&0xff00)!=0),@"conflict":@((s&GIT_STATUS_CONFLICTED)!=0)}]; }
+  git_repository_free(repo); if(rc<0){HNGError(error,rc);return nil;} return out;
+}
 @end
