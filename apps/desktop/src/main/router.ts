@@ -42,6 +42,7 @@ import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
 import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
+import { compareRevisions } from './vault/compare-revisions'
 import { createSubscriptions } from './vault/subscriptions'
 import { subscriptionChanges } from './vault/subscription-changes'
 import { fileCards, type FileCard } from './vault/file-cards'
@@ -52,7 +53,6 @@ import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
 import {
   BranchRefusedError,
-  GitHistoricalPathMissingError,
   openRepo,
   remoteUrl,
   validBranchName,
@@ -1979,21 +1979,10 @@ export function createRouter(deps: RouterDeps) {
           const rel = safe(input.path)
           if (isSecretPath(rel))
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'Secret paths cannot be compared' })
-          try {
-            const [before, after] = await Promise.all([
-              active.repo.show(input.before, rel, { maxBuffer: 1024 * 1024, timeout: 5000 }),
-              active.repo.show(input.after, rel, { maxBuffer: 1024 * 1024, timeout: 5000 }),
-            ])
-            if (deps.host.active() !== active || active.remote !== input.remote)
-              return { kind: 'unavailable', reason: 'stale' }
-            return { kind: 'text', before, after }
-          } catch (error) {
-            if (deps.host.active() !== active) return { kind: 'unavailable', reason: 'stale' }
-            return {
-              kind: 'unavailable',
-              reason: error instanceof GitHistoricalPathMissingError ? 'missing' : 'limit',
-            }
-          }
+          const result = await compareRevisions(active.repo.root, rel, input.before, input.after)
+          if (deps.host.active() !== active || active.remote !== input.remote)
+            return { kind: 'unavailable', reason: 'stale' }
+          return result
         },
       ),
 
