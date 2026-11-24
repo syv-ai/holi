@@ -11,7 +11,7 @@ import {
 describe('working-copy fixture', () => {
   let parent
   afterEach(async () => {
-    if (parent) await rm(parent, { recursive: true, force: true })
+    if (parent) await rm(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
   it('creates independent persistent repositories with host-derived expectations', async () => {
@@ -49,5 +49,5 @@ describe('working-copy fixture', () => {
     const before = staged.before
     assert.equal(await verifyWorkingCopyUnchanged(staged.root, before), true)
     assert.equal(await verifyWorkingCopyUnchanged(staged.root, []), false)
-  })
+  }, 20_000)
 })

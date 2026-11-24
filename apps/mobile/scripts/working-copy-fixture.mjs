@@ -118,6 +118,15 @@ function semanticEntries(raw) {
 
 export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
   const cases = []
+  const base = await mkdtemp(join(parent, `holi-${runId}-base-`))
+  await git(base, 'init', '-b', 'fixture-start')
+  await git(base, 'config', 'user.name', 'Holi fixture')
+  await git(base, 'config', 'user.email', 'fixture@invalid')
+  await git(base, 'remote', 'add', 'origin', remoteUrl)
+  await put(base, 'tracked.md', 'base\n')
+  await put(base, 'tracked space.md', 'base\n')
+  await git(base, 'add', 'tracked.md', 'tracked space.md')
+  await git(base, 'commit', '-m', 'fixture base')
   const specs = [
     ['clean', async () => {}],
     [
@@ -294,14 +303,11 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
   for (const [name, mutate] of specs) {
     if (name.startsWith('pending-') && !libraryRoot) continue
     const root = await mkdtemp(join(parent, `holi-${runId}-${name}-`))
-    await git(root, 'init', '-b', 'fixture-start')
+    // A local clone copies objects into its own object database (unlike alternates).
+    await git(parent, 'clone', '--no-hardlinks', base, root)
     await git(root, 'config', 'user.name', 'Holi fixture')
     await git(root, 'config', 'user.email', 'fixture@invalid')
-    await git(root, 'remote', 'add', 'origin', remoteUrl)
-    await put(root, 'tracked.md', 'base\n')
-    await put(root, 'tracked space.md', 'base\n')
-    await git(root, 'add', 'tracked.md', 'tracked space.md')
-    await git(root, 'commit', '-m', 'fixture base')
+    await git(root, 'remote', 'set-url', 'origin', remoteUrl)
     await mutate(root)
     const expectedRefusal = [
       'detached',
