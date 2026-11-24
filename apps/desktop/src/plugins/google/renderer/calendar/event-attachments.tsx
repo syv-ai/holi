@@ -16,31 +16,32 @@ import {
 import { googleAccountRevisionAtom, useGoogleAccount } from '../account'
 import { googleCap } from '../google-cap'
 import { attachmentConsentNeeded, messageOf } from '../google-errors'
-import { AttachmentOutcome } from './attachment-outcome'
+import {
+  AttachmentOutcome,
+  type AttachmentSubmission,
+  type AttachmentAccessCheck,
+} from './attachment-outcome'
 import { DriveFilesDialog, type DriveFileChoice } from './drive-files-dialog'
 
 type Read = { data: AttachmentList } | { error: unknown }
-type Attempt = {
-  files: DriveFileChoice[]
-  result: AttachEventFilesResult
-  priorSharing: AttachEventFilesResult['sharing']
-  writeStatus?: AttachEventFilesResult['calendarWriteStatus']
-  checked?: boolean
-}
 interface Recovery {
-  attempt: Attempt | null
+  submission: AttachmentSubmission | null
+  accessCheck: AttachmentAccessCheck | null
   unconfirmedFiles: DriveFileChoice[]
   pending?: 'submit' | 'check'
-  checkError: { cause: unknown; files: DriveFileChoice[]; previous?: Attempt } | null
+  checkError: { cause: unknown; files: readonly DriveFileChoice[] } | null
 }
 
 // Settings parks Calendar and unmounts the card content. Keep only recovery,
 // not the open picker or its unsubmitted selection, in the window's store.
 const recoveryAtom = atom(new Map<string, Recovery>())
 
-function reconcileAccess(result: AttachEventFilesResult, previous?: Attempt) {
+function reconcileAccess(
+  result: AttachEventFilesResult,
+  previous: AttachmentSubmission | AttachmentAccessCheck | null,
+) {
   const files = result.attachmentsVerified
-    ? new Set(result.attachments.map(({ fileId }) => fileId))
+    ? new Set(driveAttachments(result.attachments).map(({ id }) => id))
     : null
   const guests = result.guestsChecked && new Set(result.guestsChecked)
   const relevant = ({ fileId, guest }: AttachEventFilesResult['sharing'][number]) =>
@@ -50,8 +51,19 @@ function reconcileAccess(result: AttachEventFilesResult, previous?: Attempt) {
   // that history separate from current results; main owns the durable barrier.
   const priorSharing: AttachEventFilesResult['sharing'] = []
   if (previous && (!files || !guests)) {
-    for (const row of [...previous.priorSharing, ...previous.result.sharing]) {
-      if (row.status !== 'unknown' || !relevant(row)) continue
+    const earlier = 'priorSharing' in previous ? previous.priorSharing : []
+    const previousFiles = previous.result.attachmentsVerified
+      ? new Set(driveAttachments(previous.result.attachments).map(({ id }) => id))
+      : null
+    const previousGuests = previous.result.guestsChecked
+    for (const row of [...earlier, ...previous.result.sharing]) {
+      if (
+        row.status !== 'unknown' ||
+        !relevant(row) ||
+        previousFiles?.has(row.fileId) === false ||
+        previousGuests?.includes(row.guest) === false
+      )
+        continue
       const index = sharing.findIndex(
         ({ fileId, guest }) => fileId === row.fileId && guest === row.guest,
       )
@@ -97,7 +109,8 @@ export function EventAttachments({
   const store = useStore()
   const key = JSON.stringify([remote, expectedAccountSub, calendarId, eventId])
   const recovery = useAtomValue(recoveryAtom).get(key)
-  const attempt = recovery?.attempt ?? null
+  const submission = recovery?.submission ?? null
+  const accessCheck = recovery?.accessCheck ?? null
   const busy = recovery?.pending === 'submit'
   const checking = recovery?.pending === 'check'
   const checkError = recovery?.checkError ?? null
@@ -113,7 +126,8 @@ export function EventAttachments({
   const trigger = useRef<HTMLButtonElement | null>(null)
   const [snapshot, setSnapshot] = useState<{
     read: Read
-    attempt: Attempt | null
+    submission: AttachmentSubmission | null
+    accessCheck: AttachmentAccessCheck | null
     checkError: Recovery['checkError']
     accountRevision: number
   } | null>(null)
@@ -124,7 +138,7 @@ export function EventAttachments({
     if (!currentAccount) return
     let current = true
     const accept = (read: Read) => {
-      if (current) setSnapshot({ read, attempt, checkError, accountRevision })
+      if (current) setSnapshot({ read, submission, accessCheck, checkError, accountRevision })
     }
     void googleCap.eventAttachments(remote, { expectedAccountSub, calendarId, eventId }).then(
       (data) => accept({ data }),
@@ -139,7 +153,8 @@ export function EventAttachments({
     calendarId,
     eventId,
     revision,
-    attempt,
+    submission,
+    accessCheck,
     checkError,
     currentAccount,
     accountRevision,
@@ -153,7 +168,8 @@ export function EventAttachments({
   // when a connection is refreshed. The outcome itself isn't the live list.
   const read =
     currentAccount &&
-    snapshot?.attempt === attempt &&
+    snapshot?.submission === submission &&
+    snapshot.accessCheck === accessCheck &&
     snapshot.checkError === checkError &&
     snapshot.accountRevision === accountRevision
       ? snapshot.read
@@ -167,24 +183,26 @@ export function EventAttachments({
   const unconfirmedIds = new Set(unconfirmedFiles.map(({ id }) => id))
   const unavailable = (id: string) => attachedIds.has(id) || unconfirmedIds.has(id)
   const canSubmit = data?.canAttach === true && !recovery?.pending
-  const noWrite =
-    attempt &&
-    !attempt.checked &&
-    attempt.result.attachmentStatus === 'failed' &&
-    (attempt.writeStatus === 'not-written' || attempt.writeStatus === undefined)
-  const checkAttempt = attempt && !noWrite ? attempt : undefined
-  // Check the current attachments, not the entire historical selection. If
-  // there's no current list yet, a read-only check can still verify the attempt.
-  const knownFiles = data ? existingFiles : driveAttachments(checkAttempt?.result.attachments ?? [])
+  const refused = submission?.result.attachmentStatus === 'failed'
+  const latest = accessCheck ?? (refused ? null : submission)
+  // Prefer the fresh Calendar set for checks. Without it, recover using IDs
+  // Calendar supplied earlier or IDs the user explicitly submitted for an uncertain write.
+  const knownFiles = data ? existingFiles : driveAttachments(latest?.result.attachments ?? [])
   const fallbackFiles =
-    data || checkAttempt?.result.attachmentsVerified
-      ? unconfirmedFiles
-      : (checkAttempt?.files ?? [])
+    data || latest?.result.attachmentsVerified ? unconfirmedFiles : (latest?.files ?? [])
   const filesToCheck = (knownFiles.length > 0 ? knownFiles : fallbackFiles).slice(
     0,
     ATTACHMENT_LIMIT,
   )
-  const revisable = noWrite ? attempt.files.filter(({ id }) => !unavailable(id)) : []
+  const actual =
+    data?.attachments ??
+    (!checkError && latest?.result.attachmentsVerified ? latest.result.attachments : null)
+  const calendar = actual && {
+    driveIds: data ? attachedIds : new Set(driveAttachments(actual).map(({ id }) => id)),
+    live: data !== null,
+    hasUnidentifiedLinks: actual.some(hasUnidentifiedLink),
+  }
+  const revisable = refused ? submission.files.filter(({ id }) => !unavailable(id)) : []
   const confirm = async (files: DriveFileChoice[]) => {
     if (
       !canStart() ||
@@ -195,7 +213,7 @@ export function EventAttachments({
       files.some(({ id }) => unavailable(id))
     )
       return
-    saveRecovery({ attempt, unconfirmedFiles, pending: 'submit', checkError: null })
+    saveRecovery({ submission, accessCheck, unconfirmedFiles, pending: 'submit', checkError })
     let result: AttachEventFilesResult
     try {
       // A refused preflight returns a definite failure, so users may choose
@@ -218,7 +236,8 @@ export function EventAttachments({
     }
     setDialog(null)
     saveRecovery({
-      attempt: { files, ...reconcileAccess(result), writeStatus: result.calendarWriteStatus },
+      submission: { files, result },
+      accessCheck: null,
       // A fresh list cannot attribute an attachment to a lost write. Keep
       // this guard per file across unrelated adds and read-only checks.
       unconfirmedFiles:
@@ -229,28 +248,29 @@ export function EventAttachments({
     })
   }
 
-  const check = async (files: DriveFileChoice[], previous?: Attempt) => {
+  const check = async (files: readonly DriveFileChoice[]) => {
     if (!files.length || !currentAccount || !canStart()) return
-    saveRecovery({ attempt, unconfirmedFiles, pending: 'check', checkError })
+    saveRecovery({ submission, accessCheck, unconfirmedFiles, pending: 'check', checkError })
     try {
       const result = await googleCap.checkEventFileAccess(remote, {
         ...target,
         fileIds: files.map(({ id }) => id),
       })
       saveRecovery({
-        attempt: {
-          files,
-          ...reconcileAccess(result, previous),
-          writeStatus: previous?.writeStatus,
-          checked: true,
-        },
+        submission,
+        accessCheck: { files, ...reconcileAccess(result, accessCheck ?? submission) },
         unconfirmedFiles,
         checkError: null,
       })
     } catch (error) {
       // A Drive refusal leaves Calendar readable. Refresh its list even when
       // the access call could not return a Calendar snapshot at all.
-      saveRecovery({ attempt, unconfirmedFiles, checkError: { cause: error, files, previous } })
+      saveRecovery({
+        submission,
+        accessCheck,
+        unconfirmedFiles,
+        checkError: { cause: error, files },
+      })
     }
   }
 
@@ -275,7 +295,7 @@ export function EventAttachments({
             Add from Drive
           </Button>
         )}
-        {!checkAttempt && !checkError && filesToCheck.length > 0 && (
+        {!submission && !accessCheck && !checkError && filesToCheck.length > 0 && (
           <Button
             type="button"
             variant="outline"
@@ -370,7 +390,7 @@ export function EventAttachments({
                 variant="outline"
                 size="sm"
                 disabled={!currentAccount || checking}
-                onClick={() => void check(checkError.files, checkError.previous)}
+                onClick={() => void check(filesToCheck.length ? filesToCheck : checkError.files)}
               >
                 Retry check
               </Button>
@@ -383,19 +403,15 @@ export function EventAttachments({
           </AlertDescription>
         </Alert>
       )}
-      {attempt && !checkError && (
+      {(submission || (accessCheck && !checkError)) && (
         <AttachmentOutcome
-          files={attempt.files}
-          result={attempt.result}
-          priorSharing={attempt.priorSharing}
-          writeStatus={attempt.writeStatus}
-          checked={attempt.checked}
-          currentDriveIds={data ? attachedIds : null}
+          submission={submission}
+          accessCheck={accessCheck}
+          checkFailed={checkError !== null}
+          calendar={calendar}
           canCheck={currentAccount && !recovery?.pending}
           onCheck={
-            checkAttempt && filesToCheck.length > 0
-              ? () => void check(filesToCheck, checkAttempt)
-              : undefined
+            !checkError && filesToCheck.length > 0 ? () => void check(filesToCheck) : undefined
           }
           onRevise={
             canSubmit && slots > 0 && revisable.length > 0
@@ -431,23 +447,36 @@ export function EventAttachments({
   )
 }
 
+const isWebLink = (url: string) => /^https?:\/\//i.test(url) && URL.canParse(url)
+
+function hasUnidentifiedLink({ fileId, fileUrl }: EventAttachment) {
+  return !isDriveFileId(fileId) && isWebLink(fileUrl)
+}
+
 function AttachmentRow({
-  attachment: { title, fileUrl },
+  attachment,
   onOpenExternal,
 }: {
   attachment: EventAttachment
   onOpenExternal: (url: string) => void
 }) {
+  const { title, fileUrl } = attachment
   const name = title || 'Untitled attachment'
   return (
     <li className="min-w-0 wrap-break-word">
-      {fileUrl && /^https?:\/\//i.test(fileUrl) && URL.canParse(fileUrl) ? (
+      {isWebLink(fileUrl) ? (
         <Button type="button" variant="text" size="inline" onClick={() => onOpenExternal(fileUrl)}>
           <span className="min-w-0 text-start wrap-break-word">{name}</span>
           <ExternalLinkIcon className="icon-sm" aria-hidden="true" />
         </Button>
       ) : (
         name
+      )}
+      {hasUnidentifiedLink(attachment) && (
+        <p className="text-muted-foreground text-xs">
+          Calendar did not provide a Drive file ID for this link. Holi can’t check guest access to
+          it.
+        </p>
       )}
     </li>
   )
