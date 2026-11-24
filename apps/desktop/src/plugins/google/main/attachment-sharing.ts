@@ -92,10 +92,12 @@ function access(list: Permission[], guest: string): Permission | 'absent' | 'unv
   return unverified ? 'unverified' : 'absent'
 }
 
-function message(error?: unknown): string {
-  return error instanceof GoogleApiError && error.status === 403
-    ? 'Google denied permission to share this file.'
-    : 'Could not confirm file access.'
+function message(error?: unknown, phase?: 'read' | 'grant'): string {
+  if (error instanceof GoogleApiError && error.status === 403 && error.code !== 'rate-limit') {
+    if (phase === 'read') return 'Google denied permission to check access to this file.'
+    if (phase === 'grant') return 'Google denied permission to share this file.'
+  }
+  return 'Could not confirm file access.'
 }
 
 type SharingOptions = {
@@ -176,6 +178,7 @@ export async function ensureGuestViewers(
             const recipient = guest.toLowerCase()
             let unconfirmed = false
             let blocked = false
+            let phase: 'read' | 'grant' | undefined
             try {
               const before = (receipt ??= await untilGoogleAbort(signal, () =>
                 receipts.read(fileId),
@@ -184,7 +187,9 @@ export async function ensureGuestViewers(
               const acknowledged = before.acknowledged.includes(recipient)
               unconfirmed = pendingGuest === recipient || acknowledged
               blocked = pendingGuest !== null && pendingGuest !== recipient
+              phase = 'read'
               list ??= await permissions(api, url, options)
+              phase = undefined
               const existing = access(list, recipient)
               if (typeof existing !== 'string') {
                 sharing.push({ ...target, status: 'already-accessible' })
@@ -240,6 +245,7 @@ export async function ensureGuestViewers(
                   async () => {
                     await validateGuest(guest, fileId)
                     await validate()
+                    phase = 'grant'
                   },
                   { signal },
                 )) as { id?: string } | null
@@ -260,6 +266,7 @@ export async function ensureGuestViewers(
               // Even a successful response isn't proof of current access.
               let verified: ReturnType<typeof access> = 'unverified'
               try {
+                phase = 'read'
                 list = undefined
                 list = await permissions(api, url, options)
                 verified = access(list, recipient)
@@ -294,7 +301,7 @@ export async function ensureGuestViewers(
                       status: unconfirmed ? 'unknown' : 'failed',
                       message: signal.aborted
                         ? 'The guest access check timed out.'
-                        : message(error),
+                        : message(error, phase),
                     }),
               })
             }
