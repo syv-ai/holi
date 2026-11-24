@@ -119,6 +119,7 @@ try {
     'browser-dark.png',
     'recording.json',
     'rich-affinity.json',
+    'multiline-native-interactions.json',
     'ui-light.png',
     'ui-dark.png',
     'interaction.mp4',
