@@ -76,10 +76,10 @@ function calendarList(url: URL) {
     url.pathname === `/calendar/v3/users/me/calendarList/${encodeURIComponent(target.calendarId)}`
   )
 }
-function calendarEvent(url: URL) {
+function calendarEvent(url: URL, eventId = target.eventId) {
   return (
     url.pathname ===
-    `/calendar/v3/calendars/${encodeURIComponent(target.calendarId)}/events/${target.eventId}`
+    `/calendar/v3/calendars/${encodeURIComponent(target.calendarId)}/events/${eventId}`
   )
 }
 
@@ -127,17 +127,24 @@ describe('Calendar attachments over Google transport', () => {
       attachmentStatus: 'attached',
       attachments: [original, attachment('selected')],
       sharing: [],
+      guestsChecked: [],
       sharingComplete: true,
     })
     expect(event.description).toBe(solo.description)
   })
 
-  it('re-merges a 412 without duplicates and shares only with the latest real guest', async () => {
-    let event = { ...solo, attendees: [{ email: 'old@example.com' }] }
+  it('re-merges a 412 on a recurring occurrence and reports the latest guest list', async () => {
+    const occurrence = { ...target, eventId: 'series_20261124T100000Z' }
+    let event = {
+      ...solo,
+      id: occurrence.eventId,
+      recurringEventId: 'series',
+      attendees: [{ email: 'old@example.com' }],
+    }
     const grants: Record<string, unknown>[] = []
     const api = transport((url, req) => {
       if (calendarList(url) && !req.method) return json({ accessRole: 'writer' })
-      if (calendarEvent(url)) {
+      if (calendarEvent(url, occurrence.eventId)) {
         if (req.method === 'PATCH') {
           if (event.etag === solo.etag) {
             event = {
@@ -172,12 +179,13 @@ describe('Calendar attachments over Google transport', () => {
       }
       throw new Error('Unexpected Google request')
     })
-    const result = await attachEventFiles(api, target, ['selected', 'selected'], validate, {
+    const result = await attachEventFiles(api, occurrence, ['selected', 'selected'], validate, {
       receipts,
     })
     expect(result).toMatchObject({
       attachmentStatus: 'attached',
       attachments: [original, attachment('concurrent'), attachment('selected')],
+      guestsChecked: ['new@example.com'],
       sharingComplete: false,
       sharing: [
         { status: 'granted', fileId: 'selected', guest: 'new@example.com' },
@@ -369,11 +377,12 @@ it('does not replay an unverified permission and checks the current attachment a
     sharingComplete: true,
     sharing: [{ guest, status: 'already-accessible' }],
   })
-  event = { ...event, attachments: [original] }
+  event = { ...event, attachments: [original], attendees: [] }
   await expect(check()).resolves.toMatchObject({
     attachments: [original],
     attachmentStatus: 'unknown',
     sharingComplete: false,
+    guestsChecked: [],
     sharing: [],
   })
   expect(patches).toBe(1)
@@ -397,14 +406,15 @@ it.each([
     }
     return json(file('in-change'))
   })
-  await expect(
-    attachEventFiles(api, target, ['in-change'], validate, { receipts }),
-  ).resolves.toMatchObject({
+  const result = await attachEventFiles(api, target, ['in-change'], validate, { receipts })
+  expect(result).toMatchObject({
     attachmentStatus: 'attached',
     sharingComplete: false,
     message: expect.any(String),
     sharing: [{ guest, status: 'already-accessible' }],
   })
+  if (change.attendeesOmitted) expect(result).not.toHaveProperty('guestsChecked')
+  else expect(result.guestsChecked).toEqual([guest, 'joined@example.com'])
   expect(notifications).toEqual([])
 })
 
@@ -443,7 +453,7 @@ it('preserves verified access and an uncertain POST at the deadline without atte
     sharing: [
       { guest: guests[0], status: 'granted' },
       { guest: guests[1], status: 'unknown' },
-      { guest: guests[2], status: 'failed' },
+      { guest: guests[2], status: 'blocked' },
     ],
   })
   expect(notifications).toEqual(guests.slice(0, 2))

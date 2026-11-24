@@ -431,6 +431,65 @@ describe('event attachment capabilities', () => {
     ).toEqual([])
   })
 
+  it.each([false, true])(
+    'checks guest access on a read-only invitation only with a complete list (omitted: %s)',
+    async (attendeesOmitted) => {
+      const guest = 'invitee@example.com'
+      const organizer = 'host@example.com'
+      const attachment = {
+        fileId: 'selected',
+        fileUrl: 'https://drive.google.com/open?id=selected',
+        title: 'Selected',
+      }
+      const { invoke, requests } = attachmentRig({
+        scopes: [CALENDAR_READ, DRIVE_FULL],
+        onRequest: (path) => {
+          if (path.includes('/calendarList/')) return Response.json({ accessRole: 'reader' })
+          if (path.endsWith('/events/event1'))
+            return Response.json({
+              id: 'event1',
+              organizer: { email: organizer, self: false },
+              attachments: [attachment],
+              attendeesOmitted,
+              attendees: [
+                { email: organizer, organizer: true },
+                { email: 'room@example.com', resource: true },
+                { email: guest, self: true },
+              ],
+            })
+          if (path === '/drive/v3/files/selected/permissions')
+            return Response.json({
+              permissions: [{ type: 'user', emailAddress: guest, role: 'reader' }],
+            })
+        },
+      })
+      const result = await invoke('checkEventFileAccess', {
+        ...ATTACHMENT_TARGET,
+        fileIds: ['selected'],
+      })
+      expect(result).toMatchObject({
+        attachments: [attachment],
+        attachmentStatus: 'attached',
+        sharingComplete: !attendeesOmitted,
+        sharing: attendeesOmitted
+          ? []
+          : [{ fileId: 'selected', guest, status: 'already-accessible' }],
+      })
+      const driveRequests = requests.filter(({ path }) => path.startsWith('/drive/'))
+      if (attendeesOmitted) {
+        expect(result).not.toHaveProperty('guestsChecked')
+        expect(driveRequests).toEqual([])
+      } else {
+        expect(result).toHaveProperty('guestsChecked', [guest])
+        expect(driveRequests).toContainEqual({
+          path: '/drive/v3/files/selected/permissions',
+          method: 'GET',
+        })
+      }
+      expect(requests.filter(({ method }) => method !== 'GET')).toEqual([])
+    },
+  )
+
   it('reports a Calendar removal that occurs while Drive refuses a guest grant', async () => {
     const guest = 'guest@example.com'
     const metadata = {
