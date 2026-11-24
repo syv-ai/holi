@@ -249,7 +249,6 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot) {
     ],
     [
       'metadata',
-      'same-line-config',
       async (r) => {
         await rm(join(r, '.git'), { recursive: true })
         await symlink(parent, join(r, '.git'))
