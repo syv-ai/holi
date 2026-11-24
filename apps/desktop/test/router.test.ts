@@ -662,6 +662,28 @@ describe('notes', () => {
     expect(await readFile(join(root, 'index.md'), 'utf8')).toBe('[[work/a.md]] and [[work/b.md]]')
   })
 
+  it('finds and moves empty and hidden folders without relying on the snapshot', async () => {
+    const { caller, root } = await rig({
+      '.stash/.gitkeep': '',
+      'guide.md': 'Guide',
+    })
+    await mkdir(join(root, 'OS empty folder'))
+    const paths = ['OS empty folder', '.stash', 'guide.md']
+    const folders = await caller.notes.directories({ remote: REMOTE, paths })
+    expect(folders).toEqual(['OS empty folder', '.stash'])
+    await caller.notes.move({
+      remote: REMOTE,
+      moves: [],
+      folders: folders.map((from) => ({ from, to: `Archive/${from}` })),
+    })
+    for (const folder of folders) {
+      await expect(stat(join(root, folder))).rejects.toThrow()
+      expect((await stat(join(root, 'Archive', folder))).isDirectory()).toBe(true)
+    }
+    expect(await readFile(join(root, 'Archive/.stash/.gitkeep'), 'utf8')).toBe('')
+    expect(await readFile(join(root, 'guide.md'), 'utf8')).toBe('Guide')
+  })
+
   it('move carries a moved folder whole and leaves nothing behind', async () => {
     // The document moves never list a `.gitkeep`, an empty subfolder or an
     // ignored `node_modules`; they held the source folder on the tree.

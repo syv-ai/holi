@@ -117,6 +117,13 @@ describe('paths and names', () => {
     expect(terminalLabel(t('d', 'zsh', '~'), [])).toBe('~')
     expect(terminalLabel({ ...t('e', 'zsh', '/'), exitCode: 1 }, [])).toBe('/ (exited)')
     expect(folderName('~/dev/holi/')).toBe('holi')
+    expect(folderName(String.raw`~\Holi\o\r\notes`)).toBe('notes')
+    expect(folderName(String.raw`D:\work\x`)).toBe('x')
+    expect(folderName(String.raw`\\host\share\docs`)).toBe('docs')
+    expect(folderName('C:/work/x')).toBe('x')
+    expect(folderName('C:\\')).toBe('C:')
+    // On POSIX a backslash is part of a folder's name.
+    expect(folderName(String.raw`~/dev/a\b`)).toBe(String.raw`a\b`)
     expect(withContext(list, 'c', context()).at(-1)!.context?.git?.files).toBe(16)
   })
 })
