@@ -32,6 +32,8 @@ type Program = Parameters<typeof analyze>[0]
 
 type MarkdownNode = {
   type: string
+  name?: string | null
+  position?: { start: { line: number; column: number; offset: number }; end: { offset: number } }
   children?: MarkdownNode[]
   attributes?: MarkdownNode[]
   value?: string | MarkdownNode | null
@@ -57,6 +59,43 @@ function sourcePosition(location: unknown) {
   return {
     line: typeof start?.line === 'number' ? start.line : 1,
     column: typeof start?.column === 'number' ? start.column + 1 : 1,
+  }
+}
+
+function mdxTagBaseReference(
+  node: MarkdownNode,
+  input: string,
+): Program['body'][number] | undefined {
+  if (node.type !== 'mdxJsxFlowElement' && node.type !== 'mdxJsxTextElement') return
+  const { name: tagName, position } = node
+  if (!tagName || !position) return
+  const dot = tagName.indexOf('.')
+  if (dot < 0) return
+  const name = tagName.slice(0, dot)
+  if (!commonJsGlobals.has(name)) return
+
+  // MDX stores the parsed tag name separately from its ESTree fragments. The
+  // position starts at `<`; locate the parsed base past any opening-tag trivia.
+  const { start, end } = position
+  const offset = input.indexOf(name, start.offset + 1)
+  if (offset < 0 || offset >= end.offset) return
+  const lines = input
+    .slice(start.offset, offset)
+    .replaceAll('\r\n', '\n')
+    .replaceAll('\r', '\n')
+    .split('\n')
+  const line = start.line + lines.length - 1
+  const column = (lines.length === 1 ? start.column - 1 : 0) + lines.at(-1)!.length
+  const range: [number, number] = [offset, offset + name.length]
+  return {
+    type: 'ExpressionStatement',
+    range,
+    expression: {
+      type: 'Identifier',
+      name,
+      range,
+      loc: { start: { line, column }, end: { line, column: column + name.length } },
+    },
   }
 }
 
@@ -236,9 +275,9 @@ root.__holiMdxReceive = (encoded) => {
     jsxImportSource: 'react',
     remarkPlugins: [
       () => (tree: MarkdownNode) => {
-        // Analyze the original ranged ESTree fragments as one module so that
-        // MDX expressions share the bindings from every ESM block. Do this before
-        // MDX inserts unranged code, drops empty re-exports, or rewrites layouts.
+        // Analyze the original fragments and JSX tag bases as one module so that
+        // they share the bindings from every ESM block. Do this before MDX
+        // inserts unranged code, drops empty re-exports, or rewrites layouts.
         const body: Program['body'] = []
         // Micromark's offsets exclude an initial BOM.
         const input = request.source.startsWith('\uFEFF') ? request.source.slice(1) : request.source
@@ -246,6 +285,8 @@ root.__holiMdxReceive = (encoded) => {
           const statements = node.data?.estree?.body ?? []
           if (node.type === 'mdxjsEsm') inspectDeclarations(statements, input)
           for (const statement of statements) body.push(statement)
+          const tagReference = mdxTagBaseReference(node, input)
+          if (tagReference) body.push(tagReference)
           node.attributes?.forEach(visit)
           if (node.value && typeof node.value === 'object') visit(node.value)
           node.children?.forEach(visit)

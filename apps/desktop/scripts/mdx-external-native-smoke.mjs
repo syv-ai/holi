@@ -1,3 +1,4 @@
+import { assertMdxNativeApprovalOrder } from './mdx-native-approval-receipt.mts'
 import { createMdxSmokeClient } from './mdx-native-smoke-client.mjs'
 import assert from 'node:assert/strict'
 import { runDocumentNativeAcceptance } from './mdx-document-native-smoke.mjs'
@@ -21,6 +22,7 @@ export async function runExternalNativeAcceptance(
 
   const {
     delay,
+    untilDeadline,
     waitFor,
     clickPointerAt,
     findInFile,
@@ -37,7 +39,7 @@ export async function runExternalNativeAcceptance(
   const trigger = 'MDX resources'
   const runDiagnostics = 'Run diagnostics'
   const parts = ['entry', 'relative', 'redirect', 'cdn']
-  const button = (label) =>
+  const button = (label, at = null) =>
     page.evaluate(`(() => {
     const match = Array.from(document.querySelectorAll('button,[role="button"]')).find(item =>
       (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(label)} &&
@@ -45,45 +47,59 @@ export async function runExternalNativeAcceptance(
       getComputedStyle(item).visibility === 'visible' && !item.matches(':disabled,[aria-disabled="true"]'));
     if (!match) return null;
     const {x, y, width, height} = match.getBoundingClientRect();
-    const point = {x: x + width / 2, y: y + height / 2};
+    const point = ${JSON.stringify(at)} ?? {x: x + width / 2, y: y + height / 2};
     const hit = document.elementFromPoint(point.x, point.y);
     return hit && match.contains(hit) ? point : null;
   })()`)
-  const clickAt = (point, deadline) => clickPointerAt(page, point, deadline)
+  const clickAt = (label, point, deadline) =>
+    clickPointerAt(page, point, (at) => button(label, at), deadline)
   const click = async (label, deadline = performance.now() + 30000) => {
-    const point = await waitFor(
-      () => button(label),
-      label,
-      Math.max(0, deadline - performance.now()),
-    )
-    await clickAt(point, deadline)
+    const point = await waitFor(() => button(label), label, { deadline })
+    await clickAt(label, point, deadline)
   }
   const openResources = async (expected, deadline = performance.now() + 30000) => {
+    const read = (operation) => untilDeadline(operation, deadline, expected)
     for (;;) {
       const state = await waitFor(
         async () => {
-          if (await button(expected)) return { ready: true }
+          if (await read(() => button(expected))) return { ready: true }
           // Mutations may close the panel or leave it open while state refreshes.
-          const open =
-            await page.evaluate(`Array.from(document.querySelectorAll('button')).some(item =>
+          const open = await read(() =>
+            page.evaluate(`Array.from(document.querySelectorAll('button')).some(item =>
           (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(trigger)} &&
-          (item.getAttribute('aria-expanded') === 'true' || item.getAttribute('data-state') === 'open'))`)
-          const point = !open && (await button(trigger))
+          (item.getAttribute('aria-expanded') === 'true' || item.getAttribute('data-state') === 'open'))`),
+          )
+          const point = !open && (await read(() => button(trigger)))
           return point ? { point } : false
         },
         expected,
-        Math.max(0, deadline - performance.now()),
+        { deadline },
       )
       if (state.ready) return
-      if (performance.now() >= deadline) throw new Error(`Timed out opening ${expected}`)
-      await clickAt(state.point, deadline)
+      await clickAt(trigger, state.point, deadline)
     }
   }
   const cancelled = /cancel|supersed|unavailable|invalidated/i
-  const capture = async (stage) => {
+  const lifecycle = [
+    ['approval', rawOrigin],
+    ['approval', redirectOrigin],
+    ['approval', cdnOrigin],
+    ['revocation', rawOrigin],
+    ['revocation', cdnOrigin],
+  ]
+  const capture = async (stage, expectedChanges = 0) => {
     const status = await windowStatus(page)
-    external.snapshots[stage] = { ...status.network, pushes: status.resourcePushes }
-    return external.snapshots[stage]
+    const snapshot = (external.snapshots[stage] = {
+      ...status.network,
+      pushes: status.resourcePushes,
+    })
+    assert.deepEqual(
+      assertMdxNativeApprovalOrder(snapshot),
+      lifecycle.slice(0, expectedChanges),
+      `${stage}: unexpected fixture consent history`,
+    )
+    requireOnlyDestinations(snapshot, external.snapshots.beforeVaultTrust, fixtureOrigins, stage)
+    return snapshot
   }
   const noNewTraffic = (before, after, label) => {
     for (const field of ['dns', 'socket'])
@@ -115,6 +131,7 @@ export async function runExternalNativeAcceptance(
     )
   }
 
+  let finished = false
   try {
     external.stage = 'pre-consent and denial'
     const isolated = await windowStatus(page)
@@ -188,12 +205,14 @@ export async function runExternalNativeAcceptance(
     await click(allow(rawOrigin))
     const transitiveDeadline = performance.now() + 30000
     await openResources(allow(redirectOrigin), transitiveDeadline)
-    await waitFor(
-      () => button(allow(redirectOrigin)),
-      'transitive approval',
-      Math.max(0, transitiveDeadline - performance.now()),
+    await waitFor(() => button(allow(redirectOrigin)), 'transitive approval', {
+      deadline: transitiveDeadline,
+    })
+    const transitive = await untilDeadline(
+      () => capture('transitiveConsentPending', 1),
+      transitiveDeadline,
+      'transitive consent observation',
     )
-    const transitive = await capture('transitiveConsentPending')
     requireOnlyDestinations(transitive, before, [rawOrigin], 'before transitive origin consent')
     requireTransport(transitive, before, [rawOrigin])
     requireRoutes(transitive, before, ['entry', 'relative'])
@@ -208,14 +227,16 @@ export async function runExternalNativeAcceptance(
     await click(allow(redirectOrigin), transitiveDeadline)
     const redirectDeadline = performance.now() + 30000
     await openResources(allow(cdnOrigin), redirectDeadline)
-    const video = record ? await record() : null
-    if (video) await delay(700)
-    await waitFor(
-      () => button(allow(cdnOrigin)),
-      'redirect target approval',
-      Math.max(0, redirectDeadline - performance.now()),
+    const video = record ? await untilDeadline(record, redirectDeadline, 'recording start') : null
+    if (video) await delay(700, redirectDeadline)
+    await waitFor(() => button(allow(cdnOrigin)), 'redirect target approval', {
+      deadline: redirectDeadline,
+    })
+    const redirect = await untilDeadline(
+      () => capture('redirectConsentPending', 2),
+      redirectDeadline,
+      'redirect consent observation',
     )
-    const redirect = await capture('redirectConsentPending')
     requireOnlyDestinations(
       redirect,
       transitive,
@@ -235,7 +256,7 @@ export async function runExternalNativeAcceptance(
       () => cleanDiagnostics(page),
       'clean FileView diagnostics after approval of all three public origins',
     )
-    const approved = await capture('allApproved')
+    const approved = await capture('allApproved', 3)
     const origins = [rawOrigin, redirectOrigin, cdnOrigin]
     requireOnlyDestinations(approved, redirect, origins, 'after all origins approved')
     requireTransport(approved, redirect, origins)
@@ -266,7 +287,7 @@ export async function runExternalNativeAcceptance(
     })
     assert(unsafe.length > 0, 'A credential-bearing URL was accepted')
     assert.equal((await call('externalResources', { lease }, 'query')).pending.length, 0)
-    noNewTraffic(approved, await capture('userinfoRejected'), 'credential-bearing URL')
+    noNewTraffic(approved, await capture('userinfoRejected', 3), 'credential-bearing URL')
     checks.push(
       'URL userinfo is rejected even for an approved origin without observed Node DNS, socket or HTTP activity',
     )
@@ -286,7 +307,7 @@ export async function runExternalNativeAcceptance(
       cancelled,
     )
     await openResources(allow(rawOrigin))
-    const revoked = await capture('originRevoked')
+    const revoked = await capture('originRevoked', 4)
     noNewTraffic(
       approved,
       revoked,
@@ -331,7 +352,7 @@ export async function runExternalNativeAcceptance(
     lease = await probeLease()
     const streamUrl = await page.evaluate(`window.holiSmoke.call('smoke:arm-stream')`)
     const observeStream = () => page.evaluate(`window.holiSmoke.call('smoke:stream-status')`)
-    const beforeStream = await capture('beforeStream')
+    const beforeStream = await capture('beforeStream', 4)
     const streaming = wire('compile', { lease, generation: 1, source: `import '${streamUrl}'` })
     const streamEvidence = {
       backpressure:
@@ -342,8 +363,13 @@ export async function runExternalNativeAcceptance(
     }
     external.streamRevocation = streamEvidence
     const started = performance.now()
-    await page.evaluate(
-      `void (window.__mdxStreaming = window.holi.trpc(${JSON.stringify(streaming)}))`,
+    await untilDeadline(
+      () =>
+        page.evaluate(
+          `void (window.__mdxStreaming = window.holi.trpc(${JSON.stringify(streaming)}))`,
+        ),
+      started + 6500,
+      'streaming compile start',
     )
     try {
       await waitFor(
@@ -352,11 +378,19 @@ export async function runExternalNativeAcceptance(
           return (observed?.active || observed?.closed) && observed
         },
         'authorized TLS socket with a buffered incomplete response',
-        Math.max(0, started + 6500 - performance.now()),
+        { deadline: started + 6500 },
       )
-      const point = await button(revoke(cdnOrigin))
+      const point = await untilDeadline(
+        () => button(revoke(cdnOrigin)),
+        started + 6500,
+        'stream revocation control',
+      )
       assert(point, 'The FileView revoke control is not actionable while the probe streams')
-      streamEvidence.beforeRevoke = await observeStream()
+      streamEvidence.beforeRevoke = await untilDeadline(
+        observeStream,
+        started + 6500,
+        'active stream before revocation',
+      )
       assert(
         streamEvidence.beforeRevoke?.active && streamEvidence.beforeRevoke.requests === 1,
         'Did not observe exactly one active, paused HTTPS stream at the revoke click',
@@ -368,7 +402,7 @@ export async function runExternalNativeAcceptance(
           return observed?.closed && observed
         },
         'revocation-driven TLS socket close',
-        Math.max(0, Math.min(2000, started + 8000 - performance.now())),
+        { deadline: Math.min(performance.now() + 2000, started + 8000) },
       )
       // Do not credit an AbortError/close from the independent 8-second fetch deadline.
       streamEvidence.closeObservedWithinMs = Math.ceil(performance.now() - started)
@@ -383,7 +417,8 @@ export async function runExternalNativeAcceptance(
       )
       await refuse(
         page.evaluate('window.__mdxStreaming'),
-        'The native compile streaming over HTTPS returned diagnostics instead of rejecting',
+        'The native compile streaming over HTTPS returned stale diagnostics',
+        cancelled,
       )
       streamEvidence.compileRejected = true
     } finally {
@@ -393,7 +428,7 @@ export async function runExternalNativeAcceptance(
     const retrySource = `import '${streamUrl}'\n\n# Stalled stream retry requires consent\n`
     await editAndWaitForSave(retrySource, 'source after streaming origin was revoked')
     await openResources(allow(cdnOrigin))
-    const streamRevoked = await capture('streamOriginRevoked')
+    const streamRevoked = await capture('streamOriginRevoked', 5)
     requireOnlyDestinations(
       streamRevoked,
       beforeStream,
@@ -426,11 +461,17 @@ export async function runExternalNativeAcceptance(
       await delay(700)
       await video()
     }
-    external.stage = 'complete'
+    finished = true
   } finally {
-    // Preserve only bounded counts and booleans even on public DNS/CDN failures.
-    await capture('finalObservation').catch(() => {})
+    // Keep the bounded receipt even on failure, without hiding the original error.
+    const final = capture('finalObservation', lifecycle.length)
+    if (finished) await final
+    else await final.catch(() => {})
   }
+  checks.push(
+    'every observed Node DNS, TLS and HTTP contact followed durable approval for its own origin in the main-process sequence',
+  )
+  external.stage = 'complete'
 }
 
 function requireOnlyDestinations(current, baseline, allowed, label) {

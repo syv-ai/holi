@@ -3,6 +3,7 @@ import { Agent, createServer, request } from 'node:https'
 import { connect } from 'node:net'
 import tls from 'node:tls'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { assertMdxNativeApprovalOrder } from '../scripts/mdx-native-approval-receipt.mjs'
 import { observeMdxNativeNetwork } from '../scripts/mdx-native-network-observation'
 
 // Public unit-fixture key and certificate; trusted only by this modeled loopback route.
@@ -77,6 +78,7 @@ async function send(
   status = 200,
   location?: string | string[],
   sni = host,
+  headers: Record<string, string> = {},
 ) {
   respond = (res) => {
     if (location) res.setHeader('Location', location)
@@ -92,7 +94,7 @@ async function send(
         servername: sni,
         rejectUnauthorized: true,
         path,
-        headers: { Host: host, Connection: 'close' },
+        headers: { ...headers, Host: host, Connection: 'close' },
       })
       // Match production: only end the request after its TLS handshake.
       req.once('socket', (socket) => socket.once('secureConnect', () => req.end()))
@@ -170,4 +172,49 @@ it('does not credit a CDN request for a different redirect source or invalid Loc
     expect(await send(cdn, cdnPath)).toEqual({ request: 'unexpected', response: 'unexpected' })
   }
   expect(JSON.stringify(observer.network)).not.toMatch(/private-(credential|query)/)
+})
+
+it('rejects contact in the gap between a zero-traffic snapshot and saved approval (modeled transport)', async () => {
+  observer.savedApproval(`https://${raw}`) // Approval of the other origin is not transferable.
+  const beforeAllow = structuredClone(observer.network)
+  expect(beforeAllow.destinations[`https://${cdn}`].tls).toBe(0)
+  expect(assertMdxNativeApprovalOrder(beforeAllow)).toEqual([['approval', `https://${raw}`]])
+
+  expect(await send(cdn, streamPath)).toEqual({ request: 'stream', response: 'stream' })
+  observer.savedApproval(`https://${cdn}`)
+  expect(() => assertMdxNativeApprovalOrder(observer.network)).toThrow(
+    /no preceding active saved approval/,
+  )
+})
+
+it('proves ordered contact and reapproval without exporting request details (modeled transport)', async () => {
+  const origin = `https://${raw}`
+  observer.savedApproval('https://private-fixture-origin.example')
+  observer.savedApproval(origin)
+  await send(raw, `${rawPath}/entry.js`, 200, undefined, raw, { Cookie: 'private-cookie=value' })
+  observer.admittedRevocation(origin)
+  observer.savedApproval(origin)
+  await send(raw, `${rawPath}/relative.js`)
+
+  expect(assertMdxNativeApprovalOrder(observer.network)).toEqual([
+    ['approval', origin],
+    ['revocation', origin],
+    ['approval', origin],
+  ])
+  const ownEvents = observer.network.events.filter((event) => event.origin === origin)
+  const firstApproval = ownEvents.find((event) => event.kind === 'approval')!
+  for (const kind of ['tls', 'httpCreated', 'httpStarted', 'httpResponses']) {
+    expect(ownEvents.find((event) => event.kind === kind)?.seq).toBeGreaterThan(firstApproval.seq)
+  }
+  expect(observer.network.requests[0]?.credentials).toBe(true)
+  expect(JSON.stringify(observer.network)).not.toMatch(
+    /private-(fixture-origin|cookie)|entry\.js|93\.184\.216\.34/,
+  )
+
+  observer.admittedRevocation(origin)
+  await send(raw, `${rawPath}/entry.js`)
+  observer.savedApproval(origin)
+  expect(() => assertMdxNativeApprovalOrder(observer.network)).toThrow(
+    /no preceding active saved approval/,
+  )
 })

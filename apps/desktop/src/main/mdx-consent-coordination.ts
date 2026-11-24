@@ -123,33 +123,44 @@ export function createMdxConsentCoordinator(external?: {
           assertOwner()
           const revision = scoped.grantRevision
           const offers = member.offers
-          const grants = await (external?.consent.listGrants(scope).catch(() => {
-            throw new Error('Could not read MDX resource grants')
-          }) ?? [])
+          const { grants, complete } = (await external?.consent.listGrants(scope)) ?? {
+            grants: [],
+            complete: true,
+          }
           if (!(await owner.recheck()) || scoped.grantRevision !== revision || !owner.current())
             throw new Error('MDX context changed')
 
           // A source retirement cannot invalidate an unchanged grant list or its Revoke
           // actions. It only suppresses pending offers from a superseded publication.
           const ids = new Map([...member.grantIds].map(([id, origin]) => [origin, id]))
-          const approved = grants.map<MdxExternalResourceState['approved'][number]>((grant) => ({
-            ...grant,
-            id: ids.get(grant.origin) ?? opaqueId(),
-            purpose: MDX_RESOURCE_PURPOSE,
-          }))
-          member.grantIds = new Map(approved.map(({ id, origin }) => [id, origin]))
+          const approved = new Map<string, MdxExternalResourceState['approved'][number]>()
+          if (!complete) {
+            // Known IDs still authorize Revoke, not network access. Only a complete read
+            // or a saved-removal notification can retire them.
+            for (const [origin, id] of ids)
+              approved.set(origin, { id, origin, purpose: MDX_RESOURCE_PURPOSE })
+          }
+          for (const grant of grants) {
+            approved.set(grant.origin, {
+              ...grant,
+              id: ids.get(grant.origin) ?? opaqueId(),
+              purpose: MDX_RESOURCE_PURPOSE,
+            })
+          }
+          member.grantIds = new Map([...approved.values()].map(({ id, origin }) => [id, origin]))
           const blocked = new Set(
             grants.filter((grant) => grant.revocationPending).map((grant) => grant.origin),
           )
           return {
             generation: owner.generation(),
             pending:
-              offers === member.offers && owner.graphCurrent()
+              complete && offers === member.offers && owner.graphCurrent()
                 ? [...offers].flatMap(([id, { origin }]) =>
                     blocked.has(origin) ? [] : [{ id, origin, purpose: MDX_RESOURCE_PURPOSE }],
                   )
                 : [],
-            approved,
+            approved: [...approved.values()],
+            ...(!complete && { listError: 'Could not read the full MDX resource grant list' }),
           }
         },
         async approve(id: string): Promise<{ ok: true }> {

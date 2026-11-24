@@ -33,6 +33,8 @@ export interface MdxExternalResourceState {
   generation: number
   pending: MdxExternalResourceRequest[]
   approved: MdxExternalResourceGrant[]
+  /** On read failure, approved contains only known Revoke controls and pending is empty. */
+  listError?: string
 }
 
 /** Push invalidation only; the renderer must re-read controls through authenticated IPC. */

@@ -20,10 +20,16 @@ type Grant = { origin: string; revocationPending?: true }
 
 export interface MdxConsentStore {
   allows(scope: MdxConsentScope): Promise<boolean>
-  listGrants(owner: Omit<MdxConsentScope, 'origin'>): Promise<Grant[]>
+  /** If storage could not be read, return only captured removals and mark the list incomplete. */
+  listGrants(
+    owner: Omit<MdxConsentScope, 'origin'>,
+  ): Promise<{ grants: Grant[]; complete: boolean }>
   /** Pass a synchronous lifetime check for a document-bound approval. A retired approval rejects. */
   grant(scope: MdxConsentScope, stillOwned?: () => boolean): Promise<void>
   revoke(scope: MdxConsentScope): Promise<void>
+  /** Synchronously observe an owned approval after durable publication, before queued reads.
+   * Listeners must not throw. Returns an unsubscribe. */
+  onSavedApproval(listener: (scope: MdxConsentScope) => void): () => void
   /** Synchronously observe each saved removal, including retries during drain.
    * Listeners must not throw. Returns an unsubscribe. */
   onRevocationSaved(listener: (scope: Readonly<MdxConsentScope>) => void): () => void
@@ -88,6 +94,7 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
   let queue = Promise.resolve()
   const denied = new Set<string>()
   const revocations = new Map<string, Revocation>()
+  const approvalListeners = new Set<(scope: MdxConsentScope) => void>()
   const removalListeners = new Set<(scope: Readonly<MdxConsentScope>) => void>()
   const key = (scope: MdxConsentScope) =>
     JSON.stringify([scope.origin, MDX_RESOURCE_PURPOSE, scope.root, scope.remote, scope.accountId])
@@ -126,7 +133,7 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
     if (!grants.every(validScope)) throw new Error('MDX consent state is corrupt')
     return { version: VERSION, grants }
   }
-  const persist = async (state: State, beforePublish?: () => void) => {
+  const persist = async (state: State, publication?: { before(): void; after(): void }) => {
     await mkdir(dirname(file), { recursive: true })
     const temp = `${file}.${randomUUID()}.tmp`
     const handle = await open(temp, 'wx', 0o600)
@@ -138,12 +145,14 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
         await handle.close()
       }
       // A queued asynchronous rename could run after ownership expires.
-      beforePublish?.()
+      publication?.before()
       renameSync(temp, file)
     } catch (error) {
       await rm(temp, { force: true }).catch(() => undefined)
       throw error
     }
+    // Notify without yielding after the last ownership check and the write.
+    publication?.after()
   }
   const saveRevocation = (id: string, revocation: Revocation): Promise<void> => {
     if (revocation.write) return revocation.write
@@ -178,22 +187,21 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
       return transact(async () => {
         const matches = (scope: MdxConsentScope) =>
           key({ ...owner, origin: scope.origin }) === key(scope)
-        const pending = (): Grant[] =>
-          [...revocations.values()].flatMap(({ scope }) =>
-            matches(scope) ? [{ origin: scope.origin, revocationPending: true }] : [],
-          )
+        const state = await read().catch(() => null)
         const listed = new Map<string, Grant>()
-        try {
-          for (const scope of (await read()).grants) {
-            if (matches(scope) && !denied.has(key(scope)))
-              listed.set(scope.origin, { origin: scope.origin })
-          }
-        } catch (error) {
-          // Keep the blocked grant visible and retryable even when the file is unreadable.
-          if (pending().length === 0) throw error
+        for (const scope of state?.grants ?? []) {
+          if (matches(scope) && !denied.has(key(scope)))
+            listed.set(scope.origin, { origin: scope.origin })
         }
-        for (const grant of pending()) listed.set(grant.origin, grant)
-        return [...listed.keys()].sort().map((origin) => listed.get(origin)!)
+        // Captured removals remain visible and retryable even when the file is unreadable.
+        for (const { scope } of revocations.values()) {
+          if (matches(scope))
+            listed.set(scope.origin, { origin: scope.origin, revocationPending: true })
+        }
+        return {
+          grants: [...listed.keys()].sort().map((origin) => listed.get(origin)!),
+          complete: state !== null,
+        }
       })
     },
     async grant(scope, stillOwned) {
@@ -214,9 +222,13 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
         if (!state.grants.some((grant) => key(grant) === id)) {
           state.grants.push({ origin, root, remote, accountId })
         }
-        await persist(state, assertCurrent)
-        // Revoke denies immediately, even if it arrives just after publication.
-        if (!revocations.has(id)) denied.delete(id)
+        await persist(state, {
+          before: assertCurrent,
+          after() {
+            denied.delete(id)
+            for (const listener of approvalListeners) listener({ origin, root, remote, accountId })
+          },
+        })
       })
     },
     async revoke(scope) {
@@ -226,6 +238,10 @@ export function createMdxConsentStore(file: string): MdxConsentStore {
       revocations.set(id, revocation)
       denied.add(id)
       return saveRevocation(id, revocation)
+    },
+    onSavedApproval(listener) {
+      approvalListeners.add(listener)
+      return () => approvalListeners.delete(listener)
     },
     onRevocationSaved(listener) {
       removalListeners.add(listener)

@@ -19,6 +19,7 @@ const redirectStatuses = new Set([301, 302, 303, 307, 308])
 const streamPath = '/npm/lodash@4.17.21/lodash.min.js'
 const labels = [...fixtureOrigins, 'unexpected', 'unattributed'] as const
 type Destination = (typeof labels)[number]
+const eventLimit = 2048
 type Route = 'entry' | 'relative' | 'redirect' | 'cdn' | 'stream' | 'unexpected' | 'unattributed'
 
 function destination(host: unknown): Destination {
@@ -90,12 +91,26 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
     Destination,
     ReturnType<typeof counters>
   >
+  type TransportKind = keyof ReturnType<typeof counters>
+  type Event = { seq: number; origin: Destination; kind: TransportKind | 'approval' | 'revocation' }
   const network = {
     dns: 0,
     socket: 0,
     destinations,
+    sequence: 0,
+    events: [] as Event[],
     requests: [] as Array<{ route: Route; get: boolean; credentials: boolean }>,
     responses: [] as Array<{ route: Route; status: number | undefined }>,
+  }
+  function record(kind: Event['kind'], origin: Destination) {
+    const seq = ++network.sequence
+    if (seq > eventLimit) return false // Driver requires a complete receipt, never a truncated proof.
+    network.events.push({ seq, origin, kind })
+    return true
+  }
+  function contact(kind: TransportKind, origin: Destination) {
+    destinations[origin][kind] += 1
+    return record(kind, origin)
   }
 
   // Node 24.18's documented diagnostics channels expose HTTP requests/responses,
@@ -112,7 +127,7 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
         network.dns += 1
         // The production path uses resolve4/resolve6, not the system lookup.
         const origin = type === 'QUERYWRAP' ? resolving : undefined
-        destinations[origin ?? 'unattributed'].dnsResources += 1
+        contact('dnsResources', origin ?? 'unattributed')
       }
       const socket = type === 'TCPWRAP' || type === 'TCPCONNECTWRAP' || type === 'TLSWRAP'
       if (socket || type === 'TickObject') {
@@ -122,7 +137,7 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
         if (origin) socketsByAsyncId.set(id, origin)
         if (socket) {
           network.socket += 1
-          destinations[origin ?? 'unattributed'].socketResources += 1
+          contact('socketResources', origin ?? 'unattributed')
         }
       }
     },
@@ -136,7 +151,7 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
     const descriptor = Object.getOwnPropertyDescriptor(Resolver.prototype, family)
     Resolver.prototype[family] = function (this: Resolver, ...args: unknown[]) {
       const origin = destination(args[0])
-      destinations[origin][family] += 1
+      contact(family, origin)
       const previous = resolving
       resolving = origin
       try {
@@ -165,7 +180,7 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
         : undefined
     const origin = destination(option('servername'))
     const address = option('host')
-    destinations[origin].tls += 1
+    contact('tls', origin)
     const previous = connecting
     connecting = origin
     let socket: TLSSocket
@@ -176,7 +191,7 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
     }
     socket.once('secureConnect', () => {
       if (socket.authorized && socket.remotePort === 443 && sameIp(address, socket.remoteAddress)) {
-        destinations[origin].verifiedPeer += 1
+        contact('verifiedPeer', origin)
         verifiedSockets.set(socket, origin)
       }
     })
@@ -204,7 +219,7 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
     const { request } = event as { request: ClientRequest }
     const origin = destination(request.getHeader('host'))
     const route = routeOf(request, origin)
-    destinations[requestDestination(route, origin)].httpCreated += 1
+    contact('httpCreated', requestDestination(route, origin))
     const hold = stream
     if (!hold || route !== 'stream') return
     if (++hold.requests !== 1) return
@@ -263,8 +278,8 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
     }
     if (route === 'cdn') observedRedirects -= 1
     const observation = { route, get: request.method === 'GET', credentials: credentials(request) }
-    destinations[requestDestination(route, origin)].httpStarted += 1
-    network.requests.push(observation)
+    if (contact('httpStarted', requestDestination(route, origin)))
+      network.requests.push(observation)
     started.set(request, observation)
   }
   const onResponse = (event: unknown) => {
@@ -279,8 +294,8 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
       }
     }
     const origin = destination(request.getHeader('host'))
-    destinations[requestDestination(route, origin)].httpResponses += 1
-    network.responses.push({ route, status: response.statusCode })
+    if (contact('httpResponses', requestDestination(route, origin)))
+      network.responses.push({ route, status: response.statusCode })
   }
   subscribe('http.client.request.created', onCreated)
   subscribe('http.client.request.start', onRequest)
@@ -288,6 +303,14 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
 
   return {
     network,
+    savedApproval(origin: string) {
+      const label = fixtureOrigins.find((expected) => expected === origin)
+      if (label) record('approval', label)
+    },
+    admittedRevocation(origin: string) {
+      const label = fixtureOrigins.find((expected) => expected === origin)
+      if (label) record('revocation', label)
+    },
     armStream() {
       if (stream) throw new Error('The native stream observation is already armed')
       stream = {

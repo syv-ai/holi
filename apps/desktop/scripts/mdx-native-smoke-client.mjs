@@ -10,8 +10,7 @@ export function createMdxSmokeClient(page) {
   }
   const refuse = async (response, label, message) => {
     const result = await response
-    assert(result?.ok === false, label)
-    if (message) assert(message.test(result.message), label)
+    assert(result?.ok === false && message.test(result.message), label)
   }
   return { wire, rpc, call, refuse }
 }
