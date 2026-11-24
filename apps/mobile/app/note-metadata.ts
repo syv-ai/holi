@@ -1,4 +1,5 @@
 import {
+  isInIgnoredDir,
   isLocalOnlyPath,
   isRemote,
   isSecretPath,
@@ -28,6 +29,8 @@ function notePath(raw: string): string {
     !shownPathOrNull(path) ||
     isLocalOnlyPath(path) ||
     isSecretPath(path) ||
+    isInIgnoredDir(path) ||
+    path.split('/').some((part) => part.startsWith('.holi-storage-')) ||
     !path.toLowerCase().endsWith('.md')
   ) {
     throw new Error('Path is not a visible Markdown note')
@@ -98,7 +101,15 @@ export function createNoteMetadata(adapter: MetadataKeyValue, remote: string): N
       })
     },
     visible(paths) {
-      const visible = new Set(paths.map(notePath))
+      const visible = new Set(
+        paths.flatMap((path) => {
+          try {
+            return [notePath(path)]
+          } catch {
+            return []
+          }
+        }),
+      )
       return {
         recents: data.recents.filter((path) => visible.has(path)),
         favourites: data.favourites.filter((path) => visible.has(path)),
