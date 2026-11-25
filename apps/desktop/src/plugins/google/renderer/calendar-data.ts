@@ -119,6 +119,8 @@ interface EventTimes {
   /** Exclusive, as Google's is: the midnight after an all-day event. */
   end: Date
   allDay: boolean
+  /** Omitted to preserve the existing description; empty explicitly clears it. */
+  description?: string
 }
 
 /** The raw params `schedule` and `reschedule` read: instants, or days for an
@@ -156,7 +158,9 @@ export interface GoogleCalendarData {
   setCalendarEnabled: (id: string, enabled: boolean) => void
   /** Paint a move before Google answers it; the next load corrects it. */
   patchLocal: (key: string, times: Pick<EventTimes, 'start' | 'end' | 'allDay'>) => void
-  create: (times: EventTimes & { title: string; location: string }) => Promise<void>
+  create: (
+    times: EventTimes & { title: string; location: string; description: string },
+  ) => Promise<void>
   update: (googleId: string, times: EventTimes) => Promise<void>
   remove: (googleId: string) => Promise<void>
 }
@@ -300,6 +304,8 @@ export function useGoogleCalendar(
         ...eventParams(times),
         title: times.title,
         ...(times.location === '' ? {} : { location: times.location }),
+        description: times.description ?? '',
+        ...(times.description === '' ? {} : { description: times.description }),
       })
       if (context.current.generation === generation && context.current.remote === remote)
         latestLoad.current()
@@ -311,7 +317,11 @@ export function useGoogleCalendar(
     async (googleId: string, times: EventTimes) => {
       if (remote === null) throw new Error('No vault is open.')
       const generation = context.current.generation
-      await googleCap.reschedule(remote, { id: googleId, ...eventParams(times) })
+      await googleCap.reschedule(remote, {
+        id: googleId,
+        ...eventParams(times),
+        ...(times.description === undefined ? {} : { description: times.description }),
+      })
       if (context.current.generation === generation && context.current.remote === remote)
         latestLoad.current()
     },
