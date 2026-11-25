@@ -101,7 +101,11 @@ const google: Record<string, (params: unknown, remote: string) => unknown> = {
   },
   respondToMailInvitation: (p, remote) => {
     const target = p as Parameters<typeof googleCap.respondToMailInvitation>[1]
-    if (target.expectedAccountSub !== mailAccountSub) throw new Error('Google account changed')
+    if (
+      target.expectedAccountSub !== mailAccountSub ||
+      target.expectedBindingRevision !== invite.bindingRevision
+    )
+      throw new Error('Google account changed')
     return respondMock(remote, target)
   },
   mailMarkerAnnotations: (p) => mailMarkersMock(p),
@@ -527,7 +531,15 @@ test('offers an unsubscribe link for a newsletter', async () => {
 })
 
 const invite: NonNullable<Awaited<ReturnType<typeof googleCap.mailInvitation>>> = {
-  identity: { messageId: 'm1', uid: 'review', sequence: 2, recurrenceId: null },
+  bindingRevision: 'view-binding-1',
+  identity: {
+    messageId: 'm1',
+    uid: 'review',
+    sequence: 2,
+    recurrenceId: null,
+    dtstamp: '2026-08-15T08:00:00.000Z',
+    materialKey: 'sprint-review-revision',
+  },
   title: 'Sprint review',
   start: '2026-08-19T12:00:00.000Z',
   end: '2026-08-19T13:00:00.000Z',
@@ -535,7 +547,9 @@ const invite: NonNullable<Awaited<ReturnType<typeof googleCap.mailInvitation>>> 
   organizer: { name: 'Jane', email: 'jane@example.com' },
   location: 'Workshop',
   conferenceUrl: 'https://teams.microsoft.com/l/meetup-join/19%3aX/0',
-  htmlLink: 'https://calendar.google.com/event?eid=e1',
+  conferenceLinkSource: 'provider',
+  htmlLink: 'https://calendar.google.com/calendar/event?eid=e1',
+  htmlLinkSource: 'calendar',
   cancelled: false,
   canRespond: true,
   responsePending: false,
@@ -569,6 +583,32 @@ test('joins a recognised invitation without a separate meeting lookup', async ()
   expect(openExternal).toHaveBeenCalledWith(invite.conferenceUrl)
   expect(meetingMock).not.toHaveBeenCalled()
 })
+
+test.each(['conference', 'event'] as const)(
+  'discloses the actual hostname before opening an emailed %s link',
+  async (link) => {
+    const user = userEvent.setup()
+    const url = 'https://xn--bcher-kva.example.test/meet.google.com'
+    threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+    invitationMock.mockResolvedValue({
+      ...invite,
+      conferenceUrl: link === 'conference' ? url : null,
+      conferenceLinkSource: link === 'conference' ? 'mail' : null,
+      htmlLink: link === 'event' ? url : null,
+      htmlLinkSource: link === 'event' ? 'mail' : null,
+    })
+
+    await openThread()
+    const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+    const open = await region.findByRole('button', { name: 'Open email link' })
+    expect(region.getByText('xn--bcher-kva.example.test')).toBeVisible()
+    expect(open).toHaveAccessibleDescription('Destination: xn--bcher-kva.example.test')
+    expect(region.queryByRole('button', { name: /join meeting|open this meeting/i })).toBeNull()
+    expect(openExternal).not.toHaveBeenCalled()
+    await user.click(open)
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith(url)
+  },
+)
 
 test('shows RSVP controls for an inline invitation without a filename or list badge', async () => {
   withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
@@ -668,6 +708,7 @@ test('retries invitation read failures and reconciles uncertainty without resend
   expect(await region.findByText('Response: Tentative')).toBeInTheDocument()
   expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
     expectedAccountSub: 'mail-view-account',
+    expectedBindingRevision: invite.bindingRevision,
     threadId: 't1',
     identity: invite.identity,
     answer: 'tentative',
@@ -681,7 +722,7 @@ test('reloads a changed invitation after a refused response without repeating th
   invitationMock.mockResolvedValue({
     ...invite,
     title: 'Review at the new time',
-    identity: { ...invite.identity, sequence: 3 },
+    identity: { ...invite.identity, dtstamp: '2026-08-16T08:00:00.000Z', materialKey: 'new-time' },
   })
   respondMock.mockRejectedValueOnce(
     new Error('This invitation changed; reload it before responding'),
@@ -695,6 +736,32 @@ test('reloads a changed invitation after a refused response without repeating th
   await user.click(region.getByRole('button', { name: 'Retry' }))
   expect(await region.findByRole('heading', { name: 'Review at the new time' })).toBeInTheDocument()
   expect(region.getByRole('button', { name: 'Decline' })).toBeEnabled()
+  expect(respondMock).toHaveBeenCalledTimes(1)
+})
+
+test('does not attach a previous RSVP receipt to a different invitation revision', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValueOnce(invite).mockResolvedValue({
+    ...invite,
+    title: 'Review at the new time',
+    identity: { ...invite.identity, materialKey: 'new-time' },
+  })
+  respondMock.mockResolvedValue({
+    outcome: 'sent',
+    channel: 'calendar',
+    answer: 'accepted',
+    invitation: null,
+    refreshPending: true,
+  })
+
+  await openThread()
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  await user.click(await region.findByRole('button', { name: 'Accept' }))
+  await user.click(await region.findByRole('button', { name: 'Retry' }))
+  expect(await region.findByRole('heading', { name: 'Review at the new time' })).toBeInTheDocument()
+  expect(region.getByText('No response yet')).toBeInTheDocument()
+  expect(region.queryByText(/Google accepted your response/i)).not.toBeInTheDocument()
   expect(respondMock).toHaveBeenCalledTimes(1)
 })
 

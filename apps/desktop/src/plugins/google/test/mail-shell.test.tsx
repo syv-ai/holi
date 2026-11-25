@@ -33,6 +33,7 @@ const disconnectVaultMock = vi.fn()
 const removeAccountMock = vi.fn()
 const setClientMock = vi.fn()
 let accountSub = 'a'
+let accountBinding = 1
 const toastMock = vi.fn()
 const openExternal = vi.fn()
 const { agentStartMock, agentStopMock, agentServiceMock, tasksAvailabilityMock } = vi.hoisted(
@@ -92,7 +93,11 @@ const google: Record<string, (params: unknown, remote: string) => unknown> = {
   },
   respondToMailInvitation: (p, remote) => {
     const target = p as Parameters<typeof googleCap.respondToMailInvitation>[1]
-    if (target.expectedAccountSub !== accountSub) throw new Error('Google account changed')
+    if (
+      target.expectedAccountSub !== accountSub ||
+      target.expectedBindingRevision !== `shell-binding-${accountBinding}`
+    )
+      throw new Error('Google account changed')
     return respondMock(remote, target)
   },
   'mark-read': (p) => markReadMock(p),
@@ -220,6 +225,7 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   useAccountMock.mockReset().mockImplementation(async ({ sub }: { sub: string }) => {
     accountSub = sub
+    accountBinding++
     return { ok: true }
   })
   disconnectVaultMock.mockReset().mockImplementation(async () => {
@@ -229,6 +235,7 @@ beforeEach(() => {
   removeAccountMock.mockReset().mockResolvedValue({ ok: true })
   setClientMock.mockReset().mockResolvedValue({ ok: true })
   accountSub = 'a'
+  accountBinding = 1
   toastMock.mockReset()
   openExternal.mockReset()
   agentStopMock.mockReset().mockResolvedValue({ ok: true })
@@ -424,7 +431,15 @@ test('opens a thread: marks it read, renders HTML in the sandboxed frame', async
 type Invitation = NonNullable<Awaited<ReturnType<typeof googleCap.mailInvitation>>>
 type Response = Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>
 const invitation: Invitation = {
-  identity: { uid: 'q2-review', messageId: 'm2', sequence: 3, recurrenceId: '2026-08-18' },
+  bindingRevision: 'shell-binding-1',
+  identity: {
+    uid: 'q2-review',
+    messageId: 'm2',
+    sequence: 3,
+    recurrenceId: '2026-08-18',
+    dtstamp: '2026-08-14T12:15:00.000Z',
+    materialKey: 'workshop-revision',
+  },
   title: 'Budget workshop',
   start: '2026-08-18',
   end: '2026-08-20',
@@ -432,7 +447,9 @@ const invitation: Invitation = {
   organizer: { name: 'Jane Doe', email: 'jane@example.com' },
   location: 'Workshop',
   conferenceUrl: 'https://meet.google.com/abc-defg-hij',
+  conferenceLinkSource: 'calendar',
   htmlLink: null,
+  htmlLinkSource: null,
   cancelled: false,
   responseStatus: 'needsAction',
   canRespond: true,
@@ -476,6 +493,7 @@ test.each([
     expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
       threadId: 't1',
       expectedAccountSub: 'a',
+      expectedBindingRevision: invitation.bindingRevision,
       identity: invitation.identity,
       answer,
     })
@@ -551,10 +569,16 @@ test('a response from a previous account opening cannot change the visible invit
     target.expectedAccountSub === 'b'
       ? {
           ...invitation,
+          bindingRevision: `shell-binding-${accountBinding}`,
           title: 'Another mailbox’s workshop',
-          identity: { ...invitation.identity, messageId: 'm-other' },
+          identity: { ...invitation.identity, messageId: 'm-other', uid: 'other-workshop' },
         }
-      : { ...invitation, title: 'Rescheduled workshop', responseStatus: 'accepted' },
+      : {
+          ...invitation,
+          bindingRevision: `shell-binding-${accountBinding}`,
+          title: 'Budget workshop',
+          responseStatus: 'accepted',
+        },
   )
   let finish!: (result: Response) => void
   respondMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
@@ -565,7 +589,7 @@ test('a response from a previous account opening cannot change the visible invit
   expect(screen.getByRole('button', { name: 'Maybe' })).toBeDisabled()
   for (const [email, title] of [
     ['ada@home.test', 'Another mailbox’s workshop'],
-    ['ada@syv.ai', 'Rescheduled workshop'],
+    ['ada@syv.ai', 'Budget workshop'],
   ] as const) {
     await user.click(screen.getByRole('button', { name: /Google account/ }))
     await user.click(await screen.findByRole('menuitem', { name: email }))
@@ -587,6 +611,7 @@ test('a response from a previous account opening cannot change the visible invit
   expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
     threadId: 't1',
     expectedAccountSub: 'a',
+    expectedBindingRevision: invitation.bindingRevision,
     identity: invitation.identity,
     answer: 'declined',
   })
