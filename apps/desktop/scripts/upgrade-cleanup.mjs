@@ -158,42 +158,46 @@ export async function cleanupUpgradeFixture({ resources, owned, command, runtime
   if (feed) await attempt('feed-shutdown', () => feed.stop())
   let deletionAllowed = false
   if (drained && installerDrained && (!appStarted || installerGuardReady)) {
-    await attempt('confirmed-absence-and-remove-resources', async () => {
-      await removeAfterDrain({
-        runtimeDrained: true,
-        installer: {
-          inspect: async () => {
-            if (!installer) {
-              report.installerAbsence = { outcome: 'not-applicable' }
-              return { present: false }
-            }
-            try {
-              const state = await installer.inspect()
-              report.installerAbsence = {
-                outcome:
-                  state.present === true
-                    ? 'present'
-                    : state.present === false
-                      ? 'absent'
-                      : 'unavailable',
-              }
-              return state
-            } catch (error) {
-              report.installerAbsence = { outcome: 'unavailable' }
-              throw error
-            }
-          },
-        },
-        removeResources: async () => {
-          if (ownsProfile) {
-            await rm(profile, { recursive: true, force: true })
-            await rm(vaultRoot, { recursive: true, force: true })
-          }
-          if (root) await rm(root, { recursive: true, force: true })
-        },
-      })
-      deletionAllowed = true
+    await attempt('remove-validated-squirrel-job-after-drain', async () => {
+      if (installerGuardReady) await installer.removeOwned()
     })
+    if (failures.length === 0)
+      await attempt('confirmed-absence-and-remove-resources', async () => {
+        await removeAfterDrain({
+          runtimeDrained: true,
+          installer: {
+            inspect: async () => {
+              if (!installer) {
+                report.installerAbsence = { outcome: 'not-applicable' }
+                return { present: false }
+              }
+              try {
+                const state = await installer.inspect()
+                report.installerAbsence = {
+                  outcome:
+                    state.present === true
+                      ? 'present'
+                      : state.present === false
+                        ? 'absent'
+                        : 'unavailable',
+                }
+                return state
+              } catch (error) {
+                report.installerAbsence = { outcome: 'unavailable' }
+                throw error
+              }
+            },
+          },
+          removeResources: async () => {
+            if (ownsProfile) {
+              await rm(profile, { recursive: true, force: true })
+              await rm(vaultRoot, { recursive: true, force: true })
+            }
+            if (root) await rm(root, { recursive: true, force: true })
+          },
+        })
+        deletionAllowed = true
+      })
   }
   report.cleanup = {
     failures,

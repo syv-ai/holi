@@ -249,8 +249,7 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
   var requestedSettings = false
   var accountMenuOpened = false
   var requestedConnections = false
-  for _ in 0..<50 {
-    guard Date() < deadline else { break }
+  while Date() < deadline {
     guard identity(r, bundle: bundle)?.start == id.start else { reject("ownership-refused", "process-changed") }
     let (windowValue, windowStatus) = readAttribute(app, kAXWindowsAttribute)
     stats.windowsStatus = windowStatus.rawValue
@@ -267,6 +266,15 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
         selectedWindow = window; selectedBounds = rectangle(window); break
       }
       if !requestedSettings {
+        let connectionsControls = content.filter {
+          label($0) == "Connections" && [kAXButtonRole, "AXLink", kAXRadioButtonRole].contains(text($0, kAXRoleAttribute))
+        }
+        if connectionsControls.count == 1 {
+          stats.connectionsControlSeen = true
+          requestedSettings = press(connectionsControls[0])
+          requestedConnections = requestedSettings
+          stats.connectionsPressSucceeded = stats.connectionsPressSucceeded || requestedSettings
+        }
         let triggers = content.filter { element in
           guard [kAXButtonRole, kAXPopUpButtonRole].contains(text(element, kAXRoleAttribute)) else { return false }
           let name = label(element, stats: stats)
@@ -281,10 +289,10 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
           if name == "Connections" { stats.connectionsControlSeen = true }
           return matched
         }
-        if !accountMenuOpened, triggers.count == 1 {
+        if !requestedSettings, !accountMenuOpened, triggers.count == 1 {
           accountMenuOpened = press(triggers[0])
           stats.accountPressSucceeded = stats.accountPressSucceeded || accountMenuOpened
-        } else if accountMenuOpened {
+        } else if !requestedSettings, accountMenuOpened {
           let menuItems = nodes(window, pid: r.pid, deadline: deadline, stats: stats).filter {
             text($0, kAXRoleAttribute) == kAXMenuItemRole && ["Settings", "Settings ⌘,", "Settings⌘,"].contains(label($0).split(whereSeparator: \.isWhitespace).joined(separator: " "))
           }

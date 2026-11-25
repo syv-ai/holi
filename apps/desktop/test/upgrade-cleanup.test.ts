@@ -13,6 +13,8 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
     'installer-unavailable',
     'missing-anchor',
     'replacement',
+    'late-job',
+    'late-job-refused',
   ] as const)(
     'deletes fixture data only with acknowledged drainage and fresh installer absence: %s',
     async (scenario) => {
@@ -37,15 +39,27 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
           if (scenario === 'unacknowledged') throw new Error('drain not acknowledged')
         },
       }
+      let removalAttempts = 0
+      let lateJobPresent = false
       const installer = {
-        removeOwned: async () => {},
+        removeOwned: async () => {
+          removalAttempts++
+          if (removalAttempts === 2 && scenario.startsWith('late-job')) {
+            if (scenario === 'late-job-refused')
+              throw Object.assign(new Error('job ownership changed'), {
+                code: 'INSTALLER_STATE_OWNERSHIP_MISMATCH',
+                exitCode: 2,
+              })
+            lateJobPresent = false
+          }
+        },
         inspect: async () => {
           if (scenario === 'installer-unavailable')
             throw Object.assign(new Error('inspection unavailable'), {
               code: 'INSTALLER_STATE_OWNERSHIP_MISMATCH',
               exitCode: 2,
             })
-          return { present: scenario === 'installer-returned' }
+          return { present: scenario === 'installer-returned' || lateJobPresent }
         },
       }
       try {
@@ -72,26 +86,33 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
             upgradeNotBeforeMicros: 0,
           },
           owned,
-          runtimePids: async () => [],
+          runtimePids: async () => {
+            if (scenario.startsWith('late-job')) lateJobPresent = true
+            return []
+          },
           command: async () => ({ stdout: '' }),
         })
-        if (['clear', 'installer-returned', 'installer-unavailable'].includes(scenario)) {
+        if (
+          ['clear', 'installer-returned', 'installer-unavailable', 'late-job'].includes(scenario)
+        ) {
           expect(result.report.installerAbsence).toMatchObject({
             outcome:
               scenario === 'clear'
                 ? 'absent'
                 : scenario === 'installer-returned'
                   ? 'present'
-                  : 'unavailable',
+                  : scenario === 'late-job'
+                    ? 'absent'
+                    : 'unavailable',
           })
         }
-        if (scenario === 'installer-unavailable')
+        if (scenario === 'installer-unavailable' || scenario === 'late-job-refused')
           expect(result.report.cleanup.failures).toEqual(
             expect.arrayContaining([
               expect.objectContaining({ code: 'INSTALLER_STATE_OWNERSHIP_MISMATCH', exitCode: 2 }),
             ]),
           )
-        if (scenario === 'clear') {
+        if (scenario === 'clear' || scenario === 'late-job') {
           expect(result.failed).toBe(false)
           expect(result.report.cleanup).toMatchObject({
             filesRetained: false,
