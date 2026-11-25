@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { processObservables } from '../scripts/vault-snapshot-bench-metrics.mjs'
 import {
   analyzePairs,
   freezeMeasurement,
@@ -70,6 +71,28 @@ function pairs(size: 'small' | 'large', count = 5) {
 const study = () => [...pairs('small'), ...pairs('large')]
 
 describe('snapshot benchmark analysis', () => {
+  it('rejects incomplete GPU and invalid CPU process observations', () => {
+    const samples = [
+      { at: 1, processes: [{ pid: 1, type: 'GPU', workingSetBytes: 10, cumulativeCpuUsage: 1 }] },
+      { at: 2, processes: [{ pid: 2, type: 'GPU', workingSetBytes: 12, cumulativeCpuUsage: 2 }] },
+    ]
+    expect(processObservables({ samples }, (row) => row.type === 'GPU')).toBeNull()
+    expect(
+      processObservables({
+        samples: [
+          {
+            at: 1,
+            processes: [{ pid: 1, type: 'CPU', workingSetBytes: 10, cumulativeCpuUsage: 1 }],
+          },
+          {
+            at: 2,
+            processes: [{ pid: 1, type: 'CPU', workingSetBytes: 12, cumulativeCpuUsage: -1 }],
+          },
+        ],
+      }),
+    ).toBeNull()
+  })
+
   it('computes paired Student-t intervals with df=4', () => {
     expect(pairedInterval([1, 2, 3, 4, 5])).toEqual({
       n: 5,

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { processObservables } from './vault-snapshot-bench-metrics.mjs'
 
 export const T_CRITICAL_DF4 = 2.776445
 
@@ -74,6 +75,7 @@ export function sourceVersion() {
   const files = [
     'vault-snapshot-bench-main.ts',
     'vault-snapshot-bench-analysis.mjs',
+    'vault-snapshot-bench-metrics.mjs',
     'vault-snapshot-bench-adapter.ts',
     'vault-snapshot-bench-rpc.ts',
     'vault-snapshot-bench-renderer.tsx',
@@ -132,57 +134,6 @@ function changedLatency(result) {
     return null
   // Derive the per-trial p95 from the raw five writes, never from idle scan time.
   return Math.max(...metric.rawMs)
-}
-
-function processObservables(result, select = () => true) {
-  const samples = result?.samples
-  if (
-    !Array.isArray(samples) ||
-    samples.length < 2 ||
-    samples.some(
-      (sample) =>
-        !finite(sample.at) ||
-        !Array.isArray(sample.processes) ||
-        !sample.processes.length ||
-        sample.processes.some(
-          (row) =>
-            !Number.isInteger(row.pid) ||
-            !row.type ||
-            !finite(row.workingSetBytes) ||
-            row.workingSetBytes < 0 ||
-            (!finite(row.cumulativeCpuUsage) && !finite(row.cpuPercent)),
-        ),
-    )
-  )
-    return null
-  const elapsed = samples.at(-1).at - samples[0].at
-  if (elapsed <= 0) return null
-  const selected = samples.map((sample) => sample.processes.filter(select))
-  const memory = selected.map((rows) => rows.reduce((sum, row) => sum + row.workingSetBytes, 0))
-  let cpuSeconds = 0
-  for (let i = 1; i < samples.length; i++) {
-    const dt = samples[i].at - samples[i - 1].at
-    if (dt <= 0) return null
-    const previous = new Map(selected[i - 1].map((row) => [row.pid, row]))
-    for (const row of selected[i]) {
-      const prior = previous.get(row.pid)
-      if (prior && finite(row.cumulativeCpuUsage) && finite(prior.cumulativeCpuUsage)) {
-        const delta = row.cumulativeCpuUsage - prior.cumulativeCpuUsage
-        if (delta < 0) return null
-        cpuSeconds += delta
-      } else if (finite(row.cpuPercent)) cpuSeconds += (row.cpuPercent / 100) * dt
-      else return null
-    }
-  }
-  return {
-    cpuSeconds,
-    sampleElapsedSeconds: elapsed,
-    cpuSecondsPerMinute: (cpuSeconds * 60) / elapsed,
-    rssSteadyBytes: mean(memory),
-    rssPeakBytes: Math.max(...memory),
-    processCountPeak: Math.max(...selected.map((rows) => rows.length)),
-    pidRows: samples.map((sample, index) => ({ at: sample.at, processes: selected[index] })),
-  }
 }
 
 function benefitGate(ci, threshold) {

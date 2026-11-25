@@ -192,7 +192,6 @@ const git = (args, cwd, env) =>
 async function makeFixture(vault, size) {
   const fixed = new Date('2020-01-01T00:00:00.000Z')
   await mkdir(join(vault, '.holi/settings'), { recursive: true })
-  await mkdir(join(vault, '.holi/settings'), { recursive: true })
   await writeFile(join(vault, '.holi/settings/app.yaml'), 'version: 1\n')
   await writeFile(join(vault, '.holi/settings/icons.yaml'), '{}\n')
   for (let i = 0; i < size.notes; i++) {
