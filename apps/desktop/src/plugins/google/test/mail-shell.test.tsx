@@ -555,16 +555,16 @@ test('shows a filename-less inline invitation in the mail shell', async () => {
   )
 })
 
-test('reports Google acceptance separately from a failed status refresh and Retry only reads', async () => {
+test('keeps Google acceptance separate from a different response recorded after Retry', async () => {
   searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
   invitationMock.mockResolvedValueOnce(invitations(invitation))
   invitationMock.mockRejectedValueOnce(new Error('Refresh unavailable'))
-  invitationMock.mockResolvedValue(invitations({ ...invitation, responseStatus: 'accepted' }))
+  invitationMock.mockResolvedValue(invitations({ ...invitation, responseStatus: 'tentative' }))
   respondMock.mockResolvedValue({
     outcome: 'sent',
     channel: 'gmail',
     answer: 'accepted',
-    invitation: null,
+    invitation: { ...invitation, responseStatus: 'declined' },
     refreshPending: true,
   })
   const user = userEvent.setup()
@@ -572,13 +572,18 @@ test('reports Google acceptance separately from a failed status refresh and Retr
   await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
   const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
   await user.click(await region.findByRole('button', { name: 'Accept' }))
-  expect(await region.findByText(/Google accepted.*not been refreshed/i)).toBeInTheDocument()
+  expect(await region.findByText('Response: Declined')).toBeInTheDocument()
+  expect(region.getByRole('status')).toHaveTextContent(/current recorded response is different/i)
   expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
+  expect(region.getByRole('button', { name: 'Decline' })).toBeDisabled()
   await user.click(region.getByRole('button', { name: 'Retry' }))
   expect(await region.findByRole('alert')).toHaveTextContent('Refresh unavailable')
   expect(region.getByRole('button', { name: 'Decline' })).toBeDisabled()
   await user.click(region.getByRole('button', { name: 'Retry' }))
-  expect(await region.findByText('Response: Accepted')).toBeInTheDocument()
+  expect(await region.findByText('Response: Tentative')).toBeInTheDocument()
+  expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
+  expect(region.getByRole('status')).toHaveTextContent(/current recorded response is different/i)
+  expect(region.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   expect(respondMock).toHaveBeenCalledTimes(1)
 })
 

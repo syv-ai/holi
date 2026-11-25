@@ -19,12 +19,18 @@ import {
   type InvitationCardState,
 } from './use-mail-invitation'
 
-const responses = {
-  accepted: { action: 'Accept', label: 'Accepted', variant: 'success' },
-  tentative: { action: 'Maybe', label: 'Tentative', variant: 'warning' },
-  declined: { action: 'Decline', label: 'Declined', variant: 'destructive' },
+const responseBadges = {
+  accepted: { label: 'Response: Accepted', variant: 'success' },
+  tentative: { label: 'Response: Tentative', variant: 'warning' },
+  declined: { label: 'Response: Declined', variant: 'destructive' },
+  delegated: { label: 'Response: Delegated', variant: 'secondary' },
+  needsAction: { label: 'No response yet', variant: 'secondary' },
 } as const
-const answers = Object.keys(responses) as InvitationAnswer[]
+const answerButtons = [
+  ['accepted', 'Accept'],
+  ['tentative', 'Maybe'],
+  ['declined', 'Decline'],
+] as const satisfies readonly (readonly [InvitationAnswer, string])[]
 
 /** Use the list's invite hint or the full thread's calendar MIME evidence.
  * Opening ordinary mail does not incur an invitation lookup. */
@@ -154,28 +160,16 @@ function InvitationCard({
   open: (url: string) => void
   respond: (answer: InvitationAnswer) => void
 }) {
-  const { invitation, error, receipt, refreshPending } = card
+  const { invitation, error, refreshPending } = card
   const headingId = useId()
   const isInvitation = invitation.kind === 'invitation'
   const canRespond = isInvitation && invitation.canRespond && !invitation.cancelled
   const response = isInvitation ? invitation.responseStatus : null
-  const knownResponse = response && response !== 'needsAction' ? responses[response] : null
+  const responseBadge = response === null ? null : responseBadges[response]
   const date = invitationDate(invitation, clock)
   const { organizer, location } = invitation
   const status =
-    action === 'responding'
-      ? 'Sending your response…'
-      : receipt === 'sent'
-        ? refreshPending
-          ? 'Google accepted your response, but its status has not been refreshed.'
-          : 'Google accepted your response.'
-        : receipt === 'uncertain' && refreshPending
-          ? 'We couldn’t confirm whether Google accepted your response. Retry only checks its status.'
-          : receipt === 'unchanged'
-            ? 'This was already your recorded response.'
-            : refreshPending && canRespond
-              ? 'Check your response status before responding again.'
-              : null
+    action === 'responding' ? 'Sending your response…' : responseNotice(card, canRespond)
 
   return (
     <article aria-labelledby={headingId} className="flex min-w-0 flex-col gap-2">
@@ -187,11 +181,7 @@ function InvitationCard({
         {invitation.scope !== 'single' && (
           <Badge variant="secondary">{scopeLabels[invitation.scope]}</Badge>
         )}
-        {knownResponse ? (
-          <Badge variant={knownResponse.variant}>Response: {knownResponse.label}</Badge>
-        ) : response === 'needsAction' ? (
-          <Badge variant="secondary">No response yet</Badge>
-        ) : null}
+        {responseBadge && <Badge variant={responseBadge.variant}>{responseBadge.label}</Badge>}
       </div>
       {(date || organizer || location) && (
         <dl className="flex flex-col gap-1 text-sm">
@@ -219,7 +209,7 @@ function InvitationCard({
       )}
       <div className="flex flex-wrap items-center gap-2">
         {canRespond &&
-          answers.map((answer) => (
+          answerButtons.map(([answer, label]) => (
             <Button
               key={answer}
               type="button"
@@ -228,7 +218,7 @@ function InvitationCard({
               disabled={blocked || refreshPending || error !== null || response === answer}
               onClick={() => respond(answer)}
             >
-              {responses[answer].action}
+              {label}
             </Button>
           ))}
         {!invitation.cancelled && (
@@ -260,6 +250,34 @@ function InvitationCard({
       )}
     </article>
   )
+}
+
+function responseNotice(
+  { invitation, receipt, refreshPending }: InvitationCardState,
+  canRespond: boolean,
+): string | null {
+  const response = invitation.responseStatus
+  if (receipt?.outcome === 'sent') {
+    if (!receipt.hasReadback)
+      return 'Google accepted your response, but its status has not been refreshed.'
+    if (invitation.responsePending)
+      return 'Google accepted your response; waiting for it to appear.'
+    if (response === receipt.answer) return 'Google accepted your response.'
+    return response === null
+      ? 'Google accepted your response, but we couldn’t verify the current recorded response.'
+      : 'Google accepted your response, but the current recorded response is different.'
+  }
+  if (receipt?.outcome === 'uncertain') {
+    if (refreshPending)
+      return 'We couldn’t confirm whether Google accepted your response. Retry only checks its status.'
+    if (response !== receipt.answer)
+      return response === null
+        ? 'We couldn’t verify the current recorded response.'
+        : 'The current recorded response does not match the one you tried to send.'
+  }
+  if (receipt?.outcome === 'unchanged' && response === receipt.answer && !refreshPending)
+    return 'This was already your recorded response.'
+  return refreshPending && canRespond ? 'Check your response status before responding again.' : null
 }
 
 function InvitationLink({
