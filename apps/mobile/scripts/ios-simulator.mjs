@@ -302,7 +302,7 @@ try {
           runId,
           simulator,
           sourceHead: await command('git', ['rev-parse', 'HEAD']),
-          workingCopyStatusCases: statusEvidence.length,
+          workingCopyStatusCases: statusEvidence.cases.length,
           workingCopyTreeCases: treeEvidence.length,
           transportRun: false,
           certificateTrustChanged: false,
@@ -312,7 +312,7 @@ try {
       ),
     )
     console.log(
-      `iOS ${runtime.version}: ${statusEvidence.length} status and ${treeEvidence.length} tree cases passed. No transport or certificate trust changes. Evidence: ${artifacts}`,
+      `iOS ${runtime.version}: ${statusEvidence.cases.length} status and ${treeEvidence.length} tree cases passed. No transport or certificate trust changes. Evidence: ${artifacts}`,
     )
   } else {
     const context = {
