@@ -129,8 +129,17 @@ export function TabStrip({
   const stripGeometry = useRef<{
     list: HTMLElement
     scrollLeft: number
+    lastScrollLeft: number
+    intendedScrollLeft: number
     rects: Map<string, DOMRect>
   } | null>(null)
+  const restoreStripScroll = () => {
+    const geometry = stripGeometry.current
+    if (geometry === null) return
+    requestAnimationFrame(() => {
+      if (geometry.list.isConnected) geometry.list.scrollLeft = geometry.intendedScrollLeft
+    })
+  }
   const [preview, setPreview] = useState<{
     target: string | null
     index: number
@@ -218,6 +227,7 @@ export function TabStrip({
   useEffect(() => {
     const clear = () => {
       setPreview(null)
+      restoreStripScroll()
       stripGeometry.current = null
     }
     window.addEventListener('resize', clear)
@@ -259,6 +269,8 @@ export function TabStrip({
       geometry = {
         list,
         scrollLeft: list.scrollLeft,
+        lastScrollLeft: list.scrollLeft,
+        intendedScrollLeft: list.scrollLeft,
         rects: new Map(
           [...list.querySelectorAll<HTMLElement>('[data-entry-id]')].map((item) => [
             item.dataset.entryId!,
@@ -268,7 +280,17 @@ export function TabStrip({
       }
       stripGeometry.current = geometry
     }
-    const x = event.clientX + list.scrollLeft - geometry.scrollLeft
+    const actualScroll = list.scrollLeft
+    const currentMax = Math.max(0, list.scrollWidth - list.clientWidth)
+    // A preview can shrink the strip and clamp scrollLeft. That clamp is not
+    // user scroll intent; retain the intended offset until genuine movement.
+    if (actualScroll !== geometry.lastScrollLeft) {
+      const delta = actualScroll - geometry.lastScrollLeft
+      const wasClamp = actualScroll === Math.min(geometry.lastScrollLeft, currentMax)
+      if (!wasClamp) geometry.intendedScrollLeft += delta
+      geometry.lastScrollLeft = actualScroll
+    }
+    const x = event.clientX + geometry.intendedScrollLeft - geometry.scrollLeft
     const slots = [...geometry.rects]
     const at = slots.findIndex(([, rect]) => x < rect.left + rect.width / 2)
     const index = at < 0 ? slots.length : at
@@ -392,6 +414,7 @@ export function TabStrip({
                 )
                   return
                 setPreview(null)
+                restoreStripScroll()
                 stripGeometry.current = null
               }}
               onDrop={(event) => {
@@ -402,6 +425,7 @@ export function TabStrip({
                   event.dataTransfer.types.includes(TAB_MIME) &&
                   key === displayed.drag.key
                 setPreview(null)
+                restoreStripScroll()
                 stripGeometry.current = null
                 setDrag(null)
                 if (!valid || displayed === null) return
@@ -503,6 +527,7 @@ export function TabStrip({
                                   className={cn(
                                     'flex min-w-0 flex-1 items-center gap-2',
                                     changed && 'opacity-0',
+                                    changed && sticky && 'absolute inset-0',
                                   )}
                                 >
                                   {tab !== null ? (
@@ -529,10 +554,17 @@ export function TabStrip({
                                 {previewMembers !== null || previewTab !== null ? (
                                   <span
                                     aria-hidden="true"
-                                    className="pointer-events-none absolute inset-0 flex min-w-0 items-center gap-2"
+                                    className={cn(
+                                      'pointer-events-none flex min-w-0 items-center gap-2',
+                                      sticky ? 'relative' : 'absolute inset-0',
+                                    )}
                                   >
                                     {previewMembers !== null ? (
-                                      <SplitMembers members={previewMembers} focused={null} />
+                                      <SplitMembers
+                                        members={previewMembers}
+                                        focused={null}
+                                        compact={sticky}
+                                      />
                                     ) : (
                                       <>
                                         <TabMark tab={previewTab!} dot={sticky} />
