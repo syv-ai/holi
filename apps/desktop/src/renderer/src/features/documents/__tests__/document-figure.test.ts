@@ -126,19 +126,40 @@ describe('document table captions', () => {
       'unsupported caption',
       `<!-- holi:figure -->\n\n${table}\n\n<!-- holi:caption -->\n\n[Unknown][missing]\n\n<!-- /holi:figure -->`,
     ],
-  ])('keeps %s table source through unrelated edits and reopening', (_kind, source) => {
+  ])('preserves %s table content through unrelated edits and reopening', (kind, source) => {
+    const assertPreserved = (current: Editor) => {
+      const markdown = current.getMarkdown()
+      expect(markdown).toContain('Unrelated edit')
+      if (kind === 'unsupported caption') {
+        expect(markdown).toContain(source)
+        return
+      }
+      expect(markdown).toContain('<!-- holi:figure -->')
+      expect(markdown).toContain('<!-- holi:caption -->')
+      expect(markdown).toContain('Unclosed caption')
+      expect(markdown).not.toContain('<!-- /holi:figure -->')
+      expect(readMarkdownTableCaptions(markdown)).toHaveLength(0)
+      const rendered = new DOMParser().parseFromString(current.getHTML(), 'text/html')
+      expect(rendered.querySelector('figure')).toBeNull()
+      expect(rendered.querySelectorAll('th')).toHaveLength(2)
+      expect(
+        Array.from(rendered.querySelectorAll('tr'), (row) =>
+          Array.from(row.querySelectorAll('th,td'), (cell) => cell.textContent),
+        ),
+      ).toEqual([
+        ['Name', 'Value'],
+        ['A', '1'],
+      ])
+    }
     const instance = open(source)
     instance.commands.insertContentAt(0, {
       type: 'paragraph',
       content: [{ type: 'text', text: 'Unrelated edit' }],
     })
     const saved = instance.getMarkdown()
-    expect(saved).toContain(source)
-    expect(saved).toContain('Unrelated edit')
+    assertPreserved(instance)
     instance.destroy()
-    const reopened = open(saved)
-    expect(reopened.getMarkdown()).toContain(source)
-    expect(reopened.getMarkdown()).toContain('Unrelated edit')
+    assertPreserved(open(saved))
   })
 })
 
