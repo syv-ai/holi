@@ -257,6 +257,7 @@ interface SchedulerVault {
 }
 
 export interface SchedulerDeps {
+  activationSignal?: AbortSignal
   store: JsonFileStore<SchedulesFile>
   /** The open vault's sessions, through the agent. */
   provider(root: string): Promise<AgentProviderId>
@@ -326,8 +327,8 @@ export interface Scheduler {
   /** A scan of the attached vault: the files added and changed since the
    *  last one are events. */
   snapshot(snapshot: VaultSnapshot): void
-  /** Stop checking and stop hearing turn ends: when the vault is left. */
-  dispose(): void
+  /** Stop checking and stop hearing turn ends: when the vault is left. Resolves after an active check settles. */
+  dispose(): Promise<void>
 }
 
 interface FileEntry {
@@ -457,8 +458,58 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   /** Runs whose last Stop said background work or crons were still pending:
    *  paused, so the check leaves them to the Stop that ends that work. */
   const paused = new Set<string>()
-  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  let activation = 0
+  let disposed = false
+  const generations = new Map<string, number>()
+  const valid = (epoch: number): boolean =>
+    !disposed && !deps.activationSignal?.aborted && activation === epoch
+  const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      if (disposed || deps.activationSignal?.aborted) return resolve()
+      const timer = setTimeout(done, ms)
+      function abort() {
+        clearTimeout(timer)
+        done()
+      }
+      function done() {
+        clearTimeout(timer)
+        sleepers.delete(done)
+        deps.activationSignal?.removeEventListener('abort', abort)
+        resolve()
+      }
+      sleepers.add(done)
+      deps.activationSignal?.addEventListener('abort', abort, { once: true })
+    })
   let ticking: Promise<void> | null = null
+  const sleepers = new Set<() => void>()
+  /** Every asynchronous effect admitted by this activation; disposal joins it. */
+  const admitted = new Set<Promise<unknown>>()
+  const track = <T>(work: Promise<T>): Promise<T> => {
+    admitted.add(work)
+    void work.finally(() => admitted.delete(work)).catch(() => {})
+    return work
+  }
+  const cleanupFailures: unknown[] = []
+  const assertActive = (epoch = activation): void => {
+    if (!valid(epoch))
+      throw new CapabilityError('UNAVAILABLE', 'This automation activation has stopped.')
+  }
+  const own = <T>(work: () => Promise<T>): Promise<T> => {
+    if (disposed || deps.activationSignal?.aborted)
+      return Promise.reject(
+        new CapabilityError('UNAVAILABLE', 'This automation activation has stopped.'),
+      )
+    return track(work())
+  }
+  const stopLate = async (id: string): Promise<void> => {
+    try {
+      const result = await deps.sessions.stop(id)
+      if (!result.ok) throw new Error(result.message)
+    } catch (error) {
+      cleanupFailures.push(error)
+      throw error
+    }
+  }
   const router = createTriggerRouter()
   /** The schedules on here that have triggers, as of the last check. */
   let routed: RoutedSchedule[] = []
@@ -480,12 +531,20 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     remote: string,
     path: string,
     change: (s: ScheduleState) => ScheduleState,
-  ): Promise<SchedulesFile> =>
-    deps.store.update((file) => {
-      const vault = { ...(file[remote] ?? {}) }
-      vault[path] = change(vault[path] ?? { runs: [] })
-      return { ...file, [remote]: vault }
-    })
+    owned?: () => boolean,
+  ): Promise<SchedulesFile> => {
+    const epoch = activation
+    const current = owned ?? (() => valid(epoch))
+    return deps.store.update(
+      (file) => {
+        const vault = { ...(file[remote] ?? {}) }
+        vault[path] = change(vault[path] ?? { runs: [] })
+        return { ...file, [remote]: vault }
+      },
+      current,
+      current,
+    )
+  }
 
   const changed = (remote: string): void => deps.emit(remote, 'schedules', null)
 
@@ -577,11 +636,22 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     entry: ValidEntry,
     trigger: RunTrigger,
     due: Date,
-    cause?: string,
+    cause: string | undefined,
+    epoch: number,
+    generation: number,
   ): Promise<RunRecord> {
+    const admittedNow = (): boolean =>
+      valid(epoch) && (generations.get(entry.path) ?? 0) === generation
     const def = entry.parsed.def
     const at = now()
     const state = (await stateOf(vault.remote))[entry.path]
+    if (!admittedNow())
+      return {
+        at: at.toISOString(),
+        trigger,
+        outcome: 'skipped',
+        message: 'Schedule was cancelled.',
+      }
     const previous = state?.runs.find((r) => r.outcome === 'started')
     let record: RunRecord
     const prior =
@@ -601,7 +671,22 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     } else {
       // Done, and nobody is reading it: out of the sidebar, into the list.
       if (prior !== undefined && !(await deps.sessions.watched(prior.id))) {
-        await deps.sessions.stop(prior.id)
+        if (!admittedNow())
+          return {
+            at: at.toISOString(),
+            trigger,
+            outcome: 'skipped',
+            message: 'Schedule was cancelled.',
+          }
+        const stopped = await deps.sessions.stop(prior.id)
+        if (!admittedNow())
+          return {
+            at: at.toISOString(),
+            trigger,
+            outcome: 'skipped',
+            message: 'Schedule was cancelled.',
+          }
+        if (!stopped.ok) throw new Error(stopped.message)
       }
       // The Holi that carries it out, read as the run starts: its memory now.
       const holi = entry.holi !== undefined && 'system' in entry.holi ? entry.holi : undefined
@@ -610,6 +695,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // Pi overrides use provider/model-id pairs. Legacy Claude aliases mean
       // use Pi's configured default model.
       const model = provider === 'pi' && !requestedModel?.includes('/') ? undefined : requestedModel
+      if (!admittedNow()) return { at: at.toISOString(), trigger, outcome: 'skipped' }
       const res = await deps.sessions.launch({
         name: `${def.name} · ${clock(at)}`,
         prompt: runPrompt(
@@ -628,6 +714,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           : { allow: [...new Set([...def.allow, ...(holi?.allow ?? [])])] }),
         ...(holi === undefined ? {} : { system: holi.system }),
       })
+      if (!admittedNow()) {
+        if (res.ok) await stopLate(res.sessionId)
+        return {
+          at: at.toISOString(),
+          trigger,
+          outcome: 'skipped',
+          message: 'Schedule was cancelled.',
+        }
+      }
       record = res.ok
         ? { at: at.toISOString(), trigger, outcome: 'started', jobId: res.sessionId }
         : { at: at.toISOString(), trigger, outcome: 'failed', message: res.message }
@@ -640,11 +735,21 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         router.running(entry.path, true)
       }
     }
-    await changeState(vault.remote, entry.path, (s) => ({
-      ...s,
-      lastRun: at.toISOString(),
-      runs: [record, ...s.runs].slice(0, RUNS_KEPT),
-    }))
+    try {
+      await changeState(
+        vault.remote,
+        entry.path,
+        (s) => ({
+          ...s,
+          lastRun: at.toISOString(),
+          runs: [record, ...s.runs].slice(0, RUNS_KEPT),
+        }),
+        admittedNow,
+      )
+    } catch (error) {
+      if (record.outcome === 'started' && record.jobId !== undefined) await stopLate(record.jobId)
+      throw error
+    }
     log(`${entry.path}: ${record.outcome}${record.message ? ` (${record.message})` : ''}`)
     if (record.outcome === 'failed') {
       await logRun(vault.root, def.name, entry.path, `did not start: ${record.message}`)
@@ -771,18 +876,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
    */
   async function closeWhenDone(jobId: string, pending: number | null = null): Promise<void> {
     const vault = attached
-    if (vault === null || closing.has(jobId)) return
+    const epoch = activation
+    if (vault === null || !valid(epoch) || closing.has(jobId)) return
     if (pending !== null && pending > 0) {
       paused.add(jobId)
       return
     }
     if (pending !== null) paused.delete(jobId)
     const path = await runOf(vault.remote, jobId)
-    if (path === null) return
+    if (attached !== vault || !valid(epoch) || path === null || closing.has(jobId)) return
     closing.add(jobId)
     try {
       for (let i = 0; i < CLOSE_POLLS; i++) {
-        if (attached !== vault) return
+        if (attached !== vault || !valid(epoch)) return
         const session = deps.sessions.sessions().find((s) => s.id === jobId)
         if (session?.outcome === 'failed' || session?.outcome === 'aborted') {
           return await failRun(vault, path, jobId, session.error ?? `Pi session ${session.outcome}`)
@@ -790,13 +896,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         if (session === undefined) return await finish(vault, path, jobId, false)
         if (session.state === 'needs-you') return
         if (session.state === 'idle') {
-          if (await deps.sessions.watched(jobId)) return await finish(vault, path, jobId, true)
+          const isWatched = await deps.sessions.watched(jobId)
+          if (attached !== vault || !valid(epoch)) return
+          if (isWatched) return await finish(vault, path, jobId, true)
           const stopped = await deps.sessions.stop(jobId)
+          if (attached !== vault || !valid(epoch)) return
           if (stopped.ok) return await finish(vault, path, jobId, false)
           log(`${path}: could not close run ${jobId}: ${stopped.message}`)
           return
         }
         await sleep(deps.closePollMs ?? CLOSE_POLL_MS)
+        if (!valid(epoch) || attached !== vault) return
       }
     } finally {
       closing.delete(jobId)
@@ -807,7 +917,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     turnEnds.set(id, now().getTime())
     // Every session's turns are heard, a run's or not: the oldest go first.
     if (turnEnds.size > TURN_ENDS_KEPT) turnEnds.delete(turnEnds.keys().next().value!)
-    void closeWhenDone(id, pending).catch((err: unknown) =>
+    void track(closeWhenDone(id, pending)).catch((err: unknown) =>
       log(`closing ${id} failed: ${String(err)}`),
     )
   })
@@ -839,14 +949,23 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
   async function tickNow(): Promise<void> {
     const vault = attached
-    if (vault === null) return
+    const epoch = activation
+    if (vault === null || !valid(epoch)) return
+    const admittedGenerations = new Map(generations)
     const [entries, state] = await Promise.all([readAll(vault), stateOf(vault.remote)])
+    if (!valid(epoch) || attached !== vault) return
     const at = now()
     await closeMissed(vault, state, at).catch((err: unknown) =>
       log(`closing missed runs failed: ${String(err)}`),
     )
     for (const entry of entries) {
-      if (!entry.parsed.ok || firing.has(entry.path)) continue
+      if (!valid(epoch) || attached !== vault) return
+      if (
+        !entry.parsed.ok ||
+        firing.has(entry.path) ||
+        (generations.get(entry.path) ?? 0) !== (admittedGenerations.get(entry.path) ?? 0)
+      )
+        continue
       const s = state[entry.path]
       if (statusOf(entry, s) !== 'on') continue
       const when = entry.parsed.def.when
@@ -878,14 +997,23 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       }
       firing.add(entry.path)
       try {
-        await fire(vault, entry as ValidEntry, 'schedule', due)
+        await fire(
+          vault,
+          entry as ValidEntry,
+          'schedule',
+          due,
+          undefined,
+          epoch,
+          admittedGenerations.get(entry.path) ?? 0,
+        )
       } catch (err) {
         log(`${entry.path}: run failed: ${String(err)}`)
       } finally {
         firing.delete(entry.path)
       }
     }
-    await routeEvents(vault, entries).catch((err: unknown) =>
+    if (!valid(epoch) || attached !== vault) return
+    await routeEvents(vault, entries, epoch, admittedGenerations).catch((err: unknown) =>
       log(`routing events failed: ${String(err)}`),
     )
   }
@@ -896,25 +1024,33 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
    * is due, unless the previous run is still working or waiting on you, when
    * the batch waits for a later check (and keeps growing).
    */
-  async function routeEvents(vault: SchedulerVault, entries: readonly FileEntry[]): Promise<void> {
+  async function routeEvents(
+    vault: SchedulerVault,
+    entries: readonly FileEntry[],
+    epoch: number,
+    admittedGenerations: ReadonlyMap<string, number>,
+  ): Promise<void> {
     const state = await stateOf(vault.remote)
+    if (!valid(epoch) || attached !== vault) return
     const on = entries.filter(
       (e): e is ValidEntry =>
         e.parsed.ok &&
         e.provider !== undefined &&
         e.parsed.def.on.length > 0 &&
-        statusOf(e, state[e.path]) === 'on',
+        statusOf(e, state[e.path]) === 'on' &&
+        (generations.get(e.path) ?? 0) === (admittedGenerations.get(e.path) ?? 0),
     )
     routed = on.map((e) => ({ path: e.path, on: e.parsed.def.on }))
     router.keep(new Set(routed.map((r) => r.path)))
     for (const path of settling.keys())
       if (!routed.some((r) => r.path === path)) settling.delete(path)
     for (const path of [...settling.keys()]) await settleRun(path)
+    if (!valid(epoch) || attached !== vault) return
     deps.tell?.({ type: 'interest', interest: interestOf(routed.flatMap((r) => r.on)) })
 
     const at = now()
     for (const entry of on) {
-      if (attached !== vault) return
+      if (attached !== vault || !valid(epoch)) return
       const s = state[entry.path]
       const start = s?.approvedAt ?? at.toISOString()
       // A run still working writes files of its own: not events for it.
@@ -953,8 +1089,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (prior !== undefined && prior.state !== 'idle') continue
       router.take(entry.path)
       firing.add(entry.path)
+      const generation = admittedGenerations.get(entry.path) ?? 0
       try {
-        await fire(vault, entry, 'event', at, describeBatch(batch))
+        await fire(vault, entry, 'event', at, describeBatch(batch), epoch, generation)
       } catch (err) {
         log(`${entry.path}: run failed: ${String(err)}`)
       } finally {
@@ -963,9 +1100,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
   }
 
-  return {
+  const api: Scheduler = {
     attach(vault) {
+      assertActive()
       this.detach()
+      activation++
       attached = vault
       lastScan = null
       first = setTimeout(() => {
@@ -976,8 +1115,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     detach() {
+      // Invalidate before clearing listeners so already-admitted work cannot
+      // make another consequential call for this activation.
       // Nothing listens now: a source stops its polling.
       if (attached !== null) deps.tell?.({ type: 'interest', interest: NO_INTEREST })
+      activation++
+      for (const wake of [...sleepers]) wake()
       attached = null
       lastScan = null
       routed = []
@@ -991,27 +1134,30 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
     list,
 
-    turnEnded: closeWhenDone,
+    turnEnded: (...args) => own(() => closeWhenDone(...args)),
 
     sessionsChanged(sessions) {
       const vault = attached
-      if (vault === null) return
+      const epoch = activation
+      if (vault === null || !valid(epoch)) return
       for (const session of sessions) {
         if (session.outcome !== 'failed' && session.outcome !== 'aborted') continue
         if (closing.has(session.id)) continue
         closing.add(session.id)
-        void runOf(vault.remote, session.id)
-          .then((path) => {
-            if (path === null) return
-            return failRun(
-              vault,
-              path,
-              session.id,
-              session.error ?? `Pi session ${session.outcome}`,
-            )
-          })
-          .catch((err: unknown) => log(`failing ${session.id} failed: ${String(err)}`))
-          .finally(() => closing.delete(session.id))
+        void track(
+          runOf(vault.remote, session.id)
+            .then((path) => {
+              if (path === null || !valid(epoch) || attached !== vault) return
+              return failRun(
+                vault,
+                path,
+                session.id,
+                session.error ?? `Pi session ${session.outcome}`,
+              )
+            })
+            .catch((err: unknown) => log(`failing ${session.id} failed: ${String(err)}`))
+            .finally(() => closing.delete(session.id)),
+        )
       }
     },
 
@@ -1029,12 +1175,23 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       for (const event of fileEvents(before, snapshot)) router.hear(event, routed, at)
     },
 
-    dispose() {
+    async dispose() {
+      disposed = true
+      activation++
       unhear()
       this.detach()
+      for (const wake of [...sleepers]) wake()
+      // Work may admit cleanup while settling (for example a late session
+      // returned by launch), so drain until the activation is truly quiescent.
+      deps.activationSignal?.removeEventListener('abort', abort)
+      while (admitted.size > 0) await Promise.allSettled([...admitted])
+      if (cleanupFailures.length)
+        throw new AggregateError(cleanupFailures, 'Failed to clean up automation launches.')
     },
 
     async enable(vault, ref, seen) {
+      const epoch = activation
+      const admittedGenerations = new Map(generations)
       const entry = find(await readAll(vault), ref)
       const error = errorOf(entry)
       if (error !== null) {
@@ -1055,14 +1212,24 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           `${entry.path} was for ${def.when.stamp}, which has passed`,
         )
       }
-      await changeState(vault.remote, entry.path, ({ momentsSince: _, ...s }) => ({
-        ...s,
-        approved: fingerprint(ok),
-        approvedAt: at.toISOString(),
-        // Turned on now: the moments before this are not missed runs, and
-        // neither are the triggers' (they count from `approvedAt` again).
-        lastRun: at.toISOString(),
-      }))
+      assertActive(epoch)
+      if ((generations.get(entry.path) ?? 0) !== (admittedGenerations.get(entry.path) ?? 0))
+        throw new CapabilityError('UNAVAILABLE', 'Schedule approval was cancelled.')
+      await changeState(
+        vault.remote,
+        entry.path,
+        ({ momentsSince: _, ...s }) => ({
+          ...s,
+          approved: fingerprint(ok),
+          approvedAt: at.toISOString(),
+          // Turned on now: the moments before this are not missed runs, and
+          // neither are the triggers' (they count from `approvedAt` again).
+          lastRun: at.toISOString(),
+        }),
+        () =>
+          valid(epoch) &&
+          (generations.get(entry.path) ?? 0) === (admittedGenerations.get(entry.path) ?? 0),
+      )
       changed(vault.remote)
       // A check now, so its triggers listen from this moment rather than
       // from the next check: a file dropped in between would go unheard.
@@ -1071,7 +1238,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     async disable(vault, ref) {
+      const epoch = activation
       const entry = find(await readAll(vault), ref)
+      assertActive(epoch)
+      generations.set(entry.path, (generations.get(entry.path) ?? 0) + 1)
       await changeState(vault.remote, entry.path, (s) => ({
         runs: s.runs,
         ...(s.lastRun === undefined ? {} : { lastRun: s.lastRun }),
@@ -1081,11 +1251,21 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     async run(vault, ref) {
-      if (attached?.remote !== vault.remote) {
+      const epoch = activation
+      const admittedGenerations = new Map(generations)
+      if (attached?.remote !== vault.remote || !valid(epoch)) {
         throw new CapabilityError('UNAVAILABLE', 'That vault is not open.')
       }
       const entries = await readAll(vault)
       const entry = find(entries, ref)
+      const generation = admittedGenerations.get(entry.path) ?? 0
+      if (
+        !valid(epoch) ||
+        attached?.remote !== vault.remote ||
+        (generations.get(entry.path) ?? 0) !== generation
+      ) {
+        throw new CapabilityError('UNAVAILABLE', 'That automation was cancelled.')
+      }
       const status = statusOf(entry, (await stateOf(vault.remote))[entry.path])
       const error = errorOf(entry)
       if (error !== null) {
@@ -1102,15 +1282,25 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (firing.has(entry.path)) {
         throw new CapabilityError('BAD_REQUEST', `${entry.path} is starting a run already.`)
       }
+      if (
+        !valid(epoch) ||
+        attached?.remote !== vault.remote ||
+        (generations.get(entry.path) ?? 0) !== generation
+      ) {
+        throw new CapabilityError('UNAVAILABLE', 'That automation was cancelled.')
+      }
       firing.add(entry.path)
       try {
-        return await fire(vault, entry as ValidEntry, 'manual', now())
+        return await track(
+          fire(vault, entry as ValidEntry, 'manual', now(), undefined, epoch, generation),
+        )
       } finally {
         firing.delete(entry.path)
       }
     },
 
     async save(vault, draft, path) {
+      const epoch = activation
       let target = path
       let before: string | undefined
       if (target !== undefined) {
@@ -1132,6 +1322,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const text = scheduleFileText(draft, before)
       const parsed = parseScheduleFile(text, target)
       if (!parsed.ok) throw new CapabilityError('BAD_REQUEST', parsed.error)
+      assertActive(epoch)
       await mkdir(join(vault.root, SCHEDULES_DIR), { recursive: true })
       await writeFile(join(vault.root, target), text, before === undefined ? { flag: 'wx' } : {})
       changed(vault.remote)
@@ -1139,7 +1330,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     async remove(vault, ref) {
+      const epoch = activation
       const entry = find(await readSchedules(vault.root), ref)
+      assertActive(epoch)
+      generations.set(entry.path, (generations.get(entry.path) ?? 0) + 1)
       await rm(join(vault.root, entry.path), { force: true })
       await deps.store.update((file) => {
         const { [entry.path]: _gone, ...rest } = file[vault.remote] ?? {}
@@ -1151,12 +1345,23 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     async tick() {
       // One check at a time: a slow start must not overlap the next tick.
       if (ticking !== null) return ticking
-      ticking = tickNow().catch((err: unknown) => log(`check failed: ${String(err)}`))
+      ticking = track(tickNow().catch((err: unknown) => log(`check failed: ${String(err)}`)))
       try {
         await ticking
       } finally {
         ticking = null
       }
     },
+  }
+  const abort = (): void => api.detach()
+  deps.activationSignal?.addEventListener('abort', abort, { once: true })
+  return {
+    ...api,
+    list: (...args) => own(() => api.list(...args)),
+    enable: (...args) => own(() => api.enable(...args)),
+    disable: (...args) => own(() => api.disable(...args)),
+    run: (...args) => own(() => api.run(...args)),
+    save: (...args) => own(() => api.save(...args)),
+    remove: (...args) => own(() => api.remove(...args)),
   }
 }
