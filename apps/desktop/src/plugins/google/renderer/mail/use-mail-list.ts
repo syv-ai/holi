@@ -273,7 +273,10 @@ export function useMailList({
           for (const id of removed) owner.restorationIds.add(id)
           owner.reconcile = true
         } else if (owner.revision === revision) paint(snapshot)
-        else owner.reconcile = true
+        else {
+          owner.cursor = undefined
+          owner.reconcile = true
+        }
         setWriteError(explainWriteFailure(cause))
       }
       return false

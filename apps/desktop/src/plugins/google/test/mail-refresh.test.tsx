@@ -13,6 +13,7 @@ import { useMail, type ThreadSummary } from '../renderer/mail/use-mail'
 const search = vi.fn()
 const archive = vi.fn()
 const unarchive = vi.fn()
+const markRead = vi.fn()
 const counts = vi.fn()
 const categories = vi.fn()
 const marker = vi.fn()
@@ -45,6 +46,8 @@ vi.mock('@/lib/trpc', () => ({
               return archive(input.remote, params)
             case 'google.star':
               return undefined
+            case 'google.mark-read':
+              return markRead(input.remote, params)
             case 'google.unarchive':
               return unarchive(input.remote, params)
             case 'google.mailCounts':
@@ -165,6 +168,7 @@ beforeEach(() => {
   search.mockReset().mockResolvedValue(page('existing'))
   archive.mockReset().mockResolvedValue({ ok: true })
   unarchive.mockReset().mockResolvedValue({ ok: true })
+  markRead.mockReset().mockResolvedValue(undefined)
   counts.mockReset().mockResolvedValue({ unread: 16, total: 340 })
   categories.mockReset().mockResolvedValue({ updates: { count: 3, more: false } })
   marker.mockReset().mockResolvedValue({ ok: true })
@@ -596,6 +600,46 @@ test('a queued marker intent replaces an invalidated search before its retired d
   })
   expect(result.current.searching).toBe(true)
   expect(result.current.list.kind).toBe('ready')
+})
+
+test('concurrent flag refusal restores the refused row even when history only changed another row', async () => {
+  const initial = page('a', 'b')
+  initial.threads = initial.threads.map((thread) => ({ ...thread, unread: true }))
+  search.mockResolvedValue(initial)
+  const { result } = await mount()
+  const refused = deferred<void>()
+  markRead.mockReturnValueOnce(refused.promise)
+  let first!: Promise<boolean>
+  await act(async () => {
+    first = result.current.setRead('a', true)
+    expect(await result.current.setRead('b', true)).toBe(true)
+  })
+  expect(result.current.threads.map(({ id, unread }) => ({ id, unread }))).toEqual([
+    { id: 'a', unread: false },
+    { id: 'b', unread: false },
+  ])
+  const checked = delta(['a', 'b'], ['a', 'b'])
+  const coverage = {
+    ...checked,
+    threads: [{ ...summary('a'), unread: true }, summary('b')],
+    uiList: { ...checked.uiList, mode: 'coverage' as const },
+  }
+  search.mockImplementation((_remote: string, params: { uiList?: { cursor?: unknown } }) =>
+    Promise.resolve(params.uiList?.cursor ? delta(['b'], ['a', 'b']) : coverage),
+  )
+  await act(async () => {
+    refused.reject(new Error('Read change refused'))
+    expect(await first).toBe(false)
+  })
+  const expected = [
+    { id: 'a', unread: true },
+    { id: 'b', unread: false },
+  ]
+  expect(result.current.threads.map(({ id, unread }) => ({ id, unread }))).toEqual(expected)
+  await act(async () => {
+    result.current.refresh()
+  })
+  expect(result.current.threads.map(({ id, unread }) => ({ id, unread }))).toEqual(expected)
 })
 
 test('pending marker writes suspend polling and manual refresh until persisted reconciliation', async () => {
