@@ -1425,6 +1425,51 @@ it('keeps a corroborated answer across Calendar and Gmail copies without notifyi
   expect(state.sendAttempts).toBe(1)
 })
 
+it('uses a fresh Calendar reset but remembers the confirmed answer when that copy is missing', async () => {
+  const { state, read, respond, restart } = await rig()
+  const copy = event()
+  state.messages[0] = gmailMessage(
+    'update',
+    200,
+    invite().replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DELEGATED:'),
+  )
+  state.events.set('primary', [copy])
+  await read()
+  expect(await respond('accepted')).toMatchObject({
+    channel: 'calendar',
+    outcome: 'sent',
+    refreshPending: false,
+  })
+
+  state.events.clear()
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject({ responseStatus: 'accepted', canRespond: true })
+  expect(await reopened.respond('accepted')).toMatchObject({
+    channel: 'gmail',
+    outcome: 'unchanged',
+  })
+
+  copy.attendees[0]!.responseStatus = 'needsAction'
+  copy.etag = '"organizer-reset"'
+  state.events.set('primary', [copy])
+  expect(await reopened.read()).toMatchObject({
+    responseStatus: 'needsAction',
+    recordedResponseStatus: 'needsAction',
+    canRespond: true,
+    responsePending: false,
+  })
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(await reopened.respond('accepted')).toMatchObject({
+    channel: 'calendar',
+    outcome: 'sent',
+    refreshPending: false,
+    invitation: { responseStatus: 'accepted' },
+  })
+  expect(state.calendarPatchAttempts).toBe(2)
+  expect(state.notices.map(({ status }) => status)).toEqual(['accepted', 'accepted'])
+  expect(state.sendAttempts).toBe(0)
+})
+
 it('does not settle a Calendar response while the matching copy still reports the previous answer', async () => {
   const { state, read, respond, restart } = await rig()
   state.events.set('primary', [event()])
@@ -1464,7 +1509,7 @@ it('marks contradictory Sent readback instead of settling or offering to send th
   expect(state.sendAttempts).toBe(1)
 })
 
-it('uses a newer correlated Gmail answer after a confirmed Holi reply', async () => {
+it('uses a newer Gmail answer on a verified old parent after equivalent REQUEST redelivery', async () => {
   const { state, read, respond, restart } = await rig()
   state.replyThread = 'separate-sent-thread'
   await read()
@@ -1488,7 +1533,17 @@ it('uses a newer correlated Gmail answer after a confirmed Holi reply', async ()
   expect(await reopened.read()).toMatchObject({ responseStatus: null, canRespond: false })
   await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
 
-  state.messages[state.messages.length - 1] = decline
+  const unrelated = gmailMessage(
+    'different-parent',
+    900,
+    invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=ACCEPTED:'),
+    { sent: true, parent: '<unrelated@example.net>', method: 'REPLY' },
+  )
+  state.messages = [
+    gmailMessage('redelivery', 300, invite('REQUEST', '', 3, '20240702T090000Z')),
+    decline,
+    unrelated,
+  ]
   expect(await reopened.read()).toMatchObject({
     responseStatus: 'declined',
     sentResponseStatus: 'declined',
@@ -1507,6 +1562,43 @@ it('uses a newer correlated Gmail answer after a confirmed Holi reply', async ()
   expect(await reopened.respond('tentative')).toMatchObject({ outcome: 'unchanged' })
   expect(state.sendAttempts).toBe(2)
 })
+
+it.each(['missing stamp', 'invalid stamp', 'duplicate stamp', 'duplicate From', 'duplicate To'])(
+  'does not replace a confirmed answer with a newer Sent REPLY with %s',
+  async (defect) => {
+    const { state, read, respond } = await rig()
+    await read()
+    expect(await respond('accepted')).toMatchObject({ channel: 'gmail', refreshPending: false })
+    const stamp = 'DTSTAMP:20240701T090000Z\r\n'
+    const valid = invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')
+    const source =
+      defect === 'missing stamp'
+        ? valid.replace(stamp, '')
+        : defect === 'invalid stamp'
+          ? valid.replace(stamp, 'DTSTAMP:20240701T090000\r\n')
+          : defect === 'duplicate stamp'
+            ? valid.replace(stamp, `${stamp}${stamp}`)
+            : valid
+    const newer = gmailMessage('newer-decline', 700, source, {
+      sent: true,
+      method: 'REPLY',
+      parent: '<update@example.net>',
+    })
+    if (defect === 'duplicate From' || defect === 'duplicate To')
+      newer.payload.headers.push({
+        name: defect === 'duplicate From' ? 'from' : 'to',
+        value: guest,
+      })
+    state.messages.push(newer)
+    expect(await read()).toMatchObject({
+      responseStatus: 'accepted',
+      sentResponseStatus: 'accepted',
+    })
+    expect(await respond('accepted')).toMatchObject({ outcome: 'unchanged', refreshPending: false })
+    expect(state.sendAttempts).toBe(1)
+    expect(state.calendarPatchAttempts).toBe(0)
+  },
+)
 
 it('blocks a listed active occurrence of a verified cancelled Calendar master', async () => {
   const { state, read, respond } = await rig()

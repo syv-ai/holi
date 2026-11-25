@@ -888,7 +888,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
             </div>
           )}
 
-          {!showDrafts && list.kind === 'ready' && list.partial.length > 0 && (
+          {!showDrafts && list.kind === 'ready' && !!list.unreadableThreadIds?.length && (
             <MailPartialAlert
               busy={working !== null}
               retrying={working === 'retry'}
@@ -921,7 +921,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
             {!showDrafts &&
               list.kind === 'ready' &&
               list.threads.length === 0 &&
-              list.partial.length === 0 && (
+              !list.unreadableThreadIds?.length && (
                 <EmptyState
                   icon={Inbox}
                   title={emptyMessage(view, filter, unreadOnly)}

@@ -70,7 +70,10 @@ export interface GoogleData {
   /** The last agenda for this exact question, or `null`. Never a request. */
   cachedAgenda(window: AgendaWindow, overrides: CalendarOverrides): CalendarEvent[] | null
   /** Ordinary lists use a delta; CLI reads can request an independent fresh page. */
-  threads(options: ListThreadsOptions, context?: { freshPage?: boolean }): Promise<MailPage>
+  threads(
+    options: ListThreadsOptions,
+    context?: { freshPage?: boolean; refresh?: boolean },
+  ): Promise<MailPage>
   /**
    * The address book, fetched **once per connected account**.
    *

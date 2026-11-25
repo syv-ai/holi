@@ -510,7 +510,11 @@ export function MailList({
           }
         />
       )
-    if (list.threads.length === 0 && list.partial.length === 0 && list.nextPageToken === null)
+    if (
+      list.threads.length === 0 &&
+      !list.unreadableThreadIds?.length &&
+      list.nextPageToken === null
+    )
       return (
         <ListMessage
           icon={<InboxIcon aria-hidden="true" />}
@@ -546,7 +550,7 @@ export function MailList({
       )
     return (
       <>
-        {list.partial.length > 0 && (
+        {!!list.unreadableThreadIds?.length && (
           <MailPartialAlert
             busy={mail.listWorking !== null}
             retrying={mail.listWorking === 'retry'}

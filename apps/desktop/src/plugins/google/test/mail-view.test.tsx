@@ -744,12 +744,15 @@ test.each(['conference', 'event'] as const)(
 
 test('shows RSVP controls for an inline invitation without a filename or list badge', async () => {
   withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
-  invitationMock.mockResolvedValue(invitations(invite))
+  invitationMock.mockResolvedValue(
+    invitations({ ...invite, recordedResponseStatus: 'needsAction' }),
+  )
 
   await openThread()
 
   const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
   expect(await region.findByRole('heading', { name: 'Sprint review' })).toBeInTheDocument()
+  expect(region.getByText('No response yet')).toBeVisible()
   expect(region.getByRole('button', { name: 'Accept' })).toBeEnabled()
   expect(screen.queryByLabelText('Meeting invite')).not.toBeInTheDocument()
 })
@@ -1080,14 +1083,29 @@ test('loads the next page when asked', async () => {
   expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
 })
 
-test('keeps healthy Mail rows usable while retrying a partial inbox', async () => {
-  const partial = { ...page([summary()], 'page-2'), unreadableThreadIds: ['oversized'] }
-  let complete!: (result: typeof partial) => void
-  threadMock.mockResolvedValueOnce(partial).mockImplementationOnce(
-    () =>
-      new Promise<typeof partial>((resolve) => {
-        complete = resolve
-      }),
+test('keeps healthy Mail readable during Retry, then paginates the new inbox snapshot', async () => {
+  const existing = summary()
+  const arrival = summary({ id: 'new', subject: 'Newly arrived mail' })
+  const tail = summary({ id: 'tail', subject: 'Older mail' })
+  const partial = { ...page([existing], 'old-page-2'), unreadableThreadIds: ['oversized'] }
+  // The arrival moves the former first-page row onto page 2. The failed row
+  // remains unreadable and is not a placeholder on either page.
+  const refreshed = { ...page([arrival], 'fresh-page-2'), unreadableThreadIds: ['oversized'] }
+  let complete!: (result: typeof refreshed) => void
+  let retryStarted = false
+  threadMock.mockImplementation(
+    async ({ pageToken, refresh }: { pageToken?: string; refresh?: boolean }) => {
+      if (pageToken === undefined && !refresh && !retryStarted) return partial
+      if (pageToken === undefined && refresh) {
+        retryStarted = true
+        return new Promise<typeof refreshed>((resolve) => {
+          complete = resolve
+        })
+      }
+      if (pageToken === 'fresh-page-2' && retryStarted)
+        return { ...page([existing, tail]), unreadableThreadIds: ['oversized'] }
+      throw new Error('Stale Gmail page token')
+    },
   )
   const user = userEvent.setup()
   render(<MailView />)
@@ -1098,11 +1116,15 @@ test('keeps healthy Mail rows usable while retrying a partial inbox', async () =
   expect(within(alert).getByRole('button', { name: /Retrying/ })).toBeDisabled()
   await user.click(screen.getByRole('button', { name: /Q2 budget/ }))
   expect(await screen.findByRole('article')).toBeInTheDocument()
-  await act(async () => complete(partial))
+  await act(async () => complete(refreshed))
 
+  expect(screen.getByRole('button', { name: /Newly arrived mail/ })).toBeInTheDocument()
+  expect(screen.getByRole('alert')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /load more/i }))
+  expect(await screen.findByRole('button', { name: /Older mail/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Newly arrived mail/ })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Q2 budget/ })).toBeInTheDocument()
   expect(screen.getByRole('alert')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /load more/i })).toBeEnabled()
   expect(setReadMock).not.toHaveBeenCalled()
   expect(respondMock).not.toHaveBeenCalled()
 })

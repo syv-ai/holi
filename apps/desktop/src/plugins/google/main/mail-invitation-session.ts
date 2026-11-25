@@ -508,13 +508,15 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           delivery.target === calendar.target &&
           delivery.proof === calendar.proof
         const responseParents = new Set(parents)
-        const eligibleSent = messages.filter((mail) => mail.parent && parents.has(mail.parent))
-        if (delivery?.channel === 'gmail' && confirmation?.mail) {
-          responseParents.add(delivery.parent)
-          if (!eligibleSent.some(({ messageId }) => messageId === confirmation.mail?.messageId))
-            eligibleSent.push(confirmation.mail)
-        }
-        const sent = await sentResponse(eligibleSent, responseParents, identity, {
+        const receipt = confirmation?.mail
+        // A verified receipt can prove the old REQUEST's parent even after
+        // equivalent redelivery replaced that REQUEST. Consider all Sent mail
+        // on that lineage, not just the receipt itself.
+        if (delivery?.channel === 'gmail' && receipt) responseParents.add(delivery.parent)
+        const sentMail = receipt
+          ? [...messages.filter(({ messageId }) => messageId !== receipt.messageId), receipt]
+          : messages
+        const sent = await sentResponse(sentMail, responseParents, identity, {
           organizer,
           mailbox: email,
         })
@@ -561,7 +563,6 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         // A different answer can replace a Holi receipt only with positive Gmail
         // ordering evidence. In particular, a reply already observed before the
         // write is not a subsequent change, even if Gmail dates it later.
-        const receipt = confirmation?.mail
         const newerSent =
           sent.evidence &&
           receipt &&
@@ -590,12 +591,16 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           invitation.responseStatus =
             calendarStatus ??
             sentStatus ??
-            historical ??
-            (attendee?.responseStatus === 'delegated' && calendarObserved === 'needsAction'
-              ? attendee.responseStatus
-              : calendarObserved) ??
-            attendee?.responseStatus ??
-            null
+            // A confirmed Calendar write is history, not a substitute for
+            // the current state of that same verified copy (including a reset).
+            (sameTarget
+              ? calendarObserved
+              : (historical ??
+                (attendee?.responseStatus === 'delegated' && calendarObserved === 'needsAction'
+                  ? attendee.responseStatus
+                  : calendarObserved) ??
+                attendee?.responseStatus ??
+                null))
         }
         if (reply)
           reply.key = JSON.stringify([

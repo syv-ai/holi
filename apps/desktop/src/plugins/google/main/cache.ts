@@ -41,6 +41,10 @@ export interface GoogleCache {
   ensureShape(): void
   readThreads(key: string): MailThreadSummary[] | null
   writeThreads(key: string, threads: MailThreadSummary[]): void
+  /** Unresolved provider reads, separate from rows and the delta cursor. */
+  unreadableThreads(key: string): string[]
+  /** Resolve checked IDs, then record any that still failed. Returns pending IDs. */
+  updateUnreadableThreads(key: string, checked: string[], unreadable: string[]): string[]
   /**
    * Apply a label change to one thread **in every list that holds it**.
    *
@@ -154,6 +158,13 @@ export function openGoogleCache(path: string): GoogleCache {
     database().prepare('INSERT OR REPLACE INTO answered (kind, key) VALUES (?, ?)').run(kind, key)
   }
 
+  function unreadableThreads(key: string): string[] {
+    const row = database()
+      .prepare('SELECT value FROM meta WHERE key = ?')
+      .get(`unreadableThreads:${key}`) as { value: string } | undefined
+    return row ? (JSON.parse(row.value) as string[]) : []
+  }
+
   return {
     ensureShape() {
       const read = (key: string): string | undefined =>
@@ -193,6 +204,26 @@ export function openGoogleCache(path: string): GoogleCache {
         insert.run(key, position, thread.id, JSON.stringify(thread))
       })
       markAnswered('threads', key)
+    },
+
+    unreadableThreads,
+
+    updateUnreadableThreads(key, checked, unreadable) {
+      const previous = unreadableThreads(key)
+      if (!previous.length && !unreadable.length) return previous
+      const pending = new Set(previous)
+      for (const id of checked) pending.delete(id)
+      for (const id of unreadable) pending.add(id)
+      const ids = [...pending]
+      if (previous.length === ids.length && previous.every((id, index) => ids[index] === id))
+        return previous
+      const storageKey = `unreadableThreads:${key}`
+      if (ids.length)
+        database()
+          .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
+          .run(storageKey, JSON.stringify(ids))
+      else database().prepare('DELETE FROM meta WHERE key = ?').run(storageKey)
+      return ids
     },
 
     patchThread(id, change) {

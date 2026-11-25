@@ -665,6 +665,7 @@ export function invitationReplyStatus(
       if (time) resolveTime(time, property)
     }
     if (
+      sent.dtstamp === null ||
       sent.uid !== identity.uid ||
       sent.sequence !== identity.sequence ||
       sent.recurrenceId !== identity.recurrenceId ||

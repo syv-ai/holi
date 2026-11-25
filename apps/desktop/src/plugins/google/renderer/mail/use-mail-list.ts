@@ -6,12 +6,7 @@ type Page = Awaited<ReturnType<typeof googleCap.search>>
 type Search = NonNullable<Parameters<typeof googleCap.search>[1]>
 type Call = <T>(work: (remote: string) => Promise<T>) => Promise<T>
 
-type PartialPage = { pageToken: string | undefined; ids: string[] }
-type Ready = Pick<Page, 'threads' | 'nextPageToken' | 'syncedAt'> & {
-  kind: 'ready'
-  partial: PartialPage[]
-  tail: string | undefined
-}
+type Ready = Page & { kind: 'ready' }
 
 type ListState =
   Ready | { kind: 'loading' } | { kind: 'disconnected' } | { kind: 'error'; message: string }
@@ -20,10 +15,6 @@ function failure(error: unknown): ListState {
   return isDisconnected(error)
     ? { kind: 'disconnected' }
     : { kind: 'error', message: messageOf(error, 'Could not load your mail.') }
-}
-
-function partialPage(page: Page, pageToken: string | undefined): PartialPage[] {
-  return page.unreadableThreadIds?.length ? [{ pageToken, ids: page.unreadableThreadIds }] : []
 }
 
 /** Both readers use the same paged load and read-only partial-page recovery. */
@@ -49,15 +40,7 @@ export function useMailList(
     void call((remote) => googleCap.search(remote, params)).then(
       (page) => {
         if (request.current !== at) return
-        const { threads, nextPageToken, syncedAt } = page
-        setList({
-          kind: 'ready',
-          threads,
-          nextPageToken,
-          syncedAt,
-          partial: partialPage(page, undefined),
-          tail: undefined,
-        })
+        setList({ ...page, kind: 'ready' })
       },
       (error: unknown) => {
         if (request.current === at) setList(failure(error))
@@ -68,44 +51,32 @@ export function useMailList(
 
   const paginate = (mode: 'more' | 'retry') => {
     if (!enabled || list.kind !== 'ready' || paging.current) return
-    const retry = mode === 'retry' ? list.partial[0] : undefined
-    if (mode === 'retry' ? !retry : list.nextPageToken === null) return
-    const pageToken = retry ? retry.pageToken : list.nextPageToken!
+    const retry = mode === 'retry'
+    if (retry ? !list.unreadableThreadIds?.length : list.nextPageToken === null) return
     const at = request.current
     paging.current = true
     setWorking(mode)
-    void call((remote) => googleCap.search(remote, { ...params, pageToken }))
+    const options = retry
+      ? { ...params, refresh: true }
+      : { ...params, pageToken: list.nextPageToken! }
+    void call((remote) => googleCap.search(remote, options))
       .then((page) => {
         if (request.current !== at) return
         generation.current++
         setList((previous) => {
           if (previous.kind !== 'ready') return previous
-          const partial = partialPage(page, pageToken)
-          const { nextPageToken, syncedAt } = page
-          if (!retry)
-            return {
-              kind: 'ready',
-              nextPageToken,
-              syncedAt,
-              tail: pageToken,
-              threads: [...previous.threads, ...page.threads],
-              partial: [...previous.partial, ...partial],
-            }
-          // Retry the affected page, not the entire list. Retain healthy rows
-          // and their local triage state; only restore newly readable rows.
-          const unreadable = new Set(page.unreadableThreadIds)
-          const kept = previous.threads.filter(({ id }) => !unreadable.has(id))
-          const existing = new Set(kept.map(({ id }) => id))
-          const failed = new Set(retry.ids)
-          const recovered = page.threads.filter(({ id }) => failed.has(id) && !existing.has(id))
+          // Keep the current rows while the retry runs, then replace them
+          // together with the cursor. Newly arrived mail may have moved every
+          // page boundary, so old rows cannot be paired with a fresh token.
+          if (retry) return { ...page, kind: 'ready' }
+          const replaced = new Set([
+            ...page.threads.map(({ id }) => id),
+            ...(page.unreadableThreadIds ?? []),
+          ])
           return {
-            ...previous,
-            threads: recovered.length
-              ? [...kept, ...recovered].sort((a, b) => b.date.localeCompare(a.date))
-              : kept,
-            nextPageToken: previous.tail === pageToken ? nextPageToken : previous.nextPageToken,
-            // A persistent refusal on one page must not starve later retries.
-            partial: [...previous.partial.slice(1), ...partial],
+            ...page,
+            kind: 'ready',
+            threads: [...previous.threads.filter(({ id }) => !replaced.has(id)), ...page.threads],
           }
         })
       })
