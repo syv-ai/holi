@@ -55,6 +55,7 @@
         // Native #550 fixtures are built by disposable MJS runners via filesystem paths.
         "scripts/agent-inbox-550.vite.config.ts",
         "scripts/agent-inbox-550-main.ts",
+        "scripts/agent-inbox-550-preload.ts",
         "scripts/agent-inbox-550-github.ts",
         "scripts/seed-agent-inbox-550.ts",
         "scripts/notification-os-fixture-main.ts",
