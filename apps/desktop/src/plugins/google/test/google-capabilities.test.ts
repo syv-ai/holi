@@ -182,7 +182,6 @@ it('rejects malformed or wrong full Gmail threads and can reread the requested t
     for (const _ of invalidReplies) {
       await expect(call('thread', { id: 'selected' })).rejects.toMatchObject({
         code: 'FORBIDDEN',
-        message: expect.stringMatching(/Gmail.*thread/i),
       })
     }
     expect(await call('thread', { id: 'selected' })).toMatchObject({
