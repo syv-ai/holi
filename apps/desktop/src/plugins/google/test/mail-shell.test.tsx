@@ -588,35 +588,43 @@ test('shows a filename-less inline invitation in the mail shell', async () => {
   )
 })
 
-test('keeps the qualified Calendar answer and read-only Retry when Gmail cannot verify Sent', async () => {
+test('shows Calendar acceptance and the Gmail verification warning from response readback', async () => {
   searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  const unsettled: Invitation = {
-    ...invitation,
-    responseStatus: null,
-    recordedResponseStatus: 'tentative',
-    sentResponseStatus: null,
-    canRespond: false,
-    unavailableReason: 'Gmail could not verify the latest sent response',
-  }
-  invitationMock.mockResolvedValueOnce(invitations(unsettled))
-  invitationMock.mockResolvedValue(
-    invitations({ ...unsettled, recordedResponseStatus: 'declined' }),
-  )
+  const initial = { ...invitation, recordedResponseStatus: 'needsAction' } as const
+  const unavailableReason = 'Gmail could not verify the latest sent response'
+  const recorded = { ...initial, recordedResponseStatus: 'accepted' } as const
+  invitationMock
+    .mockResolvedValueOnce(invitations(initial))
+    .mockResolvedValue(invitations({ ...recorded, responseStatus: 'accepted' }))
+  respondMock.mockResolvedValueOnce({
+    outcome: 'sent',
+    channel: 'calendar',
+    answer: 'accepted',
+    refreshPending: true,
+    invitation: {
+      ...recorded,
+      responseStatus: null,
+      sentResponseStatus: null,
+      canRespond: false,
+      unavailableReason,
+    },
+  })
   const user = userEvent.setup()
   render(<MailShell />)
   await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
-
   const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
-  expect(await region.findByText('Calendar: Tentative')).toBeVisible()
-  await user.click(region.getByRole('button', { name: 'Retry' }))
-  expect(await region.findByText('Calendar: Declined')).toBeVisible()
-  expect(region.getByText(unsettled.unavailableReason!)).toBeVisible()
-  expect(region.queryByText(/Gmail Sent:|Response: Declined/)).not.toBeInTheDocument()
+  await user.click(await region.findByRole('button', { name: 'Accept' }))
+  expect(await region.findByText('Calendar: Accepted')).toBeVisible()
+  expect(region.getByText(/Google accepted your response, but/i)).toBeVisible()
+  expect(region.getByText(unavailableReason)).toBeVisible()
+  expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
   for (const name of ['Accept', 'Maybe', 'Decline']) {
     expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
   }
-  expect(region.getByRole('button', { name: 'Retry' })).toBeEnabled()
-  expect(respondMock).not.toHaveBeenCalled()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('Response: Accepted')).toBeVisible()
+  expect(region.queryByText(unavailableReason)).not.toBeInTheDocument()
+  expect(respondMock).toHaveBeenCalledTimes(1)
 })
 
 test('keeps Google acceptance separate from a different response recorded after Retry', async () => {

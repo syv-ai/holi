@@ -795,36 +795,42 @@ test('distinguishes a recorded Calendar answer from a different verified Sent re
   expect(respondMock).not.toHaveBeenCalled()
 })
 
-test('shows the Calendar answer while Gmail is unsettled and Retry only rereads', async () => {
+test('shows Calendar acceptance and the Gmail verification warning from response readback', async () => {
   withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
+  const initial = { ...invite, recordedResponseStatus: 'needsAction' } as const
   const unavailableReason = 'Gmail could not verify the latest sent response'
-  invitationMock.mockResolvedValueOnce(
-    invitations({
-      ...invite,
+  const recorded = { ...initial, recordedResponseStatus: 'accepted' } as const
+  invitationMock
+    .mockResolvedValueOnce(invitations(initial))
+    .mockResolvedValue(invitations({ ...recorded, responseStatus: 'accepted' }))
+  respondMock.mockResolvedValueOnce({
+    outcome: 'sent',
+    channel: 'calendar',
+    answer: 'accepted',
+    refreshPending: true,
+    invitation: {
+      ...recorded,
       responseStatus: null,
-      recordedResponseStatus: 'tentative',
       sentResponseStatus: null,
       canRespond: false,
       unavailableReason,
-    }),
-  )
-  invitationMock.mockResolvedValue(
-    invitations({ ...invite, responseStatus: 'tentative', recordedResponseStatus: 'tentative' }),
-  )
+    },
+  })
   const user = userEvent.setup()
   await openThread()
-
   const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
-  expect(await region.findByText('Calendar: Tentative')).toBeVisible()
+  await user.click(await region.findByRole('button', { name: 'Accept' }))
+  expect(await region.findByText('Calendar: Accepted')).toBeVisible()
+  expect(region.getByText(/Google accepted your response, but/i)).toBeVisible()
   expect(region.getByText(unavailableReason)).toBeVisible()
-  expect(region.queryByText(/Gmail Sent:|Response: Tentative/)).not.toBeInTheDocument()
+  expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
   for (const name of ['Accept', 'Maybe', 'Decline']) {
     expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
   }
   await user.click(region.getByRole('button', { name: 'Retry' }))
-  expect(await region.findByText('Response: Tentative')).toBeVisible()
-  expect(region.getByRole('button', { name: 'Maybe' })).toBeDisabled()
-  expect(respondMock).not.toHaveBeenCalled()
+  expect(await region.findByText('Response: Accepted')).toBeVisible()
+  expect(region.queryByText(unavailableReason)).not.toBeInTheDocument()
+  expect(respondMock).toHaveBeenCalledTimes(1)
 })
 
 test('ordinary mail opens without an invitation or meeting lookup', async () => {

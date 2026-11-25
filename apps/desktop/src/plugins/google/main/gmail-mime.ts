@@ -25,9 +25,12 @@ export type MimeLocation = {
 
 export class CalendarScanError extends Error {}
 
+function mediaType(value: string | undefined) {
+  return value?.split(';', 1)[0]!.trim().toLowerCase()
+}
+
 function declaresMediaType(part: RawPart, pattern: RegExp): boolean {
-  const matches = (value: string | undefined) =>
-    value !== undefined && pattern.test(value.split(';', 1)[0]!.trim())
+  const matches = (value: string | undefined) => pattern.test(mediaType(value) ?? '')
   return (
     matches(part.mimeType) ||
     Boolean(
@@ -36,6 +39,33 @@ function declaresMediaType(part: RawPart, pattern: RegExp): boolean {
       ),
     )
   )
+}
+
+function routingMediaType(part: RawPart): string | undefined {
+  const headers = (part.headers ?? []).filter(({ name }) => name?.toLowerCase() === 'content-type')
+  const declarations = [part.mimeType, ...headers.map(({ value }) => value)]
+  const concrete = declarations
+    .map(mediaType)
+    .filter((type): type is string => type !== undefined && type !== 'application/octet-stream')
+  const container = concrete.find((type) => /^(multipart|message)\//.test(type))
+  // A generic Gmail wrapper may defer to the header. Two concrete types
+  // cannot disagree about how to traverse the MIME tree.
+  if (container) {
+    if (headers.length > 1 || concrete.some((type) => type !== container))
+      throw new CalendarScanError('Gmail returned conflicting MIME container declarations')
+    for (const value of declarations) {
+      if (value === undefined) continue
+      const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
+      const parsed = parseHeaderParameters(unfolded)
+      if (
+        /[\r\n\x00]/.test(unfolded) ||
+        !parsed ||
+        !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(parsed.main)
+      )
+        throw new CalendarScanError('Gmail returned an invalid MIME container declaration')
+    }
+  }
+  return container
 }
 
 export function isCalendarPart(part: RawPart): boolean {
@@ -111,13 +141,14 @@ export function createMimeWalk(maxDepth = 16, format: 'partial' | 'full' = 'part
         string(header.name)
         string(header.value)
       }
+      const routing = routingMediaType(part)
       if (format === 'full' && !isFullPart(part))
         throw new CalendarScanError('Gmail returned an incomplete or invalid full MIME part')
-      const forwarded = declaresMediaType(part, /^message\/rfc822$/i)
+      const forwarded = routing === 'message/rfc822' || routing === 'message/global'
       collect(part, location, forwarded)
       if (forwarded || !part.parts?.length) return
       bounded(part.parts.length <= nodes && depth < maxDepth)
-      const alternative = declaresMediaType(part, /^multipart\/alternative$/i)
+      const alternative = routing === 'multipart/alternative'
       part.parts.forEach((child, branch) =>
         visit(child, depth + 1, {
           path: `${location.path}.${branch}`,
