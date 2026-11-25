@@ -10,12 +10,12 @@ export function createUpgradeInstaller({ binary, artifact, statePath, label, run
       ;({ stdout } = await run(binary, [mode, label, artifact, statePath], { timeout: 15_000 }))
     } catch (error) {
       const codes = new Map([
-        ['launchd inspection failed', 'INSTALLER_INSPECTION_FAILED'],
-        ['invalid arguments', 'INSTALLER_ARGUMENTS_INVALID'],
-        ['job ownership mismatch', 'INSTALLER_JOB_OWNERSHIP_MISMATCH'],
-        ['state ownership mismatch', 'INSTALLER_STATE_OWNERSHIP_MISMATCH'],
-        ['job removal failed', 'INSTALLER_REMOVAL_FAILED'],
-        ['job restarted or remains', 'INSTALLER_REAPPEARED'],
+        ['installer guard: launchd inspection failed', 'INSTALLER_INSPECTION_FAILED'],
+        ['installer guard: invalid arguments', 'INSTALLER_ARGUMENTS_INVALID'],
+        ['installer guard: job ownership mismatch', 'INSTALLER_JOB_OWNERSHIP_MISMATCH'],
+        ['installer guard: state ownership mismatch', 'INSTALLER_STATE_OWNERSHIP_MISMATCH'],
+        ['installer guard: job removal failed', 'INSTALLER_REMOVAL_FAILED'],
+        ['installer guard: job restarted or remains', 'INSTALLER_REAPPEARED'],
       ])
       const failure = new Error('native installer command unavailable')
       failure.code =

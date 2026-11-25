@@ -43,7 +43,7 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
           if (scenario === 'installer-unavailable')
             throw Object.assign(new Error('inspection unavailable'), {
               code: 'INSTALLER_STATE_OWNERSHIP_MISMATCH',
-              exitCode: 1,
+              exitCode: 2,
             })
           return { present: scenario === 'installer-returned' }
         },
@@ -88,7 +88,7 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
         if (scenario === 'installer-unavailable')
           expect(result.report.cleanup.failures).toEqual(
             expect.arrayContaining([
-              expect.objectContaining({ code: 'INSTALLER_STATE_OWNERSHIP_MISMATCH', exitCode: 1 }),
+              expect.objectContaining({ code: 'INSTALLER_STATE_OWNERSHIP_MISMATCH', exitCode: 2 }),
             ]),
           )
         if (scenario === 'clear') {
