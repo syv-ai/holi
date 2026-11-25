@@ -120,6 +120,26 @@ describe('document table captions', () => {
     expect(reopened.state.doc.firstChild?.firstChild?.toJSON()).toEqual(edited)
     expect(reopened.state.doc.firstChild?.lastChild?.textContent).toBe('Caption')
   })
+  it.each([
+    ['unclosed', `<!-- holi:figure -->\n\n${table}\n\n<!-- holi:caption -->\n\nUnclosed caption`],
+    [
+      'unsupported caption',
+      `<!-- holi:figure -->\n\n${table}\n\n<!-- holi:caption -->\n\n[Unknown][missing]\n\n<!-- /holi:figure -->`,
+    ],
+  ])('keeps %s table source through unrelated edits and reopening', (_kind, source) => {
+    const instance = open(source)
+    instance.commands.insertContentAt(0, {
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'Unrelated edit' }],
+    })
+    const saved = instance.getMarkdown()
+    expect(saved).toContain(source)
+    expect(saved).toContain('Unrelated edit')
+    instance.destroy()
+    const reopened = open(saved)
+    expect(reopened.getMarkdown()).toContain(source)
+    expect(reopened.getMarkdown()).toContain('Unrelated edit')
+  })
 })
 
 describe('document code captions', () => {

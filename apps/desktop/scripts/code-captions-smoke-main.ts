@@ -262,9 +262,9 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
     else await wait(`window.captionFixture.state('primary').editable`, 'primary focus owns editor')
   }
   async function click(selector: string) {
-    const rect = await js<{ x: number; y: number }>(
-      `const e=document.querySelector(${JSON.stringify(selector)}); if(!e)throw Error('Missing '+${JSON.stringify(selector)}); const r=e.getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}`,
-    )
+    const point = `(()=>{const e=Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}); if(!e)throw Error('Missing visible '+${JSON.stringify(selector)}); const r=e.getBoundingClientRect(),x=Math.round(r.x+r.width/2),y=Math.round(r.y+r.height/2); if(!e.contains(document.elementFromPoint(x,y)))throw Error('Obscured '+${JSON.stringify(selector)}); return {x,y}})()`
+    await wait(point, `visible unobscured ${selector}`)
+    const rect = await js<{ x: number; y: number }>(`return ${point}`)
     win.webContents.sendInputEvent({ type: 'mouseMove', ...rect })
     win.webContents.sendInputEvent({ type: 'mouseDown', ...rect, button: 'left', clickCount: 1 })
     win.webContents.sendInputEvent({ type: 'mouseUp', ...rect, button: 'left', clickCount: 1 })
@@ -278,6 +278,58 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
     win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 2 })
     win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 2 })
     await sleep(100)
+  }
+  async function resizeTableColumn() {
+    const start = await js<{ x: number; y: number; width: number }>(
+      `const cell=document.querySelector('[data-pane="primary"] th'); cell.scrollIntoView({block:'nearest',inline:'nearest'}); const r=cell.getBoundingClientRect(); return {x:Math.round(r.right-2),y:Math.round(r.y+r.height/2),width:r.width}`,
+    )
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: start.x, y: start.y })
+    await wait(
+      `getComputedStyle(document.querySelector('[data-pane="primary"] .tiptap')).cursor === 'col-resize'`,
+      'real table resize handle',
+    )
+    win.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: start.x,
+      y: start.y,
+      button: 'left',
+      clickCount: 1,
+    })
+    try {
+      for (let step = 1; step <= 5; step++) {
+        win.webContents.sendInputEvent({ type: 'mouseMove', x: start.x + step * 16, y: start.y })
+        await sleep(40)
+      }
+    } finally {
+      win.webContents.sendInputEvent({
+        type: 'mouseUp',
+        x: start.x + 80,
+        y: start.y,
+        button: 'left',
+        clickCount: 1,
+      })
+    }
+    await wait(
+      `document.querySelector('[data-pane="primary"] th').getBoundingClientRect().width > ${start.width + 30}`,
+      'native column resize changes rendered width',
+    )
+  }
+  async function scrollTable() {
+    const point = await js<{ x: number; y: number }>(
+      `const wrapper=document.querySelector('[data-pane="primary"] .tableWrapper'); if(wrapper.scrollWidth<=wrapper.clientWidth)throw Error('Wide fixture table does not overflow'); const r=wrapper.getBoundingClientRect(); return {x:Math.round(r.x+Math.min(80,r.width/2)),y:Math.round(r.y+r.height/2)}`,
+    )
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...point })
+    win.webContents.sendInputEvent({
+      type: 'mouseWheel',
+      ...point,
+      deltaX: -180,
+      deltaY: 0,
+      canScroll: true,
+    })
+    await wait(
+      `document.querySelector('[data-pane="primary"] .tableWrapper').scrollLeft > 0`,
+      'native horizontal wheel scroll moves overflowing table',
+    )
   }
   async function menu(label: string, waitForTextFocus = true) {
     press('/', ['meta'])
@@ -479,6 +531,8 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
     js,
     wait,
     capture,
+    resizeTableColumn,
+    scrollTable,
     convertAndInspectPdf,
     press,
     setRightFocus,
@@ -752,6 +806,8 @@ async function verifyTableCaption(driver: ReturnType<typeof createEditorDriver>)
   )
   mark('native-matching-tables-caption-controls-follow-current-selection')
   await verifyTableBlocks(driver)
+  await verifyTableViews(driver)
+  await verifyTableLayouts(driver)
 }
 
 function assertTableCaption(markdown: string, caption: string, body: string, count = 1) {
@@ -761,7 +817,9 @@ function assertTableCaption(markdown: string, caption: string, body: string, cou
     value
       .trim()
       .split('\n')
-      .map((row) => row.split('|').map((cell) => cell.trim()))
+      .map((row, index) =>
+        row.split('|').map((cell) => (index === 1 ? cell.trim().replace(/-+/g, '-') : cell.trim())),
+      )
   for (const frame of frames) {
     assert.equal(markdown.slice(frame.caption.from, frame.caption.to), caption)
     assert.deepEqual(rows(markdown.slice(frame.body.from, frame.body.to)), rows(body))
@@ -814,6 +872,10 @@ async function verifyTableBlocks({
     caption,
     table,
   )
+  await js(`window.captionFixture.theme('light'); return true`)
+  await capture('table-caption-formatted-light.png')
+  await js(`window.captionFixture.theme('dark'); return true`)
+  await capture('table-caption-formatted-dark.png')
   mark('native-table-formatted-caption-complete-save-and-reopen')
 
   await js(`window.captionFixture.select('documentFigure'); return true`)
@@ -891,6 +953,202 @@ async function verifyTableBlocks({
   await capture('table-caption-actions.png')
   await writeFile(join(evidence, 'table-actions-saved.md.txt'), await readFile(note, 'utf8'))
   mark('native-table-confirmed-delete-and-undo-save-reopen')
+}
+
+async function verifyTableViews({
+  js,
+  wait,
+  click,
+  insertText,
+  press,
+  capture,
+}: ReturnType<typeof createEditorDriver>) {
+  const table = '| Name | Value |\n| --- | --- |\n| Alpha | 1 |'
+  const caption = 'Table **portable** caption.'
+  const primary = await readFile(note, 'utf8')
+  const otherBefore = await readFile(join(vault, 'notes/Clipboard.md'), 'utf8')
+  assertTableCaption(primary, caption, table)
+  await js(`window.captionFixture.select('documentCaption', 'primary', true); return true`)
+  const anchor = await js<{
+    anchor: { quote: string }
+    lines: { startLine: number; endLine: number }
+  }>('return await window.captionFixture.anchor()')
+  assert(anchor.anchor.quote.includes('portable'))
+  assert(
+    primary
+      .split('\n')
+      .slice(anchor.lines.startLine - 1, anchor.lines.endLine)
+      .join('\n')
+      .includes(caption),
+  )
+  press('f', ['meta'])
+  await wait(`document.querySelector('input[aria-label="Find"]')`, 'table caption find field')
+  await click('input[aria-label="Find"]')
+  press('a', ['meta'])
+  await insertText('portable')
+  await wait(
+    `document.querySelector('[role="search"]')?.textContent.includes('1 of 1')`,
+    'table caption find match',
+  )
+  await capture('table-caption-find.png')
+  press('Escape')
+  await wait(`!document.querySelector('input[aria-label="Find"]')`, 'table find closes')
+  mark('native-table-caption-find-and-file-comment-anchors')
+
+  await js('await window.captionFixture.flush(); return true')
+  await writeFile(
+    join(vault, 'notes/Clipboard.md'),
+    primary.replace(caption, 'Other **portable** caption.'),
+  )
+  await js('window.captionFixture.split(true); return true')
+  await wait(
+    `document.querySelector('[data-pane="secondary"] figcaption strong')?.textContent === 'portable'`,
+    'second captioned table mounted',
+  )
+  await click('[data-pane="secondary"] td p')
+  const secondaryCaption = `Array.from(document.querySelectorAll('[aria-label="Edit caption"]')).find(e=>{const r=e.getBoundingClientRect(),pane=document.querySelector('[data-pane="secondary"]').getBoundingClientRect();return r.width>0&&r.x>=pane.left&&getComputedStyle(e).visibility!=='hidden'})`
+  await wait(secondaryCaption, 'secondary table caption control')
+  await js(`${secondaryCaption}.setAttribute('data-secondary-caption', 'true'); return true`)
+  await click('[data-secondary-caption="true"]')
+  await wait(
+    `document.activeElement?.closest('[data-pane="secondary"]')`,
+    'secondary caption owns native input',
+  )
+  await insertText('Secondary ')
+  await js('await window.captionFixture.flush(); return true')
+  assert.equal(await readFile(note, 'utf8'), primary)
+  assertTableCaption(
+    await readFile(join(vault, 'notes/Clipboard.md'), 'utf8'),
+    'Secondary Other **portable** caption.',
+    table,
+  )
+  await js('window.captionFixture.hide(true); return true')
+  await wait(`!window.captionFixture.state().editable`, 'hidden table is read-only')
+  await js(
+    'window.captionFixture.hide(false); window.captionFixture.rightFocused(false); return true',
+  )
+  await wait(
+    `window.captionFixture.state().editable && document.querySelector('[data-pane="primary"] figcaption strong')?.textContent === 'portable'`,
+    'retained table returns unchanged',
+  )
+  await capture('table-caption-split.png')
+  assert.equal(await readFile(note, 'utf8'), primary)
+  mark('native-table-split-and-retained-view-ownership')
+
+  await js('window.captionFixture.split(false); window.captionFixture.locked(true); return true')
+  await wait(`!window.captionFixture.state().editable`, 'table document locked')
+  await js(`document.querySelector('[data-pane="primary"] [role="textbox"]').focus(); return true`)
+  await insertText('MUST NOT WRITE')
+  await js('await window.captionFixture.flush(); return true')
+  assert.equal(await readFile(note, 'utf8'), primary)
+  await capture('table-caption-locked.png')
+  await js('window.captionFixture.locked(false); return true')
+  await wait('window.captionFixture.state().editable', 'table document unlocked')
+  mark('native-table-locked-view-rejects-native-mutation')
+
+  const plain = primary.replace(caption, 'Table **Markdown-edited** caption.')
+  await js('await window.captionFixture.flush(); return true')
+  await writeFile(join(vault, 'notes/Clipboard.md'), '')
+  await js(
+    `await window.captionFixture.openPaths(${JSON.stringify(path)}, 'notes/Clipboard.md', true); window.captionFixture.split(true); window.captionFixture.rightFocused(true); return true`,
+  )
+  await wait(`window.captionFixture.plainState()`, 'production plain Markdown editor mounted')
+  await js('window.captionFixture.plainState(true); return true')
+  await wait(
+    `document.activeElement?.closest('[data-pane="secondary"] .cm-editor')`,
+    'plain Markdown editor owns native input',
+  )
+  await insertText(plain)
+  await wait(
+    `window.captionFixture.plainState()?.text.includes('Markdown-edited')`,
+    'native Markdown edit received',
+  )
+  await js('await window.captionFixture.flush(); return true')
+  const plainSaved = await readFile(join(vault, 'notes/Clipboard.md'), 'utf8')
+  assert(plainSaved.startsWith(head))
+  assertTableCaption(plainSaved, 'Table **Markdown-edited** caption.', table)
+  assert.equal(await readFile(note, 'utf8'), primary)
+  await capture('table-caption-markdown.png')
+  await js(
+    `await window.captionFixture.openPaths('notes/Clipboard.md', ${JSON.stringify(path)}); window.captionFixture.split(false); window.captionFixture.rightFocused(false); return true`,
+  )
+  await wait(
+    `document.querySelector('[data-pane="primary"] figcaption strong')?.textContent === 'Markdown-edited'`,
+    'plain Markdown reopens as formatted native table caption',
+  )
+  assertTableCaption(
+    (await js<{ markdown: string }>('return window.captionFixture.state()')).markdown,
+    'Table **Markdown-edited** caption.',
+    table,
+  )
+  await writeFile(join(evidence, 'table-markdown-saved.md.txt'), plainSaved)
+  await js(
+    `await window.captionFixture.openPaths(${JSON.stringify(path)}, 'notes/Clipboard.md'); return true`,
+  )
+  await wait(
+    `document.querySelector('[data-pane="primary"] figcaption strong')?.textContent === 'portable'`,
+    'original table view restored',
+  )
+  await writeFile(join(vault, 'notes/Clipboard.md'), otherBefore)
+  mark('native-table-plain-markdown-edit-save-and-rich-reopen')
+}
+
+async function verifyTableLayouts(driver: ReturnType<typeof createEditorDriver>) {
+  const { js, wait, insertText, capture, resizeTableColumn, scrollTable } = driver
+  const columns = Array.from({ length: 16 }, (_, index) => `Column ${index}`)
+  const table = [
+    `| ${columns.join(' | ')} |`,
+    `| ${columns.map(() => '---').join(' | ')} |`,
+    `| ${columns.map((_, index) => `Value ${index}`).join(' | ')} |`,
+  ].join('\n')
+  const caption = 'Layout **portable** caption.'
+  let originalStyle: 'banded' | 'lines' | undefined
+  try {
+    for (const style of ['banded', 'lines'] as const) {
+      const previous = await js<'banded' | 'lines'>(
+        `return window.captionFixture.tableStyle(${JSON.stringify(style)})`,
+      )
+      originalStyle ??= previous
+      await js(
+        `await window.captionFixture.replace(${JSON.stringify(`${head}# Table layout\n\n${writeMarkdownTableCaption(table, caption)}\n`)}); return true`,
+      )
+      await wait(
+        `document.querySelector('[data-pane="primary"] [data-table-style]')?.dataset.tableStyle === ${JSON.stringify(style)} && document.querySelector('[data-pane="primary"] figcaption strong')?.textContent === 'portable'`,
+        `${style} captioned table mounted`,
+      )
+      await js(`window.captionFixture.select('paragraph', 'primary', true); return true`)
+      await insertText('Changed header')
+      await resizeTableColumn()
+      await scrollTable()
+      await js('await window.captionFixture.flush(); return true')
+      const saved = await readFile(note, 'utf8')
+      assert(saved.startsWith(head))
+      assertTableCaption(saved, caption, table.replace('Column 0', 'Changed header'))
+      const geometry = await js<{ tableBottom: number; captionTop: number; align: string }>(
+        `const table=document.querySelector('[data-pane="primary"] table'),caption=document.querySelector('[data-pane="primary"] figcaption'); return {tableBottom:table.getBoundingClientRect().bottom,captionTop:caption.getBoundingClientRect().top,align:getComputedStyle(caption).textAlign}`,
+      )
+      assert(
+        geometry.captionTop >= geometry.tableBottom,
+        'caption remains beneath the resized scrolling table',
+      )
+      assert.equal(geometry.align, 'center')
+      await capture(`table-caption-${style}.png`)
+      await js('await window.captionFixture.reopen(); return true')
+      await wait(
+        `document.querySelector('[data-pane="primary"] th')?.textContent === 'Changed header'`,
+        `${style} table selection/edit persisted`,
+      )
+      assertTableCaption(
+        (await js<{ markdown: string }>('return window.captionFixture.state()')).markdown,
+        caption,
+        table.replace('Column 0', 'Changed header'),
+      )
+      mark(`native-table-${style}-selection-resize-scroll-and-reopen`)
+    }
+  } finally {
+    if (originalStyle !== undefined)
+      await js(`window.captionFixture.tableStyle(${JSON.stringify(originalStyle)}); return true`)
+  }
 }
 
 async function verifyParserSource({
@@ -2761,6 +3019,11 @@ async function run() {
         {
           ok,
           scope,
+          controllerValidated: false,
+          source: {
+            head: process.env.HOLI_535_SOURCE_HEAD,
+            dirty: process.env.HOLI_535_SOURCE_DIRTY === 'true',
+          },
           checks,
           captures,
           roots,

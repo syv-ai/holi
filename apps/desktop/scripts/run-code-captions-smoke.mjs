@@ -91,6 +91,12 @@ function run(argv) {
 `
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' })
+assert.equal(revision.status, 0, 'source revision must be available')
+const sourceHead = revision.stdout.trim()
+const status = spawnSync('git', ['status', '--porcelain'], { cwd: desktop, encoding: 'utf8' })
+assert.equal(status.status, 0, 'source working-tree status must be available')
+const sourceDirty = status.stdout.length > 0
 const args = process.argv.slice(2)
 const tablesOnly = args.includes('--tables-only')
 const positional = args.filter((arg) => arg !== '--tables-only')
@@ -108,6 +114,12 @@ const tableChecks = [
   'native-table-formatted-caption-complete-save-and-reopen',
   'native-table-duplicate-move-and-undo-preserve-association',
   'native-table-confirmed-delete-and-undo-save-reopen',
+  'native-table-caption-find-and-file-comment-anchors',
+  'native-table-split-and-retained-view-ownership',
+  'native-table-locked-view-rejects-native-mutation',
+  'native-table-plain-markdown-edit-save-and-rich-reopen',
+  'native-table-banded-selection-resize-scroll-and-reopen',
+  'native-table-lines-selection-resize-scroll-and-reopen',
 ]
 await assert.rejects(access(evidence), {
   code: 'ENOENT',
@@ -190,6 +202,8 @@ try {
     HOLI_535_EVIDENCE: evidence,
     HOLI_535_TYPST: tablesOnly ? '' : resolve(typst),
     HOLI_535_SCOPE: scope,
+    HOLI_535_SOURCE_HEAD: sourceHead,
+    HOLI_535_SOURCE_DIRTY: String(sourceDirty),
     HOLI_535_DESKTOP: desktop,
     HOLI_VAULT_ROOT: join(root, 'vault'),
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
@@ -267,13 +281,14 @@ try {
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   assert.equal(result.scope, scope)
+  assert.deepEqual(result.source, { head: sourceHead, dirty: sourceDirty })
   for (const name of tableChecks)
     assert(result.checks.includes(name), `missing native table acceptance: ${name}`)
   if (tablesOnly)
-    assert.deepEqual(result.checks, [
-      'production-document-view-with-real-router-filesystem',
-      ...tableChecks,
-    ])
+    assert.deepEqual(
+      [...result.checks].sort(),
+      ['production-document-view-with-real-router-filesystem', ...tableChecks].sort(),
+    )
   assert.equal(result.electron.split('.')[0], '43')
   if (!tablesOnly) {
     assert(result.checks.length >= 47, 'missing native acceptance assertions')
@@ -299,7 +314,16 @@ try {
         'table-caption-dark.png',
         'table-caption-saved.json',
         'table-caption-actions.png',
+        'table-caption-formatted-light.png',
+        'table-caption-formatted-dark.png',
         'table-actions-saved.md.txt',
+        'table-caption-find.png',
+        'table-caption-split.png',
+        'table-caption-locked.png',
+        'table-caption-markdown.png',
+        'table-markdown-saved.md.txt',
+        'table-caption-banded.png',
+        'table-caption-lines.png',
       ]
     : [
         'native-ui.pdf',
@@ -319,6 +343,15 @@ try {
         'mermaid-pdf-proof.json',
       ]
   for (const file of requiredFiles) assert((await stat(join(evidence, file))).size > 0)
+} catch (error) {
+  const resultPath = join(evidence, 'result.json')
+  const result = await readFile(resultPath, 'utf8')
+    .then(JSON.parse)
+    .catch(() => ({ scope, checks: [], captures: [] }))
+  result.ok = false
+  result.controllerValidated = false
+  await writeFile(resultPath, JSON.stringify(result, null, 2))
+  throw error
 } finally {
   if (child && child.exitCode === null) {
     child.kill('SIGTERM')
@@ -396,7 +429,23 @@ assert.equal(result.scope, scope)
 assert.equal(result.ok, true)
 assert.equal(result.clipboardRestored, true)
 assert.equal(child.exitCode, 0)
+const finalRevision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' })
+assert.equal(finalRevision.status, 0)
+assert.equal(
+  finalRevision.stdout.trim(),
+  sourceHead,
+  'source head changed during native acceptance',
+)
+if (!sourceDirty) {
+  const finalStatus = spawnSync('git', ['status', '--porcelain'], {
+    cwd: desktop,
+    encoding: 'utf8',
+  })
+  assert.equal(finalStatus.status, 0)
+  assert.equal(finalStatus.stdout, '', 'source changed during native acceptance')
+}
 result.exitCode = child.exitCode
+result.controllerValidated = true
 result.cleanup = { removed: true, root }
 await writeFile(resultPath, JSON.stringify(result, null, 2))
 console.log(
