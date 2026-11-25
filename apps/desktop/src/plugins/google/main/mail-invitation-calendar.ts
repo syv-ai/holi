@@ -76,15 +76,21 @@ function invitationPageItems<T>(page: CollectionPage<T>, kind: CollectionKind): 
     Array.isArray(page) ||
     !('kind' in page) ||
     page.kind !== kind ||
-    (page.items !== undefined &&
-      (!Array.isArray(page.items) ||
-        page.items.some((item) => !item || typeof item !== 'object' || Array.isArray(item)))) ||
-    (page.nextPageToken !== undefined &&
-      (typeof page.nextPageToken !== 'string' ||
-        !/^[^\s\p{Cc}]{1,4096}$/u.test(page.nextPageToken)))
+    (page.items !== undefined && !Array.isArray(page.items))
   )
     throw new Error('Invalid Calendar collection')
   return page.items ?? []
+}
+
+function invitationPageToken(page: CollectionPage<unknown>): string | undefined {
+  const token = page.nextPageToken
+  if (token !== undefined && (typeof token !== 'string' || !/^[^\s\p{Cc}]{1,4096}$/u.test(token)))
+    throw new Error('Invalid Calendar page token')
+  return token
+}
+
+function isCollectionRow(item: unknown): boolean {
+  return Boolean(item && typeof item === 'object' && !Array.isArray(item))
 }
 
 async function invitationPages<T>(
@@ -92,14 +98,25 @@ async function invitationPages<T>(
   url: string,
   kind: CollectionKind,
   params: GoogleParams,
+  observe?: (item: T) => Promise<void>,
 ): Promise<T[]> {
-  return api.getAll<T>(
-    url,
-    params,
-    (page) => invitationPageItems(page, kind),
-    CALENDAR_PAGE_LIMIT,
-    true,
-  )
+  const all: T[] = []
+  const seen = new Set<string>()
+  let pageToken: string | undefined
+  for (let index = 0; index < CALENDAR_PAGE_LIMIT; index++) {
+    const page = await api.get<CollectionPage<T>>(url, { ...params, pageToken })
+    const items = invitationPageItems(page, kind)
+    // An independently verified locator is evidence of existence, even if a
+    // sibling, page token, or later request prevents using the collection.
+    if (observe) for (const item of items) if (isCollectionRow(item)) await observe(item)
+    if (!items.every(isCollectionRow)) throw new Error('Invalid Calendar collection row')
+    all.push(...items)
+    pageToken = invitationPageToken(page)
+    if (pageToken === undefined) return all
+    if (seen.has(pageToken)) throw new Error('Calendar repeated a page token')
+    seen.add(pageToken)
+  }
+  throw new Error('Calendar returned too many pages')
 }
 
 function instant(value: string): number {
@@ -172,13 +189,17 @@ async function exactCopies(
   uid: string,
   recurrenceId: string | null,
   floating: boolean,
-  observe: (event: RawEvent) => void,
+  observe: (event: RawEvent) => Promise<void>,
 ): Promise<RawEvent[]> {
-  const events = await invitationPages<RawEvent>(api, url, 'calendar#events', {
-    iCalUID: uid,
-    singleEvents: 'false',
-    showDeleted: 'true',
-  })
+  const events = await invitationPages<RawEvent>(
+    api,
+    url,
+    'calendar#events',
+    { iCalUID: uid, singleEvents: 'false', showDeleted: 'true' },
+    async (event) => {
+      if (event.iCalUID === uid) await observe(event)
+    },
+  )
   if (
     events.some(
       (event) =>
@@ -193,7 +214,6 @@ async function exactCopies(
   const roots = events.filter((event) => !event.recurringEventId && !event.originalStartTime)
   if (new Set(events.map(({ id }) => id)).size !== events.length)
     throw new Error('Calendar returned duplicate event rows')
-  for (const event of events) if (event.iCalUID === uid) observe(event)
   // Any row for a floating series could occupy this wall-clock slot. An
   // empty UID collection is still meaningful; never query instances in a guessed zone.
   if (floating) return events
@@ -219,10 +239,17 @@ async function exactCopies(
         originalStart: recurrenceId,
         showDeleted: 'true',
       },
+      async (event) => {
+        // Only a UID-verified parent can establish UID when the instance omits it.
+        if (
+          (event.iCalUID === uid || (event.iCalUID === undefined && series.iCalUID === uid)) &&
+          event.recurringEventId === series.id
+        )
+          await observe(event)
+      },
     )
     if (new Set(instances.map(({ id }) => id)).size !== instances.length)
       throw new Error('Calendar returned duplicate instance rows')
-    const verified: RawEvent[] = []
     for (const event of instances) {
       if (
         !usableInvitationEvent(event) ||
@@ -236,10 +263,7 @@ async function exactCopies(
       if (listed && (listed.etag !== event.etag || calendarProof(listed) !== calendarProof(event)))
         throw new Error('Calendar returned conflicting instance rows')
       matching.set(event.id, event)
-      // Only a UID-verified parent can establish UID when the instance omits it.
-      if (event.iCalUID === uid || series.iCalUID === uid) verified.push(event)
     }
-    for (const event of verified) observe(event)
   }
   // A cancelled series suppresses every occurrence even if Google no longer
   // returns its instances. Never use the series itself as a write target.
@@ -254,12 +278,22 @@ async function exactCopies(
   )
 }
 
-function usableInvitationEvent(event: RawEvent): boolean {
-  const original = event.originalStartTime
+function usableEventLocator(event: RawEvent): boolean {
   return (
     (event.kind === undefined || event.kind === 'calendar#event') &&
     typeof event.id === 'string' &&
     /^[A-Za-z0-9_-]{1,1024}$/.test(event.id) &&
+    (event.recurringEventId === undefined
+      ? event.originalStartTime === undefined
+      : typeof event.recurringEventId === 'string' &&
+        Boolean(event.recurringEventId) &&
+        validTime(event.originalStartTime))
+  )
+}
+
+function usableInvitationEvent(event: RawEvent): boolean {
+  return (
+    usableEventLocator(event) &&
     (event.status === undefined ||
       ['confirmed', 'tentative', 'cancelled'].includes(event.status)) &&
     (event.sequence === undefined ||
@@ -267,11 +301,6 @@ function usableInvitationEvent(event: RawEvent): boolean {
     (event.recurrence === undefined ||
       (Array.isArray(event.recurrence) &&
         event.recurrence.every((rule) => typeof rule === 'string'))) &&
-    (event.recurringEventId === undefined
-      ? original === undefined
-      : typeof event.recurringEventId === 'string' &&
-        Boolean(event.recurringEventId) &&
-        validTime(original)) &&
     (event.start === undefined || validTime(event.start)) &&
     (event.end === undefined || validTime(event.end)) &&
     (event.organizer === undefined ||
@@ -319,16 +348,25 @@ function usableInvitationEvent(event: RawEvent): boolean {
   )
 }
 
+class CalendarObservationError extends Error {}
+
 /** RSVP lookup is independent of agenda visibility, dates and RSVP state. */
 export async function findInvitationCalendarCopy(
   api: GoogleApi,
   invitation: InvitationTarget,
   mailbox: string,
-  remember: (locator: Omit<CalendarLocator, 'accountSub'>) => void,
+  remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
 ): Promise<CalendarLookup> {
   try {
-    return await lookupInvitationCalendarCopy(api, invitation, mailbox, remember)
+    return await lookupInvitationCalendarCopy(api, invitation, mailbox, async (locator) => {
+      try {
+        await remember(locator)
+      } catch (cause) {
+        throw new CalendarObservationError('Could not retain a Calendar locator', { cause })
+      }
+    })
   } catch (error) {
+    if (error instanceof CalendarObservationError) throw error.cause
     // Neither a 404 nor incomplete/malformed results prove there is no copy.
     if (propagateCalendarRefusal(error)) throw error
     if (error instanceof GoogleApiError && error.status === 403)
@@ -344,36 +382,48 @@ async function lookupInvitationCalendarCopy(
   api: GoogleApi,
   invitation: InvitationTarget,
   mailbox: string,
-  remember: (locator: Omit<CalendarLocator, 'accountSub'>) => void,
+  remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
 ): Promise<CalendarLookup> {
   const { uid, recurrenceId } = invitation.details.identity
   const organizer = invitation.details.organizer?.email
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
-    (event: RawEvent) => {
-      // The collection has verified the resource and its UID. Bind organizer,
-      // mailbox and original scope independently of the REQUEST's RSVP fields.
-      if (!organizer || event.organizer?.email?.toLowerCase() !== organizer) return
+    async (event: RawEvent) => {
+      // Bind organizer, mailbox and original scope independently of the
+      // REQUEST's RSVP fields and the rest of the collection.
+      if (
+        !usableEventLocator(event) ||
+        !organizer ||
+        typeof event.organizer?.email !== 'string' ||
+        event.organizer.email.toLowerCase() !== organizer
+      )
+        return
       // The authenticated primary collection itself binds the resource to the
       // mailbox. Elsewhere, require the provider's self marker, not just an
       // attendee address on a shared calendar's copy.
       if (base !== PRIMARY_EVENTS) {
         const self = uniqueSelfAttendee(event)
-        const selfEmail = self?.email?.toLowerCase()
-        const mailboxCopy = selfEmail === mailbox && !self?.resource
+        const selfEmail = typeof self?.email === 'string' ? self.email.toLowerCase() : undefined
+        const person = self && (self.resource === undefined || self.resource === false)
+        const mailboxCopy = selfEmail === mailbox && person
         const ownedCopy =
           owned &&
-          ((selfEmail === calendarId && !self?.resource) ||
+          ((selfEmail === calendarId && person) ||
             (event.organizer?.self === true && (organizer === mailbox || organizer === calendarId)))
         if (!mailboxCopy && !ownedCopy) return
       }
       const instance = event.recurringEventId !== undefined
-      const series = !instance && Boolean(event.recurrence?.length)
+      const series =
+        instance || event.recurrence === undefined
+          ? false
+          : Array.isArray(event.recurrence)
+            ? event.recurrence.length > 0
+            : undefined
       // A floating slot cannot be identified by Calendar's absolute time.
       // A verified series master still proves itself, including for a slot lookup.
       const originalSlot = occurrenceSlot(event)
       if (instance && recurrenceId !== null && !sameOccurrence(event, recurrenceId)) return
-      remember({
+      await remember({
         uid,
         organizer,
         recurrenceId: originalSlot,
@@ -460,7 +510,17 @@ async function lookupInvitationCalendarCopy(
 }
 
 function uniqueSelfAttendee(event: RawEvent) {
-  const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []
+  const attendees = event.attendees
+  if (
+    !Array.isArray(attendees) ||
+    !attendees.every(
+      (attendee) =>
+        isCollectionRow(attendee) &&
+        (attendee.self === undefined || typeof attendee.self === 'boolean'),
+    )
+  )
+    return undefined
+  const self = attendees.filter((attendee) => attendee.self === true)
   return self.length === 1 ? self[0] : undefined
 }
 
@@ -665,7 +725,8 @@ async function upcomingInvitationLinks(
         pageToken,
       })
       const items = invitationPageItems(page, 'calendar#events')
-      if (items.length > 1) return null
+      pageToken = invitationPageToken(page)
+      if (items.length > 1 || !items.every(isCollectionRow)) return null
       const instance = items[0]
       if (instance) {
         if (
@@ -685,14 +746,10 @@ async function upcomingInvitationLinks(
         const slot = occurrenceSlot(instance)!
         if (!suppressSlot(slot)) {
           const { url, source } = mailConference(instance)
-          return {
-            conferenceUrl: url,
-            conferenceLinkSource: source,
-            htmlLink: googleEventUrl(instance.htmlLink),
-          }
+          const htmlLink = googleEventUrl(instance.htmlLink)
+          if (url || htmlLink) return { conferenceUrl: url, conferenceLinkSource: source, htmlLink }
         }
       }
-      pageToken = page.nextPageToken
       if (pageToken === undefined || seen.has(pageToken)) return null
       seen.add(pageToken)
     }
