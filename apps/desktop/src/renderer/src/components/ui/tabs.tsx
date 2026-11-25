@@ -72,15 +72,17 @@ function TabsEntry({
   className,
   size,
   presentationOrder,
+  presentation = "normal",
   style,
   ...props
 }: React.ComponentProps<'div'> & {
   size: 'tab' | 'tab-group' | 'tab-wide' | 'sticky' | 'sticky-group'
   presentationOrder?: number
+  presentation?: "normal" | "removed" | "ghost"
 }) {
   return (
     <div
-      className={cn(tabsEntryVariants({ size }), className)}
+      className={cn(tabsEntryVariants({ size }), presentation === "removed" && "absolute opacity-0 pointer-events-none", presentation === "ghost" && "pointer-events-none items-center gap-2 px-3 text-sm", className)}
       style={presentationOrder === undefined ? style : { ...style, order: presentationOrder }}
       {...props}
     />

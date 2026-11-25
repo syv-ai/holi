@@ -489,42 +489,89 @@ test('split preview retains its hovered member and hides original labels until l
   expect(title.closest('.opacity-0')).toBeNull()
 })
 
-test('combine preview preserves measured target geometry through repeated hover and drop', () => {
+test('combine targeting stays stable when the preview changes the measured footprint', () => {
+  const { store, list, tabs, transfer } = setup()
+  transfer.setData(MIME, 'B.md')
+  act(() => store.set(tabDragAtom, { key: 'B.md', vault: 'owner/vault', wasOpen: true }))
+  const before = store.get(shellWorkspaceAtom)
+  fireEvent(list, dragEvent('dragover', transfer, 25))
+  expect(screen.getByRole('tab', { name: 'Split view: A, B' })).toBeInTheDocument()
+  // The presented group is wider, but the resting quarter/interior zones stay put.
+  vi.mocked(tabs[0]!.getBoundingClientRect).mockReturnValue({
+    left: 0,
+    right: 240,
+    width: 240,
+    top: 0,
+    bottom: 36,
+    height: 36,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  } as DOMRect)
+  fireEvent(list, dragEvent('dragover', transfer, 25))
+  expect(screen.getByRole('tab', { name: 'Split view: A, B' })).toBeInTheDocument()
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+  fireEvent(list, dragEvent('drop', transfer, 25))
+  expect(store.get(shellWorkspaceAtom).entries).toMatchObject([{ views: ['A.md', 'B.md'] }])
+})
+
+test('reorder commits the last displayed layout rather than recomputing at drop', () => {
+  const workspace = openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md')
+  const { store, list, tabs, transfer } = setup(workspace)
+  const title = screen.getByText('A')
+  fireEvent(list, dragEvent('dragover', transfer, 295))
+  expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+  expect(tabs[0]!.isConnected).toBe(true)
+  expect(screen.getByText('A')).toBe(title)
+  fireEvent(list, dragEvent('drop', transfer, 5))
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md', 'C.md', 'A.md'])
+})
+
+test('interior and edge previews switch without detaching the dragged title', () => {
+  const workspace = openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md')
+  const { store, list, transfer } = setup(workspace)
+  transfer.setData(MIME, 'B.md')
+  act(() => store.set(tabDragAtom, { key: 'B.md', vault: 'owner/vault', wasOpen: true }))
+  const title = screen.getByText('B')
+  fireEvent(list, dragEvent('dragover', transfer, 25))
+  expect(screen.getByRole('tab', { name: 'Split view: A, B' })).toBeInTheDocument()
+  expect(title.isConnected).toBe(true)
+  fireEvent(list, dragEvent('dragover', transfer, 295))
+  expect(screen.queryByRole('tab', { name: 'Split view: A, B' })).toBeNull()
+  expect(screen.getByText('B')).toBe(title)
+  expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+  fireEvent(list, dragEvent('drop', transfer, 295))
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md', 'C.md', 'B.md'])
+})
+
+test('moving a member out previews its remaining sibling without unmounting the source', () => {
+  const workspace = combineOnStrip(
+    openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md'),
+    'B.md',
+    'A.md',
+  )
+  const { store, list, transfer } = setup(workspace)
+  const member = document.querySelector('[data-member="A.md"]')!
+  fireEvent(list, dragEvent('dragover', transfer, 900))
+  expect(screen.getByRole('tab', { name: 'B' })).toBeInTheDocument()
+  expect(member.isConnected).toBe(true)
+  expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+  fireEvent(list, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md', 'C.md', 'A.md'])
+})
+
+test('leaving a sidebar insertion preview removes its label without opening the view', () => {
   const { store, list, transfer } = setup()
-  const items = Array.from(list.querySelectorAll<HTMLElement>('[data-entry-id]'))
-  for (const [index, item] of items.entries()) {
-    vi.spyOn(item, 'getBoundingClientRect').mockImplementation(() => {
-      const widths = items.map((candidate) => {
-        return candidate.className.includes('flex-[1_1_20rem]')
-          ? 320
-          : candidate.className.includes('flex-[1_1_15rem]')
-            ? 256
-            : 224
-      })
-      const left = widths.slice(0, index).reduce((sum, width) => sum + width, 0)
-      const width = widths[index]!
-      return {
-        left,
-        right: left + width,
-        width,
-        top: 0,
-        bottom: 36,
-        height: 36,
-        x: left,
-        y: 0,
-        toJSON: () => ({}),
-      } as DOMRect
-    })
-  }
-  const targetCenterBoundary = 224 + 60
-  fireEvent(list, dragEvent('dragover', transfer, targetCenterBoundary))
-  expect(items[1]!.dataset.combinePreview).toBe('true')
-  expect(items[1]!.className).toContain('w-44')
-  fireEvent(list, dragEvent('dragover', transfer, targetCenterBoundary))
-  expect(items[1]!.dataset.combinePreview).toBe('true')
-  fireEvent(list, dragEvent('drop', transfer, targetCenterBoundary))
-  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
-  expect(store.get(shellWorkspaceAtom).entries[0]).toMatchObject({ views: ['B.md', 'A.md'] })
+  const before = store.get(shellWorkspaceAtom)
+  transfer.setData(MIME, 'C.md')
+  act(() => store.set(tabDragAtom, { key: 'C.md', vault: 'owner/vault', wasOpen: false }))
+  fireEvent(list, dragEvent('dragover', transfer, 900))
+  expect(screen.getByText('C')).toBeInTheDocument()
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+  fireEvent.dragLeave(list, { relatedTarget: document.body })
+  expect(screen.queryByText('C')).toBeNull()
+  fireEvent(list, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
 })
 
 test('a closed original source cannot be reopened by an edge drop', () => {

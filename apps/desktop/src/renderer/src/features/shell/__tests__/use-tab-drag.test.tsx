@@ -9,7 +9,7 @@ import { expect, test, vi } from 'vitest'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { emptyWorkspace, openTab } from '@/state/shell-workspace'
 import { activeRemoteAtom } from '@/state/vaults'
-import { fireEvent, render, screen } from '@/test/render'
+import { act, fireEvent, render, screen } from '@/test/render'
 
 import {
   insertPreview,
@@ -148,3 +148,42 @@ test("a sidebar row's drag carries its tab, beside a row's own drag", async () =
   fireEvent.dragEnd(screen.getByText('File'))
   vi.useRealTimers()
 })
+
+test.each(['Session', 'File'])(
+  '%s cannot publish a deferred drag after cancellation or departure',
+  async (label) => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    const store = createStore()
+    store.set(activeRemoteAtom, 'owner/vault')
+    store.set(shellWorkspaceAtom, openTab(emptyWorkspace(), 'Notes/A.md'))
+    const view = render(
+      <Provider store={store}>
+        <Rows own={() => {}} />
+      </Provider>,
+    )
+    try {
+      const row = screen.getByText(label)
+      fireEvent.dragStart(row, { dataTransfer: transfer() })
+      fireEvent.dragEnd(row)
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+      expect(store.get(tabDragAtom)).toBeNull()
+      fireEvent.dragStart(row, { dataTransfer: transfer() })
+      act(() => store.set(activeRemoteAtom, 'other/vault'))
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+      expect(store.get(tabDragAtom)).toBeNull()
+      fireEvent.dragStart(row, { dataTransfer: transfer() })
+      view.unmount()
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+      expect(store.get(tabDragAtom)).toBeNull()
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  },
+)

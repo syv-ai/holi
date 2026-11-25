@@ -17,7 +17,7 @@
  * Separate, Replace with…, Move out of split, and ⌥-click.
  */
 import { atom, useSetAtom, useStore } from 'jotai'
-import { useCallback, useRef, type DragEvent } from 'react'
+import { useCallback, useEffect, useRef, type DragEvent } from 'react'
 
 import { activeSplit, tabIsOpen, type ShellWorkspace } from '@/state/shell-workspace'
 import { tabKey, type TabDescriptor } from '@/state/tab-descriptor'
@@ -48,6 +48,12 @@ export function useTabDragSource(): (key: string) => DragSourceProps {
   const setDrag = useSetAtom(tabDragAtom)
   const store = useStore()
   const session = useRef(0)
+  useEffect(
+    () => () => {
+      session.current += 1
+    },
+    [],
+  )
   return useCallback(
     (key: string) => ({
       draggable: true,
@@ -57,10 +63,16 @@ export function useTabDragSource(): (key: string) => DragSourceProps {
         // A frame later: changing the page under the pointer in dragstart
         // itself can cancel the drag.
         const started = ++session.current
+        const workspace = store.get(shellWorkspaceAtom)
+        const vault = store.get(activeRemoteAtom)
         window.setTimeout(() => {
-          if (session.current !== started) return
-          const ws = store.get(shellWorkspaceAtom)
-          setDrag({ key, vault: store.get(activeRemoteAtom), wasOpen: tabIsOpen(ws, key) })
+          if (
+            session.current !== started ||
+            store.get(shellWorkspaceAtom) !== workspace ||
+            store.get(activeRemoteAtom) !== vault
+          )
+            return
+          setDrag({ key, vault, wasOpen: tabIsOpen(workspace, key) })
         }, 0)
       },
       onDragEnd: () => {
@@ -99,6 +111,12 @@ export function useTabDrag(): {
   const setDrag = useSetAtom(tabDragAtom)
   const store = useStore()
   const session = useRef(0)
+  useEffect(
+    () => () => {
+      session.current += 1
+    },
+    [],
+  )
   return useCallback(
     (tab: TabDescriptor | null, options?: { alongside: true }) => {
       if (tab === null) return {}
@@ -108,10 +126,16 @@ export function useTabDrag(): {
         onDragStartCapture: (event: DragEvent) => {
           event.dataTransfer.setData(TAB_MIME, key)
           const started = ++session.current
+          const workspace = store.get(shellWorkspaceAtom)
+          const vault = store.get(activeRemoteAtom)
           window.setTimeout(() => {
-            if (session.current !== started) return
-            const ws = store.get(shellWorkspaceAtom)
-            setDrag({ key, vault: store.get(activeRemoteAtom), wasOpen: tabIsOpen(ws, key) })
+            if (
+              session.current !== started ||
+              store.get(shellWorkspaceAtom) !== workspace ||
+              store.get(activeRemoteAtom) !== vault
+            )
+              return
+            setDrag({ key, vault, wasOpen: tabIsOpen(workspace, key) })
           }, 0)
         },
         onDragEndCapture: () => {
