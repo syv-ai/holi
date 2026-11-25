@@ -17,9 +17,15 @@ import { jsonFileStore } from '../../../main/plugin-api'
 /** `owner/repo` → Google's stable account id (`sub`). */
 type VaultAccounts = Record<string, string>
 
+type VaultAccountBinding = { sub: string | null; revision: number }
+
 export interface VaultAccountsStore {
   /** The account this vault uses, or null for one that has never connected. */
   subFor(remote: string): Promise<string | null>
+  /** Coherent snapshot of the mapping and its main-process publication revision. */
+  bindingFor(remote: string): Promise<VaultAccountBinding>
+  /** Revalidate a snapshot from bindingFor for the same remote. Does not yield. */
+  isCurrentBinding(remote: string, binding: VaultAccountBinding): boolean
   /** Snapshot, for the settings UI and for `unlinkAccount`. */
   all(): Promise<VaultAccounts>
   link(remote: string, sub: string): Promise<void>
@@ -65,6 +71,27 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
     queue = run.catch(() => undefined)
     return run
   }
+  const revisions = new Map<string, number>()
+  const revisionOf = (remote: string) => revisions.get(remote) ?? 0
+  const publish = (change: (current: VaultAccounts) => VaultAccounts, relink?: string) => {
+    let changed: string[] = []
+    return store.update(
+      (current) => {
+        const next = change(current)
+        changed = [...new Set([...Object.keys(current), ...Object.keys(next)])].filter(
+          (remote) => current[remote] !== next[remote] || remote === relink,
+        )
+        return next
+      },
+      undefined,
+      () => {
+        // The store renames synchronously after this guard. Invalidate at
+        // publication, not when the surrounding async operation finishes.
+        for (const remote of changed) revisions.set(remote, revisionOf(remote) + 1)
+        return true
+      },
+    )
+  }
   /** Only when there is one to clear: most machines never lose a grant. */
   const clearExpired = async (drop: (remote: string, sub: string) => boolean) => {
     const current = await expired.read()
@@ -77,21 +104,31 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
     async subFor(remote) {
       return (await store.read())[remote] ?? null
     },
+    async bindingFor(remote) {
+      for (;;) {
+        const revision = revisionOf(remote)
+        const sub = (await store.read())[remote] ?? null
+        if (revision === revisionOf(remote)) return { sub, revision }
+      }
+    },
+    isCurrentBinding(remote, binding) {
+      return revisionOf(remote) === binding.revision
+    },
     link(remote, sub) {
       return serial(async () => {
-        await store.update((current) => ({ ...current, [remote]: sub }))
+        await publish((current) => ({ ...current, [remote]: sub }), remote)
         await clearExpired((key) => key === remote)
       })
     },
     unlinkVault(remote) {
       return serial(async () => {
-        await store.update((current) => without(current, (key) => key === remote))
+        await publish((current) => without(current, (key) => key === remote))
         await clearExpired((key) => key === remote)
       })
     },
     unlinkAccount(sub) {
       return serial(async () => {
-        await store.update((current) => without(current, (_, value) => value === sub))
+        await publish((current) => without(current, (_, value) => value === sub))
         await clearExpired((_, value) => value === sub)
       })
     },
@@ -103,7 +140,7 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
           ...current,
           ...Object.fromEntries(lost.map((remote) => [remote, sub])),
         }))
-        await store.update((current) => without(current, (_, value) => value === sub))
+        await publish((current) => without(current, (_, value) => value === sub))
       })
     },
     async needsReconnect(remote) {

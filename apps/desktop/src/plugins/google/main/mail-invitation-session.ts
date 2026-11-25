@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto'
 import { CapabilityError } from '../../../main/plugin-api'
 import { GoogleApiError, GoogleWriteUncertainError, type GoogleApi } from './api'
 import { findInvitationCalendarCopy, type InviteAnswer } from './calendar'
-import { fetchThreadCalendarPayloads, sendCalendarReply } from './gmail'
+import { fetchThreadCalendarPayloads, findSentCalendarReply, sendCalendarReply } from './gmail'
+import type { createMailInvitationStore, InvitationAttempt } from './mail-invitation-store'
 import {
   httpsLink,
   invitationReplyStatus,
@@ -11,13 +13,15 @@ import {
 
 type Invitation = NonNullable<ReturnType<typeof parseMailInvitation>>
 type Mail = Awaited<ReturnType<typeof fetchThreadCalendarPayloads>>[number]
+type Revision = InvitationAttempt['revision']
 type MailInvitation = Invitation['details'] & {
+  bindingRevision: string
   responseStatus: InviteAnswer | 'needsAction' | null
   canRespond: boolean
   /** A write has not yet been corroborated by Calendar or a sent REPLY. */
   responsePending: boolean
 }
-type Channel = 'calendar' | 'gmail'
+type Channel = InvitationAttempt['delivery']['channel']
 type RespondResult = {
   /** Sent means Google accepted it, not that the organizer received it. */
   outcome: 'sent' | 'unchanged' | 'uncertain'
@@ -31,218 +35,359 @@ type Target = {
   api: GoogleApi
   threadId: string
   accountSub: string
+  bindingRevision: string
   email: string
-  validateSession: () => Promise<void>
+  assertBinding: () => void
 }
-type Resolved = {
-  invitation: MailInvitation
-  reply: {
-    channel: Channel
-    send: (answer: InviteAnswer, validate: () => Promise<void>) => Promise<unknown>
-  } | null
+type Candidate = { value: Invitation; mail: Mail }
+type Incoming = {
+  selected: Candidate
+  parents: Set<string>
+  reason?: string
+}
+type Reply = { key: string } & (
+  | {
+      channel: 'calendar'
+      target: string
+      send: (answer: InviteAnswer, validate: () => Promise<void>) => Promise<void>
+    }
+  | {
+      channel: 'gmail'
+      headers: NonNullable<Mail['replyHeaders']>
+      organizer: string
+      body: (email: string, answer: InviteAnswer) => string
+    }
+)
+type Resolved = { invitation: MailInvitation; reply: Reply | null }
+
+type SentAddress = { organizer: string; mailbox: string }
+
+function sameGroup(a: Revision, b: Revision): boolean {
+  return a.uid === b.uid && a.recurrenceId === b.recurrenceId
 }
 
-function sameInvitation(a: MailInvitationIdentity, b: MailInvitationIdentity): boolean {
+function sameRevision(a: Revision, b: Revision): boolean {
   return (
-    a.messageId === b.messageId &&
-    a.uid === b.uid &&
+    sameGroup(a, b) &&
     a.sequence === b.sequence &&
-    a.recurrenceId === b.recurrenceId
+    a.dtstamp === b.dtstamp &&
+    a.materialKey === b.materialKey
   )
 }
 
-async function latestIncoming(
-  messages: Mail[],
-): Promise<{ invitation: Invitation; mail: Mail } | null> {
+function sameInvitation(a: MailInvitationIdentity, b: MailInvitationIdentity): boolean {
+  return a.messageId === b.messageId && sameRevision(a, b)
+}
+
+function equivalent(a: Invitation, b: Invitation): boolean {
+  return (
+    a.method !== null &&
+    a.method === b.method &&
+    a.details.identity.materialKey !== null &&
+    sameRevision(a.details.identity, b.details.identity)
+  )
+}
+
+async function latestIncoming(messages: Mail[]): Promise<Incoming | null> {
+  const candidates: Candidate[] = []
   for (const mail of messages) {
     if (mail.sent) continue
-    const candidates: Invitation[] = []
     for (const part of mail.parts) {
       const value = parseMailInvitation(mail.messageId, await part.read(), part.method)
-      if (value) candidates.push(value)
+      if (value) candidates.push({ value, mail })
     }
-    const cancelled = candidates.find(({ details }) => details.cancelled)
-    if (cancelled) return { invitation: cancelled, mail }
-    // Common senders include both an inline calendar part and an equivalent
-    // attachment. Do not choose between different invites in the same message.
-    const usable = candidates.filter(({ request }) => request !== null)
-    const selected = usable[0] ?? candidates[0]
-    if (!selected) continue
-    if (
-      usable.some(
-        ({ details }) =>
-          !sameInvitation(details.identity, selected.details.identity) ||
-          details.organizer?.email !== selected.details.organizer?.email,
-      )
-    ) {
-      return {
-        invitation: {
-          details: {
-            ...selected.details,
-            unavailableReason: 'This message contains different invitations',
-          },
-          request: null,
-        },
-        mail,
-      }
-    }
-    return { invitation: selected, mail }
   }
-  return null
+  // Arrival only selects a parent for equivalent deliveries (or the card to
+  // show when blocked). It never orders distinct invitation revisions.
+  candidates.sort(
+    (a, b) =>
+      b.mail.timestamp - a.mail.timestamp || a.mail.messageId.localeCompare(b.mail.messageId),
+  )
+  const first = candidates[0]
+  if (!first) return null
+  const blocked = (reason: string) => ({ selected: first, parents: new Set<string>(), reason })
+  const group = first.value.details.identity
+  if (candidates.some(({ value }) => !sameGroup(group, value.details.identity))) {
+    return blocked('This conversation contains different invitations')
+  }
+  const sequence = candidates.reduce(
+    (max, { value }) => Math.max(max, value.details.identity.sequence),
+    0,
+  )
+  const atSequence = candidates.filter(({ value }) => value.details.identity.sequence === sequence)
+  const stamps = atSequence.flatMap(({ value }) => value.details.identity.dtstamp ?? [])
+  const newest = stamps.sort().at(-1) ?? null
+  // An unstamped candidate at the same sequence cannot be ordered against a
+  // stamped one. Keep it in contention rather than guessing which came later.
+  const latest = atSequence.filter(({ value }) => {
+    const stamp = value.details.identity.dtstamp
+    return stamp === null || stamp === newest
+  })
+  const selected = latest[0]!
+  if (latest.some(({ value }) => value !== selected.value && !equivalent(value, selected.value))) {
+    return blocked('This conversation contains conflicting invitation revisions')
+  }
+  const parents = new Set<string>()
+  for (const { value, mail } of candidates) {
+    const parent = mail.replyHeaders?.inReplyTo
+    if (
+      parent &&
+      equivalent(value, selected.value) &&
+      candidates.every((other) => other.mail.rfcId !== parent || equivalent(other.value, value))
+    ) {
+      parents.add(parent)
+    }
+  }
+  return { selected, parents }
+}
+
+async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }: SentAddress) {
+  if (!mail.sent || mail.from !== mailbox || mail.to.length !== 1 || mail.to[0] !== organizer)
+    return []
+  const answers = new Set<InviteAnswer>()
+  for (const part of mail.parts) {
+    if (part.method && part.method.toUpperCase() !== 'REPLY') continue
+    // A REPLY's DTSTAMP describes the reply. Its parent, not its own stamp,
+    // associates it with the precise incoming REQUEST revision.
+    const answer = invitationReplyStatus(
+      await part.read(),
+      { ...revision, messageId: '' },
+      organizer,
+      mailbox,
+    )
+    if (answer) answers.add(answer)
+  }
+  return [...answers]
 }
 
 async function sentResponse(
   messages: Mail[],
-  incoming: Mail,
-  identity: MailInvitationIdentity,
-  organizer: string,
-  email: string,
-): Promise<InviteAnswer | 'needsAction'> {
+  parents: Set<string>,
+  revision: Revision,
+  address: SentAddress,
+) {
+  let newest = -1
+  const answers = new Set<InviteAnswer>()
+  const evidence = new Set<string>()
   for (const message of messages) {
-    if (
-      !message.sent ||
-      message.timestamp < incoming.timestamp ||
-      message.from !== email ||
-      !message.to.includes(organizer)
-    )
-      continue
-    for (const part of message.parts) {
-      if (part.method && part.method.toUpperCase() !== 'REPLY') continue
-      const answer = invitationReplyStatus(await part.read(), identity, organizer, email)
-      if (answer) return answer
+    if (!message.parent || !parents.has(message.parent) || message.timestamp < newest) continue
+    const matched = await sentAnswer(message, revision, address)
+    if (!matched.length) continue
+    if (message.timestamp > newest) {
+      answers.clear()
+      evidence.clear()
+      newest = message.timestamp
     }
+    for (const answer of matched) answers.add(answer)
+    evidence.add(message.messageId)
   }
-  return 'needsAction'
+  return { answers, evidence: [...evidence].sort() }
 }
 
-async function resolve(target: Target): Promise<Resolved | null> {
-  const { api, threadId, email } = target
-  const messages = await fetchThreadCalendarPayloads(api, threadId)
-  const incoming = await latestIncoming(messages)
-  if (!incoming) return null
-  const { details, request } = incoming.invitation
-  const invitation: MailInvitation = {
-    ...details,
-    responseStatus: null,
-    canRespond: false,
-    responsePending: false,
-  }
-  if (!request || !invitation.organizer) return { invitation, reply: null }
-  const organizer = invitation.organizer.email
-  if (organizer === email) {
-    invitation.unavailableReason = 'You organize this event'
-    return { invitation, reply: null }
-  }
-
-  const copy = await findInvitationCalendarCopy(api, { ...details.identity, organizer }, email)
-  if (copy.kind === 'ambiguous') {
-    invitation.unavailableReason = 'More than one Calendar event matches this invitation'
-    return { invitation, reply: null }
-  }
-  if (copy.kind === 'found') {
-    invitation.title = copy.title?.trim() || invitation.title
-    invitation.start = copy.start ?? invitation.start
-    invitation.end = copy.end ?? invitation.end
-    if (copy.start) invitation.allDay = copy.allDay
-    invitation.location = copy.location ?? invitation.location
-    invitation.conferenceUrl = httpsLink(copy.conferenceUrl) ?? invitation.conferenceUrl
-    invitation.htmlLink = httpsLink(copy.htmlLink) ?? invitation.htmlLink
-    invitation.responseStatus = copy.responseStatus
-    invitation.cancelled = copy.cancelled
-    invitation.canRespond = copy.reply !== null
-    invitation.unavailableReason = copy.unavailableReason
-    return { invitation, reply: copy.reply ? { channel: 'calendar', send: copy.reply } : null }
-  }
-
-  if (!request.attendees.includes(email)) {
-    invitation.unavailableReason =
-      'This invitation does not list the connected mailbox as an attendee'
-    return { invitation, reply: null }
-  }
-  invitation.responseStatus = await sentResponse(
-    messages,
-    incoming.mail,
-    details.identity,
-    organizer,
-    email,
-  )
-  invitation.canRespond = true
-  return {
-    invitation,
-    reply: {
-      channel: 'gmail',
-      send: (answer, validate) =>
-        sendCalendarReply(
-          api,
-          threadId,
-          incoming.mail.replyHeaders,
-          email,
-          organizer,
-          request.reply(email, answer),
-          validate,
-        ),
-    },
-  }
+function conflict(): CapabilityError {
+  return new CapabilityError('CONFLICT', 'This invitation changed; reload it before responding')
 }
 
-/** Coordinates one explicit RSVP at a time per mailbox/thread, across vaults.
- * After an uncertain dispatch only reads may resolve it, never another send. */
-export function createMailInvitationSession() {
+/** One Electron-process owner, used by every vault. A durable reservation
+ * precedes dispatch; Retry reads Google and never replays a write. */
+export function createMailInvitationSession(store: ReturnType<typeof createMailInvitationStore>) {
   const busy = new Set<string>()
-  const pending = new Map<
-    string,
-    { identity: MailInvitationIdentity; answer: InviteAnswer; accepted: boolean }
-  >()
-  const keyOf = (target: Target) => `${target.accountSub}:${target.threadId}`
-  const read = async (target: Target): Promise<Resolved | null> => {
-    const result = await resolve(target)
-    await target.validateSession()
-    if (!result) return null
-    const key = keyOf(target)
-    const write = pending.get(key)
-    if (write) {
-      const invitation = result.invitation
+  const dispatching = new Set<string>()
+  const changeAttempt = (
+    id: string,
+    change: (attempt: InvitationAttempt) => InvitationAttempt | null,
+  ) =>
+    store.update((journal) => ({
+      ...journal,
+      attempts: journal.attempts.flatMap(
+        (attempt) => (attempt.id === id ? change(attempt) : attempt) ?? [],
+      ),
+    }))
+
+  const read = async (target: Target, excludeAttempt?: string): Promise<Resolved | null> => {
+    const { api, threadId, accountSub, email } = target
+    target.assertBinding()
+    const journal = await store.read()
+    const messages = await fetchThreadCalendarPayloads(api, threadId)
+    const incoming = await latestIncoming(messages)
+    target.assertBinding()
+    if (!incoming) return null
+    const { details, request } = incoming.selected.value
+    const identity = details.identity
+    const relevant = journal.attempts.filter(
+      (attempt) =>
+        attempt.id !== excludeAttempt &&
+        attempt.accountSub === accountSub &&
+        (attempt.state === 'confirmed'
+          ? sameRevision(attempt.revision, identity)
+          : sameGroup(attempt.revision, identity) || attempt.threadId === threadId),
+    )
+    const invitation: MailInvitation = {
+      ...details,
+      bindingRevision: target.bindingRevision,
+      responseStatus: null,
+      canRespond: false,
+      responsePending: false,
+    }
+    let reply: Reply | null = null
+    const pending: InvitationAttempt[] = []
+    const located: Mail[] = []
+    const locatedParents = new Set(incoming.parents)
+    let missingConfirmed = false
+    const organizer = details.organizer?.email
+    let calendar: Awaited<ReturnType<typeof findInvitationCalendarCopy>> | undefined
+    if (incoming.reason) invitation.unavailableReason = incoming.reason
+    else if (request && organizer) {
+      if (organizer === email) invitation.unavailableReason = 'You organize this event'
+      else calendar = await findInvitationCalendarCopy(api, { ...identity, organizer }, email)
+    }
+
+    for (const attempt of relevant) {
+      const { id, answer, delivery, revision } = attempt
+      if (dispatching.has(id)) {
+        pending.push(attempt)
+        continue
+      }
+      if (delivery.channel === 'calendar') {
+        if (
+          sameRevision(revision, identity) &&
+          calendar?.kind === 'verified' &&
+          !calendar.cancelled &&
+          delivery.target === calendar.target &&
+          answer === calendar.responseStatus
+        ) {
+          target.assertBinding()
+          await changeAttempt(id, () => null)
+        } else pending.push(attempt)
+        continue
+      }
+      const isAnswer = async (mail: Mail) => {
+        if (mail.parent !== delivery.parent) return false
+        const answers = await sentAnswer(mail, revision, delivery)
+        return answers.length === 1 && answers[0] === answer
+      }
+      let mail = await findSentCalendarReply(api, delivery.rfcId, delivery.receipt, isAnswer).catch(
+        () => null,
+      )
+      if (!mail) {
+        const inThread = messages.find((message) => message.rfcId === delivery.rfcId)
+        if (inThread && (await isAnswer(inThread))) mail = inThread
+      }
+      if (!mail) {
+        if (attempt.state !== 'confirmed') pending.push(attempt)
+        else missingConfirmed = true
+        continue
+      }
+      target.assertBinding()
+      if (attempt.state !== 'confirmed') {
+        const receipt = { id: mail.messageId, threadId: mail.threadId }
+        await changeAttempt(id, (current) => ({
+          ...current,
+          state: 'confirmed',
+          delivery: { ...delivery, receipt: delivery.receipt?.id ? delivery.receipt : receipt },
+        }))
+      }
       if (
-        !sameInvitation(write.identity, invitation.identity) ||
-        invitation.cancelled ||
-        invitation.responseStatus === write.answer
+        sameRevision(revision, identity) &&
+        delivery.organizer === organizer &&
+        delivery.mailbox === email
       ) {
-        pending.delete(key)
-      } else {
-        invitation.canRespond = false
-        invitation.responsePending = true
-        invitation.unavailableReason = write.accepted
-          ? 'Google accepted your response; waiting for it to appear'
-          : 'The response could not be confirmed. Check its status before sending again.'
-        // The write receipt carries the answer; the read model reports only
-        // Calendar or Sent evidence, even when that evidence is still stale.
-        result.reply = null
+        located.push(mail)
+        locatedParents.add(delivery.parent)
       }
     }
-    return result
+
+    if (calendar?.kind === 'blocked') invitation.unavailableReason = calendar.reason
+    if (calendar?.kind === 'verified') {
+      invitation.title = calendar.title?.trim() || invitation.title
+      invitation.start = calendar.start ?? invitation.start
+      invitation.end = calendar.end ?? invitation.end
+      if (calendar.start) invitation.allDay = calendar.allDay
+      invitation.location = calendar.location ?? invitation.location
+      const conferenceUrl = httpsLink(calendar.conferenceUrl)
+      const htmlLink = httpsLink(calendar.htmlLink)
+      if (conferenceUrl) {
+        invitation.conferenceUrl = conferenceUrl
+        invitation.conferenceLinkSource = 'calendar'
+      }
+      if (htmlLink) {
+        invitation.htmlLink = htmlLink
+        invitation.htmlLinkSource = 'calendar'
+      }
+      invitation.responseStatus = calendar.responseStatus
+      invitation.cancelled = calendar.cancelled
+      invitation.unavailableReason = calendar.unavailableReason
+      if (calendar.reply)
+        reply = {
+          channel: 'calendar',
+          target: calendar.target,
+          key: JSON.stringify([calendar.target, calendar.etag]),
+          send: calendar.reply,
+        }
+    } else if (calendar?.kind === 'absent' && request && organizer) {
+      const headers = incoming.selected.mail.replyHeaders
+      if (!request.attendees.includes(email)) {
+        invitation.unavailableReason =
+          'This invitation does not list the connected mailbox as an attendee'
+      } else {
+        const eligibleSent = messages.filter(
+          (mail) => mail.parent && incoming.parents.has(mail.parent),
+        )
+        const response = await sentResponse(
+          [...eligibleSent, ...located],
+          locatedParents,
+          identity,
+          { organizer, mailbox: email },
+        )
+        if (response.answers.size > 1 || missingConfirmed) {
+          invitation.unavailableReason = 'Gmail could not verify the latest sent response'
+        } else {
+          invitation.responseStatus = response.answers.values().next().value ?? 'needsAction'
+          if (!headers || !incoming.parents.has(headers.inReplyTo)) {
+            invitation.unavailableReason = 'This invitation has no valid Gmail reply headers'
+          } else {
+            reply = {
+              channel: 'gmail',
+              organizer,
+              headers,
+              body: request.reply,
+              key: JSON.stringify([organizer, email, headers, response.evidence]),
+            }
+          }
+        }
+      }
+    }
+    if (pending.length) {
+      invitation.responsePending = true
+      invitation.unavailableReason = pending.some((attempt) => attempt.state === 'accepted')
+        ? 'Google accepted your response; waiting for it to appear'
+        : 'The response could not be confirmed. Check its status before sending again.'
+      reply = null
+    }
+    invitation.canRespond = reply !== null
+    target.assertBinding()
+    return { invitation, reply }
   }
 
   return {
     async read(target: Target): Promise<MailInvitation | null> {
-      return (await read(target))?.invitation ?? null
+      const result = await read(target)
+      target.assertBinding()
+      return result?.invitation ?? null
     },
     async respond(
       target: Target,
       identity: MailInvitationIdentity,
       answer: InviteAnswer,
     ): Promise<RespondResult> {
-      const key = keyOf(target)
-      if (busy.has(key))
+      const { accountSub, threadId, email } = target
+      if (busy.has(accountSub))
         throw new CapabilityError('CONFLICT', 'An invitation response is already in progress')
-      busy.add(key)
+      busy.add(accountSub)
       try {
         const current = await read(target)
-        if (!current || !sameInvitation(current.invitation.identity, identity)) {
-          throw new CapabilityError(
-            'CONFLICT',
-            'This invitation changed; reload it before responding',
-          )
-        }
+        target.assertBinding()
+        if (!current || !sameInvitation(current.invitation.identity, identity)) throw conflict()
         const { invitation, reply } = current
         if (!reply)
           throw new CapabilityError(
@@ -253,50 +398,101 @@ export function createMailInvitationSession() {
         if (invitation.responseStatus === answer) {
           return { outcome: 'unchanged', channel, answer, invitation, refreshPending: false }
         }
-        const validate = async () => {
-          // Run inside the write seam, after obtaining its token. A changed
-          // thread must not write; Calendar also uses the matched event's ETag.
-          const newest = await latestIncoming(
-            await fetchThreadCalendarPayloads(target.api, target.threadId),
-          )
-          if (
-            !newest?.invitation.request ||
-            !sameInvitation(newest.invitation.details.identity, identity)
-          ) {
-            throw new CapabilityError(
-              'CONFLICT',
-              'This invitation changed; reload it before responding',
-            )
-          }
+
+        if (!invitation.identity.materialKey) throw conflict()
+        const id = randomUUID()
+        const { uid, recurrenceId, sequence, dtstamp, materialKey } = invitation.identity
+        const rfcId = `<${id}@holi.invalid>`
+        const attempt: InvitationAttempt = {
+          id,
+          accountSub,
+          threadId,
+          revision: { uid, recurrenceId, sequence, dtstamp, materialKey },
+          answer,
+          state: 'unresolved',
+          delivery:
+            channel === 'calendar'
+              ? { channel, target: reply.target }
+              : {
+                  channel,
+                  rfcId,
+                  parent: reply.headers.inReplyTo,
+                  organizer: reply.organizer,
+                  mailbox: email,
+                  receipt: null,
+                },
         }
+        dispatching.add(id)
         try {
-          await reply.send(answer, validate)
-        } catch (error) {
-          if (error instanceof GoogleWriteUncertainError) {
-            pending.set(key, { identity, answer, accepted: false })
-            return { outcome: 'uncertain', channel, answer, invitation: null, refreshPending: true }
-          }
-          if (error instanceof GoogleApiError && error.status === 412) {
-            throw new CapabilityError(
-              'CONFLICT',
-              'The Calendar event changed; reload it before responding',
+          await store.update((journal) => ({
+            ...journal,
+            attempts: [...journal.attempts, attempt],
+          }))
+          const validate = async () => {
+            // Runs after the write token has been obtained. Recheck the channel,
+            // exact Calendar target/ETag or proven absence, and the prior answer.
+            const newest = await read(target, id)
+            if (
+              !newest?.reply ||
+              !sameInvitation(newest.invitation.identity, identity) ||
+              newest.reply.channel !== channel ||
+              newest.reply.key !== reply.key ||
+              newest.invitation.responseStatus !== invitation.responseStatus
             )
+              throw conflict()
           }
-          throw error
+          try {
+            let receipt = null
+            if (channel === 'calendar') await reply.send(answer, validate)
+            else
+              receipt = await sendCalendarReply(
+                target.api,
+                threadId,
+                reply.headers,
+                rfcId,
+                email,
+                reply.organizer,
+                reply.body(email, answer),
+                validate,
+              )
+            // A journal/readback failure after acceptance is never a failed send.
+            await changeAttempt(id, (entry) => ({
+              ...entry,
+              state: 'accepted',
+              delivery:
+                entry.delivery.channel === 'gmail'
+                  ? { ...entry.delivery, receipt }
+                  : entry.delivery,
+            })).catch(() => null)
+          } catch (error) {
+            if (error instanceof GoogleWriteUncertainError) {
+              return {
+                outcome: 'uncertain',
+                channel,
+                answer,
+                invitation: null,
+                refreshPending: true,
+              }
+            }
+            // Preflight refused before dispatch, or Google definitively refused.
+            await changeAttempt(id, () => null)
+            if (error instanceof GoogleApiError && error.status === 412) throw conflict()
+            throw error
+          }
+        } finally {
+          dispatching.delete(id)
         }
-        pending.set(key, { identity, answer, accepted: true })
-        // No failure after a 2xx can turn it into a failed send. Gmail may
-        // accept a REPLY before it can be read back from the thread.
         const refreshed = await read(target).catch(() => null)
+        const confirmed = refreshed?.invitation ?? null
         return {
           outcome: 'sent',
           channel,
           answer,
-          invitation: refreshed?.invitation ?? null,
-          refreshPending: refreshed === null || refreshed.invitation.responsePending,
+          invitation: confirmed,
+          refreshPending: confirmed === null || confirmed.responsePending,
         }
       } finally {
-        busy.delete(key)
+        busy.delete(accountSub)
       }
     },
   }

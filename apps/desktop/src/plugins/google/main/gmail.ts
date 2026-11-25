@@ -1837,73 +1837,165 @@ async function readCalendarPart(api: GoogleApi, messageId: string | undefined, p
   return Buffer.from(fetched.data, 'base64').toString('utf8')
 }
 
-/** Only valid RFC Message-IDs can travel into an outgoing header. */
-function messageIds(header: string | null): string[] {
-  return header?.match(/<[^<>\s@]+@[^<>\s@]+>/g) ?? []
+type CalendarReplyHeaders = {
+  subject: string
+  inReplyTo: string
+  references: string[]
 }
 
 type CalendarMail = {
   messageId: string
+  rfcId: string | null
+  threadId: string | null
+  parent: string | null
   timestamp: number
   sent: boolean
   from: string
   to: string[]
-  replyHeaders: Pick<OutgoingMail, 'subject' | 'inReplyTo' | 'references'>
+  replyHeaders: CalendarReplyHeaders | null
   parts: { method: string | undefined; read: () => Promise<string> }[]
 }
 
-/** Newest first. Attachment bodies are lazy: an older missing attachment must
- * not hide a newer invitation, and Calendar RSVP does not need sent payloads. */
+type CalendarReplyReceipt = { id: string | null; threadId: string | null }
+
+function calendarMailId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(value)
+}
+
+/** Do not accept a good-looking substring of an invalid header, or choose
+ * between duplicate headers. Missing is distinct from invalid. */
+function calendarHeaderIds(part: RawPart | undefined, name: string): string[] | null {
+  const values = (part?.headers ?? []).filter((header) => header.name?.toLowerCase() === name)
+  if (values.length === 0) return []
+  const value = values[0]?.value
+  if (values.length !== 1 || typeof value !== 'string') return null
+  const ids = normalizeMessageIds(value)
+  return ids?.length ? ids : null
+}
+
+function calendarMail(api: GoogleApi, message: RawMessage): CalendarMail | null {
+  const id = message.id
+  if (!calendarMailId(id) || message.labelIds?.includes('DRAFT')) return null
+  const parts = calendarPartsOf(message.payload)
+  if (parts.length === 0) return null
+  const ids = calendarHeaderIds(message.payload, 'message-id')
+  const rfcId = ids?.length === 1 ? ids[0]! : null
+  const references = calendarHeaderIds(message.payload, 'references')
+  const parent = calendarHeaderIds(message.payload, 'in-reply-to')
+  const validThreading = references !== null && parent !== null && parent.length <= 1
+  const parentId =
+    validThreading && (!parent.length || !references.length || references.at(-1) === parent[0])
+      ? (parent[0] ?? references.at(-1) ?? null)
+      : null
+  const subject = (headerOf(message.payload, 'Subject') ?? '').replace(/[\r\n]+/g, ' ').trim()
+  const from = parseAddresses(headerOf(message.payload, 'From'))
+  return {
+    messageId: id,
+    rfcId,
+    threadId: calendarMailId(message.threadId) ? message.threadId : null,
+    parent: parentId,
+    timestamp: Number(message.internalDate) || 0,
+    sent: message.labelIds?.includes('SENT') ?? false,
+    from: from.length === 1 ? from[0]!.email : '',
+    to: parseAddresses(headerOf(message.payload, 'To')).map(({ email }) => email),
+    replyHeaders:
+      rfcId && validThreading
+        ? {
+            subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+            inReplyTo: rfcId,
+            references: [
+              ...new Set([...references, ...parent].filter((id) => id !== rfcId)),
+              rfcId,
+            ],
+          }
+        : null,
+    parts: parts.map((part) => ({
+      method: parseHeaderParameters(
+        headerOf(part, 'Content-Type') ?? part.mimeType ?? '',
+      )?.parameters.get('method'),
+      read: async () => (await readCalendarPart(api, id, part)) ?? '',
+    })),
+  }
+}
+
+/** Read calendar MIME for revision selection and Sent evidence, including
+ * attachments fetched only when the caller consumes their parts. */
 export async function fetchThreadCalendarPayloads(
   api: GoogleApi,
   threadId: string,
 ): Promise<CalendarMail[]> {
   const thread = await fullCalendarThread(api, threadId)
-  const messages: CalendarMail[] = []
-  for (const message of thread.messages ?? []) {
-    const id = message.id
-    if (!id || message.labelIds?.includes('DRAFT')) continue
-    const parts = calendarPartsOf(message.payload)
-    if (parts.length === 0) continue
-    const inReplyTo = messageIds(headerOf(message.payload, 'Message-ID'))[0]
-    const references = messageIds(
-      headerOf(message.payload, 'References') ?? headerOf(message.payload, 'In-Reply-To'),
+  if (
+    !thread ||
+    thread.id !== threadId ||
+    !Array.isArray(thread.messages) ||
+    thread.messages.some(
+      (message) =>
+        !message ||
+        !calendarMailId(message.id) ||
+        (message.threadId !== undefined && message.threadId !== threadId),
     )
-    if (inReplyTo && !references.includes(inReplyTo)) references.push(inReplyTo)
-    const subject = (headerOf(message.payload, 'Subject') ?? '').replace(/[\r\n]+/g, ' ').trim()
-    messages.push({
-      messageId: id,
-      timestamp: Number(message.internalDate) || 0,
-      sent: message.labelIds?.includes('SENT') ?? false,
-      from: parseAddress(headerOf(message.payload, 'From')).email,
-      to: parseAddresses(headerOf(message.payload, 'To')).map(({ email }) => email),
-      replyHeaders: {
-        subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
-        inReplyTo,
-        references,
-      },
-      parts: parts.map((part) => ({
-        method: parseHeaderParameters(
-          headerOf(part, 'Content-Type') ?? part.mimeType ?? '',
-        )?.parameters.get('method'),
-        read: async () => (await readCalendarPart(api, id, part)) ?? '',
-      })),
-    })
+  ) {
+    throw new Error('Gmail could not verify this invitation thread')
   }
-  // Gmail's thread order is chronological; reverse first to break internalDate ties.
-  return messages.reverse().sort((a, b) => b.timestamp - a.timestamp)
+  return thread.messages.flatMap((message) => calendarMail(api, message) ?? [])
+}
+
+/** The send receipt may point to a different thread. If no usable receipt
+ * was returned, a bounded exact-ID search of Sent can find the same reply. */
+export async function findSentCalendarReply(
+  api: GoogleApi,
+  rfcId: string,
+  receipt: CalendarReplyReceipt | null,
+  matches: (message: CalendarMail) => Promise<boolean>,
+): Promise<CalendarMail | null> {
+  const read = async (id: string, threadId: string | null) => {
+    const raw = await api.get<RawMessage>(`${BASE}/messages/${encodeURIComponent(id)}`, {
+      format: 'full',
+    })
+    if (raw?.id !== id || (threadId !== null && raw.threadId !== threadId)) return null
+    const mail = calendarMail(api, raw)
+    return mail?.rfcId === rfcId && (await matches(mail)) ? mail : null
+  }
+  if (receipt?.id) {
+    const mail = await read(receipt.id, receipt.threadId).catch(() => null)
+    if (mail) return mail
+  }
+  const page = await api.get<{
+    messages?: Pick<RawMessage, 'id' | 'threadId'>[]
+    nextPageToken?: string
+  }>(`${BASE}/messages`, {
+    labelIds: 'SENT',
+    q: `rfc822msgid:${rfcId.slice(1, -1)}`,
+    maxResults: '10',
+  })
+  if (
+    !page ||
+    page.nextPageToken !== undefined ||
+    !Array.isArray(page.messages) ||
+    page.messages.length > 10
+  )
+    return null
+  const found = new Map<string, CalendarMail>()
+  for (const candidate of page.messages) {
+    if (!calendarMailId(candidate?.id)) return null
+    const mail = await read(candidate.id, candidate.threadId ?? null).catch(() => null)
+    if (mail) found.set(mail.messageId, mail)
+  }
+  return found.size === 1 ? (found.values().next().value ?? null) : null
 }
 
 /** Send a calendar reply to only the organizer, in the thread being answered. */
 export async function sendCalendarReply(
   api: GoogleApi,
   threadId: string,
-  headers: CalendarMail['replyHeaders'],
+  headers: CalendarReplyHeaders,
+  rfcId: string,
   from: string,
   organizer: string,
   calendarText: string,
   validate: () => Promise<void>,
-): Promise<{ id: string | null }> {
+): Promise<CalendarReplyReceipt> {
   // The caller supplies the verified mailbox, not a From header from the invitation.
   if (/[\r\n]/.test(from)) throw new Error('Invalid calendar reply sender')
   const message = buildRfc822({
@@ -1919,15 +2011,16 @@ export async function sendCalendarReply(
       },
     ],
   })
-  const sent = await api.postJson<{ id?: string }>(
+  const sent = await api.postJson<{ id?: string; threadId?: string }>(
     `${BASE}/messages/send`,
     {
-      raw: toBase64Url(`From: ${from}\r\n${message}`),
+      raw: toBase64Url(`From: ${from}\r\nMessage-ID: ${rfcId}\r\n${message}`),
       threadId,
     },
     validate,
   )
-  return { id: sent?.id ?? null }
+  const identifier = (value: unknown) => (calendarMailId(value) ? value : null)
+  return { id: identifier(sent?.id), threadId: identifier(sent?.threadId) }
 }
 
 function isCalendarPart(part: RawPart): boolean {
