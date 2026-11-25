@@ -38,16 +38,12 @@ export function createVaultCliInstallations(
   async function prepare(remote: string) {
     const port = bridge.port()
     if (port === null) throw new Error('vault CLI bridge is not listening')
-    // Remote segments, not generated vault IDs. Prefix validation also excludes
-    // traversal and Windows device names as filesystem path components.
-    const segments = remote.split('/')
-    if (
-      segments.some(
-        (segment) =>
-          /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(segment) || segment.endsWith('.'),
-      )
-    )
-      throw new Error('unsafe vault remote path')
+    // Reversible remote segments, not generated vault IDs. Hex has no Windows
+    // device names or trailing dots/spaces, and cannot collapse distinct names.
+    const segments = remote
+      .toLowerCase()
+      .split('/')
+      .map((segment) => Buffer.from(segment, 'utf8').toString('hex'))
     let dir = userDataDir
     for (const segment of ['vault-cli', ...segments]) {
       dir = join(dir, segment)
@@ -78,7 +74,7 @@ export function createVaultCliInstallations(
       const normalized = remote.toLowerCase()
       let installation = pending.get(normalized)
       if (!installation) {
-        installation = prepare(normalized).catch((error) => {
+        installation = prepare(remote).catch((error) => {
           pending.delete(normalized)
           throw error
         })

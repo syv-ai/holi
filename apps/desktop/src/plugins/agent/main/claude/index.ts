@@ -6,7 +6,8 @@
  * No `electron` import: the caller hands in the colour mode it reads from
  * `nativeTheme`, so this loads under plain Node in the tests.
  */
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
+import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
 import type { BackgroundProvider } from '../provider'
 import {
   buildAgentEnv,
@@ -59,7 +60,10 @@ export function claudeProvider(deps: ClaudeProviderDeps): BackgroundProvider {
         env: {
           HOLI_BIN: deps.holiBin(),
           PATH: Object.entries(
-            buildAgentEnv(process.env, { binDir: dirname(deps.holiBin()) }),
+            buildAgentEnv(process.env, {
+              binDir: dirname(deps.holiBin()),
+              commandsDir: join(root, PLUGIN_COMMANDS_DIR),
+            }),
           ).find(([key]) => key.toUpperCase() === 'PATH')![1],
         },
       }),

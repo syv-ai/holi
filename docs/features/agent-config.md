@@ -234,9 +234,9 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   alone: refused for any other session),
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script is
-  generated at `<Electron userData>/bin/holi`, and Holi supplies its path as `HOLI_BIN` to its
-  Claude sessions. Holi-launched agents receive a separate `holi` executable bound
-  to their vault's private endpoint descriptor. Its vault-local credential rejects
+  generated at `<Electron userData>/bin/holi` for the person's terminal. Holi-launched
+  agents receive a separate `holi` executable as `HOLI_BIN`, bound to their vault's
+  private endpoint descriptor. Its vault-local credential rejects
   another `--vault` selector, including after changing directory; missing, malformed
   or stale credentials fail without using the machine credential. Interactive,
   background and job launches retain the owning vault's CLI path. Claude's
