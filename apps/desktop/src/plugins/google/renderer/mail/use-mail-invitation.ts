@@ -37,7 +37,7 @@ export interface InvitationCardState {
 
 interface InvitationState {
   cards: InvitationCardState[]
-  busy: 'reading' | { responding: string } | null
+  busy: 'reading' | { action: 'responding' | 'opening'; key: string } | null
   readError: string | null
   recoveryReason: string | null
 }
@@ -53,6 +53,7 @@ export function useMailInvitation({
 }: ReadInput & { remote: string; remoteRevision: number; accountRevision: number }) {
   const store = useStore()
   const owner = useRef<object | null>(null)
+  const currentCards = useRef<InvitationCardState[]>([])
   const flight = useRef(false)
   const [state, setState] = useState<InvitationState>({
     cards: [],
@@ -71,6 +72,7 @@ export function useMailInvitation({
 
   // Do not readmit an action until its result and disabled state have committed.
   useLayoutEffect(() => {
+    currentCards.current = state.cards
     if (state.busy === null) flight.current = false
   }, [state])
 
@@ -157,7 +159,7 @@ export function useMailInvitation({
         busy,
         cards: previous.cards.map((current) => (current.key === key ? update(current) : current)),
       }))
-    updateCard({ responding: key }, (current) => ({ ...current, receipt: null }))
+    updateCard({ action: 'responding', key }, (current) => ({ ...current, receipt: null }))
     try {
       const result = await googleCap.respondToMailInvitation(remote, {
         threadId,
@@ -193,12 +195,42 @@ export function useMailInvitation({
     }
   }
 
-  const openLink = async (url: string) => {
-    const lifetime = owner.current
-    if (!ownsReader()) return
-    const accounts = await googleCap.allAccounts(remote).catch(() => null)
-    if (owner.current === lifetime && ownsReader() && accounts?.current === expectedAccountSub)
-      openExternal(url)
+  const openLink = async (card: InvitationCardState, url: string) => {
+    if (
+      state.busy !== null ||
+      state.readError !== null ||
+      card.error !== null ||
+      !currentCards.current.includes(card)
+    )
+      return
+    const request = begin()
+    if (request === null) return
+    setState((previous) => ({ ...previous, busy: { action: 'opening', key: card.key } }))
+    try {
+      await googleCap.validateMailInvitationBinding(remote, {
+        expectedAccountSub,
+        expectedBindingRevision: card.invitation.bindingRevision,
+      })
+      if (request() && currentCards.current.includes(card)) openExternal(url)
+      if (request()) setState((previous) => ({ ...previous, busy: null }))
+    } catch (error) {
+      if (!request()) return
+      setState((previous) => ({
+        ...previous,
+        busy: null,
+        cards: previous.cards.map((current) =>
+          current === card
+            ? {
+                ...current,
+                error: messageOf(
+                  error,
+                  'Could not verify this invitation before opening its link.',
+                ),
+              }
+            : current,
+        ),
+      }))
+    }
   }
 
   return { ...state, openLink, read, respond }

@@ -49,6 +49,8 @@ const createTaskMock = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
 let mailAccountSub = 'mail-view-account'
+let mailBindingRevision = 'view-binding-1'
+let heldBindingValidation: Promise<void> | undefined
 const google: Record<string, (params: unknown, remote: string) => unknown> = {
   status: () => ({
     account: {
@@ -97,11 +99,20 @@ const google: Record<string, (params: unknown, remote: string) => unknown> = {
     if (target.expectedAccountSub !== mailAccountSub) throw new Error('Google account changed')
     return invitationMock(remote, target)
   },
+  validateMailInvitationBinding: async (p) => {
+    const target = p as Parameters<typeof googleCap.validateMailInvitationBinding>[1]
+    if (
+      target.expectedAccountSub !== mailAccountSub ||
+      target.expectedBindingRevision !== mailBindingRevision
+    )
+      throw new Error('Google account binding changed')
+    await heldBindingValidation
+  },
   respondToMailInvitation: (p, remote) => {
     const target = p as Parameters<typeof googleCap.respondToMailInvitation>[1]
     if (
       target.expectedAccountSub !== mailAccountSub ||
-      target.expectedBindingRevision !== invite.bindingRevision
+      target.expectedBindingRevision !== mailBindingRevision
     )
       throw new Error('Google account changed')
     return respondMock(remote, target)
@@ -252,6 +263,8 @@ async function frameOf(article: HTMLElement): Promise<Document> {
 beforeEach(() => {
   threadMock.mockReset()
   mailAccountSub = 'mail-view-account'
+  mailBindingRevision = 'view-binding-1'
+  heldBindingValidation = undefined
   // A default, because the real query ALWAYS returns a promise. A bare
   // `mockReset()` returns `undefined`, which surfaces as an unhandled error
   // beside a passing suite rather than as a failure.
@@ -544,6 +557,7 @@ const invite: Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations'
   start: '2026-08-19T12:00:00.000Z',
   end: '2026-08-19T13:00:00.000Z',
   allDay: false,
+  floating: false,
   organizer: { name: 'Jane', email: 'jane@example.com' },
   location: 'Workshop',
   conferenceUrl: 'https://teams.microsoft.com/l/meetup-join/19%3aX/0',
@@ -597,7 +611,103 @@ test('does not open a link from a reader whose Google account was relinked', asy
   // The connector can change before this reader receives its refresh notification.
   mailAccountSub = 'account-b'
   await user.click(join)
+  const region = within(screen.getByRole('region', { name: 'Calendar invitation' }))
+  expect(await region.findByRole('alert')).toHaveTextContent(/account binding changed/i)
   expect(openExternal).not.toHaveBeenCalled()
+})
+
+test('a same-account relink blocks the old card link and Retry only rereads it', async () => {
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  const accepted = { ...invite, responseStatus: 'accepted' } as const
+  invitationMock.mockResolvedValue(invitations(accepted))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  const join = await region.findByRole('button', { name: 'Join meeting' })
+
+  // The provider subject stays the same, but main has a different binding revision.
+  mailBindingRevision = 'view-binding-2'
+  invitationMock.mockResolvedValue(
+    invitations({ ...accepted, bindingRevision: mailBindingRevision }),
+  )
+  await user.click(join)
+  expect(await region.findByRole('alert')).toHaveTextContent(/account binding changed/i)
+  expect(region.getByText('Response: Accepted')).toBeVisible()
+  expect(join).toBeDisabled()
+  expect(openExternal).not.toHaveBeenCalled()
+
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(region.queryByRole('alert')).not.toBeInTheDocument())
+  expect(region.getByText('Response: Accepted')).toBeVisible()
+  expect(openExternal).not.toHaveBeenCalled()
+  expect(respondMock).not.toHaveBeenCalled()
+
+  await user.click(region.getByRole('button', { name: 'Join meeting' }))
+  await waitFor(() => expect(openExternal).toHaveBeenCalledExactlyOnceWith(invite.conferenceUrl))
+})
+
+test('does not open a validated invitation link after switching reader threads', async () => {
+  const user = userEvent.setup()
+  let release!: () => void
+  heldBindingValidation = new Promise<void>((resolve) => (release = resolve))
+  invitationMock.mockResolvedValue(invitations(invite))
+  readMock.mockImplementation(async ({ id }: { id: string }) => ({
+    id,
+    subject: id === 't1' ? 'Q2 budget' : 'Lunch',
+    webUrl: 'https://mail.google.com/x',
+    messages: [],
+  }))
+  threadMock.mockResolvedValue(
+    page([summary({ hasInvite: true }), summary({ id: 't2', subject: 'Lunch' })]),
+  )
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  await user.click(await region.findByRole('button', { name: 'Join meeting' }))
+  expect(await region.findByText('Checking invitation link…')).toBeVisible()
+  expect(openExternal).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: /Lunch/ }))
+  expect(await screen.findByRole('heading', { name: 'Lunch' })).toBeVisible()
+  await act(async () => release())
+  expect(openExternal).not.toHaveBeenCalled()
+  expect(respondMock).not.toHaveBeenCalled()
+})
+
+test('renders a floating occurrence at its wall-clock time inside a DST gap', async () => {
+  vi.stubEnv('TZ', 'America/New_York')
+  try {
+    expect(new Date('2026-03-08T06:30:00Z').getHours()).toBe(1)
+    expect(new Date('2026-03-08T07:30:00Z').getHours()).toBe(3)
+    threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+    invitationMock.mockResolvedValue(
+      invitations({
+        ...invite,
+        recurring: true,
+        scope: 'occurrence',
+        identity: { ...invite.identity, recurrenceId: '2026-03-01T02:30:00' },
+        floating: true,
+        start: '2026-03-08T02:30:00',
+        end: '2026-03-08T04:00:00',
+      }),
+    )
+    const user = userEvent.setup()
+    render(<MailView />)
+    await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+    const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+    expect(await region.findByText(/02:30 – 04:00/)).toBeVisible()
+
+    imageSendersMock.mockResolvedValueOnce({
+      imageSenders: [],
+      imagesFromAllSenders: false,
+      timeFormat: '12h',
+    })
+    await act(async () => getDefaultStore().set(loadVaultSettingsAtom, { force: true }))
+    expect(await region.findByText(/2:30\s*AM – 4:00\s*AM/i)).toBeVisible()
+  } finally {
+    await act(async () => getDefaultStore().set(loadVaultSettingsAtom, { force: true }))
+    vi.unstubAllEnvs()
+  }
 })
 
 test.each(['conference', 'event'] as const)(

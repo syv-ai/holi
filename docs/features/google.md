@@ -11,7 +11,14 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - **Each vault names its account** in `userData/google-vault-accounts.json` (`owner/repo` → `sub`), outside the clone. One account may serve several vaults; linking a stored account needs no consent. _Disconnect this vault_ drops the mapping, at once, because _Use in this vault_ undoes it; _Remove from Holi_ revokes at Google, deletes tokens and cache, and unlinks every vault, so Connections asks first ("Remove … from Holi?", a destructive _Remove account_) and holds the dialog open while the revoke runs. Connections' errors and the reconnect warning are `text-destructive` and wrap rather than truncate. A new vault is never mapped automatically.
 - **Scope drift:** an old grant keeps working and 403s only the newly added calls. `missingScopes()` compares stored scopes in Google's vocabulary (`email` returns as `.../userinfo.email`) and settings offers **Reconnect**.
 - **Mail cache:** one `node:sqlite` file per account, `userData/google-cache-<sub>.db`, last 500 threads, reconciled by `history.list` deltas. The key carries every filter that narrows a list; the history cursor is per key; archive and trash arrive as label changes and land in a _left_ bucket. Bump `SHAPE_VERSION` when a cached type changes. A removed or dead account deletes the file and its sidecars.
-- **Writes:** the renderer paints first and reverts on refusal; main calls Google first and updates the cache only on success. Every thread action takes that one path. Archive and trash, of one thread or a selection, then raise one toast ("Thread moved to Trash", "2 threads archived") that stays until dismissed and offers **Undo**: undo beats a confirmation for a frequent, reversible removal. Undo calls `google.unarchive` (`INBOX` back on) or `google.untrash` (Gmail's `/untrash`), UI-door only, and re-reads the list; nothing is put back into the cache, because `history.list` brings both changes back.
+- **Thread triage writes** paint first and revert on refusal; main calls Google first
+  and updates the cache only on success. Archive and trash, of one thread or a
+  selection, raise one toast ("Thread moved to Trash", "2 threads archived") that stays
+  until dismissed and offers **Undo**: undo beats a confirmation for a frequent,
+  reversible removal. Undo calls `google.unarchive` (`INBOX` back on) or
+  `google.untrash` (Gmail's `/untrash`), UI-door only, and re-reads the list;
+  nothing is put back into the cache, because `history.list` brings both changes back.
+  Mail RSVP does not paint an unconfirmed answer.
 - **Mail's panes** share one left edge: the toolbar, selection bar, find bar and
   reader's action row use `PaneToolbar`; the subject wraps on its own row. Reply,
   Reply all, Archive, Trash and Star stay on the action row. Summarize, Task,
@@ -22,18 +29,19 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - **Meeting invitations in Mail** use the same cards in both readers. A calendar
   MIME part can open a card even when the thread has no attachment badge. The
   cards show the organizer, time, location and confirmed response when known. A
-  series and a separately invited occurrence have distinct cards: Accept, Maybe
-  and Decline apply only to the eligible invitation on that card. A verified
-  meeting without a response to make can still offer a link, but not RSVP.
+  floating time keeps the invitation's wall clock rather than taking the host's
+  time zone. A series and a separately invited occurrence have distinct cards:
+  Accept, Maybe and Decline apply only to the eligible invitation on that card.
+  A verified meeting without a response to make can still offer a link, but not RSVP.
 - **Mail RSVP** updates only the attendee's entry on a verified, writable Calendar
   copy, using the selected series or original occurrence. Only when Calendar
   verifies that no matching copy exists does Holi send a threaded iTIP reply
   through Gmail to the organizer. A blocked or inconclusive Calendar lookup is
   not permission to send mail. Main binds the response to the vault's linked
-  account and the exact invitation revision; the reader also rechecks its
-  ownership and linked account before opening a card link. A pending or refused
-  response is not shown as confirmed. **Retry** checks the thread and provider
-  status again; it never repeats the send.
+  account and the exact invitation revision. Opening a card link checks the binding
+  revision in main without contacting Google, then rechecks that the reader still owns
+  the card. A pending or refused response is not shown as confirmed. **Retry** checks
+  the thread and provider status again; it never repeats the send or opens a link.
 - **Calendar** shows calendars the user owns by default; per-calendar overrides
   are the plugin's `calendars` setting in the vault's
   `.holi/settings/plugins.local.yaml`, read in main so the agent and apps honour
@@ -65,7 +73,14 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - Never write "the agent cannot send": `gmail.modify` permits it; the gate is the wall. Do not widen past `gmail.modify`.
 - A send with unknown outcome is never retried. UI send is not gated.
 - Mail data stays in `userData`, per account, never in a vault.
-- Treat a new Google call as broken until it has run against a real account; fakes written from docs have passed on broken code, and Gmail answers some bad requests with an empty 200.
+- Verify new Google calls against a real account when fixtures cannot model the
+  relevant behavior. Fakes written from docs have passed on broken code, and Gmail
+  answers some bad requests with an empty 200. Mail invitation acceptance can use a
+  protocol-faithful offline Google transport through both production readers and
+  capabilities, not stubs that simply report success. The fixture covers inline and
+  attached calendar MIME, Calendar updates and readback, Gmail refusal and exact
+  message-ID readback from Sent in a separate thread, read-only Retry, and a blocked
+  write after an account switch. This does not verify live email delivery.
 
 ## Rejected
 

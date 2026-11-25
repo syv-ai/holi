@@ -90,6 +90,14 @@ const google: Record<string, (params: unknown, remote: string) => unknown> = {
     if (target.expectedAccountSub !== accountSub) throw new Error('Google account changed')
     return invitationMock(remote, target)
   },
+  validateMailInvitationBinding: async (p) => {
+    const target = p as Parameters<typeof googleCap.validateMailInvitationBinding>[1]
+    if (
+      target.expectedAccountSub !== accountSub ||
+      target.expectedBindingRevision !== `shell-binding-${accountBinding}`
+    )
+      throw new Error('Google account binding changed')
+  },
   respondToMailInvitation: (p, remote) => {
     const target = p as Parameters<typeof googleCap.respondToMailInvitation>[1]
     if (
@@ -446,6 +454,7 @@ const invitation: Invitation = {
   start: '2026-08-18',
   end: '2026-08-20',
   allDay: true,
+  floating: false,
   organizer: { name: 'Jane Doe', email: 'jane@example.com' },
   location: 'Workshop',
   conferenceUrl: 'https://meet.google.com/abc-defg-hij',
@@ -540,6 +549,10 @@ test('shows a filename-less inline invitation in the mail shell', async () => {
   const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
   expect(await region.findByRole('heading', { name: 'Budget workshop' })).toBeInTheDocument()
   expect(region.getByRole('button', { name: 'Accept' })).toBeEnabled()
+  await user.click(region.getByRole('button', { name: 'Join meeting' }))
+  await waitFor(() =>
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith(invitation.conferenceUrl),
+  )
 })
 
 test('reports Google acceptance separately from a failed status refresh and Retry only reads', async () => {
