@@ -29,6 +29,7 @@ describe.skipIf(!process.env.HOLI_CODEX_TUI_BIN)('native Codex TUI production co
       error?: string
     }> = []
     const allContexts: Context[] = []
+    const owners: Array<{ directory: string | null; removed: boolean; nativeDrained: boolean }> = []
     let failure: unknown
     let bridgeClosed = false
     const run = async (
@@ -49,6 +50,7 @@ describe.skipIf(!process.env.HOLI_CODEX_TUI_BIN)('native Codex TUI production co
             bridge,
             remote: `fixture/${name}-${suffix}`,
             mode,
+            onOwned: (owner) => owners.push(owner),
           })
           contexts.push(context)
           allContexts.push(context)
@@ -203,15 +205,14 @@ describe.skipIf(!process.env.HOLI_CODEX_TUI_BIN)('native Codex TUI production co
         runId,
         nonce,
         workerPid: process.pid,
+        owners,
         classification: failure ? 'observed-contract-error' : 'pass',
         error: failure ? String(failure) : undefined,
         scenarios,
         cleanup: {
           bridgeClosed,
-          contextsRemoved: allContexts.every((context) => context.snapshot().removed),
-          nativeDrained: allContexts.every((context) =>
-            context.snapshot().native.every(({ receipt }) => receipt?.drained === true),
-          ),
+          contextsRemoved: owners.every((owner) => owner.removed),
+          nativeDrained: owners.every((owner) => owner.nativeDrained),
         },
       }
       const bytes = JSON.stringify(evidence)

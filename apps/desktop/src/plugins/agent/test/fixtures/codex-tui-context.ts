@@ -23,16 +23,21 @@ export async function createCodexTuiContext({
   bridge,
   remote,
   mode,
+  onOwned,
 }: {
   root: string
   bin: string
   bridge: BridgeServer
   remote: string
   mode: 'success' | 'approval'
+  onOwned(record: { directory: string | null; removed: boolean; nativeDrained: boolean }): void
 }) {
   if (process.platform !== 'darwin')
     throw new Error('Native TUI containment requires macOS Seatbelt')
+  const ownership = { directory: null as string | null, removed: false, nativeDrained: false }
+  onOwned(ownership)
   const directory = await realpath(await mkdtemp(join(root, 'context-')))
+  ownership.directory = directory
   const vault = join(directory, 'vault')
   const env: NodeJS.ProcessEnv = {
     HOME: join(directory, 'home'),
@@ -157,11 +162,13 @@ export async function createCodexTuiContext({
           failures.push(error)
         }
       }
+      ownership.nativeDrained = native.every(({ receipt }) => receipt?.drained === true)
       if (native.some(({ receipt }) => receipt?.drained !== true))
         failures.push(new Error('Native PTY drainage missing'))
       if (failures.length) throw new AggregateError(failures, 'Native context cleanup incomplete')
       await rm(directory, { recursive: true, force: true })
       removed = true
+      ownership.removed = true
     })())
   try {
     for (const path of [

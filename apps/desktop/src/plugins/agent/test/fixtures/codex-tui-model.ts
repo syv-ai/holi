@@ -28,7 +28,8 @@ export function startCodexTuiModel({ mode }: { mode: 'success' | 'approval' }) {
         const bytes = Buffer.from(chunk)
         length += bytes.length
         if (length > maxBodyBytes) {
-          request.destroy()
+          send(response, 413)
+          request.resume()
           return
         }
         chunks.push(bytes)
@@ -155,6 +156,7 @@ export function startCodexTuiModel({ mode }: { mode: 'success' | 'approval' }) {
       return address && typeof address !== 'string' ? address.port : 0
     },
     requests,
+    ready: listening,
     async close() {
       if (closed) return
       closed = true
@@ -169,10 +171,7 @@ function send(response: ServerResponse, status: number) {
   response.end()
 }
 function hasPrompt(value: any): boolean {
-  return (
-    Array.isArray(value.input) &&
-    value.input.some((item: any) => JSON.stringify(item).includes('exec_command'))
-  )
+  return Array.isArray(value.input) && value.input.some((item: any) => item?.role === 'user')
 }
 function sanitize(value: any): any {
   if (Array.isArray(value)) return value.map(sanitize)

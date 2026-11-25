@@ -49,6 +49,7 @@ function protocol() {
     schema: 'holi.codex-tui-producer.v1',
     ...identity,
     workerPid: 99,
+    owners: Array.from({ length: 6 }, () => ({ removed: true, nativeDrained: true })),
     classification: 'pass',
     cleanup: { bridgeClosed: true, contextsRemoved: true, nativeDrained: true },
     scenarios: [
@@ -105,6 +106,9 @@ test('foreign identity, tampered bytes and missing physical receipts fail closed
   const { proof, identity } = protocol()
   assert.throws(() => inspect(proof, { ...identity, nonce: 'foreign' }))
   assert.equal(inspect(proof, identity, { sha256: 'not-the-artifact-digest' }).settled, false)
+  proof.owners.push({ removed: false, nativeDrained: false })
+  assert.equal(inspect(proof, identity).settled, false)
+  proof.owners.pop()
   proof.scenarios[0].contexts[0].native[0].receipt.drained = false
   assert.equal(inspect(proof, identity).settled, false)
   assert.equal(inspect(proof, identity).complete, false)

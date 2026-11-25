@@ -30,6 +30,8 @@ export function inspectCodexTuiEvidence(bytes, receipt, identity) {
     Array.isArray(context.native) ? context.native : [],
   )
   const settled =
+    Array.isArray(proof.owners) &&
+    proof.owners.every((owner) => owner.removed === true && owner.nativeDrained === true) &&
     receipt?.settled === true &&
     receipt.runId === identity.runId &&
     receipt.nonce === identity.nonce &&

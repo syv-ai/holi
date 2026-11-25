@@ -6,9 +6,10 @@ const models: ReturnType<typeof startCodexTuiModel>[] = []
 afterEach(async () => {
   await Promise.all(models.splice(0).map((model) => model.close()))
 })
-function start(mode: 'success' | 'approval' = 'success') {
+async function start(mode: 'success' | 'approval' = 'success') {
   const model = startCodexTuiModel({ mode })
   models.push(model)
+  await model.ready
   return model
 }
 
@@ -22,7 +23,7 @@ async function post(port: number, body: Buffer | string, headers: Record<string,
 
 describe('loopback Codex Responses model', () => {
   it('streams a completed answer and records request input', async () => {
-    const model = start()
+    const model = await start()
     const response = await post(
       model.port,
       JSON.stringify({ input: [{ role: 'user', content: 'hello' }] }),
@@ -35,9 +36,9 @@ describe('loopback Codex Responses model', () => {
   })
 
   it('accepts gzip requests and emits one approval call before subsequent answers', async () => {
-    const model = start('approval')
+    const model = await start('approval')
     const trigger = {
-      input: [{ type: 'function_call_output', call_id: 'prior', output: 'previous result' }],
+      input: [{ role: 'user', content: 'exercise fixture command' }],
     }
     const first = await post(model.port, gzipSync(Buffer.from(JSON.stringify(trigger))), {
       'content-encoding': 'gzip',
@@ -51,12 +52,12 @@ describe('loopback Codex Responses model', () => {
     expect(firstText).toContain('holi-528-fixture')
     expect(await next.text()).toContain('native fixture answer')
     expect(model.requests).toHaveLength(2)
-    expect(JSON.stringify(model.requests)).toContain('previous result')
+    expect(JSON.stringify(model.requests)).toContain('exercise fixture command')
     expect(JSON.stringify(model.requests)).toContain('cancelled')
   })
 
   it('rejects invalid routes, methods, encodings, malformed and oversized bodies', async () => {
-    const model = start()
+    const model = await start()
     expect((await fetch(`http://127.0.0.1:${model.port}/wrong`, { method: 'POST' })).status).toBe(
       404,
     )
@@ -67,7 +68,7 @@ describe('loopback Codex Responses model', () => {
   })
 
   it('closes idempotently and refuses later connections', async () => {
-    const model = start()
+    const model = await start()
     await model.close()
     await model.close()
     await expect(post(model.port, '{}')).rejects.toThrow()

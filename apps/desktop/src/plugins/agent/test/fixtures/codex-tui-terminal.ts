@@ -67,7 +67,7 @@ export function createCodexTuiTerminals({ launch }: { launch?: Launch } = {}): C
       if (!found) break
       s.query = s.query.slice(found.index + found.query.length)
       s.replyTail = s.replyTail
-        .then(() => s.handle?.write(found.reply))
+        .then(() => (s.draining ? undefined : s.handle?.write(found.reply)))
         .catch((error: unknown) => {
           if (!s.draining) s.failure = error instanceof Error ? error : new Error(String(error))
         })
@@ -75,6 +75,7 @@ export function createCodexTuiTerminals({ launch }: { launch?: Launch } = {}): C
     s.query = s.query.slice(-16)
   }
   const stop = (_id: string, s: Session): Promise<void> => {
+    s.draining = true
     s.closeWork ??= (async () => {
       try {
         await s.start
@@ -150,8 +151,10 @@ export function createCodexTuiTerminals({ launch }: { launch?: Launch } = {}): C
         })
         .catch((error: unknown) => {
           if (s.timer) clearInterval(s.timer)
-          s.retired = true
-          args.onStartupCleanup?.(Promise.reject(error).catch(() => {}))
+          s.failure = error instanceof Error ? error : new Error(String(error))
+          const cleanup = stop(id, s)
+          void cleanup.catch(() => {})
+          args.onStartupCleanup?.(cleanup)
           throw error
         })
       void s.start.catch(() => {})
@@ -171,9 +174,9 @@ export function createCodexTuiTerminals({ launch }: { launch?: Launch } = {}): C
         .map(([id, s]) => ({ id, launchedFor: s.args.attach ?? null, title: '' })),
     async write(id, bytes) {
       const s = sessions.get(id)
-      if (!s || s.retired) return
+      if (!s || s.retired || s.draining) return
       await s.start
-      if (!s.handle) return
+      if (!s.handle || s.draining || s.retired) return
       s.inputs.push(bytes)
       s.args.onInput?.(bytes)
       await s.handle.write(bytes)
