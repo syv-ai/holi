@@ -141,6 +141,15 @@ function App() {
         reload,
         flush: flushAllBuffers,
         theme,
+        tableStyle(style: 'banded' | 'lines') {
+          const current = store.get(vaultSettingsAtom)
+          if (!current) throw new Error('Fixture settings are not mounted')
+          store.set(vaultSettingsAtom, {
+            ...current,
+            settings: { ...current.settings, tableStyle: style },
+          })
+          return current.settings.tableStyle
+        },
         locked,
         reopen,
         hide: setHidden,
