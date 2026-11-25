@@ -106,19 +106,29 @@ export async function runRestrictedContext({ root, env, bin, launch, model }) {
       })
       if (!request) throw Error('Restricted native request not captured')
       evidence.requests.push(request)
-      const text = JSON.stringify(request.body)
       if (
-        text.includes('HOLI764_ADDITIVE_CONTEXT') ||
-        text.includes('HOLI764_CONFIG_INSTRUCTIONS') ||
-        text.includes('HOLI764_BASE_INSTRUCTIONS') ||
-        text.includes('HOLI764_PROFILE_INSTRUCTIONS')
+        evidence.requests.some((item) =>
+          JSON.stringify(item.body).includes('HOLI764_BASE_INSTRUCTIONS'),
+        )
       )
-        throw Error('Restricted request unexpectedly inherited ordinary context')
+        throw Error('Inactive base instructions reached the restricted request')
       if (existsSync(sentinel)) throw Error('Untrusted project integration executed')
     }
-    evidence.status = 'demonstrated-unsupported'
-    evidence.limitation =
-      'The existing production restricted home excludes the ordinary hook, native trust and custom/profile instructions on initial and regenerated follow-up launches. This tested integration does not deliver additive context; no claim about every possible Codex mechanism.'
+    const markers = [
+      'HOLI764_ADDITIVE_CONTEXT',
+      'HOLI764_CONFIG_INSTRUCTIONS',
+      'HOLI764_PROFILE_INSTRUCTIONS',
+    ]
+    const observed = evidence.requests.map((item) =>
+      markers.map((marker) => JSON.stringify(item.body).includes(marker)),
+    )
+    if (observed.every((flags) => flags.every(Boolean))) evidence.status = 'demonstrated'
+    else if (observed.every((flags) => flags.every((flag) => !flag))) {
+      evidence.status = 'demonstrated-unsupported'
+      evidence.limitation =
+        'The existing production restricted home excludes the ordinary hook, native trust and custom/profile instructions on initial and regenerated follow-up launches. This tested integration does not deliver additive context; no claim about every possible Codex mechanism.'
+    } else
+      evidence.error = 'Restricted context preservation was partial or inconsistent across turns'
     return evidence
   } finally {
     await loader.close()

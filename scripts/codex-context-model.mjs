@@ -6,6 +6,7 @@ export async function createContextModel() {
   const requests = []
   const failures = []
   const pending = new Set()
+  let admissions = 0
   const handle = async (req, res) => {
     if (req.url === '/probe') {
       res.writeHead(404)
@@ -13,7 +14,8 @@ export async function createContextModel() {
       return
     }
     if (req.method !== 'POST' || req.url !== '/v1/responses') throw Error('Unexpected model route')
-    if (requests.length >= 12) throw Error('Model request bound exceeded')
+    if (admissions >= 12) throw Error('Model request bound exceeded')
+    admissions++
     const chunks = []
     let size = 0
     for await (const chunk of req) {

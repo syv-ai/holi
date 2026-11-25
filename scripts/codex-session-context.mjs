@@ -3,11 +3,15 @@ import { mkdir, realpath, open } from 'node:fs/promises'
 import { dirname, resolve, relative, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { runNativeInitialFixture } from './codex-session-context-native.mjs'
 
 const repositoryRoot = await realpath(resolve(dirname(fileURLToPath(import.meta.url)), '..'))
 const schema = 'holi.codex-session-context.v1'
+const { parse: parseToml } = createRequire(
+  new URL('../apps/desktop/package.json', import.meta.url),
+)('smol-toml')
 const roles = (request) =>
   Array.isArray(request?.input) &&
   request.input.some((item) => item.role === 'user') &&
@@ -34,6 +38,7 @@ export function validateContextEvidence(value) {
       ].includes(value.outcome)
     )
       return false
+    if (value.outcome !== native.classification) return false
     if (['incomplete-proof', 'setup-unavailable'].includes(value.outcome))
       return native.status !== 'demonstrated'
     if (
@@ -44,7 +49,8 @@ export function validateContextEvidence(value) {
     )
       return false
     if (
-      !native.source?.commit ||
+      !/^[0-9a-f]{40}$/.test(native.source?.commit) ||
+      !native.source.repository ||
       native.source.dirty !== false ||
       !native.containment?.loopback ||
       !['EPERM', 'EACCES'].includes(native.containment.external)
@@ -55,7 +61,14 @@ export function validateContextEvidence(value) {
       !native.rootRemoved ||
       native.cleanupError ||
       !native.receipts?.length ||
-      !native.receipts.every((receipt) => receipt.drained)
+      !native.receipts.every((receipt) => receipt.drained && !receipt.failure)
+    )
+      return false
+    if (
+      !native.outputs?.length ||
+      native.outputs.length !== native.receipts.length ||
+      native.outputs.some((output) => output.failure) ||
+      native.argv?.length !== native.outputs.length
     )
       return false
     if (
@@ -128,15 +141,90 @@ export function validateContextEvidence(value) {
       restricted.projectIntegrationExecuted !== false
     )
       return false
+    if (restricted.configs?.length !== 2) return false
+    let thread
+    for (const [index, launch] of restricted.launches.entries()) {
+      const prompt = ['HOLI764_RESTRICTED_PROMPT', 'HOLI764_RESTRICTED_FOLLOWUP'][index]
+      const args = launch.args
+      if (
+        !Array.isArray(args) ||
+        args[0] !== 'exec' ||
+        !args.includes('--json') ||
+        !args.includes('--skip-git-repo-check') ||
+        args[args.indexOf('--sandbox') + 1] !== 'workspace-write' ||
+        ![
+          'approval_policy="never"',
+          'sandbox_workspace_write.network_access=false',
+          'web_search="disabled"',
+          'tools.web_search=false',
+        ].every((flag) => args.includes(flag)) ||
+        args.at(-1) !== prompt ||
+        promptOf(restricted.requests[index].body) !== prompt
+      )
+        return false
+      const config = parseToml(restricted.configs[index])
+      const vault = args[args.indexOf('-C') + 1]
+      if (
+        !vault ||
+        config.projects?.[vault]?.trust_level !== 'untrusted' ||
+        config.hooks ||
+        config.profiles ||
+        config.mcp_servers ||
+        config.plugins ||
+        config.developer_instructions ||
+        config.model_instructions_file
+      )
+        return false
+      const outputs = launch.output.split('\n').flatMap((line) => {
+        try {
+          return [JSON.parse(line)]
+        } catch {
+          return []
+        }
+      })
+      const observed = outputs.find((event) => event.type === 'thread.started')?.thread_id
+      if (!observed || !outputs.some((event) => event.type === 'turn.completed')) return false
+      if (index === 0) thread = observed
+      else if (observed !== thread || !args.includes('resume') || args.at(-2) !== thread)
+        return false
+      const owned = native.argv.find(
+        (entry) =>
+          entry.codeHome === launch.home &&
+          entry.args.slice(-args.length).every((arg, i) => arg === args[i]),
+      )
+      if (
+        !owned ||
+        !native.outputs.some(
+          (output) =>
+            output.launch?.codeHome === launch.home &&
+            output.transcript === launch.output &&
+            output.exit?.code === 0,
+        )
+      )
+        return false
+    }
     if (value.outcome === 'demonstrated-unsupported-path')
       return (
         restricted.status === 'demonstrated-unsupported' &&
         typeof restricted.limitation === 'string' &&
-        restricted.requests.every(
-          (item) => !JSON.stringify(item.body).includes('HOLI764_ADDITIVE_CONTEXT'),
+        restricted.requests.every((item) =>
+          [
+            'HOLI764_ADDITIVE_CONTEXT',
+            'HOLI764_CONFIG_INSTRUCTIONS',
+            'HOLI764_PROFILE_INSTRUCTIONS',
+          ].every((marker) => !JSON.stringify(item.body).includes(marker)),
         )
       )
-    return restricted.status === 'demonstrated'
+    return (
+      restricted.status === 'demonstrated' &&
+      restricted.requests.every((item) =>
+        [
+          'HOLI764_ADDITIVE_CONTEXT',
+          'HOLI764_CONFIG_INSTRUCTIONS',
+          'HOLI764_PROFILE_INSTRUCTIONS',
+        ].every((marker) => JSON.stringify(item.body).includes(marker)),
+      )
+    )
   } catch {
     return false
   }
@@ -152,7 +240,12 @@ export async function runContextHarness({
   await mkdir(dirname(path), { recursive: true })
   const parent = await realpath(dirname(path))
   const rel = relative(repositoryRoot, parent)
-  if (!rel || (!rel.startsWith('..') && !isAbsolute(rel)))
+  if (
+    !rel ||
+    (rel !== '..' &&
+      !rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) &&
+      !isAbsolute(rel))
+  )
     throw Error('Evidence output must be outside the repository')
   const artifact = await open(path, 'wx', 0o600)
   try {
@@ -160,13 +253,13 @@ export async function runContextHarness({
     try {
       native = await nativeRunner()
     } catch (error) {
-      native = { status: 'incomplete', error: String(error) }
+      native = { status: 'incomplete', classification: 'incomplete-proof', error: String(error) }
     }
+    native.classification ??= 'incomplete-proof'
     const evidence = {
       schema,
       version: '0.169.0',
-      outcome:
-        native.status === 'demonstrated' ? 'demonstrated-unsupported-path' : 'incomplete-proof',
+      outcome: native.classification ?? 'incomplete-proof',
       native,
     }
     if (!validateContextEvidence(evidence) && native.status === 'demonstrated') {
@@ -174,6 +267,7 @@ export async function runContextHarness({
       evidence.validationError =
         'Required native observations or clean source provenance are missing'
       native.status = 'incomplete'
+      native.classification = 'incomplete-proof'
     }
     const bytes = JSON.stringify(evidence, null, 2)
     if (Buffer.byteLength(bytes) > 8 * 1024 * 1024)

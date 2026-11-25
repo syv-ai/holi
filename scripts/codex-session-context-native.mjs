@@ -3,10 +3,12 @@ import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { startOwnedPty } from './pi-native-tui-process.mjs'
 import { createContextModel } from './codex-context-model.mjs'
 import { runRestrictedContext } from './codex-context-restricted.mjs'
 
+const repositoryRoot = fileURLToPath(new URL('../', import.meta.url))
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const clean = (text) =>
   text
@@ -18,6 +20,7 @@ export async function runNativeInitialFixture() {
   const evidence = {
     scenario: 'initialTUI',
     status: 'incomplete',
+    classification: 'setup-unavailable',
     consent: [],
     trustChanges: [],
     hooks: [],
@@ -33,8 +36,17 @@ export async function runNativeInitialFixture() {
     if (process.platform !== 'darwin' || !existsSync('/usr/bin/sandbox-exec'))
       throw Error('Verified macOS containment required')
     evidence.source = {
-      commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-      dirty: Boolean(execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim()),
+      repository: await realpath(repositoryRoot),
+      commit: execFileSync('git', ['rev-parse', 'HEAD'], {
+        encoding: 'utf8',
+        cwd: repositoryRoot,
+      }).trim(),
+      dirty: Boolean(
+        execFileSync('git', ['status', '--porcelain'], {
+          encoding: 'utf8',
+          cwd: repositoryRoot,
+        }).trim(),
+      ),
     }
     root = await realpath(await mkdtemp(join(tmpdir(), 'holi764-native-')))
     evidence.root = root
@@ -134,6 +146,7 @@ export async function runNativeInitialFixture() {
       throw Error('External network containment unproven')
     evidence.version = await command([bin, '--version'], 'version')
     if (evidence.version !== 'codex-cli 0.169.0') throw Error('Native version mismatch')
+    evidence.classification = 'incomplete-proof'
     const hook = join(root, 'owned-context-hook.mjs')
     const hookEvents = join(root, 'hook-events.jsonl')
     await writeFile(
@@ -396,7 +409,17 @@ export async function runNativeInitialFixture() {
       await child.close()
     }
     evidence.restricted = await runRestrictedContext({ root, env, bin, launch, model })
-    evidence.status = 'demonstrated'
+    evidence.status = ['demonstrated', 'demonstrated-unsupported'].includes(
+      evidence.restricted.status,
+    )
+      ? 'demonstrated'
+      : 'incomplete'
+    evidence.classification =
+      evidence.status === 'incomplete'
+        ? 'incomplete-proof'
+        : evidence.restricted.status === 'demonstrated'
+          ? 'supported'
+          : 'demonstrated-unsupported-path'
   } catch (error) {
     evidence.error = String(error)
   } finally {
@@ -428,7 +451,11 @@ export async function runNativeInitialFixture() {
       await rm(root, { recursive: true, force: true })
       evidence.rootRemoved = !existsSync(root)
     }
-    if (!evidence.drainage || !evidence.rootRemoved) evidence.status = 'incomplete'
+    if (!root) evidence.rootRemoved = true
+    if (!evidence.drainage || !evidence.rootRemoved || handles.some((child) => child.failure)) {
+      evidence.status = 'incomplete'
+      evidence.classification = 'incomplete-proof'
+    }
   }
   return evidence
 }

@@ -1,5 +1,7 @@
 """Keep a PTY session anchor owned until the final process-group signal."""
 
+from __future__ import annotations
+
 import errno
 import fcntl
 import json

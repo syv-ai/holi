@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { runContextHarness, validateContextEvidence } from './codex-session-context.mjs'
 
 const request = (prompt, context = '') => ({
@@ -15,15 +16,52 @@ const ordinary = (source) =>
   `HOLI764_CONFIG_INSTRUCTIONS HOLI764_PROFILE_INSTRUCTIONS HOLI764_ADDITIVE_CONTEXT:${source}`
 function observedNative() {
   const session = 'fixture-session'
+  const prompts = ['HOLI764_RESTRICTED_PROMPT', 'HOLI764_RESTRICTED_FOLLOWUP']
+  const launches = prompts.map((prompt, index) => ({
+    home: '/fixture/home',
+    args: [
+      'exec',
+      '--json',
+      '--skip-git-repo-check',
+      '-C',
+      '/fixture/vault',
+      '--sandbox',
+      'workspace-write',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'sandbox_workspace_write.network_access=false',
+      '-c',
+      'web_search="disabled"',
+      '-c',
+      'tools.web_search=false',
+      ...(index ? ['resume', '--', session] : ['--']),
+      prompt,
+    ],
+    exit: { code: 0 },
+    output: `${JSON.stringify({ type: 'thread.started', thread_id: session })}\n${JSON.stringify({ type: 'turn.completed' })}\n`,
+  }))
+  const argv = launches.map((launch) => ({
+    command: '/usr/bin/sandbox-exec',
+    args: ['-f', '/fixture/policy', '--', '/node', '/codex', '--no-daemon', ...launch.args],
+    codeHome: launch.home,
+  }))
   return {
     status: 'demonstrated',
+    classification: 'demonstrated-unsupported-path',
     version: 'codex-cli 0.169.0',
     package: { name: '@openai/codex', version: '0.169.0' },
-    source: { commit: 'reviewed-revision', dirty: false },
+    source: { commit: 'a'.repeat(40), repository: '/fixture/holi', dirty: false },
     containment: { loopback: true, external: 'EPERM' },
     drainage: true,
     rootRemoved: true,
-    receipts: [{ drained: true }],
+    receipts: launches.map(() => ({ drained: true })),
+    argv,
+    outputs: launches.map((launch, index) => ({
+      launch: argv[index],
+      transcript: launch.output,
+      exit: launch.exit,
+    })),
     initial: {
       status: 'demonstrated',
       request: request('HOLI764_UNCHANGED_USER_PROMPT', ordinary('startup')),
@@ -60,8 +98,9 @@ function observedNative() {
       status: 'demonstrated-unsupported',
       limitation: 'Production isolated home excludes this ordinary hook/context path.',
       projectIntegrationExecuted: false,
-      launches: [{ exit: { code: 0 } }, { exit: { code: 0 } }],
-      requests: [{ body: request('job') }, { body: request('followup') }],
+      launches,
+      configs: launches.map(() => '[projects."/fixture/vault"]\ntrust_level = "untrusted"\n'),
+      requests: prompts.map((prompt) => ({ body: request(prompt) })),
     },
   }
 }
@@ -108,6 +147,27 @@ test('partial, stale, unsafe or misattributed observations cannot produce a conc
     (native) => {
       native.trustChanges = [{}]
     },
+    (native) => {
+      native.receipts[0].failure = 'deadline exceeded'
+    },
+    (native) => {
+      native.outputs[0].failure = 'output exceeded bound'
+    },
+    (native) => {
+      native.restricted.launches[0].args = ['exec', '--', 'unsafe']
+    },
+    (native) => {
+      native.restricted.configs = []
+    },
+    (native) => {
+      native.restricted.requests[1].body = request('wrong thread prompt')
+    },
+    (native) => {
+      native.restricted.launches[1].output = JSON.stringify({
+        type: 'thread.started',
+        thread_id: 'another-thread',
+      })
+    },
   ]
   for (const mutate of mutations) {
     const native = observedNative()
@@ -117,6 +177,44 @@ test('partial, stale, unsafe or misattributed observations cannot produce a conc
     assert.equal(result.evidence.outcome, 'incomplete-proof')
   }
   assert.equal(validateContextEvidence(null), false)
+})
+
+test('reports explicit setup unavailability and supported observations without relabeling either', async (t) => {
+  const unavailable = await runContextHarness({
+    output: await artifact(t),
+    nativeRunner: async () => ({
+      status: 'incomplete',
+      classification: 'setup-unavailable',
+      error: 'No verified containment on this platform',
+    }),
+  })
+  assert.equal(unavailable.evidence.outcome, 'setup-unavailable')
+  const native = observedNative()
+  native.classification = 'supported'
+  native.restricted.status = 'demonstrated'
+  for (const item of native.restricted.requests)
+    item.body.input[0].content[0].text = ordinary('restricted')
+  const supported = await runContextHarness({
+    output: await artifact(t),
+    nativeRunner: async () => native,
+  })
+  assert.equal(supported.evidence.outcome, 'supported')
+})
+
+test('repository children beginning with dots are refused before native execution', async (t) => {
+  const root = await mkdtemp(join(fileURLToPath(new URL('../', import.meta.url)), '..evidence-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let called = false
+  await assert.rejects(
+    runContextHarness({
+      output: join(root, 'evidence.json'),
+      nativeRunner: async () => {
+        called = true
+        return observedNative()
+      },
+    }),
+  )
+  assert.equal(called, false)
 })
 
 test('native setup failure remains incomplete evidence and cannot overwrite an existing artifact', async (t) => {
