@@ -252,6 +252,7 @@ try {
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
       .join(delimiter),
+    HOLI_671_CHILD_VIM: childVimAcceptance ? '1' : '0',
     HOLI_473_ROOT: root,
     HOLI_473_EVIDENCE: evidence,
     HOLI_473_RENDERER: join(fixtureRoot, 'index.html'),

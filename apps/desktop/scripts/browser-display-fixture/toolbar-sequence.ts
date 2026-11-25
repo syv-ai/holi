@@ -96,9 +96,7 @@
   const field = async (code: string) => inPage(view, code)
   const text = () => field(`document.querySelector('#text').value`)
   const captureFrame = async (wc: any) => {
-    if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
-    await wc.debugger.sendCommand('Page.enable')
-    await wc.debugger.sendCommand('Page.captureScreenshot', { fromSurface: true })
+    await wc.capturePage()
     await wc.executeJavaScript(
       `if(!window.__qaKeyListener){globalThis.qaKeys=[];window.addEventListener('keydown',e=>qaKeys.push({key:e.key,trusted:e.isTrusted}),true);window.__qaKeyListener=true}`,
     )
