@@ -21,7 +21,7 @@ import { createOwnedProcesses } from './owned-processes.mjs'
 import {
   allowNativeNotificationPermission,
   assertMacDesktopAvailable,
-  clickNativeBanner,
+  clickOwnedNativeNotification,
 } from './notification-os.mjs'
 
 if (process.platform !== 'darwin') throw new Error('notification readiness requires macOS')
@@ -261,7 +261,7 @@ try {
       `${JSON.stringify({ declaration: { NSUserNotificationAlertStyle: 'banner' }, observed: notificationSettings })}\n`,
     )
   }
-  const click = await clickNativeBanner({
+  const click = await clickOwnedNativeNotification({
     appName,
     title,
     timeoutMs: 12_000,
@@ -279,7 +279,17 @@ try {
     throw new Error(`native click did not activate fixture window (state=${outcome})`)
   await writeFile(
     join(evidence, 'result.json'),
-    `${JSON.stringify({ appName, bundleId, title, permissionOutcome, notificationSettings, click, outcome })}\n`,
+    `${JSON.stringify({
+      appName,
+      bundleId,
+      title,
+      permissionOutcome,
+      notificationSettings,
+      click,
+      outcome,
+      interaction: 'native-notification-click',
+      bannerAcceptance: 'not-verified',
+    })}\n`,
   )
 } catch (error) {
   if (artifactsCreated && notificationSettings === undefined) {
