@@ -89,10 +89,8 @@ export interface MailThreadSummary {
    *  on the user's behalf. */
   unsubscribeUrl: string | null
   /**
-   * A calendar invite (`.ics`) is attached somewhere in this thread.
-   *
-   * The one field here that does **not** come from the thread's own metadata:
-   * see `fetchInviteIds` for why it cannot, and what is asked instead.
+   * Calendar invitation evidence from MIME headers or Gmail's `.ics` index.
+   * Neither source requires fetching the message body.
    */
   hasInvite: boolean
   /** Whether a Gmail-SENT message followed an incoming non-SENT message, regardless of later follow-up. */
@@ -579,7 +577,7 @@ export async function fetchThreadSummaries(
   const summaries = threads.map((thread) => summarize(thread, names, knownAddresses))
 
   // Metadata omits MIME children. Inspect only multipart MIME structure and
-  // headers for an ambiguous latest incoming; never request body bytes.
+  // headers of the latest incoming; never request body bytes.
   const { invitationIds, unknownIds } = await fetchLatestIncomingInvitations(api, threads)
   const invites = await fetchInviteIds(api, summaries)
   return {
@@ -591,7 +589,7 @@ export async function fetchThreadSummaries(
       ...summary,
       automated: summary.automated || invitationIds.has(summary.id),
       automationUnknown: unknownIds.has(summary.id),
-      hasInvite: invites.has(summary.id),
+      hasInvite: invitationIds.has(summary.id) || invites.has(summary.id),
     })),
   }
 }
@@ -628,19 +626,10 @@ async function fetchLatestIncomingInvitations(
       return []
     }
 
-    const hasOtherEvidence = hasAutomationHeaderEvidence(payload)
-    if (hasInvitationMethod(payload)) {
-      invitationIds.add(thread.id)
-      return []
-    }
-    const contentType = headerOf(payload, 'Content-Type')
-    const mainType = parseHeaderParameters(contentType ?? '')?.main.toLowerCase()
-    const multipart =
-      payload.mimeType?.toLowerCase().startsWith('multipart/') === true ||
-      mainType?.startsWith('multipart/') === true
-    return !hasOtherEvidence && multipart
-      ? [{ threadId: thread.id, messageId: latestIncoming.id }]
-      : []
+    const { invitation, incomplete } = inspectInvitationMime(payload)
+    if (incomplete) return [{ threadId: thread.id, messageId: latestIncoming.id }]
+    if (invitation) invitationIds.add(thread.id)
+    return []
   })
 
   const results = await mapPooled(ids, 5, async ({ threadId, messageId }) => {
@@ -654,7 +643,8 @@ async function fetchLatestIncomingInvitations(
       )
       if (message?.id !== messageId || message.threadId !== threadId || !message.payload)
         return { threadId, invitation: false, unknown: true }
-      return { threadId, invitation: hasInvitationMethod(message.payload), unknown: false }
+      const { invitation, incomplete } = inspectInvitationMime(message.payload)
+      return { threadId, invitation: !incomplete && invitation, unknown: incomplete }
     } catch (error) {
       // A message can disappear after its thread metadata was fetched. Omit that
       // thread's invitation evidence; do not turn a lookup failure into proof.
@@ -680,16 +670,18 @@ async function fetchLatestIncomingInvitations(
   }
 }
 
-/** Only a valid invitation method on a calendar MIME part is positive evidence. */
-function hasInvitationMethod(payload: RawPart): boolean {
-  let found = false
-  createMimeWalk(MIME_EVIDENCE_DEPTH)(payload, (part, _location, forwarded) => {
+/** Use the walker's validated routing for both descent and probe admission. */
+function inspectInvitationMime(payload: RawPart) {
+  let invitation = false
+  let incomplete = false
+  createMimeWalk(MIME_EVIDENCE_DEPTH)(payload, (part, _location, forwarded, unexpanded) => {
+    if (unexpanded) incomplete = true
     if (!forwarded && isCalendarPart(part)) {
       const method = calendarMimeMethod(part)
-      if (method && ['REQUEST', 'REPLY', 'CANCEL'].includes(method)) found = true
+      if (method && ['REQUEST', 'REPLY', 'CANCEL'].includes(method)) invitation = true
     }
   })
-  return found
+  return { invitation, incomplete }
 }
 
 /**

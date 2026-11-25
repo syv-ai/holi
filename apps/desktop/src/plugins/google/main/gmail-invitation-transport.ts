@@ -19,6 +19,13 @@ import {
 import { buildRfc822, toBase64Url } from './mime'
 
 const MAX_CALENDAR_PART_BYTES = 256 * 1024
+const calendarUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+
+export class CalendarTextEncodingError extends CalendarScanError {
+  constructor() {
+    super('Gmail calendar part is not valid UTF-8')
+  }
+}
 
 /** Each public read or response owns one budget, including all evidence and
  * preflight reads. Revalidation still gets a fresh provider snapshot. */
@@ -62,7 +69,12 @@ export function createCalendarScan() {
     check(decoded.length <= MAX_CALENDAR_PART_BYTES && decoded.length <= bytes)
     if (decoded.length !== declared) throw new CalendarScanError('Invalid Gmail calendar part size')
     bytes -= decoded.length
-    return decoded.toString('utf8')
+    try {
+      return calendarUtf8.decode(decoded)
+    } catch {
+      // Do not manufacture an identity by replacing malformed wire bytes.
+      throw new CalendarTextEncodingError()
+    }
   }
   return {
     partsOf(

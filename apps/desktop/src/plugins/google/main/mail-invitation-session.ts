@@ -14,6 +14,7 @@ import {
 } from './mail-invitation-calendar'
 import { CalendarScanError } from './gmail-mime'
 import {
+  CalendarTextEncodingError,
   createCalendarScan,
   createMessageIdOwnership,
   fetchThreadCalendarPayloads,
@@ -113,6 +114,13 @@ type LineageMatch = (attempt: InvitationAttempt) => 'linked' | 'disputed' | null
 type SentAddress = { organizer: string; mailbox: string }
 const sentVerificationReason = 'Gmail could not verify the latest sent response'
 
+function readPossibleReply(part: Mail['parts'][number]): Promise<string | null> {
+  return part.read().catch((error) => {
+    if (error instanceof CalendarTextEncodingError) return null
+    throw error
+  })
+}
+
 async function latestByScope({ messages, owners }: Thread, mailbox: string) {
   const candidates: Candidate[] = []
   for (const mail of messages) {
@@ -123,8 +131,12 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
       if (part.method === null)
         throw new CalendarScanError('Gmail could not verify the calendar MIME declaration')
       if (mail.sent && part.method === 'REPLY' && !part.alternatives.length) continue
-      const source = await part.read()
-      const parsed = parseCalendarMail(mail.messageId, source, part.method)
+      // A Sent part without a revision declaration may be a reply even
+      // when its bytes cannot be read. Assess it against known parents below.
+      const possibleReply =
+        mail.sent && mail.parent && (part.method === undefined || part.method === 'REPLY')
+      const source = await (possibleReply ? readPossibleReply(part) : part.read())
+      const parsed = source === null ? null : parseCalendarMail(mail.messageId, source, part.method)
       const candidate = parsed && (!mail.sent || parsed.value.method) ? { ...parsed, mail } : null
       if (candidate) {
         hasCandidate = true
@@ -161,9 +173,9 @@ async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }
     // The caller established a known parent separately. A malformed calendar
     // body cannot corroborate that relation, but cannot disprove it either.
     const method = part.method
-    const source = method === null ? '' : await part.read()
+    const source = method === null ? null : await readPossibleReply(part)
     const answer =
-      method === null
+      method === null || source === null
         ? 'unresolved'
         : invitationReplyStatus(source, revision, organizer, mailbox, method)
     if (answer === 'unresolved') unresolved = true
@@ -175,7 +187,7 @@ async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }
         signature: answer && answer !== 'unresolved' ? answer : `unrecognized:${source}`,
       })
   }
-  if (answers.size) assertEquivalentAlternatives(representations)
+  if (!unresolved && answers.size) assertEquivalentAlternatives(representations)
   // One matching part cannot authorize readback for a mixed or malformed reply.
   unresolved ||= unrelated && answers.size > 0
   return { answers: unresolved ? [] : [...answers], unresolved }
@@ -385,12 +397,19 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           mail = found.mail
           if (found.unresolvedReply) unverifiedReceipts.add(id)
           const timestamps = found.contestedTimestamp ? [found.contestedTimestamp] : []
-          if (!mail && found.contestedTimestamp !== null && owners.get(delivery.rfcId) === null) {
+          if (!mail) {
             for (const message of inThread) {
-              if (await assess(message)) timestamps.push(message.timestamp)
+              const evidence = await assess(message)
+              if (evidence === 'unresolved') unverifiedReceipts.add(id)
+              if (evidence && (evidence === 'unresolved' || !owners.owns(message)))
+                timestamps.push(message.timestamp)
             }
           }
-          if (timestamps.length && timestamps.every((stamp) => stamp > 0))
+          if (
+            found.contestedTimestamp !== null &&
+            timestamps.length &&
+            timestamps.every((stamp) => stamp > 0)
+          )
             contested.set(id, Math.max(...timestamps))
         }
         if (attempt.state !== 'confirmed') {
@@ -515,7 +534,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         // A contradictory visible owner invalidates parent proof, not the
         // fact that we already dispatched a response on this lineage.
         const parentOwner = owners.get(delivery.parent)
-        return (entry.parents.has(delivery.parent) && parentOwner !== null) ||
+        return (entry.provenParents.has(delivery.parent) && parentOwner !== null) ||
           parentOwner === undefined
           ? 'linked'
           : 'disputed'
@@ -525,8 +544,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     type Scope = (typeof scopes)[number]
     function evidenceParents(entry: Scope, organizer: string, anchors: ParentAnchor[]) {
       const key = scopeKey(identityOf(entry.selected))
-      const verified = new Set([...entry.parents].filter((parent) => owners.get(parent) !== null))
-      const related = new Set(entry.parents)
+      const verified = new Set(
+        [...entry.provenParents].filter((parent) => owners.get(parent) !== null),
+      )
+      const related = new Set(entry.possibleParents)
       for (const anchor of anchors) {
         if (
           anchor.accountSub === accountSub &&

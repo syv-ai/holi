@@ -10,7 +10,8 @@ type Revision = InvitationAttempt['revision']
 export type Candidate = NonNullable<ReturnType<typeof parseCalendarMail>> & { mail: Mail }
 type Incoming = {
   selected: Candidate
-  parents: Set<string>
+  provenParents: Set<string>
+  possibleParents: Set<string>
   history: Candidate[]
   response: NonNullable<Revision['mailboxResponse']> | null
   barrier?: Revision
@@ -57,7 +58,14 @@ function sameMaterial(a: Candidate, b: Candidate): boolean {
 }
 
 function blocked(selected: Candidate, reason: string): Incoming {
-  return { selected, reason, parents: new Set(), history: [], response: null }
+  return {
+    selected,
+    reason,
+    provenParents: new Set(),
+    possibleParents: new Set(),
+    history: [],
+    response: null,
+  }
 }
 
 /** Treat validated cancellation entries as revision evidence for their own
@@ -273,8 +281,12 @@ function selectScope(
       break
     lineage.push(...deliveries)
   }
-  const parents = new Set<string>()
+  const provenParents = new Set<string>()
+  const possibleParents = new Set<string>()
   for (const candidate of lineage) {
+    // Ownership disputes cannot erase the link from known REQUEST material
+    // to a claimed parent. Such a link can withhold, but never confirm, an answer.
+    for (const claim of candidate.mail.claims) possibleParents.add(claim)
     const parent = candidate.mail.replyHeaders?.inReplyTo
     if (
       parent &&
@@ -288,9 +300,9 @@ function selectScope(
           (sameRevision(identityOf(candidate), identityOf(other)) && equivalent(candidate, other)),
       )
     )
-      parents.add(parent)
+      provenParents.add(parent)
   }
-  return { selected, history, parents, response, barrier }
+  return { selected, history, provenParents, possibleParents, response, barrier }
 }
 
 function covers(cancel: Candidate, selected: Candidate): boolean {
