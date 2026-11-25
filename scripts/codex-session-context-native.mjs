@@ -140,12 +140,19 @@ export async function runNativeInitialFixture() {
       hook,
       `import{appendFileSync}from'node:fs';let input='';for await(const c of process.stdin)input+=c;appendFileSync(${JSON.stringify(hookEvents)},JSON.stringify(JSON.parse(input))+'\\n',{mode:0o600});console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:'HOLI764_ADDITIVE_CONTEXT:'+JSON.parse(input).source}}))`,
     )
-    const config = join(env.CODEX_HOME, 'config.toml')
+    const config = join(env.CODEX_HOME, 'fixture.config.toml')
     const profileInstructions = join(root, 'profile-instructions.txt')
     await writeFile(profileInstructions, 'HOLI764_PROFILE_INSTRUCTIONS')
     await writeFile(
       config,
-      `model = "gpt-5.1-codex-mini"\nmodel_provider = "holi-fixture"\nprofile = "fixture"\ndeveloper_instructions = "HOLI764_CONFIG_INSTRUCTIONS"\n[profiles.fixture]\nmodel_instructions_file = ${JSON.stringify(profileInstructions)}\n[model_providers.holi-fixture]\nname = "Holi fixture"\nbase_url = "http://127.0.0.1:${model.port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n`,
+      `model = "gpt-5.1-codex-mini"\nmodel_provider = "holi-fixture"\ndeveloper_instructions = "HOLI764_CONFIG_INSTRUCTIONS"\nmodel_instructions_file = ${JSON.stringify(profileInstructions)}\n[model_providers.holi-fixture]\nname = "Holi fixture"\nbase_url = "http://127.0.0.1:${model.port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n`,
+    )
+    await writeFile(
+      join(env.CODEX_HOME, 'config.toml'),
+      (await readFile(config, 'utf8')).replace(
+        'HOLI764_CONFIG_INSTRUCTIONS',
+        'HOLI764_BASE_INSTRUCTIONS',
+      ),
     )
     await writeFile(
       join(env.CODEX_HOME, 'hooks.json'),
@@ -194,7 +201,10 @@ export async function runNativeInitialFixture() {
       }
       throw Error(`Native observation deadline: ${label}`)
     }
-    const approval = await launch([bin, '--no-daemon', '--no-alt-screen'], 'consent')
+    const approval = await launch(
+      [bin, '--no-daemon', '--no-alt-screen', '--profile', 'fixture'],
+      'consent',
+    )
     await wait(
       approval,
       (text) => text.includes('Hooks need review') && text.includes('1 hook is new or changed.'),
@@ -226,7 +236,10 @@ export async function runNativeInitialFixture() {
     evidence.trustChanges.push({ before, after })
     evidence.approvalTranscript = approval.output.toString()
     await approval.close()
-    const initial = await launch([bin, '--no-daemon', '--no-alt-screen'], 'initial')
+    const initial = await launch(
+      [bin, '--no-daemon', '--no-alt-screen', '--profile', 'fixture'],
+      'initial',
+    )
     await wait(
       initial,
       () => initial.output.toString().includes('state=idle:app=codex'),
@@ -274,7 +287,7 @@ export async function runNativeInitialFixture() {
     const session = evidence.hooks.find((event) => event.source === 'startup').session_id
     if (!/^[0-9a-f-]{36}$/.test(session)) throw Error('Native session identity missing')
     const resume = await launch(
-      [bin, '--no-daemon', '--no-alt-screen', 'resume', session],
+      [bin, '--no-daemon', '--no-alt-screen', '--profile', 'fixture', 'resume', session],
       'resume',
     )
     await wait(
@@ -336,7 +349,10 @@ export async function runNativeInitialFixture() {
       await writeFile(declarationPath, JSON.stringify(declaration))
       const beforeEvents = (await readFile(hookEvents, 'utf8')).trim().split('\n').length
       const label = changed ? 'modified-hook' : 'unrelated-hook'
-      const child = await launch([bin, '--no-daemon', '--no-alt-screen'], label)
+      const child = await launch(
+        [bin, '--no-daemon', '--no-alt-screen', '--profile', 'fixture'],
+        label,
+      )
       await wait(child, (text) => text.includes('Hooks need review'), `${label} native review`)
       await send(child, `deny-${label}`, '\u001b')
       await wait(

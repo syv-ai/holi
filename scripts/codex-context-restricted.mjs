@@ -110,6 +110,7 @@ export async function runRestrictedContext({ root, env, bin, launch, model }) {
       if (
         text.includes('HOLI764_ADDITIVE_CONTEXT') ||
         text.includes('HOLI764_CONFIG_INSTRUCTIONS') ||
+        text.includes('HOLI764_BASE_INSTRUCTIONS') ||
         text.includes('HOLI764_PROFILE_INSTRUCTIONS')
       )
         throw Error('Restricted request unexpectedly inherited ordinary context')
