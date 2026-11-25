@@ -33,12 +33,13 @@ export function useMailList({
   params: Params
 }) {
   const activation = useMemo(() => ({ remote, account, categories: false }), [remote, account])
-  const key = JSON.stringify([remote, account, visible, drafts, supported, params])
+  const key = JSON.stringify([remote, account, drafts, supported, params])
   const owner = useMemo(
     () => ({
       key,
       live: false,
       revision: 0,
+      activity: 0,
       request: 0,
       countsRequest: 0,
       categoryRequest: 0,
@@ -138,6 +139,7 @@ export function useMailList({
       owner.categoryRequest++
       const at = ++owner.request
       const revision = owner.revision
+      const activity = owner.activity
       const pendingRead = {
         replaceOnInvalidation: kind === 'initial' || kind === 'manual' || previous.kind !== 'ready',
       }
@@ -145,7 +147,11 @@ export function useMailList({
       owner.more = append
       setLoadingMore(append)
       if (!append && kind !== 'poll') setListState({ owner, value: { kind: 'loading' } })
-      const valid = () => active() && owner.request === at && owner.revision === revision
+      const valid = () =>
+        active() &&
+        owner.request === at &&
+        owner.revision === revision &&
+        owner.activity === activity
       try {
         const page = await googleCap.search(remote, {
           ...params,
@@ -219,26 +225,38 @@ export function useMailList({
   latestRead.current = read
   useEffect(() => {
     owner.live = visible
-    setWriteError(null)
-    setLoadingMore(false)
     if (visible) {
-      void latestRead.current('initial')
+      owner.live = true
+      owner.activity++
+      if (owner.list.kind === 'loading') void latestRead.current('initial')
       loadCounts()
+    } else {
+      owner.live = false
+      owner.activity++
+      owner.countsRequest++
+      owner.categoryRequest++
     }
     const timer = window.setInterval(() => {
       if (visible && account !== null) void latestRead.current('poll')
     }, 30_000)
     return () => {
+      window.clearInterval(timer)
+    }
+  }, [owner, visible, account, loadCounts])
+
+  useEffect(
+    () => () => {
       owner.live = false
       for (const id of owner.undoToasts) toast.dismiss(id)
       owner.undoToasts.clear()
       owner.restorationIds.clear()
+      owner.activity++
       owner.request++
       owner.countsRequest++
       owner.categoryRequest++
-      window.clearInterval(timer)
-    }
-  }, [owner, visible, account, loadCounts])
+    },
+    [owner],
+  )
 
   const invalidateRead = () => {
     if (owner.pendingRead?.replaceOnInvalidation) owner.reconcile = true
