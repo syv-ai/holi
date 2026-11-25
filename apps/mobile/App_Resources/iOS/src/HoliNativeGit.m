@@ -164,8 +164,15 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
       }
     } else if (errno != ENOENT) { HNGError(error, errno); return nil; }
   } else {
-    result = git_repository_open_ext(&repository, rootPath, GIT_REPOSITORY_OPEN_NO_SEARCH, NULL);
-    if (result < 0) { HNGError(error, result); return nil; }
+    if (selectedBranch) {
+      HoliGitSnapshot *snapshot = nil;
+      repository = [self openSelectedRepository:root remote:remote branch:selectedBranch snapshot:&snapshot error:error];
+      if (!repository) return nil;
+      [snapshot close];
+    } else {
+      result = git_repository_open_ext(&repository, rootPath, GIT_REPOSITORY_OPEN_NO_SEARCH, NULL);
+      if (result < 0) { HNGError(error, result); return nil; }
+    }
   }
   HNGCredentials credentials = { username.UTF8String, password.UTF8String, remote, NO, NO };
   git_remote_callbacks callbacks = GIT_REMOTE_CALLBACKS_INIT;
@@ -334,6 +341,48 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   if (rc < 0 || bare || unsafe.hooks || unsafe.filters || unsafe.helpers) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository configuration"); return NULL; }
   git_repository_state_t state = git_repository_state(repo);
   if (state != GIT_REPOSITORY_STATE_NONE && state != GIT_REPOSITORY_STATE_MERGE) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository state"); return NULL; }
+  *snapshotOut = snapshot;
+  return repo;
+}
+- (git_repository *)openSelectedRepository:(NSString *)root remote:(NSString *)remote branch:(NSString *)branch snapshot:(HoliGitSnapshot **)snapshotOut error:(NSError **)error {
+  HoliGitSnapshot *snapshot = [[HoliGitSnapshot alloc] initWithRoot:root error:error];
+  if (!snapshot) return NULL;
+  NSString *gitDir = [snapshot.path stringByAppendingPathComponent:@".git"];
+  NSString *configPath = [gitDir stringByAppendingPathComponent:@"config"];
+  git_config *diskConfig = NULL;
+  git_config *isolated = NULL;
+  git_repository *repo = NULL;
+  int rc = git_config_new(&diskConfig);
+  if (rc == 0) rc = git_config_add_file_ondisk(diskConfig, configPath.fileSystemRepresentation, GIT_CONFIG_LEVEL_LOCAL, NULL, 0);
+  const char *origin = NULL;
+  const char *push = NULL;
+  const char *fetchSpec = NULL;
+  if (rc == 0) rc = git_config_get_string(&origin, diskConfig, "remote.origin.url");
+  int pushResult = rc == 0 ? git_config_get_string(&push, diskConfig, "remote.origin.pushurl") : rc;
+  if (pushResult == GIT_ENOTFOUND) push = NULL;
+  else if (pushResult < 0) rc = pushResult;
+  NSString *expectedSpec = [NSString stringWithFormat:@"+refs/heads/%@:refs/remotes/origin/%@", branch, branch];
+  int specResult = rc == 0 ? git_config_get_string(&fetchSpec, diskConfig, "remote.origin.fetch") : rc;
+  if (strcmp(origin ?: "", remote.UTF8String) || (push && strcmp(push, remote.UTF8String)) || specResult != 0 || strcmp(fetchSpec, expectedSpec.UTF8String)) rc = GIT_EINVALIDSPEC;
+  HNGUnsafeConfig unsafe = {0};
+  if (rc == 0) rc = git_config_foreach(diskConfig, HNGInspectConfig, &unsafe);
+  if (rc == 0 && (unsafe.hooks || unsafe.filters || unsafe.helpers)) rc = GIT_EINVALIDSPEC;
+  if (rc == 0) rc = git_config_new(&isolated);
+  if (rc == 0) rc = git_config_set_bool(isolated, "core.bare", 0);
+  if (rc == 0) rc = git_config_set_bool(isolated, "core.filemode", 1);
+  if (rc == 0) rc = git_config_set_string(isolated, "remote.origin.url", remote.UTF8String);
+  if (rc == 0) rc = git_config_set_string(isolated, "remote.origin.fetch", expectedSpec.UTF8String);
+  if (rc == 0 && push) rc = git_config_set_string(isolated, "remote.origin.pushurl", remote.UTF8String);
+  if (rc == 0) rc = git_repository_open_holi(&repo, gitDir.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH | GIT_REPOSITORY_OPEN_BARE, NULL, isolated);
+  git_config_free(isolated);
+  git_config_free(diskConfig);
+  if (rc < 0) { git_repository_free(repo); [snapshot close]; if (error) *error = HNGPathError(EINVAL, @"Unsupported or mismatched selected-branch repository metadata"); return NULL; }
+  git_reference *head = NULL;
+  rc = git_repository_head(&head, repo);
+  const char *headName = rc == 0 ? git_reference_name(head) : NULL;
+  if (!headName || strcmp(headName, [[@"refs/heads/" stringByAppendingString:branch] UTF8String])) rc = GIT_EINVALIDSPEC;
+  git_reference_free(head);
+  if (rc < 0) { git_repository_free(repo); [snapshot close]; if (error) *error = HNGPathError(EINVAL, @"Checked-out branch does not match selected branch"); return NULL; }
   *snapshotOut = snapshot;
   return repo;
 }
