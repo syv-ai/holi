@@ -16,7 +16,7 @@ export type InvitationCardSource = {
   navigationWithheld: boolean
   calendar: Pick<
     VerifiedCopy,
-    keyof InvitationLinks | 'title' | 'start' | 'end' | 'allDay' | 'location' | 'responseStatus'
+    keyof InvitationLinks | 'title' | 'start' | 'end' | 'allDay' | 'location'
   > | null
 }
 
@@ -27,7 +27,7 @@ type MailInvitation = Details & {
   kind: 'invitation' | 'meeting'
   scope: 'single' | 'series' | 'occurrence'
   responseStatus: ResponsePresentation['status']
-  /** The verified Calendar copy's current self response, not a mail or journal fallback. */
+  /** A current, verified Calendar answer, not a mail or journal fallback. */
   recordedResponseStatus: MailInvitation['responseStatus']
   /** The latest corroborated Gmail reply, unless superseded by a Calendar response. */
   sentResponseStatus: InviteAnswer | null
@@ -40,6 +40,7 @@ type ResponsePresentation = {
   unavailableReason: string | null
   status: RsvpStatus | 'delegated' | null
   sentStatus: InviteAnswer | null
+  recordedCalendarStatus: RsvpStatus | null
   targetKey: string | null
   canRespond: boolean
   pending: boolean
@@ -104,7 +105,7 @@ export function projectMailInvitation(
     unavailableReason: response.unavailableReason,
     responseTargetKey: response.targetKey,
     responseStatus: response.status,
-    recordedResponseStatus: calendar?.responseStatus ?? null,
+    recordedResponseStatus: response.recordedCalendarStatus,
     sentResponseStatus: response.sentStatus,
     canRespond: response.canRespond,
     responsePending: response.pending,

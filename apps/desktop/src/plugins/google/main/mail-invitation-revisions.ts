@@ -10,7 +10,8 @@ type Revision = InvitationAttempt['revision']
 export type Candidate = NonNullable<ReturnType<typeof parseCalendarMail>> & { mail: Mail }
 type RevisionSelection = {
   scopes: Incoming[]
-  suppressesSeriesSlot: (series: Candidate, slot: string) => boolean
+  /** A live scoped REQUEST, false for a withheld slot, or null for no applicable evidence. */
+  selectSeriesSlot: (series: Candidate, slot: string) => Incoming | false | null
 }
 type Incoming = {
   selected: Candidate
@@ -193,7 +194,7 @@ export function selectInvitationRevisions(
             'Gmail could not identify a revision in this conversation',
         ),
       ],
-      suppressesSeriesSlot: () => false,
+      selectSeriesSlot: () => null,
     }
   const groups = new Map<string, Candidate[]>()
   for (const candidate of revisions) {
@@ -260,7 +261,7 @@ export function selectInvitationRevisions(
   const bySlot = new Map(slots.map((slot) => [scopeKey(identityOf(slot.entry.selected)), slot]))
   return {
     scopes: slots.map(({ entry }) => entry),
-    suppressesSeriesSlot(series: Candidate, recurrenceId: string) {
+    selectSeriesSlot(series: Candidate, recurrenceId: string) {
       const revision = identityOf(series)
       const organizer = series.value.details.organizer?.email
       const slot = { ...revision, recurrenceId }
@@ -271,17 +272,17 @@ export function selectInvitationRevisions(
         const cancellation =
           occurrence.cancelledBy ??
           (!occurrence.reason && value.details.cancelled ? occurrence.selected : null)
-        if (cancellation && suppresses(series, identityOf(cancellation))) return true
+        if (cancellation && suppresses(series, identityOf(cancellation))) return false
         if (!cancellation) {
           // A disputed slot is not eligible for navigation, even when Google
           // still lists a confirmed instance. A selected live REQUEST already
           // accounts for any cancellation, including a later reinstatement.
-          if (occurrence.reason || !value.request) return true
-          if (value.method === 'REQUEST') return false
+          if (occurrence.reason || !value.request) return false
+          if (value.method === 'REQUEST') return occurrence
         }
       }
       const covering = coveringCancellation(slot, organizer, series)
-      return Boolean(covering.conflict || covering.cancelledBy)
+      return covering.conflict || covering.cancelledBy ? false : null
     },
   }
 }

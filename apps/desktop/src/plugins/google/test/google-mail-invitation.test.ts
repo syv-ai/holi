@@ -457,7 +457,11 @@ async function rig() {
       ).filter(
         (e) =>
           e.iCalUID === queryUid &&
-          (e.status !== 'cancelled' || url.searchParams.get('showDeleted') === 'true'),
+          (e.status !== 'cancelled' || url.searchParams.get('showDeleted') === 'true') &&
+          // The fixture calendar is UTC, including the exclusive end of a DATE.
+          (!url.searchParams.has('timeMin') ||
+            Date.parse(e.end.date ?? e.end.dateTime ?? '') >
+              Date.parse(url.searchParams.get('timeMin')!)),
       )
       if (state.replaceOnQuery) {
         state.replaceOnQuery = false
@@ -590,6 +594,7 @@ async function rig() {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
@@ -1628,6 +1633,66 @@ it('joins the next verified series occurrence but answers only the master', asyn
   expect(state.sendAttempts).toBe(0)
 })
 
+it.each(['joined', 'ineligible before a failed continuation'] as const)(
+  'retains the original slot of a %s navigation-only Calendar instance',
+  async (discovery) => {
+    const { state, read, restart } = await rig()
+    state.messages[0] = gmailMessage(
+      'update',
+      200,
+      invite().replace('END:VEVENT', 'RRULE:FREQ=WEEKLY\r\nEND:VEVENT'),
+    )
+    const master = event({ id: 'series', series: true })
+    const slotB = upcomingInstance('slot-b', '2099-07-10', 'https://meet.google.com/xyz-abcd-efg')
+    slotB.originalStartTime = { dateTime: '2099-07-09T15:00:00Z' }
+    state.events.set('primary', [master]) // Unexpanded UID results expose only the master.
+    state.instances.set('primary', [slotB])
+    if (discovery !== 'joined') {
+      slotB.hangoutLink = ''
+      slotB.htmlLink = ''
+      // Page 2 is unavailable, but page 1 already established a resource.
+      state.expandedPages = [{ kind: 'calendar#events', items: [slotB], nextPageToken: '1' }]
+    }
+    expect(await read()).toMatchObject({
+      scope: 'series',
+      canRespond: true,
+      conferenceUrl: slotB.hangoutLink || null,
+      htmlLink: slotB.htmlLink || master.htmlLink,
+    })
+
+    state.events.clear() // The master now returns 404. The instance still returns 200.
+    const request = (slot: string) =>
+      invite('REQUEST', 'DTSTART:20990710T150000Z\r\nDTEND:20990710T160000Z').replace(
+        'END:VEVENT',
+        `RECURRENCE-ID:${slot}\r\nEND:VEVENT`,
+      )
+    const reopened = restart()
+    state.messages = [gmailMessage('other-slot', 300, request('20990710T150000Z'))]
+    expect(await reopened.read()).toMatchObject({ scope: 'occurrence', canRespond: true })
+
+    state.messages = [gmailMessage('slot-b-request', 400, request('20990709T150000Z'))]
+    expect(await reopened.read()).toMatchObject({
+      identity: { messageId: 'slot-b-request', recurrenceId: '2099-07-09T15:00:00.000Z' },
+      canRespond: false,
+      responseTargetKey: null,
+      recordedResponseStatus: null,
+      htmlLink: null,
+    })
+    await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+    state.instances.clear()
+    expect(await reopened.read()).toMatchObject({ canRespond: true })
+    expect(await reopened.respond('accepted')).toMatchObject({
+      channel: 'gmail',
+      outcome: 'sent',
+      refreshPending: false,
+    })
+    expect(state.sendAttempts).toBe(1)
+    expect(state.calendarPatchAttempts).toBe(0)
+  },
+)
+
 it('skips linkless and unsafe upcoming instances and leaves only Calendar navigation when exhausted', async () => {
   const { state, read } = await rig()
   state.messages[0] = gmailMessage(
@@ -1703,7 +1768,7 @@ it('skips individually unverifiable series occurrences, but cannot use a malform
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
-it('uses the selected mail cancellation at the original slot when joining a series', async () => {
+it('follows cancellation and reinstatement at the original slot when joining a series', async () => {
   const { state, list, read } = await rig()
   state.messages[0] = gmailMessage(
     'update',
@@ -1768,14 +1833,60 @@ it('uses the selected mail cancellation at the original slot when joining a seri
     htmlLink: master.htmlLink,
     canRespond: true,
   })
+  const newRoom = 'https://meet.google.com/qrs-tuvw-xyz'
   const reinstate = invite(
     'REQUEST',
-    'DTSTART:20990710T150000Z\r\nDTEND:20990710T160000Z',
+    'DTSTART:20990711T150000Z\r\nDTEND:20990711T160000Z',
     3,
     '20240703T090000Z',
-  ).replace('END:VEVENT', 'RECURRENCE-ID:20990709T150000Z\r\nEND:VEVENT')
-  state.messages.push(gmailMessage('reinstated', 250, reinstate))
-  expect(await series()).toMatchObject({ conferenceUrl: next.hangoutLink, canRespond: true })
+  )
+    .replace('LOCATION:Upstairs', 'LOCATION:Downstairs')
+    .replace('https://meet.google.com/abc-defg-hij', newRoom)
+    .replace('END:VEVENT', 'RECURRENCE-ID:20990709T150000Z\r\nEND:VEVENT')
+  state.messages = [
+    state.messages[0]!,
+    gmailMessage('cancel', 300, cancel(organizer, '20240702T090000Z')),
+  ]
+  const reinstated = gmailMessage('reinstated', 250, reinstate)
+  state.messages.push(reinstated)
+  expect(await read(thread, 'occurrence')).toMatchObject({
+    identity: { messageId: 'reinstated' },
+    cancelled: false,
+    canRespond: false,
+    responseTargetKey: null,
+    conferenceUrl: newRoom, // Current mail material, not the stale Calendar room.
+    htmlLink: null,
+  })
+  expect(await series()).toMatchObject({
+    conferenceUrl: later.hangoutLink,
+    htmlLink: later.htmlLink,
+    canRespond: true,
+    responseTargetKey: first!.responseTargetKey,
+  })
+  const updated = {
+    ...next,
+    start: { dateTime: '2099-07-11T15:00:00Z' },
+    end: { dateTime: '2099-07-11T16:00:00Z' },
+    location: 'Downstairs',
+    hangoutLink: newRoom,
+  }
+  state.instances.set('primary', [later, { ...updated, hangoutLink: next.hangoutLink }])
+  expect(await series()).toMatchObject({ conferenceUrl: later.hangoutLink })
+  state.instances.set('primary', [later, updated])
+  expect(await series()).toMatchObject({
+    conferenceUrl: newRoom,
+    htmlLink: updated.htmlLink,
+    canRespond: true,
+    responseTargetKey: first!.responseTargetKey,
+  })
+  expect(await read(thread, 'occurrence')).toMatchObject({
+    identity: { messageId: 'reinstated' },
+    canRespond: true,
+    conferenceUrl: newRoom,
+    htmlLink: updated.htmlLink,
+  })
+  state.messages = [state.messages[0]!, range, reinstated]
+  expect(await series()).toMatchObject({ conferenceUrl: newRoom, canRespond: true })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
@@ -2143,6 +2254,7 @@ it('keeps an unknown Calendar dispatch when the target vanishes, but permits a v
 })
 
 it('offers join-only for verified organizer or PUBLISH mail and rejects unverified lookalikes', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2024-07-18T14:00:00Z'))
   const { state, read, respond, list } = await rig()
   const published = invite('PUBLISH').replace('METHOD:PUBLISH', 'METHOD:PUB\r\n LISH')
   state.messages = [gmailMessage('published', 200, published, { method: 'PUBLISH' })]
@@ -2182,6 +2294,69 @@ it('offers join-only for verified organizer or PUBLISH mail and rejects unverifi
     htmlLink: null,
   })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
+it.each(['PUBLISH', 'EXPORT'] as const)(
+  'keeps %s meeting facts but expires standalone navigation at the legacy cutoff',
+  async (method) => {
+    const clock = vi.spyOn(Date, 'now')
+    const { state, read, respond } = await rig()
+    let source = invite(method)
+    if (method === 'EXPORT') source = source.replace('METHOD:EXPORT\r\n', '')
+    state.messages = [gmailMessage('meeting', 200, source)]
+    const copy = { ...event(), hangoutLink: 'https://meet.google.com/abc-defg-hij' }
+    state.events.set('primary', [copy])
+
+    for (const time of ['14:00:00', '15:30:00', '16:59:59']) {
+      clock.mockReturnValue(Date.parse(`2024-07-18T${time}Z`))
+      expect(await read()).toMatchObject({
+        conferenceUrl: copy.hangoutLink,
+        htmlLink: copy.htmlLink,
+      })
+    }
+    clock.mockReturnValue(Date.parse('2024-07-18T17:00:00Z'))
+    expect(await read()).toMatchObject({
+      kind: 'meeting',
+      title: 'Design sync',
+      start,
+      end,
+      location: 'Upstairs',
+      conferenceUrl: null,
+      conferenceLinkSource: null,
+      htmlLink: null,
+      htmlLinkSource: null,
+      canRespond: false,
+    })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+    state.messages = [gmailMessage('late-request', 300, invite())]
+    expect(await read()).toMatchObject({ kind: 'invitation', canRespond: true })
+    expect(await respond('accepted')).toMatchObject({
+      channel: 'calendar',
+      outcome: 'sent',
+      refreshPending: false,
+    })
+  },
+)
+
+it('uses the Calendar end cutoff for an all-day publication with an implicit end', async () => {
+  const clock = vi.spyOn(Date, 'now')
+  const { state, read } = await rig()
+  state.messages = [
+    gmailMessage('publication', 200, invite('PUBLISH', 'DTSTART;VALUE=DATE:20240718')),
+  ]
+  const copy = event({ allDay: true })
+  state.events.set('primary', [copy])
+  clock.mockReturnValue(Date.parse('2024-07-18T23:30:00Z'))
+  expect(await read()).toMatchObject({ allDay: true, end: '2024-07-19', htmlLink: copy.htmlLink })
+  clock.mockReturnValue(Date.parse('2024-07-19T01:00:00Z'))
+  expect(await read()).toMatchObject({
+    allDay: true,
+    end: '2024-07-19',
+    htmlLink: null,
+    conferenceUrl: null,
+    canRespond: false,
+  })
 })
 
 it.each(['PUBLISH', 'EXPORT'] as const)(
@@ -2241,6 +2416,7 @@ it.each(['PUBLISH', 'EXPORT'] as const)(
 )
 
 it('allows a methodless export to open only a verified meeting, never to RSVP', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2024-07-18T14:00:00Z'))
   const { state, read, respond, list } = await rig()
   const source = invite()
     .replace('METHOD:REQUEST\r\n', '')
@@ -2920,6 +3096,7 @@ it.each(['collection recovers', 'resource deleted'] as const)(
     const reopened = restart()
     expect(await reopened.read()).toMatchObject({
       responseStatus: 'accepted',
+      recordedResponseStatus: 'accepted',
       responsePending: false,
       canRespond: false,
     })
@@ -2940,6 +3117,7 @@ it.each(['collection recovers', 'resource deleted'] as const)(
         identity: { messageId: 'moved' },
         canRespond: false,
         responseStatus: null,
+        recordedResponseStatus: null,
       })
       await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
       expect(state.calendarPatchAttempts).toBe(1)
@@ -2970,6 +3148,39 @@ it.each(['collection recovers', 'resource deleted'] as const)(
     }
   },
 )
+
+it('keeps the exact Calendar answer separate from a newer verified Sent answer', async () => {
+  const { state, read, respond, restart } = await rig()
+  state.events.set('primary', [event()])
+  await read()
+  expect(await respond('accepted')).toMatchObject({
+    channel: 'calendar',
+    outcome: 'sent',
+    refreshPending: false,
+  })
+  state.primaryPages = [{ kind: 'calendar#events' }]
+  state.messages.push(
+    gmailMessage(
+      'newer-sent',
+      700,
+      invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:'),
+      { sent: true, parent: '<update@example.net>', method: 'REPLY' },
+    ),
+  )
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject({
+    responseStatus: null,
+    recordedResponseStatus: 'accepted',
+    sentResponseStatus: 'declined',
+    canRespond: false,
+    responsePending: false,
+    responseTargetKey: null,
+    htmlLink: null,
+  })
+  await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.sendAttempts).toBe(0)
+})
 
 it('remembers the identity of an RSVP-ineligible Calendar copy until exact deletion', async () => {
   const { state, read, respond, restart } = await rig()
