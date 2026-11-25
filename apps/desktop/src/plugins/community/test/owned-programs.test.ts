@@ -583,7 +583,7 @@ async function ownedVault(userData: string, name: string, ids: string[]) {
   const host = createCapabilityHost({
     registry,
     rootFor: async (target) => (target === remote ? root : null),
-    active: () => null,
+    get: (_remote) => null,
     core: noCoreServices,
     pluginEnabled: async (id, target) =>
       (await readVaultSettings(target)).plugins.vault[id] === true,
@@ -1384,7 +1384,7 @@ async function coreHostedCommunity(userData: string) {
   const caps = createCapabilityHost({
     registry,
     rootFor,
-    active: () => null,
+    get: (_remote) => null,
     core: noCoreServices,
     pluginEnabled: async (id, root, allowDrain) => (await host.serving(root, allowDrain)).has(id),
     claims: async () => [],
