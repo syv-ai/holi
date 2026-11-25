@@ -27,6 +27,7 @@ export interface MeetingInput {
   end: string
   allDay: boolean
   location: string
+  description?: string
   guests: string[]
   meet: boolean
 }
@@ -119,6 +120,9 @@ export function meetingParams(raw: unknown): MeetingInput {
     end,
     allDay,
     location: (optionalStringParam(p, 'location') ?? '').trim(),
+    ...(p.description === undefined
+      ? {}
+      : { description: optionalStringParam(p, 'description') ?? '' }),
     guests: guests.sort(),
     meet: p.meet as boolean,
   }
@@ -134,6 +138,7 @@ function bodyOf(op: MeetingOperation) {
     start: endpoint(i.start),
     end: endpoint(i.end),
     ...(i.location ? { location: i.location } : {}),
+    ...(i.description ? { description: i.description } : {}),
     ...(i.guests.length ? { attendees: i.guests.map((email) => ({ email })) } : {}),
     extendedProperties: { private: { holiMeeting: op.fingerprint } },
     ...(i.meet
@@ -153,6 +158,7 @@ interface CreatedEvent {
   id?: string
   summary?: string
   location?: string
+  description?: string
   status?: string
   start?: { date?: string; dateTime?: string }
   end?: { date?: string; dateTime?: string }
@@ -180,6 +186,7 @@ function accept(op: MeetingOperation, event: CreatedEvent | null): boolean {
   if (
     event.summary !== i.title ||
     (event.location ?? '') !== i.location ||
+    (event.description ?? '') !== (i.description ?? '') ||
     !sameTime(event.start?.date ?? event.start?.dateTime, i.start) ||
     !sameTime(event.end?.date ?? event.end?.dateTime, i.end)
   )
