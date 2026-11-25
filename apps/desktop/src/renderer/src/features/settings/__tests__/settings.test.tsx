@@ -24,7 +24,7 @@ import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTab as closeShellTab, entryIds, selectEntry } from '@/state/shell-workspace'
 import { parseTabKey, SETTINGS_KEY, tabKey } from '@/state/tab-descriptor'
 import { EditorPage } from '../pages/editor-page'
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 const write = vi.fn(async (_input: unknown) => ({
   ok: true as const,
@@ -185,6 +185,7 @@ function ConnectionsSettings() {
 function mount({ agent = false }: { agent?: boolean } = {}) {
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
+  store.set(openedRemoteAtom, 'mara/notes')
   store.set(vaultsAtom, [
     {
       remote: 'mara/notes',
@@ -217,6 +218,7 @@ test('the machine-wide Vim switch works while vault settings load and never writ
   localStorage.removeItem('holi:vimCodeEditing')
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
+  store.set(openedRemoteAtom, 'mara/notes')
   store.set(vaultSettingsAtom, null)
   render(
     <Provider store={store}>
@@ -676,7 +678,10 @@ test('leaving a vault disposes its plugin settings draft', async () => {
   })
   act(() => store.set(activeRemoteAtom, null))
   expect(screen.queryByLabelText('Connection draft')).toBeNull()
-  act(() => store.set(activeRemoteAtom, 'mara/notes'))
+  act(() => {
+    store.set(activeRemoteAtom, 'mara/notes')
+    store.set(openedRemoteAtom, 'mara/notes')
+  })
   act(() => store.set(openSettingsSectionAtom, 'connections'))
   expect(await screen.findByLabelText('Connection draft')).toHaveValue('')
 })

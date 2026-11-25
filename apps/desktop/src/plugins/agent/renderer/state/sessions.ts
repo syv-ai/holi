@@ -260,6 +260,19 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
  * Asked fresh for every vault, so a renderer reload pulls the lists again.
  */
 export function agentVault(remote: string, store: PluginStore): () => void {
+  let disposed = false
+  let sessionsReady = false
+  let terminalsReady = false
+  const current = () => !disposed && store.get(activeRemoteAtom) === remote
+  const prune = () => {
+    if (!current() || !sessionsReady || !terminalsReady) return
+    store.set(
+      closeSurfaceTabsAtom,
+      AGENT_SURFACE,
+      store.get(agentTerminalsAtom).map((t) => t.id),
+      remote,
+    )
+  }
   // An event that lands while the opening question is in flight is NEWER
   // than its answer, and letting the answer win would drop what was just
   // announced. Every event is a new list, so an unchanged one means none came.
@@ -267,25 +280,31 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   const terminalsAsked = store.get(agentTerminalsAtom)
   const historyAsked = store.get(agentHistoryAtom)
   void agentCap.history(remote).then((list) => {
-    if (store.get(agentHistoryAtom) === historyAsked) store.set(agentHistoryAtom, list)
+    if (current() && store.get(agentHistoryAtom) === historyAsked) store.set(agentHistoryAtom, list)
   })
   void agentCap.sessions(remote).then((list) => {
-    if (store.get(agentSessionsAtom) === sessionsAsked) store.set(agentSessionsAtom, list)
+    if (current() && store.get(agentSessionsAtom) === sessionsAsked)
+      store.set(agentSessionsAtom, list)
+    sessionsReady = true
+    prune()
   })
   void agentCap.terminals(remote).then((list) => {
-    if (store.get(agentTerminalsAtom) === terminalsAsked) store.set(agentTerminalsAtom, list)
+    if (current() && store.get(agentTerminalsAtom) === terminalsAsked)
+      store.set(agentTerminalsAtom, list)
+    terminalsReady = true
+    prune()
   })
 
   // A terminal leaves main's list when its client exits: a detach, `/exit`,
   // or its session stopped. Its tabs go with it.
-  const offGone = store.sub(agentTerminalsAtom, () =>
-    store.set(
-      closeSurfaceTabsAtom,
-      AGENT_SURFACE,
-      store.get(agentTerminalsAtom).map((t) => t.id),
-      remote,
-    ),
-  )
+  const offSessions = store.sub(agentSessionsAtom, () => {
+    sessionsReady = true
+    prune()
+  })
+  const offGone = store.sub(agentTerminalsAtom, () => {
+    terminalsReady = true
+    prune()
+  })
 
   // Closing an agent tab only ends its window (the session keeps running);
   // without a detach the PTY would linger in main's list, which the palette
@@ -301,7 +320,9 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   })
 
   return () => {
+    disposed = true
     offGone()
+    offSessions()
     offTabs()
     // Both lists and the turn record are per vault: left as they are, the
     // next vault would show this one's sessions until its own answer came,

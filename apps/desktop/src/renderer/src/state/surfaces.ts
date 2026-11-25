@@ -39,7 +39,7 @@ function surfaceIdOf(key: string, surface: string): string | null {
 /** Close the tab onto `surface` with `id`, wherever it is in the strip: an
  *  app's "close tab" once its bundle is gone. */
 export const closeSurfaceTabAtom = atom(null, (_get, set, surface: string, id: string): void => {
-  set(shellWorkspaceAtom, (ws) => closeShellTab(ws, tabKey(shellSurfaceTab(surface, id))))
+  set(shellWorkspaceAtom, (ws) => closeShellTab(ws, tabKey(shellSurfaceTab(surface, id)), true))
 })
 
 /** Close every tab of `surface` whose id is not in `keep`: a plugin's tabs

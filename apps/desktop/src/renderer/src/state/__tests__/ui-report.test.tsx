@@ -1,3 +1,4 @@
+import { emptyWorkspace } from '@/state/shell-workspace'
 /**
  * What the agent is told the person looks at: the focused note, the lines
  * selected in it once the selection holds still, and nothing of another
@@ -33,7 +34,7 @@ function setup() {
 
 /** The strip as `entries`, with `active` in front. */
 function show(store: ReturnType<typeof createStore>, entries: ShellEntry[], active: string) {
-  store.set(shellWorkspaceAtom, { entries, active, closed: [], seq: 1, recent: [] })
+  store.set(shellWorkspaceAtom, { ...emptyWorkspace(), entries, active, seq: 1 })
 }
 
 const split = (views: string[], focused: string): ShellEntry => ({
