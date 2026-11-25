@@ -13,12 +13,17 @@ static NSError *HMAError(int c, NSString *s) { return [NSError errorWithDomain:H
 static BOOL HMAString(id x) { return [x isKindOfClass:NSString.class] && [x length] && ![x containsString:@"\0"]; }
 static NSString *HMAUUID(void) { uuid_t u; uuid_generate(u); char s[37]; uuid_unparse_lower(u,s); return [NSString stringWithUTF8String:s]; }
 static BOOL HMAWrite(int fd, NSData *d) { const char *p=d.bytes; size_t n=d.length; while(n){ssize_t k=write(fd,p,n);if(k<0&&errno==EINTR)continue;if(k<=0)return NO;p+=k;n-=k;}return fsync(fd)==0; }
+static BOOL HMAValidUUID(id x) { return HMAString(x) && [x length] == 36 && [[NSUUID alloc] initWithUUIDString:x] != nil; }
 static NSDictionary *HMARead(int d) {
  int f=openat(d,".holi-acquisition.json",O_RDONLY|O_NOFOLLOW|O_CLOEXEC); if(f<0)return nil;
  struct stat st; BOOL valid=fstat(f,&st)==0&&S_ISREG(st.st_mode)&&st.st_size>=2&&st.st_size<=4096;
- NSMutableData *data=[NSMutableData data]; char b[4097]; ssize_t n=0;
+ NSMutableData *data=[NSMutableData data]; char b[1024]; ssize_t n=0;
  if(valid){ do { n=read(f,b,sizeof b); if(n>0){if(data.length+(NSUInteger)n>4096){valid=NO;break;}[data appendBytes:b length:(NSUInteger)n];} } while(n>0|| (n<0&&errno==EINTR)); if(n<0)valid=NO; }
- close(f); if(!valid)return nil; id x=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]; return [x isKindOfClass:NSDictionary.class]?x:nil;
+ close(f); if(!valid)return nil; id x=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+ if (![x isKindOfClass:NSDictionary.class]) return nil;
+ NSDictionary *m=x; NSString *c=m[@"container"],*uid=m[@"uuid"];
+ if (![m[@"version"] isEqual:@1] || !HMAValidUUID(uid) || !HMAString(c) || ![c.lastPathComponent isEqual:[@".holi-acquire-" stringByAppendingString:uid]] || !HMAString(m[@"stage"]) || !HMAString(m[@"target"]) || ![m[@"rootKey"] isEqual:m[@"target"]] || !HMAString(m[@"remote"]) || !HMAString(m[@"branch"]) || !HMAString(m[@"runId"]) || ![@[@"prepared",@"before-publication",@"after-publication"] containsObject:m[@"phase"]] || (m[@"nativeId"] && !HMAValidUUID(m[@"nativeId"]))) return nil;
+ return m;
 }
 @implementation HoliManagedAcquisition
 - (NSString *)rootKeyAtTarget:(NSString *)target error:(NSError **)error {
@@ -37,18 +42,36 @@ static NSDictionary *HMARead(int d) {
 - (BOOL)checkpointReceipt:(NSDictionary *)receipt name:(NSString *)name error:(NSError **)error {
  if(![@[@"prepared",@"before-publication",@"after-publication"] containsObject:name]){if(error)*error=HMAError(EINVAL,@"Unknown checkpoint");return NO;}
  NSString *container=receipt[@"containerPath"]; if(!HMAString(container)){if(error)*error=HMAError(EINVAL,@"Missing container");return NO;} int d=open(container.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC); NSDictionary *m=d<0?nil:HMARead(d);
- if(!m||![m[@"container"] isEqual:container]||![receipt[@"stagePath"] isEqual:m[@"stage"]]||![receipt[@"targetPath"] isEqual:m[@"target"]]||![receipt[@"rootKey"] isEqual:m[@"rootKey"]]||![receipt[@"receipt"] isEqual:m]){if(d>=0)close(d);if(error)*error=HMAError(EPERM,@"Receipt ownership mismatch");return NO;}
- NSMutableDictionary *u=[m mutableCopy];u[@"phase"]=name;NSData *data=[NSJSONSerialization dataWithJSONObject:u options:NSJSONWritingSortedKeys error:nil];unlinkat(d,".holi-acquisition.tmp",0);int f=openat(d,".holi-acquisition.tmp",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);BOOL ok=f>=0&&HMAWrite(f,data);if(f>=0)close(f);if(ok)ok=renameat(d,".holi-acquisition.tmp",d,".holi-acquisition.json")==0&&fsync(d)==0;close(d);if(!ok&&error)*error=HMAError(errno?:EIO,@"Checkpoint failed");return ok;
+ if(!m||![m[@"container"] isEqual:container]||![receipt[@"stagePath"] isEqual:m[@"stage"]]||![receipt[@"targetPath"] isEqual:m[@"target"]]||![receipt[@"rootKey"] isEqual:m[@"rootKey"]]||![receipt[@"receipt"] isEqual:m]||![container.lastPathComponent isEqual:[@".holi-acquire-" stringByAppendingString:m[@"uuid"]]]){if(d>=0)close(d);if(error)*error=HMAError(EPERM,@"Receipt ownership mismatch");return NO;}
+ NSMutableDictionary *u=[m mutableCopy];u[@"phase"]=name;NSData *data=[NSJSONSerialization dataWithJSONObject:u options:NSJSONWritingSortedKeys error:nil];NSString *tmp=[@".holi-acquisition-" stringByAppendingString:HMAUUID()];int f=openat(d,tmp.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);BOOL ok=f>=0&&data.length<=4096&&HMAWrite(f,data);if(f>=0)close(f);if(ok)ok=renameat(d,tmp.fileSystemRepresentation,d,".holi-acquisition.json")==0&&fsync(d)==0;close(d);if(!ok&&error)*error=HMAError(errno?:EIO,@"Checkpoint failed");return ok;
 }
 - (NSDictionary *)finishReceipt:(NSDictionary *)receipt error:(NSError **)error {
  NSString *stage=receipt[@"stagePath"],*target=receipt[@"targetPath"]; NSDictionary *m=receipt[@"receipt"]; struct stat st;
  if(![self checkpointReceipt:receipt name:@"before-publication" error:error])return nil;
  NSString *container=receipt[@"containerPath"]; if(lstat(stage.fileSystemRepresentation,&st)||!S_ISDIR(st.st_mode)){if(error)*error=HMAError(ENOENT,@"Checkout stage missing");return nil;}
  HoliManagedIdentity *identity=[HoliManagedIdentity new];NSDictionary *i=[identity readIdentityAtRoot:stage error:error];if(!i||![i[@"remote"] isEqual:m[@"remote"]]||![i[@"branch"] isEqual:m[@"branch"]]||!HMAString(i[@"nativeId"])){if(error&&!*error)*error=HMAError(EPERM,@"Checkout identity mismatch");return nil;}
- NSString *key=[self rootKeyAtTarget:target error:error];if(![key isEqual:target]||lstat(target.fileSystemRepresentation,&st)==0){if(error)*error=HMAError(EEXIST,@"Target changed or already exists");return nil;}
+ NSString *key=[self rootKeyAtTarget:target error:error];if(![key isEqual:target]){if(error)*error=HMAError(EINVAL,@"Target changed");return nil;}
  // Bind identity into the private manifest before the atomic no-replace publication.
- NSMutableDictionary *bound=[m mutableCopy];bound[@"nativeId"]=i[@"nativeId"];if(![self checkpointReceipt:@{@"containerPath":container,@"stagePath":stage,@"targetPath":target,@"rootKey":target,@"receipt":m} name:@"before-publication" error:error])return nil;
- if(renamex_np(stage.fileSystemRepresentation,target.fileSystemRepresentation,RENAME_EXCL)){if(error)*error=HMAError(errno,@"Atomic publication refused");return nil;} return @{@"targetPath":target,@"rootKey":target,@"receipt":bound};
+ NSMutableDictionary *bound=[m mutableCopy];bound[@"nativeId"]=i[@"nativeId"];
+ NSDictionary *boundReceipt=@{@"containerPath":container,@"stagePath":stage,@"targetPath":target,@"rootKey":target,@"receipt":m};
+ if(![self checkpointReceipt:boundReceipt name:@"before-publication" error:error])return nil;
+ // Store the checkout identity in the durable ownership record before publication.
+ int cd=open(container.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+ NSData *bd=[NSJSONSerialization dataWithJSONObject:bound options:NSJSONWritingSortedKeys error:nil]; NSString *tmp=[@".holi-acquisition-" stringByAppendingString:HMAUUID()];
+ int bf=cd<0?-1:openat(cd,tmp.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+ BOOL saved=bf>=0&&bd.length<=4096&&HMAWrite(bf,bd);if(bf>=0)close(bf);if(saved)saved=renameat(cd,tmp.fileSystemRepresentation,cd,".holi-acquisition.json")==0&&fsync(cd)==0;if(cd>=0)close(cd);
+ if(!saved){if(error)*error=HMAError(errno?:EIO,@"Cannot persist checkout identity");return nil;}
+ if(renamex_np(stage.fileSystemRepresentation,target.fileSystemRepresentation,RENAME_EXCL)){
+   // A retry after publication is successful only for the same durable native identity.
+   if(errno!=ENOENT && errno!=EEXIST){if(error)*error=HMAError(errno,@"Atomic publication refused");return nil;}
+   NSDictionary *published=[identity readIdentityAtRoot:target error:nil];
+   if(![published[@"nativeId"] isEqual:bound[@"nativeId"]]||![published[@"remote"] isEqual:m[@"remote"]]||![published[@"branch"] isEqual:m[@"branch"]]){if(error)*error=HMAError(EEXIST,@"Target belongs to another checkout");return nil;}
+ }
+ NSString *parent=target.stringByDeletingLastPathComponent;int pd=open(parent.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+ if(pd<0||fsync(pd)){if(pd>=0)close(pd);if(error)*error=HMAError(errno?:EIO,@"Cannot persist publication");return nil;}close(pd);
+ NSDictionary *finalReceipt=@{@"containerPath":container,@"stagePath":stage,@"targetPath":target,@"rootKey":target,@"receipt":bound};
+ if(![self checkpointReceipt:finalReceipt name:@"after-publication" error:error])return nil;
+ return @{@"targetPath":target,@"rootKey":target,@"receipt":bound};
 }
 - (NSDictionary *)receiptsAtTarget:(NSString *)target error:(NSError **)error {
  NSString *key=[self rootKeyAtTarget:target error:error];if(!key)return @{@"receipts":@[],@"refusals":@[]}; NSString *parent=key.stringByDeletingLastPathComponent;DIR *dir=opendir(parent.fileSystemRepresentation);NSMutableArray *found=[NSMutableArray array],*ref=[NSMutableArray array];struct dirent *e;
