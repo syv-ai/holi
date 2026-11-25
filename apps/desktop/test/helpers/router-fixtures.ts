@@ -133,7 +133,10 @@ export async function rig(
     registry: capabilities,
     rootFor: async (remote) =>
       (await registry.list()).find((e) => e.remote === remote)?.path ?? null,
-    active: () => host.active(),
+    get: (remote) => {
+      const active = host.active()
+      return active?.remote === remote ? active : null
+    },
     core: noCoreServices,
     pluginEnabled: async () => true,
     claims: TASKS,

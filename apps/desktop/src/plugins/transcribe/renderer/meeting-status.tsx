@@ -28,7 +28,7 @@ import type { ChunkInfo, ChunkState, MeetingState, ScribeState } from '../shared
 import { useAgentName } from './agent-name'
 import { useMeetingsDisplayed } from './displayed'
 import { SCRIBE_NAME, SCRIBE_TITLE } from './names'
-import { recorderAtom } from './recorder'
+import { selectedRecorderAtom } from './recorder'
 import { scribeStateOf, unsupportedReason } from './scribe-ready'
 
 /** How the topics are doing: "Topics: listening". */
@@ -86,7 +86,7 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
   useEffect(() => {
     if (!displayed) setDetailsOpen(false)
   }, [displayed])
-  const rec = useAtomValue(recorderAtom)
+  const rec = useAtomValue(selectedRecorderAtom)
   const agent = useAgentName()
   const { waiting, failed, lag, scribe, live, state } = useHealth(meeting)
   const transcription =

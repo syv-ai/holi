@@ -82,10 +82,11 @@ import { guardNavigation } from './window-guard'
 import { createRouter } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
+import { startRegisteredVaults } from './vault/startup'
 import { createSubscriptions } from './vault/subscriptions'
 import { createManagedCommitProvenance } from './managed-commit-provenance'
 import { prepareManagedClone } from './vault/prepare-clone'
-import { createSelectedRuntimeGate } from './vault/selected-runtime'
+import { createRuntimeGate } from './vault/runtime-gate'
 import { drainShutdown, settleVaultForQuit } from './shutdown'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
@@ -531,6 +532,7 @@ async function main(): Promise<void> {
       const entry = (await registry.list()).find((candidate) => candidate.remote === remote)
       if (!entry) throw new Error(`no such vault: ${remote}`)
       await prepareManagedClone(entry.path)
+      await plugins.seed(entry.path)
     },
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
@@ -552,7 +554,7 @@ async function main(): Promise<void> {
     onSnapshot: (remote, snapshot) => {
       const runtime = gate.capture(remote)
       if (runtime === null) return
-      send('vault:snapshot', snapshot)
+      send('vault:snapshot', { remote, snapshot })
       // Host startup snapshots arrive before the router has seeded and
       // reconciled plugins. The router's `opened` callback supplies the initial
       // snapshot after that sequence; later snapshots handle hand edits.
@@ -581,7 +583,7 @@ async function main(): Promise<void> {
         })
         .catch((err) => console.error('[plugins] snapshot reconcile failed:', err))
     },
-    onSyncState: (remote, state) => gate.run(remote, () => send('vault:sync', state)),
+    onSyncState: (remote, state) => gate.run(remote, () => send('vault:sync', { remote, state })),
     // Sync that keeps failing says so outside Holi too; inside, the activity
     // log's error line marks the Output (docs/features/vaults-sync.md).
     onSyncFailing: (remote, text) =>
@@ -607,8 +609,10 @@ async function main(): Promise<void> {
     },
     // The large-file gate's held-back set (empty clears the callout). Pushed
     // every commit tick and once at open, so a vault switch resets it.
-    onHeldBack: (remote, files) => gate.run(remote, () => send('vault:heldback', files)),
-    onCommitted: (remote, paths) => gate.run(remote, () => send('vault:committed', paths)),
+    onHeldBack: (remote, files) =>
+      gate.run(remote, () => send('vault:heldback', { remote, files })),
+    onCommitted: (remote, paths) =>
+      gate.run(remote, () => send('vault:committed', { remote, paths })),
     activity: activity.write,
     // A merge (a pull, or a reconcile landing) is the only way a teammate's
     // comment arrives, so it is where a mention of the person signed in is
@@ -638,8 +642,7 @@ async function main(): Promise<void> {
     },
   })
 
-  const gate = createSelectedRuntimeGate({
-    selected: () => host.active(),
+  const gate = createRuntimeGate({
     get: (remote) => host.get(remote),
   })
 
@@ -717,9 +720,11 @@ async function main(): Promise<void> {
    * resolves: its clone is on disk either way, and its git hook can fire.
    */
   const rootFor = async (remote: string): Promise<string | null> => {
-    const active = host.active()
-    if (active?.remote === remote) return active.root
-    return (await registry.list()).find((e) => e.remote === remote)?.path ?? null
+    return (
+      host.get(remote)?.root ??
+      (await registry.list()).find((e) => e.remote === remote)?.path ??
+      null
+    )
   }
 
   /**
@@ -824,7 +829,7 @@ async function main(): Promise<void> {
    *  Holi has open (`requireOpen`), asked again here since a switch can land
    *  between the check and the show. */
   const showInActive = (remote: string, path: string, focus: boolean): BrowserWindow => {
-    if (host.active()?.remote !== remote) throw vaultNotOpen()
+    if (host.get(remote) === null) throw vaultNotOpen()
     return showPath(remote, path, { focus })
   }
   /** One screenshot at a time, open and capture together: a second one's tab
@@ -857,11 +862,11 @@ async function main(): Promise<void> {
    * the renderer, which only shows it.
    */
   const updateSkillsOnOpen = (remote: string): void => {
-    const vault = host.active()
-    if (vault === null || vault.remote !== remote) return
+    const vault = host.get(remote)
+    if (vault === null) return
     pluginReady.add(vault)
     plugins.snapshot(remote, vault.snapshot())
-    const stillOpen = (): boolean => host.active() === vault
+    const stillOpen = (): boolean => host.get(remote) === vault
     void updateOnOpen({
       root: vault.root,
       release: app.getVersion(),
@@ -931,9 +936,9 @@ async function main(): Promise<void> {
   const capabilityHost = createCapabilityHost({
     registry: capabilities,
     rootFor,
-    active: () => host.active(),
+    get: (remote) => host.get(remote),
     core: createCoreServices({
-      active: () => host.active(),
+      get: (remote) => host.get(remote),
       members,
       reports: uiReports,
     }),
@@ -1070,10 +1075,10 @@ async function main(): Promise<void> {
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
   const targetResolver = createCliTargetResolver(registry, async (remote, root) => {
-    const active = host.active()
-    if (active?.remote !== remote) return false
-    const path = await realpath(active.root).catch(() => null)
-    return host.active() === active && path === root
+    const runtime = host.get(remote)
+    if (runtime === null) return false
+    const path = await realpath(runtime.root).catch(() => null)
+    return host.get(remote) === runtime && path === root
   })
   let cliEndpoint: CliEndpoint | null = null
   const bridge = createBridgeServer({
@@ -1118,6 +1123,32 @@ async function main(): Promise<void> {
     throw error
   }
   const binDir = dirname(holiCliPath)
+
+  // Warm every existing managed clone only after bridge, CLI and login PATH are
+  // ready. Keep this serial and isolate failures so one broken clone cannot
+  // prevent the remaining registered vaults from starting.
+  const vaultStartup = loginPath
+    .then(async () => {
+      const entries = await registry.list()
+      await startRegisteredVaults(
+        entries,
+        async (remote) => {
+          const entry = entries.find((candidate) => candidate.remote === remote)
+          if (entry === undefined) return
+          await host.withRuntime(
+            remote,
+            async (coldStart) => {
+              if (coldStart) await prepareManagedClone(entry.path)
+              await plugins.seed(entry.path)
+            },
+            (runtime) => plugins.reconcile(runtime, 'open'),
+          )
+          updateSkillsOnOpen(remote)
+        },
+        (remote, error) => console.error(`[vault] startup failed for ${remote}:`, error),
+      )
+    })
+    .catch((error) => console.error('[vault] startup registry failed:', error))
 
   // Opened at login, Holi starts out of sight: the window loads (so the
   // vault opens) without showing, until the dock or the tray's Open Holi.
@@ -1267,11 +1298,49 @@ async function main(): Promise<void> {
           }
           invalidateMdxDiagnostics(false)
           await drainShutdown({
-            stopBackground: () => plugins.stopBackground(),
+            stopBackground: async () => {
+              await vaultStartup
+              await plugins.stopBackground()
+            },
             stopPlugins: () => plugins.stopAll(),
             closeTerminals: () => terminals.closeAll(),
             disposeUpdater: () => updater.dispose(),
-            settleVault: () => settleVaultForQuit(host.active()),
+            settleVault: async () => {
+              for (const { remote } of await registry.list()) {
+                await settleVaultForQuit(host.get(remote))
+              }
+            },
+            closeVaults: () => host.closeAll(),
+            closeBridge: async () => {
+              const endpoint = cliEndpoint
+              await endpoint?.dispose()
+              cliEndpoint = null
+              await bridge.stop()
+            },
+          })
+        async proceed() {
+          // Retrying consent removals and flushing buffers can both veto quit
+          // before tearing down the compiler, plugins, vaults or updater.
+          channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
+          const result = await requestFlush(channel)
+          if (result !== 'flushed') {
+            console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
+            return false
+          }
+          invalidateMdxDiagnostics(false)
+          await drainShutdown({
+            stopBackground: async () => {
+              await vaultStartup
+              await plugins.stopBackground()
+            },
+            stopPlugins: () => plugins.stopAll(),
+            closeTerminals: () => terminals.closeAll(),
+            disposeUpdater: () => updater.dispose(),
+            settleVault: async () => {
+              for (const { remote } of await registry.list()) {
+                await settleVaultForQuit(host.get(remote))
+              }
+            },
             closeVaults: () => host.closeAll(),
             closeBridge: async () => {
               const endpoint = cliEndpoint

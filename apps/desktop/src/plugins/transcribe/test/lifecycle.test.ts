@@ -130,7 +130,7 @@ it.each(['stop', 'stopAll', 'settings', 'snapshot', 'joined-stop', 'joined-setti
     const capabilities = createCapabilityHost({
       registry,
       rootFor: async () => root,
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async (plugin, at, allowDrain) =>
         (await host.serving(at, allowDrain)).has(plugin),

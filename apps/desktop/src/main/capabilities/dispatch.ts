@@ -26,8 +26,8 @@ export interface CapabilityHostDeps {
   registry: CapabilityRegistry
   /** The vault's clone on this machine, or null for a vault Holi does not have. */
   rootFor(remote: string): Promise<string | null>
-  /** The open vault, or null with none open. */
-  active(): {
+  /** The runtime for this vault, or null when it is not open. */
+  get(remote: string): {
     remote: string
     root: string
     snapshot(): VaultSnapshot
@@ -136,7 +136,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
         root,
         bundle,
         snapshot: async () => {
-          const active = deps.active()
+          const active = deps.get(remote)
           const snapshot =
             active?.remote === remote && active.root === root
               ? active.snapshot()
@@ -169,7 +169,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     }
     if (result.writes) {
       if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
-      const active = deps.active()
+      const active = deps.get(remote)
       if (active?.remote === remote && active.root === root) {
         await active.refresh().catch((e) => console.error('[capabilities] post-write rescan:', e))
       }

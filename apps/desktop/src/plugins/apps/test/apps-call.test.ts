@@ -110,7 +110,7 @@ async function rig(
   const host = createCapabilityHost({
     registry,
     rootFor: async (remote) => (remote === REMOTE ? root : null),
-    active: () => null,
+    get: (_remote) => null,
     core: noCoreServices,
     pluginEnabled: async () => true,
     claims: async () => [],
