@@ -66,7 +66,8 @@ export const transcribeRenderer: RendererPlugin = {
   vault: (remote, store) => {
     const off = meetingsVault(remote, store)
     return () => {
-      void store.set(stopRecordingAtom)
+      // Captures belong to their recorded remote, not to the selected-vault
+      // subscription. Main's stop-recording lifecycle event owns teardown.
       off()
     }
   },
