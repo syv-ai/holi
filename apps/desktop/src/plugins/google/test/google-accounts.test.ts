@@ -22,7 +22,7 @@ import {
 } from '../main/credentials'
 import { createVaultAccounts } from '../main/vault-accounts'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../main/token-store'
-import type { LoopbackServer } from '../main/loopback-flow'
+import type { LoopbackFlow, LoopbackServer } from '../main/loopback-flow'
 import { GOOGLE_SCOPES } from '../main/session'
 import { GoogleApi } from '../main/api'
 
@@ -99,6 +99,7 @@ function deferred<T>() {
 async function controlledConsent(
   seed: StoredGoogleAuth[] = [],
   onRevoke?: (token: string) => Promise<void>,
+  clients = memoryClients(null),
 ) {
   await store.write(Object.fromEntries(seed.map((row) => [row.sub, row])))
   let now = NOW
@@ -114,7 +115,7 @@ async function controlledConsent(
   const accounts = await createGoogleAccounts({
     store,
     vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
-    clients: memoryClients(null),
+    clients,
     env: {},
     now: () => now,
     listen: async () => {
@@ -386,6 +387,79 @@ describe('removeAccount', () => {
     expect(await accounts.sessionFor(VAULT)).toBeNull()
     expect(await accounts.sessionFor(WORK)).toBeNull()
     expect(await accounts.sessionFor('a/third')).not.toBeNull()
+  })
+
+  it('retires an unbound account locally while revocation is still in flight', async () => {
+    const revoking = deferred<void>()
+    const finishRevoke = deferred<void>()
+    const { accounts, exchanges, revoked } = await controlledConsent(
+      [auth()],
+      async (token) => {
+        if (token !== 'rt-1') return
+        revoking.resolve()
+        await finishRevoke.promise
+      },
+      memoryClients({ id: 'client-1' }),
+    )
+    // Linking doesn't allocate a session. A first binding during removal
+    // must not create a session for the old row at the new account epoch.
+    await accounts.link(VAULT, 'sub-1')
+    const removal = accounts.removeAccount('sub-1')
+    await revoking.promise
+    const duplicate = accounts.removeAccount('sub-1')
+    const providerWrite = vi.fn(async () => new Response('{}'))
+    let stale: ReturnType<LoopbackFlow['wait']> | undefined
+    try {
+      const binding = await accounts.bindingFor(VAULT)
+      if (binding) {
+        const api = new GoogleApi({
+          accessToken: () => binding.session.getAccessToken(),
+          fetch: providerWrite,
+        })
+        await api.postJson('https://www.googleapis.com/calendar/v3/calendars/primary/events', {})
+      }
+      expect(providerWrite).not.toHaveBeenCalled()
+      expect(binding).toBeNull()
+      const restarted = await manager()
+      expect(await restarted.bindingFor(VAULT)).toBeNull()
+      expect(await restarted.overview(VAULT)).toMatchObject({ state: 'not-connected' })
+
+      const overlapping = await accounts.connect(WORK)
+      stale = overlapping.wait()
+      await exchanges[0]!.started.promise
+    } finally {
+      finishRevoke.resolve()
+      await Promise.all([removal, duplicate])
+      if (stale) {
+        exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-overlap' }))
+        await expect(stale).resolves.toMatchObject({ kind: 'cancelled' })
+      }
+    }
+    expect(revoked.filter((token) => token === 'rt-1')).toHaveLength(1)
+    const fresh = await accounts.connect(WORK)
+    const result = fresh.wait()
+    exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }))
+    await expect(result).resolves.toMatchObject({ kind: 'granted' })
+    await expect((await accounts.bindingFor(WORK))?.session.getAccessToken()).resolves.toBe(
+      'at-fresh',
+    )
+    expect(await accounts.bindingFor(VAULT)).toBeNull()
+  })
+
+  it('keeps a failed local removal unavailable until it is retried', async () => {
+    const revoke = vi.fn(async () => new Response('{}'))
+    const accounts = await manager([auth()], revoke)
+    await accounts.link(VAULT, 'sub-1')
+    const diskError = new Error('could not delete Google credentials')
+    vi.spyOn(store, 'write').mockRejectedValueOnce(diskError)
+
+    await expect(accounts.removeAccount('sub-1')).rejects.toBe(diskError)
+    await expect(accounts.bindingFor(VAULT)).resolves.toBeNull()
+    expect(revoke).not.toHaveBeenCalled()
+
+    await accounts.removeAccount('sub-1')
+    expect(revoke).toHaveBeenCalledTimes(1)
+    await expect(accounts.overview(VAULT)).resolves.toMatchObject({ state: 'not-connected' })
   })
 })
 
@@ -661,7 +735,7 @@ describe('a grant that lands after it was let go', () => {
    * A connect whose code exchange hangs until `release`, the moment a cancel
    * or a client change cannot stop: the request is already at Google.
    */
-  async function hangingExchange() {
+  async function hangingExchange(clients = memoryClients(null)) {
     let state = ''
     let release = () => {}
     let exchanging = () => {}
@@ -670,7 +744,7 @@ describe('a grant that lands after it was let go', () => {
     const accounts = await createGoogleAccounts({
       store,
       vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
-      clients: memoryClients(null),
+      clients,
       env: {},
       listen: async () => ({
         port: 45123,
@@ -722,46 +796,74 @@ describe('a grant that lands after it was let go', () => {
     expect(await rig.accounts.sessionFor(VAULT)).toBeNull()
   })
 
-  it('does not expose consent whose token write lands after the client changed', async () => {
-    // A persisted link without a live account must not gain access even
-    // briefly when an obsolete consent finishes writing its tokens.
-    const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
-    await vaults.link(WORK, 'sub-9')
-    const rig = await hangingExchange()
-    const originalWrite = store.write.bind(store)
-    const atWrite = deferred<void>()
-    const releaseWrite = deferred<void>()
-    const atDiscard = deferred<void>()
-    const releaseDiscard = deferred<void>()
-    store.write = async (value) => {
-      if (value['sub-9']) {
-        atWrite.resolve()
-        await releaseWrite.promise
-      } else {
-        atDiscard.resolve()
-        await releaseDiscard.promise
-      }
-      await originalWrite(value)
-    }
-    const flow = await rig.accounts.connect(VAULT)
-    const outcome = flow.wait()
-    await rig.atGoogle
-    rig.release()
-    await atWrite.promise
+  it.each(['succeeds', 'fails'] as const)(
+    'keeps the old client until an in-flight first grant is retired (deletion %s)',
+    async (deletion) => {
+      const clients = createClientStore(join(dir, 'google-client.enc'), storage)
+      const old = { id: 'old.apps.googleusercontent.com' }
+      const replacement = { id: 'replacement.apps.googleusercontent.com' }
+      await clients.write(old)
+      // An existing link alone doesn't authorize a vault, but would expose
+      // this row on restart if the new client were published too early.
+      const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
+      await vaults.link(WORK, 'sub-9')
+      const rig = await hangingExchange(clients)
+      const originalWrite = store.write.bind(store)
+      const atWrite = deferred<void>()
+      const finishWrite = deferred<void>()
+      const atDeletion = deferred<void>()
+      const finishDeletion = deferred<void>()
+      const diskError = new Error('could not delete the old grant')
+      let firstDeletion = true
+      vi.spyOn(store, 'write').mockImplementation(async (value) => {
+        if (value['sub-9']) {
+          atWrite.resolve()
+          await finishWrite.promise
+        } else if (firstDeletion) {
+          firstDeletion = false
+          atDeletion.resolve()
+          await finishDeletion.promise
+          if (deletion === 'fails') throw diskError
+        }
+        await originalWrite(value)
+      })
+      const flow = await rig.accounts.connect(VAULT)
+      const outcome = flow.wait()
+      await rig.atGoogle
+      rig.release()
+      await atWrite.promise
 
-    await rig.accounts.setClient({ id: 'replacement.apps.googleusercontent.com', secret: 's' })
-    releaseWrite.resolve()
-    try {
-      await atDiscard.promise
-      await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
-    } finally {
-      releaseDiscard.resolve()
-      expect(await outcome).toEqual({ kind: 'cancelled' })
-    }
-    expect(rig.accounts.list()).toEqual([])
-    expect(await store.read()).toEqual({})
-    expect(rig.revoked).toEqual(['rt-new'])
-  })
+      const change = rig.accounts.setClient(replacement)
+      const checked =
+        deletion === 'fails'
+          ? expect(change).rejects.toBe(diskError)
+          : expect(change).resolves.toBeUndefined()
+      finishWrite.resolve()
+      try {
+        await atDeletion.promise
+        await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
+        const restarted = await hangingExchange(clients)
+        expect(restarted.accounts.client().id).toBe(old.id)
+      } finally {
+        finishDeletion.resolve()
+        await checked
+      }
+      await expect(outcome).resolves.toMatchObject({ kind: 'cancelled' })
+      if (deletion === 'fails') {
+        expect(rig.accounts.client().id).toBe(old.id)
+        await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
+        await expect(rig.accounts.connect(VAULT)).rejects.toThrow()
+        const restarted = await hangingExchange(clients)
+        expect(restarted.accounts.client().id).toBe(old.id)
+        await rig.accounts.setClient(replacement)
+      }
+      const restarted = await hangingExchange(clients)
+      expect(restarted.accounts.client().id).toBe(replacement.id)
+      expect(restarted.accounts.list()).toEqual([])
+      await expect(restarted.accounts.bindingFor(WORK)).resolves.toBeNull()
+      expect(rig.revoked).toEqual(['rt-new'])
+    },
+  )
 
   it('revokes the grant of a connect overtaken by a client change', async () => {
     const rig = await hangingExchange()
