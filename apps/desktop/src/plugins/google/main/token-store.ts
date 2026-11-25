@@ -2,8 +2,8 @@
  * The Google tokens, on disk, encrypted by the OS keychain.
  *
  * A deliberate sibling of `github/token-store.ts` rather than a generalization
- * of it: the two hold different shapes and version independently. The two
- * invariants *are* copied, because both are load-bearing and both are tested:
+ * of it: the two hold different shapes and version independently. This store
+ * has two tested constraints:
  *
  *   - **It never writes plaintext.** If the platform cannot encrypt, `write`
  *     throws rather than falling back. A refresh token in a readable file is a
@@ -113,8 +113,8 @@ export class GoogleTokenStore {
     }
 
     await mkdir(dirname(this.#file), { recursive: true })
-    // Write-then-rename: a crash mid-write must not leave a truncated file that
-    // reads as a disconnect on next launch.
+    // Write-then-rename keeps a crash from replacing the stored credentials
+    // with a truncated envelope.
     const tmp = `${this.#file}.tmp`
     await writeFile(tmp, JSON.stringify(envelope), { mode: 0o600 })
     await rename(tmp, this.#file)
