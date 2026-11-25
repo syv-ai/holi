@@ -17,10 +17,11 @@ export function createChildFrameVim(
   contents: WebContents,
   presented: () => boolean,
   releaseFocus: () => void,
+  sharedAddressing?: ReturnType<typeof createFrameAddressing>,
 ) {
   const tab = {}
   let capture: FrameCapture | null = null
-  let addressing: ReturnType<typeof createFrameAddressing> | null = null
+  let addressing: ReturnType<typeof createFrameAddressing> | null = sharedAddressing ?? null
   const children = new Map<WebFrameMain, Child>()
   let enabled = false
   let revision = 0
