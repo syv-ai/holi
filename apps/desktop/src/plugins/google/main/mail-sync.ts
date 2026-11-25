@@ -160,11 +160,8 @@ export async function syncThreads(
     (id) => !cachedIds.has(id) || left.has(id) || deleted.has(id),
   )
   const confirmedIds = new Set(candidatesToConfirm)
-  const queryMatches =
-    candidatesToConfirm.length === 0
-      ? []
-      : await findQueryMatches(api, options, knownAddresses, confirmedIds)
-  const admitted = new Set(queryMatches.map((thread) => thread.id))
+  const queryMatches = await findQueryMatches(api, options, knownAddresses, confirmedIds)
+  const admitted = new Set(queryMatches.threads.map((thread) => thread.id))
   for (const id of changed) {
     if (!cachedIds.has(id) && !admitted.has(id)) changed.delete(id)
   }
@@ -179,29 +176,33 @@ export async function syncThreads(
 
   // Only the threads that actually moved, and never one we already know has
   // gone. Two changed threads cost two requests, not 25.
-  const queryMatchIds = new Set(queryMatches.map((thread) => thread.id))
   const refetched = await fetchThreadSummaries(
     api,
-    [...changed].filter((id) => !gone.has(id) && !queryMatchIds.has(id) && !confirmedIds.has(id)),
+    [...changed].filter((id) => !gone.has(id) && !confirmedIds.has(id)),
     knownAddresses,
   )
-  const available = new Set([
-    ...refetched.map((thread) => thread.id),
-    ...queryMatches.map((thread) => thread.id),
-  ])
+  const refreshed = [...refetched.threads, ...queryMatches.threads]
+  const available = new Set(refreshed.map((thread) => thread.id))
   // A deleted message can be a draft, not a conversation. A thread disappears
   // only when refetch or the authoritative list query confirms it is gone.
   for (const id of deleted) if (!available.has(id)) gone.add(id)
-  const refreshed = new Map(refetched.map((thread) => [thread.id, thread]))
-  for (const thread of queryMatches) refreshed.set(thread.id, thread)
-
-  const threads = merge(cached, [...refreshed.values()], gone, patches, options)
+  const unreadableThreadIds = [
+    ...queryMatches.unreadableThreadIds,
+    ...refetched.unreadableThreadIds,
+  ]
+  // Do not serve an old summary for a thread whose current metadata is unreadable.
+  for (const id of unreadableThreadIds) gone.add(id)
+  const threads = merge(cached, refreshed, gone, patches, options)
+  if (unreadableThreadIds.length) cache.setHistoryId(key, null)
   cache.writeThreads(key, threads)
-  if (historyId !== undefined) cache.setHistoryId(key, historyId)
+  if (!unreadableThreadIds.length && historyId !== undefined) cache.setHistoryId(key, historyId)
 
-  // A delta IS a sync: these threads are current as of this moment, even
-  // though most of them were served from disk rather than refetched.
-  return { threads, nextPageToken: null, syncedAt: new Date().toISOString() }
+  return {
+    threads,
+    ...(unreadableThreadIds.length ? { unreadableThreadIds } : {}),
+    nextPageToken: null,
+    syncedAt: new Date().toISOString(),
+  }
 }
 
 /**
@@ -220,8 +221,11 @@ async function fullSync(
 ): Promise<MailPage> {
   const cursor = currentHistoryId(api)
   const page = await listThreads(api, options, knownAddresses)
+  // A partial list has no usable cursor: a delta could have nothing to say
+  // about the skipped threads. The next read must try the whole page again.
+  const historyId = page.unreadableThreadIds ? null : await cursor
+  if (historyId === null) cache.setHistoryId(key, null)
   cache.writeThreads(key, page.threads)
-  const historyId = await cursor
   if (historyId !== null) cache.setHistoryId(key, historyId)
   return page
 }
@@ -231,7 +235,8 @@ async function findQueryMatches(
   options: ListThreadsOptions,
   knownAddresses: string[] | undefined,
   candidates: Set<string>,
-): Promise<MailThreadSummary[]> {
+) {
+  if (!candidates.size) return { threads: [], unreadableThreadIds: [] }
   const matches = new Set<string>()
   let pageToken: string | undefined
 

@@ -474,6 +474,8 @@ export function mailboxLabel(mailbox: MailboxName | undefined): string {
 
 export interface MailPage {
   threads: MailThreadSummary[]
+  /** Present only on a partial page; no usable summary exists for these threads. */
+  unreadableThreadIds?: string[]
   /** `null` when there is nothing more to load. */
   nextPageToken: string | null
   /** When these threads were actually obtained from Google, ISO. The footer
@@ -601,8 +603,10 @@ export async function listThreads(
 ): Promise<MailPage> {
   const page = await listThreadIds(api, options)
 
+  const { threads, unreadableThreadIds } = await fetchThreadSummaries(api, page.ids, knownAddresses)
   return {
-    threads: await fetchThreadSummaries(api, page.ids, knownAddresses),
+    threads,
+    ...(unreadableThreadIds.length ? { unreadableThreadIds } : {}),
     nextPageToken: page.nextPageToken,
     syncedAt: new Date().toISOString(),
   }
@@ -619,47 +623,53 @@ export async function fetchThreadSummaries(
   api: GoogleApi,
   ids: string[],
   knownAddresses?: string[],
-): Promise<MailThreadSummary[]> {
-  if (ids.length === 0) return []
+): Promise<{ threads: MailThreadSummary[]; unreadableThreadIds: string[] }> {
+  if (ids.length === 0) return { threads: [], unreadableThreadIds: [] }
 
   // ONCE per call, not once per thread: resolving a chip must not cost a
   // request. It runs concurrently with the threads for the same reason.
-  const labelNames = fetchLabelNames(api)
-
-  const threads = await mapPooled(ids, 5, (id) =>
-    api
-      .get<RawThread>(`${BASE}/threads/${id}`, {
-        format: 'metadata',
-        // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
-        // Comma-joined, Gmail reads the whole string as one header name, matches
-        // nothing, and returns 200 with no headers.
-        metadataHeaders: [
-          'Subject',
-          'From',
-          'Date',
-          'Message-ID',
-          'To',
-          'Cc',
-          'Reply-To',
-          'List-Unsubscribe',
-          'Auto-Submitted',
-          'List-Id',
-          'Content-Type',
-        ],
-      })
-      .catch((error: unknown): RawThread => {
-        if (error instanceof GoogleApiError && error.status === 404) return {}
-        throw error
-      }),
-  )
-
-  for (const thread of threads) {
-    const walk = createMimeWalk(MIME_EVIDENCE_DEPTH)
-    if ((thread.messages?.length ?? 0) > 2048)
-      throw new CalendarScanError('Gmail MIME data exceeds the scan limits')
-    for (const message of thread.messages ?? []) walk(message.payload, () => {})
-  }
-  const names = await labelNames
+  const [names, results] = await Promise.all([
+    fetchLabelNames(api),
+    mapPooled(ids, 5, async (id) => {
+      const thread = await api
+        .get<RawThread>(`${BASE}/threads/${id}`, {
+          format: 'metadata',
+          // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
+          // Comma-joined, Gmail reads the whole string as one header name, matches
+          // nothing, and returns 200 with no headers.
+          metadataHeaders: [
+            'Subject',
+            'From',
+            'Date',
+            'Message-ID',
+            'To',
+            'Cc',
+            'Reply-To',
+            'List-Unsubscribe',
+            'Auto-Submitted',
+            'List-Id',
+            'Content-Type',
+          ],
+        })
+        .catch((error: unknown) => {
+          if (error instanceof GoogleApiError && error.status === 404) return null
+          throw error
+        })
+      if (thread === null) return { kind: 'missing' } as const
+      try {
+        const walk = createMimeWalk(MIME_EVIDENCE_DEPTH)
+        const messages = thread.messages ?? []
+        if (!Array.isArray(messages) || messages.length > 2048)
+          throw new CalendarScanError('Gmail MIME data exceeds the scan limits')
+        for (const message of messages) walk(message.payload, () => {})
+        return { kind: 'readable', thread } as const
+      } catch (error) {
+        if (!(error instanceof CalendarScanError)) throw error
+        return { kind: 'unreadable', id } as const
+      }
+    }),
+  ])
+  const threads = results.flatMap((result) => (result.kind === 'readable' ? [result.thread] : []))
   const summaries = threads
     .map((thread) => summarize(thread, names, knownAddresses))
     .filter((t): t is Omit<MailThreadSummary, 'hasInvite'> => t !== null)
@@ -668,12 +678,17 @@ export async function fetchThreadSummaries(
   // headers for an ambiguous latest incoming; never request body bytes.
   const { invitationIds, unknownIds } = await fetchLatestIncomingInvitations(api, threads)
   const invites = await fetchInviteIds(api, summaries)
-  return summaries.map((summary) => ({
-    ...summary,
-    automated: summary.automated || invitationIds.has(summary.id),
-    automationUnknown: unknownIds.has(summary.id),
-    hasInvite: invites.has(summary.id),
-  }))
+  return {
+    unreadableThreadIds: results.flatMap((result) =>
+      result.kind === 'unreadable' ? [result.id] : [],
+    ),
+    threads: summaries.map((summary) => ({
+      ...summary,
+      automated: summary.automated || invitationIds.has(summary.id),
+      automationUnknown: unknownIds.has(summary.id),
+      hasInvite: invites.has(summary.id),
+    })),
+  }
 }
 
 /**

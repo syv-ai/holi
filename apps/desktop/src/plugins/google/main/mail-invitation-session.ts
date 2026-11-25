@@ -182,13 +182,18 @@ async function sentResponse(
 ) {
   let newest = -Infinity
   const answers = new Set<InviteAnswer>()
+  const unordered = new Set<InviteAnswer>()
   const messageIds = new Set<string>()
   for (const message of messages
     .filter((mail) => mail.sent && mail.parent && parents.has(mail.parent))
     .sort((a, b) => b.timestamp - a.timestamp)) {
-    if (message.timestamp < newest) break
+    if (message.timestamp !== 0 && message.timestamp < newest) continue
     const matched = await sentAnswer(message, revision, address)
     if (!matched.length) continue
+    if (message.timestamp === 0) {
+      for (const answer of matched) unordered.add(answer)
+      continue
+    }
     newest = message.timestamp
     for (const answer of matched) answers.add(answer)
     messageIds.add(message.messageId)
@@ -200,7 +205,11 @@ async function sentResponse(
         answer: answers.size === 1 ? answers.values().next().value! : null,
       }
     : null
-  return { answers, evidence }
+  return {
+    answers,
+    evidence,
+    orderUnverified: [...unordered].some((answer) => answer !== evidence?.answer),
+  }
 }
 
 function isAnswer(status: MailInvitation['responseStatus']): status is InviteAnswer {
@@ -520,7 +529,8 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             (sent.evidence.timestamp === earlier.timestamp &&
               sent.evidence.answer === earlier.answer &&
               sent.evidence.messageIds.every((id) => earlier.messageIds.includes(id))))
-        const sentStatus = superseded ? null : (sent.evidence?.answer ?? null)
+        const sentStatus =
+          superseded || sent.orderUnverified ? null : (sent.evidence?.answer ?? null)
         invitation.sentResponseStatus = sentStatus
         const calendarStatus = isAnswer(calendarObserved) ? calendarObserved : null
         const historical = confirmation?.attempt.answer ?? null
@@ -531,6 +541,8 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           if (!attendee) {
             invitation.unavailableReason =
               'This invitation does not list the connected mailbox as an attendee'
+          } else if (request.replyUnavailableReason) {
+            invitation.unavailableReason = request.replyUnavailableReason
           } else if (!headers || !parents.has(headers.inReplyTo)) {
             invitation.unavailableReason = 'This invitation has no valid Gmail reply headers'
           } else {
@@ -546,10 +558,22 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           }
         }
         recorded = calendar.kind === 'verified' ? calendarStatus : sentStatus
+        // A different answer can replace a Holi receipt only with positive Gmail
+        // ordering evidence. In particular, a reply already observed before the
+        // write is not a subsequent change, even if Gmail dates it later.
+        const receipt = confirmation?.mail
+        const newerSent =
+          sent.evidence &&
+          receipt &&
+          receipt.timestamp > 0 &&
+          sent.evidence.timestamp > receipt.timestamp &&
+          sent.evidence.timestamp >
+            (delivery?.channel === 'gmail' ? (delivery.priorSentTimestamp ?? 0) : 0)
         const sentUnverified =
+          sent.orderUnverified ||
           (!superseded && sent.answers.size > 1) ||
           (delivery?.channel === 'gmail' &&
-            (!confirmation?.mail || (sentStatus !== null && sentStatus !== historical)))
+            (!receipt || (sentStatus !== null && sentStatus !== historical && !newerSent)))
         const otherAnswer = sentStatus ?? historicalCalendar
         const answersDiffer =
           calendarStatus !== null && otherAnswer !== null && calendarStatus !== otherAnswer
@@ -700,6 +724,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
                   parent: reply.headers.inReplyTo,
                   organizer: reply.organizer,
                   mailbox: email,
+                  priorSentTimestamp: current.priorSent?.timestamp,
                   receipt: null,
                 },
         }
