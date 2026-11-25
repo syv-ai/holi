@@ -35,6 +35,7 @@ it('runs whatever a stale plugins.yaml pins for it', async () => {
   registry.register(
     AGENT_NAMESPACES,
     agentCapabilities({
+      presentationLease: () => () => true,
       sessions: {} as never,
       own: {} as never,
       jobs: {} as never,

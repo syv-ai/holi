@@ -545,7 +545,12 @@ test.each([
   `EACCES: permission denied, open /vault/${'long-filename-'.repeat(18)}.md`,
 ])('a failed Done keeps the task open, explains %s and allows retry', async (cause) => {
   const user = userEvent.setup()
-  write.mockRejectedValueOnce(new Error(cause))
+  // Autosave may consume the first write before Done is clicked. Keep the
+  // failure active until the user explicitly retries so this exercises the
+  // failed-Done workflow rather than depending on save timing.
+  write.mockImplementation(async () => {
+    throw new Error(cause)
+  })
   openTask()
   const box = await editorBox(TASK_PATH)
   act(() => (box as WithEditor).editor.commands.insertContent('Pending edit'))
@@ -554,6 +559,10 @@ test.each([
   expect(within(error).getByText('Could not finish editing')).toBeVisible()
   expect(within(error).getByText(cause)).toBeVisible()
   expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
+  expect((box as WithEditor).editor.getText()).toContain('Pending edit')
+  write.mockImplementation(async (input: { path: string; text: string }) => {
+    files.set(input.path, input.text)
+  })
   await user.click(within(error).getByRole('button', { name: 'Retry' }))
   await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
 })
