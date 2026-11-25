@@ -226,9 +226,9 @@ it.each([
       : 'DTSTART:20260720T150000Z'
     const reference = parseMailInvitation('part', calendar(originalFields), 'REQUEST')
     const reply = calendar(fields, { method: 'REPLY', definition })
-    expect(
-      invitationReplyStatus(reply, reference!.details.identity, organizer, attendee),
-    ).toBeNull()
+    expect(invitationReplyStatus(reply, reference!.details.identity, organizer, attendee)).toBe(
+      'unresolved',
+    )
   },
 )
 
