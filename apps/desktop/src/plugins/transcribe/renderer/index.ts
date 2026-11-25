@@ -19,15 +19,14 @@ import { MEETINGS_APP, MEETINGS_SURFACE, meetingsVault, transcribeEvents } from 
 
 export const transcribeRenderer: RendererPlugin = {
   info: TRANSCRIBE_INFO,
-  events: {
-    ...transcribeEvents,
+  events: transcribeEvents,
+  backgroundEvents: {
     // Main is going (Holi quits, or the plugin is turned off): the recording
     // hands over its last audio before main's capabilities do.
     'stop-recording': ({ remote }, store) => {
       if (store.get(recorderAtom).remote === remote) void store.set(stopRecordingAtom)
     },
-    // Its folder was deleted from the vault: so was the meeting, and what it
-    // records goes nowhere.
+    // Its folder was deleted from its owning vault: discard this recording.
     'meeting-removed': ({ remote, payload }, store) => {
       const id = (payload as { meetingId?: unknown } | null)?.meetingId
       if (store.get(recorderAtom).remote === remote && typeof id === 'string') {
@@ -60,15 +59,7 @@ export const transcribeRenderer: RendererPlugin = {
   commandMenu: { entries: meetingMenuEntriesAtom, run: runMeetingMenuEntryAtom },
   statusItems: [{ id: 'recording', side: 'left', order: 10, Component: RecordingStatusItem }],
   leaveGuard: atom((get) =>
-    get(recordingAtom) ? 'A meeting is recording. Leaving this vault stops it.' : null,
+    get(recordingAtom) ? 'A meeting is recording.' : null,
   ),
-  // Leaving the vault stops its recording: its chunks belong to its meetings.
-  vault: (remote, store) => {
-    const off = meetingsVault(remote, store)
-    return () => {
-      // Captures belong to their recorded remote, not to the selected-vault
-      // subscription. Main's stop-recording lifecycle event owns teardown.
-      off()
-    }
-  },
+  vault: meetingsVault,
 }

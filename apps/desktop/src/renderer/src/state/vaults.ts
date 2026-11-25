@@ -479,17 +479,21 @@ export function subscribeToVault(
       (err: unknown) => window.holi.vault.located({ id, error: (err as Error).message }),
     )
   })
-  const tables = plugins.flatMap((p) =>
-    p.events === undefined ? [] : [[p.info.id, p.events] as const],
-  )
-  const offEvents = tables.map(([id, handlers]) =>
-    window.holi.plugin.on(id, ({ remote, name, payload }) => {
-      // Capture shutdown is addressed to its owning vault and must survive a
-      // displayed-vault switch. Other plugin events remain selection-scoped.
-      if (name !== 'stop-recording' && remote !== store.get(activeRemoteAtom)) return
-      if (Object.hasOwn(handlers, name)) handlers[name]!({ remote, payload }, store)
-    }),
-  )
+  const offEvents = plugins.flatMap((plugin) => {
+    if (plugin.events === undefined && plugin.backgroundEvents === undefined) return []
+    return [
+      window.holi.plugin.on(plugin.info.id, ({ remote, name, payload }) => {
+        const background = plugin.backgroundEvents
+        const handlers =
+          background !== undefined && Object.hasOwn(background, name)
+            ? background
+            : remote === store.get(activeRemoteAtom)
+              ? plugin.events
+              : undefined
+        if (handlers && Object.hasOwn(handlers, name)) handlers[name]!({ remote, payload }, store)
+      }),
+    ]
+  })
   return () => {
     offSelection()
     offSnapshot()
