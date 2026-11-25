@@ -181,7 +181,11 @@ interface Message {
   html: string | null
 }
 
-function summary(overrides: Record<string, unknown> = {}) {
+type SearchPage = Awaited<ReturnType<typeof googleCap.search>>
+type SearchParams = NonNullable<Parameters<typeof googleCap.search>[1]>
+type ThreadSummary = SearchPage['threads'][number]
+
+function summary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
   return {
     id: 't1',
     subject: 'Q2 budget',
@@ -199,12 +203,17 @@ function summary(overrides: Record<string, unknown> = {}) {
     labels: [],
     hasInvite: false,
     unsubscribeUrl: null,
+    replied: false,
+    lastReplyAt: null,
+    addressedAs: 'unknown',
+    automated: false,
+    needsReply: true,
     ...overrides,
   }
 }
 
 /** Gmail answers a page at a time; `nextPageToken` is null at the end. */
-function page(threads: unknown[], nextPageToken: string | null = null) {
+function page(threads: ThreadSummary[], nextPageToken: string | null = null): SearchPage {
   return { threads, nextPageToken, syncedAt: new Date().toISOString() }
 }
 
@@ -1240,21 +1249,36 @@ test('ignores a thread refusal after the reader has switched to another thread',
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
-test('loads the next page when asked', async () => {
-  threadMock
-    .mockResolvedValueOnce(page([summary({ id: 't1', subject: 'First page' })], 'page-2'))
-    .mockResolvedValueOnce(page([summary({ id: 't2', subject: 'Second page' })]))
+test('loads more mail without retaining an overlapping thread Gmail no longer has', async () => {
+  threadMock.mockImplementation(
+    async ({ pageToken, refresh }: SearchParams): Promise<SearchPage> => {
+      if (pageToken === undefined && !refresh)
+        return page([summary(), summary({ id: 'gone', subject: 'Removed thread' })], 'page-2')
+      if (pageToken === 'page-2')
+        return {
+          ...page([summary({ id: 't2', subject: 'Second page' })], 'page-3'),
+          notFoundThreadIds: ['gone'],
+        }
+      if (pageToken === 'page-3') return page([summary({ id: 't3', subject: 'Last page' })])
+      throw new Error('Unexpected Gmail continuation or retry')
+    },
+  )
   const user = userEvent.setup()
-
   render(<MailView />)
+
+  expect(await screen.findByText('Removed thread')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: /load more/i }))
+
+  expect(await screen.findByText('Second page')).toBeVisible()
+  expect(screen.getByText('Q2 budget')).toBeVisible()
+  expect(screen.queryByText('Removed thread')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   await user.click(await screen.findByRole('button', { name: /load more/i }))
 
-  await waitFor(() => expect(screen.getByText('Second page')).toBeInTheDocument())
-  expect(queryOf(1)).toMatchObject({ pageToken: 'page-2' })
-  // Appended, not replaced.
-  expect(screen.getByText('First page')).toBeInTheDocument()
-  // And there is nothing left to ask for.
-  expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
+  expect(await screen.findByText('Last page')).toBeVisible()
+  expect(screen.getByText('Second page')).toBeVisible()
+  expect(screen.queryByText('Removed thread')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
 })
 
 test('keeps paging from an empty unread page without offering to clear the filter', async () => {
