@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
+import { createTRPCClient, TRPCClientError } from '@trpc/client'
+import { observable } from '@trpc/server/observable'
+import type { AppRouter } from '../src/main/router'
 import {
   waitForBeforePanel,
   captureUpgradeUiRequests,
@@ -358,6 +361,47 @@ describe('hosted upgrade UI diagnostics', () => {
       code: 'FORBIDDEN',
     })
     expect(JSON.stringify(snapshot())).not.toContain(secret)
+  })
+
+  it('observes a typed production vault-open request across IPC', async () => {
+    const { ipc, invoke } = ipcFixture()
+    const snapshot = observeUpgradeUiRequests(ipc, remote)
+    ipc.handle('holi:trpc', async () => ({ ok: true, data: null }))
+    const client = createTRPCClient<AppRouter>({
+      links: [
+        () =>
+          ({ op }) =>
+            observable((observer) => {
+              Promise.resolve(
+                invoke(
+                  'holi:trpc',
+                  null,
+                  {},
+                  {
+                    path: op.path,
+                    type: op.type,
+                    input: op.input,
+                  },
+                ),
+              ).then(
+                (envelope) => {
+                  if (!envelope.ok) {
+                    observer.error(TRPCClientError.from(new Error(envelope.message)))
+                    return
+                  }
+                  observer.next({ result: { data: envelope.data } })
+                  observer.complete()
+                },
+                (error) => observer.error(TRPCClientError.from(error)),
+              )
+            }),
+      ],
+    })
+    await client.vaults.open.mutate({ remote })
+    expect(snapshot()).toEqual([
+      expect.objectContaining({ event: 'vaults.open', result: 'success' }),
+    ])
+    expect(snapshot()[0].completionOrder).toBeGreaterThan(snapshot()[0].startOrder)
   })
 
   it('records only matching vault.open lifecycle and orders it against Google requests', async () => {
