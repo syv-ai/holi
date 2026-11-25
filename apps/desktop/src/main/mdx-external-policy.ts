@@ -101,16 +101,9 @@ function parseDestination(raw: string, base?: URL): URL | null {
 }
 
 function moduleFormat(pathname: string): 'js' | 'jsx' | null {
-  let path: string
-  try {
-    // Decode suffixes for the format check, but don't guess how a server handles
-    // encoded separators, controls, or another layer of percent encoding.
-    if (/%2f/i.test(pathname)) return null
-    path = decodeURIComponent(pathname)
-    if (/[\\%\u0000-\u001f\u007f]/u.test(path)) return null
-  } catch {
-    return null
-  }
+  // Decode suffixes without repairing encoded separators or repeated encoding.
+  const path = decodedPath(pathname)
+  if (!path) return null
   const file = posix.basename(path)
   if (/\.jsx$/i.test(file)) return 'jsx'
   if (/\.m?js$/i.test(file)) return 'js'
