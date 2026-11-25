@@ -1,5 +1,12 @@
 #import "HoliNativeCredentials.h"
 #import <Security/Security.h>
+#import <TargetConditionals.h>
+
+#if TARGET_OS_SIMULATOR && defined(HOLI_CREDENTIAL_ACCEPTANCE_BUILD) && HOLI_CREDENTIAL_ACCEPTANCE_BUILD == 1
+#define HNC_DIAGNOSTICS 1
+#else
+#define HNC_DIAGNOSTICS 0
+#endif
 
 static NSString *const HNCService = @"app.holi.github-credentials";
 static NSString *const HNCAccount = @"github";
@@ -24,7 +31,12 @@ static void HNCSetError(NSError **error, NSString *operation, OSStatus status) {
   return [self initWithService:HNCService account:HNCAccount];
 }
 
++ (BOOL)diagnosticsAvailable {
+  return HNC_DIAGNOSTICS;
+}
+
 - (instancetype)initWithDiagnosticRunId:(NSString *)runId slot:(HoliCredentialSlot)slot {
+#if HNC_DIAGNOSTICS
   NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:runId];
   if (uuid == nil || ![uuid.UUIDString.lowercaseString isEqualToString:runId.lowercaseString] ||
       (slot != HoliCredentialSlotPrimary && slot != HoliCredentialSlotUnrelated)) return nil;
@@ -32,6 +44,9 @@ static void HNCSetError(NSError **error, NSString *operation, OSStatus status) {
   NSString *scope = [NSString stringWithFormat:@"diagnostic.%@.%@", uuid.UUIDString.lowercaseString, name];
   return [self initWithService:[HNCService stringByAppendingFormat:@".%@", scope]
                        account:[HNCAccount stringByAppendingFormat:@".%@", scope]];
+#else
+  return nil;
+#endif
 }
 
 - (instancetype)initWithService:(NSString *)service account:(NSString *)account {

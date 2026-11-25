@@ -1,5 +1,18 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { readBoundedJson } from './storage-evidence.mjs'
+
+const outcomes = new Map([
+  ['verify-empty', 'empty'],
+  ['store', 'stored'],
+  ['replace', 'replaced'],
+  ['read', 'persisted'],
+  ['sign-out', 'signed-out'],
+  ['verify-absent', 'primary-absent'],
+  ['delete-unrelated', 'empty'],
+])
+const metadataPhases = ['store', 'replace', 'read']
+const isolationPhases = ['sign-out', 'verify-absent']
+
 export function validateCredentialReport(report, { runId, phase, build, pid, launchedAt, now }) {
   const fields = [
     'schemaVersion',
@@ -13,22 +26,16 @@ export function validateCredentialReport(report, { runId, phase, build, pid, lau
     'tokenRecorded',
     'metadata',
     'unrelatedPreserved',
-    ...(report?.outcome === 'failed' ? ['error'] : []),
   ]
-  if (!report || Object.keys(report).some((key) => !fields.includes(key)))
-    throw new Error('Unexpected credential report data')
-  const outcomes = {
-    'verify-empty': ['empty'],
-    store: ['stored'],
-    replace: ['replaced'],
-    read: ['persisted'],
-    'sign-out': ['signed-out'],
-    'verify-absent': ['primary-absent'],
-    'delete-unrelated': ['empty'],
-  }
   if (!report || report.schemaVersion !== 1 || report.source !== 'diagnostic-keychain-namespace')
     throw new Error('Invalid credential report provenance')
-  if (report.runId !== runId || report.phase !== phase || !outcomes[phase])
+  if (
+    typeof runId !== 'string' ||
+    !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(runId) ||
+    report.runId !== runId ||
+    report.phase !== phase ||
+    !outcomes.has(phase)
+  )
     throw new Error('Credential report does not match the active run and phase')
   if (
     !Number.isSafeInteger(pid) ||
@@ -40,52 +47,63 @@ export function validateCredentialReport(report, { runId, phase, build, pid, lau
   )
     throw new Error('Credential report does not belong to the active process')
   if (report.outcome === 'failed') throw new Error('Native credential phase reported failure')
+  if (Object.keys(report).some((key) => !fields.includes(key)))
+    throw new Error('Unexpected credential report data')
   if (
+    typeof build !== 'string' ||
+    !/^\d{1,10}(?:\.\d{1,10}){0,2}$/.test(build) ||
     report.build !== build ||
-    !outcomes[phase].includes(report.outcome) ||
+    report.outcome !== outcomes.get(phase) ||
     report.tokenRecorded !== false
   )
     throw new Error('Credential report outcome does not match the expected build or phase')
   if (
-    ['store', 'replace', 'read'].includes(phase) &&
+    metadataPhases.includes(phase) &&
     (report.metadata?.accessible !== true || report.metadata?.synchronizable !== false)
   )
     throw new Error('Credential metadata is invalid')
-  if (['sign-out', 'verify-absent'].includes(phase) && report.unrelatedPreserved !== true)
+  if (isolationPhases.includes(phase) && report.unrelatedPreserved !== true)
     throw new Error('Unrelated credential was not preserved')
-  return report
+  return {
+    schemaVersion: 1,
+    source: 'diagnostic-keychain-namespace',
+    runId,
+    phase,
+    build,
+    pid,
+    observedAt: report.observedAt,
+    outcome: outcomes.get(phase),
+    tokenRecorded: false,
+    ...(metadataPhases.includes(phase)
+      ? { metadata: { accessible: true, synchronizable: false } }
+      : {}),
+    ...(isolationPhases.includes(phase) ? { unrelatedPreserved: true } : {}),
+  }
 }
 
 export function summarizeCredentialReport(report) {
-  const phases = [
-    'verify-empty',
-    'store',
-    'replace',
-    'read',
-    'sign-out',
-    'verify-absent',
-    'delete-unrelated',
-  ]
-  const outcomes = [
-    'empty',
-    'stored',
-    'replaced',
-    'persisted',
-    'signed-out',
-    'primary-absent',
-    'failed',
-  ]
+  const phase = outcomes.has(report?.phase) ? report.phase : 'unexpected'
   return {
     schemaVersion: report?.schemaVersion === 1 ? 1 : null,
-    phase: phases.includes(report?.phase) ? report.phase : 'unexpected',
-    outcome: outcomes.includes(report?.outcome) ? report.outcome : 'unexpected',
+    phase,
+    outcome:
+      report?.outcome === 'failed' ||
+      (outcomes.has(phase) && report.outcome === outcomes.get(phase))
+        ? report.outcome
+        : 'unexpected',
     pid: Number.isSafeInteger(report?.pid) && report.pid > 0 ? report.pid : null,
     observedAt: Number.isSafeInteger(report?.observedAt) ? report.observedAt : null,
-    metadata: {
-      accessible: report?.metadata?.accessible === true,
-      synchronizable: report?.metadata?.synchronizable !== false,
-    },
-    unrelatedPreserved: report?.unrelatedPreserved === true,
+    ...(metadataPhases.includes(phase)
+      ? {
+          metadata: {
+            accessible: report?.metadata?.accessible === true,
+            synchronizable: report?.metadata?.synchronizable !== false,
+          },
+        }
+      : {}),
+    ...(isolationPhases.includes(phase)
+      ? { unrelatedPreserved: report?.unrelatedPreserved === true }
+      : {}),
     tokenRecorded: report?.tokenRecorded !== false,
     nativeErrorReported: Boolean(report?.error),
     nativeError:

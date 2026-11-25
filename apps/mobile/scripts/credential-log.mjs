@@ -1,23 +1,31 @@
-import { openSync, writeSync, closeSync } from 'node:fs'
+import { constants } from 'node:os'
 
-export function createCredentialLog(path, limit = 2 * 1024 * 1024) {
-  if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('Invalid log byte limit')
-  const fd = openSync(path, 'wx', 0o600)
-  let observedBytes = 0
-  let retainedBytes = 0
+export function credentialFailure(error, signal) {
   return {
-    write(data) {
-      const bytes = Buffer.from(data)
-      observedBytes += bytes.length
-      const retained = bytes.subarray(0, Math.max(0, limit - retainedBytes))
-      let offset = 0
-      while (offset < retained.length)
-        offset += writeSync(fd, retained, offset, retained.length - offset)
-      retainedBytes += retained.length
-    },
-    close() {
-      closeSync(fd)
-      return { limit, observedBytes, retainedBytes, truncated: observedBytes > retainedBytes }
-    },
+    status: error?.timedOut === true ? 'timeout' : signal?.aborted ? 'interrupted' : 'failed',
+    exitCode:
+      Number.isInteger(error?.exitCode) && error.exitCode >= 0 && error.exitCode <= 255
+        ? error.exitCode
+        : null,
+    signal:
+      typeof error?.signal === 'string' && Object.hasOwn(constants.signals, error.signal)
+        ? error.signal
+        : null,
+    filesystemError: ['ENOENT', 'EACCES', 'EPERM'].includes(error?.code) ? error.code : null,
+  }
+}
+
+/** Record only command outcomes. Output, arguments and exception messages are not evidence. */
+export async function recordCredentialCommand(receipts, stage, work, signal) {
+  const start = performance.now()
+  const record = (result) =>
+    receipts.push({ stage, ...result, durationMs: Math.round(performance.now() - start) })
+  try {
+    const stdout = await work()
+    record({ status: 'ok', exitCode: 0, signal: null })
+    return stdout
+  } catch (error) {
+    record(credentialFailure(error, signal))
+    throw error
   }
 }

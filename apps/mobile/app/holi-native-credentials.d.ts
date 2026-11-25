@@ -2,6 +2,7 @@
 
 declare class HoliNativeCredentials extends NSObject {
   static alloc(): HoliNativeCredentials
+  static diagnosticsAvailable(): boolean
   init(): this
   initWithDiagnosticRunIdSlot(runId: string, slot: number): HoliNativeCredentials | null
   read(error: interop.Pointer | interop.Reference<NSError>): NSData | null

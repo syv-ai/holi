@@ -385,10 +385,15 @@ export function runCommand(
     onOutput,
     outputLimit = Infinity,
     killGrace = 2_000,
+    drainProcessGroup = false,
     ...options
   } = {},
 ) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Simulator check interrupted'))
+      return
+    }
     const child = spawn(command, args, {
       ...options,
       detached: process.platform !== 'win32',
@@ -399,17 +404,43 @@ export function runCommand(
     let failure
     let killTimer
     let settled = false
-    const finish = (code) => {
+    const finish = async (code, exitSignal = null) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       clearTimeout(killTimer)
-      if (failure) kill('SIGKILL')
       signal?.removeEventListener('abort', abort)
+      let processGroupUndrained = false
+      if (drainProcessGroup && child.pid && process.platform !== 'win32') {
+        // Xcode/NativeScript build descendants can outlive the CLI and close their
+        // pipes. Check the owned process group rather than treating close as proof.
+        try {
+          const start = performance.now()
+          kill(failure ? 'SIGKILL' : 'SIGTERM')
+          while (true) {
+            try {
+              process.kill(-child.pid, 0)
+            } catch (error) {
+              if (error.code === 'ESRCH') break
+              throw error
+            }
+            const elapsed = performance.now() - start
+            if (elapsed >= killGrace + 2_000) throw new Error('Build process group did not drain')
+            if (elapsed >= killGrace) kill('SIGKILL')
+            await new Promise((done) => setTimeout(done, 25))
+          }
+        } catch (error) {
+          processGroupUndrained = true
+          failure ??= error
+        }
+      } else if (failure) kill('SIGKILL')
       if (failure || code !== 0) {
         reject(
           Object.assign(new Error(`${failure?.message ?? `Exit ${code}: ${command}`}\n${output}`), {
             exitCode: code,
+            signal: exitSignal,
+            code: failure?.code,
+            processGroupUndrained,
             timedOut: failure?.message.startsWith('Timed out:') ?? false,
           }),
         )

@@ -8,6 +8,7 @@ typedef NS_ENUM(NSInteger, HoliCredentialSlot) {
 };
 
 @interface HoliNativeCredentials : NSObject
++ (BOOL)diagnosticsAvailable;
 - (nullable NSData *)read:(NSError *_Nullable __autoreleasing *)error;
 - (BOOL)write:(NSData *)token error:(NSError *_Nullable __autoreleasing *)error;
 - (BOOL)remove:(NSError *_Nullable __autoreleasing *)error;

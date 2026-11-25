@@ -9,8 +9,9 @@ import {
   waitForCredentialReport,
 } from '../scripts/credential-evidence.mjs'
 
+const runId = 'e9c63bec-e162-4a5e-a66e-53a36e923c82'
 const context = {
-  runId: 'owned-run',
+  runId,
   phase: 'store',
   build: '1',
   pid: 1234,
@@ -20,7 +21,7 @@ const context = {
 const report = {
   schemaVersion: 1,
   source: 'diagnostic-keychain-namespace',
-  runId: 'owned-run',
+  runId,
   phase: 'store',
   build: '1',
   pid: 1234,
@@ -31,7 +32,7 @@ const report = {
 }
 
 test('accepts native credential storage observed by the current build and process', () => {
-  assert.equal(validateCredentialReport(report, context), report)
+  assert.deepEqual(validateCredentialReport(report, context), report)
 })
 
 test('rejects stale, incomplete, unsafe and foreign credential evidence', () => {
@@ -50,6 +51,25 @@ test('rejects stale, incomplete, unsafe and foreign credential evidence', () => 
     assert.throws(() => validateCredentialReport({ ...report, ...change }, context))
   assert.throws(() => validateCredentialReport(null, context))
   assert.throws(() => validateCredentialReport(report, { ...context, pid: undefined }))
+})
+
+test('published proof contains only the applicable validated fields', () => {
+  const privateValue = { secret: 'must-not-be-published' }
+  const stored = {
+    ...report,
+    metadata: { ...report.metadata, extra: privateValue },
+    unrelatedPreserved: privateValue,
+  }
+  assert.deepEqual(validateCredentialReport(stored, context), report)
+  const { metadata, ...base } = report
+  const signedOut = { ...base, phase: 'sign-out', outcome: 'signed-out', unrelatedPreserved: true }
+  assert.deepEqual(
+    validateCredentialReport(
+      { ...signedOut, metadata: { ...metadata, extra: privateValue } },
+      { ...context, phase: 'sign-out' },
+    ),
+    signedOut,
+  )
 })
 
 test('requires unrelated item preservation during sign-out', () => {
