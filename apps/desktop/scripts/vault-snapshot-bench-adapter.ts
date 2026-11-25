@@ -12,7 +12,7 @@ export interface SnapshotAdapterOptions {
   remote: string
   getVault: () => { remote: string; root: string } | null
   host: SnapshotPluginHost
-  send: (snapshot: VaultSnapshot) => void
+  send: (payload: { remote: string; snapshot: VaultSnapshot }) => void
   onSend?: (serialized: string) => void
   refresh: () => void
   pluginReady?: () => boolean
@@ -52,7 +52,7 @@ export function createSnapshotBenchAdapter(options: SnapshotAdapterOptions) {
       lastSerialized = serialized
       sent++
       payloadBytes += Buffer.byteLength(serialized)
-      options.send(snapshot)
+      options.send({ remote: options.remote, snapshot })
       options.onSend?.(serialized)
     } else suppressed++
     const vault = options.getVault()

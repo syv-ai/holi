@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { VAULT_SETTING_DEFAULTS, vaultRelPath } from '@holi/shared'
 
 export type TrpcOpWire = { path: string; type?: string; input?: unknown }
@@ -23,10 +23,10 @@ export function createBenchRpc({
         if (input.remote !== remote) throw new Error('Unknown benchmark vault')
       }
       let data: unknown
-      if (op.path === 'vault.snapshot' || op.path === 'vault.getSnapshot') {
+      if (op.path === 'vaults.snapshot' || op.path === 'vaults.open') {
         requireRemote()
         data = getSnapshot()
-      } else if (op.path === 'vault.refresh') {
+      } else if (op.path === 'vaults.refresh') {
         requireRemote()
         data = getSnapshot()
       } else if (op.path === 'subscriptions.list') {
@@ -41,7 +41,10 @@ export function createBenchRpc({
         const rel = vaultRelPath(input.path)
         const target = resolve(vault, rel)
         if (!target.startsWith(`${vault}/`)) throw new Error('Path escapes benchmark vault')
-        data = await readFile(target, 'utf8')
+        data =
+          op.path === 'files.read'
+            ? new Uint8Array(await readFile(target))
+            : await readFile(target, 'utf8')
       } else throw new Error(`Unexpected benchmark RPC: ${op.path}`)
       return { ok: true, data }
     } catch (error) {

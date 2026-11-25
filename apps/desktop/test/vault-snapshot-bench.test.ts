@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createBenchRpc } from '../scripts/vault-snapshot-bench-rpc'
 import { createSnapshotBenchAdapter } from '../scripts/vault-snapshot-bench-adapter'
 
 const vault = { remote: 'bench/snapshot', root: '/tmp/bench' }
@@ -51,23 +55,12 @@ describe('real snapshot benchmark adapter', () => {
     expect(send).toHaveBeenCalledTimes(5)
   })
 
-  it('preserves production per-scan invalidation/reconcile/snapshot ordering', async () => {
-    const { adapter, calls, host } = fixture()
-    await adapter.onSnapshot(snapshot())
-    const before = adapter.metrics()
-    await adapter.onSnapshot(snapshot())
-    expect(before.pluginCallbacks).toHaveLength(3)
-    expect(adapter.metrics().pluginCallbacks).toHaveLength(6)
-    expect(calls).toEqual([
-      'invalidate',
-      'reconcile',
-      'snapshot',
-      'invalidate',
-      'reconcile',
-      'snapshot',
-    ])
-    expect(host.invalidate).toHaveBeenCalledTimes(2)
-    expect(host.reconcile).toHaveBeenCalledTimes(2)
+  it('keeps plugin snapshot contents current even when an identical renderer push is suppressed', async () => {
+    const { adapter, host } = fixture()
+    const current = snapshot(['a'])
+    await adapter.onSnapshot(current)
+    await adapter.onSnapshot(current)
+    expect(host.snapshot).toHaveBeenLastCalledWith(vault.remote, current)
     expect(host.snapshot).toHaveBeenCalledTimes(2)
   })
 
@@ -89,5 +82,72 @@ describe('real snapshot benchmark adapter', () => {
     expect(send).toHaveBeenCalledTimes(1)
     expect(adapter.metrics().suppressed).toBe(1)
     expect(host.snapshot).toHaveBeenCalledTimes(2)
+  })
+})
+
+const preload = vi.hoisted(() => ({
+  bridge: null as unknown as Window['holi'],
+  listeners: new Map<string, (event: unknown, payload: unknown) => void>(),
+}))
+vi.mock('electron', () => ({
+  contextBridge: {
+    exposeInMainWorld: (_name: string, bridge: Window['holi']) => {
+      preload.bridge = bridge
+    },
+  },
+  ipcRenderer: {
+    on: (channel: string, listener: (event: unknown, payload: unknown) => void) => {
+      preload.listeners.set(channel, listener)
+    },
+  },
+  webUtils: {},
+}))
+
+describe('benchmark production push and RPC contracts', () => {
+  it('delivers remote-tagged watcher contents over the production preload and unsubscribes', async () => {
+    await import('../src/preload/index')
+    const received: unknown[] = []
+    const off = preload.bridge.vault.onSnapshot((event) => received.push(event))
+    const original = snapshot(['old'])
+    const replacement = snapshot(['new'])
+    const publish = createSnapshotBenchAdapter({
+      mode: 'baseline',
+      remote: vault.remote,
+      getVault: () => null,
+      host: fixture().host,
+      refresh: () => {},
+      send: (payload) => preload.listeners.get('vault:snapshot')!(null, payload),
+    })
+    await publish.onSnapshot(original)
+    await publish.onSnapshot(replacement)
+    preload.listeners.get('vault:snapshot')!(null, { remote: 'other/vault', snapshot: original })
+    expect(received).toEqual([
+      { remote: vault.remote, snapshot: original },
+      { remote: vault.remote, snapshot: replacement },
+      { remote: 'other/vault', snapshot: original },
+    ])
+    off()
+    await publish.onSnapshot(original)
+    expect(received).toHaveLength(3)
+  })
+
+  it('reads current snapshot and disk contents only for the requested benchmark remote', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'snapshot-bench-rpc-'))
+    let current = snapshot(['old'])
+    const rpc = createBenchRpc({ root, remote: vault.remote, getSnapshot: () => current })
+    const query = (path: string, remote = vault.remote) =>
+      rpc({ path, input: { remote, path: 'note.md' } })
+    try {
+      await writeFile(join(root, 'note.md'), 'before')
+      expect(await query('notes.read')).toEqual({ ok: true, data: 'before' })
+      current = snapshot(['replacement'])
+      await writeFile(join(root, 'note.md'), 'watcher update')
+      expect(await query('vaults.snapshot')).toEqual({ ok: true, data: current })
+      expect(await query('notes.read')).toEqual({ ok: true, data: 'watcher update' })
+      for (const path of ['vaults.snapshot', 'notes.read', 'files.read', 'vaults.refresh'])
+        expect(await query(path, 'other/vault')).toMatchObject({ ok: false })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

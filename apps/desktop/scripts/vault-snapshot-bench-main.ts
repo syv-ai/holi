@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { loadavg } from 'node:os'
+import { processObservables } from './vault-snapshot-bench-metrics.mjs'
 import { freezeMeasurement, trialSucceeded } from './vault-snapshot-bench-analysis.mjs'
 import { createHash } from 'node:crypto'
 import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
@@ -89,6 +90,8 @@ async function run(root: string, evidence: string): Promise<void> {
   const pipelinePromises = new Set<Promise<unknown>>()
   const sendStats = { count: 0 }
   const started = performance.now()
+  let visibilityBeforeIdle: unknown = null
+  let visibilityAfterIdle: unknown = null
   let finished = false
   let rendererStats: unknown = null
   let measured: any = null
@@ -145,7 +148,7 @@ async function run(root: string, evidence: string): Promise<void> {
       }
     }
     win = null
-    ipcMain.removeHandler('snapshot-bench:rpc')
+    ipcMain.removeHandler('holi:trpc')
     ipcMain.removeHandler('vault:snapshot-bench')
   }
   const finish = async (error?: unknown) => {
@@ -161,9 +164,12 @@ async function run(root: string, evidence: string): Promise<void> {
       const snapshot = measured?.snapshot ?? null
       const finalSnapshotDigest = snapshot ? digest(JSON.stringify(snapshot)) : ''
       await cleanup()
+      const observations = processObservables({ samples: measured?.samples ?? [] })
+      const observationError =
+        observations === null ? new Error('Invalid process observations') : undefined
       const result = {
         ok: trialSucceeded({
-          error,
+          error: error ?? observationError,
           cleanupErrors,
           valid:
             denied.length === 0 &&
@@ -175,7 +181,10 @@ async function run(root: string, evidence: string): Promise<void> {
             (measured?.adapter.scans ?? 0) > 0 &&
             Boolean(snapshot),
         }),
-        error: error === undefined ? null : String(error),
+        error:
+          error === undefined && observationError === undefined
+            ? null
+            : String(error ?? observationError),
         trial,
         mode: trial.mode,
         snapshot,
@@ -208,12 +217,14 @@ async function run(root: string, evidence: string): Promise<void> {
         wiring: 'reproduced main/index.ts snapshot callback order with production plugin host',
         cpuUnit:
           'CPU seconds, sum of per-process cumulative CPU deltas; fallback percent/100 × elapsed seconds',
-        cpuSeconds: integrateCpu(measured?.samples ?? []),
+        cpuSeconds: observations?.cpuSeconds ?? null,
         processBreakdown: aggregateProcesses(measured?.samples ?? []),
-        sampleElapsedSeconds:
-          (measured?.samples.length ?? 0) > 1
-            ? measured.samples.at(-1).at - measured.samples[0].at
-            : 0,
+        sampleElapsedSeconds: observations?.sampleElapsedSeconds ?? null,
+        visibility: {
+          policy: 'showInactive; no activation requests',
+          beforeIdle: visibilityBeforeIdle,
+          afterIdle: visibilityAfterIdle,
+        },
         phases: {
           warmupSeconds: trial.warmupSeconds,
           measurementSeconds: trial.durationSeconds,
@@ -248,7 +259,7 @@ async function run(root: string, evidence: string): Promise<void> {
   process.once('SIGTERM', () => void finish(new Error('SIGTERM')))
   try {
     win = new BrowserWindow({
-      show: true,
+      show: false,
       width: 1200,
       height: 800,
       webPreferences: {
@@ -258,6 +269,8 @@ async function run(root: string, evidence: string): Promise<void> {
         nodeIntegration: false,
       },
     })
+    win.showInactive()
+    const visibility = () => ({ visible: win!.isVisible(), focused: win!.isFocused() })
     const web = win.webContents
     web.on('console-message', (event) => console.error('[snapshot-bench renderer]', event.message))
     const isAuthorized = (event: Electron.IpcMainInvokeEvent) =>
@@ -298,12 +311,12 @@ async function run(root: string, evidence: string): Promise<void> {
       remote,
       getVault: () => active,
       host,
-      send: (snapshot) => {
+      send: (payload) => {
         sendStats.count++
         // The adapter already accounts serialized bytes symmetrically in both modes.
         // Do not serialize again here or retain payload bodies per send.
         snapshotNotifications++
-        publish('vault:snapshot', snapshot)
+        publish('vault:snapshot', payload)
       },
       refresh: () => {
         void active?.refresh()
@@ -332,9 +345,9 @@ async function run(root: string, evidence: string): Promise<void> {
           },
         )
       },
-      onSyncState: (state) => publish('vault:sync', state),
-      onHeldBack: (files) => publish('vault:heldback', files),
-      onCommitted: (paths) => publish('vault:committed', paths),
+      onSyncState: (state) => publish('vault:sync', { remote, state }),
+      onHeldBack: (files) => publish('vault:heldback', { remote, files }),
+      onCommitted: (paths) => publish('vault:committed', { remote, paths }),
       timings: { healIntervalMs: 30_000, pullIntervalMs: 30_000 },
     })
     const handlers = [
@@ -355,10 +368,13 @@ async function run(root: string, evidence: string): Promise<void> {
       getSnapshot: () => active?.snapshot() ?? emptyVaultSnapshot(),
     })
     ipcMain.handle(
-      'snapshot-bench:rpc',
+      'holi:trpc',
       async (event, operation: Parameters<ReturnType<typeof createBenchRpc>>[0]) => {
         if (!isAuthorized(event)) throw new Error('Unauthorized benchmark IPC sender')
-        if (operation.path === 'vault.refresh') {
+        if (
+          operation.path === 'vaults.refresh' &&
+          (operation.input as { remote?: string } | undefined)?.remote === remote
+        ) {
           if (!active) throw new Error('Benchmark vault is not open')
           await active.refresh()
           return { ok: true, data: active.snapshot() }
@@ -444,7 +460,7 @@ async function run(root: string, evidence: string): Promise<void> {
           ...(typeof row.cpu.cumulativeCPUUsage === 'number'
             ? { cumulativeCpuUsage: row.cpu.cumulativeCPUUsage }
             : {}),
-          workingSetBytes: (row.memory.workingSetSize ?? 0) * 1024,
+          workingSetBytes: row.memory.workingSetSize * 1024,
           privateBytes: (row.memory.privateBytes ?? 0) * 1024,
         })),
       })
@@ -460,6 +476,10 @@ async function run(root: string, evidence: string): Promise<void> {
     sendStats.count = 0
     samples.length = 1
     samples[0]!.elapsedSeconds = 0
+    visibilityBeforeIdle = {
+      ...visibility(),
+      rendererVisibility: await web.executeJavaScript('document.visibilityState'),
+    }
     measuring = true
     const begin = performance.now()
     sampleInterval = setInterval(() => void sample(), 1000)
@@ -483,6 +503,10 @@ async function run(root: string, evidence: string): Promise<void> {
       snapshot: active.snapshot(),
       samples,
     })
+    visibilityAfterIdle = {
+      ...visibility(),
+      rendererVisibility: await web.executeJavaScript('document.visibilityState'),
+    }
     const renderer = await rendererAtEnd
     if (!renderer.consumerReady || renderer.treeItems <= 0 || renderer.taskCount <= 0)
       throw new Error('Production benchmark consumers did not render fixture data')
@@ -497,12 +521,7 @@ async function run(root: string, evidence: string): Promise<void> {
       join(evidence, 'renderer-metrics.json'),
       JSON.stringify({ renderer, elapsedSeconds: (end - begin) / 1000 }, null, 2),
     )
-    // Idle sampling is over. Bring the diagnostic consumer onscreen and allow
-    // compositor frames even if the desktop briefly occludes the benchmark.
-    win.webContents.setBackgroundThrottling(false)
-    win.show()
-    app.focus({ steal: true })
-    win.focus()
+    // Diagnostics keep the same non-activating visibility policy as timed idle.
     const taskPath = join(paths.vault, 'nested/tasks/task.0.md')
     const originalTask = readFileSync(taskPath, 'utf8')
     const taskCount = snapshotCount(active.snapshot()).tasks
@@ -590,7 +609,7 @@ async function run(root: string, evidence: string): Promise<void> {
       )
       nativeUserChangesLatency = {
         phase: 'post-idle changed-update diagnostic',
-        display: 'focused window, background throttling disabled only after idle sampling',
+        display: 'showInactive; unchanged visibility policy; user focus is never changed',
         metric:
           'write-start to real PlanningView DOM text plus two animation frames (includes refresh and pipeline drain)',
         rawMs,
@@ -680,22 +699,6 @@ function snapshotCount(snapshot: any) {
     tasks: snapshot.claimed?.tasks?.items?.length ?? 0,
   }
 }
-function integrateCpu(samples: Array<{ at: number; processes: MetricRow[] }>): number {
-  let total = 0
-  for (let i = 1; i < samples.length; i++) {
-    const previous = new Map(samples[i - 1]!.processes.map((row) => [row.pid, row]))
-    const elapsed = samples[i]!.at - samples[i - 1]!.at
-    for (const row of samples[i]!.processes) {
-      const prior = previous.get(row.pid)
-      if (prior && row.cumulativeCpuUsage !== undefined && prior.cumulativeCpuUsage !== undefined) {
-        const delta = row.cumulativeCpuUsage - prior.cumulativeCpuUsage
-        if (delta >= 0) total += delta
-      } else total += (row.cpuPercent / 100) * elapsed
-    }
-  }
-  return total
-}
-
 function aggregateProcesses(samples: Array<{ processes: MetricRow[] }>) {
   const totals = new Map<
     string,

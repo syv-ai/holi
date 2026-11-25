@@ -179,6 +179,14 @@ function regression(baseline, candidate, absoluteMargin, relativeMargin) {
   }
 }
 
+/**
+ * Protocol 4 requires allocation main/renderer sampledBytes, elapsedSeconds (>0),
+ * gcCount and gcDurationMs; physicalGpu availability/source/scope/samples (host
+ * utilization is context, never owned attribution); publicationLatencyMs from
+ * completion barriers; and fullCorrectness in full trials. Every correctness
+ * value must be true and include the pilot assertion keys. Missing evidence is
+ * inconclusive, not zero. Allocation is sampled/estimated, not an exact total.
+ */
 export function analyzePairs(results, { pilot = false } = {}) {
   const validation = validatePairs(results, pilot)
   const sizes = /** @type {Record<string, any>} */ ({})
@@ -189,12 +197,63 @@ export function analyzePairs(results, { pilot = false } = {}) {
       const baseline = measured(pair, 'baseline'),
         candidate = measured(pair, 'candidate')
       const sourceValid =
-        baseline?.protocolRevision === 3 &&
-        candidate?.protocolRevision === 3 &&
+        baseline?.protocolRevision === 4 &&
+        candidate?.protocolRevision === 4 &&
         typeof baseline?.mainBundleSha256 === 'string' &&
         baseline.mainBundleSha256.length > 0 &&
         baseline.mainBundleSha256 === candidate?.mainBundleSha256
-      const valid = baseline?.ok === true && candidate?.ok === true && sourceValid
+      const trialValid = baseline?.ok === true && candidate?.ok === true && sourceValid
+      const completeAllocation = (value) =>
+        ['main', 'renderer'].every((process) => {
+          const row = value?.allocation?.[process]
+          return (
+            row &&
+            finite(row.sampledBytes) &&
+            row.sampledBytes >= 0 &&
+            finite(row.elapsedSeconds) &&
+            row.elapsedSeconds > 0 &&
+            finite(row.gcCount) &&
+            row.gcCount >= 0 &&
+            finite(row.gcDurationMs) &&
+            row.gcDurationMs >= 0
+          )
+        })
+      const completeGpu = (value) => {
+        const gpu = value?.physicalGpu
+        return (
+          gpu &&
+          typeof gpu.available === 'boolean' &&
+          typeof gpu.source === 'string' &&
+          ['host', 'owned'].includes(gpu.scope) &&
+          Array.isArray(gpu.samples) &&
+          gpu.samples.every(
+            (sample) =>
+              finite(sample?.at) &&
+              sample.at >= 0 &&
+              finite(sample?.utilizationPercent) &&
+              sample.utilizationPercent >= 0 &&
+              sample.utilizationPercent <= 100,
+          ) &&
+          (gpu.available || typeof gpu.missingReason === 'string')
+        )
+      }
+      const correctnessKeys = Object.keys(baseline?.pilotCorrectness ?? {})
+      const completeCorrectness = (value) =>
+        value?.fullCorrectness &&
+        correctnessKeys.length > 0 &&
+        correctnessKeys.every((key) => value.fullCorrectness[key] === true) &&
+        Object.values(value.fullCorrectness).every((item) => item === true)
+      const completePublication = (value) =>
+        Array.isArray(value?.publicationLatencyMs) &&
+        value.publicationLatencyMs.length > 0 &&
+        value.publicationLatencyMs.every((item) => finite(item) && item >= 0)
+      const completeEvidence = (value) =>
+        completeAllocation(value) &&
+        completeGpu(value) &&
+        completePublication(value) &&
+        (pilot || completeCorrectness(value))
+      const evidenceValid = completeEvidence(baseline) && completeEvidence(candidate)
+      const valid = trialValid && evidenceValid
       const metrics = (result) => {
         const processes = processObservables(result)
         const gpu = processObservables(result, (row) =>
@@ -207,6 +266,10 @@ export function analyzePairs(results, { pilot = false } = {}) {
           cpuSecondsPerMinute: valid ? cpuPerMinute(result) : null,
           changedUpdateP95Ms: valid ? changedLatency(result) : null,
           changedUpdateRawMs: result?.nativeUserChangesLatency?.rawMs ?? null,
+          allocation: completeAllocation(result) ? result.allocation : null,
+          physicalGpu: completeGpu(result) ? result.physicalGpu : null,
+          publicationLatencyMs: completePublication(result) ? result.publicationLatencyMs : null,
+          fullCorrectness: result?.fullCorrectness ?? null,
           rendererSends: result?.rendererSends ?? null,
           rendererStats: result?.rendererStats ?? null,
           snapshotCounts: result?.snapshotCounts ?? null,
@@ -231,10 +294,18 @@ export function analyzePairs(results, { pilot = false } = {}) {
         order: pair.trials.map((trial) => trial.mode),
         baseline: b,
         candidate: c,
-        valid,
+        valid: valid && evidenceValid,
         failureCauses: [
+          ...(!evidenceValid
+            ? [
+                {
+                  error:
+                    'missing or invalid protocol 4 allocation, GPU, publication, or full correctness evidence',
+                },
+              ]
+            : []),
           ...(!sourceValid
-            ? [{ error: 'missing/mismatched paired source bundle or protocol revision 3' }]
+            ? [{ error: 'missing/mismatched paired source bundle or protocol revision 4' }]
             : []),
           ...pair.trials
             .filter((trial) => trial.result?.ok !== true)
@@ -260,6 +331,25 @@ export function analyzePairs(results, { pilot = false } = {}) {
     const cpu = interval(raw.map((pair) => pair.cpuSecondsSavedPerMinute))
     const cpuRelative = interval(raw.map((pair) => pair.cpuReduction))
     const payload = interval(raw.map((pair) => pair.payloadAvoidedFraction))
+    const publicationSavings = interval(
+      raw.map((pair) => {
+        const p95 = (values) =>
+          [...values].sort((a, b) => a - b)[Math.ceil(values.length * 0.95) - 1]
+        const baseline = pair.baseline.publicationLatencyMs
+        const candidate = pair.candidate.publicationLatencyMs
+        return baseline && candidate ? p95(baseline) - p95(candidate) : null
+      }),
+    )
+    const publicationRelative = interval(
+      raw.map((pair) => {
+        const b = pair.baseline.publicationLatencyMs
+        const c = pair.candidate.publicationLatencyMs
+        if (!b || !c) return null
+        const p95 = (values) =>
+          [...values].sort((x, y) => x - y)[Math.ceil(values.length * 0.95) - 1]
+        return p95(b) > 0 ? (p95(b) - p95(c)) / p95(b) : null
+      }),
+    )
     const latency = reg((m) => m.changedUpdateP95Ms, 20, 0.1)
     const memory = {
       steady: reg((m) => m.processes?.rssSteadyBytes, 10 * 1024 * 1024, 0.05),
@@ -290,6 +380,18 @@ export function analyzePairs(results, { pilot = false } = {}) {
       helperCountDeltas: helperDeltas,
       benefitGates: {
         absoluteCpuSavings: benefitGate(cpu, 0.3),
+        largePublicationLatencySavings:
+          size === 'large'
+            ? benefitGate(publicationSavings, 5) === 'pass' &&
+              benefitGate(publicationRelative, 0.1) === 'pass'
+              ? 'pass'
+              : benefitGate(publicationSavings, 5) === 'fail' ||
+                  benefitGate(publicationRelative, 0.1) === 'fail'
+                ? 'fail'
+                : 'inconclusive'
+            : 'not-primary',
+        publicationLatencySavingsMs: publicationSavings,
+        publicationLatencyRelativeSavings: publicationRelative,
         relativeCpuSavings: benefitGate(cpuRelative, 0.2),
       },
       guardrailGates: {
@@ -327,7 +429,7 @@ export function analyzePairs(results, { pilot = false } = {}) {
   )
   return {
     issue: 544,
-    protocolRevision: 3,
+    protocolRevision: 4,
     sourceVersion: sourceVersion(),
     pilot,
     primaryBenefitWorkload: 'large',

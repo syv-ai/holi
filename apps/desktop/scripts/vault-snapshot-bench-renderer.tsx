@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo } from 'react'
+import { useLayoutEffect, useMemo } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createStore, Provider, useAtomValue } from 'jotai'
 import {
@@ -69,10 +69,10 @@ function BenchConsumers() {
         </SidebarProvider>
       </aside>
       <section className="min-w-0 flex-1">
-        <DocumentView path="nested/000/note-0.md" onOpen={() => undefined} />
+        <DocumentView path="nested/000/note-0.md" onOpen={() => undefined} focused={false} />
       </section>
       <section className="min-w-0 flex-1" data-bench-task>
-        <PlanningView onOpenTask={() => undefined} />
+        <PlanningView onOpenTask={() => undefined} focused={false} />
         {tasks.size > 0 && <output>{[...tasks.values()][0]?.title}</output>}
       </section>
     </main>
@@ -119,19 +119,6 @@ tree.render(
 
 declare global {
   interface Window {
-    holi: {
-      vault: {
-        onSnapshot: (callback: (snapshot: never) => void) => () => void
-        onSyncState: (callback: (state: never) => void) => () => void
-        onHeldBack: (callback: (files: never) => void) => () => void
-        onCommitted: (callback: (paths: never) => void) => () => void
-        onOpen: (callback: (value: never) => void) => () => void
-        onNavigate: (callback: (value: never) => void) => () => void
-        onLocate: (callback: (value: never) => void) => () => void
-        located: (value: unknown) => void
-      }
-      plugin: { on: (id: string, cb: (value: never) => void) => () => void }
-    }
     snapshotBench: {
       ready: Promise<boolean>
       dataReady: Promise<boolean>
@@ -146,7 +133,6 @@ declare global {
       }
       resetMetrics: () => void
       dispose: () => void
-      receive: (snapshot: never) => void
     }
   }
 }

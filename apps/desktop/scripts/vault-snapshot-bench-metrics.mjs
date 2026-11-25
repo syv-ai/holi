@@ -32,6 +32,12 @@ export function processObservables(result, select = () => true) {
   }
   let cpuSeconds = 0
   for (let i = 1; i < samples.length; i++) {
+    // The measured app is expected to be stable after warmup. A process that
+    // disappears between samples may have unobserved CPU and invalidates totals.
+    const beforeIds = new Set(selected[i - 1].map((row) => row.pid))
+    const afterIds = new Set(selected[i].map((row) => row.pid))
+    if (beforeIds.size !== afterIds.size || [...beforeIds].some((pid) => !afterIds.has(pid)))
+      return null
     const dt = samples[i].at - samples[i - 1].at
     const before = new Map(selected[i - 1].map((row) => [row.pid, row]))
     for (const row of selected[i]) {

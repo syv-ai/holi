@@ -462,10 +462,21 @@ try {
     join(root, 'renderer.html'),
     '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; img-src data:; font-src \'self\'; connect-src \'none\'"><link rel="stylesheet" href="renderer/renderer.css"></head><body><div id="root"></div><script type="module" src="renderer/renderer.js"></script></body></html>',
   )
-  await writeFile(
-    join(root, 'preload.cjs'),
-    `const{contextBridge,ipcRenderer}=require('electron');const sub=c=>cb=>{const f=(_e,v)=>cb(v);ipcRenderer.on(c,f);return()=>ipcRenderer.removeListener(c,f)};contextBridge.exposeInMainWorld('holi',{vault:{onSnapshot:sub('vault:snapshot'),onSyncState:sub('vault:sync'),onHeldBack:sub('vault:heldback'),onCommitted:sub('vault:committed'),onOpen:sub('vault:open'),onNavigate:sub('vault:navigate'),onLocate:sub('vault:locate'),located:v=>ipcRenderer.send('vault:located',v)},plugin:{on:(id,cb)=>{const c='plugin:'+id;const f=(_e,v)=>cb(v);ipcRenderer.on(c,f);return()=>ipcRenderer.removeListener(c,f)}},trpc:op=>ipcRenderer.invoke('snapshot-bench:rpc',op)});`,
-  )
+  await build({
+    configFile: false,
+    root: desktop,
+    build: {
+      ssr: true,
+      target: 'node24',
+      outDir: root,
+      emptyOutDir: false,
+      rollupOptions: {
+        input: join(desktop, 'src/preload/index.ts'),
+        external: ['electron'],
+        output: { format: 'cjs', entryFileNames: 'preload.cjs' },
+      },
+    },
+  })
   await writeFile(
     join(root, 'package.json'),
     JSON.stringify({ name: 'holi-snapshot-bench', main: 'main.cjs' }),
