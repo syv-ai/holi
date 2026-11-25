@@ -160,11 +160,12 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     result = HNGDisableUnsafeConfig(repository);
     git_remote *gitRemote = NULL;
     if (result == 0) result = git_remote_lookup(&gitRemote, repository, "origin");
-    if (result == GIT_ENOTFOUND) result = git_remote_create(&gitRemote, repository, "origin", remote.UTF8String);
-    if (result == 0) result = git_remote_set_url(repository, "origin", remote.UTF8String);
-    if (result == 0) result = git_remote_set_pushurl(repository, "origin", remote.UTF8String);
-    if (gitRemote) { git_remote_free(gitRemote); gitRemote = NULL; }
-    if (result == 0) result = git_remote_lookup(&gitRemote, repository, "origin");
+    if (result == 0) {
+      const char *fetchURL = git_remote_url(gitRemote);
+      const char *pushURL = git_remote_pushurl(gitRemote);
+      if (!fetchURL || !pushURL || strcmp(fetchURL, remote.UTF8String) || strcmp(pushURL, remote.UTF8String))
+        result = GIT_EINVALIDSPEC;
+    }
     if (result == 0) result = git_remote_connect(gitRemote, [operation isEqualToString:@"push"] ? GIT_DIRECTION_PUSH : GIT_DIRECTION_FETCH, &callbacks, NULL, NULL);
     if (result == 0 && [operation isEqualToString:@"fetch"]) {
       git_fetch_options fetchOptions = GIT_FETCH_OPTIONS_INIT;
@@ -175,11 +176,27 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     if (result == 0 && [operation isEqualToString:@"fetch"]) result = git_remote_update_tips(gitRemote, &callbacks, 0, GIT_REMOTE_DOWNLOAD_TAGS_NONE, "Holi compatibility fetch");
     if (result == 0 && [operation isEqualToString:@"push"]) {
       git_strarray refspecs = {0};
-      char *spec = "HEAD:refs/heads/holi-compat";
-      refspecs.strings = &spec; refspecs.count = 1;
-      git_push_options options = GIT_PUSH_OPTIONS_INIT;
-      options.callbacks = callbacks;
-      result = git_remote_push(gitRemote, &refspecs, &options);
+      git_reference *headRef = NULL;
+      const char *headName = NULL;
+      if (git_repository_head(&headRef, repository) == 0 && headRef && !git_reference_is_branch(headRef))
+        result = GIT_EUNBORNBRANCH;
+      else if (!headRef || !(headName = git_reference_name(headRef)))
+        result = GIT_EUNBORNBRANCH;
+      char *spec = NULL;
+      if (result == 0) {
+        NSString *branchName = [NSString stringWithUTF8String:headName];
+        NSString *specString = [NSString stringWithFormat:@"%@:%@", branchName, branchName];
+        spec = strdup(specString.UTF8String);
+        if (!spec) result = GIT_ERROR;
+      }
+      if (result == 0) {
+        refspecs.strings = &spec; refspecs.count = 1;
+        git_push_options options = GIT_PUSH_OPTIONS_INIT;
+        options.callbacks = callbacks;
+        result = git_remote_push(gitRemote, &refspecs, &options);
+      }
+      free(spec);
+      git_reference_free(headRef);
     }
     if (gitRemote && git_remote_connected(gitRemote)) git_remote_disconnect(gitRemote);
     git_remote_free(gitRemote);
