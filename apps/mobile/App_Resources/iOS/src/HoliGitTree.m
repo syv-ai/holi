@@ -5,39 +5,140 @@
 #import <errno.h>
 #import <dirent.h>
 
-@implementation HoliNativeGit (TreePreparation)
 static BOOL HNGTreeFail(NSError **error, NSString *message) {
   if (error) *error = HNGPathError(EINVAL, message);
   return NO;
 }
-static BOOL HNGTreeCollectNames(int fd, NSString *prefix, NSMutableSet<NSString *> *names, NSUInteger depth, NSError **error) {
-  if (depth > 64 || names.count > 10000) return HNGTreeFail(error, @"Working tree exceeds traversal limits");
+static NSDictionary *HNGTreeFileIdentity(struct stat st) {
+  return @{@"dev":@(st.st_dev), @"ino":@(st.st_ino), @"mode":@(st.st_mode), @"size":@(st.st_size), @"mtime":@(st.st_mtimespec.tv_sec), @"mtimeNS":@(st.st_mtimespec.tv_nsec), @"ctime":@(st.st_ctimespec.tv_sec), @"ctimeNS":@(st.st_ctimespec.tv_nsec)};
+}
+static BOOL HNGTreeDecision(NSString *path, NSInteger (^policy)(NSString *), BOOL *include, NSError **error) {
+  NSInteger value = policy(path);
+  if (value != 0 && value != 1) return HNGTreeFail(error, @"Invalid working-tree path");
+  *include = value == 1;
+  return YES;
+}
+// Metadata only. Excluded subtrees are pruned before opening or enumerating them.
+static BOOL HNGTreeInventory(int fd, NSString *prefix, NSMutableDictionary *records, NSInteger (^policy)(NSString *), NSUInteger *visits, NSUInteger depth, NSError **error) {
+  if (depth > 64) return HNGTreeFail(error, @"Working tree exceeds depth limit");
   int copy = dup(fd);
   DIR *dir = copy >= 0 ? fdopendir(copy) : NULL;
   if (!dir) { if (copy >= 0) close(copy); return HNGTreeFail(error, @"Cannot enumerate working tree"); }
-  struct dirent *entry;
   BOOL ok = YES;
-  while ((entry = readdir(dir))) {
+  for (;;) {
+    errno = 0;
+    struct dirent *entry = readdir(dir);
+    if (!entry) { if (errno) ok = HNGTreeFail(error, @"Cannot enumerate working tree"); break; }
     if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") || !strcmp(entry->d_name, ".git")) continue;
+    if (++*visits > 10000) { ok = HNGTreeFail(error, @"Working tree exceeds entry limit"); break; }
     NSString *part = [NSString stringWithUTF8String:entry->d_name];
-    if (!part) { ok = NO; break; }
+    if (!part) { ok = HNGTreeFail(error, @"Invalid working-tree filename"); break; }
     NSString *path = prefix.length ? [prefix stringByAppendingFormat:@"/%@", part] : part;
-    struct stat st;
-    if (fstatat(fd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW)) { ok = NO; break; }
-    if (S_ISDIR(st.st_mode)) {
+    BOOL include = NO;
+    if (!HNGTreeDecision(path, policy, &include, error)) { ok = NO; break; }
+    if (!include) continue;
+    struct stat before, opened, after;
+    if (fstatat(fd, entry->d_name, &before, AT_SYMLINK_NOFOLLOW)) { ok = HNGTreeFail(error, @"Cannot inspect working-tree entry"); break; }
+    records[path] = HNGTreeFileIdentity(before);
+    if (S_ISDIR(before.st_mode)) {
       int child = openat(fd, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-      if (child < 0) { ok = NO; break; }
-      ok = HNGTreeCollectNames(child, path, names, depth + 1, error);
-      close(child);
-    } else [names addObject:path];
-    if (!ok || names.count > 10000) { ok = NO; break; }
+      ok = child >= 0 && !fstat(child, &opened) && [HNGTreeFileIdentity(before) isEqualToDictionary:HNGTreeFileIdentity(opened)];
+      if (ok) ok = HNGTreeInventory(child, path, records, policy, visits, depth + 1, error);
+      if (child >= 0) close(child);
+      if (ok) ok = !fstatat(fd, entry->d_name, &after, AT_SYMLINK_NOFOLLOW) && [HNGTreeFileIdentity(before) isEqualToDictionary:HNGTreeFileIdentity(after)];
+      if (!ok) { HNGTreeFail(error, @"Working-tree directory changed during enumeration"); break; }
+    }
   }
-  if (errno) ok = NO;
   closedir(dir);
-  return ok ? YES : HNGTreeFail(error, @"Working tree traversal failed or exceeded limits");
+  return ok;
 }
-static BOOL HNGTreeSameFile(struct stat a, struct stat b) {
-  return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_mode == b.st_mode && a.st_size == b.st_size && a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec && a.st_ctimespec.tv_sec == b.st_ctimespec.tv_sec && a.st_ctimespec.tv_nsec == b.st_ctimespec.tv_nsec;
+static NSData *HNGTreeRead(int rootFD, NSString *path, NSDictionary *identity, NSUInteger *total, NSError **error) {
+  NSArray *parts = nil;
+  if (!HNGPathParts(path, &parts)) { HNGTreeFail(error, @"Invalid tree path"); return nil; }
+  int parent = HNGOpenParent(rootFD, parts);
+  int fd = parent >= 0 ? openat(parent, [parts.lastObject fileSystemRepresentation], O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC) : -1;
+  struct stat before, after;
+  BOOL ok = fd >= 0 && !fstat(fd, &before) && S_ISREG(before.st_mode) && [identity isEqualToDictionary:HNGTreeFileIdentity(before)];
+  NSUInteger limit = [path.lastPathComponent isEqualToString:@".gitignore"] ? 1024 * 1024 : 64 * 1024 * 1024;
+  if (ok) ok = before.st_size >= 0 && before.st_size <= (off_t)limit && *total + before.st_size <= 512 * 1024 * 1024;
+  NSMutableData *data = [NSMutableData data];
+  uint8_t buffer[16384];
+  while (ok) {
+    ssize_t n = read(fd, buffer, sizeof(buffer));
+    if (n < 0) { ok = NO; break; }
+    if (!n) break;
+    if (data.length + (NSUInteger)n > (NSUInteger)before.st_size) { ok = NO; break; }
+    [data appendBytes:buffer length:(NSUInteger)n];
+  }
+  if (ok) ok = data.length == (NSUInteger)before.st_size && !fstat(fd, &after) && [identity isEqualToDictionary:HNGTreeFileIdentity(after)] && !fstatat(parent, [parts.lastObject fileSystemRepresentation], &after, AT_SYMLINK_NOFOLLOW) && [identity isEqualToDictionary:HNGTreeFileIdentity(after)];
+  if (fd >= 0) close(fd);
+  if (parent >= 0) close(parent);
+  if (!ok) { HNGTreeFail(error, @"Working-tree file changed or exceeds limits"); return nil; }
+  *total += data.length;
+  return data;
+}
+static BOOL HNGTreeObjectValid(git_repository *repo, const git_oid *oid, git_object_t type, NSError **error) {
+  git_odb *odb = NULL;
+  git_odb_object *object = NULL;
+  git_oid actual;
+  int rc = git_repository_odb(&odb, repo);
+  if (rc == 0) rc = git_odb_read(&object, odb, oid);
+  if (rc == 0 && (git_odb_object_type(object) != type || git_odb_object_size(object) > 64 * 1024 * 1024)) rc = GIT_ERROR;
+  if (rc == 0) rc = git_odb_hash(&actual, git_odb_object_data(object), git_odb_object_size(object), type);
+  if (rc == 0 && !git_oid_equal(&actual, oid)) rc = GIT_ERROR;
+  git_odb_object_free(object); git_odb_free(odb);
+  return rc == 0 ? YES : HNGTreeFail(error, @"Git object is missing, corrupt or unsupported");
+}
+static NSString *HNGTreeOID(const git_oid *oid) {
+  char text[GIT_OID_HEXSZ + 1]; git_oid_tostr(text, sizeof(text), oid);
+  return [NSString stringWithUTF8String:text];
+}
+static BOOL HNGTreeParentPaths(git_repository *repo, git_tree *tree, NSString *prefix, NSMutableSet *paths, NSInteger (^policy)(NSString *), NSUInteger *visits, NSUInteger depth, NSError **error) {
+  if (depth > 64) return HNGTreeFail(error, @"Parent tree exceeds depth limit");
+  if (!HNGTreeObjectValid(repo, git_tree_id(tree), GIT_OBJECT_TREE, error)) return NO;
+  for (size_t i = 0; i < git_tree_entrycount(tree); i++) {
+    if (++*visits > 10000) return HNGTreeFail(error, @"Parent tree exceeds entry limit");
+    const git_tree_entry *entry = git_tree_entry_byindex(tree, i);
+    NSString *name = [NSString stringWithUTF8String:git_tree_entry_name(entry)];
+    if (!name) return HNGTreeFail(error, @"Invalid parent-tree filename");
+    NSString *path = prefix.length ? [prefix stringByAppendingFormat:@"/%@", name] : name;
+    BOOL include = NO;
+    if (!HNGTreeDecision(path, policy, &include, error)) return NO;
+    if (!include) continue;
+    if (git_tree_entry_type(entry) == GIT_OBJECT_TREE) {
+      git_tree *child = NULL;
+      int rc = git_tree_lookup(&child, repo, git_tree_entry_id(entry));
+      BOOL ok = rc == 0 && HNGTreeParentPaths(repo, child, path, paths, policy, visits, depth + 1, error);
+      git_tree_free(child);
+      if (!ok) return HNGTreeFail(error, @"Cannot inspect parent tree");
+    } else {
+      if (git_tree_entry_filemode(entry) != GIT_FILEMODE_BLOB && git_tree_entry_filemode(entry) != GIT_FILEMODE_BLOB_EXECUTABLE) return HNGTreeFail(error, @"Unsupported parent-tree entry");
+      [paths addObject:path];
+    }
+  }
+  return YES;
+}
+static BOOL HNGTreeVerifyPlan(git_repository *repo, const git_oid *oid, NSString *prefix, NSDictionary *plan, NSMutableSet *seen, NSUInteger depth, NSError **error) {
+  if (depth > 64) return HNGTreeFail(error, @"Prepared tree exceeds depth limit");
+  if (!HNGTreeObjectValid(repo, oid, GIT_OBJECT_TREE, error)) return NO;
+  git_tree *tree = NULL;
+  if (git_tree_lookup(&tree, repo, oid) < 0) return HNGTreeFail(error, @"Cannot read prepared tree");
+  BOOL ok = YES;
+  for (size_t i = 0; ok && i < git_tree_entrycount(tree); i++) {
+    const git_tree_entry *entry = git_tree_entry_byindex(tree, i);
+    NSString *name = [NSString stringWithUTF8String:git_tree_entry_name(entry)];
+    if (!name) { ok = NO; break; }
+    NSString *path = prefix.length ? [prefix stringByAppendingFormat:@"/%@", name] : name;
+    if (git_tree_entry_type(entry) == GIT_OBJECT_TREE) ok = HNGTreeVerifyPlan(repo, git_tree_entry_id(entry), path, plan, seen, depth + 1, error);
+    else {
+      NSDictionary *expected = plan[path];
+      ok = expected && ![seen containsObject:path] && [expected[@"oid"] isEqualToString:HNGTreeOID(git_tree_entry_id(entry))] && [expected[@"mode"] unsignedIntValue] == git_tree_entry_filemode(entry) && HNGTreeObjectValid(repo, git_tree_entry_id(entry), GIT_OBJECT_BLOB, error);
+      if (ok) [seen addObject:path];
+    }
+    if (seen.count > 10000) ok = NO;
+  }
+  git_tree_free(tree);
+  return ok ? YES : HNGTreeFail(error, @"Prepared tree differs from captured bytes and modes");
 }
 static NSSet<NSString *> *HNGLooseObjects(NSString *snapshot) {
   NSString *objects = [snapshot stringByAppendingPathComponent:@".git/objects"];
@@ -136,6 +237,8 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
   close(objectsFD);
   return ok;
 }
+
+@implementation HoliNativeGit (TreePreparation)
 - (NSDictionary<NSString *, id> *)prepareWorkingCopyTree:(NSString *)root remote:(NSString *)remote branch:(NSString *)branch policy:(NSInteger (^)(NSString *))policy error:(NSError **)error {
   HoliGitSnapshot *snapshot = nil;
   git_repository *repo = [self openSafeRepository:root snapshot:&snapshot error:error];
@@ -155,18 +258,25 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
     NSString *https = [@"https://github.com/" stringByAppendingString:remote];
     NSString *ssh = [@"git@github.com:" stringByAppendingString:remote];
     BOOL remoteMatches = [url isEqualToString:https] || [url isEqualToString:[https stringByAppendingString:@".git"]] || [url isEqualToString:ssh] || [url isEqualToString:[ssh stringByAppendingString:@".git"]];
-    if (rc < 0 || !git_reference_is_branch(head) || !branch.length || ![branch isEqualToString:[NSString stringWithUTF8String:git_reference_shorthand(head)]] || !remoteMatches || git_repository_state(repo) != GIT_REPOSITORY_STATE_NONE) { HNGTreeFail(error, @"Tree preparation identity or repository state mismatch"); break; }
+    if (rc < 0 || !policy || !git_reference_is_branch(head) || !branch.length || ![branch isEqualToString:[NSString stringWithUTF8String:git_reference_shorthand(head)]] || !remoteMatches || git_repository_state(repo) != GIT_REPOSITORY_STATE_NONE) { HNGTreeFail(error, @"Tree preparation identity or repository state mismatch"); break; }
     rc = git_repository_index(&original, repo);
-    if (rc < 0 || git_index_has_conflicts(original)) { HNGTreeFail(error, @"Tree preparation refuses conflicted indexes"); break; }
+    if (rc < 0 || git_index_has_conflicts(original) || git_index_entrycount(original) > 10000) { HNGTreeFail(error, @"Unsupported or conflicted index"); break; }
     BOOL valid = YES;
+    NSMutableSet *trackedPaths = [NSMutableSet set];
     for (size_t i = 0; i < git_index_entrycount(original); i++) {
       const git_index_entry *entry = git_index_get_byindex(original, i);
-      if (!entry || (entry->flags & GIT_INDEX_ENTRY_VALID) || (entry->flags_extended & (GIT_INDEX_ENTRY_SKIP_WORKTREE | GIT_INDEX_ENTRY_INTENT_TO_ADD)) || (entry->mode != GIT_FILEMODE_BLOB && entry->mode != GIT_FILEMODE_BLOB_EXECUTABLE)) { valid = NO; break; }
+      NSString *path = entry && entry->path ? [NSString stringWithUTF8String:entry->path] : nil;
+      BOOL include = NO;
+      if (!path || !HNGTreeDecision(path, policy, &include, error) || (entry->flags & GIT_INDEX_ENTRY_VALID) || (entry->flags_extended & (GIT_INDEX_ENTRY_SKIP_WORKTREE | GIT_INDEX_ENTRY_INTENT_TO_ADD)) || (entry->mode != GIT_FILEMODE_BLOB && entry->mode != GIT_FILEMODE_BLOB_EXECUTABLE)) { valid = NO; break; }
+      if (include) [trackedPaths addObject:path];
     }
-    if (!valid) { HNGTreeFail(error, @"Unsupported tree preparation index state"); break; }
+    if (!valid) { HNGTreeFail(error, @"Unsupported index path or state"); break; }
     rc = git_reference_peel((git_object **)&commit, head, GIT_OBJECT_COMMIT);
     if (rc == 0) rc = git_commit_tree(&tree, commit);
-    if (rc == 0) rc = git_repository_config(&config, repo);
+    if (rc < 0 || !HNGTreeObjectValid(repo, git_commit_id(commit), GIT_OBJECT_COMMIT, error)) break;
+    NSUInteger visits = 0;
+    if (!HNGTreeParentPaths(repo, tree, @"", trackedPaths, policy, &visits, 0, error)) break;
+    rc = git_repository_config(&config, repo);
     const char *unsupported[] = {"core.autocrlf", "core.eol", "core.attributesfile", "core.excludesfile"};
     for (NSUInteger i = 0; rc == 0 && i < 4; i++) {
       git_config_entry *setting = NULL;
@@ -174,96 +284,97 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
       git_config_entry_free(setting);
       if (found != GIT_ENOTFOUND) rc = GIT_ERROR;
     }
-    if (rc < 0 || !policy) { HNGTreeFail(error, @"Unsupported tree preparation configuration or missing policy"); break; }
+    int filemode = 1;
+    if (rc == 0) { int found = git_config_get_bool(&filemode, config, "core.filemode"); if (found != 0 && found != GIT_ENOTFOUND) rc = found; }
+    if (rc < 0) { HNGTreeFail(error, @"Unsupported tree preparation configuration"); break; }
     NSDictionary *metadata = HNGTreeMetadata(snapshot.path);
     NSSet *objectsBefore = HNGLooseObjects(snapshot.path);
     if (!metadata) { HNGTreeFail(error, @"Existing metadata lock or unreadable metadata"); break; }
     rootFD = open(root.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (rootFD < 0) { HNGTreeFail(error, @"Cannot open tree preparation root"); break; }
-    // Enumerate candidates before reading content; the caller's pure policy excludes private
-    // paths and subtrees at the native boundary.
-    NSMutableSet<NSString *> *candidateNames = [NSMutableSet set];
-    if (!HNGTreeCollectNames(rootFD, @"", candidateNames, 0, error)) break;
-    NSMutableArray<NSString *> *paths = [NSMutableArray array];
-    for (NSString *candidate in candidateNames) {
-      NSInteger decision = policy(candidate);
-      if (decision < -1 || decision > 1 || decision == -1) { HNGTreeFail(error, @"Working tree policy refused an invalid path"); valid = NO; break; }
-      if (decision == 1) [paths addObject:candidate];
-    }
-    if (!valid || paths.count > 10000) { HNGTreeFail(error, @"Working tree exceeds policy or path limits"); break; }
-    if (!HNGPrepareIgnores(repo, snapshot, rootFD, paths, error)) break;
-    rc = git_index_new(&prepared);
-    if (rc < 0) { HNGError(error, rc); break; }
-    NSMutableSet *names = [NSMutableSet set];
+    if (rootFD < 0) { HNGTreeFail(error, @"Cannot open working tree"); break; }
+    NSMutableDictionary *inventory = [NSMutableDictionary dictionary];
+    visits = 0;
+    if (!HNGTreeInventory(rootFD, @"", inventory, policy, &visits, 0, error)) break;
+    NSMutableDictionary *cache = [NSMutableDictionary dictionary];
     NSUInteger total = 0;
-    for (NSString *path in paths) {
-      NSArray *parts = nil;
+    // Load ignore rules once. These exact bytes also become their prepared blobs.
+    for (NSString *path in inventory) {
+      if ([path.lastPathComponent isEqualToString:@".gitattributes"]) { valid = HNGTreeFail(error, @"Attributes are unsupported"); break; }
+      if (![path.lastPathComponent isEqualToString:@".gitignore"]) continue;
+      NSData *bytes = HNGTreeRead(rootFD, path, inventory[path], &total, error);
+      if (!bytes) { valid = NO; break; }
+      cache[path] = bytes;
+      NSString *target = [snapshot.path stringByAppendingPathComponent:path];
+      if (![[NSFileManager defaultManager] createDirectoryAtPath:target.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error] || ![bytes writeToFile:target options:0 error:error]) { valid = NO; break; }
+    }
+    if (!valid) break;
+    rc = git_repository_set_workdir(repo, snapshot.path.fileSystemRepresentation, 0);
+    if (rc == 0) rc = git_index_new(&prepared);
+    if (rc < 0) { HNGError(error, rc); break; }
+    NSMutableSet *foldedNames = [NSMutableSet set];
+    NSMutableDictionary *plan = [NSMutableDictionary dictionary];
+    for (NSString *path in [[inventory allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+      NSDictionary *identity = inventory[path];
+      mode_t mode = [identity[@"mode"] unsignedIntValue];
+      if (S_ISDIR(mode)) continue;
       NSString *folded = path.precomposedStringWithCanonicalMapping.lowercaseString;
-      if (!HNGPathParts(path, &parts) || [names containsObject:folded]) { valid = HNGTreeFail(error, @"Invalid or case-ambiguous tree path"); break; }
-      [names addObject:folded];
-      const git_index_entry *tracked = git_index_get_bypath(original, path.fileSystemRepresentation, 0);
-      if (tracked && strcmp(tracked->path, path.fileSystemRepresentation)) { valid = HNGTreeFail(error, @"Case-only staged renames are unsupported"); break; }
-      git_tree_entry *old = NULL;
-      int lookup = git_tree_entry_bypath(&old, tree, path.fileSystemRepresentation);
-      if (lookup != 0 && lookup != GIT_ENOTFOUND) { valid = HNGTreeFail(error, @"Cannot inspect parent tree"); break; }
-      BOOL inHead = old && git_tree_entry_type(old) != GIT_OBJECT_TREE;
-      if (inHead && git_tree_entry_filemode(old) != GIT_FILEMODE_BLOB && git_tree_entry_filemode(old) != GIT_FILEMODE_BLOB_EXECUTABLE) valid = HNGTreeFail(error, @"Unsupported parent tree entry");
-      git_tree_entry_free(old);
-      if (!valid) break;
+      if ([foldedNames containsObject:folded]) { valid = HNGTreeFail(error, @"Case-ambiguous working tree"); break; }
+      [foldedNames addObject:folded];
+      const git_index_entry *tracked = git_index_get_bypath(original, path.UTF8String, 0);
+      if (tracked && strcmp(tracked->path, path.UTF8String)) { valid = HNGTreeFail(error, @"Case-only staged rename is unsupported"); break; }
+      BOOL inHead = [trackedPaths containsObject:path];
       if (!tracked && !inHead) {
         int ignored = 0;
-        if (git_ignore_path_is_ignored(&ignored, repo, path.fileSystemRepresentation) < 0) { valid = HNGTreeFail(error, @"Cannot evaluate ignore rules"); break; }
+        if (git_ignore_path_is_ignored(&ignored, repo, path.UTF8String) < 0) { valid = HNGTreeFail(error, @"Cannot evaluate ignore rules"); break; }
         if (ignored) continue;
       }
-      int parent = HNGOpenParent(rootFD, parts);
-      int saved = errno;
-      struct stat before, opened, after;
-      int inspected = parent >= 0 ? fstatat(parent, [parts.lastObject fileSystemRepresentation], &before, AT_SYMLINK_NOFOLLOW) : -1;
-      if (inspected < 0) {
-        saved = parent < 0 ? saved : errno;
-        if (parent >= 0) close(parent);
-        if (saved == ENOENT || saved == ENOTDIR) continue;
-        valid = HNGTreeFail(error, @"Cannot inspect tree entry"); break;
-      }
-      if (S_ISDIR(before.st_mode)) { close(parent); continue; }
-      if (!S_ISREG(before.st_mode) || before.st_size < 0 || before.st_size > 64 * 1024 * 1024 || total + before.st_size > 512 * 1024 * 1024) { close(parent); valid = HNGTreeFail(error, @"Unsupported or oversized tree entry"); break; }
-      int input = openat(parent, [parts.lastObject fileSystemRepresentation], O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
-      if (input < 0 || fstat(input, &opened) || !HNGTreeSameFile(before, opened)) { if (input >= 0) close(input); close(parent); valid = HNGTreeFail(error, @"Tree entry changed before reading"); break; }
-      NSMutableData *bytes = [NSMutableData data];
-      uint8_t buffer[16384]; ssize_t count;
-      while ((count = read(input, buffer, sizeof(buffer))) > 0) {
-        if (bytes.length + (NSUInteger)count > (NSUInteger)before.st_size) { valid = NO; break; }
-        [bytes appendBytes:buffer length:(NSUInteger)count];
-      }
-      if (count < 0 || bytes.length != (NSUInteger)before.st_size || fstat(input, &after) || !HNGTreeSameFile(before, after) || fstatat(parent, [parts.lastObject fileSystemRepresentation], &after, AT_SYMLINK_NOFOLLOW) || !HNGTreeSameFile(before, after)) valid = NO;
-      close(input); close(parent);
-      if (!valid) { HNGTreeFail(error, @"Tree entry changed while reading"); break; }
-      total += bytes.length;
+      NSData *bytes = cache[path];
+      if (!bytes) bytes = HNGTreeRead(rootFD, path, identity, &total, error);
+      if (!bytes) { valid = NO; break; }
       git_index_entry entry = {0};
-      entry.path = path.fileSystemRepresentation;
-      entry.mode = (before.st_mode & S_IXUSR) ? GIT_FILEMODE_BLOB_EXECUTABLE : GIT_FILEMODE_BLOB;
-      rc = git_blob_create_frombuffer(&entry.id, repo, bytes.bytes, bytes.length);
-      if (rc == 0) rc = git_index_add(prepared, &entry);
+      entry.path = path.UTF8String;
+      entry.mode = mode & S_IXUSR ? GIT_FILEMODE_BLOB_EXECUTABLE : GIT_FILEMODE_BLOB;
+      if (!filemode && tracked) entry.mode = tracked->mode;
+      else if (!filemode && inHead) {
+        git_tree_entry *old = NULL;
+        if (git_tree_entry_bypath(&old, tree, path.UTF8String) == 0) entry.mode = git_tree_entry_filemode(old);
+        git_tree_entry_free(old);
+      }
+      git_oid expected;
+      rc = git_odb_hash(&expected, bytes.bytes, bytes.length, GIT_OBJECT_BLOB);
+      if (rc == 0) rc = git_blob_create_frombuffer(&entry.id, repo, bytes.bytes, bytes.length);
+      if (rc < 0 || !git_oid_equal(&expected, &entry.id) || !HNGTreeObjectValid(repo, &entry.id, GIT_OBJECT_BLOB, error)) { valid = HNGTreeFail(error, @"Prepared blob differs from captured bytes"); break; }
+      rc = git_index_add(prepared, &entry);
       if (rc < 0) { HNGError(error, rc); valid = NO; break; }
+      plan[path] = @{@"oid":HNGTreeOID(&entry.id), @"mode":@(entry.mode)};
     }
     if (!valid) break;
     git_oid treeOID;
     rc = git_index_write_tree_to(&treeOID, prepared, repo);
-    if (rc < 0) { HNGError(error, rc); break; }
+    NSMutableSet *seen = [NSMutableSet set];
+    if (rc < 0 || !HNGTreeVerifyPlan(repo, &treeOID, @"", plan, seen, 0, error) || seen.count != plan.count) { HNGTreeFail(error, @"Prepared tree is incomplete or corrupt"); break; }
+    NSMutableDictionary *current = [NSMutableDictionary dictionary];
+    visits = 0;
+    if (!HNGTreeInventory(rootFD, @"", current, policy, &visits, 0, error) || ![inventory isEqualToDictionary:current]) { HNGTreeFail(error, @"Working tree changed during preparation"); break; }
     HoliGitSnapshot *verification = [[HoliGitSnapshot alloc] initWithRoot:root error:error];
     BOOL unchangedMetadata = verification && [metadata isEqualToDictionary:HNGTreeMetadata(verification.path)];
     BOOL closed = [verification closeWithError:error];
-    if (!unchangedMetadata || !closed) { HNGTreeFail(error, @"Repository changed during tree preparation"); break; }
+    if (!unchangedMetadata || !closed) { HNGTreeFail(error, @"Repository changed during preparation"); break; }
     if (!HNGInstallTreeObjects(snapshot.path, objectsBefore, rootFD, repo, error)) break;
-    char treeText[GIT_OID_HEXSZ + 1], parentText[GIT_OID_HEXSZ + 1];
-    git_oid_tostr(treeText, sizeof(treeText), &treeOID);
-    git_oid_tostr(parentText, sizeof(parentText), git_commit_id(commit));
-    result = @{@"treeOID": [NSString stringWithUTF8String:treeText], @"parentOID": [NSString stringWithUTF8String:parentText], @"branch": branch, @"unchanged": @(git_oid_equal(&treeOID, git_tree_id(tree)))};
+    HoliGitSnapshot *destination = nil;
+    git_repository *destinationRepo = [self openSafeRepository:root snapshot:&destination error:error];
+    [seen removeAllObjects];
+    BOOL installed = destinationRepo && [metadata isEqualToDictionary:HNGTreeMetadata(destination.path)] && HNGTreeVerifyPlan(destinationRepo, &treeOID, @"", plan, seen, 0, error) && seen.count == plan.count;
+    git_repository_free(destinationRepo);
+    closed = [destination closeWithError:error];
+    if (!installed || !closed) { HNGTreeFail(error, @"Destination tree verification failed"); break; }
+    [current removeAllObjects]; visits = 0;
+    if (!HNGTreeInventory(rootFD, @"", current, policy, &visits, 0, error) || ![inventory isEqualToDictionary:current]) { HNGTreeFail(error, @"Working tree changed during object installation"); break; }
+    result = @{@"treeOID":HNGTreeOID(&treeOID), @"parentOID":HNGTreeOID(git_commit_id(commit)), @"branch":branch, @"unchanged":@(git_oid_equal(&treeOID, git_tree_id(tree)))};
   } while (0);
   if (rootFD >= 0) close(rootFD);
   git_config_free(config); git_tree_free(tree); git_commit_free(commit); git_remote_free(origin); git_reference_free(head); git_index_free(original); git_index_free(prepared); git_repository_free(repo);
   if (![snapshot closeWithError:error]) return nil;
   return result;
 }
-
 @end
