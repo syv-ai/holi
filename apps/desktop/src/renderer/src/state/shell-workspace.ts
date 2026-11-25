@@ -71,13 +71,15 @@ export interface ShellWorkspace {
   closed: ClosedEntry[]
   /** The last number handed out, to New tabs and to splits. */
   seq: number
+  /** Sticky view keys, kept in strip order at the front. */
+  sticky: string[]
   /** Entry ids, the active one first and then each by when it was last
    *  active; only open entries. Kept by `trackRecent`, never by hand. */
   recent: string[]
 }
 
 export function emptyWorkspace(): ShellWorkspace {
-  return { entries: [], active: null, closed: [], seq: 0, recent: [] }
+  return { entries: [], active: null, closed: [], seq: 0, recent: [], sticky: [] }
 }
 
 // ------------------------------------------------------------------ reading
@@ -237,7 +239,8 @@ function insertEntry(
 ): ShellWorkspace {
   const at = Math.max(0, Math.min(index, ws.entries.length))
   const entries = [...ws.entries.slice(0, at), entry, ...ws.entries.slice(at)]
-  return { ...ws, entries, active: select ? entryId(entry) : ws.active }
+  const inserted = { ...ws, entries, active: select ? entryId(entry) : ws.active }
+  return orderSticky(inserted)
 }
 
 /** Where a new entry goes: after the active one, else at the end. */
@@ -421,9 +424,43 @@ export function stepMember(ws: ShellWorkspace, step: number): ShellWorkspace {
  * to the entry after it, else before; a split's member goes from its split,
  * and a split left with one view turns back into that view's tab.
  */
-export function closeTab(ws: ShellWorkspace, key: string): ShellWorkspace {
-  if (entryOf(ws, key) === null) return ws
-  return { ...detach(ws, key), closed: [...ws.closed, key] }
+export function closeTab(ws: ShellWorkspace, key: string, explicit = false): ShellWorkspace {
+  if (entryOf(ws, key) === null || (ws.sticky.includes(key) && !explicit)) return ws
+  return {
+    ...detach(ws, key),
+    sticky: ws.sticky.filter((item) => item !== key),
+    closed: [...ws.closed, key],
+  }
+}
+
+/** Toggle a view's sticky status. Sticky entries remain an ordered prefix. */
+export function setSticky(ws: ShellWorkspace, key: string, sticky: boolean): ShellWorkspace {
+  const entry = entryOf(ws, key)
+  if (entry === null || (isSplit(entry) && entry.views.length > 1)) return ws
+  const current = ws.sticky.includes(key)
+  if (current === sticky) return ws
+  const next = {
+    ...ws,
+    sticky: sticky ? [...ws.sticky, key] : ws.sticky.filter((item) => item !== key),
+  }
+  return orderSticky(next)
+}
+
+function orderSticky(ws: ShellWorkspace): ShellWorkspace {
+  if (!ws.sticky?.length) return ws
+  const rank = new Map(ws.sticky.map((key, index) => [key, index]))
+  const entries = [...ws.entries].sort((a, b) => {
+    const left = rank.get(entryId(a))
+    const right = rank.get(entryId(b))
+    return left === undefined
+      ? right === undefined
+        ? 0
+        : 1
+      : right === undefined
+        ? -1
+        : left - right
+  })
+  return entries.every((entry, index) => entry === ws.entries[index]) ? ws : { ...ws, entries }
 }
 
 function closedOf(entry: ShellEntry): ClosedEntry {
@@ -432,9 +469,11 @@ function closedOf(entry: ShellEntry): ClosedEntry {
 
 /** Close a whole entry: a tab, or a split with every member (reopened as
  *  the split it was). */
-export function closeEntry(ws: ShellWorkspace, id: string): ShellWorkspace {
+export function closeEntry(ws: ShellWorkspace, id: string, explicit = false): ShellWorkspace {
   const at = indexOfEntry(ws, id)
-  if (at === -1) return closeTab(ws, id)
+  if (at === -1) return closeTab(ws, id, explicit)
+  const entry = ws.entries[at]!
+  if (!explicit && entryViews(entry).some((key) => ws.sticky.includes(key))) return ws
   const entries = ws.entries.filter((_, i) => i !== at)
   const heir = entries[Math.min(at, entries.length - 1)]
   const active = ws.active === id ? (heir === undefined ? null : entryId(heir)) : ws.active
@@ -451,11 +490,15 @@ function closeWhere(
   keep: (index: number) => boolean,
   active: string | null,
 ): ShellWorkspace {
-  const gone = ws.entries.filter((_, i) => !keep(i))
+  const gone = ws.entries.filter(
+    (entry, i) => !keep(i) && !entryViews(entry).some((key) => ws.sticky.includes(key)),
+  )
   if (gone.length === 0) {
     return active === ws.active ? ws : { ...ws, active }
   }
-  const entries = ws.entries.filter((_, i) => keep(i))
+  const entries = ws.entries.filter(
+    (entry, i) => keep(i) || entryViews(entry).some((key) => ws.sticky.includes(key)),
+  )
   const ids = entries.map(entryId)
   return {
     ...ws,
@@ -596,7 +639,7 @@ export function moveEntry(ws: ShellWorkspace, id: string, index: number): ShellW
   if (to === from) return ws
   const entries = ws.entries.filter((_, i) => i !== from)
   entries.splice(to, 0, ws.entries[from]!)
-  return { ...ws, entries }
+  return orderSticky({ ...ws, entries })
 }
 
 /**
