@@ -446,7 +446,7 @@ describe('ConnectionsSection', () => {
 })
 
 describe('the OAuth client', () => {
-  it('names the client in use, and a new one asks before it disconnects the accounts', async () => {
+  it('changes the future-connect client without disconnecting existing accounts', async () => {
     const user = userEvent.setup()
     render()
     expect(
@@ -455,17 +455,16 @@ describe('the OAuth client', () => {
     await user.click(screen.getByRole('button', { name: 'Use your own client…' }))
     await user.type(screen.getByLabelText('Client ID'), 'mine.apps.googleusercontent.com')
     await user.type(screen.getByLabelText('Client secret'), 's3cret')
-    await user.click(screen.getByRole('button', { name: 'Save and disconnect 2 accounts' }))
-    // Asked once more: nothing saved yet.
-    expect(await screen.findByText('This disconnects 2 accounts')).toBeTruthy()
-    expect(setClient).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Disconnect and switch' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() =>
       expect(setClient).toHaveBeenCalledWith({
         id: 'mine.apps.googleusercontent.com',
         secret: 's3cret',
       }),
     )
+    expect(disconnectVault).not.toHaveBeenCalled()
+    expect(removeAccount).not.toHaveBeenCalled()
+    expect(await screen.findByText(ADA.email)).toBeInTheDocument()
   })
 
   it('says a refusal in the form, and keeps what was typed', async () => {

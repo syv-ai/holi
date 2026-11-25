@@ -381,7 +381,6 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
 
           {/* Machine-wide: the client every account here was granted to. */}
           <OAuthClient
-            accountCount={accounts.length}
             beforeChange={(change) => changeAccount(change, false)}
             disabled={busy}
             visible={visible}

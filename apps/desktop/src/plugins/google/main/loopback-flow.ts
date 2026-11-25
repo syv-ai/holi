@@ -279,10 +279,23 @@ function identityFrom(idToken: unknown): { sub: string; email: string } {
 
 class GoogleHttpError extends Error {
   status: number
+  oauthCode?: string
   constructor(status: number, body: string) {
     super(`Google returned ${status}: ${body}`)
     this.name = 'GoogleHttpError'
     this.status = status
+    try {
+      const parsed: unknown = JSON.parse(body)
+      if (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        'error' in parsed &&
+        typeof parsed.error === 'string'
+      )
+        this.oauthCode = parsed.error
+    } catch {
+      // A non-JSON failure is not evidence that the account's grant expired.
+    }
   }
 }
 

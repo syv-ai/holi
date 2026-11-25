@@ -1125,3 +1125,169 @@ describe('resolveClient', () => {
     })
   })
 })
+
+describe('issuing clients survive future-connect defaults', () => {
+  const oldClient = { id: 'previous.apps.googleusercontent.com', secret: 'previous-secret' }
+  const newClient = { id: 'next.apps.googleusercontent.com', secret: 'next-secret' }
+  const start = (
+    clients: GoogleClientStore,
+    fetch: typeof globalThis.fetch,
+    env: NodeJS.ProcessEnv = {},
+    now = () => NOW,
+  ) =>
+    createGoogleAccounts({
+      store,
+      clients,
+      fetch,
+      env,
+      now,
+      vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+      listen: async () => ({ port: 1, waitForRedirect: () => new Promise(() => {}), close() {} }),
+      openBrowser: async () => {},
+    })
+
+  it.each([undefined, 'previous-secret'])(
+    'refreshes migrated grants after restart without mixing clients (secret %s)',
+    async (secret) => {
+      await store.write({
+        'sub-1': auth({ expiresAt: NOW - 1 }),
+        'sub-2': auth({ sub: 'sub-2', refreshToken: 'rt-2', expiresAt: NOW - 1 }),
+      })
+      const clients = createClientStore(join(dir, 'client.enc'), storage)
+      const calls: URLSearchParams[] = []
+      const fetch = (async (_url, init) => {
+        calls.push(new URLSearchParams(String(init?.body)))
+        return Response.json({ access_token: 'refreshed', expires_in: 3600 })
+      }) as typeof globalThis.fetch
+      const env = {
+        HOLI_GOOGLE_CLIENT_ID: oldClient.id,
+        ...(secret === undefined ? {} : { HOLI_GOOGLE_CLIENT_SECRET: secret }),
+      }
+      const accounts = await start(clients, fetch, env)
+      await accounts.link(VAULT, 'sub-1')
+      await accounts.link(WORK, 'sub-2')
+      const held = await accounts.sessionFor(VAULT)
+      await accounts.setClient(newClient)
+      expect(await accounts.sessionFor(VAULT)).toBe(held)
+      expect(accounts.list()).toHaveLength(2)
+      expect((await accounts.overview(VAULT)).client).toEqual({
+        id: oldClient.id,
+        source: 'environment',
+      })
+      const restarted = await start(clients, fetch, {})
+      await restarted.sessionForSub('sub-1')!.getAccessToken()
+      await restarted.sessionForSub('sub-2')!.getAccessToken()
+      expect(calls.map((c) => [c.get('client_id'), c.get('client_secret')])).toEqual([
+        [oldClient.id, secret ?? null],
+        [oldClient.id, secret ?? null],
+      ])
+      await restarted.setClient(null)
+      expect(await restarted.sessionFor(WORK)).not.toBeNull()
+      expect((await restarted.overview(WORK)).client.id).toBe(oldClient.id)
+      expect(JSON.stringify(await restarted.overview(VAULT))).not.toContain('previous-secret')
+      expect(JSON.stringify(restarted.list())).not.toContain('rt-1')
+    },
+  )
+
+  it('refuses a default change when legacy grants cannot be durably pinned, then retries', async () => {
+    await store.write({ 'sub-1': auth() })
+    const clients = createClientStore(join(dir, 'client.enc'), storage)
+    await clients.write(oldClient)
+    const accounts = await start(clients, async () => {
+      throw new Error('no network needed')
+    })
+    await accounts.link(VAULT, 'sub-1')
+    const held = await accounts.sessionFor(VAULT)
+    vi.spyOn(store, 'write').mockRejectedValueOnce(new Error('synthetic disk refusal'))
+    await expect(accounts.setClient(newClient)).rejects.toThrow('synthetic disk refusal')
+    expect(await clients.read()).toEqual(oldClient)
+    expect(await accounts.sessionFor(VAULT)).toBe(held)
+    expect(await held!.getAccessToken()).toBe('at-1')
+    await accounts.setClient(newClient)
+    const restarted = await start(clients, async () => {
+      throw new Error('no network needed')
+    })
+    expect((await restarted.overview(VAULT)).client.id).toBe(oldClient.id)
+    expect(await (await restarted.sessionFor(VAULT))!.getAccessToken()).toBe('at-1')
+  })
+
+  it('keeps a rotated secret when an older refresh finishes, including after reconstruction', async () => {
+    await store.write({ 'sub-1': auth({ expiresAt: NOW - 1 }) })
+    const clients = createClientStore(join(dir, 'client.enc'), storage)
+    await clients.write(oldClient)
+    const entered = deferred<void>()
+    const reply = deferred<Response>()
+    const calls: URLSearchParams[] = []
+    const accounts = await start(clients, (async (_url, init) => {
+      calls.push(new URLSearchParams(String(init?.body)))
+      entered.resolve()
+      return reply.promise
+    }) as typeof globalThis.fetch)
+    const held = accounts.sessionForSub('sub-1')!
+    const token = held.getAccessToken()
+    await entered.promise
+    await accounts.setClient({ ...oldClient, secret: 'rotated-secret' })
+    reply.resolve(Response.json({ access_token: 'refreshed', expires_in: 3600 }))
+    await expect(token).resolves.toBe('refreshed')
+    const restarted = await start(
+      clients,
+      (async (_url, init) => {
+        calls.push(new URLSearchParams(String(init?.body)))
+        return Response.json({ access_token: 'after-restart', expires_in: 3600 })
+      }) as typeof globalThis.fetch,
+      {},
+      () => NOW + 7_200_000,
+    )
+    await expect(restarted.sessionForSub('sub-1')!.getAccessToken()).resolves.toBe('after-restart')
+    expect(calls.map((c) => c.get('client_secret'))).toEqual(['previous-secret', 'rotated-secret'])
+    expect(accounts.sessionForSub('sub-1')).toBe(held)
+  })
+
+  it.each(['rt-1', 'unused-other-client'])(
+    'refuses a different-client duplicate without losing the existing grant (%s)',
+    async (returned) => {
+      const fixture = await controlledConsent([auth()])
+      await fixture.accounts.link(WORK, 'sub-1')
+      await fixture.accounts.setClient(newClient)
+      const flow = await fixture.accounts.connect(VAULT)
+      const result = flow.wait()
+      await fixture.exchanges[0]!.started.promise
+      fixture.exchanges[0]!.reply.resolve(auth({ refreshToken: returned }))
+      await expect(result).rejects.toThrow(/different OAuth client/)
+      expect(fixture.revoked).toEqual(returned === 'rt-1' ? [] : [returned])
+      expect(await fixture.accounts.sessionFor(VAULT)).toBeNull()
+      expect(await (await fixture.accounts.sessionFor(WORK))!.getAccessToken()).toBe('at-1')
+    },
+  )
+
+  it('does not revoke existing authorization when a same-client re-consent is cancelled', async () => {
+    const fixture = await controlledConsent([auth()])
+    const flow = await fixture.accounts.connect(VAULT)
+    const result = flow.wait()
+    await fixture.exchanges[0]!.started.promise
+    flow.cancel()
+    fixture.exchanges[0]!.reply.resolve(auth({ refreshToken: 'unused-same-client' }))
+    expect(await result).toEqual({ kind: 'cancelled' })
+    expect(fixture.revoked).toEqual([])
+    expect(await fixture.accounts.sessionForSub('sub-1')!.getAccessToken()).toBe('at-1')
+  })
+
+  it('keeps the grant after a client-authentication refusal and accepts corrected credentials', async () => {
+    await store.write({ 'sub-1': auth({ expiresAt: NOW - 1 }) })
+    const clients = memoryClients(oldClient)
+    const accounts = await start(clients, (async (_url, init) =>
+      new URLSearchParams(String(init?.body)).get('client_secret') === 'bad'
+        ? Response.json({ error: 'invalid_client' }, { status: 400 })
+        : Response.json({
+            access_token: 'recovered',
+            expires_in: 3600,
+          })) as typeof globalThis.fetch)
+    await accounts.link(VAULT, 'sub-1')
+    await accounts.setClient({ ...oldClient, secret: 'bad' })
+    const held = (await accounts.sessionFor(VAULT))!
+    await expect(held.getAccessToken()).rejects.toThrow(/400/)
+    expect(await accounts.sessionFor(VAULT)).toBe(held)
+    await accounts.setClient(oldClient)
+    await expect(held.getAccessToken()).resolves.toBe('recovered')
+  })
+})
