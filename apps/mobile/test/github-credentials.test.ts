@@ -15,12 +15,12 @@ const http: DeviceAuthHttp = async (_url, init) =>
 
 function setup(initial: string | null = 'old-token') {
   let token = initial
-  const store = {
+  const openStore = () => ({
     read: () => token,
     write: (value: string) => (token = value),
     remove: () => (token = null),
-  }
-  return { credentials: createGitHubCredentials(store), store }
+  })
+  return { credentials: createGitHubCredentials(openStore()), openStore }
 }
 
 describe('GitHub credentials', () => {
@@ -95,7 +95,7 @@ function deferred<T>() {
 it.each(['cancel', 'sign-out', 'failed-sign-out', 'supersede', 'repeat-wait'])(
   'handles %s while token JSON is delayed',
   async (action) => {
-    const { credentials, store } = setup()
+    const { credentials, openStore } = setup()
     const cancellation = createCancellation()
     const reached = deferred<void>()
     const json = deferred<unknown>()
@@ -118,25 +118,29 @@ it.each(['cancel', 'sign-out', 'failed-sign-out', 'supersede', 'repeat-wait'])(
     })
     const waiting = auth.wait()
     await reached.promise
-    let next: Awaited<ReturnType<typeof credentials.authorize>> | undefined
-    if (action === 'cancel') cancellation.abort()
-    else if (action === 'sign-out') credentials.signOut()
-    else if (action === 'failed-sign-out') {
+    // Like fresh native adapters, these objects share storage but not JS identity.
+    const store = openStore()
+    if (action === 'failed-sign-out') {
       store.remove = () => {
         throw new Error('private deletion detail')
       }
-      expect(() => credentials.signOut()).toThrow()
-    } else if (action === 'supersede')
-      next = await credentials.authorize({ clientId: 'public', fetch: http, wait: async () => {} })
+    }
+    const reopened = createGitHubCredentials(store)
+    let next: Awaited<ReturnType<typeof credentials.authorize>> | undefined
+    if (action === 'cancel') cancellation.abort()
+    else if (action === 'sign-out') reopened.signOut()
+    else if (action === 'failed-sign-out') expect(() => reopened.signOut()).toThrow()
+    else if (action === 'supersede')
+      next = await reopened.authorize({ clientId: 'public', fetch: http, wait: async () => {} })
     else await expect(auth.wait()).rejects.toThrow()
     json.resolve({ access_token: 'delayed-token' })
     if (action === 'repeat-wait') {
       await waiting
       expect(credentials.readToken()).toBe('delayed-token')
-      expect(createGitHubCredentials(store).readToken()).toBe('delayed-token')
+      expect(reopened.readToken()).toBe('delayed-token')
     } else {
       await expect(waiting).rejects.toThrow()
-      expect(credentials.readToken()).toBe(action === 'sign-out' ? null : 'old-token')
+      expect(reopened.readToken()).toBe(action === 'sign-out' ? null : 'old-token')
       if (next) {
         await next.wait()
         expect(credentials.readToken()).toBe('new-token')
