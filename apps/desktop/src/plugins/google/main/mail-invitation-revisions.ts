@@ -373,7 +373,8 @@ function covers(cancel: Revision, selected: Revision): boolean {
   return kind(first) === kind(slot) && slot > first
 }
 
-function revisionOrder(a: Revision, b: Revision): -1 | 0 | 1 | null {
+/** Order only; equal version fields do not establish equal material. */
+export function revisionOrder(a: Revision, b: Revision): -1 | 0 | 1 | null {
   if (a.sequence !== b.sequence) return a.sequence > b.sequence ? 1 : -1
   if (a.dtstamp === b.dtstamp) return 0
   if (!a.dtstamp || !b.dtstamp) return null
@@ -430,17 +431,13 @@ export function supersedes(incoming: Incoming, revision: Revision, mailbox: stri
   const current = identityOf(incoming.selected)
   if (incoming.reason || !incoming.selected.value.request || !sameGroup(current, revision))
     return false
-  if (current.sequence !== revision.sequence) return current.sequence > revision.sequence
-  if (
-    onLineage(incoming, revision, mailbox) ||
-    !current.dtstamp ||
-    !revision.dtstamp ||
-    current.dtstamp <= revision.dtstamp
-  )
-    return false
+  if (revisionOrder(current, revision) !== 1) return false
+  if (current.sequence !== revision.sequence) return true
+  if (onLineage(incoming, revision, mailbox)) return false
   // Old journals hashed everybody's response into materialKey. A different
   // hash alone is not proof that a legacy reservation was superseded.
-  const prevStamp = revision.dtstamp
+  // Equal sequence and strict order require usable stamps on both sides.
+  const prevStamp = revision.dtstamp!
   return (
     (revision.mailboxResponse !== undefined &&
       (current.materialKey !== revision.materialKey ||
