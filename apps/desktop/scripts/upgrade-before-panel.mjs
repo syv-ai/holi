@@ -108,7 +108,7 @@ export function observeUpgradeUiRequests(ipcMain, fixtureRemote) {
       function (...args) {
         const op = args[1]
         const isVaultOpen =
-          op?.path === 'vault.open' &&
+          op?.path === 'vaults.open' &&
           op?.type === 'mutation' &&
           op?.input?.remote === fixtureRemote
         const capability =
@@ -121,7 +121,7 @@ export function observeUpgradeUiRequests(ipcMain, fixtureRemote) {
           return listener.apply(this, args)
         const order = ++sequence
         const record = isVaultOpen
-          ? { event: 'vault.open', result: 'pending', order, startOrder: order }
+          ? { event: 'vaults.open', result: 'pending', order, startOrder: order }
           : {
               event: 'google-request',
               capability,

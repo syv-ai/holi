@@ -365,24 +365,24 @@ describe('hosted upgrade UI diagnostics', () => {
     const snapshot = observeUpgradeUiRequests(ipc, remote)
     const opened = { ok: true, data: {} }
     ipc.handle('holi:trpc', (_event: unknown, op: any) =>
-      op.path === 'vault.open' ? Promise.resolve(opened) : { ok: true, data: {} },
+      op.path === 'vaults.open' ? Promise.resolve(opened) : { ok: true, data: {} },
     )
     invoke(
       'holi:trpc',
       null,
       {},
-      { path: 'vault.open', type: 'mutation', input: { remote: 'other/vault' } },
+      { path: 'vaults.open', type: 'mutation', input: { remote: 'other/vault' } },
     )
     const pending = invoke(
       'holi:trpc',
       null,
       {},
-      { path: 'vault.open', type: 'mutation', input: { remote } },
+      { path: 'vaults.open', type: 'mutation', input: { remote } },
     )
     invoke('holi:trpc', null, {}, operation())
     await pending
     expect(snapshot()).toHaveLength(2)
-    expect(snapshot()[0]).toMatchObject({ event: 'vault.open', result: 'success', startOrder: 1 })
+    expect(snapshot()[0]).toMatchObject({ event: 'vaults.open', result: 'success', startOrder: 1 })
     expect(snapshot()[0].completionOrder).toBeGreaterThan(snapshot()[0].startOrder)
     expect(snapshot()[1]).toMatchObject({
       event: 'google-request',
@@ -402,7 +402,7 @@ describe('hosted upgrade UI diagnostics', () => {
     let opens = 0
     let googles = 0
     ipc.handle('holi:trpc', (_event: unknown, op: any) =>
-      op.path === 'vault.open'
+      op.path === 'vaults.open'
         ? ++opens === 1
           ? open
           : Promise.resolve({ ok: true })
@@ -414,7 +414,7 @@ describe('hosted upgrade UI diagnostics', () => {
       'holi:trpc',
       null,
       {},
-      { path: 'vault.open', type: 'mutation', input: { remote } },
+      { path: 'vaults.open', type: 'mutation', input: { remote } },
     )
     const firstGoogle = invoke('holi:trpc', null, {}, operation())
     resolveGoogle({ ok: false })
@@ -424,12 +424,14 @@ describe('hosted upgrade UI diagnostics', () => {
     resolveOpen({ ok: true })
     await firstOpen
     const events = snapshot()
-    expect(events.map(({ event, completionOrder }) => [event, completionOrder])).toEqual([
-      ['vault.open', 6],
-      ['google-request', 3],
-      ['google-request', 5],
+    expect(events.map(({ event }) => event)).toEqual([
+      'vaults.open',
+      'google-request',
+      'google-request',
     ])
     expect(events[0].startOrder).toBeLessThan(events[1].startOrder)
+    expect(events[1].completionOrder).toBeLessThan(events[2].startOrder)
+    expect(events[2].completionOrder).toBeLessThan(events[0].completionOrder)
   })
 
   it('bounds vault lifecycle diagnostics together with Google requests', () => {
@@ -441,7 +443,7 @@ describe('hosted upgrade UI diagnostics', () => {
       return new Promise(() => {})
     })
     for (let i = 0; i < 30; i++)
-      invoke('holi:trpc', null, {}, { path: 'vault.open', type: 'mutation', input: { remote } })
+      invoke('holi:trpc', null, {}, { path: 'vaults.open', type: 'mutation', input: { remote } })
     expect(effects).toBe(30)
     expect(snapshot()).toHaveLength(20)
     expect(snapshot().every(({ result }) => result === 'pending')).toBe(true)
@@ -459,13 +461,13 @@ describe('hosted upgrade UI diagnostics', () => {
       'holi:trpc',
       null,
       {},
-      { path: 'vault.open', type: 'mutation', input: { remote } },
+      { path: 'vaults.open', type: 'mutation', input: { remote } },
     )
     await expect(failed).rejects.toThrow(secret)
-    invoke('holi:trpc', null, {}, { path: 'vault.open', type: 'mutation', input: { remote } })
+    invoke('holi:trpc', null, {}, { path: 'vaults.open', type: 'mutation', input: { remote } })
     expect(snapshot().map(({ event, result }) => ({ event, result }))).toEqual([
-      { event: 'vault.open', result: 'rejection' },
-      { event: 'vault.open', result: 'pending' },
+      { event: 'vaults.open', result: 'rejection' },
+      { event: 'vaults.open', result: 'pending' },
     ])
     expect(snapshot()[0].completionOrder).toBeDefined()
     expect(snapshot()[1]).not.toHaveProperty('completionOrder')
