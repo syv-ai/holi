@@ -19,7 +19,7 @@
  * HTML sanitizer remains in the renderer, where a DOM is available.
  */
 import { Parser } from 'htmlparser2'
-import { GoogleApiError, type GoogleApi } from './api'
+import { GoogleApiError, type GoogleApi, type GoogleDispatchGate } from './api'
 import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
@@ -1396,13 +1396,14 @@ export async function createDraft(
   return { id: draft?.id ?? updateId ?? null }
 }
 
-function normalizeMessageIds(value: string): string[] | null {
+function normalizeMessageIds(value: string, strictAngles = false): string[] | null {
   const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
   if (/[\r\n]/.test(unfolded)) return null
   let clean = ''
   let comments = 0
   let escaped = false
   let quoted = false
+  let inAngle = false
   for (const char of unfolded) {
     if (escaped) {
       if (comments === 0) clean += char
@@ -1416,14 +1417,18 @@ function normalizeMessageIds(value: string): string[] | null {
     } else if (char === '"') {
       quoted = !quoted
       clean += char
-    } else if (char === '(' && !quoted) comments++
-    else clean += char
+    } else if (char === '(' && !quoted && !inAngle) comments++
+    else {
+      if (strictAngles && !quoted && (char === '<' || char === '>')) inAngle = char === '<'
+      clean += char
+    }
   }
   if (comments !== 0 || escaped || quoted) return null
-  const text = clean.trim()
+  const text = strictAngles ? clean.replace(/^[\t ]+|[\t ]+$/g, '') : clean.trim()
   if (text === '') return []
   const ids = text.match(/<[^<>]+>/g) ?? []
-  if (ids.length === 0 || !/^\s*$/.test(text.replace(/<[^<>]+>/g, ''))) return null
+  const gap = strictAngles ? /^[\t ]*$/ : /^\s*$/
+  if (ids.length === 0 || !gap.test(text.replace(/<[^<>]+>/g, ''))) return null
   const valid = ids.every((token) => {
     const id = token.slice(1, -1)
     const at = id.lastIndexOf('@')
@@ -1832,7 +1837,7 @@ export function createCalendarScan() {
         )
           throw new CalendarScanError('Invalid Gmail MIME part')
         if (part.mimeType?.toLowerCase() === 'message/rfc822') return
-        if (isCalendarPart(part)) {
+        if (isCalendarPart(part) || contentTypeDeclaresCalendar(part)) {
           check(--parts >= 0)
           found.push(part)
         }
@@ -1901,7 +1906,7 @@ type CalendarMail = {
   from: string
   to: string[]
   replyHeaders: CalendarReplyHeaders | null
-  parts: { method: string | undefined; read: () => Promise<string> }[]
+  parts: { method: string | undefined | null; read: () => Promise<string> }[]
 }
 
 type CalendarReplyReceipt = { id: string | null; threadId: string | null }
@@ -1917,7 +1922,7 @@ function calendarHeaderIds(part: RawPart | undefined, name: string): string[] | 
   if (values.length === 0) return []
   const value = values[0]?.value
   if (values.length !== 1 || typeof value !== 'string') return null
-  const ids = normalizeMessageIds(value)
+  const ids = normalizeMessageIds(value, true)
   return ids?.length ? ids : null
 }
 
@@ -1934,11 +1939,12 @@ function calendarMail(
   const rfcId = ids?.length === 1 ? ids[0]! : null
   const references = calendarHeaderIds(message.payload, 'references')
   const parent = calendarHeaderIds(message.payload, 'in-reply-to')
-  const validThreading = references !== null && parent !== null && parent.length <= 1
-  const parentId =
-    validThreading && (!parent.length || !references.length || references.at(-1) === parent[0])
-      ? (parent[0] ?? references.at(-1) ?? null)
-      : null
+  const validThreading =
+    references !== null &&
+    parent !== null &&
+    parent.length <= 1 &&
+    (!parent.length || !references.length || references.at(-1) === parent[0])
+  const parentId = validThreading ? (parent[0] ?? references.at(-1) ?? null) : null
   const subject = (headerOf(message.payload, 'Subject') ?? '').replace(/[\r\n]+/g, ' ').trim()
   const from = parseAddresses(headerOf(message.payload, 'From'))
   return {
@@ -1964,9 +1970,7 @@ function calendarMail(
     parts: parts.map((part) => {
       let decoded: Promise<string> | undefined
       return {
-        method: parseHeaderParameters(
-          headerOf(part, 'Content-Type') ?? part.mimeType ?? '',
-        )?.parameters.get('method'),
+        method: calendarMimeMethod(part),
         read: () => (decoded ??= scan.readPart(api, id, part)),
       }
     }),
@@ -2058,7 +2062,7 @@ export async function sendCalendarReply(
   from: string,
   organizer: string,
   calendarText: string,
-  gate: { validate: () => Promise<void>; reserveDispatch: () => Promise<void> },
+  gate: GoogleDispatchGate,
 ): Promise<CalendarReplyReceipt> {
   // The caller supplies the verified mailbox, not a From header from the invitation.
   if (/[\r\n]/.test(from)) throw new Error('Invalid calendar reply sender')
@@ -2081,11 +2085,43 @@ export async function sendCalendarReply(
       raw: toBase64Url(`From: ${from}\r\nMessage-ID: ${rfcId}\r\n${message}`),
       threadId,
     },
-    gate.validate,
-    gate.reserveDispatch,
+    gate,
   )
   const identifier = (value: unknown) => (calendarMailId(value) ? value : null)
   return { id: identifier(sent?.id), threadId: identifier(sent?.threadId) }
+}
+
+// A missing MIME method leaves the iCalendar METHOD authoritative. A malformed
+// or contradictory declaration does not, even when another part looks usable.
+function calendarMimeMethod(part: RawPart): string | undefined | null {
+  const headers = (part.headers ?? []).filter(({ name }) => name?.toLowerCase() === 'content-type')
+  if (headers.length > 1 || (headers.length && typeof headers[0]?.value !== 'string')) return null
+  let method: string | undefined
+  for (const value of [headers[0]?.value, part.mimeType]) {
+    if (value === undefined) continue
+    const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
+    if (/[\r\n\x00]/.test(unfolded)) return null
+    const type = parseHeaderParameters(unfolded)
+    if (!type || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(type.main))
+      return null
+    const hint = type.parameters.get('method')?.toUpperCase()
+    if (hint !== undefined) {
+      if (!/^[A-Z][A-Z0-9-]*$/.test(hint) || (method !== undefined && method !== hint)) return null
+      method = hint
+    }
+  }
+  return method
+}
+
+function contentTypeDeclaresCalendar(part: RawPart): boolean {
+  return Boolean(
+    part.headers?.some(
+      (header) =>
+        header.name?.toLowerCase() === 'content-type' &&
+        typeof header.value === 'string' &&
+        /^\s*(?:text\/calendar|application\/ics)(?:\s*;|\s*$)/i.test(header.value),
+    ),
+  )
 }
 
 function isCalendarPart(part: RawPart): boolean {

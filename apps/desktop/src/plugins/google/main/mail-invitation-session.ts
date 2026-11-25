@@ -1,11 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { CapabilityError } from '../../../main/plugin-api'
-import { GoogleApiError, GoogleWriteUncertainError, type GoogleApi } from './api'
+import {
+  GoogleApiError,
+  GoogleWriteUncertainError,
+  type GoogleApi,
+  type GoogleDispatchGate,
+} from './api'
+import type { InviteAnswer } from './calendar'
 import {
   findInvitationCalendarCopy,
   verifyInvitationCalendarResponse,
-  type InviteAnswer,
-} from './calendar'
+} from './mail-invitation-calendar'
 import {
   CalendarScanError,
   createCalendarScan,
@@ -15,6 +20,17 @@ import {
   sendCalendarReply,
 } from './gmail'
 import { parseCalendarMail } from './invite'
+import {
+  identityOf,
+  onLineage,
+  sameGroup,
+  sameInvitation,
+  sameRevision,
+  scopeKey,
+  selectInvitationRevisions,
+  supersedes,
+  type Candidate,
+} from './mail-invitation-revisions'
 import type { createMailInvitationStore, InvitationAttempt } from './mail-invitation-store'
 import {
   invitationReplyStatus,
@@ -53,20 +69,12 @@ type Target = {
   assertBinding: () => void
 }
 type Scan = ReturnType<typeof createCalendarScan>
-type Candidate = NonNullable<ReturnType<typeof parseCalendarMail>> & { mail: Mail }
-type Incoming = {
-  selected: Candidate
-  parents: Set<string>
-  history: Candidate[]
-  reason?: string
-}
-type DispatchGate = { validate: () => Promise<void>; reserveDispatch: () => Promise<void> }
 type Reply = { key: string } & (
   | {
       channel: 'calendar'
       target: string
       proof: string
-      send: (answer: InviteAnswer, gate: DispatchGate) => Promise<void>
+      send: (answer: InviteAnswer, gate: GoogleDispatchGate) => Promise<void>
     }
   | {
       channel: 'gmail'
@@ -75,190 +83,45 @@ type Reply = { key: string } & (
       body: (email: string, answer: InviteAnswer) => string
     }
 )
-type Resolved = { invitation: MailInvitation; reply: Reply | null }
+type Resolved = {
+  invitation: MailInvitation
+  reply: Reply | null
+  response: Revision['mailboxResponse']
+}
 type ReadResult = { cards: Resolved[]; recoveryReason: string | null }
 type CalendarCopy = Awaited<ReturnType<typeof findInvitationCalendarCopy>>
 
 type SentAddress = { organizer: string; mailbox: string }
 
-function sameGroup(a: Revision, b: Revision): boolean {
-  return a.uid === b.uid && a.recurrenceId === b.recurrenceId
-}
-
-function sameRevision(a: Revision, b: Revision): boolean {
-  return (
-    sameGroup(a, b) &&
-    a.sequence === b.sequence &&
-    a.dtstamp === b.dtstamp &&
-    a.materialKey === b.materialKey
-  )
-}
-
-function sameInvitation(a: MailInvitationIdentity, b: MailInvitationIdentity): boolean {
-  return a.messageId === b.messageId && sameRevision(a, b)
-}
-
-const identityOf = ({ value }: Candidate) => value.details.identity
-const scopeKey = ({ uid, recurrenceId }: Revision) => JSON.stringify([uid, recurrenceId])
-
-function sameMaterial(a: Candidate, b: Candidate): boolean {
-  const first = identityOf(a)
-  const second = identityOf(b)
-  return (
-    a.published === b.published &&
-    a.value.method !== null &&
-    a.value.method === b.value.method &&
-    first.sequence === second.sequence &&
-    first.materialKey !== null &&
-    first.materialKey === second.materialKey
-  )
-}
-
-function blocked(selected: Candidate, reason: string): Incoming {
-  return { selected, reason, parents: new Set(), history: [] }
-}
-
-async function latestByScope(messages: Mail[], mailbox: string): Promise<Incoming[]> {
+async function latestByScope(messages: Mail[], mailbox: string) {
   const candidates: Candidate[] = []
   for (const mail of messages) {
     if (mail.sent && mail.from !== mailbox) continue
     for (const part of mail.parts) {
+      if (part.method === null)
+        throw new CalendarScanError('Gmail could not verify the calendar MIME declaration')
       if (mail.sent && part.method?.toUpperCase() === 'REPLY') continue
       const parsed = parseCalendarMail(mail.messageId, await part.read(), part.method)
       if (parsed && (!mail.sent || parsed.value.method || parsed.published))
         candidates.push({ ...parsed, mail })
     }
   }
-  // Arrival breaks ties among equivalent deliveries. Sequence and DTSTAMP
-  // order revisions within an original occurrence (or the master), never across scopes.
-  candidates.sort(
-    (a, b) =>
-      Number(a.mail.sent) - Number(b.mail.sent) ||
-      b.mail.timestamp - a.mail.timestamp ||
-      a.mail.messageId.localeCompare(b.mail.messageId),
-  )
-  const first = candidates[0]
-  if (!first) return []
-  const unknown = candidates.find((candidate) => !identityOf(candidate).materialKey)
-  if (unknown)
-    return [
-      blocked(
-        unknown,
-        unknown.value.details.unavailableReason ??
-          'Gmail could not identify a revision in this conversation',
-      ),
-    ]
-  const groups = new Map<string, Candidate[]>()
-  for (const candidate of candidates) {
-    const identity = identityOf(candidate)
-    if (identity.uid !== identityOf(first).uid)
-      return [blocked(first, 'This conversation contains unrelated invitations')]
-    const key = scopeKey(identity)
-    const group = groups.get(key) ?? []
-    group.push(candidate)
-    groups.set(key, group)
-  }
-  return [...groups.values()].map((group) => selectScope(group, candidates))
-}
-
-function selectScope(group: Candidate[], candidates: Candidate[]): Incoming {
-  const sequence = Math.max(...group.map((candidate) => identityOf(candidate).sequence))
-  const history = group.filter((candidate) => identityOf(candidate).sequence === sequence)
-  const stamps = [...new Set(history.flatMap((candidate) => identityOf(candidate).dtstamp ?? []))]
-    .sort()
-    .reverse()
-  const newest = stamps[0] ?? null
-  const unknownOrder = history.filter((candidate) => identityOf(candidate).dtstamp === null)
-  const latest = history.filter((candidate) => identityOf(candidate).dtstamp === newest)
-  const selected = latest[0]!
-  if (
-    (newest !== null && unknownOrder.length) ||
-    latest.some((candidate) => candidate !== selected && !sameMaterial(candidate, selected))
-  )
-    return blocked(selected, 'This conversation contains conflicting invitation revisions')
-
-  // For Sent continuity walk backwards through equal material without crossing
-  // a CANCEL, conflict, material change, or attendee PARTSTAT/RSVP reset.
-  const lineage = [...latest]
-  for (const stamp of stamps.slice(1)) {
-    const deliveries = history.filter((candidate) => identityOf(candidate).dtstamp === stamp)
-    if (!deliveries.every((candidate) => sameMaterial(candidate, selected))) break
-    lineage.push(...deliveries)
-  }
-  const parents = new Set<string>()
-  for (const candidate of lineage) {
-    const parent = candidate.mail.replyHeaders?.inReplyTo
-    if (
-      parent &&
-      candidates.every(
-        (other) =>
-          other.mail.rfcId !== parent ||
-          (candidate.mail.messageId === other.mail.messageId &&
-            !sameGroup(identityOf(candidate), identityOf(other))) ||
-          (sameRevision(identityOf(candidate), identityOf(other)) &&
-            sameMaterial(candidate, other)),
-      )
-    )
-      parents.add(parent)
-  }
-  return { selected, history, parents }
-}
-
-function onLineage(incoming: Incoming, revision: Revision): boolean {
-  const current = identityOf(incoming.selected)
-  if (sameRevision(current, revision)) return true
-  if (
-    incoming.reason ||
-    !sameGroup(current, revision) ||
-    current.sequence !== revision.sequence ||
-    current.materialKey !== revision.materialKey ||
-    !current.dtstamp ||
-    !revision.dtstamp ||
-    current.dtstamp <= revision.dtstamp
-  )
-    return false
-  // A journal receipt can anchor a parent no longer present in the thread.
-  // Every visible candidate back to that anchor must still agree.
-  const anchor = revision.dtstamp
-  return incoming.history.every((candidate) => {
-    const stamp = identityOf(candidate).dtstamp
-    return stamp !== null && (stamp < anchor || sameMaterial(candidate, incoming.selected))
-  })
-}
-
-function supersedes(incoming: Incoming, revision: Revision): boolean {
-  const current = identityOf(incoming.selected)
-  if (incoming.reason || !sameGroup(current, revision)) return false
-  if (current.sequence !== revision.sequence) return current.sequence > revision.sequence
-  if (
-    onLineage(incoming, revision) ||
-    !current.dtstamp ||
-    !revision.dtstamp ||
-    current.dtstamp <= revision.dtstamp
-  )
-    return false
-  // An older parent may have disappeared. Do not unlock a stamp-only
-  // redelivery without proof of a newer material revision in between.
-  const prevStamp = revision.dtstamp
-  return (
-    current.materialKey !== revision.materialKey ||
-    incoming.history.some((candidate) => {
-      const prior = identityOf(candidate)
-      return (
-        prior.dtstamp !== null &&
-        prior.dtstamp >= prevStamp &&
-        !sameMaterial(candidate, incoming.selected)
-      )
-    })
-  )
+  return selectInvitationRevisions(candidates, mailbox)
 }
 
 async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }: SentAddress) {
-  if (!mail.sent || mail.from !== mailbox || mail.to.length !== 1 || mail.to[0] !== organizer)
+  if (
+    !mail.sent ||
+    !mail.rfcId ||
+    mail.from !== mailbox ||
+    mail.to.length !== 1 ||
+    mail.to[0] !== organizer ||
+    mail.parts.some((part) => part.method === null)
+  )
     return []
   const answers = new Set<InviteAnswer>()
   for (const part of mail.parts) {
-    if (part.method && part.method.toUpperCase() !== 'REPLY') continue
+    if (part.method && part.method.toUpperCase() !== 'REPLY') return []
     // A REPLY's DTSTAMP describes the reply. Its parent, not its own stamp,
     // associates it with the precise incoming REQUEST revision.
     const answer = invitationReplyStatus(
@@ -267,7 +130,8 @@ async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }
       organizer,
       mailbox,
     )
-    if (answer) answers.add(answer)
+    if (!answer) return []
+    answers.add(answer)
   }
   return [...answers]
 }
@@ -354,7 +218,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
                 delivery.target,
                 delivery.proof,
                 answer,
-              ).catch(() => false)),
+              )),
             )
         if (confirmed) {
           target.assertBinding()
@@ -436,7 +300,28 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         copies.set(scopeKey(details.identity), copy)
       }
     }
-    const { pending, receipts } = await reconcile(target, relevant, messages, scan, copies)
+    const visibleParents = new Set(messages.flatMap((message) => message.rfcId ?? []))
+    const corroborates = (
+      entry: (typeof scopes)[number],
+      { revision, delivery }: InvitationAttempt,
+    ) =>
+      delivery.channel === 'gmail' &&
+      delivery.organizer === entry.selected.value.details.organizer?.email &&
+      delivery.mailbox === email &&
+      onLineage(entry, revision, email) &&
+      (entry.parents.has(delivery.parent) || !visibleParents.has(delivery.parent))
+    // Confirmed receipts are only useful for a Gmail answer on this lineage.
+    // Never spend the shared evidence budget on known-obsolete confirmations.
+    const attempts = relevant.filter(
+      (attempt) =>
+        attempt.state !== 'confirmed' ||
+        scopes.some(
+          (entry) =>
+            copies.get(scopeKey(identityOf(entry.selected)))?.kind === 'absent' &&
+            corroborates(entry, attempt),
+        ),
+    )
+    const { pending, receipts } = await reconcile(target, attempts, messages, scan, copies)
     const cards: Resolved[] = []
     const displayedPending = new Set<string>()
     for (const entry of scopes) {
@@ -451,6 +336,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       if (joinOnly && calendar?.kind !== 'verified') continue
       const invitation: MailInvitation = {
         ...details,
+        cancelled: details.cancelled || entry.cancelled === true,
         bindingRevision: target.bindingRevision,
         kind: joinOnly ? 'meeting' : 'invitation',
         scope:
@@ -500,19 +386,8 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           const located: Mail[] = []
           let missingConfirmed = false
           for (const { attempt, mail } of receipts) {
-            const { revision, delivery } = attempt
-            if (
-              delivery.channel !== 'gmail' ||
-              delivery.organizer !== organizer ||
-              delivery.mailbox !== email ||
-              !onLineage(entry, revision)
-            )
-              continue
-            if (
-              !parents.has(delivery.parent) &&
-              messages.some((message) => message.rfcId === delivery.parent)
-            )
-              continue
+            const { delivery } = attempt
+            if (delivery.channel !== 'gmail' || !corroborates(entry, attempt)) continue
             // A durable receipt validated this parent when the original
             // REQUEST was selected. It can outlive Gmail's threading.
             if (mail) {
@@ -547,18 +422,23 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         }
       }
       const scopePending = pending.filter(
-        (attempt) => sameGroup(attempt.revision, identity) && !supersedes(entry, attempt.revision),
+        (attempt) =>
+          sameGroup(attempt.revision, identity) && !supersedes(entry, attempt.revision, email),
       )
       if (scopePending.length) {
         for (const attempt of scopePending) displayedPending.add(attempt.id)
         invitation.responsePending = true
-        invitation.unavailableReason = scopePending.some((attempt) => attempt.state === 'accepted')
-          ? 'Google accepted your response; waiting for it to appear'
-          : 'The response could not be confirmed. Check its status before sending again.'
+        if (!invitation.cancelled) {
+          invitation.unavailableReason = scopePending.some(
+            (attempt) => attempt.state === 'accepted',
+          )
+            ? 'Google accepted your response; waiting for it to appear'
+            : 'The response could not be confirmed. Check its status before sending again.'
+        }
         reply = null
       }
       invitation.canRespond = reply !== null
-      cards.push({ invitation, reply })
+      cards.push({ invitation, reply, response: entry.response })
     }
     target.assertBinding()
     return {
@@ -622,7 +502,14 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           id,
           accountSub,
           threadId,
-          revision: { uid, recurrenceId, sequence, dtstamp, materialKey },
+          revision: {
+            uid,
+            recurrenceId,
+            sequence,
+            dtstamp,
+            materialKey,
+            mailboxResponse: current.response,
+          },
           answer,
           state: 'prepared',
           delivery:
@@ -652,7 +539,9 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               !sameInvitation(newest.invitation.identity, identity) ||
               newest.reply.channel !== channel ||
               newest.reply.key !== reply.key ||
-              newest.invitation.responseStatus !== invitation.responseStatus
+              newest.invitation.responseStatus !== invitation.responseStatus ||
+              newest.response?.responseStatus !== current.response?.responseStatus ||
+              newest.response?.rsvp !== current.response?.rsvp
             )
               throw conflict()
           }
@@ -668,7 +557,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               }
             })
           }
-          const gate = { validate, reserveDispatch }
+          const gate: GoogleDispatchGate = { validate, reserveDispatch }
           try {
             let receipt = null
             if (channel === 'calendar') await reply.send(answer, gate)

@@ -3,7 +3,10 @@ import { jsonFileStore } from '../../../main/plugin-api'
 import type { InviteAnswer } from './calendar'
 import type { MailInvitationIdentity } from './mail-invitation'
 
-type Revision = Omit<MailInvitationIdentity, 'messageId'>
+type Revision = Omit<MailInvitationIdentity, 'messageId'> & {
+  /** Absent on journals written before mailbox response was separate from event material. */
+  mailboxResponse?: { responseStatus: 'needsAction' | InviteAnswer; rsvp: boolean | null } | null
+}
 
 type Delivery =
   | { channel: 'calendar'; target: string; proof?: string }
@@ -40,6 +43,19 @@ function nullableText(value: unknown): boolean {
   return value === null || text(value)
 }
 
+function validMailboxResponse(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (record(value) &&
+      (value.responseStatus === 'needsAction' ||
+        value.responseStatus === 'accepted' ||
+        value.responseStatus === 'tentative' ||
+        value.responseStatus === 'declined') &&
+      (value.rsvp === null || typeof value.rsvp === 'boolean'))
+  )
+}
+
 function isAttempt(value: unknown): value is InvitationAttempt {
   if (!record(value)) return false
   const { id, accountSub, threadId, revision, answer, state, delivery } = value
@@ -55,6 +71,7 @@ function isAttempt(value: unknown): value is InvitationAttempt {
     !nullableText(revision.recurrenceId) ||
     !nullableText(revision.dtstamp) ||
     !text(revision.materialKey) ||
+    !validMailboxResponse(revision.mailboxResponse) ||
     (answer !== 'accepted' && answer !== 'tentative' && answer !== 'declined') ||
     (state !== 'prepared' &&
       state !== 'unresolved' &&
