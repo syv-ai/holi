@@ -257,6 +257,8 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   if (rc == 0) { int value = 1; if (git_config_get_bool(&value, local, "core.bare") == 0) bare = value; }
   git_config_free(local);
   if (rc < 0 || bare || unsafe.hooks || unsafe.filters || unsafe.helpers) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository configuration"); return NULL; }
+  git_repository_state_t state = git_repository_state(repo);
+  if (state != GIT_REPOSITORY_STATE_NONE && state != GIT_REPOSITORY_STATE_MERGE) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository state"); return NULL; }
   *snapshotOut = snapshot;
   return repo;
 }
@@ -384,6 +386,34 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   if (rc < 0) { HNGError(error, rc); return NO; }
   return YES;
 }
+- (NSDictionary<NSString *, id> *)prepareWorkingCopyTree:(NSString *)root remote:(NSString *)remote branch:(NSString *)branch paths:(NSArray<NSString *> *)paths error:(NSError **)error {
+  // Fail closed until the object publication path can guarantee that no partial
+  // object is visible in the caller's repository.
+  HoliGitSnapshot *snapshot = nil;
+  git_repository *repo = [self openSafeRepository:root snapshot:&snapshot error:error];
+  if (!repo) return nil;
+  git_reference *head = NULL;
+  git_remote *origin = NULL;
+  git_index *index = NULL;
+  int rc = git_repository_head(&head, repo);
+  if (rc == 0 && (!git_reference_is_branch(head) || !branch || ![branch isEqualToString:[NSString stringWithUTF8String:git_reference_shorthand(head) ?: ""]])) rc = GIT_EINVALIDSPEC;
+  if (rc == 0) rc = git_remote_lookup(&origin, repo, "origin");
+  if (rc == 0 && (!git_remote_url(origin) || strcmp(git_remote_url(origin), remote.UTF8String))) rc = GIT_EINVALIDSPEC;
+  if (rc == 0) rc = git_repository_index(&index, repo);
+  if (rc == 0 && git_index_has_conflicts(index)) rc = GIT_EUNMERGED;
+  if (rc == 0) {
+    for (size_t i = 0; i < git_index_entrycount(index); i++) {
+      const git_index_entry *entry = git_index_get_byindex(index, i);
+      if (!entry || (entry->flags & GIT_INDEX_ENTRY_VALID) || (entry->flags_extended & (GIT_INDEX_ENTRY_SKIP_WORKTREE | GIT_INDEX_ENTRY_INTENT_TO_ADD)) || entry->mode == GIT_FILEMODE_COMMIT || entry->mode == GIT_FILEMODE_LINK) { rc = GIT_EINVALIDSPEC; break; }
+    }
+  }
+  if (rc < 0) { if (error) HNGError(error, rc); }
+  else if (error) *error = HNGPathError(ENOTSUP, @"Safe working-tree object publication is not available yet");
+  git_index_free(index); git_remote_free(origin); git_reference_free(head); git_repository_free(repo);
+  if (![snapshot closeWithError:error]) return nil;
+  return nil;
+}
+
 - (NSArray<NSDictionary<NSString *,id> *> *)workingCopyStatus:(NSArray<NSString *> *)paths root:(NSString *)root error:(NSError **)error {
   HoliGitSnapshot *snapshot = nil; git_repository *repo=[self openSafeRepository:root snapshot:&snapshot error:error]; if(!repo)return nil;
   int workdirResult = git_repository_set_workdir(repo, snapshot.path.fileSystemRepresentation, 0);
@@ -392,10 +422,6 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   if(rootFD<0){ if(error)*error=HNGPathError(errno,@"Cannot safely open working tree"); git_repository_free(repo); [snapshot close]; return nil; }
   git_index *index=NULL; git_reference *head=NULL; git_commit *commit=NULL; git_tree *tree=NULL;
   int rc=git_repository_index(&index,repo);
-  if (rc == 0 && git_index_has_conflicts(index)) {
-    if (error) *error = HNGPathError(EINVAL, @"Working-copy status is unavailable while the index has conflicts");
-    close(rootFD); git_index_free(index); git_repository_free(repo); [snapshot close]; return nil;
-  }
   if (rc == 0) {
     rc = git_repository_head(&head, repo);
     if (rc == GIT_EUNBORNBRANCH || rc == GIT_ENOTFOUND) {
