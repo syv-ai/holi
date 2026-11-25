@@ -11,7 +11,7 @@ import {
   CalendarPartError,
   malformed,
   openCalendarPart,
-  type ResolveTime,
+  type CalendarTimes,
 } from './mail-invitation-zones'
 
 export type MailInvitationIdentity = {
@@ -48,7 +48,10 @@ type MailInvitationDetails = {
   unavailableReason: string | null
 }
 
-type AttendeeState = { responseStatus: 'needsAction' | InviteAnswer; rsvp: boolean | null }
+type AttendeeState = {
+  responseStatus: 'needsAction' | 'delegated' | InviteAnswer
+  rsvp: boolean | null
+}
 
 type ExplicitFields = {
   title: boolean
@@ -62,11 +65,19 @@ type ExplicitFields = {
 
 type TimeKind = 'date' | 'floating' | 'instant'
 
+type Cancellation = {
+  identity: MailInvitationIdentity
+  organizer: MailInvitationDetails['organizer']
+  recurrenceRange: 'THISANDFUTURE' | null
+}
+
 type ParsedInvitation = {
   /** Validated independently of actionability (including non-answerable CANCELs). */
   method: 'REQUEST' | 'CANCEL' | null
-  /** Scope of a validated RECURRENCE-ID, even when there is no usable request. */
-  recurrenceRange: 'THISANDFUTURE' | null
+  /** Scope of the representative event. Use cancellations for cancellation evidence. */
+  recurrenceRange: Cancellation['recurrenceRange']
+  /** One entry per validated cancellation scope; the caller must verify the organizer. */
+  cancellations: Cancellation[]
   details: MailInvitationDetails
   /** Never crosses the capability seam. Only present for a usable REQUEST. */
   request: {
@@ -78,6 +89,8 @@ type ParsedInvitation = {
     /** Fields supplied by the organizer, not synthesized display defaults. */
     explicitFields: ExplicitFields
     recurrenceKind: TimeKind | null
+    /** DTSTART in its original civil basis, including the zone of future recurrences. */
+    recurrenceTimeBasis: ReturnType<CalendarTimes['recurrenceTimeBasis']>
     reply: (email: string, answer: InviteAnswer) => string
   } | null
 }
@@ -116,10 +129,11 @@ function eventTime(property: ICAL.Property | null): ICAL.Time | null {
 function identityOf(
   messageId: string,
   event: ICAL.Component,
-  resolveTime: ResolveTime,
+  resolveTime: CalendarTimes['resolveTime'],
 ): MailInvitationIdentity {
-  const uid = single(event, 'uid')?.getFirstValue()
-  if (typeof uid !== 'string' || !uid.trim())
+  const uidProperty = single(event, 'uid')
+  const uid = uidProperty?.getFirstValue()
+  if (uidProperty?.type !== 'text' || typeof uid !== 'string' || !uid.trim())
     throw new CalendarPartError('Invitation has no usable UID')
   const sequence = single(event, 'sequence')?.getFirstValue() ?? 0
   if (typeof sequence !== 'number' || !Number.isSafeInteger(sequence) || sequence < 0)
@@ -152,7 +166,9 @@ function attendeeState(property: ICAL.Property): AttendeeState {
   const responseStatus =
     partstat === undefined || status === 'NEEDS-ACTION'
       ? 'needsAction'
-      : (Object.keys(PARTSTAT) as InviteAnswer[]).find((answer) => PARTSTAT[answer] === status)
+      : status === 'DELEGATED'
+        ? 'delegated'
+        : (Object.keys(PARTSTAT) as InviteAnswer[]).find((answer) => PARTSTAT[answer] === status)
   // An unknown explicit response is not evidence of needsAction.
   if (!responseStatus) malformed()
   return { responseStatus, rsvp: rsvp === undefined ? null : flag === 'TRUE' }
@@ -179,25 +195,11 @@ function attendeeEvidence(entry: ICAL.Component) {
   }
 }
 
-function candidate(events: ICAL.Component[]): ICAL.Component | undefined {
-  if (events.length <= 1) return events[0]
-  const masters = events.filter((event) => !event.hasProperty('recurrence-id'))
-  const master = masters[0]
-  // A series plus its exceptions is one series invitation. Independent events
-  // or several instance-only updates have no single answer.
-  if (
-    master &&
-    masters.length === 1 &&
-    events.every(
-      (event) => event.getFirstPropertyValue('uid') === master.getFirstPropertyValue('uid'),
-    )
-  )
-    return master
-  return undefined
-}
-
-function eventMaterial(entry: ICAL.Component, resolveTime: ResolveTime, hasExceptions = false) {
-  const status = methodOf(single(entry, 'status')?.getFirstValue()) ?? null
+function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasExceptions: boolean) {
+  const { resolveTime } = times
+  const statusProperty = single(entry, 'status')
+  if (statusProperty && statusProperty.type !== 'text') malformed()
+  const status = methodOf(statusProperty?.getFirstValue()) ?? null
   const summary = single(entry, 'summary')
   const locationProperty = single(entry, 'location')
   const urlProperty = single(entry, 'url')
@@ -225,7 +227,8 @@ function eventMaterial(entry: ICAL.Component, resolveTime: ResolveTime, hasExcep
   const conferenceUrl = providerLink ?? conferenceLinks[0] ?? null
   const conferenceLinkSource: LinkSource = providerLink ? 'provider' : conferenceUrl ? 'mail' : null
   const organizerProperty = single(entry, 'organizer')
-  const email = mailbox(organizerProperty?.getFirstValue())
+  const email =
+    organizerProperty?.type === 'cal-address' ? mailbox(organizerProperty.getFirstValue()) : null
   const name = text(organizerProperty?.getParameter('cn'))
   const organizer = email ? { email, ...(name ? { name } : {}) } : null
   const { attendees, attendeeStates } = attendeeEvidence(entry)
@@ -237,6 +240,7 @@ function eventMaterial(entry: ICAL.Component, resolveTime: ResolveTime, hasExcep
   const endTime = eventTime(endProperty)
   if (endTime && (!startTime || startTime.isDate !== endTime.isDate)) malformed()
   const start = startTime ? resolveTime(startTime, startProperty) : null
+  const recurrenceTimeBasis = startTime ? times.recurrenceTimeBasis(startTime, startProperty) : null
   let end = endTime ? resolveTime(endTime, endProperty) : start
   if (start && end && timeKind(start) !== timeKind(end)) malformed()
   if (startTime && !endTime && (duration || startTime.isDate)) {
@@ -301,7 +305,12 @@ function eventMaterial(entry: ICAL.Component, resolveTime: ResolveTime, hasExcep
       status,
       recurrenceRange,
       rules,
+      // A single moved instance has no future schedule of its own.
+      ...((hasExceptions || rules.length > 0 || recurrenceRange) && recurrenceTimeBasis
+        ? { recurrenceTimeBasis }
+        : {}),
     },
+    recurrenceTimeBasis,
     attendeeStates,
   }
 }
@@ -379,6 +388,25 @@ function recurrenceLines(entry: ICAL.Component): string[] {
   return lines.sort()
 }
 
+function materialKey(
+  method: 'REQUEST' | 'CANCEL',
+  identity: MailInvitationIdentity,
+  material: ReturnType<typeof eventMaterial>['material'],
+  exceptions: string[] = [],
+): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        method,
+        cancelled: method === 'CANCEL' || material.status === 'CANCELLED',
+        occurrence: identity.recurrenceId,
+        ...material,
+        exceptions,
+      }),
+    )
+    .digest('hex')
+}
+
 /** Inspect only calendar MIME payloads, not prose or a quoted earlier email. */
 export function parseMailInvitation(
   messageId: string,
@@ -412,9 +440,9 @@ export function parseMailInvitation(
     cancelled: false,
     unavailableReason: null,
   }
-  const unavailable = (reason: string): ParsedInvitation => {
+  const unavailable = (reason: string, cancellations: Cancellation[] = []): ParsedInvitation => {
     details.unavailableReason = reason
-    return { method, recurrenceRange, details, request: null }
+    return { method, recurrenceRange, cancellations, details, request: null }
   }
 
   try {
@@ -434,42 +462,103 @@ export function parseMailInvitation(
     if ((parsed !== 'REQUEST' && parsed !== 'CANCEL') || (hint && hint !== parsed))
       return unavailable('Calendar invitation has a missing or inconsistent method')
     method = parsed
-    const resolveTime = resolveTimes()
+    const times = resolveTimes()
     const events = calendar.getAllSubcomponents('vevent')
-    const entry = candidate(events)
-    if (!entry) return unavailable('Invitation does not describe a single event or series')
-    const identity = identityOf(messageId, entry, resolveTime)
-    const { material, attendeeStates } = eventMaterial(entry, resolveTime, events.length > 1)
-    const exceptions = events
-      .filter((item) => item !== entry)
-      .map((item) => {
-        const { recurrenceId } = identityOf(messageId, item, resolveTime)
-        return JSON.stringify({ recurrenceId, ...eventMaterial(item, resolveTime).material })
-      })
-      .sort()
-    const cancelled = method === 'CANCEL' || material.status === 'CANCELLED'
-    identity.materialKey = createHash('sha256')
-      .update(
-        JSON.stringify({
-          method,
-          cancelled,
-          occurrence: identity.recurrenceId,
-          ...material,
-          exceptions,
-        }),
+    const parts = events.map((entry) => {
+      const identity = identityOf(messageId, entry, times.resolveTime)
+      return {
+        entry,
+        identity,
+        ...eventMaterial(
+          entry,
+          times,
+          method === 'REQUEST' && events.length > 1 && identity.recurrenceId === null,
+        ),
+      }
+    })
+    const master = parts.find(({ identity }) => identity.recurrenceId === null)
+    const representative = master ?? parts[0]
+    if (
+      !representative ||
+      (method === 'REQUEST' && parts.length > 1 && !master) ||
+      parts.some(({ identity }) => identity.uid !== representative.identity.uid) ||
+      new Set(parts.map(({ identity }) => identity.recurrenceId)).size !== parts.length
+    )
+      return unavailable('Invitation does not describe an unambiguous event or series')
+
+    const { identity, material, attendeeStates, recurrenceTimeBasis } = representative
+    const { organizer, start, end } = material.details
+    const siblings = parts.filter((part) => part !== representative)
+    const cancellations: Cancellation[] = []
+    if (method === 'CANCEL') {
+      // A CANCEL may name several occurrences with no master and no DTSTART.
+      // Prove every scope before reporting any cancellation evidence.
+      for (const part of parts) {
+        const sender = part.material.details.organizer
+        if (!sender || sender.email !== organizer?.email) malformed()
+        if (!part.identity.dtstamp || !part.entry.hasProperty('sequence')) malformed()
+        part.identity.materialKey = materialKey(method, part.identity, part.material)
+        cancellations.push({
+          identity: part.identity,
+          organizer: sender,
+          recurrenceRange: part.material.recurrenceRange,
+        })
+      }
+      recurrenceRange = material.recurrenceRange
+      Object.assign(details, material.details, { identity, cancelled: true })
+      return unavailable('This invitation was cancelled', cancellations)
+    }
+
+    for (const part of siblings) {
+      const ownOrganizer = part.material.details.organizer
+      // An explicitly malformed or different organizer cannot inherit the master.
+      if (
+        part.entry.hasProperty('organizer') &&
+        (!ownOrganizer || ownOrganizer.email !== organizer?.email)
       )
-      .digest('hex')
+        malformed()
+      if (part.material.status !== 'CANCELLED') continue
+      const occurrence = part.identity.recurrenceId
+      if (
+        !organizer ||
+        !start ||
+        !end ||
+        end < start ||
+        !occurrence ||
+        timeKind(occurrence) !== timeKind(start) ||
+        !part.identity.dtstamp
+      )
+        malformed()
+      const sender = ownOrganizer ?? organizer
+      const cancellation = { ...part.identity }
+      cancellation.materialKey = materialKey('CANCEL', cancellation, {
+        ...part.material,
+        details: { ...part.material.details, organizer: sender },
+      })
+      cancellations.push({
+        identity: cancellation,
+        organizer: sender,
+        recurrenceRange: part.material.recurrenceRange,
+      })
+    }
+    const exceptions = siblings
+      .map(({ identity, material }) =>
+        JSON.stringify({ recurrenceId: identity.recurrenceId, ...material }),
+      )
+      .sort()
+    identity.materialKey = materialKey(method, identity, material, exceptions)
     recurrenceRange = material.recurrenceRange
+    const cancelled = material.status === 'CANCELLED'
     Object.assign(details, material.details, { identity, cancelled })
-    if (cancelled) return unavailable('This invitation was cancelled')
-    if (!details.organizer) return unavailable('Invitation has no usable organizer address')
-    if (!details.start || !details.end || details.end < details.start)
+    if (cancelled) return unavailable('This invitation was cancelled', cancellations)
+    if (!organizer) return unavailable('Invitation has no usable organizer address')
+    if (!start || !end || end < start || !recurrenceTimeBasis)
       return unavailable('Invitation has no usable start or end time')
     if (recurrenceRange) return unavailable('This invitation changes multiple occurrences')
-    const { start, organizer } = details
     return {
       method,
       recurrenceRange,
+      cancellations,
       details,
       request: {
         attendees: material.attendees,
@@ -477,6 +566,7 @@ export function parseMailInvitation(
         recurrence: material.rules,
         explicitFields: material.explicitFields,
         recurrenceKind: identity.recurrenceId ? timeKind(identity.recurrenceId) : null,
+        recurrenceTimeBasis,
         reply: (attendee, answer) => buildReply(identity, start, organizer.email, attendee, answer),
       },
     }
@@ -544,7 +634,7 @@ export function invitationReplyStatus(
     if (method?.type !== 'text' || methodOf(method.getFirstValue()) !== 'REPLY') return null
     const events = reply.getAllSubcomponents('vevent')
     if (events.length !== 1) return null
-    const resolveTime = resolveTimes()
+    const { resolveTime } = resolveTimes()
     const entry = events[0]!
     const sent = identityOf('', entry, resolveTime)
     const recurrence = entry.getFirstProperty('recurrence-id')

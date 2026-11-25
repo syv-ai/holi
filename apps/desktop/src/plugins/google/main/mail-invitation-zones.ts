@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { TZDate } from '@date-fns/tz'
 import ICAL from 'ical.js'
 
@@ -32,7 +33,19 @@ const DATE_TIME = /^([1-9]\d{3})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/
 const DAY_MS = 86_400_000
 const DURATION = /^\+?P(?:(\d+)W|(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?)$/
 
-export type ResolveTime = (time: ICAL.Time, property: ICAL.Property | null) => string
+type RecurrenceTimeBasis = {
+  kind: 'date' | 'floating' | 'utc' | 'iana' | 'custom'
+  zone: string | null
+  /** ISO civil date or date-time, without a zone or offset (including for UTC). */
+  wallStart: string
+  /** Complete supported VTIMEZONE rules, not just transitions near DTSTART. */
+  customKey: string | null
+}
+
+export type CalendarTimes = {
+  resolveTime: (time: ICAL.Time, property: ICAL.Property | null) => string
+  recurrenceTimeBasis: (time: ICAL.Time, property: ICAL.Property | null) => RecurrenceTimeBasis
+}
 
 // Validate wire values before ical.js can coerce a partial integer or normalize
 // a bad date. A local date-time is represented on a UTC axis for civil math only.
@@ -303,7 +316,11 @@ function zoneOffset(value: string | undefined): Offset {
   return { wire: `${sign}${hour}:${minute}`, ms: minutes * 60_000 }
 }
 
-type AnnualRule = { on: (year: number) => number; until: number }
+type AnnualRule = {
+  on: (year: number) => number
+  until: number
+  pattern: [month: number, day: number] | [month: number, ordinal: number, weekday: number]
+}
 
 // Deliberately not a recurrence engine: one month and one guaranteed day each
 // year, at DTSTART's wall clock. Support the ordinal and BYSETPOS spellings of
@@ -346,6 +363,7 @@ function annualRule(value: string, anchor: number): AnnualRule {
     const day = week.indexOf(byDay[2]!)
     return {
       until,
+      pattern: [monthIndex, ordinal, day],
       on(year) {
         const edge = ordinal > 0 ? Date.UTC(year, monthIndex, 1) : Date.UTC(year, monthIndex + 1, 0)
         const weekday = new Date(edge).getUTCDay()
@@ -367,6 +385,7 @@ function annualRule(value: string, anchor: number): AnnualRule {
   const day = Number(monthDay)
   return {
     until,
+    pattern: [monthIndex, day],
     on: (year) =>
       (day > 0 ? Date.UTC(year, monthIndex, day) : Date.UTC(year, monthIndex + 1, day + 1)) + clock,
   }
@@ -375,7 +394,7 @@ function annualRule(value: string, anchor: number): AnnualRule {
 type Transition = { wall: number; kind: 'STANDARD' | 'DAYLIGHT'; from: Offset; to: Offset }
 const instantOf = ({ wall, from }: Transition) => wall - from.ms
 
-type FiniteZones = Map<string, Transition[]>
+type FiniteZones = Map<string, { transitions: Transition[]; rulesKey: string }>
 
 function materializeZones(scope: ReturnType<typeof inspectCalendar>): FiniteZones {
   const zones: FiniteZones = new Map()
@@ -389,6 +408,7 @@ function materializeZones(scope: ReturnType<typeof inspectCalendar>): FiniteZone
   let work = 0
   for (const { id, observances } of scope.zones.values()) {
     const transitions = new Map<number, Transition>()
+    const rules: string[] = []
     let prior: Transition | undefined
     let next: Transition | undefined
     for (const { kind, fields } of observances) {
@@ -423,15 +443,27 @@ function materializeZones(scope: ReturnType<typeof inspectCalendar>): FiniteZone
       }
       charge()
       add(anchor)
+      const dates = new Set<number>()
       for (const value of fields.get('RDATE') ?? []) {
         charge()
         const date = civilTime(value, 'local')
         if (date === null) unsupportedZone()
         add(date)
+        dates.add(date)
       }
       const rawRule = fields.get('RRULE')?.[0]
-      if (rawRule !== undefined) {
-        const rule = annualRule(rawRule, anchor)
+      const rule = rawRule === undefined ? null : annualRule(rawRule, anchor)
+      rules.push(
+        JSON.stringify([
+          kind,
+          anchor,
+          from.ms,
+          to.ms,
+          [...dates].sort((a, b) => a - b),
+          rule && [rule.pattern, Number.isFinite(rule.until) ? rule.until : null],
+        ]),
+      )
+      if (rule) {
         if (rule.until < anchor - from.ms) unsupportedZone()
         const anchorYear = new Date(anchor).getUTCFullYear()
         // Jump straight to the window or to the year of a historical UNTIL. A
@@ -463,13 +495,16 @@ function materializeZones(scope: ReturnType<typeof inspectCalendar>): FiniteZone
       if (change.from.ms !== offset.ms) unsupportedZone()
       offset = change.to
     }
-    zones.set(id, known)
+    zones.set(id, {
+      transitions: known,
+      rulesKey: createHash('sha256').update(JSON.stringify(rules.sort())).digest('hex'),
+    })
   }
   return zones
 }
 
 function installZones(calendar: ICAL.Component, zones: FiniteZones) {
-  for (const [id, transitions] of zones) {
+  for (const [id, { transitions }] of zones) {
     const definition = new ICAL.Component('vtimezone')
     definition.addPropertyWithValue('tzid', id)
     const groups = new Map<string, ICAL.Component>()
@@ -492,9 +527,23 @@ function installZones(calendar: ICAL.Component, zones: FiniteZones) {
   }
 }
 
-function dateOf(time: ICAL.Time, property: ICAL.Property | null, zones: FiniteZones): string {
-  const tzid = property?.getParameter('tzid')
-  if (tzid !== undefined) {
+function resolvedTimes(zones: FiniteZones): CalendarTimes {
+  const namedZones = new Map<string, string>()
+  function recurrenceTimeBasis(
+    time: ICAL.Time,
+    property: ICAL.Property | null,
+  ): RecurrenceTimeBasis {
+    const tzid = property?.getParameter('tzid')
+    const wallStart = time.toString().replace(/Z$/, '')
+    if (tzid === undefined) {
+      const utc = time.zone === ICAL.Timezone.utcTimezone
+      return {
+        kind: time.isDate ? 'date' : utc ? 'utc' : 'floating',
+        zone: utc ? 'UTC' : null,
+        wallStart,
+        customKey: null,
+      }
+    }
     const raw: unknown = property?.toJSON()[3]
     if (
       typeof tzid !== 'string' ||
@@ -503,48 +552,60 @@ function dateOf(time: ICAL.Time, property: ICAL.Property | null, zones: FiniteZo
       (typeof raw === 'string' && raw.endsWith('Z'))
     )
       malformed()
-    const transitions = zones.get(tzid)
-    if (!transitions) {
-      // Many senders omit VTIMEZONE for IANA names. Don't fall back to floating
-      // time or accept an offset string in place of a named zone.
+    const custom = zones.get(tzid)
+    if (custom) return { kind: 'custom', zone: tzid, wallStart, customKey: custom.rulesKey }
+    // An embedded definition takes precedence even when it uses an IANA name.
+    // Without one, only trust names that Intl can canonicalize.
+    let zone = namedZones.get(tzid)
+    if (!zone) {
+      if (!/^[a-z][a-z\d_+./-]*$/i.test(tzid)) unsupportedZone()
       try {
-        if (!/^[a-z][a-z\d_+./-]*$/i.test(tzid)) unsupportedZone()
-        const zone = new Intl.DateTimeFormat('en', { timeZone: tzid }).resolvedOptions().timeZone
-        return new Date(
-          new TZDate(
-            time.year,
-            time.month - 1,
-            time.day,
-            time.hour,
-            time.minute,
-            time.second,
-            zone,
-          ).getTime(),
-        ).toISOString()
+        zone = new Intl.DateTimeFormat('en', { timeZone: tzid }).resolvedOptions().timeZone
       } catch {
         unsupportedZone()
       }
+      namedZones.set(tzid, zone)
     }
-    // RFC 5545 uses the offset before the change for either the repeated
-    // hour or the skipped hour. ICAL otherwise may prefer standard over DST.
-    const wallTime = Date.UTC(
-      time.year,
-      time.month - 1,
-      time.day,
-      time.hour,
-      time.minute,
-      time.second,
-    )
-    for (const { wall, from, to } of transitions) {
-      const after = wall + to.ms - from.ms
-      if (wallTime >= Math.min(wall, after) && wallTime < Math.max(wall, after))
-        return new Date(wallTime - from.ms).toISOString()
-    }
+    return { kind: zone === 'UTC' ? 'utc' : 'iana', zone, wallStart, customKey: null }
   }
-  // A floating DATE-TIME names a wall clock, not an instant in the host zone.
-  return time.isDate || time.zone === ICAL.Timezone.localTimezone
-    ? time.toString()
-    : time.toJSDate().toISOString()
+
+  return {
+    recurrenceTimeBasis,
+    resolveTime(time, property) {
+      const basis = recurrenceTimeBasis(time, property)
+      switch (basis.kind) {
+        case 'date':
+        case 'floating':
+          // A floating DATE-TIME names a wall clock, not an instant in the host zone.
+          return basis.wallStart
+        case 'utc':
+          return new Date(basis.wallStart + 'Z').toISOString()
+        case 'iana':
+          return new Date(
+            new TZDate(
+              time.year,
+              time.month - 1,
+              time.day,
+              time.hour,
+              time.minute,
+              time.second,
+              basis.zone!,
+            ).getTime(),
+          ).toISOString()
+        case 'custom': {
+          // RFC 5545 uses the offset before the change for either the repeated
+          // hour or the skipped hour. ICAL otherwise may prefer standard over DST.
+          const wallTime = Date.parse(basis.wallStart + 'Z')
+          for (const { wall, from, to } of zones.get(basis.zone!)!.transitions) {
+            const after = wall + to.ms - from.ms
+            if (wallTime >= Math.min(wall, after) && wallTime < Math.max(wall, after))
+              return new Date(wallTime - from.ms).toISOString()
+          }
+          return time.toJSDate().toISOString()
+        }
+      }
+    },
+  }
 }
 
 /** Read only bounded calendar parts. Prepare zones after the caller recognizes the method. */
@@ -553,10 +614,10 @@ export function openCalendarPart(source: string) {
   const calendar = new ICAL.Component(ICAL.parse(scope.body.join('\r\n')))
   return {
     calendar,
-    resolveTimes(): ResolveTime {
+    resolveTimes(): CalendarTimes {
       const zones = materializeZones(scope)
       installZones(calendar, zones)
-      return (time, property) => dateOf(time, property, zones)
+      return resolvedTimes(zones)
     },
   }
 }
