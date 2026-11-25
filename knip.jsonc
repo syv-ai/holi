@@ -65,6 +65,8 @@
         "scripts/pdf-vim-native-smoke.tsx",
         "scripts/mail-vim-native-smoke-main.ts",
         "scripts/mail-vim-native-smoke.tsx",
+        // Full-shell Backspace main fixture is selected by the MJS runner's build input.
+        "scripts/backspace-shell-smoke-main.ts",
         "scripts/folder-subscriptions-native-smoke-main.ts",
         "scripts/folder-subscriptions-native-smoke.tsx",
         "scripts/rich-text-vim-native-smoke-main.ts",
