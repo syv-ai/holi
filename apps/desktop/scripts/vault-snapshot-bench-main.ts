@@ -367,27 +367,24 @@ async function run(root: string, evidence: string): Promise<void> {
         const scan = scanStartedAt
         scanStartedAt = null
         if (measuring && scan?.measured) scanDurationsMs.push(performance.now() - scan.at)
-        const promise = adapter!.onSnapshot(snapshot)
+        // Drain the complete pending pipeline, not a resolved adapter promise whose
+        // settlement still needs renderer I/O; the latter starves the main event loop.
+        const promise = (async () => {
+          await adapter!.onSnapshot(snapshot)
+          if (publicationStartedAt !== null) {
+            const before = await rendererBefore
+            const sent = sendStats.count > sendsBeforePublication
+            await win!.webContents.executeJavaScript(
+              `window.snapshotBench.settlePublication(${sent}, ${before?.atomWrites ?? 0}, ${before?.commits ?? 0})`,
+            )
+            publicationLatencyMs.push(performance.now() - publicationStartedAt)
+          }
+        })()
         pipelinePromises.add(promise)
         void promise.then(
-          async () => {
-            try {
-              if (publicationStartedAt !== null) {
-                const before = await rendererBefore
-                const sent = sendStats.count > sendsBeforePublication
-                await win!.webContents.executeJavaScript(
-                  `window.snapshotBench.settlePublication(${sent}, ${before?.atomWrites ?? 0}, ${before?.commits ?? 0})`,
-                )
-                publicationLatencyMs.push(performance.now() - publicationStartedAt)
-              }
-            } catch (error) {
-              pipelineErrors.push(`publication settlement: ${String(error)}`)
-            } finally {
-              pipelinePromises.delete(promise)
-            }
-          },
+          () => pipelinePromises.delete(promise),
           (error) => {
-            pipelineErrors.push(String(error))
+            pipelineErrors.push(`snapshot pipeline: ${String(error)}`)
             pipelinePromises.delete(promise)
           },
         )
