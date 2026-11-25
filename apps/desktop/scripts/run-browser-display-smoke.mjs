@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { constants, rmSync } from 'node:fs'
+import { constants, readdirSync, rmSync } from 'node:fs'
 import { cp, mkdir, mkdtemp, rm, writeFile, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
@@ -47,6 +47,11 @@ let closed
 let log = ''
 try {
   await mkdir(evidence, { recursive: true })
+  assert.equal(
+    readdirSync(evidence).length,
+    0,
+    `native smoke evidence directory must be fresh: ${evidence}`,
+  )
   if (appHintVideo) {
     for (const executable of ['ffmpeg', 'ffprobe'])
       execFileSync(executable, ['-version'], { timeout: 10_000, stdio: 'pipe' })
