@@ -52,8 +52,38 @@ function InvitationScope({ threadId, generation }: { threadId: string; generatio
   const remote = useAtomValue(activeRemoteAtom)
   const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const accountRevision = useAtomValue(googleAccountRevisionAtom)
-  const { currentSub, loading, readError } = useGoogleAccount()
-  if (remote === null || !currentSub || loading || readError) return null
+  const { currentSub, loading, readError, refresh } = useGoogleAccount()
+  if (remote === null) return null
+  // The shared read can hold the last good subject through refresh and failure.
+  // Do not mount an actionable reader until the current read verifies it again.
+  if (loading || readError) {
+    return (
+      <section aria-label="Calendar invitation" className="flex min-w-0 flex-col gap-3 pt-4">
+        {loading ? (
+          <div role="status" className="flex flex-col gap-2">
+            <p className="text-muted-foreground text-sm">Checking the Google connection…</p>
+            <Skeleton className="h-5 w-1/2" />
+          </div>
+        ) : (
+          <Alert variant="destructive">
+            <AlertDescription className="min-w-0 wrap-anywhere">
+              Could not verify the Google account for this vault. Retry to check the connection
+              before responding or opening invitation links.
+            </AlertDescription>
+          </Alert>
+        )}
+        {readError && (
+          <div>
+            <Button type="button" size="sm" variant="outline" disabled={loading} onClick={refresh}>
+              Retry
+            </Button>
+          </div>
+        )}
+        <Separator />
+      </section>
+    )
+  }
+  if (!currentSub) return null
   return (
     <InvitationDetails
       key={JSON.stringify([
