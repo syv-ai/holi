@@ -1,4 +1,4 @@
-import { File, knownFolders, path } from '@nativescript/core'
+import { knownFolders, path } from '@nativescript/core'
 import { createGitHubCredentials } from './github-credentials'
 import { createNativeCredentialStore } from './native-credentials.ios'
 import type { DeviceAuthHttp } from './device-auth'
@@ -23,22 +23,29 @@ export async function runCredentialCheck(runId: string, phase: string): Promise<
   const store = createNativeCredentialStore({ runId, slot: 'primary' })
   const unrelated = createNativeCredentialStore({ runId, slot: 'unrelated' })
   const reportPath = path.join(knownFolders.documents().path, `credential-diagnostic-${runId}.json`)
-  const report = (outcome: Record<string, unknown>) =>
-    File.fromPath(reportPath).writeTextSync(
-      JSON.stringify({
-        schemaVersion: 1,
-        runId,
-        phase,
-        pid: NSProcessInfo.processInfo.processIdentifier,
-        observedAt: Date.now(),
-        build: NSBundle.mainBundle.infoDictionary?.objectForKey('CFBundleVersion') ?? 'unknown',
-        source: 'diagnostic-keychain-namespace',
-        ...outcome,
-      }),
-      (error) => {
-        if (error) throw error
-      },
+  const report = (outcome: Record<string, unknown>) => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      runId,
+      phase,
+      pid: NSProcessInfo.processInfo.processIdentifier,
+      observedAt: Date.now(),
+      build: NSBundle.mainBundle.infoDictionary?.objectForKey('CFBundleVersion') ?? 'unknown',
+      source: 'diagnostic-keychain-namespace',
+      ...outcome,
+    })
+    const error = new interop.Reference<NSError>()
+    if (
+      !NSString.stringWithString(text).writeToFileAtomicallyEncodingError(
+        reportPath,
+        true,
+        NSUTF8StringEncoding,
+        error,
+      ) ||
+      error.value
     )
+      throw new Error('Could not atomically publish credential evidence')
+  }
   const credentials = createGitHubCredentials(store)
   const syntheticHttp: DeviceAuthHttp = async (url, init) => {
     if (init.method !== 'POST') throw new Error('Unexpected diagnostic HTTP method')

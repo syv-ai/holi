@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises'
+import { readBoundedJson } from './storage-evidence.mjs'
 export function validateCredentialReport(report, { runId, phase, build, pid, launchedAt, now }) {
   const fields = [
     'schemaVersion',
@@ -85,4 +87,18 @@ export function summarizeCredentialReport(report) {
     tokenRecorded: report?.tokenRecorded !== false,
     nativeErrorReported: Boolean(report?.error),
   }
+}
+
+export async function waitForCredentialReport(path, { signal, timeout = 90_000 } = {}) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error('Credential observation interrupted')
+    try {
+      return await readBoundedJson(path)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+    await sleep(150, undefined, { signal })
+  }
+  throw Object.assign(new Error('Credential observation deadline'), { timedOut: true })
 }

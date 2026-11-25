@@ -5,10 +5,13 @@ import { dirname, join, relative, resolve, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { runCommand } from './host-checks.mjs'
-import { readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
 import { createCredentialLog } from './credential-log.mjs'
-import { validateCredentialReport, summarizeCredentialReport } from './credential-evidence.mjs'
+import {
+  validateCredentialReport,
+  summarizeCredentialReport,
+  waitForCredentialReport,
+} from './credential-evidence.mjs'
 
 const cwd = fileURLToPath(new URL('..', import.meta.url))
 const bundleId = 'ai.syv.holi.compatibility'
@@ -46,6 +49,8 @@ export async function runCredentialSimulator() {
   process.once('SIGTERM', interrupt)
   const command = (exe, args, options = {}) =>
     runCommand(exe, args, { cwd, signal: controller.signal, outputLimit: 64 * 1024, ...options })
+  const cleanupCommand = (exe, args, options = {}) =>
+    runCommand(exe, args, { cwd, outputLimit: 64 * 1024, ...options })
   const simctl = (...args) => command('xcrun', ['simctl', ...args])
   const pids = []
   const cleanupFailures = []
@@ -183,18 +188,7 @@ export async function runCredentialSimulator() {
       previousPid = pid
       active = { phase, pid, launchedAt }
       pids.push(active)
-      const deadline = Date.now() + 90_000
-      let report
-      while (Date.now() < deadline) {
-        try {
-          report = await readBoundedJson(reportPath)
-          break
-        } catch (error) {
-          if (error.code !== 'ENOENT') throw error
-        }
-        await sleep(150, undefined, { signal: controller.signal })
-      }
-      if (!report) throw new Error(`Timed out waiting for ${phase} evidence`)
+      const report = await waitForCredentialReport(reportPath, { signal: controller.signal })
       await writeFile(
         join(artifacts, `native-receipt-${phase}.json`),
         JSON.stringify(summarizeCredentialReport(report), null, 2),
@@ -222,7 +216,7 @@ export async function runCredentialSimulator() {
     // Cleanup must remain possible after an interrupt.
     if (active && simulator) {
       try {
-        await runCommand('xcrun', ['simctl', 'terminate', simulator, bundleId], {
+        await cleanupCommand('xcrun', ['simctl', 'terminate', simulator, bundleId], {
           cwd,
           outputLimit: 64 * 1024,
           timeout: 15_000,
@@ -234,10 +228,10 @@ export async function runCredentialSimulator() {
     if (simulator) {
       try {
         cleanupFailures.push(
-          ...(await cleanupSimulator({ simulator, artifacts, command: runCommand })),
+          ...(await cleanupSimulator({ simulator, artifacts, command: cleanupCommand })),
         )
         const devices = JSON.parse(
-          await runCommand('xcrun', ['simctl', 'list', 'devices', '--json']),
+          await cleanupCommand('xcrun', ['simctl', 'list', 'devices', '--json']),
         ).devices
         simulatorRemoved = !Object.values(devices)
           .flat()

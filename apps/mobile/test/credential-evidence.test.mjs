@@ -1,8 +1,12 @@
+import { mkdtemp, writeFile, appendFile, rename, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import {
   validateCredentialReport,
   summarizeCredentialReport,
+  waitForCredentialReport,
 } from '../scripts/credential-evidence.mjs'
 
 const context = {
@@ -67,4 +71,21 @@ test('preserves failure observations without copying raw token or error fields',
   assert.equal(receipt.outcome, 'failed')
   assert.equal(receipt.nativeErrorReported, true)
   assert.ok(!JSON.stringify(receipt).includes('private-token'))
+})
+
+test('observes a complete report when publication overlaps polling', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'holi770-observation-'))
+  try {
+    const target = join(dir, 'report.json'),
+      pending = join(dir, 'report.pending')
+    const observed = waitForCredentialReport(target, { timeout: 5000 })
+    await writeFile(pending, '{"outcome":')
+    await appendFile(pending, '"stored"}')
+    await rename(pending, target)
+    assert.deepEqual(await observed, { outcome: 'stored' })
+    await writeFile(target, 'invalid')
+    await assert.rejects(waitForCredentialReport(target))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
