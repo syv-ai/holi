@@ -3257,11 +3257,15 @@ it.each(['calendar', 'gmail'] as const)(
   async (channel) => {
     const { state, read, respond, restart } = await rig()
     const replacement = 'replacement@example.org'
-    const prior = invite('REQUEST', '', 4).replace(
-      'END:VEVENT',
-      `ATTENDEE:mailto:${guest}\r\nEND:VEVENT`,
-    )
-    const oldCopy = { ...event(), sequence: 4 }
+    // Change prose in the Gmail case without also removing a conference link.
+    const priorDescription = channel === 'gmail' ? 'Review the sketches' : undefined
+    const request = invite('REQUEST', '', 4)
+    const prior = (
+      priorDescription
+        ? request.replace(/^DESCRIPTION:[^\r\n]*/m, `DESCRIPTION:${priorDescription}`)
+        : request
+    ).replace('END:VEVENT', `ATTENDEE:mailto:${guest}\r\nEND:VEVENT`)
+    const oldCopy = { ...event({ description: priorDescription }), sequence: 4 }
     state.messages = [gmailMessage('prior', 200, prior)]
     if (channel === 'calendar') state.events.set('primary', [oldCopy])
     else state.replyThread = 'separate-thread'
@@ -3309,7 +3313,8 @@ it.each(['calendar', 'gmail'] as const)(
 
     const current = {
       ...oldCopy,
-      etag: '"updated"',
+      etag: '"updated-roster"',
+      description: undefined,
       attendees: [
         { ...oldCopy.attendees[0]!, responseStatus: 'needsAction' },
         { ...oldCopy.attendees[1]!, email: replacement },
@@ -3319,7 +3324,7 @@ it.each(['calendar', 'gmail'] as const)(
     if (channel === 'gmail') {
       expect(await reopened.read()).toMatchObject(blocked)
       await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
-      current.description = description
+      state.events.set('primary', [{ ...current, description, etag: '"updated-description"' }])
     }
     await expect(respond('declined')).rejects.toMatchObject({ code: 'CONFLICT' })
     await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'CONFLICT' })
