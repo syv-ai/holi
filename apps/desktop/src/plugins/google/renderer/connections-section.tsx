@@ -276,7 +276,11 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                 </>
               ) : (
                 <>
-                  <Button size="sm" disabled={busy} onClick={() => void connect()}>
+                  <Button
+                    size="sm"
+                    disabled={busy || account === undefined}
+                    onClick={() => void connect()}
+                  >
                     {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
                   </Button>
                   {needsReconnect && (

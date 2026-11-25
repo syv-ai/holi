@@ -12,12 +12,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SandboxedHtml } from '../renderer/sandboxed-html'
 import { ConnectionsSection } from '../renderer/connections-section'
 import { activeRemoteAtom, loadVaultSettingsAtom, registerBuffer } from '@/plugin-api'
+import { vaultWorkflow } from '@/test/vault-workflow'
+import { emptyVaultSnapshot } from '@holi/shared'
 
 /** A fresh jotai store per test: the google atoms are module level, so one
  *  case's answer would otherwise still be held when the next one renders. */
-const render = (visible = true) => {
+const render = async (visible = true) => {
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/vault')
+  await vaultWorkflow(store).open('syv-ai/vault')
   const result = rtlRender(
     <Provider store={store}>
       <ConnectionsSection visible={visible} />
@@ -66,6 +69,7 @@ const google: Record<string, (params: unknown) => unknown> = {
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    vaults: { open: { mutate: async () => emptyVaultSnapshot() } },
     settings: { read: { query: () => settingsRead() } },
     cap: {
       run: {
@@ -113,6 +117,7 @@ describe('ConnectionsSection', () => {
   it('shows a settings read retry and retries a failed write without racing the switch', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/vault')
+    await vaultWorkflow(store).open('syv-ai/vault')
     status.mockResolvedValue({ account: ADA, missingScopes: [] })
     settingsRead.mockRejectedValueOnce(new Error('read failed'))
     await expect(store.set(loadVaultSettingsAtom, { force: true })).rejects.toThrow('read failed')
@@ -146,6 +151,7 @@ describe('ConnectionsSection', () => {
   it('shares pending consent between the banner and actual settings controls', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/vault')
+    await vaultWorkflow(store).open('syv-ai/vault')
     await store.set(loadVaultSettingsAtom, { force: true })
     status.mockResolvedValue({ account: ADA, missingScopes: [] })
     let finish!: (value: { ok: true }) => void
@@ -186,7 +192,7 @@ describe('ConnectionsSection', () => {
   })
 
   it('closes the OAuth dialog when its Settings page is hidden and preserves its draft', async () => {
-    const mounted = render()
+    const mounted = await render()
     await screen.findByRole('button', { name: 'Use your own client…' })
     await userEvent.click(screen.getByRole('button', { name: 'Use your own client…' }))
     const id = screen.getByLabelText('Client ID')
@@ -212,7 +218,7 @@ describe('ConnectionsSection', () => {
   it('ignores a delayed connect phase after Settings hides and returns', async () => {
     let finishConnect!: () => void
     connect.mockReturnValueOnce(new Promise<void>((resolve) => (finishConnect = resolve)))
-    const mounted = render()
+    const mounted = await render()
     const button = await screen.findByRole('button', { name: 'Connect a different account…' })
     await userEvent.click(button)
     expect(button).toBeDisabled()
@@ -242,7 +248,7 @@ describe('ConnectionsSection', () => {
       .mockReturnValueOnce(new Promise((resolve) => (settleFirst = resolve)))
       .mockReturnValueOnce(new Promise((resolve) => (settleSecond = resolve)))
 
-    const mounted = render()
+    const mounted = await render()
     const label = 'Connect a different account…'
     await userEvent.click(await screen.findByRole('button', { name: label }))
     await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(1))
@@ -276,7 +282,7 @@ describe('ConnectionsSection', () => {
   it('invalidates a pending connect when unmounted', async () => {
     let settle!: (value: { kind: 'granted' }) => void
     awaitConnect.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)))
-    const mounted = render()
+    const mounted = await render()
     const button = await screen.findByRole('button', { name: 'Connect a different account…' })
     await userEvent.click(button)
     await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(1))
@@ -288,7 +294,7 @@ describe('ConnectionsSection', () => {
   })
 
   it('offers the accounts already connected here to a vault with none', async () => {
-    render()
+    await render()
 
     expect(await screen.findByText('ada@syv.ai')).toBeInTheDocument()
     expect(screen.getByText('work@syv.ai')).toBeInTheDocument()
@@ -298,13 +304,13 @@ describe('ConnectionsSection', () => {
   it('exposes a failed status read with Retry and recovers without switching vaults', async () => {
     vi.useFakeTimers()
     status.mockRejectedValue(new Error('main is still starting'))
-    render()
+    await render()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_250)
     })
     expect(screen.getByRole('alert')).toHaveTextContent(/could not read/i)
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: /^Connect$/ })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^Connect$/ })).toBeDisabled()
 
     status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
@@ -320,7 +326,7 @@ describe('ConnectionsSection', () => {
     let finishRead!: (value: { account: null; missingScopes: string[] }) => void
     status.mockReturnValueOnce(new Promise((resolve) => (finishRead = resolve)))
     accounts.mockResolvedValue({ accounts: [], current: null })
-    render()
+    await render()
     const connect = screen.getByRole('button', { name: /^Connect$/ })
     expect(connect).toBeDisabled()
     await act(async () => finishRead({ account: null, missingScopes: [] }))
@@ -335,7 +341,7 @@ describe('ConnectionsSection', () => {
     // The label follows the machine list, not this vault's link: offering a
     // "different" account to a first-run user names one they do not have.
     accounts.mockResolvedValue({ accounts: [], current: null })
-    render()
+    await render()
 
     expect(await screen.findByRole('button', { name: 'Connect' })).toBeInTheDocument()
   })
@@ -343,7 +349,7 @@ describe('ConnectionsSection', () => {
   it('offers a different account only when this machine already has one', async () => {
     // Accounts exist and this vault uses none: the rows above are the offer, and
     // this button is the escape hatch from them.
-    render()
+    await render()
 
     expect(
       await screen.findByRole('button', { name: 'Connect a different account…' }),
@@ -351,7 +357,7 @@ describe('ConnectionsSection', () => {
   })
 
   it('reuses an account with one click and no consent round trip', async () => {
-    render()
+    await render()
     await screen.findByText('ada@syv.ai')
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Use in this vault' })[0]!)
@@ -362,11 +368,11 @@ describe('ConnectionsSection', () => {
   it('keeps every account/client lifecycle change behind a successful draft flush', async () => {
     status.mockResolvedValue({ account: { email: ADA.email }, missingScopes: [] })
     accounts.mockResolvedValue({ accounts: [ADA, WORK], current: 'sub-1' })
+    await render()
     const unregister = registerBuffer(async () => {
       throw new Error('offline')
     })
     try {
-      render()
       await screen.findByText(ADA.email)
 
       await userEvent.click(screen.getAllByRole('button', { name: 'Use in this vault' })[0]!)
@@ -393,7 +399,7 @@ describe('ConnectionsSection', () => {
   it('does not offer the account this vault is already using', async () => {
     accounts.mockResolvedValue({ accounts: [ADA, WORK], current: 'sub-1' })
     status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
-    render()
+    await render()
 
     expect(await screen.findByText('work@syv.ai')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Use in this vault' })).toHaveLength(1)
@@ -404,7 +410,7 @@ describe('ConnectionsSection', () => {
     // vault may be using this account.
     accounts.mockResolvedValue({ accounts: [ADA], current: 'sub-1' })
     status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
-    render()
+    await render()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Disconnect this vault' }))
 
@@ -414,7 +420,7 @@ describe('ConnectionsSection', () => {
 
   it('lets a vault whose grant Google refused forget it', async () => {
     status.mockResolvedValue({ account: null, missingScopes: [], needsReconnect: true })
-    render()
+    await render()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Forget this connection' }))
 
@@ -422,7 +428,7 @@ describe('ConnectionsSection', () => {
   })
 
   it('removes an account by name when that is what was asked for', async () => {
-    render()
+    await render()
     await screen.findByText('ada@syv.ai')
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
@@ -434,7 +440,7 @@ describe('ConnectionsSection', () => {
   })
 
   it('cancelling the remove confirm revokes nothing', async () => {
-    render()
+    await render()
     await screen.findByText('ada@syv.ai')
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
@@ -448,7 +454,7 @@ describe('ConnectionsSection', () => {
 describe('the OAuth client', () => {
   it('names the client in use, and a new one asks before it disconnects the accounts', async () => {
     const user = userEvent.setup()
-    render()
+    await render()
     expect(
       await screen.findByText(/Holi’s client, which accepts syv.ai accounts only/),
     ).toBeTruthy()
@@ -472,7 +478,7 @@ describe('the OAuth client', () => {
     const user = userEvent.setup()
     accounts.mockResolvedValue({ accounts: [], current: null })
     setClient.mockRejectedValue(new Error('a client id ends in .apps.googleusercontent.com'))
-    render()
+    await render()
     await user.click(await screen.findByRole('button', { name: 'Use your own client…' }))
     await user.type(screen.getByLabelText('Client ID'), 'nope')
     await user.type(screen.getByLabelText('Client secret'), 'x')

@@ -1,8 +1,10 @@
+import { readyVaultAtom } from '@/plugin-api'
+import { emptyVaultSnapshot } from '@holi/shared'
 import { createStore } from 'jotai'
 import { describe, expect, it, vi } from 'vitest'
 import type { RendererPlugin } from '@/state/plugin-types'
 import { hostPluginVaults, installedPluginsAtom } from '@/state/plugins'
-import { activeRemoteAtom, openedRemoteAtom } from '../vaults'
+import { activeRemoteAtom, openedRemoteAtom, loadVaultsAtom, openVaultAtom } from '../vaults'
 
 describe('hostPluginVaults', () => {
   it('starts enabled vault hooks only after main finishes opening the active vault', () => {
@@ -39,4 +41,51 @@ describe('hostPluginVaults', () => {
 
     stop()
   })
+})
+
+vi.mock('@/lib/trpc', () => ({
+  trpc: {
+    vaults: {
+      list: {
+        query: async () => [{ remote: 'owner/a', name: 'a', path: '/unused', lastOpenedAt: '' }],
+      },
+      open: { mutate: () => open() },
+    },
+  },
+}))
+const open = vi.fn()
+
+it('projects readiness only for completed public opens, including a same-vault reopen', async () => {
+  const store = createStore()
+  await store.set(loadVaultsAtom)
+  expect(store.get(readyVaultAtom)).toBeNull()
+  let complete!: () => void
+  let started!: () => void
+  let openingStarted = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  open.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        complete = () => resolve(emptyVaultSnapshot())
+        started()
+      }),
+  )
+  const firstOpen = store.set(openVaultAtom, 'owner/a')
+  await openingStarted
+  expect(store.get(readyVaultAtom)).toBeNull()
+  complete()
+  await firstOpen
+  const first = store.get(readyVaultAtom)
+  expect(first?.remote).toBe('owner/a')
+  openingStarted = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const reopening = store.set(openVaultAtom, 'owner/a')
+  await openingStarted
+  expect(store.get(readyVaultAtom)).toBeNull()
+  complete()
+  await reopening
+  expect(store.get(readyVaultAtom)?.remote).toBe('owner/a')
+  expect(store.get(readyVaultAtom)).not.toBe(first)
 })

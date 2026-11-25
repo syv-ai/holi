@@ -12,7 +12,7 @@ import { installedPluginsAtom } from '@/state/plugins'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTab, emptyWorkspace, focusedTab, openTab, selectEntry } from '@/state/shell-workspace'
 import { tabKey } from '@/state/tab-descriptor'
-import { snapshotAtom } from '@/state/vaults'
+import { openVaultAtom, snapshotAtom } from '@/state/vaults'
 import { TabView } from '@/features/shell/tab-view'
 import { useRetainedSurfaces } from '@/features/shell/retained-surfaces'
 // This shell integration test installs the actual Google contribution;
@@ -83,6 +83,7 @@ vi.mock('sonner', async (original) => ({
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    vaults: { open: { mutate: async () => emptyVaultSnapshot() } },
     cap: {
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
@@ -152,7 +153,7 @@ const thread = {
   ],
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   currentAccount = 'a'
   searchMock.mockReset().mockResolvedValue(page([summary()]))
   threadMock.mockReset().mockImplementation(({ id }: { id: string }) =>
@@ -176,6 +177,7 @@ beforeEach(() => {
   toastMock.mockReset()
   openExternal.mockReset()
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  await getDefaultStore().set(openVaultAtom, 'syv-ai/vault')
   // @ts-expect-error: the preload bridge is not typed onto window in tests.
   window.holi = { openExternal }
 })
@@ -224,9 +226,10 @@ function MailTabs() {
   )
 }
 
-function mountMailTabs(showMail = true) {
+async function mountMailTabs(showMail = true) {
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/vault')
+  await store.set(openVaultAtom, 'syv-ai/vault')
   store.set(snapshotAtom, emptyVaultSnapshot())
   store.set(installedPluginsAtom, [
     {
@@ -268,7 +271,7 @@ function mountMailTabs(showMail = true) {
 }
 
 test('retained ordinary app views receive display and focus lifecycle updates', async () => {
-  const { show } = mountMailTabs(false)
+  const { show } = await mountMailTabs(false)
   const other = await screen.findByRole('textbox', { name: 'Other app state' })
   expect(other).toHaveAttribute('data-visible', 'true')
   expect(other).toHaveAttribute('data-focused', 'true')
@@ -293,7 +296,7 @@ test('Mail, session and code-file hosts retain and dispose independently', async
       deliverThread = resolve
     }),
   )
-  const { store, show } = mountMailTabs()
+  const { store, show } = await mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   fireEvent.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
@@ -339,7 +342,7 @@ test('Mail, session and code-file hosts retain and dispose independently', async
 test.each(['vault app', 'named surface'])(
   '%s opens the registered name into retained Mail and back',
   async (entrypoint) => {
-    const { store, show } = mountMailTabs(false)
+    const { store, show } = await mountMailTabs(false)
     await screen.findByRole('textbox', { name: 'Other app state' })
 
     act(() => {
@@ -364,7 +367,7 @@ test.each(['vault app', 'named surface'])(
 )
 
 test('shell switch and back retains real Mail list, selection and scroll without refetching', async () => {
-  const { show } = mountMailTabs()
+  const { show } = await mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   fireEvent.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
@@ -402,7 +405,7 @@ test.each([
   ['account', 'Google account ada@syv.ai'],
 ] as const)('parked Mail closes its %s menu', async (_name, triggerName) => {
   const user = userEvent.setup()
-  const { show } = mountMailTabs()
+  const { show } = await mountMailTabs()
   await screen.findByRole('list', { name: 'Inbox' })
   await user.click(screen.getByRole('button', { name: triggerName }))
   expect(await screen.findByRole('menu')).toBeInTheDocument()
@@ -421,7 +424,7 @@ test.each([
 
 test('parked Mail hides an open tooltip', async () => {
   const user = userEvent.setup()
-  const { show } = mountMailTabs()
+  const { show } = await mountMailTabs()
   await screen.findByRole('list', { name: 'Inbox' })
   await user.hover(screen.getByRole('button', { name: 'Refresh mail' }))
   expect(await screen.findByRole('tooltip')).toHaveTextContent('Refresh')
@@ -433,7 +436,7 @@ test('parked Mail hides an open tooltip', async () => {
 
 test('parked Mail closes its More actions menu without losing the open thread', async () => {
   const user = userEvent.setup()
-  const { show } = mountMailTabs()
+  const { show } = await mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
@@ -454,7 +457,7 @@ test('parked Mail closes its More actions menu without losing the open thread', 
 
 test('switching Google accounts releases the previous account’s Mail state', async () => {
   const user = userEvent.setup()
-  mountMailTabs()
+  await mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
@@ -472,7 +475,7 @@ test('switching Google accounts releases the previous account’s Mail state', a
 
 test('a parked Mail keeps its inline reply open', async () => {
   const user = userEvent.setup()
-  const { show } = mountMailTabs()
+  const { show } = await mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
@@ -489,7 +492,7 @@ test('a parked Mail keeps its inline reply open', async () => {
 test('a pristine inline reply is released when its thread changes and is not restored on return', async () => {
   const user = userEvent.setup()
   searchMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Second thread' })]))
-  mountMailTabs()
+  await mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
@@ -513,7 +516,7 @@ test('a pristine inline reply is released when its thread changes and is not res
 
 test('archiving a thread releases its pristine inline reply guard', async () => {
   const user = userEvent.setup()
-  mountMailTabs()
+  await mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
@@ -532,7 +535,7 @@ test('archiving a thread releases its pristine inline reply guard', async () => 
 
 test('an open inline reply prevents switching accounts until its save succeeds and it closes', async () => {
   const user = userEvent.setup()
-  mountMailTabs()
+  await mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
@@ -575,7 +578,7 @@ test('an open inline reply prevents switching accounts until its save succeeds a
 })
 
 test('Mail and opted-in ordinary apps retain until closed, then reopen fresh', async () => {
-  const { store, show } = mountMailTabs(false)
+  const { store, show } = await mountMailTabs(false)
   const other = screen.getByRole('textbox', { name: 'Other app state' })
   fireEvent.change(other, { target: { value: 'temporary' } })
   expect(searchMock).not.toHaveBeenCalled()
@@ -600,7 +603,7 @@ test('Mail and opted-in ordinary apps retain until closed, then reopen fresh', a
 })
 
 test('parked Mail is disposed when its plugin is removed or its vault changes', async () => {
-  const { store, show } = mountMailTabs()
+  const { store, show } = await mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   show(otherKey)
   const plugins = store.get(installedPluginsAtom)

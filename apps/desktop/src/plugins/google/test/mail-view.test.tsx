@@ -1,3 +1,5 @@
+import { vaultWorkflow } from '@/test/vault-workflow'
+import { emptyVaultSnapshot } from '@holi/shared'
 /**
  * MailView: the list, the reader, triage, and the wiring around the sanitizer.
  *
@@ -111,6 +113,7 @@ vi.mock('sonner', async (original) => ({
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    vaults: { open: { mutate: async () => emptyVaultSnapshot() } },
     settings: {
       read: {
         query: async () => ({
@@ -225,7 +228,7 @@ async function frameOf(article: HTMLElement): Promise<Document> {
   return frame!.contentDocument!
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   threadMock.mockReset()
   mailAccountSub = 'mail-view-account'
   // A default, because the real query ALWAYS returns a promise. A bare
@@ -280,6 +283,7 @@ beforeEach(() => {
   openedDialog.mockReset()
   // Every Google call names the vault it is for.
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
   // The remote-content choice outlives a component, so reset it or one test's
   // "Load images" satisfies the next test's assertion.
   resetMailImagesForTests()
@@ -2742,9 +2746,15 @@ test('invalidates markers across an A-B-A vault switch before accepting the late
   await screen.findByRole('button', { name: /Q2 budget/i })
   await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
 
-  act(() => getDefaultStore().set(activeRemoteAtom, 'other/vault'))
+  await act(async () => {
+    getDefaultStore().set(activeRemoteAtom, 'other/vault')
+    await vaultWorkflow(getDefaultStore()).open('other/vault')
+  })
   await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(2))
-  act(() => getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault'))
+  await act(async () => {
+    getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+    await vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
+  })
   await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(3))
 
   await act(async () => pending[2]!({ t1: 'red-star' }))

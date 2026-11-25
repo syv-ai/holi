@@ -62,6 +62,7 @@ export { useNow } from '@/hooks/use-now'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export {
   activeRemoteAtom,
+  readyVaultAtom,
   /** @public */ activeRemoteRevisionValueAtom,
   historyEpochsAtom,
   snapshotAtom,

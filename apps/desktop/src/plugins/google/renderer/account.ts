@@ -16,7 +16,7 @@
  */
 import { atom, useAtomValue, useSetAtom, useStore, type Atom } from 'jotai'
 import { unwrap } from 'jotai/utils'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, readyVaultAtom } from '@/plugin-api'
 import { googleCap } from './google-cap'
 import type { GoogleAccount } from '../main/session'
 
@@ -57,7 +57,10 @@ interface LifecycleState {
 /** Invalidates in-flight account-scoped actions even across A→B→A refreshes. */
 export const googleAccountRevisionAtom = atom(0)
 const lifecycleAtom = atom<LifecycleState | null>(null)
+type ReadyVault = NonNullable<ReturnType<typeof readyVaultAtom.read>>
+
 interface CachedConnection {
+  ready: ReadyVault
   connection: Connection
   request: number
   lifecycle: number
@@ -95,6 +98,7 @@ export const refreshGoogleAtom = atom(null, (_get, set) =>
 )
 
 interface ConnectionRead {
+  ready?: ReadyVault
   remote: string | null
   connection?: Connection
   request: number
@@ -104,27 +108,21 @@ interface ConnectionRead {
 const connectionAtom = atom(
   async (get, { signal, setSelf }): Promise<ConnectionRead> => {
     const remote = get(activeRemoteAtom)
+    const ready = get(readyVaultAtom)
     const request = get(googleAccountRevisionAtom)
     const lifecycle = get(lifecycleAtom)
     const cached = get(lastGoodConnectionAtom)
+    if (ready === null) return { remote, request, error: false }
     if (
+      cached?.ready === ready &&
       lifecycle !== null &&
       cached?.request === request &&
       cached.lifecycle === lifecycle.generation &&
       cached.connection.remote === remote
     ) {
-      return { remote, connection: cached.connection, request, error: false }
+      return { remote, ready, connection: cached.connection, request, error: false }
     }
-    const none: Connection = {
-      remote,
-      account: null,
-      missingScopes: [],
-      needsReconnect: false,
-      accounts: [],
-      currentSub: null,
-    }
-    if (remote === null) return { remote, connection: none, request, error: false }
-    if (lifecycle === null) return { remote, request, error: false }
+    if (remote === null || lifecycle === null) return { remote, request, error: false }
 
     const owner = new AbortController()
     const cancel = () => owner.abort()
@@ -138,7 +136,12 @@ const connectionAtom = atom(
             googleCap.status(remote),
             googleCap.allAccounts(remote),
           ])
-          if (owner.signal.aborted || signal.aborted || get(lifecycleAtom) !== lifecycle) {
+          if (
+            owner.signal.aborted ||
+            signal.aborted ||
+            get(readyVaultAtom) !== ready ||
+            get(lifecycleAtom) !== lifecycle
+          ) {
             return { remote, request, error: false }
           }
           const connection: Connection = {
@@ -151,23 +154,36 @@ const connectionAtom = atom(
           }
           // Keep the cache in this Jotai store's shared request lifecycle, rather
           // than relying on a mounted React consumer to observe the result.
-          setSelf({ cacheConnection: { connection, request, lifecycle: lifecycle.generation } })
-          return { remote, connection, request, error: false }
+          setSelf({
+            cacheConnection: { ready, connection, request, lifecycle: lifecycle.generation },
+          })
+          return { remote, ready, connection, request, error: false }
         } catch {
           // An abandoned request belongs to an earlier lifecycle. In particular,
           // do not schedule a retry after its last subscriber has gone away.
-          if (owner.signal.aborted || signal.aborted || get(lifecycleAtom) !== lifecycle) {
+          if (
+            owner.signal.aborted ||
+            signal.aborted ||
+            get(readyVaultAtom) !== ready ||
+            get(lifecycleAtom) !== lifecycle
+          ) {
             return { remote, request, error: false }
           }
           const delay = retryDelays[attempt]
           if (delay === undefined || !(await waitForRetry(delay, owner.signal))) {
-            if (owner.signal.aborted || signal.aborted || get(lifecycleAtom) !== lifecycle) {
+            if (
+              owner.signal.aborted ||
+              signal.aborted ||
+              get(readyVaultAtom) !== ready ||
+              get(lifecycleAtom) !== lifecycle
+            ) {
               return { remote, request, error: false }
             }
-            const lastGood = get(lastGoodConnectionAtom)?.connection
+            const lastGood = get(lastGoodConnectionAtom)
             return {
               remote,
-              connection: lastGood?.remote === remote ? lastGood : undefined,
+              ready,
+              connection: lastGood?.ready === ready ? lastGood.connection : undefined,
               request,
               error: true,
             }
@@ -209,7 +225,8 @@ const heldConnectionReadAtom = unwrap(
  *  not this one's, so a switch reads as "not asked yet" until it lands. */
 const currentConnectionReadAtom = atom((get): ConnectionRead | undefined => {
   const held = get(heldConnectionReadAtom)
-  return held !== undefined && held.remote === get(activeRemoteAtom) ? held : undefined
+  const ready = get(readyVaultAtom)
+  return ready !== null && held?.ready === ready ? held : undefined
 })
 
 /** `undefined`: not asked yet. `null`: asked, nothing connected. */
