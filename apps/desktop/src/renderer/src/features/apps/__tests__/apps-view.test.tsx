@@ -1,3 +1,4 @@
+import { emptyWorkspace } from '@/state/shell-workspace'
 /**
  * The Apps page: a card per vault app on ReUI's card, with its icon,
  * whether it is shared or personal, its folder, its name, its manifest's
@@ -251,6 +252,7 @@ test("right-click offers the app's actions, and each does its thing", async () =
 test('Open beside opens the app in split view, as ⌥-click does', async () => {
   const store = withApps()
   store.set(shellWorkspaceAtom, {
+    ...emptyWorkspace(),
     entries: ['holi:apps'],
     active: 'holi:apps',
     closed: [],
@@ -317,6 +319,7 @@ function SessionTabs() {
 test('Ask about this app opens a new chat beside the page, carrying the app', async () => {
   const store = withApps()
   store.set(shellWorkspaceAtom, {
+    ...emptyWorkspace(),
     entries: ['holi:apps'],
     active: 'holi:apps',
     closed: [],

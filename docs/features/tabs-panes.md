@@ -27,12 +27,14 @@ a directory a plugin's folder claim makes one document, such as a community plug
 it. A folder document's tab follows its entry file when the folder moves, and only to a
 directory its claim still matches, and closes when the folder is deleted.
 
-**The workspace** (`state/shell-workspace.ts`) is pure functions over `{entries, active, closed,
-seq, recent}`. An entry is a single view (its tab key) or a split `{id, views, shares, focused}`: two or
-three keys, each member's share of the width, and the focused member. A split's id is
-`holi:split:<n>`, a `holi:` key no tab kind parses, so it never meets a tab key; `active` is a
-tab's key or a split's id. `state/shell-tabs.ts` keeps one workspace per vault, in memory:
-switching vaults shows that vault's tabs and coming back finds them. `recent` is the open entries'
+**The workspace** (`state/shell-workspace.ts`) is pure functions over
+`{entries, active, closed, seq, recent, sticky}`. An entry is a single view (its tab
+key) or a split `{id, views, shares, focused}`: two to four keys, each member's
+share of the width, and the focused member. A split's id is `holi:split:<n>`, a
+`holi:` key no tab kind parses, so it never meets a tab key; `active` is a tab's
+key or a split's id. `sticky` holds sticky view keys. `state/shell-tabs.ts` restores
+and keeps one machine-local workspace per vault: switching vaults shows that
+vault's tabs and coming back finds them. `recent` is the open entries'
 ids, the active one first and then each by when it was last active: every write of the workspace
 goes through that atom, which brings it up to date (`trackRecent`), so whatever changes the active
 entry is recorded and a closed entry drops out. A plugin opens a tab through
@@ -80,18 +82,19 @@ view in front the files sidebar folds to its rail, and leaving it gives the side
 
 ## The strip
 
-The strip (`features/shell/tab-strip.tsx`) rides in the title band always, split or not. A tab is a
-pill: its mark, its title, × on hover. Every tab is one width, 176px (`w-44`) while they fit, and
+The strip (`features/shell/tab-strip.tsx`) rides in the title band always, split or not.
+An ordinary tab is a pill: its mark, its title, × on hover. Ordinary tabs are
+176px (`w-44`) while they fit, and
 as more open they shrink evenly, browser-style, down to 112px (`min-w-28`), which still shows the
 mark and the start of the title; only then does the strip scroll. A split is one wider pill
 (240px for two members, 320px for three or four), shrinking in the same proportion down to its own
 floor (176px, 240px). The widths are CSS (each entry's width and min-width in a shrinking flex
-row), not measured. A split's pill holds each member's mark and title side by side, a hairline between them, truncating evenly; with the split active the focused
+row), not measured. An ordinary split's pill holds each member's mark and title side by side, a hairline between them, truncating evenly; with the split active the focused
 member's title has the full weight and the others are muted. Clicking the pill selects the split;
 clicking a member inside it selects the split focused on that member. + opens a New tab (⌘T), or
 while the sidebar is on Agents starts a session in the default agent, in a tab of its own.
 
-**A tab says its state** in a badge at its end, which gives way to × on hover: a session's
+**An ordinary tab says its state** in a badge at its end, which gives way to × on hover: a session's
 Working (a spinner, still under reduced motion), Needs you, or Done (not opened yet), and a
 document's **Updated** when its text changed while another tab was in front, until it is looked
 at (`state/doc-changes.ts`). The file's time is only the cue to read it: leaving a document
@@ -130,22 +133,40 @@ Leaving the strip, ending or cancelling the native drag clears the preview witho
 A successful combine focuses the dragged view (the first member when a group is dragged) and
 shares the available width evenly across the resulting members, like other split creation.
 
-A tab's right-click menu: **Open in split view**, Close, Close others, Close tabs to the right,
-Reopen closed tab. A split's: **Separate**, then the same closes. The strip's ⋯ holds Split view,
-Separate (with a split active), Reopen closed tab and Close all tabs.
+**Sticky tabs.** Right-click **Make sticky** keeps a view compact at the left of
+its vault's strip; **Make non-sticky** returns it to the start of the ordinary
+section. Sticky entries show their marks, with full accessible names and tooltips,
+and have no close button. A split containing any sticky member is a compact sticky
+entry too. Its menu toggles the whole group; a member's menu toggles that member.
+Sticky state follows views through splitting, combining and separating. Dragging
+reorders within the sticky or ordinary section; ordinary entries never precede
+sticky ones. Making another entry sticky appends it to the sticky section.
+
+A tab's right-click menu also offers **Open in split view**, **Close**, Close
+others, Close tabs to the right and Reopen closed tab. A split's offers **Separate**
+and the same closes. The strip's ⋯ holds Split view, Separate (with a split active),
+Reopen closed tab and Close all tabs.
 
 **Opening.** A view already open is selected where it is: its tab, or its split with it focused.
 Otherwise:
 
-- from a New tab it takes that tab's place, as in a browser, whether the New tab is a tab or a
-  split's focused member (so ⌘\ on a split, then a click in the sidebar, makes a third side), and
-  a session started from the Agents home takes the home's place;
+- from an ordinary New tab it takes that tab's place, as in a browser, whether
+  the New tab is a tab or a split's focused member (so ⌘\ on a split, then a click
+  in the sidebar, makes a third side), and a session started from an ordinary
+  Agents home takes the home's place; sticky launchers keep their place;
 - else it opens as a tab after the active entry. A plain open never changes a split: a click in
   the sidebar while one is up opening into it swapped out half of what you were looking at.
   Joining a split is its own gesture: ⌥-click, Open in split view (a tab's menu, or a file
   row's in the tree), ⌘\, or a drop on a member's edge.
 
-**Closing.** Closing the active tab hands over to the entry after it, else the one before. Closing
+**Closing.** The normal close shortcut and native menu leave a sticky view open.
+Bulk closes preserve every entry containing a sticky member. The right-click
+**Close** action deliberately closes a sticky view or group, keeping the normal
+save and split-confirmation workflow; an explicitly closed view reopens ordinary.
+Authoritative removal and deliberate surface-close actions can still remove
+sticky tabs; disabling a plugin may leave a not-running placeholder.
+
+Closing the active ordinary tab hands over to the entry after it, else the one before. Closing
 a split member takes it out of the split, and a 2-split turns back into a tab of the one left.
 Closing a split's pill closes all its members; Reopen closed tab (⇧⌘T, the last closed first,
 skipping New tabs) brings a closed split back as the split it was, with its widths, less any view
@@ -185,7 +206,8 @@ the foreground's full weight, the others' muted. Clicking or focusing anywhere i
 it.
 
 **Keys.** ⌘\ split view, ⇧⌘\ separate, ⌃⌥→ / ⌃⌥← focus the next or previous member, ⌘W closes the
-focused member inside a split and the tab otherwise ([keyboard shortcuts](keyboard-shortcuts.md)).
+focused ordinary member inside a split and the ordinary tab otherwise; sticky
+views stay open ([keyboard shortcuts](keyboard-shortcuts.md)).
 The tab switcher (⌃Tab, ⌃⇧Tab) and ⌘1–9 go over strip entries, a split counting as one.
 
 **motion-panels** (MIT, Valerii Strilets; `components/ui/motion-panels.tsx` is its shadcn item)
@@ -245,10 +267,17 @@ already; dropped on the strip it opens as a tab at that place. A file row keeps 
 folders: the tab's type joins the tree's data in the same dragstart. A drop that would change
 nothing is refused. The menus and ⌥-click are the keyboard's way to the same places.
 
-**Persistence.** Tabs and splits live for the app's session, per vault; a restart opens on an
-empty strip, as the shell always has. The widths a vault last had for a two-, three- and four-member
-split are kept on this machine (`localStorage`, `holi.panes.<remote>.<count>`), and a new split
-opens at them.
+**Persistence.** Each vault's open tabs, strip order, sticky state, active entry,
+split membership, focused member and proportions restore after restart. Workspace
+metadata lives in this machine's app profile (`localStorage`), keyed by the vault's
+GitHub remote, never in the synced vault. Editor buffers and closed-tab history
+are not stored there. Restored proportions are not overwritten by the remembered
+per-count widths used for new splits.
+
+Restored views wait for initial vault and plugin-settings readiness. Existing
+editors stay mounted during temporary same-vault recovery so a failed save does
+not discard their buffers; newly opened views still wait for readiness. Terminal
+cleanup waits for an authoritative session list before removing missing sessions.
 
 ## The arcade
 
