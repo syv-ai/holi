@@ -239,7 +239,11 @@ function InvitationCard({
             </Button>
           ))}
         {!invitation.cancelled && (
-          <InvitationLink invitation={invitation} blocked={blocked || error !== null} open={open} />
+          <InvitationLink
+            invitation={invitation}
+            blocked={blocked || error !== null || !card.responseFresh}
+            open={open}
+          />
         )}
       </div>
       {action === 'opening' && (

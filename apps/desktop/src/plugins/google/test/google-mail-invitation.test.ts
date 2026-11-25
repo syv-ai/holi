@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
@@ -230,6 +230,7 @@ async function rig() {
     sentSearchBody: undefined as unknown,
     replyThread: 'thread',
     sendReceiptId: undefined as string | undefined,
+    beforeSendAcknowledgement: async () => {},
     replaceOnQuery: false,
     sendReplyMode: 'ok' as 'ok' | 'refused' | 'empty' | 'response-lost',
   }
@@ -507,6 +508,7 @@ async function rig() {
       )
       state.sent.set(reply.id, reply)
       if (state.replyThread === 'thread') state.messages.push(reply)
+      await state.beforeSendAcknowledgement()
       if (state.sendReplyMode === 'response-lost') throw new TypeError('Lost the send response')
       if (state.sendReplyMode === 'empty') return new Response(null, { status: 200 })
       return json({
@@ -2892,6 +2894,41 @@ it('remembers the identity of an RSVP-ineligible Calendar copy until exact delet
   expect(state.calendarPatchAttempts).toBe(0)
 })
 
+it('retains sparse primary cancellations until every possible exact copy is gone', async () => {
+  const { state, read, restart } = await rig()
+  const first = { ...event({ id: 'first' }), status: 'cancelled' }
+  const second = { ...event({ id: 'second' }), status: 'cancelled' }
+  state.events.set('primary', [first, second])
+  state.primaryPages = [
+    { kind: 'calendar#events', items: [{ id: first.id, iCalUID: uid, status: 'cancelled' }] },
+  ]
+  expect(await read()).toMatchObject({ cancelled: true, canRespond: false })
+  state.primaryPages = [
+    { kind: 'calendar#events', items: [{ id: second.id, iCalUID: uid, status: 'cancelled' }] },
+  ]
+  expect(await read()).toMatchObject({ cancelled: true, canRespond: false })
+
+  // The complete collection now omits both rows, but exact GET still sees them.
+  state.primaryPages = [{ kind: 'calendar#events' }]
+  const reopened = restart()
+  const blocked = { canRespond: false, recordedResponseStatus: null, responseTargetKey: null }
+  expect(await reopened.read()).toMatchObject(blocked)
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  state.events.set('primary', [second])
+  expect(await reopened.read()).toMatchObject(blocked)
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.events.clear()
+  expect(await reopened.read()).toMatchObject({ canRespond: true })
+  expect(await reopened.respond('accepted')).toMatchObject({
+    channel: 'gmail',
+    refreshPending: false,
+  })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
 it('does not treat a Calendar row for a different organizer as a known copy', async () => {
   const { state, read, restart } = await rig()
   state.events.set('primary', [{ ...event(), organizer: { email: guest, self: false } }])
@@ -3809,6 +3846,78 @@ it.each(['ok', 'empty'] as const)(
     expect(state.calendarPatchAttempts).toBe(0)
   },
 )
+
+it('keeps a Gmail acknowledgement binding when its journal update fails', async () => {
+  const { userData, state, read, respond, restart } = await rig()
+  state.replyThread = 'sent-elsewhere'
+  const temporary = join(userData, 'google-mail-invitations.json.tmp')
+  const acknowledgedId = 'reply-1'
+  const otherId = 'different-gmail-id'
+  state.beforeSendAcknowledgement = async () => {
+    // The request already crossed the durable dispatch gate. Block the actual
+    // atomic write without touching the committed journal or its read path.
+    await mkdir(temporary)
+    const sent = state.sent.get(acknowledgedId)!
+    state.sent.set(otherId, { ...sent, id: otherId })
+    state.sent.delete(acknowledgedId)
+  }
+  await read()
+  const unresolved = {
+    responseStatus: null,
+    sentResponseStatus: null,
+    responsePending: true,
+    canRespond: false,
+  }
+  expect(await respond('accepted')).toMatchObject({
+    outcome: 'sent',
+    channel: 'gmail',
+    refreshPending: true,
+    invitation: unresolved,
+  })
+  expect(await read()).toMatchObject(unresolved)
+  await expect(respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  await rm(temporary, { recursive: true })
+  // A new session has only the durable reservation. A matching index/body
+  // cannot stand in for the lost acknowledgement, even with writes restored.
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject(unresolved)
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(await read()).toMatchObject(unresolved)
+  expect(await restart().read()).toMatchObject(unresolved)
+
+  // When the exact acknowledged resource appears, read-only Retry settles it.
+  const substitute = state.sent.get(otherId)!
+  state.sent.delete(otherId)
+  state.sent.set(acknowledgedId, { ...substitute, id: acknowledgedId })
+  const settled = {
+    responseStatus: 'accepted',
+    sentResponseStatus: 'accepted',
+    responsePending: false,
+    canRespond: true,
+  }
+  expect(await read()).toMatchObject(settled)
+  const afterRecovery = restart()
+  expect(await afterRecovery.read()).toMatchObject(settled)
+  expect(await afterRecovery.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
+
+  // Only the confirmed A can anchor a later answer to the vanished REQUEST.
+  // The indexed substitute must not have left independent parent proof.
+  state.messages = [
+    gmailMessage('redelivery', 700, invite('REQUEST', '', 3, '20240702T090000Z')),
+    { ...acceptedReply('<update@example.net>'), internalDate: '1200' },
+  ]
+  expect(await afterRecovery.read()).toMatchObject(settled)
+  state.sent.delete(acknowledgedId)
+  state.sent.set(otherId, substitute)
+  expect(await restart().read()).toMatchObject({
+    responseStatus: null,
+    sentResponseStatus: null,
+    canRespond: false,
+  })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
 
 it('requires unique account-wide ownership before settling an in-thread Gmail receipt', async () => {
   const { state, read, respond, restart } = await rig()

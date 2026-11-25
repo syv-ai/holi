@@ -53,7 +53,7 @@ export interface InvitationCardState {
   invitation: Invitation
   error: string | null
   receipt: Receipt | null
-  /** The displayed response is backed by a read after the last write result. */
+  /** The displayed card has a fresh provider readback, even if its RSVP is pending. */
   responseFresh: boolean
   refreshPending: boolean
 }
@@ -225,6 +225,7 @@ export function useMailInvitation({
       state.busy !== null ||
       state.readError !== null ||
       card.error !== null ||
+      !card.responseFresh ||
       !currentCards.current.includes(card)
     )
       return

@@ -487,13 +487,21 @@ async function lookupInvitationCalendarCopy(
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
     async (event: RawEvent) => {
-      // Bind organizer and mailbox independently of scope, RSVP fields,
+      if (!hasEventResourceId(event)) return
+      // A sparse tombstone with this exact UID in the authenticated primary
+      // collection is possible existence, not organizer or attendance proof.
+      const sparsePrimaryCancellation =
+        base === PRIMARY_EVENTS &&
+        event.iCalUID === uid &&
+        event.status === 'cancelled' &&
+        event.organizer === undefined
+      // Otherwise bind the organizer independently of scope, RSVP fields,
       // and the rest of the collection.
       if (
-        !hasEventResourceId(event) ||
-        !organizer ||
-        typeof event.organizer?.email !== 'string' ||
-        event.organizer.email.toLowerCase() !== organizer
+        !sparsePrimaryCancellation &&
+        (!organizer ||
+          typeof event.organizer?.email !== 'string' ||
+          event.organizer.email.toLowerCase() !== organizer)
       )
         return
       // The authenticated primary collection itself binds the resource to the
@@ -521,7 +529,7 @@ async function lookupInvitationCalendarCopy(
       if (!calendarLocatorMayMatchScope(scope, identity)) return
       await remember({
         uid,
-        organizer,
+        organizer: sparsePrimaryCancellation ? undefined : organizer,
         ...scope,
         series,
         target: calendarCopyTarget(calendarResponseUrl(base, event), mailbox),

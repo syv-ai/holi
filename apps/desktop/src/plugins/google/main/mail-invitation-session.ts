@@ -23,6 +23,7 @@ import {
   fetchThreadCalendarPayloads,
   createSentCalendarLookup,
   sendCalendarReply,
+  type CalendarReplyReceipt,
 } from './gmail-invitation-transport'
 import { parseCalendarMail } from './invite'
 import { projectMailInvitation, type InvitationCardSource } from './mail-invitation-projection'
@@ -424,6 +425,29 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       ),
     }))
 
+  // Only failed journal writes survive here. The journal reserves space for
+  // every such dispatch, and a dispatch without a durable outcome cannot be compacted.
+  const gmailOutcomes = new Map<
+    string,
+    { state: 'unresolved' | 'accepted'; receipt: CalendarReplyReceipt }
+  >()
+  const withGmailOutcome = (attempt: InvitationAttempt): InvitationAttempt => {
+    const outcome = gmailOutcomes.get(attempt.id)
+    const { delivery } = attempt
+    return outcome &&
+      attempt.state === 'unresolved' &&
+      delivery.channel === 'gmail' &&
+      delivery.receipt === null
+      ? { ...attempt, state: outcome.state, delivery: { ...delivery, receipt: outcome.receipt } }
+      : attempt
+  }
+  const flushGmailOutcome = async (id: string) => {
+    await changeAttempt(id, withGmailOutcome).then(
+      () => gmailOutcomes.delete(id),
+      () => undefined,
+    )
+  }
+
   async function reconcile(
     target: Target,
     attempts: InvitationAttempt[],
@@ -493,6 +517,17 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         match !== 'disputed' ||
         delivery.confirmedSentTimestamp === undefined
       ) {
+        // A bare reservation (including legacy null receipts) cannot say
+        // whether no ID was received or a known ID was lost before persistence.
+        if (delivery.receipt === null) {
+          unverifiedReceipts.add(id)
+          pending.push(attempt)
+          continue
+        }
+        if (gmailOutcomes.has(id)) {
+          target.assertBinding()
+          await flushGmailOutcome(id)
+        }
         const found = await receipts.findReply(delivery.rfcId, delivery.receipt, (candidate) =>
           assessReply(candidate, revision, delivery, disputedSent, answer),
         )
@@ -568,6 +603,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           (entry.delivery.channel !== 'gmail' || hasStoredAnchor(entry) || provesAnchor(entry)),
         provesAnchor,
       )
+      gmailOutcomes.delete(attempt.id)
       parentAnchors = journal.parentAnchors
     }
     return { pending, confirmations, parentAnchors, contested, unverifiedReceipts }
@@ -635,7 +671,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     const scopes = selection
       ? incoming.filter((entry) => sameGroup(identityOf(entry.selected), selection))
       : incoming
-    const { copies, journal } = await collectCalendarCopies(target, scopes)
+    const { copies, journal: durable } = await collectCalendarCopies(target, scopes)
+    // Use the same locator for dispatch exclusion, Sent evidence, and readback,
+    // even when a known outcome could not be written to the journal.
+    const journal = { ...durable, attempts: durable.attempts.map(withGmailOutcome) }
     const resources = createInvitationCalendarResourceLookup(api, email)
     const known = knownCalendarLocators(journal)
     const relevant = journal.attempts.filter(
@@ -1279,10 +1318,14 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           }
           const gate: GoogleDispatchGate = { validate, reserveDispatch }
           try {
-            let receipt = null
-            if (channel === 'calendar') await reply.send(answer, gate)
-            else
-              receipt = await sendCalendarReply(
+            if (channel === 'calendar') {
+              await reply.send(answer, gate)
+              // A journal/readback failure after acceptance is never a failed send.
+              await changeAttempt(id, (entry) => ({ ...entry, state: 'accepted' })).catch(
+                () => null,
+              )
+            } else {
+              const receipt = await sendCalendarReply(
                 target.api,
                 threadId,
                 reply.headers,
@@ -1292,17 +1335,20 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
                 reply.body(email, answer),
                 gate,
               )
-            // A journal/readback failure after acceptance is never a failed send.
-            await changeAttempt(id, (entry) => ({
-              ...entry,
-              state: 'accepted',
-              delivery:
-                entry.delivery.channel === 'gmail'
-                  ? { ...entry.delivery, receipt }
-                  : entry.delivery,
-            })).catch(() => null)
+              gmailOutcomes.set(id, { state: 'accepted', receipt })
+              await flushGmailOutcome(id)
+            }
           } catch (error) {
             if (error instanceof GoogleWriteUncertainError) {
+              if (channel === 'gmail') {
+                // This live operation knows it received no provider locator.
+                // Retry may use RFC-only evidence once this outcome is known.
+                gmailOutcomes.set(id, {
+                  state: 'unresolved',
+                  receipt: { id: null, threadId: null },
+                })
+                await flushGmailOutcome(id)
+              }
               return {
                 outcome: 'uncertain',
                 channel,
