@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, isAbsolute } from 'node:path'
 
 export const reviewedCodexTuiRelease = Object.freeze({
   package: '@openai/codex',
@@ -30,15 +31,40 @@ export function verifyCodexTuiProvenance(bin, expectedVersion = reviewedCodexTui
   }
   if (!manifest || manifest.version !== expectedVersion)
     throw new Error('Codex package provenance or version mismatch')
-  const relativeExecutable = executable.slice(directory.length + 1)
-  if (!relativeExecutable || relativeExecutable.startsWith('..'))
+  const relativeExecutable = relative(directory, executable)
+  if (!relativeExecutable || relativeExecutable.startsWith('..') || isAbsolute(relativeExecutable))
     throw new Error('Codex executable is outside its package')
+
+  // Codex ships a JS launcher as well as the platform binary. Provenance for
+  // native acceptance must bind to the latter, not merely the npm wrapper.
+  const bytes = readFileSync(executable)
+  const magic = bytes.subarray(0, 4).toString('hex')
+  const nativeFormat = new Map([
+    ['cffaedfe', 'macho'],
+    ['feedfacf', 'macho'],
+    ['cafebabe', 'macho'],
+    ['7f454c46', 'elf'],
+  ]).get(magic)
+  if (!nativeFormat) throw new Error('Codex executable is not a native Mach-O or ELF binary')
+  const observedVersion = execFileSync(executable, ['--version'], {
+    encoding: 'utf8',
+    timeout: 5000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim()
+  if (
+    !new RegExp(`^codex ${expectedVersion.replaceAll('.', '\\\\.')}(?:\\\\s|$)`, 'i').test(
+      observedVersion,
+    )
+  )
+    throw new Error(`Codex runtime version mismatch: ${observedVersion}`)
   return {
     package: manifest.name,
     version: manifest.version,
     packageDirectory: directory,
     executable,
+    nativeFormat,
+    observedVersion,
     packageJsonSha256: sha256(readFileSync(join(directory, 'package.json'))),
-    executableSha256: sha256(readFileSync(executable)),
+    executableSha256: sha256(bytes),
   }
 }
