@@ -527,8 +527,8 @@ export function createSentCalendarLookup(
     if (incomplete) return null
     return found
   }
-  async function gather(rfcId: string, receipt: CalendarReplyReceipt | null) {
-    if (receipt?.id) await read(receipt.id)
+  async function gather(rfcId: string, receipt: CalendarReplyReceipt) {
+    if (receipt.id) await read(receipt.id)
     let request = search.get(rfcId)
     if (!request) {
       request = exact(rfcId)
@@ -536,9 +536,9 @@ export function createSentCalendarLookup(
     }
     const indexed = await request
     if (indexed === null) return null
-    const direct = receipt?.id ? await reads.get(receipt.id) : undefined
+    const direct = receipt.id ? await reads.get(receipt.id) : undefined
     // Even after a direct 404, the index cannot change the receipt's thread.
-    if (direct && receipt?.threadId && direct.message.threadId !== receipt.threadId) return null
+    if (direct && receipt.threadId && direct.message.threadId !== receipt.threadId) return null
     return direct
       ? [direct, ...indexed.filter(({ message }) => message.id !== direct.message.id)]
       : indexed
@@ -550,7 +550,7 @@ export function createSentCalendarLookup(
     threadEvidence: () => inThread.map((mail) => verifiedReplies.get(mail.messageId) ?? mail),
     async findReply(
       rfcId: string,
-      receipt: CalendarReplyReceipt | null,
+      receipt: CalendarReplyReceipt,
       assess: (message: CalendarMail) => Promise<'match' | 'related' | 'unresolved' | null>,
     ): Promise<{
       mail: CalendarMail | null
@@ -560,10 +560,10 @@ export function createSentCalendarLookup(
       // A thread hit can locate the full resource when send returned no ID
       // and the account-wide index has not caught up. It cannot prove it.
       const visible =
-        !receipt?.id &&
+        !receipt.id &&
         inThread.find((mail) => mail.sent && mail.rfcId === rfcId && owners.owns(mail))
       const locator = visible
-        ? { id: visible.messageId, threadId: receipt?.threadId ?? visible.threadId }
+        ? { id: visible.messageId, threadId: receipt.threadId ?? visible.threadId }
         : receipt
       const sources = await gather(rfcId, locator)
       if (sources === null) return { mail: null, contestedTimestamp: null, unresolvedReply: true }
@@ -584,7 +584,7 @@ export function createSentCalendarLookup(
       }
       let contestedTimestamp = 0
       let unordered = false
-      let unresolvedReply = Boolean(locator?.id || receipt?.threadId || receipt?.invalidLocator)
+      let unresolvedReply = Boolean(locator.id || receipt.threadId || receipt.invalidLocator)
       const sourceIds = new Set(sources.map(({ message }) => message.id))
       for (const mail of candidates.values()) {
         if (!mail) continue
@@ -596,10 +596,10 @@ export function createSentCalendarLookup(
           // The index corroborates the receipt; it cannot substitute another
           // Gmail message for an acknowledged ID, even with the same RFC ID.
           const matchesReceipt =
-            !receipt?.invalidLocator &&
+            !receipt.invalidLocator &&
             mail.rfcId === rfcId &&
-            (!receipt?.id || mail.messageId === receipt.id) &&
-            (!receipt?.threadId || mail.threadId === receipt.threadId)
+            (!receipt.id || mail.messageId === receipt.id) &&
+            (!receipt.threadId || mail.threadId === receipt.threadId)
           if (evidence === 'match' && full && matchesReceipt) {
             verifiedReplies.set(mail.messageId, mail)
             return { mail, contestedTimestamp: 0, unresolvedReply: false }

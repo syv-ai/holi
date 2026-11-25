@@ -498,10 +498,14 @@ async function run() {
       ] as const) {
         const before = transport.writes.length
         await pause(700)
-        if (answer === 'declined') transport.loseNextPatchAcknowledgement()
+        if (answer === 'declined') {
+          assert(await js(`(${target('Join meeting', card)})?.disabled === false`))
+          transport.loseNextPatchAcknowledgement()
+        }
         await click(action, card)
         if (answer === 'declined') {
           await expectStatus('Retry only checks its status')
+          assert(await js(`(${target('Join meeting', card)})?.disabled === true`))
           assert(!(await readCard()).includes('Response: Tentative'))
           assert(!(await readCard()).includes('Response: Declined'))
           assert.equal(transport.snapshot().calendarResponse, answer)
@@ -511,6 +515,7 @@ async function run() {
           await click('Retry', card)
         }
         await expectStatus(`Response: ${label}`)
+        assert(await js(`(${target('Join meeting', card)})?.disabled === false`))
         assert.equal(transport.writes.length, before + 1)
         assert.equal(transport.writes[before]?.answer, answer)
         assert.equal(transport.snapshot().calendarResponse, answer)

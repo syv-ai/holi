@@ -32,6 +32,8 @@ type Delivery =
       priorSentTimestamp?: number
       /** Verified provider order, not proof that the parent still belongs to this invitation. */
       confirmedSentTimestamp?: number
+      /** Null means the dispatch outcome is unknown. An observed no-ID
+       * outcome is a receipt object with null locator fields. */
       receipt: CalendarReplyReceipt | null
     }
 

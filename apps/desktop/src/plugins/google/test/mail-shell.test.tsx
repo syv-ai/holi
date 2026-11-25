@@ -23,6 +23,7 @@ const draftBodyMock = vi.fn()
 const markReadMock = vi.fn()
 const invitationMock = vi.fn<typeof googleCap.mailInvitation>()
 const respondMock = vi.fn<typeof googleCap.respondToMailInvitation>()
+const validateBinding = vi.fn()
 const starMock = vi.fn()
 const mailMarkersMock = vi.fn()
 const setMailMarkerMock = vi.fn()
@@ -91,6 +92,7 @@ const google: Record<string, (params: unknown, remote: string) => unknown> = {
     return invitationMock(remote, target)
   },
   validateMailInvitationBinding: async (p) => {
+    validateBinding()
     const target = p as Parameters<typeof googleCap.validateMailInvitationBinding>[1]
     if (
       target.expectedAccountSub !== accountSub ||
@@ -245,6 +247,7 @@ beforeEach(() => {
   accountBinding = 1
   toastMock.mockReset()
   openExternal.mockReset()
+  validateBinding.mockClear()
   agentStopMock.mockReset().mockResolvedValue({ ok: true })
   agentStartMock.mockReset().mockResolvedValue({ ok: true })
   agentServiceMock.mockReset().mockReturnValue({
@@ -619,6 +622,7 @@ test('shows Calendar acceptance and the Gmail verification warning from response
   expect(await region.findByText('Calendar: Accepted')).toBeVisible()
   expect(region.getByText(/Google accepted your response, but/i)).toBeVisible()
   expect(region.getByText(unavailableReason)).toBeVisible()
+  expect(region.getByRole('button', { name: 'Join meeting' })).toBeEnabled()
   expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
   for (const name of ['Accept', 'Maybe', 'Decline']) {
     expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
@@ -647,9 +651,12 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
       unavailableReason: 'Gmail could not verify the latest sent response',
     }),
   )
+  const newConference = 'https://meet.google.com/new-link-xyz'
   invitationMock.mockResolvedValue(
     invitations({
       ...invitation,
+      identity: { ...invitation.identity, messageId: 'revision', sequence: 4 },
+      conferenceUrl: newConference,
       recordedResponseStatus: 'declined',
       responseStatus: 'declined',
       sentResponseStatus: 'declined',
@@ -667,21 +674,37 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
   await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
   const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
   expect(await region.findByText('Response: Accepted')).toBeVisible()
+  const join = region.getByRole('button', { name: 'Join meeting' })
+  expect(join).toBeEnabled()
   await user.click(region.getByRole('button', { name: 'Decline' }))
   expect(await region.findByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
   expect(region.queryByText(/^Response:|^Calendar:/)).not.toBeInTheDocument()
   expect(region.getByRole('heading', { name: invitation.title })).toBeVisible()
+  expect(join).toBeDisabled()
+  fireEvent.click(join)
+  expect(validateBinding).not.toHaveBeenCalled()
+  expect(openExternal).not.toHaveBeenCalled()
   await user.click(region.getByRole('button', { name: 'Retry' }))
   expect(await region.findByText('Calendar: Declined')).toBeVisible()
+  const refreshedJoin = region.getByRole('button', { name: 'Join meeting' })
+  expect(refreshedJoin).toBeEnabled()
   expect(region.getByText(/Gmail.*verify/i)).toBeVisible()
   expect(region.getByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
   expect(region.queryByText(/^Response:/)).not.toBeInTheDocument()
   for (const name of ['Accept', 'Maybe', 'Decline']) {
     expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
   }
-  await user.click(region.getByRole('button', { name: 'Retry' }))
+  await user.click(refreshedJoin)
+  await waitFor(() =>
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith(invitation.conferenceUrl),
+  )
+  const retry = region.getByRole('button', { name: 'Retry' })
+  await waitFor(() => expect(retry).toBeEnabled())
+  await user.click(retry)
   expect(await region.findByText('Response: Declined')).toBeVisible()
   expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
+  await user.click(region.getByRole('button', { name: 'Join meeting' }))
+  await waitFor(() => expect(openExternal).toHaveBeenNthCalledWith(2, newConference))
   expect(respondMock).toHaveBeenCalledTimes(1)
 })
 

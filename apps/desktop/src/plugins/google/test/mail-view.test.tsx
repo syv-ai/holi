@@ -39,6 +39,7 @@ const draftMock = vi.fn()
 const draftsMock = vi.fn()
 const invitationMock = vi.fn<typeof googleCap.mailInvitation>()
 const respondMock = vi.fn<typeof googleCap.respondToMailInvitation>()
+const validateBinding = vi.fn()
 const mailMarkersMock = vi.fn()
 const markerPreferencesMock = vi.fn()
 const setMailMarkerMock = vi.fn()
@@ -100,6 +101,7 @@ const google: Record<string, (params: unknown, remote: string) => unknown> = {
     return invitationMock(remote, target)
   },
   validateMailInvitationBinding: async (p) => {
+    validateBinding()
     const target = p as Parameters<typeof googleCap.validateMailInvitationBinding>[1]
     if (
       target.expectedAccountSub !== mailAccountSub ||
@@ -325,6 +327,7 @@ beforeEach(() => {
   // The frame registry is module state shared by the suite.
   resetMailFramesForTests()
   openExternal.mockReset()
+  validateBinding.mockClear()
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal }
 })
@@ -824,6 +827,7 @@ test('shows Calendar acceptance and the Gmail verification warning from response
   expect(await region.findByText('Calendar: Accepted')).toBeVisible()
   expect(region.getByText(/Google accepted your response, but/i)).toBeVisible()
   expect(region.getByText(unavailableReason)).toBeVisible()
+  expect(region.getByRole('button', { name: 'Join meeting' })).toBeEnabled()
   expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
   for (const name of ['Accept', 'Maybe', 'Decline']) {
     expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
@@ -1002,29 +1006,50 @@ test('an empty invitation result cannot promote a thread badge into a meeting', 
   expect(openExternal).not.toHaveBeenCalled()
 })
 
-test('explains a cancelled invitation detected from its attachment even without a list hint', async () => {
-  threadMock.mockResolvedValue(page([summary()]))
+test('blocks the old Join link after an uncertain write until Retry reads the cancellation', async () => {
   withMessage(
-    { body: 'The workshop is off.', html: null },
+    { body: 'Please join the workshop.', html: null },
     {
-      attachments: [{ filename: 'cancel.ics', mimeType: 'text/calendar', size: 400 }],
+      attachments: [{ filename: 'invite.ics', mimeType: 'text/calendar', size: 400 }],
       hasCalendarPayload: true,
     },
   )
-  invitationMock.mockResolvedValue(
+  invitationMock.mockResolvedValueOnce(invitations(invite)).mockResolvedValue(
     invitations({
       ...invite,
+      identity: { ...invite.identity, messageId: 'cancel', sequence: 4 },
       cancelled: true,
       canRespond: false,
       responseStatus: null,
       unavailableReason: 'This invitation was cancelled',
     }),
   )
+  respondMock.mockResolvedValueOnce({
+    outcome: 'uncertain',
+    channel: 'calendar',
+    answer: 'accepted',
+    invitation: null,
+    refreshPending: true,
+  })
+  const user = userEvent.setup()
   await openThread()
-  const region = await screen.findByRole('region', { name: 'Calendar invitation' })
-  expect(await within(region).findByText(/cancelled/i)).toBeInTheDocument()
-  expect(within(region).queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument()
-  expect(within(region).queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  const join = await region.findByRole('button', { name: 'Join meeting' })
+  expect(join).toBeEnabled()
+  await user.click(region.getByRole('button', { name: 'Accept' }))
+  const retry = await region.findByRole('button', { name: 'Retry' })
+  expect(region.getByRole('heading', { name: invite.title })).toBeVisible()
+  expect(join).toBeDisabled()
+  fireEvent.click(join)
+  expect(validateBinding).not.toHaveBeenCalled()
+  expect(openExternal).not.toHaveBeenCalled()
+
+  await user.click(retry)
+  expect(await region.findByText(/cancelled/i)).toBeVisible()
+  expect(region.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument()
+  expect(region.queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+  expect(respondMock).toHaveBeenCalledTimes(1)
+  expect(openExternal).not.toHaveBeenCalled()
 })
 
 test('retries invitation read failures and reconciles uncertainty without resending', async () => {
