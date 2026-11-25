@@ -72,7 +72,7 @@ import {
 } from './gmail'
 import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
-import { createMailInvitationSession } from './mail-invitation-session'
+import type { createMailInvitationSession } from './mail-invitation-session'
 import type { MailInvitationIdentity } from './mail-invitation'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
@@ -96,6 +96,7 @@ export const GOOGLE_NAMESPACES = ['google'] as const
 export interface GoogleCapabilityDeps {
   accounts: GoogleAccountsManager
   meetings?: MeetingCreation
+  mailInvitations?: ReturnType<typeof createMailInvitationSession>
   /** The vault's cached data layer; null when no account is connected to it. */
   dataFor(remote: string): Promise<GoogleData | null>
   /** Cached data permanently bound to this resolved account session. */
@@ -273,15 +274,18 @@ function invitationParams(raw: unknown): { threadId: string; expectedAccountSub:
 
 function invitationResponseParams(raw: unknown): ReturnType<typeof invitationParams> & {
   identity: MailInvitationIdentity
+  expectedBindingRevision: string
   answer: InviteAnswer
 } {
   const p = paramsObject(raw)
-  const { sequence, recurrenceId, ...target } = paramsObject(p.identity)
+  const { sequence, recurrenceId, dtstamp, materialKey, ...target } = paramsObject(p.identity)
   if (
     typeof sequence !== 'number' ||
     !Number.isSafeInteger(sequence) ||
     sequence < 0 ||
-    (recurrenceId !== null && (typeof recurrenceId !== 'string' || !recurrenceId))
+    (recurrenceId !== null && (typeof recurrenceId !== 'string' || !recurrenceId)) ||
+    (dtstamp !== null && (typeof dtstamp !== 'string' || !dtstamp)) ||
+    (materialKey !== null && (typeof materialKey !== 'string' || !materialKey))
   ) {
     throw new CapabilityError('BAD_REQUEST', 'Invalid invitation identity')
   }
@@ -291,12 +295,15 @@ function invitationResponseParams(raw: unknown): ReturnType<typeof invitationPar
   }
   return {
     ...invitationParams(raw),
+    expectedBindingRevision: stringParam(p, 'expectedBindingRevision'),
     answer,
     identity: {
       messageId: stringParam(target, 'messageId'),
       uid: stringParam(target, 'uid'),
       sequence,
       recurrenceId,
+      dtstamp,
+      materialKey,
     },
   }
 }
@@ -496,13 +503,6 @@ function accountsText(value: GoogleAccountsOverview): string {
 }
 
 const capabilityDisposers = new WeakMap<object, () => void>()
-// A plugin is activated per vault; outstanding responses belong to the mailbox,
-// so a different vault linked to that mailbox must not replay an uncertain send.
-const invitationSessions = new WeakMap<
-  GoogleAccountsManager,
-  ReturnType<typeof createMailInvitationSession>
->()
-
 export function disposeGoogleCapabilities(capabilities: object): void {
   capabilityDisposers.get(capabilities)?.()
 }
@@ -539,29 +539,51 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         throw new CapabilityError('FORBIDDEN', `Google account changed; reload ${view}`)
     }
 
-  const mailInvitations = invitationSessions.get(deps.accounts) ?? createMailInvitationSession()
-  invitationSessions.set(deps.accounts, mailInvitations)
   const invitationTarget = async (
     remote: string,
-    { expectedAccountSub, threadId }: ReturnType<typeof invitationParams>,
+    {
+      expectedAccountSub,
+      threadId,
+      expectedBindingRevision,
+    }: ReturnType<typeof invitationParams> & {
+      expectedBindingRevision?: string
+    },
   ) => {
-    const session = await deps.accounts.sessionFor(remote)
-    if (session?.accountSub !== expectedAccountSub) {
-      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the invitation')
+    const binding = await deps.accounts.bindingFor(remote)
+    const session = binding?.session
+    const changed = () =>
+      new CapabilityError('FORBIDDEN', 'Google account changed; reload the invitation')
+    if (
+      !binding ||
+      !session ||
+      session.accountSub !== expectedAccountSub ||
+      (expectedBindingRevision !== undefined && expectedBindingRevision !== binding.revision)
+    ) {
+      throw changed()
     }
+    const assertBinding = () => {
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      if (!binding.isCurrent()) throw changed()
+    }
+    assertBinding()
     const email = session.account?.email.toLowerCase()
     if (!email) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
-    const validate = validateSession(remote, session, 'the invitation')
     return {
       api: new GoogleApi({
         accessToken: () => session.getAccessToken(),
-        validateRequest: validate,
+        assertRequest: assertBinding,
       }),
       threadId,
       accountSub: expectedAccountSub,
+      bindingRevision: binding.revision,
       email,
-      validateSession: validate,
+      assertBinding,
     }
+  }
+  const mailInvitations = () => {
+    if (!deps.mailInvitations)
+      throw new CapabilityError('UNAVAILABLE', 'mail invitation responses are unavailable')
+    return deps.mailInvitations
   }
 
   const dataOf = async (remote: string): Promise<GoogleData> => {
@@ -872,15 +894,30 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: invitationParams,
       run: (ctx, input) =>
-        google(async () => mailInvitations.read(await invitationTarget(ctx.remote, input))),
+        google(async () => {
+          const target = await invitationTarget(ctx.remote, input)
+          const invitation = await mailInvitations().read(target)
+          target.assertBinding()
+          return invitation
+        }),
     }),
     'google.respondToMailInvitation': cap({
       doors: ['ui'],
       params: invitationResponseParams,
       run: (ctx, { identity, answer, ...target }) =>
-        google(async () =>
-          mailInvitations.respond(await invitationTarget(ctx.remote, target), identity, answer),
-        ),
+        google(async () => {
+          const bound = await invitationTarget(ctx.remote, target)
+          const result = await mailInvitations().respond(bound, identity, answer)
+          try {
+            bound.assertBinding()
+            return result
+          } catch (error) {
+            if (result.outcome === 'unchanged') throw error
+            // A retired binding cannot disclose readback, but losing it after
+            // dispatch does not turn an accepted or uncertain write into a refusal.
+            return { ...result, invitation: null, refreshPending: true }
+          }
+        }),
     }),
 
     /**

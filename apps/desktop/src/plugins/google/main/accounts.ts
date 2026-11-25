@@ -11,6 +11,7 @@
  *
  * **No `electron` import**, like every file in `google/` except `electron.ts`.
  */
+import { createHash, randomUUID } from 'node:crypto'
 import { GoogleSession, type AccountRef, type GoogleAccount, GOOGLE_SCOPES } from './session'
 import { startLoopbackFlow, type Listen, type LoopbackFlow } from './loopback-flow'
 import {
@@ -55,6 +56,12 @@ export interface GoogleAccountsOverview {
   client: { id: string; source: GoogleClientSource }
 }
 
+type GoogleAccountBinding = {
+  session: GoogleSession
+  revision: string
+  isCurrent(): boolean
+}
+
 export interface GoogleAccountsManager {
   /** Every connected account, for the picker. */
   list(): ConnectedAccount[]
@@ -63,6 +70,8 @@ export interface GoogleAccountsManager {
    *  state the UI already renders. */
   sessionFor(remote: string): Promise<GoogleSession | null>
   sessionForSub(sub: string): GoogleSession | null
+  /** Stable for this link and grant only; a token refresh is not a new grant. */
+  bindingFor(remote: string): Promise<GoogleAccountBinding | null>
   /** Full consent, then store the account **and** link it to `remote`. */
   connect(remote: string): Promise<LoopbackFlow>
   cancelConnect(): void
@@ -132,6 +141,7 @@ export async function createGoogleAccounts(
   /** Bumped by every client change, so a consent that began under the old
    *  client knows its grant is not this machine's to keep. */
   let clientEpoch = 0
+  const bindingNamespace = randomUUID()
   /** A client change in progress: a connect waits it out rather than starting
    *  under a client about to be replaced. Never rejects. */
   let switching: Promise<void> | null = null
@@ -250,6 +260,28 @@ export async function createGoogleAccounts(
     async sessionFor(remote) {
       const sub = await deps.vaults.subFor(remote)
       return sub === null ? null : sessionForSub(sub)
+    },
+
+    async bindingFor(remote) {
+      const binding = await deps.vaults.bindingFor(remote)
+      const { sub } = binding
+      if (sub === null || !deps.vaults.isCurrentBinding(remote, binding)) return null
+      const session = sessionForSub(sub)
+      if (!session?.account) return null
+      const grant = accountEpoch(sub)
+      const client = clientEpoch
+      return {
+        session,
+        revision: createHash('sha256')
+          .update(JSON.stringify([bindingNamespace, remote, sub, binding.revision, grant, client]))
+          .digest('hex'),
+        isCurrent: () =>
+          deps.vaults.isCurrentBinding(remote, binding) &&
+          accountEpoch(sub) === grant &&
+          clientEpoch === client &&
+          sessions.get(sub) === session &&
+          session.accountSub === sub,
+      }
     },
 
     async connect(remote) {
