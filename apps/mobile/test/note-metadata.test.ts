@@ -49,13 +49,31 @@ describe('note metadata', () => {
 
   it('preserves malformed stored data and rejects invalid identities and paths', () => {
     const settings = new Settings()
-    settings.values.set('holi.note-metadata:owner/repo', '{broken')
-    expect(() => createNoteMetadata(settings, 'owner/repo')).toThrow()
-    expect(settings.values.get('holi.note-metadata:owner/repo')).toBe('{broken')
+    for (const stored of [
+      '{broken',
+      JSON.stringify({ recents: 'notes/a.md', favourites: [] }),
+      JSON.stringify({ recents: [42], favourites: [] }),
+    ]) {
+      settings.values.set('holi.note-metadata:owner/repo', stored)
+      expect(() => createNoteMetadata(settings, 'owner/repo')).toThrow()
+      expect(settings.values.get('holi.note-metadata:owner/repo')).toBe(stored)
+    }
     expect(() => createNoteMetadata(settings, 'not a remote')).toThrow()
-    const metadata = createNoteMetadata(new Settings(), 'owner/repo')
-    expect(() => metadata.recent('.env.md')).toThrow()
-    expect(() => metadata.recent('.git/note.md')).toThrow()
+
+    const metadata = createNoteMetadata(settings, 'owner/repo')
+    metadata.recent('notes/before.md')
+    const before = settings.values.get('holi.note-metadata:owner/repo')
+    for (const path of [
+      '.env.md',
+      '.git/note.md',
+      'notes/local.local.md',
+      '.holi/settings/app.yaml',
+      '.holi-storage-stage/note.md',
+    ]) {
+      expect(() => metadata.recent(path)).toThrow()
+      expect(settings.values.get('holi.note-metadata:owner/repo')).toBe(before)
+    }
+    expect(metadata.visible(['notes/before.md']).recents).toEqual(['notes/before.md'])
   })
 
   it('keeps memory and persisted snapshots unchanged when writes fail', () => {
