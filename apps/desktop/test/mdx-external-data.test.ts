@@ -2,7 +2,11 @@ import { Resolver } from 'node:dns/promises'
 import type { ServerResponse } from 'node:http'
 import os, { type NetworkInterfaceInfo } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchMdxExternalData, MdxExternalDataError } from '../src/main/mdx-external-data'
+import {
+  fetchMdxExternalData,
+  fetchMdxExternalResourceData,
+  MdxExternalDataError,
+} from '../src/main/mdx-external-data'
 
 import { createMdxExternalNetworkFixture } from './fixtures/mdx-external-network'
 
@@ -51,6 +55,21 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
+const fetchResource = (
+  kind: 'module' | 'css' | 'asset',
+  overrides: Partial<Parameters<typeof fetchMdxExternalData>[0]> = {},
+) =>
+  fetchMdxExternalResourceData({
+    url: network.entryURL.replace(
+      '.js',
+      kind === 'css' ? '.css' : kind === 'asset' ? '.png' : '.js',
+    ),
+    signal: new AbortController().signal,
+    assertAccess: () => true,
+    kind,
+    ...overrides,
+  })
+
 const fetchText = (overrides: Partial<Parameters<typeof fetchMdxExternalData>[0]> = {}) =>
   fetchMdxExternalData({
     url: network.entryURL,
@@ -90,6 +109,40 @@ function expectNoContact() {
   expect(network.dns6).not.toHaveBeenCalled()
   expectNoDial()
 }
+
+describe('fetchMdxExternalResourceData', () => {
+  it('returns CSS text and exact non-UTF8 asset bytes, rejecting mismatched MIME', async () => {
+    network.routes.respond = (_, res) => {
+      res.setHeader('Content-Type', 'text/css')
+      res.end('body { color: red }')
+    }
+    await expect(fetchResource('css')).resolves.toMatchObject({ text: 'body { color: red }' })
+
+    network.routes.respond = (_, res) => {
+      res.setHeader('Content-Type', 'image/png')
+      res.end(Buffer.from([0, 255, 128]))
+    }
+    const image = await fetchResource('asset')
+    expect([...image.bytes]).toEqual([0, 255, 128])
+    expect(image).not.toHaveProperty('text')
+
+    network.routes.respond = (_, res) => {
+      res.setHeader('Content-Type', 'text/javascript')
+      res.end('not css')
+    }
+    await expect(fetchResource('css')).rejects.toMatchObject({ code: 'unsupported-format' })
+  })
+
+  it('revalidates redirected responses using the requested resource kind', async () => {
+    network.routes.respond = (_, res) => redirectTo(res, 'https://two.example/image.png')
+    network.routes.respond = (req, res) => {
+      if (req.url === '/') return redirectTo(res, 'https://two.example/image.png')
+      res.setHeader('Content-Type', 'text/css')
+      res.end('body {}')
+    }
+    await expect(fetchResource('asset')).rejects.toMatchObject({ code: 'unsupported-format' })
+  })
+})
 
 describe('fetchMdxExternalData', () => {
   it('reports the canonical origin needing consent without DNS or sockets', async () => {

@@ -26,14 +26,54 @@ export function isMdxExternalOrigin(value: unknown): value is string {
 /** Validate a raw import or redirect before authorization or canonical graph deduplication.
  * A relative destination requires the already vetted URL of the enclosing module or hop.
  */
+export type MdxExternalResourceKind = 'module' | 'css' | 'asset'
+
+export type ResolvedMdxExternalResource =
+  { url: URL; kind: 'module'; format: 'js' | 'jsx' } | { url: URL; kind: 'css' | 'asset' }
+
+/** Resolve only explicitly supported resource kinds. Relative URLs are checked against
+ * the already-vetted final URL of their parent response.
+ */
+export function resolveMdxExternalResource(
+  raw: string,
+  kind: MdxExternalResourceKind,
+  base?: URL,
+): ResolvedMdxExternalResource | { error: 'unsafe-url' | 'unsupported-format' } {
+  const url = parseDestination(raw, base)
+  if (!url) return { error: 'unsafe-url' }
+  if (kind === 'module') {
+    const format = moduleFormat(url.pathname)
+    return format ? { url, kind, format } : { error: 'unsupported-format' }
+  }
+  const path = decodedPath(url.pathname)
+  if (!path) return { error: 'unsupported-format' }
+  const extension = posix.extname(path).toLowerCase()
+  const allowed =
+    kind === 'css'
+      ? extension === '.css'
+      : /\.(?:woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|svg|mp4|webm|mp3|wav)$/i.test(path)
+  return allowed ? { url, kind } : { error: 'unsupported-format' }
+}
+
+/** Existing module callers retain their narrow result contract. */
 export function resolveMdxExternalModule(
   raw: string,
   base?: URL,
 ): { url: URL; format: 'js' | 'jsx' } | { error: 'unsafe-url' | 'unsupported-format' } {
-  const url = parseDestination(raw, base)
-  if (!url) return { error: 'unsafe-url' }
-  const format = moduleFormat(url.pathname)
-  return format ? { url, format } : { error: 'unsupported-format' }
+  const result = resolveMdxExternalResource(raw, 'module', base)
+  if ('error' in result) return result
+  if (result.kind !== 'module') return { error: 'unsupported-format' }
+  return { url: result.url, format: result.format }
+}
+
+function decodedPath(pathname: string): string | null {
+  try {
+    if (/%2f/i.test(pathname)) return null
+    const path = decodeURIComponent(pathname)
+    return /[\\%\u0000-\u001f\u007f]/u.test(path) ? null : path
+  } catch {
+    return null
+  }
 }
 
 function parseDestination(raw: string, base?: URL): URL | null {

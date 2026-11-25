@@ -12,7 +12,10 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { externalizeDepsPlugin } from 'electron-vite'
 import { MDX_RESOURCE_EVENTS } from '../../../packages/shared/src/mdx-diagnostics.ts'
-import { runExternalNativeAcceptance } from './mdx-external-native-smoke.mjs'
+import {
+  runExternalNativeAcceptance,
+  runNestedResourceNativeAcceptance,
+} from './mdx-external-native-smoke.mjs'
 import { createMdxSmokeUi } from './mdx-native-smoke-ui.mjs'
 import { createCdpClient } from './native-smoke-cdp.mjs'
 import { encodeScreencast } from './native-smoke-recording.mjs'
@@ -67,6 +70,7 @@ const external = {
   snapshots: {},
   streamRevocation: null,
 }
+const nestedResources = { stage: 'not started', snapshots: {}, guestPolicy: null }
 const evidenceFiles = ['result.json', 'electron-smoke.log']
 const checks = []
 const portServer = createServer()
@@ -338,6 +342,24 @@ async function runNative(electron, artifact) {
       logs += message
     },
   })
+  await runNestedResourceNativeAcceptance(page, {
+    fixtureSha,
+    checks,
+    report: nestedResources,
+    ui,
+    editAndWaitForSave,
+    captureScreenshot: (name) => saveScreenshot(page, name),
+    record: recordVideo
+      ? () =>
+          startVideo(
+            page,
+            (handler) => {
+              onCdpEvent = handler
+            },
+            'nested-resources-approval-revoke.webm',
+          )
+      : null,
+  })
   renderer = await evaluate(`({
     errors: window.__mdxSmoke.errors.slice(0, 10),
     deferredResizeNotifications: window.__mdxSmoke.layoutNotifications.length,
@@ -346,7 +368,7 @@ async function runNative(electron, artifact) {
   outcome = 'passed'
 }
 
-async function startVideo(page, onEvent) {
+async function startVideo(page, onEvent, filename = 'resources-approval-revoke.webm') {
   const frames = []
   let firstTime
   onEvent(({ method, params }) => {
@@ -367,7 +389,6 @@ async function startVideo(page, onEvent) {
     await page.call('Page.stopScreencast')
     onEvent(() => {})
     assert(frames.length >= 3, 'Only a few actual Chromium frames were captured')
-    const filename = 'resources-approval-revoke.webm'
     await encodeScreencast(frames, {
       root,
       evidence,
@@ -407,6 +428,11 @@ async function finalize() {
   )
   await writeFile(join(evidence, 'electron-smoke.log'), diagnosticLog)
   await writeFile(
+    join(evidence, 'nested-resource-receipt.json'),
+    JSON.stringify({ ...nestedResources, fixtureSha: fixtureSha ?? null }, null, 2),
+  )
+  evidenceFiles.push('nested-resource-receipt.json')
+  await writeFile(
     join(evidence, 'result.json'),
     JSON.stringify(
       {
@@ -415,6 +441,7 @@ async function finalize() {
         checks: { passed: checks.length, names: checks },
         nativeScenarios,
         external: { ...external, fixtureSha: fixtureSha ?? null },
+        nestedResources: { ...nestedResources, fixtureSha: fixtureSha ?? null },
         runtime,
         positionedDiagnostics,
         renderer,

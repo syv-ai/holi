@@ -3,7 +3,7 @@ import { Agent, request } from 'node:https'
 import type { IncomingMessage } from 'node:http'
 import { BlockList, isIP } from 'node:net'
 import os from 'node:os'
-import { resolveMdxExternalModule } from './mdx-external-policy'
+import { resolveMdxExternalResource, type MdxExternalResourceKind } from './mdx-external-policy'
 
 const DEADLINE_MS = 8_000
 const BODY_LIMIT = 256 * 1024
@@ -62,12 +62,22 @@ export async function fetchMdxExternalData(options: {
   signal: AbortSignal
   assertAccess(origin: string, signal: AbortSignal): boolean | Promise<boolean>
 }): Promise<{ url: string; text: string }> {
+  const result = await fetchMdxExternalResourceData({ ...options, kind: 'module' })
+  return { url: result.url, text: result.text! }
+}
+
+export async function fetchMdxExternalResourceData(options: {
+  url: string
+  signal: AbortSignal
+  assertAccess(origin: string, signal: AbortSignal): boolean | Promise<boolean>
+  kind: MdxExternalResourceKind
+}): Promise<{ url: string; bytes: Uint8Array; text?: string }> {
   const deadline = new AbortController()
   const timer = setTimeout(() => deadline.abort(), DEADLINE_MS)
   const signal = AbortSignal.any([options.signal, deadline.signal])
   try {
     signal.throwIfAborted()
-    let destination = resolveMdxExternalModule(options.url)
+    let destination = resolveMdxExternalResource(options.url, options.kind)
     for (let redirects = 0; ; redirects++) {
       if ('error' in destination) throw new MdxExternalDataError(destination.error)
       const target = destination.url
@@ -77,11 +87,22 @@ export async function fetchMdxExternalData(options: {
       const { first, answers } = await resolvePublicAddresses(hostname, signal)
       await check()
       rejectLocalAddresses(answers)
-      const result = await fetchHop(target, first, check, signal)
+      const result = await fetchHop(target, first, check, signal, options.kind)
       await check()
-      if ('text' in result) return { url: target.href, text: result.text }
+      if ('bytes' in result) {
+        if (options.kind === 'asset') return { url: target.href, bytes: result.bytes }
+        try {
+          return {
+            url: target.href,
+            bytes: result.bytes,
+            text: new TextDecoder('utf-8', { fatal: true }).decode(result.bytes),
+          }
+        } catch {
+          throw new MdxExternalDataError('response')
+        }
+      }
       if (redirects >= REDIRECT_LIMIT) throw new MdxExternalDataError('redirect')
-      destination = resolveMdxExternalModule(result.location, target)
+      destination = resolveMdxExternalResource(result.location, options.kind, target)
     }
   } catch (error) {
     // Do not propagate URL parse errors, DNS/TLS errors, callback exceptions or abort reasons.
@@ -211,7 +232,8 @@ async function fetchHop(
   address: string,
   check: () => Promise<void>,
   signal: AbortSignal,
-): Promise<{ text: string } | { location: string }> {
+  kind: MdxExternalResourceKind,
+): Promise<{ bytes: Uint8Array } | { location: string }> {
   signal.throwIfAborted()
   // Exact address matching by bytes, including IPv6 spellings and IPv4-mapped IPv6.
   const pinned = new BlockList()
@@ -278,11 +300,20 @@ async function fetchHop(
     const types = response.headersDistinct['content-type']
     const mediaType =
       types?.length === 1 ? CONTENT_TYPE.exec(types[0] ?? '')?.[1]?.toLowerCase() : undefined
-    // Raw GitHub serves source as plain text; redirects must end at this exact origin.
-    const rawGitHubSource =
-      mediaType === 'text/plain' && target.origin === 'https://raw.githubusercontent.com'
-    if (!mediaType || (!MODULE_MEDIA_TYPES.has(mediaType) && !rawGitHubSource))
-      throw new MdxExternalDataError('unsupported-format')
+    const validType =
+      kind === 'module'
+        ? MODULE_MEDIA_TYPES.has(mediaType ?? '') ||
+          (mediaType === 'text/plain' && target.origin === 'https://raw.githubusercontent.com')
+        : kind === 'css'
+          ? mediaType === 'text/css' ||
+            (mediaType === 'text/plain' && target.origin === 'https://raw.githubusercontent.com')
+          : /^image\/(?:png|jpeg|gif|webp|svg\+xml|avif)$/.test(mediaType ?? '') ||
+            /^font\/(?:woff|woff2|ttf|otf)$/.test(mediaType ?? '') ||
+            /^audio\//.test(mediaType ?? '') ||
+            /^video\//.test(mediaType ?? '') ||
+            mediaType === 'application/font-woff' ||
+            mediaType === 'application/vnd.ms-fontobject'
+    if (!validType) throw new MdxExternalDataError('unsupported-format')
     if (Number(response.headers['content-length']) > BODY_LIMIT)
       throw new MdxExternalDataError('too-large')
     const chunks: Buffer[] = []
@@ -293,11 +324,7 @@ async function fetchHop(
       chunks.push(chunk)
     }
     if (!response.complete) throw new MdxExternalDataError('response')
-    try {
-      return { text: new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size)) }
-    } catch {
-      throw new MdxExternalDataError('response')
-    }
+    return { bytes: Uint8Array.from(Buffer.concat(chunks, size)) }
   } finally {
     // Do not drain unwanted redirect/error bodies or allow a later hop to reuse this socket.
     agent.destroy()

@@ -22,6 +22,7 @@ export async function createGuestProbes() {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
   })
+  const publicBase = `https://cdn.jsdelivr.net/gh/syv-ai/holi@${process.env.HOLI_MDX_SMOKE_FIXTURE_SHA}/apps/desktop/scripts/fixtures/mdx-external`
   const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   let next: Mode | null = null
   let prepared: ((contents: WebContents) => void) | null = null
@@ -118,6 +119,37 @@ export async function createGuestProbes() {
             });
             const results = {};
             results.loopback = await denied(${JSON.stringify(endpoint + '/canary')});
+            // Consent authorizes main's typed transport, never guest networking.
+            const publicBase = ${JSON.stringify(publicBase)};
+            results.publicFetch = await denied(publicBase + '/nested.css');
+            results.publicImport = await bounded(import(publicBase + '/entry.js').then(() => false, () => true));
+            results.publicXhr = await bounded(new Promise(resolve => {
+              try { const xhr = new XMLHttpRequest(); xhr.onerror = () => resolve(true); xhr.onload = () => resolve(false);
+                xhr.open('GET', publicBase + '/tiny.png'); xhr.send(); } catch { resolve(true) }
+            }));
+            results.publicCss = await bounded(new Promise(resolve => {
+              const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = publicBase + '/nested.css';
+              link.onerror = () => resolve(true); link.onload = () => resolve(false); document.head.append(link);
+            }));
+            results.publicImage = await bounded(new Promise(resolve => {
+              const image = new Image(); image.onerror = () => resolve(true); image.onload = () => resolve(false); image.src = publicBase + '/tiny.png';
+            }));
+            results.publicFont = await bounded(new FontFace('public-probe', 'url("' + publicBase + '/tiny.woff2")').load().then(() => false, () => true));
+            results.publicAudio = await bounded(new Promise(resolve => {
+              const audio = document.createElement('audio'); audio.onerror = () => resolve(true); audio.oncanplaythrough = () => resolve(false);
+              audio.src = publicBase + '/tiny.wav'; audio.load();
+            }));
+            results.publicSocket = await bounded(new Promise(resolve => {
+              try { const socket = new WebSocket(publicBase.replace('https:', 'wss:'));
+                socket.onerror = () => { socket.close(); resolve(true) }; socket.onopen = () => { socket.close(); resolve(false) };
+              } catch { resolve(true) }
+            }));
+            results.publicWorker = await bounded(new Promise(resolve => {
+              try { const worker = new Worker(publicBase + '/entry.js'); worker.onerror = () => { worker.terminate(); resolve(true) };
+                worker.onmessage = () => { worker.terminate(); resolve(false) };
+              } catch { resolve(true) }
+            }));
+            results.publicPopup = window.open(publicBase + '/tiny.png') === null;
             results.external = await denied('https://outside.invalid/canary');
             results.dynamicImport = await bounded(import(${JSON.stringify(endpoint + '/module.js')})
               .then(() => false, () => true));
