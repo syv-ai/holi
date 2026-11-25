@@ -32,6 +32,9 @@ function gmail() {
   let countStatus = 200
   let historyPages: Record<string, HistoryPage> = { '': { historyId } }
   let messages: Record<string, string[]> = {}
+  const messageStatuses = new Map<string, number>()
+  const messageGates = new Map<string, ReturnType<typeof deferred<void>>>()
+  const messageStarted = new Map<string, ReturnType<typeof deferred<void>>>()
   let historyGate: ReturnType<typeof deferred<void>> | null = null
   let historyStarted: ReturnType<typeof deferred<void>> | null = null
   const seen: string[] = []
@@ -65,7 +68,9 @@ function gmail() {
       return ok(page, page.status ?? 200)
     }
     const id = path.split('/').pop()!
-    return ok({ id, labelIds: messages[id] ?? [] })
+    messageStarted.get(id)?.resolve()
+    await messageGates.get(id)?.promise
+    return ok({ id, labelIds: messages[id] ?? [] }, messageStatuses.get(id) ?? 200)
   }) as unknown as typeof globalThis.fetch
 
   return {
@@ -83,6 +88,23 @@ function gmail() {
     },
     setMessages(next: Record<string, string[]>) {
       messages = next
+    },
+    setMessageStatus(id: string, status: number) {
+      messageStatuses.set(id, status)
+    },
+    holdMessage(id: string) {
+      const gate = deferred<void>()
+      const started = deferred<void>()
+      messageGates.set(id, gate)
+      messageStarted.set(id, started)
+      return {
+        started: started.promise,
+        release: () => {
+          gate.resolve()
+          messageGates.delete(id)
+          messageStarted.delete(id)
+        },
+      }
     },
     holdHistory() {
       historyGate = deferred<void>()
@@ -341,6 +363,53 @@ describe('mail attention', () => {
     )
     expect(sharedHistoryRequests).toHaveLength(1)
     await Promise.all([a.stop(), b.stop(), c.stop()])
+  })
+
+  it('keeps teardown owned until every admitted metadata lookup settles', async () => {
+    const r = rig()
+    const server = gmail()
+    const session = { id: 'one', accountSub: 'sub-one' }
+    r.connect('vault/a', session, server)
+    const lease = await r.subscribe('vault/a')
+    await r.attention.refresh()
+    r.preferences.set('vault/a', true)
+    const snapshotsBefore = [...r.snapshots.get('vault/a')!]
+
+    server.setUnread(9)
+    server.setMessages({ failed: ['INBOX', 'UNREAD'], pending: ['INBOX', 'UNREAD'] })
+    server.setMessageStatus('failed', 500)
+    const pending = server.holdMessage('pending')
+    server.setHistory({
+      pages: {
+        '': {
+          historyId: '11',
+          history: [
+            {
+              messagesAdded: [{ message: { id: 'failed' } }, { message: { id: 'pending' } }],
+            },
+          ],
+        },
+      },
+    })
+
+    const refresh = r.attention.refresh()
+    await pending.started
+    let stopped = false
+    const stopping = lease.stop().then(() => {
+      stopped = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(stopped).toBe(false)
+    expect(r.snapshots.get('vault/a')).toEqual(snapshotsBefore)
+    expect(r.notices.get('vault/a')).toEqual([])
+
+    pending.release()
+    await Promise.all([refresh, stopping])
+
+    expect(stopped).toBe(true)
+    expect(r.snapshots.get('vault/a')).toEqual(snapshotsBefore)
+    expect(r.notices.get('vault/a')).toEqual([])
   })
 
   it('suppresses pending work after stop, unlink, reconnect, or preference changes', async () => {
