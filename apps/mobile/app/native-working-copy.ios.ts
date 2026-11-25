@@ -114,13 +114,11 @@ export const nativeWorkingCopy: NativeWorkingCopy & NativeTreePreparation = {
   async recoveryPending(root) {
     return hasPendingRecovery(root)
   },
-  async prepareWorkingCopyTree(root, remote, branch, paths) {
-    const nativePaths = NSMutableArray.alloc<string>().init()
-    for (const path of paths) nativePaths.addObject(path)
+  async prepareWorkingCopyTree(root, remote, branch, policy) {
     const value = checked((error) =>
       HoliNativeGit.alloc()
         .init()
-        .prepareWorkingCopyTreeRemoteBranchPathsError(root, remote, branch, nativePaths, error),
+        .prepareWorkingCopyTreeRemoteBranchPolicyError(root, remote, branch, policy, error),
     )
     if (!value) throw new Error('Native Git returned no working-copy tree')
     const result = dictionary(value)

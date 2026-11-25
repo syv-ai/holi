@@ -46,8 +46,8 @@ describe('prepareWorkingCopyTree', () => {
         ],
         authorize: async () => true,
         status: async () => [],
-        prepareWorkingCopyTree: async (_root, _remote, _branch, paths) => {
-          seen.push(paths)
+        prepareWorkingCopyTree: async (_root, _remote, _branch, policy) => {
+          seen.push(['note.md', 'assets/image.bin', '.env', '.ENV', 'private.local.md', 'private.LOCAL.md'].filter((path) => policy(path) === 1))
           return tree
         },
       }

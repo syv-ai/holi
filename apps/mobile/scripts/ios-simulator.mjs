@@ -151,6 +151,7 @@ try {
     runId,
     await realpath(join(canonicalContainer, 'Library')),
   )
+  const library = await realpath(join(canonicalContainer, 'Library'))
   const workingCopyManifest = join(canonicalContainer, 'Documents/working-copy-manifest.json')
   await writeFile(workingCopyManifest, JSON.stringify(workingCopyFixture, null, 2))
   const treeFixture = await createWorkingCopyTreeFixture(
@@ -171,7 +172,6 @@ try {
     await writeFile(join(directory, name), 'raw native fixture', { flag: 'wx' })
   }
   const documents = await realpath(join(canonicalContainer, 'Documents'))
-  const library = await realpath(join(canonicalContainer, 'Library'))
   const installedApp = await realpath(await simctl('get_app_container', simulator, bundleId, 'app'))
   const installedBinary = join(installedApp, await plist('CFBundleExecutable'))
   let activeProcess
