@@ -115,7 +115,14 @@ export function createGitHubCredentials(store: CredentialStore) {
           if (used) throw new Error('Authorization has already been awaited')
           used = true
           try {
-            const token = await session.wait()
+            let token: string
+            try {
+              token = await session.wait()
+            } catch {
+              throw new Error(
+                cancelled() ? 'Authorization cancelled' : 'GitHub authorization failed',
+              )
+            }
             if (cancelled()) throw new Error('Authorization cancelled')
             try {
               store.write(token)

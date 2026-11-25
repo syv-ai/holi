@@ -129,6 +129,37 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+it.each(['active', 'revoked'])('sanitizes polling failures for %s authorization', async (state) => {
+  const { credentials, openStore } = setup()
+  const started = deferred<void>()
+  let rejectWait!: (reason: unknown) => void
+  const pending = new Promise<void>((_resolve, reject) => {
+    rejectWait = reject
+  })
+  const auth = await credentials.authorize({
+    clientId: 'public',
+    fetch: http,
+    wait: () => {
+      started.resolve()
+      return pending
+    },
+  })
+  const failure = auth.wait().catch((error: unknown) => error)
+  await started.promise
+  if (state === 'revoked') createGitHubCredentials(openStore()).signOut()
+  const privateError = new Error('private polling detail', { cause: 'private cause' })
+  privateError.stack = 'private polling stack'
+  rejectWait(privateError)
+  const error = await failure
+  expect(error).toBeInstanceOf(Error)
+  expect(error).not.toBe(privateError)
+  expect(String(error)).not.toContain('private')
+  expect((error as Error).stack).not.toContain('private polling stack')
+  expect(error).not.toHaveProperty('cause')
+  expect(KeychainError.diagnostic(error)).toBeUndefined()
+  expect(credentials.readToken()).toBe(state === 'revoked' ? null : 'old-token')
+})
+
 it.each(['replacement', 'sign-out'])(
   'can revoke an authorization started during %s',
   async (action) => {
