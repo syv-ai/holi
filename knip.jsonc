@@ -77,10 +77,9 @@
         "scripts/folder-subscriptions-native-smoke.tsx",
         "scripts/rich-text-vim-native-smoke-main.ts",
         "scripts/rich-text-vim-native-smoke.tsx",
-        // Issue #507 native packaged MDX diagnostics fixture entries.
+        // Native packaged MDX diagnostics and resource acceptance entries.
         "scripts/mdx-diagnostics-native-smoke-main.ts",
         "scripts/mdx-diagnostics-native-smoke.tsx",
-        "scripts/mdx-diagnostics-smoke-trpc.ts",
         // Native GitHub safeStorage entry is built as an Electron SSR fixture.
         "scripts/github-storage-native-smoke-main.ts",
       ],
@@ -97,8 +96,8 @@
         "!src/plugins/*/test/**",
         "!src/main/vault/seed/vault/once/.holi/settings/theme.css",
       ],
-      // The gate self-test lints these on purpose; they are inputs, not code.
-      "ignore": ["test/fixtures/**"],
+      // The gate self-test and the public MDX fixture consume inert source inputs.
+      "ignore": ["test/fixtures/**", "scripts/fixtures/mdx-external/**"],
       // plugin-api.ts is the facade plugins import core through. It re-exports
       // more than any one plugin uses today, deliberately.
       "ignoreIssues": {
