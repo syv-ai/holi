@@ -75,6 +75,35 @@ type Cancellation = {
   attendees: string[]
 }
 
+type RevisionMaterial = {
+  description: string | null
+  status: string | null
+  explicitFields: ExplicitFields
+  attendees: string[]
+  /** Canonical embedded exception material, including each original slot. */
+  exceptionsKey: string
+}
+
+export type CalendarRevisionFields = {
+  /** Organizer-supplied evidence, not a confirmation of the mailbox's answer. */
+  attendeeStates: Record<string, AttendeeState>
+  attendees: string[]
+  /** Canonical RRULE/RDATE/EXDATE lines, without expanding or resolving a timezone. */
+  recurrence: string[]
+  recurrenceKind: TimeKind | null
+  /** DTSTART in its original civil basis, including the zone of future recurrences. */
+  recurrenceTimeBasis: ReturnType<CalendarTimes['recurrenceTimeBasis']>
+  calendarRecurrenceZoneMatches: (zone: string | null) => boolean
+}
+
+/** A live VEVENT can describe a slot without being an independently invited occurrence. */
+type EmbeddedOccurrence = {
+  details: MailInvitationDetails
+  recurrenceRange: Cancellation['recurrenceRange']
+  revisionMaterial: RevisionMaterial
+  fields: CalendarRevisionFields | null
+}
+
 type ParsedInvitation = {
   /** EXPORT is a methodless calendar; it and PUBLISH are join-only. */
   method: 'REQUEST' | 'CANCEL' | 'PUBLISH' | 'EXPORT' | null
@@ -82,33 +111,20 @@ type ParsedInvitation = {
   recurrenceRange: Cancellation['recurrenceRange']
   /** One entry per validated cancellation scope; the caller must verify the organizer. */
   cancellations: Cancellation[]
+  /** Internal navigation evidence, never a card or a reply target. */
+  embeddedOccurrences: EmbeddedOccurrence[]
   details: MailInvitationDetails
   /** Material from a strictly parsed revision, even when it cannot authorize an RSVP. */
-  revisionMaterial: {
-    description: string | null
-    status: string | null
-    explicitFields: ExplicitFields
-    attendees: string[]
-    /** Canonical embedded exception material, including each original slot. */
-    exceptionsKey: string
-  } | null
+  revisionMaterial: RevisionMaterial | null
   /** Never crosses the capability seam. Also supplies matching data for join-only mail. */
-  request: {
-    attendees: string[]
-    /** Organizer-supplied evidence, not a confirmation of the mailbox's answer. */
-    attendeeStates: Record<string, AttendeeState>
-    /** Canonical RRULE/RDATE/EXDATE lines, without expanding or resolving a timezone. */
-    recurrence: string[]
-    recurrenceKind: TimeKind | null
-    /** DTSTART in its original civil basis, including the zone of future recurrences. */
-    recurrenceTimeBasis: ReturnType<CalendarTimes['recurrenceTimeBasis']>
-    /** Check the expansion zone only for a found Calendar copy, not for a Gmail reply. */
-    calendarRecurrenceZoneMatches: (zone: string | null) => boolean
-    /** Blocks only an email REPLY; Calendar may still answer the invitation. */
-    replyUnavailableReason: string | null
-    /** Throws for join-only mail or when an email REPLY cannot represent the occurrence. */
-    reply: (email: string, answer: InviteAnswer) => string
-  } | null
+  request:
+    | (CalendarRevisionFields & {
+        /** Blocks only an email REPLY; Calendar may still answer the invitation. */
+        replyUnavailableReason: string | null
+        /** Throws for join-only mail or when an email REPLY cannot represent the occurrence. */
+        reply: (email: string, answer: InviteAnswer) => string
+      })
+    | null
 }
 
 /** Only a single SMTP address, not a header address list or a mailto query. */
@@ -441,6 +457,7 @@ export function parseMailInvitation(
   let method: ParsedInvitation['method'] = null
   let recurrenceRange: ParsedInvitation['recurrenceRange'] = null
   let revisionMaterial: ParsedInvitation['revisionMaterial'] = null
+  const embeddedOccurrences: EmbeddedOccurrence[] = []
   const details: MailInvitationDetails = {
     identity: {
       messageId,
@@ -467,7 +484,15 @@ export function parseMailInvitation(
   }
   const unavailable = (reason: string, cancellations: Cancellation[] = []): ParsedInvitation => {
     details.unavailableReason = reason
-    return { method, recurrenceRange, cancellations, details, revisionMaterial, request: null }
+    return {
+      method,
+      recurrenceRange,
+      cancellations,
+      embeddedOccurrences,
+      details,
+      revisionMaterial,
+      request: null,
+    }
   }
 
   try {
@@ -548,8 +573,52 @@ export function parseMailInvitation(
         (!ownOrganizer || ownOrganizer.email !== organizer?.email)
       )
         malformed()
-      if (unstampedRequest || part.material.status !== 'CANCELLED') continue
-      const occurrence = part.identity.recurrenceId
+      const occurrence = part.identity.recurrenceId!
+      if (part.material.status !== 'CANCELLED') {
+        const { details, status, description, explicitFields, attendees, rules, recurrenceRange } =
+          part.material
+        const kind = timeKind(occurrence)
+        const basis = part.recurrenceTimeBasis
+        const complete =
+          ownOrganizer &&
+          start &&
+          kind === timeKind(start) &&
+          kind !== 'floating' &&
+          basis &&
+          details.start &&
+          details.end &&
+          timeKind(details.start) === kind &&
+          !part.invalidExplicitInterval &&
+          !recurrenceRange &&
+          !rules.length &&
+          (status === null || status === 'CONFIRMED' || status === 'TENTATIVE') &&
+          (method !== 'REQUEST' || part.identity.dtstamp !== null)
+        embeddedOccurrences.push({
+          details: {
+            ...details,
+            identity: {
+              ...part.identity,
+              materialKey: materialKey(method, part.identity, part.material),
+            },
+            cancelled: false,
+            unavailableReason: complete ? null : 'Calendar cannot verify this embedded occurrence',
+          },
+          revisionMaterial: { description, status, explicitFields, attendees, exceptionsKey: '[]' },
+          fields: complete
+            ? {
+                attendees,
+                attendeeStates: part.attendeeStates,
+                recurrence: rules,
+                recurrenceKind: kind,
+                recurrenceTimeBasis: basis,
+                calendarRecurrenceZoneMatches: times.checkRecurrenceZones(basis, [part.entry]),
+              }
+            : null,
+          recurrenceRange,
+        })
+        continue
+      }
+      if (unstampedRequest) continue
       if (
         !organizer ||
         !start ||
@@ -616,6 +685,7 @@ export function parseMailInvitation(
       method,
       recurrenceRange,
       cancellations,
+      embeddedOccurrences,
       details,
       revisionMaterial,
       request: {

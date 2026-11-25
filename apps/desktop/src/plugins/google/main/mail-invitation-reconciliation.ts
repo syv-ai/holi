@@ -8,6 +8,7 @@ import {
   relevantCalendarTargets,
   createInvitationCalendarResourceLookup,
   type InvitationTarget,
+  type InvitationRevision,
   type InvitationLinks,
 } from './mail-invitation-calendar'
 import { CalendarScanError } from './gmail-mime'
@@ -333,15 +334,17 @@ function isAnswer(status: ResponseFacts['status']): status is InviteAnswer {
   return status === 'accepted' || status === 'tentative' || status === 'declined'
 }
 
-function calendarInvitation(
+function calendarRevision(
   entry: Scope,
   target: InvitationReadTarget,
   attempts: InvitationAttempt[],
-): InvitationTarget | null {
-  const { details, request, revisionMaterial } = entry.selected.value
-  if (entry.reason || !request || !revisionMaterial || !details.organizer) return null
+): InvitationRevision | null {
+  const { value, embedded, joinOnly, mail } = entry.selected
+  const details = embedded?.details ?? value.details
+  const { revisionMaterial } = value
+  const fields = embedded?.fields ?? value.request
+  if (entry.reason || !fields || !revisionMaterial || !details.organizer) return null
   const { email } = target
-  const legacyJoinOnly = entry.selected.joinOnly
   const evidence = invitationMaterialEvidence({ details, material: revisionMaterial })
   // Revision selection has already limited history to this scope and sequence.
   // Calendar must distinguish the selected REQUEST from each strictly earlier
@@ -377,10 +380,9 @@ function calendarInvitation(
   }
   return {
     details,
-    request,
+    fields,
     material: revisionMaterial,
-    joinOnly: legacyJoinOnly || entry.selected.mail.sent || details.organizer.email === email,
-    legacyJoinOnly,
+    joinOnly: joinOnly || mail.sent || details.organizer.email === email,
     evidence,
     predecessors,
     unknownPredecessor,
@@ -513,11 +515,16 @@ export function createMailInvitationReconciler(
     )
     const unseenPredecessor = (entry: Scope, attempt: InvitationAttempt) =>
       !observedAttempts.has(attempt.id) && calendarPredecessor(attempt, target, entry)
-    const invitations = new Map<Scope, InvitationTarget | null>()
-    const invitationFor = (entry: Scope) => {
-      if (!invitations.has(entry))
-        invitations.set(entry, calendarInvitation(entry, target, beforeCalendar.attempts))
-      return invitations.get(entry) ?? null
+    const revisions = new Map<Scope, InvitationRevision | null>()
+    const revisionFor = (entry: Scope) => {
+      if (!revisions.has(entry))
+        revisions.set(entry, calendarRevision(entry, target, beforeCalendar.attempts))
+      return revisions.get(entry) ?? null
+    }
+    const invitationFor = (entry: Scope): InvitationTarget | null => {
+      if (!entry.selected.value.request) return null
+      const revision = revisionFor(entry)
+      return revision && { ...revision, legacyJoinOnly: entry.selected.joinOnly }
     }
     const { copies, journal: durable } = await collectCalendarCopies(target, scopes, invitationFor)
     // Use the same locator for dispatch exclusion, Sent evidence, and readback,
@@ -1173,7 +1180,7 @@ export function createMailInvitationReconciler(
                     unseenPredecessor(occurrence, attempt),
                   )
                     ? false
-                    : (invitationFor(occurrence) ?? false)
+                    : (revisionFor(occurrence) ?? false)
                 })
             : null,
       })
