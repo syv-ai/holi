@@ -120,7 +120,8 @@ export async function clickOwnedNativeNotification({ appName, title, timeoutMs =
       timeoutMs: timeoutMs + 2000,
     })
     const resultText = result.output.trim()
-    if (resultText !== 'clicked') throw new Error(`unexpected native notification click result: ${resultText}`)
+    if (resultText !== 'clicked')
+      throw new Error(`unexpected native notification click result: ${resultText}`)
     return {
       interaction: 'native-notification-click',
       appName,

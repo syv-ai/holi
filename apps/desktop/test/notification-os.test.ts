@@ -61,7 +61,9 @@ describe('native notification controls', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
   })
   it('requires an exact app and title rather than allowing a broad notification click', async () => {
-    await expect(clickOwnedNativeNotification({ appName: '', title: 'nonce' })).rejects.toThrow(TypeError)
+    await expect(clickOwnedNativeNotification({ appName: '', title: 'nonce' })).rejects.toThrow(
+      TypeError,
+    )
     await expect(
       clickOwnedNativeNotification({ appName: 'Holi fixture', title: 'nonce', timeoutMs: 90_001 }),
     ).rejects.toThrow(RangeError)
