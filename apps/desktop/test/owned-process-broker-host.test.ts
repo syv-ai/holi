@@ -31,15 +31,28 @@ function host(
     plan.args[1] += `
       const fs = require('node:fs');
       const started = performance.now();
-      const mark = (event) => {
+      const mark = (event, detail = Math.round(performance.now() - started)) => {
         try {
-          fs.appendFileSync('native-join-events', event + '=' + Math.round(performance.now() - started) + '\\n');
+          fs.appendFileSync('native-join-events', event + '=' + detail + '\\n');
         } catch {} // Diagnostics are not evidence for the assertion barrier.
       };
       native.once('spawn', () => mark('spawn'));
-      native.once('exit', () => mark('exit'));
+      native.once('exit', (code, signal) => {
+        mark('exit');
+        mark('nativeExitCode', code === null ? 'null' : code);
+        mark('nativeSignal', signal ?? 'null');
+      });
       native.once('close', () => mark('close'));
       native.stdin?.once('close', () => mark('stdinClose'));
+      for (const [name, pipe] of [
+        ['stdinError', native.stdin], ['stdoutError', native.stdout], ['stderrError', native.stderr],
+        ['parentInputError', process.stdin], ['parentOutputError', process.stdout], ['parentErrorError', process.stderr],
+      ]) {
+        pipe?.once('error', (error) => {
+          const code = typeof error.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code) ? error.code : 'unknown';
+          mark(name, code);
+        });
+      }
       let ended = 0;
       for (const [event, pipe] of [['stdoutEnd', native.stdout], ['stderrEnd', native.stderr]]) {
         pipe.once('end', () => {
@@ -159,14 +172,18 @@ ${visitSelf}
     bool outputClosed = false, errorClosed = false;
     try {
       const uint DuplicateSameAccess = 2;
+      brokerPhase = "pin-output";
       Check(DuplicateHandle(self, output, self, out outputPin, 0, false, DuplicateSameAccess));
+      brokerPhase = "pin-error";
       Check(DuplicateHandle(self, error, self, out errorPin, 0, false, DuplicateSameAccess));
+      brokerPhase = "compare-pipes";
       if (SameKernelObject(outputPin, errorPin) || SameKernelObject(outputPin, input) ||
           SameKernelObject(errorPin, input)) throw new IOException();
 
       // Add-Type has returned and the fixture does not use console writers. A CRT or
       // PowerShell alias can still hold the pipe open. Only close a local slot after
       // comparing it to an owned pin, never on the basis of its type or slot value.
+      brokerPhase = "scan-aliases";
       VisitJoinHandleTable(Clock.ElapsedMilliseconds + 1000, entry => {
         var slot = entry.HandleValue;
         if (slot == input || slot == outputPin || slot == errorPin) return;
@@ -180,11 +197,18 @@ ${visitSelf}
           if (slot == error) errorClosed = true;
         }
       });
+      brokerPhase = "verify-aliases";
       if (!outputClosed || !errorClosed) throw new IOException();
+    } catch (Exception failure) {
+      RememberBrokerFailure(failure);
+      throw;
     } finally {
       bool closedOutputPin = outputPin == IntPtr.Zero || CloseHandle(outputPin);
       bool closedErrorPin = errorPin == IntPtr.Zero || CloseHandle(errorPin);
-      if (!closedOutputPin || !closedErrorPin) throw new IOException();
+      if (!closedOutputPin || !closedErrorPin) {
+        brokerPhase = "close-pins";
+        throw new IOException();
+      }
     }
     // One per stream means only the original standard handle was present.
     File.WriteAllText("native-handles-closed", outputCount.ToString(CultureInfo.InvariantCulture) +
@@ -199,6 +223,7 @@ ${visitSelf}
       var error = BrokerPipe(-12);
       BrokerWriteBytes(output, Encoding.UTF8.GetBytes("terminal\n"));
       JoinCloseOutputAliases(input, output, error);
+      brokerPhase = "read-finish";
       var one = new byte[1];
       foreach (byte expected in Encoding.UTF8.GetBytes("finish")) {
         int count;
@@ -207,7 +232,12 @@ ${visitSelf}
       }
       File.WriteAllText("native-finished", "done");
       return 0;
-    } catch {
+    } catch (Exception failure) {
+      RememberBrokerFailure(failure);
+      try {
+        File.WriteAllText("native-join-failure", brokerFailurePhase + "," +
+          brokerFailureCode.ToString(CultureInfo.InvariantCulture));
+      } catch { } // Diagnostics cannot change the fixture's exit status.
       return 125; // Never report errors through the closed stderr handle.
     }
   }
@@ -529,8 +559,21 @@ describe('owned Job broker host', () => {
     const innerEof = join(cwd, 'native-output-ended')
     inspectFixture = () => {
       const counts = readJoinMarker(cwd, 'native-handles-closed', 19)
-      const events = readJoinMarker(cwd, 'native-join-events', 160) ?? ''
+      const events = readJoinMarker(cwd, 'native-join-events', 512) ?? ''
+      const failure = readJoinMarker(cwd, 'native-join-failure', 64)
       return {
+        nativeFailure:
+          failure !== undefined && /^[a-z-]{1,32},\d{1,10}$/.test(failure) ? failure : undefined,
+        nativeStatus: Object.fromEntries(
+          [...events.matchAll(/^(nativeExitCode|nativeSignal)=([A-Za-z0-9_-]{1,40})$/gm)].map(
+            ([, event, value]) => [event, value],
+          ),
+        ),
+        pipeErrors: Object.fromEntries(
+          [...events.matchAll(/^([A-Za-z]+Error)=([A-Za-z0-9_]{1,40})$/gm)].map(
+            ([, event, code]) => [event, code],
+          ),
+        ),
         terminalSeen,
         innerEof: existsSync(innerEof),
         powerShellEntered: existsSync(join(cwd, 'powershell-start')),

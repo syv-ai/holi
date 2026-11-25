@@ -14,9 +14,14 @@ import { Terminal } from '@xterm/headless'
 
 const SCROLLBACK = 5_000
 
+type TerminalSnapshot = { state: string; through: number }
+
 export class TerminalMirror {
   private term: Terminal | null
   private addon: SerializeAddon
+  private received = 0
+  private parsed = 0
+  private snapshots = new Set<(snapshot: TerminalSnapshot) => void>()
 
   constructor(cols?: number, rows?: number) {
     this.term = new Terminal({
@@ -31,8 +36,12 @@ export class TerminalMirror {
     this.term.loadAddon(this.addon)
   }
 
-  write(data: string): void {
-    this.term?.write(data)
+  write(data: string): number {
+    const sequence = ++this.received
+    this.term?.write(data, () => {
+      this.parsed = sequence
+    })
+    return sequence
   }
 
   /**
@@ -52,10 +61,21 @@ export class TerminalMirror {
   }
 
   /** Flush the parser's async queue first — a chunk still in it would be lost. */
-  serialize(): Promise<string> {
+  async serialize(): Promise<string> {
+    return (await this.snapshot()).state
+  }
+
+  /** The exact parsed prefix lets an attachment stream only bytes after replay. */
+  snapshot(): Promise<TerminalSnapshot> {
     const term = this.term
-    if (!term) return Promise.resolve('')
-    return new Promise((resolve) => term.write('', () => resolve(this.addon.serialize())))
+    if (!term) return Promise.resolve({ state: '', through: this.parsed })
+    return new Promise((resolve) => {
+      this.snapshots.add(resolve)
+      term.write('', () => {
+        if (!this.snapshots.delete(resolve)) return
+        resolve({ state: this.addon.serialize(), through: this.parsed })
+      })
+    })
   }
 
   /** Sync variant for teardown paths that can't await; may miss the last chunk. */
@@ -64,6 +84,8 @@ export class TerminalMirror {
   }
 
   dispose(): void {
+    for (const resolve of this.snapshots) resolve({ state: '', through: this.parsed })
+    this.snapshots.clear()
     this.term?.dispose()
     this.term = null
   }
