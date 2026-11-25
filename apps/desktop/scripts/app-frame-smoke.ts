@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BrowserWindow, ipcMain, protocol, session, webContents } from 'electron'
-import { VAULT_SETTING_DEFAULTS, vaultRelPath } from '@holi/shared'
+import { vaultRelPath } from '@holi/shared'
 import { cap } from '../src/main/plugin-api'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
@@ -198,12 +198,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     notify: () => false,
     focused: () => currentWindow.isFocused(),
     window: () => currentWindow,
-    readSettings: async () => ({
-      ...VAULT_SETTING_DEFAULTS,
-      warnings: [],
-      plugins: { vault: {}, localOff: [] },
-      pluginValues: {},
-    }),
+
     call: async (remote, name, params, beforeInvoke) =>
       (await capabilityHost.dispatch({ door: 'ui', remote, name, params, beforeInvoke })).value,
   })
@@ -833,10 +828,27 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     await readSibling()
     writeFileSync(join(roots.A, '.holi/settings/plugins.yaml'), 'plugins:\n  apps: false\n')
     await host.reconcile(vault('A'), 'settings')
+    await assert.rejects(
+      capabilityHost.dispatch({
+        door: 'ui',
+        remote: 'ada/a',
+        name: 'apps.list',
+        params: {},
+      }),
+    )
+    assert.equal((await capabilityHost.names('ada/a', 'ui')).includes('apps.call'), false)
     await readSibling()
     writeFileSync(join(roots.A, '.holi/settings/plugins.yaml'), 'plugins:\n  apps: true\n')
     await host.reconcile(vault('A'), 'settings')
     assert.deepEqual(host.failures('ada/a'), {})
+    const recoveredA = await capabilityHost.dispatch({
+      door: 'ui',
+      remote: 'ada/a',
+      name: 'apps.list',
+      params: {},
+    })
+    assert(Array.isArray(recoveredA.value) && recoveredA.value.length > 0)
+    assert.equal((await capabilityHost.names('ada/a', 'ui')).includes('apps.call'), true)
     await readSibling()
     mark('integrated-restart-disable-reenable-a-preserves-b-app-door-and-native-origin')
     await captureFixture('app-frame-b-after-a-teardown.png')
