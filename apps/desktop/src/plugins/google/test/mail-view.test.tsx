@@ -766,6 +766,30 @@ test('shows Delegated as a recorded response, not as an RSVP action', async () =
   }
 })
 
+test('distinguishes a recorded Calendar answer from a different verified Sent reply', async () => {
+  withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
+  const conflicting = {
+    ...invite,
+    responseStatus: null,
+    recordedResponseStatus: 'tentative',
+    sentResponseStatus: 'accepted',
+  } as const
+  invitationMock.mockResolvedValue(invitations(conflicting))
+  const user = userEvent.setup()
+  await openThread()
+
+  const card = within(await screen.findByRole('article', { name: invite.title }))
+  expect(card.getByText('Calendar: Tentative')).toBeVisible()
+  expect(card.getByText(/Gmail Sent: Accepted/)).toBeVisible()
+  expect(card.queryByText('Response: Accepted')).not.toBeInTheDocument()
+  expect(card.getByRole('button', { name: 'Accept' })).toBeEnabled()
+  expect(card.getByRole('button', { name: 'Decline' })).toBeEnabled()
+  const maybe = card.getByRole('button', { name: 'Maybe' })
+  expect(maybe).toBeDisabled()
+  await user.click(maybe)
+  expect(respondMock).not.toHaveBeenCalled()
+})
+
 test('ordinary mail opens without an invitation or meeting lookup', async () => {
   withMessage({ body: 'lunch?', html: null })
   threadMock.mockResolvedValue(page([summary({ hasInvite: false })]))

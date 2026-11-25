@@ -13,6 +13,7 @@ import { useTimeFormat } from '../calendar/calendar-settings'
 import { googleEventUrl, httpsLink, providerConferenceUrl } from '../../shared/meeting-links'
 import type { ThreadMessage } from '../mail-types'
 import {
+  invitationResponse,
   useMailInvitation,
   type Invitation,
   type InvitationAnswer,
@@ -20,10 +21,10 @@ import {
 } from './use-mail-invitation'
 
 const responseBadges = {
-  accepted: { label: 'Response: Accepted', variant: 'success' },
-  tentative: { label: 'Response: Tentative', variant: 'warning' },
-  declined: { label: 'Response: Declined', variant: 'destructive' },
-  delegated: { label: 'Response: Delegated', variant: 'secondary' },
+  accepted: { label: 'Accepted', variant: 'success' },
+  tentative: { label: 'Tentative', variant: 'warning' },
+  declined: { label: 'Declined', variant: 'destructive' },
+  delegated: { label: 'Delegated', variant: 'secondary' },
   needsAction: { label: 'No response yet', variant: 'secondary' },
 } as const
 const answerButtons = [
@@ -164,7 +165,8 @@ function InvitationCard({
   const headingId = useId()
   const isInvitation = invitation.kind === 'invitation'
   const canRespond = isInvitation && invitation.canRespond && !invitation.cancelled
-  const response = isInvitation ? invitation.responseStatus : null
+  const { current, differingSent } = invitationResponse(invitation)
+  const response = isInvitation ? current : null
   const responseBadge = response === null ? null : responseBadges[response]
   const date = invitationDate(invitation, clock)
   const { organizer, location } = invitation
@@ -181,7 +183,13 @@ function InvitationCard({
         {invitation.scope !== 'single' && (
           <Badge variant="secondary">{scopeLabels[invitation.scope]}</Badge>
         )}
-        {responseBadge && <Badge variant={responseBadge.variant}>{responseBadge.label}</Badge>}
+        {responseBadge && (
+          <Badge variant={responseBadge.variant}>
+            {response === 'needsAction'
+              ? responseBadge.label
+              : `${differingSent ? 'Calendar' : 'Response'}: ${responseBadge.label}`}
+          </Badge>
+        )}
       </div>
       {(date || organizer || location) && (
         <dl className="flex flex-col gap-1 text-sm">
@@ -230,6 +238,12 @@ function InvitationCard({
           Checking invitation link…
         </p>
       )}
+      {isInvitation && differingSent && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Gmail Sent: {responseBadges[differingSent].label}. This reply differs from the answer
+          recorded in Calendar.
+        </p>
+      )}
       {status !== null && (
         <p role="status" className="text-muted-foreground text-sm">
           {status}
@@ -256,7 +270,7 @@ function responseNotice(
   { invitation, receipt, refreshPending }: InvitationCardState,
   canRespond: boolean,
 ): string | null {
-  const response = invitation.responseStatus
+  const response = invitationResponse(invitation).current
   if (receipt?.outcome === 'sent') {
     if (!receipt.hasReadback)
       return 'Google accepted your response, but its status has not been refreshed.'
