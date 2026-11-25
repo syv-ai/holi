@@ -72,7 +72,7 @@ describe.skipIf(!process.env.HOLI_CODEX_TUI_BIN)('native Codex TUI production co
           [...(error ? [error] : []), ...cleanupErrors],
           'Scenario cleanup incomplete',
         )
-      if (error) throw error
+      // A cleaned contract failure does not prevent independent ownership scenarios.
     }
     const start = async (context: Context) => {
       const started = await context.sessions.start('codex', {
@@ -178,6 +178,9 @@ describe.skipIf(!process.env.HOLI_CODEX_TUI_BIN)('native Codex TUI production co
         })
       }
       expect(scenarios).toHaveLength(4)
+      const failures = scenarios.filter(({ status }) => status !== 'pass')
+      if (failures.length)
+        throw new Error(failures.map(({ name, error }) => `${name}: ${error}`).join('\n'))
     } catch (error) {
       failure = error
     } finally {

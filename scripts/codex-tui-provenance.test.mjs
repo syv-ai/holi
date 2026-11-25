@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -41,7 +41,7 @@ async function installation(t) {
 test('synthetic package layout binds the native payload, not its launcher', async (t) => {
   const fixture = await installation(t)
   const result = verifyCodexTuiProvenance(fixture.root, { platform: 'darwin', arch: 'arm64' })
-  assert.equal(result.executable, fixture.executable)
+  assert.equal(result.executable, await realpath(fixture.executable))
   assert.equal(result.executableSha256, createHash('sha256').update(fixture.bytes).digest('hex'))
   assert.notEqual(result.executableSha256, result.launcherSha256)
 })

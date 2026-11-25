@@ -16,6 +16,8 @@ async function fixture(context, command, args, options = {}) {
     stateDirectory: root,
     timeoutMs: options.timeoutMs ?? 5000,
     maxOutputBytes: options.maxOutputBytes ?? 262144,
+    cols: options.cols,
+    rows: options.rows,
   })
   context.after(async () => {
     try {
@@ -149,3 +151,10 @@ test(
     assert.equal(receipt.drained, true)
   },
 )
+
+test('sets requested kernel terminal dimensions before native exec', posix, async (t) => {
+  const { handle } = await fixture(t, '/bin/stty', ['size'], { cols: 120, rows: 40 })
+  assert.equal((await handle.waitForExit()).code, 0)
+  assertGone(await handle.close())
+  assert.match(handle.output.toString(), /\b40 120\b/)
+})

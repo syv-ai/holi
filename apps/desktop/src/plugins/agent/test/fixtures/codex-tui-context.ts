@@ -96,6 +96,8 @@ export async function createCodexTuiContext({
         env: args.command.env,
         stateDirectory: join(root, 'pty-state', remote.replaceAll('/', '-'), String(native.length)),
         timeoutMs: 45_000,
+        cols: args.cols,
+        rows: args.rows,
         maxOutputBytes: 262_144,
       })
       const entry: (typeof native)[number] = { handle, argv, inputs: [] }
