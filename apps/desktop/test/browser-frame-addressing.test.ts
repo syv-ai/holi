@@ -506,7 +506,9 @@ describe('browser frame addressing ownership', () => {
     const pending = owner.send('Runtime.pending', {}, 'departing')
     events.emit('message', {}, 'Target.detachedFromTarget', { sessionId: 'departing' })
     await expect(pending).rejects.toThrow()
-    await expect(owner.send('Runtime.pending', {}, 'departing')).rejects.toThrow('no longer available')
+    await expect(owner.send('Runtime.pending', {}, 'departing')).rejects.toThrow(
+      'no longer available',
+    )
     await expect(owner.send('Runtime.pending', {}, 'healthy', false)).resolves.toEqual({
       session: 'healthy',
     })
