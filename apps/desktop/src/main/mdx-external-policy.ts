@@ -39,12 +39,12 @@ export function resolveMdxExternalResource(
   kind: MdxExternalResourceKind,
   base?: URL,
 ): ResolvedMdxExternalResource | { error: 'unsafe-url' | 'unsupported-format' } {
+  if (kind === 'module') {
+    const result = resolveMdxExternalModule(raw, base)
+    return 'error' in result ? result : { ...result, kind }
+  }
   const url = parseDestination(raw, base)
   if (!url) return { error: 'unsafe-url' }
-  if (kind === 'module') {
-    const format = moduleFormat(url.pathname)
-    return format ? { url, kind, format } : { error: 'unsupported-format' }
-  }
   const path = decodedPath(url.pathname)
   if (!path) return { error: 'unsupported-format' }
   const extension = posix.extname(path).toLowerCase()
@@ -60,10 +60,10 @@ export function resolveMdxExternalModule(
   raw: string,
   base?: URL,
 ): { url: URL; format: 'js' | 'jsx' } | { error: 'unsafe-url' | 'unsupported-format' } {
-  const result = resolveMdxExternalResource(raw, 'module', base)
-  if ('error' in result) return result
-  if (result.kind !== 'module') return { error: 'unsupported-format' }
-  return { url: result.url, format: result.format }
+  const url = parseDestination(raw, base)
+  if (!url) return { error: 'unsafe-url' }
+  const format = moduleFormat(url.pathname)
+  return format ? { url, format } : { error: 'unsupported-format' }
 }
 
 function decodedPath(pathname: string): string | null {

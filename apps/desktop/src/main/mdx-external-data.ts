@@ -3,7 +3,11 @@ import { Agent, request } from 'node:https'
 import type { IncomingMessage } from 'node:http'
 import { BlockList, isIP } from 'node:net'
 import os from 'node:os'
-import { resolveMdxExternalResource, type MdxExternalResourceKind } from './mdx-external-policy'
+import {
+  resolveMdxExternalModule,
+  resolveMdxExternalResource,
+  type MdxExternalResourceKind,
+} from './mdx-external-policy'
 
 const DEADLINE_MS = 8_000
 const BODY_LIMIT = 256 * 1024
@@ -77,7 +81,10 @@ export async function fetchMdxExternalResourceData(options: {
   const signal = AbortSignal.any([options.signal, deadline.signal])
   try {
     signal.throwIfAborted()
-    let destination = resolveMdxExternalResource(options.url, options.kind)
+    let destination =
+      options.kind === 'module'
+        ? resolveMdxExternalModule(options.url)
+        : resolveMdxExternalResource(options.url, options.kind)
     for (let redirects = 0; ; redirects++) {
       if ('error' in destination) throw new MdxExternalDataError(destination.error)
       const target = destination.url
@@ -102,7 +109,10 @@ export async function fetchMdxExternalResourceData(options: {
         }
       }
       if (redirects >= REDIRECT_LIMIT) throw new MdxExternalDataError('redirect')
-      destination = resolveMdxExternalResource(result.location, options.kind, target)
+      destination =
+        options.kind === 'module'
+          ? resolveMdxExternalModule(result.location, target)
+          : resolveMdxExternalResource(result.location, options.kind, target)
     }
   } catch (error) {
     // Do not propagate URL parse errors, DNS/TLS errors, callback exceptions or abort reasons.
