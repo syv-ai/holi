@@ -17,6 +17,7 @@ import { useMailMarkerActions } from '../use-mail-marker-actions'
 import { explainWriteFailure, isDisconnected, messageOf } from '../google-errors'
 import type { MailAddress, ThreadMessage } from '../mail-types'
 import type { MailFolder } from './data'
+import { mergeMailRefresh } from './mail-refresh'
 
 /** Gmail's own shapes, as the capabilities return them. */
 type SearchPage = Awaited<ReturnType<typeof googleCap.search>>
@@ -201,19 +202,11 @@ export function useMail(account: string | null, enabled = true) {
             cachedThreadIds.current = refreshedIds
             setList((previous) => ({
               kind: 'ready',
-              threads: [
-                ...page.threads,
-                ...(previous.kind === 'ready'
-                  ? previous.threads.filter(
-                      (thread) => !previousCachedIds.has(thread.id) && !refreshedIds.has(thread.id),
-                    )
-                  : []),
-              ],
-              // History deltas have no continuation; they do not exhaust Gmail's later pages.
-              nextPageToken:
-                previous.kind === 'ready'
-                  ? (previous.nextPageToken ?? page.nextPageToken)
-                  : page.nextPageToken,
+              ...mergeMailRefresh(
+                previous.kind === 'ready' ? previous : null,
+                page,
+                previousCachedIds,
+              ),
             }))
           }
         })

@@ -106,6 +106,7 @@ import { useGoogleAccount } from './account'
 import { useMailMarkers } from './use-mail-markers'
 import { useMailMarkerActions } from './use-mail-marker-actions'
 import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
+import { mergeMailRefresh } from './mail/mail-refresh'
 
 interface ThreadSummary {
   id: string
@@ -173,12 +174,14 @@ type ListState =
   | { kind: 'disconnected' }
   | { kind: 'error'; message: string }
 
-export function MailView() {
+export function MailView({ visible = true }: { visible?: boolean } = {}) {
   const { currentSub } = useGoogleAccount()
-  return <MailViewAccount key={currentSub ?? 'disconnected'} accountSub={currentSub} />
+  return (
+    <MailViewAccount key={currentSub ?? 'disconnected'} accountSub={currentSub} visible={visible} />
+  )
 }
 
-function MailViewAccount({ accountSub }: { accountSub: string | null }) {
+function MailViewAccount({ accountSub, visible }: { accountSub: string | null; visible: boolean }) {
   const [query, setQuery] = useState('')
   /** The query actually fetched, separate from the input so typing does not
    *  fire a request per keystroke against a rate-limited API. */
@@ -262,6 +265,11 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       remote === null ? Promise.reject(new Error('No vault is open.')) : work(remote),
     [remote],
   )
+  const listRequest = useRef(0)
+  const pendingListRequest = useRef<number | null>(null)
+  const paginationRequest = useRef<symbol | null>(null)
+  const cachedThreadIds = useRef(new Set<string>())
+  const pendingWrites = useRef(new Map<symbol, typeof call>())
   const markers = useMailMarkers({
     remote,
     accountSub,
@@ -353,26 +361,91 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   const unreadFilter = view.kind === 'category' && unreadOnly ? true : undefined
 
   const load = useCallback(() => {
+    paginationRequest.current = null
+    setLoadingMore(false)
     setList({ kind: 'loading' })
     listGeneration.current++
+    const at = ++listRequest.current
+    pendingListRequest.current = at
     void call((r) =>
       googleCap.search(r, { query: submitted, category: filter, unread: unreadFilter, mailbox }),
     )
-      .then((page) =>
+      .then((page) => {
+        if (listRequest.current !== at) return
+        cachedThreadIds.current = new Set(page.threads.map((thread) => thread.id))
         setList({
           kind: 'ready',
           threads: page.threads,
           nextPageToken: page.nextPageToken,
           syncedAt: page.syncedAt,
-        }),
-      )
+        })
+      })
       .catch((err: unknown) => {
+        if (listRequest.current !== at) return
         const message = err instanceof Error ? err.message : 'Could not load your mail.'
         setList(isDisconnected(err) ? { kind: 'disconnected' } : { kind: 'error', message })
       })
+      .finally(() => {
+        if (pendingListRequest.current === at) pendingListRequest.current = null
+      })
   }, [submitted, filter, unreadFilter, mailbox, call])
 
-  useEffect(load, [load])
+  useEffect(() => {
+    load()
+    return () => {
+      listRequest.current += 1
+      pendingListRequest.current = null
+      paginationRequest.current = null
+    }
+  }, [load])
+
+  useEffect(() => {
+    if (!visible || accountSub === null || showDrafts || searching) return
+    let active = true
+    const timer = window.setInterval(() => {
+      if (
+        pendingListRequest.current !== null ||
+        paginationRequest.current !== null ||
+        [...pendingWrites.current.values()].includes(call)
+      )
+        return
+      const at = ++listRequest.current
+      const generation = listGeneration.current
+      pendingListRequest.current = at
+      void call((r) =>
+        googleCap.search(r, { query: submitted, category: filter, unread: unreadFilter, mailbox }),
+      )
+        .then((page) => {
+          if (
+            !active ||
+            listRequest.current !== at ||
+            listGeneration.current !== generation ||
+            paginationRequest.current !== null
+          )
+            return
+          listGeneration.current++
+          const previousCachedIds = cachedThreadIds.current
+          cachedThreadIds.current = new Set(page.threads.map((thread) => thread.id))
+          setList((previous) => ({
+            kind: 'ready',
+            ...mergeMailRefresh(
+              previous.kind === 'ready' ? previous : null,
+              page,
+              previousCachedIds,
+            ),
+            syncedAt: page.syncedAt,
+          }))
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (pendingListRequest.current === at) pendingListRequest.current = null
+        })
+    }, 30_000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [visible, accountSub, showDrafts, searching, submitted, filter, unreadFilter, mailbox, call])
 
   /** The footer's numbers. One request, and a failure leaves the footer
    *  numberless rather than the list broken. */
@@ -578,6 +651,9 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
    * Gmail is rate limited, and one trackpad flick would spend a minute's quota.
    */
   const loadMore = (pageToken: string) => {
+    if (paginationRequest.current !== null) return
+    const request = Symbol()
+    paginationRequest.current = request
     setLoadingMore(true)
     void call((r) =>
       googleCap.search(r, {
@@ -589,20 +665,32 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       }),
     )
       .then((page) => {
+        if (paginationRequest.current !== request) return
         listGeneration.current++
         setList((previous) =>
           previous.kind === 'ready'
             ? {
                 kind: 'ready',
-                threads: [...previous.threads, ...page.threads],
+                threads: [
+                  ...previous.threads,
+                  ...page.threads.filter(
+                    (thread) => !previous.threads.some((old) => old.id === thread.id),
+                  ),
+                ],
                 nextPageToken: page.nextPageToken,
                 syncedAt: page.syncedAt,
               }
             : previous,
         )
       })
-      // A failed "load more" leaves what is already on screen alone.
-      .finally(() => setLoadingMore(false))
+      .catch((err: unknown) => {
+        if (paginationRequest.current === request) setWriteError(explainWriteFailure(err))
+      })
+      .finally(() => {
+        if (paginationRequest.current !== request) return
+        paginationRequest.current = null
+        setLoadingMore(false)
+      })
   }
 
   /**
@@ -664,6 +752,8 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     setList((previous) =>
       previous.kind === 'ready' ? { ...previous, threads: next(previous.threads) } : previous,
     )
+    const operation = Symbol()
+    pendingWrites.current.set(operation, call)
     try {
       await mutate()
       return true
@@ -684,6 +774,8 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       // (e.g. a grant missing `gmail.modify`), so always say why.
       setWriteError(explainWriteFailure(err))
       return false
+    } finally {
+      pendingWrites.current.delete(operation)
     }
   }
 

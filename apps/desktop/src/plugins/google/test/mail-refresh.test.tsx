@@ -13,6 +13,7 @@ const archive = vi.fn()
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: {
+      names: { query: async () => [] },
       run: {
         mutate: async (input: { name: string; remote: string; paramsJson?: string }) => {
           const params = JSON.parse(input.paramsJson ?? '{}') as Record<string, unknown>
@@ -79,11 +80,11 @@ function summary(id: string): ThreadSummary {
 }
 
 function page(...ids: string[]) {
-  return { threads: ids.map(summary), nextPageToken: null }
+  return { threads: ids.map(summary), nextPageToken: null, syncedAt: '2026-11-25T00:00:00Z' }
 }
 
 function pageWithToken(token: string | null, ...ids: string[]) {
-  return { threads: ids.map(summary), nextPageToken: token }
+  return { threads: ids.map(summary), nextPageToken: token, syncedAt: '2026-11-25T00:00:00Z' }
 }
 
 function deferred<T>() {
@@ -126,18 +127,45 @@ afterEach(() => {
 test('history refresh preserves later pages and continuation after cached rows disappear', async () => {
   search
     .mockResolvedValueOnce(pageWithToken('next', 'cached'))
-    .mockResolvedValueOnce(pageWithToken(null, 'later'))
+    .mockResolvedValueOnce(pageWithToken(null, 'arrived', 'cached'))
+    .mockResolvedValueOnce(pageWithToken('older', 'later'))
     .mockResolvedValueOnce(pageWithToken(null, 'arrived'))
+    .mockResolvedValueOnce(pageWithToken(null, 'later', 'last'))
   const { result } = await mount()
-  await act(async () => result.current.loadMore())
-  expect(result.current.threads.map((thread) => thread.id)).toEqual(['cached', 'later'])
   await advance()
-  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'later'])
-  expect(search.mock.calls[1]?.[1]).toMatchObject({ pageToken: 'next' })
   expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: 'next' })
   await act(async () => result.current.loadMore())
-  expect(search.mock.calls[3]?.[1]).toMatchObject({ pageToken: 'next' })
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'cached', 'later'])
+  expect(search.mock.calls[2]?.[1]).toMatchObject({ pageToken: 'next' })
+  await advance()
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'later'])
+  expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: 'older' })
+  await act(async () => result.current.loadMore())
+  expect(search.mock.calls[4]?.[1]).toMatchObject({ pageToken: 'older' })
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'later', 'last'])
+  expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: null })
+})
+
+test('a refresh finishing during pagination cannot replace or duplicate appended rows', async () => {
+  search.mockResolvedValueOnce(pageWithToken('next', 'cached'))
+  const { result } = await mount()
+  const refresh = deferred<ReturnType<typeof page>>()
+  const later = deferred<ReturnType<typeof pageWithToken>>()
+  search.mockReturnValueOnce(refresh.promise)
+  await advance()
+  search.mockReturnValueOnce(later.promise)
+  await act(async () => result.current.loadMore())
+  await act(async () => {
+    refresh.resolve(page('arrived', 'cached'))
+  })
+  await act(async () => {
+    later.resolve(pageWithToken('older', 'cached', 'later'))
+  })
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['cached', 'later'])
+  search.mockResolvedValue(page('arrived', 'cached'))
+  await advance()
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'cached', 'later'])
+  expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: 'older' })
 })
 
 test('restored legacy Mail surface receives arrivals and stops polling while hidden', async () => {
@@ -152,10 +180,11 @@ test('restored legacy Mail surface receives arrivals and stops polling while hid
       <Surface visible />
     </Provider>,
   )
-  await screen.findByText('existing')
+  await act(async () => {})
+  expect(screen.queryAllByText('existing').length).toBeGreaterThan(0)
   search.mockResolvedValue(page('incoming', 'existing'))
   await advance()
-  await screen.findByText('incoming')
+  expect(screen.queryAllByText('incoming').length).toBeGreaterThan(0)
   view.rerender(
     <Provider store={store}>
       <Surface visible={false} />
@@ -282,10 +311,13 @@ test('hidden mail drops its pending answer and performs no more periodic reads',
 })
 
 test('a deferred later page cannot cross an account switch or lose the current rows', async () => {
+  search.mockResolvedValueOnce(pageWithToken('next', 'existing'))
   const { result, rerender } = await mount()
   const later = deferred<ReturnType<typeof page>>()
   search.mockReturnValueOnce(later.promise)
   await act(async () => result.current.loadMore())
+  await advance()
+  expect(search).toHaveBeenCalledTimes(2)
   rerender({ account: 'account-b', visible: true })
   await advance()
   await act(async () => {
