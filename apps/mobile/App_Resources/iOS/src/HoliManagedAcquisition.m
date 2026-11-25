@@ -113,7 +113,7 @@ static BOOL HMASyncTree(int directory, NSUInteger depth, NSUInteger *entries, NS
     if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
     if (++*entries > 100000) { ok = HMAFail(error, EFBIG, @"Acquisition tree exceeds entry bound"); break; }
     struct stat before, opened, after;
-    if (fstatat(directory, entry->d_name, &before, AT_SYMLINK_NOFOLLOW) || (!S_ISDIR(before.st_mode) && !S_ISREG(before.st_mode))) {
+    if (fstatat(directory, entry->d_name, &before, AT_SYMLINK_NOFOLLOW) || (!S_ISDIR(before.st_mode) && !S_ISREG(before.st_mode)) || (S_ISREG(before.st_mode) && before.st_nlink != 1)) {
       ok = HMAFail(error, EINVAL, @"Unsupported acquisition entry"); break;
     }
     int fd = openat(directory, entry->d_name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC | (S_ISDIR(before.st_mode) ? O_DIRECTORY : 0));

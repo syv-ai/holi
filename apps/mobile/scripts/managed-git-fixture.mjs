@@ -2,7 +2,7 @@ import { createServer } from 'node:https'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { randomBytes } from 'node:crypto'
-import { mkdir, writeFile, readFile, chmod } from 'node:fs/promises'
+import { mkdir, writeFile, readFile, chmod, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const exec = promisify(execFile)
@@ -79,6 +79,28 @@ export async function createManagedGitFixture(parent) {
     protectedBranches.push(`blocked/${name}`)
   }
   await git(seed, 'checkout', 'review/mobile')
+  const blob = await git(seed, 'rev-parse', `${selectedHead}:main.md`)
+  const treePath = join(root, 'case-tree')
+  await writeFile(
+    treePath,
+    Buffer.concat(
+      ['Alias.md', 'alias.md'].map((name) =>
+        Buffer.concat([Buffer.from(`100644 ${name}\0`), Buffer.from(blob, 'hex')]),
+      ),
+    ),
+  )
+  const tree = await git(seed, 'hash-object', '-t', 'tree', '-w', treePath)
+  const collision = await git(
+    seed,
+    'commit-tree',
+    tree,
+    '-p',
+    selectedHead,
+    '-m',
+    'case collision fixture',
+  )
+  await git(seed, 'update-ref', 'refs/heads/blocked/collision', collision)
+  protectedBranches.push('blocked/collision')
   await exec('git', ['clone', '--bare', seed, bare], { env })
   await git(bare, 'symbolic-ref', 'HEAD', 'refs/heads/main')
   await git(bare, 'config', 'http.receivepack', 'true')
@@ -91,18 +113,24 @@ export async function createManagedGitFixture(parent) {
     children = new Set()
   let collectorRequests = 0,
     backendFailures = 0
+  let collectorConnections = 0
   const collector = createServer(tls, (_request, response) => {
     collectorRequests++
     response.writeHead(500)
     response.end()
   })
   collector.on('connection', (socket) => {
+    collectorConnections++
     sockets.add(socket)
     socket.on('close', () => sockets.delete(socket))
   })
   await new Promise((resolve) => collector.listen(0, '127.0.0.1', resolve))
   const server = createServer(tls, (request, response) => {
     const url = new URL(request.url, 'https://127.0.0.1')
+    if (url.pathname.startsWith('/fixture/drop.git/')) {
+      request.socket.destroy()
+      return
+    }
     const authenticated = request.headers.authorization === authorization
     requests.push({ path: url.pathname, method: request.method, authenticated })
     if (url.pathname.startsWith('/fixture/redirect.git/')) {
@@ -208,6 +236,9 @@ export async function createManagedGitFixture(parent) {
     requests,
     endpoint: `${origin}/fixture/vault.git`,
     origin,
+    get collectorConnections() {
+      return collectorConnections
+    },
     get collectorRequests() {
       return collectorRequests
     },
@@ -231,6 +262,7 @@ export async function createManagedGitFixture(parent) {
             ),
         ),
       )
+      await rm(key, { force: true })
     },
   }
 }

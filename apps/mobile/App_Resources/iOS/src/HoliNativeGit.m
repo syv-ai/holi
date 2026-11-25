@@ -206,6 +206,7 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
 }
 
 - (NSDictionary<NSString *, id> *)runSelectedBranchOperation:(NSString *)operation root:(NSString *)root remote:(NSString *)remote owner:(NSString *)owner repositoryName:(NSString *)repositoryName branch:(NSString *)branch username:(NSString *)username password:(NSString *)password error:(NSError **)error {
+  HNGInitializeLibgit2();
   NSRegularExpression *identity = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9._-]+$" options:0 error:nil];
   int validRef = 0;
   BOOL validBranch = branch.length > 0;
@@ -317,22 +318,31 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
   callbacks.push_update_reference = HNGPushUpdate;
   callbacks.payload = &credentials;
   if (isClone && selectedBranch) {
-    // Selected clones start from a fresh repository whose only config source is
-    // its local .git/config. Do this before libgit2 performs any network work.
-    HNGSelectedClone cloneContext = { HNGSelectedCloneMarker, &credentials, selectedBranch, remote };
-    git_clone_options options = GIT_CLONE_OPTIONS_INIT;
-    options.fetch_opts.callbacks = callbacks;
-    options.fetch_opts.download_tags = GIT_REMOTE_DOWNLOAD_TAGS_NONE;
-    options.fetch_opts.follow_redirects = GIT_REMOTE_REDIRECT_NONE;
-    options.fetch_opts.proxy_opts.type = GIT_PROXY_NONE;
-    options.checkout_branch = selectedBranch.UTF8String;
-    options.checkout_opts.checkout_strategy = GIT_CHECKOUT_NONE;
-    options.repository_cb = HNGSelectedRepository;
-    options.repository_cb_payload = &cloneContext;
-    options.remote_cb = HNGSelectedRemote;
-    options.remote_cb_payload = &cloneContext;
-    options.fetch_opts.callbacks.payload = &credentials;
-    result = git_clone(&repository, remote.UTF8String, rootPath, &options);
+    // Init/fetch explicitly: git_clone assumes the default unborn HEAD and
+    // recursively removes its destination on failure. An interrupted managed
+    // acquisition instead keeps its owned staging bytes for recovery.
+    HNGSelectedClone context = { HNGSelectedCloneMarker, &credentials, selectedBranch, remote };
+    result = HNGSelectedRepository(&repository, rootPath, 0, &context);
+    git_remote *selectedRemote = NULL;
+    if (result == 0) result = HNGSelectedRemote(&selectedRemote, repository, "origin", remote.UTF8String, &context);
+    git_fetch_options options = GIT_FETCH_OPTIONS_INIT;
+    options.callbacks = callbacks;
+    options.download_tags = GIT_REMOTE_DOWNLOAD_TAGS_NONE;
+    options.follow_redirects = GIT_REMOTE_REDIRECT_NONE;
+    options.proxy_opts.type = GIT_PROXY_NONE;
+    if (result == 0) result = git_remote_fetch(selectedRemote, NULL, &options, "managed acquisition");
+    git_oid target;
+    NSString *tracking = [@"refs/remotes/origin/" stringByAppendingString:selectedBranch];
+    if (result == 0) result = git_reference_name_to_id(&target, repository, tracking.UTF8String);
+    git_commit *commit = NULL;
+    git_reference *branch = NULL;
+    if (result == 0) result = git_commit_lookup(&commit, repository, &target);
+    if (result == 0) result = git_branch_create(&branch, repository, selectedBranch.UTF8String, commit, 0);
+    if (result == 0) result = git_branch_set_upstream(branch, [@"origin/" stringByAppendingString:selectedBranch].UTF8String);
+    if (result == 0) result = git_repository_set_head(repository, [@"refs/heads/" stringByAppendingString:selectedBranch].UTF8String);
+    git_reference_free(branch);
+    git_commit_free(commit);
+    git_remote_free(selectedRemote);
   } else if (isClone) {
     git_clone_options options = GIT_CLONE_OPTIONS_INIT;
     options.fetch_opts.callbacks = callbacks;

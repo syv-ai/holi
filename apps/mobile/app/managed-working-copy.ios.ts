@@ -73,7 +73,8 @@ function identity(value: NSDictionary<string, NSObject>): ManagedWorkingCopyIden
   }
 }
 
-function authorize(plan: NSDictionary<string, NSObject>): void {
+function authorize(plan: NSDictionary<string, NSObject>, checkout = false): void {
+  const names = new Map<string, { raw: string; directory: boolean }>()
   const entries = plan.objectForKey('entries') as NSArray<NSDictionary<string, NSObject>>
   if (!entries || typeof entries.count !== 'number')
     throw new TransportFailure('rejected', 'Invalid native tree plan')
@@ -81,6 +82,18 @@ function authorize(plan: NSDictionary<string, NSObject>): void {
     const entry = entries.objectAtIndex(index)
     const raw = String(entry.objectForKey('path'))
     const path = vaultRelPath(raw)
+    if (checkout) {
+      const parts = path.split('/')
+      for (let part = 0; part < parts.length; part++) {
+        const prefix = parts.slice(0, part + 1).join('/')
+        const key = prefix.normalize('NFD').toLowerCase()
+        const directory = part < parts.length - 1
+        const previous = names.get(key)
+        if (previous && (previous.raw !== prefix || previous.directory !== directory))
+          throw new TransportFailure('collision', 'Git tree contains filesystem aliases')
+        names.set(key, { raw: prefix, directory })
+      }
+    }
     if (
       path !== raw ||
       String(entry.objectForKey('kind')) !== 'file' ||
@@ -253,7 +266,7 @@ export function createManagedWorkingCopyIOS(
       const stage = String(receipt.objectForKey('stagePath'))
       await checkpoint('fetched', receipt)
       const incoming = checked((error) => client.committedEntriesHistoryError(stage, false, error))
-      authorize(incoming)
+      authorize(incoming, true)
       if (!checked((error) => client.materializeManagedPlanError(stage, incoming, error)))
         throw new TransportFailure('rejected', 'Checkout materialization refused')
       await checkpoint('authorized', receipt)

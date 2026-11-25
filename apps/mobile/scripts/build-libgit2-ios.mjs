@@ -15,7 +15,7 @@ const build = join(generated, 'build')
 const prefix = join(generated, 'install')
 const url = 'https://github.com/libgit2/libgit2/archive/refs/tags/v1.9.7.tar.gz'
 const sha256 = '1a4fbe7589e814777ae76b64734ad80f4ecad22cd33a22682a2aaea4ae5375e7'
-const patchVersion = 'holi-isolated-config-open-v2'
+const patchVersion = 'holi-isolated-config-strict-redirect-v3'
 
 async function patchRepository(sourceRoot) {
   const repositoryPath = join(sourceRoot, 'src/libgit2/repository.c')
@@ -71,6 +71,24 @@ async function patchRepository(sourceRoot) {
   }
 }
 
+async function patchRedirects(sourceRoot) {
+  const path = join(sourceRoot, 'src/libgit2/transports/http.c')
+  const source = await readFile(path, 'utf8')
+  const anchor = 'if (allow_replay && git_http_response_is_redirect(response)) {'
+  if (source.split(anchor).length !== 2) throw new Error('Unexpected libgit2 redirect handler')
+  await writeFile(
+    path,
+    source.replace(
+      anchor,
+      `${anchor}
+		if (transport->owner->connect_opts.follow_redirects == GIT_REMOTE_REDIRECT_NONE) {
+			git_error_set(GIT_ERROR_HTTP, "redirects are disabled");
+			return -1;
+		}`,
+    ),
+  )
+}
+
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, stdio: 'inherit' })
   if (result.error) throw result.error
@@ -123,6 +141,7 @@ if ((await readFile(stamp, 'utf8').catch(() => null)) !== expectedStamp) {
   await mkdir(source, { recursive: true })
   run('tar', ['-xzf', archive, '--strip-components=1', '-C', source])
   await patchRepository(source)
+  await patchRedirects(source)
   await writeFile(stamp, expectedStamp)
 }
 await rm(build, { recursive: true, force: true })

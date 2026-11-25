@@ -27,6 +27,7 @@ import {
 import { captureStorageEvidence, readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
 import { createGitFixture } from './git-fixture.mjs'
+import { runManagedIOSScenarios } from './managed-ios-scenarios.mjs'
 import { createWorkingCopyFixture, verifyWorkingCopyUnchanged } from './working-copy-fixture.mjs'
 import { validateWorkingCopyResults } from './host-checks.mjs'
 import {
@@ -610,6 +611,17 @@ try {
     join(artifacts, 'move-matrix.json'),
     JSON.stringify({ cases: moveEvidence.length, evidence: moveEvidence }, null, 2),
   )
+  await drainProcess(activeProcess)
+  activeProcess = undefined
+  const managed = await runManagedIOSScenarios({
+    simulator,
+    container: canonicalContainer,
+    bundleId,
+    artifacts,
+    runId,
+    command,
+    signal: controller.signal,
+  })
   await writeFile(
     join(artifacts, 'acceptance.json'),
     JSON.stringify(
@@ -621,6 +633,7 @@ try {
         stagedKill: true,
         recovery: true,
         gitTransport: true,
+        managedGitCases: managed.cases,
         moveCrashCases: moveEvidence.length,
         faultOperations: 10,
         rawSpellings: 2,
