@@ -36,7 +36,7 @@ export interface NativeTreePreparation {
     root: string,
     remote: string,
     branch: string,
-    paths: VaultRelPath[],
+    policy: (rawPath: string) => number,
   ): Promise<PreparedWorkingCopyTree>
 }
 
@@ -77,22 +77,21 @@ export async function prepareWorkingCopyTree(
       !identity.remotes.includes(vault.remote)
     )
       throw new Error('Working copy identity does not match vault')
-    const candidates = await native.candidates(root)
-    const unique = new Map<string, VaultRelPath>()
-    const aliases = new Set<string>()
-    for (const candidate of candidates) {
-      const path = safePath(candidate.path)
-      if (!path || !safePath(candidate.path.normalize('NFC').toLocaleLowerCase('en-US'))) continue
-      const key = path.normalize('NFC').toLocaleLowerCase('en-US')
-      if (aliases.has(key)) throw new Error('Ambiguous working copy paths')
-      aliases.add(key)
-      unique.set(path, path)
+    const policy = (raw: string): number => {
+      try {
+        const path = vaultRelPath(raw)
+        const folded = vaultRelPath(raw.normalize('NFC').toLocaleLowerCase('en-US'))
+        if (
+          isSecretPath(path) || isLocalOnlyPath(path) || isInIgnoredDir(path) ||
+          isSecretPath(folded) || isLocalOnlyPath(folded) || isInIgnoredDir(folded) ||
+          path.split('/').some((part) => /^\.holi-storage-/i.test(part))
+        ) return 0
+        return 1
+      } catch {
+        return -1
+      }
     }
-    const paths = [...unique.values()].sort()
-    for (const path of paths) {
-      if (!(await native.authorize(root, path))) throw new Error('Unsafe working copy path')
-    }
-    const result = await native.prepareWorkingCopyTree(root, vault.remote, vault.branch, paths)
+    const result = await native.prepareWorkingCopyTree(root, vault.remote, vault.branch, policy)
     if (
       !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(result.treeOID) ||
       !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(result.parentOID) ||
