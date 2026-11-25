@@ -8,6 +8,7 @@ import {
 } from './api'
 import type { InviteAnswer } from './calendar'
 import {
+  calendarLocatorMayMatchScope,
   calendarTargetIsMailbox,
   calendarTargetMailbox,
   findInvitationCalendarCopy,
@@ -337,17 +338,13 @@ function relevantCalendarTargets(
   target: Target,
   details: Invitation['details'],
 ): Set<string> {
-  const { uid, recurrenceId } = details.identity
-  // An occurrence can still belong to a known series even if events.list
-  // omits both. Other occurrences do not identify its original slot.
+  const { uid } = details.identity
   return new Set(
     locators.flatMap((copy) =>
       copy.accountSub === target.accountSub &&
       copy.uid === uid &&
       (copy.organizer === undefined || copy.organizer === details.organizer?.email) &&
-      (copy.recurrenceId === recurrenceId ||
-        (recurrenceId !== null && copy.recurrenceId === null && copy.series !== false) ||
-        (recurrenceId === null && details.recurring)) &&
+      calendarLocatorMayMatchScope(copy, details) &&
       (calendarTargetMailbox(copy.target) ?? target.email) === target.email
         ? [copy.target]
         : [],
