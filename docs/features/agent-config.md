@@ -18,13 +18,20 @@ channel that reaches every background session. It
 removes the `statusLine` older versions installed. A theme change reaches a running session on
 **Restart** (`claude respawn`).
 
-**Where a session finds Holi.** Not in this directory, and not in the environment: a background
-session's environment is its supervisor's, which may predate this Holi. Every command and hook
-walks up from its current directory to the folder holding `.holi/vault` and reads
-`.holi/state/bridge.local.env` there (mode 0600), written whole each time Holi opens the vault
-and deleted when it leaves: the bridge's port and the vault's token. It is a map each part of Holi contributes to
-(`bridgeEnv.contribute`), and it is parsed key by key, never sourced, because a collaborator
-could force-add one. `CLAUDE_CONFIG_DIR` stays the agent's config silo only.
+**Where hooks find Holi.** Hooks do not inherit bridge credentials from the
+supervisor's environment, which may predate this Holi. They walk up from their
+current directory to the folder holding `.holi/vault` and read
+`.holi/state/bridge.local.env` there (mode 0600), written whole each time Holi opens
+the vault and deleted when it leaves: the bridge's port and the vault's token.
+Each part of Holi contributes to this map (`bridgeEnv.contribute`). Hooks parse
+it key by key, never source it, because a collaborator could force-add one.
+`CLAUDE_CONFIG_DIR` stays the agent's config silo only.
+
+**Where the CLI finds Holi.** The agent's executable reads its fixed private
+endpoint descriptor outside the vault, independently of cwd. Launch PATH and
+`HOLI_BIN`, including Claude's regenerated settings environment, point to that
+vault-bound executable. The person's global CLI uses the separate machine
+endpoint. Neither executable discovers credentials through `bridge.local.env`.
 
 **Sign-in is lazy.** Credentials are keyed to the config directory, so each vault needs its own
 `/login`. The first terminal Holi opens on a directory writes a `.holi-spawned` marker and prints a
