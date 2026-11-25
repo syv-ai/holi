@@ -49,7 +49,7 @@ function frame(line) {
   if (!x || typeof x !== 'object' || Array.isArray(x)) return fail('Invalid PTY record');
   if (!started) {
     if (typeof x.file !== 'string' || !x.file || typeof x.cwd !== 'string' || !x.cwd ||
-        !Array.isArray(x.args) || !x.args.every(a => typeof a === 'string') ||
+        !(typeof x.args === 'string' || (Array.isArray(x.args) && x.args.every(a => typeof a === 'string'))) ||
         !x.env || typeof x.env !== 'object' || Array.isArray(x.env) ||
         !Object.values(x.env).every(v => typeof v === 'string') || !dimensions(x))
       return fail('Invalid PTY startup');

@@ -91,11 +91,10 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   const cancellations = new Set<AbortController>()
   const drainErrors = new Set<unknown>()
   let retirement: Promise<void> | undefined
-  // The production POSIX caller already inspected this scope before creating
-  // its owners. Never sweep an unlinked directory on POSIX.
+  // POSIX recovery inspects its scope before creating owners. Without recovery
+  // authority, retain unknown scratch on every platform instead of sweeping it.
   const swept = (async () => {
-    if (process.platform === 'win32') await rm(deps.scratchRoot, { recursive: true, force: true })
-    else if (!deps.ownership && scratchEntries(deps.scratchRoot).length !== 0)
+    if (!deps.ownership && scratchEntries(deps.scratchRoot).length !== 0)
       throw new Error(`Retaining unlinked fenced scratch: ${deps.scratchRoot}`)
   })().catch((err: unknown) => {
     drainErrors.add(err)

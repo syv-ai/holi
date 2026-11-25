@@ -139,6 +139,12 @@ export class AgentRuntime {
   private settlement: Promise<void> | null = null
   private readonly spawnPty: SpawnPty
   private readonly launchWindowsPty: typeof launchOwnedWindowsPty
+  private readonly useOwnedWindows: boolean
+  private windowsReady?: Promise<void>
+  private windowsStopping = false
+  private windowsInput: string[] = []
+  private windowsInputBytes = 0
+  private windowsResize?: { cols: number; rows: number }
   private readonly probePid: (pid: number) => PidState
   private readonly platform: NodeJS.Platform
   private readonly taskkill: ((pid: number) => void) | undefined
@@ -159,9 +165,10 @@ export class AgentRuntime {
   constructor(deps: AgentRuntimeDeps = {}) {
     this.spawnPty = deps.spawnPty ?? defaultSpawnPty
     this.launchWindowsPty = deps.launchWindowsPty ?? launchOwnedWindowsPty
+    this.useOwnedWindows = deps.launchWindowsPty !== undefined || this.spawnPty === defaultSpawnPty
     this.probePid = deps.probePid ?? (deps.spawnPty ? () => 'alive' : defaultProbePid)
     this.platform = deps.platform ?? process.platform
-    this.taskkill = deps.taskkill
+    this.taskkill = deps.taskkill ?? (deps.spawnPty ? () => {} : undefined)
     this.killGraceMs = deps.killGraceMs ?? 2_000
     this.killBackstopMs = deps.killBackstopMs ?? 5_000
     this.superviseGroup = deps.superviseGroup
@@ -214,7 +221,8 @@ export class AgentRuntime {
 
   start({ bin, args, cwd, env, cols, rows }: StartArgs): void {
     if (this.pty || this.windowsLaunch) throw new Error('agent session already running')
-    if (this.platform === 'win32' && (!this.spawnPty || this.spawnPty === defaultSpawnPty)) {
+    if (this.startupCleanup) throw new Error('previous agent launch cleanup has not succeeded')
+    if (this.platform === 'win32' && this.useOwnedWindows) {
       this.startWindows({ bin, args, cwd, env, cols, rows })
       return
     }
@@ -401,46 +409,160 @@ export class AgentRuntime {
     this.callbackSettlement = undefined
     this.physicalDrain = undefined
     this.settlement = null
+    this.windowsStopping = false
+    this.windowsInput = []
+    this.windowsInputBytes = 0
+    this.windowsResize = undefined
     if (this.activationSignal?.aborted) throw new PtyAdmissionClosed()
-    if (ownership) this.ownership = ownership.allocate('native')
-    const launch = this.launchWindowsPty({
-      file: args.bin, args: args.args, cwd: args.cwd, env: args.env, cols: args.cols, rows: args.rows,
-    })
-    this.windowsLaunch = launch
-    void launch.completion.then(() => {}, (error: unknown) => {
-      this.rememberExitFailure(error)
-      this.startupCleanup = Promise.reject(error)
+    // The native Job is the authority, not a POSIX on-disk group journal.
+    if (ownership) this.ownership = ownership.allocate('explicit')
+    let launch: ReturnType<typeof launchOwnedWindowsPty>
+    try {
+      launch = this.launchWindowsPty({
+        file: args.bin,
+        args: args.args,
+        cwd: args.cwd,
+        env: args.env,
+        cols: args.cols ?? 80,
+        rows: args.rows ?? 24,
+      })
+    } catch (error) {
+      const cleanup = ptyLaunchCleanup(error)
+      this.startupCleanup = cleanup
+        ? cleanup.then(() => {
+            throw error
+          })
+        : Promise.reject(error)
       this.observe(this.startupCleanup)
-    })
-    void launch.ready.then((ownedPty) => {
-      if (this.windowsLaunch !== launch) return
-      const pty = ownedPty as PtyProcess
-      this.pty = pty
-      pty.onData((data) => {
-        if (this.pty === pty && !this.exitFailure) for (const cb of this.dataCbs) cb(data)
-      })
-      pty.onExit((event) => {
-        if (this.pty !== pty || this.exitReported) return
-        this.exitReported = true
-        this.beginDrain()
-        this.callbackSettlement = (async () => {
-          await launch.completion
-          if (this.exitFailure) throw this.exitFailure.cause
-          const exit: AgentExit = { exitCode: event.exitCode, signal: event.signal }
-          for (const cb of this.exitCbs) await bounded(Promise.resolve(cb(exit)), `PTY ${pty.pid} exit callbacks`)
-          this.ownership?.retire()
-          this.pty = null
-          this.windowsLaunch = undefined
-          this.closedCb?.()
-        })().catch((error: unknown) => { throw this.rememberExitFailure(error) })
-        this.observeExit(this.callbackSettlement)
-        this.notifyPublicExit?.()
-      })
-      this.supervision = { drain: () => launch.completion }
-    }).catch((error: unknown) => {
-      for (const cb of this.dataCbs) cb(`\\r\\n[agent] Windows PTY startup failed: ${String(error)}\\r\\n`)
       this.rememberExitFailure(error)
+      throw error
+    }
+    this.windowsLaunch = launch
+    this.supervision = { drain: () => launch.stop() }
+    const abort = () => {
+      void this.kill().catch(() => {})
+    }
+    this.activationSignal?.addEventListener('abort', abort, { once: true })
+    void launch.completion
+      .then(
+        () => this.activationSignal?.removeEventListener('abort', abort),
+        (error: unknown) => {
+          this.activationSignal?.removeEventListener('abort', abort)
+          const original = this.rememberExitFailure(error)
+          this.beginDrain()
+          this.settlement ??= Promise.reject(original)
+          this.observe(this.settlement)
+          for (const cb of this.dataCbs)
+            cb(
+              '\r\n[Holi] Windows agent cleanup failed; the original session remains retained.\r\n',
+            )
+        },
+      )
+      .catch((error: unknown) => {
+        this.rememberExitFailure(error)
+      })
+    const ready: Promise<void> = launch.ready
+      .then(async (ownedPty) => {
+        if (this.windowsStopping || this.activationSignal?.aborted) {
+          this.windowsStopping = true
+          this.beginDrain()
+        }
+        const pty: PtyProcess = {
+          pid: ownedPty.pid,
+          onData: (cb) => ownedPty.onData(cb),
+          onExit: (cb) => ownedPty.onExit(cb),
+          write: (data) => ownedPty.write(data),
+          resize: (cols, rows) => ownedPty.resize(cols, rows),
+          kill: () => {
+            void this.kill().catch(() => {})
+          },
+        }
+        this.pty = pty
+        pty.onData((data) => {
+          if (this.pty === pty && !this.exitFailure) for (const cb of this.dataCbs) cb(data)
+        })
+        pty.onExit((event) => {
+          if (this.pty !== pty) return
+          void this.finishWindowsExit(event, launch).catch(() => {})
+        })
+        if (!this.draining) {
+          if (this.windowsResize) pty.resize(this.windowsResize.cols, this.windowsResize.rows)
+          const pending = this.windowsInput
+          this.windowsInput = []
+          this.windowsInputBytes = 0
+          for (const data of pending) pty.write(data)
+        } else {
+          await launch.stop()
+          await this.finishWindowsExit({ exitCode: -1 }, launch)
+        }
+      })
+      .catch(async (error: unknown) => {
+        try {
+          if (this.windowsStopping) {
+            await launch.stop()
+            await this.finishWindowsExit({ exitCode: -1 }, launch)
+            return
+          }
+          throw error
+        } catch (cause) {
+          const original = this.rememberExitFailure(cause)
+          this.beginDrain()
+          this.startupCleanup = ready
+          this.settlement ??= ready
+          for (const cb of this.dataCbs)
+            cb(
+              '\r\n[Holi] Windows agent startup failed; its original cleanup remains retained.\r\n',
+            )
+          try {
+            await launch.stop()
+          } catch (cleanupError) {
+            this.rememberExitFailure(cleanupError)
+          }
+          throw original
+        }
+      })
+    this.windowsReady = ready
+    this.observe(ready)
+    if (this.activationSignal?.aborted) abort()
+  }
+
+  private finishWindowsExit(
+    event: AgentExit,
+    launch: ReturnType<typeof launchOwnedWindowsPty>,
+  ): Promise<void> {
+    if (this.callbackSettlement) return this.callbackSettlement
+    this.exitReported = true
+    this.beginDrain()
+    this.windowsInput = []
+    this.windowsInputBytes = 0
+    const work = (async () => {
+      await launch.completion
+      if (this.exitFailure) throw this.exitFailure.cause
+      const controller = new AbortController()
+      const callbacks = async () => {
+        for (const cb of this.exitCbs) {
+          await cb(event, controller.signal)
+          controller.signal.throwIfAborted()
+        }
+      }
+      try {
+        await bounded(callbacks(), `PTY ${this.pid ?? 'unavailable'} exit callbacks`)
+      } catch (error) {
+        controller.abort(error)
+        throw error
+      }
+      this.ownership?.retire()
+      this.pty = null
+      this.windowsLaunch = undefined
+      this.windowsReady = undefined
+      this.closedCb?.()
+    })().catch((error: unknown) => {
+      throw this.rememberExitFailure(error)
     })
+    this.callbackSettlement = work
+    this.observeExit(work)
+    this.notifyPublicExit?.()
+    return work
   }
 
   private failed(error: unknown): void {
@@ -509,11 +631,28 @@ export class AgentRuntime {
   }
 
   write(data: string): void {
+    if (this.windowsLaunch && !this.pty) {
+      if (this.draining) return
+      this.windowsInputBytes += Buffer.byteLength(data)
+      if (this.windowsInputBytes > 1024 * 1024) {
+        const error = new Error('Pending Windows PTY input exceeded its bound')
+        this.rememberExitFailure(error)
+        void this.kill().catch(() => {})
+        throw error
+      }
+      this.windowsInput.push(data)
+      return
+    }
     this.pty?.write(data)
   }
 
   resize(cols: number, rows: number): void {
-    this.pty?.resize(Math.max(1, Math.floor(cols)), Math.max(1, Math.floor(rows)))
+    const next = { cols: Math.max(1, Math.floor(cols)), rows: Math.max(1, Math.floor(rows)) }
+    if (this.windowsLaunch && !this.pty) {
+      if (!this.draining) this.windowsResize = next
+      return
+    }
+    this.pty?.resize(next.cols, next.rows)
   }
 
   /** Join physical POSIX proof, public PTY exit (after tail output), and
@@ -521,9 +660,17 @@ export class AgentRuntime {
    * legacy signalling path; their public exit is not POSIX kernel proof. */
   kill(): Promise<void> {
     if (this.startupCleanup) return this.startupCleanup
-    if (this.windowsLaunch && !this.pty) {
+    if (this.windowsLaunch) {
+      if (this.settlement) return this.settlement
       const launch = this.windowsLaunch
-      const pending = launch.stop().then(() => launch.completion)
+      const ready = this.windowsReady
+      this.windowsStopping = true
+      this.beginDrain()
+      const pending = Promise.resolve().then(async () => {
+        await ready
+        await launch.stop()
+        if (this.callbackSettlement) await this.callbackSettlement
+      })
       this.settlement = pending
       this.observeExit(pending)
       return pending

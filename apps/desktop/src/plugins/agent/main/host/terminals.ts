@@ -154,7 +154,6 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
   deps.activationSignal?.addEventListener(
     'abort',
     () => {
-      if (process.platform === 'win32') return
       // Do not wait for the disposer or drop any terminal from the index. Its
       // later close joins the same drain/output/caller operation.
       for (const t of terminals.values()) void t.runtime.kill().catch(() => {})

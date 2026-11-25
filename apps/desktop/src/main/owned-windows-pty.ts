@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { StringDecoder } from 'node:string_decoder'
+import { commandLine, launchPlan } from './launch'
 import { spawnOwnedProgram } from './owned-process'
 import { ownedPtyHostPlan, type PtyHostLaunch } from './owned-process-pty-host'
 import { joinOwnedProgram, type ManagedOwnedChild } from './owned-program-lifetime'
@@ -26,13 +27,28 @@ export type OwnedPtyLaunch = {
   completion: Promise<void>
   stop(): Promise<void>
 }
+type Startup = Omit<OwnedWindowsPtyOptions, 'args'> & { args: string | string[] }
 type Runtime = {
+  prepare(options: OwnedWindowsPtyOptions): Startup
   spawn(plan: PtyHostLaunch, env: NodeJS.ProcessEnv): ManagedOwnedChild
   node(): string | null
   modulePath(): string
   platform: NodeJS.Platform
 }
 const production: Runtime = {
+  prepare: (options) => {
+    const plan = launchPlan(options.file, options.args, {
+      env: options.env,
+      cwd: options.cwd,
+      platform: 'win32',
+    })
+    return {
+      ...options,
+      file: plan.file,
+      args: commandLine(plan),
+      env: { ...options.env, ...plan.env },
+    }
+  },
   spawn: (plan, env) =>
     spawnOwnedProgram(plan.file, plan.args, { cwd: plan.cwd, env, stdio: 'pipe' }),
   node: resolveBundledWindowsNode,
@@ -165,8 +181,7 @@ export function launchOwnedWindowsPty(
           if (exit) listener(exit)
         },
       }
-      if (stopped) rejectReady(new Error('Windows PTY launch cancelled'))
-      else resolveReady(pty)
+      resolveReady(pty)
       return
     }
     if (!admitted) throw new Error('PTY output preceded readiness')
@@ -225,7 +240,13 @@ export function launchOwnedWindowsPty(
         (cause) => {
           settled = true
           clearTimeout(deadline)
-          recordFailure(cause)
+          if (failed && !Object.is(failure, cause)) {
+            failure = new AggregateError(
+              [failure, cause],
+              'PTY transport and native cleanup failed',
+              { cause: failure },
+            )
+          } else recordFailure(cause)
           rejectDone(failure)
         },
       )
@@ -256,7 +277,7 @@ export function launchOwnedWindowsPty(
     })
     deadline = setTimeout(() => fail(new Error('Windows PTY readiness timed out')), 60_000)
     deadline.unref()
-    send(options)
+    send(runtime.prepare(options))
   } catch (cause) {
     fail(cause)
     if (!child) rejectDone(failure)

@@ -38,6 +38,7 @@ function child(receipt = deferred<Receipt>()) {
 function runtime(proc: ReturnType<typeof child>['process']) {
   return {
     platform: 'win32' as const,
+    prepare: (input: Parameters<typeof launchOwnedWindowsPty>[0]) => input,
     node: () => 'node.exe',
     modulePath: () => 'pty',
     spawn: () => proc,
@@ -49,7 +50,7 @@ function record(proc: ReturnType<typeof child>['process'], value: unknown) {
 const options = { file: 'shell.exe', args: [], cwd: 'C:/vault', env: {}, cols: 80, rows: 24 }
 
 describe('launchOwnedWindowsPty', () => {
-  it('exposes helper PID, replays early Unicode output and sends input and resize frames', async () => {
+  it('exposes the actual PTY PID, replays early Unicode output and sends input and resize frames', async () => {
     const owned = child()
     const launch = launchOwnedWindowsPty(options, runtime(owned.process))
     record(owned.process, { type: 'ready', pid: 987 })
@@ -109,8 +110,9 @@ describe('launchOwnedWindowsPty', () => {
     const launch = launchOwnedWindowsPty(options, runtime(owned.process))
     const original = new Error('native witness unavailable')
     owned.receipt.reject(original)
-    await expect(launch.completion).rejects.toBe(original)
-    await launch.stop().catch(() => {})
+    const observed = await launch.completion.catch((error: unknown) => error)
+    expect(observed).toMatchObject({ cause: original })
+    await expect(launch.stop()).rejects.toBe(observed)
     expect(owned.process.kill).toHaveBeenCalledTimes(0)
 
     const malformed = child()
@@ -119,7 +121,27 @@ describe('launchOwnedWindowsPty', () => {
     expect(malformed.process.kill).toHaveBeenCalledTimes(1)
     const failure = new Error('native completion rejected')
     malformed.receipt.reject(failure)
-    await expect(failed.completion).rejects.toBe(failure)
+    const observedFailure = await failed.completion.catch((error: unknown) => error)
+    expect(observedFailure).toBeInstanceOf(AggregateError)
+    expect((observedFailure as AggregateError).errors).toContainEqual(
+      expect.objectContaining({ cause: failure }),
+    )
+    await expect(failed.stop()).rejects.toBe(observedFailure)
+  })
+
+  it('cancels before readiness through the original native owner without inventing a PTY', async () => {
+    const owned = child()
+    const launch = launchOwnedWindowsPty(options, runtime(owned.process))
+    const stop = launch.stop()
+    expect(launch.stop()).toBe(stop)
+    expect(owned.process.kill).toHaveBeenCalledTimes(1)
+    owned.process.stdout.end()
+    owned.process.stderr.end()
+    owned.process.emit('exit', 0, null)
+    owned.process.emit('close', 0, null)
+    owned.receipt.resolve('empty')
+    await expect(stop).resolves.toBeUndefined()
+    await expect(launch.ready).rejects.toBeInstanceOf(Error)
   })
 
   it('keeps simultaneous launches independent', async () => {
@@ -139,7 +161,7 @@ describe('launchOwnedWindowsPty', () => {
     expect(right.process.kill).not.toHaveBeenCalled()
     const error = new Error('left native failure')
     left.receipt.reject(error)
-    await expect(a.completion).rejects.toBe(error)
+    await expect(a.completion).rejects.toMatchObject({ cause: error })
     record(right.process, { type: 'exit', exitCode: 0 })
     right.process.stdout.end()
     right.process.stderr.end()
