@@ -98,6 +98,21 @@ export interface PagesDeps {
 /** A `mailto:` or `tel:` link, to the system. */
 const toSystem = (url: string): void => void shell.openExternal(url)
 
+type ChildHintWorld = Awaited<
+  ReturnType<ReturnType<typeof createChildFrameVim>['hintWorlds']>
+>[number]
+type ChildHintTarget = {
+  world: ChildHintWorld
+  localId: string
+  point: { x: number; y: number }
+  projected: { x: number; y: number }
+}
+type ChildHintBatch = {
+  owner: PageHintOwner
+  worlds: ChildHintWorld[]
+  targets: Map<string, ChildHintTarget>
+}
+
 interface Tab {
   id: string
   view: WebContentsView
@@ -147,6 +162,7 @@ interface Tab {
   hintDraining: boolean
   hintClosed: boolean
   hintZoom: number
+  childHints: ChildHintBatch | null
 }
 
 let shared: Session | null = null
@@ -526,7 +542,28 @@ export function createPages(deps: PagesDeps): Pages & {
       })
   }
 
+  function retireChildHints(tab: Tab, owner?: PageHintOwner): void {
+    const batch = tab.childHints
+    if (!batch || (owner && !sameHintOwner(batch.owner, owner))) return
+    tab.childHints = null
+    for (const world of batch.worlds)
+      void world.evaluate(`__holiPage.hints.clear(${JSON.stringify(batch.owner)})`).catch(() => {})
+  }
+
+  function sameHintOwner(a: PageHintOwner, b: PageHintOwner): boolean {
+    return (
+      a.tab === b.tab &&
+      a.nonce === b.nonce &&
+      a.attachment === b.attachment &&
+      a.request === b.request &&
+      a.origin === b.origin &&
+      a.snapshot === b.snapshot &&
+      a.geometry === b.geometry
+    )
+  }
+
   function revokeHints(tab: Tab): void {
+    retireChildHints(tab)
     const owner = tab.hintOwner ?? tab.hintPendingOwner
     tab.hintOwner = null
     tab.hintPendingOwner = null
@@ -660,6 +697,7 @@ export function createPages(deps: PagesDeps): Pages & {
       (scope.request === tab.hintRequest && (tab.hintClosed || tab.hintOwner !== null))
     )
       return null
+    retireChildHints(tab)
     const generation = tab.vimGeneration
     const attachment = tab.attachmentId!
     const lease = tab.shownLease
@@ -694,6 +732,68 @@ export function createPages(deps: PagesDeps): Pages & {
       !scopeMatches(tab, scope)
     )
       return null
+    const batch: ChildHintBatch = { owner: pendingOwner, worlds: [], targets: new Map() }
+    tab.childHints = batch
+    const ownsDiscovery = () =>
+      isPresented(tab) &&
+      scopeMatches(tab, scope) &&
+      generation === tab.vimGeneration &&
+      tab.attachmentId === attachment &&
+      tab.shownLease === lease &&
+      tab.hintRequest === scope.request &&
+      tab.hintSnapshot === snapshot &&
+      tab.hintGeometry === geometry &&
+      !tab.hintClosed &&
+      tab.childHints === batch &&
+      zoom === (deps.window()?.webContents.getZoomFactor() ?? 1) &&
+      JSON.stringify(bounds) === JSON.stringify(tab.view.getBounds())
+    const combined = [...targets].slice(0, 200)
+    const worlds = await tab.childVim!.hintWorlds().catch(() => [])
+    if (!ownsDiscovery()) {
+      retireChildHints(tab, pendingOwner)
+      return null
+    }
+    for (const world of worlds) {
+      if (combined.length >= 200) break
+      if (!world.current()) continue
+      batch.worlds.push(world)
+      try {
+        const childTargets = await world.evaluate<PageHintTarget[] | null>(
+          `__holiPage.hints.discover(${JSON.stringify({ ...pendingOwner, capture: null })})`,
+        )
+        if (!ownsDiscovery()) {
+          retireChildHints(tab, pendingOwner)
+          return null
+        }
+        if (!childTargets || !world.current()) throw new Error('child snapshot departed')
+        const projected = await world.projectDirectPoints(childTargets)
+        if (!ownsDiscovery()) {
+          retireChildHints(tab, pendingOwner)
+          return null
+        }
+        if (!world.current()) throw new Error('child snapshot departed')
+        for (const [index, target] of childTargets.entries()) {
+          if (combined.length >= 200) break
+          const point = projected[index]
+          if (!point) continue
+          const id = randomUUID()
+          batch.targets.set(id, {
+            world,
+            localId: target.id,
+            point: { x: target.x, y: target.y },
+            projected: point,
+          })
+          combined.push({ ...target, id, x: point.x, y: point.y })
+        }
+      } catch {
+        retireChildHints(tab, pendingOwner)
+        return null
+      }
+    }
+    if (!ownsDiscovery() || batch.worlds.some((world) => !world.current())) {
+      retireChildHints(tab, pendingOwner)
+      return null
+    }
     const owner = pendingOwner
     tab.hintPendingOwner = null
     tab.hintRequest = scope.request
@@ -712,7 +812,7 @@ export function createPages(deps: PagesDeps): Pages & {
     }
     return {
       owner,
-      targets: targets.map((target) => ({
+      targets: combined.map((target) => ({
         ...target,
         x: bounds.x / zoom + target.x,
         y: bounds.y / zoom + target.y,
@@ -749,10 +849,46 @@ export function createPages(deps: PagesDeps): Pages & {
     tab.hintRevision = revision
     const generation = tab.vimGeneration
     const lease = tab.shownLease
+    const batch = tab.childHints
+    const rootLabels = labels.filter((label) => !batch?.targets.has(label.id))
     const result = await inPage<boolean>(
       tab,
-      `__holiPage.hints.present(${JSON.stringify(owner)}, ${revision}, ${JSON.stringify(labels)}, ${JSON.stringify(theme)}, ${JSON.stringify(presentation)})`,
+      `__holiPage.hints.present(${JSON.stringify(owner)}, ${revision}, ${JSON.stringify(rootLabels)}, ${JSON.stringify(theme)}, ${JSON.stringify(presentation)})`,
     ).catch(() => false)
+    if (!result || !hintOwns(tab, owner) || batch !== tab.childHints) return false
+    for (const world of batch?.worlds ?? []) {
+      const localLabels = labels
+        .filter((label) => batch!.targets.get(label.id)?.world.key === world.key)
+        .map((label) => ({ ...label, id: batch!.targets.get(label.id)!.localId }))
+      const records = [...batch!.targets.values()].filter(
+        (record) => record.world.key === world.key,
+      )
+      const points = await world
+        .projectDirectPoints(records.map((record) => record.point))
+        .catch(() => [])
+      if (!hintOwns(tab, owner) || batch !== tab.childHints || !world.current()) return false
+      if (
+        points.length !== records.length ||
+        points.some(
+          (point, index) =>
+            !point ||
+            point.x !== records[index]!.projected.x ||
+            point.y !== records[index]!.projected.y,
+        )
+      ) {
+        await clearHints(owner)
+        return false
+      }
+      const shown = await world
+        .evaluate<boolean>(
+          `__holiPage.hints.present(${JSON.stringify(owner)}, ${revision}, ${JSON.stringify(localLabels)}, ${JSON.stringify(theme)}, ${JSON.stringify(presentation)})`,
+        )
+        .catch(() => false)
+      if (!shown || !hintOwns(tab, owner) || batch !== tab.childHints || !world.current()) {
+        await clearHints(owner)
+        return false
+      }
+    }
     return (
       result &&
       tabs.get(tab.id) === tab &&
@@ -768,6 +904,7 @@ export function createPages(deps: PagesDeps): Pages & {
     tab.hintRequest = scope.request
     tab.hintClosed = true
     const owner = tab.hintOwner ?? tab.hintPendingOwner
+    retireChildHints(tab, owner ?? undefined)
     tab.hintOwner = null
     tab.hintPendingOwner = null
     const retiredOwner = tab.hintCaptureOwner?.owner ?? owner
@@ -1170,6 +1307,7 @@ export function createPages(deps: PagesDeps): Pages & {
       hintDraining: false,
       hintClosed: false,
       hintZoom: 1,
+      childHints: null,
     }
     tab.childVim = createChildFrameVim(
       view.webContents,
