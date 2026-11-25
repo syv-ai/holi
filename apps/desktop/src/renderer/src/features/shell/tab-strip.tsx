@@ -128,13 +128,17 @@ export function TabStrip({
   /** Where a drag along the strip would land: before entry `n`. */
   const [dropAt, setDropAt] = useState<number | null>(null)
   const stripGeometry = useRef<{
-    list: HTMLDivElement
+    list: HTMLElement
     scrollLeft: number
     rects: Map<string, DOMRect>
   } | null>(null)
   const [combinePreview, setCombinePreview] = useState<{
     source: string
     target: string
+    next: ShellWorkspace
+    drag: typeof drag
+    workspace: ShellWorkspace
+    vault: string | null
   } | null>(null)
   /** The member of a split's pill that was right-clicked, whose own
    *  actions its menu offers: a member has no header of its own. */
@@ -199,13 +203,15 @@ export function TabStrip({
     setDrag(null)
     setDropAt(null)
     setCombinePreview(null)
+    stripGeometry.current = null
   }, [dragVault, dragWasOpen, dragged, remote, setDrag, ws])
 
   useEffect(() => {
     if (dragged !== null && dragVault === remote) return
     setDropAt(null)
     setCombinePreview(null)
-  }, [dragged, dragVault, remote])
+    stripGeometry.current = null
+  }, [dragged, dragVault, remote, ws])
 
   useEffect(() => {
     const list = listRef.current
@@ -245,8 +251,9 @@ export function TabStrip({
       }
       stripGeometry.current = geometry
     }
+    if (geometry === null) return 0
     const scrollDelta = list.scrollLeft - geometry.scrollLeft
-    const items = [...list.querySelectorAll<HTMLElement>('[data-entry-id]')]
+    const items = [...list.querySelectorAll<HTMLElement>('[data-entry-id')]
     for (let i = 0; i < items.length; i += 1) {
       const rect = geometry.rects.get(items[i]!.dataset.entryId!)
       if (rect && event.clientX < rect.left - scrollDelta + rect.width / 2) return i
@@ -270,32 +277,48 @@ export function TabStrip({
       setCombinePreview(null)
       return null
     }
-    const items = event.currentTarget.querySelectorAll<HTMLElement>('[data-entry-id]')
+    const insertionIndex = indexAt(event)
+    const list = event.currentTarget
+    const geometry = stripGeometry.current
+    const scrollDelta = geometry ? list.scrollLeft - geometry.scrollLeft : 0
+    const items = [...list.querySelectorAll<HTMLElement>('[data-entry-id]')]
     for (const item of items) {
-      const rect = item.getBoundingClientRect()
-      if (event.clientX < rect.left || event.clientX > rect.right) continue
-      const position = rect.width === 0 ? 0 : (event.clientX - rect.left) / rect.width
+      const rect = geometry?.rects.get(item.dataset.entryId ?? '')
+      if (
+        !rect ||
+        event.clientX < rect.left - scrollDelta ||
+        event.clientX > rect.right - scrollDelta
+      )
+        continue
+      const position =
+        rect.width === 0 ? 0 : (event.clientX - (rect.left - scrollDelta)) / rect.width
       const id = item.dataset.entryId
       if (id === undefined) return null
       if (stripDropZone(position) === 'combine') {
         const next = combineOnStrip(ws, dragged, id)
         if (next !== ws) {
           setCombinePreview((current) =>
-            current?.source === dragged && current.target === id
+            current?.source === dragged &&
+            current.target === id &&
+            current.drag === drag &&
+            current.workspace === ws &&
+            current.vault === remote
               ? current
-              : { source: dragged, target: id },
+              : { source: dragged, target: id, next, drag, workspace: ws, vault: remote },
           )
           return { kind: 'combine', target: id, next }
         }
       }
       setCombinePreview(null)
       setDropAt(indexAt(event))
-      const at = indexAt(event)
-      return dropOnStrip(ws, dragged, at) === ws ? null : { kind: 'reorder', index: at }
+      return dropOnStrip(ws, dragged, insertionIndex) === ws
+        ? null
+        : { kind: 'reorder', index: insertionIndex }
     }
     setCombinePreview(null)
-    const at = indexAt(event)
-    return dropOnStrip(ws, dragged, at) === ws ? null : { kind: 'reorder', index: at }
+    return dropOnStrip(ws, dragged, insertionIndex) === ws
+      ? null
+      : { kind: 'reorder', index: insertionIndex }
   }
 
   const reorderPreview =
@@ -303,13 +326,11 @@ export function TabStrip({
 
   const previewValid =
     combinePreview !== null &&
+    combinePreview.drag === drag &&
+    combinePreview.workspace === ws &&
+    combinePreview.vault === remote &&
     dragVault === remote &&
-    dragged === combinePreview.source &&
-    !(dragWasOpen && !tabIsOpen(ws, combinePreview.source)) &&
-    (() => {
-      const next = combineOnStrip(ws, combinePreview.source, combinePreview.target)
-      return next !== ws
-    })()
+    dragged === combinePreview.source
 
   /** An entry as the tab switcher lists it: a tab's mark and title, a
    *  split's members side by side, as in the strip. */
@@ -386,23 +407,23 @@ export function TabStrip({
               }}
               onDrop={(event) => {
                 const currentGesture = gestureContextCurrent()
-                const drop = currentGesture ? stripDrop(event) : null
                 const key = event.dataTransfer.getData(TAB_MIME)
                 const ownsKey = key !== '' && key === dragged && key === store.get(tabDragAtom)?.key
-                const validPreview =
-                  previewValid &&
-                  combinePreview?.source === key &&
-                  drop?.kind === 'combine' &&
-                  combinePreview.target === drop.target
+                const displayed = combinePreview
+                const validPreview = previewValid && displayed?.source === key
                 setDropAt(null)
                 setCombinePreview(null)
                 stripGeometry.current = null
                 setDrag(null)
-                if (!currentGesture || !ownsKey || drop === null) return
-                event.preventDefault()
-                if (drop.kind === 'combine') {
-                  if (validPreview) act((w) => combineOnStrip(w, key, drop.target))
-                } else {
+                if (!currentGesture || !ownsKey) return
+                if (validPreview && displayed !== null) {
+                  event.preventDefault()
+                  act(() => displayed.next)
+                  return
+                }
+                const drop = stripDrop(event)
+                if (drop?.kind === 'reorder') {
+                  event.preventDefault()
                   act((w) => dropOnStrip(w, key, drop.index))
                 }
               }}
