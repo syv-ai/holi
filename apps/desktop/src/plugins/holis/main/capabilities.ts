@@ -107,13 +107,6 @@ function editsParam(raw: unknown): { holi: string; edits: HoliEdits } {
   return { holi: stringParam(p, 'holi'), edits }
 }
 
-/** The Holi a memory command names, as its folder. */
-async function dirOf(holis: Holis, ctx: CapabilityContext, ref: string): Promise<string> {
-  const found = (await holis.list(vaultOf(ctx))).filter((h) => h.id === ref || h.path === ref)
-  if (found.length !== 1) throw new CapabilityError('NOT_FOUND', `No Holi ${ref}`)
-  return found[0]!.dir
-}
-
 const hitLine = (h: MemoryHit): string => `${h.file}\t${h.line}`
 
 export const holiCapabilities = (deps: HoliCapabilitiesDeps) => {
@@ -208,8 +201,8 @@ export const holiCapabilities = (deps: HoliCapabilitiesDeps) => {
     'holis.files': cap({
       doors: ['ui'],
       params: (raw) => ({ holi: stringParam(paramsObject(raw), 'holi') }),
-      run: async (ctx, { holi }): Promise<HoliFiles> =>
-        readFiles(ctx.root, await dirOf(deps.holis, ctx, holi)),
+      run: (ctx, { holi }): Promise<HoliFiles> =>
+        deps.holis.withFiles(vaultOf(ctx), holi, (dir) => readFiles(ctx.root, dir)),
     }),
 
     /** The page's soul or memory, saved over the text it opened only. */
@@ -230,15 +223,11 @@ export const holiCapabilities = (deps: HoliCapabilitiesDeps) => {
         }
       },
       run: async (ctx, { holi, file, text, expected }) => {
-        const res = await saveFile(
-          ctx.root,
-          await dirOf(deps.holis, ctx, holi),
-          file,
-          text,
-          expected,
-        )
-        if (res.ok) deps.changed(ctx.remote)
-        return res
+        return deps.holis.withFiles(vaultOf(ctx), holi, async (dir) => {
+          const res = await saveFile(ctx.root, dir, file, text, expected)
+          if (res.ok) deps.changed(ctx.remote)
+          return res
+        })
       },
     }),
 
@@ -261,9 +250,11 @@ export const holiCapabilities = (deps: HoliCapabilitiesDeps) => {
         }
       },
       run: async (ctx, { holi, ...args }): Promise<string> => {
-        const out = await remember(ctx.root, await dirOf(deps.holis, ctx, holi), args, now())
-        deps.changed(ctx.remote)
-        return out
+        return deps.holis.withFiles(vaultOf(ctx), holi, async (dir) => {
+          const out = await remember(ctx.root, dir, args, now())
+          deps.changed(ctx.remote)
+          return out
+        })
       },
       text: (s: string) => s,
     }),
@@ -286,9 +277,11 @@ export const holiCapabilities = (deps: HoliCapabilitiesDeps) => {
         }
       },
       run: async (ctx, { holi, ...args }): Promise<string> => {
-        const out = await revise(ctx.root, await dirOf(deps.holis, ctx, holi), args, now())
-        deps.changed(ctx.remote)
-        return out
+        return deps.holis.withFiles(vaultOf(ctx), holi, async (dir) => {
+          const out = await revise(ctx.root, dir, args, now())
+          deps.changed(ctx.remote)
+          return out
+        })
       },
       text: (s: string) => s,
     }),
@@ -307,9 +300,11 @@ export const holiCapabilities = (deps: HoliCapabilitiesDeps) => {
         }
       },
       run: async (ctx, { holi, ...args }): Promise<string> => {
-        const out = await forget(ctx.root, await dirOf(deps.holis, ctx, holi), args)
-        deps.changed(ctx.remote)
-        return out
+        return deps.holis.withFiles(vaultOf(ctx), holi, async (dir) => {
+          const out = await forget(ctx.root, dir, args)
+          deps.changed(ctx.remote)
+          return out
+        })
       },
       text: (s: string) => s,
     }),
@@ -322,8 +317,8 @@ export const holiCapabilities = (deps: HoliCapabilitiesDeps) => {
         const topic = optionalStringParam(p, 'topic')
         return { holi: stringParam(p, 'holi'), ...(topic === undefined ? {} : { topic }) }
       },
-      run: async (ctx, { holi, topic }): Promise<string> =>
-        recall(ctx.root, await dirOf(deps.holis, ctx, holi), topic),
+      run: (ctx, { holi, topic }): Promise<string> =>
+        deps.holis.withFiles(vaultOf(ctx), holi, (dir) => recall(ctx.root, dir, topic)),
       text: (s: string) => s,
     }),
 
@@ -339,8 +334,8 @@ export const holiCapabilities = (deps: HoliCapabilitiesDeps) => {
           ...(since === undefined ? {} : { since }),
         }
       },
-      run: async (ctx, { holi, ...args }): Promise<MemoryHit[]> =>
-        search(ctx.root, await dirOf(deps.holis, ctx, holi), args, now()),
+      run: (ctx, { holi, ...args }): Promise<MemoryHit[]> =>
+        deps.holis.withFiles(vaultOf(ctx), holi, (dir) => search(ctx.root, dir, args, now())),
       text: (hits: MemoryHit[]) =>
         hits.length === 0 ? 'nothing found' : hits.map(hitLine).join('\n'),
     }),
