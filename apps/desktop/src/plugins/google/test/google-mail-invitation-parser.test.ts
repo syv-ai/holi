@@ -55,6 +55,15 @@ function calendar(
     .join('\r\n')
 }
 
+function appendOccurrence(source: string, ...fields: string[]) {
+  return source.replace(
+    'END:VCALENDAR',
+    ['BEGIN:VEVENT', 'UID:room-booking@example.net', ...fields, 'END:VEVENT', 'END:VCALENDAR'].join(
+      '\r\n',
+    ),
+  )
+}
+
 it('resolves custom fixed offsets and the current season of annual Outlook-style zones', () => {
   const fields = 'DTSTART;TZID="Custom Clock":20260720T110000'
   const fixedInvite = parseMailInvitation(
@@ -200,7 +209,21 @@ it.each(['America/New_York', 'Asia/Tokyo'])(
           },
           request: { recurrenceKind },
         })
+        if (recurrenceKind === 'date') {
+          expect(invite.request?.recurrenceTimeBasis).toEqual({
+            kind: 'date',
+            zone: null,
+            wallStart: '2026-07-20',
+            customKey: null,
+          })
+        }
         if (floating) {
+          expect(invite.request?.recurrenceTimeBasis).toEqual({
+            kind: 'floating',
+            zone: null,
+            wallStart: '2026-03-08T02:30:00',
+            customKey: null,
+          })
           expect(invite.details).toMatchObject({
             start: '2026-03-08T02:30:00',
             end: '2026-03-08T03:30:00',
@@ -303,6 +326,7 @@ it('preserves normalized attendee response evidence without changing event mater
     ['PARTSTAT=tentative;RSVP=FALSE', { responseStatus: 'tentative', rsvp: false }],
     ['PARTSTAT=ACCEPTED;RSVP=true', { responseStatus: 'accepted', rsvp: true }],
     ['PARTSTAT=DECLINED', { responseStatus: 'declined', rsvp: null }],
+    ['PARTSTAT=DELEGATED', { responseStatus: 'delegated', rsvp: null }],
   ] as const) {
     const reset = parseMailInvitation(
       'other-guest-update',
@@ -328,8 +352,30 @@ it('preserves normalized attendee response evidence without changing event mater
   })
 })
 
+it('preserves a delegated mailbox response but sends only the chosen answer', () => {
+  const source = calendar().replace(
+    `ATTENDEE:mailto:${attendee}`,
+    `ATTENDEE;PARTSTAT=DELEGATED;DELEGATED-TO="mailto:other@example.net":mailto:${attendee}`,
+  )
+  const invitation = parseMailInvitation('part', source, 'REQUEST')!
+  expect(invitation.request?.attendeeStates[attendee]).toEqual({
+    responseStatus: 'delegated',
+    rsvp: null,
+  })
+  const reply = invitation.request!.reply(attendee, 'accepted')
+  expect(reply.split('\r\n').filter((line) => line.startsWith('ATTENDEE'))).toEqual([
+    `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${attendee}`,
+  ])
+  expect(reply).not.toMatch(/DELEGATED-(?:TO|FROM)|other@example.net/)
+  expect(invitationReplyStatus(reply, invitation.details.identity, organizer, attendee)).toBe(
+    'accepted',
+  )
+})
+
 it.each([
   [`ATTENDEE;PARTSTAT=DECLINED:MAILTO:${attendee.toUpperCase()}`],
+  ['ATTENDEE;PARTSTAT=UNKNOWN:mailto:other@example.net'],
+  ['ATTENDEE;PARTSTAT=DELEGATED;PARTSTAT=ACCEPTED:mailto:other@example.net'],
   [`ATTENDEE;RSVP=FALSE:mailto:${attendee}`],
   [`ATTENDEE;RSVP=TRUE;RSVP=FALSE:mailto:${attendee}`],
 ])('blocks ambiguous attendee response evidence: %s', (conflicting) => {
@@ -418,6 +464,14 @@ it('preserves organizer and revision evidence for cancellations that omit DTSTAR
     },
   })
 
+  expect(master?.cancellations).toEqual([
+    {
+      identity: master?.details.identity,
+      organizer: { email: organizer, name: 'Host' },
+      recurrenceRange: null,
+    },
+  ])
+
   const occurrence = 'RECURRENCE-ID;VALUE=DATE:20260720'
   const single = parseMailInvitation('cancel', calendar(occurrence, { method: 'CANCEL' }), 'CANCEL')
   const ranged = parseMailInvitation(
@@ -436,6 +490,18 @@ it('preserves organizer and revision evidence for cancellations that omit DTSTAR
     },
   })
   expect(ranged?.details.identity.materialKey).not.toBe(single?.details.identity.materialKey)
+  expect(
+    single?.cancellations.map(({ identity, recurrenceRange }) => [
+      identity.recurrenceId,
+      recurrenceRange,
+    ]),
+  ).toEqual([['2026-07-20', null]])
+  expect(
+    ranged?.cancellations.map(({ identity, recurrenceRange }) => [
+      identity.recurrenceId,
+      recurrenceRange,
+    ]),
+  ).toEqual([['2026-07-20', 'THISANDFUTURE']])
 
   for (const range of ['THISANDPRIOR', 'THISANDFUTURE;RANGE=THISANDFUTURE']) {
     const invalid = calendar(occurrence.replace(';VALUE', `;RANGE=${range};VALUE`), {
@@ -444,6 +510,114 @@ it('preserves organizer and revision evidence for cancellations that omit DTSTAR
     expect(parseMailInvitation('cancel', invalid, 'CANCEL')).toMatchObject({
       request: null,
       details: { identity: { materialKey: null }, unavailableReason: expect.any(String) },
+    })
+  }
+})
+
+it('exposes each same-UID cancellation from one MIME part without inventing a master', () => {
+  const first = calendar('RECURRENCE-ID;TZID="Custom Clock":20260720T110000', {
+    method: 'CANCEL',
+    definition: zone(fixed),
+  })
+  const second = [
+    'RECURRENCE-ID;TZID="Custom Clock";RANGE=THISANDFUTURE:20260727T110000',
+    'SEQUENCE:4',
+    'DTSTAMP:20260602T150000Z',
+    `ORGANIZER:mailto:${organizer}`,
+  ]
+  const parsed = parseMailInvitation('part', appendOccurrence(first, ...second), 'CANCEL')
+  expect(parsed).toMatchObject({
+    method: 'CANCEL',
+    request: null,
+    details: { cancelled: true, start: null },
+    cancellations: [
+      {
+        identity: {
+          uid: 'room-booking@example.net',
+          sequence: 3,
+          recurrenceId: '2026-07-20T05:30:00.000Z',
+        },
+        organizer: { email: organizer },
+        recurrenceRange: null,
+      },
+      {
+        identity: {
+          messageId: 'part',
+          uid: 'room-booking@example.net',
+          sequence: 4,
+          dtstamp: '2026-06-02T15:00:00.000Z',
+          recurrenceId: '2026-07-27T05:30:00.000Z',
+          materialKey: expect.any(String),
+        },
+        organizer: { email: organizer },
+        recurrenceRange: 'THISANDFUTURE',
+      },
+    ],
+  })
+  expect(parsed?.cancellations[0]).toEqual(
+    parseMailInvitation('part', first, 'CANCEL')?.cancellations[0],
+  )
+
+  const other = appendOccurrence(first, ...second)
+  for (const conflicting of [
+    other.replace(
+      'BEGIN:VEVENT\r\nUID:room-booking@example.net\r\nRECURRENCE-ID',
+      'BEGIN:VEVENT\r\nUID:unrelated@example.net\r\nRECURRENCE-ID',
+    ),
+    other.replace('20260727T110000', '20260720T110000'),
+    other.replace(`ORGANIZER:mailto:${organizer}`, 'ORGANIZER:mailto:other@example.net'),
+    other.replace('DTSTAMP:20260602T150000Z\r\n', ''),
+    other.replace('SEQUENCE:4\r\n', ''),
+  ]) {
+    expect(parseMailInvitation('part', conflicting, 'CANCEL')).toMatchObject({
+      cancellations: [],
+      request: null,
+      details: { identity: { materialKey: null } },
+    })
+  }
+})
+
+it('reports a cancelled REQUEST exception with its own revision and the verified series organizer', () => {
+  const series = calendar('DTSTART:20260720T150000Z\r\nRRULE:FREQ=WEEKLY')
+  const source = appendOccurrence(
+    series,
+    'RECURRENCE-ID:20260727T150000Z',
+    'SEQUENCE:4',
+    'DTSTAMP:20260603T150000Z',
+    'STATUS:CANCELLED',
+  )
+  const parsed = parseMailInvitation('part', source, 'REQUEST')
+  expect(parsed).toMatchObject({
+    method: 'REQUEST',
+    details: { cancelled: false, identity: { recurrenceId: null, sequence: 3 } },
+    request: { recurrence: ['RRULE:FREQ=WEEKLY'] },
+    cancellations: [
+      {
+        identity: {
+          messageId: 'part',
+          uid: 'room-booking@example.net',
+          sequence: 4,
+          dtstamp: '2026-06-03T15:00:00.000Z',
+          recurrenceId: '2026-07-27T15:00:00.000Z',
+          materialKey: expect.any(String),
+        },
+        organizer: { email: organizer, name: 'Host' },
+        recurrenceRange: null,
+      },
+    ],
+  })
+  expect(
+    parseMailInvitation('part', source.replace('STATUS:CANCELLED', 'STATUS:CONFIRMED'), 'REQUEST')
+      ?.cancellations,
+  ).toEqual([])
+  for (const invalid of [
+    source.replace('STATUS:CANCELLED', 'STATUS:CANCELLED\r\nORGANIZER:mailto:other@example.net'),
+    source.replace('STATUS:CANCELLED', 'STATUS:CANCELLED\r\nORGANIZER:invalid'),
+    source.replace('DTSTAMP:20260603T150000Z\r\n', ''),
+  ]) {
+    expect(parseMailInvitation('part', invalid, 'REQUEST')).toMatchObject({
+      cancellations: [],
+      request: null,
     })
   }
 })
@@ -469,6 +643,12 @@ it('canonicalizes explicit recurrence without expanding rules or guessing timezo
     ),
     'REQUEST',
   )!
+  expect(original.request?.recurrenceTimeBasis).toEqual({
+    kind: 'utc',
+    zone: 'UTC',
+    wallStart: '2026-07-20T15:00:00',
+    customKey: null,
+  })
   expect(original.request?.recurrence).toEqual([
     'EXDATE:20260727T150000Z',
     'RDATE;TZID=America/New_York:20260721T110000,20260722T110000',
@@ -483,6 +663,65 @@ it('canonicalizes explicit recurrence without expanding rules or guessing timezo
     'REQUEST',
   )!
   expect(changed.details.identity.materialKey).not.toBe(original.details.identity.materialKey)
+})
+
+it('distinguishes recurring zone rules even when the first winter instant is identical', () => {
+  const parse = (tzid: string, definition = '') =>
+    parseMailInvitation(
+      'series',
+      calendar(`DTSTART;TZID=${tzid}:20260105T110000\r\nRRULE:FREQ=WEEKLY`, { definition }),
+      'REQUEST',
+    )!
+  const newYork = parse('America/New_York')
+  const alias = parse('US/Eastern')
+  const fixedZone = parse('Etc/GMT+5')
+  const customDefinition = zone(fixed.replaceAll('+0530', '-0500')).replace(
+    'Custom Clock',
+    'America/New_York',
+  )
+  const customZone = parse('America/New_York', customDefinition)
+  const changedFuture = parse(
+    'America/New_York',
+    customDefinition.replace(
+      'END:VTIMEZONE',
+      [
+        'BEGIN:DAYLIGHT',
+        'DTSTART:20400311T020000',
+        'TZOFFSETFROM:-0500',
+        'TZOFFSETTO:-0400',
+        'END:DAYLIGHT',
+        'END:VTIMEZONE',
+      ].join('\r\n'),
+    ),
+  )
+  for (const invitation of [newYork, alias, fixedZone, customZone, changedFuture]) {
+    expect(invitation.details.start).toBe('2026-01-05T16:00:00.000Z')
+    expect(invitation.request?.recurrence).toEqual(['RRULE:FREQ=WEEKLY'])
+  }
+  expect(newYork.request?.recurrenceTimeBasis).toEqual({
+    kind: 'iana',
+    zone: 'America/New_York',
+    wallStart: '2026-01-05T11:00:00',
+    customKey: null,
+  })
+  expect(alias.request?.recurrenceTimeBasis).toEqual(newYork.request?.recurrenceTimeBasis)
+  expect(alias.details.identity.materialKey).toBe(newYork.details.identity.materialKey)
+  expect(fixedZone.request?.recurrenceTimeBasis).toMatchObject({ kind: 'iana', zone: 'Etc/GMT+5' })
+  expect(customZone.request?.recurrenceTimeBasis).toMatchObject({
+    kind: 'custom',
+    zone: 'America/New_York',
+    customKey: expect.any(String),
+  })
+  expect(changedFuture.request?.recurrenceTimeBasis?.customKey).not.toBe(
+    customZone.request?.recurrenceTimeBasis?.customKey,
+  )
+  expect(
+    new Set(
+      [newYork, fixedZone, customZone, changedFuture].map(
+        ({ details }) => details.identity.materialKey,
+      ),
+    ).size,
+  ).toBe(4)
 })
 
 it.each(['RRULE:FREQ=WEEKLY;COUNT=3extra', 'EXDATE:20260727T150000Zextra'])(
