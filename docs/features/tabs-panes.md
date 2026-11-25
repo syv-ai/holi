@@ -27,12 +27,14 @@ a directory a plugin's folder claim makes one document, such as a community plug
 it. A folder document's tab follows its entry file when the folder moves, and only to a
 directory its claim still matches, and closes when the folder is deleted.
 
-**The workspace** (`state/shell-workspace.ts`) is pure functions over `{entries, active, closed,
-seq, recent}`. An entry is a single view (its tab key) or a split `{id, views, shares, focused}`: two or
-three keys, each member's share of the width, and the focused member. A split's id is
-`holi:split:<n>`, a `holi:` key no tab kind parses, so it never meets a tab key; `active` is a
-tab's key or a split's id. `state/shell-tabs.ts` keeps one workspace per vault, in memory:
-switching vaults shows that vault's tabs and coming back finds them. `recent` is the open entries'
+**The workspace** (`state/shell-workspace.ts`) is pure functions over
+`{entries, active, closed, seq, recent, sticky}`. An entry is a single view (its tab
+key) or a split `{id, views, shares, focused}`: two to four keys, each member's
+share of the width, and the focused member. A split's id is `holi:split:<n>`, a
+`holi:` key no tab kind parses, so it never meets a tab key; `active` is a tab's
+key or a split's id. `sticky` holds sticky view keys. `state/shell-tabs.ts` restores
+and keeps one machine-local workspace per vault: switching vaults shows that
+vault's tabs and coming back finds them. `recent` is the open entries'
 ids, the active one first and then each by when it was last active: every write of the workspace
 goes through that atom, which brings it up to date (`trackRecent`), so whatever changes the active
 entry is recorded and a closed entry drops out. A plugin opens a tab through
@@ -140,7 +142,7 @@ Sticky state follows views through splitting, combining and separating. Dragging
 reorders within the sticky or ordinary section; ordinary entries never precede
 sticky ones. Making another entry sticky appends it to the sticky section.
 
-A tab's right-click menu also offers **Open in split view**, **Close tab**, Close
+A tab's right-click menu also offers **Open in split view**, **Close**, Close
 others, Close tabs to the right and Reopen closed tab. A split's offers **Separate**
 and the same closes. The strip's ⋯ holds Split view, Separate (with a split active),
 Reopen closed tab and Close all tabs.
@@ -159,7 +161,7 @@ Otherwise:
 
 **Closing.** The normal close shortcut and native menu leave a sticky view open.
 Bulk closes preserve every entry containing a sticky member. The right-click
-**Close tab** action deliberately closes a sticky view or group, keeping the normal
+**Close** action deliberately closes a sticky view or group, keeping the normal
 save and split-confirmation workflow; an explicitly closed view reopens ordinary.
 Removing a deleted file or disabled surface still removes its tab.
 
