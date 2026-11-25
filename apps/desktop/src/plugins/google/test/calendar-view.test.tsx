@@ -806,7 +806,7 @@ describe('the calendar view', () => {
     await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
     expect(scheduleMock.mock.calls[0]![0]).toMatchObject({
       title: 'Planning session',
-      description: 'First line\\nSecond line',
+      description: 'First line\nSecond line',
     })
   })
 

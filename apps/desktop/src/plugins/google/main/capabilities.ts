@@ -403,7 +403,7 @@ function eventFields(p: Record<string, unknown>): EventPatch {
   const title = optionalStringParam(p, 'title')
   const start = optionalStringParam(p, 'start')
   const end = optionalStringParam(p, 'end')
-  const description = optionalStringParam(p, 'description')
+  const description = p.description === '' ? '' : optionalStringParam(p, 'description')
   return {
     ...(title === undefined ? {} : { title }),
     ...(start === undefined ? {} : { start }),
