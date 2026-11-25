@@ -32,6 +32,7 @@ function text(value: unknown): string {
 function flag(value: unknown): boolean {
   if (value === null || value === undefined || value === NSNull.null()) return false
   if (value === true || value === false) return value
+  if (value === 0 || value === 1) return value === 1
   if (value instanceof NSNumber) return value.boolValue
   return false
 }
