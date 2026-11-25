@@ -10,6 +10,7 @@ import {
   agentHistoryAtom,
   agentTerminalsAtom,
   agentVault,
+  agentEvents,
   askTargetsAtom,
   defaultAgentTargetAtom,
   type AgentSession,
@@ -553,14 +554,30 @@ test('switching vaults detaches none of the old vault’s terminals', () => {
   expect(store.get(surfaceTabIdsAtom('agent'))).toEqual(['t-a'])
 })
 
-test('a terminal that left main’s list takes its tab out of the strip', () => {
+test('a terminal that left main’s authoritative lists takes its tab out of the strip', () => {
   const store = storeWith([session({ id: 'a' })], [terminal('t-a', 'a'), terminal('t-b', null)])
   const stopVault = agentVault('o/vault', store)
   store.set(openSurfaceAtom, 'agent', 't-a')
   store.set(openSurfaceAtom, 'agent', 't-b')
 
-  store.set(agentTerminalsAtom, [terminal('t-b', null)])
+  agentEvents.sessions!({ remote: 'o/vault', payload: [session({ id: 'a' })] }, store)
+  agentEvents.terminals!({ remote: 'o/vault', payload: [terminal('t-b', null)] }, store)
 
   expect(store.get(surfaceTabIdsAtom('agent'))).toEqual(['t-b'])
+  stopVault()
+})
+
+test('restored terminal tabs survive partial hydration and reconcile once both lists are authoritative', () => {
+  const store = storeWith()
+  store.set(openSurfaceAtom, 'agent', 'restored')
+  const stopVault = agentVault('o/vault', store)
+  agentEvents.terminals!({ remote: 'o/vault', payload: [] }, store)
+  expect(store.get(surfaceTabIdsAtom('agent'))).toEqual(['restored'])
+  agentEvents.terminals!({ remote: 'o/vault', payload: [terminal('restored', 'a')] }, store)
+  expect(store.get(surfaceTabIdsAtom('agent'))).toEqual(['restored'])
+  agentEvents.sessions!({ remote: 'o/vault', payload: [session({ id: 'a' })] }, store)
+  expect(store.get(surfaceTabIdsAtom('agent'))).toEqual(['restored'])
+  agentEvents.terminals!({ remote: 'o/vault', payload: [] }, store)
+  expect(store.get(surfaceTabIdsAtom('agent'))).toEqual([])
   stopVault()
 })

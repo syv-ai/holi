@@ -13,7 +13,16 @@ import { Input } from '@/components/ui/input'
 import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import type { AgentsMode, RendererPlugin } from '@/state/plugin-types'
 import { tabKey } from '@/state/tab-descriptor'
-import { closeTab, selectEntry, separate, openInSplit } from '@/state/shell-workspace'
+import {
+  closeTab,
+  selectEntry,
+  separate,
+  openInSplit,
+  emptyWorkspace,
+  setSticky,
+  setShares,
+  type ShellWorkspace,
+} from '@/state/shell-workspace'
 import {
   VAULT_SETTING_DEFAULTS,
   emptyVaultSnapshot,
@@ -139,9 +148,14 @@ vi.mock('motion-panels/react', () => ({
   Separator: () => <div role="separator" />,
 }))
 
-function mount(initial = ['A.md', 'B.md'], files: { path: string; updatedAt: string }[] = []) {
+function mount(
+  initial = ['A.md', 'B.md'],
+  files: { path: string; updatedAt: string }[] = [],
+  workspace?: ShellWorkspace,
+) {
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
+  store.set(openedRemoteAtom, 'mara/notes')
   store.set(vaultsAtom, [
     {
       remote: 'mara/notes',
@@ -153,6 +167,7 @@ function mount(initial = ['A.md', 'B.md'], files: { path: string; updatedAt: str
   store.set(snapshotAtom, { ...emptyVaultSnapshot(), files })
   store.set(vaultSettingsAtom, { remote: 'mara/notes', settings: SETTINGS })
   store.set(shellWorkspaceAtom, (ws) => {
+    if (workspace !== undefined) return workspace
     const opened = initial
       .slice(1)
       .reduce((next, key) => openTab(next, key), openTab(ws, initial[0]!))
@@ -1447,3 +1462,57 @@ test.each(['no policy', 'opted out', 'utility', 'home'] as const)(
     expect(f.acquired).toHaveBeenCalledTimes(2)
   },
 )
+
+test('ordinary keyboard closes and close-all keep sticky entries while closing normal ones', async () => {
+  const store = mount()
+  act(() => store.set(shellWorkspaceAtom, (ws) => setSticky(ws, 'B.md', true)))
+  fireEvent.keyDown(window, { key: 'w', ctrlKey: true })
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md', 'A.md'])
+  fireEvent.keyDown(window, { key: 'w', ctrlKey: true, altKey: true })
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md']))
+  expect(screen.queryByRole('button', { name: 'Close B' })).toBeNull()
+})
+
+test('an existing split keeps its own restored widths instead of the new-split width preference', () => {
+  const split = openInSplit(openTab(emptyWorkspace(), 'A.md'), 'B.md')
+  const workspace = setShares(split, split.active!, [0.3, 0.7])
+  localStorage.setItem('holi.panes.mara/notes.2', JSON.stringify([0.8, 0.2]))
+  try {
+    const store = mount([], [], workspace)
+    expect(activeSplit(store.get(shellWorkspaceAtom))?.shares).toEqual([0.3, 0.7])
+  } finally {
+    localStorage.removeItem('holi.panes.mara/notes.2')
+  }
+})
+
+test('a restored surface waits for the vault and plugin settings before mounting', async () => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'restore/vault')
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  store.set(
+    shellWorkspaceAtom,
+    openTab(emptyWorkspace(), tabKey({ kind: 'surface', surface: 'restored' })),
+  )
+  store.set(coreContributionAtom, {
+    rail: [],
+    claims: [],
+    surfaces: [
+      {
+        kind: 'restored',
+        label: 'Restored',
+        icon: () => null,
+        render: () => <Input aria-label="Restored content" />,
+      },
+    ],
+  })
+  render(
+    <Provider store={store}>
+      <AppShell onAddVault={() => {}} />
+    </Provider>,
+  )
+  expect(screen.queryByRole('textbox', { name: 'Restored content' })).toBeNull()
+  act(() => store.set(openedRemoteAtom, 'restore/vault'))
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Restored content' })).toBeInTheDocument(),
+  )
+})
