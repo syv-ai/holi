@@ -118,10 +118,18 @@ export const googleMain: MainPlugin = {
               retired.retire()
             }
           } finally {
-            // A dead grant can be discovered by this module's own in-flight token refresh;
-            // re-resolve immediately without waiting on that same poll. Other lifecycle
-            // changes drain the retired account before the settings action completes.
-            await mailAttention.refresh({ drain: reason !== 'expired' })
+            // A dead grant can be discovered by this module's own queued refresh. Waiting
+            // for another refresh from inside that token-expiry callback would queue it
+            // behind the poll that is waiting for this callback and deadlock both.
+            if (reason === 'expired') {
+              void mailAttention
+                .refresh({ drain: false })
+                .catch((error) => console.warn(`[google mail attention] refresh: ${String(error)}`))
+            } else {
+              // Deliberate lifecycle changes still drain the retired account before the
+              // settings action completes.
+              await mailAttention.refresh()
+            }
           }
         })
         return { accounts, dataForSession, mailAttention }

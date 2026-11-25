@@ -142,7 +142,8 @@ export function createMailAttention<S extends MailAttentionSession>(
         subscriber.removeAbort = () => input.signal?.removeEventListener('abort', stop)
       }
       await reconcileSubscriber(subscriber, true)
-      if (subscriber.state !== null) await pollAccount(subscriber.state)
+      // Activation owns this poll, but vault opening does not wait on Gmail.
+      if (subscriber.state !== null) void pollAccount(subscriber.state)
       return {
         snapshot: () => ({ ...subscriber.snapshotValue }),
         stop: () => stopSubscriber(subscriber),
