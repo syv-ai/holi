@@ -17,7 +17,7 @@ import { coreContributionAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { focusedTab } from '@/state/shell-workspace'
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
 
 const SETTINGS: ResolvedVaultSettings = { ...VAULT_SETTING_DEFAULTS, warnings: [] }
@@ -108,6 +108,7 @@ test('a made meeting named in place opens as the meeting at its new name', async
   const store = createStore()
   vault.store = store
   store.set(activeRemoteAtom, 'mara/notes')
+  store.set(openedRemoteAtom, 'mara/notes')
   store.set(vaultsAtom, [
     { remote: 'mara/notes', path: '/v', name: 'notes', lastOpenedAt: '2026-10-23T10:00:00.000Z' },
   ] as never)

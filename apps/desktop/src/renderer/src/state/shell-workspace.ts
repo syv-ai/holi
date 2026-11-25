@@ -71,13 +71,15 @@ export interface ShellWorkspace {
   closed: ClosedEntry[]
   /** The last number handed out, to New tabs and to splits. */
   seq: number
+  /** Sticky view keys: entries holding any of them lead the strip. */
+  sticky: string[]
   /** Entry ids, the active one first and then each by when it was last
    *  active; only open entries. Kept by `trackRecent`, never by hand. */
   recent: string[]
 }
 
 export function emptyWorkspace(): ShellWorkspace {
-  return { entries: [], active: null, closed: [], seq: 0, recent: [] }
+  return { entries: [], active: null, closed: [], seq: 0, recent: [], sticky: [] }
 }
 
 // ------------------------------------------------------------------ reading
@@ -237,7 +239,8 @@ function insertEntry(
 ): ShellWorkspace {
   const at = Math.max(0, Math.min(index, ws.entries.length))
   const entries = [...ws.entries.slice(0, at), entry, ...ws.entries.slice(at)]
-  return { ...ws, entries, active: select ? entryId(entry) : ws.active }
+  const inserted = { ...ws, entries, active: select ? entryId(entry) : ws.active }
+  return orderSticky(inserted)
 }
 
 /** Where a new entry goes: after the active one, else at the end. */
@@ -269,7 +272,9 @@ function replaceIn(
     entries: replaceEntryAt(ws, at, next),
     active: split.id,
   }
-  return drop(member) ? out : insertEntry(out, member, at + 1, false)
+  return drop(member) && !ws.sticky.includes(member)
+    ? orderSticky(out)
+    : insertEntry(out, member, at + 1, false)
 }
 
 /**
@@ -324,7 +329,7 @@ function insertMember(ws: ShellWorkspace, key: string, index: number): ShellWork
       shares: normalise(shares),
       focused: key,
     }
-    return { ...ws, seq, entries: replaceEntryAt(ws, at, split), active: id }
+    return orderSticky({ ...ws, seq, entries: replaceEntryAt(ws, at, split), active: id })
   }
   const split: ShellSplit = {
     ...entry,
@@ -332,7 +337,7 @@ function insertMember(ws: ShellWorkspace, key: string, index: number): ShellWork
     shares: normalise(shares),
     focused: key,
   }
-  return { ...ws, entries: replaceEntryAt(ws, at, split), active: entry.id }
+  return orderSticky({ ...ws, entries: replaceEntryAt(ws, at, split), active: entry.id })
 }
 
 /** Whether `key` names a view (a tab key), not a split's id or junk: what a
@@ -363,11 +368,11 @@ export function openTab(
     return isSplit(holder) ? focusMember(ws, holder.id, key) : selectEntry(ws, key)
   }
   const split = activeSplit(ws)
-  if (split !== null && replaces(split.focused)) {
+  if (split !== null && !ws.sticky.includes(split.focused) && replaces(split.focused)) {
     return replaceIn(ws, split.id, split.focused, key, replaces)
   }
   const active = activeEntry(ws)
-  if (typeof active === 'string' && replaces(active)) {
+  if (typeof active === 'string' && !ws.sticky.includes(active) && replaces(active)) {
     const at = indexOfEntry(ws, active)
     return { ...ws, entries: replaceEntryAt(ws, at, key), active: key }
   }
@@ -421,9 +426,55 @@ export function stepMember(ws: ShellWorkspace, step: number): ShellWorkspace {
  * to the entry after it, else before; a split's member goes from its split,
  * and a split left with one view turns back into that view's tab.
  */
-export function closeTab(ws: ShellWorkspace, key: string): ShellWorkspace {
-  if (entryOf(ws, key) === null) return ws
-  return { ...detach(ws, key), closed: [...ws.closed, key] }
+export function closeTab(ws: ShellWorkspace, key: string, explicit = false): ShellWorkspace {
+  if (entryOf(ws, key) === null || (ws.sticky.includes(key) && !explicit)) return ws
+  return orderSticky({
+    ...detach(ws, key),
+    sticky: ws.sticky.filter((item) => item !== key),
+    closed: [...ws.closed, key],
+  })
+}
+
+/** Whether an entry (or individual member) is sticky. A split is sticky
+ *  when any of its views is sticky. */
+export function isSticky(ws: ShellWorkspace, key: string): boolean {
+  const entry = ws.entries.find((e) => entryId(e) === key)
+  return entry === undefined
+    ? ws.sticky.includes(key) && entryOf(ws, key) !== null
+    : entryViews(entry).some((view) => ws.sticky.includes(view))
+}
+
+/** Set one view, or every member when `key` is a split's id. Newly sticky
+ *  entries join the end of the sticky group; unstuck entries lead normals. */
+export function setSticky(ws: ShellWorkspace, key: string, sticky: boolean): ShellWorkspace {
+  const entry = ws.entries.find((e) => entryId(e) === key) ?? entryOf(ws, key)
+  if (entry === null) return ws
+  const members = entryId(entry) === key ? entryViews(entry) : [key]
+  if (members.every((member) => ws.sticky.includes(member) === sticky)) return ws
+  const remaining = ws.sticky.filter((member) => !members.includes(member))
+  const next = { ...ws, sticky: sticky ? [...remaining, ...members] : remaining }
+  // Reposition only when the entry changes groups; editing a member of an
+  // already sticky split must not disturb its drag order.
+  if (isSticky(ws, entryId(entry)) !== isSticky(next, entryId(entry))) {
+    next.entries = ws.entries.filter((e) => e !== entry)
+    const boundary = next.entries.filter((e) => isSticky(next, entryId(e))).length
+    next.entries.splice(boundary, 0, entry)
+  }
+  return orderSticky(next)
+}
+
+/** Stable partition, never a ranking by metadata order: drag order wins
+ *  within each group. Call after a completed layout change, not detach,
+ *  whose removed view may be on its way into another entry. */
+function orderSticky(ws: ShellWorkspace): ShellWorkspace {
+  const open = new Set(allTabs(ws))
+  const sticky = ws.sticky.filter((key) => open.has(key))
+  const marked = (entry: ShellEntry) => entryViews(entry).some((key) => sticky.includes(key))
+  const entries = [...ws.entries.filter(marked), ...ws.entries.filter((e) => !marked(e))]
+  const sameOrder = entries.every((entry, index) => entry === ws.entries[index])
+  return sameOrder && sticky.length === ws.sticky.length
+    ? ws
+    : { ...ws, sticky, entries: sameOrder ? ws.entries : entries }
 }
 
 function closedOf(entry: ShellEntry): ClosedEntry {
@@ -432,9 +483,11 @@ function closedOf(entry: ShellEntry): ClosedEntry {
 
 /** Close a whole entry: a tab, or a split with every member (reopened as
  *  the split it was). */
-export function closeEntry(ws: ShellWorkspace, id: string): ShellWorkspace {
+export function closeEntry(ws: ShellWorkspace, id: string, explicit = false): ShellWorkspace {
   const at = indexOfEntry(ws, id)
-  if (at === -1) return closeTab(ws, id)
+  if (at === -1) return closeTab(ws, id, explicit)
+  const entry = ws.entries[at]!
+  if (!explicit && entryViews(entry).some((key) => ws.sticky.includes(key))) return ws
   const entries = ws.entries.filter((_, i) => i !== at)
   const heir = entries[Math.min(at, entries.length - 1)]
   const active = ws.active === id ? (heir === undefined ? null : entryId(heir)) : ws.active
@@ -442,6 +495,7 @@ export function closeEntry(ws: ShellWorkspace, id: string): ShellWorkspace {
     ...ws,
     entries,
     active,
+    sticky: ws.sticky.filter((key) => !entryViews(entry).includes(key)),
     closed: [...ws.closed, closedOf(ws.entries[at]!)],
   }
 }
@@ -451,16 +505,26 @@ function closeWhere(
   keep: (index: number) => boolean,
   active: string | null,
 ): ShellWorkspace {
-  const gone = ws.entries.filter((_, i) => !keep(i))
+  const gone = ws.entries.filter(
+    (entry, i) => !keep(i) && !entryViews(entry).some((key) => ws.sticky.includes(key)),
+  )
   if (gone.length === 0) {
-    return active === ws.active ? ws : { ...ws, active }
+    const selected = active ?? ws.active
+    return selected === ws.active ? ws : { ...ws, active: selected }
   }
-  const entries = ws.entries.filter((_, i) => keep(i))
+  const entries = ws.entries.filter(
+    (entry, i) => keep(i) || entryViews(entry).some((key) => ws.sticky.includes(key)),
+  )
   const ids = entries.map(entryId)
   return {
     ...ws,
     entries,
-    active: active !== null && ids.includes(active) ? active : null,
+    active:
+      active !== null && ids.includes(active)
+        ? active
+        : ws.active !== null && ids.includes(ws.active)
+          ? ws.active
+          : (ids[0] ?? null),
     closed: [...ws.closed, ...gone.map(closedOf)],
   }
 }
@@ -560,7 +624,7 @@ export function separate(ws: ShellWorkspace, splitId: string): ShellWorkspace {
   if (!isSplit(split)) return ws
   const entries = [...ws.entries.slice(0, at), ...split.views, ...ws.entries.slice(at + 1)]
   const active = ws.active === splitId ? split.focused : ws.active
-  return { ...ws, entries, active }
+  return orderSticky({ ...ws, entries, active })
 }
 
 /**
@@ -596,7 +660,8 @@ export function moveEntry(ws: ShellWorkspace, id: string, index: number): ShellW
   if (to === from) return ws
   const entries = ws.entries.filter((_, i) => i !== from)
   entries.splice(to, 0, ws.entries[from]!)
-  return { ...ws, entries }
+  const ordered = orderSticky({ ...ws, entries })
+  return ordered.entries.every((entry, i) => entry === ws.entries[i]) ? ws : ordered
 }
 
 /**
@@ -663,7 +728,7 @@ export function combineOnStrip(
   const focused = sourceViews[0]!
   const split: ShellSplit = { id, views, shares, focused }
   entries = entries.map((entry, index) => (index === adjustedTarget ? split : entry))
-  return { ...ws, entries, active: id, seq }
+  return orderSticky({ ...ws, entries, active: id, seq })
 }
 
 /** Where a view dropped on the content goes: beside the view under it, or
@@ -716,7 +781,7 @@ export function dropTab(
     if (views.every((v, i) => v === entry.views[i])) return ws
     const at = indexOfEntry(ws, entry.id)
     const split: ShellSplit = { ...entry, views, focused: key }
-    return { ...ws, entries: replaceEntryAt(ws, at, split), active: entry.id }
+    return orderSticky({ ...ws, entries: replaceEntryAt(ws, at, split), active: entry.id })
   }
   const out = detach(ws, key)
   if (zone === 'center' || entry.views.length >= MAX_SPLIT) {
@@ -786,7 +851,7 @@ export function insertIntoActive(ws: ShellWorkspace, key: string, index: number)
     shares.splice(to, 0, entry.shares[from]!)
     const at = indexOfEntry(ws, entry.id)
     const split: ShellSplit = { ...entry, views, shares, focused: key }
-    return { ...ws, entries: replaceEntryAt(ws, at, split), active: entry.id }
+    return orderSticky({ ...ws, entries: replaceEntryAt(ws, at, split), active: entry.id })
   }
   if (entry.views.length >= MAX_SPLIT) return ws
   // `key` is not in the active split, so taking it out leaves that alone.
@@ -851,6 +916,7 @@ export function retargetTabs(
       isSplit(e) ? { ...e, views: e.views.map(move), focused: move(e.focused) } : move(e),
     ),
     active: ws.active === null ? null : move(ws.active),
+    sticky: ws.sticky.map(move),
     closed: ws.closed.map((c) =>
       typeof c === 'string' ? move(c) : { ...c, views: c.views.map(move) },
     ),
@@ -860,5 +926,5 @@ export function retargetTabs(
 /** Close the views `gone` says are gone (a deleted file, a removed
  *  session), wherever they are, without offering them to Reopen. */
 export function closeTabsWhere(ws: ShellWorkspace, gone: (key: string) => boolean): ShellWorkspace {
-  return allTabs(ws).filter(gone).reduce(detach, ws)
+  return orderSticky(allTabs(ws).filter(gone).reduce(detach, ws))
 }

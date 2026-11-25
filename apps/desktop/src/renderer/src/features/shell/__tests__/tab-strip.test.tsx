@@ -1,3 +1,4 @@
+import { saveEntryClose } from '@/state/shell-close'
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
@@ -32,7 +33,16 @@ function setup(workspace = openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md')) {
   store.set(shellWorkspaceAtom, workspace)
   render(
     <Provider store={store}>
-      <TabStrip onNewTab={() => {}} onCloseRequest={() => {}} />
+      <TabStrip
+        onNewTab={() => {}}
+        onCloseRequest={(request) => {
+          void saveEntryClose(store, {
+            remote: store.get(activeRemoteAtom),
+            workspace: store.get(shellWorkspaceAtom),
+            request,
+          })
+        }}
+      />
     </Provider>,
   )
   const list = document.querySelector<HTMLElement>('[role="tablist"]')!
@@ -634,4 +644,42 @@ test('leaving the strip cancels its preview and a later drop cannot combine', ()
   expect(tabs[1]!.dataset.combinePreview).toBeUndefined()
   fireEvent(list, dragEvent('drop', transfer, 150))
   expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md', 'B.md'])
+})
+
+test('a sticky tab leads the strip without a close button and its explicit menu close still saves and closes', async () => {
+  const { store } = setup()
+  fireEvent.contextMenu(screen.getByRole('tab', { name: 'A' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Make sticky' }))
+  expect(store.get(shellWorkspaceAtom).sticky).toEqual(['A.md'])
+  expect(screen.queryByRole('button', { name: 'Close A' })).toBeNull()
+  expect(screen.getAllByRole('tab')[0]).toHaveAccessibleName('A')
+  fireEvent.contextMenu(screen.getByRole('tab', { name: 'A' }))
+  expect(screen.getByRole('menuitem', { name: 'Make non-sticky' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('menuitem', { name: /^Close$/ }))
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md']))
+})
+
+test('the split member menu marks only that member while a group menu marks all members', () => {
+  const { store } = setup(openInSplit(openTab(emptyWorkspace(), 'A.md'), 'B.md'))
+  fireEvent.contextMenu(screen.getByRole('tab').querySelector('[data-member="A.md"]')!)
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Make sticky' }))
+  expect(store.get(shellWorkspaceAtom).sticky).toEqual(['A.md'])
+  fireEvent.contextMenu(screen.getByRole('tab'))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Make non-sticky' }))
+  expect(store.get(shellWorkspaceAtom).sticky).toEqual([])
+  fireEvent.contextMenu(screen.getByRole('tab'))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Make sticky' }))
+  expect(store.get(shellWorkspaceAtom).sticky).toEqual(['A.md', 'B.md'])
+})
+
+test('a menu opened in one vault cannot mark the matching tab in the next vault', () => {
+  const { store } = setup()
+  fireEvent.contextMenu(screen.getByRole('tab', { name: 'A' }))
+  act(() => {
+    store.set(updateWorkspaceAtom, 'other/vault', openTab(emptyWorkspace(), 'A.md'))
+    store.set(activeRemoteAtom, 'other/vault')
+  })
+  const item = screen.queryByRole('menuitem', { name: 'Make sticky' })
+  if (item !== null) fireEvent.click(item)
+  expect(store.get(shellWorkspaceAtom).sticky).toEqual([])
 })
