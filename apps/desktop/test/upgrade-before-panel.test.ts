@@ -195,15 +195,14 @@ describe('hosted upgrade UI diagnostics', () => {
     }
     ipc.handle('holi:trpc', async () => envelope)
     expect(await invoke('holi:trpc', null, {}, operation())).toBe(envelope)
-    expect(snapshot()).toEqual([
-      {
-        capability: 'google.status',
-        fixtureVaultMatch: true,
-        result: 'success',
-        accountPresent: true,
-        needsReconnect: true,
-      },
-    ])
+    expect(snapshot()).toHaveLength(1)
+    expect(snapshot()[0]).toMatchObject({
+      capability: 'google.status',
+      fixtureVaultMatch: true,
+      result: 'success',
+      accountPresent: true,
+      needsReconnect: true,
+    })
     await invoke('holi:trpc', null, {}, operation('google.allAccounts', 'another/vault'))
     expect(snapshot()[1]).toMatchObject({
       capability: 'google.allAccounts',
@@ -276,22 +275,12 @@ describe('hosted upgrade UI diagnostics', () => {
     expect(returned).toBe(rejected)
     await expect(returned).rejects.toBe(failure)
     expect(request()).toBe(pending)
-    expect(snapshot()).toEqual([
-      {
-        capability: 'google.status',
-        fixtureVaultMatch: true,
-        result: 'envelope-error',
-        code: 'NOT_FOUND',
-      },
-      {
-        capability: 'google.status',
-        fixtureVaultMatch: true,
-        result: 'envelope-error',
-        code: 'other',
-      },
-      { capability: 'google.status', fixtureVaultMatch: true, result: 'throw' },
-      { capability: 'google.status', fixtureVaultMatch: true, result: 'rejection' },
-      { capability: 'google.status', fixtureVaultMatch: true, result: 'pending' },
+    expect(snapshot().map(({ result, code }) => ({ result, code }))).toEqual([
+      { result: 'envelope-error', code: 'NOT_FOUND' },
+      { result: 'envelope-error', code: 'other' },
+      { result: 'throw', code: undefined },
+      { result: 'rejection', code: undefined },
+      { result: 'pending', code: undefined },
     ])
     expect(JSON.stringify(snapshot())).not.toContain(secret)
   })
@@ -310,15 +299,14 @@ describe('hosted upgrade UI diagnostics', () => {
       }
       ipc.handle('holi:trpc', async () => envelope)
       expect(await invoke('holi:trpc', null, {}, operation(capability))).toBe(envelope)
-      expect(snapshot()).toEqual([
-        {
-          capability,
-          fixtureVaultMatch: true,
-          result: 'envelope-error',
-          code: 'BAD_REQUEST',
-          refusalClass: 'method-unavailable',
-        },
-      ])
+      expect(snapshot()).toHaveLength(1)
+      expect(snapshot()[0]).toMatchObject({
+        capability,
+        fixtureVaultMatch: true,
+        result: 'envelope-error',
+        code: 'BAD_REQUEST',
+        refusalClass: 'method-unavailable',
+      })
     },
   )
 
@@ -352,23 +340,135 @@ describe('hosted upgrade UI diagnostics', () => {
       }
       expect(invoke('holi:trpc', null, {}, operation())).toBe(envelope)
     }
-    expect(snapshot()).toEqual(
-      messages.map(() => ({
+    expect(snapshot()).toHaveLength(messages.length)
+    for (const record of snapshot())
+      expect(record).toMatchObject({
         capability: 'google.status',
         fixtureVaultMatch: true,
         result: 'envelope-error',
         code: 'BAD_REQUEST',
         refusalClass: 'other',
-      })),
-    )
+      })
     envelope = { ok: false, code: 'FORBIDDEN', message: 'no such method: google.status' }
     expect(invoke('holi:trpc', null, {}, operation())).toBe(envelope)
-    expect(snapshot().at(-1)).toEqual({
+    expect(snapshot().at(-1)).toMatchObject({
       capability: 'google.status',
       fixtureVaultMatch: true,
       result: 'envelope-error',
       code: 'FORBIDDEN',
     })
+    expect(JSON.stringify(snapshot())).not.toContain(secret)
+  })
+
+  it('records only matching vault.open lifecycle and orders it against Google requests', async () => {
+    const { ipc, invoke } = ipcFixture()
+    const snapshot = observeUpgradeUiRequests(ipc, remote)
+    const opened = { ok: true, data: {} }
+    ipc.handle('holi:trpc', (_event: unknown, op: any) =>
+      op.path === 'vault.open' ? Promise.resolve(opened) : { ok: true, data: {} },
+    )
+    invoke(
+      'holi:trpc',
+      null,
+      {},
+      { path: 'vault.open', type: 'mutation', input: { remote: 'other/vault' } },
+    )
+    const pending = invoke(
+      'holi:trpc',
+      null,
+      {},
+      { path: 'vault.open', type: 'mutation', input: { remote } },
+    )
+    invoke('holi:trpc', null, {}, operation())
+    await pending
+    expect(snapshot()).toHaveLength(2)
+    expect(snapshot()[0]).toMatchObject({ event: 'vault.open', result: 'success', startOrder: 1 })
+    expect(snapshot()[0].completionOrder).toBeGreaterThan(snapshot()[0].startOrder)
+    expect(snapshot()[1]).toMatchObject({
+      event: 'google-request',
+      capability: 'google.status',
+      startOrder: 2,
+    })
+    expect(JSON.stringify(snapshot())).not.toContain(remote)
+  })
+
+  it('orders completion diagnostics across deferred opens and Google requests', async () => {
+    const { ipc, invoke } = ipcFixture()
+    const snapshot = observeUpgradeUiRequests(ipc, remote)
+    let resolveOpen!: (value: unknown) => void
+    let resolveGoogle!: (value: unknown) => void
+    const open = new Promise((resolve) => (resolveOpen = resolve))
+    const google = new Promise((resolve) => (resolveGoogle = resolve))
+    let opens = 0
+    let googles = 0
+    ipc.handle('holi:trpc', (_event: unknown, op: any) =>
+      op.path === 'vault.open'
+        ? ++opens === 1
+          ? open
+          : Promise.resolve({ ok: true })
+        : ++googles === 1
+          ? google
+          : Promise.resolve({ ok: false }),
+    )
+    const firstOpen = invoke(
+      'holi:trpc',
+      null,
+      {},
+      { path: 'vault.open', type: 'mutation', input: { remote } },
+    )
+    const firstGoogle = invoke('holi:trpc', null, {}, operation())
+    resolveGoogle({ ok: false })
+    await firstGoogle
+    const secondGoogle = invoke('holi:trpc', null, {}, operation())
+    await secondGoogle
+    resolveOpen({ ok: true })
+    await firstOpen
+    const events = snapshot()
+    expect(events.map(({ event, completionOrder }) => [event, completionOrder])).toEqual([
+      ['vault.open', 6],
+      ['google-request', 3],
+      ['google-request', 5],
+    ])
+    expect(events[0].startOrder).toBeLessThan(events[1].startOrder)
+  })
+
+  it('bounds vault lifecycle diagnostics together with Google requests', () => {
+    const { ipc, invoke } = ipcFixture()
+    const snapshot = observeUpgradeUiRequests(ipc, remote)
+    let effects = 0
+    ipc.handle('holi:trpc', () => {
+      effects++
+      return new Promise(() => {})
+    })
+    for (let i = 0; i < 30; i++)
+      invoke('holi:trpc', null, {}, { path: 'vault.open', type: 'mutation', input: { remote } })
+    expect(effects).toBe(30)
+    expect(snapshot()).toHaveLength(20)
+    expect(snapshot().every(({ result }) => result === 'pending')).toBe(true)
+    expect(snapshot().every((record) => !('completionOrder' in record))).toBe(true)
+  })
+
+  it('records failed and still-pending vault.open outcomes without retaining errors', async () => {
+    const { ipc, invoke } = ipcFixture()
+    const snapshot = observeUpgradeUiRequests(ipc, remote)
+    const secret = 'token=/private/credentials email@example.invalid'
+    const pending = new Promise(() => {})
+    let calls = 0
+    ipc.handle('holi:trpc', () => (++calls === 1 ? Promise.reject(new Error(secret)) : pending))
+    const failed = invoke(
+      'holi:trpc',
+      null,
+      {},
+      { path: 'vault.open', type: 'mutation', input: { remote } },
+    )
+    await expect(failed).rejects.toThrow(secret)
+    invoke('holi:trpc', null, {}, { path: 'vault.open', type: 'mutation', input: { remote } })
+    expect(snapshot().map(({ event, result }) => ({ event, result }))).toEqual([
+      { event: 'vault.open', result: 'rejection' },
+      { event: 'vault.open', result: 'pending' },
+    ])
+    expect(snapshot()[0].completionOrder).toBeDefined()
+    expect(snapshot()[1]).not.toHaveProperty('completionOrder')
     expect(JSON.stringify(snapshot())).not.toContain(secret)
   })
 
@@ -383,7 +483,7 @@ describe('hosted upgrade UI diagnostics', () => {
     for (let i = 0; i < 30; i++) invoke('holi:trpc', null, {}, operation('google.allAccounts'))
     expect(effects).toBe(30)
     expect(snapshot()).toHaveLength(20)
-    expect(snapshot()[0]).toEqual({
+    expect(snapshot()[0]).toMatchObject({
       capability: 'google.allAccounts',
       fixtureVaultMatch: true,
       result: 'success',

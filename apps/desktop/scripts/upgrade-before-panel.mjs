@@ -95,6 +95,8 @@ export async function waitForBeforePanel({ probe, wait, execute, evidenceDirecto
 // renderer lib/cap-client.ts sends cap.run mutations, not google.* procedure paths.
 export function observeUpgradeUiRequests(ipcMain, fixtureRemote) {
   const records = []
+  const lifecycle = []
+  let sequence = 0
   const originalHandle = ipcMain.handle
   ipcMain.handle = function (channel, listener, ...registrationArgs) {
     if (channel !== 'holi:trpc') {
@@ -105,22 +107,39 @@ export function observeUpgradeUiRequests(ipcMain, fixtureRemote) {
       channel,
       function (...args) {
         const op = args[1]
+        const isVaultOpen =
+          op?.path === 'vault.open' &&
+          op?.type === 'mutation' &&
+          op?.input?.remote === fixtureRemote
         const capability =
           op?.path === 'cap.run' &&
           op?.type === 'mutation' &&
           ['google.status', 'google.allAccounts'].includes(op?.input?.name)
             ? op.input.name
             : null
-        if (!capability || records.length >= 20) return listener.apply(this, args)
-        const record = {
-          capability,
-          fixtureVaultMatch: op.input.remote === fixtureRemote,
-          result: 'pending',
-        }
-        records.push(record)
+        if ((!capability && !isVaultOpen) || records.length + lifecycle.length >= 20)
+          return listener.apply(this, args)
+        const order = ++sequence
+        const record = isVaultOpen
+          ? { event: 'vault.open', result: 'pending', order, startOrder: order }
+          : {
+              event: 'google-request',
+              capability,
+              fixtureVaultMatch: op.input.remote === fixtureRemote,
+              result: 'pending',
+              order,
+              startOrder: order,
+            }
+        if (isVaultOpen) lifecycle.push(record)
+        else records.push(record)
         const finish = (value, failure) => {
           // Observation must never replace a handler outcome, even for an unexpected shape.
           try {
+            if (record.completionOrder === undefined) record.completionOrder = ++sequence
+            if (isVaultOpen) {
+              record.result = failure ?? (value?.ok === true ? 'success' : 'envelope-error')
+              return
+            }
             record.result =
               failure ??
               (value?.ok === true ? 'success' : value?.ok === false ? 'envelope-error' : 'unknown')
@@ -180,7 +199,8 @@ export function observeUpgradeUiRequests(ipcMain, fixtureRemote) {
       ...registrationArgs,
     )
   }
-  return () => records.map((record) => ({ ...record }))
+  return () =>
+    [...records, ...lifecycle].sort((a, b) => a.order - b.order).map((record) => ({ ...record }))
 }
 
 // Persist while the inspector is live, including when the original observation throws.
