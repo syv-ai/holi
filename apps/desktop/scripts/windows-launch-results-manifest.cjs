@@ -561,6 +561,23 @@ const coreStatus = {
 const producer = { ...raw, ...nativeStatus, ...coreStatus }
 
 const required = {
+  'test/owned-windows-pty.test.ts': [
+    'exposes the actual PTY PID, replays early Unicode output and sends input and resize frames',
+    'waits for native emptiness after root exit and stops only the original child idempotently',
+    'preserves native rejection and treats protocol failure as cleanup, not an empty receipt',
+    'cancels before readiness through the original native owner without inventing a PTY',
+    'keeps simultaneous launches independent',
+  ],
+  'src/plugins/agent/test/windows-owned-runtime.test.ts': [
+    'queues input and latest resize until actual readiness, and waits for native completion after root exit',
+    'cancels before readiness, discards queued input and joins late native readiness and completion',
+    'retains native cleanup rejection as the cause for repeated kill and refuses replacement',
+    'keeps runtimes with matching process identifiers independent',
+  ],
+  'src/plugins/agent/test/windows-owned-fenced.test.ts': [
+    'joins Windows native drainage, real fenced copy and provider release without retiring another vault',
+    'keeps the original failed Windows session and scratch across Stop, leave and activation replacement while another vault closes',
+  ],
   'test/launch.test.ts': [
     'receives every argument exactly as given',
     'resolves filename-only Windows commands, including node.exe',
