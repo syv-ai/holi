@@ -11,8 +11,10 @@ type Revision = Omit<MailInvitationIdentity, 'messageId'> & {
   } | null
 }
 
+export type SentEvidence = { timestamp: number; messageIds: string[]; answer: InviteAnswer | null }
+
 type Delivery =
-  | { channel: 'calendar'; target: string; proof?: string }
+  | { channel: 'calendar'; target: string; proof?: string; priorSent?: SentEvidence | null }
   | {
       channel: 'gmail'
       rfcId: string
@@ -60,6 +62,23 @@ function validMailboxResponse(value: unknown): boolean {
   )
 }
 
+function validSentEvidence(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (record(value) &&
+      Number.isSafeInteger(value.timestamp) &&
+      (value.answer === null ||
+        value.answer === 'accepted' ||
+        value.answer === 'tentative' ||
+        value.answer === 'declined') &&
+      Array.isArray(value.messageIds) &&
+      value.messageIds.length > 0 &&
+      value.messageIds.length <= 32 &&
+      value.messageIds.every((id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(id)))
+  )
+}
+
 function isAttempt(value: unknown): value is InvitationAttempt {
   if (!record(value)) return false
   const { id, accountSub, threadId, revision, answer, state, delivery } = value
@@ -88,6 +107,7 @@ function isAttempt(value: unknown): value is InvitationAttempt {
   if (delivery.channel === 'calendar')
     return (
       text(delivery.target) &&
+      validSentEvidence(delivery.priorSent) &&
       (delivery.proof === undefined ||
         (typeof delivery.proof === 'string' && /^[0-9a-f]{64}$/.test(delivery.proof)))
     )

@@ -70,6 +70,7 @@ import {
   type MailCategory,
   type MailPage,
 } from './gmail'
+import { CalendarScanError } from './gmail-mime'
 import { CLIENT_ID_SUFFIX } from './credentials'
 import type { createMailInvitationSession } from './mail-invitation-session'
 import type { MailInvitationIdentity } from './mail-invitation'
@@ -140,6 +141,7 @@ async function google<T>(work: () => Promise<T>): Promise<T> {
     if (error instanceof GoogleReconnectRequiredError) {
       throw new CapabilityError('UNAUTHORIZED', error.message, RECONNECT)
     }
+    if (error instanceof CalendarScanError) throw new CapabilityError('FORBIDDEN', error.message)
     if (!(error instanceof GoogleApiError) || error.code === 'unknown') throw error
     const codes: Record<Exclude<GoogleErrorCode, 'unknown'>, CapabilityError['code']> = {
       reconnect: 'UNAUTHORIZED',

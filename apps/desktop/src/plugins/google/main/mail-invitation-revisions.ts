@@ -1,3 +1,4 @@
+import { CalendarScanError, type MimeLocation } from './gmail-mime'
 import type { fetchThreadCalendarPayloads } from './gmail'
 import type { parseCalendarMail } from './invite'
 import type { InvitationAttempt } from './mail-invitation-store'
@@ -60,37 +61,89 @@ function blocked(selected: Candidate, reason: string): Incoming {
 
 /** Treat validated cancellation entries as revision evidence for their own
  * scope. An embedded exception never replaces the containing REQUEST. */
-function expandCancellations(candidate: Candidate): Candidate[] {
+function expandCancellations(candidate: Candidate, mailbox: string): Candidate[] {
   const { value } = candidate
   if (candidate.published || !value.cancellations.length) return [candidate]
   return [
     ...(value.method === 'CANCEL' ? [] : [candidate]),
-    ...value.cancellations.map(({ identity, organizer, recurrenceRange }): Candidate => ({
-      ...candidate,
-      value: {
-        ...value,
-        method: 'CANCEL',
-        recurrenceRange,
-        details: {
-          ...value.details,
-          // The representative's DTSTART may refer to a different occurrence.
-          ...(sameGroup(identity, value.details.identity) ? {} : { start: null, end: null }),
-          identity,
-          organizer,
-          cancelled: true,
-          unavailableReason: 'This invitation was cancelled',
+    ...value.cancellations
+      .filter(({ eventCancelled, attendees }) => eventCancelled || attendees.includes(mailbox))
+      .map(({ identity, organizer, recurrenceRange }): Candidate => ({
+        ...candidate,
+        value: {
+          ...value,
+          method: 'CANCEL',
+          recurrenceRange,
+          details: {
+            ...value.details,
+            // The representative's DTSTART may refer to a different occurrence.
+            ...(sameGroup(identity, value.details.identity) ? {} : { start: null, end: null }),
+            identity,
+            organizer,
+            cancelled: true,
+            unavailableReason: 'This invitation was cancelled',
+          },
+          request: null,
         },
-        request: null,
-      },
-    })),
+      })),
   ]
+}
+
+/** Non-calendar alternatives are renditions of the prose. If two branches
+ * carry calendar material, however, they must describe the same evidence. */
+export function assertEquivalentAlternatives(
+  parts: {
+    alternatives: MimeLocation['alternatives']
+    signature: string
+  }[],
+): void {
+  const groups = new Map<string, Map<number, Set<string>>>()
+  for (const { alternatives, signature } of parts) {
+    for (const { group, branch } of alternatives) {
+      const branches = groups.get(group) ?? new Map<number, Set<string>>()
+      const material = branches.get(branch) ?? new Set<string>()
+      material.add(signature)
+      branches.set(branch, material)
+      groups.set(group, branches)
+    }
+  }
+  for (const branches of groups.values()) {
+    const [first, ...others] = branches.values()
+    if (
+      others.some(
+        (branch) => branch.size !== first!.size || [...branch].some((key) => !first!.has(key)),
+      )
+    )
+      throw new CalendarScanError('Gmail contains conflicting calendar alternatives')
+  }
+}
+
+export function representationOf(candidate: Candidate, mailbox: string): string {
+  const { value, published } = candidate
+  return JSON.stringify([
+    published,
+    value.method,
+    identityOf(candidate),
+    responseOf(candidate, mailbox),
+    value.cancellations
+      .map(({ identity, organizer, recurrenceRange, eventCancelled, attendees }) =>
+        JSON.stringify([
+          identity,
+          organizer?.email,
+          recurrenceRange,
+          eventCancelled,
+          [...attendees].sort(),
+        ]),
+      )
+      .sort(),
+  ])
 }
 
 export function selectInvitationRevisions(deliveries: Candidate[], mailbox: string): Incoming[] {
   // Arrival breaks ties among equivalent deliveries. Sequence and DTSTAMP
   // order revisions within a scope, and establish whether an applicable CANCEL is newer.
   const candidates = deliveries
-    .flatMap(expandCancellations)
+    .flatMap((candidate) => expandCancellations(candidate, mailbox))
     .sort(
       (a, b) =>
         Number(a.mail.sent) - Number(b.mail.sent) ||

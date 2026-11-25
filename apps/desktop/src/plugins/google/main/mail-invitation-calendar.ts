@@ -280,8 +280,6 @@ async function lookupInvitationCalendarCopy(
   const { uid, recurrenceId } = invitation.details.identity
   const series = recurrenceId === null && invitation.details.recurring
   const basis = invitation.request.recurrenceTimeBasis
-  if (series && basis?.kind === 'custom')
-    return { kind: 'blocked', reason: 'Calendar cannot verify this custom recurrence time zone' }
   const floating =
     invitation.request.recurrenceKind === 'floating' || (series && basis?.kind === 'floating')
   const unmatchable = {
@@ -356,14 +354,20 @@ function invitationCopy(
 ): CalendarLookup {
   const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []
   const selfEmail = self[0]?.email?.toLowerCase()
-  // Calendar's `self` denotes the calendar copy, not necessarily the mailbox.
-  // An owned secondary calendar is ours; a shared writer may not RSVP as its owner.
+  const { details, request, joinOnly } = invitation
+  // Calendar's `self` denotes the copy, not the mailbox. Even its owner must
+  // not answer for a calendar ID or alias that is not the invited mailbox.
   const attendee =
-    self.length === 1 && selfEmail && (selfEmail === mailbox || selfEmail === ownedCalendar)
+    self.length === 1 &&
+    selfEmail &&
+    (joinOnly
+      ? selfEmail === mailbox || selfEmail === ownedCalendar
+      : selfEmail === mailbox &&
+        request.attendees.includes(mailbox) &&
+        event.attendees?.filter((guest) => guest.email?.toLowerCase() === mailbox).length === 1)
       ? self[0]
       : undefined
   const organizer = event.organizer?.email?.toLowerCase()
-  const { details, request, joinOnly } = invitation
   const { sequence, recurrenceId } = details.identity
   const blocked = (reason: string): CalendarLookup => ({ kind: 'blocked', reason })
   const cancelled = event.status === 'cancelled'
@@ -395,11 +399,7 @@ function invitationCopy(
     )
   if (recurrenceId === null && Boolean(event.recurrence?.length) !== details.recurring)
     return blocked('The Calendar recurrence scope does not match this invitation')
-  if (
-    recurrenceId === null &&
-    details.recurring &&
-    !sameRecurrenceStart(request.recurrenceTimeBasis, event.start)
-  )
+  if (recurrenceId === null && details.recurring && !sameRecurrenceStart(request, event.start))
     return blocked('The Calendar time zone does not match this series invitation')
   const { explicitFields } = request
   if (explicitFields.recurrence) {
@@ -487,17 +487,22 @@ function canonicalZone(zone: string | null | undefined): string | null {
 }
 
 function sameRecurrenceStart(
-  basis: InvitationTarget['request']['recurrenceTimeBasis'],
+  request: InvitationTarget['request'],
   start: RawEvent['start'],
 ): boolean {
+  const basis = request.recurrenceTimeBasis
   if (!start || !basis) return false
-  if (basis.kind === 'date') return start.date === basis.wallStart
-  if ((basis.kind !== 'utc' && basis.kind !== 'iana') || !start.dateTime) return false
-  const expectedZone = basis.kind === 'utc' ? 'UTC' : canonicalZone(basis.zone)
+  if (basis.kind === 'date')
+    return (
+      start.date === basis.wallStart &&
+      request.calendarRecurrenceZoneMatches(start.timeZone ?? null)
+    )
+  if (!start.dateTime || !request.calendarRecurrenceZoneMatches(start.timeZone ?? null))
+    return false
   // Calendar requires a named expansion zone for a timed recurring event.
   // A serialized offset (even Z) alone only describes the first instant.
-  const actualZone = canonicalZone(start.timeZone)
-  if (!expectedZone || expectedZone !== actualZone) return false
+  const expectedZone = canonicalZone(start.timeZone)
+  if (!expectedZone) return false
   // Use the declared recurrence zone, not the offset chosen to serialize the
   // first instant (which may be serialized in UTC even for a zoned series).
   const local = new Intl.DateTimeFormat('sv-SE', {
@@ -626,6 +631,28 @@ function calendarProof(event: RawEvent): string {
     .digest('hex')
 }
 
+function calendarTargetUrl(target: string, mailbox: string): string | null {
+  let binding: unknown
+  try {
+    binding = JSON.parse(target)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(binding) || binding.length !== 2) return null
+  const [url, attendee] = binding as unknown[]
+  return typeof url === 'string' &&
+    attendee === mailbox &&
+    /^https:\/\/www\.googleapis\.com\/calendar\/v3\/calendars\/[^/?#]+\/events\/[\w-]+\?sendUpdates=all$/.test(
+      url,
+    )
+    ? url.split('?')[0]!
+    : null
+}
+
+export function calendarTargetIsMailbox(target: string, mailbox: string): boolean {
+  return calendarTargetUrl(target, mailbox) !== null
+}
+
 /** Only a read of the original identity can reconcile a superseded Calendar
  * attempt. Deletion or a newer event at the original URL is not a refusal. */
 export async function verifyInvitationCalendarResponse(
@@ -633,24 +660,11 @@ export async function verifyInvitationCalendarResponse(
   target: string,
   proof: string,
   answer: InviteAnswer,
+  mailbox: string,
 ): Promise<boolean> {
-  let binding: unknown
-  try {
-    binding = JSON.parse(target)
-  } catch {
-    return false
-  }
-  if (!Array.isArray(binding) || binding.length !== 2) return false
-  const [url, mailbox] = binding as unknown[]
-  if (
-    typeof url !== 'string' ||
-    typeof mailbox !== 'string' ||
-    !/^https:\/\/www\.googleapis\.com\/calendar\/v3\/calendars\/[^/?#]+\/events\/[\w-]+\?sendUpdates=all$/.test(
-      url,
-    )
-  )
-    return false
-  const event = await api.get<RawEvent>(url.split('?')[0]!).catch((error) => {
+  const url = calendarTargetUrl(target, mailbox)
+  if (!url) return false
+  const event = await api.get<RawEvent>(url).catch((error) => {
     if (propagateCalendarRefusal(error)) throw error
     return null
   })
