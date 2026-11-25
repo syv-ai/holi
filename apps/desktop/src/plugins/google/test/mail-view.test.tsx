@@ -795,6 +795,38 @@ test('distinguishes a recorded Calendar answer from a different verified Sent re
   expect(respondMock).not.toHaveBeenCalled()
 })
 
+test('shows the Calendar answer while Gmail is unsettled and Retry only rereads', async () => {
+  withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
+  const unavailableReason = 'Gmail could not verify the latest sent response'
+  invitationMock.mockResolvedValueOnce(
+    invitations({
+      ...invite,
+      responseStatus: null,
+      recordedResponseStatus: 'tentative',
+      sentResponseStatus: null,
+      canRespond: false,
+      unavailableReason,
+    }),
+  )
+  invitationMock.mockResolvedValue(
+    invitations({ ...invite, responseStatus: 'tentative', recordedResponseStatus: 'tentative' }),
+  )
+  const user = userEvent.setup()
+  await openThread()
+
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  expect(await region.findByText('Calendar: Tentative')).toBeVisible()
+  expect(region.getByText(unavailableReason)).toBeVisible()
+  expect(region.queryByText(/Gmail Sent:|Response: Tentative/)).not.toBeInTheDocument()
+  for (const name of ['Accept', 'Maybe', 'Decline']) {
+    expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
+  }
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('Response: Tentative')).toBeVisible()
+  expect(region.getByRole('button', { name: 'Maybe' })).toBeDisabled()
+  expect(respondMock).not.toHaveBeenCalled()
+})
+
 test('ordinary mail opens without an invitation or meeting lookup', async () => {
   withMessage({ body: 'lunch?', html: null })
   threadMock.mockResolvedValue(page([summary({ hasInvite: false })]))

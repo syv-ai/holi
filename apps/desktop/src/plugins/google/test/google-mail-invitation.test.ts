@@ -1344,6 +1344,36 @@ it('allows a methodless export to open only a verified meeting, never to RSVP', 
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
+it('refuses to project an older actionable invitation when a newer full MIME tree is incomplete', async () => {
+  const { state, list, read, respond, call } = await rig()
+  expect(await read()).toMatchObject({ canRespond: true })
+  const newer = gmailMessage('newer', 300, invite('REQUEST', '', 4), { method: 'REQUEST' })
+  const nested = { mimeType: 'multipart/mixed', body: { size: 0 }, parts: [{}] }
+  state.fullThreadOverride = {
+    id: 'thread',
+    messages: [
+      ...state.messages,
+      { ...newer, payload: { ...newer.payload, parts: [newer.payload.parts[0], nested] } },
+    ],
+  }
+  await expect(call('thread', { id: 'thread' })).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(await list()).toMatchObject({
+    invitations: [],
+    recoveryReason: expect.stringMatching(/invalid full MIME part/i),
+  })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  nested.parts = [{ mimeType: 'text/plain', body: { size: 0 } }, newer.payload.parts[1]!]
+  await expect(call('thread', { id: 'thread' })).resolves.toMatchObject({
+    messages: [expect.any(Object), expect.objectContaining({ hasCalendarPayload: true })],
+  })
+  expect(await read()).toMatchObject({
+    identity: { messageId: 'newer', sequence: 4 },
+    canRespond: true,
+  })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+})
+
 it('never uses invitation evidence from a different full Gmail thread', async () => {
   const { state, list } = await rig()
   state.fullThreadOverride = {
@@ -1600,6 +1630,31 @@ it('does not corroborate an unthreaded Sent receipt with ambiguous MIME metadata
   expect(state.calendarPatchAttempts).toBe(0)
 })
 
+it('cannot confirm an out-of-thread Sent receipt until its full nested MIME is readable', async () => {
+  const { state, read, respond, list } = await rig()
+  state.replyThread = 'separate-thread'
+  state.sentVisible = false
+  await read()
+  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', refreshPending: true })
+
+  const prose = state.sent.get('reply-1')!.payload.parts[0]!
+  Object.assign(prose, {
+    mimeType: 'multipart/mixed',
+    body: { size: 0 },
+    parts: [{ mimeType: 'text/plain' }],
+  })
+  state.sentVisible = true
+  expect(await list()).toMatchObject({
+    invitations: [],
+    recoveryReason: expect.stringMatching(/invalid full MIME part/i),
+  })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  Object.assign(prose, { parts: [{ mimeType: 'text/plain', body: { size: 0 } }] })
+  expect(await read()).toMatchObject({ responseStatus: 'accepted', responsePending: false })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
 it('keeps the connected mailbox’s Sent answer when another guest changes PARTSTAT', async () => {
   const { state, read, respond } = await rig()
   const initial = invite().replace(
@@ -1846,7 +1901,9 @@ it('uses a newer Gmail answer on a verified old parent after equivalent REQUEST 
 
   // Plain mail claiming the now-absent parent invalidates even a persisted
   // anchor. The latest receipt (on the different redelivery) still holds.
-  state.messages.push(gmailMessage('plain-claim', 1150, undefined, { rfcId: parent }))
+  const claim = gmailMessage('plain-claim', 1150, undefined, { rfcId: '<plain@example.net>' })
+  claim.payload.headers.push({ name: 'message-id', value: parent })
+  state.messages.push(claim)
   expect(await restart().read()).toMatchObject({
     sentResponseStatus: 'tentative',
     responseStatus: 'tentative',
@@ -1905,14 +1962,79 @@ it('uses a newer Gmail answer on a verified old parent after equivalent REQUEST 
   expect(state.calendarPatchAttempts).toBe(1)
 })
 
-it('uses the full Gmail thread to distinguish unrelated prose from a competing parent', async () => {
+it('uses whole Message-ID claims from plain mail without letting duplicate headers prove ownership', async () => {
   const { state, read, respond } = await rig()
-  state.messages.push(acceptedReply('<update@example.net>'), gmailMessage('plain', 550))
+  const parent = '<update@example.net>'
+  const plain = gmailMessage('plain', 550)
+  const duplicate = { name: 'MESSAGE-ID', value: `junk ${parent}` }
+  plain.payload.headers.push(duplicate)
+  state.messages.push(acceptedReply(parent), plain)
   expect(await read()).toMatchObject({ canRespond: true, sentResponseStatus: 'accepted' })
-  state.messages.push(gmailMessage('claim', 600, undefined, { rfcId: '<update@example.net>' }))
-  expect(await read()).toMatchObject({ canRespond: false, sentResponseStatus: null })
-  await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  duplicate.value = parent
+  const first = plain.payload.headers.find(({ name }) => name === 'Message-ID')!
+  for (const value of ['<unrelated@example.net>', parent, `junk ${parent}`]) {
+    first.value = value
+    expect(await read()).toMatchObject({ canRespond: false, sentResponseStatus: null })
+    await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  }
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+})
+
+it('keeps a confirmed dispatch unresolved after a parent collision until independent newer Sent proof', async () => {
+  const { state, read, respond, restart } = await rig()
+  state.replyThread = 'separate-thread'
+  state.sentInternalDate = 600
+  await read()
+  expect(await respond('accepted')).toMatchObject({
+    outcome: 'sent',
+    channel: 'gmail',
+    refreshPending: false,
+    invitation: { responseStatus: 'accepted', sentResponseStatus: 'accepted' },
+  })
+
+  state.messages.push(
+    gmailMessage('redelivery', 650, invite('REQUEST', '', 3, '20240702T090000Z')),
+    gmailMessage('plain-claim', 660, undefined, { rfcId: '<update@example.net>' }),
+  )
+  const reopened = restart()
+  const blocked = {
+    identity: { messageId: 'redelivery' },
+    canRespond: false,
+    responseStatus: null,
+    sentResponseStatus: null,
+    unavailableReason: expect.stringMatching(/Gmail.*verify/i),
+  }
+  expect(await reopened.read()).toMatchObject(blocked)
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(await reopened.read()).toMatchObject(blocked)
+  expect(state.sendAttempts).toBe(1)
+
+  const decline = gmailMessage(
+    'external-decline',
+    600,
+    invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:'),
+    { sent: true, parent: '<redelivery@example.net>', method: 'REPLY' },
+  )
+  state.messages.push(decline)
+  // Even if the separately filed original receipt disappears, a tie cannot
+  // settle the dispute and a later independently owned reply can.
+  state.sentVisible = false
+  expect(await reopened.read()).toMatchObject(blocked)
+  decline.internalDate = '700'
+  state.messages.push(
+    gmailMessage('competing-reply-id', 710, undefined, { rfcId: '<external-decline@example.net>' }),
+  )
+  expect(await reopened.read()).toMatchObject(blocked)
+  state.messages.pop()
+  expect(await reopened.read()).toMatchObject({
+    responseStatus: 'declined',
+    sentResponseStatus: 'declined',
+    canRespond: true,
+  })
+  expect(await reopened.respond('declined')).toMatchObject({ outcome: 'unchanged' })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
 })
 
 it('cannot order a competing Sent answer against a receipt with a malformed Gmail timestamp', async () => {

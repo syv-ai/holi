@@ -442,7 +442,7 @@ describe('listThreads', () => {
     },
   )
 
-  it('recognizes nested calendar invitations only on the latest incoming message', async () => {
+  it('recognizes nested calendar invitations from a headers-only probe of the latest incoming message', async () => {
     const invitation = {
       id: 'invite-message',
       internalDate: '1000',
@@ -454,11 +454,10 @@ describe('listThreads', () => {
           {
             mimeType: 'multipart/alternative',
             parts: [
-              { mimeType: 'text/plain', body: { data: b64('Please see invitation') } },
+              { mimeType: 'text/plain' },
               {
                 mimeType: 'text/calendar',
                 headers: [header('Content-Type', 'text/calendar; method=REQUEST')],
-                body: { data: b64('BEGIN:VCALENDAR\\nMETHOD:REQUEST') },
               },
             ],
           },

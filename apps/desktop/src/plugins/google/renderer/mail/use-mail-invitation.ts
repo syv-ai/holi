@@ -13,18 +13,18 @@ export type Invitation = ReadInvitation
 
 export function invitationResponse(invitation: Invitation) {
   const { recordedResponseStatus: recorded, responseStatus, sentResponseStatus: sent } = invitation
-  // Only a substantive Calendar answer conflicts with a verified Gmail reply.
-  // The unqualified summary alone does not prove a reply appeared in Sent.
-  if (
-    !invitation.responsePending &&
-    recorded &&
-    recorded !== 'needsAction' &&
-    recorded !== 'delegated' &&
-    sent &&
-    sent !== recorded
-  )
-    return { current: recorded, differingSent: sent }
-  return { current: responseStatus, differingSent: null }
+  const calendarAnswer =
+    !invitation.responsePending && recorded !== 'needsAction' && recorded !== 'delegated'
+      ? recorded
+      : null
+  // A known Calendar answer is still worth showing when Gmail is unsettled.
+  // Keep that qualified display separate from the current answer and receipts.
+  const differingSent = calendarAnswer && sent !== calendarAnswer ? sent : null
+  return {
+    current: differingSent ? calendarAnswer : responseStatus,
+    calendarOnly: differingSent || responseStatus === null ? calendarAnswer : null,
+    differingSent,
+  }
 }
 type Receipt = Pick<
   Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>,

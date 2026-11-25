@@ -45,9 +45,37 @@ export function isCalendarPart(part: RawPart): boolean {
   )
 }
 
-/** Validate before inspecting headers or descending. A forwarded message is an
- * opaque attachment in both projections, never evidence about this message. */
-export function createMimeWalk(maxDepth = 16) {
+function isFullPart(part: RawPart): boolean {
+  if (
+    typeof part.mimeType !== 'string' ||
+    !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:;[^\r\n]*)?$/.test(part.mimeType)
+  )
+    return false
+  const { body, parts } = part
+  if (
+    body !== undefined &&
+    (!body ||
+      typeof body !== 'object' ||
+      Array.isArray(body) ||
+      (body.size !== undefined && (!Number.isSafeInteger(body.size) || body.size < 0)) ||
+      (body.data !== undefined && typeof body.data !== 'string') ||
+      (body.attachmentId !== undefined &&
+        (typeof body.attachmentId !== 'string' || !body.attachmentId)))
+  )
+    return false
+  // A container needs its children; a leaf needs its body or an attachment
+  // descriptor. Gmail may omit inline data for an empty body.
+  return (
+    Boolean(parts?.length) ||
+    (!declaresMediaType(part, /^multipart\//i) &&
+      body !== undefined &&
+      (body.size === 0 || body.data !== undefined || body.attachmentId !== undefined))
+  )
+}
+
+/** Validate before visiting or descending. Only unmasked full responses require
+ * a complete part tree. A forwarded message stays an opaque attachment. */
+export function createMimeWalk(maxDepth = 16, format: 'partial' | 'full' = 'partial') {
   let nodes = 2048
   let headerBytes = 2 * 1024 * 1024
   const bounded = (within: boolean) => {
@@ -83,6 +111,8 @@ export function createMimeWalk(maxDepth = 16) {
         string(header.name)
         string(header.value)
       }
+      if (format === 'full' && !isFullPart(part))
+        throw new CalendarScanError('Gmail returned an incomplete or invalid full MIME part')
       const forwarded = declaresMediaType(part, /^message\/rfc822$/i)
       collect(part, location, forwarded)
       if (forwarded || !part.parts?.length) return
@@ -97,8 +127,10 @@ export function createMimeWalk(maxDepth = 16) {
         }),
       )
     }
-    if (payload === undefined) bounded(--nodes >= 0)
-    else visit(payload, 0, { path: '0', alternatives: [] })
+    if (payload === undefined) {
+      if (format === 'full') throw new CalendarScanError('Gmail returned no full MIME payload')
+      bounded(--nodes >= 0)
+    } else visit(payload, 0, { path: '0', alternatives: [] })
   }
 }
 

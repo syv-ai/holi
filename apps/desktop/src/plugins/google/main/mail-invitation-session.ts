@@ -106,8 +106,8 @@ type Resolved = {
 type ReadResult = { cards: Resolved[]; recoveryReason: string | null }
 type CalendarCopy = Awaited<ReturnType<typeof findInvitationCalendarCopy>>
 
-type Confirmation = { attempt: InvitationAttempt; mail: Mail | null }
-type Corroborates = (attempt: InvitationAttempt) => boolean
+type Confirmation = { attempt: InvitationAttempt; mail: Mail | null; disputedParent: boolean }
+type LineageMatch = (attempt: InvitationAttempt) => 'linked' | 'disputed' | null
 
 type SentAddress = { organizer: string; mailbox: string }
 
@@ -261,7 +261,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     messages: Mail[],
     scan: Scan,
     copies: Map<string, CalendarCopy>,
-    lineages: Map<string, Corroborates>,
+    lineages: Map<string, LineageMatch>,
     parentAnchors: ParentAnchor[],
   ) {
     const pending: InvitationAttempt[] = []
@@ -271,8 +271,8 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     for (const attempt of [...attempts].reverse()) {
       const { id, delivery, revision, answer } = attempt
       const key = scopeKey(revision)
-      const corroborates = lineages.get(key)
-      const relevant = corroborates?.(attempt) === true
+      const matchLineage = lineages.get(key)
+      const match = matchLineage?.(attempt) ?? null
       if (dispatching.has(id)) {
         pending.push(attempt)
         continue
@@ -282,7 +282,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         await changeAttempt(id, (entry) => (entry.state === 'prepared' ? null : entry))
         continue
       }
-      if (attempt.state === 'confirmed' && (!relevant || confirmations.has(key))) continue
+      if (attempt.state === 'confirmed' && (match === null || confirmations.has(key))) continue
 
       let mail: Mail | null = null
       let confirmed = attempt
@@ -315,7 +315,11 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             delivery: matching ? { ...delivery, proof: copy.proof } : delivery,
           }
         }
-      } else {
+      } else if (
+        attempt.state !== 'confirmed' ||
+        match !== 'disputed' ||
+        delivery.confirmedSentTimestamp === undefined
+      ) {
         const isAnswer = async (mail: Mail) => {
           if (mail.parent !== delivery.parent) return false
           const answers = await sentAnswer(mail, revision, delivery)
@@ -339,7 +343,11 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           confirmed = {
             ...attempt,
             state: 'confirmed',
-            delivery: { ...delivery, receipt: { id: mail.messageId, threadId: mail.threadId } },
+            delivery: {
+              ...delivery,
+              receipt: { id: mail.messageId, threadId: mail.threadId },
+              confirmedSentTimestamp: mail.timestamp || undefined,
+            },
           }
         }
       }
@@ -349,11 +357,14 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         const journal = await store.confirmAttempt(
           confirmed,
           (entry) =>
-            relevant && entry.accountSub === target.accountSub && corroborates?.(entry) === true,
+            match === 'linked' &&
+            entry.accountSub === target.accountSub &&
+            matchLineage?.(entry) === 'linked',
         )
         parentAnchors = journal.parentAnchors
       }
-      if (relevant && !confirmations.has(key)) confirmations.set(key, { attempt: confirmed, mail })
+      if (match !== null && !confirmations.has(key))
+        confirmations.set(key, { attempt: confirmed, mail, disputedParent: match === 'disputed' })
     }
     return { pending, confirmations, parentAnchors }
   }
@@ -398,19 +409,20 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         copies.set(scopeKey(details.identity), copy)
       }
     }
-    const lineages = new Map<string, Corroborates>()
+    const lineages = new Map<string, LineageMatch>()
     for (const entry of scopes) {
       const { organizer, identity } = entry.selected.value.details
-      lineages.set(
-        scopeKey(identity),
-        ({ revision, delivery }) =>
-          onLineage(entry, revision, email) &&
-          (delivery.channel === 'calendar'
-            ? calendarTargetIsMailbox(delivery.target, email)
-            : delivery.organizer === organizer?.email &&
-              delivery.mailbox === email &&
-              (entry.parents.has(delivery.parent) || !owners.has(delivery.parent))),
-      )
+      lineages.set(scopeKey(identity), ({ revision, delivery }) => {
+        if (!onLineage(entry, revision, email)) return null
+        if (delivery.channel === 'calendar')
+          return calendarTargetIsMailbox(delivery.target, email) ? 'linked' : null
+        if (delivery.organizer !== organizer?.email || delivery.mailbox !== email) return null
+        // A contradictory visible owner invalidates parent proof, not the
+        // fact that we already dispatched a response on this lineage.
+        return entry.parents.has(delivery.parent) || !owners.has(delivery.parent)
+          ? 'linked'
+          : 'disputed'
+      })
     }
     const { pending, confirmations, parentAnchors } = await reconcile(
       target,
@@ -501,7 +513,8 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           delivery.proof !== undefined &&
           calendar.matchesProof(delivery.proof)
         const responseParents = new Set(parents)
-        const receipt = confirmation?.mail
+        const disputedParent = confirmation?.disputedParent === true
+        const receipt = disputedParent ? null : confirmation?.mail
         // A compacted receipt still proves its parent, but only on this
         // mailbox's response lineage and never against contradictory visible mail.
         for (const anchor of parentAnchors) {
@@ -518,7 +531,18 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         if (delivery?.channel === 'gmail' && receipt) responseParents.add(delivery.parent)
         const sentMail = receipt
           ? [...messages.filter(({ messageId }) => messageId !== receipt.messageId), receipt]
-          : messages
+          : disputedParent && delivery?.channel === 'gmail'
+            ? messages.filter(
+                (mail) => mail.rfcId !== delivery.rfcId && mail.messageId !== delivery.receipt?.id,
+              )
+            : messages
+        const independentIds = disputedParent
+          ? new Set(
+              sentMail
+                .filter(({ rfcId, messageId }) => rfcId && owners.get(rfcId) === messageId)
+                .map(({ messageId }) => messageId),
+            )
+          : null
         const sent = await sentResponse(sentMail, responseParents, identity, {
           organizer,
           mailbox: email,
@@ -536,7 +560,6 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               sent.evidence.messageIds.every((id) => earlier.messageIds.includes(id))))
         const sentStatus =
           superseded || sent.orderUnverified ? null : (sent.evidence?.answer ?? null)
-        invitation.sentResponseStatus = sentStatus
         const calendarStatus = isAnswer(calendarObserved) ? calendarObserved : null
         const historical = confirmation?.attempt.answer ?? null
         const historicalCalendar =
@@ -562,21 +585,34 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             }
           }
         }
-        recorded = calendar.kind === 'verified' ? calendarStatus : sentStatus
         // A different answer can replace a Holi receipt only with positive Gmail
-        // ordering evidence. In particular, a reply already observed before the
-        // write is not a subsequent change, even if Gmail dates it later.
+        // ordering evidence. A disputed receipt can establish that lower bound,
+        // but only independently owned replies to verified parents can settle it.
+        const receiptTimestamp =
+          disputedParent && delivery?.channel === 'gmail'
+            ? (delivery.confirmedSentTimestamp ?? confirmation?.mail?.timestamp ?? 0)
+            : (receipt?.timestamp ?? 0)
         const newerSent =
           sent.evidence &&
-          receipt &&
-          receipt.timestamp > 0 &&
-          sent.evidence.timestamp > receipt.timestamp &&
+          receiptTimestamp > 0 &&
+          sent.evidence.timestamp > receiptTimestamp &&
           sent.evidence.timestamp >
             (delivery?.channel === 'gmail' ? (delivery.priorSentTimestamp ?? 0) : 0)
+        const disputedUnsettled =
+          independentIds !== null &&
+          !(
+            newerSent &&
+            sentStatus !== null &&
+            sent.evidence?.messageIds.every((id) => independentIds.has(id))
+          )
+        invitation.sentResponseStatus = disputedUnsettled ? null : sentStatus
+        recorded = calendar.kind === 'verified' ? calendarStatus : invitation.sentResponseStatus
         const sentUnverified =
           sent.orderUnverified ||
           (!superseded && sent.answers.size > 1) ||
+          disputedUnsettled ||
           (delivery?.channel === 'gmail' &&
+            !disputedParent &&
             (!receipt || (sentStatus !== null && sentStatus !== historical && !newerSent)))
         const otherAnswer = sentStatus ?? historicalCalendar
         const answersDiffer =

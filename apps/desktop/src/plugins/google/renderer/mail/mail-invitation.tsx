@@ -165,8 +165,8 @@ function InvitationCard({
   const headingId = useId()
   const isInvitation = invitation.kind === 'invitation'
   const canRespond = isInvitation && invitation.canRespond && !invitation.cancelled
-  const { current, differingSent } = invitationResponse(invitation)
-  const response = isInvitation ? current : null
+  const { current, calendarOnly, differingSent } = invitationResponse(invitation)
+  const response = isInvitation ? (calendarOnly ?? current) : null
   const responseBadge = response === null ? null : responseBadges[response]
   const date = invitationDate(invitation, clock)
   const { organizer, location } = invitation
@@ -187,7 +187,7 @@ function InvitationCard({
           <Badge variant={responseBadge.variant}>
             {response === 'needsAction'
               ? responseBadge.label
-              : `${differingSent ? 'Calendar' : 'Response'}: ${responseBadge.label}`}
+              : `${calendarOnly ? 'Calendar' : 'Response'}: ${responseBadge.label}`}
           </Badge>
         )}
       </div>
@@ -223,7 +223,7 @@ function InvitationCard({
               type="button"
               variant="outline"
               size="sm"
-              disabled={blocked || refreshPending || error !== null || response === answer}
+              disabled={blocked || refreshPending || error !== null || current === answer}
               onClick={() => respond(answer)}
             >
               {label}
