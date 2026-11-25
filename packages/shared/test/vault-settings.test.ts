@@ -247,29 +247,29 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     // light mode, taking your Space key or changing your editor is exactly the
     // failure the `.local` layer exists to prevent. The vault may still commit
     // a default by hand.
-    const committed = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'committed').map(
-      (d) => d.key,
-    )
-    expect(committed).toEqual([
-      'dailyNotes',
-      'hooks',
-      'maxCommittedFileBytes',
-      'autoUpdateSkills',
-      'plugins',
-    ])
-    const local = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'local').map((d) => d.key)
-    expect(local).toEqual([
-      'colorScheme',
-      'windowGlass',
-      'gridArcade',
-      'foldSidebarForApps',
-      'confirmCloseSplitTabs',
-      'editorFont',
-      'propertiesLayout',
-      'tableStyle',
-      'spaceAsksAgent',
-      'agentProvider',
-    ])
+    const committed = {
+      agentInbox: false,
+      agentHistory: false,
+      agentMemory: false,
+      dailyNotes: true,
+      hooks: { 'memory-index': false },
+      maxCommittedFileBytes: 10 * 1024 * 1024,
+      autoUpdateSkills: VAULT_SETTING_DEFAULTS.autoUpdateSkills,
+      plugins: { tasks: true },
+    }
+    const local = {
+      colorScheme: 'dark',
+      windowGlass: VAULT_SETTING_DEFAULTS.windowGlass,
+      gridArcade: false,
+      foldSidebarForApps: false,
+      confirmCloseSplitTabs: true,
+      editorFont: VAULT_SETTING_DEFAULTS.editorFont,
+      propertiesLayout: VAULT_SETTING_DEFAULTS.propertiesLayout,
+      tableStyle: VAULT_SETTING_DEFAULTS.tableStyle,
+      spaceAsksAgent: false,
+      agentProvider: 'claude',
+    }
+    expect(splitAnswersByTarget({ ...committed, ...local })).toEqual({ committed, local })
   })
 
   it('names no key twice', () => {
