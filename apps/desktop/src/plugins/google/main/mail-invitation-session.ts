@@ -6,13 +6,14 @@ import {
   type GoogleApi,
   type GoogleDispatchGate,
 } from './api'
-import type { InviteAnswer } from './calendar'
+import type { InviteAnswer, RsvpStatus } from './calendar'
 import {
   calendarLocatorMayMatchScope,
   calendarTargetIsMailbox,
   calendarTargetMailbox,
   findInvitationCalendarCopy,
   createInvitationCalendarResourceLookup,
+  type InvitationTarget,
   type InvitationLinks,
 } from './mail-invitation-calendar'
 import { CalendarScanError } from './gmail-mime'
@@ -84,6 +85,7 @@ type ResponseDecision = {
   unavailableReason: string | null
   status: NonNullable<Revision['mailboxResponse']>['responseStatus'] | null
   sentStatus: InviteAnswer | null
+  recordedCalendarStatus: RsvpStatus | null
   targetKey: string | null
   mayRespond: boolean
   pending: boolean
@@ -112,7 +114,7 @@ type Resolved = {
   recorded: InviteAnswer | null
   priorSent: SentEvidence | null
   absentTargets: Set<string>
-  upcomingLinks: (() => Promise<InvitationLinks | null>) | null
+  navigation: (() => Promise<InvitationLinks | false | null | undefined>) | null
 }
 type ReadResult = { cards: Resolved[]; recoveryReason: string | null }
 type CalendarCopy = Awaited<ReturnType<typeof findInvitationCalendarCopy>>
@@ -348,6 +350,35 @@ function isAnswer(status: MailInvitation['responseStatus']): status is InviteAns
   return status === 'accepted' || status === 'tentative' || status === 'declined'
 }
 
+function calendarInvitation(
+  entry: Awaited<ReturnType<typeof latestByScope>>['scopes'][number],
+  email: string,
+): InvitationTarget | null {
+  const { details, request, revisionMaterial } = entry.selected.value
+  if (entry.reason || !request || !revisionMaterial || !details.organizer) return null
+  const legacyJoinOnly = entry.selected.joinOnly
+  // Revision selection has already limited history to this scope and sequence.
+  // Calendar must distinguish the selected REQUEST from each strictly earlier
+  // REQUEST it might still be showing, for both the occurrence card and Join.
+  const predecessors = entry.history.flatMap(({ value }) =>
+    value.method === 'REQUEST' &&
+    value.revisionMaterial &&
+    value.details.identity.dtstamp !== null &&
+    details.identity.dtstamp !== null &&
+    value.details.identity.dtstamp < details.identity.dtstamp
+      ? [{ details: value.details, material: value.revisionMaterial }]
+      : [],
+  )
+  return {
+    details,
+    request,
+    material: revisionMaterial,
+    joinOnly: legacyJoinOnly || entry.selected.mail.sent || details.organizer.email === email,
+    legacyJoinOnly,
+    predecessors,
+  }
+}
+
 function sameWriteTarget(a: Reply, b: Reply): boolean {
   if (a.channel === 'calendar' && b.channel === 'calendar')
     return a.target === b.target && a.proof === b.proof
@@ -380,10 +411,15 @@ function relevantCalendarTargets(
 }
 
 /** Resolve navigation only on the way out, never during write preflight. */
-async function displayCard({ source, decision, upcomingLinks }: Resolved): Promise<MailInvitation> {
+async function displayCard({ source, decision, navigation }: Resolved): Promise<MailInvitation> {
+  const links = await navigation?.()
   return projectMailInvitation(
-    { ...source, response: { ...decision, canRespond: decision.mayRespond } },
-    await upcomingLinks?.(),
+    {
+      ...source,
+      navigationWithheld: source.navigationWithheld || links === false,
+      response: { ...decision, canRespond: decision.mayRespond },
+    },
+    links === false ? undefined : links,
   )
 }
 
@@ -613,31 +649,12 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     const copies = new Map<string, CalendarCopy>()
     target.assertBinding()
     for (const entry of scopes) {
-      const { details, request, revisionMaterial } = entry.selected.value
-      const joinOnly =
-        entry.selected.joinOnly || entry.selected.mail.sent || details.organizer?.email === email
-      if (!entry.reason && request && revisionMaterial && details.organizer) {
-        // Revision selection has already limited history to this scope and
-        // sequence. Calendar must distinguish the selected REQUEST from each
-        // strictly earlier REQUEST it might still be showing.
-        const predecessors = entry.history.flatMap(({ value }) =>
-          value.method === 'REQUEST' &&
-          value.revisionMaterial &&
-          value.details.identity.dtstamp !== null &&
-          details.identity.dtstamp !== null &&
-          value.details.identity.dtstamp < details.identity.dtstamp
-            ? [{ details: value.details, material: value.revisionMaterial }]
-            : [],
-        )
-        const copy = await findInvitationCalendarCopy(
-          api,
-          { details, request, material: revisionMaterial, joinOnly, predecessors },
-          email,
-          (locator) =>
-            store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
-        )
-        copies.set(scopeKey(details.identity), copy)
-      }
+      const invitation = calendarInvitation(entry, email)
+      if (!invitation) continue
+      const copy = await findInvitationCalendarCopy(api, invitation, email, (locator) =>
+        store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
+      )
+      copies.set(scopeKey(invitation.details.identity), copy)
     }
     const journal = await store.read()
     target.assertBinding()
@@ -659,11 +676,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       return { messages: [], owners: createMessageIdOwnership() }
     })
     const { messages, owners } = thread
-    const {
-      scopes: incoming,
-      suppressesSeriesSlot,
-      disputedSent,
-    } = await latestByScope(thread, email)
+    const { scopes: incoming, selectSeriesSlot, disputedSent } = await latestByScope(thread, email)
     const scopes = selection
       ? incoming.filter((entry) => sameGroup(identityOf(entry.selected), selection))
       : incoming
@@ -870,6 +883,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             : (entry.reason ?? details.unavailableReason),
         status: verifiedCopy?.responseStatus ?? null,
         sentStatus: null,
+        recordedCalendarStatus: verifiedCopy?.responseStatus ?? null,
         targetKey:
           verifiedCopy && !joinOnly ? responseTargetKey('calendar', verifiedCopy.target) : null,
         mayRespond: false,
@@ -960,7 +974,6 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               sent.evidence.messageIds.every((id) => earlier.messageIds.includes(id))))
         const sentStatus =
           superseded || sent.orderUnverified ? null : (sent.evidence?.answer ?? null)
-        const calendarStatus = isAnswer(calendarObserved) ? calendarObserved : null
         const historical = confirmation?.attempt.answer ?? null
         const historicalCalendar =
           delivery?.channel === 'calendar' && !sameTarget ? historical : null
@@ -976,8 +989,12 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             }
             absentTargets.add(locator)
           }
-          if (absenceContradicted && delivery?.channel === 'calendar' && historical)
+          if (absenceContradicted && delivery?.channel === 'calendar' && historical) {
+            // Only a confirmation on the selected lineage reaches here. The
+            // exact resource corroborates its answer, not a current write target.
             exactConfirmed = await exactCalendarAnswer(resources, delivery, historical)
+            if (exactConfirmed) decision.recordedCalendarStatus = historical
+          }
           const headers = selected.mail.replyHeaders
           if (absenceContradicted) {
             decision.unavailableReason =
@@ -1022,7 +1039,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           (!receipt || (sentStatus !== null && sentStatus !== historical)) &&
           !(newerSent && sentStatus !== null)
         decision.sentStatus = receiptUnsettled ? null : sentStatus
-        recorded = calendar.kind === 'verified' ? calendarStatus : decision.sentStatus
+        const calendarStatus = isAnswer(decision.recordedCalendarStatus)
+          ? decision.recordedCalendarStatus
+          : null
+        recorded = calendarStatus ?? (calendar.kind === 'absent' ? decision.sentStatus : null)
         gmailUnverified =
           sent.orderUnverified || (!superseded && sent.answers.size > 1) || receiptUnsettled
         if (!gmailUnverified && sentStatus !== null) currentSent = sent.evidence
@@ -1115,7 +1135,6 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         }
       }
       decision.mayRespond = reply !== null && !responseUnverified && !decision.pending
-      const loadUpcoming = verifiedCopy?.upcomingLinks
       cards.push({
         source: {
           details,
@@ -1131,9 +1150,13 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         recorded,
         priorSent,
         absentTargets,
-        upcomingLinks:
-          !navigationWithheld && loadUpcoming
-            ? () => loadUpcoming((slot) => suppressesSeriesSlot(selected, slot))
+        navigation:
+          !navigationWithheld && verifiedCopy
+            ? () =>
+                verifiedCopy.navigation((slot) => {
+                  const occurrence = selectSeriesSlot(selected, slot)
+                  return occurrence ? (calendarInvitation(occurrence, email) ?? false) : occurrence
+                })
             : null,
       })
     }
