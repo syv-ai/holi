@@ -47,6 +47,11 @@ describe('Codex TUI terminal adapter', () => {
     })
     if (!openedResult.ok) throw new Error(openedResult.message)
     await Promise.resolve()
+    fake.handle.emit(Buffer.from('\x1b[6'))
+    fake.handle.emit(Buffer.from('n'))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(fake.writes).toContain('\x1b[1;1R')
+    expect(inputs).toEqual([])
     fake.handle.emit(Buffer.from([0xe2]))
     await new Promise((resolve) => setTimeout(resolve, 20))
     fake.handle.emit(Buffer.from([0x82, 0xac]))
@@ -56,6 +61,8 @@ describe('Codex TUI terminal adapter', () => {
     expect(inputs).toEqual(['y'])
     expect(fake.writes).toContain('y')
     await terminals.close(openedResult.id)
+    expect(terminals.snapshot(openedResult.id).output).toBe('€')
+    expect(terminals.snapshot(openedResult.id).inputs).toEqual(['y'])
   })
 
   it('joins close during launch and retains ownership when drainage is unconfirmed', async () => {
