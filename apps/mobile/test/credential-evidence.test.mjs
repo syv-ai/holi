@@ -89,3 +89,11 @@ test('observes a complete report when publication overlaps polling', async () =>
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('retains bounded native Keychain status without arbitrary error details', () => {
+  const error = { kind: 'keychain', operation: 'read', status: -34018, message: 'private-token' }
+  const receipt = summarizeCredentialReport({ ...report, outcome: 'failed', error })
+  assert.deepEqual(receipt.nativeError, { kind: 'keychain', operation: 'read', status: -34018 })
+  assert.ok(!JSON.stringify(receipt).includes('private-token'))
+  assert.throws(() => validateCredentialReport({ ...report, outcome: 'failed', error }, context))
+})

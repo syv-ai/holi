@@ -54,6 +54,8 @@ export async function runCredentialSimulator() {
   const simctl = (...args) => command('xcrun', ['simctl', ...args])
   const pids = []
   const cleanupFailures = []
+  const signedBuild = join(artifacts, 'simulator-build')
+  const signedDerived = join(artifacts, 'simulator-derived')
   let simulator
   let active
   let build
@@ -106,11 +108,42 @@ export async function runCredentialSimulator() {
         onOutput: (data) => buildLog.write(data),
         env: { ...process.env, CI: '1', ELECTRON_SKIP_BINARY_DOWNLOAD: '1' },
       })
+      stage = 'simulator-signing'
+      await command(
+        'xcodebuild',
+        [
+          '-project',
+          'platforms/ios/mobile.xcodeproj',
+          '-scheme',
+          'mobile',
+          '-configuration',
+          'Debug',
+          '-sdk',
+          'iphonesimulator',
+          '-destination',
+          'generic/platform=iOS Simulator',
+          '-derivedDataPath',
+          signedDerived,
+          `CONFIGURATION_BUILD_DIR=${signedBuild}`,
+          'CODE_SIGNING_ALLOWED=YES',
+          'CODE_SIGNING_REQUIRED=YES',
+          'CODE_SIGN_IDENTITY=-',
+          'CODE_SIGN_STYLE=Manual',
+          'DEVELOPMENT_TEAM=',
+          'PROVISIONING_PROFILE=',
+          'PROVISIONING_PROFILE_SPECIFIER=',
+        ],
+        {
+          timeout: 600_000,
+          onOutput: (data) => buildLog.write(data),
+          env: { ...process.env, CI: '1' },
+        },
+      )
     } finally {
       await writeFile(join(artifacts, 'build-log.json'), JSON.stringify(buildLog.close(), null, 2))
     }
     stage = 'verify-build'
-    const app = join(cwd, 'platforms/ios/build/Debug-iphonesimulator/mobile.app')
+    const app = join(signedBuild, 'mobile.app')
     const plist = async (key) =>
       command('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, join(app, 'Info.plist')])
     assert.equal(await plist('MinimumOSVersion'), '26.0')
@@ -131,6 +164,8 @@ export async function runCredentialSimulator() {
       .digest('hex')
     provenance = {
       sourceHead,
+      signing: 'xcode-simulator-adhoc',
+      provisioning: false,
       binaryHash,
       bundleHash,
       bundleId,
@@ -241,6 +276,13 @@ export async function runCredentialSimulator() {
         if (!simulatorRemoved) cleanupFailures.push('Owned simulator still exists')
       } catch (error) {
         cleanupFailures.push(String(error))
+      }
+    }
+    for (const ownedBuild of [signedBuild, signedDerived]) {
+      try {
+        await rm(ownedBuild, { recursive: true, force: true })
+      } catch {
+        cleanupFailures.push('Owned simulator build cleanup failed')
       }
     }
     process.removeListener('SIGINT', interrupt)
