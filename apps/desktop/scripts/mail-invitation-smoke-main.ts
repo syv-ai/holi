@@ -502,7 +502,9 @@ async function run() {
         await click(action, card)
         if (answer === 'declined') {
           await expectStatus('Retry only checks its status')
-          await expectStatus('Response: Tentative')
+          assert(!(await readCard()).includes('Response: Tentative'))
+          assert(!(await readCard()).includes('Response: Declined'))
+          assert.equal(transport.snapshot().calendarResponse, answer)
           assert.equal(transport.writes.length, before + 1)
           assert.equal(transport.snapshot().tokenRefreshes, 0)
           rig.expireAccessToken()

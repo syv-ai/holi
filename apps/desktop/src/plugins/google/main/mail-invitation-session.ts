@@ -10,7 +10,7 @@ import type { InviteAnswer } from './calendar'
 import {
   calendarTargetIsMailbox,
   findInvitationCalendarCopy,
-  verifyInvitationCalendarResponse,
+  createInvitationCalendarResourceLookup,
 } from './mail-invitation-calendar'
 import { CalendarScanError } from './gmail-mime'
 import {
@@ -18,7 +18,7 @@ import {
   createCalendarScan,
   createMessageIdOwnership,
   fetchThreadCalendarPayloads,
-  findSentCalendarReply,
+  createSentCalendarLookup,
   sendCalendarReply,
 } from './gmail-invitation-transport'
 import { parseCalendarMail } from './invite'
@@ -83,6 +83,7 @@ type Target = {
   assertBinding: () => void
 }
 type Scan = ReturnType<typeof createCalendarScan>
+type CalendarResources = ReturnType<typeof createInvitationCalendarResourceLookup>
 type Reply = { key: string } & (
   | {
       channel: 'calendar'
@@ -101,6 +102,7 @@ type Reply = { key: string } & (
 type Resolved = {
   invitation: MailInvitation
   reply: Reply | null
+  noopChannel: Channel | null
   response: Revision['mailboxResponse']
   recorded: InviteAnswer | null
   priorSent: SentEvidence | null
@@ -258,6 +260,16 @@ async function sentResponse(
   }
 }
 
+async function exactCalendarAnswer(
+  resources: CalendarResources,
+  { target, proof }: Extract<InvitationAttempt['delivery'], { channel: 'calendar' }>,
+  answer: InviteAnswer,
+): Promise<boolean> {
+  if (!proof) return false
+  const resource = await resources(target)
+  return resource.kind === 'present' && resource.confirms(proof, answer)
+}
+
 function isAnswer(status: MailInvitation['responseStatus']): status is InviteAnswer {
   return status === 'accepted' || status === 'tentative' || status === 'declined'
 }
@@ -303,8 +315,9 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     target: Target,
     attempts: InvitationAttempt[],
     { messages, owners }: Thread,
-    scan: Scan,
+    receipts: ReturnType<typeof createSentCalendarLookup>,
     copies: Map<string, CalendarCopy>,
+    resources: CalendarResources,
     lineages: Map<string, LineageMatch>,
     parentAnchors: ParentAnchor[],
     receiptObscured: (attempt: InvitationAttempt, mail: Mail) => Promise<boolean>,
@@ -349,14 +362,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               : sameRevision(copy.revision, revision))
           const observed = matching
             ? copy.responseStatus === answer
-            : delivery.proof &&
-              (await verifyInvitationCalendarResponse(
-                target.api,
-                delivery.target,
-                delivery.proof,
-                answer,
-                target.email,
-              ))
+            : await exactCalendarAnswer(resources, delivery, answer)
           if (!observed) {
             pending.push(attempt)
             continue
@@ -379,44 +385,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           if (answers.length === 1 && answers[0] === answer) return 'match'
           return answers.length ? 'related' : null
         }
-        const inThread = messages.filter((message) => message.claims.has(delivery.rfcId))
-        const owned = inThread.find((message) => owners.owns(message))
-        const receipt = delivery.receipt
-        const liveReceipt =
-          owned &&
-          (!receipt?.id ||
-            (receipt.id === owned.messageId &&
-              (!receipt.threadId || receipt.threadId === owned.threadId)))
-            ? owned
-            : null
-        if (liveReceipt && (await assess(liveReceipt)) === 'match') mail = liveReceipt
-        if (!mail) {
-          const found = await findSentCalendarReply(
-            target.api,
-            delivery.rfcId,
-            delivery.receipt,
-            scan,
-            owners,
-            assess,
-          )
-          mail = found.mail
-          if (found.unresolvedReply) unverifiedReceipts.add(id)
-          const timestamps = found.contestedTimestamp ? [found.contestedTimestamp] : []
-          if (!mail) {
-            for (const message of inThread) {
-              const evidence = await assess(message)
-              if (evidence === 'unresolved') unverifiedReceipts.add(id)
-              if (evidence && (evidence === 'unresolved' || !owners.owns(message)))
-                timestamps.push(message.timestamp)
-            }
-          }
-          if (
-            found.contestedTimestamp !== null &&
-            timestamps.length &&
-            timestamps.every((stamp) => stamp > 0)
-          )
-            contested.set(id, Math.max(...timestamps))
-        }
+        const found = await receipts.findReply(delivery.rfcId, delivery.receipt, messages, assess)
+        mail = found.mail
+        if (found.unresolvedReply) unverifiedReceipts.add(id)
+        if (found.contestedTimestamp) contested.set(id, found.contestedTimestamp)
         if (attempt.state !== 'confirmed') {
           if (!mail) {
             pending.push(attempt)
@@ -454,17 +426,37 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         entry.delivery.channel === 'gmail' &&
         entry.delivery.receipt?.id != null &&
         matchLineage?.(entry) === 'linked' &&
-        !owners.contradicts({
+        receipts.hasVerifiedOwner({
           rfcId: entry.delivery.rfcId,
           messageId: entry.delivery.receipt.id,
         })
+      // Compaction may retain an existing anchor without proving it again.
+      // This does not grant parent evidence; a known contradiction keeps the dispatch.
+      const hasStoredAnchor = (entry: InvitationAttempt) => {
+        const { delivery } = entry
+        return (
+          delivery.channel === 'gmail' &&
+          delivery.receipt?.id != null &&
+          !owners.contradicts({ rfcId: delivery.rfcId, messageId: delivery.receipt.id }) &&
+          parentAnchors.some(
+            (anchor) =>
+              anchor.accountSub === entry.accountSub &&
+              anchor.mailbox === delivery.mailbox &&
+              anchor.organizer === delivery.organizer &&
+              anchor.parent === delivery.parent &&
+              sameRevision(anchor.revision, entry.revision) &&
+              anchor.reply?.rfcId === delivery.rfcId &&
+              anchor.reply.messageId === delivery.receipt?.id,
+          )
+        )
+      }
       const journal = await store.confirmAttempt(
         attempt,
         (entry) =>
           matchLineage?.(attempt) === 'linked' &&
           entry.accountSub === target.accountSub &&
           matchLineage(entry) === 'linked' &&
-          (entry.delivery.channel !== 'gmail' || provesAnchor(entry)),
+          (entry.delivery.channel !== 'gmail' || hasStoredAnchor(entry) || provesAnchor(entry)),
         provesAnchor,
       )
       parentAnchors = journal.parentAnchors
@@ -503,6 +495,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             scopes.some((entry) => sameGroup(identityOf(entry.selected), attempt.revision))),
     )
     const copies = new Map<string, CalendarCopy>()
+    const resources = createInvitationCalendarResourceLookup(api, email)
     for (const entry of scopes) {
       const { details, request, revisionMaterial } = entry.selected.value
       const joinOnly =
@@ -546,6 +539,24 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       })
     }
     const entries = new Map(scopes.map((entry) => [scopeKey(identityOf(entry.selected)), entry]))
+    const receipts = createSentCalendarLookup(api, scan, owners)
+    const sentParents = new Set(
+      messages.flatMap((mail) => (mail.sent && mail.parent ? [mail.parent] : [])),
+    )
+    // Only check historical anchors that could make a visible reply positive.
+    // Do not scan the whole journal on each view or re-use ownership across reads.
+    for (const anchor of journal.parentAnchors) {
+      if (!anchor.reply || !sentParents.has(anchor.parent) || owners.has(anchor.parent)) continue
+      const entry = entries.get(scopeKey(anchor.revision))
+      if (
+        entry &&
+        anchor.accountSub === accountSub &&
+        anchor.mailbox === email &&
+        anchor.organizer === entry.selected.value.details.organizer?.email &&
+        onLineage(entry, anchor.revision, email)
+      )
+        await receipts.checkAnchor(anchor.reply)
+    }
     type Scope = (typeof scopes)[number]
     function evidenceParents(entry: Scope, organizer: string, anchors: ParentAnchor[]) {
       const key = scopeKey(identityOf(entry.selected))
@@ -561,7 +572,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           onLineage(entry, anchor.revision, email)
         ) {
           related.add(anchor.parent)
-          if (!owners.has(anchor.parent) && anchor.reply && !owners.contradicts(anchor.reply))
+          if (!owners.has(anchor.parent) && anchor.reply && receipts.hasVerifiedOwner(anchor.reply))
             verified.add(anchor.parent)
         }
       }
@@ -579,8 +590,9 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         target,
         relevant,
         thread,
-        scan,
+        receipts,
         copies,
+        resources,
         lineages,
         journal.parentAnchors,
         async (attempt, mail) => {
@@ -630,6 +642,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         responsePending: false,
       }
       let reply: Reply | null = null
+      let noopChannel: Channel | null = null
       let recorded: InviteAnswer | null = null
       let priorSent: SentEvidence | null = null
       let responseUnverified = false
@@ -740,9 +753,30 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         const historical = confirmation?.attempt.answer ?? null
         const historicalCalendar =
           delivery?.channel === 'calendar' && !sameTarget ? historical : null
+        let absenceContradicted = false
+        let exactConfirmed = false
         if (calendar.kind === 'absent') {
+          // A complete list can still disagree with an exact resource read.
+          // Any known target for this scope must be gone before Gmail can write.
+          for (const attempt of relevant) {
+            if (
+              attempt.state !== 'prepared' &&
+              attempt.delivery.channel === 'calendar' &&
+              sameGroup(attempt.revision, identity) &&
+              calendarTargetIsMailbox(attempt.delivery.target, email) &&
+              (await resources(attempt.delivery.target)).kind !== 'gone'
+            ) {
+              absenceContradicted = true
+              break
+            }
+          }
+          if (absenceContradicted && delivery?.channel === 'calendar' && historical)
+            exactConfirmed = await exactCalendarAnswer(resources, delivery, historical)
           const headers = selected.mail.replyHeaders
-          if (!attendee) {
+          if (absenceContradicted) {
+            invitation.unavailableReason =
+              'Calendar could not verify whether it has a copy of this invitation'
+          } else if (!attendee) {
             invitation.unavailableReason =
               'This invitation does not list the connected mailbox as an attendee'
           } else if (request.replyUnavailableReason) {
@@ -794,7 +828,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         const canResolveDifference = reply?.channel === 'calendar' && sentStatus !== null
         const calendarUnverified = calendar.kind === 'verified' && calendarObserved === null
         responseUnverified =
-          gmailUnverified || calendarUnverified || (answersDiffer && !canResolveDifference)
+          gmailUnverified ||
+          calendarUnverified ||
+          (answersDiffer && !canResolveDifference) ||
+          (absenceContradicted && !exactConfirmed && sentStatus === null)
         if (responseUnverified) {
           if (gmailUnverified) invitation.unavailableReason = sentVerificationReason
           else if (answersDiffer)
@@ -815,6 +852,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
                 attendee?.responseStatus ??
                 null))
         }
+        // This exact read can establish a read-only no-op for the confirmed
+        // answer; it is not the selected collection copy or a writable target.
+        if (exactConfirmed && !responseUnverified && invitation.responseStatus === historical)
+          noopChannel = 'calendar'
         if (reply)
           reply.key = JSON.stringify([
             reply.key,
@@ -839,6 +880,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         return !settled
       })
       if (scopePending.length) {
+        noopChannel = null
         for (const attempt of scopePending) displayedPending.add(attempt.id)
         invitation.responsePending = true
         invitation.responseStatus = null
@@ -858,7 +900,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         }
       }
       invitation.canRespond = reply !== null && !responseUnverified && !invitation.responsePending
-      cards.push({ invitation, reply, response: entry.response, recorded, priorSent })
+      cards.push({ invitation, reply, noopChannel, response: entry.response, recorded, priorSent })
     }
     target.assertBinding()
     return {
@@ -905,11 +947,12 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         if (!current || !sameInvitation(current.invitation.identity, identity)) throw conflict()
         const { invitation, reply } = current
         const unchanged = (card: Resolved): RespondResult | null => {
+          const channel = card.reply?.channel ?? card.noopChannel
           if (
-            !card.reply ||
+            !channel ||
             (card.recorded !== answer &&
               !(
-                card.invitation.canRespond &&
+                (card.invitation.canRespond || card.noopChannel !== null) &&
                 card.recorded === null &&
                 card.invitation.responseStatus === answer
               ))
@@ -917,7 +960,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             return null
           return {
             outcome: 'unchanged',
-            channel: card.reply.channel,
+            channel,
             answer,
             invitation: card.invitation,
             refreshPending:
@@ -972,16 +1015,22 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             // exact Calendar target/ETag or proven absence, and the prior answer.
             const newest = await selected(id)
             if (
-              !newest?.reply ||
+              !newest ||
               !sameInvitation(newest.invitation.identity, identity) ||
               newest.response?.responseStatus !== current.response?.responseStatus ||
               newest.response?.rsvp !== current.response?.rsvp
             )
               throw conflict()
             const recorded = unchanged(newest)
-            if (recorded && (newest.recorded === answer || sameWriteTarget(newest.reply, reply)))
+            if (
+              recorded &&
+              (newest.recorded === answer ||
+                newest.noopChannel !== null ||
+                (newest.reply && sameWriteTarget(newest.reply, reply)))
+            )
               throw new AlreadyRecorded(recorded)
             if (
+              !newest.reply ||
               !newest.invitation.canRespond ||
               !sameWriteTarget(newest.reply, reply) ||
               newest.reply.key !== reply.key ||

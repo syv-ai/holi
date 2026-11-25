@@ -135,7 +135,7 @@ function event(
     summary: 'Design sync',
     location: options.location,
     description: options.description,
-    status: 'confirmed',
+    status: 'confirmed' as string | undefined,
     organizer: { email: organizer, self: false },
     start: options.allDay
       ? { date: '2024-07-18' }
@@ -1080,6 +1080,28 @@ it('requires updated material even when the same-sequence predecessor could not 
   expect(state.sendAttempts).toBe(0)
 })
 
+it('requires Calendar to distinguish a same-sequence change to the event status', async () => {
+  const { state, read, respond } = await rig()
+  const prior = invite().replace('END:VEVENT', 'STATUS:TENTATIVE\r\nEND:VEVENT')
+  state.messages = [gmailMessage('prior', 200, prior)]
+  const copy = { ...event(), status: 'tentative' }
+  state.events.set('primary', [copy])
+  expect(await read()).toMatchObject({ canRespond: true })
+  const latest = prior.replace('TENTATIVE', 'CONFIRMED').replace('20240701', '20240702')
+  state.messages.push(gmailMessage('latest', 300, latest))
+  for (const status of ['tentative', undefined]) {
+    state.events.set('primary', [{ ...copy, status }])
+    expect(await read()).toMatchObject({ identity: { messageId: 'latest' }, canRespond: false })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  }
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.events.set('primary', [{ ...copy, status: 'confirmed' }])
+  expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
+  expect(state.calendarUpdateRequests).toHaveLength(1)
+  expect(state.sendAttempts).toBe(0)
+})
+
 it('does not answer a series master when only an embedded exception moved at the same sequence', async () => {
   const { state, read, respond } = await rig()
   const request = (stamp: string, exceptionHour: number) =>
@@ -1945,44 +1967,73 @@ it('ignores obsolete confirmed receipts before exhausting the shared evidence bu
   expect(state.calendarPatchAttempts).toBe(0)
 })
 
-it('keeps a corroborated answer across Calendar and Gmail copies without notifying twice', async () => {
-  const { state, read, respond, restart } = await rig()
-  state.events.set('primary', [event()])
-  state.omitAfterPatch = true
-  state.replyThread = 'separate-thread'
-  await read()
-  expect(await respond('accepted')).toMatchObject({
-    channel: 'calendar',
-    outcome: 'sent',
-    refreshPending: false,
-    invitation: { responseStatus: 'accepted' },
-  })
-  const reopened = restart()
-  expect(await reopened.read()).toMatchObject({ responseStatus: 'accepted', canRespond: true })
-  expect(await reopened.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
-  expect(await reopened.respond('tentative')).toMatchObject({
-    channel: 'gmail',
-    outcome: 'sent',
-    refreshPending: false,
-    invitation: { responseStatus: 'tentative' },
-  })
+it.each(['collection recovers', 'resource deleted'] as const)(
+  'keeps the confirmed answer but blocks writes while the exact Calendar copy contradicts absence (%s)',
+  async (resolution) => {
+    const { state, read, respond, restart } = await rig()
+    state.events.set('primary', [event()])
+    state.omitAfterPatch = true
+    state.replyThread = 'separate-thread'
+    await read()
+    expect(await respond('accepted')).toMatchObject({
+      channel: 'calendar',
+      outcome: 'sent',
+      refreshPending: false,
+      invitation: { responseStatus: 'accepted', canRespond: false },
+    })
+    const reopened = restart()
+    expect(await reopened.read()).toMatchObject({
+      responseStatus: 'accepted',
+      responsePending: false,
+      canRespond: false,
+    })
+    expect(await reopened.respond('accepted')).toMatchObject({
+      channel: 'calendar',
+      outcome: 'unchanged',
+    })
+    await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.calendarPatchAttempts).toBe(1)
+    expect(state.sendAttempts).toBe(0)
 
-  const newCopy = event({ id: 'new-calendar-copy' })
-  newCopy.attendees[0]!.responseStatus = 'needsAction'
-  state.omitAfterPatch = false
-  state.primaryPages = null
-  state.events.set('primary', [newCopy])
-  expect(await read()).toMatchObject({ responseStatus: 'tentative', canRespond: true })
-  expect(await respond('tentative')).toMatchObject({ outcome: 'unchanged' })
-  expect(await respond('declined')).toMatchObject({
-    channel: 'calendar',
-    outcome: 'sent',
-    refreshPending: false,
-    invitation: { responseStatus: 'declined' },
-  })
-  expect(state.calendarUpdateRequests.map(({ status }) => status)).toEqual(['accepted', 'declined'])
-  expect(state.sendAttempts).toBe(1)
-})
+    state.omitAfterPatch = false
+    if (resolution === 'collection recovers') {
+      // The old exact resource still exists, but doesn't prove the newly selected revision.
+      const moved = invite('REQUEST', '', 3, '20240702T090000Z').replace('Upstairs', 'Downstairs')
+      state.messages.push(gmailMessage('moved', 300, moved))
+      expect(await reopened.read()).toMatchObject({
+        identity: { messageId: 'moved' },
+        canRespond: false,
+        responseStatus: null,
+      })
+      await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+      expect(state.calendarPatchAttempts).toBe(1)
+      expect(state.sendAttempts).toBe(0)
+
+      state.primaryPages = null
+      state.events.set('primary', [event({ location: 'Downstairs' })])
+      expect(await reopened.read()).toMatchObject({ canRespond: true })
+      expect(await reopened.respond('tentative')).toMatchObject({
+        channel: 'calendar',
+        outcome: 'sent',
+        refreshPending: false,
+        invitation: { responseStatus: 'tentative' },
+      })
+      expect(state.calendarPatchAttempts).toBe(2)
+      expect(state.sendAttempts).toBe(0)
+    } else {
+      state.events.clear()
+      expect(await reopened.read()).toMatchObject({ canRespond: true })
+      expect(await reopened.respond('tentative')).toMatchObject({
+        channel: 'gmail',
+        outcome: 'sent',
+        refreshPending: false,
+        invitation: { responseStatus: 'tentative' },
+      })
+      expect(state.calendarPatchAttempts).toBe(1)
+      expect(state.sendAttempts).toBe(1)
+    }
+  },
+)
 
 it('uses a fresh Calendar reset but remembers the confirmed answer when that copy is missing', async () => {
   const { state, read, respond, restart } = await rig()
@@ -2215,10 +2266,15 @@ it('uses a newer Gmail answer on a verified old parent after equivalent REQUEST 
   const anchorRfcId = state.sent
     .get('reply-1')!
     .payload.headers.find(({ name }) => name === 'Message-ID')!.value
-  state.messages.push(gmailMessage('anchor-id-claim', 1140, undefined, { rfcId: anchorRfcId }))
+  const anchorClaim = gmailMessage('anchor-id-claim', 1140, undefined, {
+    rfcId: anchorRfcId,
+    sent: true,
+    threadId: 'another-thread',
+  })
+  state.sent.set(anchorClaim.id, anchorClaim)
   const disputedAnswer = { sentResponseStatus: null, responseStatus: null, canRespond: false }
   expect(await restart().read()).toMatchObject(disputedAnswer)
-  state.messages.pop()
+  state.sent.delete(anchorClaim.id)
 
   // Plain mail claiming the now-absent parent invalidates even a persisted
   // anchor. Its later valid REPLY still contests the older redelivery receipt.
@@ -2588,6 +2644,45 @@ it.each(['ok', 'empty'] as const)(
     expect(state.calendarPatchAttempts).toBe(0)
   },
 )
+
+it('requires unique account-wide ownership before settling an in-thread Gmail receipt', async () => {
+  const { state, read, respond, restart } = await rig()
+  state.sendReplyMode = 'response-lost'
+  await read()
+  expect(await respond('accepted')).toMatchObject({ outcome: 'uncertain', refreshPending: true })
+  const reply = state.sent.get('reply-1')!
+  const rfcId = reply.payload.headers.find(({ name }) => name === 'Message-ID')!.value
+  const plain = gmailMessage('plain-sent', 700, undefined, {
+    sent: true,
+    rfcId,
+    threadId: 'another-thread',
+  })
+  state.sent.set(plain.id, plain)
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject({
+    responseStatus: null,
+    sentResponseStatus: null,
+    responsePending: true,
+    canRespond: false,
+  })
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  state.sent.delete(plain.id)
+  expect(await reopened.read()).toMatchObject({
+    responseStatus: 'accepted',
+    responsePending: false,
+    canRespond: true,
+  })
+  expect(await reopened.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
+
+  // Losing unique ownership after confirmation does not erase the dispatch
+  // or turn either the old answer or a different answer into a new send.
+  state.sent.set(plain.id, plain)
+  expect(await restart().read()).toMatchObject({ responseStatus: null, canRespond: false })
+  await expect(respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
 
 it.each([
   ['missing strict identity', 'UID:', 'UID;VALUE="TEXT",URI:', 500],

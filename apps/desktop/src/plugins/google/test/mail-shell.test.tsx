@@ -629,7 +629,12 @@ test('shows Calendar acceptance and the Gmail verification warning from response
 
 test('Retry shows the Calendar answer without settling a contested Gmail send', async () => {
   searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  invitationMock.mockResolvedValueOnce(invitations(invitation)).mockResolvedValue(
+  const previous = {
+    ...invitation,
+    responseStatus: 'accepted',
+    sentResponseStatus: 'accepted',
+  } as const
+  invitationMock.mockResolvedValueOnce(invitations(previous)).mockResolvedValueOnce(
     invitations({
       ...invitation,
       recordedResponseStatus: 'declined',
@@ -640,10 +645,18 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
       unavailableReason: 'Gmail could not verify the latest sent response',
     }),
   )
+  invitationMock.mockResolvedValue(
+    invitations({
+      ...invitation,
+      recordedResponseStatus: 'declined',
+      responseStatus: 'declined',
+      sentResponseStatus: 'declined',
+    }),
+  )
   respondMock.mockResolvedValueOnce({
     outcome: 'uncertain',
     channel: 'gmail',
-    answer: 'accepted',
+    answer: 'declined',
     invitation: null,
     refreshPending: true,
   })
@@ -651,8 +664,11 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
   render(<MailShell />)
   await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
   const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
-  await user.click(await region.findByRole('button', { name: 'Accept' }))
+  expect(await region.findByText('Response: Accepted')).toBeVisible()
+  await user.click(region.getByRole('button', { name: 'Decline' }))
   expect(await region.findByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
+  expect(region.queryByText(/^Response:|^Calendar:/)).not.toBeInTheDocument()
+  expect(region.getByRole('heading', { name: invitation.title })).toBeVisible()
   await user.click(region.getByRole('button', { name: 'Retry' }))
   expect(await region.findByText('Calendar: Declined')).toBeVisible()
   expect(region.getByText(/Gmail.*verify/i)).toBeVisible()
@@ -661,7 +677,9 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
   for (const name of ['Accept', 'Maybe', 'Decline']) {
     expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
   }
-  expect(region.getByRole('button', { name: 'Retry' })).toBeEnabled()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('Response: Declined')).toBeVisible()
+  expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
   expect(respondMock).toHaveBeenCalledTimes(1)
 })
 

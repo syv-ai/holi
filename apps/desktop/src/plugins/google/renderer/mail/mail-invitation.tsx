@@ -165,7 +165,7 @@ function InvitationCard({
   const headingId = useId()
   const isInvitation = invitation.kind === 'invitation'
   const canRespond = isInvitation && invitation.canRespond && !invitation.cancelled
-  const { current, calendarOnly, differingSent } = invitationResponse(invitation)
+  const { current, calendarOnly, differingSent } = invitationResponse(card)
   const response = isInvitation ? (calendarOnly ?? current) : null
   const responseBadge = response === null ? null : responseBadges[response]
   const date = invitationDate(invitation, clock)
@@ -272,13 +272,11 @@ function InvitationCard({
   )
 }
 
-function responseNotice(
-  { invitation, receipt, refreshPending }: InvitationCardState,
-  canRespond: boolean,
-): string | null {
-  const response = invitationResponse(invitation).current
+function responseNotice(card: InvitationCardState, canRespond: boolean): string | null {
+  const { invitation, receipt, responseFresh, refreshPending } = card
+  const response = invitationResponse(card).current
   if (receipt?.outcome === 'sent') {
-    if (!receipt.hasReadback)
+    if (!responseFresh)
       return 'Google accepted your response, but its status has not been refreshed.'
     if (invitation.responsePending)
       return 'Google accepted your response; waiting for it to appear.'
