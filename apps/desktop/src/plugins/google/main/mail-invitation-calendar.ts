@@ -24,6 +24,7 @@ type InvitationCalendarCopy = {
   target: string
   etag: string | null
   proof: string
+  matchesProof: (proof: string) => boolean
   revision: Parsed['details']['identity']
   title?: string
   start?: string
@@ -142,7 +143,12 @@ async function exactCopies(
   // Any row for a floating series could occupy this wall-clock slot. An
   // empty UID collection is still meaningful; never query instances in a guessed zone.
   if (floating) return events
-  if (recurrenceId === null) return roots
+  const requireScope = (copies: RawEvent[]) => {
+    if (events.length && !copies.length)
+      throw new Error('Calendar returned events but could not verify this recurrence scope')
+    return copies
+  }
+  if (recurrenceId === null) return requireScope(roots)
   if (roots.length > 1) throw new Error('Calendar returned ambiguous series rows')
   const matching = new Map(
     events.filter((event) => sameOccurrence(event, recurrenceId)).map((event) => [event.id, event]),
@@ -180,12 +186,14 @@ async function exactCopies(
   // A cancelled series suppresses every occurrence even if Google no longer
   // returns its instances. Never use the series itself as a write target.
   const cancelledRoots = roots.filter((root) => root.status === 'cancelled')
-  return !matching.size ||
-    cancelledRoots.some((root) =>
-      [...matching.values()].some((instance) => instance.recurringEventId === root.id),
-    )
-    ? cancelledRoots
-    : [...matching.values()]
+  return requireScope(
+    !matching.size ||
+      cancelledRoots.some((root) =>
+        [...matching.values()].some((instance) => instance.recurringEventId === root.id),
+      )
+      ? cancelledRoots
+      : [...matching.values()],
+  )
 }
 
 function usableInvitationEvent(event: RawEvent): boolean {
@@ -449,11 +457,13 @@ function invitationCopy(
         ? 'This Calendar copy cannot be edited'
         : null
   const url = `${base}/${encodeURIComponent(event.id ?? '')}?sendUpdates=all`
+  const proof = calendarProof(event)
   return {
     kind: 'verified',
     target: JSON.stringify([url, selfEmail ?? organizer]),
     etag,
-    proof: calendarProof(event),
+    proof,
+    matchesProof: (stored) => matchesCalendarProof(event, stored, proof),
     revision: details.identity,
     title: event.summary,
     start,
@@ -594,7 +604,15 @@ function mailConference(event: RawEvent) {
   return { url: prose, source: prose ? ('provider' as const) : null }
 }
 
-function calendarProof(event: RawEvent): string {
+function matchesCalendarProof(event: RawEvent, stored: string, proof = calendarProof(event)) {
+  // Old journals can still prove an exact match. Only canonical proofs can
+  // recognize reordered rules; never infer what a previous raw hash meant.
+  return (
+    stored === proof || (event.recurrence !== undefined && stored === calendarProof(event, true))
+  )
+}
+
+function calendarProof(event: RawEvent, legacy = false): string {
   const when = (time: RawEvent['start']) =>
     time?.date ?? (time?.dateTime ? instant(time.dateTime) : null)
   // Ignore RSVP and ETag changes, but never mistake a different revision at the
@@ -607,7 +625,13 @@ function calendarProof(event: RawEvent): string {
         event.sequence ?? 0,
         event.recurringEventId,
         when(event.originalStartTime),
-        event.recurrence,
+        // Use the same equality as verification. Keep raw unrecognized rules
+        // distinct rather than treating them as empty or equal to each other.
+        legacy
+          ? event.recurrence
+          : event.recurrence?.length
+            ? (recurrenceSet(event.recurrence) ?? event.recurrence)
+            : undefined,
         event.organizer?.email?.toLowerCase(),
         event.summary,
         when(event.start),
@@ -665,7 +689,7 @@ export async function verifyInvitationCalendarResponse(
     !usableInvitationEvent(event) ||
     event.status === 'cancelled' ||
     event.organizer?.self ||
-    calendarProof(event) !== proof
+    !matchesCalendarProof(event, proof)
   )
     return false
   const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []

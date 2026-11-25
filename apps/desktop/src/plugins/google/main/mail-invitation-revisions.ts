@@ -46,7 +46,7 @@ function sameMaterial(a: Candidate, b: Candidate): boolean {
       a.value.recurrenceRange === b.value.recurrenceRange
     )
   return (
-    a.published === b.published &&
+    a.joinOnly === b.joinOnly &&
     a.value.method !== null &&
     a.value.method === b.value.method &&
     first.sequence === second.sequence &&
@@ -63,7 +63,7 @@ function blocked(selected: Candidate, reason: string): Incoming {
  * scope. An embedded exception never replaces the containing REQUEST. */
 function expandCancellations(candidate: Candidate, mailbox: string): Candidate[] {
   const { value } = candidate
-  if (candidate.published || !value.cancellations.length) return [candidate]
+  if (candidate.joinOnly || !value.cancellations.length) return [candidate]
   return [
     ...(value.method === 'CANCEL' ? [] : [candidate]),
     ...value.cancellations
@@ -119,9 +119,9 @@ export function assertEquivalentAlternatives(
 }
 
 export function representationOf(candidate: Candidate, mailbox: string): string {
-  const { value, published } = candidate
+  const { value, joinOnly } = candidate
   return JSON.stringify([
-    published,
+    joinOnly,
     value.method,
     identityOf(candidate),
     responseOf(candidate, mailbox),
@@ -178,8 +178,8 @@ export function selectInvitationRevisions(deliveries: Candidate[], mailbox: stri
   })
   const eligible = scoped.flat()
   const cancellations = eligible.filter(
-    ({ value, published }) =>
-      !published &&
+    ({ value, joinOnly }) =>
+      !joinOnly &&
       value.method === 'CANCEL' &&
       value.details.organizer &&
       (value.details.identity.recurrenceId === null || value.recurrenceRange === 'THISANDFUTURE'),

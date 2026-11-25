@@ -20,6 +20,7 @@ import { GoogleApiError, type GoogleApi } from './api'
 import type { GoogleCache } from './cache'
 import {
   applyLabelDelta,
+  fetchThreadPage,
   fetchThreadSummaries,
   listThreads,
   listThreadIds,
@@ -28,6 +29,7 @@ import {
   type ListThreadsOptions,
   type MailPage,
   type MailThreadSummary,
+  type ThreadMetadataOutcome,
 } from './gmail'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -116,13 +118,8 @@ export async function syncThreads(
   // a change in recipient classification does not resolve a metadata failure.
   const pendingKey = cacheKey(options)
   if (options.pageToken !== undefined) {
-    const page = await listThreads(api, options, knownAddresses)
-    return recordReads(
-      cache,
-      pendingKey,
-      page,
-      page.threads.map(({ id }) => id),
-    )
+    const { page, outcomes } = await fetchThreadPage(api, options, knownAddresses)
+    return recordReads(cache, pendingKey, page, outcomes)
   }
   const fresh = () => fullSync(api, cache, options, key, pendingKey, knownAddresses)
   if (context?.refresh || options.query?.trim() || cache.unreadableThreads(pendingKey).length)
@@ -216,13 +213,25 @@ export async function syncThreads(
     cache,
     pendingKey,
     { threads, unreadableThreadIds, nextPageToken: null, syncedAt: new Date().toISOString() },
-    [...available],
+    [...queryMatches.outcomes, ...refetched.outcomes],
   )
 }
 
-function recordReads(cache: GoogleCache, key: string, page: MailPage, checked: string[]): MailPage {
-  const { unreadableThreadIds, ...snapshot } = page
-  const pending = cache.updateUnreadableThreads(key, checked, unreadableThreadIds ?? [])
+function recordReads(
+  cache: GoogleCache,
+  key: string,
+  page: MailPage,
+  outcomes: ThreadMetadataOutcome[],
+): MailPage {
+  const { unreadableThreadIds: _, ...snapshot } = page
+  const failed = outcomes.filter(({ kind }) => kind === 'unreadable').map(({ id }) => id)
+  // A failed read stays pending but moves to the end so repeated failures
+  // cannot starve the rest of the bounded off-page probe queue.
+  const pending = cache.updateUnreadableThreads(
+    key,
+    outcomes.map(({ id }) => id),
+    failed,
+  )
   if (!pending.length) return snapshot
   const unreadable = new Set(pending)
   return {
@@ -248,8 +257,8 @@ async function fullSync(
   knownAddresses?: string[],
 ): Promise<MailPage> {
   const cursor = currentHistoryId(api)
-  const page = await listThreads(api, options, knownAddresses)
-  const onPage = new Set([...page.threads.map(({ id }) => id), ...(page.unreadableThreadIds ?? [])])
+  const { page, outcomes } = await fetchThreadPage(api, options, knownAddresses)
+  const onPage = new Set(outcomes.map(({ id }) => id))
   // A fresh first page is not proof that a failed thread outside it has
   // recovered or gone. Check at most 25 pending IDs per refresh, without
   // mixing off-page summaries into the snapshot that owns the new token.
@@ -258,17 +267,7 @@ async function fullSync(
     .filter((id) => !onPage.has(id))
     .slice(0, 25)
   const probe = await fetchThreadSummaries(api, probeIds, knownAddresses)
-  const result = recordReads(
-    cache,
-    pendingKey,
-    {
-      ...page,
-      unreadableThreadIds: [...(page.unreadableThreadIds ?? []), ...probe.unreadableThreadIds],
-    },
-    // A completed probe either read the metadata, verified 404, or returned
-    // an unreadable ID. Move the last group to the end for the next retry.
-    [...page.threads.map(({ id }) => id), ...probeIds],
-  )
+  const result = recordReads(cache, pendingKey, page, [...outcomes, ...probe.outcomes])
   // A partial list has no usable cursor: a delta could have nothing to say
   // about the skipped threads. The next read must try the whole page again.
   const historyId = result.unreadableThreadIds ? null : await cursor
@@ -284,7 +283,7 @@ async function findQueryMatches(
   knownAddresses: string[] | undefined,
   candidates: Set<string>,
 ) {
-  if (!candidates.size) return { threads: [], unreadableThreadIds: [] }
+  if (!candidates.size) return { threads: [], unreadableThreadIds: [], outcomes: [] }
   const matches = new Set<string>()
   let pageToken: string | undefined
 

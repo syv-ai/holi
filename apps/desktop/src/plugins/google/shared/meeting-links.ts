@@ -64,12 +64,16 @@ export function conferenceUrlIn(text: string | null | undefined): string | null 
 
 export function googleEventUrl(value: unknown): string | null {
   const url = recognizedHttps(value)
-  if (
-    !url ||
-    url.hostname !== 'calendar.google.com' ||
-    !/^\/(?:calendar\/(?:u\/\d+\/)?)?(?:event|eventedit)$/.test(url.pathname)
-  )
-    return null
+  if (!url) return null
+  const current =
+    url.hostname === 'calendar.google.com' &&
+    /^\/(?:calendar\/(?:u\/\d+\/)?)?(?:event|eventedit)$/.test(url.pathname)
+  const legacy =
+    url.hostname === 'www.google.com' &&
+    url.pathname === '/calendar/event' &&
+    /^\?eid=[^&#]+$/.test(url.search) &&
+    !url.hash
+  if (!current && !legacy) return null
   const ids = url.searchParams.getAll('eid')
   return ids.length === 1 && /^[\w-]+=*$/.test(ids[0]!) ? url.href : null
 }

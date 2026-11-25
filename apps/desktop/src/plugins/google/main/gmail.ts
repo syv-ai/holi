@@ -601,15 +601,72 @@ export async function listThreads(
   options: ListThreadsOptions = {},
   knownAddresses?: string[],
 ): Promise<MailPage> {
-  const page = await listThreadIds(api, options)
+  return (await fetchThreadPage(api, options, knownAddresses)).page
+}
 
-  const { threads, unreadableThreadIds } = await fetchThreadSummaries(api, page.ids, knownAddresses)
-  return {
+export async function fetchThreadPage(
+  api: GoogleApi,
+  options: ListThreadsOptions,
+  knownAddresses?: string[],
+) {
+  const { ids, nextPageToken } = await listThreadIds(api, options)
+  const { threads, unreadableThreadIds, outcomes } = await fetchThreadSummaries(
+    api,
+    ids,
+    knownAddresses,
+  )
+  const page: MailPage = {
     threads,
     ...(unreadableThreadIds.length ? { unreadableThreadIds } : {}),
-    nextPageToken: page.nextPageToken,
+    nextPageToken,
     syncedAt: new Date().toISOString(),
   }
+  return { page, outcomes }
+}
+
+/** Per requested ID; only an actual HTTP 404 proves absence. */
+export type ThreadMetadataOutcome = {
+  id: string
+  kind: 'readable' | 'not-found' | 'unreadable'
+}
+
+// This applies to the unmasked threads.get metadata response, not a partial
+// projection that may intentionally omit a Thread or Message identifier.
+function verifyThreadMetadata(thread: RawThread, id: string): RawMessage[] {
+  if (
+    !thread ||
+    typeof thread !== 'object' ||
+    Array.isArray(thread) ||
+    thread.id !== id ||
+    !Array.isArray(thread.messages) ||
+    thread.messages.length === 0 ||
+    thread.messages.length > 2048
+  )
+    throw new CalendarScanError('Gmail returned invalid thread metadata')
+  const walk = createMimeWalk(MIME_EVIDENCE_DEPTH)
+  const seen = new Set<string>()
+  for (const message of thread.messages) {
+    if (
+      !message ||
+      typeof message !== 'object' ||
+      Array.isArray(message) ||
+      !calendarMailId(message.id) ||
+      seen.has(message.id) ||
+      (message.threadId !== undefined && message.threadId !== id) ||
+      (message.labelIds !== undefined &&
+        (!Array.isArray(message.labelIds) ||
+          message.labelIds.some((label) => typeof label !== 'string'))) ||
+      (message.internalDate !== undefined &&
+        (typeof message.internalDate !== 'string' ||
+          !/^\d+$/.test(message.internalDate) ||
+          Number(message.internalDate) > 8_640_000_000_000_000)) ||
+      (message.snippet !== undefined && typeof message.snippet !== 'string')
+    )
+      throw new CalendarScanError('Gmail returned invalid thread message metadata')
+    seen.add(message.id)
+    walk(message.payload, () => {})
+  }
+  return thread.messages
 }
 
 /**
@@ -623,16 +680,20 @@ export async function fetchThreadSummaries(
   api: GoogleApi,
   ids: string[],
   knownAddresses?: string[],
-): Promise<{ threads: MailThreadSummary[]; unreadableThreadIds: string[] }> {
-  if (ids.length === 0) return { threads: [], unreadableThreadIds: [] }
+): Promise<{
+  threads: MailThreadSummary[]
+  unreadableThreadIds: string[]
+  outcomes: ThreadMetadataOutcome[]
+}> {
+  if (ids.length === 0) return { threads: [], unreadableThreadIds: [], outcomes: [] }
 
   // ONCE per call, not once per thread: resolving a chip must not cost a
   // request. It runs concurrently with the threads for the same reason.
   const [names, results] = await Promise.all([
     fetchLabelNames(api),
     mapPooled(ids, 5, async (id) => {
-      const thread = await api
-        .get<RawThread>(`${BASE}/threads/${id}`, {
+      try {
+        const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(id)}`, {
           format: 'metadata',
           // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
           // Comma-joined, Gmail reads the whole string as one header name, matches
@@ -651,34 +712,26 @@ export async function fetchThreadSummaries(
             'Content-Type',
           ],
         })
-        .catch((error: unknown) => {
-          if (error instanceof GoogleApiError && error.status === 404) return null
-          throw error
-        })
-      if (thread === null) return { kind: 'missing' } as const
-      try {
-        const walk = createMimeWalk(MIME_EVIDENCE_DEPTH)
-        const messages = thread.messages ?? []
-        if (!Array.isArray(messages) || messages.length > 2048)
-          throw new CalendarScanError('Gmail MIME data exceeds the scan limits')
-        for (const message of messages) walk(message.payload, () => {})
-        return { kind: 'readable', thread } as const
+        const messages = verifyThreadMetadata(thread, id)
+        return { kind: 'readable', id, messages } as const
       } catch (error) {
-        if (!(error instanceof CalendarScanError)) throw error
-        return { kind: 'unreadable', id } as const
+        if (error instanceof GoogleApiError && error.status === 404)
+          return { kind: 'not-found', id } as const
+        if (error instanceof CalendarScanError || error instanceof SyntaxError)
+          return { kind: 'unreadable', id } as const
+        throw error
       }
     }),
   ])
-  const threads = results.flatMap((result) => (result.kind === 'readable' ? [result.thread] : []))
-  const summaries = threads
-    .map((thread) => summarize(thread, names, knownAddresses))
-    .filter((t): t is Omit<MailThreadSummary, 'hasInvite'> => t !== null)
+  const threads = results.filter((result) => result.kind === 'readable')
+  const summaries = threads.map((thread) => summarize(thread, names, knownAddresses))
 
   // Metadata omits MIME children. Inspect only multipart MIME structure and
   // headers for an ambiguous latest incoming; never request body bytes.
   const { invitationIds, unknownIds } = await fetchLatestIncomingInvitations(api, threads)
   const invites = await fetchInviteIds(api, summaries)
   return {
+    outcomes: results.map(({ id, kind }) => ({ id, kind })),
     unreadableThreadIds: results.flatMap((result) =>
       result.kind === 'unreadable' ? [result.id] : [],
     ),
@@ -987,14 +1040,13 @@ function latestIncomingOf(messages: RawMessage[]): RawMessage | undefined {
 /** Everything derivable from the metadata fetch: everything except
  *  `hasInvite`. */
 function summarize(
-  thread: RawThread,
+  thread: { id: string; messages: RawMessage[] },
   labelNames: Map<string, string>,
   knownAddresses?: string[],
-): Omit<MailThreadSummary, 'hasInvite'> | null {
-  const messages = thread.messages ?? []
-  const first = messages[0]
-  const last = messages[messages.length - 1]
-  if (thread.id === undefined || first === undefined || last === undefined) return null
+): Omit<MailThreadSummary, 'hasInvite'> {
+  const { messages } = thread
+  const first = messages[0]!
+  const last = messages.at(-1)!
 
   // A label anywhere in the thread applies to the thread, as in Gmail's own list.
   const allLabels = messages.flatMap((m) => m.labelIds ?? [])
@@ -1913,7 +1965,7 @@ type CalendarMail = {
   timestamp: number
   sent: boolean
   from: string
-  to: string[]
+  sentAddresses: { from: string[]; to: string[] } | null
   replyHeaders: CalendarReplyHeaders | null
   parts: {
     method: string | undefined | null
@@ -1939,11 +1991,83 @@ function calendarHeaderIds(part: RawPart | undefined, name: string): string[] | 
   return ids?.length ? ids : null
 }
 
-/** Addresses used as calendar evidence cannot choose between duplicate headers. */
-function calendarAddresses(part: RawPart | undefined, name: string): MailAddress[] {
+function uniqueAddressHeader(part: RawPart | undefined, name: string): string | null {
   const headers = (part?.headers ?? []).filter((header) => header.name?.toLowerCase() === name)
   const value = headers.length === 1 ? headers[0]?.value : null
-  return typeof value === 'string' ? parseAddresses(value) : []
+  return typeof value === 'string' ? value : null
+}
+
+/** Unlike display parsing, Sent evidence must consume the whole unique header.
+ * Require a dot-atom SMTP address (the form used by calendar addresses). */
+function sentEvidenceAddresses(value: string | null, allowGroups: boolean): string[] {
+  if (value === null) return []
+  const unfolded = value.replace(/\r\n[ \t]+/g, ' ')
+  if (/\p{Cc}/u.test(unfolded.replaceAll('\t', ''))) return []
+  let source = ''
+  let comments = 0
+  let quoted = false
+  let escaped = false
+  for (const char of unfolded) {
+    if (escaped) {
+      if (!comments) source += char
+      escaped = false
+    } else if (char === '\\' && (quoted || comments)) {
+      if (!comments) source += char
+      escaped = true
+    } else if (!quoted && char === '(') {
+      if (comments++ === 0) source += ' '
+    } else if (!quoted && char === ')') {
+      if (!comments) return []
+      comments--
+    } else if (!comments) {
+      if (char === '"') quoted = !quoted
+      source += char
+    }
+  }
+  if (comments || quoted || escaped) return []
+
+  const atom = String.raw`[\w!#$%&'*+\-/=?^\x60{|}~]`
+  const word = String.raw`(?:"(?:[^"\\]|\\.)*"|(?:${atom}|\.|[^\x00-\x7f\s])+)`
+  const phrase = String.raw`${word}(?:[ \t]+${word})*`
+  const addr = String.raw`(${atom}+(?:\.${atom}+)*)[ \t]*@[ \t]*([a-z\d-]+(?:\.[a-z\d-]+)*)`
+  const mailbox = new RegExp(String.raw`(?:${phrase}[ \t]*)?<[ \t]*${addr}[ \t]*>|${addr}`, 'iy')
+  const group = new RegExp(`${phrase}[ \\t]*:`, 'y')
+  const space = /[ \t]*/y
+  let at = 0
+  const take = (pattern: RegExp) => {
+    pattern.lastIndex = at
+    const match = pattern.exec(source)
+    if (match) at = pattern.lastIndex
+    return match
+  }
+  const addresses: string[] = []
+  const takeMailbox = () => {
+    const match = take(mailbox)
+    if (!match) return false
+    addresses.push(`${match[1] ?? match[3]}@${match[2] ?? match[4]}`.toLowerCase())
+    take(space)
+    return true
+  }
+  take(space)
+  while (at < source.length) {
+    if (allowGroups && take(group)) {
+      take(space)
+      if (source[at] !== ';') {
+        if (!takeMailbox()) return []
+        while (source[at] === ',') {
+          at++
+          take(space)
+          if (!takeMailbox()) return []
+        }
+      }
+      if (source[at++] !== ';') return []
+      take(space)
+    } else if (!takeMailbox()) return []
+    if (at === source.length) return addresses
+    if (source[at++] !== ',') return []
+    take(space)
+  }
+  return []
 }
 
 function calendarMail(
@@ -1966,7 +2090,9 @@ function calendarMail(
     (!parent.length || !references.length || references.at(-1) === parent[0])
   const parentId = validThreading ? (parent[0] ?? references.at(-1) ?? null) : null
   const subject = (headerOf(message.payload, 'Subject') ?? '').replace(/[\r\n]+/g, ' ').trim()
-  const from = calendarAddresses(message.payload, 'from')
+  const fromHeader = uniqueAddressHeader(message.payload, 'from')
+  const from = parseAddresses(fromHeader)
+  const sent = message.labelIds?.includes('SENT') ?? false
   const internalDate = Number(message.internalDate)
   return {
     messageId: id,
@@ -1974,9 +2100,14 @@ function calendarMail(
     threadId: calendarMailId(message.threadId) ? message.threadId : null,
     parent: parentId,
     timestamp: Number.isSafeInteger(internalDate) && internalDate >= 0 ? internalDate : 0,
-    sent: message.labelIds?.includes('SENT') ?? false,
+    sent,
     from: from.length === 1 ? from[0]!.email : '',
-    to: calendarAddresses(message.payload, 'to').map(({ email }) => email),
+    sentAddresses: sent
+      ? {
+          from: sentEvidenceAddresses(fromHeader, false),
+          to: sentEvidenceAddresses(uniqueAddressHeader(message.payload, 'to'), true),
+        }
+      : null,
     replyHeaders:
       rfcId && validThreading
         ? {
