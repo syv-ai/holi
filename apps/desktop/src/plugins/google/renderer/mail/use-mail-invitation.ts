@@ -7,8 +7,27 @@ import { messageOf } from '../google-errors'
 
 type ReadInput = Parameters<typeof googleCap.mailInvitation>[1]
 type ReadResult = Awaited<ReturnType<typeof googleCap.mailInvitation>>
-export type Invitation = ReadResult['invitations'][number]
+type ReadInvitation = ReadResult['invitations'][number]
 export type InvitationAnswer = Parameters<typeof googleCap.respondToMailInvitation>[1]['answer']
+export type Invitation = ReadInvitation & {
+  recordedResponseStatus?: ReadInvitation['responseStatus']
+  sentResponseStatus?: InvitationAnswer | null
+}
+
+export function invitationResponse(invitation: Invitation) {
+  const { recordedResponseStatus: recorded, responseStatus, sentResponseStatus: sent } = invitation
+  // Only a substantive Calendar answer conflicts with a verified Gmail reply.
+  // The unqualified summary alone does not prove a reply appeared in Sent.
+  if (
+    recorded &&
+    recorded !== 'needsAction' &&
+    recorded !== 'delegated' &&
+    sent &&
+    sent !== recorded
+  )
+    return { current: recorded, differingSent: sent }
+  return { current: responseStatus, differingSent: null }
+}
 type Receipt = Pick<
   Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>,
   'outcome' | 'answer'
@@ -145,7 +164,7 @@ export function useMailInvitation({
       invitation.kind !== 'invitation' ||
       !invitation.canRespond ||
       invitation.cancelled ||
-      invitation.responseStatus === answer ||
+      invitationResponse(invitation).current === answer ||
       !currentCards.current.includes(card) ||
       state.busy !== null ||
       state.readError !== null ||

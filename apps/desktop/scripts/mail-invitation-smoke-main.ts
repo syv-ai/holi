@@ -25,6 +25,7 @@ import { GOOGLE_SCOPES, GoogleSession } from '../src/plugins/google/main/session
 import type { StoredGoogleAuth } from '../src/plugins/google/main/token-store'
 import {
   attachment,
+  attachmentEventId,
   createInvitationTransport,
   fixtureToken,
   inline,
@@ -271,12 +272,12 @@ const target = (name: string, scope = 'body', selector = controls) =>
 function drive(win: BrowserWindow) {
   const js = <T>(expression: string): Promise<T> => win.webContents.executeJavaScript(expression)
   async function until<T>(label: string, read: () => T | Promise<T>) {
-    const deadline = Date.now() + 9_000
+    const deadline = performance.now() + 9_000
     do {
       const value = await read()
       if (value) return value
       await pause(40)
-    } while (Date.now() < deadline)
+    } while (performance.now() < deadline)
     throw new Error(
       `${label} did not settle; visible reader: ${await js('document.body.innerText')}`,
     )
@@ -533,7 +534,7 @@ async function run() {
 
       transport.refuseNextSend()
       await pause(700)
-      await click('Maybe', card)
+      await click('Accept', card)
       await until('invitation refusal with Retry', () =>
         js(
           `!!document.querySelector(${literal(`${card} [role="alert"]`)}) && !!(${target('Retry', card)})`,
@@ -555,7 +556,7 @@ async function run() {
       await pause(700)
       await click('Retry', card)
       await until('Retry reconciled without writing', () =>
-        js(`!(${target('Retry', card)}) && (${target('Maybe', card)})?.disabled === false`),
+        js(`!(${target('Retry', card)}) && (${target('Accept', card)})?.disabled === false`),
       )
       await expectStatus('No response yet')
       assert(transport.snapshot().attachmentReads > attachmentReadsBeforeRetry)
@@ -565,15 +566,15 @@ async function run() {
       const beforeSent = transport.snapshot()
       const releaseSent = transport.holdSentAcknowledgement()
       try {
-        await click('Maybe', card)
+        await click('Accept', card)
         await expectStatus('Sending your response…')
         await expectStatus('No response yet')
-        assert(!(await readCard()).includes('Response: Tentative'))
+        assert(!(await readCard()).includes('Response: Accepted'))
       } finally {
         releaseSent()
       }
       await expectStatus('Google accepted your response.')
-      await expectStatus('Response: Tentative')
+      await expectStatus('Response: Accepted')
       assert(!(await js(`!!(${target('Retry', card)})`)))
       assert.equal(transport.writes.length, refusedWrites + 1)
       const afterSent = transport.snapshot()
@@ -605,7 +606,7 @@ async function run() {
       });
     })()`),
     )
-    await expectStatus('Response: Tentative')
+    await expectStatus('Response: Accepted')
     await capture('06-mail-view-narrow-dark')
     window.setContentSize(1280, 920)
     await open('surface', series)
@@ -642,20 +643,40 @@ async function run() {
 
     const writesBeforeCalendarCopy = transport.writes.length
     const readsBeforeCalendarCopy = transport.snapshot()
-    transport.addCalendarCopyOfAttachment()
+    transport.setCalendarCopyOfAttachment('needsAction')
     await open('surface', attachment)
     await until('the verified Sent answer survives the new Calendar copy', async () => {
       const observed = transport.snapshot()
       return (
         observed.attachmentCopyReads > readsBeforeCalendarCopy.attachmentCopyReads &&
         observed.sentReceiptReads > readsBeforeCalendarCopy.sentReceiptReads &&
-        (await containsCard(attachment.title, 'Response: Tentative')) &&
+        (await containsCard(attachment.title, 'Response: Accepted')) &&
         (await containsCard(attachment.title, 'Open in Google Calendar'))
       )
     })
     assert(!(await containsCard(attachment.title, 'No response yet')))
     assert.equal(transport.writes.length, writesBeforeCalendarCopy)
     mark('a-new-unanswered-calendar-copy-does-not-erase-a-confirmed-itip-response')
+
+    transport.setCalendarCopyOfAttachment('tentative')
+    await open('surface', attachment)
+    await expectStatus('Calendar: Tentative')
+    await expectStatus('Gmail Sent: Accepted')
+    assert(!(await containsCard(attachment.title, 'Response: Accepted')))
+    assert(await js(`(${target('Maybe', card)})?.disabled === true`))
+    assert.equal(transport.writes.length, writesBeforeCalendarCopy)
+    await capture('07-mail-view-calendar-and-sent-conflict-dark')
+
+    await click('Decline', card)
+    await until(
+      'the explicitly changed answer is recorded in Calendar',
+      async () =>
+        (await containsCard(attachment.title, 'Response: Declined')) &&
+        (await js(`(${target('Decline', card)})?.disabled === true`)),
+    )
+    assert.equal(transport.writes.length, writesBeforeCalendarCopy + 1)
+    assert.equal(transport.snapshot().attachmentResponse, 'declined')
+    mark('calendar-maybe-disagrees-with-gmail-sent-and-only-an-explicit-change-writes')
 
     await click('Sidebar mail')
     await js('document.documentElement.dataset.theme = "light"')
@@ -702,7 +723,7 @@ async function run() {
     await expectStatus('No response yet')
     assert(!(await readCard()).includes(inline.title))
     assert(!(await js(`!!document.querySelector(${literal(`${card} [role="alert"]`)})`)))
-    await capture('07-shell-account-switch-light')
+    await capture('08-shell-account-switch-light')
     mark('account-switch-abandons-in-flight-rsvp-without-writing-to-either-account')
 
     assert.deepEqual(
@@ -728,7 +749,7 @@ async function run() {
           'POST',
           '/gmail/v1/users/me/messages/send',
           organizer.email,
-          'tentative',
+          'accepted',
           status,
         ]),
         [
@@ -737,6 +758,14 @@ async function run() {
           `/calendar/v3/calendars/primary/events/${occurrenceId}`,
           organizer.email,
           'accepted',
+          200,
+        ],
+        [
+          mailboxA.sub,
+          'PATCH',
+          `/calendar/v3/calendars/primary/events/${attachmentEventId}`,
+          organizer.email,
+          'declined',
           200,
         ],
       ],

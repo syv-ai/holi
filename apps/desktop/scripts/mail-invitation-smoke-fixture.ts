@@ -60,7 +60,7 @@ const googleGmail = 'https://www.googleapis.com/gmail/v1/users/me'
 const calendar = 'https://www.googleapis.com/calendar/v3'
 const people = 'https://people.googleapis.com/v1'
 const eventId = 'fixture-event'
-const attachmentEventId = 'fixture-workshop'
+export const attachmentEventId = 'fixture-workshop'
 const seriesId = 'fixture-series'
 export const occurrenceId = 'fixture-occurrence'
 const occurrenceSlot = '2026-11-25T15:20:00Z'
@@ -97,19 +97,49 @@ function notFound() {
   return googleError(404, 'NOT_FOUND', 'notFound', 'Not Found')
 }
 
+const zoneId = 'America/New_York'
+const zoneDefinition = [
+  'BEGIN:VTIMEZONE',
+  `TZID:${zoneId}`,
+  'BEGIN:DAYLIGHT',
+  'DTSTART:20070311T020000',
+  'TZOFFSETFROM:-0500',
+  'TZOFFSETTO:-0400',
+  'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU',
+  'END:DAYLIGHT',
+  'BEGIN:STANDARD',
+  'DTSTART:20071104T020000',
+  'TZOFFSETFROM:-0400',
+  'TZOFFSETTO:-0500',
+  'RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU',
+  'END:STANDARD',
+  'END:VTIMEZONE',
+]
+
 function invitationSource(invite: Invite, mailbox: Mailbox) {
+  const zoned = invite.attached || invite.scope !== undefined
+  const timeField = (name: string, wall: string, utc: string) =>
+    zoned ? `${name};TZID=${zoneId}:${wall}` : `${name}:${utc}Z`
   return [
     'BEGIN:VCALENDAR',
     'PRODID:-//Holi//Offline Invitation Fixture//EN',
     'VERSION:2.0',
     'METHOD:REQUEST',
+    ...(zoned ? zoneDefinition : []),
     'BEGIN:VEVENT',
     `UID:${invite.uid}`,
     `SEQUENCE:${sequence}`,
     'DTSTAMP:20261112T100000Z',
     ...(invite.scope === 'occurrence'
-      ? ['RECURRENCE-ID:20261125T152000Z', 'DTSTART:20261125T162000Z', 'DTEND:20261125T170500Z']
-      : ['DTSTART:20261118T152000Z', 'DTEND:20261118T160500Z']),
+      ? [
+          timeField('RECURRENCE-ID', '20261125T102000', '20261125T152000'),
+          timeField('DTSTART', '20261125T112000', '20261125T162000'),
+          timeField('DTEND', '20261125T120500', '20261125T170500'),
+        ]
+      : [
+          timeField('DTSTART', '20261118T102000', '20261118T152000'),
+          timeField('DTEND', '20261118T110500', '20261118T160500'),
+        ]),
     ...(invite.scope === 'series' ? ['RRULE:FREQ=WEEKLY;COUNT=4'] : []),
     `SUMMARY:${invite.title}`,
     `LOCATION:${invite.location.replaceAll(',', '\\,')}`,
@@ -209,6 +239,18 @@ function readReply(raw: string, invite: Invite, mailbox: Mailbox) {
   assert.equal(event.getFirstPropertyValue('uid'), invite.uid)
   assert.equal(event.getFirstPropertyValue('sequence'), sequence)
   assert.equal(event.getFirstPropertyValue('organizer'), `mailto:${organizer.email}`)
+  assert(!event.hasProperty('recurrence-id'), 'this invitation is not a recurring occurrence')
+  const repliedStart = event.getFirstProperty('dtstart')
+  if (repliedStart) {
+    assert.equal(repliedStart.getParameter('tzid'), zoneId)
+    assert.equal(repliedStart.getFirstValue()?.toString(), '2026-11-18T10:20:00')
+    assert(
+      reply
+        .getAllSubcomponents('vtimezone')
+        .some((definition) => definition.getFirstPropertyValue('tzid') === zoneId),
+      'a zoned DTSTART in the reply requires its VTIMEZONE',
+    )
+  }
   const attendees = event.getAllProperties('attendee')
   assert.deepEqual(
     attendees.map((p) => p.getFirstValue()),
@@ -269,9 +311,8 @@ export function createInvitationTransport() {
   const requestCounts: Record<string, number> = {}
   const event = (id: string) => {
     const { invite, version, attendee } = targets.get(id)!
-    // The ICS master uses UTC DTSTART/DTEND and the instance's RECURRENCE-ID
-    // is also UTC. Google uses the master's named zone to expand the RRULE.
-    const zone = id === seriesId || id === occurrenceId ? { timeZone: 'UTC' } : {}
+    // Calendar serializes instants and separately names the series expansion zone.
+    const zone = invite.attached || invite.scope ? { timeZone: zoneId } : {}
     return {
       kind: 'calendar#event',
       id,
@@ -520,7 +561,7 @@ export function createInvitationTransport() {
         const target = targets.get(id)
         if (!target && !id.includes('/')) return notFound()
         assert(
-          target && (id === eventId || id === occurrenceId),
+          target && (id === eventId || id === occurrenceId || id === attachmentEventId),
           'must only write to the selected event or occurrence',
         )
         if (mailbox !== mailboxA) {
@@ -616,11 +657,11 @@ export function createInvitationTransport() {
     refuseNextSend: () => {
       refuseNextSend = true
     },
-    addCalendarCopyOfAttachment() {
+    setCalendarCopyOfAttachment(responseStatus: InviteAnswer | 'needsAction') {
       targets.set(attachmentEventId, {
         invite: attachment,
-        version: 1,
-        attendee: { ...originalAttendee },
+        version: (targets.get(attachmentEventId)?.version ?? 0) + 1,
+        attendee: { ...originalAttendee, responseStatus },
       })
     },
     loseNextPatchAcknowledgement: () => {
@@ -652,6 +693,7 @@ export function createInvitationTransport() {
       tokenRefreshes,
       calendarReadbacks: calendarReadbackVersions.size,
       calendarResponse: targets.get(eventId)!.attendee.responseStatus,
+      attachmentResponse: targets.get(attachmentEventId)?.attendee.responseStatus ?? null,
       seriesResponse: targets.get(seriesId)!.attendee.responseStatus,
       occurrenceResponse: targets.get(occurrenceId)!.attendee.responseStatus,
       otherGuest: event(eventId).attendees[1],

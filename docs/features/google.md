@@ -35,13 +35,19 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
   A verified meeting without a response to make can still offer a link, but not RSVP.
 - **Mail RSVP** updates only the attendee's entry on a verified, writable Calendar
   copy, using the selected series or original occurrence. Only when Calendar
-  verifies that no matching copy exists does Holi send a threaded iTIP reply
-  through Gmail to the organizer. A blocked or inconclusive Calendar lookup is
-  not permission to send mail. Main binds the response to the vault's linked
-  account and the exact invitation revision. Opening a card link checks the binding
-  revision in main without contacting Google, then rechecks that the reader still owns
-  the card. A pending or refused response is not shown as confirmed. **Retry** checks
-  the thread and provider status again; it never repeats the send or opens a link.
+  verifies that no matching copy exists does Holi send an iTIP reply through Gmail to
+  the organizer. Holi requests threading with reply headers and the original thread ID;
+  Gmail can put the reply in a separate Sent thread and readback can still correlate it
+  by message ID. A blocked or inconclusive Calendar lookup is not permission to send
+  mail. When Calendar and a verified Sent reply disagree, the card distinguishes the
+  answer recorded in Calendar from the answer in Sent. It disables an answer already
+  recorded at the current target. An unanswered Calendar copy does not erase a
+  confirmed reply. Google's acceptance of a write does not prove organizer delivery.
+  Main binds the response to the vault's linked account and exact invitation revision.
+  Opening a card link checks the binding revision in main without contacting Google,
+  then rechecks that the reader still owns the card. A pending or refused response is
+  not shown as confirmed. **Retry** checks the thread and provider status again; it
+  never repeats the send or opens a link.
 - **Calendar** shows calendars the user owns by default; per-calendar overrides
   are the plugin's `calendars` setting in the vault's
   `.holi/settings/plugins.local.yaml`, read in main so the agent and apps honour
@@ -79,8 +85,15 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
   protocol-faithful offline Google transport through both production readers and
   capabilities, not stubs that simply report success. The fixture covers inline and
   attached calendar MIME, Calendar updates and readback, Gmail refusal and exact
-  message-ID readback from Sent in a separate thread, read-only Retry, and a blocked
-  write after an account switch. This does not verify live email delivery.
+  message-ID readback from Sent in a separate thread, conflicting Calendar and Sent
+  answers, read-only Retry, and a blocked write after an account switch. This does
+  not verify live email delivery. To capture isolated evidence, run from the repo root
+  on macOS or Linux with the pinned Electron binary and `ffmpeg` installed:
+
+  ```sh
+  node apps/desktop/scripts/run-mail-invitation-smoke.mjs \
+    --evidence-dir=/absolute/new-directory
+  ```
 
 ## Rejected
 
