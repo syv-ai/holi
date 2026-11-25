@@ -163,7 +163,7 @@ type CalendarMail = {
   timestamp: number
   sent: boolean
   from: string
-  sentAddresses: { from: string[]; to: string[] } | null
+  sentAddresses: Record<'from' | 'to' | 'cc' | 'bcc', string[] | null> | null
   replyHeaders: CalendarReplyHeaders | null
   parts: {
     method: string | undefined | null
@@ -235,12 +235,24 @@ function uniqueAddressHeader(part: RawPart | undefined, name: string): string | 
   return typeof value === 'string' ? value : null
 }
 
-/** Unlike display parsing, Sent evidence must consume the whole unique header.
- * Require a dot-atom SMTP address (the form used by calendar addresses). */
-function sentEvidenceAddresses(value: string | null, allowGroups: boolean): string[] {
-  if (value === null) return []
+function sentAddressHeader(part: RawPart | undefined, name: 'from' | 'to' | 'cc' | 'bcc') {
+  const headers = (part?.headers ?? []).filter((header) => header.name?.toLowerCase() === name)
+  if (!headers.length) return []
+  const value = headers[0]?.value
+  return headers.length === 1 && typeof value === 'string'
+    ? sentEvidenceAddresses(value, name !== 'from', name === 'bcc')
+    : null
+}
+
+/** Unlike display parsing, Sent evidence must consume the whole unique header
+ * within the MIME scan's header limits. Null is unknown, not an empty list. */
+function sentEvidenceAddresses(
+  value: string,
+  allowGroups: boolean,
+  allowEmpty: boolean,
+): string[] | null {
   const unfolded = value.replace(/\r\n[ \t]+/g, ' ')
-  if (/\p{Cc}/u.test(unfolded.replaceAll('\t', ''))) return []
+  if (/\p{Cc}/u.test(unfolded.replaceAll('\t', ''))) return null
   let source = ''
   let comments = 0
   let quoted = false
@@ -255,14 +267,14 @@ function sentEvidenceAddresses(value: string | null, allowGroups: boolean): stri
     } else if (!quoted && char === '(') {
       if (comments++ === 0) source += ' '
     } else if (!quoted && char === ')') {
-      if (!comments) return []
+      if (!comments) return null
       comments--
     } else if (!comments) {
       if (char === '"') quoted = !quoted
       source += char
     }
   }
-  if (comments || quoted || escaped) return []
+  if (comments || quoted || escaped) return null
 
   const atom = String.raw`[\w!#$%&'*+\-/=?^\x60{|}~]`
   const word = String.raw`(?:"(?:[^"\\]|\\.)*"|(?:${atom}|\.|[^\x00-\x7f\s])+)`
@@ -287,25 +299,27 @@ function sentEvidenceAddresses(value: string | null, allowGroups: boolean): stri
     return true
   }
   take(space)
+  // Bcc alone can legally contain only folding whitespace and comments.
+  if (at === source.length) return allowEmpty ? [] : null
   while (at < source.length) {
     if (allowGroups && take(group)) {
       take(space)
       if (source[at] !== ';') {
-        if (!takeMailbox()) return []
+        if (!takeMailbox()) return null
         while (source[at] === ',') {
           at++
           take(space)
-          if (!takeMailbox()) return []
+          if (!takeMailbox()) return null
         }
       }
-      if (source[at++] !== ';') return []
+      if (source[at++] !== ';') return null
       take(space)
-    } else if (!takeMailbox()) return []
+    } else if (!takeMailbox()) return null
     if (at === source.length) return addresses
-    if (source[at++] !== ',') return []
+    if (source[at++] !== ',') return null
     take(space)
   }
-  return []
+  return null
 }
 
 function calendarMail(
@@ -339,8 +353,10 @@ function calendarMail(
     from: from.length === 1 ? from[0]!.email : '',
     sentAddresses: sent
       ? {
-          from: sentEvidenceAddresses(fromHeader, false),
-          to: sentEvidenceAddresses(uniqueAddressHeader(message.payload, 'to'), true),
+          from: sentAddressHeader(message.payload, 'from'),
+          to: sentAddressHeader(message.payload, 'to'),
+          cc: sentAddressHeader(message.payload, 'cc'),
+          bcc: sentAddressHeader(message.payload, 'bcc'),
         }
       : null,
     replyHeaders:
@@ -402,6 +418,7 @@ export function createSentCalendarLookup(
   scan: CalendarScan,
   owners: MessageIdOwners,
   inThread: CalendarMail[],
+  isKnownDispatch: (mail: CalendarMail) => boolean,
 ) {
   type Snapshot = {
     message: ReturnType<typeof validateFullMessage>
@@ -412,10 +429,14 @@ export function createSentCalendarLookup(
   const verifiedReplies = new Map<string, CalendarMail>()
   const hasVerifiedFullReply = (mail: CalendarMail) =>
     verifiedReplies.get(mail.messageId) === mail && owners.owns(mail)
-  // Once an exact read is attempted, only an assessed full envelope can give
-  // positive evidence. The old envelope still contributes claims and can contest.
+  // Holi's dispatches (and any attempted exact read) require the assessed
+  // full envelope. Thread projections still contribute claims and can contest,
+  // but cannot fall back to the policy for independent manual responses.
   const ownsSent = (mail: CalendarMail) =>
-    mail.sent && (reads.has(mail.messageId) ? hasVerifiedFullReply(mail) : owners.owns(mail))
+    mail.sent &&
+    (reads.has(mail.messageId) || isKnownDispatch(mail)
+      ? hasVerifiedFullReply(mail)
+      : owners.owns(mail))
   const read = async (id: string, fromIndex = false) => {
     let request = reads.get(id)
     // An individual GET can return 404 before the index makes the resource

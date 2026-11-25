@@ -51,7 +51,7 @@ export type InvitationLinks = Pick<
 type CalendarLookup =
   | InvitationCalendarCopy
   | { kind: 'absent' }
-  | { kind: 'blocked'; reason: string; cancelled?: true }
+  | { kind: 'blocked'; reason: string; cancelled?: true; navigationUnverified?: true }
 
 type Parsed = NonNullable<ReturnType<typeof parseMailInvitation>>
 type RevisionMaterial = {
@@ -219,14 +219,17 @@ export function calendarLocatorMayMatchScope(
   )
 }
 
+class PossibleSeriesCancellation extends Error {}
+
 async function exactCopies(
   api: GoogleApi,
   url: string,
   identity: Parsed['details']['identity'],
   floating: boolean,
+  context: { organizer: string | undefined; bindsParent: (event: RawEvent) => boolean },
   observe: (event: RawEvent) => Promise<void>,
 ): Promise<RawEvent[]> {
-  const { uid, recurrenceId } = identity
+  const { uid, recurrenceId, sequence } = identity
   const events = await invitationPages<RawEvent>(
     api,
     url,
@@ -251,8 +254,8 @@ async function exactCopies(
     calendarLocatorMayMatchScope(eventLocatorScope(event), identity),
   )
   const roots = possible.filter((event) => !event.recurringEventId && !event.originalStartTime)
-  if (new Set(events.map(({ id }) => id)).size !== events.length)
-    throw new Error('Calendar returned duplicate event rows')
+  const listedIds = new Set(events.map(({ id }) => id))
+  if (listedIds.size !== events.length) throw new Error('Calendar returned duplicate event rows')
   // Any row for a floating series could occupy this wall-clock slot. An
   // empty UID collection is still meaningful; never query instances in a guessed zone.
   if (floating) return possible
@@ -263,14 +266,27 @@ async function exactCopies(
     return copies
   }
   if (recurrenceId === null) return requireScope(roots)
-  if (roots.length > 1) throw new Error('Calendar returned ambiguous series rows')
+  const cancelledRoots = roots.filter((root) => root.status === 'cancelled')
+  const activeRoots = roots.filter((root) => root.status !== 'cancelled')
+  if (activeRoots.length > 1) throw new Error('Calendar returned ambiguous series rows')
+  const verifiedInstances = new Set<string | undefined>()
   const matching = new Map(
     possible
       .filter((event) => sameOccurrence(event, recurrenceId))
       .map((event) => [event.id, event]),
   )
-  for (const series of roots) {
-    if (!series.id || !series.recurrence?.length || series.status === 'cancelled') continue
+  for (const series of activeRoots) {
+    if (!series.id || !series.recurrence?.length) continue
+    const verifiedParent =
+      cancelledRoots.length > 0 &&
+      series.iCalUID === uid &&
+      Boolean(context.organizer) &&
+      series.organizer?.email?.toLowerCase() === context.organizer &&
+      context.bindsParent(series) &&
+      (series.sequence ?? 0) === sequence &&
+      coherentEventTimes(series) &&
+      (series.start?.date !== undefined) === date(recurrenceId) &&
+      recurrenceSet(series.recurrence) !== null
     // Unmodified instances do not appear in events.list. Query for the original
     // start (not timeMin or the displayed start, which miss moved occurrences).
     const instances = await invitationPages<RawEvent>(
@@ -302,22 +318,39 @@ async function exactCopies(
         throw new Error('Invalid Calendar instance for this invitation')
       }
       const listed = matching.get(event.id)
-      if (listed && (listed.etag !== event.etag || calendarProof(listed) !== calendarProof(event)))
+      if (
+        listedIds.has(event.id) &&
+        (!listed || listed.etag !== event.etag || calendarProof(listed) !== calendarProof(event))
+      )
         throw new Error('Calendar returned conflicting instance rows')
       matching.set(event.id, event)
+      if (verifiedParent) verifiedInstances.add(event.id)
     }
   }
-  // A cancelled series suppresses every occurrence even if Google no longer
-  // returns its instances. Never use the series itself as a write target.
-  const cancelledRoots = roots.filter((root) => root.status === 'cancelled')
-  return requireScope(
-    !matching.size ||
-      cancelledRoots.some((root) =>
-        [...matching.values()].some((instance) => instance.recurringEventId === root.id),
-      )
-      ? cancelledRoots
-      : [...matching.values()],
+  const matches = [...matching.values()]
+  // A root may cover an occurrence even when Google removed its recurrence
+  // rules. A different recurringEventId on a listed row is not evidence that
+  // the cancellation is unrelated. Only a corroborated current parent and
+  // older, distinct tombstones can disambiguate it for RSVP or navigation.
+  if (!matches.length) return requireScope(cancelledRoots)
+  const cancelledParents = cancelledRoots.filter((root) =>
+    matches.some((instance) => instance.recurringEventId === root.id),
   )
+  if (cancelledParents.length) return cancelledParents
+  if (
+    cancelledRoots.length &&
+    (matches.length !== 1 ||
+      !verifiedInstances.has(matches[0]!.id) ||
+      cancelledRoots.some(
+        (root) =>
+          root.iCalUID !== uid ||
+          root.organizer?.email?.toLowerCase() !== context.organizer ||
+          root.sequence === undefined ||
+          root.sequence >= sequence,
+      ))
+  )
+    throw new PossibleSeriesCancellation()
+  return matches
 }
 
 function hasEventResourceId(event: RawEvent): boolean {
@@ -415,6 +448,12 @@ export async function findInvitationCalendarCopy(
     })
   } catch (error) {
     if (error instanceof CalendarObservationError) throw error.cause
+    if (error instanceof PossibleSeriesCancellation)
+      return {
+        kind: 'blocked',
+        reason: 'Calendar could not distinguish this occurrence from a cancelled series',
+        navigationUnverified: true,
+      }
     // Neither a 404 nor incomplete/malformed results prove there is no copy.
     if (propagateCalendarRefusal(error)) throw error
     if (error instanceof GoogleApiError && error.status === 403)
@@ -435,6 +474,16 @@ async function lookupInvitationCalendarCopy(
   const { identity } = invitation.details
   const { uid, recurrenceId } = identity
   const organizer = invitation.details.organizer?.email
+  const parentContext = (ownedCalendar?: string) => ({
+    organizer,
+    bindsParent: (event: RawEvent) =>
+      Boolean(
+        mailboxAttendee(event, mailbox) ||
+        (invitation.joinOnly &&
+          event.organizer?.self &&
+          (organizer === mailbox || organizer === ownedCalendar)),
+      ),
+  })
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
     async (event: RawEvent) => {
@@ -491,6 +540,7 @@ async function lookupInvitationCalendarCopy(
     PRIMARY_EVENTS,
     identity,
     floating,
+    parentContext(),
     observeCopy(PRIMARY_EVENTS),
   )
   if (floating && primary.length) return unmatchable
@@ -534,6 +584,7 @@ async function lookupInvitationCalendarCopy(
       url,
       identity,
       floating,
+      parentContext(ownedCalendar),
       observeCopy(url, calendar.id.toLowerCase(), calendar.accessRole === 'owner'),
     )
     if (floating && events.length) return unmatchable

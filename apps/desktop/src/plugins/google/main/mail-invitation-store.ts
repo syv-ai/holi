@@ -294,7 +294,10 @@ function anchorFor({ accountSub, revision, delivery, answer }: InvitationAttempt
   return [{ accountSub, revision, parent, organizer, mailbox, reply }]
 }
 
-function anchorKey({ accountSub, revision, parent, organizer, mailbox }: ParentAnchor): string {
+function anchorKey(
+  { accountSub, revision, parent, organizer, mailbox, reply }: ParentAnchor,
+  dispatchRfcId = reply?.rfcId,
+): string {
   const { uid, recurrenceId, sequence, dtstamp, materialKey, mailboxResponse } = revision
   return JSON.stringify([
     accountSub,
@@ -307,6 +310,8 @@ function anchorKey({ accountSub, revision, parent, organizer, mailbox }: ParentA
     materialKey,
     parent,
     mailboxResponse === undefined ? [] : [mailboxResponse?.responseStatus, mailboxResponse?.rsvp],
+    // Separate replies to the same REQUEST still have separate dispatch identities.
+    dispatchRfcId,
   ])
 }
 
@@ -362,9 +367,15 @@ export function createMailInvitationStore(userData: string) {
         const attempts = [...journal.attempts, attempt]
         // Reserve space even for an uncertain Gmail write: its later confirmation
         // must not evict an older parent or become impossible to record.
-        const keys = new Set(
-          [...journal.parentAnchors, ...attempts.flatMap(anchorFor)].map(anchorKey),
-        )
+        const keys = new Set([
+          ...journal.parentAnchors.map((anchor) => anchorKey(anchor)),
+          ...attempts.flatMap((entry) => {
+            const { delivery } = entry
+            return delivery.channel === 'gmail'
+              ? anchorFor(entry).map((anchor) => anchorKey(anchor, delivery.rfcId))
+              : []
+          }),
+        ])
         if (keys.size > MAX_PARENT_ANCHORS)
           throw new CapabilityError(
             'FORBIDDEN',
