@@ -20,20 +20,20 @@ function child(receipt = deferred<Receipt>()) {
   const stderr = new PassThrough()
   const writes: Buffer[] = []
   stdin.on('data', (data: Buffer) => writes.push(Buffer.from(data)))
+  const nativeStop = vi.fn(() => true)
   const process = Object.assign(new ChildProcess(), {
     pid: 321,
     stdin,
     stdout,
     stderr,
     ownedCompletion: receipt.promise,
-    kill: vi.fn(() => true),
+    kill: nativeStop,
   }) as ManagedOwnedChild & {
     stdin: PassThrough
     stdout: PassThrough
     stderr: PassThrough
-    kill: ReturnType<typeof vi.fn>
   }
-  return { process, receipt, writes }
+  return { process, receipt, writes, nativeStop }
 }
 function runtime(proc: ReturnType<typeof child>['process']) {
   return {
@@ -100,7 +100,7 @@ describe('launchOwnedWindowsPty', () => {
     const first = launch.stop()
     const second = launch.stop()
     expect(second).toBe(first)
-    expect(owned.process.kill).toHaveBeenCalledTimes(1)
+    expect(owned.nativeStop).toHaveBeenCalledTimes(1)
     owned.receipt.resolve('empty')
     await expect(first).resolves.toBeUndefined()
   })
@@ -113,12 +113,12 @@ describe('launchOwnedWindowsPty', () => {
     const observed = await launch.completion.catch((error: unknown) => error)
     expect(observed).toMatchObject({ cause: original })
     await expect(launch.stop()).rejects.toBe(observed)
-    expect(owned.process.kill).toHaveBeenCalledTimes(0)
+    expect(owned.nativeStop).toHaveBeenCalledTimes(0)
 
     const malformed = child()
     const failed = launchOwnedWindowsPty(options, runtime(malformed.process))
     record(malformed.process, { type: 'unexpected' })
-    expect(malformed.process.kill).toHaveBeenCalledTimes(1)
+    expect(malformed.nativeStop).toHaveBeenCalledTimes(1)
     const failure = new Error('native completion rejected')
     malformed.receipt.reject(failure)
     const observedFailure = await failed.completion.catch((error: unknown) => error)
@@ -134,7 +134,7 @@ describe('launchOwnedWindowsPty', () => {
     const launch = launchOwnedWindowsPty(options, runtime(owned.process))
     const stop = launch.stop()
     expect(launch.stop()).toBe(stop)
-    expect(owned.process.kill).toHaveBeenCalledTimes(1)
+    expect(owned.nativeStop).toHaveBeenCalledTimes(1)
     owned.process.stdout.end()
     owned.process.stderr.end()
     owned.process.emit('exit', 0, null)
@@ -157,8 +157,8 @@ describe('launchOwnedWindowsPty', () => {
     record(right.process, { type: 'data', data: Buffer.from('still alive').toString('base64') })
     expect(output.join('')).toBe('still alive')
     a.stop()
-    expect(left.process.kill).toHaveBeenCalledTimes(1)
-    expect(right.process.kill).not.toHaveBeenCalled()
+    expect(left.nativeStop).toHaveBeenCalledTimes(1)
+    expect(right.nativeStop).not.toHaveBeenCalled()
     const error = new Error('left native failure')
     left.receipt.reject(error)
     await expect(a.completion).rejects.toMatchObject({ cause: error })
