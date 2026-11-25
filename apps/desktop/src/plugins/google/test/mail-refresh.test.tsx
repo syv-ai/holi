@@ -168,8 +168,10 @@ beforeEach(() => {
   marker.mockReset().mockResolvedValue({ ok: true })
   annotations.mockReset().mockResolvedValue({})
 })
-afterEach(() => {
+afterEach(async () => {
   toast.dismiss()
+  await advance(100)
+  await advance(1_000)
   cleanup()
   vi.useRealTimers()
 })
@@ -355,6 +357,7 @@ test('new mail appears without manual refresh and leaves the open reader in plac
 
 test('automatic arrivals retain the selected inbox filters', async () => {
   const { result } = await mount()
+  search.mockResolvedValue(page())
   await act(async () => {
     result.current.setCategory('updates')
     result.current.setUnreadOnly(true)
@@ -559,6 +562,10 @@ test.each(['account', 'vault'] as const)(
 test.each(['sidebar', 'surface'] as const)(
   '%s registration keeps selected filters and reader while counts and arrivals advance',
   async (registration) => {
+    // Only the refresh interval needs a clock. Testing Library's userEvent
+    // wrapper drains a real timeout after each interaction (Vitest is not Jest).
+    vi.useRealTimers()
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     const store = createStore()
     store.set(activeRemoteAtom, 'team/one')
     const Surface =
@@ -571,7 +578,7 @@ test.each(['sidebar', 'surface'] as const)(
       </Provider>,
     )
     await act(async () => {})
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    const user = userEvent.setup()
     if (registration === 'sidebar') {
       expect(screen.getByText('16', { exact: true })).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: /Inbox tab:/ }))
@@ -703,6 +710,9 @@ test.each(['folder', 'filter', 'hidden'] as const)(
       else if (change === 'filter') result.current.setUnreadOnly(true)
       else rerender({ account: 'account-a', visible: false })
     })
+    // Sonner publishes dismissal over animation frames; commit that render
+    // before advancing the exit animation's removal timer.
+    await advance(100)
     await advance(1_000)
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull()
     expect(unarchive).not.toHaveBeenCalled()

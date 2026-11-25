@@ -97,12 +97,12 @@ export function useMailList({
   const read = useCallback(
     async (kind: 'initial' | 'manual' | 'poll' | 'more'): Promise<void> => {
       if (!active()) return
-      if (account === null) {
-        paint({ kind: 'disconnected' })
-        return
-      }
       if (remote === null) {
         paint({ kind: 'error', message: 'No vault is open.' })
+        return
+      }
+      if (account === null) {
+        paint({ kind: 'disconnected' })
         return
       }
       if (
