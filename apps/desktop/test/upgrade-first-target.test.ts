@@ -145,6 +145,10 @@ async function fixture(scenario: Scenario) {
         connectionsPressSucceeded: false,
         deadlineReached: true,
         childrenReadAttempted: true,
+        snapshotDeadlineReached: false,
+        snapshotNodeLimitReached: false,
+        snapshotDepthLimitReached: false,
+        navigationScanStarted: true,
         windowsSeen: 1,
         visited: 42,
         windowsStatus: 0,
@@ -318,7 +322,14 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
         })
         if (scenario === 'navigation-unavailable') {
           expect(result).toMatchObject({
-            navigationStats: { connectionsControlSeen: true, deadlineReached: true },
+            navigationStats: {
+              connectionsControlSeen: true,
+              deadlineReached: true,
+              snapshotDeadlineReached: false,
+              snapshotNodeLimitReached: false,
+              snapshotDepthLimitReached: false,
+              navigationScanStarted: true,
+            },
           })
         } else expect(result).not.toHaveProperty('navigationStats')
         expect(JSON.stringify(result)).not.toContain(app.token)

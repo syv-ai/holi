@@ -44,6 +44,10 @@ function validNavigationStats(stats) {
     'connectionsPressSucceeded',
     'deadlineReached',
     'childrenReadAttempted',
+    'snapshotDeadlineReached',
+    'snapshotNodeLimitReached',
+    'snapshotDepthLimitReached',
+    'navigationScanStarted',
   ]
   const counts = ['windowsSeen', 'visited']
   const codes = ['windowsStatus', 'childrenStatus']
