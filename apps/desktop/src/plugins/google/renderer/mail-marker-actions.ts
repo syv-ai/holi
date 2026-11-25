@@ -133,8 +133,9 @@ export class MailMarkerActions {
   private async flush(id: string): Promise<void> {
     if (this.running.has(id)) return
     this.running.add(id)
+    const generation = this.generation
     try {
-      const work = () => this.drain(id)
+      const work = () => this.drain(id, generation)
       if (this.deps.runMutation) await this.deps.runMutation(work)
       else await work()
     } finally {
@@ -143,8 +144,10 @@ export class MailMarkerActions {
     }
   }
 
-  private async drain(id: string): Promise<void> {
-    while (this.queued.has(id)) {
+  private async drain(id: string, generation: number): Promise<void> {
+    // A retired transaction must leave newer intents for their own mutation owner.
+    // flush restarts them only after the previous runMutation wrapper has exited.
+    while (generation === this.generation && this.queued.has(id)) {
       const intent = this.queued.get(id)!
       this.queued.delete(id)
       if (!this.isCurrent(intent)) continue
