@@ -148,6 +148,7 @@ async function fixture(scenario: Scenario) {
         snapshotDeadlineReached: false,
         snapshotNodeLimitReached: false,
         snapshotDepthLimitReached: false,
+        snapshotReadFailed: false,
         navigationScanStarted: true,
         windowsSeen: 1,
         visited: 42,

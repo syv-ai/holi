@@ -47,6 +47,7 @@ function validNavigationStats(stats) {
     'snapshotDeadlineReached',
     'snapshotNodeLimitReached',
     'snapshotDepthLimitReached',
+    'snapshotReadFailed',
     'navigationScanStarted',
   ]
   const counts = ['windowsSeen', 'visited']
