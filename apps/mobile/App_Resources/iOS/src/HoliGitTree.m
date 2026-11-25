@@ -3,11 +3,38 @@
 #import <fcntl.h>
 #import <unistd.h>
 #import <errno.h>
+#import <dirent.h>
 
 @implementation HoliNativeGit (TreePreparation)
 static BOOL HNGTreeFail(NSError **error, NSString *message) {
   if (error) *error = HNGPathError(EINVAL, message);
   return NO;
+}
+static BOOL HNGTreeCollectNames(int fd, NSString *prefix, NSMutableSet<NSString *> *names, NSUInteger depth, NSError **error) {
+  if (depth > 64 || names.count > 10000) return HNGTreeFail(error, @"Working tree exceeds traversal limits");
+  int copy = dup(fd);
+  DIR *dir = copy >= 0 ? fdopendir(copy) : NULL;
+  if (!dir) { if (copy >= 0) close(copy); return HNGTreeFail(error, @"Cannot enumerate working tree"); }
+  struct dirent *entry;
+  BOOL ok = YES;
+  while ((entry = readdir(dir))) {
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") || !strcmp(entry->d_name, ".git")) continue;
+    NSString *part = [NSString stringWithUTF8String:entry->d_name];
+    if (!part) { ok = NO; break; }
+    NSString *path = prefix.length ? [prefix stringByAppendingFormat:@"/%@", part] : part;
+    struct stat st;
+    if (fstatat(fd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW)) { ok = NO; break; }
+    if (S_ISDIR(st.st_mode)) {
+      int child = openat(fd, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+      if (child < 0) { ok = NO; break; }
+      ok = HNGTreeCollectNames(child, path, names, depth + 1, error);
+      close(child);
+    } else [names addObject:path];
+    if (!ok || names.count > 10000) { ok = NO; break; }
+  }
+  if (errno) ok = NO;
+  closedir(dir);
+  return ok ? YES : HNGTreeFail(error, @"Working tree traversal failed or exceeded limits");
 }
 static BOOL HNGTreeSameFile(struct stat a, struct stat b) {
   return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_mode == b.st_mode && a.st_size == b.st_size && a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec && a.st_ctimespec.tv_sec == b.st_ctimespec.tv_sec && a.st_ctimespec.tv_nsec == b.st_ctimespec.tv_nsec;
@@ -109,7 +136,7 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
   close(objectsFD);
   return ok;
 }
-- (NSDictionary<NSString *, id> *)prepareWorkingCopyTree:(NSString *)root remote:(NSString *)remote branch:(NSString *)branch paths:(NSArray<NSString *> *)paths error:(NSError **)error {
+- (NSDictionary<NSString *, id> *)prepareWorkingCopyTree:(NSString *)root remote:(NSString *)remote branch:(NSString *)branch policy:(NSInteger (^)(NSString *))policy error:(NSError **)error {
   HoliGitSnapshot *snapshot = nil;
   git_repository *repo = [self openSafeRepository:root snapshot:&snapshot error:error];
   if (!repo) return nil;
@@ -147,12 +174,23 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
       git_config_entry_free(setting);
       if (found != GIT_ENOTFOUND) rc = GIT_ERROR;
     }
-    if (rc < 0 || paths.count > 10000) { HNGTreeFail(error, @"Unsupported tree preparation configuration or size"); break; }
+    if (rc < 0 || !policy) { HNGTreeFail(error, @"Unsupported tree preparation configuration or missing policy"); break; }
     NSDictionary *metadata = HNGTreeMetadata(snapshot.path);
     NSSet *objectsBefore = HNGLooseObjects(snapshot.path);
     if (!metadata) { HNGTreeFail(error, @"Existing metadata lock or unreadable metadata"); break; }
     rootFD = open(root.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (rootFD < 0) { HNGTreeFail(error, @"Cannot open tree preparation root"); break; }
+    // Enumerate candidates before reading content; the caller's pure policy excludes private
+    // paths and subtrees at the native boundary.
+    NSMutableSet<NSString *> *candidateNames = [NSMutableSet set];
+    if (!HNGTreeCollectNames(rootFD, @"", candidateNames, 0, error)) break;
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSString *candidate in candidateNames) {
+      NSInteger decision = policy(candidate);
+      if (decision < -1 || decision > 1 || decision == -1) { HNGTreeFail(error, @"Working tree policy refused an invalid path"); valid = NO; break; }
+      if (decision == 1) [paths addObject:candidate];
+    }
+    if (!valid || paths.count > 10000) { HNGTreeFail(error, @"Working tree exceeds policy or path limits"); break; }
     if (!HNGPrepareIgnores(repo, snapshot, rootFD, paths, error)) break;
     rc = git_index_new(&prepared);
     if (rc < 0) { HNGError(error, rc); break; }
