@@ -3,12 +3,22 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { BrowserWindow, session as electronSession, webContents } from 'electron'
 import type { Session } from 'electron'
-import type { MdxDiagnostic } from '@holi/shared'
+import {
+  MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH,
+  MAX_MDX_INSPECTION_DEPENDENCIES,
+  MAX_MDX_INSPECTION_DIAGNOSTICS,
+  MAX_MDX_SPECIFIER_LENGTH,
+  type MdxDiagnostic,
+} from '@holi/shared'
 
 const MAX_SOURCE_BYTES = 256 * 1024
-const MAX_RESULT_BYTES = 32 * 1024
-const MAX_DIAGNOSTICS = 32
-const MAX_MESSAGE = 512
+// JSON can use six bytes per UTF-16 code unit (e.g. a lone surrogate).
+// Each 128-byte allowance covers keys, positions and punctuation, or the UUID envelope.
+// The guest may send one extra dependency to signal overflow without returning a partial graph.
+const MAX_RESULT_BYTES =
+  128 +
+  (MAX_MDX_INSPECTION_DEPENDENCIES + 1) * (128 + 6 * MAX_MDX_SPECIFIER_LENGTH) +
+  MAX_MDX_INSPECTION_DIAGNOSTICS * (128 + 6 * MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH)
 const QUEUE_TIMEOUT_MS = 10_000
 const COMPILE_TIMEOUT_MS = 5_000
 const MAX_PENDING = 4
@@ -75,7 +85,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
   const guests = new Set<BrowserWindow>()
 
   function makeError(message: string): Error {
-    return new Error(message.slice(0, MAX_MESSAGE))
+    return new Error(message.slice(0, MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH))
   }
 
   function settle(request: Request, error?: Error, result?: MdxInspectResult): void {
@@ -251,7 +261,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
 
   function cleanDiagnostics(value: unknown): MdxDiagnostic[] {
     if (!Array.isArray(value)) throw makeError('MDX compiler returned an invalid result')
-    return value.slice(0, MAX_DIAGNOSTICS).flatMap((item): MdxDiagnostic[] => {
+    return value.slice(0, MAX_MDX_INSPECTION_DIAGNOSTICS).flatMap((item): MdxDiagnostic[] => {
       if (
         item === null ||
         typeof item !== 'object' ||
@@ -263,7 +273,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
       const diagnostic = item as MdxDiagnostic
       return [
         {
-          message: diagnostic.message.slice(0, MAX_MESSAGE),
+          message: diagnostic.message.slice(0, MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH),
           line: Math.max(1, Math.min(1_000_000, Math.floor(diagnostic.line))),
           column: Math.max(1, Math.min(1_000_000, Math.floor(diagnostic.column))),
         },
@@ -388,18 +398,21 @@ export function createMdxResources(assetDirectory: string): MdxResources {
         if (result !== null && result !== undefined) {
           const serialized = JSON.stringify(result)
           if (Buffer.byteLength(serialized, 'utf8') > MAX_RESULT_BYTES)
-            throw makeError('MDX compiler result exceeds 32 KiB')
+            throw makeError('MDX compiler result exceeds its size limit')
           const envelope = result as { id?: unknown; diagnostics?: unknown; dependencies?: unknown }
           if (envelope.id === id) {
-            if (!Array.isArray(envelope.dependencies) || envelope.dependencies.length > 64)
+            if (
+              !Array.isArray(envelope.dependencies) ||
+              envelope.dependencies.length > MAX_MDX_INSPECTION_DEPENDENCIES
+            )
               throw makeError('MDX compiler dependency limit or invalid result')
             const dependencies = envelope.dependencies.map((item): MdxDependency => {
               if (!item || typeof item !== 'object') throw makeError('Invalid MDX dependency')
               const value = item as MdxDependency
               if (
                 typeof value.specifier !== 'string' ||
-                value.specifier.length > MAX_MESSAGE ||
-                (!value.specifier.startsWith('./') && !value.specifier.startsWith('../')) ||
+                value.specifier.length > MAX_MDX_SPECIFIER_LENGTH ||
+                !/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(value.specifier) ||
                 !Number.isSafeInteger(value.line) ||
                 value.line < 1 ||
                 !Number.isSafeInteger(value.column) ||
