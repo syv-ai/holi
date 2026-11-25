@@ -56,6 +56,7 @@ import {
   type InviteAnswer,
 } from './calendar'
 import type { ComposeWrite, GoogleData } from './data'
+import type { MailListRequest } from './mail-list-types'
 import {
   createDraft,
   fetchCategoryCounts,
@@ -192,6 +193,32 @@ const MAIL_CATEGORIES: readonly MailCategory[] = [
   'forums',
 ]
 
+function mailListParams(raw: unknown): MailListRequest | undefined {
+  if (raw === undefined) return undefined
+  const p = paramsObject(raw)
+  const loadedIds = p.loadedIds
+  if (!Array.isArray(loadedIds) || !loadedIds.every((id) => typeof id === 'string')) {
+    throw new CapabilityError('BAD_REQUEST', 'uiList.loadedIds must be thread ids')
+  }
+  for (const id of loadedIds) validateThreadId(id)
+  let cursor: MailListRequest['cursor']
+  if (p.cursor !== undefined) {
+    const value = paramsObject(p.cursor)
+    if (value.version !== 1) throw new CapabilityError('BAD_REQUEST', 'invalid mail cursor version')
+    cursor = {
+      version: 1,
+      owner: stringParam(value, 'owner'),
+      key: stringParam(value, 'key'),
+      historyId: stringParam(value, 'historyId'),
+    }
+  }
+  return {
+    loadedIds: [...new Set(loadedIds)],
+    ...(cursor === undefined ? {} : { cursor }),
+    ...(p.refresh === undefined ? {} : { refresh: booleanParam(p, 'refresh') }),
+  }
+}
+
 /** A mail search. An unknown category means none, and an unknown mailbox the
  *  inbox: the worst either can do is a list the person can see is wrong. */
 function searchParams(raw: unknown): {
@@ -203,8 +230,10 @@ function searchParams(raw: unknown): {
   needsReply?: boolean
   includeCc?: boolean
   includeAutomated?: boolean
+  uiList?: MailListRequest
 } {
   const p = paramsObject(raw)
+  const uiList = mailListParams(p.uiList)
   const category = MAIL_CATEGORIES.find((c) => c === optionalStringParam(p, 'category'))
   const mailbox: MailboxName | undefined =
     optionalStringParam(p, 'mailbox') === 'sent' ? 'sent' : undefined
@@ -219,6 +248,7 @@ function searchParams(raw: unknown): {
     ...(flagParam(p, 'needs-reply') ? { needsReply: true } : {}),
     ...(flagParam(p, 'include-cc') ? { includeCc: true } : {}),
     ...(flagParam(p, 'include-automated') ? { includeAutomated: true } : {}),
+    ...(uiList === undefined ? {} : { uiList }),
   }
 }
 
@@ -744,10 +774,26 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           "threads matching Gmail's search grammar (the inbox). --needs-reply is a factual shortlist, not a classification of obligation: it selects incoming mail after the latest sent message, so a new incoming message remains eligible after an older reply; a draft is not a sent reply. The facts replied, lastReplyAt, addressedAs and automated describe Gmail evidence, not semantics: replied means a sent message followed an incoming message, and lastReplyAt is the latest such sent message time. addressedAs is the latest incoming message's recipient classification (to, cc, neither or unknown), or null when there is no incoming message; known send-as aliases are matched and unknown recipients remain eligible. Direct To is the default only with --needs-reply; --include-cc opts into Cc-only and --include-automated opts into positively recognized automation only in that mode, and neither flag otherwise filters results. No recognized automation evidence is not proof a human wrote it; automationUnknown marks MIME evidence that was unavailable or truncated and remains eligible. Filters apply to one Gmail page. Use --json to receive nextPageToken and continue with --pageToken <token>; an empty filtered page may still have a token and is not exhausted until nextPageToken is null.",
       },
       params: searchParams,
-      run: async (ctx, options) => {
-        const data = await dataOf(ctx.remote)
+      run: async (ctx, { uiList, ...options }) => {
+        if (uiList !== undefined && ctx.door !== 'ui') {
+          throw new CapabilityError('BAD_REQUEST', 'loaded mail lists require the UI door')
+        }
+        let data: GoogleData
+        let listContext: { owner: string; request: MailListRequest } | undefined
+        if (uiList === undefined) data = await dataOf(ctx.remote)
+        else {
+          const session = await deps.accounts.sessionFor(ctx.remote)
+          if (session?.accountSub == null) {
+            throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
+          }
+          if (deps.dataForSession === undefined) {
+            throw new CapabilityError('UNAVAILABLE', 'account-bound mail data is unavailable')
+          }
+          data = deps.dataForSession(session)
+          listContext = { owner: JSON.stringify([ctx.remote, session.accountSub]), request: uiList }
+        }
         const page = (await google(() =>
-          data.threads(options, { freshPage: ctx.door === 'cli' }),
+          data.threads(options, { freshPage: ctx.door === 'cli', uiList: listContext }),
         )) as CliMailPage
         if (ctx.door === 'cli' && options.needsReply === true) {
           Object.defineProperty(page, NEEDS_REPLY_CLI_TEXT, { value: true })
