@@ -231,12 +231,17 @@ it('waits for disposer authority on a dependent-only disable and leaves populate
   const releaseLaunch = deferred()
   adapters.cleanupReleases.push(releaseWrite.resolve, releaseLaunch.resolve)
   adapters.writeGates.push({
-    fragment: join(roots[A], '.holi/holis/scout/MEMORY.md'),
+    fragment: join(roots[A], '.holi/holis/scout/.holi-tmp-'),
     entered: enteredWrite.resolve,
     wait: releaseWrite.promise,
   })
   const memory = machineCall(A, 'holis', 'remember', 'scout', 'drained A fact')
-  await enteredWrite.promise
+  await Promise.race([
+    enteredWrite.promise,
+    memory.then((result) => {
+      throw new Error(`Memory completed before native gate: ${result.status}`)
+    }),
+  ])
   adapters.run.mockImplementation(async (_bin, args, options) => {
     if (args.includes('--bg')) {
       if (options.cwd === roots[A]) {
@@ -291,51 +296,60 @@ it('waits for disposer authority on a dependent-only disable and leaves populate
   ).toEqual([roots[A]])
 })
 
-it('does not publish approval after its activation is revoked during native write preparation', async () => {
-  const { enter, call, roots, userData, reconcileSettings } = await rig(
-    undefined,
-    undefined,
-    true,
-    { retainedContexts: true },
-  )
-  await enter(A)
-  const holi = (await call(A, 'holis.create', { name: 'Scout' })) as {
-    id: string
-    fingerprint: string
-  }
-  const entered = deferred()
-  const release = deferred()
-  adapters.cleanupReleases.push(release.resolve)
-  adapters.writeGates.push({
-    fragment: join(userData, 'holis.json.tmp'),
-    entered: entered.resolve,
-    wait: release.promise,
-  })
-  const approval = call(A, 'holis.approve', { holi: holi.id, fingerprint: holi.fingerprint }).catch(
-    (error: unknown) => error,
-  )
-  await entered.promise
-  await writeFile(
-    join(roots[A], '.holi/settings/plugins.yaml'),
-    'plugins:\n  automations: false\n  holis: false\n',
-  )
-  const disabling = reconcileSettings(A)
-  try {
-    await vi.waitFor(async () => {
-      await expect(call(A, 'holis.list')).rejects.toThrow()
+it.each(['approve', 'send'] as const)(
+  'does not publish %s after its activation is revoked during native write preparation',
+  async (operation) => {
+    const { enter, call, roots, userData, reconcileSettings } = await rig(
+      undefined,
+      undefined,
+      true,
+      { retainedContexts: true },
+    )
+    await enter(A)
+    const holi = (await call(A, 'holis.create', { name: 'Scout' })) as {
+      id: string
+      fingerprint: string
+    }
+    const entered = deferred()
+    const release = deferred()
+    adapters.cleanupReleases.push(release.resolve)
+    if (operation === 'send')
+      await call(A, 'holis.approve', { holi: holi.id, fingerprint: holi.fingerprint })
+    adapters.writeGates.push({
+      fragment: join(userData, 'holis.json.tmp'),
+      entered: entered.resolve,
+      wait: release.promise,
     })
-  } finally {
-    release.resolve()
-  }
-  expect(await approval).toBeInstanceOf(Error)
-  await disabling
-  await writeFile(
-    join(roots[A], '.holi/settings/plugins.yaml'),
-    'plugins:\n  automations: true\n  holis: true\n',
-  )
-  await reconcileSettings(A)
-  expect(await call(A, 'holis.list')).toMatchObject([{ status: 'new', runs: [] }])
-})
+    const approval = (
+      operation === 'approve'
+        ? call(A, 'holis.approve', { holi: holi.id, fingerprint: holi.fingerprint })
+        : call(A, 'holis.send', { holi: holi.id, path: 'note.md' })
+    ).catch((error: unknown) => error)
+    await entered.promise
+    await writeFile(
+      join(roots[A], '.holi/settings/plugins.yaml'),
+      'plugins:\n  automations: false\n  holis: false\n',
+    )
+    const disabling = reconcileSettings(A)
+    try {
+      await vi.waitFor(async () => {
+        await expect(call(A, 'holis.list')).rejects.toThrow()
+      })
+    } finally {
+      release.resolve()
+    }
+    expect(await approval).toBeInstanceOf(Error)
+    await disabling
+    await writeFile(
+      join(roots[A], '.holi/settings/plugins.yaml'),
+      'plugins:\n  automations: true\n  holis: true\n',
+    )
+    await reconcileSettings(A)
+    expect(await call(A, 'holis.list')).toMatchObject([
+      { status: operation === 'approve' ? 'new' : 'approved', runs: [] },
+    ])
+  },
+)
 
 it('uses the original host presentation lease and immutable notification navigation', async () => {
   const { enter, call, machineCall, setActive, notifications, navigations, userData } = await rig(

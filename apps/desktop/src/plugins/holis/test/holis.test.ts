@@ -27,6 +27,7 @@ import {
 import { hashOf, readFiles, remember, saveFile } from '../main/memory'
 
 const REMOTE = 'syv-ai/notes'
+const cleanupReleases: (() => void)[] = []
 let root: string
 let data: string
 let launched: Parameters<HolisDeps['launch']>[0][]
@@ -81,6 +82,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  for (const release of cleanupReleases.splice(0)) release()
   await holis.stop()
   await Promise.all([root, data].map((d) => rm(d, { recursive: true, force: true })))
 })
@@ -374,4 +376,39 @@ describe('activation work', () => {
     await holis.report(vault(), 'proposal', 'ready', true)
     expect(asked).toMatchObject([{ remote: REMOTE, text: 'ready' }])
   })
+})
+
+it('refuses approval queued behind another real store update after stop', async () => {
+  await writeHoli({ yaml: PROPOSAL, soul: SOUL })
+  const shown = (await holis.list(vault()))[0]!.fingerprint!
+  const store = jsonFileStore(join(data, 'holis.json'), parseHolisFile)
+  let release!: () => void
+  let entered!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  cleanupReleases.push(release)
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const blocker = store.update(async (file) => {
+    entered()
+    await held
+    return file
+  })
+  await waiting
+  let providerRead!: () => void
+  const prepared = new Promise<void>((resolve) => {
+    providerRead = resolve
+  })
+  onProviderRead = providerRead
+  const approval = holis.approve(vault(), 'proposal', shown).catch((error: unknown) => error)
+  await prepared
+  await new Promise((resolve) => setImmediate(resolve))
+  const stopped = holis.stop()
+  release()
+  await blocker
+  expect(await approval).toBeInstanceOf(Error)
+  await stopped
+  expect((await store.read())[REMOTE]?.['.holi/holis/proposal/holi.yaml']?.approved).toBeUndefined()
 })

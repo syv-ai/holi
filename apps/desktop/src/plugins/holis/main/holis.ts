@@ -421,6 +421,15 @@ export function createHolis(deps: HolisDeps): Holis {
     void operation.finally(() => owned.delete(operation)).catch(() => {})
     return operation
   }
+  const cleanup = async (vault: HolisVault, id: string): Promise<void> => {
+    try {
+      if (!deps.cleanupLaunch) throw new Error('No cleanup adapter for the late Holi launch.')
+      await deps.cleanupLaunch(vault, id)
+    } catch (error) {
+      cleanupFailures.push(error)
+      throw error
+    }
+  }
   const stop = (): Promise<void> => {
     stopping = true
     deps.activationSignal?.removeEventListener('abort', abort)
@@ -615,23 +624,20 @@ export function createHolis(deps: HolisDeps): Holis {
           system,
         })
         if (stopping || deps.activationSignal?.aborted) {
-          if (res.ok) {
-            try {
-              if (!deps.cleanupLaunch)
-                throw new Error('No cleanup adapter for the late Holi launch.')
-              await deps.cleanupLaunch(vault, res.sessionId)
-            } catch (error) {
-              cleanupFailures.push(error)
-            }
-          }
+          if (res.ok) await cleanup(vault, res.sessionId)
           throw unavailable()
         }
         if (!res.ok) throw new CapabilityError('UNAVAILABLE', res.message)
         const run: HoliRun = { jobId: res.sessionId, at: now().toISOString(), path }
-        await changeState(vault.remote, entry.path, (s) => ({
-          ...s,
-          runs: [run, ...s.runs].slice(0, RUNS_KEPT),
-        }))
+        try {
+          await changeState(vault.remote, entry.path, (s) => ({
+            ...s,
+            runs: [run, ...s.runs].slice(0, RUNS_KEPT),
+          }))
+        } catch (error) {
+          await cleanup(vault, res.sessionId)
+          throw error
+        }
         changed(vault.remote)
         return { sessionId: res.sessionId }
       } finally {

@@ -32,6 +32,7 @@ let root: string
 let data: string
 const dirs: string[] = []
 const REMOTE = 'syv-ai/notes'
+const cleanupReleases: (() => void)[] = []
 
 /** The clock the scheduler reads, moved by each test. */
 let clock: Date
@@ -139,6 +140,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  for (const release of cleanupReleases.splice(0)) release()
   await scheduler.dispose()
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
@@ -815,4 +817,45 @@ describe('activation cancellation', () => {
     await closing
     expect(stopped).toEqual([])
   })
+})
+
+it('refuses approval queued behind another real store update after disposal', async () => {
+  await scheduler.dispose()
+  let providerRead!: () => void
+  const prepared = new Promise<void>((resolve) => {
+    providerRead = resolve
+  })
+  scheduler = make(undefined, {
+    provider: async () => {
+      providerRead()
+      return 'claude'
+    },
+  })
+  scheduler.attach(vault())
+  await writeSchedule('inbox.local.md', 'name: Inbox\ncron: "*/30 * * * *"')
+  const store = jsonFileStore(join(data, 'schedules.json'), parseSchedulesFile)
+  let release!: () => void
+  let entered!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  cleanupReleases.push(release)
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const blocker = store.update(async (file) => {
+    entered()
+    await held
+    return file
+  })
+  await waiting
+  const approval = scheduler.enable(vault(), 'inbox').catch((error: unknown) => error)
+  await prepared
+  await new Promise((resolve) => setImmediate(resolve))
+  const stopped = scheduler.dispose()
+  release()
+  await blocker
+  expect(await approval).toBeInstanceOf(Error)
+  await stopped
+  expect((await store.read())[REMOTE]?.['.holi/schedules/inbox.local.md']?.approved).toBeUndefined()
 })

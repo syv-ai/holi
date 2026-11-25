@@ -735,11 +735,21 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         router.running(entry.path, true)
       }
     }
-    await changeState(vault.remote, entry.path, (s) => ({
-      ...s,
-      lastRun: at.toISOString(),
-      runs: [record, ...s.runs].slice(0, RUNS_KEPT),
-    }))
+    try {
+      await changeState(
+        vault.remote,
+        entry.path,
+        (s) => ({
+          ...s,
+          lastRun: at.toISOString(),
+          runs: [record, ...s.runs].slice(0, RUNS_KEPT),
+        }),
+        admittedNow,
+      )
+    } catch (error) {
+      if (record.outcome === 'started' && record.jobId !== undefined) await stopLate(record.jobId)
+      throw error
+    }
     log(`${entry.path}: ${record.outcome}${record.message ? ` (${record.message})` : ''}`)
     if (record.outcome === 'failed') {
       await logRun(vault.root, def.name, entry.path, `did not start: ${record.message}`)
