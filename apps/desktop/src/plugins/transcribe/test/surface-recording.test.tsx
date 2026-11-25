@@ -311,6 +311,41 @@ test('a chunk tried again after a lost answer is sent again, and main takes it a
   expect(store.get(recorderAtom)).toMatchObject({ failedUploads: 0, error: null })
 }, 15_000)
 
+test('a recording stays bound to its vault and only its owner can stop or discard it', async () => {
+  const store = storeFor()
+  await store.set(startRecordingAtom, {
+    profileId: 'planning',
+    title: '',
+    microphone: true,
+    system: true,
+  })
+  expect(store.get(recorderAtom).phase).toBe('recording')
+
+  store.set(activeRemoteAtom, 'other/vault')
+  store.set(meetingsAtom, [{ ...meeting, id: 'm9', title: 'Other vault meeting' }])
+  render(
+    <Provider store={store}>
+      <MeetingsSurface />
+    </Provider>,
+  )
+  expect(screen.getByRole('button', { name: 'Record' })).toBeEnabled()
+  expect(screen.queryByText('Recording · tell everyone')).toBeNull()
+  expect(screen.queryByText('Other vault meeting')).toBeNull()
+
+  act(() => options?.onChunk({ n: 0, start: 0, duration: 6, wav: wav(1, 2) }))
+  await waitFor(() =>
+    expect(calls('meeting.chunk')).toEqual([
+      { meetingId: 'm9', n: 0, start: 0, duration: 6, audio: 'AQI=' },
+    ]),
+  )
+  transcribeRenderer.backgroundEvents!['stop-recording']!({ remote: 'other/vault' }, store)
+  expect(stopCapture).not.toHaveBeenCalled()
+  transcribeRenderer.backgroundEvents!['stop-recording']!({ remote: 'syv/vault' }, store)
+  await waitFor(() => expect(store.get(recorderAtom).phase).toBe('idle'))
+  expect(calls('meeting.stop')).toEqual([{ meetingId: 'm9' }])
+  expect(calls('meeting.chunk')).toHaveLength(2)
+}, 15_000)
+
 test('a meeting deleted from the vault while it records stops, and sends nothing more', async () => {
   const store = storeFor()
   await store.set(startRecordingAtom, {
@@ -320,7 +355,7 @@ test('a meeting deleted from the vault while it records stops, and sends nothing
     system: true,
   })
   expect(store.get(recorderAtom).phase).toBe('recording')
-  transcribeRenderer.events!['meeting-removed']!(
+  transcribeRenderer.backgroundEvents!['meeting-removed']!(
     { remote: 'syv/vault', payload: { meetingId: 'm9' } },
     store,
   )
