@@ -463,6 +463,28 @@ test('tree rows activate by Enter and Space without consuming nested controls', 
   expect(onOpen).not.toHaveBeenCalledWith('')
 })
 
+test('a subscription refresh does not insert a loading row into a populated tree', async () => {
+  const { store } = mount()
+  await screen.findByRole('treeitem', { name: 'kunder' })
+  let resolveRefresh!: (scopes: typeof subscriptionScopes.values) => void
+  const refresh = new Promise<typeof subscriptionScopes.values>((resolve) => {
+    resolveRefresh = resolve
+  })
+  subscriptionList.mockImplementationOnce(async () => refresh)
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      dirs: ['kunder', 'new-folder'],
+    }),
+  )
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(2))
+  expect(screen.queryByText('Loading subscriptions…')).not.toBeInTheDocument()
+  expect(screen.getByRole('treeitem', { name: 'kunder' })).toBeInTheDocument()
+  expect(screen.getByRole('treeitem', { name: 'new-folder' })).toBeInTheDocument()
+  resolveRefresh([])
+  await act(async () => refresh)
+})
+
 test('an older list response cannot erase a completed subscription refresh', async () => {
   const { store } = mount()
   let resolveOld!: (scopes: typeof subscriptionScopes.values) => void
