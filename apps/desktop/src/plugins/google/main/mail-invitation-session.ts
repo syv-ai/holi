@@ -166,7 +166,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         const { reply } = current
         const { channel } = reply
 
-        if (!details.identity.materialKey) throw conflict()
+        if (!details.identity.materialKey || !current.calendarMaterial) throw conflict()
         const id = randomUUID()
         const { uid, recurrenceId, sequence, dtstamp, materialKey } = details.identity
         const rfcId = `<${id}@holi.invalid>`
@@ -182,6 +182,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             materialKey,
             mailboxResponse: current.response,
           },
+          calendarMaterial: current.calendarMaterial,
           answer,
           state: 'prepared',
           delivery:
@@ -208,7 +209,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         try {
           await store.addAttempt(attempt)
           let absentTargets: Set<string> = new Set()
-          let blockedByConfirmation = current.blockedByConfirmation
+          let blocksReservation = current.blocksReservation
           const validate = async () => {
             // Runs after the write token has been obtained. Recheck the channel,
             // exact Calendar target/ETag or proven absence, and the prior answer.
@@ -237,13 +238,13 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             )
               throw conflict()
             absentTargets = newest.absentTargets
-            blockedByConfirmation = newest.blockedByConfirmation
+            blocksReservation = newest.blocksReservation
           }
           const reserveDispatch = async () => {
             await store.update((journal) => {
               if (
                 !journal.attempts.some((entry) => entry.id === id && entry.state === 'prepared') ||
-                journal.attempts.some(blockedByConfirmation)
+                journal.attempts.some(blocksReservation)
               )
                 throw conflict()
               // A concurrent reader can discover another copy after preflight.
