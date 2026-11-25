@@ -311,24 +311,30 @@ export function createMailInvitationStore(userData: string) {
   return {
     read: store.read,
     update,
-    rememberCalendarLocators: (snapshot: Journal, found: CalendarLocator[]) => {
-      const known = new Set(snapshot.calendarLocators.map(calendarLocatorKey))
-      if (
-        snapshot.calendarLocatorOverflow ||
-        found.every((locator) => known.has(calendarLocatorKey(locator)))
-      )
-        return Promise.resolve(snapshot)
-      return update((journal) => {
-        const locators = new Map(
-          journal.calendarLocators.map((entry) => [calendarLocatorKey(entry), entry]),
+    async rememberCalendarLocator(locator: CalendarLocator, assertBinding: () => void) {
+      assertBinding()
+      const key = calendarLocatorKey(locator)
+      const alreadyRetained = (journal: Journal) =>
+        journal.calendarLocatorOverflow ||
+        journal.calendarLocators.some((entry) => calendarLocatorKey(entry) === key)
+      if (!alreadyRetained(await store.read()))
+        await store.update(
+          (journal) => {
+            if (alreadyRetained(journal)) return journal
+            // A full registry is not absence. Do not silently forget a copy.
+            return verifyJournal(
+              journal.calendarLocators.length >= MAX_CALENDAR_LOCATORS
+                ? { ...journal, calendarLocatorOverflow: true }
+                : { ...journal, calendarLocators: [...journal.calendarLocators, locator] },
+            )
+          },
+          undefined,
+          () => {
+            assertBinding()
+            return true
+          },
         )
-        for (const locator of found) locators.set(calendarLocatorKey(locator), locator)
-        // Keep existing evidence and durably disable Gmail fallback if we
-        // cannot remember every verified copy. A full registry is not absence.
-        if (locators.size > MAX_CALENDAR_LOCATORS)
-          return { ...journal, calendarLocatorOverflow: true }
-        return { ...journal, calendarLocators: [...locators.values()] }
-      })
+      assertBinding()
     },
     addAttempt: (attempt: InvitationAttempt) =>
       update((journal) => {

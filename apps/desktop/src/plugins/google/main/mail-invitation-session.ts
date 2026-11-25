@@ -128,43 +128,81 @@ function readPossibleReply(part: Mail['parts'][number]): Promise<string | null> 
   })
 }
 
-async function latestByScope({ messages, owners }: Thread, mailbox: string) {
-  const candidates: Candidate[] = []
-  for (const mail of messages) {
-    if (mail.sent && mail.from !== mailbox) continue
-    const representations = []
-    let hasCandidate = false
-    for (const part of mail.parts) {
-      if (part.method === null) {
-        // Incoming ambiguity could hide a newer REQUEST or CANCEL. A Sent
-        // leaf could instead be a reply: assess its envelope and order below.
-        if (mail.sent) continue
-        throw new CalendarScanError('Gmail could not verify the calendar MIME declaration')
-      }
-      if (mail.sent && part.method === 'REPLY' && !part.alternatives.length) continue
-      // A Sent part without a revision declaration may be a reply even
-      // when its bytes cannot be read. Assess it against known parents below.
-      const possibleReply = mail.sent && (part.method === undefined || part.method === 'REPLY')
-      const source = await (possibleReply ? readPossibleReply(part) : part.read())
-      const parsed = source === null ? null : parseCalendarMail(mail.messageId, source, part.method)
-      const candidate = parsed && (!mail.sent || parsed.value.method) ? { ...parsed, mail } : null
-      if (candidate) {
-        hasCandidate = true
-        candidates.push(candidate)
-      }
-      if (part.alternatives.length) {
-        representations.push({
-          alternatives: part.alternatives,
-          signature: candidate ? representationOf(candidate, mailbox) : `unrecognized:${source}`,
-        })
-      }
-    }
-    if (hasCandidate || !mail.sent) assertEquivalentAlternatives(representations)
-  }
-  return selectInvitationRevisions(candidates, mailbox, owners)
+type Alternative = {
+  alternatives: Mail['parts'][number]['alternatives']
+  signature: string | null
 }
 
-async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }: SentAddress) {
+function knownAlternativeGroups(parts: Alternative[]) {
+  const unknownGroups = new Set(
+    parts.flatMap(({ alternatives, signature }) =>
+      signature === null ? alternatives.map(({ group }) => group) : [],
+    ),
+  )
+  return ({ alternatives }: Alternative) =>
+    !alternatives.some(({ group }) => unknownGroups.has(group))
+}
+
+function assertKnownAlternatives(parts: Alternative[]): void {
+  assertEquivalentAlternatives(
+    parts.flatMap(({ alternatives, signature }) =>
+      signature === null ? [] : [{ alternatives, signature }],
+    ),
+  )
+}
+
+async function latestByScope({ messages, owners }: Thread, mailbox: string) {
+  const candidates: Candidate[] = []
+  const disputedSent = new Set<Mail>()
+  for (const mail of messages) {
+    if (mail.sent && mail.from !== mailbox) continue
+    const renditions: (Alternative & { candidate: Candidate | null })[] = []
+    for (const part of mail.parts) {
+      if (part.method === null && !mail.sent)
+        throw new CalendarScanError('Gmail could not verify the calendar MIME declaration')
+      if (mail.sent && part.method === 'REPLY' && !part.alternatives.length) continue
+      // Only possible replies may defer a leaf-local failure. Concrete
+      // revision declarations and shared scan limits still fail closed.
+      const possibleReply = mail.sent && (part.method === undefined || part.method === 'REPLY')
+      const source =
+        part.method === null ? null : await (possibleReply ? readPossibleReply(part) : part.read())
+      const parsed =
+        source === null ? null : parseCalendarMail(mail.messageId, source, part.method ?? undefined)
+      const candidate = parsed && (!mail.sent || parsed.value.method) ? { ...parsed, mail } : null
+      const unknown =
+        mail.sent &&
+        (part.method === null || possibleReply) &&
+        !candidate?.value.details.identity.materialKey
+      renditions.push({
+        alternatives: part.alternatives,
+        candidate,
+        signature: unknown
+          ? null
+          : candidate
+            ? representationOf(candidate, mailbox)
+            : `unrecognized:${source}`,
+      })
+    }
+    const verified = knownAlternativeGroups(renditions)
+    for (const rendition of renditions) {
+      if (!rendition.candidate) continue
+      if (verified(rendition)) candidates.push(rendition.candidate)
+      // A recognizable sibling cannot authenticate a disputed alternative.
+      // Keep the envelope for parent- and date-scoped Sent reconciliation.
+      else disputedSent.add(mail)
+    }
+    if (!mail.sent || renditions.some(({ candidate }) => candidate))
+      assertKnownAlternatives(renditions.filter(verified))
+  }
+  return { ...selectInvitationRevisions(candidates, mailbox, owners), disputedSent }
+}
+
+async function sentAnswer(
+  mail: Mail,
+  revision: Revision,
+  { mailbox, organizer }: SentAddress,
+  disputedSent: Set<Mail>,
+) {
   const addresses = mail.sentAddresses
   if (
     !mail.sent ||
@@ -178,12 +216,15 @@ async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }
   const answers = new Set<InviteAnswer>()
   const representations = []
   let unrelated = false
-  let unresolved = false
+  let unresolved = disputedSent.has(mail)
   for (const part of mail.parts) {
     // The caller established a known parent separately. A malformed calendar
     // body cannot corroborate that relation, but cannot disprove it either.
     const method = part.method
-    const source = method === null ? null : await readPossibleReply(part)
+    const source =
+      method === null
+        ? null
+        : await (method === undefined || method === 'REPLY' ? readPossibleReply(part) : part.read())
     const answer =
       method === null || source === null
         ? 'unresolved'
@@ -205,11 +246,12 @@ async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }
 
 async function sentResponse(
   messages: Mail[],
-  owners: Thread['owners'],
+  ownsSent: ReturnType<typeof createSentCalendarLookup>['ownsSent'],
   parents: Set<string>,
   relatedParents: Set<string>,
   revision: Revision,
   address: SentAddress,
+  disputedSent: Set<Mail>,
   protectReceiptSince?: number,
 ) {
   let newest = -Infinity
@@ -229,13 +271,13 @@ async function sentResponse(
     // A newer disputed answer is not independent proof that an older
     // unreadable reply may be ignored when settling a dispatch reservation.
     if (older && (!couldObscureReceipt || (!contested && answers.size === 1))) continue
-    const matched = await sentAnswer(message, revision, address)
+    const matched = await sentAnswer(message, revision, address, disputedSent)
     // A matching REPLY to a possible-only parent can contest the current
     // answer, but neither its contents nor its envelope prove that parent.
     const unverified = matched.unresolved || (matched.answers.length > 0 && !parents.has(parent))
     if (unverified && (protectReceiptSince === undefined || couldObscureReceipt)) unresolved = true
     if (older || (!unverified && !matched.answers.length)) continue
-    const disputed = unverified || !owners.owns(message)
+    const disputed = unverified || !ownsSent(message)
     if (message.timestamp === 0) {
       if (disputed) unorderedContest = true
       else for (const answer of matched.answers) unordered.add(answer)
@@ -358,12 +400,13 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
   async function reconcile(
     target: Target,
     attempts: InvitationAttempt[],
-    { messages, owners }: Thread,
+    owners: Thread['owners'],
     receipts: ReturnType<typeof createSentCalendarLookup>,
     copies: Map<string, CalendarCopy>,
     resources: CalendarResources,
     lineages: Map<string, LineageMatch>,
     parentAnchors: ParentAnchor[],
+    disputedSent: Set<Mail>,
     receiptObscured: (attempt: InvitationAttempt, mail: Mail) => Promise<boolean>,
   ) {
     const pending: InvitationAttempt[] = []
@@ -424,12 +467,12 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       ) {
         const assess = async (mail: Mail) => {
           if (mail.parent !== delivery.parent) return null
-          const { answers, unresolved } = await sentAnswer(mail, revision, delivery)
+          const { answers, unresolved } = await sentAnswer(mail, revision, delivery, disputedSent)
           if (unresolved) return 'unresolved'
           if (answers.length === 1 && answers[0] === answer) return 'match'
           return answers.length ? 'related' : null
         }
-        const found = await receipts.findReply(delivery.rfcId, delivery.receipt, messages, assess)
+        const found = await receipts.findReply(delivery.rfcId, delivery.receipt, assess)
         mail = found.mail
         if (found.unresolvedReply) unverifiedReceipts.add(id)
         if (found.contestedTimestamp) contested.set(id, found.contestedTimestamp)
@@ -457,11 +500,11 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     // durable. A later lookup in this read can contradict an earlier receipt.
     for (const { attempt, prior, mail } of corroborated) {
       const key = scopeKey(attempt.revision)
-      if (mail && (!owners.owns(mail) || (await receiptObscured(attempt, mail)))) {
+      if (mail && (!receipts.ownsSent(mail) || (await receiptObscured(attempt, mail)))) {
         if (confirmations.get(key)?.attempt === attempt) confirmations.delete(key)
         pending.push(prior)
         unverifiedReceipts.add(prior.id)
-        if (mail.timestamp && !owners.owns(mail)) contested.set(prior.id, mail.timestamp)
+        if (mail.timestamp && !receipts.ownsSent(mail)) contested.set(prior.id, mail.timestamp)
         continue
       }
       target.assertBinding()
@@ -470,7 +513,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         entry.delivery.channel === 'gmail' &&
         entry.delivery.receipt?.id != null &&
         matchLineage?.(entry) === 'linked' &&
-        receipts.hasVerifiedOwner({
+        receipts.hasVerifiedSentOwner({
           rfcId: entry.delivery.rfcId,
           messageId: entry.delivery.receipt.id,
         })
@@ -513,44 +556,37 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     scopes: Awaited<ReturnType<typeof latestByScope>>['scopes'],
   ) {
     const { api, accountSub, email } = target
-    const found: CalendarLocator[] = []
     const copies = new Map<string, CalendarCopy>()
-    let journal: Awaited<ReturnType<typeof store.read>>
     target.assertBinding()
-    try {
-      for (const entry of scopes) {
-        const { details, request, revisionMaterial } = entry.selected.value
-        const joinOnly =
-          entry.selected.joinOnly || entry.selected.mail.sent || details.organizer?.email === email
-        if (!entry.reason && request && revisionMaterial && details.organizer) {
-          // Revision selection has already limited history to this scope and
-          // sequence. Calendar must distinguish the selected REQUEST from each
-          // strictly earlier REQUEST it might still be showing.
-          const predecessors = entry.history.flatMap(({ value }) =>
-            value.method === 'REQUEST' &&
-            value.revisionMaterial &&
-            value.details.identity.dtstamp !== null &&
-            details.identity.dtstamp !== null &&
-            value.details.identity.dtstamp < details.identity.dtstamp
-              ? [{ details: value.details, material: value.revisionMaterial }]
-              : [],
-          )
-          const copy = await findInvitationCalendarCopy(
-            api,
-            { details, request, material: revisionMaterial, joinOnly, predecessors },
-            email,
-            (locator) => found.push({ accountSub, ...locator }),
-          )
-          copies.set(scopeKey(details.identity), copy)
-        }
+    for (const entry of scopes) {
+      const { details, request, revisionMaterial } = entry.selected.value
+      const joinOnly =
+        entry.selected.joinOnly || entry.selected.mail.sent || details.organizer?.email === email
+      if (!entry.reason && request && revisionMaterial && details.organizer) {
+        // Revision selection has already limited history to this scope and
+        // sequence. Calendar must distinguish the selected REQUEST from each
+        // strictly earlier REQUEST it might still be showing.
+        const predecessors = entry.history.flatMap(({ value }) =>
+          value.method === 'REQUEST' &&
+          value.revisionMaterial &&
+          value.details.identity.dtstamp !== null &&
+          details.identity.dtstamp !== null &&
+          value.details.identity.dtstamp < details.identity.dtstamp
+            ? [{ details: value.details, material: value.revisionMaterial }]
+            : [],
+        )
+        const copy = await findInvitationCalendarCopy(
+          api,
+          { details, request, material: revisionMaterial, joinOnly, predecessors },
+          email,
+          (locator) =>
+            store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
+        )
+        copies.set(scopeKey(details.identity), copy)
       }
-    } finally {
-      // A validated identity survives an ineligible revision, or a later
-      // failed lookup for a different scope. Persist before exposing an action.
-      target.assertBinding()
-      journal = await store.rememberCalendarLocators(await store.read(), found)
-      target.assertBinding()
     }
+    const journal = await store.read()
+    target.assertBinding()
     return { copies, journal }
   }
 
@@ -569,7 +605,11 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       return { messages: [], owners: createMessageIdOwnership() }
     })
     const { messages, owners } = thread
-    const { scopes: incoming, suppressesSeriesSlot } = await latestByScope(thread, email)
+    const {
+      scopes: incoming,
+      suppressesSeriesSlot,
+      disputedSent,
+    } = await latestByScope(thread, email)
     const scopes = selection
       ? incoming.filter((entry) => sameGroup(identityOf(entry.selected), selection))
       : incoming
@@ -603,7 +643,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       })
     }
     const entries = new Map(scopes.map((entry) => [scopeKey(identityOf(entry.selected)), entry]))
-    const receipts = createSentCalendarLookup(api, scan, owners)
+    const receipts = createSentCalendarLookup(api, scan, owners, messages)
     const sentParents = new Set(
       messages.flatMap((mail) => (mail.sent && mail.parent ? [mail.parent] : [])),
     )
@@ -636,7 +676,11 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           onLineage(entry, anchor.revision, email)
         ) {
           related.add(anchor.parent)
-          if (!owners.has(anchor.parent) && anchor.reply && receipts.hasVerifiedOwner(anchor.reply))
+          if (
+            !owners.has(anchor.parent) &&
+            anchor.reply &&
+            receipts.hasVerifiedSentOwner(anchor.reply)
+          )
             verified.add(anchor.parent)
         }
       }
@@ -653,12 +697,13 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       await reconcile(
         target,
         relevant,
-        thread,
+        owners,
         receipts,
         copies,
         resources,
         lineages,
         journal.parentAnchors,
+        disputedSent,
         async (attempt, mail) => {
           const key = scopeKey(attempt.revision)
           const entry = entries.get(key)
@@ -670,11 +715,12 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           related.add(parent)
           const sent = await sentResponse(
             [...messages.filter(({ messageId }) => messageId !== mail.messageId), mail],
-            owners,
+            receipts.ownsSent,
             verified,
             related,
             identityOf(entry.selected),
             { organizer, mailbox: email },
+            disputedSent,
             mail.timestamp,
           )
           return sent.unresolved
@@ -758,7 +804,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             !responseParents.has(delivery.parent))
         const observedReceipt = confirmation?.mail
         const receipt =
-          !disputedParent && observedReceipt && owners.owns(observedReceipt)
+          !disputedParent && observedReceipt && receipts.ownsSent(observedReceipt)
             ? observedReceipt
             : null
         // A verified latest receipt from an older journal can also prove its parent.
@@ -775,14 +821,12 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             : messages
         const sent = await sentResponse(
           sentMail,
-          owners,
+          receipts.ownsSent,
           responseParents,
           relatedParents,
           identity,
-          {
-            organizer,
-            mailbox: email,
-          },
+          { organizer, mailbox: email },
+          disputedSent,
         )
         priorSent = sent.evidence
         // Only evidence that preceded this verified Calendar dispatch can be

@@ -393,6 +393,7 @@ export function createSentCalendarLookup(
   api: GoogleApi,
   scan: CalendarScan,
   owners: MessageIdOwners,
+  inThread: CalendarMail[],
 ) {
   type Snapshot = {
     message: ReturnType<typeof validateFullMessage>
@@ -401,8 +402,14 @@ export function createSentCalendarLookup(
   const reads = new Map<string, Promise<Snapshot | null>>()
   const search = new Map<string, Promise<Snapshot[] | null>>()
   const complete = new Set<string>()
-  const hasVerifiedOwner = (reply: { rfcId: string; messageId: string }) =>
-    complete.has(reply.rfcId) && owners.owns(reply)
+  const threadSent = new Set(inThread.filter(({ sent }) => sent).map(({ messageId }) => messageId))
+  const fullSent = new Map<string, boolean>()
+  // A valid empty index permits unindexed Sent evidence; it never supplies
+  // the SENT label. Full reads supersede the thread's label for the same ID.
+  const ownsSent = (reply: { rfcId: string | null; messageId: string }) =>
+    owners.owns(reply) && (fullSent.get(reply.messageId) ?? threadSent.has(reply.messageId))
+  const hasVerifiedSentOwner = (reply: { rfcId: string; messageId: string }) =>
+    complete.has(reply.rfcId) && ownsSent(reply)
   const read = async (id: string, fromIndex = false) => {
     // An individual GET can return 404 before the index makes the resource
     // readable. An index row still needs a successful full read.
@@ -416,6 +423,7 @@ export function createSentCalendarLookup(
           const message = validateFullMessage(raw, id)
           const header = messageIdClaims(message.payload)
           owners.index(message.id, header)
+          fullSent.set(message.id, message.labelIds?.includes('SENT') ?? false)
           return { message, header }
         })
         .catch((error) => {
@@ -509,14 +517,14 @@ export function createSentCalendarLookup(
       : indexed
   }
   return {
-    hasVerifiedOwner,
+    ownsSent,
+    hasVerifiedSentOwner,
     async checkAnchor({ rfcId, messageId }: { rfcId: string; messageId: string }) {
       await gather(rfcId, { id: messageId, threadId: null })
     },
     async findReply(
       rfcId: string,
       receipt: CalendarReplyReceipt | null,
-      inThread: CalendarMail[],
       assess: (message: CalendarMail) => Promise<'match' | 'related' | 'unresolved' | null>,
     ): Promise<{
       mail: CalendarMail | null
@@ -547,7 +555,7 @@ export function createSentCalendarLookup(
         const evidence = await assess(mail)
         if (!evidence) continue
         if (evidence === 'unresolved') unresolvedReply = true
-        if (owners.owns(mail)) {
+        if (ownsSent(mail)) {
           const matchesLocator =
             !receipt?.id ||
             (mail.messageId === receipt.id &&

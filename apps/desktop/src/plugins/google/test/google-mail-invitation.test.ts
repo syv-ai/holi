@@ -202,6 +202,7 @@ async function rig() {
     originalGets: [] as string[],
     patchMode: 'ok' as 'ok' | 'not-found' | 'response-lost',
     primaryPages: null as unknown[] | null,
+    primaryPageErrors: new Map<number, number>(),
     expandedEmptyFirstPage: false,
     exactCalendarError: null as number | null,
     omitAfterPatch: false,
@@ -416,7 +417,9 @@ async function rig() {
       }
       if (id === 'primary' && state.primaryPages) {
         const page = Number(url.searchParams.get('pageToken') ?? 0)
-        return json(state.primaryPages[page] ?? {}, page < state.primaryPages.length ? 200 : 404)
+        const status =
+          state.primaryPageErrors.get(page) ?? (page < state.primaryPages.length ? 200 : 404)
+        return json(status === 200 ? state.primaryPages[page] : {}, status)
       }
       const items = (
         state.calendarPatchAttempts && state.calendarReadback ? [state.calendarReadback] : events
@@ -1429,6 +1432,38 @@ it('joins the next verified series occurrence but answers only the master', asyn
   expect(state.sendAttempts).toBe(0)
 })
 
+it('skips linkless and unsafe upcoming instances and leaves only Calendar navigation when exhausted', async () => {
+  const { state, read } = await rig()
+  state.messages[0] = gmailMessage(
+    'update',
+    200,
+    invite().replace('END:VEVENT', 'RRULE:FREQ=WEEKLY\r\nEND:VEVENT'),
+  )
+  const master = event({ id: 'series', series: true })
+  state.events.set('primary', [master])
+  const linkless = {
+    ...upcomingInstance('linkless', '2099-07-09', ''),
+    htmlLink: '',
+  }
+  const unsafe = {
+    ...upcomingInstance('unsafe', '2099-07-16', 'javascript:alert(1)'),
+    htmlLink: 'https://not-calendar.example/calendar/event?eid=unsafe',
+  }
+  state.instances.set('primary', [linkless, unsafe])
+  const noJoin = await read()
+  expect(noJoin).toMatchObject({ conferenceUrl: null, htmlLink: master.htmlLink, canRespond: true })
+
+  const linked = upcomingInstance('linked', '2099-07-23', 'https://meet.google.com/klm-nopq-rst')
+  state.instances.set('primary', [linkless, unsafe, linked])
+  expect(await read()).toMatchObject({
+    conferenceUrl: linked.hangoutLink,
+    htmlLink: linked.htmlLink,
+    responseTargetKey: noJoin!.responseTargetKey,
+    canRespond: true,
+  })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
 it('uses the selected mail cancellation at the original slot when joining a series', async () => {
   const { state, list, read } = await rig()
   state.messages[0] = gmailMessage(
@@ -1673,6 +1708,34 @@ it('follows documented empty Calendar pages but never treats malformed or partia
   }
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
+
+it.each(['writable', 'RSVP-ineligible'])(
+  'retains a %s Calendar copy from a valid first page when the next page fails',
+  async (eligibility) => {
+    const { state, read, restart } = await rig()
+    const page = { kind: 'calendar#events' }
+    const copy = event()
+    if (eligibility === 'RSVP-ineligible') copy.attendees = []
+    state.events.set('primary', [copy])
+    state.primaryPages = [{ ...page, items: [copy], nextPageToken: '1' }]
+    state.primaryPageErrors.set(1, 503)
+    expect(await read()).toMatchObject({ responseStatus: null, canRespond: false })
+
+    // A later query omits the row, but its exact resource is still there.
+    state.primaryPages = [page]
+    const reopened = restart()
+    expect(await reopened.read()).toMatchObject({ responseStatus: null, canRespond: false })
+    await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+    // Only complete absence and an actual exact-resource 404 allow Gmail.
+    state.events.clear()
+    expect(await reopened.read()).toMatchObject({ responseStatus: 'needsAction', canRespond: true })
+    expect(await reopened.respond('accepted')).toMatchObject({ channel: 'gmail', outcome: 'sent' })
+    expect(state.calendarPatchAttempts).toBe(0)
+    expect(state.sendAttempts).toBe(1)
+  },
+)
 
 it('reclaims inactive prepared reservations and treats an explicit PATCH 404 as a refusal', async () => {
   const { state, read, userData, restart } = await rig()
@@ -2903,6 +2966,110 @@ it('scopes a Sent calendar leaf with ambiguous MIME declarations by parent and p
   expect(await respond('declined')).toMatchObject({ outcome: 'unchanged' })
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
+
+it('does not settle a newer reservation through a compacted parent whose reply is no longer Sent', async () => {
+  const { state, read, respond, restart } = await rig()
+  const parent = '<update@example.net>'
+  state.replyThread = 'separate-thread'
+  await read()
+  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', refreshPending: false })
+  state.messages = [gmailMessage('redelivery', 300, invite('REQUEST', '', 3, '20240702T090000Z'))]
+  await read()
+  expect(await respond('tentative')).toMatchObject({ outcome: 'sent', refreshPending: false })
+
+  const anchorReply = state.sent.get('reply-1')!
+  const later = { ...acceptedReply(parent), internalDate: '1200' }
+  const reopened = restart()
+  state.messages.push(later)
+  expect(await reopened.read()).toMatchObject({ sentResponseStatus: 'accepted', canRespond: true })
+  // The full resource still owns its RFC Message-ID, but the SENT search is empty.
+  anchorReply.labelIds = ['INBOX']
+  const blocked = { sentResponseStatus: null, responseStatus: null, canRespond: false }
+  expect(await reopened.read()).toMatchObject(blocked)
+  await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  state.messages.pop()
+
+  // An unthreaded send without a returned locator stays reserved until there
+  // is an exact receipt or independent proof after the contested receipt.
+  state.sentIndexed = false
+  state.sendReplyMode = 'empty'
+  await reopened.read()
+  expect(await reopened.respond('declined')).toMatchObject({
+    outcome: 'sent',
+    refreshPending: true,
+  })
+  const pendingReply = state.sent.get('reply-3')!
+  const pendingRfcId = pendingReply.payload.headers.find(({ name }) => name === 'Message-ID')!.value
+  const duplicate = gmailMessage('plain-id-claim', 900, undefined, {
+    sent: true,
+    rfcId: pendingRfcId,
+    threadId: state.replyThread,
+  })
+  state.sent.set(duplicate.id, duplicate)
+  state.sentIndexed = true
+  state.messages.push(later)
+  expect(await reopened.read()).toMatchObject({ ...blocked, responsePending: true })
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  anchorReply.labelIds = ['SENT']
+  expect(await reopened.read()).toMatchObject({
+    sentResponseStatus: 'accepted',
+    responseStatus: 'accepted',
+    responsePending: false,
+    canRespond: true,
+  })
+  expect(await reopened.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
+  expect(state.sendAttempts).toBe(3)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it.each(['PUBLISH', 'REQUEST', 'REPLY'] as const)(
+  'scopes a failed Sent alternative without trusting its valid %s sibling',
+  async (method) => {
+    const { state, list, read, respond } = await rig()
+    const parent = '<update@example.net>'
+    const decline = invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')
+    const otherUid = uid.replace('folded-uid', 'other-event')
+    state.events.set('primary', [{ ...event(), iCalUID: otherUid }])
+    const sibling =
+      method === 'REPLY' ? decline : invite(method).replace('folded-uid', 'other-event')
+    const disputed = (replyParent: string, timestamp: number) => {
+      const mail = gmailMessage('disputed', timestamp, decline, { sent: true, parent: replyParent })
+      mail.payload.mimeType = 'multipart/alternative'
+      mail.payload.parts[1]!.body.data = '!bad!'
+      mail.payload.parts.push(
+        gmailMessage('sibling', timestamp, sibling, { method }).payload.parts[1]!,
+      )
+      return mail
+    }
+    state.messages.push({ ...acceptedReply(parent), internalDate: '500' })
+    state.messages.push(disputed('<unrelated@example.net>', 300))
+    expect((await list()).invitations).toEqual([
+      expect.objectContaining({
+        identity: expect.objectContaining({ uid }),
+        sentResponseStatus: 'accepted',
+        canRespond: true,
+      }),
+    ])
+
+    state.messages.pop()
+    state.messages.push(disputed(parent, 300))
+    expect(await read()).toMatchObject({ sentResponseStatus: 'accepted', canRespond: true })
+    for (const timestamp of ['500', '700']) {
+      state.messages.at(-1)!.internalDate = timestamp
+      expect(await read()).toMatchObject({
+        responseStatus: null,
+        sentResponseStatus: null,
+        canRespond: false,
+      })
+      await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    }
+    state.messages.push(gmailMessage('independent', 800, decline, { sent: true, parent }))
+    expect(await read()).toMatchObject({ sentResponseStatus: 'declined', canRespond: true })
+    expect(await respond('declined')).toMatchObject({ outcome: 'unchanged' })
+    expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+  },
+)
 
 it.each(['invalid base64', 'declared size mismatch'])(
   'scopes an unreadable methodless Sent leaf by parent and order (%s)',
