@@ -96,7 +96,9 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-/** Independently gated code exchanges and refresh, with real persistence. */
+type RefreshReply = { access_token: string; expires_in: number; refresh_token?: string }
+
+/** Gated exchanges and first refresh, real persistence, and one synthetic Google project. */
 async function controlledConsent(
   seed: StoredGoogleAuth[] = [],
   onRevoke?: (token: string, signal: AbortSignal | undefined) => Promise<void>,
@@ -113,7 +115,18 @@ async function controlledConsent(
   const revoked: string[] = []
   const refreshes: string[] = []
   const refreshStarted = deferred<void>()
-  const refreshReply = deferred<Response>()
+  const refreshReply = deferred<RefreshReply>()
+  const grantRevisions = new Map<string, number>()
+  const revision = (sub: string) => grantRevisions.get(sub) ?? 0
+  // All these client IDs share the project, but a token only refreshes with
+  // the client that issued it. Keep historical tokens attributable for revoke.
+  const grants = new Map<string, { sub: string; client: string; revision: number }>()
+  const authorize = (row: StoredGoogleAuth, client: string) => {
+    grants.set(row.refreshToken, { sub: row.sub, client, revision: revision(row.sub) })
+  }
+  const initialClient = resolveClient(await clients.read(), {}).id
+  for (const row of Object.values(await store.read())) authorize(row, initialClient)
+
   const accounts = await createGoogleAccounts({
     store,
     vaults,
@@ -139,17 +152,35 @@ async function controlledConsent(
       if (String(url).endsWith('/revoke')) {
         const token = params.get('token')!
         revoked.push(token)
+        const grant = grants.get(token)
+        if (grant) grantRevisions.set(grant.sub, revision(grant.sub) + 1)
         await onRevoke?.(token, init?.signal ?? undefined)
         return new Response('{}')
       }
+      const client = params.get('client_id')!
       if (params.get('grant_type') === 'refresh_token') {
-        refreshes.push(params.get('refresh_token')!)
+        const token = params.get('refresh_token')!
+        refreshes.push(token)
+        const grant = grants.get(token)
+        if (!grant || grant.client !== client || grant.revision !== revision(grant.sub)) {
+          return Response.json({ error: 'invalid_grant' }, { status: 400 })
+        }
+        if (refreshes.length > 1) {
+          return Response.json({ access_token: `refreshed-${token}`, expires_in: 3600 })
+        }
         refreshStarted.resolve()
-        return refreshReply.promise
+        const reply = await refreshReply.promise
+        // A response already in flight can surface after revoke or new consent.
+        // Its rotation belongs to the old grant; it does not reauthorize it.
+        if (reply.refresh_token && !grants.has(reply.refresh_token)) {
+          grants.set(reply.refresh_token, grant)
+        }
+        return Response.json(reply)
       }
       const exchange = exchanges[Number(params.get('code'))]!
       exchange.started.resolve()
       const row = await exchange.reply.promise
+      authorize(row, client)
       return new Response(
         JSON.stringify({
           access_token: row.accessToken,
@@ -437,7 +468,7 @@ describe('removeAccount', () => {
         await expect(stale).resolves.toMatchObject({ kind: 'cancelled' })
       }
     }
-    expect(revoked.filter((token) => token === 'rt-1')).toHaveLength(1)
+    expect(revoked).toEqual(['rt-1', 'rt-overlap'])
     const fresh = await accounts.connect(WORK)
     const result = fresh.wait()
     exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }))
@@ -794,7 +825,12 @@ describe('consent whose vault link fails', () => {
         throw error
       }
     })
-    const { accounts, exchanges } = await controlledConsent([auth()], undefined, undefined, vaults)
+    const { accounts, exchanges, revoked } = await controlledConsent(
+      [auth()],
+      undefined,
+      undefined,
+      vaults,
+    )
     const failed = (await accounts.connect(VAULT)).wait()
     exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-failed', accessToken: 'at-failed' }))
     const rejection = expect(failed).rejects.toThrow()
@@ -808,6 +844,7 @@ describe('consent whose vault link fails', () => {
       await rejection
     }
 
+    expect(revoked).toEqual(['rt-failed'])
     expect(await vaults.all()).toMatchObject({ [VAULT]: 'sub-1', [WORK]: 'sub-1' })
     const restarted = await controlledConsent()
     expect(restarted.accounts.list()).toEqual([])
@@ -826,7 +863,7 @@ describe('consent whose vault link fails', () => {
       auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }),
     )
     await expect(retry).resolves.toMatchObject({ kind: 'granted' })
-    expect(restarted.revoked).toContain('rt-failed')
+    expect(restarted.revoked).toEqual([])
     await expect(
       (await restarted.accounts.bindingFor(WORK))?.session.getAccessToken(),
     ).resolves.toBe('at-fresh')
@@ -1165,9 +1202,7 @@ describe('a grant that lands after it was let go', () => {
       await rig.refreshStarted.promise
       await expect(old.getAccessToken()).rejects.toThrow(/expired or been revoked/)
       expect(rig.refreshes).toHaveLength(1)
-      rig.refreshReply.resolve(
-        new Response(JSON.stringify({ access_token: 'at-refreshed', expires_in: 3600 })),
-      )
+      rig.refreshReply.resolve({ access_token: 'at-refreshed', expires_in: 3600 })
       await expect(Promise.all([first, second])).resolves.toEqual(['at-refreshed', 'at-refreshed'])
     },
   )
@@ -1230,7 +1265,7 @@ describe('a grant that lands after it was let go', () => {
   })
 
   it.each(['stored', 'writing', 'queued'] as const)(
-    'does not revoke a newer same-token consent while it is %s',
+    'does not revoke a newer same-subject consent while it is %s',
     async (stage) => {
       const rig = await controlledConsent()
       const first = await rig.accounts.connect(VAULT)
@@ -1265,12 +1300,12 @@ describe('a grant that lands after it was let go', () => {
       const exchange = rig.exchanges.at(-1)!
       await exchange.started.promise
       if (stage === 'queued') {
-        // Queue stale revocation first; B then reserves the same token before
+        // Queue stale revocation first; B then claims its own grant before
         // either queued operation can run. Drain microtasks, not a timed wait.
         rig.exchanges[0]!.reply.resolve(auth({ accessToken: 'at-stale' }))
         await new Promise<void>((resolve) => setImmediate(resolve))
       }
-      exchange.reply.resolve(auth({ accessToken: 'at-winner' }))
+      exchange.reply.resolve(auth({ refreshToken: 'rt-winner', accessToken: 'at-winner' }))
       if (stage === 'stored') await winner
       else if (stage === 'writing') await atWrite.promise
       else await new Promise<void>((resolve) => setImmediate(resolve))
@@ -1289,7 +1324,7 @@ describe('a grant that lands after it was let go', () => {
     },
   )
 
-  it('keeps a same-token grant whose newer exchange is still at Google when stale consent returns', async () => {
+  it('keeps a newer same-subject grant when its exchange is still at Google', async () => {
     const rig = await controlledConsent()
     const stale = (await rig.accounts.connect(VAULT)).wait()
     await rig.exchanges[0]!.started.promise
@@ -1298,7 +1333,7 @@ describe('a grant that lands after it was let go', () => {
 
     rig.exchanges[0]!.reply.resolve(auth({ accessToken: 'at-stale' }))
     await new Promise<void>((resolve) => setImmediate(resolve))
-    rig.exchanges[1]!.reply.resolve(auth({ accessToken: 'at-current' }))
+    rig.exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-current', accessToken: 'at-current' }))
 
     await expect(stale).resolves.toEqual({ kind: 'cancelled' })
     expect(rig.revoked).not.toContain('rt-1')
@@ -1309,10 +1344,11 @@ describe('a grant that lands after it was let go', () => {
     await expect(rig.accounts.bindingFor(VAULT)).resolves.toBeNull()
   })
 
-  it('aborts a hung revoke and does not publish a token with an unknown revoke outcome', async () => {
+  it('aborts a hung revoke and rejects overlapping same-subject consent and uncertain token reuse', async () => {
     const revoking = deferred<void>()
     let aborted = false
-    const rig = await controlledConsent([], async (_token, signal) => {
+    const rig = await controlledConsent([], async (token, signal) => {
+      if (token !== 'rt-1') return
       revoking.resolve()
       signal?.throwIfAborted()
       await new Promise<never>((_, reject) => {
@@ -1335,7 +1371,10 @@ describe('a grant that lands after it was let go', () => {
       await revoking.promise
 
       const overlapping = (await rig.accounts.connect(WORK)).wait()
-      rig.exchanges[1]!.reply.resolve(auth({ accessToken: 'at-overlap' }))
+      await rig.exchanges[1]!.started.promise
+      rig.exchanges[1]!.reply.resolve(
+        auth({ refreshToken: 'rt-overlap', accessToken: 'at-overlap' }),
+      )
       await vi.advanceTimersByTimeAsync(30_000)
       expect(aborted).toBe(true)
       await expect(stale).resolves.toEqual({ kind: 'cancelled' })
@@ -1345,7 +1384,7 @@ describe('a grant that lands after it was let go', () => {
       const retry = (await rig.accounts.connect(WORK)).wait()
       rig.exchanges[2]!.reply.resolve(auth({ accessToken: 'at-retry' }))
       await expect(retry).resolves.toEqual({ kind: 'cancelled' })
-      expect(rig.revoked).toEqual(['rt-1'])
+      expect(rig.revoked).toEqual(['rt-1', 'rt-overlap'])
       await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
 
       const fresh = (await rig.accounts.connect(WORK)).wait()
@@ -1359,7 +1398,7 @@ describe('a grant that lands after it was let go', () => {
     }
   })
 
-  it('still revokes a superseded consent when its refresh token differs from the winner', async () => {
+  it('still revokes a superseded consent for another subject in the same project', async () => {
     const rig = await controlledConsent()
     const first = await rig.accounts.connect(VAULT)
     const stale = first.wait()
@@ -1369,11 +1408,16 @@ describe('a grant that lands after it was let go', () => {
     await rig.exchanges[1]!.started.promise
     rig.exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-winner', accessToken: 'at-winner' }))
     await winner
-    rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-stale' }))
+    rig.exchanges[0]!.reply.resolve(auth({ sub: 'sub-other', refreshToken: 'rt-stale' }))
 
     expect(await stale).toEqual({ kind: 'cancelled' })
     expect(rig.revoked).toEqual(['rt-stale'])
-    await expect((await rig.accounts.sessionFor(WORK))!.getAccessToken()).resolves.toBe('at-winner')
+    expect(await rig.accounts.sessionFor(VAULT)).toBeNull()
+    rig.setNow(NOW + 3_600_000)
+    rig.refreshReply.resolve({ access_token: 'at-refreshed', expires_in: 3600 })
+    await expect((await rig.accounts.sessionFor(WORK))!.getAccessToken()).resolves.toBe(
+      'at-refreshed',
+    )
   })
 
   it('does not let a stale expiry remove a same-token reconnect or its vault link', async () => {
@@ -1546,15 +1590,11 @@ describe('a grant that lands after it was let go', () => {
       expect(await accounts.bindingFor(VAULT)).toBeNull()
       expect(await accounts.bindingFor(WORK)).toBeNull()
 
-      refreshReply.resolve(
-        new Response(
-          JSON.stringify({
-            access_token: 'at-stale',
-            expires_in: 3600,
-            refresh_token: refreshToken,
-          }),
-        ),
-      )
+      refreshReply.resolve({
+        access_token: 'at-stale',
+        expires_in: 3600,
+        refresh_token: refreshToken,
+      })
       await stale
       expect(revoked).toEqual(revocations)
       expect(await store.read()).toEqual({})
@@ -1563,36 +1603,57 @@ describe('a grant that lands after it was let go', () => {
     },
   )
 
-  it('keeps a newer consent that owns the late rotation token', async () => {
-    const rig = await controlledConsent([auth({ expiresAt: NOW - 1 })])
-    await rig.accounts.link(VAULT, 'sub-1')
-    const old = (await rig.accounts.bindingFor(VAULT))!
-    const stale = expect(old.session.getAccessToken()).rejects.toBeInstanceOf(
-      GoogleReconnectRequiredError,
-    )
-    await rig.refreshStarted.promise
-    await rig.accounts.removeAccount('sub-1')
+  it.each([
+    { reconnect: 'with the rotated token', refreshToken: 'rt-rotated', replaceClient: false },
+    { reconnect: 'with a distinct token', refreshToken: 'rt-current', replaceClient: false },
+    {
+      reconnect: 'on another client in the project',
+      refreshToken: 'rt-current',
+      replaceClient: true,
+    },
+  ])(
+    'keeps the project grant after reconnecting $reconnect',
+    async ({ refreshToken, replaceClient }) => {
+      const clients = memoryClients({ id: 'client-1' })
+      const rig = await controlledConsent([auth({ expiresAt: NOW - 1 })], undefined, clients)
+      const { accounts } = rig
+      await accounts.link(VAULT, 'sub-1')
+      const old = (await accounts.bindingFor(VAULT))!
+      const stale = expect(old.session.getAccessToken()).rejects.toBeInstanceOf(
+        GoogleReconnectRequiredError,
+      )
+      await rig.refreshStarted.promise
+      if (replaceClient) await accounts.setClient({ id: 'client-2' })
+      else await accounts.removeAccount('sub-1')
+      expect(rig.revoked).toEqual(['rt-1'])
+      expect(await store.read()).toEqual({})
+      expect(await accounts.bindingFor(VAULT)).toBeNull()
 
-    const current = (await rig.accounts.connect(WORK)).wait()
-    const exchange = rig.exchanges[0]!
-    await exchange.started.promise
-    exchange.reply.resolve(auth({ refreshToken: 'rt-rotated', accessToken: 'at-current' }))
-    await expect(current).resolves.toMatchObject({ kind: 'granted' })
+      const current = (await accounts.connect(WORK)).wait()
+      const exchange = rig.exchanges[0]!
+      await exchange.started.promise
+      exchange.reply.resolve(auth({ refreshToken, accessToken: 'at-current' }))
+      await expect(current).resolves.toMatchObject({ kind: 'granted' })
 
-    rig.refreshReply.resolve(
-      new Response(
-        JSON.stringify({ access_token: 'at-stale', expires_in: 3600, refresh_token: 'rt-rotated' }),
-      ),
-    )
-    await stale
-    expect(rig.revoked).toEqual(['rt-1'])
-    expect(await rig.accounts.bindingFor(VAULT)).toBeNull()
-    const binding = (await rig.accounts.bindingFor(WORK))!
-    await expect(binding.session.getAccessToken()).resolves.toBe('at-current')
-    expect(await store.read()).toMatchObject({
-      'sub-1': { refreshToken: 'rt-rotated', accessToken: 'at-current' },
-    })
-  })
+      rig.refreshReply.resolve({
+        access_token: 'at-stale',
+        expires_in: 3600,
+        refresh_token: 'rt-rotated',
+      })
+      await stale
+      expect(await store.read()).toMatchObject({
+        'sub-1': { refreshToken, accessToken: 'at-current' },
+      })
+      expect(await accounts.bindingFor(VAULT)).toBeNull()
+
+      // Make the replacement prove it still owns a live grant at Google; the
+      // cached access token could otherwise hide project-wide invalidation.
+      rig.setNow(NOW + 3_600_000)
+      const binding = (await accounts.bindingFor(WORK))!
+      await expect(binding.session.getAccessToken()).resolves.toBe(`refreshed-${refreshToken}`)
+      expect(rig.revoked).toEqual(['rt-1'])
+    },
+  )
 })
 
 describe('resolveClient', () => {

@@ -188,40 +188,41 @@ export async function createGoogleAccounts(
     await deps.store.write(next)
     accounts = next
   }
-  // A newer consent owns its token before its queued disk write has landed.
-  const pendingGrants = new Map<string, { refreshToken: string; epoch: number }>()
+  // A consent owns its grant before its queued disk write has landed.
+  const pendingGrants = new Map<string, number>()
+  const hasPendingGrant = (sub: string) => pendingGrants.get(sub) === accountEpoch(sub)
   const usableAuth = (sub: string): StoredGoogleAuth | undefined => {
     const row = accounts[sub]
-    return isRetiring(sub) ||
-      row?.pendingConsent ||
-      pendingGrants.get(sub)?.epoch === accountEpoch(sub)
-      ? undefined
-      : row
+    return isRetiring(sub) || row?.pendingConsent || hasPendingGrant(sub) ? undefined : row
   }
   // Track the code exchange through ownership of its result, not the time a
   // person spends in the browser or the later persistence/cleanup work.
   const exchanges = new Set<Promise<void>>()
-  let revoking: string | undefined
+  let revoking: { sub: string; digest: string } | undefined
   const uncertainRevokes = new Set<string>()
-  async function revokeUnusedGrant(refreshToken: string, removingSub?: string): Promise<void> {
+  async function revokeUnusedGrant(
+    sub: string,
+    refreshToken: string,
+    fromRemoval = false,
+  ): Promise<void> {
     for (;;) {
       const exchanging = await serialize(async () => {
-        if (Object.values(accounts).some((auth) => auth.refreshToken === refreshToken)) return
+        // Google revokes the subject's entire OAuth project grant, not just
+        // this token or client. We don't know project identity, so even a
+        // different client may share the grant. Protect any live owner here.
+        // https://developers.google.com/identity/protocols/oauth2/native-app#tokenrevoke
+        if (!isRetiring(sub) && (usableAuth(sub) !== undefined || hasPendingGrant(sub))) return
+        // Retiring rows aren't live owners. Delegate the exact credential to
+        // the explicit removal that will take (or has already taken) the row.
         if (
-          [...removals].some(
-            ([sub, removal]) => sub !== removingSub && removal.refreshToken === refreshToken,
-          )
-        )
-          return
-        if (
-          [...pendingGrants].some(
-            ([sub, grant]) =>
-              grant.refreshToken === refreshToken && grant.epoch === accountEpoch(sub),
-          )
+          !fromRemoval &&
+          isRetiring(sub) &&
+          (accounts[sub]?.refreshToken === refreshToken ||
+            removals.get(sub)?.refreshToken === refreshToken)
         )
           return
         if (exchanges.size > 0) return [...exchanges]
-        await revoke(refreshToken)
+        await revoke(sub, refreshToken)
       })
       if (!exchanging) return
       // The exchange can queue a write to claim the token. Don't hold the
@@ -252,7 +253,7 @@ export async function createGoogleAccounts(
         })
         // A late rotation minted a credential our retiring session can't keep.
         // Let the shared revoke path recheck consent ownership outside this write.
-        if (!saved && digest !== lastTokenDigest) await revokeUnusedGrant(auth.refreshToken)
+        if (!saved && digest !== lastTokenDigest) await revokeUnusedGrant(sub, auth.refreshToken)
       },
       async remove() {
         const removed = await serialize(async () => {
@@ -384,7 +385,7 @@ export async function createGoogleAccounts(
       }
       const { id, secret } = currentClient()
       let finishExchange: (() => void) | undefined
-      let overlappingRevoke: string | undefined
+      let overlappingRevoke: typeof revoking
       let flow: LoopbackFlow
       try {
         flow = await startLoopbackFlow({
@@ -449,18 +450,19 @@ export async function createGoogleAccounts(
         const { tokens } = result
         const { sub, refreshToken } = tokens
         const digest = tokenDigest(refreshToken)
-        // An exchange can start during a revoke. Even if it finishes after
-        // the request completes, it cannot publish that retiring token.
-        if (digest === overlappingRevoke || uncertainRevokes.has(digest))
+        if (digest === overlappingRevoke?.digest || uncertainRevokes.has(digest))
           return { kind: 'cancelled' }
         const active = () =>
+          // An exchange that overlaps a revoke may return a distinct token
+          // for the affected subject. It too is unsafe to publish.
+          sub !== overlappingRevoke?.sub &&
           !reservation.cancelled &&
           connecting?.id === reservation.id &&
           epoch === clientEpoch &&
           !isRetiring(sub)
         // The code exchange may finish after cancellation, replacement, or removal.
         if (!active() || (startingAccountEpochs.get(sub) ?? 0) !== accountEpoch(sub)) {
-          await revokeUnusedGrant(refreshToken)
+          await revokeUnusedGrant(sub, refreshToken)
           return { kind: 'cancelled' }
         }
         const grantEpoch = advanceAccountEpoch(sub)
@@ -584,7 +586,7 @@ export async function createGoogleAccounts(
   ): Promise<boolean> {
     const { sub, refreshToken } = tokens
     const stillOwned = () => active() && accountEpoch(sub) === grantEpoch
-    pendingGrants.set(sub, { refreshToken, epoch: grantEpoch })
+    pendingGrants.set(sub, grantEpoch)
     sessions.delete(sub)
     const unused = new Set([refreshToken])
     try {
@@ -631,8 +633,10 @@ export async function createGoogleAccounts(
         return false
       })
     } finally {
-      if (pendingGrants.get(sub)?.epoch === grantEpoch) pendingGrants.delete(sub)
-      for (const token of unused) await revokeUnusedGrant(token)
+      // This transaction no longer owns its unused tokens. Only another
+      // owner can protect them, not this transaction's quarantined row.
+      if (pendingGrants.get(sub) === grantEpoch) pendingGrants.delete(sub)
+      for (const token of unused) await revokeUnusedGrant(sub, token)
     }
   }
 
@@ -643,10 +647,10 @@ export async function createGoogleAccounts(
   }
 
   /** Only inside the writer, after ownership has been checked. */
-  async function revoke(refreshToken: string): Promise<void> {
+  async function revoke(sub: string, refreshToken: string): Promise<void> {
     const digest = tokenDigest(refreshToken)
     if (uncertainRevokes.has(digest)) return
-    revoking = digest
+    revoking = { sub, digest }
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), REVOKE_TIMEOUT_MS)
     try {
@@ -683,7 +687,7 @@ export async function createGoogleAccounts(
         await retireLocalAccount(sub)
       })
       if (removal.refreshToken !== undefined) {
-        await revokeUnusedGrant(removal.refreshToken, sub)
+        await revokeUnusedGrant(sub, removal.refreshToken, true)
         delete removal.refreshToken
       }
       await emit(sub, 'removed')
