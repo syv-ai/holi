@@ -15,6 +15,7 @@ import type { VaultSnapshot } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 import { openDocumentRequestAtom, pendingHeadingAtom } from '@/state/open-document'
 import { documentRunsAtom } from '@/state/document-runs'
+import type { RendererPlugin } from '@/plugin-api'
 import {
   activeRemoteAtom,
   addVaultAtom,
@@ -128,6 +129,32 @@ describe('vaults', () => {
     expect(store.get(heldBackAtom).map((file) => file.path)).toEqual(['b.bin'])
     expect(store.get(historyEpochsAtom)).toEqual(history)
     expect(store.get(pluginRemote)).toBe(displayed)
+  })
+
+  it('routes declared background events across vaults while ordinary events stay selected', () => {
+    holi = installFakeHoli()
+    const store = createStore()
+    const displayed = 'syv-ai/displayed'
+    const owner = 'syv-ai/owner'
+    const ordinary = atom<string[]>([])
+    const background = atom<string[]>([])
+    const plugin: RendererPlugin = {
+      info: { id: 'proof', label: 'Proof', default: true },
+      events: { update: ({ remote }, target) => target.set(ordinary, [...target.get(ordinary), remote]) },
+      backgroundEvents: {
+        'stop-recording': ({ remote }, target) =>
+          target.set(background, [...target.get(background), remote]),
+      },
+    }
+    store.set(activeRemoteAtom, displayed)
+    unsubscribe = subscribeToVault(store, [plugin])
+
+    holi.pushPluginEvent('proof', { remote: owner, name: 'update', payload: {} })
+    holi.pushPluginEvent('proof', { remote: owner, name: 'stop-recording', payload: {} })
+    holi.pushPluginEvent('proof', { remote: displayed, name: 'update', payload: {} })
+
+    expect(store.get(ordinary)).toEqual([displayed])
+    expect(store.get(background)).toEqual([owner])
   })
 
   it('applies target sync and held-back events received before a cross-vault open resolves', async () => {
