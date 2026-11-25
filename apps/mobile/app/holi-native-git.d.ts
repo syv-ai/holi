@@ -34,4 +34,15 @@ declare class HoliNativeGit extends NSObject {
     password: string | null,
     error: interop.Pointer | interop.Reference<NSError>,
   ): NSDictionary<string, NSObject> | null
+  runSelectedBranchOperationRootRemoteOwnerRepositoryNameBranchUsernamePasswordError(
+    operation: string,
+    root: string,
+    remote: string,
+    owner: string,
+    repositoryName: string,
+    branch: string,
+    username: string | null,
+    password: string | null,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): NSDictionary<string, NSObject> | null
 }
