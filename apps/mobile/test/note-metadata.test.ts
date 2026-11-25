@@ -60,9 +60,10 @@ describe('note metadata', () => {
     }
     expect(() => createNoteMetadata(settings, 'not a remote')).toThrow()
 
-    const metadata = createNoteMetadata(settings, 'owner/repo')
+    const validSettings = new Settings()
+    const metadata = createNoteMetadata(validSettings, 'owner/repo')
     metadata.recent('notes/before.md')
-    const before = settings.values.get('holi.note-metadata:owner/repo')
+    const before = validSettings.values.get('holi.note-metadata:owner/repo')
     for (const path of [
       '.env.md',
       '.git/note.md',
@@ -71,7 +72,7 @@ describe('note metadata', () => {
       '.holi-storage-stage/note.md',
     ]) {
       expect(() => metadata.recent(path)).toThrow()
-      expect(settings.values.get('holi.note-metadata:owner/repo')).toBe(before)
+      expect(validSettings.values.get('holi.note-metadata:owner/repo')).toBe(before)
     }
     expect(metadata.visible(['notes/before.md']).recents).toEqual(['notes/before.md'])
   })
