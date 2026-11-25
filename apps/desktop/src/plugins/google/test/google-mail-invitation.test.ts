@@ -2627,6 +2627,59 @@ it.each([
   },
 )
 
+it('retains a listed occurrence for its own slot, not the slot being read', async () => {
+  const { state, read, respond, restart } = await rig()
+  const request = (slot: string) =>
+    invite().replace('END:VEVENT', `RECURRENCE-ID:${slot}\r\nEND:VEVENT`)
+  const slotA = event({ id: 'slot-a', occurrence: true })
+  const slotB = {
+    ...event({ id: 'slot-b', occurrence: true }),
+    // A moved exception may have the same displayed time as a different slot.
+    originalStartTime: { dateTime: '2024-07-25T11:00:00-04:00' },
+    htmlLink: 'https://calendar.google.com/calendar/event?eid=slotB',
+  }
+  state.messages = [gmailMessage('request-a', 200, request('20240711T150000Z'))]
+  state.events.set('primary', [event({ id: 'series', series: true }), slotB])
+  state.instances.set('primary', [slotA])
+  expect(await read()).toMatchObject({
+    identity: { messageId: 'request-a', recurrenceId: '2024-07-11T15:00:00.000Z' },
+    canRespond: true,
+    htmlLink: slotA.htmlLink,
+  })
+
+  // The master and slot A are gone. The UID collection also omits the still
+  // readable slot B; that resource cannot become A's target or block A's absence.
+  state.primaryPages = [{ kind: 'calendar#events' }]
+  state.events.set('primary', [slotB])
+  state.instances.clear()
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject({ canRespond: true, htmlLink: null })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+
+  // A new invitation for B must not use Gmail while B still exists, nor can
+  // the known exact resource provide RSVP or navigation when omitted from the list.
+  state.messages = [gmailMessage('request-b', 300, request('20240725T150000Z'))]
+  expect(await reopened.read()).toMatchObject({
+    identity: { messageId: 'request-b', recurrenceId: '2024-07-25T15:00:00.000Z' },
+    canRespond: false,
+    responseTargetKey: null,
+    recordedResponseStatus: null,
+    htmlLink: null,
+  })
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.events.clear()
+  expect(await reopened.read()).toMatchObject({ canRespond: true })
+  expect(await reopened.respond('accepted')).toMatchObject({
+    channel: 'gmail',
+    outcome: 'sent',
+    refreshPending: false,
+  })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
 it.each(
   [
     ['text/calendar; method="REQUEST'],
@@ -2941,6 +2994,34 @@ it('remembers the identity of an RSVP-ineligible Calendar copy until exact delet
     expect(await reopened.read()).toMatchObject({ canRespond: false, responseTargetKey: null })
     await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   }
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.events.clear()
+  expect(await reopened.read()).toMatchObject({ canRespond: true })
+  expect(await reopened.respond('accepted')).toMatchObject({
+    channel: 'gmail',
+    outcome: 'sent',
+    refreshPending: false,
+  })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it('retains an active primary copy with the exact UID and no organizer address', async () => {
+  const { state, read, respond, restart } = await rig()
+  const copy = event()
+  state.events.set('primary', [copy])
+  state.primaryPages = [{ kind: 'calendar#events', items: [{ ...copy, organizer: undefined }] }]
+  const blocked = { canRespond: false, responseTargetKey: null, htmlLink: null }
+  expect(await read()).toMatchObject(blocked)
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  // A complete UID collection is not absence while exact GET still returns
+  // the resource. Its complete organizer details cannot authorize a write either.
+  state.primaryPages = [{ kind: 'calendar#events' }]
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject(blocked)
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 
   state.events.clear()

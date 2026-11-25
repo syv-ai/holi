@@ -513,18 +513,17 @@ async function lookupInvitationCalendarCopy(
         typeof observedAddress === 'string' && observedAddress.trim()
           ? observedAddress.toLowerCase()
           : undefined
-      // An organizer object may only carry a display name. An unknown
-      // organizer can still be relevant on primary; a known address must match
-      // for an exact-UID row. A UID-less query match remains possible-only.
-      const sparsePrimaryCancellation =
+      // On the authenticated primary calendar, an exact-UID row with no
+      // organizer address is possible existence evidence, whatever its status.
+      // A UID-less cancellation needs the bound query context even for that.
+      const possiblePrimaryCopy =
         base === PRIMARY_EVENTS &&
-        event.status === 'cancelled' &&
-        ((isUidlessCancellation(event) &&
-          association?.uid === uid &&
-          association.mailbox === mailbox &&
-          (association.kind === 'uid' || association.parentId === event.recurringEventId)) ||
-          (event.iCalUID === uid && observedOrganizer === undefined))
-      if (!sparsePrimaryCancellation && (!organizer || observedOrganizer !== organizer)) return
+        ((event.iCalUID === uid && observedOrganizer === undefined) ||
+          (isUidlessCancellation(event) &&
+            association?.uid === uid &&
+            association.mailbox === mailbox &&
+            (association.kind === 'uid' || association.parentId === event.recurringEventId)))
+      if (!possiblePrimaryCopy && (!organizer || observedOrganizer !== organizer)) return
       // The authenticated primary collection itself binds the resource to the
       // mailbox. Elsewhere, require the provider's self marker, not just an
       // attendee address on a shared calendar's copy.
@@ -546,12 +545,12 @@ async function lookupInvitationCalendarCopy(
           : Array.isArray(event.recurrence)
             ? event.recurrence.length > 0
             : undefined
-      const scope = eventLocatorScope(event)
-      if (!calendarLocatorMayMatchScope(scope, identity)) return
+      // Retain the event's own scope, even if the current request is for a
+      // different occurrence. Filter by scope when using the locator instead.
       await remember({
         uid,
-        organizer: sparsePrimaryCancellation ? undefined : organizer,
-        ...scope,
+        organizer: possiblePrimaryCopy ? undefined : observedOrganizer,
+        ...eventLocatorScope(event),
         series,
         target: calendarCopyTarget(calendarResponseUrl(base, event), mailbox),
       })
