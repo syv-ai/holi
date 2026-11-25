@@ -57,6 +57,7 @@ import {
   clearRecorderErrorAtom,
   levelAtom,
   selectedRecorderAtom,
+  recordingAtom,
   startRecordingAtom,
   stopRecordingAtom,
 } from './recorder'
@@ -113,6 +114,7 @@ export function MeetingHeader({
   const profiles = useAtomValue(profilesAtom)
   const [profileId, setProfileId] = useAtom(selectedProfileIdAtom)
   const rec = useAtomValue(selectedRecorderAtom)
+  const captureBusy = useAtomValue(recordingAtom)
   const start = useSetAtom(startRecordingAtom)
   const stop = useSetAtom(stopRecordingAtom)
   const clearError = useSetAtom(clearRecorderErrorAtom)
@@ -260,7 +262,7 @@ export function MeetingHeader({
             </>
           )}
           {rec.phase === 'idle' ? (
-            <Button size="sm" disabled={!canRecord} onClick={record}>
+            <Button size="sm" disabled={!canRecord || captureBusy} onClick={record}>
               <Circle aria-hidden className="fill-current text-destructive" />
               Record
             </Button>

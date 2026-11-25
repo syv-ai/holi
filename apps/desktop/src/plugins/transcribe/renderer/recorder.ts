@@ -57,7 +57,7 @@ export const recorderAtom = atom<RecorderState>(IDLE)
 /** The capture shown in vault-scoped views; a recording in another vault is global only. */
 export const selectedRecorderAtom = atom((get) => {
   const recorder = get(recorderAtom)
-  return recorder.remote === get(activeRemoteAtom) ? recorder : IDLE
+  return recorder.remote === null || recorder.remote === get(activeRemoteAtom) ? recorder : IDLE
 })
 
 /** The capture's loudness, 0..1, about 20 times a second. Its own atom, so
@@ -115,9 +115,9 @@ export const startRecordingAtom = atom(null, async (get, set, args: StartArgs): 
   // Asked fresh: a service set up in another window counts.
   try {
     const status = await meetingCap['key.status'](remote)
-    set(speechKeyAtom, status)
+    if (get(activeRemoteAtom) === remote) set(speechKeyAtom, status)
     if (status.ready === false) {
-      set(recorderAtom, { ...IDLE, error: NOT_SET_UP })
+      set(recorderAtom, { ...IDLE, remote, error: NOT_SET_UP })
       return
     }
   } catch {
@@ -135,7 +135,7 @@ export const startRecordingAtom = atom(null, async (get, set, args: StartArgs): 
     }))
   } catch (e) {
     if (!cancelled())
-      set(recorderAtom, { ...IDLE, error: `The meeting didn’t start: ${message(e)}` })
+      set(recorderAtom, { ...IDLE, remote, error: `The meeting didn’t start: ${message(e)}` })
     return
   }
   if (cancelled()) {
@@ -144,7 +144,7 @@ export const startRecordingAtom = atom(null, async (get, set, args: StartArgs): 
     return
   }
   set(recorderAtom, (s) => ({ ...s, meetingId }))
-  set(shownMeetingIdAtom, meetingId)
+  if (get(activeRemoteAtom) === remote) set(shownMeetingIdAtom, meetingId)
 
   const lost = (chunk: CapturedChunk, error: unknown) => {
     set(recorderAtom, (s) =>
@@ -203,7 +203,7 @@ export const startRecordingAtom = atom(null, async (get, set, args: StartArgs): 
   } catch (e) {
     // The meeting exists but will never hear anything: close it.
     void meetingCap.stop(remote, { meetingId }).catch(() => {})
-    if (!cancelled()) set(recorderAtom, { ...IDLE, error: captureError(e) })
+    if (!cancelled()) set(recorderAtom, { ...IDLE, remote, error: captureError(e) })
     return
   }
   if (cancelled()) {
@@ -248,12 +248,12 @@ export const stopRecordingAtom = atom(null, async (get, set): Promise<void> => {
   try {
     await meetingCap.stop(s.remote, { meetingId: s.meetingId })
     // The view turns to the review at once; main's next word fills it in.
-    set(markStoppedAtom, s.meetingId)
+    if (get(activeRemoteAtom) === s.remote) set(markStoppedAtom, s.meetingId)
   } catch (e) {
     error = `The meeting didn’t close cleanly: ${message(e)}`
   }
   set(levelAtom, 0)
-  set(recorderAtom, { ...IDLE, error })
+  set(recorderAtom, { ...IDLE, remote: s.remote, error })
 })
 
 /**
@@ -271,8 +271,10 @@ export const discardRecordingAtom = atom(null, async (get, set, meetingId: strin
   set(levelAtom, 0)
   set(recorderAtom, {
     ...IDLE,
+    remote: s.remote,
     error: 'The meeting’s folder was deleted from the vault, so its recording stopped.',
   })
-  if (get(shownMeetingIdAtom) === meetingId) set(shownMeetingIdAtom, null)
+  if (get(activeRemoteAtom) === s.remote && get(shownMeetingIdAtom) === meetingId)
+    set(shownMeetingIdAtom, null)
   await running?.stop().catch(() => {})
 })
