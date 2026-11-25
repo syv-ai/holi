@@ -96,7 +96,10 @@ function deferred<T>() {
 }
 
 /** Independently gated code exchanges and refresh, with real persistence. */
-async function controlledConsent(seed: StoredGoogleAuth[] = []) {
+async function controlledConsent(
+  seed: StoredGoogleAuth[] = [],
+  onRevoke?: (token: string) => Promise<void>,
+) {
   await store.write(Object.fromEntries(seed.map((row) => [row.sub, row])))
   let now = NOW
   const states = new Map<string, string>()
@@ -131,7 +134,9 @@ async function controlledConsent(seed: StoredGoogleAuth[] = []) {
     fetch: (async (url, init) => {
       const params = new URLSearchParams(String(init?.body))
       if (String(url).endsWith('/revoke')) {
-        revoked.push(params.get('token')!)
+        const token = params.get('token')!
+        revoked.push(token)
+        await onRevoke?.(token)
         return new Response('{}')
       }
       if (params.get('grant_type') === 'refresh_token') {
@@ -525,14 +530,68 @@ describe('the client credentials', () => {
     expect(await store.read()).toEqual({})
   })
 
-  it('keeps every account when the same client is saved again', async () => {
+  it('keeps the current grant and binding when the same client is saved again', async () => {
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }))
     const accounts = await manager([auth()], fetchImpl as unknown as typeof globalThis.fetch)
+    await accounts.link(VAULT, 'sub-1')
+    const before = (await accounts.bindingFor(VAULT))!
 
-    await accounts.setClient({ id: 'client-1' })
+    await accounts.setClient({ id: 'client-1', secret: 'rotated-secret' })
 
     expect(fetchImpl).not.toHaveBeenCalled()
-    expect(accounts.list()).toHaveLength(1)
+    expect(before.isCurrent()).toBe(true)
+    expect((await accounts.bindingFor(VAULT))?.revision).toBe(before.revision)
+  })
+
+  it('keeps unfinished client retirement closed through a failed and queued replacement', async () => {
+    const retryStarted = deferred<void>()
+    const releaseRetry = deferred<void>()
+    let pauseRevocation = false
+    const { accounts, exchanges } = await controlledConsent(
+      [auth(), auth({ sub: 'sub-2', refreshToken: 'rt-2' })],
+      async (token) => {
+        if (!pauseRevocation || token !== 'rt-2') return
+        retryStarted.resolve()
+        await releaseRetry.promise
+      },
+    )
+    await accounts.link(VAULT, 'sub-1')
+    await accounts.link(WORK, 'sub-2')
+    await accounts.link('other/linked', 'sub-2')
+    const before = (await accounts.bindingFor(WORK))!
+    const stop = accounts.onChange((sub, reason) => {
+      if (sub === 'sub-1' && reason === 'removed') throw new Error('could not remove local data')
+    })
+    const replacement = { id: 'replacement.apps.googleusercontent.com' }
+    await expect(accounts.setClient(replacement)).rejects.toThrow('could not remove local data')
+    stop()
+    expect(before.isCurrent()).toBe(false)
+    await expect(accounts.bindingFor(WORK)).resolves.toBeNull()
+
+    pauseRevocation = true
+    const retry = accounts.setClient(replacement)
+    const final = { id: 'final.apps.googleusercontent.com' }
+    const queued = accounts.setClient(final)
+    try {
+      await retryStarted.promise
+      await expect(accounts.bindingFor(WORK)).resolves.toBeNull()
+    } finally {
+      releaseRetry.resolve()
+      await Promise.all([retry, queued])
+    }
+    expect(await accounts.bindingFor(WORK)).toBeNull()
+    const flow = await accounts.connect(WORK)
+    expect(new URL(flow.authUrl).searchParams.get('client_id')).toBe(final.id)
+    const result = flow.wait()
+    const exchange = exchanges[0]!
+    await exchange.started.promise
+    exchange.reply.resolve(auth({ sub: 'sub-2', refreshToken: 'rt-new', accessToken: 'at-new' }))
+    expect((await result).kind).toBe('granted')
+    const current = (await accounts.bindingFor(WORK))!
+    expect(current.isCurrent()).toBe(true)
+    await expect(current.session.getAccessToken()).resolves.toBe('at-new')
+    expect(before.isCurrent()).toBe(false)
+    await expect(accounts.bindingFor('other/linked')).resolves.toBeNull()
   })
 })
 
@@ -663,18 +722,24 @@ describe('a grant that lands after it was let go', () => {
     expect(await rig.accounts.sessionFor(VAULT)).toBeNull()
   })
 
-  it('discards consent whose token write was already queued when the client changed', async () => {
+  it('does not expose consent whose token write lands after the client changed', async () => {
+    // A persisted link without a live account must not gain access even
+    // briefly when an obsolete consent finishes writing its tokens.
+    const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
+    await vaults.link(WORK, 'sub-9')
     const rig = await hangingExchange()
     const originalWrite = store.write.bind(store)
-    let releaseWrite!: () => void
-    let writeStarted!: () => void
-    const atWrite = new Promise<void>((resolve) => (writeStarted = resolve))
-    let gated = false
+    const atWrite = deferred<void>()
+    const releaseWrite = deferred<void>()
+    const atDiscard = deferred<void>()
+    const releaseDiscard = deferred<void>()
     store.write = async (value) => {
-      if (!gated) {
-        gated = true
-        writeStarted()
-        await new Promise<void>((resolve) => (releaseWrite = resolve))
+      if (value['sub-9']) {
+        atWrite.resolve()
+        await releaseWrite.promise
+      } else {
+        atDiscard.resolve()
+        await releaseDiscard.promise
       }
       await originalWrite(value)
     }
@@ -682,12 +747,17 @@ describe('a grant that lands after it was let go', () => {
     const outcome = flow.wait()
     await rig.atGoogle
     rig.release()
-    await atWrite
+    await atWrite.promise
 
     await rig.accounts.setClient({ id: 'replacement.apps.googleusercontent.com', secret: 's' })
-    releaseWrite()
-
-    expect(await outcome).toEqual({ kind: 'cancelled' })
+    releaseWrite.resolve()
+    try {
+      await atDiscard.promise
+      await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
+    } finally {
+      releaseDiscard.resolve()
+      expect(await outcome).toEqual({ kind: 'cancelled' })
+    }
     expect(rig.accounts.list()).toEqual([])
     expect(await store.read()).toEqual({})
     expect(rig.revoked).toEqual(['rt-new'])

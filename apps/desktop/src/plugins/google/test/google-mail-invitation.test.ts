@@ -8,6 +8,7 @@ import { createCapabilityRegistry, type Door } from '../../../main/capabilities/
 import { noCoreServices } from '../../../main/capabilities/services'
 import { createGoogleAccounts } from '../main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../main/capabilities'
+import { createClientStore } from '../main/credentials'
 import { createMailInvitationSession } from '../main/mail-invitation-session'
 import { createMailInvitationStore } from '../main/mail-invitation-store'
 import { createVaultAccounts } from '../main/vault-accounts'
@@ -217,6 +218,7 @@ async function rig() {
     refreshOnQuery: false,
     refreshOnPrimaryCopy: false,
     onRefresh: async () => {},
+    onRevoke: async () => {},
     sent: new Map<string, ReturnType<typeof gmailMessage>>(),
     fullSentMessage: (message: ReturnType<typeof gmailMessage>) => message,
     sentVisible: true,
@@ -227,24 +229,33 @@ async function rig() {
     sentSearchError: null as number | null,
     sentSearchBody: undefined as unknown,
     replyThread: 'thread',
+    sendReceiptId: undefined as string | undefined,
     replaceOnQuery: false,
     sendReplyMode: 'ok' as 'ok' | 'refused' | 'empty' | 'response-lost',
   }
-  const refresh: typeof fetch = async () => {
+  const oauth: typeof fetch = async (url) => {
+    if (String(url) === 'https://oauth2.googleapis.com/revoke') {
+      await state.onRevoke()
+      return json({})
+    }
     await state.onRefresh()
     return json({ access_token: 'refreshed-receiver', expires_in: 3600 })
   }
-  const store = new GoogleTokenStore(join(userData, 'tokens.enc'), {
+  const storage = {
     isEncryptionAvailable: () => true,
-    encryptString: (value) => Buffer.from(`fake:${value}`),
-    decryptString: (value) => value.toString().slice(5),
-  })
+    encryptString: (value: string) => Buffer.from(`fake:${value}`),
+    decryptString: (value: Buffer) => value.toString().slice(5),
+  }
+  const store = new GoogleTokenStore(join(userData, 'tokens.enc'), storage)
+  const clients = createClientStore(join(userData, 'client.enc'), storage)
+  await clients.write({ id: 'original.apps.googleusercontent.com' })
   await store.write({ receiver: account('receiver'), other: account('other') })
   const vaults = createVaultAccounts(join(userData, 'vault-links.json'))
   const accounts = await createGoogleAccounts({
     vaults,
     store,
-    fetch: refresh,
+    clients,
+    fetch: oauth,
     now: () => now,
     listen: async () => {
       throw new Error('Consent is not part of this fixture')
@@ -498,7 +509,11 @@ async function rig() {
       if (state.replyThread === 'thread') state.messages.push(reply)
       if (state.sendReplyMode === 'response-lost') throw new TypeError('Lost the send response')
       if (state.sendReplyMode === 'empty') return new Response(null, { status: 200 })
-      return json({ id: reply.id, threadId: state.replyThread, labelIds: ['SENT'] })
+      return json({
+        id: state.sendReceiptId ?? reply.id,
+        threadId: state.replyThread,
+        labelIds: ['SENT'],
+      })
     }
     throw new Error(`Unhandled Google request: ${init.method ?? 'GET'} ${url}`)
   })
@@ -1016,6 +1031,50 @@ it('rejects an old binding after the real vault mapping switches A → B → A d
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
+it('cannot reopen or answer a Mail invitation while its OAuth grant is being revoked', async () => {
+  const { state, accounts, read, respond, restart } = await rig()
+  state.events.set('primary', [event()])
+  await accounts.link('owner/second-vault', 'receiver')
+  expect(await read()).toMatchObject({ canRespond: true })
+  const old = await accounts.bindingFor(remote)
+  expect(old?.isCurrent()).toBe(true)
+
+  let start!: () => void
+  let finish!: () => void
+  const revoking = new Promise<void>((resolve) => (start = resolve))
+  const release = new Promise<void>((resolve) => (finish = resolve))
+  state.onRevoke = () => {
+    start()
+    return release
+  }
+  const replacement = 'replacement.apps.googleusercontent.com'
+  const change = accounts.setClient({ id: replacement })
+  try {
+    await revoking
+    expect(old?.isCurrent()).toBe(false)
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    const reopened = restart()
+    const attemptAfterReopen = async () => {
+      await reopened.read()
+      return reopened.respond('accepted')
+    }
+    await expect(attemptAfterReopen()).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(accounts.bindingFor(remote)).resolves.toBeNull()
+    expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+  } finally {
+    finish()
+    await change
+  }
+  expect(accounts.client()).toEqual({ id: replacement, source: 'own' })
+  expect(accounts.list()).toEqual([])
+  for (const vault of [remote, 'owner/second-vault']) {
+    await expect(accounts.bindingFor(vault)).resolves.toBeNull()
+    expect(await accounts.overview(vault)).toMatchObject({ state: 'not-connected' })
+  }
+  await expect(restart().read()).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(old?.isCurrent()).toBe(false)
+})
+
 it('proves the Sent parent belongs to the selected material and refuses invalid reply headers', async () => {
   const { state, read, respond, call } = await rig()
   state.messages.push(acceptedReply('<update@example.net>'))
@@ -1172,6 +1231,73 @@ it.each(['thread', 'separate-thread'])(
     expect(state.calendarPatchAttempts).toBe(0)
   },
 )
+
+it.each(['missing', 'wrong RFC ID'] as const)(
+  'does not substitute a matching Sent message for a %s acknowledged Gmail message',
+  async (defect) => {
+    const { state, read, respond, restart } = await rig()
+    state.replyThread = 'separate-thread'
+    state.sentVisible = false
+    await read()
+    const pending = {
+      responseStatus: null,
+      sentResponseStatus: null,
+      responsePending: true,
+      canRespond: false,
+    }
+    expect(await respond('accepted')).toMatchObject({
+      outcome: 'sent',
+      refreshPending: true,
+      invitation: pending,
+    })
+    const acknowledged = state.sent.get('reply-1')!
+    const substitute = { ...structuredClone(acknowledged), id: 'substitute' }
+    state.sent.set(substitute.id, substitute)
+    if (defect === 'missing') state.sent.delete(acknowledged.id)
+    else {
+      const wrongHeader = structuredClone(acknowledged)
+      wrongHeader.payload.headers.find(({ name }) => name === 'Message-ID')!.value =
+        '<different@example.net>'
+      state.sent.set(acknowledged.id, wrongHeader)
+    }
+    state.sentVisible = true
+    const reopened = restart()
+    expect(await reopened.read()).toMatchObject(pending)
+    await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    // A recovered full GET still cannot settle while another resource owns
+    // the same RFC ID. Only the original, uniquely corroborated, can settle.
+    state.sent.set(acknowledged.id, acknowledged)
+    expect(await reopened.read()).toMatchObject(pending)
+    state.sent.delete(substitute.id)
+    expect(await reopened.read()).toMatchObject({
+      responseStatus: 'accepted',
+      sentResponseStatus: 'accepted',
+      responsePending: false,
+      canRespond: true,
+    })
+    expect(await reopened.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
+    expect(state.sendAttempts).toBe(1)
+    expect(state.calendarPatchAttempts).toBe(0)
+  },
+)
+
+it('does not treat an invalid acknowledged Gmail ID as an absent ID', async () => {
+  const { state, read, respond, restart } = await rig()
+  state.replyThread = 'separate-thread'
+  state.sendReceiptId = '../invalid'
+  await read()
+  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', refreshPending: true })
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject({
+    sentResponseStatus: null,
+    responsePending: true,
+    canRespond: false,
+  })
+  await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
 
 it('fails closed on a damaged invitation response journal', async () => {
   const { userData, state, read, respond } = await rig()
