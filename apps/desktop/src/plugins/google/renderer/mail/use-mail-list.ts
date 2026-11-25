@@ -244,6 +244,7 @@ export function useMailList({
   ): Promise<boolean> => {
     if (!active()) return false
     const snapshot = owner.list
+    if (owner.pendingRead !== null && snapshot.kind !== 'ready') owner.reconcile = true
     const revision = ++owner.revision
     owner.request++
     owner.more = false

@@ -43,6 +43,8 @@ vi.mock('@/lib/trpc', () => ({
               return []
             case 'google.archive':
               return archive(input.remote, params)
+            case 'google.star':
+              return undefined
             case 'google.unarchive':
               return unarchive(input.remote, params)
             case 'google.mailCounts':
@@ -195,6 +197,36 @@ test('StrictMode replay queues an initial replacement without overlapping reads 
   expect(search).toHaveBeenCalledTimes(2)
   expect(result.current.list.kind).toBe('ready')
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['current-ready'])
+})
+
+test('a successful retained-reader write replaces its invalidated initial search without polling', async () => {
+  const { result } = await mount()
+  await act(async () => {
+    result.current.openThread(summary('existing'))
+  })
+  const replacement = {
+    threads: [summary('search-match')],
+    nextPageToken: null,
+    syncedAt: '2026-11-25T00:00:00Z',
+  }
+  const pending = deferred<typeof replacement>()
+  search.mockReturnValueOnce(pending.promise).mockResolvedValue(replacement)
+  await act(async () => {
+    result.current.search('subject:retained')
+  })
+  expect(result.current.list.kind).toBe('loading')
+  await act(async () => {
+    expect(await result.current.setStarred('existing', true)).toBe(true)
+  })
+  expect(search).toHaveBeenCalledTimes(2)
+  await act(async () => {
+    pending.resolve({ ...replacement, threads: [summary('retired-search')] })
+  })
+  expect(search).toHaveBeenCalledTimes(3)
+  expect(result.current.searching).toBe(true)
+  expect(result.current.openId).toBe('existing')
+  expect(result.current.list.kind).toBe('ready')
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['search-match'])
 })
 
 test('a write invalidates a stalled poll without releasing its single-flight slot', async () => {
