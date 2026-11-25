@@ -8,10 +8,9 @@
  *   - **It never writes plaintext.** If the platform cannot encrypt, `write`
  *     throws rather than falling back. A refresh token in a readable file is a
  *     standing grant to someone's mail.
- *   - **A file it cannot read is a disconnect, not a crash.** Corrupt JSON, an
- *     envelope from a future version, a keychain re-keyed by an OS upgrade:
- *     all read as "no accounts". "Connect again" is a recovery a user can
- *     perform; a bricked app is not.
+ *   - **Only a missing file is a disconnect.** Corrupt data or unavailable
+ *     decryption must not look like an empty account store: a later write could
+ *     otherwise replace credentials that are still recoverable.
  */
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -74,12 +73,18 @@ export class GoogleTokenStore {
   }
 
   async read(): Promise<GoogleAccounts> {
-    const text = await readFile(this.#file, 'utf8').catch(() => null)
-    if (text === null) return {}
+    let text: string
+    try {
+      text = await readFile(this.#file, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+      throw error
+    }
 
     try {
       const envelope: unknown = JSON.parse(text)
-      if (!isEnvelope(envelope) || envelope.v !== VERSION) return {}
+      if (!isEnvelope(envelope) || envelope.v !== VERSION)
+        throw new Error('the Google token store has an unsupported or invalid envelope')
       const plain = this.#storage.decryptString(Buffer.from(envelope.data, 'base64'))
       const accounts: unknown = JSON.parse(plain)
       if (accounts === null || typeof accounts !== 'object') return {}
@@ -91,8 +96,8 @@ export class GoogleTokenStore {
         if (isStoredGoogleAuth(auth)) valid[sub] = auth
       }
       return valid
-    } catch {
-      return {}
+    } catch (error) {
+      throw new Error('the Google token store could not be read, decrypted, or parsed', { cause: error })
     }
   }
 

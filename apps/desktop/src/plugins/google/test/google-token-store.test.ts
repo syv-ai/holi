@@ -81,15 +81,15 @@ describe('it never writes plaintext', () => {
   })
 })
 
-describe('an unreadable file is a disconnect, not a crash', () => {
-  it('reads corrupt JSON as disconnected', async () => {
+describe('an unreadable file is unavailable, not disconnected', () => {
+  it('rejects corrupt JSON without treating it as an empty store', async () => {
     await writeFile(file, 'not json at all')
-    expect(await new GoogleTokenStore(file, storage).read()).toEqual({})
+    await expect(new GoogleTokenStore(file, storage).read()).rejects.toThrow()
   })
 
-  it('reads an envelope from a future version as disconnected', async () => {
+  it('rejects an envelope from a future version', async () => {
     await writeFile(file, JSON.stringify({ v: 99, data: 'whatever' }))
-    expect(await new GoogleTokenStore(file, storage).read()).toEqual({})
+    await expect(new GoogleTokenStore(file, storage).read()).rejects.toThrow()
   })
 
   it('reads as disconnected when the keychain can no longer decrypt', async () => {
@@ -102,7 +102,8 @@ describe('an unreadable file is a disconnect, not a crash', () => {
         throw new Error('keychain re-keyed by an OS upgrade')
       },
     })
-    expect(await rekeyed.read()).toEqual({})
+    await expect(rekeyed.read()).rejects.toThrow()
+    expect(await new GoogleTokenStore(file, storage).read()).toEqual({ 'sub-1': AUTH })
   })
 
   it('drops only the malformed entry, keeping a readable one beside it', async () => {
