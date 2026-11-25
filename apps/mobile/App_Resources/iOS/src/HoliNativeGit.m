@@ -721,4 +721,32 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   }
   close(rootFD); git_tree_free(tree); git_commit_free(commit); git_reference_free(head); git_index_free(index); git_repository_free(repo); if (![snapshot closeWithError:error]) return nil; return changes;
 }
+- (NSDictionary<NSString *, id> *)managedIdentity:(NSString *)root error:(NSError **)error {
+  HoliManagedIdentity *reader = [HoliManagedIdentity new];
+  NSDictionary *record = [reader readIdentityAtRoot:root error:error];
+  if (!record) return nil;
+  NSString *remote = record[@"remote"], *branch = record[@"branch"], *endpoint = record[@"endpoint"];
+  NSString *canonical = [NSString stringWithFormat:@"https://github.com/%@/%@.git", _configuredOwner ?: @"", _configuredRepositoryName ?: @""];
+  NSString *expected = _configuredEndpoint ?: canonical;
+  HoliGitSnapshot *snapshot = nil;
+  git_repository *repo = [self openSelectedRepository:root remote:endpoint branch:branch snapshot:&snapshot error:error];
+  if (!repo) return nil;
+  BOOL valid = [endpoint isEqualToString:expected] &&
+    [reader identity:record matchesRemote:remote branch:branch endpoint:endpoint error:error];
+  git_oid headOID;
+  git_reference *head = NULL;
+  if (valid && (git_repository_head(&head, repo) < 0 || git_reference_name(head) == NULL || git_reference_target(head) == NULL)) valid = NO;
+  if (valid) git_oid_cpy(&headOID, git_reference_target(head));
+  git_reference_free(head); git_repository_free(repo);
+  if (![snapshot closeWithError:error] || !valid) { if (error && !*error) *error = HNGPathError(EINVAL, @"Managed identity does not match selected repository"); return nil; }
+  return @{ @"remote": remote, @"branch": branch, @"nativeId": record[@"nativeId"] };
+}
+- (NSArray<NSDictionary<NSString *,id> *> *)committedEntries:(NSString *)root history:(BOOL)history error:(NSError **)error {
+  if (error) *error = HNGPathError(ENOTSUP, @"Committed entry enumeration is unavailable");
+  return nil;
+}
+- (BOOL)materializeManaged:(NSString *)root error:(NSError **)error {
+  if (error) *error = HNGPathError(ENOTSUP, @"Managed materialization is unavailable");
+  return NO;
+}
 @end
