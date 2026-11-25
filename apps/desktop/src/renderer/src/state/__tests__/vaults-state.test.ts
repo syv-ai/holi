@@ -140,7 +140,9 @@ describe('vaults', () => {
     const background = atom<string[]>([])
     const plugin: RendererPlugin = {
       info: { id: 'proof', label: 'Proof', default: true },
-      events: { update: ({ remote }, target) => target.set(ordinary, [...target.get(ordinary), remote]) },
+      events: {
+        update: ({ remote }, target) => target.set(ordinary, [...target.get(ordinary), remote]),
+      },
       backgroundEvents: {
         'stop-recording': ({ remote }, target) =>
           target.set(background, [...target.get(background), remote]),

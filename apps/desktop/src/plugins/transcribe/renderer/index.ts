@@ -58,8 +58,6 @@ export const transcribeRenderer: RendererPlugin = {
   ],
   commandMenu: { entries: meetingMenuEntriesAtom, run: runMeetingMenuEntryAtom },
   statusItems: [{ id: 'recording', side: 'left', order: 10, Component: RecordingStatusItem }],
-  leaveGuard: atom((get) =>
-    get(recordingAtom) ? 'A meeting is recording.' : null,
-  ),
+  leaveGuard: atom((get) => (get(recordingAtom) ? 'A meeting is recording.' : null)),
   vault: meetingsVault,
 }
