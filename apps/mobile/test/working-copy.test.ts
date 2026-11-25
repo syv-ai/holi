@@ -36,6 +36,7 @@ describe('managed working copy transport', () => {
     const calls: Array<{ method: string; credential?: string }> = []
     const native: ManagedWorkingCopyNative = {
       ...base,
+      recover: async () => {},
       prepare: async () => ({ remote: vault.remote, branch: vault.branch, nativeId: 'checkout-1' }),
       reopen: async () => ({ remote: vault.remote, branch: vault.branch, nativeId: 'checkout-1' }),
       fetch: async (_root, _identity, credential) => { calls.push({ method: 'fetch', credential }) },
