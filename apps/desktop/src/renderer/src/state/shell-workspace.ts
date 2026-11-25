@@ -436,14 +436,12 @@ export function closeTab(ws: ShellWorkspace, key: string, explicit = false): She
 /** Toggle a view's sticky status. Sticky entries remain an ordered prefix. */
 export function setSticky(ws: ShellWorkspace, key: string, sticky: boolean): ShellWorkspace {
   const entry = entryOf(ws, key)
-  if (entry === null || (isSplit(entry) && entry.views.length > 1)) return ws
-  const current = ws.sticky.includes(key)
-  if (current === sticky) return ws
-  const next = {
-    ...ws,
-    sticky: sticky ? [...ws.sticky, key] : ws.sticky.filter((item) => item !== key),
-  }
-  return orderSticky(next)
+  if (entry === null) return ws
+  const members = isSplit(entry) ? entry.views : [key]
+  const current = members.filter((member) => ws.sticky.includes(member))
+  if ((current.length === members.length) === sticky) return ws
+  const remaining = ws.sticky.filter((member) => !members.includes(member))
+  return orderSticky({ ...ws, sticky: sticky ? [...remaining, ...members] : remaining })
 }
 
 function orderSticky(ws: ShellWorkspace): ShellWorkspace {
