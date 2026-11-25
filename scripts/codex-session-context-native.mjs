@@ -185,27 +185,27 @@ export async function runNativeInitialFixture() {
         },
       }),
     )
+    const replies = new WeakMap()
     const wait = async (child, predicate, label) => {
       const until = Math.min(deadline, Date.now() + 12000)
-      let cursors = 0,
-        devices = 0,
-        colors = 0
+      const answered = replies.get(child) ?? { cursors: 0, devices: 0, colors: 0 }
+      replies.set(child, answered)
       while (Date.now() < until) {
         if (child.failure) throw child.failure
         const output = child.output.toString()
         if (predicate(clean(output))) return
         if (child.nativeExit) throw Error(`${label}: native exited`)
         const count = (sequence) => output.split(sequence).length - 1
-        if (count('\u001b[6n') > cursors) {
-          cursors = count('\u001b[6n')
+        if (count('\u001b[6n') > answered.cursors) {
+          answered.cursors = count('\u001b[6n')
           await child.write('\u001b[1;1R')
         }
-        if (count('\u001b[c') > devices) {
-          devices = count('\u001b[c')
+        if (count('\u001b[c') > answered.devices) {
+          answered.devices = count('\u001b[c')
           await child.write('\u001b[?1;2c')
         }
-        if (count('\u001b]11;?') > colors) {
-          colors = count('\u001b]11;?')
+        if (count('\u001b]11;?') > answered.colors) {
+          answered.colors = count('\u001b]11;?')
           await child.write(
             '\u001b]10;rgb:ffff/ffff/ffff\u001b\\\u001b]11;rgb:0000/0000/0000\u001b\\',
           )
@@ -227,6 +227,8 @@ export async function runNativeInitialFixture() {
       evidence.consent.push({ label, offset: child.output.length, bytes: [...Buffer.from(bytes)] })
       await child.write(bytes)
     }
+    // Codex 0.169.0 drains protected-screen input after drawing, for up to one second.
+    await delay(1100)
     await send(approval, 'review-hooks', '\r')
     await wait(approval, (text) => text.includes('Lifecycle hooks from config'), 'hook events')
     await send(approval, 'review-session-start', '\r')
@@ -367,6 +369,7 @@ export async function runNativeInitialFixture() {
         label,
       )
       await wait(child, (text) => text.includes('Hooks need review'), `${label} native review`)
+      await delay(1100)
       await send(child, `deny-${label}`, '\u001b')
       await wait(
         child,
