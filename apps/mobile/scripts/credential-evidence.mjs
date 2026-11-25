@@ -13,6 +13,7 @@ export function validateCredentialReport(report, { runId, phase, build, pid, lau
     'tokenRecorded',
     'metadata',
     'unrelatedPreserved',
+    ...(report?.outcome === 'failed' ? ['error'] : []),
   ]
   if (!report || Object.keys(report).some((key) => !fields.includes(key)))
     throw new Error('Unexpected credential report data')
@@ -38,6 +39,7 @@ export function validateCredentialReport(report, { runId, phase, build, pid, lau
     report.observedAt > now
   )
     throw new Error('Credential report does not belong to the active process')
+  if (report.outcome === 'failed') throw new Error('Native credential phase reported failure')
   if (
     report.build !== build ||
     !outcomes[phase].includes(report.outcome) ||
@@ -86,6 +88,21 @@ export function summarizeCredentialReport(report) {
     unrelatedPreserved: report?.unrelatedPreserved === true,
     tokenRecorded: report?.tokenRecorded !== false,
     nativeErrorReported: Boolean(report?.error),
+    nativeError:
+      report?.error?.kind === 'keychain' &&
+      ['read', 'write', 'remove', 'metadata'].includes(report.error.operation) &&
+      Number.isInteger(report.error.status) &&
+      report.error.status >= -2147483648 &&
+      report.error.status <= 2147483647
+        ? { kind: 'keychain', operation: report.error.operation, status: report.error.status }
+        : report?.error?.kind === 'interop'
+          ? {
+              kind: 'interop',
+              selector: ['read', 'writeError', 'remove', 'metadata'].includes(report.error.selector)
+                ? report.error.selector
+                : 'unknown',
+            }
+          : undefined,
   }
 }
 

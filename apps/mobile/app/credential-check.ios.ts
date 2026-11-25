@@ -114,7 +114,25 @@ export async function runCredentialCheck(runId: string, phase: string): Promise<
     }
     return `Credential diagnostic ${phase} passed`
   } catch (error) {
-    report({ outcome: 'failed', error: 'Credential diagnostic phase failed', tokenRecorded: false })
+    const keychain =
+      error instanceof Error
+        ? /^iOS Keychain (read|write|remove|metadata) failed \(OSStatus (-?\d+)\)$/.exec(
+            error.message,
+          )
+        : null
+    const selector =
+      error instanceof TypeError
+        ? /\.(read|writeError|remove|metadata) is not a function/.exec(error.message)?.[1]
+        : undefined
+    report({
+      outcome: 'failed',
+      error: keychain
+        ? { kind: 'keychain', operation: keychain[1], status: Number(keychain[2]) }
+        : error instanceof TypeError
+          ? { kind: 'interop', selector: selector ?? 'unknown' }
+          : { kind: 'diagnostic' },
+      tokenRecorded: false,
+    })
     throw error
   }
 }
