@@ -2,6 +2,10 @@ module HoliNativeFiles {
   header "HoliNativeFiles.h"
   export *
 }
+module HoliManagedAcquisition {
+  header "HoliManagedAcquisition.h"
+  export *
+}
 module HoliNativeGit {
   header "HoliNativeGit.h"
   export *
