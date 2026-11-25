@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { writeFile, mkdir } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { mkdtemp, realpath } from 'node:fs/promises'
-import { runProducerProof } from './codex-exec-producer.mjs'
+import { runNativeInitialFixture } from './codex-session-context-native.mjs'
 
 const VERSION = '0.169.0'
 const SCHEMA = 'holi.codex-session-context.v1'
@@ -79,10 +79,7 @@ export function validateContextEvidence(value) {
   return true
 }
 
-export async function runContextHarness({
-  output = process.env.HOLI_CODEX_CONTEXT_EVIDENCE,
-  proofRunner = runProducerProof,
-} = {}) {
+export async function runContextHarness({ output = process.env.HOLI_CODEX_CONTEXT_EVIDENCE } = {}) {
   const root = await realpath(await mkdtemp(resolve(tmpdir(), `holi764-${randomUUID()}-`)))
   const evidence = {
     schema: SCHEMA,
@@ -103,29 +100,24 @@ export async function runContextHarness({
     cleanup: { verified: false, ownedRoot: root, ownedRootRemoved: false, processesDrained: false },
   }
   try {
-    // The existing executable producer proves the isolated package install/version and
-    // synthetic loopback transport. It is not evidence for native TUI or hook semantics.
-    const producer = await proofRunner()
+    const native = await runNativeInitialFixture({ root: join(root, 'native') })
+    evidence.native = native
     evidence.provenance = {
       package: '@openai/codex',
       version: VERSION,
-      source: producer.evidence?.native?.bin ?? 'pinned-package-install',
-      argv:
-        producer.evidence?.native?.scenarios?.flatMap(
-          (s) => s.processes?.flatMap((p) => p.args) ?? [],
-        ) ?? [],
+      source: native.package
+        ? `${native.root}/install/node_modules/@openai/codex/bin/codex.js`
+        : 'pinned-package-install',
+      argv: native.argv ?? [],
     }
-    evidence.producer = producer.evidence
-    evidence.outcome =
-      producer.evidence?.classification === 'setup-unavailable'
-        ? 'setup-unavailable'
-        : 'incomplete-proof'
+    evidence.outcome = 'incomplete-proof'
+    evidence.scenarios[0].status = native.status === 'demonstrated' ? 'demonstrated' : 'not-run'
+    evidence.scenarios[0].evidence = native
   } catch (error) {
     evidence.error = String(error)
   } finally {
-    // Keep the uniquely-owned root and bounded evidence for inspection; only remove
-    // after verified drainage. This runner currently launches no child processes itself.
-    evidence.cleanup.processesDrained = true
+    // Preserve the owned root and evidence for inspection; do not claim cleanup unless verified.
+    evidence.cleanup.processesDrained = evidence.native?.drainage === true
     evidence.cleanup.ownedRootRemoved = false
     evidence.cleanup.verified = false
   }
