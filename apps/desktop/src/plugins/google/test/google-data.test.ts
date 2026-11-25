@@ -827,6 +827,7 @@ describe('forwarded attachments', () => {
         return ok({
           id: 'src-1',
           payload: {
+            mimeType: 'multipart/mixed',
             parts: Array.from({ length: attachmentCount }, (_, i) => ({
               filename: `f${i}.pdf`,
               mimeType: 'application/pdf',

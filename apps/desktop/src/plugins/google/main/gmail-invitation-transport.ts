@@ -373,9 +373,13 @@ export async function findSentCalendarReply(
   receipt: CalendarReplyReceipt | null,
   scan: CalendarScan,
   owners: MessageIdOwners,
-  assess: (message: CalendarMail) => Promise<'match' | 'related' | null>,
-): Promise<{ mail: CalendarMail | null; contestedTimestamp: number | null }> {
-  const unresolved = { mail: null, contestedTimestamp: null }
+  assess: (message: CalendarMail) => Promise<'match' | 'related' | 'unresolved' | null>,
+): Promise<{
+  mail: CalendarMail | null
+  contestedTimestamp: number | null
+  unresolvedReply: boolean
+}> {
+  const unresolved = { mail: null, contestedTimestamp: null, unresolvedReply: false }
   const messages = new Map<
     string,
     {
@@ -444,6 +448,8 @@ export async function findSentCalendarReply(
   }
   if (missing) return unresolved
   let contestedTimestamp = 0
+  let unordered = false
+  let unresolvedReply = false
   for (const claimed of messages.values()) {
     if (!claimed?.header.claims.has(rfcId)) continue
     const { message, header } = claimed
@@ -451,16 +457,17 @@ export async function findSentCalendarReply(
     if (!mail) continue
     const evidence = await assess(mail)
     if (!evidence) continue
+    if (evidence === 'unresolved') unresolvedReply = true
     if (owners.owns(mail)) {
-      if (evidence === 'match') return { mail, contestedTimestamp: 0 }
-      continue
+      if (evidence === 'match') return { mail, contestedTimestamp: 0, unresolvedReply: false }
+      if (evidence !== 'unresolved') continue
     }
-    // Ordered but contested evidence may set a floor for an independent newer
-    // answer. It can neither confirm the dispatch nor establish its parent.
-    if (!mail.timestamp) return unresolved
+    // Ordered but contested or unreadable evidence may set a floor for an
+    // independent newer answer. It neither confirms the write nor proves its parent.
+    if (!mail.timestamp) unordered = true
     contestedTimestamp = Math.max(contestedTimestamp, mail.timestamp)
   }
-  return { mail: null, contestedTimestamp }
+  return { mail: null, contestedTimestamp: unordered ? null : contestedTimestamp, unresolvedReply }
 }
 
 /** Send a calendar reply to only the organizer, in the thread being answered. */

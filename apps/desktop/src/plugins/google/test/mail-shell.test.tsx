@@ -627,6 +627,44 @@ test('shows Calendar acceptance and the Gmail verification warning from response
   expect(respondMock).toHaveBeenCalledTimes(1)
 })
 
+test('Retry shows the Calendar answer without settling a contested Gmail send', async () => {
+  searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValueOnce(invitations(invitation)).mockResolvedValue(
+    invitations({
+      ...invitation,
+      recordedResponseStatus: 'declined',
+      responseStatus: null,
+      sentResponseStatus: null,
+      canRespond: false,
+      responsePending: true,
+      unavailableReason: 'Gmail could not verify the latest sent response',
+    }),
+  )
+  respondMock.mockResolvedValueOnce({
+    outcome: 'uncertain',
+    channel: 'gmail',
+    answer: 'accepted',
+    invitation: null,
+    refreshPending: true,
+  })
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  await user.click(await region.findByRole('button', { name: 'Accept' }))
+  expect(await region.findByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('Calendar: Declined')).toBeVisible()
+  expect(region.getByText(/Gmail.*verify/i)).toBeVisible()
+  expect(region.getByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
+  expect(region.queryByText(/^Response:/)).not.toBeInTheDocument()
+  for (const name of ['Accept', 'Maybe', 'Decline']) {
+    expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
+  }
+  expect(region.getByRole('button', { name: 'Retry' })).toBeEnabled()
+  expect(respondMock).toHaveBeenCalledTimes(1)
+})
+
 test('keeps Google acceptance separate from a different response recorded after Retry', async () => {
   searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
   invitationMock.mockResolvedValueOnce(invitations(invitation))

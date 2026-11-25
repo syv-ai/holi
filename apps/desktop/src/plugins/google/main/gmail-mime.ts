@@ -25,8 +25,51 @@ export type MimeLocation = {
 
 export class CalendarScanError extends Error {}
 
+const MIME_TYPE = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+)[ \t]*\/[ \t]*([!#$%&'*+.^_`|~0-9A-Za-z-]+)$/
+
+// MIME permits comments between tokens. A comment is whitespace, never part
+// of a token or a quoted parameter. The walker bounds header size first.
+function mimeDeclaration(value: string) {
+  const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
+  if (/[\x00-\x08\x0a-\x1f\x7f]/.test(unfolded)) return null
+  let clean = ''
+  let comments = 0
+  let quoted = false
+  let escaped = false
+  for (const char of unfolded) {
+    if (escaped) {
+      if (!comments) clean += char
+      escaped = false
+    } else if (char === '\\' && (comments || quoted)) {
+      if (!comments) clean += char
+      escaped = true
+    } else if (!quoted && char === '(') {
+      if (comments++ === 0) clean += ' '
+    } else if (!quoted && char === ')') {
+      if (!comments) return null
+      comments--
+    } else if (!comments) {
+      if (char === '"') quoted = !quoted
+      clean += char
+    }
+  }
+  if (comments || quoted || escaped) return null
+  const type = MIME_TYPE.exec(clean.split(';', 1)[0]!.trim())
+  return (
+    type && {
+      mediaType: `${type[1]}/${type[2]}`.toLowerCase(),
+      parameters: parseHeaderParameters(clean)?.parameters ?? null,
+    }
+  )
+}
+
 function mediaType(value: string | undefined) {
-  return value?.split(';', 1)[0]!.trim().toLowerCase()
+  // A malformed declaration can still be a calendar *hint*, but cannot prove
+  // its method or authorize traversal. Keep simple malformed calendar leaves
+  // visible to the scan so they cannot silently disappear as evidence.
+  return value === undefined
+    ? undefined
+    : (mimeDeclaration(value)?.mediaType ?? value.split(';', 1)[0]!.trim().toLowerCase())
 }
 
 function declaresMediaType(part: RawPart, pattern: RegExp): boolean {
@@ -43,29 +86,32 @@ function declaresMediaType(part: RawPart, pattern: RegExp): boolean {
 
 function routingMediaType(part: RawPart): string | undefined {
   const headers = (part.headers ?? []).filter(({ name }) => name?.toLowerCase() === 'content-type')
-  const declarations = [part.mimeType, ...headers.map(({ value }) => value)]
-  const concrete = declarations
-    .map(mediaType)
-    .filter((type): type is string => type !== undefined && type !== 'application/octet-stream')
-  const container = concrete.find((type) => /^(multipart|message)\//.test(type))
-  // A generic Gmail wrapper may defer to the header. Two concrete types
-  // cannot disagree about how to traverse the MIME tree.
-  if (container) {
-    if (headers.length > 1 || concrete.some((type) => type !== container))
-      throw new CalendarScanError('Gmail returned conflicting MIME container declarations')
-    for (const value of declarations) {
-      if (value === undefined) continue
-      const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
-      const parsed = parseHeaderParameters(unfolded)
-      if (
-        /[\r\n\x00]/.test(unfolded) ||
-        !parsed ||
-        !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(parsed.main)
-      )
-        throw new CalendarScanError('Gmail returned an invalid MIME container declaration')
-    }
-  }
-  return container
+  const declarations = [
+    ...(part.mimeType === undefined ? [] : [part.mimeType]),
+    ...headers.map(({ value }) => value),
+  ].map((value) => ({
+    parsed: value === undefined ? null : mimeDeclaration(value),
+    bareType: value?.split(';', 1)[0]!.trim().toLowerCase(),
+  }))
+  const containerType = /^(multipart|message)\//
+  const container = declarations.find(({ parsed, bareType }) =>
+    containerType.test(parsed?.mediaType ?? bareType ?? ''),
+  )
+  // Only a verified container permits looking at children. A generic Gmail
+  // wrapper may defer to the header; concrete declarations must agree.
+  if (!container && !part.parts?.length) return undefined
+  const routing = container?.parsed?.mediaType
+  if (!routing || declarations.some(({ parsed }) => !parsed?.parameters))
+    throw new CalendarScanError('Gmail returned an invalid MIME container declaration')
+  if (
+    headers.length > 1 ||
+    declarations.some(
+      ({ parsed }) =>
+        parsed!.mediaType !== routing && parsed!.mediaType !== 'application/octet-stream',
+    )
+  )
+    throw new CalendarScanError('Gmail returned conflicting MIME container declarations')
+  return routing
 }
 
 export function isCalendarPart(part: RawPart): boolean {
@@ -75,7 +121,7 @@ export function isCalendarPart(part: RawPart): boolean {
   )
 }
 
-function isFullPart(part: RawPart): boolean {
+function isFullPart(part: RawPart, routing: string | undefined): boolean {
   if (
     typeof part.mimeType !== 'string' ||
     !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:;[^\r\n]*)?$/.test(part.mimeType)
@@ -97,7 +143,7 @@ function isFullPart(part: RawPart): boolean {
   // descriptor. Gmail may omit inline data for an empty body.
   return (
     Boolean(parts?.length) ||
-    (!declaresMediaType(part, /^multipart\//i) &&
+    (!routing?.startsWith('multipart/') &&
       body !== undefined &&
       (body.size === 0 || body.data !== undefined || body.attachmentId !== undefined))
   )
@@ -142,9 +188,9 @@ export function createMimeWalk(maxDepth = 16, format: 'partial' | 'full' = 'part
         string(header.value)
       }
       const routing = routingMediaType(part)
-      if (format === 'full' && !isFullPart(part))
+      if (format === 'full' && !isFullPart(part, routing))
         throw new CalendarScanError('Gmail returned an incomplete or invalid full MIME part')
-      const forwarded = routing === 'message/rfc822' || routing === 'message/global'
+      const forwarded = routing?.startsWith('message/') === true
       collect(part, location, forwarded)
       if (forwarded || !part.parts?.length) return
       bounded(part.parts.length <= nodes && depth < maxDepth)
@@ -173,11 +219,8 @@ export function calendarMimeMethod(part: RawPart): string | undefined | null {
   let method: string | undefined
   for (const value of [headers[0]?.value, part.mimeType]) {
     if (value === undefined) continue
-    const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
-    if (/[\r\n\x00]/.test(unfolded)) return null
-    const type = parseHeaderParameters(unfolded)
-    if (!type || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(type.main))
-      return null
+    const type = mimeDeclaration(value)
+    if (!type?.parameters) return null
     const hint = type.parameters.get('method')?.toUpperCase()
     if (hint !== undefined) {
       if (!/^[A-Z][A-Z0-9-]*$/.test(hint) || (method !== undefined && method !== hint)) return null

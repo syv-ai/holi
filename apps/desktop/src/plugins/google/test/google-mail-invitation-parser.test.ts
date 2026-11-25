@@ -549,7 +549,7 @@ it('distinguishes omitted overlap fields from explicit values even when the disp
     details: { title: 'Meeting invitation', end: '2026-07-21', recurring: false },
     request: { recurrenceKind: null, recurrence: [] },
   })
-  expect(implicit.request?.explicitFields).toEqual({
+  expect(implicit.revisionMaterial?.explicitFields).toEqual({
     title: false,
     start: true,
     end: false,
@@ -583,7 +583,7 @@ it('distinguishes omitted overlap fields from explicit values even when the disp
     },
     request: { recurrenceKind: null, recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] },
   })
-  expect(explicit.request?.explicitFields).toEqual({
+  expect(explicit.revisionMaterial?.explicitFields).toEqual({
     title: true,
     start: true,
     end: true,
@@ -597,7 +597,7 @@ it('distinguishes omitted overlap fields from explicit values even when the disp
     source.replace('END:VEVENT', 'DTEND;VALUE=DATE:20260721\r\nEND:VEVENT'),
     'REQUEST',
   )!
-  expect(withDtend.request?.explicitFields.end).toBe(true)
+  expect(withDtend.revisionMaterial?.explicitFields.end).toBe(true)
   expect(withDtend.details.end).toBe(implicit.details.end)
   expect(withDtend.details.identity.materialKey).not.toBe(implicit.details.identity.materialKey)
 })
@@ -964,7 +964,7 @@ it('does not treat malformed revision fields as valid or corroborating evidence'
       parseMailInvitation('part', calendar().replace(before, after), 'REQUEST')?.request,
     ).toBeNull()
     const sent = calendar(undefined, { method: 'REPLY' }).replace(before, after)
-    expect(invitationReplyStatus(sent, identity, organizer, attendee)).toBeNull()
+    expect(invitationReplyStatus(sent, identity, organizer, attendee)).toBe('unresolved')
   }
 })
 
@@ -1032,7 +1032,7 @@ it('selects a recognized video conference over dial-in regardless of property or
         conferenceLinkSource: 'provider',
         identity: { materialKey: expect.any(String) },
       },
-      request: { explicitFields: { conferenceUrl: true } },
+      revisionMaterial: { explicitFields: { conferenceUrl: true } },
     })
   }
   expect(invites[0]!.details.identity.materialKey).toBe(invites[1]!.details.identity.materialKey)

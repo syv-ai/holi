@@ -833,6 +833,43 @@ test('shows Calendar acceptance and the Gmail verification warning from response
   expect(respondMock).toHaveBeenCalledTimes(1)
 })
 
+test('Retry shows the Calendar answer without settling a contested Gmail send', async () => {
+  withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
+  invitationMock.mockResolvedValueOnce(invitations(invite)).mockResolvedValue(
+    invitations({
+      ...invite,
+      recordedResponseStatus: 'declined',
+      responseStatus: null,
+      sentResponseStatus: null,
+      canRespond: false,
+      responsePending: true,
+      unavailableReason: 'Gmail could not verify the latest sent response',
+    }),
+  )
+  respondMock.mockResolvedValueOnce({
+    outcome: 'uncertain',
+    channel: 'gmail',
+    answer: 'accepted',
+    invitation: null,
+    refreshPending: true,
+  })
+  const user = userEvent.setup()
+  await openThread()
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  await user.click(await region.findByRole('button', { name: 'Accept' }))
+  expect(await region.findByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('Calendar: Declined')).toBeVisible()
+  expect(region.getByText(/Gmail.*verify/i)).toBeVisible()
+  expect(region.getByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
+  expect(region.queryByText(/^Response:/)).not.toBeInTheDocument()
+  for (const name of ['Accept', 'Maybe', 'Decline']) {
+    expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
+  }
+  expect(region.getByRole('button', { name: 'Retry' })).toBeEnabled()
+  expect(respondMock).toHaveBeenCalledTimes(1)
+})
+
 test('ordinary mail opens without an invitation or meeting lookup', async () => {
   withMessage({ body: 'lunch?', html: null })
   threadMock.mockResolvedValue(page([summary({ hasInvite: false })]))

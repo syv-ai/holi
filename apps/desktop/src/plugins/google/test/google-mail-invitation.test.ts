@@ -1024,6 +1024,38 @@ it.each([
   },
 )
 
+it('requires updated material even when the same-sequence predecessor could not be answered', async () => {
+  const { state, read, respond } = await rig()
+  const prior = invite('REQUEST', 'COMMENT:Date to follow').replace(
+    'DESCRIPTION:https://meet.google.com/abc-defg-hij',
+    'DESCRIPTION:Old agenda',
+  )
+  state.messages = [gmailMessage('prior', 200, prior)]
+  const copy = event()
+  state.events.set('primary', [copy])
+  expect(await read()).toMatchObject({ canRespond: false })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  const latest = invite('REQUEST', '', 3, '20240702T090000Z')
+    .replace('Upstairs', 'Downstairs')
+    .replace('https://meet.google.com/abc-defg-hij', 'Bring the plans')
+  state.messages.push(gmailMessage('latest', 300, latest))
+  // Neither an omitted location nor omitted prose proves the revision, even
+  // if Calendar confirms the other changed field.
+  for (const fields of [{ location: 'Downstairs' }, { description: 'Bring the plans' }]) {
+    state.events.set('primary', [{ ...copy, ...fields }])
+    expect(await read()).toMatchObject({ identity: { messageId: 'latest' }, canRespond: false })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  }
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.events.set('primary', [{ ...copy, location: 'Downstairs', description: 'Bring the plans' }])
+  expect(await read()).toMatchObject({ canRespond: true })
+  expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
+  expect(state.calendarUpdateRequests).toHaveLength(1)
+  expect(state.sendAttempts).toBe(0)
+})
+
 it('accepts structured conference proof when a bare join URL distinguishes same-sequence mail', async () => {
   const { state, read, respond } = await rig()
   const latest = invite('REQUEST', '', 3, '20240702T090000Z')
@@ -2194,6 +2226,103 @@ it.each(['ok', 'empty'] as const)(
   },
 )
 
+it.each([
+  ['missing strict identity', 'UID:', 'UID;VALUE="TEXT",URI:', 500],
+  ['contradictory PARTSTAT', 'PARTSTAT=DECLINED:', 'PARTSTAT=ACCEPTED;PARTSTAT=DECLINED:', 700],
+] as const)(
+  'keeps a write reserved and blocks each candidate scope of a known Sent parent with %s',
+  async (_defect, before, after, timestamp) => {
+    const { state, read, respond, restart } = await rig()
+    const parent = '<update@example.net>'
+    const other = invite().replace('folded-uid', 'other-event')
+    state.messages[0]!.payload.parts.push(gmailMessage('part', 200, other).payload.parts[1]!)
+    state.messages.push(acceptedReply(parent))
+    state.replyThread = 'separate-sent-thread'
+    state.sentVisible = false
+    state.sentInternalDate = 500
+    expect(await read()).toMatchObject({ responseStatus: 'accepted', canRespond: true })
+    expect(await respond('tentative')).toMatchObject({ outcome: 'sent', refreshPending: true })
+
+    const decline = invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')
+    state.messages.push(
+      gmailMessage('unreadable', timestamp, decline.replace(before, after), {
+        sent: true,
+        parent,
+        method: 'REPLY',
+      }),
+      gmailMessage('ordinary-sent', 1000, undefined, { sent: true, parent }),
+    )
+    state.sentVisible = true
+    const reopened = restart()
+    const blocked = {
+      recordedResponseStatus: null,
+      responseStatus: null,
+      sentResponseStatus: null,
+      canRespond: false,
+      unavailableReason: expect.stringMatching(/Gmail.*verify/i),
+    }
+    expect((await reopened.list()).invitations).toMatchObject([
+      { ...blocked, identity: { uid }, responsePending: true },
+      { ...blocked, identity: { uid: uid.replace('folded-uid', 'other-event') } },
+    ])
+    expect(await reopened.read()).toMatchObject({ ...blocked, responsePending: true })
+    await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    const independent = gmailMessage('independent', 900, decline, { sent: true, parent })
+    state.messages.push(
+      independent,
+      gmailMessage('competing-id', 910, undefined, { rfcId: '<independent@example.net>' }),
+    )
+    expect(await reopened.read()).toMatchObject({ ...blocked, responsePending: true })
+    state.messages.pop()
+    expect(await reopened.read()).toMatchObject({
+      responseStatus: 'declined',
+      sentResponseStatus: 'declined',
+      responsePending: false,
+      canRespond: true,
+    })
+    expect(await reopened.respond('declined')).toMatchObject({ outcome: 'unchanged' })
+    expect(
+      (await reopened.list()).invitations.find((card) => card.identity.uid !== uid),
+    ).toMatchObject(blocked)
+    expect(state.sendAttempts).toBe(1)
+    expect(state.calendarPatchAttempts).toBe(0)
+  },
+)
+
+it('reports the Calendar answer and the Gmail verification reason for a contested dispatch', async () => {
+  const { state, read, respond, restart } = await rig()
+  state.replyThread = 'separate-sent-thread'
+  state.sendReplyMode = 'response-lost'
+  await read()
+  expect(await respond('accepted')).toMatchObject({ outcome: 'uncertain', channel: 'gmail' })
+  const rfcId = state.sent
+    .get('reply-1')!
+    .payload.headers.find(({ name }) => name === 'Message-ID')!.value
+  const duplicate = gmailMessage('plain-claimant', 600, undefined, {
+    sent: true,
+    rfcId,
+    threadId: 'another-thread',
+  })
+  state.sent.set(duplicate.id, duplicate)
+  const copy = { ...event(), etag: 'W/"read-only"' }
+  state.events.set('primary', [copy])
+  const reopened = restart()
+  const unsettled = {
+    recordedResponseStatus: 'declined',
+    responseStatus: null,
+    sentResponseStatus: null,
+    responsePending: true,
+    canRespond: false,
+    unavailableReason: expect.stringMatching(/Gmail.*verify/i),
+  }
+  expect(await reopened.read()).toMatchObject(unsettled)
+  await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(await reopened.read()).toMatchObject(unsettled)
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
 it('keeps a confirmed dispatch unresolved after a parent collision until independent newer Sent proof', async () => {
   const { state, read, respond, restart } = await rig()
   state.replyThread = 'separate-thread'
@@ -2345,7 +2474,7 @@ it.each([
     newer.payload.headers.find((header) => header.name === name)!.value = value
   }
   state.messages.push(newer)
-  if (defect.includes('duplicate') && defect.includes('VALUE')) {
+  if (calendarDefect) {
     expect(await read()).toMatchObject({
       responseStatus: null,
       sentResponseStatus: null,
@@ -2616,17 +2745,48 @@ it('uses the same MIME discovery for thread hints and bounded invitation reads',
   const filenameLess = gmailMessage('header-only', 200, invite(), { method: 'REQUEST' })
   filenameLess.payload.parts[1]!.mimeType = 'application/octet-stream'
   const forward = gmailMessage('forward', 300)
+  const quoted = gmailMessage('quoted', 300, invite('REQUEST', '', 4)).payload
+  quoted.parts.push(
+    gmailMessage('cancelled', 300, invite('CANCEL', 'STATUS:CANCELLED', 4)).payload.parts[1]!,
+  )
   const wrapped = {
     mimeType: 'application/octet-stream',
     filename: '',
     body: { size: 0, data: '' },
-    headers: [{ name: 'Content-Type', value: 'message/rfc822' }],
-    parts: [gmailMessage('quoted', 300, invite('CANCEL', 'STATUS:CANCELLED', 4)).payload],
+    headers: [
+      {
+        name: 'Content-Type',
+        value: String.raw`(forwarded (with \) escape)) message/rfc822; name="Meeting (forwarded).eml"`,
+      },
+    ],
+    parts: [quoted],
   }
   forward.payload.parts.push(wrapped)
   state.messages = [filenameLess, forward]
   expect(await hints()).toEqual([true, false])
-  expect((await list()).invitations).toEqual([expect.objectContaining({ canRespond: true })])
+  expect((await list()).invitations).toEqual([
+    expect.objectContaining({
+      canRespond: true,
+      identity: expect.objectContaining({ messageId: 'header-only' }),
+    }),
+  ])
+
+  const header = wrapped.headers[0]!
+  const declared = header.value
+  for (const contentType of ['(unclosed message/rfc822', 'application/octet-stream']) {
+    header.value = contentType
+    expect(await list()).toMatchObject({
+      invitations: [],
+      recoveryReason: expect.stringMatching(/MIME/),
+    })
+  }
+  header.value = declared
+  wrapped.mimeType = 'multipart/mixed'
+  expect(await list()).toMatchObject({
+    invitations: [],
+    recoveryReason: expect.stringMatching(/conflicting MIME/),
+  })
+  wrapped.mimeType = 'application/octet-stream'
 
   const calendarPart = filenameLess.payload.parts[1]!
   calendarPart.headers!.push({ name: 'Content-Type', value: 'text/calendar; method=REPLY' })
