@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { authorizeWithGitHub, createCancellation, type DeviceAuthHttp } from '../app/device-auth'
 
 const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
@@ -94,6 +94,78 @@ describe('authorizeWithGitHub', () => {
     })
     await expect(session.wait()).rejects.toThrow('expired')
     expect(requests).toBe(1)
+  })
+
+  it.each(['success', 'HTTP failure'])(
+    'rejects another wait after %s and cancellation',
+    async (outcome) => {
+      const cancellation = createCancellation()
+      let polls = 0
+      const session = await authorizeWithGitHub({
+        clientId: 'public-id',
+        signal: cancellation.signal,
+        wait: async () => {},
+        fetch: async (_url, init) => {
+          if (!init.body.includes('device_code=')) return response(device)
+          polls++
+          if (outcome === 'HTTP failure' && polls === 1)
+            return { ok: false, status: 503, json: async () => ({}) }
+          return response({ access_token: 'secret-token' })
+        },
+      })
+      if (outcome === 'success') await expect(session.wait()).resolves.toBe('secret-token')
+      else await expect(session.wait()).rejects.toThrow()
+      await expect(session.wait()).rejects.toThrow()
+      cancellation.abort()
+      await expect(session.wait()).rejects.toThrow()
+      expect(polls).toBe(1)
+    },
+  )
+
+  it('rejects a concurrent wait without releasing cancellation of the original wait', async () => {
+    const cancellation = createCancellation()
+    let release!: () => void
+    const waiting = new Promise<void>((resolve) => (release = resolve))
+    let polls = 0
+    const session = await authorizeWithGitHub({
+      clientId: 'public-id',
+      signal: cancellation.signal,
+      wait: async () => waiting,
+      fetch: async (_url, init) => {
+        if (!init.body.includes('device_code=')) return response(device)
+        polls++
+        return response({ access_token: 'late-token' })
+      },
+    })
+    const first = session.wait()
+    await expect(session.wait()).rejects.toThrow()
+    cancellation.abort()
+    release()
+    await expect(first).rejects.toThrow('cancelled')
+    expect(polls).toBe(0)
+  })
+
+  it('interrupts the default wait immediately on cancellation without polling', async () => {
+    vi.useFakeTimers()
+    try {
+      const cancellation = createCancellation()
+      let polls = 0
+      const session = await authorizeWithGitHub({
+        clientId: 'public-id',
+        signal: cancellation.signal,
+        fetch: async (_url, init) => {
+          if (!init.body.includes('device_code=')) return response(device)
+          polls++
+          return response({ access_token: 'late-token' })
+        },
+      })
+      const cancelled = expect(session.wait()).rejects.toThrow('cancelled')
+      cancellation.abort()
+      await cancelled
+      expect(polls).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('cancels during the wait before polling', async () => {
