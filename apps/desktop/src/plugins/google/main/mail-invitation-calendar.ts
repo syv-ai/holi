@@ -38,7 +38,13 @@ type InvitationCalendarCopy = {
   cancelled: boolean
   unavailableReason: string | null
   reply: ((answer: InviteAnswer, gate: GoogleDispatchGate) => Promise<void>) | null
+  upcomingLinks: (() => Promise<InvitationLinks | null>) | null
 }
+
+type InvitationLinks = Pick<
+  InvitationCalendarCopy,
+  'conferenceUrl' | 'conferenceLinkSource' | 'htmlLink'
+>
 
 type CalendarLookup =
   | InvitationCalendarCopy
@@ -56,33 +62,40 @@ type InvitationTarget = RevisionMaterial & {
   predecessors: RevisionMaterial[]
 }
 
+const CALENDAR_PAGE_LIMIT = 10
+
+type CollectionKind = 'calendar#events' | 'calendar#calendarList'
+type CollectionPage<T> = { items?: T[]; nextPageToken?: string }
+
+function invitationPageItems<T>(page: CollectionPage<T>, kind: CollectionKind): T[] {
+  if (
+    !page ||
+    typeof page !== 'object' ||
+    Array.isArray(page) ||
+    !('kind' in page) ||
+    page.kind !== kind ||
+    (page.items !== undefined &&
+      (!Array.isArray(page.items) ||
+        page.items.some((item) => !item || typeof item !== 'object' || Array.isArray(item)))) ||
+    (page.nextPageToken !== undefined &&
+      (typeof page.nextPageToken !== 'string' ||
+        !/^[^\s\p{Cc}]{1,4096}$/u.test(page.nextPageToken)))
+  )
+    throw new Error('Invalid Calendar collection')
+  return page.items ?? []
+}
+
 async function invitationPages<T>(
   api: GoogleApi,
   url: string,
-  kind: 'calendar#events' | 'calendar#calendarList',
+  kind: CollectionKind,
   params: GoogleParams,
 ): Promise<T[]> {
   return api.getAll<T>(
     url,
     params,
-    (page) => {
-      if (
-        !page ||
-        typeof page !== 'object' ||
-        Array.isArray(page) ||
-        !('kind' in page) ||
-        page.kind !== kind ||
-        (page.items !== undefined &&
-          (!Array.isArray(page.items) ||
-            page.items.some((item) => !item || typeof item !== 'object' || Array.isArray(item)))) ||
-        (page.nextPageToken !== undefined &&
-          (typeof page.nextPageToken !== 'string' ||
-            !/^[^\s\p{Cc}]{1,4096}$/u.test(page.nextPageToken)))
-      )
-        throw new Error('Invalid Calendar collection')
-      return page.items ?? []
-    },
-    10,
+    (page) => invitationPageItems(page, kind),
+    CALENDAR_PAGE_LIMIT,
     true,
   )
 }
@@ -232,7 +245,7 @@ function usableInvitationEvent(event: RawEvent): boolean {
   return (
     (event.kind === undefined || event.kind === 'calendar#event') &&
     typeof event.id === 'string' &&
-    /^[A-Za-z0-9_-]+$/.test(event.id) &&
+    /^[A-Za-z0-9_-]{1,1024}$/.test(event.id) &&
     (event.status === undefined ||
       ['confirmed', 'tentative', 'cancelled'].includes(event.status)) &&
     (event.sequence === undefined ||
@@ -350,8 +363,7 @@ async function lookupInvitationCalendarCopy(
   for (const calendar of calendars) {
     if (
       (calendar.kind !== undefined && calendar.kind !== 'calendar#calendarListEntry') ||
-      typeof calendar.id !== 'string' ||
-      !/^[^\s\p{Cc}/?#]+$/u.test(calendar.id) ||
+      !safeCalendarId(calendar.id) ||
       seen.has(calendar.id) ||
       (calendar.primary !== undefined && typeof calendar.primary !== 'boolean') ||
       (calendar.deleted !== undefined && typeof calendar.deleted !== 'boolean') ||
@@ -430,7 +442,7 @@ function invitationCopy(
       (recurrenceId !== null && !event.recurringEventId))
   )
     return { kind: 'blocked', reason: 'This Calendar event was cancelled', cancelled: true }
-  if (organizer !== details.organizer?.email)
+  if (!organizer || organizer !== details.organizer?.email)
     return blocked('The Calendar organizer does not match this invitation')
   const organizes =
     event.organizer?.self === true && (organizer === mailbox || organizer === ownedCalendar)
@@ -494,7 +506,11 @@ function invitationCopy(
       htmlLink &&
       calendarPageInMail !== htmlLink) ||
     (!cancelled &&
-      ((requiresRoster && calendarRoster(event) !== expectedRoster) ||
+      ((!joinOnly &&
+        (material.status === 'CONFIRMED' || material.status === 'TENTATIVE') &&
+        event.status !== undefined &&
+        event.status.toUpperCase() !== material.status) ||
+        (requiresRoster && calendarRoster(event) !== expectedRoster) ||
         !provesChangedMaterial(invitation, event, calendarConference, htmlLink)))
   )
     return blocked('The Calendar details do not match this revision of the invitation')
@@ -517,7 +533,7 @@ function invitationCopy(
   const proof = calendarProof(event, requiresRoster)
   return {
     kind: 'verified',
-    target: JSON.stringify([url, attendee?.email?.toLowerCase() ?? organizer]),
+    target: JSON.stringify([url, mailbox]),
     etag,
     proof,
     matchesProof: (stored) => stored === proof || matchesCalendarProof(event, stored),
@@ -533,6 +549,10 @@ function invitationCopy(
     responseStatus,
     cancelled,
     unavailableReason: reason,
+    upcomingLinks:
+      recurrenceId === null && details.recurring && !cancelled
+        ? () => upcomingInvitationLinks(api, base, event, details.identity.uid, organizer)
+        : null,
     reply:
       !joinOnly && reason === null && etag
         ? (answer, gate) =>
@@ -543,6 +563,66 @@ function invitationCopy(
             )
         : null,
   }
+}
+
+/** Only Join uses the ordered, expanded view. Its instances never provide
+ * RSVP material, a write validator, or proof of absence for the master. */
+async function upcomingInvitationLinks(
+  api: GoogleApi,
+  base: string,
+  master: RawEvent,
+  uid: string,
+  organizer: string,
+): Promise<InvitationLinks | null> {
+  const now = Date.now()
+  const timeMin = new Date(now).toISOString()
+  let pageToken: string | undefined
+  const seen = new Set<string>()
+  try {
+    for (let pageNumber = 0; pageNumber < CALENDAR_PAGE_LIMIT; pageNumber++) {
+      const page = await api.get<CollectionPage<RawEvent>>(base, {
+        iCalUID: uid,
+        singleEvents: 'true',
+        orderBy: 'startTime',
+        timeMin,
+        showDeleted: 'false',
+        maxResults: '1',
+        pageToken,
+      })
+      const items = invitationPageItems(page, 'calendar#events')
+      if (items.length > 1) return null
+      const instance = items[0]
+      if (instance) {
+        if (
+          !usableInvitationEvent(instance) ||
+          instance.id === master.id ||
+          instance.iCalUID !== uid ||
+          instance.recurringEventId !== master.id ||
+          instance.organizer?.email?.toLowerCase() !== organizer ||
+          instance.status === 'cancelled' ||
+          !coherentEventTimes(instance) ||
+          (instance.start?.date !== undefined) !== (master.start?.date !== undefined) ||
+          // timeMin applies to the exclusive end. For DATEs Google applies its
+          // calendar timezone; converting those dates ourselves would guess it.
+          (instance.end?.dateTime !== undefined && instant(instance.end.dateTime) <= now)
+        )
+          return null
+        const { url, source } = mailConference(instance)
+        return {
+          conferenceUrl: url,
+          conferenceLinkSource: source,
+          htmlLink: googleEventUrl(instance.htmlLink),
+        }
+      }
+      pageToken = page.nextPageToken
+      if (pageToken === undefined || seen.has(pageToken)) return null
+      seen.add(pageToken)
+    }
+  } catch {
+    // An unavailable optional link neither invalidates the verified master
+    // nor changes how the invitation may be answered.
+  }
+  return null
 }
 
 const words = (value: string | null | undefined) =>
@@ -805,22 +885,48 @@ function calendarProof(
     .digest('hex')
 }
 
-function calendarTargetUrl(target: string, mailbox: string): string | null {
-  let binding: unknown
+function safeCalendarId(id: unknown): id is string {
+  return (
+    typeof id === 'string' && id !== '.' && id !== '..' && /^[^\s\p{Cc}/\\?#%]{1,1024}$/u.test(id)
+  )
+}
+
+function calendarTargetParts(target: string): [string, string] | null {
   try {
-    binding = JSON.parse(target)
+    const binding: unknown = JSON.parse(target)
+    if (
+      Array.isArray(binding) &&
+      binding.length === 2 &&
+      typeof binding[0] === 'string' &&
+      typeof binding[1] === 'string'
+    )
+      return [binding[0], binding[1]]
+  } catch {
+    // Not a locator. No request may be made with this value.
+  }
+  return null
+}
+
+export function calendarTargetMailbox(target: string): string | null {
+  return calendarTargetParts(target)?.[1] ?? null
+}
+
+function calendarTargetUrl(target: string, mailbox: string): string | null {
+  const binding = calendarTargetParts(target)
+  if (!binding || binding[1] !== mailbox) return null
+  const [url] = binding
+  const match =
+    /^(https:\/\/www\.googleapis\.com\/calendar\/v3\/calendars\/([^/?#]+)\/events\/[\w-]+)\?sendUpdates=all$/.exec(
+      url,
+    )
+  if (!match || match[0] !== url) return null
+  try {
+    const segment = match[2]!
+    const id = decodeURIComponent(segment)
+    return safeCalendarId(id) && encodeURIComponent(id) === segment ? match[1]! : null
   } catch {
     return null
   }
-  if (!Array.isArray(binding) || binding.length !== 2) return null
-  const [url, attendee] = binding as unknown[]
-  return typeof url === 'string' &&
-    attendee === mailbox &&
-    /^https:\/\/www\.googleapis\.com\/calendar\/v3\/calendars\/[^/?#]+\/events\/[\w-]+\?sendUpdates=all$/.test(
-      url,
-    )
-    ? url.split('?')[0]!
-    : null
 }
 
 export function calendarTargetIsMailbox(target: string, mailbox: string): boolean {

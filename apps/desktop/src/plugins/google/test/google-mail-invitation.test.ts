@@ -135,6 +135,7 @@ function event(
     summary: 'Design sync',
     location: options.location,
     description: options.description,
+    hangoutLink: undefined as string | undefined,
     status: 'confirmed' as string | undefined,
     organizer: { email: organizer, self: false },
     start: options.allDay
@@ -201,6 +202,8 @@ async function rig() {
     originalGets: [] as string[],
     patchMode: 'ok' as 'ok' | 'not-found' | 'response-lost',
     primaryPages: null as unknown[] | null,
+    expandedEmptyFirstPage: false,
+    exactCalendarError: null as number | null,
     omitAfterPatch: false,
     afterPatch: () => {},
     calendarReadback: null as ReturnType<typeof event> | null,
@@ -218,6 +221,7 @@ async function rig() {
     receiptError: null as number | null,
     receiptMissOnce: false,
     sentSearchError: null as number | null,
+    sentSearchBody: undefined as unknown,
     replyThread: 'thread',
     replaceOnQuery: false,
     sendReplyMode: 'ok' as 'ok' | 'refused' | 'empty' | 'response-lost',
@@ -258,6 +262,7 @@ async function rig() {
     }
     if (url.pathname.endsWith('/messages') && url.searchParams.get('labelIds') === 'SENT') {
       if (state.sentSearchError) return json({}, state.sentSearchError)
+      if (state.sentSearchBody !== undefined) return json(state.sentSearchBody)
       const query = url.searchParams.get('q')
       const matching =
         state.sentVisible && state.sentIndexed
@@ -269,7 +274,9 @@ async function rig() {
               ),
             )
           : []
-      return json({ messages: matching.map(({ id, threadId }) => ({ id, threadId })) })
+      return json(
+        matching.length ? { messages: matching.map(({ id, threadId }) => ({ id, threadId })) } : {},
+      )
     }
     const messagePath = /\/messages\/([^/]+)$/.exec(url.pathname)
     if (messagePath && url.searchParams.get('format') === 'full') {
@@ -373,6 +380,7 @@ async function rig() {
       }
       if (calendar[2]) {
         state.originalGets.push(calendar[2])
+        if (state.exactCalendarError) return json({}, state.exactCalendarError)
         const original = [...events, ...(state.instances.get(id) ?? [])].find(
           (event) => event.id === calendar[2],
         )
@@ -380,6 +388,30 @@ async function rig() {
       }
       const queryUid = url.searchParams.get('iCalUID')
       if (queryUid !== null) state.calendarUidQueries.push(queryUid)
+      if (url.searchParams.get('singleEvents') === 'true') {
+        if (state.expandedEmptyFirstPage && !url.searchParams.has('pageToken'))
+          return json({ kind: 'calendar#events', nextPageToken: '0' })
+        const threshold = Date.parse(url.searchParams.get('timeMin') ?? '')
+        const limit = Number(url.searchParams.get('maxResults') ?? '250')
+        const offset = Number(url.searchParams.get('pageToken') ?? '0')
+        const upcoming = (state.instances.get(id) ?? [])
+          .filter(
+            (event) =>
+              event.iCalUID === queryUid &&
+              event.status !== 'cancelled' &&
+              Date.parse(event.end.date ?? event.end.dateTime ?? '') > threshold,
+          )
+          .sort(
+            (a, b) =>
+              Date.parse(a.start.date ?? a.start.dateTime ?? '') -
+              Date.parse(b.start.date ?? b.start.dateTime ?? ''),
+          )
+        return json({
+          kind: 'calendar#events',
+          items: upcoming.slice(offset, offset + limit),
+          nextPageToken: offset + limit < upcoming.length ? String(offset + limit) : undefined,
+        })
+      }
       if (id === 'primary' && state.primaryPages) {
         const page = Number(url.searchParams.get('pageToken') ?? 0)
         return json(state.primaryPages[page] ?? {}, page < state.primaryPages.length ? 200 : 404)
@@ -486,7 +518,9 @@ async function rig() {
           params,
         )
       ).value
-    type Read = Awaited<ReturnType<ReturnType<typeof createMailInvitationSession>['read']>>
+    type Session = ReturnType<typeof createMailInvitationSession>
+    type Read = Awaited<ReturnType<Session['read']>>
+    type Respond = Awaited<ReturnType<Session['respond']>>
     let current: Read['invitations'][number] | null = null
     const list = async (params = thread) => (await call('mailInvitation', params)) as Read
     return {
@@ -498,13 +532,17 @@ async function rig() {
           (scope ? invitations.find((card) => card.scope === scope) : invitations[0]) ?? null
         return current
       },
-      respond: (answer: string, override?: Record<string, unknown>) =>
-        call('respondToMailInvitation', {
+      async respond(answer: string, override?: Record<string, unknown>) {
+        const result = (await call('respondToMailInvitation', {
           ...thread,
           identity: { ...current?.identity, ...override },
           expectedBindingRevision: current?.bindingRevision,
+          expectedResponseTargetKey: current?.responseTargetKey ?? null,
           answer,
-        }),
+        })) as Respond
+        if (result.invitation) current = result.invitation
+        return result
+      },
     }
   }
   return { userData, state, accounts, restart: service, ...service() }
@@ -986,6 +1024,43 @@ it.each(['ok', 'empty', 'response-lost'] as const)(
   },
 )
 
+it.each(['thread', 'separate-thread'])(
+  'keeps a Gmail RSVP in %s pending until the account-wide Sent search has a valid envelope',
+  async (replyThread) => {
+    const { state, read, respond, restart } = await rig()
+    state.replyThread = replyThread
+    state.sendReplyMode = replyThread === 'thread' ? 'empty' : 'ok'
+    await read()
+    state.sentSearchBody = []
+    expect(await respond('accepted')).toMatchObject({ outcome: 'sent', refreshPending: true })
+    const reopened = restart()
+    for (const invalid of [
+      [],
+      'unexpected',
+      { messages: [{ id: '../outside' }] },
+      { nextPageToken: 1 },
+      { nextPageToken: 'more' },
+    ]) {
+      state.sentSearchBody = invalid
+      expect(await reopened.read()).toMatchObject({
+        responseStatus: null,
+        sentResponseStatus: null,
+        responsePending: true,
+        canRespond: false,
+      })
+      await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    }
+    state.sentSearchBody = undefined
+    expect(await reopened.read()).toMatchObject({
+      responseStatus: 'accepted',
+      responsePending: false,
+    })
+    expect(await reopened.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
+    expect(state.sendAttempts).toBe(1)
+    expect(state.calendarPatchAttempts).toBe(0)
+  },
+)
+
 it('fails closed on a damaged invitation response journal', async () => {
   const { userData, state, read, respond } = await rig()
   await read()
@@ -1097,6 +1172,35 @@ it('requires Calendar to distinguish a same-sequence change to the event status'
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 
   state.events.set('primary', [{ ...copy, status: 'confirmed' }])
+  expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
+  expect(state.calendarUpdateRequests).toHaveLength(1)
+  expect(state.sendAttempts).toBe(0)
+})
+
+it('blocks a contradictory explicit Calendar status even without the predecessor mail', async () => {
+  const { state, read, respond } = await rig()
+  state.messages = [
+    gmailMessage(
+      'latest',
+      300,
+      invite('REQUEST', '', 3, '20240702T090000Z').replace(
+        'END:VEVENT',
+        'STATUS:CONFIRMED\r\nEND:VEVENT',
+      ),
+    ),
+  ]
+  const copy = { ...event(), status: 'tentative' }
+  state.events.set('primary', [copy])
+  expect(await read()).toMatchObject({
+    identity: { messageId: 'latest' },
+    canRespond: false,
+    recordedResponseStatus: null,
+  })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  copy.status = 'confirmed'
+  expect(await read()).toMatchObject({ canRespond: true, recordedResponseStatus: 'declined' })
   expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
   expect(state.calendarUpdateRequests).toHaveLength(1)
   expect(state.sendAttempts).toBe(0)
@@ -1230,6 +1334,97 @@ it('prefers a corroborated Sent answer but honors REQUEST PARTSTAT and an explic
   expect(await read()).toMatchObject({ responseStatus: 'accepted' })
 })
 
+function upcomingInstance(id: string, day: string, link: string) {
+  return {
+    ...event({ id, occurrence: true }),
+    start: { dateTime: `${day}T15:00:00Z` },
+    end: { dateTime: `${day}T16:00:00Z` },
+    originalStartTime: { dateTime: `${day}T15:00:00Z` },
+    hangoutLink: link,
+    htmlLink: `https://calendar.google.com/calendar/event?eid=${id}`,
+  }
+}
+
+it('joins the next verified series occurrence but answers only the master', async () => {
+  const { state, read, respond } = await rig()
+  state.messages[0] = gmailMessage(
+    'update',
+    200,
+    invite().replace('END:VEVENT', 'RRULE:FREQ=WEEKLY\r\nEND:VEVENT'),
+  )
+  const master = {
+    ...event({ id: 'series', series: true }),
+    hangoutLink: 'https://meet.google.com/abc-defg-hij',
+  }
+  const next = upcomingInstance('next', '2099-07-09', 'https://meet.google.com/xyz-abcd-efg')
+  const later = upcomingInstance('later', '2099-07-16', 'https://meet.google.com/klm-nopq-rst')
+  state.events.set('primary', [master])
+  state.instances.set('primary', [later, event({ id: 'past', occurrence: true }), next])
+  state.expandedEmptyFirstPage = true
+  expect(await read()).toMatchObject({
+    scope: 'series',
+    conferenceUrl: next.hangoutLink,
+    htmlLink: next.htmlLink,
+    canRespond: true,
+  })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.instances.set('primary', [later])
+  expect(await respond('accepted')).toMatchObject({
+    channel: 'calendar',
+    refreshPending: false,
+    invitation: { conferenceUrl: later.hangoutLink, htmlLink: later.htmlLink },
+  })
+  expect(state.calendarUpdateRequests.map(({ eventId }) => eventId)).toEqual([master.id])
+  expect(later.attendees[0]?.responseStatus).toBe('declined')
+  expect(state.sendAttempts).toBe(0)
+})
+
+it('uses only verified upcoming links for a series export by the organizer', async () => {
+  const { state, read, respond } = await rig()
+  const source = invite()
+    .replace('METHOD:REQUEST\r\n', '')
+    .replace(organizer, person)
+    .replace('END:VEVENT', 'RRULE:FREQ=WEEKLY\r\nEND:VEVENT')
+  state.messages = [gmailMessage('export', 200, source, { sent: true })]
+  const master = {
+    ...event({ id: 'series', series: true }),
+    organizer: { email: person, self: true },
+    attendees: [],
+  }
+  state.events.set('primary', [master])
+  const next = upcomingInstance(
+    'next',
+    '2099-07-09',
+    'https://teams.microsoft.com/l/meetup-join/19%3aX/0',
+  )
+  state.instances.set('primary', [next])
+  expect(await read()).toMatchObject({
+    kind: 'meeting',
+    canRespond: false,
+    conferenceUrl: null,
+    htmlLink: master.htmlLink,
+  })
+  state.instances.set('primary', [{ ...next, organizer: master.organizer }])
+  expect(await read()).toMatchObject({
+    kind: 'meeting',
+    canRespond: false,
+    conferenceUrl: next.hangoutLink,
+    htmlLink: next.htmlLink,
+  })
+  state.instances.set('primary', [
+    { ...next, organizer: master.organizer, hangoutLink: 'https://notzoom.us/j/123' },
+  ])
+  expect(await read()).toMatchObject({
+    kind: 'meeting',
+    canRespond: false,
+    conferenceUrl: null,
+    htmlLink: next.htmlLink,
+  })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
 it('returns independent series and original occurrence cards and updates only the selected occurrence', async () => {
   const { state, list, read, respond } = await rig()
   state.messages[0] = gmailMessage(
@@ -1241,13 +1436,19 @@ it('returns independent series and original occurrence cards and updates only th
     gmailMessage(
       'exception',
       300,
-      invite().replace('END:VEVENT', 'RECURRENCE-ID:20240711T150000Z\r\nEND:VEVENT'),
+      invite()
+        .replace('END:VEVENT', 'RECURRENCE-ID:20240711T150000Z\r\nEND:VEVENT')
+        .replace('https://meet.google.com/abc-defg-hij', 'https://meet.google.com/xyz-abcd-efg'),
     ),
   )
   const series = event({ id: 'series', series: true })
-  const instance = event({ id: 'instance', occurrence: true })
+  const instance = {
+    ...event({ id: 'instance', occurrence: true }),
+    hangoutLink: 'https://meet.google.com/xyz-abcd-efg',
+  }
+  const next = upcomingInstance('next', '2099-07-09', 'https://meet.google.com/klm-nopq-rst')
   state.events.set('primary', [series])
-  state.instances.set('primary', [instance])
+  state.instances.set('primary', [instance, next])
   expect((await list()).invitations).toHaveLength(2)
   expect((await list()).invitations).toEqual(
     expect.arrayContaining([
@@ -1260,6 +1461,7 @@ it('returns independent series and original occurrence cards and updates only th
       expect.objectContaining({
         kind: 'invitation',
         scope: 'occurrence',
+        conferenceUrl: instance.hangoutLink,
         responseStatus: 'declined',
         canRespond: true,
       }),
@@ -1322,11 +1524,14 @@ it.each(['occurrence', 'series'] as const)(
 it('follows documented empty Calendar pages but never treats malformed or partial collections as absence', async () => {
   const { state, read, respond } = await rig()
   const empty = { kind: 'calendar#events' }
+  const copy = event()
+  state.events.set('primary', [copy])
   state.primaryPages = [
     { ...empty, nextPageToken: '1' },
-    { ...empty, items: [event()] },
+    { ...empty, items: [copy] },
   ]
   expect(await read()).toMatchObject({ responseStatus: 'declined', canRespond: true })
+  state.events.clear()
   state.primaryPages = [{ ...empty, nextPageToken: '1' }, empty]
   expect(await read()).toMatchObject({ responseStatus: 'needsAction', canRespond: true })
   for (const second of [
@@ -1965,6 +2170,93 @@ it('ignores obsolete confirmed receipts before exhausting the shared evidence bu
   expect(await reopened.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
   expect(state.sendAttempts).toBe(12)
   expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it('does not retarget the first click when Calendar omits or replaces a displayed copy', async () => {
+  const { state, read, respond, restart } = await rig()
+  const first = event({ id: 'first' })
+  const second = event({ id: 'second' })
+  state.events.set('primary', [first])
+  expect(await read()).toMatchObject({ canRespond: true })
+
+  // Google can omit a resource from events.list while events.get still sees it.
+  state.primaryPages = [{ kind: 'calendar#events' }]
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(await restart().read()).toMatchObject({ canRespond: false })
+
+  state.events.set('primary', [first, second])
+  state.primaryPages = [{ kind: 'calendar#events', items: [second] }]
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.primaryPages = null
+  state.events.clear()
+  state.exactCalendarError = 503
+  expect(await restart().read()).toMatchObject({ canRespond: false })
+  state.exactCalendarError = null
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+  expect(await read()).toMatchObject({ canRespond: true })
+  expect(await respond('accepted')).toMatchObject({ channel: 'gmail', refreshPending: false })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it('requires absence of a known series master before sending a reply to one of its occurrences', async () => {
+  const { state, read, restart } = await rig()
+  const first = invite().replace('END:VEVENT', 'RRULE:FREQ=WEEKLY\r\nEND:VEVENT')
+  state.messages = [gmailMessage('series', 200, first)]
+  state.events.set('primary', [event({ id: 'series', series: true })])
+  expect(await read()).toMatchObject({ scope: 'series', canRespond: true })
+
+  const occurrence = invite().replace('END:VEVENT', 'RECURRENCE-ID:20240711T150000Z\r\nEND:VEVENT')
+  state.messages = [gmailMessage('occurrence', 300, occurrence)]
+  state.primaryPages = [{ kind: 'calendar#events' }]
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject({ scope: 'occurrence', canRespond: false })
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.events.clear()
+  expect(await reopened.read()).toMatchObject({ scope: 'occurrence', canRespond: true })
+  expect(await reopened.respond('accepted')).toMatchObject({
+    channel: 'gmail',
+    refreshPending: false,
+  })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it('keeps distinct Calendar copies through answer compaction and a transition to Gmail', async () => {
+  const { state, read, respond, restart } = await rig()
+  const first = event({ id: 'first' })
+  const second = event({ id: 'second' })
+  state.events.set('primary', [first, second])
+  state.primaryPages = [{ kind: 'calendar#events', items: [first] }]
+  await read()
+  expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
+
+  second.attendees[0]!.responseStatus = 'accepted'
+  state.primaryPages = [{ kind: 'calendar#events', items: [second] }]
+  expect(await read()).toMatchObject({ canRespond: true, recordedResponseStatus: 'accepted' })
+  expect(await respond('tentative')).toMatchObject({ channel: 'calendar', refreshPending: false })
+
+  const reopened = restart()
+  state.primaryPages = [{ kind: 'calendar#events' }]
+  state.events.set('primary', [first])
+  expect(await reopened.read()).toMatchObject({ canRespond: false })
+  await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.sendAttempts).toBe(0)
+
+  state.events.clear()
+  expect(await reopened.read()).toMatchObject({ canRespond: true })
+  expect(await reopened.respond('declined')).toMatchObject({
+    channel: 'gmail',
+    refreshPending: false,
+  })
+  state.events.set('primary', [first])
+  expect(await restart().read()).toMatchObject({ canRespond: false })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarUpdateRequests.map(({ eventId }) => eventId)).toEqual(['first', 'second'])
 })
 
 it.each(['collection recovers', 'resource deleted'] as const)(

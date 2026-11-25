@@ -14,7 +14,14 @@ type Revision = Omit<MailInvitationIdentity, 'messageId'> & {
 export type SentEvidence = { timestamp: number; messageIds: string[]; answer: InviteAnswer | null }
 
 type Delivery =
-  | { channel: 'calendar'; target: string; proof?: string; priorSent?: SentEvidence | null }
+  | {
+      channel: 'calendar'
+      target: string
+      proof?: string
+      priorSent?: SentEvidence | null
+      organizer?: string
+      series?: boolean
+    }
   | {
       channel: 'gmail'
       rfcId: string
@@ -48,8 +55,24 @@ export type ParentAnchor = {
   reply?: { rfcId: string; messageId: string }
 }
 
-type Journal = { version: 1; attempts: InvitationAttempt[]; parentAnchors: ParentAnchor[] }
+/** Existence evidence only, retained independently of confirmation and ETags. */
+export type CalendarLocator = Pick<Revision, 'uid' | 'recurrenceId'> & {
+  accountSub: string
+  target: string
+  /** Not recorded by older Calendar attempts. */
+  organizer?: string
+  series?: boolean
+}
+
+type Journal = {
+  version: 1
+  attempts: InvitationAttempt[]
+  parentAnchors: ParentAnchor[]
+  calendarLocators: CalendarLocator[]
+  calendarLocatorOverflow: boolean
+}
 const MAX_PARENT_ANCHORS = 4096
+const MAX_CALENDAR_LOCATORS = 4096
 
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -121,6 +144,24 @@ function isParentAnchor(value: unknown): value is ParentAnchor {
   )
 }
 
+function validCalendarScope(value: Record<string, unknown>): boolean {
+  return (
+    (value.organizer === undefined || text(value.organizer)) &&
+    (value.series === undefined || typeof value.series === 'boolean')
+  )
+}
+
+function isCalendarLocator(value: unknown): value is CalendarLocator {
+  return (
+    record(value) &&
+    text(value.accountSub) &&
+    text(value.target) &&
+    text(value.uid) &&
+    nullableText(value.recurrenceId) &&
+    validCalendarScope(value)
+  )
+}
+
 function isAttempt(value: unknown): value is InvitationAttempt {
   if (!record(value)) return false
   const { id, accountSub, threadId, revision, answer, state, delivery } = value
@@ -141,6 +182,7 @@ function isAttempt(value: unknown): value is InvitationAttempt {
   if (delivery.channel === 'calendar')
     return (
       text(delivery.target) &&
+      validCalendarScope(delivery) &&
       validSentEvidence(delivery.priorSent) &&
       (delivery.proof === undefined ||
         (typeof delivery.proof === 'string' && /^[0-9a-f]{64}$/.test(delivery.proof)))
@@ -168,6 +210,10 @@ function isAttempt(value: unknown): value is InvitationAttempt {
 
 function verifyJournal(raw: unknown): Journal {
   const parentAnchors = record(raw) && raw.parentAnchors !== undefined ? raw.parentAnchors : []
+  const calendarLocators =
+    record(raw) && raw.calendarLocators !== undefined ? raw.calendarLocators : []
+  const calendarLocatorOverflow =
+    record(raw) && raw.calendarLocatorOverflow !== undefined ? raw.calendarLocatorOverflow : false
   if (
     !record(raw) ||
     raw.version !== 1 ||
@@ -176,11 +222,48 @@ function verifyJournal(raw: unknown): Journal {
     new Set(raw.attempts.map(({ id }) => id)).size !== raw.attempts.length ||
     !Array.isArray(parentAnchors) ||
     parentAnchors.length > MAX_PARENT_ANCHORS ||
-    !parentAnchors.every(isParentAnchor)
+    !parentAnchors.every(isParentAnchor) ||
+    !Array.isArray(calendarLocators) ||
+    calendarLocators.length > MAX_CALENDAR_LOCATORS ||
+    !calendarLocators.every(isCalendarLocator) ||
+    typeof calendarLocatorOverflow !== 'boolean'
   ) {
     throw new Error('The mail invitation response journal is invalid; no response can be sent')
   }
-  return { version: 1, attempts: raw.attempts, parentAnchors }
+  return {
+    version: 1,
+    attempts: raw.attempts,
+    parentAnchors,
+    calendarLocators,
+    calendarLocatorOverflow,
+  }
+}
+
+function calendarLocatorFor({
+  accountSub,
+  revision,
+  delivery,
+}: InvitationAttempt): CalendarLocator | null {
+  if (delivery.channel !== 'calendar') return null
+  const { uid, recurrenceId } = revision
+  const { target, organizer, series } = delivery
+  return { accountSub, uid, recurrenceId, target, organizer, series }
+}
+
+function calendarLocatorKey(locator: CalendarLocator): string {
+  const { accountSub, uid, recurrenceId, target, organizer, series } = locator
+  return JSON.stringify([accountSub, organizer, uid, recurrenceId, series, target])
+}
+
+/** Legacy attempts can contribute locators before they have been compacted. */
+export function knownCalendarLocators({ attempts, calendarLocators }: Journal): CalendarLocator[] {
+  return [
+    ...calendarLocators,
+    ...attempts.flatMap((attempt) => {
+      const locator = attempt.state !== 'prepared' && calendarLocatorFor(attempt)
+      return locator ? [locator] : []
+    }),
+  ]
 }
 
 function anchorFor({ accountSub, revision, delivery }: InvitationAttempt): ParentAnchor[] {
@@ -212,7 +295,15 @@ export function createMailInvitationStore(userData: string) {
   const store = jsonFileStore<Journal>(
     join(userData, 'google-mail-invitations.json'),
     (raw, source) =>
-      source === null ? { version: 1, attempts: [], parentAnchors: [] } : verifyJournal(raw),
+      source === null
+        ? {
+            version: 1,
+            attempts: [],
+            parentAnchors: [],
+            calendarLocators: [],
+            calendarLocatorOverflow: false,
+          }
+        : verifyJournal(raw),
     { mode: 0o600 },
   )
   const update = (change: (journal: Journal) => Journal) =>
@@ -220,6 +311,25 @@ export function createMailInvitationStore(userData: string) {
   return {
     read: store.read,
     update,
+    rememberCalendarLocators: (snapshot: Journal, found: CalendarLocator[]) => {
+      const known = new Set(snapshot.calendarLocators.map(calendarLocatorKey))
+      if (
+        snapshot.calendarLocatorOverflow ||
+        found.every((locator) => known.has(calendarLocatorKey(locator)))
+      )
+        return Promise.resolve(snapshot)
+      return update((journal) => {
+        const locators = new Map(
+          journal.calendarLocators.map((entry) => [calendarLocatorKey(entry), entry]),
+        )
+        for (const locator of found) locators.set(calendarLocatorKey(locator), locator)
+        // Keep existing evidence and durably disable Gmail fallback if we
+        // cannot remember every verified copy. A full registry is not absence.
+        if (locators.size > MAX_CALENDAR_LOCATORS)
+          return { ...journal, calendarLocatorOverflow: true }
+        return { ...journal, calendarLocators: [...locators.values()] }
+      })
+    },
     addAttempt: (attempt: InvitationAttempt) =>
       update((journal) => {
         const attempts = [...journal.attempts, attempt]
@@ -244,6 +354,9 @@ export function createMailInvitationStore(userData: string) {
         const index = journal.attempts.findIndex(({ id }) => id === confirmed.id)
         if (index < 0) return journal
         const anchors = new Map(journal.parentAnchors.map((anchor) => [anchorKey(anchor), anchor]))
+        const locators = new Map(
+          journal.calendarLocators.map((entry) => [calendarLocatorKey(entry), entry]),
+        )
         const retain = (attempt: InvitationAttempt) => {
           if (provesAnchor(attempt))
             for (const anchor of anchorFor(attempt)) anchors.set(anchorKey(anchor), anchor)
@@ -251,14 +364,25 @@ export function createMailInvitationStore(userData: string) {
         const attempts = journal.attempts.flatMap((entry, prior) => {
           if (prior === index) return confirmed
           if (prior < index && entry.state === 'confirmed' && replaces(entry)) {
-            // Also migrate older confirmed Gmail receipts before dropping them.
+            // Compact old answers only when their independent evidence survives.
+            const locator = calendarLocatorFor(entry)
+            if (locator) {
+              const key = calendarLocatorKey(locator)
+              if (!locators.has(key) && locators.size >= MAX_CALENDAR_LOCATORS) return entry
+              locators.set(key, locator)
+            }
             retain(entry)
             return []
           }
           return entry
         })
         retain(confirmed)
-        return { ...journal, attempts, parentAnchors: [...anchors.values()] }
+        return {
+          ...journal,
+          attempts,
+          parentAnchors: [...anchors.values()],
+          calendarLocators: [...locators.values()],
+        }
       }),
   }
 }

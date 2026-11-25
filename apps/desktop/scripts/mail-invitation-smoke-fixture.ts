@@ -393,6 +393,41 @@ export function createInvitationTransport() {
         ) {
           const uid = query.get('iCalUID')
           assert(uid, 'invitation reads must select an iCalUID')
+          if (query.get('singleEvents') === 'true') {
+            assert.equal(mailbox, mailboxA)
+            assert.equal(uid, series.uid)
+            assert.equal(query.get('orderBy'), 'startTime')
+            assert.equal(query.get('maxResults'), '1')
+            assert.equal(query.get('showDeleted'), 'false')
+            const from = Date.parse(query.get('timeMin') ?? '')
+            assert(Number.isFinite(from))
+            const { recurrence: _recurrence, ...master } = event(seriesId)
+            const upcoming = [0, 1, 2, 3]
+              .map((week) => {
+                if (week === 1) return event(occurrenceId)
+                const shift = (value: string) =>
+                  new Date(Date.parse(value) + week * 604_800_000).toISOString()
+                const dateTime = shift(start)
+                const id = `${seriesId}-${week}`
+                return {
+                  ...master,
+                  id,
+                  htmlLink: `https://calendar.google.com/calendar/event?eid=${id}`,
+                  recurringEventId: seriesId,
+                  originalStartTime: { ...master.start, dateTime },
+                  start: { ...master.start, dateTime },
+                  end: { ...master.end, dateTime: shift(end) },
+                }
+              })
+              .filter((item) => Date.parse(item.end.dateTime) > from)
+            const offset = Number(query.get('pageToken') ?? '0')
+            assert(Number.isInteger(offset) && offset >= 0)
+            return Response.json({
+              kind: 'calendar#events',
+              items: upcoming.slice(offset, offset + 1),
+              nextPageToken: offset + 1 < upcoming.length ? String(offset + 1) : undefined,
+            })
+          }
           assert.equal(query.get('singleEvents'), 'false')
           assert.equal(query.get('showDeleted'), 'true')
           const matched = mailbox === mailboxA && uid === inline.uid

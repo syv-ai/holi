@@ -424,29 +424,50 @@ export function createSentCalendarLookup(
   }
   async function exact(rfcId: string): Promise<Snapshot[] | null> {
     scan.evidenceRead()
-    const page = await api.get<{
-      messages?: Pick<RawMessage, 'id' | 'threadId'>[]
-      nextPageToken?: string
-    }>(`${GMAIL_BASE}/messages`, {
-      labelIds: 'SENT',
-      q: `rfc822msgid:${rfcId.slice(1, -1)}`,
-      maxResults: '10',
-    })
+    const page = await api
+      .get<unknown>(`${GMAIL_BASE}/messages`, {
+        labelIds: 'SENT',
+        q: `rfc822msgid:${rfcId.slice(1, -1)}`,
+        maxResults: '10',
+      })
+      .catch((error) => {
+        if (error instanceof SyntaxError) return null
+        throw error
+      })
+    if (!page || typeof page !== 'object' || Array.isArray(page)) return null
+    const { messages, nextPageToken, resultSizeEstimate } = page as Record<string, unknown>
+    // A search with another page is incomplete within the evidence budget.
+    // An actual empty Gmail object is valid; arbitrary JSON is not an empty result.
     if (
-      !page ||
-      page.nextPageToken !== undefined ||
-      (page.messages !== undefined && (!Array.isArray(page.messages) || page.messages.length > 10))
+      nextPageToken !== undefined ||
+      Object.keys(page).some(
+        (key) => !['messages', 'nextPageToken', 'resultSizeEstimate'].includes(key),
+      ) ||
+      (resultSizeEstimate !== undefined &&
+        (typeof resultSizeEstimate !== 'number' ||
+          !Number.isInteger(resultSizeEstimate) ||
+          resultSizeEstimate < 0 ||
+          resultSizeEstimate > 0xffffffff)) ||
+      (messages !== undefined && (!Array.isArray(messages) || messages.length > 10))
     )
       return null
-    const found = []
-    let missing = false
-    for (const candidate of page.messages ?? []) {
+    const candidates = new Map<string, string | null>()
+    for (const candidate of messages ?? []) {
       if (
-        !isGmailMessageId(candidate?.id) ||
+        !candidate ||
+        typeof candidate !== 'object' ||
+        Array.isArray(candidate) ||
+        !isGmailMessageId(candidate.id) ||
+        candidates.has(candidate.id) ||
         (candidate.threadId !== undefined && !isGmailMessageId(candidate.threadId))
       )
         return null
-      const snapshot = await read(candidate.id, candidate.threadId ?? null, true)
+      candidates.set(candidate.id, candidate.threadId ?? null)
+    }
+    const found = []
+    let missing = false
+    for (const [id, threadId] of candidates) {
+      const snapshot = await read(id, threadId, true)
       if (snapshot) found.push(snapshot)
       else missing = true
     }
