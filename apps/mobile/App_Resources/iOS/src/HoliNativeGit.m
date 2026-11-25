@@ -94,13 +94,19 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
 @implementation HoliNativeGit
 
 - (NSDictionary<NSString *, id> *)runSelectedBranchOperation:(NSString *)operation root:(NSString *)root remote:(NSString *)remote owner:(NSString *)owner repositoryName:(NSString *)repositoryName branch:(NSString *)branch username:(NSString *)username password:(NSString *)password error:(NSError **)error {
-  NSRegularExpression *identity = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9-]+$" options:0 error:nil];
-  NSRegularExpression *branchPattern = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$" options:0 error:nil];
-  if (!owner.length || !repositoryName.length || !branch.length ||
+  NSRegularExpression *identity = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9._-]+$" options:0 error:nil];
+  int validRef = 0;
+  BOOL validBranch = branch.length > 0;
+  NSCharacterSet *controls = [NSCharacterSet controlCharacterSet];
+  if (validBranch && [branch rangeOfCharacterFromSet:controls].location != NSNotFound) validBranch = NO;
+  if (validBranch) {
+    NSString *ref = [@"refs/heads/" stringByAppendingString:branch];
+    int validationResult = git_reference_name_is_valid(&validRef, ref.UTF8String);
+    validBranch = validationResult == 0 && validRef == 1;
+  }
+  if (!owner.length || !repositoryName.length || !validBranch ||
       [identity numberOfMatchesInString:owner options:0 range:NSMakeRange(0, owner.length)] != 1 ||
-      [identity numberOfMatchesInString:repositoryName options:0 range:NSMakeRange(0, repositoryName.length)] != 1 ||
-      [branchPattern numberOfMatchesInString:branch options:0 range:NSMakeRange(0, branch.length)] != 1 ||
-      [branch containsString:@".."] || [branch containsString:@"//"] || [branch hasSuffix:@"/"] || [branch containsString:@"@{"]) {
+      [identity numberOfMatchesInString:repositoryName options:0 range:NSMakeRange(0, repositoryName.length)] != 1) {
     if (error) *error = HNGPathError(EINVAL, @"Invalid repository identity or branch");
     return nil;
   }
@@ -113,17 +119,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     if (error) *error = HNGPathError(EINVAL, @"Unsupported Git operation");
     return nil;
   }
-  NSDictionary *result = [self runOperation:operation root:root remote:remote username:username password:password error:error];
-  if (!result) return nil;
-  NSString *expectedRef = [NSString stringWithFormat:@"refs/heads/%@", branch];
-  if (![operation isEqualToString:@"clone"] && ![NSStringFromClass([result class]) isEqualToString:@""]) {
-    NSString *reported = result[@"branch"];
-    if ([operation isEqualToString:@"push"] && ![reported isEqualToString:expectedRef]) {
-      if (error) *error = HNGPathError(EINVAL, @"Checked-out branch does not match selected branch");
-      return nil;
-    }
-  }
-  return result;
+  return [self runNativeOperation:operation root:root remote:remote username:username password:password selectedBranch:branch error:error];
 }
 
 - (NSString *)embeddedVersion {
@@ -134,6 +130,10 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
 }
 
 - (NSDictionary<NSString *, id> *)runOperation:(NSString *)operation root:(NSString *)root remote:(NSString *)remote username:(NSString *)username password:(NSString *)password error:(NSError **)error {
+  return [self runNativeOperation:operation root:root remote:remote username:username password:password selectedBranch:nil error:error];
+}
+
+- (NSDictionary<NSString *, id> *)runNativeOperation:(NSString *)operation root:(NSString *)root remote:(NSString *)remote username:(NSString *)username password:(NSString *)password selectedBranch:(NSString *)selectedBranch error:(NSError **)error {
   NSURL *remoteURL = [NSURL URLWithString:remote];
   if (![@[@"clone", @"fetch", @"push", @"poison"] containsObject:operation] || root.length == 0 || root.length > 4096 || remote.length == 0 || remote.length > 4096 || ![remoteURL.scheme.lowercaseString isEqualToString:@"https"] || remoteURL.user || remoteURL.password) {
     if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:EINVAL userInfo:@{NSLocalizedDescriptionKey: @"Only bounded HTTPS remotes and absolute roots are accepted"}];
@@ -177,6 +177,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     git_clone_options options = GIT_CLONE_OPTIONS_INIT;
     options.fetch_opts.callbacks = callbacks;
     options.fetch_opts.download_tags = GIT_REMOTE_DOWNLOAD_TAGS_NONE;
+    if (selectedBranch) options.checkout_branch = [@"refs/heads/" stringByAppendingString:selectedBranch].UTF8String;
     result = git_clone(&repository, remote.UTF8String, rootPath, &options);
   } else if (isPoison) {
     git_config *config = NULL;
@@ -191,6 +192,15 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     if (result == 0) result = git_remote_set_pushurl(repository, "origin", "https://127.0.0.1:1/attacker.git");
     git_remote_free(gitRemote);
   } else {
+    if (selectedBranch) {
+      git_reference *headRef = NULL;
+      const char *headName = NULL;
+      result = git_repository_head(&headRef, repository);
+      if (result == 0 && (!headRef || !(headName = git_reference_name(headRef)) ||
+          ![[@"refs/heads/" stringByAppendingString:selectedBranch] isEqualToString:[NSString stringWithUTF8String:headName]])) result = GIT_EINVALIDSPEC;
+      git_reference_free(headRef);
+      if (result < 0) { if (error) *error = HNGPathError(EINVAL, @"Checked-out branch does not match selected branch"); git_repository_free(repository); return nil; }
+    }
     result = HNGDisableUnsafeConfig(repository);
     git_remote *gitRemote = NULL;
     if (result == 0) result = git_remote_lookup(&gitRemote, repository, "origin");
@@ -205,7 +215,16 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
       git_fetch_options fetchOptions = GIT_FETCH_OPTIONS_INIT;
       fetchOptions.callbacks = callbacks;
       fetchOptions.download_tags = GIT_REMOTE_DOWNLOAD_TAGS_NONE;
-      result = git_remote_download(gitRemote, NULL, &fetchOptions);
+      char *selectedSpec = NULL;
+      git_strarray fetchSpecs = {0};
+      if (selectedBranch) {
+        NSString *spec = [NSString stringWithFormat:@"refs/heads/%@:%@", selectedBranch, [@"refs/remotes/origin/" stringByAppendingString:selectedBranch]];
+        selectedSpec = strdup(spec.UTF8String);
+        if (!selectedSpec) result = GIT_ERROR;
+        fetchSpecs.strings = &selectedSpec; fetchSpecs.count = selectedSpec ? 1 : 0;
+      }
+      if (result == 0) result = git_remote_download(gitRemote, selectedBranch ? &fetchSpecs : NULL, &fetchOptions);
+      free(selectedSpec);
     }
     if (result == 0 && [operation isEqualToString:@"fetch"]) result = git_remote_update_tips(gitRemote, &callbacks, 0, GIT_REMOTE_DOWNLOAD_TAGS_NONE, "Holi compatibility fetch");
     if (result == 0 && [operation isEqualToString:@"push"]) {
@@ -219,7 +238,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
       char *spec = NULL;
       if (result == 0) {
         NSString *branchName = [NSString stringWithUTF8String:headName];
-        NSString *specString = [NSString stringWithFormat:@"%@:%@", branchName, branchName];
+        NSString *specString = selectedBranch ? [NSString stringWithFormat:@"refs/heads/%@:%@", selectedBranch, [@"refs/heads/" stringByAppendingString:selectedBranch]] : [NSString stringWithFormat:@"%@:%@", branchName, branchName];
         spec = strdup(specString.UTF8String);
         if (!spec) result = GIT_ERROR;
       }
@@ -255,7 +274,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     git_reference *current = NULL;
     const char *currentName = NULL;
     if (git_repository_head(&current, repository) == 0) currentName = git_reference_name(current);
-    NSString *trackingName = currentName ? [NSString stringWithFormat:@"refs/remotes/origin/%@", [[NSString stringWithUTF8String:currentName] lastPathComponent]] : @"";
+    NSString *trackingName = selectedBranch ? [@"refs/remotes/origin/" stringByAppendingString:selectedBranch] : (currentName ? [NSString stringWithFormat:@"refs/remotes/origin/%@", [[NSString stringWithUTF8String:currentName] lastPathComponent]] : @"");
     if (trackingName.length && git_reference_lookup(&fetched, repository, trackingName.UTF8String) == 0) {
       char oid[GIT_OID_HEXSZ + 1];
       git_oid_tostr(oid, sizeof(oid), git_reference_target(fetched));
