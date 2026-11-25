@@ -2605,6 +2605,7 @@ it.each(
     ['text/calendar; method="REQUEST'],
     ['text/calendar; method=REQUEST; METHOD=REPLY'],
     ['text/calendar; method=REQUEST', 'text/calendar; method=REQUEST'],
+    ['text/calendar; method=REQUEST', 'text/plain; method=REQUEST'],
   ].map((contentTypes) => ({ contentTypes })),
 )('does not treat invalid MIME metadata as missing ($contentTypes)', async ({ contentTypes }) => {
   const { state, list, read, respond } = await rig()
@@ -2614,6 +2615,38 @@ it.each(
   await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
+
+it.each([
+  { mimeType: 'text/calendar', contentType: 'text/plain; method=REQUEST', hasCopy: true },
+  {
+    mimeType: 'text/plain',
+    contentType: '(invite) TeXt / CaLeNdAr; method=REQUEST',
+    hasCopy: false,
+  },
+])(
+  'blocks a REQUEST with conflicting media declarations ($mimeType)',
+  async ({ mimeType, contentType, hasCopy }) => {
+    const { state, call, list, read, respond } = await rig()
+    const latest = gmailMessage('latest', 300, invite(), { method: 'REQUEST' })
+    state.messages.push(latest)
+    if (hasCopy) state.events.set('primary', [event()])
+    expect(await read()).toMatchObject({ identity: { messageId: 'latest' }, canRespond: true })
+
+    const part = latest.payload.parts[1]!
+    part.mimeType = mimeType
+    part.headers![0]!.value = contentType
+    // Discovery still offers the invitation reader; neither the contradictory
+    // rendition nor the older REQUEST can authorize a response.
+    expect(await call('thread', { id: 'thread' })).toMatchObject({
+      messages: expect.arrayContaining([
+        expect.objectContaining({ id: 'latest', hasCalendarPayload: true }),
+      ]),
+    })
+    expect(await list()).toMatchObject({ invitations: [], recoveryReason: expect.any(String) })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+  },
+)
 
 it('does not corroborate an unthreaded Sent receipt with ambiguous MIME metadata', async () => {
   const { state, read, respond, restart } = await rig()
@@ -2903,10 +2936,13 @@ it('retains sparse primary cancellations until every possible exact copy is gone
     { kind: 'calendar#events', items: [{ id: first.id, iCalUID: uid, status: 'cancelled' }] },
   ]
   expect(await read()).toMatchObject({ cancelled: true, canRespond: false })
-  state.primaryPages = [
-    { kind: 'calendar#events', items: [{ id: second.id, iCalUID: uid, status: 'cancelled' }] },
-  ]
-  expect(await read()).toMatchObject({ cancelled: true, canRespond: false })
+  state.primaryPages = [{ kind: 'calendar#events', items: [{ ...second, iCalUID: undefined }] }]
+  expect(await read()).toMatchObject({
+    cancelled: true,
+    canRespond: false,
+    htmlLink: null,
+    responseTargetKey: null,
+  })
 
   // The complete collection now omits both rows, but exact GET still sees them.
   state.primaryPages = [{ kind: 'calendar#events' }]
@@ -3327,19 +3363,24 @@ it('scopes a Sent calendar leaf with ambiguous MIME declarations by parent and p
   expect(await read()).toMatchObject({ sentResponseStatus: 'accepted', canRespond: true })
   expect(await respond('accepted')).toMatchObject({ outcome: 'unchanged' })
 
-  const related = gmailMessage('related-sent', 700, decline, {
+  const related = gmailMessage('related-sent', 300, decline, {
     sent: true,
     parent,
     method: 'REPLY',
   })
-  related.payload.parts[1]!.mimeType = 'text/calendar; method=REQUEST'
+  related.payload.parts[1]!.mimeType = 'text/plain'
   state.messages.push(related)
-  expect(await read()).toMatchObject({
-    responseStatus: null,
-    sentResponseStatus: null,
-    canRespond: false,
-  })
-  await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(await read()).toMatchObject({ sentResponseStatus: 'accepted', canRespond: true })
+  related.internalDate = '700'
+  for (const mimeType of ['text/plain', 'text/calendar; method=REQUEST']) {
+    related.payload.parts[1]!.mimeType = mimeType
+    expect(await read()).toMatchObject({
+      responseStatus: null,
+      sentResponseStatus: null,
+      canRespond: false,
+    })
+    await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  }
 
   state.messages.push(gmailMessage('independent', 800, decline, { sent: true, parent }))
   expect(await read()).toMatchObject({ sentResponseStatus: 'declined', canRespond: true })
@@ -3354,6 +3395,7 @@ const replyContradictions = [
   'thread',
   'scope',
   'answer',
+  'MIME media type',
   'extra Cc',
   'extra Bcc',
   'malformed Cc',
@@ -3380,6 +3422,8 @@ function contradictoryReply(
     }
   } else if (field === 'thread') {
     full.threadId = 'different-thread'
+  } else if (field === 'MIME media type') {
+    full.payload.parts[1]!.headers![0]!.value = 'text/plain; method=REPLY'
   } else {
     const body = full.payload.parts[1]!.body
     const source = Buffer.from(body.data!, 'base64url').toString('utf8')
@@ -3464,7 +3508,7 @@ it('does not settle a newer reservation through a compacted parent without a cor
 it('settles a new in-thread receipt only from a corroborating full Sent envelope', async () => {
   const { state, read, respond, restart } = await rig()
   state.sentIndexed = false
-  state.fullSentMessage = (message) => contradictoryReply(message, 'extra Cc')
+  state.fullSentMessage = (message) => contradictoryReply(message, 'MIME media type')
   await read()
   expect(await respond('accepted')).toMatchObject({
     outcome: 'sent',
@@ -3495,9 +3539,14 @@ it('settles a new in-thread receipt only from a corroborating full Sent envelope
   expect(state.calendarPatchAttempts).toBe(0)
 })
 
-it.each(['PUBLISH', 'REQUEST', 'REPLY'] as const)(
-  'scopes a failed Sent alternative without trusting its valid %s sibling',
-  async (method) => {
+it.each([
+  { method: 'PUBLISH', defect: 'invalid encoding' },
+  { method: 'REQUEST', defect: 'invalid encoding' },
+  { method: 'REPLY', defect: 'invalid encoding' },
+  { method: 'REQUEST', defect: 'media type conflict' },
+])(
+  'scopes a Sent alternative with $defect without trusting its valid $method sibling',
+  async ({ method, defect }) => {
     const { state, list, read, respond } = await rig()
     const parent = '<update@example.net>'
     const decline = invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')
@@ -3508,7 +3557,12 @@ it.each(['PUBLISH', 'REQUEST', 'REPLY'] as const)(
     const disputed = (replyParent: string, timestamp: number) => {
       const mail = gmailMessage('disputed', timestamp, decline, { sent: true, parent: replyParent })
       mail.payload.mimeType = 'multipart/alternative'
-      mail.payload.parts[1]!.body.data = '!bad!'
+      if (defect === 'media type conflict') {
+        mail.payload.parts[1]!.headers!.push({
+          name: 'Content-Type',
+          value: 'text/plain; method=REPLY',
+        })
+      } else mail.payload.parts[1]!.body.data = '!bad!'
       mail.payload.parts.push(
         gmailMessage('sibling', timestamp, sibling, { method }).payload.parts[1]!,
       )
@@ -4837,8 +4891,14 @@ it('blocks contradictory MIME alternatives, but not independent mixed invitation
   await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   message.payload.parts[2] = second(invite('REQUEST', '', 4))
   expect(await list()).toMatchObject({ invitations: [], recoveryReason: expect.any(String) })
-  message.payload.parts[2] = second(invite().replaceAll('\r\n', '\n'))
-  message.payload.parts[2]!.mimeType = 'application/ics'
+  const equivalent = second(invite().replaceAll('\r\n', '\n'))
+  message.payload.parts[2] = equivalent
+  equivalent.mimeType = 'application/ics'
+  equivalent.headers!.push({ name: 'Content-Type', value: 'text/calendar' })
+  expect((await list()).invitations).toEqual([expect.objectContaining({ canRespond: true })])
+  equivalent.mimeType = 'text/plain'
+  equivalent.filename = 'meeting.ics'
+  equivalent.headers![0]!.value = 'text/plain'
   expect((await list()).invitations).toEqual([expect.objectContaining({ canRespond: true })])
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })

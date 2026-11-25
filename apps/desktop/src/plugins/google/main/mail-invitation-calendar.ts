@@ -221,13 +221,17 @@ export function calendarLocatorMayMatchScope(
 
 class PossibleSeriesCancellation extends Error {}
 
+function isUidlessCancellation(event: RawEvent): boolean {
+  return event.iCalUID === undefined && event.status === 'cancelled'
+}
+
 async function exactCopies(
   api: GoogleApi,
   url: string,
   identity: Parsed['details']['identity'],
   floating: boolean,
   context: { organizer: string | undefined; bindsParent: (event: RawEvent) => boolean },
-  observe: (event: RawEvent) => Promise<void>,
+  observe: (event: RawEvent, associatedByQuery?: boolean) => Promise<void>,
 ): Promise<RawEvent[]> {
   const { uid, recurrenceId, sequence } = identity
   const events = await invitationPages<RawEvent>(
@@ -237,13 +241,13 @@ async function exactCopies(
     { iCalUID: uid, singleEvents: 'false', showDeleted: 'true' },
     async (event) => {
       if (event.iCalUID === uid) await observe(event)
+      else if (url === PRIMARY_EVENTS && isUidlessCancellation(event)) await observe(event, true)
     },
   )
   if (
     events.some(
       (event) =>
-        !usableInvitationEvent(event) ||
-        (event.iCalUID !== uid && !(event.iCalUID === undefined && event.status === 'cancelled')),
+        !usableInvitationEvent(event) || (event.iCalUID !== uid && !isUidlessCancellation(event)),
     )
   ) {
     throw new Error('Invalid Calendar events for this invitation')
@@ -486,15 +490,15 @@ async function lookupInvitationCalendarCopy(
   })
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
-    async (event: RawEvent) => {
+    async (event: RawEvent, associatedByQuery = false) => {
       if (!hasEventResourceId(event)) return
-      // A sparse tombstone with this exact UID in the authenticated primary
-      // collection is possible existence, not organizer or attendance proof.
+      // A UID-less cancellation in the authenticated primary UID query is
+      // associated with the requested UID for absence checks only. Neither it
+      // nor a tombstone with no organizer establishes organizer or RSVP proof.
       const sparsePrimaryCancellation =
         base === PRIMARY_EVENTS &&
-        event.iCalUID === uid &&
         event.status === 'cancelled' &&
-        event.organizer === undefined
+        (associatedByQuery || (event.iCalUID === uid && event.organizer === undefined))
       // Otherwise bind the organizer independently of scope, RSVP fields,
       // and the rest of the collection.
       if (
@@ -671,9 +675,11 @@ function invitationCopy(
   const { sequence, recurrenceId } = details.identity
   const blocked = (reason: string): CalendarLookup => ({ kind: 'blocked', reason })
   const cancelled = event.status === 'cancelled'
+  // A UID-less tombstone can block, but cannot supply a verified copy or links.
   if (
     cancelled &&
-    (joinOnly ||
+    (isUidlessCancellation(event) ||
+      joinOnly ||
       !attendee ||
       organizer !== details.organizer?.email ||
       (recurrenceId !== null && !event.recurringEventId))
