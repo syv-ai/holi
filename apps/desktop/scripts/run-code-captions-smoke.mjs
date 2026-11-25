@@ -91,10 +91,21 @@ function run(argv) {
 `
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const evidence = resolve(process.argv[2] ?? '/tmp/holi-535/native')
-const typst = process.env.HOLI_535_TYPST ?? process.argv[3]
-assert(typst, 'Provide a Typst executable as argument 3 or HOLI_535_TYPST')
-await access(typst)
+const args = process.argv.slice(2)
+const tablesOnly = args.includes('--tables-only')
+const positional = args.filter((arg) => arg !== '--tables-only')
+const scope = tablesOnly ? 'tables-only' : 'full'
+const evidence = resolve(positional[0] ?? '/tmp/holi-535/native')
+const typst = process.env.HOLI_535_TYPST ?? positional[1]
+if (!tablesOnly) {
+  assert(typst, 'Provide a Typst executable as argument 3 or HOLI_535_TYPST')
+  await access(typst)
+}
+const tableChecks = [
+  'native-table-toolbar-add-caption-save-reopen-frontmatter-light-dark',
+  'native-table-row-column-caption-edit-external-reload-and-remove',
+  'native-matching-tables-caption-controls-follow-current-selection',
+]
 await assert.rejects(access(evidence), {
   code: 'ENOENT',
 })
@@ -163,17 +174,19 @@ try {
   )
   await mkdir(join(root, 'node_modules'), { recursive: true })
   await symlink(join(desktop, 'node_modules/mermaid'), join(root, 'node_modules/mermaid'))
-  await cp(
-    join(desktop, 'src/plugins/pdf/main/vault/once/.holi/document-templates/plain'),
-    join(root, 'vault/.holi/document-templates/plain'),
-    { recursive: true },
-  )
+  if (!tablesOnly)
+    await cp(
+      join(desktop, 'src/plugins/pdf/main/vault/once/.holi/document-templates/plain'),
+      join(root, 'vault/.holi/document-templates/plain'),
+      { recursive: true },
+    )
   const electron = createRequire(import.meta.url)('electron')
   const env = {
     ...process.env,
     HOLI_535_ROOT: root,
     HOLI_535_EVIDENCE: evidence,
-    HOLI_535_TYPST: resolve(typst),
+    HOLI_535_TYPST: tablesOnly ? '' : resolve(typst),
+    HOLI_535_SCOPE: scope,
     HOLI_535_DESKTOP: desktop,
     HOLI_VAULT_ROOT: join(root, 'vault'),
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
@@ -244,47 +257,59 @@ try {
   const videoInfo = JSON.parse(probe.stdout)
   assert.equal(videoInfo.streams?.[0]?.codec_name, 'h264')
   assert(
-    Number(videoInfo.format?.duration) >= 10,
-    'interaction video must show the full native flow',
+    Number(videoInfo.format?.duration) >= (tablesOnly ? 0.2 : 10),
+    `interaction video must show the ${scope} native flow`,
   )
   await writeFile(join(evidence, 'video-proof.json'), JSON.stringify(videoInfo, null, 2))
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
+  assert.equal(result.scope, scope)
+  for (const name of tableChecks)
+    assert(result.checks.includes(name), `missing native table acceptance: ${name}`)
+  if (tablesOnly)
+    assert.deepEqual(result.checks, [
+      'production-document-view-with-real-router-filesystem',
+      ...tableChecks,
+    ])
   assert.equal(result.electron.split('.')[0], '43')
-  assert(result.checks.length >= 47, 'missing native acceptance assertions')
-  for (const name of [
-    'native-same-alt-and-protected-examples-survive-unrelated-save-reopen',
-    'native-image-copy-os-clipboard-plain-markdown-save-reopen',
-    'native-image-cut-os-clipboard-plain-markdown-save-reopen',
-    'native-documentFigure-copy-os-clipboard-plain-markdown-save-reopen',
-    'native-documentFigure-cut-os-clipboard-plain-markdown-save-reopen',
-    'native-root-to-nested-copy-paste-save-reopen-real-typst-pdf',
-    'native-root-to-root-copy-paste-save-reopen-real-typst-pdf',
-    'native-nested-to-root-copy-paste-save-reopen-real-typst-pdf',
-    'native-spaced-image-path-copy-paste-save-reopen-real-typst-pdf',
-  ])
-    assert(result.checks.includes(name), `missing native acceptance: ${name}`)
+  if (!tablesOnly) {
+    assert(result.checks.length >= 47, 'missing native acceptance assertions')
+    for (const name of [
+      'native-same-alt-and-protected-examples-survive-unrelated-save-reopen',
+      'native-image-copy-os-clipboard-plain-markdown-save-reopen',
+      'native-image-cut-os-clipboard-plain-markdown-save-reopen',
+      'native-documentFigure-copy-os-clipboard-plain-markdown-save-reopen',
+      'native-documentFigure-cut-os-clipboard-plain-markdown-save-reopen',
+      'native-root-to-nested-copy-paste-save-reopen-real-typst-pdf',
+      'native-root-to-root-copy-paste-save-reopen-real-typst-pdf',
+      'native-nested-to-root-copy-paste-save-reopen-real-typst-pdf',
+      'native-spaced-image-path-copy-paste-save-reopen-real-typst-pdf',
+    ])
+      assert(result.checks.includes(name), `missing native acceptance: ${name}`)
+  }
   for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)
   assert.deepEqual(result.rendererErrors, [])
   assert.deepEqual(result.denied, [])
-  for (const file of [
-    'native-ui.pdf',
-    'native-cli.pdf',
-    'pdf-proof.json',
-    'root-to-nested.pdf',
-    'root-to-root.pdf',
-    'nested-to-root.pdf',
-    'plain-image-copy-clipboard.json',
-    'plain-image-cut-clipboard.json',
-    'plain-documentFigure-copy-clipboard.json',
-    'plain-documentFigure-cut-clipboard.json',
-    'mermaid-ui-valid.pdf',
-    'mermaid-cli-valid.pdf',
-    'mermaid-ui-fallback.pdf',
-    'mermaid-cli-fallback.pdf',
-    'mermaid-pdf-proof.json',
-  ])
-    assert((await stat(join(evidence, file))).size > 0)
+  const requiredFiles = tablesOnly
+    ? ['table-caption-light.png', 'table-caption-dark.png', 'table-caption-saved.json']
+    : [
+        'native-ui.pdf',
+        'native-cli.pdf',
+        'pdf-proof.json',
+        'root-to-nested.pdf',
+        'root-to-root.pdf',
+        'nested-to-root.pdf',
+        'plain-image-copy-clipboard.json',
+        'plain-image-cut-clipboard.json',
+        'plain-documentFigure-copy-clipboard.json',
+        'plain-documentFigure-cut-clipboard.json',
+        'mermaid-ui-valid.pdf',
+        'mermaid-cli-valid.pdf',
+        'mermaid-ui-fallback.pdf',
+        'mermaid-cli-fallback.pdf',
+        'mermaid-pdf-proof.json',
+      ]
+  for (const file of requiredFiles) assert((await stat(join(evidence, file))).size > 0)
 } finally {
   if (child && child.exitCode === null) {
     child.kill('SIGTERM')
@@ -352,6 +377,22 @@ try {
     else console.error(`Private clipboard backup preserved at ${clipboardBackup}`)
   }
 }
+
+// This receipt is written only after Electron exited successfully, every named
+// outcome and artifact passed, the clipboard was restored, and owned data was removed.
+await assert.rejects(access(root), { code: 'ENOENT' })
+const resultPath = join(evidence, 'result.json')
+const result = JSON.parse(await readFile(resultPath, 'utf8'))
+assert.equal(result.scope, scope)
+assert.equal(result.ok, true)
+assert.equal(result.clipboardRestored, true)
+assert.equal(child.exitCode, 0)
+result.exitCode = child.exitCode
+result.cleanup = { removed: true, root }
+await writeFile(resultPath, JSON.stringify(result, null, 2))
+console.log(
+  `PASS ${scope} native acceptance; Electron exit 0; clipboard restored; owned root removed`,
+)
 
 function clipboardCommand(action, backup = '') {
   const result = spawnSync('osascript', ['-l', 'JavaScript', clipboardScript, action, backup], {
