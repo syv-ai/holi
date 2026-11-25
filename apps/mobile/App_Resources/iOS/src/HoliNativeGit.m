@@ -20,8 +20,11 @@ static void HNGError(NSError **error, int code) {
 }
 
 typedef struct { const char *username; const char *password; NSString *origin; BOOL challenged; BOOL attempted; } HNGCredentials;
+typedef struct { uint32_t marker; HNGCredentials *credentials; NSString *branch; NSString *remote; } HNGSelectedClone;
+static const uint32_t HNGSelectedCloneMarker = 0x484e4743;
 static int HNGCredentialCallback(git_credential **out, const char *url, const char *username_from_url, unsigned int allowed, void *payload) {
-  HNGCredentials *credentials = payload;
+  HNGSelectedClone *clone = payload;
+  HNGCredentials *credentials = clone->marker == HNGSelectedCloneMarker ? clone->credentials : (HNGCredentials *)payload;
   NSURL *requested = [NSURL URLWithString:[NSString stringWithUTF8String:url ?: ""]];
   NSURL *permitted = [NSURL URLWithString:credentials->origin];
   NSNumber *requestedPort = requested.port ?: @443;
@@ -33,6 +36,35 @@ static int HNGCredentialCallback(git_credential **out, const char *url, const ch
   if (credentials->attempted || !(allowed & GIT_CREDENTIAL_USERPASS_PLAINTEXT) || !credentials->username || !credentials->password) return GIT_EAUTH;
   credentials->attempted = YES;
   return git_credential_userpass_plaintext_new(out, credentials->username, credentials->password);
+}
+static int HNGSelectedRepository(git_repository **out, const char *path, int bare, void *payload) {
+  HNGSelectedClone *clone = payload;
+  git_repository_init_options initOptions = GIT_REPOSITORY_INIT_OPTIONS_INIT;
+  initOptions.flags = GIT_REPOSITORY_INIT_MKPATH;
+  initOptions.initial_head = [@"refs/heads/" stringByAppendingString:clone->branch].UTF8String;
+  int result = git_repository_init_ext(out, path, &initOptions);
+  if (result < 0) return result;
+  NSString *configPath = [[NSString stringWithUTF8String:git_repository_path(*out)] stringByAppendingPathComponent:@"config"];
+  git_config *config = NULL;
+  result = git_config_new(&config);
+  if (result == 0) result = git_config_add_file_ondisk(config, configPath.fileSystemRepresentation, GIT_CONFIG_LEVEL_LOCAL, *out, 0);
+  if (result == 0) result = git_repository_set_config(*out, config);
+  git_config_free(config);
+  if (result < 0) { git_repository_free(*out); *out = NULL; }
+  return result;
+}
+static int HNGSelectedRemote(git_remote **out, git_repository *repo, const char *name, const char *url, void *payload) {
+  HNGSelectedClone *clone = payload;
+  if (!name || strcmp(name, "origin") || !url || strcmp(url, clone->remote.UTF8String)) return GIT_EINVALIDSPEC;
+  int result = git_remote_create(out, repo, "origin", clone->remote.UTF8String);
+  if (result == 0) {
+    NSString *spec = [NSString stringWithFormat:@"+refs/heads/%@:refs/remotes/origin/%@", clone->branch, clone->branch];
+    char *copy = strdup(spec.UTF8String);
+    if (!copy) result = GIT_ERROR;
+    else { git_strarray specs = { &copy, 1 }; result = git_remote_set_fetchspecs(*out, &specs); free(copy); }
+  }
+  if (result < 0) { git_remote_free(*out); *out = NULL; }
+  return result;
 }
 static int HNGTransferProgress(const git_indexer_progress *stats, void *payload) { return 0; }
 static int HNGPushUpdate(const char *refname, const char *status, void *payload) { return status ? GIT_ERROR : 0; }
@@ -180,11 +212,25 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   callbacks.transfer_progress = HNGTransferProgress;
   callbacks.push_update_reference = HNGPushUpdate;
   callbacks.payload = &credentials;
-  if (isClone) {
+  if (isClone && selectedBranch) {
+    // Selected clones start from a fresh repository whose only config source is
+    // its local .git/config. Do this before libgit2 performs any network work.
+    HNGSelectedClone cloneContext = { HNGSelectedCloneMarker, &credentials, selectedBranch, remote };
     git_clone_options options = GIT_CLONE_OPTIONS_INIT;
     options.fetch_opts.callbacks = callbacks;
     options.fetch_opts.download_tags = GIT_REMOTE_DOWNLOAD_TAGS_NONE;
-    if (selectedBranch) options.checkout_branch = [@"refs/heads/" stringByAppendingString:selectedBranch].UTF8String;
+    options.checkout_branch = [@"refs/heads/" stringByAppendingString:selectedBranch].UTF8String;
+    options.checkout_opts.checkout_strategy = GIT_CHECKOUT_NONE;
+    options.repository_cb = HNGSelectedRepository;
+    options.repository_cb_payload = &cloneContext;
+    options.remote_cb = HNGSelectedRemote;
+    options.remote_cb_payload = &cloneContext;
+    options.fetch_opts.callbacks.payload = &cloneContext;
+    result = git_clone(&repository, remote.UTF8String, rootPath, &options);
+  } else if (isClone) {
+    git_clone_options options = GIT_CLONE_OPTIONS_INIT;
+    options.fetch_opts.callbacks = callbacks;
+    options.fetch_opts.download_tags = GIT_REMOTE_DOWNLOAD_TAGS_NONE;
     result = git_clone(&repository, remote.UTF8String, rootPath, &options);
   } else if (isPoison) {
     git_config *config = NULL;
