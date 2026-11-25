@@ -394,6 +394,55 @@ it('uses the original host presentation lease and immutable notification navigat
   ])
 })
 
+it('recovers one vault after a failed launch without affecting its same-id sibling', async () => {
+  const { enter, call, roots, stopRemote } = await rig(undefined, undefined, true, {
+    retainedContexts: true,
+  })
+  await enter(A)
+  await enter(B)
+  const schedules = await Promise.all(
+    ([A, B] as const).map(async (remote) => {
+      const saved = (await call(remote, 'schedules.save', {
+        draft: { name: 'Inbox', crons: ['0 * * * *'], prompt: 'Read notes.' },
+      })) as { path: string; fingerprint: string }
+      await call(remote, 'schedules.enable', {
+        schedule: saved.path,
+        fingerprint: saved.fingerprint,
+      })
+      return saved
+    }),
+  )
+  expect(schedules[0]!.path).toBe(schedules[1]!.path)
+  adapters.run.mockImplementation(async (_bin, args, options) => {
+    if (options.cwd === roots[A] && args.includes('--bg'))
+      throw new Error('synthetic launch failure')
+    return args.includes('--bg') ? 'backgrounded · abc12345 · Inbox' : '[]'
+  })
+  await expect(call(A, 'schedules.run', { schedule: schedules[0]!.path })).rejects.toThrow(
+    'synthetic launch failure',
+  )
+  expect(await call(B, 'schedules.run', { schedule: schedules[1]!.path })).toMatchObject({
+    outcome: 'started',
+    jobId: 'abc12345',
+  })
+  expect(await call(B, 'schedules.list')).toMatchObject([
+    { status: 'on', runs: [{ jobId: 'abc12345' }] },
+  ])
+
+  adapters.run.mockImplementation(async (_bin, args) =>
+    args.includes('--bg') ? 'backgrounded · def67890 · Inbox' : '[]',
+  )
+  await stopRemote(A)
+  await enter(A)
+  expect(await call(A, 'schedules.run', { schedule: schedules[0]!.path })).toMatchObject({
+    outcome: 'started',
+    jobId: 'def67890',
+  })
+  expect(await call(B, 'schedules.list')).toMatchObject([
+    { status: 'on', runs: [{ jobId: 'abc12345' }] },
+  ])
+})
+
 it('drains actual scheduler turn polling without finishing a sibling same-id run', async () => {
   const { enter, call, machineCall, stopRemote, roots, bridge, userData } = await rig(
     undefined,
