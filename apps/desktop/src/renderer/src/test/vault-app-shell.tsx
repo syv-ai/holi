@@ -18,6 +18,7 @@ import {
   openTab,
   selectEntry,
   separate,
+  setSticky,
 } from '@/state/shell-workspace'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { act, render } from './render'
@@ -88,6 +89,15 @@ export function mountVaultAppShell(surface: Surface) {
     separate: () =>
       act(() => store.set(shellWorkspaceAtom, (ws) => separate(ws, activeSplit(ws)!.id))),
     close: () => act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, paths[0]!))),
+    stick: (path = paths[0]!) =>
+      act(() => store.set(shellWorkspaceAtom, (ws) => setSticky(ws, path, true))),
+    remove: (path = paths[0]!) =>
+      act(() =>
+        store.set(snapshotAtom, (snapshot) => ({
+          ...snapshot,
+          files: snapshot.files.filter((file) => !file.path.startsWith(`${path}/`)),
+        })),
+      ),
     install: (enabled: boolean) => act(() => install(enabled)),
     depart: () => act(() => store.set(activeRemoteAtom, 'mara/other')),
     frame: (name: string) =>

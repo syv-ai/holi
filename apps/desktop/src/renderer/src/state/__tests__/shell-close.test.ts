@@ -1,9 +1,9 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { createStore } from 'jotai'
 import { registerBuffer } from '@/lib/buffer-registry'
-import { saveEntryClose, type EntryCloseIntent } from '../shell-close'
+import { saveEntryClose, closesSplit, type EntryCloseIntent } from '../shell-close'
 import { shellWorkspaceAtom } from '../shell-tabs'
-import { emptyWorkspace, openInSplit, openNewTab, openTab } from '../shell-workspace'
+import { emptyWorkspace, openInSplit, openNewTab, openTab, setSticky } from '../shell-workspace'
 import { activeRemoteAtom } from '../vaults'
 
 const cleanups: (() => void)[] = []
@@ -105,4 +105,20 @@ test('an already stale confirmation does not start saving or change the workspac
   await saveEntryClose(store, intent)
   expect(flush).not.toHaveBeenCalled()
   expect(store.get(shellWorkspaceAtom)).toBe(changed)
+})
+
+test('ordinary and bulk closes preserve a sticky split without asking to close it; explicit close saves and removes it', async () => {
+  const { store, intent } = splitIntent()
+  store.set(shellWorkspaceAtom, setSticky(intent.workspace, 'Plan.md', true))
+  const workspace = store.get(shellWorkspaceAtom)
+  for (const request of [{ kind: 'entry', id: workspace.active! }, { kind: 'all' }] as const) {
+    expect(closesSplit(workspace, request)).toBe(false)
+    await saveEntryClose(store, { ...intent, workspace, request })
+    expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+  }
+  const request = { kind: 'entry', id: workspace.active!, explicit: true } as const
+  expect(closesSplit(workspace, request)).toBe(true)
+  await saveEntryClose(store, { ...intent, workspace, request })
+  expect(store.get(shellWorkspaceAtom).entries).toEqual([])
+  expect(store.get(shellWorkspaceAtom).sticky).toEqual([])
 })
