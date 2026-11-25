@@ -119,7 +119,37 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   return ok;
 }
 
-@implementation HoliNativeGit
+@implementation HoliNativeGit {
+  NSString *_configuredOwner;
+  NSString *_configuredRepositoryName;
+  NSString *_configuredEndpoint;
+}
+
+- (instancetype)initWithOwner:(NSString *)owner repositoryName:(NSString *)repositoryName endpoint:(NSString *)endpoint error:(NSError **)error {
+  NSRegularExpression *identity = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9._-]{1,100}$" options:0 error:nil];
+  BOOL validIdentity = owner.length > 0 && repositoryName.length > 0 && owner.length <= 100 && repositoryName.length <= 100 &&
+      [identity numberOfMatchesInString:owner options:0 range:NSMakeRange(0, owner.length)] == 1 &&
+      [identity numberOfMatchesInString:repositoryName options:0 range:NSMakeRange(0, repositoryName.length)] == 1;
+  NSString *path = [NSString stringWithFormat:@"/%@/%@.git", owner, repositoryName];
+  NSURLComponents *components = [NSURLComponents componentsWithString:endpoint];
+  BOOL github = [endpoint isEqualToString:[NSString stringWithFormat:@"https://github.com%@", path]];
+  BOOL loopback = endpoint.length <= 4096 && [components.scheme isEqualToString:@"https"] &&
+      ([components.host isEqualToString:@"127.0.0.1"] || [components.host isEqualToString:@"::1"]) &&
+      components.port != nil && components.port > 0 && components.port <= 65535 &&
+      [components.percentEncodedPath isEqualToString:path] && !components.query && !components.fragment &&
+      !components.user && !components.password;
+  if (!validIdentity || (!github && !loopback)) {
+    if (error) *error = HNGPathError(EINVAL, @"Invalid repository identity or HTTPS endpoint");
+    return nil;
+  }
+  self = [super init];
+  if (self) {
+    _configuredOwner = [owner copy];
+    _configuredRepositoryName = [repositoryName copy];
+    _configuredEndpoint = [endpoint copy];
+  }
+  return self;
+}
 
 - (NSDictionary<NSString *, id> *)runSelectedBranchOperation:(NSString *)operation root:(NSString *)root remote:(NSString *)remote owner:(NSString *)owner repositoryName:(NSString *)repositoryName branch:(NSString *)branch username:(NSString *)username password:(NSString *)password error:(NSError **)error {
   NSRegularExpression *identity = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9._-]+$" options:0 error:nil];
@@ -139,7 +169,11 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     return nil;
   }
   NSString *expected = [NSString stringWithFormat:@"https://github.com/%@/%@.git", owner, repositoryName];
-  if (![remote isEqualToString:expected]) {
+  if (_configuredOwner && (![_configuredOwner isEqualToString:owner] || ![_configuredRepositoryName isEqualToString:repositoryName] || ![_configuredEndpoint isEqualToString:remote])) {
+    if (error) *error = HNGPathError(EINVAL, @"Operation does not match initialized repository endpoint");
+    return nil;
+  }
+  if (![remote isEqualToString:expected] && !(_configuredEndpoint && [remote isEqualToString:_configuredEndpoint])) {
     if (error) *error = HNGPathError(EINVAL, @"Remote does not match canonical repository identity");
     return nil;
   }
