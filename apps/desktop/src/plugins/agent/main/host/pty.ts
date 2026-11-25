@@ -536,6 +536,7 @@ export class AgentRuntime {
     this.windowsInput = []
     this.windowsInputBytes = 0
     const work = (async () => {
+      if (this.physicalDrain) await this.physicalDrain
       await launch.completion
       if (this.exitFailure) throw this.exitFailure.cause
       const controller = new AbortController()
@@ -669,7 +670,7 @@ export class AgentRuntime {
       const pending = Promise.resolve().then(async () => {
         await ready
         await launch.stop()
-        if (this.callbackSettlement) await this.callbackSettlement
+        await this.finishWindowsExit({ exitCode: -1 }, launch)
       })
       this.settlement = pending
       this.observeExit(pending)

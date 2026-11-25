@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AgentRuntime } from '../main/host/pty'
-import type { OwnedPtyLaunch, OwnedPtyProcess } from '../../../main/owned-windows-pty'
+import type { OwnedPtyLaunch } from '../../../main/owned-windows-pty'
+type OwnedPtyProcess = Awaited<OwnedPtyLaunch['ready']>
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -15,7 +16,7 @@ function deferred<T>() {
 function fixture() {
   const ready = deferred<OwnedPtyProcess>()
   const completion = deferred<void>()
-  const stopped = deferred<void>()
+  const stopped = completion
   const writes: string[] = []
   const sizes: Array<[number, number]> = []
   let exit!: (event: { exitCode: number; signal?: number }) => void
@@ -54,7 +55,9 @@ describe('AgentRuntime owned Windows launch', () => {
     const f = fixture()
     const exits: number[] = []
     let closed = 0
-    f.runtime.onExit(({ exitCode }) => exits.push(exitCode))
+    f.runtime.onExit(({ exitCode }) => {
+      exits.push(exitCode)
+    })
     f.runtime.onClosed(() => closed++)
     expect(f.runtime.isRunning).toBe(true)
     expect(f.runtime.pid).toBeNull()

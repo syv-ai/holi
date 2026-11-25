@@ -14,7 +14,7 @@ export type OwnedWindowsPtyOptions = {
   cols: number
   rows: number
 }
-export type OwnedPtyProcess = {
+type OwnedPtyProcess = {
   readonly pid: number
   write(data: string): void
   resize(cols: number, rows: number): void
