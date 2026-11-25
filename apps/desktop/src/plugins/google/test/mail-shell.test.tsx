@@ -9,6 +9,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { atom, getDefaultStore } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
+import { MailView } from '../renderer/mail-view'
+import { refreshGoogleAtom } from '../renderer/account'
 import type { googleCap } from '../renderer/google-cap'
 import { mailCatchUpByVaultAtom } from '../renderer/mail/mail-catch-up'
 import { ConnectionsSection } from '../renderer/connections-section'
@@ -21,6 +23,8 @@ const draftsMock = vi.fn()
 const saveDraftMock = vi.fn()
 const draftBodyMock = vi.fn()
 const markReadMock = vi.fn()
+const readAccountsMock = vi.fn<typeof googleCap.allAccounts>()
+const connectMock = vi.fn<typeof googleCap.connect>()
 const invitationMock = vi.fn<typeof googleCap.mailInvitation>()
 const respondMock = vi.fn<typeof googleCap.respondToMailInvitation>()
 const validateBinding = vi.fn()
@@ -58,18 +62,12 @@ vi.mock('@/plugin-api', async (importOriginal) => {
 const google: Record<string, (params: unknown, remote: string) => unknown> = {
   status: () => ({
     account:
-      accountSub === ''
-        ? null
-        : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test', sub: accountSub },
+      accountSub === '' ? null : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test' },
     missingScopes: [],
+    needsReconnect: false,
   }),
-  allAccounts: () => ({
-    accounts: [
-      { sub: 'a', email: 'ada@syv.ai' },
-      { sub: 'b', email: 'ada@home.test' },
-    ],
-    current: accountSub,
-  }),
+  allAccounts: (_p, remote) => readAccountsMock(remote),
+  connect: (_p, remote) => connectMock(remote),
   useAccount: (p) => useAccountMock(p),
   disconnectVault: () => disconnectVaultMock(),
   removeAccount: (p) => removeAccountMock(p),
@@ -234,6 +232,14 @@ beforeEach(() => {
     foreign: false,
   })
   markReadMock.mockReset().mockResolvedValue({ ok: true })
+  readAccountsMock.mockReset().mockImplementation(async () => ({
+    accounts: [
+      { sub: 'a', email: 'ada@syv.ai' },
+      { sub: 'b', email: 'ada@home.test' },
+    ],
+    current: accountSub || null,
+  }))
+  connectMock.mockReset().mockRejectedValue(new Error('Unexpected Google consent request'))
   invitationMock.mockReset().mockResolvedValue(invitations())
   respondMock.mockReset().mockRejectedValue(new Error('Unexpected RSVP'))
   starMock.mockReset().mockResolvedValue({ ok: true })
@@ -546,6 +552,105 @@ function invitations(
 ) {
   return { invitations: cards, recoveryReason: null }
 }
+test.each([
+  { name: 'MailShell', Reader: MailShell, hasInvite: true },
+  { name: 'MailView', Reader: MailView, hasInvite: false },
+])(
+  '$name recovers an open invitation after a failed Google account read',
+  async ({ Reader, hasInvite }) => {
+    searchMock.mockResolvedValue(page([summary({ hasInvite })]))
+    threadMock.mockResolvedValue({
+      ...thread,
+      messages: [
+        { ...thread.messages[1], body: 'Workshop agenda', html: null, hasCalendarPayload: true },
+      ],
+    })
+    invitationMock.mockResolvedValue(
+      invitations({
+        ...invitation,
+        responseStatus: 'accepted',
+        recordedResponseStatus: 'accepted',
+      }),
+    )
+    const user = userEvent.setup()
+    const getInvitation = () => within(screen.getByRole('region', { name: 'Calendar invitation' }))
+    render(<Reader />)
+    await user.click(await screen.findByText('Q2 budget'))
+    expect(await screen.findByText('Response: Accepted')).toBeVisible()
+    expect(getInvitation().getByRole('button', { name: 'Decline' })).toBeEnabled()
+    expect(getInvitation().getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+
+    vi.useFakeTimers()
+    try {
+      readAccountsMock.mockRejectedValue(new Error('Account information is temporarily unreadable'))
+      await act(async () => {
+        getDefaultStore().set(refreshGoogleAtom)
+        await vi.runAllTimersAsync()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    const expectUnverified = () => {
+      expect(screen.getByText('Workshop agenda')).toBeVisible()
+      expect(getInvitation().queryByText('Response: Accepted')).not.toBeInTheDocument()
+      for (const action of [
+        'Accept',
+        'Maybe',
+        'Decline',
+        'Join meeting',
+        'Open in Google Calendar',
+        'Open email link',
+        'Connect',
+        'Reconnect',
+      ]) {
+        expect(getInvitation().queryByRole('button', { name: action })).not.toBeInTheDocument()
+      }
+    }
+    expect(getInvitation().getByRole('alert')).toHaveTextContent(
+      /could not verify the Google account/i,
+    )
+    expectUnverified()
+    const retry = getInvitation().getByRole('button', { name: 'Retry' })
+    expect(retry).toBeEnabled()
+
+    let finishAccounts!: (result: Awaited<ReturnType<typeof googleCap.allAccounts>>) => void
+    readAccountsMock.mockImplementation(() => new Promise((resolve) => (finishAccounts = resolve)))
+    let finishInvitation!: (result: ReturnType<typeof invitations>) => void
+    invitationMock.mockImplementation(() => new Promise((resolve) => (finishInvitation = resolve)))
+    await user.click(retry)
+    expect(getInvitation().getByRole('status')).toHaveTextContent(/checking the Google connection/i)
+    expect(getInvitation().getByRole('button', { name: 'Retry' })).toBeDisabled()
+    expectUnverified()
+
+    await act(async () =>
+      finishAccounts({ accounts: [{ sub: 'a', email: 'ada@syv.ai' }], current: 'a' }),
+    )
+    expect(
+      getInvitation().getByRole('status', { name: 'Loading calendar invitation' }),
+    ).toBeVisible()
+    expectUnverified()
+
+    const current = {
+      ...invitation,
+      responseStatus: 'tentative',
+      recordedResponseStatus: 'tentative',
+      conferenceUrl: 'https://meet.google.com/xyz-abcd-efg',
+    } as const
+    await act(async () => finishInvitation(invitations(current)))
+    expect(getInvitation().queryByRole('alert')).not.toBeInTheDocument()
+    expect(getInvitation().getByText('Response: Tentative')).toBeVisible()
+    expect(getInvitation().getByRole('button', { name: 'Accept' })).toBeEnabled()
+    expect(getInvitation().getByRole('button', { name: 'Maybe' })).toBeDisabled()
+    expect(connectMock).not.toHaveBeenCalled()
+    expect(useAccountMock).not.toHaveBeenCalled()
+    expect(respondMock).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
+
+    await user.click(getInvitation().getByRole('button', { name: 'Join meeting' }))
+    await waitFor(() => expect(openExternal).toHaveBeenCalledExactlyOnceWith(current.conferenceUrl))
+  },
+)
+
 test.each([
   ['Accept', 'accepted', 'Accepted'],
   ['Maybe', 'tentative', 'Tentative'],
