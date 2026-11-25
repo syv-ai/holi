@@ -152,12 +152,12 @@ export async function createGoogleAccounts(
     const migrated = Object.fromEntries(
       Object.entries(accounts).map(([sub, auth]) => [
         sub,
-        auth.clientId && auth.clientSecret
+        auth.clientId !== undefined
           ? auth
           : {
               ...auth,
-              clientId: auth.clientId ?? client.id,
-              clientSecret: auth.clientSecret ?? client.secret,
+              clientId: client.id,
+              ...(client.secret === undefined ? {} : { clientSecret: client.secret }),
             },
       ]),
     )
@@ -202,7 +202,14 @@ export async function createGoogleAccounts(
         await persist((latest) =>
           latest[sub] === undefined || accountEpoch(sub) !== expectedGeneration
             ? latest
-            : { ...latest, [sub]: auth },
+            : {
+                ...latest,
+                [sub]: {
+                  ...auth,
+                  clientId: latest[sub].clientId ?? auth.clientId,
+                  clientSecret: latest[sub].clientSecret ?? auth.clientSecret,
+                },
+              },
         )
       },
       async remove() {
@@ -251,8 +258,8 @@ export async function createGoogleAccounts(
         client: () => {
           const auth = accounts[sub]
           const fallback = currentClient()
-          return auth?.clientId && auth.clientSecret
-            ? { id: auth.clientId, secret: auth.clientSecret }
+          return auth?.clientId !== undefined
+            ? { id: auth.clientId, ...(auth.clientSecret === undefined ? {} : { secret: auth.clientSecret }) }
             : fallback
         },
         fetch: deps.fetch,
@@ -511,12 +518,12 @@ export async function createGoogleAccounts(
           const migrated = Object.fromEntries(
             Object.entries(accounts).map(([sub, auth]) => [
               sub,
-              auth.clientId && auth.clientSecret
+              auth.clientId !== undefined
                 ? auth
                 : {
                     ...auth,
-                    clientId: auth.clientId ?? current.id,
-                    clientSecret: auth.clientSecret ?? current.secret,
+                    clientId: current.id,
+                    ...(current.secret === undefined ? {} : { clientSecret: current.secret }),
                   },
             ]),
           )
