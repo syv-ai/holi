@@ -27,6 +27,11 @@ export const automationsMain: MainPlugin = {
   info: AUTOMATIONS_INFO,
   seed: automationsSeed,
   async activate(ctx) {
+    let draining = false
+    let beginDrain!: () => void
+    const drainStarted = new Promise<void>((resolve) => {
+      beginDrain = resolve
+    })
     let live: SessionSummary[] = []
     let receivedSessions = false
     ctx.hear('agent', 'sessions', (list) => {
@@ -57,7 +62,10 @@ export const automationsMain: MainPlugin = {
                 ...(provider === 'claude' && allow !== undefined ? { allow } : {}),
               }))) as { ok: true; sessionId: string } | { ok: false; message: string },
         sessions: () => live,
-        stop: async (id) => (await ctx.call('agent.stop', { id })) as Result,
+        stop: async (id) => {
+          if (ctx.activationSignal.aborted && !draining) await drainStarted
+          return (await ctx.call('agent.stop', { id })) as Result
+        },
         watched: async (id) => (await ctx.call('agent.watched', { id })) === true,
         onTurnEnd: (listener) =>
           ctx.hear('agent', 'turn-end', (p) => {
@@ -93,6 +101,8 @@ export const automationsMain: MainPlugin = {
       .catch(() => {})
     scheduler.attach({ remote: ctx.remote, root: ctx.root })
     return async () => {
+      draining = true
+      beginDrain()
       unevents()
       unscan()
       const [result] = await Promise.allSettled([scheduler.dispose(), initialSessions])

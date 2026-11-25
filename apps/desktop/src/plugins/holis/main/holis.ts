@@ -445,11 +445,15 @@ export function createHolis(deps: HolisDeps): Holis {
     path: string,
     change: (s: HoliState) => HoliState,
   ): Promise<HolisFile> =>
-    deps.store.update((file) => {
-      const vault = { ...(file[remote] ?? {}) }
-      vault[path] = change(vault[path] ?? { runs: [] })
-      return { ...file, [remote]: vault }
-    })
+    deps.store.update(
+      (file) => {
+        const vault = { ...(file[remote] ?? {}) }
+        vault[path] = change(vault[path] ?? { runs: [] })
+        return { ...file, [remote]: vault }
+      },
+      () => !stopping && !deps.activationSignal?.aborted,
+      () => !stopping && !deps.activationSignal?.aborted,
+    )
 
   const changed = (remote: string): void => deps.emit(remote, 'holis', null)
 

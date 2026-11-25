@@ -4,8 +4,7 @@
  * with. A send runs through the agent (`agent.launch`, `agent.job` on
  * Codex), which it requires.
  *
- * Electron loads inside `activate`, so the plugin stays importable under
- * plain Node in the tests.
+ * The plugin stays importable under plain Node.
  */
 import { join } from 'node:path'
 import { jsonFileStore, readVaultSettings, type MainPlugin } from '../../../main/plugin-api'
@@ -20,6 +19,11 @@ export const holisMain: MainPlugin = {
   info: HOLIS_INFO,
   seed: holisSeed,
   async activate(ctx) {
+    let draining = false
+    let beginDrain!: () => void
+    const drainStarted = new Promise<void>((resolve) => {
+      beginDrain = resolve
+    })
     const notify = (n: NeedsYou, lease: () => boolean): void => {
       if (ctx.activationSignal.aborted || !lease()) return
       ctx.notify({
@@ -51,6 +55,7 @@ export const holisMain: MainPlugin = {
       needsYou: notify,
       presentationLease: ctx.presentationLease,
       cleanupLaunch: async (_vault, sessionId) => {
+        if (ctx.activationSignal.aborted && !draining) await drainStarted
         const result = (await ctx.call('agent.stop', { id: sessionId })) as
           { ok: true } | { ok: false; message: string }
         if (!result.ok) throw new Error(result.message)
@@ -61,6 +66,10 @@ export const holisMain: MainPlugin = {
       HOLI_NAMESPACES,
       holiCapabilities({ holis, changed: (remote) => ctx.emit(remote, 'holis', null) }),
     )
-    return () => holis.stop()
+    return () => {
+      draining = true
+      beginDrain()
+      return holis.stop()
+    }
   },
 }

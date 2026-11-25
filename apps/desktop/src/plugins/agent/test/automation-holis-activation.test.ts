@@ -1,6 +1,8 @@
+import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { A, B, rig, adapters, deferred } from './activation-fixture'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 describe('automation and Holi activation contexts', () => {
   it('keeps real capability dispatch scoped to the selected vault and denies CLI approval', async () => {
@@ -203,5 +205,237 @@ describe('retained asynchronous launches', () => {
     expect(await call(B, 'agent.inbox')).toMatchObject({ entries: [] })
     await enter(A)
     expect(await call(A, 'holis.list')).toMatchObject([{ status: 'approved', runs: [] }])
+  })
+})
+
+it('waits for disposer authority on a dependent-only disable and leaves populated sibling inboxes intact', async () => {
+  const { enter, call, machineCall, roots, reconcileSettings } = await rig(
+    undefined,
+    undefined,
+    true,
+    { retainedContexts: true },
+  )
+  await enter(A)
+  await enter(B)
+  await call(A, 'holis.create', { name: 'Scout' })
+  for (const remote of [A, B] as const) {
+    const saved = (await call(remote, 'schedules.save', {
+      draft: { name: 'Inbox', crons: ['0 * * * *'], prompt: 'Read notes.' },
+    })) as { path: string; fingerprint: string }
+    await call(remote, 'schedules.enable', { schedule: saved.path, fingerprint: saved.fingerprint })
+    expect((await machineCall(remote, 'agent', 'notify', 'Shared notice', remote)).status).toBe(200)
+  }
+  const enteredWrite = deferred()
+  const releaseWrite = deferred()
+  const enteredLaunch = deferred()
+  const releaseLaunch = deferred()
+  adapters.cleanupReleases.push(releaseWrite.resolve, releaseLaunch.resolve)
+  adapters.writeGates.push({
+    fragment: join(roots[A], '.holi/holis/scout/MEMORY.md'),
+    entered: enteredWrite.resolve,
+    wait: releaseWrite.promise,
+  })
+  const memory = machineCall(A, 'holis', 'remember', 'scout', 'drained A fact')
+  await enteredWrite.promise
+  adapters.run.mockImplementation(async (_bin, args, options) => {
+    if (args.includes('--bg')) {
+      if (options.cwd === roots[A]) {
+        enteredLaunch.resolve()
+        await releaseLaunch.promise
+      }
+      return 'backgrounded · abc12345 · Inbox'
+    }
+    return '[]'
+  })
+  const launch = call(A, 'schedules.run', { schedule: 'inbox' }).catch((error: unknown) => error)
+  await enteredLaunch.promise
+  expect(await call(B, 'schedules.run', { schedule: 'inbox' })).toMatchObject({
+    outcome: 'started',
+  })
+  await writeFile(
+    join(roots[A], '.holi/settings/plugins.yaml'),
+    'plugins:\n  automations: false\n  holis: false\n',
+  )
+  let disabled = false
+  const disabling = reconcileSettings(A).then(() => {
+    disabled = true
+  })
+  try {
+    await vi.waitFor(async () => {
+      await expect(call(A, 'holis.list')).rejects.toThrow()
+    })
+    releaseLaunch.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(disabled).toBe(false)
+    expect(await call(B, 'schedules.list')).toMatchObject([
+      { status: 'on', runs: [{ jobId: 'abc12345' }] },
+    ])
+  } finally {
+    releaseLaunch.resolve()
+    releaseWrite.resolve()
+  }
+  expect((await memory).status).toBe(200)
+  await launch
+  await disabling
+  const inboxA = (await call(A, 'agent.inbox')) as { entries: { body: string }[] }
+  const inboxB = (await call(B, 'agent.inbox')) as { entries: { body: string }[] }
+  expect(JSON.stringify(inboxA)).toContain(A)
+  expect(JSON.stringify(inboxA)).not.toContain(B)
+  expect(JSON.stringify(inboxB)).toContain(B)
+  expect(JSON.stringify(inboxB)).not.toContain(A)
+  expect(await call(A, 'agent.sessions')).toEqual([])
+  expect(
+    adapters.run.mock.calls
+      .filter(([, args]) => args[0] === 'stop')
+      .map(([, , options]) => options.cwd),
+  ).toEqual([roots[A]])
+})
+
+it('does not publish approval after its activation is revoked during native write preparation', async () => {
+  const { enter, call, roots, userData, reconcileSettings } = await rig(
+    undefined,
+    undefined,
+    true,
+    { retainedContexts: true },
+  )
+  await enter(A)
+  const holi = (await call(A, 'holis.create', { name: 'Scout' })) as {
+    id: string
+    fingerprint: string
+  }
+  const entered = deferred()
+  const release = deferred()
+  adapters.cleanupReleases.push(release.resolve)
+  adapters.writeGates.push({
+    fragment: join(userData, 'holis.json.tmp'),
+    entered: entered.resolve,
+    wait: release.promise,
+  })
+  const approval = call(A, 'holis.approve', { holi: holi.id, fingerprint: holi.fingerprint }).catch(
+    (error: unknown) => error,
+  )
+  await entered.promise
+  await writeFile(
+    join(roots[A], '.holi/settings/plugins.yaml'),
+    'plugins:\n  automations: false\n  holis: false\n',
+  )
+  const disabling = reconcileSettings(A)
+  try {
+    await vi.waitFor(async () => {
+      await expect(call(A, 'holis.list')).rejects.toThrow()
+    })
+  } finally {
+    release.resolve()
+  }
+  expect(await approval).toBeInstanceOf(Error)
+  await disabling
+  await writeFile(
+    join(roots[A], '.holi/settings/plugins.yaml'),
+    'plugins:\n  automations: true\n  holis: true\n',
+  )
+  await reconcileSettings(A)
+  expect(await call(A, 'holis.list')).toMatchObject([{ status: 'new', runs: [] }])
+})
+
+it('uses the original host presentation lease and immutable notification navigation', async () => {
+  const { enter, call, machineCall, setActive, notifications, navigations, userData } = await rig(
+    undefined,
+    undefined,
+    true,
+    { retainedContexts: true },
+  )
+  await enter(A)
+  await enter(B)
+  const holi = (await call(A, 'holis.create', { name: 'Scout' })) as {
+    id: string
+    fingerprint: string
+  }
+  await call(A, 'holis.approve', { holi: holi.id, fingerprint: holi.fingerprint })
+  await call(A, 'holis.send', { holi: holi.id, path: 'note.md' })
+  setActive(A)
+  const entered = deferred()
+  const release = deferred()
+  adapters.cleanupReleases.push(release.resolve)
+  adapters.writeGates.push({
+    fragment: join(userData, 'holis.json.tmp'),
+    entered: entered.resolve,
+    wait: release.promise,
+  })
+  const before = notifications.length
+  const report = machineCall(A, 'holis', 'report', holi.id, 'needs attention', '--needs-you')
+  await entered.promise
+  setActive(B)
+  setActive(A)
+  release.resolve()
+  expect((await report).status).toBe(200)
+  expect(notifications).toHaveLength(before)
+  expect(
+    (await machineCall(A, 'holis', 'report', holi.id, 'fresh attention', '--needs-you')).status,
+  ).toBe(200)
+  expect(notifications).toHaveLength(before + 1)
+  setActive(B)
+  ;(notifications.at(-1) as { onClick(): void }).onClick()
+  expect(navigations).toEqual([
+    { plugin: 'holis', remote: A, name: 'holi-open', payload: { holi: holi.id } },
+  ])
+})
+
+it('drains actual scheduler turn polling without finishing a sibling same-id run', async () => {
+  const { enter, call, machineCall, stopRemote, roots, bridge, userData } = await rig(
+    undefined,
+    undefined,
+    true,
+    { retainedContexts: true },
+  )
+  await enter(A)
+  await enter(B)
+  const states = new Map<string, string>([
+    [roots[A], 'working'],
+    [roots[B], 'working'],
+  ])
+  adapters.run.mockImplementation(async (_bin, args, options) => {
+    if (args.includes('--bg')) return 'backgrounded · abc12345 · Inbox'
+    if (args[0] === 'agents')
+      return JSON.stringify([
+        {
+          kind: 'background',
+          id: 'abc12345',
+          name: 'Inbox',
+          cwd: options.cwd,
+          pid: process.pid,
+          status: states.get(options.cwd ?? ''),
+        },
+      ])
+    return '[]'
+  })
+  for (const remote of [A, B] as const) {
+    const saved = (await call(remote, 'schedules.save', {
+      draft: { name: 'Inbox', crons: ['0 * * * *'], prompt: 'Read notes.' },
+    })) as { path: string; fingerprint: string }
+    await call(remote, 'schedules.enable', { schedule: saved.path, fingerprint: saved.fingerprint })
+    await call(remote, 'schedules.run', { schedule: saved.path })
+    await call(remote, 'agent.sessions')
+  }
+  const post = (remote: typeof A | typeof B, path: string) =>
+    fetch(
+      `http://127.0.0.1:${bridge.port()}${path}?t=${encodeURIComponent(bridge.tokenForVault(remote))}&job=abc12345&pid=${process.pid}`,
+      { method: 'POST' },
+    )
+  expect((await post(A, '/turn/start')).status).toBe(204)
+  expect((await post(A, '/turn/end')).ok).toBe(true)
+  await stopRemote(A)
+  expect(await call(B, 'schedules.list')).toMatchObject([{ runs: [{ jobId: 'abc12345' }] }])
+  expect(
+    (await machineCall(B, 'agent', 'notify', 'B remains active', 'after A poll teardown')).status,
+  ).toBe(200)
+  const state = JSON.parse(await readFile(join(userData, 'schedules.json'), 'utf8'))
+  expect(state[B]['.holi/schedules/inbox.local.md'].runs[0].finishedAt).toBeUndefined()
+  expect((await post(B, '/turn/start')).status).toBe(204)
+  states.set(roots[B], 'idle')
+  await call(B, 'agent.sessions')
+  expect((await post(B, '/turn/end')).ok).toBe(true)
+  await vi.waitFor(async () => {
+    const schedules = (await call(B, 'schedules.list')) as { runs: { finishedAt?: string }[] }[]
+    expect(schedules[0]!.runs[0]!.finishedAt).toEqual(expect.any(String))
   })
 })

@@ -531,12 +531,20 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     remote: string,
     path: string,
     change: (s: ScheduleState) => ScheduleState,
-  ): Promise<SchedulesFile> =>
-    deps.store.update((file) => {
-      const vault = { ...(file[remote] ?? {}) }
-      vault[path] = change(vault[path] ?? { runs: [] })
-      return { ...file, [remote]: vault }
-    })
+    owned?: () => boolean,
+  ): Promise<SchedulesFile> => {
+    const epoch = activation
+    const current = owned ?? (() => valid(epoch))
+    return deps.store.update(
+      (file) => {
+        const vault = { ...(file[remote] ?? {}) }
+        vault[path] = change(vault[path] ?? { runs: [] })
+        return { ...file, [remote]: vault }
+      },
+      current,
+      current,
+    )
+  }
 
   const changed = (remote: string): void => deps.emit(remote, 'schedules', null)
 
@@ -1197,14 +1205,21 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       assertActive(epoch)
       if ((generations.get(entry.path) ?? 0) !== (admittedGenerations.get(entry.path) ?? 0))
         throw new CapabilityError('UNAVAILABLE', 'Schedule approval was cancelled.')
-      await changeState(vault.remote, entry.path, ({ momentsSince: _, ...s }) => ({
-        ...s,
-        approved: fingerprint(ok),
-        approvedAt: at.toISOString(),
-        // Turned on now: the moments before this are not missed runs, and
-        // neither are the triggers' (they count from `approvedAt` again).
-        lastRun: at.toISOString(),
-      }))
+      await changeState(
+        vault.remote,
+        entry.path,
+        ({ momentsSince: _, ...s }) => ({
+          ...s,
+          approved: fingerprint(ok),
+          approvedAt: at.toISOString(),
+          // Turned on now: the moments before this are not missed runs, and
+          // neither are the triggers' (they count from `approvedAt` again).
+          lastRun: at.toISOString(),
+        }),
+        () =>
+          valid(epoch) &&
+          (generations.get(entry.path) ?? 0) === (admittedGenerations.get(entry.path) ?? 0),
+      )
       changed(vault.remote)
       // A check now, so its triggers listen from this moment rather than
       // from the next check: a file dropped in between would go unheard.

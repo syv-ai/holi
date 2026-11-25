@@ -366,6 +366,7 @@ export async function rig(
   }
   const sent: { remote: string; name: string }[] = []
   const notifications: unknown[] = []
+  const navigations: { plugin: string; remote: string; name: string; payload: unknown }[] = []
   const syncHolds = new Map<string, number>()
   const pause = (remote: string) => syncHolds.set(remote, 1)
   const resume = (remote: string) => syncHolds.set(remote, 0)
@@ -491,6 +492,9 @@ export async function rig(
     notify: (notice) => {
       notifications.push(notice)
       return false
+    },
+    navigate: (plugin, remote, name, payload) => {
+      navigations.push({ plugin, remote, name, payload })
     },
     focused: () => false,
     call: async (remote, name, params, beforeInvoke, finalization) =>
@@ -624,12 +628,15 @@ export async function rig(
     host,
     enter,
     replace,
+    reconcileSettings: (remote: typeof A | typeof B) =>
+      host.reconcile(openVault(remote), 'settings'),
     call,
     capabilities,
     roots,
     userData,
     sent,
     notifications,
+    navigations,
     syncHolds,
     setActive,
     stopRemote: async (remote: string) => {
