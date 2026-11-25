@@ -77,7 +77,7 @@ function setup(workspace = openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md')) {
       wasOpen: true,
     })
   })
-  return { store, list, tabs, transfer }
+  return { store, list, tabs, transfer, initial: store.get(shellWorkspaceAtom) }
 }
 function pointerClick(
   target: HTMLElement,
@@ -197,12 +197,13 @@ test.each([
     ),
   ],
 ])('an ineligible center combine over an %s falls back to reorder', (_name, workspace) => {
-  const { store, list, transfer } = setup(workspace)
+  const { store, list, transfer, initial } = setup(workspace)
   const x = _name === 'own tab' ? 50 : 150
   fireEvent(list, dragEvent('dragover', transfer, x))
   expect(document.querySelector('[data-combine-preview="true"]')).toBeNull()
   fireEvent(list, dragEvent('drop', transfer, x))
-  expect(store.get(shellWorkspaceAtom)).not.toBe(workspace)
+  if (_name === 'own tab') expect(store.get(shellWorkspaceAtom)).toBe(initial)
+  else expect(store.get(shellWorkspaceAtom).entries).toEqual([initial.entries[1], 'A.md'])
 })
 
 test('the strip drop target fills unused space without including its controls', () => {
@@ -544,10 +545,10 @@ test('combine targeting stays stable when the preview changes the measured footp
 
 test('reorder commits the last displayed layout rather than recomputing at drop', () => {
   const workspace = openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md')
-  const { store, list, tabs, transfer } = setup(workspace)
+  const { store, list, tabs, transfer, initial } = setup(workspace)
   const title = screen.getByText('A')
   fireEvent(list, dragEvent('dragover', transfer, 295))
-  expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+  expect(store.get(shellWorkspaceAtom)).toBe(initial)
   expect(tabs[0]!.isConnected).toBe(true)
   expect(screen.getByText('A')).toBe(title)
   fireEvent(list, dragEvent('drop', transfer, 5))
@@ -556,7 +557,7 @@ test('reorder commits the last displayed layout rather than recomputing at drop'
 
 test('interior and edge previews switch without detaching the dragged title', () => {
   const workspace = openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md')
-  const { store, list, transfer } = setup(workspace)
+  const { store, list, transfer, initial } = setup(workspace)
   transfer.setData(MIME, 'B.md')
   act(() =>
     store.set(tabDragAtom, {
@@ -573,7 +574,7 @@ test('interior and edge previews switch without detaching the dragged title', ()
   fireEvent(list, dragEvent('dragover', transfer, 295))
   expect(screen.queryByRole('tab', { name: 'Split view: A, B' })).toBeNull()
   expect(screen.getByText('B')).toBe(title)
-  expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+  expect(store.get(shellWorkspaceAtom)).toBe(initial)
   fireEvent(list, dragEvent('drop', transfer, 295))
   expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md', 'C.md', 'B.md'])
 })
@@ -584,12 +585,12 @@ test('moving a member out previews its remaining sibling without unmounting the 
     'B.md',
     'A.md',
   )
-  const { store, list, transfer } = setup(workspace)
+  const { store, list, transfer, initial } = setup(workspace)
   const member = document.querySelector('[data-member="A.md"]')!
   fireEvent(list, dragEvent('dragover', transfer, 900))
   expect(screen.getByRole('tab', { name: 'B' })).toBeInTheDocument()
   expect(member.isConnected).toBe(true)
-  expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+  expect(store.get(shellWorkspaceAtom)).toBe(initial)
   fireEvent(list, dragEvent('drop', transfer, 900))
   expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md', 'C.md', 'A.md'])
 })
@@ -801,7 +802,7 @@ test.each(['leave', 'end'])(
       (ws, key) => openTab(ws, key),
       emptyWorkspace(),
     )
-    const { store, list, tabs, transfer } = setup(workspace)
+    const { store, list, tabs, transfer, initial } = setup(workspace)
     act(() =>
       store.set(tabDragAtom, {
         key: 'D.md',
@@ -848,11 +849,11 @@ test.each(['leave', 'end'])(
     expect(list.scrollLeft).toBe(140)
     fireEvent(list, dragEvent('dragover', transfer, 25))
     expect(screen.getByRole('tab', { name: /C.*D/ })).toBeInTheDocument()
-    expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+    expect(store.get(shellWorkspaceAtom)).toBe(initial)
     if (reason === 'leave') fireEvent.dragLeave(list, { relatedTarget: document.body })
     else act(() => store.set(tabDragAtom, null))
     expect(list.scrollLeft).toBe(200)
-    expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+    expect(store.get(shellWorkspaceAtom)).toBe(initial)
     if (reason === 'leave') {
       fireEvent(list, dragEvent('dragover', transfer, 25))
       list.scrollLeft = 80
@@ -860,7 +861,7 @@ test.each(['leave', 'end'])(
       expect(screen.getByRole('tab', { name: /B.*D/ })).toBeInTheDocument()
       fireEvent.dragLeave(list, { relatedTarget: document.body })
       expect(list.scrollLeft).toBe(140)
-      expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+      expect(store.get(shellWorkspaceAtom)).toBe(initial)
     }
   },
 )
@@ -871,7 +872,7 @@ test.each([false, true])(
     let workspace = openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md')
     if (group) workspace = openTab(combineOnStrip(workspace, 'B.md', 'A.md'), 'C.md')
     workspace = setSticky(workspace, 'A.md', true)
-    const { store, list, transfer } = setup(workspace)
+    const { store, list, transfer, initial } = setup(workspace)
     const key = group ? 'C.md' : 'B.md'
     const source = screen.getByRole('tab', { name: group ? 'C' : 'B' })
     transfer.setData(MIME, key)
@@ -886,7 +887,7 @@ test.each([false, true])(
     fireEvent(list, dragEvent('dragover', transfer, 50))
     expect(screen.getByRole('tab', { name: group ? /A.*B.*C/ : /A.*B/ })).toBeInTheDocument()
     expect(source.isConnected).toBe(true)
-    expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+    expect(store.get(shellWorkspaceAtom)).toBe(initial)
     fireEvent(list, dragEvent('drop', transfer, 50))
     expect(store.get(shellWorkspaceAtom).entries).toMatchObject([
       { views: group ? ['A.md', 'B.md', 'C.md'] : ['A.md', 'B.md'] },

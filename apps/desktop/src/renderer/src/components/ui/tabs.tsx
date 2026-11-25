@@ -82,7 +82,7 @@ function TabsEntry({
 }) {
   return (
     <div
-      className={cn(tabsEntryVariants({ size }), presentation === "removed" && "absolute opacity-0 pointer-events-none", presentation === "ghost" && "pointer-events-none items-center gap-2 px-3 text-sm", className)}
+      className={cn(tabsEntryVariants({ size }), presentation === "removed" && "absolute opacity-0 pointer-events-none", presentation === "ghost" && "pointer-events-none items-center gap-2 px-3 text-sm [&_svg:not([class*='size-'])]:size-4", className)}
       style={presentationOrder === undefined ? style : { ...style, order: presentationOrder }}
       {...props}
     />
