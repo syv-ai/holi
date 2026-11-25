@@ -154,5 +154,10 @@ export function inspectMdxCssResources(source: string): {
     }
     report('CSS is malformed, unsupported, or exceeds inspection limits.', offset)
   }
-  return { diagnostics, dependencies: diagnostics.length ? [] : dependencies }
+  return {
+    diagnostics,
+    dependencies: diagnostics.length
+      ? []
+      : dependencies.sort((a, b) => a.line - b.line || a.column - b.column),
+  }
 }

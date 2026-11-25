@@ -71,6 +71,14 @@ a { content: 'url(not-an-edge.png)'; /* url(ignored) */
       { specifier: 'https://other.example/photo.png', kind: 'asset' },
       { specifier: './large.png', kind: 'asset' },
     ])
+    const urlFirst = inspectMdxCssResources(
+      `a { background: ${name}(url(./small.png) 1x, "./large.png" 2x) }`,
+    )
+    expect(urlFirst.diagnostics).toEqual([])
+    expect(urlFirst.dependencies.map(({ specifier }) => specifier)).toEqual([
+      './small.png',
+      './large.png',
+    ])
     const invalid = inspectMdxCssResources(
       `@import './valid.css'; a { background: ${name}("data:image/png;base64,AAAA" 1x) }`,
     )
