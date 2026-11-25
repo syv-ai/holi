@@ -668,6 +668,7 @@ describe('provider selection', () => {
   function caps(providers: AgentProvider[]) {
     const started: string[] = []
     const table = agentCapabilities({
+      presentationLease: () => () => true,
       sessions: {
         start: async () => {
           started.push('claude')

@@ -48,7 +48,7 @@ import {
 import { bounded } from './bounded'
 import { createTurnSignals, type TurnSignals } from './pty-signals'
 import type { ActionResult, Geometry, OpenResult, StartResult } from './sessions'
-import type { AgentTerminals } from './terminals'
+import type { AgentTerminals, PresentationLease } from './terminals'
 
 /** Holi's id for a session it runs: never a conversation id or job id. */
 export const PTY_SESSION_ID = /^p[0-9a-f]{12}$/
@@ -100,7 +100,7 @@ export interface PtySessionsDeps {
    *  change while the vault is open. One with `background` runs here only
    *  for its sign-in (`login`). */
   providers(): readonly AgentProvider[]
-  terminals: Pick<AgentTerminals, 'open' | 'close' | 'paste' | 'list'>
+  terminals: Pick<AgentTerminals, 'open' | 'close' | 'paste' | 'list' | 'claim' | 'discard'>
   /** The vault's turn bracket: sync pauses and the turn is recorded. */
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<unknown>
   /** Keep an open POSIX turn through drain, until its owner can safely forget it. */
@@ -144,8 +144,9 @@ export interface PtySessions {
   sessions(): SessionSummary[]
   past(): Promise<SessionSummary[]>
   hasPast(id: string): Promise<boolean>
-  reopen(id: string, size: Geometry): Promise<StartResult>
-  duplicate(id: string, size: Geometry): Promise<StartResult>
+  reopen(id: string, size: Geometry, lease: PresentationLease): Promise<StartResult>
+  duplicate(id: string, size: Geometry, lease: PresentationLease): Promise<StartResult>
+  discard(id: string, lease: PresentationLease): Promise<boolean>
   has(id: string): boolean
   /** Whether a terminal is one of these sessions' own, which a detach must
    *  leave running. */
@@ -167,9 +168,10 @@ export interface PtySessions {
       fence?: Fence
       onStartupCleanup?(work: Promise<void>): void
     },
+    lease: PresentationLease,
   ): Promise<StartResult>
   /** Put text in a session's input, unsent. */
-  send(id: string, text: string): OpenResult
+  send(id: string, text: string, lease: PresentationLease): OpenResult
   stop(id: string): Promise<ActionResult>
   /** A turn edge from the provider's hook. */
   noteTurn(id: string, active: boolean): void
@@ -298,7 +300,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     return promise
   }
   /** A sign-in still starting, by provider. */
-  const signingIn = new Map<ProviderId, Promise<StartResult>>()
+  const signingIn = new Map<ProviderId, { lease: PresentationLease; work: Promise<StartResult> }>()
   const configured = new Map<ProviderId, Promise<{ dir: string } | null>>()
   let left = deps.activationSignal?.aborted === true
   const starting = new Set<Promise<StartResult>>()
@@ -453,8 +455,9 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       fork,
       onStartupCleanup,
     }: StartArgs,
+    lease: PresentationLease,
   ): Promise<StartResult> {
-    if (left) return { ok: false, message: 'That vault has been left.' }
+    if (left || !lease()) return { ok: false, message: 'That vault has been left.' }
     const provider = deps.providers().find((p) => p.id === providerId)
     if (provider === undefined) {
       return {
@@ -480,7 +483,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       }
     }
     const config = await configure(provider)
-    if (left) return { ok: false, message: 'That vault has been left.' }
+    if (left || !lease()) return { ok: false, message: 'That vault has been left.' }
     if (config === null) {
       return { ok: false, message: `${provider.label} could not be set up for this vault.` }
     }
@@ -589,7 +592,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       return { ok: false, message: (err as Error).message }
     }
     const notice = await firstSpawnNotice(provider, config.dir)
-    if (left) {
+    if (left || !lease()) {
       signals.dispose()
       return { ok: false, message: 'That vault has been left.' }
     }
@@ -613,6 +616,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       forget()
     }
     const opened = deps.terminals.open({
+      lease,
       remote: deps.vault.remote,
       cwd: fence?.dir ?? deps.vault.root,
       command,
@@ -801,9 +805,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     }
     sessions.set(id, session)
     // A session started on a prompt is in its first turn already.
-    if (left) fenceAdmission(session)
+    if (left || !lease()) fenceAdmission(session)
     else if (prompt !== undefined && prompt.trim() !== '') signals.begin()
     push()
+    if (!lease()) {
+      await api.discard(id, lease)
+      return gone
+    }
     return { ok: true, sessionId: id, terminalId: opened.id }
   }
 
@@ -841,23 +849,28 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     async hasPast(id) {
       return (await api.past()).some((p) => p.id === id)
     },
-    async reopen(id, size) {
-      if (left) return { ok: false, message: 'That vault has been left.' }
+    async reopen(id, size, lease) {
+      if (left || !lease()) return { ok: false, message: 'That vault has been left.' }
       if (sessions.has(id) || reopening.has(id)) {
         return { ok: false, message: 'That session is open already.' }
       }
       reopening.add(id)
       try {
         const past = (await api.past()).find((p) => p.id === id)
+        if (!lease()) return gone
         if (!past || typeof past.conversationId !== 'string') {
           return { ok: false, message: 'That session cannot be reopened.' }
         }
-        const result = await api.start(past.provider, {
-          ...size,
-          name: past.name,
-          resume: past.conversationId,
-          sessionId: past.id,
-        })
+        const result = await api.start(
+          past.provider,
+          {
+            ...size,
+            name: past.name,
+            resume: past.conversationId,
+            sessionId: past.id,
+          },
+          lease,
+        )
         // A process can exit before start() returns. Its onExit has already
         // queued the closed row; do not remove that newer history entry.
         const open = sessions.get(id)
@@ -868,12 +881,17 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           )
           pushPast()
         }
+        if (!lease()) {
+          if (result.ok) await api.discard(result.sessionId, lease)
+          return gone
+        }
         return result
       } finally {
         reopening.delete(id)
       }
     },
-    async duplicate(id, size) {
+    async duplicate(id, size, lease) {
+      if (!lease()) return gone
       const source = sessions.get(id)
       const providerId = source?.provider
       const conversation = source?.conversationId
@@ -882,37 +900,60 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       const provider = deps.providers().find((p) => p.id === providerId)
       if (!provider?.namesConversation)
         return { ok: false, message: `${provider?.label ?? providerId} cannot be copied.` }
-      return api.start(providerId, {
-        ...size,
-        name: source === undefined ? NEW_SESSION : nameFor(source),
-        fork: conversation,
-      })
+      return api.start(
+        providerId,
+        {
+          ...size,
+          name: source === undefined ? NEW_SESSION : nameFor(source),
+          fork: conversation,
+        },
+        lease,
+      )
     },
     has: (id) => sessions.has(id),
     ownsTerminal: (terminalId) => [...sessions.values()].some((s) => s.terminalId === terminalId),
     terminalOf: (id) => sessions.get(id)?.terminalId ?? null,
 
-    start(providerId, args) {
-      if (left) return Promise.resolve({ ok: false, message: 'That vault has been left.' })
-      if (args.login !== true) return track(startNow(providerId, args))
-      // One sign-in at a time: a second ask gets the terminal of the first,
-      // the one still starting included.
+    async start(providerId, args, lease) {
+      if (left || !lease()) return gone
+      if (args.login !== true) return track(startNow(providerId, args, lease))
       const running = [...sessions.values()].find((s) => s.signIn && s.provider === providerId)
       if (running !== undefined) {
-        return Promise.resolve({ ok: true, sessionId: running.id, terminalId: running.terminalId })
+        return deps.terminals.claim(running.terminalId, lease)
+          ? { ok: true, sessionId: running.id, terminalId: running.terminalId }
+          : gone
       }
-      let pending = signingIn.get(providerId)
-      if (pending === undefined) {
-        pending = track(startNow(providerId, args)).finally(() => signingIn.delete(providerId))
-        signingIn.set(providerId, pending)
+      const previous = signingIn.get(providerId)
+      if (previous !== undefined) {
+        const result = await previous.work
+        if (left || !lease()) return gone
+        if (!previous.lease()) return api.start(providerId, args, lease)
+        return result.ok && !deps.terminals.claim(result.terminalId, lease) ? gone : result
       }
-      return pending
+      const work = track(startNow(providerId, args, lease)).finally(() => {
+        if (signingIn.get(providerId)?.work === work) signingIn.delete(providerId)
+      })
+      signingIn.set(providerId, { lease, work })
+      return work
     },
 
-    send(id, text) {
+    send(id, text, lease) {
       const s = sessions.get(id)
-      if (s === undefined || s.draining || !deps.terminals.paste(s.terminalId, text)) return gone
+      if (
+        s === undefined ||
+        s.draining ||
+        !deps.terminals.claim(s.terminalId, lease) ||
+        !deps.terminals.paste(s.terminalId, text, lease)
+      )
+        return gone
       return { ok: true, terminalId: s.terminalId }
+    },
+
+    async discard(id, lease) {
+      const s = sessions.get(id)
+      if (s === undefined || !(await deps.terminals.discard(s.terminalId, lease))) return false
+      await closeSession(s)
+      return true
     },
 
     async stop(id) {

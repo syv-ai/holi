@@ -142,9 +142,9 @@ export class AgentRuntime {
   private readonly useOwnedWindows: boolean
   private windowsReady?: Promise<void>
   private windowsStopping = false
-  private windowsInput: string[] = []
+  private windowsInput: Array<{ data: string; guard?: () => boolean; delivered?: () => void }> = []
   private windowsInputBytes = 0
-  private windowsResize?: { cols: number; rows: number }
+  private windowsResize?: { cols: number; rows: number; guard?: () => boolean }
   private readonly probePid: (pid: number) => PidState
   private readonly platform: NodeJS.Platform
   private readonly taskkill: ((pid: number) => void) | undefined
@@ -486,11 +486,16 @@ export class AgentRuntime {
           void this.finishWindowsExit(event, launch).catch(() => {})
         })
         if (!this.draining) {
-          if (this.windowsResize) pty.resize(this.windowsResize.cols, this.windowsResize.rows)
+          if (this.windowsResize && (this.windowsResize.guard?.() ?? true))
+            pty.resize(this.windowsResize.cols, this.windowsResize.rows)
           const pending = this.windowsInput
           this.windowsInput = []
           this.windowsInputBytes = 0
-          for (const data of pending) pty.write(data)
+          for (const item of pending) {
+            if (this.draining || item.guard?.() === false) continue
+            item.delivered?.()
+            pty.write(item.data)
+          }
         } else {
           await launch.stop()
           await this.finishWindowsExit({ exitCode: -1 }, launch)
@@ -631,7 +636,8 @@ export class AgentRuntime {
     }
   }
 
-  write(data: string): void {
+  write(data: string, guard?: () => boolean, delivered?: () => void): void {
+    if (guard?.() === false) return
     if (this.windowsLaunch && !this.pty) {
       if (this.draining) return
       this.windowsInputBytes += Buffer.byteLength(data)
@@ -641,14 +647,18 @@ export class AgentRuntime {
         void this.kill().catch(() => {})
         throw error
       }
-      this.windowsInput.push(data)
+      this.windowsInput.push({ data, guard, delivered })
       return
     }
-    this.pty?.write(data)
+    if (this.pty) {
+      delivered?.()
+      this.pty.write(data)
+    }
   }
 
-  resize(cols: number, rows: number): void {
-    const next = { cols: Math.max(1, Math.floor(cols)), rows: Math.max(1, Math.floor(rows)) }
+  resize(cols: number, rows: number, guard?: () => boolean): void {
+    if (guard?.() === false) return
+    const next = { cols: Math.max(1, Math.floor(cols)), rows: Math.max(1, Math.floor(rows)), guard }
     if (this.windowsLaunch && !this.pty) {
       if (!this.draining) this.windowsResize = next
       return

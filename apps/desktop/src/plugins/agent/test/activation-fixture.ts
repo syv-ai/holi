@@ -13,7 +13,7 @@ import { createPluginHost } from '../../../main/plugin-host/host'
 import { createBridgeServer } from '../../../main/bridge/server'
 import { automationsMain } from '../../automations/main/index'
 import type { RunOptions } from '../main/claude/cli'
-import type { AgentExit, StartArgs } from '../main/host/pty'
+import type { AgentRuntimeDeps, PtyProcess, StartArgs } from '../main/host/pty'
 import { agentMain } from '../main/index'
 import type { BridgeRoute, MainPlugin, PluginCtx } from '../../../main/plugin-api'
 
@@ -21,6 +21,12 @@ const adapters = vi.hoisted(() => ({
   version: vi.fn(() => 'test'),
   run: vi.fn<(bin: string, args: string[], opts: RunOptions) => Promise<string>>(),
   pty: [] as StartArgs[],
+  terminals: [] as Array<{
+    args: StartArgs
+    writes: string[]
+    sizes: Array<[number, number]>
+    emit(data: string): void
+  }>,
   backup: null as null | { source: string; entered: () => void; wait: Promise<void> },
   heldExit: null as null | { cwd: string; entered: () => void; wait: Promise<void> },
   historyRename: null as null | {
@@ -205,25 +211,62 @@ vi.mock('../main/host/pty', async (original) => {
   return {
     ...pty,
     AgentRuntime: class extends pty.AgentRuntime {
-      private exitCallback: ((event: AgentExit) => void) | null = null
-      private args: StartArgs | null = null
-      override start(args: StartArgs) {
-        this.args = args
-        adapters.pty.push(args)
-      }
-      override onExit(callback: (event: AgentExit) => void) {
-        this.exitCallback = callback
-      }
-      override async kill() {
-        const hold = adapters.heldExit
-        if (hold !== null && this.args?.cwd === hold.cwd) {
-          adapters.heldExit = null
-          hold.entered()
-          await hold.wait
+      constructor(deps: AgentRuntimeDeps = {}) {
+        let args: StartArgs
+        let output: ((data: string) => void) | undefined
+        let exited: ((event: { exitCode: number }) => void) | undefined
+        let physical: Promise<void> | undefined
+        const writes: string[] = []
+        const sizes: Array<[number, number]> = []
+        const native: PtyProcess = {
+          pid: 424_200 + adapters.pty.length,
+          onData: (cb) => {
+            output = cb
+          },
+          onExit: (cb) => {
+            exited = cb
+          },
+          write: (data) => {
+            writes.push(data)
+          },
+          resize: (cols, rows) => {
+            sizes.push([cols, rows])
+          },
+          kill: () => {
+            exited?.({ exitCode: 0 })
+          },
         }
-        const observed = adapters.exitObserved
-        if (observed !== null && this.args?.cwd === observed.cwd) observed.entered()
-        this.exitCallback?.({ exitCode: 0 })
+        super({
+          ...deps,
+          spawnPty: (bin, argv, options) => {
+            args = {
+              bin,
+              args: argv,
+              cwd: options.cwd,
+              env: options.env,
+              cols: options.cols,
+              rows: options.rows,
+            }
+            adapters.pty.push(args)
+            adapters.terminals.push({ args, writes, sizes, emit: (data) => output?.(data) })
+            return native
+          },
+          probePid: () => 'alive',
+          superviseGroup: () => ({
+            drain: () =>
+              (physical ??= Promise.resolve().then(async () => {
+                const hold = adapters.heldExit
+                if (hold !== null && args.cwd === hold.cwd) {
+                  adapters.heldExit = null
+                  hold.entered()
+                  await hold.wait
+                }
+                const observed = adapters.exitObserved
+                if (observed !== null && args.cwd === observed.cwd) observed.entered()
+                exited?.({ exitCode: 0 })
+              })),
+          }),
+        })
       }
     },
   }
@@ -241,6 +284,7 @@ beforeEach(() => {
       args.includes('--bg') ? 'backgrounded · abc12345 · Bound run' : '[]',
     )
   adapters.pty.length = 0
+  adapters.terminals.length = 0
   adapters.backup = null
   adapters.heldExit = null
   adapters.historyRename = null
@@ -361,6 +405,7 @@ export async function rig(
   }
   const sent: { remote: string; name: string }[] = []
   const notifications: unknown[] = []
+  const listeners = new Map<string, Set<(message: unknown) => void>>()
   const syncHolds = new Map<string, number>()
   const pause = (remote: string) => syncHolds.set(remote, 1)
   const resume = (remote: string) => syncHolds.set(remote, 0)
@@ -464,7 +509,14 @@ export async function rig(
     rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
     events: {
       send: (_channel, event) => sent.push({ remote: event.remote, name: event.name }),
-      listen: () => () => {},
+      listen: (channel, handler) => {
+        const callbacks = listeners.get(channel) ?? new Set()
+        callbacks.add(handler)
+        listeners.set(channel, callbacks)
+        return () => {
+          callbacks.delete(handler)
+        }
+      },
       liveRemote: () => host.displayed(),
     },
     openAppDoor: () => {
@@ -619,6 +671,10 @@ export async function rig(
     userData,
     sent,
     notifications,
+    sendAgent: (remote: string, name: string, payload: unknown) => {
+      for (const callback of listeners.get('plugin:agent') ?? [])
+        callback({ remote, name, payload })
+    },
     syncHolds,
     setActive,
     bridge,
