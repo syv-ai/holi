@@ -151,6 +151,8 @@ export type JobEvent =
 
 /** How one turn of a job runs (`host/jobs.ts`). */
 export interface JobRun {
+  /** The owning activation's prepared command directory, independent of cwd. */
+  binDir?: string | null
   /** Where it runs, and the one folder it may write unless `readOnly`. */
   cwd: string
   /** The vault's root, which a scratch job does not run in. */

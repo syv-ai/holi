@@ -597,7 +597,7 @@ describe('the Codex job command', () => {
     expect(await readFile(join(state, 'codex-home/auth.json'), 'utf8')).toBe(PERSON_AUTH)
   })
 
-  it('carries no Holi commands on its PATH, and runs on a Codex folder of its own', async () => {
+  it('binds owner commands while running on a Codex folder of its own', async () => {
     const person = await personHome()
     const state = await temp('holi-job-state-')
     const codex = codexProvider({
@@ -609,8 +609,10 @@ describe('the Codex job command', () => {
       root: '/vault',
       prompt: 'p',
       state,
+      binDir: '/owner/bin',
     })
-    expect(cmd?.env.PATH?.split(':')).not.toContain('/holi/bin')
+    expect(cmd?.env.PATH?.split(':')[0]).toBe('/owner/bin')
+    expect(cmd?.env.HOLI_BIN).toBe(join('/owner/bin', 'holi'))
     expect(cmd?.env.HOLI_AGENT_SESSION).toBeUndefined()
     expect(cmd?.env.CODEX_HOME).toBe(join(state, 'codex-home'))
     const config = await readFile(join(state, 'codex-home/config.toml'), 'utf8')

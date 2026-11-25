@@ -369,14 +369,14 @@ export function codexProvider(deps: CodexProviderDeps = {}): JobsProvider {
         command(run) {
           const path = bin()
           if (path === null) return null
-          // No Holi commands on its PATH and no session id: a job reaches
-          // nothing of Holi's, only the folders its sandbox lets it write.
+          // Bind Holi commands to the owner even in scratch; keep the native
+          // sandbox and the job's private state unchanged.
           // Its sandbox can still read the disk; what a scratch job hands the
           // vault is what Holi copies back. Its Codex folder is its own, with
           // no MCP servers, and a follow-up finds its thread there; a
           // `CODEX_HOME` the preset sets is the person's folder it copies.
           const preset = deps.env?.() ?? {}
-          const env = { ...buildAgentEnv(base), ...preset }
+          const env = buildAgentEnv({ ...base, ...preset }, { binDir: run.binDir })
           delete env[SESSION_ENV]
           // Nor any project's own: where it runs, the folder that holds it
           // and the vault are untrusted (`home.ts` says why).

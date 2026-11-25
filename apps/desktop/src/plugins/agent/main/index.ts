@@ -293,6 +293,7 @@ export const agentMain: MainPlugin = {
       // when it takes up this registry, then link each individual launch.
       const jobs = createJobs({
         vault,
+        binDir: ctx.binDir,
         scratchRoot: scratchRoots.jobs,
         ...(ownership && { ownership }),
         activationSignal: ctx.activationSignal,

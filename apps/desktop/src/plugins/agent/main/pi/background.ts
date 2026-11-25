@@ -409,7 +409,8 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     let env: NodeJS.ProcessEnv
     try {
       if (invalidated) return { ok: false as const, message: 'No vault is open.' }
-      env = (deps.env ?? ((binDir) => buildPiEnv(process.env, { binDir })))(deps.binDir?.())
+      const binDir = deps.binDir?.()
+      env = buildPiEnv(deps.env?.(binDir) ?? process.env, { binDir })
     } catch (error) {
       return refused(error)
     }
