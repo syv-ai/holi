@@ -232,16 +232,27 @@ export async function createGoogleAccounts(
 
   /** A session's window onto its own row. Writes go through here so the map has
    *  exactly one writer even while several sessions are refreshing. */
-  const refFor = (sub: string): AccountRef => {
+  const refFor = (sub: string, refreshToken: string): AccountRef => {
     const grantEpoch = accountEpoch(sub)
+    const read = () => (accountEpoch(sub) === grantEpoch ? (usableAuth(sub) ?? null) : null)
+    // One refresh at a time per session. Remember its last token even after
+    // the row is gone, so an unrotated reply doesn't schedule another revoke.
+    let lastTokenDigest = tokenDigest(refreshToken)
     return {
-      read: () => (accountEpoch(sub) === grantEpoch ? (usableAuth(sub) ?? null) : null),
-      generation: () => accountEpoch(sub),
+      read,
+      // A client change closes the grant before it advances each account epoch.
+      generation: () => (read() === null ? -1 : grantEpoch),
       async write(auth, expectedGeneration) {
-        await serialize(async () => {
-          if (usableAuth(sub) === undefined || accountEpoch(sub) !== expectedGeneration) return
+        const digest = tokenDigest(auth.refreshToken)
+        const saved = await serialize(async () => {
+          if (expectedGeneration !== grantEpoch || read() === null) return false
           await writeAccounts({ ...accounts, [sub]: auth })
+          lastTokenDigest = digest
+          return true
         })
+        // A late rotation minted a credential our retiring session can't keep.
+        // Let the shared revoke path recheck consent ownership outside this write.
+        if (!saved && digest !== lastTokenDigest) await revokeUnusedGrant(auth.refreshToken)
       },
       async remove() {
         const removed = await serialize(async () => {
@@ -289,11 +300,12 @@ export async function createGoogleAccounts(
   /** Memoized: two vaults on one account must share ONE session, because
    *  `#refreshing` is that session's single-flight latch. */
   const sessionForSub = (sub: string): GoogleSession | null => {
-    if (usableAuth(sub) === undefined) return null
+    const auth = usableAuth(sub)
+    if (auth === undefined) return null
     let session = sessions.get(sub)
     if (session === undefined) {
       session = new GoogleSession({
-        account: refFor(sub),
+        account: refFor(sub, auth.refreshToken),
         client: currentClient,
         fetch: deps.fetch,
         now: deps.now,

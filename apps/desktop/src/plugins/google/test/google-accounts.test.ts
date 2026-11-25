@@ -23,7 +23,7 @@ import {
 import { createVaultAccounts } from '../main/vault-accounts'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../main/token-store'
 import type { LoopbackFlow, LoopbackServer } from '../main/loopback-flow'
-import { GOOGLE_SCOPES } from '../main/session'
+import { GOOGLE_SCOPES, GoogleReconnectRequiredError } from '../main/session'
 import { GoogleApi } from '../main/api'
 
 const storage = {
@@ -1521,30 +1521,77 @@ describe('a grant that lands after it was let go', () => {
     expect(await accounts.sessionFor(WORK)).toBeNull()
   })
 
-  it('does not bring back an account removed while it was refreshing', async () => {
-    let release = () => {}
-    let refreshing = () => {}
-    const atGoogle = new Promise<void>((resolve) => (refreshing = resolve))
-    const fetchImpl = (async (url: string) => {
-      if (url === REVOKE) return new Response('{}', { status: 200 })
-      refreshing()
-      await new Promise<void>((resolve) => (release = resolve))
-      return new Response(JSON.stringify({ access_token: 'at-2', expires_in: 3600 }), {
-        status: 200,
-      })
-    }) as unknown as typeof globalThis.fetch
-    const accounts = await manager([auth({ expiresAt: NOW - 1 })], fetchImpl)
-    await accounts.link(VAULT, 'sub-1')
+  it.each([
+    { reply: 'rotated', refreshToken: 'rt-rotated', revocations: ['rt-1', 'rt-rotated'] },
+    { reply: 'unrotated', refreshToken: undefined, revocations: ['rt-1'] },
+  ])(
+    'retires an account before its late $reply refresh returns',
+    async ({ refreshToken, revocations }) => {
+      const { accounts, revoked, refreshStarted, refreshReply } = await controlledConsent([
+        auth({ expiresAt: NOW - 1 }),
+      ])
+      await accounts.link(VAULT, 'sub-1')
+      await accounts.link(WORK, 'sub-1')
+      const binding = (await accounts.bindingFor(VAULT))!
+      const stale = expect(binding.session.getAccessToken()).rejects.toBeInstanceOf(
+        GoogleReconnectRequiredError,
+      )
+      await refreshStarted.promise
 
-    const token = accounts.sessionForSub('sub-1')!.getAccessToken()
-    await atGoogle
-    await accounts.removeAccount('sub-1')
-    release()
-    await expect(token).rejects.toThrow(/expired or been revoked/)
+      const removal = accounts.removeAccount('sub-1')
+      expect(binding.isCurrent()).toBe(false)
+      await removal
+      expect(revoked).toEqual(['rt-1'])
+      expect(await store.read()).toEqual({})
+      expect(await accounts.bindingFor(VAULT)).toBeNull()
+      expect(await accounts.bindingFor(WORK)).toBeNull()
 
-    expect(accounts.list()).toEqual([])
-    expect(await store.read()).toEqual({})
-    expect(await accounts.sessionFor(VAULT)).toBeNull()
+      refreshReply.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: 'at-stale',
+            expires_in: 3600,
+            refresh_token: refreshToken,
+          }),
+        ),
+      )
+      await stale
+      expect(revoked).toEqual(revocations)
+      expect(await store.read()).toEqual({})
+      expect(await accounts.bindingFor(VAULT)).toBeNull()
+      expect(await accounts.bindingFor(WORK)).toBeNull()
+    },
+  )
+
+  it('keeps a newer consent that owns the late rotation token', async () => {
+    const rig = await controlledConsent([auth({ expiresAt: NOW - 1 })])
+    await rig.accounts.link(VAULT, 'sub-1')
+    const old = (await rig.accounts.bindingFor(VAULT))!
+    const stale = expect(old.session.getAccessToken()).rejects.toBeInstanceOf(
+      GoogleReconnectRequiredError,
+    )
+    await rig.refreshStarted.promise
+    await rig.accounts.removeAccount('sub-1')
+
+    const current = (await rig.accounts.connect(WORK)).wait()
+    const exchange = rig.exchanges[0]!
+    await exchange.started.promise
+    exchange.reply.resolve(auth({ refreshToken: 'rt-rotated', accessToken: 'at-current' }))
+    await expect(current).resolves.toMatchObject({ kind: 'granted' })
+
+    rig.refreshReply.resolve(
+      new Response(
+        JSON.stringify({ access_token: 'at-stale', expires_in: 3600, refresh_token: 'rt-rotated' }),
+      ),
+    )
+    await stale
+    expect(rig.revoked).toEqual(['rt-1'])
+    expect(await rig.accounts.bindingFor(VAULT)).toBeNull()
+    const binding = (await rig.accounts.bindingFor(WORK))!
+    await expect(binding.session.getAccessToken()).resolves.toBe('at-current')
+    expect(await store.read()).toMatchObject({
+      'sub-1': { refreshToken: 'rt-rotated', accessToken: 'at-current' },
+    })
   })
 })
 
