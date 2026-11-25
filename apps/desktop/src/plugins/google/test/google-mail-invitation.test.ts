@@ -65,6 +65,7 @@ function gmailMessage(
   calendar?: string | Buffer,
   options: {
     sent?: boolean
+    from?: string
     attached?: boolean
     method?: string
     contentTypes?: string[]
@@ -84,7 +85,7 @@ function gmailMessage(
     payload: {
       mimeType: 'multipart/mixed',
       headers: [
-        { name: 'From', value: options.sent ? person : organizer },
+        { name: 'From', value: options.from ?? (options.sent ? person : organizer) },
         { name: 'To', value: options.sent ? organizer : person },
         { name: 'Subject', value: options.sent ? 'Re: Design sync' : 'Design sync' },
         { name: 'Message-ID', value: options.rfcId ?? `<${id}@example.net>` },
@@ -205,9 +206,11 @@ async function rig() {
       id: string
       selected: boolean
       hidden?: boolean
-      accessRole?: 'owner' | 'writer' | 'reader'
+      accessRole?: 'owner' | 'writer' | 'reader' | 'freeBusyReader'
+      deleted?: boolean
     }[],
     secondaryUidItems: new Map<string, unknown[]>(),
+    eventCollectionErrors: new Map<string, number>(),
     hiddenCalendars: [] as string[],
     calendarOverrides: { 'hidden@example.com': false } as Record<string, boolean>,
     // Applied PATCHes requesting Calendar updates, not notification receipts.
@@ -231,6 +234,7 @@ async function rig() {
     // These fixture calendars have fixed UTC offsets over the dates under test.
     calendarDateOffsets: new Map<string, string>(),
     exactCalendarError: null as number | null,
+    afterExactCalendarRead: () => {},
     omitAfterPatch: false,
     afterPatch: () => {},
     calendarReadback: null as ReturnType<typeof event> | null,
@@ -357,17 +361,45 @@ async function rig() {
       const bytes = state.attachments.get(id)
       return bytes ? json({ data: wire(bytes), size: Buffer.byteLength(bytes) }) : json({}, 404)
     }
+    const secondaryCalendars = [
+      ...state.secondaryCalendars.map((calendar) => ({ accessRole: 'owner', ...calendar })),
+      ...state.hiddenCalendars.map((id) => ({
+        id,
+        selected: false,
+        hidden: true,
+        accessRole: 'owner',
+      })),
+    ]
+    const calendarKey = (calendarId: string) =>
+      calendarId === state.primaryCalendarId ? 'primary' : calendarId
+    const canReadEvents = (id: string) =>
+      id === 'primary'
+        ? !state.primaryMissing
+        : secondaryCalendars.some(
+            (calendar) =>
+              calendar.id === id &&
+              !('deleted' in calendar && calendar.deleted) &&
+              calendar.accessRole !== 'freeBusyReader',
+          )
     if (url.pathname.endsWith('/users/me/calendarList')) {
       if (state.refreshOnQuery) now = 3_600_000
-      const hidden = url.searchParams.get('showHidden') === 'true' ? state.hiddenCalendars : []
+      const showHidden = url.searchParams.get('showHidden') === 'true'
+      const showDeleted = url.searchParams.get('showDeleted') === 'true'
+      const minRole = url.searchParams.get('minAccessRole')
       return json({
         kind: 'calendar#calendarList',
         items: [
-          { id: state.primaryCalendarId, primary: true, selected: true, accessRole: 'owner' },
-          ...state.secondaryCalendars
-            .filter((calendar) => !calendar.hidden || url.searchParams.get('showHidden') === 'true')
-            .map((calendar) => ({ accessRole: 'owner', ...calendar })),
-          ...hidden.map((id) => ({ id, selected: false, hidden: true, accessRole: 'owner' })),
+          ...(state.primaryMissing
+            ? []
+            : [
+                { id: state.primaryCalendarId, primary: true, selected: true, accessRole: 'owner' },
+              ]),
+          ...secondaryCalendars.filter(
+            (calendar) =>
+              (showHidden || !calendar.hidden) &&
+              (showDeleted || !('deleted' in calendar && calendar.deleted)) &&
+              (minRole !== 'reader' || calendar.accessRole !== 'freeBusyReader'),
+          ),
         ],
       })
     }
@@ -387,8 +419,9 @@ async function rig() {
           403,
         )
       const calendarId = decodeURIComponent(instancePath[1]!)
-      const instances =
-        state.instances.get(calendarId === state.primaryCalendarId ? 'primary' : calendarId) ?? []
+      const id = calendarKey(calendarId)
+      if (!canReadEvents(id)) return json({}, 404)
+      const instances = state.instances.get(id) ?? []
       const seriesId = decodeURIComponent(instancePath[2]!)
       const original = url.searchParams.get('originalStart')
       if (state.instanceContinuationUnavailable && url.searchParams.has('pageToken'))
@@ -409,9 +442,9 @@ async function rig() {
     const calendar = /\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/.exec(url.pathname)
     if (calendar) {
       const calendarId = decodeURIComponent(calendar[1]!)
-      const id = calendarId === state.primaryCalendarId ? 'primary' : calendarId
+      const id = calendarKey(calendarId)
       if (state.calendarUnavailable) throw new TypeError('Calendar offline')
-      if (state.primaryMissing && id === 'primary') return json({}, 404)
+      if (!canReadEvents(id)) return json({}, 404)
       const events = state.events.get(id) ?? []
       if (init.method === 'PATCH') {
         state.calendarPatchAttempts++
@@ -457,8 +490,12 @@ async function rig() {
         const original = [...events, ...(state.instances.get(id) ?? [])].find(
           (event) => event.id === calendar[2],
         )
-        return original ? json(original) : json({}, 404)
+        const response = original ? json(original) : json({}, 404)
+        state.afterExactCalendarRead()
+        return response
       }
+      const collectionError = state.eventCollectionErrors.get(id)
+      if (collectionError) return json({}, collectionError)
       const queryUid = url.searchParams.get('iCalUID')
       if (queryUid !== null) state.calendarUidQueries.push(queryUid)
       if (state.navigationRefusal && url.searchParams.has('timeMin')) {
@@ -649,6 +686,71 @@ afterEach(async () => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
+
+it('excludes guest REQUEST and CANCEL deliveries from organizer history and reply parents', async () => {
+  const { state, list, read, respond } = await rig()
+  const genuine = gmailMessage('update', 100, invite(), {
+    from: `(sent for the meeting) "Host, Organizer" <${organizer.toUpperCase()}> (host)`,
+  })
+  genuine.payload.headers.push({ name: 'Sender', value: organizer })
+  const guestRequest = gmailMessage('guest-update', 300, invite('REQUEST', '', 4), { from: guest })
+  const guestCancel = gmailMessage('guest-cancel', 400, invite('CANCEL', 'STATUS:CANCELLED', 5), {
+    from: guest,
+  })
+  state.messages = [guestRequest, guestCancel]
+  expect(await list()).toMatchObject({ invitations: [], recoveryReason: expect.any(String) })
+  const guestPredecessor = gmailMessage(
+    'guest-predecessor',
+    250,
+    invite('REQUEST', '', 3, '20240601T090000Z').replace('Upstairs', 'Downstairs'),
+    { from: guest },
+  )
+  state.messages = [genuine, guestPredecessor, guestRequest, guestCancel]
+  state.events.set('primary', [event()])
+  expect(await read()).toMatchObject({
+    identity,
+    canRespond: true,
+    recordedResponseStatus: 'declined',
+  })
+  state.events.clear()
+  expect(await read()).toMatchObject({ identity, canRespond: true, cancelled: false })
+  await expect(
+    respond('accepted', { messageId: guestRequest.id, sequence: 4 }),
+  ).rejects.toMatchObject({
+    code: 'CONFLICT',
+  })
+  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', channel: 'gmail' })
+  expect(state.sentMime).toHaveLength(1)
+  expect(state.sentMime[0]).toContain('In-Reply-To: <update@example.net>')
+})
+
+it.each([
+  ['malformed From', `${organizer} (unclosed`, []],
+  ['multiple From mailboxes', `${organizer}, ${guest}`, []],
+  ['duplicate From', organizer, [{ name: 'fRoM', value: organizer }]],
+  [
+    'duplicate Sender',
+    organizer,
+    [
+      { name: 'Sender', value: organizer },
+      { name: 'sender', value: organizer },
+    ],
+  ],
+  ['malformed Sender', organizer, [{ name: 'Sender', value: `${organizer},` }]],
+  ['unverified sender relay', organizer, [{ name: 'Sender', value: guest }]],
+  ['self-asserted delegation', guest, [{ name: 'Reply-To', value: organizer }]],
+] as const)('does not grant organizer authority to %s', async (defect, from, headers) => {
+  const { state, list } = await rig()
+  const request =
+    defect === 'self-asserted delegation'
+      ? invite().replace('ORGANIZER;', `ORGANIZER;SENT-BY="mailto:${guest}";`)
+      : invite()
+  const delivery = gmailMessage('update', 300, request, { from })
+  delivery.payload.headers.push(...headers)
+  state.messages = [delivery]
+  expect(await list()).toMatchObject({ invitations: [], recoveryReason: expect.any(String) })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
 it('patches only the attendee on the primary copy of a past invitation and confirms each answer by readback', async () => {
@@ -2197,6 +2299,43 @@ it('skips linkless and unsafe upcoming instances and leaves only Calendar naviga
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
+it('skips expanded rows without current mailbox membership or the master revision', async () => {
+  const { state, read, respond } = await rig()
+  const original = seriesWithException()
+  state.messages = [
+    gmailMessage('original', 100, original),
+    gmailMessage(
+      'update',
+      200,
+      original.replace('20240701T090000Z', '20240702T090000Z').replace('Upstairs', 'Downstairs'),
+    ),
+  ]
+  const master = event({ id: 'series', series: true, location: 'Downstairs' })
+  const room = 'https://meet.google.com/xyz-abcd-efg'
+  const removed = upcomingInstance('removed', '2099-07-09', room)
+  removed.attendees.shift()
+  const unrelatedSelf = upcomingInstance('different-self', '2099-07-16', room)
+  unrelatedSelf.attendees[0]!.self = false
+  unrelatedSelf.attendees[1]!.self = true
+  const omitted = { ...upcomingInstance('omitted', '2099-07-23', room), attendeesOmitted: true }
+  const stale = { ...upcomingInstance('stale', '2099-07-30', room), sequence: 2 }
+  const staleMaterial = {
+    ...upcomingInstance('stale-location', '2099-08-06', room),
+    location: 'Upstairs',
+  }
+  const next = upcomingInstance('next', '2099-08-13', 'https://meet.google.com/klm-nopq-rst')
+  for (const row of [removed, unrelatedSelf, omitted, stale, next]) row.location = master.location
+  state.events.set('primary', [master])
+  state.instances.set('primary', [removed, unrelatedSelf, omitted, stale, staleMaterial, next])
+  expect(await read()).toMatchObject({
+    conferenceUrl: next.hangoutLink,
+    htmlLink: next.htmlLink,
+    canRespond: true,
+  })
+  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', channel: 'calendar' })
+  expect(state.calendarUpdateRequests).toMatchObject([{ eventId: master.id, status: 'accepted' }])
+})
+
 it('skips individually unverifiable series occurrences, but cannot use a malformed page for Join', async () => {
   const { state, read } = await rig()
   state.messages[0] = gmailMessage(
@@ -2263,7 +2402,9 @@ it('follows cancellation and reinstatement at the original slot when joining a s
       .replace(organizer, organizerEmail)
       .replace('END:VEVENT', `RECURRENCE-ID${range}:20990709T150000Z\r\nEND:VEVENT`)
 
-  state.messages.push(gmailMessage('another-organizer', 400, cancel(guest, '20240703T090000Z')))
+  state.messages.push(
+    gmailMessage('another-organizer', 400, cancel(guest, '20240703T090000Z'), { from: guest }),
+  )
   expect(await series()).toMatchObject({ conferenceUrl: next.hangoutLink })
   state.messages.pop()
   state.messages.push(gmailMessage('obsolete', 500, cancel(organizer, '20240630T090000Z')))
@@ -2777,6 +2918,32 @@ it('offers join-only for verified organizer or PUBLISH mail and rejects unverifi
     conferenceUrl: null,
     htmlLink: null,
   })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
+it('skips disabled collections for publications but not for REQUEST authority', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2024-07-18T14:00:00Z'))
+  const { state, read, respond } = await rig()
+  const disabledId = 'disabled@example.com'
+  const enabledId = 'enabled@example.com'
+  state.secondaryCalendars = [
+    { id: disabledId, selected: true },
+    { id: enabledId, selected: true },
+  ]
+  state.calendarOverrides = { [disabledId]: false }
+  state.eventCollectionErrors.set(disabledId, 503)
+  const enabledCopy = event({ id: 'enabled' })
+  enabledCopy.attendees[0]!.responseStatus = 'needsAction'
+  state.events.set(enabledId, [enabledCopy])
+  state.messages = [gmailMessage('publication', 200, invite('PUBLISH'))]
+  expect(await read()).toMatchObject({
+    kind: 'meeting',
+    htmlLink: enabledCopy.htmlLink,
+    canRespond: false,
+  })
+  state.messages = [gmailMessage('update', 300, invite())]
+  expect(await read()).toMatchObject({ kind: 'invitation', htmlLink: null, canRespond: false })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
@@ -3325,7 +3492,9 @@ it('applies organizer cancellations across only the affected occurrences', async
   await read(thread, 'occurrence')
   await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
 
-  state.messages[3] = gmailMessage('wrong-organizer', 190, cancel.replace(organizer, guest))
+  state.messages[3] = gmailMessage('wrong-organizer', 190, cancel.replace(organizer, guest), {
+    from: guest,
+  })
   expect(await read(thread, 'occurrence')).toMatchObject({ cancelled: false, canRespond: true })
   state.messages[3] = gmailMessage(
     'range',
@@ -4134,6 +4303,48 @@ it('retains an active primary copy with the exact UID and no organizer address',
   })
   expect(state.sendAttempts).toBe(1)
   expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it('requires access to a known secondary calendar before its event 404 permits Gmail', async () => {
+  const { state, read, restart } = await rig()
+  const secondary = {
+    id: 'hidden@example.com',
+    selected: false,
+    hidden: true,
+    accessRole: 'writer' as const,
+  }
+  state.secondaryCalendars = [secondary]
+  state.events.set(secondary.id, [event()])
+  expect(await read()).toMatchObject({ canRespond: true, recordedResponseStatus: 'declined' })
+  // The event still exists. Complete UID discovery does not see it, and an
+  // exact GET without read access returns the same 404 as deletion.
+  state.secondaryUidItems.set(secondary.id, [])
+  const reopened = restart()
+  const blocked = { canRespond: false, responseTargetKey: null }
+  for (const subscriptions of [
+    [],
+    [{ ...secondary, accessRole: 'freeBusyReader' as const }],
+    [{ ...secondary, deleted: true }],
+    [secondary],
+  ]) {
+    state.secondaryCalendars = subscriptions
+    expect(await reopened.read()).toMatchObject(blocked)
+    await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  }
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+  state.events.delete(secondary.id)
+  expect(await reopened.read()).toMatchObject({ canRespond: true })
+  // Lose access after the response's initial 404. Dispatch preflight must
+  // read a fresh access snapshot, even though the known event really is gone.
+  state.afterExactCalendarRead = () => {
+    state.secondaryCalendars = []
+    state.afterExactCalendarRead = () => {}
+  }
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+  expect(state.sendAttempts).toBe(0)
+  state.secondaryCalendars = [secondary]
+  expect(await reopened.respond('accepted')).toMatchObject({ outcome: 'sent', channel: 'gmail' })
+  expect(state.sendAttempts).toBe(1)
 })
 
 it.each(['mailbox', 'other mailbox', 'ambiguous self'] as const)(

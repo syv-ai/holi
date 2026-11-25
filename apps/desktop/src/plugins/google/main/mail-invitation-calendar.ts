@@ -512,6 +512,51 @@ function usableInvitationEvent(event: RawEvent): boolean {
 
 class CalendarObservationError extends Error {}
 
+/** One bounded CalendarList snapshot per reconciliation, never across reads
+ * or dispatch preflight. Visibility settings do not grant access to resources. */
+export function createInvitationCalendarDiscovery(api: CalendarReadApi) {
+  let snapshot: Promise<CalendarListEntry[]> | undefined
+  return () =>
+    (snapshot ??= invitationPages<CalendarListEntry>(
+      api,
+      `${BASE}/users/me/calendarList`,
+      'calendar#calendarList',
+      { minAccessRole: 'reader', showDeleted: 'false', showHidden: 'true' },
+    ))
+}
+
+type ReadCalendars = ReturnType<typeof createInvitationCalendarDiscovery>
+
+function validCalendar(calendar: CalendarListEntry): boolean {
+  return (
+    (calendar.kind === undefined || calendar.kind === 'calendar#calendarListEntry') &&
+    safeCalendarId(calendar.id) &&
+    (calendar.primary === undefined || typeof calendar.primary === 'boolean') &&
+    (calendar.deleted === undefined || typeof calendar.deleted === 'boolean') &&
+    (calendar.deleted === true ||
+      readableCalendar(calendar) ||
+      calendar.accessRole === 'freeBusyReader')
+  )
+}
+
+function readableCalendar({ deleted, accessRole }: CalendarListEntry): boolean {
+  return (
+    deleted !== true &&
+    (accessRole === 'owner' || accessRole === 'writer' || accessRole === 'reader')
+  )
+}
+
+function primaryCalendar(calendars: CalendarListEntry[]): CalendarListEntry | undefined {
+  const primary = calendars.filter(({ primary }) => primary === true)
+  const [entry] = primary
+  if (
+    primary.length > 1 ||
+    (entry && (!validCalendar(entry) || calendars.filter(({ id }) => id === entry.id).length !== 1))
+  )
+    throw new InvalidCalendarCollection('Invalid primary Calendar list entry')
+  return entry
+}
+
 /** RSVP lookup is independent of agenda visibility, dates and RSVP state. */
 export async function findInvitationCalendarCopy(
   api: CalendarReadApi,
@@ -519,6 +564,7 @@ export async function findInvitationCalendarCopy(
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
   readCalendarOverrides: () => Promise<CalendarOverrides>,
+  readCalendars: ReadCalendars,
 ): Promise<CalendarLookup> {
   try {
     return await lookupInvitationCalendarCopy(
@@ -533,6 +579,7 @@ export async function findInvitationCalendarCopy(
         }
       },
       readCalendarOverrides,
+      readCalendars,
     )
   } catch (error) {
     if (error instanceof CalendarObservationError) throw error.cause
@@ -559,6 +606,7 @@ async function lookupInvitationCalendarCopy(
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
   readCalendarOverrides: () => Promise<CalendarOverrides>,
+  readCalendars: ReadCalendars,
 ): Promise<CalendarLookup> {
   const { identity } = invitation.details
   const { uid, recurrenceId } = identity
@@ -639,92 +687,73 @@ async function lookupInvitationCalendarCopy(
     kind: 'blocked',
     reason: 'Calendar cannot verify a floating recurrence',
   } as const
-  const observePrimary = observeCopy(PRIMARY_EVENTS)
-  const primary = await exactCopies(
-    api,
-    PRIMARY_EVENTS,
-    identity,
-    floating,
-    { ...parentContext(), primaryMailbox: mailbox },
-    observePrimary,
-  )
-  if (floating && primary.length) return unmatchable
   const ambiguous = {
     kind: 'blocked',
     reason: 'More than one Calendar event matches this invitation',
   } as const
-  const primaryCopy = (event: RawEvent) =>
-    invitationCopy(api, PRIMARY_EVENTS, event, invitation, mailbox, true, observePrimary)
   const { legacyJoinOnly } = invitation
-  if (!legacyJoinOnly) {
-    if (primary.length > 1) return ambiguous
-    if (primary[0]) return primaryCopy(primary[0])
-  }
-
-  const calendars = await invitationPages<CalendarListEntry>(
-    api,
-    `${BASE}/users/me/calendarList`,
-    'calendar#calendarList',
-    {
-      minAccessRole: 'reader',
-      showDeleted: 'false',
-      showHidden: 'true',
-    },
-  )
   const overrides = legacyJoinOnly ? await readCalendarOverrides() : null
-  const enabled = (calendar: CalendarListEntry) =>
-    overrides === null || calendarIsEnabled(calendar, overrides)
+  const enabled = (calendar: CalendarListEntry) => {
+    if (overrides === null) return true
+    if (
+      (calendar.selected !== undefined && typeof calendar.selected !== 'boolean') ||
+      (calendar.hidden !== undefined && typeof calendar.hidden !== 'boolean')
+    )
+      throw new InvalidCalendarCollection('Invalid Calendar visibility')
+    return calendarIsEnabled(calendar, overrides)
+  }
   let sawIneligibleCopy = false
-  const navigationCandidates = (events: RawEvent[], calendarEnabled: boolean) => {
+  const navigationCandidates = (events: RawEvent[]) => {
     if (!legacyJoinOnly) return events
     // exactCopies has already observed resources, including those that will
     // never supply links. Ineligibility is not proof of absence.
-    const candidates = calendarEnabled
-      ? events.filter(
-          (event) =>
-            isAgendaEventVisible(event) ||
-            // The master still binds expanded occurrences. Their own self
-            // status determines Join, not the status on the series template.
-            (series && event.status !== 'cancelled' && event.recurrence?.length),
-        )
-      : []
+    const candidates = events.filter(
+      (event) =>
+        isAgendaEventVisible(event) ||
+        // A master still binds expanded occurrences. Their self status
+        // determines Join, not the status on the series template.
+        (series && event.status !== 'cancelled' && event.recurrence?.length),
+    )
     if (candidates.length !== events.length) sawIneligibleCopy = true
     return candidates
   }
-  const validCalendar = (calendar: (typeof calendars)[number]) =>
-    (calendar.kind === undefined || calendar.kind === 'calendar#calendarListEntry') &&
-    safeCalendarId(calendar.id) &&
-    (calendar.primary === undefined || typeof calendar.primary === 'boolean') &&
-    (calendar.deleted === undefined || typeof calendar.deleted === 'boolean') &&
-    (!legacyJoinOnly ||
-      ((calendar.selected === undefined || typeof calendar.selected === 'boolean') &&
-        (calendar.hidden === undefined || typeof calendar.hidden === 'boolean'))) &&
-    (calendar.deleted ||
-      ['owner', 'writer', 'reader', 'freeBusyReader'].includes(calendar.accessRole ?? ''))
-  if (legacyJoinOnly && primary.length) {
-    // The alias locates the resource; the declared calendar ID keys its
-    // visibility and per-vault override. They are not interchangeable.
-    const declared = calendars.filter(({ primary }) => primary === true)
-    const [primaryCalendar] = declared
-    if (
-      declared.length > 1 ||
-      (primaryCalendar &&
-        (!validCalendar(primaryCalendar) ||
-          calendars.filter(({ id }) => id === primaryCalendar.id).length !== 1))
+  const declaredPrimary = legacyJoinOnly ? primaryCalendar(await readCalendars()) : undefined
+  if (
+    !legacyJoinOnly ||
+    (declaredPrimary && readableCalendar(declaredPrimary) && enabled(declaredPrimary))
+  ) {
+    const observePrimary = observeCopy(PRIMARY_EVENTS)
+    const primary = await exactCopies(
+      api,
+      PRIMARY_EVENTS,
+      identity,
+      floating,
+      { ...parentContext(), primaryMailbox: mailbox },
+      observePrimary,
     )
-      throw new Error('Invalid primary Calendar list entry')
-    const candidates = navigationCandidates(primary, !!primaryCalendar && enabled(primaryCalendar))
+    const candidates = navigationCandidates(primary)
+    if (floating && candidates.length) return unmatchable
     if (candidates.length > 1) return ambiguous
-    if (candidates[0]) return primaryCopy(candidates[0])
+    if (candidates[0])
+      return invitationCopy(
+        api,
+        PRIMARY_EVENTS,
+        candidates[0],
+        invitation,
+        mailbox,
+        true,
+        observePrimary,
+      )
   }
 
+  const calendars = await readCalendars()
   let match: CalendarLookup | undefined
   const seen = new Set<string>()
   for (const calendar of calendars) {
     if (!validCalendar(calendar) || seen.has(calendar.id))
       throw new Error('Invalid Calendar list entry')
     seen.add(calendar.id)
-    if (calendar.primary || calendar.deleted || calendar.accessRole === 'freeBusyReader') continue
+    if (calendar.primary || !readableCalendar(calendar) || !enabled(calendar)) continue
     const url = `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`
     const ownedCalendar = calendar.accessRole === 'owner' ? calendar.id.toLowerCase() : undefined
     const observe = observeCopy(url, calendar.id.toLowerCase(), calendar.accessRole === 'owner')
@@ -736,7 +765,7 @@ async function lookupInvitationCalendarCopy(
       parentContext(ownedCalendar),
       observe,
     )
-    const candidates = navigationCandidates(events, enabled(calendar))
+    const candidates = navigationCandidates(events)
     if (floating && candidates.length) return unmatchable
     if (candidates.length > 1 || (candidates.length && match)) return ambiguous
     if (candidates[0]) {
@@ -819,6 +848,7 @@ function invitationMembership(
       : undefined
   return {
     attendee,
+    organizes,
     allowed: joinOnly
       ? owned && (organizes || Boolean(attendee && !attendee.resource))
       : !!attendee,
@@ -872,7 +902,7 @@ function invitationCopy(
   if (organizerConflict) return blocked('You organize this event')
   const links = invitationEventLinks(event)
   const requiresRoster = rosterChanged(invitation)
-  const mismatch = calendarRevisionMismatch(event, invitation, links, requiresRoster)
+  const mismatch = calendarRevisionMismatch(event, invitation, links, { requiresRoster })
   if (mismatch) return blocked(mismatch)
   const etag = strongEventEtag(event.etag)
   // Only an explicit needsAction is a reset. An omitted status cannot
@@ -915,15 +945,19 @@ function invitationCopy(
           api,
           base,
           event,
-          uid,
-          organizer,
+          invitation,
           observeUidQuery(uid, observe, primary && { ...primary, parentId: event.id }),
           selectSlot,
-          (row, slot) => {
-            const membership = invitationMembership(row, slot, mailbox, owned, ownedCalendar)
-            return membership.allowed && !membership.organizerConflict
+          (row, revision) => {
+            const membership = invitationMembership(row, revision, mailbox, owned, ownedCalendar)
+            return (
+              (row.attendeesOmitted === undefined || row.attendeesOmitted === false) &&
+              membership.allowed &&
+              !membership.organizerConflict &&
+              (Boolean(mailboxAttendee(row, mailbox)) ||
+                (revision.joinOnly && membership.organizes))
+            )
           },
-          invitation.legacyJoinOnly,
         )
         if (upcoming) return { kind: 'series', links: upcoming }
         return invitation.legacyJoinOnly ? { kind: 'withheld' } : { kind: 'series' }
@@ -969,7 +1003,7 @@ function calendarRevisionMismatch(
   event: RawEvent,
   invitation: InvitationRevision,
   { conferenceUrl, htmlLink }: InvitationLinks,
-  requiresRoster = rosterChanged(invitation),
+  { requiresRoster = rosterChanged(invitation), expanded = false } = {},
 ): string | null {
   const { details, fields, material, joinOnly } = invitation
   const { sequence, recurrenceId } = details.identity
@@ -978,12 +1012,17 @@ function calendarRevisionMismatch(
     return (event.sequence ?? 0) > sequence
       ? 'Calendar has a newer revision of this event'
       : 'Calendar has not received this revision of the invitation yet'
-  if (recurrenceId === null && Boolean(event.recurrence?.length) !== details.recurring)
+  if (!expanded && recurrenceId === null && Boolean(event.recurrence?.length) !== details.recurring)
     return 'The Calendar recurrence scope does not match this invitation'
-  if (recurrenceId === null && details.recurring && !sameRecurrenceStart(fields, event.start))
+  if (
+    !expanded &&
+    recurrenceId === null &&
+    details.recurring &&
+    !sameRecurrenceStart(fields, event.start)
+  )
     return 'The Calendar time zone does not match this series invitation'
   const { explicitFields } = material
-  if (explicitFields.recurrence) {
+  if (!expanded && explicitFields.recurrence) {
     const expected = recurrenceSet(fields.recurrence)
     const actual = recurrenceSet(event.recurrence ?? [])
     if (expected === null || actual === null || expected !== actual)
@@ -1003,18 +1042,24 @@ function calendarRevisionMismatch(
     (explicitFields.title &&
       event.summary !== undefined &&
       words(event.summary) !== words(details.title)) ||
-    ((joinOnly || explicitFields.start) &&
+    (!expanded &&
+      (joinOnly || explicitFields.start) &&
       start !== undefined &&
       !timeMatches(details.start, start)) ||
-    ((joinOnly || explicitFields.end) && end !== undefined && !timeMatches(details.end, end)) ||
+    (!expanded &&
+      (joinOnly || explicitFields.end) &&
+      end !== undefined &&
+      !timeMatches(details.end, end)) ||
     (explicitFields.location &&
       event.location !== undefined &&
       words(event.location) !== words(details.location)) ||
-    (explicitFields.conferenceUrl &&
+    (!expanded &&
+      explicitFields.conferenceUrl &&
       details.conferenceUrl &&
       calendarConference &&
       details.conferenceUrl !== calendarConference) ||
-    (explicitFields.htmlLink &&
+    (!expanded &&
+      explicitFields.htmlLink &&
       calendarPageInMail &&
       htmlLink &&
       calendarPageInMail !== htmlLink) ||
@@ -1026,7 +1071,7 @@ function calendarRevisionMismatch(
         (requiresRoster &&
           (observedRoster === undefined ||
             materialDigest(observedRoster) !== invitation.evidence.attendees)) ||
-        !provesChangedMaterial(invitation, event, calendarConference, htmlLink)))
+        !provesChangedMaterial(invitation, event, calendarConference, htmlLink, expanded)))
   )
     return 'The Calendar details do not match this revision of the invitation'
   if (joinOnly && (!start || !end || !explicitFields.start))
@@ -1143,13 +1188,14 @@ async function upcomingInvitationLinks(
   api: CalendarReadApi,
   base: string,
   master: RawEvent,
-  uid: string,
-  organizer: string,
+  invitation: InvitationTarget,
   observe: (event: RawEvent) => Promise<void>,
   selectSlot: (slot: string) => InvitationRevision | false | null,
-  bindsSlot: (event: RawEvent, slot: InvitationRevision) => boolean,
-  legacyJoinOnly: boolean,
+  bindsMailbox: (event: RawEvent, revision: InvitationRevision) => boolean,
 ): Promise<InvitationLinks | null> {
+  const { details, legacyJoinOnly } = invitation
+  const { uid } = details.identity
+  const organizer = details.organizer?.email
   const { timeMin, includesEnd } = navigationWindow(legacyJoinOnly)
   let pageToken: string | undefined
   const seen = new Set<string>()
@@ -1189,14 +1235,19 @@ async function upcomingInvitationLinks(
         includesEnd(instance)
       ) {
         const slot = selectSlot(occurrenceSlot(instance)!)
-        const links = invitationEventLinks(instance)
-        if (
-          slot !== false &&
-          (!slot ||
-            (bindsSlot(instance, slot) && !calendarRevisionMismatch(instance, slot, links))) &&
-          (links.conferenceUrl || links.htmlLink)
-        )
-          return links
+        if (slot !== false) {
+          const revision = slot ?? invitation
+          const links = invitationEventLinks(instance)
+          // The verified master establishes a baseline, not the actual date,
+          // room or event page of each provider-expanded instance. A mailed
+          // slot revision instead supplies exact occurrence material.
+          if (
+            bindsMailbox(instance, revision) &&
+            !calendarRevisionMismatch(instance, revision, links, { expanded: slot === null }) &&
+            (links.conferenceUrl || links.htmlLink)
+          )
+            return links
+        }
       }
       if (pageToken === undefined) return null
       seen.add(pageToken)
@@ -1254,6 +1305,7 @@ function provesChangedMaterial(
   event: RawEvent,
   conference: string | null,
   htmlLink: string | null,
+  expanded: boolean,
 ): boolean {
   if (!predecessors.length) return true
   // A series master cannot prove changes to embedded exception rows. A
@@ -1289,11 +1341,15 @@ function provesChangedMaterial(
     proves('htmlLink', htmlLink ?? undefined) &&
     proves(
       'start',
-      materialTime(event.start?.date ?? event.start?.dateTime, details.allDay) ?? undefined,
+      expanded
+        ? undefined
+        : (materialTime(event.start?.date ?? event.start?.dateTime, details.allDay) ?? undefined),
     ) &&
     proves(
       'end',
-      materialTime(event.end?.date ?? event.end?.dateTime, details.allDay) ?? undefined,
+      expanded
+        ? undefined
+        : (materialTime(event.end?.date ?? event.end?.dateTime, details.allDay) ?? undefined),
     ),
   )
 }
@@ -1523,7 +1579,7 @@ function calendarTargetMailbox(target: string): string | null {
   return calendarTargetParts(target)?.[1] ?? null
 }
 
-function calendarTargetUrl(target: string, mailbox: string): string | null {
+function calendarTargetResource(target: string, mailbox: string) {
   const binding = calendarTargetParts(target)
   if (!binding || binding[1] !== mailbox) return null
   const [url] = binding
@@ -1535,25 +1591,47 @@ function calendarTargetUrl(target: string, mailbox: string): string | null {
   try {
     const segment = match[2]!
     const id = decodeURIComponent(segment)
-    return safeCalendarId(id) && encodeURIComponent(id) === segment ? match[1]! : null
+    return safeCalendarId(id) && encodeURIComponent(id) === segment ? { url: match[1]!, id } : null
   } catch {
     return null
   }
 }
 
 export function calendarTargetIsMailbox(target: string, mailbox: string): boolean {
-  return calendarTargetUrl(target, mailbox) !== null
+  return calendarTargetResource(target, mailbox) !== null
 }
 
 type CalendarResource =
   | { kind: 'gone' | 'unknown' }
   | { kind: 'present'; confirms: (proof: string, answer: InviteAnswer) => boolean }
 
-/** Exact resources can corroborate earlier writes, and only a resource 404
- * corroborates absence for a known target. Neither authorizes a Calendar PATCH. */
-export function createInvitationCalendarResourceLookup(api: CalendarReadApi, mailbox: string) {
+/** Exact resources can corroborate earlier writes. A 404 proves absence
+ * only with current read access to the containing calendar. Neither fact
+ * authorizes a Calendar PATCH. */
+export function createInvitationCalendarResourceLookup(
+  api: CalendarReadApi,
+  mailbox: string,
+  readCalendars: ReadCalendars,
+) {
   const snapshots = new Map<string, Promise<CalendarResource>>()
-  async function read(url: string): Promise<CalendarResource> {
+  async function hasReadAccess(id: string): Promise<boolean> {
+    try {
+      const calendars = await readCalendars()
+      if (id === 'primary') {
+        const primary = primaryCalendar(calendars)
+        return !!primary && readableCalendar(primary)
+      }
+      const [entry, duplicate] = calendars.filter((calendar) => calendar.id === id)
+      return !!entry && !duplicate && validCalendar(entry) && readableCalendar(entry)
+    } catch (error) {
+      if (propagateCalendarRefusal(error)) throw error
+      return false
+    }
+  }
+  async function read({
+    url,
+    id,
+  }: NonNullable<ReturnType<typeof calendarTargetResource>>): Promise<CalendarResource> {
     try {
       const event = await api.get<RawEvent>(url)
       return {
@@ -1572,18 +1650,22 @@ export function createInvitationCalendarResourceLookup(api: CalendarReadApi, mai
     } catch (error) {
       if (propagateCalendarRefusal(error)) throw error
       return {
-        kind: error instanceof GoogleApiError && error.status === 404 ? 'gone' : 'unknown',
+        kind:
+          error instanceof GoogleApiError && error.status === 404 && (await hasReadAccess(id))
+            ? 'gone'
+            : 'unknown',
       }
     }
   }
   return (target: string): Promise<CalendarResource> => {
-    const url = calendarTargetUrl(target, mailbox)
-    if (!url) return Promise.resolve({ kind: 'unknown' })
+    const resource = calendarTargetResource(target, mailbox)
+    if (!resource) return Promise.resolve({ kind: 'unknown' })
+    const { url } = resource
     let snapshot = snapshots.get(url)
     if (!snapshot) {
       // Historical targets share a bounded budget within this snapshot.
       if (snapshots.size >= 32) return Promise.resolve({ kind: 'unknown' })
-      snapshot = read(url)
+      snapshot = read(resource)
       snapshots.set(url, snapshot)
     }
     return snapshot

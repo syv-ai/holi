@@ -6,6 +6,7 @@ import {
   findInvitationCalendarCopy,
   invitationMaterialEvidence,
   relevantCalendarTargets,
+  createInvitationCalendarDiscovery,
   createInvitationCalendarResourceLookup,
   type InvitationTarget,
   type InvitationRevision,
@@ -147,9 +148,15 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
   const candidates: Candidate[] = []
   const disputedEmbedded = new Set<Candidate['value']['embeddedOccurrences'][number]>()
   const disputedSent = new Set<Mail>()
+  let rejectedOrganizer = false
   for (const mail of messages) {
-    if (mail.sent && mail.from !== mailbox) continue
+    if (
+      mail.sent &&
+      (mail.sentAddresses?.from?.length !== 1 || mail.sentAddresses.from[0] !== mailbox)
+    )
+      continue
     const renditions: (Alternative & { candidate: Candidate | null })[] = []
+    let rejectedRendition = false
     for (const part of mail.parts) {
       if (part.method === null && !mail.sent)
         throw new CalendarScanError('Gmail could not verify the calendar MIME declaration')
@@ -162,6 +169,23 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
       const parsed =
         source === null ? null : parseCalendarMail(mail.messageId, source, part.method ?? undefined)
       const candidate = parsed && (!mail.sent || parsed.value.method) ? { ...parsed, mail } : null
+      const organizer = candidate?.value.details.organizer?.email
+      if (
+        candidate &&
+        !candidate.joinOnly &&
+        (!mail.organizerSender ||
+          ((organizer || identityOf(candidate).materialKey) && organizer !== mail.organizerSender))
+      ) {
+        rejectedOrganizer = rejectedRendition = true
+        // A rejected branch is not revision evidence, but it still disagrees
+        // with any authoritative calendar alternative in the same delivery.
+        renditions.push({
+          alternatives: part.alternatives,
+          candidate: null,
+          signature: `unverified-organizer:${source}`,
+        })
+        continue
+      }
       const unknown =
         mail.sent &&
         (part.method === null || possibleReply) &&
@@ -186,7 +210,7 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
     }
     // This pass compares event revisions, not REPLYs. Only the latter can
     // be reconciled by Sent envelope, scope, and timestamp.
-    if (!mail.sent || renditions.some(({ candidate }) => candidate)) {
+    if ((!mail.sent && !rejectedRendition) || renditions.some(({ candidate }) => candidate)) {
       const known = renditions.filter(verified)
       if (hasConflictingAlternatives(known))
         throw new CalendarScanError('Gmail contains conflicting calendar alternatives')
@@ -194,9 +218,27 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
         disputedEmbedded.add(occurrence)
     }
   }
+  // A malformed part with no organizer cannot enter revision history. Keep
+  // the existing malformed-mail refusal for a known organizer's delivery (or
+  // a standalone unreadable invitation), not for an unrelated sender's part.
+  const organizers = new Set(
+    candidates.flatMap((candidate) => {
+      const organizer = candidate.value.details.organizer?.email
+      return !candidate.joinOnly && organizer && identityOf(candidate).materialKey
+        ? [organizer]
+        : []
+    }),
+  )
+  const admitted = candidates.filter((candidate) => {
+    if (candidate.joinOnly || identityOf(candidate).materialKey || !organizers.size) return true
+    if (organizers.has(candidate.mail.organizerSender!)) return true
+    rejectedOrganizer = true
+    return false
+  })
   return {
-    ...selectInvitationRevisions(candidates, mailbox, owners, disputedEmbedded),
+    ...selectInvitationRevisions(admitted, mailbox, owners, disputedEmbedded),
     disputedSent,
+    rejectedOrganizer,
   }
 }
 
@@ -479,6 +521,7 @@ export function createMailInvitationReconciler(
     target: InvitationReadTarget,
     scopes: Scope[],
     invitationFor: (scope: Scope) => InvitationTarget | null,
+    readCalendars: ReturnType<typeof createInvitationCalendarDiscovery>,
   ) {
     const { api, accountSub, email } = target
     const copies = new Map<string, CalendarCopy>()
@@ -493,6 +536,7 @@ export function createMailInvitationReconciler(
         (locator) =>
           store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
         target.readCalendarOverrides,
+        readCalendars,
       )
       copies.set(scopeKey(invitation.details.identity), copy)
     }
@@ -516,7 +560,12 @@ export function createMailInvitationReconciler(
       return { messages: [], owners: createMessageIdOwnership() }
     })
     const { messages, owners } = thread
-    const { scopes: incoming, selectSeriesSlot, disputedSent } = await latestByScope(thread, email)
+    const {
+      scopes: incoming,
+      selectSeriesSlot,
+      disputedSent,
+      rejectedOrganizer,
+    } = await latestByScope(thread, email)
     const scopes = selection
       ? incoming.filter((entry) => sameGroup(identityOf(entry.selected), selection))
       : incoming
@@ -539,11 +588,17 @@ export function createMailInvitationReconciler(
       const revision = revisionFor(entry)
       return revision && { ...revision, legacyJoinOnly: entry.selected.joinOnly }
     }
-    const { copies, journal: durable } = await collectCalendarCopies(target, scopes, invitationFor)
+    const readCalendars = createInvitationCalendarDiscovery(api)
+    const { copies, journal: durable } = await collectCalendarCopies(
+      target,
+      scopes,
+      invitationFor,
+      readCalendars,
+    )
     // Use the same locator for dispatch exclusion, Sent evidence, and readback,
     // even when a known outcome could not be written to the journal.
     const journal = { ...durable, attempts: durable.attempts.map(withGmailOutcome) }
-    const resources = createInvitationCalendarResourceLookup(api, email)
+    const resources = createInvitationCalendarResourceLookup(api, email, readCalendars)
     const known = knownCalendarLocators(journal)
     const relevant = journal.attempts.filter(
       (attempt) =>
@@ -1208,7 +1263,9 @@ export function createMailInvitationReconciler(
         ? 'An earlier response could not be confirmed. Checking its status will not send another response.'
         : missingThread
           ? 'Gmail could not find this invitation thread'
-          : null,
+          : rejectedOrganizer && !cards.length
+            ? 'Gmail could not verify the organizer as the sender of this invitation'
+            : null,
     }
   }
 
