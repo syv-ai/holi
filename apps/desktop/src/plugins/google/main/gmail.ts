@@ -19,6 +19,7 @@
  * HTML sanitizer remains in the renderer, where a DOM is available.
  */
 import { Parser } from 'htmlparser2'
+import type { MailListResult } from './mail-list-types'
 import { GoogleApiError, type GoogleApi } from './api'
 import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
@@ -505,6 +506,8 @@ export function mailboxLabel(mailbox: MailboxName | undefined): string {
 }
 
 export interface MailPage {
+  /** Present only for the authoritative loaded-list sync path. */
+  uiList?: MailListResult
   threads: MailThreadSummary[]
   /** `null` when there is nothing more to load. */
   nextPageToken: string | null
@@ -626,6 +629,40 @@ export async function listThreadIds(
   }
 }
 
+/** Only these fixed navigation queries can be evaluated from message labels.
+ * Arbitrary Gmail grammar and needs-reply remain on the existing path. */
+export function supportsMailListSync(options: ListThreadsOptions): boolean {
+  return (
+    options.needsReply !== true &&
+    ['', 'is:starred', 'in:inbox', 'in:sent', 'in:all', 'in:trash'].includes(
+      options.query?.trim() ?? '',
+    )
+  )
+}
+
+function matchesMailList(thread: RawThread, options: ListThreadsOptions): boolean {
+  if (!supportsMailListSync(options)) throw new Error('unsupported loaded mail list')
+  const query = options.query?.trim() ?? ''
+  const scope = query === '' ? (options.mailbox ?? 'inbox') : query
+  // Gmail evaluates the conjunction on messages, then returns conversations.
+  // A trashed message must not lend UNREAD/STARRED/category to a live sibling.
+  return (thread.messages ?? []).some((message) => {
+    const labels = new Set(message.labelIds ?? [])
+    if (labels.has('SPAM') || (scope !== 'in:trash' && labels.has('TRASH'))) return false
+    if (scope === 'in:trash' && !labels.has('TRASH')) return false
+    if ((scope === 'inbox' || scope === 'in:inbox') && !labels.has('INBOX')) return false
+    if ((scope === 'sent' || scope === 'in:sent') && !labels.has('SENT')) return false
+    if (scope === 'is:starred' && !labels.has('STARRED')) return false
+    if (options.unread === true && !labels.has('UNREAD')) return false
+    if (
+      options.category !== undefined &&
+      ![...labels].some((label) => CATEGORY_BY_LABEL[label] === options.category)
+    )
+      return false
+    return true
+  })
+}
+
 export async function listThreads(
   api: GoogleApi,
   options: ListThreadsOptions = {},
@@ -651,48 +688,71 @@ export async function fetchThreadSummaries(
   api: GoogleApi,
   ids: string[],
   knownAddresses?: string[],
+  /** UI sync checks membership against raw message labels, not summary flags.
+   * Also makes label lookup failures fatal rather than publishing partial data. */
+  membership?: ListThreadsOptions,
 ): Promise<MailThreadSummary[]> {
   if (ids.length === 0) return []
 
   // ONCE per call, not once per thread: resolving a chip must not cost a
   // request. It runs concurrently with the threads for the same reason.
-  const labelNames = fetchLabelNames(api)
+  const labelNames =
+    membership === undefined
+      ? fetchLabelNames(api)
+      : api
+          .get<{ labels?: { id?: string; name?: string; type?: string }[] }>(`${BASE}/labels`)
+          .then(
+            (page) =>
+              new Map(
+                (page.labels ?? []).flatMap((label) =>
+                  label.type === 'user' && label.id !== undefined && label.name !== undefined
+                    ? [[label.id, label.name] as const]
+                    : [],
+                ),
+              ),
+          )
 
-  const threads = await mapPooled(ids, 5, (id) =>
-    api
-      .get<RawThread>(`${BASE}/threads/${id}`, {
-        format: 'metadata',
-        // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
-        // Comma-joined, Gmail reads the whole string as one header name, matches
-        // nothing, and returns 200 with no headers.
-        metadataHeaders: [
-          'Subject',
-          'From',
-          'Date',
-          'Message-ID',
-          'To',
-          'Cc',
-          'Reply-To',
-          'List-Unsubscribe',
-          'Auto-Submitted',
-          'List-Id',
-          'Content-Type',
-        ],
-      })
-      .catch((error: unknown): RawThread => {
-        if (error instanceof GoogleApiError && error.status === 404) return {}
-        throw error
-      }),
-  )
+  const [names, threads] = await Promise.all([
+    labelNames,
+    mapPooled(ids, 5, (id) =>
+      api
+        .get<RawThread>(`${BASE}/threads/${id}`, {
+          format: 'metadata',
+          // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
+          // Comma-joined, Gmail reads the whole string as one header name, matches
+          // nothing, and returns 200 with no headers.
+          metadataHeaders: [
+            'Subject',
+            'From',
+            'Date',
+            'Message-ID',
+            'To',
+            'Cc',
+            'Reply-To',
+            'List-Unsubscribe',
+            'Auto-Submitted',
+            'List-Id',
+            'Content-Type',
+          ],
+        })
+        .catch((error: unknown): RawThread => {
+          if (error instanceof GoogleApiError && error.status === 404) return {}
+          throw error
+        }),
+    ),
+  ])
 
-  const names = await labelNames
-  const summaries = threads
+  const matchingThreads =
+    membership === undefined
+      ? threads
+      : threads.filter((thread) => matchesMailList(thread, membership))
+  const summaries = matchingThreads
     .map((thread) => summarize(thread, names, knownAddresses))
     .filter((t): t is Omit<MailThreadSummary, 'hasInvite'> => t !== null)
 
   // Metadata omits MIME children. Inspect only multipart MIME structure and
   // headers for an ambiguous latest incoming; never request body bytes.
-  const { invitationIds, unknownIds } = await fetchLatestIncomingInvitations(api, threads)
+  const { invitationIds, unknownIds } = await fetchLatestIncomingInvitations(api, matchingThreads)
   const invites = await fetchInviteIds(api, summaries)
   return summaries.map((summary) => ({
     ...summary,
