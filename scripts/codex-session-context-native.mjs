@@ -219,11 +219,26 @@ export async function runNativeInitialFixture() {
     evidence.approvalTranscript = approval.output.toString()
     await approval.close()
     const initial = await launch([bin, '--no-daemon', '--no-alt-screen'], 'initial')
-    await wait(initial, () => existsSync(hookEvents), 'trusted startup execution')
-    await wait(initial, (text) => text.includes('Ask Codex to do anything'), 'native editor')
+    await wait(
+      initial,
+      () => initial.output.toString().includes('state=idle:app=codex'),
+      'native editor idle',
+    )
     const prompt = 'HOLI764_UNCHANGED_USER_PROMPT'
-    await send(initial, 'submit-synthetic-prompt', `${prompt}\r`)
-    await wait(initial, () => model.requests.length === 1, 'native model request')
+    await send(initial, 'type-synthetic-prompt', prompt)
+    await wait(initial, (text) => text.includes(prompt), 'native draft')
+    await delay(250)
+    await send(initial, 'submit-synthetic-prompt', '\r')
+    await wait(initial, () => existsSync(hookEvents), 'trusted startup execution')
+    const lastUserText = (body) => {
+      const user = body.input?.filter((item) => item.role === 'user').at(-1)
+      return typeof user?.content === 'string'
+        ? user.content
+        : user?.content?.map((part) => part.text ?? '').join('')
+    }
+    const primaryRequest = () =>
+      model.requests.find((request) => lastUserText(request.body) === prompt)
+    await wait(initial, () => Boolean(primaryRequest()), 'native model request')
     await wait(
       initial,
       (text) => text.includes('Holi context fixture finished.'),
@@ -234,13 +249,9 @@ export async function runNativeInitialFixture() {
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line))
-    const request = model.requests[0].body
+    const request = primaryRequest().body
     const text = JSON.stringify(request)
-    const user = request.input?.filter((item) => item.role === 'user').at(-1)
-    const userText =
-      typeof user?.content === 'string'
-        ? user.content
-        : user?.content?.map((part) => part.text ?? '').join('')
+    const userText = lastUserText(request)
     if (
       !text.includes('HOLI764_ADDITIVE_CONTEXT') ||
       !text.includes('HOLI764_CONFIG_INSTRUCTIONS') ||
@@ -260,6 +271,12 @@ export async function runNativeInitialFixture() {
         evidence.cleanupError = String(error)
       }
     }
+    evidence.outputs = handles.map((child, index) => ({
+      launch: evidence.argv[index],
+      transcript: child.output.toString(),
+      failure: child.failure?.message,
+      exit: child.nativeExit,
+    }))
     evidence.drainage =
       !evidence.cleanupError &&
       evidence.receipts.length === handles.length &&
