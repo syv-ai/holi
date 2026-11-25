@@ -155,18 +155,11 @@ export const agentMain: MainPlugin = {
       assertActive()
       const terminals = createAgentTerminals({
         activationSignal: ctx.activationSignal,
-        emit(remote, name, payload) {
-          if (!ctx.activationSignal.aborted) ctx.emit(remote, name, payload)
+        emit(remote, name, payload, deliveryGuard) {
+          if (!ctx.activationSignal.aborted) ctx.emit(remote, name, payload, deliveryGuard)
         },
       })
       const displayedLease = (): (() => boolean) => ctx.presentationLease()
-      const openTerminal = terminals.open
-      terminals.open = (args) => {
-        const lease = displayedLease()
-        if (!lease()) return { ok: false, message: 'This vault is no longer displayed.' }
-        const result = openTerminal(args)
-        return result
-      }
       if (ownership) {
         const open = terminals.open
         terminals.open = (args) =>
@@ -352,6 +345,7 @@ export const agentMain: MainPlugin = {
           fenced,
           providers,
           terminals,
+          presentationLease: displayedLease,
           liveRemote,
           commitNow: () => ctx.commitNow(),
           trackMutation,
@@ -399,23 +393,46 @@ export const agentMain: MainPlugin = {
       activationOwners.push(() => unmention())
       // Keystrokes and resizes, in the order they were typed. The host drops
       // any about a vault that is not the open one.
-      ctx.on('pty-write', (_remote, payload) => {
-        if (ctx.activationSignal.aborted || !displayedLease()()) return
-        const p = payload as { id?: unknown; data?: unknown }
-        if (typeof p?.id === 'string' && typeof p.data === 'string') terminals.write(p.id, p.data)
-      })
-      ctx.on('pty-resize', (_remote, payload) => {
-        if (ctx.activationSignal.aborted || !displayedLease()()) return
-        const p = payload as { id?: unknown; cols?: unknown; rows?: unknown }
-        if (typeof p?.id === 'string' && typeof p.cols === 'number' && typeof p.rows === 'number') {
-          terminals.resize(p.id, p.cols, p.rows)
-        }
-      })
-      ctx.on('pty-appearance', (_remote, payload) => {
-        if (ctx.activationSignal.aborted || !displayedLease()()) return
-        const p = payload as { id?: unknown; appearance?: unknown }
-        if (typeof p?.id === 'string') terminals.setAppearance(p.id, p.appearance)
-      })
+      let writeLease = displayedLease()
+      ctx.on(
+        'pty-write',
+        (_remote, payload) => {
+          const lease = writeLease
+          if (ctx.activationSignal.aborted || !lease()) return
+          const p = payload as { id?: unknown; data?: unknown }
+          if (typeof p?.id === 'string' && typeof p.data === 'string')
+            terminals.write(p.id, p.data, lease)
+        },
+        () => ((writeLease = displayedLease()), () => writeLease()),
+      )
+      let resizeLease = displayedLease()
+      ctx.on(
+        'pty-resize',
+        (_remote, payload) => {
+          const lease = resizeLease
+          if (ctx.activationSignal.aborted || !lease()) return
+          const p = payload as { id?: unknown; cols?: unknown; rows?: unknown }
+          if (
+            typeof p?.id === 'string' &&
+            typeof p.cols === 'number' &&
+            typeof p.rows === 'number'
+          ) {
+            terminals.resize(p.id, p.cols, p.rows, lease)
+          }
+        },
+        () => ((resizeLease = displayedLease()), () => resizeLease()),
+      )
+      let appearanceLease = displayedLease()
+      ctx.on(
+        'pty-appearance',
+        (_remote, payload) => {
+          const lease = appearanceLease
+          if (ctx.activationSignal.aborted || !lease()) return
+          const p = payload as { id?: unknown; appearance?: unknown }
+          if (typeof p?.id === 'string') terminals.setAppearance(p.id, p.appearance, lease)
+        },
+        () => ((appearanceLease = displayedLease()), () => appearanceLease()),
+      )
       // Each provider's hooks, by the session id they carry: a session Holi
       // runs, or a background job. The built-in ones are fixed, so their
       // routes are served once.
