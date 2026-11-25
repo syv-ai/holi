@@ -255,6 +255,9 @@ def _group_exists(*, anchor: int) -> bool:
         return True
     except ProcessLookupError:
         return False
+    except PermissionError:
+        # EPERM is not evidence that the owned group has disappeared.
+        return True
 
 
 if __name__ == "__main__":
