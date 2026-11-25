@@ -75,23 +75,37 @@ async function fixture(
     { message: 'unexpected token', line: 2, column: 4 },
   ])
   let selected: ActiveVault | null = null
-  const makeActive = (remote: string): ActiveVault =>
-    ({
+  const runtimes = new Map<string, ActiveVault>()
+  const makeActive = (remote: string): ActiveVault => {
+    const existing = runtimes.get(remote)
+    if (existing) return existing
+    const runtime = {
       remote,
       root,
-      snapshot: async () => ({}) as never,
+      snapshot: () => ({}) as never,
       refresh: async () => {},
-    }) as unknown as ActiveVault
+    } as unknown as ActiveVault
+    runtimes.set(remote, runtime)
+    return runtime
+  }
   const host = {
     active: () => selected,
-    get: () => null,
+    get: (remote: string) => runtimes.get(remote) ?? null,
     prepare: async () => {},
     open: async (remote: string) => (selected = makeActive(remote)),
     getOrOpen: async (remote: string) => makeActive(remote),
-    close: async () => {
-      selected = null
+    close: async (remote = selected?.remote) => {
+      if (remote === undefined) return
+      runtimes.delete(remote)
+      if (selected?.remote === remote) selected = null
+    },
+    remove: async (remote: string, afterClose?: () => Promise<void>) => {
+      await host.close(remote)
+      await afterClose?.()
+      await registry.remove(remote)
     },
     closeAll: async () => {
+      runtimes.clear()
       selected = null
     },
   } as unknown as VaultHost
