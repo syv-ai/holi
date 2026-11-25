@@ -41,7 +41,7 @@ import {
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { createLateSessionCleanup } from './late-session-cleanup'
 import { admitAgentSessions, createOwnedOperationTracker } from './session-admission'
-import type { AgentTerminals } from './terminals'
+import type { AgentTerminals, PresentationLease } from './terminals'
 import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
 import type { TurnLog } from './turn-log'
 
@@ -125,7 +125,10 @@ export interface AgentSessions {
   /** A terminal on the list (no `attach`), on one session, or on a copy of
    *  a conversation by Claude Code's session id (`fork`). Its sign-in is a
    *  session Holi runs (`pty-sessions.ts`). */
-  open(args: Geometry & { attach?: string; fork?: string }): Promise<OpenResult>
+  open(
+    args: Geometry & { attach?: string; fork?: string },
+    lease: PresentationLease,
+  ): Promise<OpenResult>
   /** A new background session, and a terminal on it. With a prompt, that
    *  prompt is its first turn (reconcile); without, it waits for one. */
   start(
@@ -137,6 +140,7 @@ export interface AgentSessions {
       allow?: readonly string[]
       appendSystemPrompt?: string
     },
+    lease: PresentationLease,
   ): Promise<StartResult>
   /** A new background session whose first turn is `prompt`, and no
    *  terminal: nobody is watching it start. A scheduled run. */
@@ -163,10 +167,17 @@ export interface AgentSessions {
   onSessions(listener: (sessions: SessionSummary[]) => void): () => void
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
-  send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
+  send(
+    args: Geometry & { text: string; target: string | 'new' },
+    lease: PresentationLease,
+  ): Promise<OpenResult>
   stop(id: string): Promise<ActionResult>
-  respawn(id: string): Promise<ActionResult>
-  duplicate(id: string, geometry?: Geometry): Promise<StartResult>
+  respawn(id: string, lease: PresentationLease): Promise<ActionResult>
+  duplicate(
+    id: string,
+    geometry: Geometry | undefined,
+    lease: PresentationLease,
+  ): Promise<StartResult>
   /** A turn edge from the seeded hook, by vault and job id. A start may say
    *  the session's process id, which outlives a listing that loses the id. At
    *  an end, answers the settle commit it took (`TurnCoordinator.end`), or null. */
@@ -844,8 +855,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     c: Current,
     args: Geometry & { attach?: string; fork?: string },
     notice?: string,
+    lease?: PresentationLease,
   ): { ok: true; terminalId: string } | Failure {
-    if (!admittedFor(c, c.vault))
+    if (!admittedFor(c, c.vault) || (lease !== undefined && !lease()))
       return { ok: false, message: 'The vault was left before the terminal opened.' }
     const target = targetOf(c)
     const res = deps.terminals.open({
@@ -860,6 +872,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       ...(args.cols === undefined ? {} : { cols: args.cols }),
       ...(args.rows === undefined ? {} : { rows: args.rows }),
       ...(notice === undefined ? {} : { notice }),
+      lease: lease!,
     })
     return res.ok ? { ok: true, terminalId: res.id } : res
   }
@@ -884,11 +897,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     past,
     refresh,
 
-    async open(args) {
+    async open(args, lease) {
       const owner = attached
       const c = await ensureCurrent()
-      if (!admittedFor(c, owner)) return noVault
-      return openOn(c, args)
+      if (!admittedFor(c, owner) || !lease()) return noVault
+      const notice = await prepareOpen(c)
+      if (!lease()) return noVault
+      if (args.attach !== undefined && inventory.unpublished.has(args.attach))
+        return { ok: false, message: `Session ${args.attach} is still changing.` }
+      return openPrepared(c, args, notice, lease)
     },
 
     async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
