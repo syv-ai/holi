@@ -26,7 +26,7 @@ import type { VaultAccountsStore } from './vault-accounts'
 
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
 const REVOKE_TIMEOUT_MS = 15_000
-const tokenDigest = (token: string) => createHash('sha256').update(token).digest('hex')
+const sha256 = (value: string) => createHash('sha256').update(value).digest('hex')
 
 // Kept in the encrypted row itself, so a restart between token and link writes
 // (or after failed cleanup) cannot expose that grant through any vault link.
@@ -106,8 +106,8 @@ export interface GoogleAccountsManager {
   /**
    * Set this machine's own client, or `null` to go back to the environment's
    * or the shipped one. **A grant belongs to the client that made it**, so a
-   * change that reaches Google as a different client removes every account,
-   * revoking each, exactly as `removeAccount` does. Saving the client in use
+   * change that reaches Google as a different client retires every account,
+   * attempting revocation as `removeAccount` does. Saving the client in use
    * again changes nothing.
    */
   setClient(own: GoogleClient | null): Promise<void>
@@ -132,6 +132,9 @@ export async function createGoogleAccounts(
 ): Promise<GoogleAccountsManager> {
   /** The one copy. Sessions reach it through their `AccountRef`, never directly. */
   let accounts: AccountRows = await deps.store.read()
+  const revocationFences = await deps.store.readRevocationFences()
+  const hasRevocationFence = (sub: string) =>
+    revocationFences.size > 0 && revocationFences.has(sha256(sub))
   const sessions = new Map<string, GoogleSession>()
   const listeners = new Set<
     (
@@ -193,13 +196,14 @@ export async function createGoogleAccounts(
   const hasPendingGrant = (sub: string) => pendingGrants.get(sub) === accountEpoch(sub)
   const usableAuth = (sub: string): StoredGoogleAuth | undefined => {
     const row = accounts[sub]
-    return isRetiring(sub) || row?.pendingConsent || hasPendingGrant(sub) ? undefined : row
+    return isRetiring(sub) || row?.pendingConsent || hasPendingGrant(sub) || hasRevocationFence(sub)
+      ? undefined
+      : row
   }
   // Track the code exchange through ownership of its result, not the time a
   // person spends in the browser or the later persistence/cleanup work.
   const exchanges = new Set<Promise<void>>()
   let revoking: { sub: string; digest: string } | undefined
-  const uncertainRevokes = new Set<string>()
   async function revokeUnusedGrant(
     sub: string,
     refreshToken: string,
@@ -207,6 +211,8 @@ export async function createGoogleAccounts(
   ): Promise<void> {
     for (;;) {
       const exchanging = await serialize(async () => {
+        // Another attempt cannot establish that the original request is done.
+        if (hasRevocationFence(sub)) return
         // Google revokes the subject's entire OAuth project grant, not just
         // this token or client. We don't know project identity, so even a
         // different client may share the grant. Protect any live owner here.
@@ -238,13 +244,13 @@ export async function createGoogleAccounts(
     const read = () => (accountEpoch(sub) === grantEpoch ? (usableAuth(sub) ?? null) : null)
     // One refresh at a time per session. Remember its last token even after
     // the row is gone, so an unrotated reply doesn't schedule another revoke.
-    let lastTokenDigest = tokenDigest(refreshToken)
+    let lastTokenDigest = sha256(refreshToken)
     return {
       read,
       // A client change closes the grant before it advances each account epoch.
       generation: () => (read() === null ? -1 : grantEpoch),
       async write(auth, expectedGeneration) {
-        const digest = tokenDigest(auth.refreshToken)
+        const digest = sha256(auth.refreshToken)
         const saved = await serialize(async () => {
           if (expectedGeneration !== grantEpoch || read() === null) return false
           await writeAccounts({ ...accounts, [sub]: auth })
@@ -449,21 +455,30 @@ export async function createGoogleAccounts(
 
         const { tokens } = result
         const { sub, refreshToken } = tokens
-        const digest = tokenDigest(refreshToken)
-        if (digest === overlappingRevoke?.digest || uncertainRevokes.has(digest))
-          return { kind: 'cancelled' }
         const active = () =>
-          // An exchange that overlaps a revoke may return a distinct token
-          // for the affected subject. It too is unsafe to publish.
-          sub !== overlappingRevoke?.sub &&
           !reservation.cancelled &&
           connecting?.id === reservation.id &&
           epoch === clientEpoch &&
           !isRetiring(sub)
-        // The code exchange may finish after cancellation, replacement, or removal.
-        if (!active() || (startingAccountEpochs.get(sub) ?? 0) !== accountEpoch(sub)) {
+        const refused = () => {
+          if (active() && hasRevocationFence(sub)) {
+            throw new Error(
+              'Holi cannot verify that an earlier Google revocation is complete. ' +
+                'Use a different Google account on this installation. ' +
+                'To check or remove remaining access, review third-party connections in your Google Account.',
+            )
+          }
+          return { kind: 'cancelled' } as const
+        }
+        if (hasRevocationFence(sub)) return refused()
+        const overlap = overlappingRevoke
+        const overlaps = overlap !== undefined && sub === overlap.sub
+        if (overlaps && sha256(refreshToken) === overlap.digest) return refused()
+        // Even a distinct token from an exchange that overlapped a revoke is
+        // unsafe to publish. Wait for cleanup only on the rejected path.
+        if (overlaps || !active() || (startingAccountEpochs.get(sub) ?? 0) !== accountEpoch(sub)) {
           await revokeUnusedGrant(sub, refreshToken)
-          return { kind: 'cancelled' }
+          return refused()
         }
         const grantEpoch = advanceAccountEpoch(sub)
         if (!(await commitConsent(remote, tokens, grantEpoch, active))) return { kind: 'cancelled' }
@@ -648,25 +663,39 @@ export async function createGoogleAccounts(
 
   /** Only inside the writer, after ownership has been checked. */
   async function revoke(sub: string, refreshToken: string): Promise<void> {
-    const digest = tokenDigest(refreshToken)
-    if (uncertainRevokes.has(digest)) return
-    revoking = { sub, digest }
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), REVOKE_TIMEOUT_MS)
+    const subjectDigest = sha256(sub)
+    revoking = { sub, digest: sha256(refreshToken) }
     try {
-      const response = await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: refreshToken }).toString(),
-        signal: controller.signal,
-      })
-      if (!response.ok) uncertainRevokes.add(digest)
-    } catch {
-      // Aborting ends the request locally, but Google may already have acted.
-      // Keep the token ineligible for publication, without holding the writer.
-      uncertainRevokes.add(digest)
+      // Record the potential project-wide effect before sending anything, so
+      // even quitting mid-request cannot make a later consent look safe.
+      await deps.store.setRevocationFence(subjectDigest, true)
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), REVOKE_TIMEOUT_MS)
+      let confirmed = false
+      try {
+        const response = await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token: refreshToken }).toString(),
+          signal: controller.signal,
+        })
+        confirmed = response.ok && !controller.signal.aborted
+      } catch {
+        // Aborting ends the wait here, not the operation at Google.
+      } finally {
+        clearTimeout(timer)
+      }
+      if (confirmed) {
+        try {
+          await deps.store.setRevocationFence(subjectDigest, false)
+          return
+        } catch {
+          // If the marker could not be cleared, keep the same fence on disk
+          // and in memory rather than changing behavior after a restart.
+        }
+      }
+      revocationFences.add(subjectDigest)
     } finally {
-      clearTimeout(timer)
       revoking = undefined
     }
   }

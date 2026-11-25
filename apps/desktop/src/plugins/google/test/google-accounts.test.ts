@@ -11,7 +11,11 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createGoogleAccounts, type GoogleAccountsManager } from '../main/accounts'
+import {
+  createGoogleAccounts,
+  type GoogleAccountsDeps,
+  type GoogleAccountsManager,
+} from '../main/accounts'
 import {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
@@ -101,7 +105,7 @@ type RefreshReply = { access_token: string; expires_in: number; refresh_token?: 
 /** Gated exchanges and first refresh, real persistence, and one synthetic Google project. */
 async function controlledConsent(
   seed: StoredGoogleAuth[] = [],
-  onRevoke?: (token: string, signal: AbortSignal | undefined) => Promise<void>,
+  onRevoke?: (token: string, signal: AbortSignal | undefined, apply: () => void) => Promise<void>,
   clients = memoryClients(null),
   vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json')),
 ) {
@@ -127,7 +131,7 @@ async function controlledConsent(
   const initialClient = resolveClient(await clients.read(), {}).id
   for (const row of Object.values(await store.read())) authorize(row, initialClient)
 
-  const accounts = await createGoogleAccounts({
+  const deps = {
     store,
     vaults,
     clients,
@@ -153,8 +157,11 @@ async function controlledConsent(
         const token = params.get('token')!
         revoked.push(token)
         const grant = grants.get(token)
-        if (grant) grantRevisions.set(grant.sub, revision(grant.sub) + 1)
-        await onRevoke?.(token, init?.signal ?? undefined)
+        const apply = () => {
+          if (grant) grantRevisions.set(grant.sub, revision(grant.sub) + 1)
+        }
+        await onRevoke?.(token, init?.signal ?? undefined, apply)
+        apply()
         return new Response('{}')
       }
       const client = params.get('client_id')!
@@ -191,9 +198,16 @@ async function controlledConsent(
         }),
       )
     }) as typeof globalThis.fetch,
-  })
+  } satisfies GoogleAccountsDeps
+  const accounts = await createGoogleAccounts(deps)
   return {
     accounts,
+    restart: () =>
+      createGoogleAccounts({
+        ...deps,
+        store: new GoogleTokenStore(join(dir, 'google-auth.enc'), storage),
+        vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+      }),
     exchanges,
     revoked,
     refreshes,
@@ -425,7 +439,7 @@ describe('removeAccount', () => {
   it('retires an unbound account locally while revocation is still in flight', async () => {
     const revoking = deferred<void>()
     const finishRevoke = deferred<void>()
-    const { accounts, exchanges, revoked } = await controlledConsent(
+    const { accounts, exchanges, revoked, restart, setNow, refreshReply } = await controlledConsent(
       [auth()],
       async (token) => {
         if (token !== 'rt-1') return
@@ -469,14 +483,19 @@ describe('removeAccount', () => {
       }
     }
     expect(revoked).toEqual(['rt-1', 'rt-overlap'])
-    const fresh = await accounts.connect(WORK)
+    // Google confirmed the earlier revocation, so restarting after cleanup
+    // must not leave behind a fence. Prove the replacement can refresh.
+    const recovered = await restart()
+    const fresh = await recovered.connect(WORK)
     const result = fresh.wait()
-    exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }))
+    exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-fresh' }))
     await expect(result).resolves.toMatchObject({ kind: 'granted' })
-    await expect((await accounts.bindingFor(WORK))?.session.getAccessToken()).resolves.toBe(
-      'at-fresh',
+    setNow(NOW + 3_600_000)
+    refreshReply.resolve({ access_token: 'at-fresh-refreshed', expires_in: 3600 })
+    await expect((await recovered.bindingFor(WORK))?.session.getAccessToken()).resolves.toBe(
+      'at-fresh-refreshed',
     )
-    expect(await accounts.bindingFor(VAULT)).toBeNull()
+    expect(await recovered.bindingFor(VAULT)).toBeNull()
   })
 
   it('keeps a failed local removal unavailable until it is retried', async () => {
@@ -1344,56 +1363,83 @@ describe('a grant that lands after it was let go', () => {
     await expect(rig.accounts.bindingFor(VAULT)).resolves.toBeNull()
   })
 
-  it('aborts a hung revoke and rejects overlapping same-subject consent and uncertain token reuse', async () => {
+  it('blocks same-subject consent after an aborted project revoke, including after restart', async () => {
     const revoking = deferred<void>()
+    const releaseProvider = deferred<void>()
+    let providerWork: Promise<void> | undefined
     let aborted = false
-    const rig = await controlledConsent([], async (token, signal) => {
-      if (token !== 'rt-1') return
-      revoking.resolve()
-      signal?.throwIfAborted()
-      await new Promise<never>((_, reject) => {
-        signal?.addEventListener(
-          'abort',
-          () => {
-            aborted = true
-            reject(signal.reason)
-          },
-          { once: true },
-        )
-      })
-    })
+    const clients = memoryClients({ id: 'client-1' })
+    const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
+    const rig = await controlledConsent(
+      [auth()],
+      async (token, signal, apply) => {
+        if (token !== 'rt-1') return
+        // Abort rejects the local fetch; the project revocation at Google
+        // can still happen independently, even after new tokens are issued.
+        providerWork = releaseProvider.promise.then(apply)
+        revoking.resolve()
+        if (!signal) throw new Error('Revoke must be abortable')
+        signal.throwIfAborted()
+        await new Promise<never>((_, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              aborted = true
+              reject(signal.reason)
+            },
+            { once: true },
+          )
+        })
+      },
+      clients,
+      vaults,
+    )
+    await rig.accounts.link(VAULT, 'sub-1')
+    await rig.accounts.link(WORK, 'sub-1')
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
-      const stale = (await rig.accounts.connect(VAULT)).wait()
-      await rig.exchanges[0]!.started.promise
-      rig.accounts.cancelConnect()
-      rig.exchanges[0]!.reply.resolve(auth())
+      const change = rig.accounts.setClient({ id: 'client-2' })
       await revoking.promise
-
-      const overlapping = (await rig.accounts.connect(WORK)).wait()
-      await rig.exchanges[1]!.started.promise
-      rig.exchanges[1]!.reply.resolve(
-        auth({ refreshToken: 'rt-overlap', accessToken: 'at-overlap' }),
-      )
-      await vi.advanceTimersByTimeAsync(30_000)
+      await expect(vaults.all()).resolves.toEqual({})
+      await expect(store.read()).resolves.toEqual({})
+      await vi.runOnlyPendingTimersAsync()
       expect(aborted).toBe(true)
-      await expect(stale).resolves.toEqual({ kind: 'cancelled' })
-      await expect(overlapping).resolves.toEqual({ kind: 'cancelled' })
+      await change
+
+      // Both client IDs share the project. A distinct token exchanged only
+      // after the abort is still exposed to the outstanding revocation.
+      const fresh = await rig.accounts.connect(WORK)
+      expect(new URL(fresh.authUrl).searchParams.get('client_id')).toBe('client-2')
+      const outcome = fresh.wait()
+      rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-fresh' }))
+      await expect(outcome).rejects.toThrow(/cannot verify.*revocation/i)
       await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
 
-      const retry = (await rig.accounts.connect(WORK)).wait()
-      rig.exchanges[2]!.reply.resolve(auth({ accessToken: 'at-retry' }))
-      await expect(retry).resolves.toEqual({ kind: 'cancelled' })
-      expect(rig.revoked).toEqual(['rt-1', 'rt-overlap'])
-      await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
+      const restarted = await rig.restart()
+      const retry = (await restarted.connect(WORK)).wait()
+      rig.exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-retry' }))
+      await expect(retry).rejects.toThrow(/cannot verify.*revocation/i)
+      await expect(restarted.bindingFor(WORK)).resolves.toBeNull()
+      await expect(vaults.all()).resolves.toEqual({})
+      await expect(store.read()).resolves.toEqual({})
 
-      const fresh = (await rig.accounts.connect(WORK)).wait()
-      rig.exchanges[3]!.reply.resolve(auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }))
-      await expect(fresh).resolves.toMatchObject({ kind: 'granted' })
-      await expect((await rig.accounts.bindingFor(WORK))?.session.getAccessToken()).resolves.toBe(
-        'at-fresh',
+      const unrelated = (await restarted.connect(VAULT)).wait()
+      rig.exchanges[2]!.reply.resolve(auth({ sub: 'sub-2' }))
+      await expect(unrelated).resolves.toMatchObject({ kind: 'granted' })
+      releaseProvider.resolve()
+      await providerWork
+
+      // The remote project grant for sub-1 is now invalidated. Check sub-2
+      // against the provider rather than relying on a cached access token.
+      rig.setNow(NOW + 3_600_000)
+      rig.refreshReply.resolve({ access_token: 'at-other-refreshed', expires_in: 3600 })
+      await expect((await restarted.bindingFor(VAULT))?.session.getAccessToken()).resolves.toBe(
+        'at-other-refreshed',
       )
+      expect(rig.revoked).toEqual(['rt-1'])
     } finally {
+      releaseProvider.resolve()
+      await providerWork
       vi.useRealTimers()
     }
   })
