@@ -14,6 +14,7 @@ interface Request {
   id: string
   source: string
   format?: 'mdx' | 'js' | 'jsx'
+  emitArtifact?: boolean
 }
 
 interface Dependency {
@@ -147,6 +148,7 @@ root.__holiMdxReceive = (encoded) => {
       id: value.id,
       source: value.source,
       format: value.format === 'js' || value.format === 'jsx' ? value.format : 'mdx',
+      emitArtifact: value.emitArtifact === true,
     }
   } catch {
     return
@@ -238,7 +240,12 @@ root.__holiMdxReceive = (encoded) => {
       })
       inspectDeclarations(tree.body, request.source)
       inspectProgram(tree as unknown as Program)
-      root.__holiMdxResult = { id: request.id, diagnostics, dependencies }
+      root.__holiMdxResult = {
+        id: request.id,
+        diagnostics,
+        dependencies,
+        ...(request.emitArtifact && diagnostics.length === 0 ? { artifact: request.source } : {}),
+      }
     } catch (error) {
       const candidate = error as ParserError
       const position = candidate.position ?? candidate.place ?? candidate.loc
@@ -272,7 +279,7 @@ root.__holiMdxReceive = (encoded) => {
     outputFormat: 'program',
     development: false,
     format: 'mdx',
-    jsx: true,
+    jsx: request.emitArtifact ? false : true,
     jsxImportSource: 'react',
     remarkPlugins: [
       () => (tree: MarkdownNode) => {
@@ -305,7 +312,7 @@ root.__holiMdxReceive = (encoded) => {
         id: request.id,
         diagnostics,
         dependencies,
-        artifact: String(compiled),
+        ...(request.emitArtifact && diagnostics.length === 0 ? { artifact: String(compiled) } : {}),
       }
     },
     (error: unknown) => {
