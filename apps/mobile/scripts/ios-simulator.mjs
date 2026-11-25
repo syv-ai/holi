@@ -28,6 +28,10 @@ import { captureStorageEvidence, readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
 import { createGitFixture } from './git-fixture.mjs'
 import { createWorkingCopyFixture, verifyWorkingCopyUnchanged } from './working-copy-fixture.mjs'
+import {
+  createWorkingCopyTreeFixture,
+  verifyWorkingCopyTreeResults,
+} from './working-copy-tree-fixture.mjs'
 import { validateWorkingCopyResults } from './host-checks.mjs'
 import {
   interruptionBefore,
@@ -149,6 +153,14 @@ try {
   )
   const workingCopyManifest = join(canonicalContainer, 'Documents/working-copy-manifest.json')
   await writeFile(workingCopyManifest, JSON.stringify(workingCopyFixture, null, 2))
+  const treeFixture = await createWorkingCopyTreeFixture(
+    join(canonicalContainer, 'Documents'),
+    runId,
+    library,
+  )
+  const treeManifest = join(canonicalContainer, 'Documents/tree-manifest.json')
+  await writeFile(treeManifest, JSON.stringify(treeFixture, null, 2))
+  await writeFile(join(artifacts, 'tree-fixture.json'), JSON.stringify(treeFixture, null, 2))
   await writeFile(
     join(artifacts, 'working-copy-fixture.json'),
     JSON.stringify(workingCopyFixture, null, 2),
@@ -201,6 +213,7 @@ try {
         ...(phase === 'normal'
           ? {
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_MANIFEST: workingCopyManifest,
+              SIMCTL_CHILD_HOLI_GIT_TREE_MANIFEST: treeManifest,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: `${canonicalContainer}/Documents/holi-git-${runId}`,
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: gitFixture.url,
               SIMCTL_CHILD_HOLI_GIT_INVALID_TLS_URL: gitFixture.invalidUrl,
@@ -249,6 +262,11 @@ try {
     report.workingCopy?.cases,
     workingCopyFixture.cases,
     runId,
+  )
+  await verifyWorkingCopyTreeResults(report.workingCopy?.treeCases, treeFixture)
+  await writeFile(
+    join(artifacts, 'working-copy-tree-evidence.json'),
+    JSON.stringify(report.workingCopy?.treeCases, null, 2),
   )
   for (const item of workingCopyFixture.cases) {
     assert.equal(
