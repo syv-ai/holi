@@ -73,6 +73,26 @@ describe('seen revisions', () => {
     })
   })
 
+  it('does not publish an acknowledgement after asynchronous ownership expires', async () => {
+    const file = await setup()
+    const store = createSeenRevisions(file)
+    await store.acknowledge('owner/repo', 'notes/a.md', revisions[0]!, ancestry)
+    let owned = true
+    const ancestryAfterRevocation = async () => {
+      owned = false
+      return true
+    }
+    await expect(
+      store.acknowledge('owner/repo', 'notes/a.md', revisions[1]!, ancestryAfterRevocation, {
+        stillOwned: () => owned,
+      }),
+    ).rejects.toThrow()
+    expect(await store.get('owner/repo', 'notes/a.md')).toEqual({
+      seen: revisions[0],
+      previous: null,
+    })
+  })
+
   it('serializes concurrent handles and reports malformed or unwritable storage', async () => {
     const file = await setup()
     const one = createSeenRevisions(file)
