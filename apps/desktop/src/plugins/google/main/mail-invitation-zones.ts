@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { TZDate, tzOffset } from '@date-fns/tz'
 import ICAL from 'ical.js'
+import { canonicalIanaZone } from '../shared/time-zones'
 
 // Both incoming parts and Sent evidence are untrusted. Bound work before calling
 // ical.js, including folding, nested components, and the separate timezone work.
@@ -55,6 +55,7 @@ export type CalendarTimes = {
   replyTimes: (properties: (ICAL.Property | null)[]) => {
     properties: ReturnType<ICAL.Property['toJSON']>[]
     definitions: string[]
+    unavailableReason: string | null
   }
 }
 
@@ -598,6 +599,52 @@ function recurrenceReferences(entry: ICAL.Component): Map<string, Years> {
   return refs
 }
 
+function ianaOffsetReader(zone: string) {
+  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' })
+  return (instant: number): number => {
+    const offset = formatter
+      .formatToParts(instant)
+      .find(({ type }) => type === 'timeZoneName')?.value
+    if (offset === 'GMT') return 0
+    // Historical IANA offsets need not be rounded to a minute.
+    const parts = /^GMT([+-])([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/.exec(offset ?? '')
+    if (!parts) unsupportedZone()
+    const [, sign, h, m, s = '0'] = parts
+    return (sign === '-' ? -1 : 1) * (Number(h) * 3600 + Number(m) * 60 + Number(s)) * 1000
+  }
+}
+
+function ianaInstant(wall: number, zone: string): number {
+  const offsetAt = ianaOffsetReader(zone)
+  // Treat the wall clock as UTC only for arithmetic. Probe a day either way
+  // (beyond IANA's UTC offsets) to get candidates on either side of a change.
+  const before = offsetAt(wall - DAY_MS)
+  const after = offsetAt(wall + DAY_MS)
+  const earlier = wall - Math.max(before, after)
+  const later = wall - Math.min(before, after)
+  const earlierOffset = offsetAt(earlier)
+  // If both candidates round-trip, RFC 5545 chooses the first occurrence.
+  if (earlier + earlierOffset === wall) return earlier
+  const laterOffset = offsetAt(later)
+  if (later + laterOffset === wall) return later
+
+  if (before < after && earlierOffset === before && laterOffset === after) {
+    // Prove the skipped wall clock straddles a forward transition at wire
+    // precision. RFC 5545 uses that transition's old offset (the later instant).
+    let low = earlier
+    let high = later
+    while (high - low > 1000) {
+      const probe = low + Math.floor((high - low) / 2000) * 1000
+      const offset = offsetAt(probe)
+      if (offset === before) low = probe
+      else if (offset === after) high = probe
+      else unsupportedZone()
+    }
+    if (wall >= high + before && wall < high + after) return later
+  }
+  unsupportedZone()
+}
+
 function equivalentObservances(
   observances: Observance[],
   name: string,
@@ -621,9 +668,10 @@ function equivalentObservances(
   const transitions = zoneTransitions(observances, first - 1, through, charge)
   const lower = Date.UTC(first, 0, 1) - DAY_MS
   const upper = Date.UTC(through + 1, 0, 1)
+  const offsetAt = ianaOffsetReader(name)
   const agrees = (at: number, offset: number) => {
     charge()
-    return tzOffset(name, new Date(at)) * 60_000 === offset
+    return offsetAt(at) === offset
   }
   // Check both sides of every advertised transition at wire precision. Also
   // scan daily for missing IANA seasons. Intl has no transition iterator; a
@@ -661,15 +709,10 @@ function resolvedTimes(zones: FiniteZones): CalendarTimes {
     return refs
   }
   function knownZone(id: string | null): string | null {
-    if (!id || !/^[a-z][a-z\d_+./-]*$/i.test(id)) return null
+    if (id === null) return null
     const cached = namedZones.get(id)
     if (cached !== undefined) return cached
-    let zone: string | null = null
-    try {
-      zone = new Intl.DateTimeFormat('en', { timeZone: id }).resolvedOptions().timeZone
-    } catch {
-      // Not a zone recognized by this runtime.
-    }
+    const zone = canonicalIanaZone(id)
     namedZones.set(id, zone)
     return zone
   }
@@ -757,13 +800,22 @@ function resolvedTimes(zones: FiniteZones): CalendarTimes {
     },
     replyTimes(fields) {
       const definitions = new Map<string, string[]>()
+      let unavailableReason: string | null = null
       const properties = fields.flatMap((property) => {
         if (!property) return []
         const [name, , type, value] = property.toJSON()
         const id = property.getParameter('tzid')
         if (typeof id === 'string') {
           const definition = zones.get(id)
-          if (definition) definitions.set(id, definition.wire)
+          if (!definition) {
+            // DTSTART is optional in a REPLY, but RECURRENCE-ID is required
+            // to identify the occurrence and its TZID needs a definition.
+            if (name === 'recurrence-id')
+              unavailableReason =
+                'This occurrence cannot be answered by email without its time zone definition'
+            return []
+          }
+          definitions.set(id, definition.wire)
         }
         // Keep the original value and its TZID, not the hydrated ICAL.Time or
         // arbitrary parameters from the organizer. Never serialize our finite
@@ -772,6 +824,7 @@ function resolvedTimes(zones: FiniteZones): CalendarTimes {
       })
       return {
         properties,
+        unavailableReason,
         definitions: [...definitions.values()].map((lines) =>
           lines.map(ICAL.helpers.foldline).join('\r\n'),
         ),
@@ -787,17 +840,7 @@ function resolvedTimes(zones: FiniteZones): CalendarTimes {
         case 'utc':
           return new Date(basis.wallStart + 'Z').toISOString()
         case 'iana':
-          return new Date(
-            new TZDate(
-              time.year,
-              time.month - 1,
-              time.day,
-              time.hour,
-              time.minute,
-              time.second,
-              basis.zone!,
-            ).getTime(),
-          ).toISOString()
+          return new Date(ianaInstant(Date.parse(basis.wallStart + 'Z'), basis.zone!)).toISOString()
         case 'custom': {
           // RFC 5545 uses the offset before the change for either the repeated
           // hour or the skipped hour. ICAL otherwise may prefer standard over DST.

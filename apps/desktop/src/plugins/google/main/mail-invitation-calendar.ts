@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalIanaZone } from '../shared/time-zones'
 import { GoogleApiError, type GoogleApi, type GoogleDispatchGate, type GoogleParams } from './api'
 import {
   asRsvp,
@@ -477,15 +478,6 @@ function invitationCopy(
   }
 }
 
-function canonicalZone(zone: string | null | undefined): string | null {
-  if (!zone || !/^[a-z][a-z\d_+./-]*$/i.test(zone)) return null
-  try {
-    return new Intl.DateTimeFormat('en', { timeZone: zone }).resolvedOptions().timeZone
-  } catch {
-    return null
-  }
-}
-
 function sameRecurrenceStart(
   request: InvitationTarget['request'],
   start: RawEvent['start'],
@@ -501,7 +493,7 @@ function sameRecurrenceStart(
     return false
   // Calendar requires a named expansion zone for a timed recurring event.
   // A serialized offset (even Z) alone only describes the first instant.
-  const expectedZone = canonicalZone(start.timeZone)
+  const expectedZone = canonicalIanaZone(start.timeZone)
   if (!expectedZone) return false
   // Use the declared recurrence zone, not the offset chosen to serialize the
   // first instant (which may be serialized in UTC even for a zoned series).
@@ -567,7 +559,7 @@ function recurrenceSet(lines: string[]): string | null {
         if (param[1]!.toUpperCase() === 'VALUE' && type === undefined)
           type = param[2]!.toUpperCase()
         else if (param[1]!.toUpperCase() === 'TZID' && zone === undefined) {
-          const canonical = canonicalZone(param[2])
+          const canonical = canonicalIanaZone(param[2])
           if (!canonical) return null
           zone = canonical
         } else return null
@@ -624,7 +616,7 @@ function calendarProof(event: RawEvent): string {
         httpsLink(structuredConference(event)) ?? mailConference(event).url,
         googleEventUrl(event.htmlLink),
         ...(event.recurrence?.length && event.start?.timeZone !== undefined
-          ? [canonicalZone(event.start.timeZone) ?? event.start.timeZone]
+          ? [canonicalIanaZone(event.start.timeZone) ?? event.start.timeZone]
           : []),
       ]),
     )

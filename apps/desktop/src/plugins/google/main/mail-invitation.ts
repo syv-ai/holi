@@ -97,6 +97,9 @@ type ParsedInvitation = {
     recurrenceTimeBasis: ReturnType<CalendarTimes['recurrenceTimeBasis']>
     /** Check the expansion zone only for a found Calendar copy, not for a Gmail reply. */
     calendarRecurrenceZoneMatches: (zone: string | null) => boolean
+    /** Blocks only an email REPLY; Calendar may still answer the invitation. */
+    replyUnavailableReason: string | null
+    /** Throws if an email REPLY cannot represent the occurrence. */
     reply: (email: string, answer: InviteAnswer) => string
   } | null
 }
@@ -505,9 +508,12 @@ export function parseMailInvitation(
         const sender = part.material.details.organizer
         if (!sender || sender.email !== organizer?.email) malformed()
         if (!part.identity.dtstamp || !part.entry.hasProperty('sequence')) malformed()
-        const eventCancelled = part.material.status === 'CANCELLED'
+        const status = part.entry.getFirstProperty('status')
+        const value = status?.getFirstValue()
+        const eventCancelled = typeof value === 'string' && value.toUpperCase() === 'CANCELLED'
         const { attendees } = part.material
-        if (!eventCancelled && !attendees.length) malformed()
+        // Only an absent STATUS can describe removal of the named attendees.
+        if (!eventCancelled && (status || !attendees.length)) malformed()
         part.identity.materialKey = materialKey(method, part.identity, part.material)
         cancellations.push({
           identity: part.identity,
@@ -587,6 +593,7 @@ export function parseMailInvitation(
         recurrenceKind: identity.recurrenceId ? timeKind(identity.recurrenceId) : null,
         recurrenceTimeBasis,
         calendarRecurrenceZoneMatches: times.checkRecurrenceZones(recurrenceTimeBasis, events),
+        replyUnavailableReason: replyTimes.unavailableReason,
         reply: (attendee, answer) =>
           buildReply(identity, replyTimes, organizer.email, attendee, answer),
       },
@@ -609,6 +616,7 @@ function buildReply(
   email: string,
   answer: InviteAnswer,
 ): string {
+  if (times.unavailableReason !== null) throw new CalendarPartError(times.unavailableReason)
   const calendar = new ICAL.Component('vcalendar')
   calendar.addPropertyWithValue('version', '2.0')
   calendar.addPropertyWithValue('prodid', '-//Holi//Mail invitation reply//EN')

@@ -232,6 +232,67 @@ it.each([
   },
 )
 
+it.each([
+  ['UTC', 0],
+  ['America/New_York', 240],
+] as const)(
+  'uses RFC 5545 offsets for bare IANA gaps and folds with host TZ=%s',
+  (host, offset) => {
+    vi.stubEnv('TZ', host)
+    try {
+      expect(new Date('2026-10-25T00:30:00Z').getTimezoneOffset()).toBe(offset)
+      for (const [civil, instant] of [
+        ['20261025T023000', '2026-10-25T00:30:00.000Z'], // First 02:30, on summer time.
+        ['20260329T023000', '2026-03-29T01:30:00.000Z'], // Skipped 02:30, using winter offset.
+      ]) {
+        const source = calendar(
+          `DTSTART;TZID=Europe/Paris:${civil}\r\nRECURRENCE-ID;TZID=Europe/Paris:${civil}`,
+        )
+        expect(parseMailInvitation('part', source, 'REQUEST')).toMatchObject({
+          details: { start: instant, identity: { recurrenceId: instant }, unavailableReason: null },
+        })
+      }
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  },
+)
+
+it('refuses an email reply for an undefined zoned occurrence without blocking Calendar', () => {
+  const parsed = parseMailInvitation(
+    'part',
+    calendar(
+      'DTSTART;TZID=America/New_York:20260720T140000\r\nRECURRENCE-ID;TZID=America/New_York:20260713T110000',
+    ),
+    'REQUEST',
+  )!
+  expect(parsed).toMatchObject({
+    details: { identity: { recurrenceId: '2026-07-13T15:00:00.000Z' }, unavailableReason: null },
+    request: { replyUnavailableReason: expect.any(String) },
+  })
+  expect(parsed.request!.calendarRecurrenceZoneMatches(newYork)).toBe(true)
+  expect(() => parsed.request!.reply(attendee, 'accepted')).toThrow(
+    parsed.request!.replyUnavailableReason!,
+  )
+})
+
+it('omits optional DTSTART with an undefined zone while preserving a valid occurrence reply', () => {
+  const parsed = parseMailInvitation(
+    'part',
+    calendar('DTSTART;TZID=America/New_York:20260720T140000\r\nRECURRENCE-ID:20260713T150000Z'),
+    'REQUEST',
+  )!
+  expect(parsed.request?.replyUnavailableReason).toBeNull()
+  const reply = parsed.request!.reply(attendee, 'accepted')
+  const decoded = ICAL.Component.fromString(reply)
+  const event = decoded.getFirstSubcomponent('vevent')!
+  expect(event.hasProperty('dtstart')).toBe(false)
+  expect(reply.split('\r\n')).toContain('RECURRENCE-ID:20260713T150000Z')
+  expect(invitationReplyStatus(reply, parsed.details.identity, organizer, attendee)).toBe(
+    'accepted',
+  )
+})
+
 it.each(['America/New_York', 'Asia/Tokyo'])(
   'round-trips moved DATE, floating and known-zone occurrences with host TZ=%s',
   (tz) => {
@@ -295,7 +356,7 @@ it.each(['America/New_York', 'Asia/Tokyo'])(
             floating: floating ?? false,
             identity: { recurrenceId: occurrence },
           },
-          request: { recurrenceKind },
+          request: { recurrenceKind, replyUnavailableReason: null },
         })
         if (recurrenceKind === 'date') {
           expect(invite.request?.recurrenceTimeBasis).toEqual({
@@ -647,6 +708,20 @@ it('keeps attendee removals restricted to explicitly named mailboxes', () => {
   }
 })
 
+it.each(['CONFIRMED', 'TENTATIVE', '', ' CANCELLED ', 'CANCELLED\r\nSTATUS:CANCELLED'])(
+  'does not report a cancellation or attendee removal for invalid explicit STATUS %j',
+  (status) => {
+    expect(
+      parseMailInvitation('part', calendar(`STATUS:${status}`, { method: 'CANCEL' }), 'CANCEL'),
+    ).toMatchObject({
+      method: 'CANCEL',
+      request: null,
+      cancellations: [],
+      details: { cancelled: false, unavailableReason: expect.any(String) },
+    })
+  },
+)
+
 it('exposes each same-UID cancellation from one MIME part without inventing a master', () => {
   const first = calendar('RECURRENCE-ID;TZID="Custom Clock":20260720T110000', {
     method: 'CANCEL',
@@ -706,6 +781,7 @@ it('exposes each same-UID cancellation from one MIME part without inventing a ma
     other.replace(`ORGANIZER:mailto:${organizer}`, 'ORGANIZER:mailto:other@example.net'),
     other.replace('DTSTAMP:20260602T150000Z\r\n', ''),
     other.replace('SEQUENCE:4\r\n', ''),
+    other.replace('STATUS:CANCELLED', `STATUS:TENTATIVE\r\nATTENDEE:mailto:${attendee}`),
   ]) {
     expect(parseMailInvitation('part', conflicting, 'CANCEL')).toMatchObject({
       cancellations: [],
