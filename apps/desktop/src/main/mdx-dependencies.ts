@@ -11,7 +11,9 @@ import {
   type MdxDiagnostic,
 } from '@holi/shared'
 import { MdxExternalDataError } from './mdx-external-data'
-import { resolveMdxExternalModule } from './mdx-external-policy'
+import { resolveMdxExternalResource } from './mdx-external-policy'
+import { inspectMdxCssResources } from './mdx-css-resources'
+import type { MdxExternalResourceKind } from './mdx-external-policy'
 import type { MdxResourceOwner, MdxInspectResult } from './mdx-resources'
 
 const FILE_LIMIT = 256 * 1024
@@ -19,8 +21,9 @@ const TOTAL_LIMIT = 1024 * 1024
 const MODULE_LIMIT = 64
 const DEPTH_LIMIT = 16
 const REQUEST_LIMIT = 10_000
+const ASSET_SUFFIX = /\.(?:png|jpe?g|gif|webp|avif|svg|woff2?|ttf|otf|eot|mp4|webm|mp3|wav)$/i
 
-type ModuleFormat = 'mdx' | 'jsx' | 'js'
+type ModuleFormat = 'mdx' | 'jsx' | 'js' | 'css' | 'asset'
 type RemoteProvenance = {
   hops: Set<string>
   parents: Set<RemoteProvenance>
@@ -47,7 +50,8 @@ export async function inspectMdxDependencies(options: {
       // Collects authorized hops for this fetch. For a consent discovery, the graph
       // adds inherited origins to the same set before inspection returns.
       discoveryOrigins: Set<string>,
-    ): Promise<{ url: string; text: string }>
+      kind?: MdxExternalResourceKind,
+    ): Promise<{ url: string; text?: string; bytes?: Uint8Array }>
     retainSnapshot(localTreeCurrent: () => boolean): void
   }
   inspect(
@@ -166,7 +170,7 @@ export async function inspectMdxDependencies(options: {
     })
     const visit = async (
       path: string,
-      source: string,
+      source: string | Uint8Array,
       format: ModuleFormat,
       depth: number,
       remote?: { url: URL; provenance: RemoteProvenance },
@@ -180,7 +184,7 @@ export async function inspectMdxDependencies(options: {
       if (completed.has(key)) return []
       if (depth > DEPTH_LIMIT || (!remote && count >= MODULE_LIMIT))
         return [failure(`Dependency graph limit reached at ${safe}`, 1)]
-      const size = Buffer.byteLength(source)
+      const size = typeof source === 'string' ? Buffer.byteLength(source) : source.byteLength
       if (size > FILE_LIMIT || total + size > TOTAL_LIMIT)
         return [failure(`Dependency size limit reached at ${safe}`, 1)]
       if (!remote) count++
@@ -189,19 +193,37 @@ export async function inspectMdxDependencies(options: {
       try {
         await check()
         await validateRootAndAncestors()
-        const result = await options.inspect(options.owner, source, signal, format)
+        if (format === 'asset') {
+          completed.add(key)
+          return []
+        }
+        if (typeof source !== 'string')
+          return [failure(`Dependency ${safe} has no readable source`, 1)]
+        const result =
+          format === 'css'
+            ? inspectMdxCssResources(source)
+            : await options.inspect(options.owner, source, signal, format)
         await check()
         const diagnostics = [...result.diagnostics]
         for (const dep of result.dependencies) {
           await check()
           const line = dep.line ?? 1,
             spec = dep.specifier
+          const resourcePath = spec.split(/[?#]/, 1)[0] ?? ''
+          const kind: MdxExternalResourceKind =
+            'kind' in dep && (dep.kind === 'css' || dep.kind === 'asset')
+              ? dep.kind
+              : /\.css$/i.test(resourcePath)
+                ? 'css'
+                : ASSET_SUFFIX.test(resourcePath)
+                  ? 'asset'
+                  : 'module'
           const absolute = /^https:\/\//i.test(spec)
           if (remote || absolute) {
             // Validate the raw spelling before consulting either canonical graph cache.
             const destination =
-              absolute || (remote && relativeUrl(spec))
-                ? resolveMdxExternalModule(spec, remote?.url)
+              absolute || (remote && (format === 'css' || relativeUrl(spec)))
+                ? resolveMdxExternalResource(spec, kind, remote?.url)
                 : null
             if (!destination || 'error' in destination) {
               diagnostics.push(
@@ -236,7 +258,7 @@ export async function inspectMdxDependencies(options: {
             }
             count++
             remoteAttempts++
-            let fetched: { url: string; text: string }
+            let fetched: { url: string; text?: string; bytes?: Uint8Array }
             const discoveryOrigins = new Set<string>()
             try {
               fetched = await options.external.fetch(
@@ -244,6 +266,7 @@ export async function inspectMdxDependencies(options: {
                 signal,
                 localTreeCurrent,
                 discoveryOrigins,
+                kind,
               )
             } catch (error) {
               await check()
@@ -266,19 +289,34 @@ export async function inspectMdxDependencies(options: {
               continue
             }
             await check()
-            const destinationAfterRedirects = resolveMdxExternalModule(fetched.url)
-            readBudget -= Math.min(FILE_LIMIT, Buffer.byteLength(fetched.text) + 3) // Possible UTF-8 BOM.
+            const destinationAfterRedirects = resolveMdxExternalResource(fetched.url, kind)
+            const data = kind === 'asset' ? fetched.bytes : fetched.text
+            if (data === undefined) {
+              readBudget -= FILE_LIMIT
+              diagnostics.push(
+                failure('External MDX resource response is unavailable', line, dep.column),
+              )
+              continue
+            }
+            readBudget -= Math.min(
+              FILE_LIMIT,
+              fetched.bytes?.byteLength ?? Buffer.byteLength(data) + 3,
+            )
             if ('error' in destinationAfterRedirects) {
               diagnostics.push(
                 failure('Unsupported external MDX module destination', line, dep.column),
               )
               continue
             }
-            const { url: final, format: childFormat } = destinationAfterRedirects
+            const { url: final } = destinationAfterRedirects
+            const childFormat =
+              destinationAfterRedirects.kind === 'module'
+                ? destinationAfterRedirects.format
+                : destinationAfterRedirects.kind
             redirects.set(target.href, final.href)
             diagnostics.push(
               ...(
-                await visit(final.href, fetched.text, childFormat, depth + 1, {
+                await visit(final.href, data, childFormat, depth + 1, {
                   url: final,
                   provenance: recordRemotePath(final.href, remote?.provenance, discoveryOrigins),
                 })
@@ -291,8 +329,16 @@ export async function inspectMdxDependencies(options: {
             )
             continue
           }
-          const ext = spec.match(/\.(mdx|jsx|js)$/i)?.[1]?.toLowerCase()
-          if ((!spec.startsWith('./') && !spec.startsWith('../')) || /[?#]/.test(spec) || !ext) {
+          const ext = kind === 'module' ? spec.match(/\.(mdx|jsx|js)$/i)?.[1]?.toLowerCase() : kind
+          if (
+            (format !== 'css' && !spec.startsWith('./') && !spec.startsWith('../')) ||
+            spec.startsWith('/') ||
+            /[\\?#]/.test(spec) ||
+            /^[a-z][a-z\d+.-]*:/i.test(spec) ||
+            (kind === 'asset' && !ASSET_SUFFIX.test(spec)) ||
+            (kind === 'css' && !/\.css$/i.test(spec)) ||
+            !ext
+          ) {
             diagnostics.push(failure('Unsupported local MDX module specifier', line, dep.column))
             continue
           }
@@ -326,7 +372,7 @@ export async function inspectMdxDependencies(options: {
             break
           }
           const target = join(rootCanonical, child)
-          let text = ''
+          let data: string | Uint8Array = ''
           try {
             await check()
             if ((await exactPath(rootCanonical, child)) !== target) throw new Error('unsafe path')
@@ -385,7 +431,9 @@ export async function inspectMdxDependencies(options: {
                 (await exactPath(rootCanonical, child)) !== target
               )
                 throw new Error('changed')
-              text = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))
+              const body = Buffer.concat(chunks)
+              data =
+                kind === 'asset' ? body : new TextDecoder('utf-8', { fatal: true }).decode(body)
               await check()
             } finally {
               await handle.close()
@@ -398,7 +446,7 @@ export async function inspectMdxDependencies(options: {
             continue
           }
           diagnostics.push(
-            ...(await visit(child, text, ext as ModuleFormat, depth + 1)).map((d) => ({
+            ...(await visit(child, data, ext as ModuleFormat, depth + 1)).map((d) => ({
               ...d,
               message: `${child}:${d.line}:${d.column}: ${d.message}`,
               line,

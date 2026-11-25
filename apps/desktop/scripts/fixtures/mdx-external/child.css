@@ -1,0 +1,8 @@
+@font-face {
+  font-family: 'mdx-fixture';
+  src: url('./tiny.woff2') format('woff2');
+}
+.nested-resource-fixture {
+  background-image: url('./tiny.png');
+  --audio-fixture: url('./tiny.wav');
+}
