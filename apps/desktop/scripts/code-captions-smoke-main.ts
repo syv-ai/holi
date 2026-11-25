@@ -201,6 +201,14 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
     throw new Error(`Timed out: ${label}; ${await js('return document.body.innerText')}`)
   }
   async function capture(name: string) {
+    await js(`
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const animations = document.getAnimations().filter(animation =>
+        animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+      await Promise.allSettled(animations.map(animation => animation.finished));
+      await new Promise(requestAnimationFrame);
+      return true;
+    `)
     const shot = (await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
       fromSurface: true,
     })) as { data: string }
