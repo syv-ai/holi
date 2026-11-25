@@ -42,8 +42,9 @@ import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
 import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
-import { createSubscriptions } from './vault/subscriptions'
+import { createSubscriptions, createSeenRevisions } from './vault/subscriptions'
 import { subscriptionChanges } from './vault/subscription-changes'
+import { createSubscriptionReceipts } from './vault/subscription-receipts'
 import { fileCards, type FileCard } from './vault/file-cards'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
@@ -108,9 +109,35 @@ import { repoName, type VaultRegistry } from './vault/registry'
 import type { UpdateStatus } from './updates/state'
 import type { Updater } from './updates/updater'
 import { isReleaseVersion, type ReleaseNotesAnswer } from './updates/release-notes'
+import { execFileSync } from 'node:child_process'
 
 /** The longest answer to "What is this vault for?", as the onboarding field caps it. */
 const PURPOSE_MAX = 300
+
+function repositoryHead(root: string): string | null {
+  try {
+    const head = execFileSync(
+      'git',
+      ['--no-replace-objects', 'rev-parse', '--verify', 'HEAD^{commit}'],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 250,
+        maxBuffer: 65536,
+        env: {
+          ...process.env,
+          GIT_NO_REPLACE_OBJECTS: '1',
+          GIT_NO_LAZY_FETCH: '1',
+          GIT_TERMINAL_PROMPT: '0',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    ).trim()
+    return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(head) ? head : null
+  } catch {
+    return null
+  }
+}
 
 const t = initTRPC.create()
 
@@ -454,6 +481,11 @@ export function createRouter(deps: RouterDeps) {
     deps.userData === undefined
       ? null
       : createSubscriptions(join(deps.userData, 'subscriptions.json'))
+  const seenRevisions =
+    deps.userData === undefined
+      ? null
+      : createSeenRevisions(join(deps.userData, 'subscription-seen.json'))
+  const subscriptionReceipts = createSubscriptionReceipts()
 
   /**
    * A write must be visible to the very next read.
@@ -2408,6 +2440,110 @@ export function createRouter(deps: RouterDeps) {
           if (!Array.isArray(paths) || paths.some((path) => typeof path !== 'string'))
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid subscription paths.' })
           return subscriptions.list(remote, root, paths)
+        }),
+      readForDisplay: t.procedure
+        .input(fields({ remote: 'string', path: 'string' }))
+        .query(async ({ input }) => {
+          if (subscriptions === null)
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Subscriptions are unavailable.',
+            })
+          const active = activeOrThrow()
+          if (active.remote !== input.remote)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault changed; retry in the active vault.',
+            })
+          const accountId = deps.session.viewer?.accountId ?? null
+          const accountGeneration = deps.session.generation
+          const openRevision = vaultOpenRevision
+          const scopeSnapshot = subscriptions.coveringScopeNow(active.remote, input.path)
+          const scope = scopeSnapshot?.scope ?? null
+          return subscriptionReceipts.capture({
+            repo: active.repo,
+            root: active.root,
+            remote: active.remote,
+            path: input.path,
+            scope,
+            valid: () =>
+              deps.host.active() === active &&
+              vaultOpenRevision === openRevision &&
+              completedVaultOpenRevision === openRevision &&
+              accountId !== null &&
+              (deps.session.viewer?.accountId ?? null) === accountId &&
+              deps.session.generation === accountGeneration &&
+              scopeSnapshot?.isCurrent() === true,
+          })
+        }),
+      acknowledgeDisplay: t.procedure
+        .input(fields({ remote: 'string', path: 'string', receipt: 'string' }))
+        .mutation(async ({ input }) => {
+          if (subscriptions === null || seenRevisions === null)
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Subscriptions are unavailable.',
+            })
+          const active = activeOrThrow()
+          if (active.remote !== input.remote)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault changed; retry in the active vault.',
+            })
+          const accountId = deps.session.viewer?.accountId ?? null
+          const accountGeneration = deps.session.generation
+          const scope = subscriptions.coveringScopeNow(active.remote, input.path)?.scope ?? null
+          if (scope === null)
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: 'This path is not explicitly subscribed.',
+            })
+          const consumed = subscriptionReceipts.consume(input.receipt, {
+            remote: active.remote,
+            root: active.root,
+            path: input.path,
+            scope: JSON.stringify(scope),
+          })
+          if (consumed === null)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The display receipt is invalid or expired.',
+            })
+          const nowActive = deps.host.active()
+          if (
+            nowActive !== active ||
+            (deps.session.viewer?.accountId ?? null) !== accountId ||
+            deps.session.generation !== accountGeneration ||
+            JSON.stringify(subscriptions.coveringScopeNow(active.remote, input.path)?.scope) !==
+              JSON.stringify(scope)
+          )
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault, account, or subscription changed; retry in the active vault.',
+            })
+          let proofHead: string | null = null
+          return seenRevisions.acknowledge(
+            active.remote,
+            input.path,
+            consumed.revision,
+            async (ancestor, descendant) => {
+              return active.repo.isAncestor(ancestor, descendant)
+            },
+            {
+              stillOwned: async () => {
+                if (!consumed.valid()) return false
+                const head = await active.repo.historicalHead()
+                if (head.kind !== 'commit') return false
+                const validatedHead = repositoryHead(active.root)
+                if (validatedHead === null || validatedHead !== head.sha) return false
+                if (!(await active.repo.isAncestor(consumed.revision, validatedHead))) return false
+                proofHead = validatedHead
+                return consumed.valid() && repositoryHead(active.root) === validatedHead
+              },
+              publishOwned: () =>
+                proofHead !== null && consumed.valid() && repositoryHead(active.root) === proofHead,
+            },
+          )
         }),
       changes: t.procedure
         .input(fields({ remote: 'string', path: 'string' }))
