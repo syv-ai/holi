@@ -49,7 +49,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     )
     writeFileSync(
       join(vaultRoot, bundle, 'app.yaml'),
-      'commands:\n  smoke: { script: command.js }\n',
+      `description: owner-${owner}\ncommands:\n  smoke: { script: command.js }\n`,
     )
     writeFileSync(
       join(vaultRoot, bundle, 'owner.js'),
@@ -832,8 +832,8 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       capabilityHost.dispatch({
         door: 'ui',
         remote: 'ada/a',
-        name: 'apps.list',
-        params: {},
+        name: 'apps.describe',
+        params: { bundle },
       }),
     )
     assert.equal((await capabilityHost.names('ada/a', 'ui')).includes('apps.call'), false)
@@ -844,10 +844,10 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     const recoveredA = await capabilityHost.dispatch({
       door: 'ui',
       remote: 'ada/a',
-      name: 'apps.list',
-      params: {},
+      name: 'apps.describe',
+      params: { bundle },
     })
-    assert(Array.isArray(recoveredA.value) && recoveredA.value.length > 0)
+    assert.deepEqual(recoveredA.value, { description: 'owner-A' })
     assert.equal((await capabilityHost.names('ada/a', 'ui')).includes('apps.call'), true)
     await readSibling()
     mark('integrated-restart-disable-reenable-a-preserves-b-app-door-and-native-origin')
