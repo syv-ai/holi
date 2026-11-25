@@ -1,110 +1,86 @@
-import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { release, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setImmediate as nextTurn } from 'node:timers/promises'
-import { Script } from 'node:vm'
-import ts from 'typescript'
 import { expect, it } from 'vitest'
+import { finalizeElectronSmoke } from '../scripts/windows-agent-smoke-finalization'
 
-const source = ts.createSourceFile(
-  'windows-agent-smoke.ts',
-  readFileSync(new URL('../scripts/windows-agent-smoke.ts', import.meta.url), 'utf8'),
-  ts.ScriptTarget.ESNext,
-  true,
-)
-const main = source.statements.find(
-  (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === 'main',
-)
-const entry = source.statements.at(-1)
-assert(main && entry && ts.isExpressionStatement(entry) && ts.isVoidExpression(entry.expression))
-// Execute the real finalizer and error handler, without booting Electron or running the
-// native probes. Unwrap the entrypoint's `void` so the test can await its completion.
-const finalization = new Script(
-  ts.transpileModule(`${main.getText(source)}\n${entry.expression.expression.getText(source)}`, {
-    compilerOptions: { target: ts.ScriptTarget.ESNext },
-  }).outputText,
-  { filename: source.fileName },
-)
-
-async function finishSmoke(cleanupError?: Error) {
+async function finishSmoke(failureAt?: 'run' | 'cleanup') {
   const root = mkdtempSync(join(tmpdir(), 'holi-smoke-report-'))
   const reportPath = join(root, 'smoke-result.json')
-  const steps: string[] = []
-  const errors: unknown[] = []
+  const resource = join(root, 'fixture-resource')
+  writeFileSync(resource, 'retained until cleanup')
+  const failure = new Error('fixture failed')
   let quit: ReturnType<typeof setImmediate> | undefined
-  let observedExit: { code: number; report: string | undefined } | undefined
+  let observedExit:
+    | { code: number; report: string | undefined; resourcePresent: boolean; windowClosed: boolean }
+    | undefined
+  let cleaned = false
+  let closed = false
   const exit = (code: number) => {
     if (observedExit) return
     clearImmediate(quit)
-    steps.push(`exit ${code}`)
     observedExit = {
       code,
+      resourcePresent: existsSync(resource),
+      windowClosed: closed,
       report: existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : undefined,
     }
   }
+  const record = {
+    ok: true,
+    runtime: 'dependency-electron',
+    checks: ['fixture stage'],
+    ownedPty: { schema: 'fixture-payload' },
+  }
   try {
-    await finalization.runInNewContext({
-      root,
-      join,
-      release,
-      process: { platform: 'win32', versions: { electron: '43.0.0' } },
-      checks: ['native fixture completed'],
-      run: async () => {},
-      cleanup: [
-        async () => {
-          await nextTurn()
-          steps.push('cleanup')
-          if (cleanupError) throw cleanupError
-        },
-      ],
-      pendingPids: [[23, 42]],
-      checkPidsGone: async () => {
+    await finalizeElectronSmoke({
+      reportPath,
+      run: async () => {
+        if (failureAt === 'run') throw failure
+        return record
+      },
+      cleanup: async () => {
         await nextTurn()
-        steps.push('probe')
+        cleaned = true
+        if (failureAt === 'cleanup') throw failure
+        rmSync(resource)
       },
-      window: {
-        destroy: () => {
-          steps.push('destroy')
-          quit = setImmediate(() => exit(0)) // Electron's implicit quit after the last window closes.
-        },
+      closeWindow: () => {
+        closed = true
+        // Model Electron's implicit quit after the last window closes.
+        quit = setImmediate(() => exit(0))
       },
-      writeFile: async (path: string, data: string, options: { flag: string }) => {
-        // Opening the file can succeed before the event loop returns to complete the write.
-        writeFileSync(path, '', options)
-        await nextTurn()
-        if (!observedExit) writeFileSync(path, data)
-      },
-      writeFileSync,
-      app: { exit },
-      console: { error: (error: unknown) => errors.push(error) },
+      exit,
+    }).catch((error: unknown) => {
+      expect(error).toBeInstanceOf(AggregateError)
+      expect((error as AggregateError).errors).toContain(failure)
+      exit(1)
     })
-    return { observedExit, steps, errors }
+    return { observedExit, cleaned, closed, record }
   } finally {
     clearImmediate(quit)
     rmSync(root, { recursive: true, force: true })
   }
 }
 
-it('seals the dependency Electron smoke report before the first zero exit', async () => {
-  const { observedExit, steps, errors } = await finishSmoke()
-  expect(steps).toEqual(['cleanup', 'probe', 'destroy', 'exit 0'])
-  expect(errors).toEqual([])
-  expect(observedExit?.code).toBe(0)
-  expect(JSON.parse(observedExit!.report!)).toEqual({
-    ok: true,
-    runtime: 'dependency-electron',
-    platform: 'win32',
-    platformVersion: release(),
-    electron: '43.0.0',
-    checks: ['native fixture completed'],
-  })
+it('seals the complete smoke report before the first zero exit', async () => {
+  const { observedExit, cleaned, closed, record } = await finishSmoke()
+  expect(cleaned && closed).toBe(true)
+  expect(observedExit).toMatchObject({ code: 0, resourcePresent: false, windowClosed: true })
+  expect(JSON.parse(observedExit!.report!)).toEqual(record)
 })
 
-it('probes and destroys the window but does not publish success when cleanup rejects', async () => {
-  const failure = new Error('fixture cleanup failed')
-  const { observedExit, steps, errors } = await finishSmoke(failure)
-  expect(steps).toEqual(['cleanup', 'probe', 'destroy', 'exit 1'])
-  expect(observedExit).toEqual({ code: 1, report: undefined })
-  expect(errors).toEqual([expect.objectContaining({ errors: [failure] })])
-})
+it.each(['run', 'cleanup'] as const)(
+  'still cleans and closes but never publishes success after %s failure',
+  async (phase) => {
+    const { observedExit, cleaned, closed } = await finishSmoke(phase)
+    expect(cleaned && closed).toBe(true)
+    expect(observedExit).toEqual({
+      code: 1,
+      report: undefined,
+      resourcePresent: phase === 'cleanup',
+      windowClosed: true,
+    })
+  },
+)

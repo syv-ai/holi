@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { ChildProcess, execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { release } from 'node:os'
 import { join, relative } from 'node:path'
 import { finished } from 'node:stream/promises'
@@ -19,6 +19,7 @@ import { killChildTree } from '../src/main/process-group'
 import { defaultSpawnPty } from '../src/main/terminal/pty'
 import { createTerminals } from '../src/main/terminal/terminals'
 import { AgentRuntime } from '../src/plugins/agent/main/host/pty'
+import { finalizeElectronSmoke } from './windows-agent-smoke-finalization'
 import { launchOwnedWindowsPty } from '../src/main/owned-windows-pty'
 
 const root = process.env.HOLI_QA372_ROOT!
@@ -624,40 +625,32 @@ if(args[0]==='--pty') {
 }
 
 async function main() {
-  const failures = new Set<unknown>()
-  try {
-    await run()
-  } catch (error) {
-    failures.add(error)
-  } finally {
-    const results = await Promise.allSettled(cleanup.map((stop) => Promise.resolve().then(stop)))
-    // Do not infer cleanup from the receipt or the PTY adapter alone. Only probe
-    // the known fixture PIDs not already observed gone, and never signal them.
-    const probes = await Promise.allSettled([...pendingPids].map(checkPidsGone))
-    for (const result of [...results, ...probes])
-      if (result.status === 'rejected') failures.add(result.reason)
-  }
-  try {
-    window?.destroy()
-  } catch (error) {
-    failures.add(error)
-  }
-  if (failures.size) throw new AggregateError([...failures], 'Dependency Electron smoke failed')
-  // Closing the last window can queue an implicit quit. Seal the report without yielding.
-  writeFileSync(
-    join(root, 'smoke-result.json'),
-    JSON.stringify({
-      ok: true,
-      runtime: 'dependency-electron',
-      platform: process.platform,
-      platformVersion: release(),
-      electron: process.versions.electron,
-      checks,
-      ...(ownedPtyProof ? { ownedPty: ownedPtyProof } : {}),
-    }),
-    { flag: 'wx' },
-  )
-  app.exit(0)
+  await finalizeElectronSmoke({
+    reportPath: join(root, 'smoke-result.json'),
+    run: async () => {
+      await run()
+      return {
+        ok: true,
+        runtime: 'dependency-electron',
+        platform: process.platform,
+        platformVersion: release(),
+        electron: process.versions.electron,
+        checks,
+        ...(ownedPtyProof ? { ownedPty: ownedPtyProof } : {}),
+      }
+    },
+    cleanup: async () => {
+      const results = await Promise.allSettled(cleanup.map((stop) => Promise.resolve().then(stop)))
+      // Only probe known fixture PIDs, never signal rediscovered processes.
+      const probes = await Promise.allSettled([...pendingPids].map(checkPidsGone))
+      const failures = [...results, ...probes].flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : [],
+      )
+      if (failures.length) throw new AggregateError(failures, 'Smoke fixture cleanup failed')
+    },
+    closeWindow: () => window?.destroy(),
+    exit: (code) => app.exit(code),
+  })
 }
 void main().catch((error) => {
   console.error(error)
