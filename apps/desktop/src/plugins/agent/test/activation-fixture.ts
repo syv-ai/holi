@@ -12,6 +12,7 @@ import { createMembersCache } from '../../../main/github/members-cache'
 import { createPluginHost } from '../../../main/plugin-host/host'
 import { createBridgeServer } from '../../../main/bridge/server'
 import { automationsMain } from '../../automations/main/index'
+import { holisMain } from '../../holis/main'
 import type { RunOptions } from '../main/claude/cli'
 import type { AgentExit, StartArgs } from '../main/host/pty'
 import { agentMain } from '../main/index'
@@ -341,6 +342,7 @@ export async function rig(
     context?: (ctx: PluginCtx) => void
     holdAutomationsDisposer?: { entered: () => void; wait: Promise<void>; turnEnded?: () => void }
     agentDisposerStarted?: () => void
+    retainedContexts?: boolean
   },
 ) {
   userData ??= await tempDirectory('h674-agent-')
@@ -348,7 +350,10 @@ export async function rig(
   const roots = { [A]: join(userData, 'vault-a'), [B]: join(userData, 'vault-b') }
   for (const root of Object.values(roots)) {
     await mkdir(join(root, '.holi/settings'), { recursive: true })
-    await writeFile(join(root, '.holi/settings/plugins.yaml'), 'plugins:\n  automations: true\n')
+    await writeFile(
+      join(root, '.holi/settings/plugins.yaml'),
+      'plugins:\n  automations: true\n  holis: true\n',
+    )
     await writeFile(
       join(root, '.fixture-owner'),
       Object.entries(roots).find(([, path]) => path === root)![0],
@@ -425,7 +430,7 @@ export async function rig(
     },
   }
   const host = createPluginHost({
-    plugins: [agentPlugin, automationsPlugin, ...(lifecycle?.plugins ?? [])],
+    plugins: [agentPlugin, automationsPlugin, holisMain, ...(lifecycle?.plugins ?? [])],
     registry,
     userData,
     coreSeeds: [],
@@ -496,10 +501,13 @@ export async function rig(
         )
       ).value,
   })
+  const retainedRemotes = new Set<string>()
   const reports = createUiReports()
   const core = createCoreServices({
     get: (remote) => {
-      if (activeRemote !== remote) return null
+      if (remote !== A && remote !== B) return null
+      if (!(lifecycle?.retainedContexts ? retainedRemotes.has(remote) : activeRemote === remote))
+        return null
       return {
         remote,
         root: roots[remote],
@@ -515,7 +523,9 @@ export async function rig(
     registry,
     rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
     get: (remote) => {
-      if (activeRemote !== remote) return null
+      if (remote !== A && remote !== B) return null
+      if (!(lifecycle?.retainedContexts ? retainedRemotes.has(remote) : activeRemote === remote))
+        return null
       const root = roots[remote]
       return {
         remote,
@@ -563,6 +573,7 @@ export async function rig(
   const enter = (remote: typeof A | typeof B) => {
     if (liveContext) {
       activeRemote = remote
+      if (lifecycle?.retainedContexts) retainedRemotes.add(remote)
       host.setDisplayed(remote)
     }
     return host.reconcile(openVault(remote), 'open')
@@ -621,6 +632,10 @@ export async function rig(
     notifications,
     syncHolds,
     setActive,
+    stopRemote: async (remote: string) => {
+      await host.stop(remote)
+      retainedRemotes.delete(remote)
+    },
     bridge,
     registry,
     expectFailedDrain,

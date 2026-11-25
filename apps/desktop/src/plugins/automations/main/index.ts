@@ -28,14 +28,17 @@ export const automationsMain: MainPlugin = {
   seed: automationsSeed,
   async activate(ctx) {
     let live: SessionSummary[] = []
+    let receivedSessions = false
     ctx.hear('agent', 'sessions', (list) => {
       if (!Array.isArray(list)) return
+      receivedSessions = true
       live = list as SessionSummary[]
       scheduler.sessionsChanged(live)
     })
     // Which automations this machine runs, and what they did: outside the
     // vault, where the agent cannot approve its own (`scheduler.ts`).
     const scheduler = createScheduler({
+      activationSignal: ctx.activationSignal,
       store: jsonFileStore(join(ctx.userData, 'schedules.json'), parseSchedulesFile),
       provider: async (root) => (await readVaultSettings(root)).agentProvider,
       sessions: {
@@ -81,17 +84,19 @@ export const automationsMain: MainPlugin = {
     const unevents = ctx.events.on((event) => scheduler.hear(event))
     const unscan = ctx.onSnapshot((snapshot) => scheduler.snapshot(snapshot))
     // The list as it is when this starts; the agent's news keeps it after.
-    void ctx
+    const initialSessions = ctx
       .call('agent.sessions', {})
       .then((list) => {
-        if (Array.isArray(list)) live = list as SessionSummary[]
+        if (!ctx.activationSignal.aborted && Array.isArray(list) && !receivedSessions)
+          live = list as SessionSummary[]
       })
       .catch(() => {})
     scheduler.attach({ remote: ctx.remote, root: ctx.root })
-    return () => {
+    return async () => {
       unevents()
       unscan()
-      scheduler.dispose()
+      const [result] = await Promise.allSettled([scheduler.dispose(), initialSessions])
+      if (result.status === 'rejected') throw result.reason
     }
   },
 }

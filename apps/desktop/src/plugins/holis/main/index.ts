@@ -20,22 +20,13 @@ export const holisMain: MainPlugin = {
   info: HOLIS_INFO,
   seed: holisSeed,
   async activate(ctx) {
-    const { BrowserWindow, Notification } = await import('electron')
-    // A run that needs the person says so where they are, which is often not
-    // Holi: a system notification, and a click opens Agents mode on it.
-    const notify = (n: NeedsYou): void => {
-      if (!Notification.isSupported()) return
-      const note = new Notification({ title: `${n.name} needs you`, body: n.text })
-      note.on('click', () => {
-        const win = BrowserWindow.getAllWindows()[0]
-        if (win !== undefined) {
-          if (win.isMinimized()) win.restore()
-          win.show()
-          win.focus()
-        }
-        ctx.emit(n.remote, 'holi-open', { holi: n.id })
+    const notify = (n: NeedsYou, lease: () => boolean): void => {
+      if (ctx.activationSignal.aborted || !lease()) return
+      ctx.notify({
+        title: `${n.name} needs you`,
+        body: n.text,
+        navigate: { name: 'holi-open', payload: { holi: n.id } },
       })
-      note.show()
     }
     // Which Holis this machine approved, and their runs: outside the vault,
     // where the agent cannot approve its own (`holis.ts`).
@@ -58,11 +49,18 @@ export const holisMain: MainPlugin = {
             }))) as Launched,
       emit: ctx.emit,
       needsYou: notify,
+      presentationLease: ctx.presentationLease,
+      cleanupLaunch: async (_vault, sessionId) => {
+        const result = (await ctx.call('agent.stop', { id: sessionId })) as
+          { ok: true } | { ok: false; message: string }
+        if (!result.ok) throw new Error(result.message)
+      },
+      activationSignal: ctx.activationSignal,
     })
     ctx.register(
       HOLI_NAMESPACES,
       holiCapabilities({ holis, changed: (remote) => ctx.emit(remote, 'holis', null) }),
     )
-    return () => {}
+    return () => holis.stop()
   },
 }
