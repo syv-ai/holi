@@ -52,7 +52,11 @@ function gmail() {
         ? ok({ threadsUnread: unread, threadsTotal: unread + 20 })
         : ok({}, countStatus)
     }
-    if (path.endsWith('/profile')) return ok({ historyId })
+    if (path.endsWith('/profile')) {
+      historyStarted?.resolve()
+      await historyGate?.promise
+      return ok({ historyId })
+    }
     if (path.endsWith('/history')) {
       historyStarted?.resolve()
       await historyGate?.promise
@@ -130,6 +134,37 @@ function rig() {
 }
 
 describe('mail attention', () => {
+  it('returns an unknown subscription while the initial poll remains teardown-owned', async () => {
+    const r = rig()
+    const server = gmail()
+    const session = { id: 'one', accountSub: 'sub-one' }
+    r.connect('vault/a', session, server)
+    const gate = server.holdHistory()
+
+    const lease = await r.subscribe('vault/a')
+    await gate.started
+
+    expect(lease.snapshot()).toMatchObject({
+      accountSub: 'sub-one',
+      unreadThreads: null,
+      status: 'unknown',
+    })
+    expect(r.snapshots.get('vault/a')).toEqual([
+      expect.objectContaining({ accountSub: 'sub-one', status: 'unknown' }),
+    ])
+
+    let stopped = false
+    const stopping = lease.stop().then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+
+    gate.release()
+    await stopping
+    expect(stopped).toBe(true)
+  })
+
   it('baselines the exact unread thread count without notifying old mail', async () => {
     const r = rig()
     const server = gmail()
@@ -147,6 +182,7 @@ describe('mail attention', () => {
     r.preferences.set('vault/b', true)
 
     const lease = await r.subscribe('vault/b')
+    await r.attention.refresh()
 
     expect(lease.snapshot()).toMatchObject({
       accountSub: 'sub-one',
@@ -164,6 +200,7 @@ describe('mail attention', () => {
     const session = { id: 'one', accountSub: 'sub-one' }
     r.connect('vault/a', session, server)
     const lease = await r.subscribe('vault/a')
+    await r.attention.refresh()
     r.preferences.set('vault/a', true)
     server.setUnread(2)
     server.setMessages({
@@ -226,6 +263,7 @@ describe('mail attention', () => {
     server.setUnread(4)
     r.connect('vault/a', session, server)
     const lease = await r.subscribe('vault/a')
+    await r.attention.refresh()
     r.preferences.set('vault/a', true)
 
     server.setCountStatus(503)
@@ -276,6 +314,7 @@ describe('mail attention', () => {
       r.subscribe('vault/a'),
       r.subscribe('vault/c'),
     ])
+    await r.attention.refresh()
     r.preferences.set('vault/a', true)
     r.preferences.set('vault/b', true)
     r.preferences.set('vault/c', true)
@@ -312,6 +351,7 @@ describe('mail attention', () => {
     const secondSession = { id: 'second', accountSub: 'sub-second' }
     r.connect('vault/a', firstSession, first)
     const lease = await r.subscribe('vault/a')
+    await r.attention.refresh()
     r.preferences.set('vault/a', true)
     first.setMessages({ pending: ['INBOX', 'UNREAD'] })
     first.setHistory({
