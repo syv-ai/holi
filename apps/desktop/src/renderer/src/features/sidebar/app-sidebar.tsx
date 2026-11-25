@@ -59,7 +59,7 @@ export function AppSidebar({
     : `Board${taskAttention?.open ? `, ${taskAttention.open} open tasks` : ''}`
   const { isMobile } = useSidebar()
   const running = useAtomValue(runningPluginsAtom)
-  const AgentsSidebar = running.find((plugin) => plugin.agentsMode)?.agentsMode?.sidebar
+  const agentsMode = running.find((plugin) => plugin.agentsMode)?.agentsMode
 
   if (collapsed) {
     // Same SidebarMenuButton as the expanded nav, so hover, active and the
@@ -179,13 +179,14 @@ export function AppSidebar({
         <div key={remote} className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col gap-2">
             <DocumentsNav activeId={activeId} onOpenSearch={onOpenSearch} onOpen={onOpen} />
+            {agentsMode?.navigation ? <agentsMode.navigation /> : null}
             <FilesSection activeId={activeId} onOpen={onOpen} onMoved={onMoved} />
             {running.map(({ info, sidebarSection: Section }) =>
               Section === undefined ? null : <Section key={info.id} />,
             )}
-            {AgentsSidebar ? (
+            {agentsMode?.sidebar ? (
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-                <AgentsSidebar />
+                <agentsMode.sidebar />
               </div>
             ) : null}
           </div>
