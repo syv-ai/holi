@@ -48,11 +48,12 @@ afterEach(async () => {
 })
 
 function auth(overrides: Partial<StoredGoogleAuth> = {}): StoredGoogleAuth {
+  const tokenSuffix = (overrides.sub ?? 'sub-1').replace(/^sub-/, '')
   return {
     sub: 'sub-1',
     email: 'ada@syv.ai',
-    refreshToken: 'rt-1',
-    accessToken: 'at-1',
+    refreshToken: `rt-${tokenSuffix}`,
+    accessToken: `at-${tokenSuffix}`,
     expiresAt: NOW + 3_600_000,
     scopes: ['openid'],
     ...overrides,
