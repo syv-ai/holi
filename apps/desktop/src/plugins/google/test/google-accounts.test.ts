@@ -96,7 +96,10 @@ function deferred<T>() {
 }
 
 /** Independently gated code exchanges and refresh, with real persistence. */
-async function controlledConsent(seed: StoredGoogleAuth[] = []) {
+async function controlledConsent(
+  seed: StoredGoogleAuth[] = [],
+  vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+) {
   await store.write(Object.fromEntries(seed.map((row) => [row.sub, row])))
   let now = NOW
   const states = new Map<string, string>()
@@ -110,7 +113,7 @@ async function controlledConsent(seed: StoredGoogleAuth[] = []) {
   const refreshReply = deferred<Response>()
   const accounts = await createGoogleAccounts({
     store,
-    vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+    vaults,
     clients: memoryClients(null),
     env: {},
     now: () => now,
@@ -683,8 +686,12 @@ describe('a grant that lands after it was let go', () => {
     rig.release()
     await atWrite
 
-    await rig.accounts.setClient({ id: 'replacement.apps.googleusercontent.com', secret: 's' })
+    const switching = rig.accounts.setClient({
+      id: 'replacement.apps.googleusercontent.com',
+      secret: 's',
+    })
     releaseWrite()
+    await switching
 
     expect(await outcome).toEqual({ kind: 'cancelled' })
     expect(rig.accounts.list()).toEqual([])
@@ -848,7 +855,7 @@ describe('a grant that lands after it was let go', () => {
   })
 
   it.each(['stored', 'writing', 'queued'] as const)(
-    'does not revoke a newer same-token consent while it is %s',
+    'does not revoke newer account/client authorization while it is %s',
     async (stage) => {
       const rig = await controlledConsent()
       const first = await rig.accounts.connect(VAULT)
@@ -888,7 +895,7 @@ describe('a grant that lands after it was let go', () => {
         rig.exchanges[0]!.reply.resolve(auth({ accessToken: 'at-stale' }))
         await new Promise<void>((resolve) => setImmediate(resolve))
       }
-      exchange.reply.resolve(auth({ accessToken: 'at-winner' }))
+      exchange.reply.resolve(auth({ accessToken: 'at-winner', refreshToken: 'rt-distinct-winner' }))
       if (stage === 'stored') await winner
       else if (stage === 'writing') await atWrite.promise
       else await new Promise<void>((resolve) => setImmediate(resolve))
@@ -907,7 +914,7 @@ describe('a grant that lands after it was let go', () => {
     },
   )
 
-  it('still revokes a superseded consent when its refresh token differs from the winner', async () => {
+  it('preserves the winner authorization when superseded consent has a distinct token', async () => {
     const rig = await controlledConsent()
     const first = await rig.accounts.connect(VAULT)
     const stale = first.wait()
@@ -920,7 +927,7 @@ describe('a grant that lands after it was let go', () => {
     rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-stale' }))
 
     expect(await stale).toEqual({ kind: 'cancelled' })
-    expect(rig.revoked).toEqual(['rt-stale'])
+    expect(rig.revoked).toEqual([])
     await expect((await rig.accounts.sessionFor(WORK))!.getAccessToken()).resolves.toBe('at-winner')
   })
 
@@ -1289,5 +1296,101 @@ describe('issuing clients survive future-connect defaults', () => {
     expect(await accounts.sessionFor(VAULT)).toBe(held)
     await accounts.setClient(oldClient)
     await expect(held.getAccessToken()).resolves.toBe('recovered')
+  })
+})
+
+describe('cancelled re-consent keeps existing ownership', () => {
+  it.each(['queued', 'writing', 'linking'] as const)(
+    'preserves live sessions and links when a default switch cancels %s consent',
+    async (stage) => {
+      const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
+      const rig = await controlledConsent(
+        [
+          auth(),
+          ...(stage === 'queued'
+            ? [auth({ sub: 'sub-2', refreshToken: 'rt-2', expiresAt: NOW - 1 })]
+            : []),
+        ],
+        vaults,
+      )
+      await rig.accounts.link(VAULT, 'sub-1')
+      const held = (await rig.accounts.sessionFor(VAULT))!
+      const entered = deferred<void>()
+      const release = deferred<void>()
+      let blocker: Promise<unknown> | undefined
+      if (stage === 'linking') {
+        const original = vaults.link.bind(vaults)
+        vi.spyOn(vaults, 'link').mockImplementationOnce(async (remote, sub) => {
+          const undo = await original(remote, sub)
+          entered.resolve()
+          await release.promise
+          return undo
+        })
+      } else {
+        const original = store.write.bind(store)
+        vi.spyOn(store, 'write').mockImplementationOnce(async (value) => {
+          entered.resolve()
+          await release.promise
+          await original(value)
+        })
+        if (stage === 'queued') {
+          blocker = rig.accounts.sessionForSub('sub-2')!.getAccessToken()
+          await rig.refreshStarted.promise
+          rig.refreshReply.resolve(
+            Response.json({ access_token: 'other-refreshed', expires_in: 3600 }),
+          )
+          await entered.promise
+        }
+      }
+      const flow = await rig.accounts.connect(VAULT)
+      const result = flow.wait()
+      await rig.exchanges[0]!.started.promise
+      rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'new-consent-token' }))
+      if (stage !== 'queued') await entered.promise
+      else await new Promise<void>((resolve) => setImmediate(resolve))
+      const switching = rig.accounts.setClient({ id: GOOGLE_CLIENT_ID, secret: 'rotated-secret' })
+      release.resolve()
+      await switching
+      await blocker
+      expect(await result).toEqual({ kind: 'cancelled' })
+      expect(await rig.accounts.sessionFor(VAULT)).toBe(held)
+      await expect(held.getAccessToken()).resolves.toBe('at-1')
+      expect(rig.revoked).toEqual([])
+      const calls: URLSearchParams[] = []
+      const restarted = await createGoogleAccounts({
+        store,
+        vaults,
+        clients: memoryClients({ id: GOOGLE_CLIENT_ID, secret: 'rotated-secret' }),
+        env: {},
+        listen: async () => {
+          throw new Error('no consent needed')
+        },
+        openBrowser: async () => {},
+        now: () => NOW + 7_200_000,
+        fetch: (async (_url, init) => {
+          calls.push(new URLSearchParams(String(init?.body)))
+          return Response.json({ access_token: 'after-restart', expires_in: 3600 })
+        }) as typeof globalThis.fetch,
+      })
+      await expect((await restarted.sessionFor(VAULT))!.getAccessToken()).resolves.toBe(
+        'after-restart',
+      )
+      expect(calls[0]!.get('client_secret')).toBe('rotated-secret')
+    },
+  )
+
+  it('restores reconnect state after a linked consent is cancelled and does not undo a newer link', async () => {
+    const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
+    await vaults.link(VAULT, 'expired')
+    await vaults.expireAccount('expired')
+    const undo = await vaults.link(VAULT, 'replacement')
+    await undo()
+    expect(await vaults.subFor(VAULT)).toBeNull()
+    expect(await vaults.needsReconnect(VAULT)).toBe(true)
+    const staleUndo = await vaults.link(VAULT, 'older')
+    await vaults.link(VAULT, 'newer')
+    await staleUndo()
+    expect(await vaults.subFor(VAULT)).toBe('newer')
+    expect(await vaults.needsReconnect(VAULT)).toBe(false)
   })
 })

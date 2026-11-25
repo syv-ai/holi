@@ -636,8 +636,8 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
     /**
      * Set this machine's own OAuth client, or clear it with an empty `id` to
-     * go back to the next source. A different client disconnects every
-     * account here: their grants belong to the old one.
+     * go back to the next source. This changes the default for future connects;
+     * existing grants retain their issuing credentials.
      */
     'google.setClient': cap({
       doors: ['ui'],

@@ -379,7 +379,7 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
             </Item>
           ))}
 
-          {/* Machine-wide: the client every account here was granted to. */}
+          {/* Machine-wide default for future connections; existing grants keep their client. */}
           <OAuthClient
             beforeChange={(change) => changeAccount(change, false)}
             disabled={busy}
