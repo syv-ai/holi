@@ -39,7 +39,9 @@ type InvitationCalendarCopy = {
 }
 
 type CalendarLookup =
-  InvitationCalendarCopy | { kind: 'absent' } | { kind: 'blocked'; reason: string }
+  | InvitationCalendarCopy
+  | { kind: 'absent' }
+  | { kind: 'blocked'; reason: string; cancelled?: true }
 
 type Parsed = NonNullable<ReturnType<typeof parseMailInvitation>>
 type InvitationTarget = {
@@ -95,6 +97,7 @@ function date(value: unknown): value is string {
 function validTime(value: RawEvent['start']): boolean {
   return Boolean(
     value &&
+    (value.timeZone === undefined || typeof value.timeZone === 'string') &&
     ((date(value.date) && value.dateTime === undefined) ||
       (value.date === undefined &&
         typeof value.dateTime === 'string' &&
@@ -175,9 +178,13 @@ async function exactCopies(
   }
   // A cancelled series suppresses every occurrence even if Google no longer
   // returns its instances. Never use the series itself as a write target.
-  return matching.size
-    ? [...matching.values()]
-    : roots.filter((root) => root.status === 'cancelled')
+  const cancelledRoots = roots.filter((root) => root.status === 'cancelled')
+  return !matching.size ||
+    cancelledRoots.some((root) =>
+      [...matching.values()].some((instance) => instance.recurringEventId === root.id),
+    )
+    ? cancelledRoots
+    : [...matching.values()]
 }
 
 function usableInvitationEvent(event: RawEvent): boolean {
@@ -271,10 +278,15 @@ async function lookupInvitationCalendarCopy(
   mailbox: string,
 ): Promise<CalendarLookup> {
   const { uid, recurrenceId } = invitation.details.identity
-  const floating = invitation.request.recurrenceKind === 'floating'
+  const series = recurrenceId === null && invitation.details.recurring
+  const basis = invitation.request.recurrenceTimeBasis
+  if (series && basis?.kind === 'custom')
+    return { kind: 'blocked', reason: 'Calendar cannot verify this custom recurrence time zone' }
+  const floating =
+    invitation.request.recurrenceKind === 'floating' || (series && basis?.kind === 'floating')
   const unmatchable = {
     kind: 'blocked',
-    reason: 'Calendar cannot verify a floating occurrence',
+    reason: 'Calendar cannot verify a floating recurrence',
   } as const
   const primary = await exactCopies(api, PRIMARY_EVENTS, uid, recurrenceId, floating)
   if (floating && primary.length) return unmatchable
@@ -355,8 +367,14 @@ function invitationCopy(
   const { sequence, recurrenceId } = details.identity
   const blocked = (reason: string): CalendarLookup => ({ kind: 'blocked', reason })
   const cancelled = event.status === 'cancelled'
-  if (cancelled && (joinOnly || !attendee || organizer !== details.organizer?.email))
-    return blocked('This Calendar event was cancelled')
+  if (
+    cancelled &&
+    (joinOnly ||
+      !attendee ||
+      organizer !== details.organizer?.email ||
+      (recurrenceId !== null && !event.recurringEventId))
+  )
+    return { kind: 'blocked', reason: 'This Calendar event was cancelled', cancelled: true }
   if (organizer !== details.organizer?.email)
     return blocked('The Calendar organizer does not match this invitation')
   const organizes =
@@ -377,6 +395,12 @@ function invitationCopy(
     )
   if (recurrenceId === null && Boolean(event.recurrence?.length) !== details.recurring)
     return blocked('The Calendar recurrence scope does not match this invitation')
+  if (
+    recurrenceId === null &&
+    details.recurring &&
+    !sameRecurrenceStart(request.recurrenceTimeBasis, event.start)
+  )
+    return blocked('The Calendar time zone does not match this series invitation')
   const { explicitFields } = request
   if (explicitFields.recurrence) {
     const expected = recurrenceSet(request.recurrence)
@@ -453,6 +477,39 @@ function invitationCopy(
   }
 }
 
+function canonicalZone(zone: string | null | undefined): string | null {
+  if (!zone || !/^[a-z][a-z\d_+./-]*$/i.test(zone)) return null
+  try {
+    return new Intl.DateTimeFormat('en', { timeZone: zone }).resolvedOptions().timeZone
+  } catch {
+    return null
+  }
+}
+
+function sameRecurrenceStart(
+  basis: InvitationTarget['request']['recurrenceTimeBasis'],
+  start: RawEvent['start'],
+): boolean {
+  if (!start || !basis) return false
+  if (basis.kind === 'date') return start.date === basis.wallStart
+  if ((basis.kind !== 'utc' && basis.kind !== 'iana') || !start.dateTime) return false
+  const expectedZone = basis.kind === 'utc' ? 'UTC' : canonicalZone(basis.zone)
+  // Calendar requires a named expansion zone for a timed recurring event.
+  // A serialized offset (even Z) alone only describes the first instant.
+  const actualZone = canonicalZone(start.timeZone)
+  if (!expectedZone || expectedZone !== actualZone) return false
+  // Use the declared recurrence zone, not the offset chosen to serialize the
+  // first instant (which may be serialized in UTC even for a zoned series).
+  const local = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: expectedZone,
+    dateStyle: 'short',
+    timeStyle: 'medium',
+  })
+    .format(instant(start.dateTime))
+    .replace(' ', 'T')
+  return local === basis.wallStart.replace(/(?:\.000)?Z$/, '')
+}
+
 /** Compare descriptions, not expanded occurrences. Normalise unordered rule
  * terms and date sets, but do not infer equality across different time zones,
  * DATE vs DATE-TIME, or recurrence forms we cannot interpret. */
@@ -504,8 +561,11 @@ function recurrenceSet(lines: string[]): string | null {
         if (!param) return null
         if (param[1]!.toUpperCase() === 'VALUE' && type === undefined)
           type = param[2]!.toUpperCase()
-        else if (param[1]!.toUpperCase() === 'TZID' && zone === undefined) zone = param[2]!
-        else return null
+        else if (param[1]!.toUpperCase() === 'TZID' && zone === undefined) {
+          const canonical = canonicalZone(param[2])
+          if (!canonical) return null
+          zone = canonical
+        } else return null
       }
       for (const value of body.split(',')) {
         if (
@@ -558,6 +618,9 @@ function calendarProof(event: RawEvent): string {
         event.location,
         httpsLink(structuredConference(event)) ?? mailConference(event).url,
         googleEventUrl(event.htmlLink),
+        ...(event.recurrence?.length && event.start?.timeZone !== undefined
+          ? [canonicalZone(event.start.timeZone) ?? event.start.timeZone]
+          : []),
       ]),
     )
     .digest('hex')

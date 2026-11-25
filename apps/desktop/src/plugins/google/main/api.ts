@@ -59,9 +59,6 @@ export interface GoogleApiDeps {
   accessToken: () => Promise<string>
   fetch?: typeof globalThis.fetch
   beforeRequest?: () => void
-  /** Check an account-bound client after token refresh, immediately before dispatch.
-   * For this client, distinguish an indeterminate dispatch from a refusal. */
-  validateRequest?: () => Promise<void>
   /** Synchronous invitation binding check: no await may separate it from dispatch. */
   assertRequest?: () => void
 }
@@ -105,7 +102,6 @@ export class GoogleApi {
       )
     }
 
-    if (this.#deps.validateRequest) await this.#deps.validateRequest()
     this.#deps.assertRequest?.()
     const res = await (this.#deps.fetch ?? globalThis.fetch)(full, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
@@ -153,7 +149,6 @@ export class GoogleApi {
 
     this.#deps.beforeRequest?.()
     if (validate) await validate()
-    if (this.#deps.validateRequest) await this.#deps.validateRequest()
     const init: RequestInit = {
       method,
       headers: {
@@ -174,15 +169,14 @@ export class GoogleApi {
       })
     } catch (error) {
       // Do not reclassify a refusal from validation or token minting: no write left Holi.
-      if (reserveDispatch || this.#deps.validateRequest || this.#deps.assertRequest)
-        throw new GoogleWriteUncertainError(error)
+      if (reserveDispatch || this.#deps.assertRequest) throw new GoogleWriteUncertainError(error)
       throw error
     }
 
     if (!res.ok) {
       const error = await classify(res)
       if (
-        (reserveDispatch || this.#deps.validateRequest || this.#deps.assertRequest) &&
+        (reserveDispatch || this.#deps.assertRequest) &&
         (error.status === 408 ||
           error.status >= 500 ||
           (method !== 'PATCH' && this.#deps.assertRequest !== undefined && error.status === 404))

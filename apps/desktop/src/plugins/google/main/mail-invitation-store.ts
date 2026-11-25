@@ -5,7 +5,10 @@ import type { MailInvitationIdentity } from './mail-invitation'
 
 type Revision = Omit<MailInvitationIdentity, 'messageId'> & {
   /** Absent on journals written before mailbox response was separate from event material. */
-  mailboxResponse?: { responseStatus: 'needsAction' | InviteAnswer; rsvp: boolean | null } | null
+  mailboxResponse?: {
+    responseStatus: 'needsAction' | 'delegated' | InviteAnswer
+    rsvp: boolean | null
+  } | null
 }
 
 type Delivery =
@@ -49,6 +52,7 @@ function validMailboxResponse(value: unknown): boolean {
     value === null ||
     (record(value) &&
       (value.responseStatus === 'needsAction' ||
+        value.responseStatus === 'delegated' ||
         value.responseStatus === 'accepted' ||
         value.responseStatus === 'tentative' ||
         value.responseStatus === 'declined') &&
@@ -83,7 +87,6 @@ function isAttempt(value: unknown): value is InvitationAttempt {
   }
   if (delivery.channel === 'calendar')
     return (
-      state !== 'confirmed' &&
       text(delivery.target) &&
       (delivery.proof === undefined ||
         (typeof delivery.proof === 'string' && /^[0-9a-f]{64}$/.test(delivery.proof)))
