@@ -13,11 +13,13 @@ export type CredentialStore = {
 
 type Authorization = DeviceAuthorization & { wait(): Promise<void> }
 
-/** Owns the saved GitHub credential and makes in-flight authorizations transactional. */
-export function createGitHubCredentials(store: CredentialStore) {
-  let generation = 0
-  let active: (() => void) | undefined
+// Holi manages one GitHub credential slot. Rebuilding its adapter must not reset
+// authorization state: a stale handle could otherwise write after sign-out.
+let generation = 0
+let active: (() => void) | undefined
 
+/** Opens a handle to the app's single GitHub credential slot. */
+export function createGitHubCredentials(store: CredentialStore) {
   return {
     readToken(): string | null {
       try {
