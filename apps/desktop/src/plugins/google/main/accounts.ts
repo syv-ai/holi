@@ -436,7 +436,11 @@ export async function createGoogleAccounts(
       if (connecting?.id === reservation.id)
         connecting = { id: reservation.id, clientId: id, settled, flow, cancel: wrapped.cancel }
       const completion = complete()
-      void completion.then(settle, settle)
+      const finished = () => {
+        if (connecting?.id === reservation.id) connecting = null
+        settle()
+      }
+      void completion.then(finished, finished)
       return wrapped
     },
 

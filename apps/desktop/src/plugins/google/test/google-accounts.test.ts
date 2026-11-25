@@ -91,8 +91,12 @@ async function manager(seed: StoredGoogleAuth[] = [], fetchImpl?: typeof globalT
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
-  const promise = new Promise<T>((done) => (resolve = done))
-  return { promise, resolve }
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
 }
 
 /** Independently gated code exchanges and refresh, with real persistence. */
@@ -1454,5 +1458,42 @@ describe('unresolved consent and rejected rotation', () => {
       'working-secret',
       'working-secret',
     ])
+  })
+})
+
+describe('every completed consent releases its reservation', () => {
+  it('finishes older cleanup when the newer exchange fails', async () => {
+    const rig = await controlledConsent()
+    const first = await rig.accounts.connect(VAULT)
+    const stale = first.wait()
+    await rig.exchanges[0]!.started.promise
+    const second = await rig.accounts.connect(WORK)
+    const failed = expect(second.wait()).rejects.toThrow('synthetic exchange failure')
+    await rig.exchanges[1]!.started.promise
+    rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'unused-old' }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    rig.exchanges[1]!.reply.reject(new Error('synthetic exchange failure'))
+    await failed
+    expect(await stale).toEqual({ kind: 'cancelled' })
+    expect(rig.revoked).toEqual(['unused-old'])
+    expect(rig.accounts.list()).toEqual([])
+  })
+
+  it('finishes older cleanup when the newer account epoch is stale', async () => {
+    const rig = await controlledConsent()
+    const first = await rig.accounts.connect(VAULT)
+    const stale = first.wait()
+    await rig.exchanges[0]!.started.promise
+    const second = await rig.accounts.connect(WORK)
+    const discarded = second.wait()
+    await rig.exchanges[1]!.started.promise
+    rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'unused-old' }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await rig.accounts.removeAccount('sub-1')
+    rig.exchanges[1]!.reply.resolve(auth({ refreshToken: 'unused-new' }))
+    expect(await discarded).toEqual({ kind: 'cancelled' })
+    expect(await stale).toEqual({ kind: 'cancelled' })
+    expect(rig.revoked.sort()).toEqual(['unused-new', 'unused-old'])
+    expect(rig.accounts.list()).toEqual([])
   })
 })
