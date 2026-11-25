@@ -36,7 +36,7 @@ const saveDraftMock = vi.fn()
 const saveDraftAccounts: string[] = []
 const useAccountMock = vi.fn()
 const toastMock = Object.assign(
-  vi.fn(() => 'toast-id'),
+  vi.fn<(...args: unknown[]) => string>(() => 'toast-id'),
   { dismiss: vi.fn() },
 )
 const openExternal = vi.fn()
