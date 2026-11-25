@@ -119,10 +119,7 @@ describe.skipIf(!process.env.HOLI_CODEX_TUI_BIN)('native Codex TUI production co
           return text.includes('wouldyouliketo') && text.includes('holi-528-fixture')
         }, 'native approval prompt')
         await delay(3000)
-        await nativeUntil(
-          () => context.sessions.sessions()[0]?.state === 'needs-you',
-          'production approval attention',
-        )
+        const attentionBeforeCancel = context.sessions.sessions()[0]?.state
         expect(context.terminals.snapshot(terminal).output).toMatch(
           /\x1b\]9;[^\x07\x1b]*(?:\x07|\x1b\\)/,
         )
@@ -136,6 +133,7 @@ describe.skipIf(!process.env.HOLI_CODEX_TUI_BIN)('native Codex TUI production co
         expect(context.terminals.snapshot(terminal).inputs).toEqual(['\x1b'])
         await context.sessions.stop(id)
         expect(context.sessions.sessions()).toEqual([])
+        expect(attentionBeforeCancel).toBe('needs-you')
       })
       for (const name of ['closed-session-notify', 'leave-isolation']) {
         await run(name, async (create) => {
