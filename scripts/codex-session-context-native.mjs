@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startOwnedPty } from './pi-native-tui-process.mjs'
 import { createContextModel } from './codex-context-model.mjs'
+import { runRestrictedContext } from './codex-context-restricted.mjs'
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const clean = (text) =>
@@ -63,7 +64,12 @@ export async function runNativeInitialFixture() {
         terminalSize: { rows: 50, columns: 240 },
       })
       handles.push(child)
-      evidence.argv.push({ command, args, cwd: join(root, 'vault'), codeHome: env.CODEX_HOME })
+      evidence.argv.push({
+        command,
+        args,
+        cwd: join(root, 'vault'),
+        codeHome: extra.CODEX_HOME ?? env.CODEX_HOME,
+      })
       return child
     }
     const install = await own(
@@ -102,8 +108,8 @@ export async function runNativeInitialFixture() {
       policy,
       `(version 1)\n(allow default)\n(deny network*)\n(allow network-outbound (remote tcp "localhost:${model.port}"))\n`,
     )
-    const launch = (args, label) =>
-      own('/usr/bin/sandbox-exec', ['-f', policy, '--', process.execPath, ...args], label)
+    const launch = (args, label, extra = {}) =>
+      own('/usr/bin/sandbox-exec', ['-f', policy, '--', process.execPath, ...args], label, extra)
     const command = async (args, label) => {
       const child = await launch(args, label)
       if ((await child.waitForExit()).code !== 0)
@@ -132,12 +138,14 @@ export async function runNativeInitialFixture() {
     const hookEvents = join(root, 'hook-events.jsonl')
     await writeFile(
       hook,
-      `import{appendFileSync}from'node:fs';let input='';for await(const c of process.stdin)input+=c;appendFileSync(${JSON.stringify(hookEvents)},JSON.stringify(JSON.parse(input))+'\\n',{mode:0o600});console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:'HOLI764_ADDITIVE_CONTEXT'}}))`,
+      `import{appendFileSync}from'node:fs';let input='';for await(const c of process.stdin)input+=c;appendFileSync(${JSON.stringify(hookEvents)},JSON.stringify(JSON.parse(input))+'\\n',{mode:0o600});console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:'HOLI764_ADDITIVE_CONTEXT:'+JSON.parse(input).source}}))`,
     )
     const config = join(env.CODEX_HOME, 'config.toml')
+    const profileInstructions = join(root, 'profile-instructions.txt')
+    await writeFile(profileInstructions, 'HOLI764_PROFILE_INSTRUCTIONS')
     await writeFile(
       config,
-      `model = "gpt-5.1-codex-mini"\nmodel_provider = "holi-fixture"\ndeveloper_instructions = "HOLI764_CONFIG_INSTRUCTIONS"\n[model_providers.holi-fixture]\nname = "Holi fixture"\nbase_url = "http://127.0.0.1:${model.port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n`,
+      `model = "gpt-5.1-codex-mini"\nmodel_provider = "holi-fixture"\nprofile = "fixture"\ndeveloper_instructions = "HOLI764_CONFIG_INSTRUCTIONS"\n[profiles.fixture]\nmodel_instructions_file = ${JSON.stringify(profileInstructions)}\n[model_providers.holi-fixture]\nname = "Holi fixture"\nbase_url = "http://127.0.0.1:${model.port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n`,
     )
     await writeFile(
       join(env.CODEX_HOME, 'hooks.json'),
@@ -255,11 +263,123 @@ export async function runNativeInitialFixture() {
     if (
       !text.includes('HOLI764_ADDITIVE_CONTEXT') ||
       !text.includes('HOLI764_CONFIG_INSTRUCTIONS') ||
+      !text.includes('HOLI764_PROFILE_INSTRUCTIONS') ||
       userText !== prompt ||
       !evidence.hooks.some((event) => event.source === 'startup')
     )
       throw Error('Native input/context preservation not demonstrated')
     if (model.failures.length) throw Error(model.failures.join('; '))
+    evidence.initial = { status: 'demonstrated', request, hooks: [...evidence.hooks] }
+    await initial.close()
+    const session = evidence.hooks.find((event) => event.source === 'startup').session_id
+    if (!/^[0-9a-f-]{36}$/.test(session)) throw Error('Native session identity missing')
+    const resume = await launch(
+      [bin, '--no-daemon', '--no-alt-screen', 'resume', session],
+      'resume',
+    )
+    await wait(
+      resume,
+      () => resume.output.toString().includes('state=idle:app=codex'),
+      'resumed editor idle',
+    )
+    const resumePrompt = 'HOLI764_RESUME_PROMPT'
+    await send(resume, 'type-resume-prompt', resumePrompt)
+    await wait(resume, (text) => text.includes(resumePrompt), 'resumed draft')
+    await delay(250)
+    await send(resume, 'submit-resume-prompt', '\r')
+    const resumedRequest = () =>
+      model.requests.find((item) => lastUserText(item.body) === resumePrompt)
+    await wait(resume, () => Boolean(resumedRequest()), 'resumed model request')
+    await wait(
+      resume,
+      (text) => text.includes('Holi context fixture finished.'),
+      'resumed turn completion',
+    )
+    evidence.hooks = (await readFile(hookEvents, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    if (
+      !evidence.hooks.some((event) => event.source === 'resume' && event.session_id === session) ||
+      !JSON.stringify(resumedRequest().body).includes('HOLI764_ADDITIVE_CONTEXT:resume') ||
+      !JSON.stringify(resumedRequest().body).includes('HOLI764_CONFIG_INSTRUCTIONS') ||
+      !JSON.stringify(resumedRequest().body).includes('HOLI764_PROFILE_INSTRUCTIONS')
+    )
+      throw Error('Fresh resume context not demonstrated')
+    evidence.resume = {
+      status: 'demonstrated',
+      session,
+      request: resumedRequest().body,
+      transcript: resume.output.toString(),
+    }
+    await resume.close()
+    const declarationPath = join(env.CODEX_HOME, 'hooks.json')
+    const declaration = JSON.parse(await readFile(declarationPath, 'utf8'))
+    const deniedSentinel = join(root, 'denied-hook-executed')
+    const deniedScript = join(root, 'denied-hook.mjs')
+    await writeFile(
+      deniedScript,
+      `import{writeFileSync}from'node:fs';writeFileSync(${JSON.stringify(deniedSentinel)},'unexpected')`,
+    )
+    declaration.hooks.SessionStart.push({
+      matcher: 'startup|resume',
+      hooks: [
+        {
+          type: 'command',
+          command: `${JSON.stringify(process.execPath)} ${JSON.stringify(deniedScript)}`,
+        },
+      ],
+    })
+    evidence.negativeControls = []
+    for (const changed of [false, true]) {
+      if (changed) declaration.hooks.SessionStart[0].hooks[0].command += ' --changed'
+      await writeFile(declarationPath, JSON.stringify(declaration))
+      const beforeEvents = (await readFile(hookEvents, 'utf8')).trim().split('\n').length
+      const label = changed ? 'modified-hook' : 'unrelated-hook'
+      const child = await launch([bin, '--no-daemon', '--no-alt-screen'], label)
+      await wait(child, (text) => text.includes('Hooks need review'), `${label} native review`)
+      await send(child, `deny-${label}`, '\u001b')
+      await wait(
+        child,
+        () => child.output.toString().includes('state=idle:app=codex'),
+        `${label} idle`,
+      )
+      const controlPrompt = `HOLI764_${label}_PROMPT`
+      await send(child, `type-${label}`, controlPrompt)
+      await wait(child, (text) => text.includes(controlPrompt), `${label} draft`)
+      await delay(250)
+      await send(child, `submit-${label}`, '\r')
+      const controlRequest = () =>
+        model.requests.find((item) => lastUserText(item.body) === controlPrompt)
+      await wait(child, () => Boolean(controlRequest()), `${label} request`)
+      await wait(
+        child,
+        (text) => text.includes('Holi context fixture finished.'),
+        `${label} completion`,
+      )
+      const events = (await readFile(hookEvents, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      const hasContext = JSON.stringify(controlRequest().body).includes('HOLI764_ADDITIVE_CONTEXT')
+      if (
+        existsSync(deniedSentinel) ||
+        hasContext === changed ||
+        (changed && events.length !== beforeEvents)
+      )
+        throw Error(`${label} denial did not preserve native trust`)
+      evidence.negativeControls.push({
+        label,
+        status: 'demonstrated',
+        request: controlRequest().body,
+        beforeEvents,
+        afterEvents: events.length,
+        deniedHookExecuted: false,
+        transcript: child.output.toString(),
+      })
+      await child.close()
+    }
+    evidence.restricted = await runRestrictedContext({ root, env, bin, launch, model })
     evidence.status = 'demonstrated'
   } catch (error) {
     evidence.error = String(error)
