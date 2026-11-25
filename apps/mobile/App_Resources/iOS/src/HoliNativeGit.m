@@ -257,13 +257,6 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   if (rc == 0) { int value = 1; if (git_config_get_bool(&value, local, "core.bare") == 0) bare = value; }
   git_config_free(local);
   if (rc < 0 || bare || unsafe.hooks || unsafe.filters || unsafe.helpers) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository configuration"); return NULL; }
-  git_repository_state_t state = git_repository_state(repo);
-  if (state != GIT_REPOSITORY_STATE_NONE) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository state"); return NULL; }
-  git_index *index = NULL;
-  rc = git_repository_index(&index, repo);
-  if (rc == 0 && git_index_has_conflicts(index)) rc = GIT_ECONFLICT;
-  git_index_free(index);
-  if (rc < 0) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported or conflicted index state"); return NULL; }
   *snapshotOut = snapshot;
   return repo;
 }
@@ -399,6 +392,10 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   if(rootFD<0){ if(error)*error=HNGPathError(errno,@"Cannot safely open working tree"); git_repository_free(repo); [snapshot close]; return nil; }
   git_index *index=NULL; git_reference *head=NULL; git_commit *commit=NULL; git_tree *tree=NULL;
   int rc=git_repository_index(&index,repo);
+  if (rc == 0 && git_index_has_conflicts(index)) {
+    if (error) *error = HNGPathError(EINVAL, @"Working-copy status is unavailable while the index has conflicts");
+    close(rootFD); git_index_free(index); git_repository_free(repo); [snapshot close]; return nil;
+  }
   if (rc == 0) {
     rc = git_repository_head(&head, repo);
     if (rc == GIT_EUNBORNBRANCH || rc == GIT_ENOTFOUND) {
