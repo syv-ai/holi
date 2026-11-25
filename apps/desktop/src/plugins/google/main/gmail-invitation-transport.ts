@@ -57,8 +57,16 @@ export function createCalendarScan() {
           `${GMAIL_BASE}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachment)}`,
         )
         .catch((error) => {
-          if (error instanceof GoogleApiError && error.code === 'not-found')
-            throw new CalendarLeafError('Gmail could not find the calendar attachment')
+          if (error instanceof GoogleApiError) {
+            if (error.code === 'not-found')
+              throw new CalendarLeafError('Gmail could not find the calendar attachment')
+            // A transient HTTP failure on this resource leaves its MIME leaf
+            // unreadable. Auth, throttling and transport failures still abort.
+            if ([500, 502, 503, 504].includes(error.status))
+              throw new CalendarLeafError('Gmail could not read the calendar attachment', {
+                cause: error,
+              })
+          }
           if (error instanceof SyntaxError)
             throw new CalendarLeafError('Gmail returned an invalid calendar attachment')
           throw error
@@ -399,42 +407,49 @@ export function createSentCalendarLookup(
     message: ReturnType<typeof validateFullMessage>
     header: ReturnType<typeof messageIdClaims>
   }
-  const reads = new Map<string, Promise<Snapshot | null>>()
+  type FullRead = { result: Promise<Snapshot | null>; sent: boolean }
+  const reads = new Map<string, FullRead>()
   const search = new Map<string, Promise<Snapshot[] | null>>()
   const complete = new Set<string>()
   const threadSent = new Set(inThread.filter(({ sent }) => sent).map(({ messageId }) => messageId))
-  const fullSent = new Map<string, boolean>()
-  // A valid empty index permits unindexed Sent evidence; it never supplies
-  // the SENT label. Full reads supersede the thread's label for the same ID.
+  // Once an exact read is attempted, a stale thread label cannot restore its
+  // authority. Keep the thread's Message-ID claims for contestation.
   const ownsSent = (reply: { rfcId: string | null; messageId: string }) =>
-    owners.owns(reply) && (fullSent.get(reply.messageId) ?? threadSent.has(reply.messageId))
+    owners.owns(reply) && (reads.get(reply.messageId)?.sent ?? threadSent.has(reply.messageId))
+  // A complete (even empty) search checks ownership; only a successful full
+  // resource read can corroborate a stored anchor's SENT label.
   const hasVerifiedSentOwner = (reply: { rfcId: string; messageId: string }) =>
-    complete.has(reply.rfcId) && ownsSent(reply)
+    complete.has(reply.rfcId) && reads.get(reply.messageId)?.sent === true && owners.owns(reply)
   const read = async (id: string, fromIndex = false) => {
+    let request = reads.get(id)
     // An individual GET can return 404 before the index makes the resource
     // readable. An index row still needs a successful full read.
-    if (fromIndex && reads.has(id) && (await reads.get(id)) === null) reads.delete(id)
-    let request = reads.get(id)
+    if (fromIndex && request && (await request.result) === null && reads.get(id) === request)
+      request = undefined
     if (!request) {
       scan.evidenceRead()
-      request = api
-        .get<RawMessage>(`${GMAIL_BASE}/messages/${encodeURIComponent(id)}`, { format: 'full' })
-        .then((raw) => {
-          const message = validateFullMessage(raw, id)
-          const header = messageIdClaims(message.payload)
-          owners.index(message.id, header)
-          fullSent.set(message.id, message.labelIds?.includes('SENT') ?? false)
-          return { message, header }
-        })
-        .catch((error) => {
-          if (error instanceof GoogleApiError && error.code === 'not-found') return null
-          if (error instanceof SyntaxError)
-            throw new CalendarScanError('Gmail returned an invalid full message response')
-          throw error
-        })
-      reads.set(id, request)
+      const full: FullRead = {
+        sent: false,
+        result: api
+          .get<RawMessage>(`${GMAIL_BASE}/messages/${encodeURIComponent(id)}`, { format: 'full' })
+          .then((raw) => {
+            const message = validateFullMessage(raw, id)
+            const header = messageIdClaims(message.payload)
+            owners.index(message.id, header)
+            full.sent = message.labelIds?.includes('SENT') ?? false
+            return { message, header }
+          })
+          .catch((error) => {
+            if (error instanceof GoogleApiError && error.code === 'not-found') return null
+            if (error instanceof SyntaxError)
+              throw new CalendarScanError('Gmail returned an invalid full message response')
+            throw error
+          }),
+      }
+      reads.set(id, full)
+      request = full
     }
-    return request
+    return request.result
   }
   async function exact(rfcId: string): Promise<Snapshot[] | null> {
     scan.evidenceRead()
@@ -506,7 +521,7 @@ export function createSentCalendarLookup(
     }
     const indexed = await request
     if (indexed === null) return null
-    const direct = receipt?.id ? await reads.get(receipt.id) : undefined
+    const direct = receipt?.id ? await reads.get(receipt.id)?.result : undefined
     // Even after a direct 404, the index cannot change the receipt's thread.
     if (direct && receipt?.threadId && direct.message.threadId !== receipt.threadId) {
       complete.delete(rfcId)

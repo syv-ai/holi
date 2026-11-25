@@ -62,6 +62,8 @@ export type CalendarLocator = Pick<Revision, 'uid' | 'recurrenceId'> & {
   /** Not recorded by older Calendar attempts. */
   organizer?: string
   series?: boolean
+  /** The event identified an occurrence but its original slot was unverifiable. */
+  occurrenceUnverified?: true
 }
 
 type Journal = {
@@ -158,6 +160,8 @@ function isCalendarLocator(value: unknown): value is CalendarLocator {
     text(value.target) &&
     text(value.uid) &&
     nullableText(value.recurrenceId) &&
+    (value.occurrenceUnverified === undefined ||
+      (value.occurrenceUnverified === true && value.recurrenceId === null)) &&
     validCalendarScope(value)
   )
 }
@@ -251,8 +255,16 @@ function calendarLocatorFor({
 }
 
 function calendarLocatorKey(locator: CalendarLocator): string {
-  const { accountSub, uid, recurrenceId, target, organizer, series } = locator
-  return JSON.stringify([accountSub, organizer, uid, recurrenceId, series, target])
+  const { accountSub, uid, recurrenceId, target, organizer, series, occurrenceUnverified } = locator
+  return JSON.stringify([
+    accountSub,
+    organizer,
+    uid,
+    recurrenceId,
+    series,
+    target,
+    occurrenceUnverified,
+  ])
 }
 
 /** Legacy attempts can contribute locators before they have been compacted. */

@@ -304,11 +304,9 @@ export class GoogleApi {
     params: GoogleParams,
     items: (page: { items?: T[]; nextPageToken?: string }) => T[],
     cap = 10,
-    requireComplete = false,
   ): Promise<T[]> {
     const all: T[] = []
     let pageToken: string | undefined
-    const seen = new Set<string>()
     for (let i = 0; i < cap; i++) {
       const page = await this.get<{ items?: T[]; nextPageToken?: string }>(url, {
         ...params,
@@ -317,11 +315,7 @@ export class GoogleApi {
       all.push(...items(page))
       pageToken = page.nextPageToken
       if (pageToken === undefined) break
-      if (requireComplete && seen.has(pageToken)) throw new Error('Google repeated a page token')
-      seen.add(pageToken)
     }
-    if (requireComplete && pageToken !== undefined)
-      throw new Error('Google returned too many pages')
     return all
   }
 }

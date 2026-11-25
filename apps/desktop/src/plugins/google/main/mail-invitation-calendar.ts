@@ -183,6 +183,27 @@ function sameOccurrence(event: RawEvent, recurrenceId: string): boolean {
   return original.dateTime !== undefined && instant(original.dateTime) === instant(recurrenceId)
 }
 
+// Only comparable original slots can rule out a relationship. In particular,
+// an absolute provider slot says nothing about a floating mail slot's zone.
+function distinctSlots(a: string, b: string): boolean {
+  if (date(a) && date(b)) return a !== b
+  const first = instant(a)
+  const second = instant(b)
+  return Number.isFinite(first) && Number.isFinite(second) && first !== second
+}
+
+/** Existence only: this deliberately cannot prove an exact RSVP scope. */
+export function calendarLocatorMayMatchScope(
+  copy: Pick<CalendarLocator, 'recurrenceId' | 'series' | 'occurrenceUnverified'>,
+  details: Parsed['details'],
+): boolean {
+  const { recurrenceId } = details.identity
+  if (copy.occurrenceUnverified) return true
+  if (recurrenceId === null) return copy.recurrenceId === null || details.recurring
+  if (copy.recurrenceId === null) return copy.series !== false
+  return !distinctSlots(copy.recurrenceId, recurrenceId)
+}
+
 async function exactCopies(
   api: GoogleApi,
   url: string,
@@ -278,11 +299,17 @@ async function exactCopies(
   )
 }
 
-function usableEventLocator(event: RawEvent): boolean {
+function hasEventResourceId(event: RawEvent): boolean {
   return (
     (event.kind === undefined || event.kind === 'calendar#event') &&
     typeof event.id === 'string' &&
-    /^[A-Za-z0-9_-]{1,1024}$/.test(event.id) &&
+    /^[A-Za-z0-9_-]{1,1024}$/.test(event.id)
+  )
+}
+
+function usableEventLocator(event: RawEvent): boolean {
+  return (
+    hasEventResourceId(event) &&
     (event.recurringEventId === undefined
       ? event.originalStartTime === undefined
       : typeof event.recurringEventId === 'string' &&
@@ -389,10 +416,10 @@ async function lookupInvitationCalendarCopy(
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
     async (event: RawEvent) => {
-      // Bind organizer, mailbox and original scope independently of the
-      // REQUEST's RSVP fields and the rest of the collection.
+      // Bind organizer and mailbox independently of scope, RSVP fields,
+      // and the rest of the collection.
       if (
-        !usableEventLocator(event) ||
+        !hasEventResourceId(event) ||
         !organizer ||
         typeof event.organizer?.email !== 'string' ||
         event.organizer.email.toLowerCase() !== organizer
@@ -412,22 +439,28 @@ async function lookupInvitationCalendarCopy(
             (event.organizer?.self === true && (organizer === mailbox || organizer === calendarId)))
         if (!mailboxCopy && !ownedCopy) return
       }
-      const instance = event.recurringEventId !== undefined
+      const instance = event.recurringEventId !== undefined || event.originalStartTime !== undefined
       const series =
         instance || event.recurrence === undefined
           ? false
           : Array.isArray(event.recurrence)
             ? event.recurrence.length > 0
             : undefined
-      // A floating slot cannot be identified by Calendar's absolute time.
-      // A verified series master still proves itself, including for a slot lookup.
-      const originalSlot = occurrenceSlot(event)
-      if (instance && recurrenceId !== null && !sameOccurrence(event, recurrenceId)) return
+      const originalSlot = instance && usableEventLocator(event) ? occurrenceSlot(event) : null
+      // Do not retain a provably different occurrence for this lookup. An
+      // incomparable or missing original slot is still existence evidence.
+      if (
+        originalSlot !== null &&
+        recurrenceId !== null &&
+        distinctSlots(originalSlot, recurrenceId)
+      )
+        return
       await remember({
         uid,
         organizer,
         recurrenceId: originalSlot,
         series,
+        ...(instance && originalSlot === null ? { occurrenceUnverified: true } : {}),
         target: calendarCopyTarget(calendarResponseUrl(base, event), mailbox),
       })
     }
@@ -726,31 +759,35 @@ async function upcomingInvitationLinks(
       })
       const items = invitationPageItems(page, 'calendar#events')
       pageToken = invitationPageToken(page)
-      if (items.length > 1 || !items.every(isCollectionRow)) return null
+      if (
+        items.length > 1 ||
+        !items.every(isCollectionRow) ||
+        (pageToken !== undefined && seen.has(pageToken))
+      )
+        return null
       const instance = items[0]
-      if (instance) {
-        if (
-          !usableInvitationEvent(instance) ||
-          instance.id === master.id ||
-          instance.iCalUID !== uid ||
-          instance.recurringEventId !== master.id ||
-          instance.organizer?.email?.toLowerCase() !== organizer ||
-          instance.status === 'cancelled' ||
-          !coherentEventTimes(instance) ||
-          (instance.start?.date !== undefined) !== (master.start?.date !== undefined) ||
-          // timeMin applies to the exclusive end. For DATEs Google applies its
-          // calendar timezone; converting those dates ourselves would guess it.
-          (instance.end?.dateTime !== undefined && instant(instance.end.dateTime) <= now)
-        )
-          return null
-        const slot = occurrenceSlot(instance)!
-        if (!suppressSlot(slot)) {
-          const { url, source } = mailConference(instance)
-          const htmlLink = googleEventUrl(instance.htmlLink)
-          if (url || htmlLink) return { conferenceUrl: url, conferenceLinkSource: source, htmlLink }
-        }
+      // A verified page may still contain an ineligible occurrence. None of
+      // its links are usable, but a valid continuation may lead to a safe one.
+      if (
+        instance &&
+        usableInvitationEvent(instance) &&
+        instance.id !== master.id &&
+        instance.iCalUID === uid &&
+        instance.recurringEventId === master.id &&
+        instance.organizer?.email?.toLowerCase() === organizer &&
+        instance.status !== 'cancelled' &&
+        coherentEventTimes(instance) &&
+        (instance.start?.date !== undefined) === (master.start?.date !== undefined) &&
+        // timeMin applies to the exclusive end. For DATEs Google applies its
+        // calendar timezone; converting those dates ourselves would guess it.
+        (instance.end?.dateTime === undefined || instant(instance.end.dateTime) > now) &&
+        !suppressSlot(occurrenceSlot(instance)!)
+      ) {
+        const { url, source } = mailConference(instance)
+        const htmlLink = googleEventUrl(instance.htmlLink)
+        if (url || htmlLink) return { conferenceUrl: url, conferenceLinkSource: source, htmlLink }
       }
-      if (pageToken === undefined || seen.has(pageToken)) return null
+      if (pageToken === undefined) return null
       seen.add(pageToken)
     }
   } catch {
