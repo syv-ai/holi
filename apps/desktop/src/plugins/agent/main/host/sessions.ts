@@ -450,7 +450,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     c: Current,
     target: VaultCliTarget,
     create: () => Promise<CliCreation>,
-    terminal: Geometry,
+    terminal: Geometry & { lease: PresentationLease },
     blank?: boolean,
   ): Promise<StartResult>
   function createBackground(
@@ -462,9 +462,11 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     c: Current,
     target: VaultCliTarget,
     create: () => Promise<CliCreation>,
-    terminal?: Geometry,
+    terminal?: Geometry & { lease: PresentationLease },
     blank = false,
   ): Promise<Failure | Unconfirmed | { ok: true; sessionId: string; terminalId?: string }> {
+    const presented = () => terminal === undefined || terminal.lease()
+    if (!presented()) return vaultClosed
     const alreadyBlocked = admission.creationBlock()
     if (alreadyBlocked) return alreadyBlocked
     const unlock = await admission.acquire()
@@ -480,7 +482,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       unlock()
     }
     try {
-      if (!admittedFor(c, c.vault)) return vaultClosed
+      if (!admittedFor(c, c.vault) || !presented()) return vaultClosed
       const blocked = admission.creationBlock()
       if (blocked) return blocked
       // The listing cannot identify an in-flight launch. Delay applying reads
@@ -490,7 +492,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       if (!result.ok) {
         if (!result.cleanupUnconfirmed) return result
         const failure = admission.retainFailedReceipt(result)
-        if (!admittedFor(c, c.vault)) await admission.revokeUnconfirmed(failure.error)
+        if (!admittedFor(c, c.vault) || !presented())
+          await admission.revokeUnconfirmed(failure.error)
         return failure
       }
       const { id, lease } = result
@@ -499,21 +502,22 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       let tracked = false
       let committed = false
       let terminalId: string | undefined
-      async function closeTerminal() {
-        if (terminalId === undefined) return
+      async function closeTerminal(): Promise<boolean> {
+        if (terminalId === undefined) return true
         try {
-          await deps.terminals.close(terminalId)
+          return await deps.terminals.discard(terminalId, terminal!.lease)
         } catch (error) {
           lateCleanup.recordFailure(error)
           if (error instanceof Error && !admittedFor(c, c.vault))
             await admission.revokeUnconfirmed(error)
+          throw error
         }
       }
       const discard = async (
         failure: Failure,
         commandError = failure.error,
       ): Promise<Failure | Unconfirmed> => {
-        await closeTerminal()
+        if (!(await closeTerminal())) return failure
         inventory.unprompted.delete(id)
         try {
           if (lease !== undefined && !committed) {
@@ -528,7 +532,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
             unconfirmed(cause, id, committed ? undefined : lease, commandError),
             true,
           )
-          if (!admittedFor(c, c.vault)) await admission.revokeUnconfirmed(unresolved.error)
+          if (!admittedFor(c, c.vault) || !presented())
+            await admission.revokeUnconfirmed(unresolved.error)
           return unresolved
         }
         inventory.unpublished.delete(id)
@@ -536,7 +541,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
         await refresh()
         return failure
       }
-      if (!admittedFor(c, c.vault)) return await discard(vaultClosed)
+      if (!admittedFor(c, c.vault) || !presented()) return await discard(vaultClosed)
       const openFailure = (error: unknown): Failure => ({
         ok: false,
         message: error instanceof Error ? error.message : 'Could not open session.',
@@ -554,7 +559,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       // Recheck before reserving so we never count our own pending id.
       const refused = admission.rejectCollision(result)
       if (refused !== undefined) return await refused
-      if (!admittedFor(c, c.vault)) return await discard(vaultClosed)
+      if (!admittedFor(c, c.vault) || !presented()) return await discard(vaultClosed)
       // Teardown owns the pending id, but listing cannot adopt it before commit.
       if (lease !== undefined) inventory.unpublished.add(id)
       trackPendingShutdown(id)
@@ -583,12 +588,12 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
           }
           return admission.rejectCommit(id, lease, cause, revoked)
         }
-        if (!admittedFor(c, c.vault)) return await discard(vaultClosed)
+        if (!admittedFor(c, c.vault) || !presented()) return await discard(vaultClosed)
       }
       // Never attach a terminal to a retained run that has not actually committed.
       if (terminal !== undefined) {
         try {
-          const opened = openPrepared(c, { ...terminal, attach: id }, notice)
+          const opened = openPrepared(c, { ...terminal, attach: id }, terminal.lease, notice)
           if (!opened.ok) return await discard(opened)
           terminalId = opened.terminalId
         } catch (error) {
@@ -599,8 +604,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       // The next receipt can now check this id against the pending owner (or
       // the verified listing). Refresh is still this operation's to join.
       releaseAdmission()
-      if (admittedFor(c, c.vault)) await refresh()
-      if (!admittedFor(c, c.vault)) return await discard(vaultClosed)
+      if (admittedFor(c, c.vault) && presented()) await refresh()
+      if (!admittedFor(c, c.vault) || !presented()) return await discard(vaultClosed)
       return { ok: true, sessionId: id, ...(terminalId === undefined ? {} : { terminalId }) }
     } finally {
       releaseAdmission()
@@ -611,7 +616,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     c: Current,
     id: string,
     action: 'stop' | 'respawn',
+    presentation?: PresentationLease,
   ): Promise<ActionResult> {
+    const presented = () => presentation === undefined || presentation()
+    if (!presented()) return vaultClosed
     const failure = inventory.uncertain.get(id)
     if (failure) return failure
     // When no further listing can verify ownership, stop only known owners
@@ -641,8 +649,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
         if (action === 'respawn') trackPendingShutdown(id)
         else confirmStopped(id)
       }
-      if (admittedFor(c, c.vault)) await refresh()
-      if (!result.ok || admittedFor(c, c.vault)) return result
+      if (admittedFor(c, c.vault) && presented()) await refresh()
+      if (!result.ok || (admittedFor(c, c.vault) && presented())) return result
       if (action === 'respawn') {
         try {
           await lateCleanup.track(() => stopProvider(target, id))
@@ -844,20 +852,26 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
     return firstSpawnNotice(provider, c.configDir)
   }
 
-  async function openOn(c: Current, args: Geometry & { attach?: string; fork?: string }) {
+  async function openOn(
+    c: Current,
+    args: Geometry & { attach?: string; fork?: string },
+    lease: PresentationLease,
+  ) {
+    if (!lease()) return vaultClosed
     const notice = await prepareOpen(c)
+    if (!lease()) return vaultClosed
     if (args.attach !== undefined && inventory.unpublished.has(args.attach))
       return { ok: false as const, message: `Session ${args.attach} is still changing.` }
-    return openPrepared(c, args, notice)
+    return openPrepared(c, args, lease, notice)
   }
 
   function openPrepared(
     c: Current,
     args: Geometry & { attach?: string; fork?: string },
+    lease: PresentationLease,
     notice?: string,
-    lease?: PresentationLease,
   ): { ok: true; terminalId: string } | Failure {
-    if (!admittedFor(c, c.vault) || (lease !== undefined && !lease()))
+    if (!admittedFor(c, c.vault) || !lease())
       return { ok: false, message: 'The vault was left before the terminal opened.' }
     const target = targetOf(c)
     const res = deps.terminals.open({
@@ -872,7 +886,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       ...(args.cols === undefined ? {} : { cols: args.cols }),
       ...(args.rows === undefined ? {} : { rows: args.rows }),
       ...(notice === undefined ? {} : { notice }),
-      lease: lease!,
+      lease,
     })
     return res.ok ? { ok: true, terminalId: res.id } : res
   }
@@ -905,13 +919,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       if (!lease()) return noVault
       if (args.attach !== undefined && inventory.unpublished.has(args.attach))
         return { ok: false, message: `Session ${args.attach} is still changing.` }
-      return openPrepared(c, args, notice, lease)
+      return openPrepared(c, args, lease, notice)
     },
 
-    async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
+    async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }, lease) {
       const owner = attached
       const c = await ensureCurrent()
-      if (!admittedFor(c, owner))
+      if (!admittedFor(c, owner) || !lease())
         return { ok: false, message: 'The vault changed before the session started.' }
       const target = targetOf(c)
       const options = {
@@ -925,7 +939,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
         c,
         target,
         () => bg.cli.startBg(target, options),
-        { cols, rows: r },
+        { cols, rows: r, lease },
         prompt === undefined,
       )
     },
@@ -958,14 +972,14 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       return () => void sessionListeners.delete(listener)
     },
 
-    async send({ text, target, cols, rows: r }) {
+    async send({ text, target, cols, rows: r }, lease) {
       const owner = attached
       const c = await ensureCurrent()
-      if (!admittedFor(c, owner)) return noVault
+      if (!admittedFor(c, owner) || !lease()) return noVault
       let terminalId: string
       if (target === 'new') {
         // The CLI makes a name of the text's first line.
-        const started = await api.start({ name: text, cols, rows: r })
+        const started = await api.start({ name: text, cols, rows: r }, lease)
         if (!started.ok) return started
         terminalId = started.terminalId
       } else {
@@ -975,14 +989,18 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
         const existing = deps.terminals.launchedFor(target)
         if (existing !== null) terminalId = existing
         else {
-          const opened = await openOn(c, { attach: target, cols, rows: r })
+          const opened = await openOn(c, { attach: target, cols, rows: r }, lease)
           if (!opened.ok) return opened
           terminalId = opened.terminalId
         }
       }
-      if (!admittedFor(c, owner))
+      if (!admittedFor(c, owner) || !lease())
         return { ok: false, message: 'The vault was left before the message was sent.' }
-      deps.terminals.paste(terminalId, text)
+      if (
+        !deps.terminals.claim(terminalId, lease) ||
+        !deps.terminals.paste(terminalId, text, lease)
+      )
+        return vaultClosed
       return { ok: true, terminalId }
     },
 
@@ -992,16 +1010,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       return admittedFor(c, owner) ? changeSession(c, id, 'stop') : noVault
     },
 
-    async respawn(id) {
+    async respawn(id, lease) {
       const owner = attached
       const c = await ensureCurrent()
-      return admittedFor(c, owner) ? changeSession(c, id, 'respawn') : noVault
+      return admittedFor(c, owner) && lease() ? changeSession(c, id, 'respawn', lease) : noVault
     },
 
-    async duplicate(id, geometry = {}) {
+    async duplicate(id, geometry = {}, lease) {
       const owner = attached
       const c = await ensureCurrent()
-      if (!admittedFor(c, owner)) return noVault
+      if (!admittedFor(c, owner) || !lease()) return noVault
       const blocked = admission.creationBlock()
       if (blocked) return blocked
       const row = inventory.rows.find((r) => r.id === id)
@@ -1012,7 +1030,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions & {
       const label = bg.summarise(row, coordinator.working).name
       const name = label === 'New session' ? undefined : `${label} (copy)`
       const target = targetOf(c)
-      return createBackground(c, target, () => bg.cli.forkBg(target, conversation, name), geometry)
+      return createBackground(c, target, () => bg.cli.forkBg(target, conversation, name), {
+        ...geometry,
+        lease,
+      })
     },
 
     async noteTurn(remote, jobId, active, pending = null, pid) {

@@ -393,23 +393,21 @@ export const agentMain: MainPlugin = {
       activationOwners.push(() => unmention())
       // Keystrokes and resizes, in the order they were typed. The host drops
       // any about a vault that is not the open one.
-      let writeLease = displayedLease()
       ctx.on(
         'pty-write',
         (_remote, payload) => {
-          const lease = writeLease
+          const lease = displayedLease()
           if (ctx.activationSignal.aborted || !lease()) return
           const p = payload as { id?: unknown; data?: unknown }
           if (typeof p?.id === 'string' && typeof p.data === 'string')
             terminals.write(p.id, p.data, lease)
         },
-        () => ((writeLease = displayedLease()), () => writeLease()),
+        () => ctx.presentationLease(),
       )
-      let resizeLease = displayedLease()
       ctx.on(
         'pty-resize',
         (_remote, payload) => {
-          const lease = resizeLease
+          const lease = displayedLease()
           if (ctx.activationSignal.aborted || !lease()) return
           const p = payload as { id?: unknown; cols?: unknown; rows?: unknown }
           if (
@@ -420,18 +418,17 @@ export const agentMain: MainPlugin = {
             terminals.resize(p.id, p.cols, p.rows, lease)
           }
         },
-        () => ((resizeLease = displayedLease()), () => resizeLease()),
+        () => ctx.presentationLease(),
       )
-      let appearanceLease = displayedLease()
       ctx.on(
         'pty-appearance',
         (_remote, payload) => {
-          const lease = appearanceLease
+          const lease = displayedLease()
           if (ctx.activationSignal.aborted || !lease()) return
           const p = payload as { id?: unknown; appearance?: unknown }
           if (typeof p?.id === 'string') terminals.setAppearance(p.id, p.appearance, lease)
         },
-        () => ((appearanceLease = displayedLease()), () => appearanceLease()),
+        () => ctx.presentationLease(),
       )
       // Each provider's hooks, by the session id they carry: a session Holi
       // runs, or a background job. The built-in ones are fixed, so their

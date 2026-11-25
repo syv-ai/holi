@@ -135,7 +135,7 @@ interface Terminal {
   appearance: TerminalAppearanceProtocol
   onInput: ((data: string) => void) | undefined
   /** False until a renderer has taken its state: output goes to the record only. */
-  attachment?: { lease: PresentationLease }
+  attachment?: { lease: PresentationLease; ready: boolean }
   lease: PresentationLease
   claimant?: PresentationLease
   retainOnExit: boolean
@@ -313,7 +313,9 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
           log(`terminal ${id} exited (code ${e.exitCode})`)
           // Notify while still indexed. A failing notification must not let
           // close/reopen miss this terminal or retire its session underneath it.
-          deps.emit(remote, 'pty-exit', { id, code: e.exitCode }, () => valid(t.lease))
+          deps.emit(remote, 'pty-exit', { id, code: e.exitCode }, () =>
+            valid(t.claimant ?? t.lease),
+          )
           if (!t.retainOnExit) {
             t.hidden = true
             pushList(remote)
@@ -364,11 +366,13 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       if (!valid(lease)) return ''
       const t = terminals.get(id)
       if (t === undefined) return ''
-      const attachment = { lease }
+      const attachment = { lease, ready: false }
       t.attachment = attachment
       t.claimant = lease
       const state = await t.mirror.serialize()
-      if (terminals.get(id) !== t || t.attachment !== attachment || !valid(lease)) return ''
+      if (terminals.get(id) !== t || t.attachment !== attachment || !valid(lease) || t.draining)
+        return ''
+      attachment.ready = true
       return state
     },
 
