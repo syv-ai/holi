@@ -474,7 +474,7 @@ export function mailboxLabel(mailbox: MailboxName | undefined): string {
 
 export interface MailPage {
   threads: MailThreadSummary[]
-  /** Present only on a partial page; no usable summary exists for these threads. */
+  /** Unresolved metadata failures, including known failures outside this page on cached reads. */
   unreadableThreadIds?: string[]
   /** `null` when there is nothing more to load. */
   nextPageToken: string | null
@@ -1939,6 +1939,13 @@ function calendarHeaderIds(part: RawPart | undefined, name: string): string[] | 
   return ids?.length ? ids : null
 }
 
+/** Addresses used as calendar evidence cannot choose between duplicate headers. */
+function calendarAddresses(part: RawPart | undefined, name: string): MailAddress[] {
+  const headers = (part?.headers ?? []).filter((header) => header.name?.toLowerCase() === name)
+  const value = headers.length === 1 ? headers[0]?.value : null
+  return typeof value === 'string' ? parseAddresses(value) : []
+}
+
 function calendarMail(
   api: GoogleApi,
   message: RawMessage,
@@ -1959,7 +1966,7 @@ function calendarMail(
     (!parent.length || !references.length || references.at(-1) === parent[0])
   const parentId = validThreading ? (parent[0] ?? references.at(-1) ?? null) : null
   const subject = (headerOf(message.payload, 'Subject') ?? '').replace(/[\r\n]+/g, ' ').trim()
-  const from = parseAddresses(headerOf(message.payload, 'From'))
+  const from = calendarAddresses(message.payload, 'from')
   const internalDate = Number(message.internalDate)
   return {
     messageId: id,
@@ -1969,7 +1976,7 @@ function calendarMail(
     timestamp: Number.isSafeInteger(internalDate) && internalDate >= 0 ? internalDate : 0,
     sent: message.labelIds?.includes('SENT') ?? false,
     from: from.length === 1 ? from[0]!.email : '',
-    to: parseAddresses(headerOf(message.payload, 'To')).map(({ email }) => email),
+    to: calendarAddresses(message.payload, 'to').map(({ email }) => email),
     replyHeaders:
       rfcId && validThreading
         ? {

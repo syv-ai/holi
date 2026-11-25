@@ -87,7 +87,7 @@ export async function syncThreads(
   cache: GoogleCache,
   options: ListThreadsOptions = {},
   knownAddresses?: string[],
-  context?: { freshPage?: boolean },
+  context?: { freshPage?: boolean; refresh?: boolean },
 ): Promise<MailPage> {
   // Recipient classification depends on the resolved account identities. Keep
   // summaries from an outage/previous identity from becoming authoritative once
@@ -109,15 +109,30 @@ export async function syncThreads(
   // Needs-reply also always fetches one fresh Gmail page: filtering a cached
   // slice would lose a valid continuation when that slice has no matches. Ordinary
   // unfiltered/category/unread/mailbox lists remain delta-backed.
-  if (options.pageToken !== undefined || options.needsReply === true || context?.freshPage === true)
+  if (options.needsReply === true || context?.freshPage === true)
     return listThreads(api, options, knownAddresses)
-  if (options.query?.trim()) return fullSync(api, cache, options, key, knownAddresses)
+  // Keep unresolved reads across a pagination reset, including failures found
+  // on continuation pages. This key is independent of send-as resolution:
+  // a change in recipient classification does not resolve a metadata failure.
+  const pendingKey = cacheKey(options)
+  if (options.pageToken !== undefined) {
+    const page = await listThreads(api, options, knownAddresses)
+    return recordReads(
+      cache,
+      pendingKey,
+      page,
+      page.threads.map(({ id }) => id),
+    )
+  }
+  const fresh = () => fullSync(api, cache, options, key, pendingKey, knownAddresses)
+  if (context?.refresh || options.query?.trim() || cache.unreadableThreads(pendingKey).length)
+    return fresh()
   const cached = cache.readThreads(key)
   // The cursor THIS list was written at. Gmail's cursor is mailbox-wide, but
   // each cached list was written at a different moment.
   const since = cache.historyId(key)
 
-  if (cached === null || since === null) return fullSync(api, cache, options, key, knownAddresses)
+  if (cached === null || since === null) return fresh()
 
   // The mailbox this list is of, as Gmail labels it: the scope of the delta,
   // and the label whose removal means a thread has left.
@@ -144,7 +159,7 @@ export async function syncThreads(
     // Gmail keeps roughly a week. Older than that is a resync, not a failure,
     // and must never reach the user as one.
     if (error instanceof GoogleApiError && error.status === 404) {
-      return fullSync(api, cache, options, key, knownAddresses)
+      return fresh()
     }
     throw error
   }
@@ -197,11 +212,23 @@ export async function syncThreads(
   cache.writeThreads(key, threads)
   if (!unreadableThreadIds.length && historyId !== undefined) cache.setHistoryId(key, historyId)
 
+  return recordReads(
+    cache,
+    pendingKey,
+    { threads, unreadableThreadIds, nextPageToken: null, syncedAt: new Date().toISOString() },
+    [...available],
+  )
+}
+
+function recordReads(cache: GoogleCache, key: string, page: MailPage, checked: string[]): MailPage {
+  const { unreadableThreadIds, ...snapshot } = page
+  const pending = cache.updateUnreadableThreads(key, checked, unreadableThreadIds ?? [])
+  if (!pending.length) return snapshot
+  const unreadable = new Set(pending)
   return {
-    threads,
-    ...(unreadableThreadIds.length ? { unreadableThreadIds } : {}),
-    nextPageToken: null,
-    syncedAt: new Date().toISOString(),
+    ...snapshot,
+    threads: snapshot.threads.filter(({ id }) => !unreadable.has(id)),
+    unreadableThreadIds: pending,
   }
 }
 
@@ -217,17 +244,38 @@ async function fullSync(
   cache: GoogleCache,
   options: ListThreadsOptions,
   key: string,
+  pendingKey: string,
   knownAddresses?: string[],
 ): Promise<MailPage> {
   const cursor = currentHistoryId(api)
   const page = await listThreads(api, options, knownAddresses)
+  const onPage = new Set([...page.threads.map(({ id }) => id), ...(page.unreadableThreadIds ?? [])])
+  // A fresh first page is not proof that a failed thread outside it has
+  // recovered or gone. Check at most 25 pending IDs per refresh, without
+  // mixing off-page summaries into the snapshot that owns the new token.
+  const probeIds = cache
+    .unreadableThreads(pendingKey)
+    .filter((id) => !onPage.has(id))
+    .slice(0, 25)
+  const probe = await fetchThreadSummaries(api, probeIds, knownAddresses)
+  const result = recordReads(
+    cache,
+    pendingKey,
+    {
+      ...page,
+      unreadableThreadIds: [...(page.unreadableThreadIds ?? []), ...probe.unreadableThreadIds],
+    },
+    // A completed probe either read the metadata, verified 404, or returned
+    // an unreadable ID. Move the last group to the end for the next retry.
+    [...page.threads.map(({ id }) => id), ...probeIds],
+  )
   // A partial list has no usable cursor: a delta could have nothing to say
   // about the skipped threads. The next read must try the whole page again.
-  const historyId = page.unreadableThreadIds ? null : await cursor
+  const historyId = result.unreadableThreadIds ? null : await cursor
   if (historyId === null) cache.setHistoryId(key, null)
-  cache.writeThreads(key, page.threads)
+  cache.writeThreads(key, result.threads)
   if (historyId !== null) cache.setHistoryId(key, historyId)
-  return page
+  return result
 }
 
 async function findQueryMatches(
@@ -421,8 +469,8 @@ function patch(
  * (`composeQuery`), so all of them belong here; a missing one serves one
  * list's answer under another list's key.
  *
- * `pageToken` is deliberately absent: a later page never consults the cache
- * (see `syncThreads`), so it has no key to belong to.
+ * `pageToken` is deliberately absent: only first-page rows are cached, and
+ * unresolved reads belong to the query, not to a particular continuation.
  */
 export function cacheKey(options: ListThreadsOptions): string {
   const parts = [

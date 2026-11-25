@@ -500,6 +500,10 @@ export function createInvitationTransport() {
         }
         const threadResource = (id: string, messages: ReturnType<typeof message>[]) => {
           assert(format === 'full' || format === 'metadata')
+          assert(!query.has('fields'))
+          const requested = new Set(
+            query.getAll('metadataHeaders').map((name) => name.toLowerCase()),
+          )
           return Response.json({
             id,
             historyId: '100',
@@ -508,7 +512,12 @@ export function createInvitationTransport() {
               format === 'metadata'
                 ? messages.map(({ payload, ...item }) => ({
                     ...item,
-                    payload: { mimeType: payload.mimeType, headers: payload.headers },
+                    payload: {
+                      mimeType: payload.mimeType,
+                      headers: payload.headers.filter(
+                        ({ name }) => requested.size === 0 || requested.has(name.toLowerCase()),
+                      ),
+                    },
                   }))
                 : messages,
           })
@@ -528,20 +537,27 @@ export function createInvitationTransport() {
               : invite === series && resource === `${api}/messages/${mailId(occurrence)}`
                 ? message(occurrence, mailbox)
                 : null
-          if (selected && format === 'full' && query.has('fields')) {
-            const { payload } = selected
+          if (selected && format === 'full') {
+            const fields = query.get('fields')
+            if (fields === null) return Response.json(selected)
+            // This fixture only serves the production headers-only MIME probe.
+            // Do not invent support for other field masks, or return fields
+            // (e.g. filename/body) the probe could not obtain from Gmail.
+            const headersOnly = 'mimeType,headers(name,value)'
+            assert.equal(
+              fields,
+              `id,threadId,payload(${'mimeType,headers(name,value),parts('.repeat(8)}${headersOnly},parts(mimeType)${')'.repeat(9)}`,
+            )
+            const { id, threadId, payload } = selected
             return Response.json({
-              id: selected.id,
-              threadId: invite.id,
+              id,
+              threadId,
               payload: {
                 mimeType: payload.mimeType,
                 headers: payload.headers,
-                parts: payload.parts.map(({ body, ...part }) => ({
-                  ...part,
-                  body: {
-                    size: body.size,
-                    ...('attachmentId' in body ? { attachmentId: body.attachmentId } : {}),
-                  },
+                parts: payload.parts.map((part) => ({
+                  mimeType: part.mimeType,
+                  ...('headers' in part ? { headers: part.headers } : {}),
                 })),
               },
             })

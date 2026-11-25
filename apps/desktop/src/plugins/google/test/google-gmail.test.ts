@@ -260,6 +260,7 @@ describe('htmlToText', () => {
 describe('listThreads', () => {
   it('returns a usable partial Mail page through cached delta and retry', async () => {
     let oversized = false
+    let outsideFirstPage = false
     let metadataStatus = 200
     const healthy = {
       id: 'healthy',
@@ -299,7 +300,14 @@ describe('listThreads', () => {
         return Response.json(
           url.searchParams.get('q')?.includes('filename:ics')
             ? { threads: [{ id: 'healthy' }] }
-            : { threads: [{ id: 'oversized' }, { id: 'healthy' }], nextPageToken: 'next-page' },
+            : url.searchParams.get('pageToken') === 'next-page'
+              ? { threads: metadataStatus === 404 ? [] : [{ id: 'oversized' }] }
+              : {
+                  threads: outsideFirstPage
+                    ? [{ id: 'healthy' }]
+                    : [{ id: 'oversized' }, { id: 'healthy' }],
+                  nextPageToken: 'next-page',
+                },
         )
       if (url.searchParams.get('format') === 'metadata') {
         if (path.endsWith('/threads/healthy')) return Response.json(healthy)
@@ -350,9 +358,24 @@ describe('listThreads', () => {
         ],
       }
       expect(await data.threads(options)).toMatchObject(partial)
-      expect(await data.threads(options)).toMatchObject({ ...partial, nextPageToken: 'next-page' })
+      outsideFirstPage = true
+      expect(await data.threads(options, { refresh: true })).toMatchObject({
+        ...partial,
+        nextPageToken: 'next-page',
+      })
       metadataStatus = 403
-      await expect(data.threads(options)).rejects.toMatchObject({ status: 403 })
+      await expect(data.threads(options, { refresh: true })).rejects.toMatchObject({ status: 403 })
+      metadataStatus = 200
+      oversized = false
+      const recovered = await data.threads(options, { refresh: true })
+      expect(recovered).toMatchObject({ threads: partial.threads, nextPageToken: 'next-page' })
+      expect(recovered).not.toHaveProperty('unreadableThreadIds')
+      expect(await data.threads({ ...options, pageToken: recovered.nextPageToken! })).toMatchObject(
+        {
+          threads: [{ id: 'oversized', subject: 'Other thread' }],
+          nextPageToken: null,
+        },
+      )
     } finally {
       cache.close()
     }
