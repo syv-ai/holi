@@ -163,7 +163,13 @@ async function rig() {
     events: new Map<string, ReturnType<typeof event>[]>(),
     instances: new Map<string, ReturnType<typeof event>[]>(),
     hiddenCalendars: [] as string[],
-    notices: [] as { calendar: string; to: string; status: string }[],
+    // Applied PATCHes requesting Calendar updates, not notification receipts.
+    calendarUpdateRequests: [] as {
+      calendar: string
+      eventId: string
+      sendUpdates: 'all'
+      status: string
+    }[],
     sendAttempts: 0,
     sentMime: [] as string[],
     calendarPatchAttempts: 0,
@@ -319,10 +325,12 @@ async function rig() {
         }
         currentEvent.attendees[0] = update.attendees[0]!
         currentEvent.etag = `"version-${state.calendarPatchAttempts}"`
-        if (url.searchParams.get('sendUpdates') === 'all') {
-          state.notices.push({
+        const sendUpdates = url.searchParams.get('sendUpdates')
+        if (sendUpdates === 'all') {
+          state.calendarUpdateRequests.push({
             calendar: id,
-            to: currentEvent.organizer.email,
+            eventId: currentEvent.id,
+            sendUpdates,
             status: currentEvent.attendees[0].responseStatus,
           })
         }
@@ -472,7 +480,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
-it('shows a past, declined primary copy and sends each RSVP to its organizer only', async () => {
+it('patches only the attendee on the primary copy of a past invitation and confirms each answer by readback', async () => {
   const { state, read, respond } = await rig()
   const primary = event()
   state.events.set('primary', [primary])
@@ -500,10 +508,11 @@ it('shows a past, declined primary copy and sends each RSVP to its organizer onl
       invitation: { responseStatus: answer },
     })
   }
-  expect(state.notices).toEqual(
+  expect(state.calendarUpdateRequests).toEqual(
     ['accepted', 'tentative', 'declined'].map((status) => ({
       calendar: 'primary',
-      to: organizer,
+      eventId: primary.id,
+      sendUpdates: 'all',
       status,
     })),
   )
@@ -541,7 +550,9 @@ it('uses original start and the hidden secondary calendar ID for an attached, mo
     outcome: 'sent',
     channel: 'calendar',
   })
-  expect(state.notices).toEqual([{ calendar, to: organizer, status: 'accepted' }])
+  expect(state.calendarUpdateRequests).toEqual([
+    { calendar, eventId: 'moved', sendUpdates: 'all', status: 'accepted' },
+  ])
   expect(state.sendAttempts).toBe(0)
 })
 
@@ -1018,7 +1029,7 @@ it('returns independent series and original occurrence cards and updates only th
   })
   expect(series.attendees[0]?.responseStatus).toBe('declined')
   expect(instance.attendees[0]?.responseStatus).toBe('accepted')
-  expect(state.notices).toHaveLength(1)
+  expect(state.calendarUpdateRequests).toHaveLength(1)
   expect(state.sendAttempts).toBe(0)
 })
 
@@ -1500,7 +1511,7 @@ it('keeps a corroborated answer across Calendar and Gmail copies without notifyi
     refreshPending: false,
     invitation: { responseStatus: 'declined' },
   })
-  expect(state.notices.map(({ status }) => status)).toEqual(['accepted', 'declined'])
+  expect(state.calendarUpdateRequests.map(({ status }) => status)).toEqual(['accepted', 'declined'])
   expect(state.sendAttempts).toBe(1)
 })
 
@@ -1545,7 +1556,7 @@ it('uses a fresh Calendar reset but remembers the confirmed answer when that cop
     invitation: { responseStatus: 'accepted' },
   })
   expect(state.calendarPatchAttempts).toBe(2)
-  expect(state.notices.map(({ status }) => status)).toEqual(['accepted', 'accepted'])
+  expect(state.calendarUpdateRequests.map(({ status }) => status)).toEqual(['accepted', 'accepted'])
   expect(state.sendAttempts).toBe(0)
 })
 
@@ -1567,7 +1578,7 @@ it('does not settle a Calendar response while the matching copy still reports th
     responseStatus: 'accepted',
     responsePending: false,
   })
-  expect(state.notices).toHaveLength(1)
+  expect(state.calendarUpdateRequests).toHaveLength(1)
   expect(state.sendAttempts).toBe(0)
 })
 
@@ -1869,7 +1880,7 @@ it('requires the same recurrence zone, not just the same winter instant and RRUL
   recurring.start.timeZone = 'US/Eastern'
   expect(await read()).toMatchObject({ scope: 'series', canRespond: true })
   expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
-  expect(state.notices).toHaveLength(1)
+  expect(state.calendarUpdateRequests).toHaveLength(1)
   const zoned = (observances: string, stamp: string) =>
     invite(
       'REQUEST',
@@ -1924,7 +1935,7 @@ it('requires the same recurrence zone, not just the same winter instant and RRUL
     canRespond: false,
   })
   await expect(respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
-  expect(state.notices).toHaveLength(1)
+  expect(state.calendarUpdateRequests).toHaveLength(1)
   expect(state.sendAttempts).toBe(0)
 
   state.messages[0] = gmailMessage('standard-zone', 400, googleZone)
@@ -1977,7 +1988,7 @@ it.each(['thread', 'separate-thread'])(
       invitation: { responseStatus: 'tentative' },
     })
     expect(state.sendAttempts).toBe(18)
-    expect(state.notices).toHaveLength(0)
+    expect(state.calendarUpdateRequests).toHaveLength(0)
   },
 )
 
@@ -2009,7 +2020,7 @@ it.each([
     state.receiptError = null
     expect(await reopened.read()).toMatchObject({ responseStatus: 'accepted', canRespond: true })
     expect(state.sendAttempts).toBe(1)
-    expect(state.notices).toHaveLength(0)
+    expect(state.calendarUpdateRequests).toHaveLength(0)
   },
 )
 
@@ -2100,7 +2111,9 @@ it.each(['thread', 'separate-thread'])(
     })
     expect(await restart().read()).toMatchObject(settled)
     expect(state.calendarPatchAttempts).toBe(1)
-    expect(state.notices).toEqual([{ calendar: 'primary', to: organizer, status: 'declined' }])
+    expect(state.calendarUpdateRequests).toEqual([
+      { calendar: 'primary', eventId: copy.id, sendUpdates: 'all', status: 'declined' },
+    ])
     expect(copy.attendees).toEqual(event().attendees)
     expect(state.sendAttempts).toBe(1)
   },
@@ -2143,7 +2156,7 @@ it('leaves a Calendar write unsettled when a competing Sent answer appears in re
       sentResponseStatus: 'accepted',
     },
   })
-  expect(state.notices).toHaveLength(1)
+  expect(state.calendarUpdateRequests).toHaveLength(1)
   expect(state.sendAttempts).toBe(0)
 })
 
@@ -2196,7 +2209,7 @@ it('uses a newer correlated Sent answer once a confirmed Calendar copy disappear
     outcome: 'unchanged',
     channel: 'gmail',
   })
-  expect(state.notices).toHaveLength(1)
+  expect(state.calendarUpdateRequests).toHaveLength(1)
   expect(state.sendAttempts).toBe(0)
 })
 

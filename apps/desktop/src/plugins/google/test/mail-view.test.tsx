@@ -1066,6 +1066,58 @@ test('ignores an earlier invitation read after opening another thread and reopen
   expect(screen.getByText('Response: Accepted')).toBeInTheDocument()
 })
 
+test('keeps a metadata-readable thread selected when its body fails and retries the read only', async () => {
+  threadMock.mockResolvedValue(
+    page([summary({ unread: true }), summary({ id: 't2', subject: 'Lunch' })]),
+  )
+  readMock.mockRejectedValueOnce(
+    Object.assign(new Error('Gmail MIME data exceeds the reader limits'), {
+      data: { code: 'FORBIDDEN' },
+    }),
+  )
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+
+  const failed = await screen.findByRole('alert')
+  expect(failed).toBeVisible()
+  expect(failed).toHaveTextContent(/MIME.*limits/i)
+  expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeVisible()
+  expect(screen.queryByText(/pick a thread/i)).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Lunch/ })).toBeEnabled()
+  await user.click(within(failed).getByRole('button', { name: 'Retry' }))
+
+  expect(await within(await screen.findByRole('article')).findByText('a body')).toBeVisible()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(readMock).toHaveBeenCalledTimes(2)
+  expect(readMock.mock.calls.filter(([params]) => params.id === 't1')).toHaveLength(2)
+  expect(setReadMock).toHaveBeenCalledTimes(1) // Only the original unread-row selection.
+  expect(respondMock).not.toHaveBeenCalled()
+  expect(saveDraftMock).not.toHaveBeenCalled()
+  expect(sendMock).not.toHaveBeenCalled()
+})
+
+test('ignores a thread refusal after the reader has switched to another thread', async () => {
+  threadMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Lunch' })]))
+  let refuse!: (error: Error) => void
+  readMock.mockImplementation(async ({ id }: { id: string }) => {
+    if (id === 't1') return new Promise((_resolve, reject) => (refuse = reject))
+    return { id, subject: 'Lunch', webUrl: 'https://mail.google.com/x', messages: [] }
+  })
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('status', { name: 'Loading the thread' })
+  await user.click(screen.getByRole('button', { name: /Lunch/ }))
+  await screen.findByRole('heading', { name: 'Lunch' })
+  await act(async () => refuse(new Error('Gmail MIME data exceeds the reader limits')))
+
+  expect(screen.getByRole('heading', { name: 'Lunch' })).toBeVisible()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
 test('loads the next page when asked', async () => {
   threadMock
     .mockResolvedValueOnce(page([summary({ id: 't1', subject: 'First page' })], 'page-2'))
@@ -1081,6 +1133,30 @@ test('loads the next page when asked', async () => {
   expect(screen.getByText('First page')).toBeInTheDocument()
   // And there is nothing left to ask for.
   expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
+})
+
+test('keeps paging from an empty unread page without offering to clear the filter', async () => {
+  threadMock.mockImplementation(
+    async ({ unread, pageToken }: { unread?: boolean; pageToken?: string }) => {
+      if (!unread && pageToken === undefined) return page([summary()])
+      if (unread && pageToken === undefined) return page([], 'unread-page-2')
+      if (unread && pageToken === 'unread-page-2') {
+        return page([summary({ id: 't2', subject: 'Unread on page two', unread: true })])
+      }
+      throw new Error('Unknown Gmail page token')
+    },
+  )
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+  await user.click(screen.getByRole('button', { name: /show unread only/i }))
+
+  const more = await screen.findByRole('button', { name: /load more/i })
+  expect(screen.queryByRole('button', { name: /show all mail/i })).not.toBeInTheDocument()
+  await user.click(more)
+
+  expect(await screen.findByRole('button', { name: /Unread on page two/ })).toBeVisible()
+  expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
 })
 
 test('keeps healthy Mail readable during Retry, then paginates the new inbox snapshot', async () => {

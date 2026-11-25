@@ -515,7 +515,9 @@ async function run() {
         await capture(`02-shell-${answer}-light`)
       }
       assert.equal(transport.snapshot().tokenRefreshes, 1)
-      mark('mail-shell-three-calendar-answers-including-read-only-retry-after-uncertain-patch')
+      mark(
+        'mail-shell-calendar-patches-and-readback-including-read-only-retry-after-uncertain-patch',
+      )
       await click('Mail surface')
       await js('document.documentElement.dataset.theme = "dark"')
       transport.missAttachmentCollection()
@@ -727,20 +729,22 @@ async function run() {
     mark('account-switch-abandons-in-flight-rsvp-without-writing-to-either-account')
 
     assert.deepEqual(
-      transport.writes.map(({ account, method, resource, to, answer, status }) => [
-        account,
-        method,
-        resource,
-        to,
-        answer,
-        status,
+      transport.writes.map((write) => [
+        write.account,
+        write.method,
+        write.resource,
+        write.method === 'PATCH'
+          ? { organizerEmail: write.organizerEmail, sendUpdates: write.sendUpdates }
+          : { to: write.to },
+        write.answer,
+        write.status,
       ]),
       [
         ...['accepted', 'tentative', 'declined'].map((answer) => [
           mailboxA.sub,
           'PATCH',
           '/calendar/v3/calendars/primary/events/fixture-event',
-          organizer.email,
+          { organizerEmail: organizer.email, sendUpdates: 'all' },
           answer,
           answer === 'declined' ? 'transport error' : 200,
         ]),
@@ -748,7 +752,7 @@ async function run() {
           mailboxA.sub,
           'POST',
           '/gmail/v1/users/me/messages/send',
-          organizer.email,
+          { to: organizer.email },
           'accepted',
           status,
         ]),
@@ -756,7 +760,7 @@ async function run() {
           mailboxA.sub,
           'PATCH',
           `/calendar/v3/calendars/primary/events/${occurrenceId}`,
-          organizer.email,
+          { organizerEmail: organizer.email, sendUpdates: 'all' },
           'accepted',
           200,
         ],
@@ -764,7 +768,7 @@ async function run() {
           mailboxA.sub,
           'PATCH',
           `/calendar/v3/calendars/primary/events/${attachmentEventId}`,
-          organizer.email,
+          { organizerEmail: organizer.email, sendUpdates: 'all' },
           'declined',
           200,
         ],

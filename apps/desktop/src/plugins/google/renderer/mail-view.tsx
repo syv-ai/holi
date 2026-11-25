@@ -64,6 +64,7 @@ import {
   openExternal,
 } from '@/plugin-api'
 import { buildSummarizePrompt } from './summarize-prompt'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -101,7 +102,7 @@ import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from '.
 import { MailPartialAlert } from './mail/mail-partial-alert'
 import { useMailList } from './mail/use-mail-list'
 import { googleCap } from './google-cap'
-import { explainWriteFailure } from './google-errors'
+import { explainWriteFailure, messageOf } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
 import { useGoogleAccount } from './account'
 import { useMailMarkers } from './use-mail-markers'
@@ -150,6 +151,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   const [open, setOpen] = useState<Thread | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
+  const [threadError, setThreadError] = useState<string | null>(null)
   const threadGeneration = useRef(0)
   /**
    * Where the list is pointed: a tab, Sent, or Drafts. One union so that
@@ -509,6 +511,23 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     })
   }
 
+  /** Read only the body, so retrying a failed load does not mark it read again. */
+  const fetchThread = (id: string) => {
+    const generation = ++threadGeneration.current
+    setOpen(null)
+    setThreadError(null)
+    void call((r) => googleCap.thread(r, { id })).then(
+      (found) => {
+        if (threadGeneration.current === generation) setOpen(found)
+      },
+      (error: unknown) => {
+        if (threadGeneration.current === generation) {
+          setThreadError(messageOf(error, 'Could not load this thread.'))
+        }
+      },
+    )
+  }
+
   /**
    * Open a thread.
    *
@@ -522,15 +541,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       setFindOpen(false)
       setOpenId(thread.id)
       setOpenSummary(thread)
-      setOpen(null)
-      const generation = ++threadGeneration.current
-      void call((r) => googleCap.thread(r, { id: thread.id }))
-        .then((found) => {
-          if (threadGeneration.current === generation) setOpen(found)
-        })
-        .catch(() => {
-          if (threadGeneration.current === generation) setOpenId(null)
-        })
+      fetchThread(thread.id)
       // Only when there is something to change: the API is rate limited.
       if (thread.unread) void setRead(thread.id, true)
     }, true)
@@ -621,6 +632,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       setOpen(null)
       setOpenId(null)
       setOpenSummary(null)
+      setThreadError(null)
     }
     return write(mutate, (threads) => threads.filter((t) => t.id !== id))
   }
@@ -921,7 +933,8 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
             {!showDrafts &&
               list.kind === 'ready' &&
               list.threads.length === 0 &&
-              !list.unreadableThreadIds?.length && (
+              !list.unreadableThreadIds?.length &&
+              list.nextPageToken === null && (
                 <EmptyState
                   icon={Inbox}
                   title={emptyMessage(view, filter, unreadOnly)}
@@ -1034,6 +1047,24 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
             </div>
           ) : openId === null ? (
             <EmptyState icon={MailOpen} title="Pick a thread to read it" />
+          ) : threadError !== null ? (
+            <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3">
+              <h3 className="text-sm font-medium text-pretty break-words">{openRow?.subject}</h3>
+              <Alert variant="destructive">
+                <AlertTitle>Couldn’t open this thread</AlertTitle>
+                <AlertDescription>
+                  <p className="break-words">{threadError}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => fetchThread(openId)}
+                  >
+                    Retry
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            </div>
           ) : open === null ? (
             <LoadingRows label="Loading the thread" lines={3} />
           ) : (

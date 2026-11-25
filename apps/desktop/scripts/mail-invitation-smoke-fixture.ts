@@ -174,7 +174,7 @@ function message(invite: Invite, mailbox: Mailbox, sent?: SentReply) {
         header('Content-Type', 'multipart/mixed; boundary=fixture'),
         // A local-only sender domain keeps the mail list on its initials avatar.
         header('From', sent ? mailbox.email : 'Operations Desk <dispatch@localhost>'),
-        header('To', sent ? organizer.email : mailbox.email),
+        header('To', sent?.to ?? mailbox.email),
         header('Subject', sent ? `Re: ${invite.subject}` : invite.subject),
         header('Date', new Date(mailAt + (sent ? 60_000 : 0)).toUTCString()),
         header('Message-ID', sent?.rfcId ?? rfcId(invite)),
@@ -215,7 +215,8 @@ function readReply(raw: string, invite: Invite, mailbox: Mailbox) {
   const headers = mime.split('\r\n\r\n')[0]!
   const field = (name: string) => new RegExp(`^${name}: (.*)$`, 'im').exec(headers)?.[1]?.trim()
   assert.equal(field('From'), mailbox.email)
-  assert.equal(field('To'), organizer.email)
+  const to = field('To')
+  assert.equal(to, organizer.email)
   assert.equal(field('Cc'), undefined)
   assert.equal(field('Bcc'), undefined)
   const outgoingId = field('Message-ID')
@@ -260,6 +261,7 @@ function readReply(raw: string, invite: Invite, mailbox: Mailbox) {
   assert(typeof status === 'string' && ['ACCEPTED', 'TENTATIVE', 'DECLINED'].includes(status))
   return {
     source,
+    to,
     answer: status.toLowerCase() as InviteAnswer,
     rfcId: outgoingId,
     parent,
@@ -288,18 +290,18 @@ export function createInvitationTransport() {
   let tokenRefreshes = 0
   let heldCalendarRead: { skip: number; entered: () => void; released: Promise<void> } | undefined
   let heldSentAcknowledgement: Promise<void> | undefined
-  const writes: {
+  const writes: ({
     account: string
-    method: 'PATCH' | 'POST'
     resource: string
-    to: string
     answer: InviteAnswer
     status: number | 'transport error'
-    uid?: string
-    sendUpdates?: string
-    ifMatch?: string
-    messageId?: string
-  }[] = []
+    uid: string
+  } &
+    // Calendar's organizer identifies the event; the fixture does not observe notifications.
+    (
+      | { method: 'PATCH'; organizerEmail: string; sendUpdates: 'all'; ifMatch: string }
+      | { method: 'POST'; to: string; messageId?: string }
+    ))[] = []
   const rejected: string[] = []
   let attachmentReads = 0
   let sentReceiptMisses = 0
@@ -584,9 +586,11 @@ export function createInvitationTransport() {
           rejected.push(`${summary}: must not write to a different Google account`)
           return notFound()
         }
+        const copy = event(id)
         const ifMatch = headers.get('If-Match') ?? ''
-        assert.equal(ifMatch, event(id).etag)
-        assert.equal(query.get('sendUpdates'), 'all')
+        const sendUpdates = query.get('sendUpdates')
+        assert.equal(ifMatch, copy.etag)
+        assert.equal(sendUpdates, 'all')
         const body = JSON.parse(String(init?.body))
         const answer: InviteAnswer = body.attendees?.[0]?.responseStatus
         assert(['accepted', 'tentative', 'declined'].includes(answer))
@@ -598,11 +602,11 @@ export function createInvitationTransport() {
           account: mailbox.sub,
           method,
           resource: url.pathname,
-          to: organizer.email,
+          organizerEmail: copy.organizer.email,
           answer,
           status: losePatchAcknowledgement ? 'transport error' : 200,
           ifMatch,
-          sendUpdates: 'all',
+          sendUpdates,
           uid: target.invite.uid,
         })
         target.attendee = { ...target.attendee, responseStatus: answer }
@@ -632,7 +636,7 @@ export function createInvitationTransport() {
           account: mailbox.sub,
           method,
           resource: url.pathname,
-          to: organizer.email,
+          to: reply.to,
           answer: reply.answer,
           uid: attachment.uid,
         } as const
