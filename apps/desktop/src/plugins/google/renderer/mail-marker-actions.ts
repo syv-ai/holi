@@ -6,6 +6,7 @@ export interface MailMarkerState {
 }
 
 export interface MailMarkerActionsDeps {
+  runMutation?: (work: () => Promise<void>) => Promise<void>
   write: (owner: string, id: string, marker: MailMarker | null) => Promise<void>
   reconcile: (owner: string, id: string, readActualStar: boolean) => Promise<MailMarkerState>
   changed: (id: string, state: MailMarkerState, error: boolean) => void
@@ -105,6 +106,12 @@ export class MailMarkerActions {
 
   /** Retry a failed state read without replaying the potentially refused write. */
   async retry(id: string): Promise<void> {
+    const work = () => this.retryOwned(id)
+    if (this.deps.runMutation) await this.deps.runMutation(work)
+    else await work()
+  }
+
+  private async retryOwned(id: string): Promise<void> {
     const owner = this.owner
     const generation = this.generation
     if (!owner) return
@@ -127,49 +134,55 @@ export class MailMarkerActions {
     if (this.running.has(id)) return
     this.running.add(id)
     try {
-      while (this.queued.has(id)) {
-        const intent = this.queued.get(id)!
-        this.queued.delete(id)
+      const work = () => this.drain(id)
+      if (this.deps.runMutation) await this.deps.runMutation(work)
+      else await work()
+    } finally {
+      this.running.delete(id)
+      if (this.queued.has(id)) void this.flush(id)
+    }
+  }
+
+  private async drain(id: string): Promise<void> {
+    while (this.queued.has(id)) {
+      const intent = this.queued.get(id)!
+      this.queued.delete(id)
+      if (!this.isCurrent(intent)) continue
+      try {
+        await this.deps.write(intent.owner, id, intent.marker)
         if (!this.isCurrent(intent)) continue
-        try {
-          await this.deps.write(intent.owner, id, intent.marker)
-          if (!this.isCurrent(intent)) continue
-          if (this.latest(intent)) {
-            try {
-              const actual = await this.deps.reconcile(intent.owner, id, false)
-              if (!this.isCurrent(intent) || !this.latest(intent)) continue
-              this.intended.delete(id)
-              this.deps.changed(id, actual, false)
-              this.deps.settled?.(id)
-            } catch {
-              if (this.isCurrent(intent) && this.latest(intent)) {
-                this.deps.changed(id, { marker: intent.marker, starred: intent.starred }, true)
-              }
+        if (this.latest(intent)) {
+          try {
+            const actual = await this.deps.reconcile(intent.owner, id, false)
+            if (!this.isCurrent(intent) || !this.latest(intent)) continue
+            this.intended.delete(id)
+            this.deps.changed(id, actual, false)
+            this.deps.settled?.(id)
+          } catch {
+            if (this.isCurrent(intent) && this.latest(intent)) {
+              this.deps.changed(id, { marker: intent.marker, starred: intent.starred }, true)
             }
           }
-        } catch (cause) {
-          if (!this.isCurrent(intent)) continue
-          if (this.latest(intent)) {
-            this.deps.failed?.(cause)
-            try {
-              const actual = await this.deps.reconcile(intent.owner, id, true)
-              if (!this.isCurrent(intent) || !this.latest(intent)) continue
-              this.intended.delete(id)
+        }
+      } catch (cause) {
+        if (!this.isCurrent(intent)) continue
+        if (this.latest(intent)) {
+          this.deps.failed?.(cause)
+          try {
+            const actual = await this.deps.reconcile(intent.owner, id, true)
+            if (!this.isCurrent(intent) || !this.latest(intent)) continue
+            this.intended.delete(id)
+            if (this.lastActivation?.id === id) this.lastActivation = null
+            this.deps.changed(id, actual, false)
+            this.deps.settled?.(id)
+          } catch {
+            if (this.isCurrent(intent) && this.latest(intent)) {
               if (this.lastActivation?.id === id) this.lastActivation = null
-              this.deps.changed(id, actual, false)
-              this.deps.settled?.(id)
-            } catch {
-              if (this.isCurrent(intent) && this.latest(intent)) {
-                if (this.lastActivation?.id === id) this.lastActivation = null
-                this.deps.changed(id, { marker: intent.marker, starred: intent.starred }, true)
-              }
+              this.deps.changed(id, { marker: intent.marker, starred: intent.starred }, true)
             }
           }
         }
       }
-    } finally {
-      this.running.delete(id)
-      if (this.queued.has(id)) void this.flush(id)
     }
   }
 
