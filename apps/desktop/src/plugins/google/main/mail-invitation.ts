@@ -1,7 +1,13 @@
 import { createHash } from 'node:crypto'
 import { TZDate } from '@date-fns/tz'
 import ICAL from 'ical.js'
-import { joinLinkIn, type InviteAnswer } from './calendar'
+import {
+  conferenceUrlIn,
+  googleEventUrl,
+  httpsLink,
+  providerConferenceUrl,
+} from '../shared/meeting-links'
+import type { InviteAnswer } from './calendar'
 
 export type MailInvitationIdentity = {
   /** Gmail parent locator, not part of the iTIP revision. */
@@ -10,7 +16,7 @@ export type MailInvitationIdentity = {
   sequence: number
   dtstamp: string | null
   materialKey: string | null
-  /** Original occurrence: an ISO instant or an all-day date, never the moved start. */
+  /** Original occurrence: a date, floating wall clock or ISO instant, never the moved start. */
   recurrenceId: string | null
 }
 
@@ -22,6 +28,8 @@ type MailInvitationDetails = {
   start: string | null
   end: string | null
   allDay: boolean
+  /** An occurrence has a recurrenceId; a recurring event without one is the series. */
+  recurring: boolean
   organizer: { email: string; name?: string } | null
   location: string | null
   conferenceUrl: string | null
@@ -32,12 +40,32 @@ type MailInvitationDetails = {
   unavailableReason: string | null
 }
 
+type AttendeeState = { responseStatus: 'needsAction' | InviteAnswer; rsvp: boolean | null }
+
+type ExplicitFields = {
+  title: boolean
+  start: boolean
+  end: boolean
+  location: boolean
+  conferenceUrl: boolean
+  htmlLink: boolean
+}
+
+type TimeKind = 'date' | 'floating' | 'instant'
+
 type ParsedInvitation = {
   /** Validated independently of actionability (including non-answerable CANCELs). */
   method: 'REQUEST' | 'CANCEL' | null
   details: MailInvitationDetails
   /** Never crosses the capability seam. Only present for a usable REQUEST. */
-  request: { attendees: string[]; reply: (email: string, answer: InviteAnswer) => string } | null
+  request: {
+    attendees: string[]
+    attendeeStates: Record<string, AttendeeState>
+    /** Fields supplied by the organizer, not synthesized display defaults. */
+    explicitFields: ExplicitFields
+    recurrenceKind: TimeKind | null
+    reply: (email: string, answer: InviteAnswer) => string
+  } | null
 }
 
 // Both incoming parts and Sent evidence are untrusted. Bound work before calling
@@ -211,23 +239,34 @@ function inspectCalendar(lines: string[]) {
         ((params && params !== ';VALUE=DATE-TIME') || civilTime(value, 'utc') === null)
       )
         throw new CalendarPartError('Invitation has an invalid revision timestamp')
-      if (['DTSTART', 'DTEND', 'RECURRENCE-ID'].includes(name)) {
+      if (name === 'ATTENDEE' || ['DTSTART', 'DTEND', 'RECURRENCE-ID'].includes(name)) {
         const fields = params
           .replace(/"[^"]*"/g, '""')
           .split(';')
           .slice(1)
-        const valueType = fields.filter((param) => param.startsWith('VALUE='))
-        if (
-          valueType.length > 1 ||
-          (valueType[0] && !/^VALUE=(DATE|DATE-TIME)$/.test(valueType[0])) ||
-          fields.filter((param) => param.startsWith('TZID=')).length > 1 ||
-          fields.filter((param) => param.startsWith('RANGE=')).length > 1 ||
-          civilTime(value, valueType[0] === 'VALUE=DATE' ? 'date' : 'timed') === null
-        )
-          malformed()
-        const year = Number(value.slice(0, 4))
-        firstYear = Math.min(firstYear, year)
-        lastYear = Math.max(lastYear, year)
+        if (name === 'ATTENDEE') {
+          // ICAL keeps only one value for repeated scalar parameters. Reject
+          // them before ambiguous response evidence can be silently discarded.
+          if (
+            ['PARTSTAT=', 'RSVP='].some(
+              (key) => fields.filter((param) => param.startsWith(key)).length > 1,
+            )
+          )
+            malformed()
+        } else {
+          const valueType = fields.filter((param) => param.startsWith('VALUE='))
+          if (
+            valueType.length > 1 ||
+            (valueType[0] && !/^VALUE=(DATE|DATE-TIME)$/.test(valueType[0])) ||
+            fields.filter((param) => param.startsWith('TZID=')).length > 1 ||
+            fields.filter((param) => param.startsWith('RANGE=')).length > 1 ||
+            civilTime(value, valueType[0] === 'VALUE=DATE' ? 'date' : 'timed') === null
+          )
+            malformed()
+          const year = Number(value.slice(0, 4))
+          firstYear = Math.min(firstYear, year)
+          lastYear = Math.max(lastYear, year)
+        }
       }
       if (name === 'DURATION') {
         const parts =
@@ -523,8 +562,14 @@ function dateOf(time: ICAL.Time, property: ICAL.Property | null, zones: FiniteZo
         return new Date(wallTime - from.ms).toISOString()
     }
   }
-  // Explicitly floating date-times retain the reader's local time semantics.
-  return time.isDate ? time.toString() : time.toJSDate().toISOString()
+  // A floating DATE-TIME names a wall clock, not an instant in the host zone.
+  return time.isDate || time.zone === ICAL.Timezone.localTimezone
+    ? time.toString()
+    : time.toJSDate().toISOString()
+}
+
+function timeKind(value: string): TimeKind {
+  return value.length === 10 ? 'date' : value.endsWith('Z') ? 'instant' : 'floating'
 }
 
 function eventTime(property: ICAL.Property | null): ICAL.Time | null {
@@ -565,54 +610,40 @@ function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-export function httpsLink(value: unknown): string | null {
-  if (
-    typeof value !== 'string' ||
-    !/^https:\/\//i.test(value.trim()) ||
-    /[\\\x00-\x1f]/.test(value)
-  )
-    return null
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' && !url.username && !url.password ? url.href : null
-  } catch {
-    return null
+function attendeeState(property: ICAL.Property): AttendeeState {
+  const partstat = property.getParameter('partstat')
+  const rsvp = property.getParameter('rsvp')
+  const status = methodOf(partstat)
+  const flag = methodOf(rsvp)
+  if (rsvp !== undefined && flag !== 'TRUE' && flag !== 'FALSE') malformed()
+  const responseStatus =
+    partstat === undefined || status === 'NEEDS-ACTION'
+      ? 'needsAction'
+      : (Object.keys(PARTSTAT) as InviteAnswer[]).find((answer) => PARTSTAT[answer] === status)
+  // An unknown explicit response is not evidence of needsAction.
+  if (!responseStatus) malformed()
+  return { responseStatus, rsvp: rsvp === undefined ? null : flag === 'TRUE' }
+}
+
+function attendeeEvidence(entry: ICAL.Component) {
+  const states = new Map<string, AttendeeState>()
+  for (const property of entry.getAllProperties('attendee')) {
+    const email = mailbox(property.getFirstValue())
+    if (!email) continue
+    const state = attendeeState(property)
+    const previous = states.get(email)
+    if (
+      previous &&
+      (previous.responseStatus !== state.responseStatus || previous.rsvp !== state.rsvp)
+    )
+      throw new CalendarPartError('Invitation has conflicting attendee responses')
+    states.set(email, state)
   }
-}
-
-function conferenceProvider(link: string): boolean {
-  const { hostname, pathname, port } = new URL(link)
-  if (port) return false
-  if (hostname === 'meet.google.com') return /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/i.test(pathname)
-  if (hostname === 'teams.microsoft.com' || hostname === 'teams.microsoft.us')
-    return /^\/l\/meetup-join\/[\w%:@.-]+\/\d+\/?$/.test(pathname)
-  if (hostname === 'teams.live.com') return /^\/meet\/\d+\/?$/.test(pathname)
-  if (/^(?:[a-z\d-]+\.)*zoom\.us$/i.test(hostname))
-    return /^\/(?:j|w)\/\d+\/?$|^\/my\/[\w.-]+\/?$/.test(pathname)
-  return false
-}
-
-function providerLink(value: string | undefined): string | null {
-  for (const raw of value?.match(/https:\/\/[^\s"'<>]+/gi) ?? []) {
-    // Reuse the calendar's prose-link shapes, then check the parsed host
-    // and path independently before elevating a mail link's provenance.
-    const link = httpsLink(joinLinkIn(raw))
-    if (link && conferenceProvider(link)) return link
+  const attendees = [...states.keys()].sort()
+  return {
+    attendees,
+    attendeeStates: Object.fromEntries(attendees.map((email) => [email, states.get(email)!])),
   }
-  return null
-}
-
-function htmlSource(link: string | null): LinkSource {
-  if (!link) return null
-  const url = new URL(link)
-  if (
-    conferenceProvider(link) ||
-    (url.host === 'calendar.google.com' &&
-      /^\/calendar\/(?:event|eventedit)$/.test(url.pathname) &&
-      /^[\w=-]+$/.test(url.searchParams.get('eid') ?? ''))
-  )
-    return 'provider'
-  return 'mail'
 }
 
 function candidate(events: ICAL.Component[]): ICAL.Component | undefined {
@@ -632,34 +663,39 @@ function candidate(events: ICAL.Component[]): ICAL.Component | undefined {
   return undefined
 }
 
-function eventMaterial(entry: ICAL.Component, zones: FiniteZones) {
+function eventMaterial(entry: ICAL.Component, zones: FiniteZones, hasExceptions = false) {
   const status = methodOf(single(entry, 'status')?.getFirstValue()) ?? null
-  const title = text(single(entry, 'summary')?.getFirstValue()) ?? 'Meeting invitation'
-  const location = text(single(entry, 'location')?.getFirstValue()) ?? null
+  const summary = single(entry, 'summary')
+  const locationProperty = single(entry, 'location')
+  const urlProperty = single(entry, 'url')
+  const conferenceProperties = entry.getAllProperties('conference')
+  const title = text(summary?.getFirstValue()) ?? 'Meeting invitation'
+  const location = text(locationProperty?.getFirstValue()) ?? null
   const description = text(single(entry, 'description')?.getFirstValue())
-  const htmlLink = httpsLink(single(entry, 'url')?.getFirstValue())
-  const conferenceUrl =
-    httpsLink(single(entry, 'conference')?.getFirstValue()) ??
-    providerLink(htmlLink ?? undefined) ??
-    providerLink(description) ??
-    providerLink(location ?? undefined)
-  const conferenceLinkSource: LinkSource = !conferenceUrl
+  const htmlLink = httpsLink(urlProperty?.getFirstValue())
+  const urlConference = htmlLink ? providerConferenceUrl(htmlLink) : null
+  const htmlLinkSource: LinkSource = !htmlLink
     ? null
-    : conferenceProvider(conferenceUrl)
+    : urlConference || googleEventUrl(htmlLink)
       ? 'provider'
       : 'mail'
+  // RFC 7986 permits multiple access points, including telephone dial-in.
+  // Rank recognized video links first and break ties independently of wire order.
+  const conferenceLinks = conferenceProperties
+    .flatMap((property) => httpsLink(property.getFirstValue()) ?? [])
+    .sort()
+  const providerLink =
+    conferenceLinks.map(providerConferenceUrl).find((link) => link !== null) ??
+    urlConference ??
+    conferenceUrlIn(description ?? '') ??
+    conferenceUrlIn(location ?? '')
+  const conferenceUrl = providerLink ?? conferenceLinks[0] ?? null
+  const conferenceLinkSource: LinkSource = providerLink ? 'provider' : conferenceUrl ? 'mail' : null
   const organizerProperty = single(entry, 'organizer')
   const email = mailbox(organizerProperty?.getFirstValue())
   const name = text(organizerProperty?.getParameter('cn'))
   const organizer = email ? { email, ...(name ? { name } : {}) } : null
-  const attendees = [
-    ...new Set(
-      entry
-        .getAllProperties('attendee')
-        .map((attendee) => mailbox(attendee.getFirstValue()))
-        .filter((address): address is string => address !== null),
-    ),
-  ].sort()
+  const evidence = attendeeEvidence(entry)
   const startProperty = single(entry, 'dtstart')
   const endProperty = single(entry, 'dtend')
   const duration = single(entry, 'duration')
@@ -669,6 +705,7 @@ function eventMaterial(entry: ICAL.Component, zones: FiniteZones) {
   if (endTime && (!startTime || startTime.isDate !== endTime.isDate)) malformed()
   const start = startTime ? dateOf(startTime, startProperty, zones) : null
   let end = endTime ? dateOf(endTime, endProperty, zones) : start
+  if (start && end && timeKind(start) !== timeKind(end)) malformed()
   if (startTime && !endTime && (duration || startTime.isDate)) {
     const next = startTime.clone()
     const length = duration?.getFirstValue() ?? ICAL.Duration.fromSeconds(86400)
@@ -677,13 +714,16 @@ function eventMaterial(entry: ICAL.Component, zones: FiniteZones) {
       (next.isDate && (length.hours || length.minutes || length.seconds))
     )
       malformed()
-    // Calendar days are nominal (a DST change can move the offset), while
-    // hours, minutes and seconds are elapsed time.
+    // Calendar days are nominal (a DST change can move the offset). Add
+    // sub-day units to the instant when known, or to the wall clock otherwise.
     next.day += length.weeks * 7 + length.days
-    end = dateOf(next, startProperty, zones)
-    if (!next.isDate) {
-      const seconds = length.hours * 3600 + length.minutes * 60 + length.seconds
-      end = new Date(Date.parse(end) + seconds * 1000).toISOString()
+    const seconds = length.hours * 3600 + length.minutes * 60 + length.seconds
+    if (!next.isDate && start && timeKind(start) === 'floating') {
+      next.second += seconds
+      end = dateOf(next, startProperty, zones)
+    } else {
+      end = dateOf(next, startProperty, zones)
+      if (!next.isDate) end = new Date(Date.parse(end) + seconds * 1000).toISOString()
     }
   }
   const recurrence = single(entry, 'recurrence-id')
@@ -691,18 +731,6 @@ function eventMaterial(entry: ICAL.Component, zones: FiniteZones) {
   const rangeParam = recurrence?.getParameter('range')
   if (rangeParam !== undefined && !methodOf(rangeParam)) malformed()
   const range = methodOf(rangeParam) ?? null
-  const details = {
-    title,
-    location,
-    htmlLink,
-    htmlLinkSource: htmlSource(htmlLink),
-    conferenceUrl,
-    conferenceLinkSource,
-    organizer,
-    start,
-    end,
-    allDay: startTime?.isDate ?? false,
-  }
   // Preserve the recurrence description of a series, without expanding it.
   const rules = ['rrule', 'rdate', 'exdate']
     .flatMap((name) =>
@@ -717,7 +745,36 @@ function eventMaterial(entry: ICAL.Component, zones: FiniteZones) {
       }),
     )
     .sort()
-  return { details, attendees, description: description ?? null, status, range, rules }
+  const details = {
+    title,
+    location,
+    htmlLink,
+    htmlLinkSource,
+    conferenceUrl,
+    conferenceLinkSource,
+    organizer,
+    start,
+    end,
+    allDay: startTime?.isDate ?? false,
+    recurring: hasExceptions || recurrence !== null || rules.length > 0,
+  }
+  const explicitFields: ExplicitFields = {
+    title: summary !== null,
+    start: startProperty !== null,
+    end: endProperty !== null || duration !== null,
+    location: locationProperty !== null,
+    conferenceUrl: conferenceProperties.length > 0 || conferenceUrl !== null,
+    htmlLink: urlProperty !== null,
+  }
+  return {
+    details,
+    explicitFields,
+    ...evidence,
+    description: description ?? null,
+    status,
+    range,
+    rules,
+  }
 }
 
 function canonicalFields(value: unknown): unknown {
@@ -750,6 +807,7 @@ export function parseMailInvitation(
     start: null,
     end: null,
     allDay: false,
+    recurring: false,
     organizer: null,
     location: null,
     conferenceUrl: null,
@@ -788,7 +846,7 @@ export function parseMailInvitation(
     const entry = candidate(events)
     if (!entry) return unavailable('Invitation does not describe a single event or series')
     const identity = identityOf(messageId, entry, zones)
-    const material = eventMaterial(entry, zones)
+    const material = eventMaterial(entry, zones, events.length > 1)
     const exceptions = events
       .filter((item) => item !== entry)
       .map((item) => {
@@ -820,6 +878,9 @@ export function parseMailInvitation(
       details,
       request: {
         attendees: material.attendees,
+        attendeeStates: material.attendeeStates,
+        explicitFields: material.explicitFields,
+        recurrenceKind: identity.recurrenceId ? timeKind(identity.recurrenceId) : null,
         reply: (attendee, answer) => buildReply(identity, start, organizer.email, attendee, answer),
       },
     }
@@ -854,8 +915,8 @@ function buildReply(
   const attendee = reply.addPropertyWithValue('attendee', `mailto:${email}`)
   attendee.setParameter('partstat', PARTSTAT[answer])
 
-  // Use the normalized instants (including IANA-only input), never a TZID
-  // without its definition. The recurrence slot is independent of moved start.
+  // Preserve DATE and floating values. Known instants go out as UTC, never a
+  // TZID without its definition. The recurrence slot is independent of moved start.
   reply.addPropertyWithValue('dtstart', replyTime(start))
   if (identity.recurrenceId)
     reply.addPropertyWithValue('recurrence-id', replyTime(identity.recurrenceId))
@@ -863,9 +924,14 @@ function buildReply(
 }
 
 function replyTime(value: string): ICAL.Time {
-  return value.length === 10
-    ? ICAL.Time.fromDateString(value)
-    : ICAL.Time.fromJSDate(new Date(value), true)
+  switch (timeKind(value)) {
+    case 'date':
+      return ICAL.Time.fromDateString(value)
+    case 'floating':
+      return ICAL.Time.fromDateTimeString(value)
+    case 'instant':
+      return ICAL.Time.fromJSDate(new Date(value), true)
+  }
 }
 
 /** A sent iTIP reply can describe only this organizer, invite sequence and occurrence.

@@ -1,5 +1,5 @@
 import ICAL from 'ical.js'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { invitationReplyStatus, parseMailInvitation } from '../main/mail-invitation'
 
 const organizer = 'host@example.net'
@@ -150,39 +150,78 @@ it.each([
   },
 )
 
-it.each([
-  {
-    fields:
-      'DTSTART;TZID=America/New_York:20260720T110000\r\nRECURRENCE-ID;TZID=America/New_York:20260713T110000',
-    start: '2026-07-20T15:00:00Z',
-    occurrence: '2026-07-13T15:00:00Z',
-    type: 'date-time',
-  },
-  {
-    fields: 'DTSTART;VALUE=DATE:20260720\r\nRECURRENCE-ID;VALUE=DATE:20260713',
-    start: '2026-07-20',
-    occurrence: '2026-07-13',
-    type: 'date',
-  },
-])(
-  'round-trips a moved $type occurrence as a self-contained reply',
-  ({ fields, start, occurrence, type }) => {
-    const request = parseMailInvitation('part', calendar(fields), 'REQUEST')!
-    const source = request.request!.reply(attendee, 'tentative')
-    const event = ICAL.Component.fromString(source).getFirstSubcomponent('vevent')!
-    expect(event.getFirstPropertyValue('uid')).toBe(request.details.identity.uid)
-    expect(event.getFirstPropertyValue('sequence')).toBe(3)
-    for (const [name, value] of [
-      ['dtstart', start],
-      ['recurrence-id', occurrence],
-    ] as const) {
-      const time = event.getFirstProperty(name)!
-      expect(time.type).toBe(type)
-      expect(time.getFirstValue()?.toString()).toBe(value)
+it.each(['America/New_York', 'Asia/Tokyo'])(
+  'round-trips moved DATE, floating and known-zone occurrences with host TZ=%s',
+  (tz) => {
+    vi.stubEnv('TZ', tz)
+    try {
+      for (const { fields, definition, recurrenceKind, occurrence, wire } of [
+        {
+          fields: 'DTSTART;VALUE=DATE:20260720\r\nRECURRENCE-ID;VALUE=DATE:20260713',
+          recurrenceKind: 'date',
+          occurrence: '2026-07-13',
+          wire: ['DTSTART;VALUE=DATE:20260720', 'RECURRENCE-ID;VALUE=DATE:20260713'],
+        },
+        {
+          fields: 'DTSTART:20260308T013000\r\nRECURRENCE-ID:20260301T013000\r\nDURATION:PT2H',
+          recurrenceKind: 'floating',
+          occurrence: '2026-03-01T01:30:00',
+          wire: ['DTSTART:20260308T013000', 'RECURRENCE-ID:20260301T013000'],
+        },
+        {
+          fields: 'DTSTART:20260308T063000Z\r\nRECURRENCE-ID:20260301T013000',
+          recurrenceKind: 'floating',
+          occurrence: '2026-03-01T01:30:00',
+          wire: ['DTSTART:20260308T063000Z', 'RECURRENCE-ID:20260301T013000'],
+        },
+        {
+          fields:
+            'DTSTART;TZID=America/New_York:20260720T110000\r\nRECURRENCE-ID;TZID=America/New_York:20260713T110000',
+          recurrenceKind: 'instant',
+          occurrence: '2026-07-13T15:00:00.000Z',
+          wire: ['DTSTART:20260720T150000Z', 'RECURRENCE-ID:20260713T150000Z'],
+        },
+        {
+          fields:
+            'DTSTART;TZID="Custom Clock":20260720T110000\r\nRECURRENCE-ID;TZID="Custom Clock":20260713T110000',
+          definition: zone(fixed),
+          recurrenceKind: 'instant',
+          occurrence: '2026-07-13T05:30:00.000Z',
+          wire: ['DTSTART:20260720T053000Z', 'RECURRENCE-ID:20260713T053000Z'],
+        },
+      ]) {
+        const invite = parseMailInvitation('part', calendar(fields, { definition }), 'REQUEST')!
+        expect(invite).toMatchObject({
+          details: { recurring: true, identity: { recurrenceId: occurrence } },
+          request: { recurrenceKind },
+        })
+        if (fields.includes('DURATION')) {
+          expect(invite.details).toMatchObject({
+            start: '2026-03-08T01:30:00',
+            end: '2026-03-08T03:30:00',
+          })
+        }
+        const source = invite.request!.reply(attendee, 'tentative')
+        expect(source.split('\r\n')).toEqual(expect.arrayContaining(wire))
+        const event = ICAL.Component.fromString(source).getFirstSubcomponent('vevent')!
+        expect(event.getFirstPropertyValue('uid')).toBe(invite.details.identity.uid)
+        expect(event.getFirstPropertyValue('sequence')).toBe(3)
+        expect(invitationReplyStatus(source, invite.details.identity, organizer, attendee)).toBe(
+          'tentative',
+        )
+        if (recurrenceKind === 'floating') {
+          const guessedInstant = source.replace(
+            'RECURRENCE-ID:20260301T013000',
+            'RECURRENCE-ID:20260301T013000Z',
+          )
+          expect(
+            invitationReplyStatus(guessedInstant, invite.details.identity, organizer, attendee),
+          ).toBeNull()
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs()
     }
-    expect(invitationReplyStatus(source, request.details.identity, organizer, attendee)).toBe(
-      'tentative',
-    )
   },
 )
 
@@ -228,6 +267,112 @@ it('separates the parent message and revision from normalized invitation materia
   )!
   expect(cancelled).toMatchObject({ method: 'CANCEL', request: null, details: { cancelled: true } })
   expect(cancelled.details.identity.materialKey).not.toBe(first.details.identity.materialKey)
+})
+
+it('preserves normalized attendee response evidence and identifies reconfirmation changes', () => {
+  const source = calendar(
+    [
+      'DTSTART:20260720T150000Z',
+      'ATTENDEE;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:Accepted@example.net',
+      'ATTENDEE;RSVP=true;PARTSTAT=tentative:mailto:tentative@example.net',
+      'ATTENDEE;PARTSTAT=DECLINED:mailto:declined@example.net',
+    ].join('\r\n'),
+  )
+  const initial = parseMailInvitation('initial', source, 'REQUEST')!
+  expect(initial.request?.attendeeStates).toEqual({
+    [attendee]: { responseStatus: 'needsAction', rsvp: null },
+    'accepted@example.net': { responseStatus: 'accepted', rsvp: false },
+    'tentative@example.net': { responseStatus: 'tentative', rsvp: true },
+    'declined@example.net': { responseStatus: 'declined', rsvp: null },
+  })
+  expect(initial.details.identity.materialKey).toEqual(expect.any(String))
+  const redelivery = source
+    .replace('20260601T150000Z', '20260602T150000Z')
+    .replace(
+      `ATTENDEE:mailto:${attendee}`,
+      `ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:${attendee}\r\nATTENDEE:MAILTO:${attendee.toUpperCase()}`,
+    )
+  const canonical = parseMailInvitation('redelivery', redelivery, undefined)!
+  expect(canonical.request?.attendeeStates).toEqual(initial.request?.attendeeStates)
+  expect(canonical.details.identity.materialKey).toBe(initial.details.identity.materialKey)
+
+  for (const changed of [
+    source.replace('PARTSTAT=ACCEPTED', 'PARTSTAT=NEEDS-ACTION'),
+    source.replace('RSVP=FALSE', 'RSVP=TRUE'),
+    source.replace(';RSVP=FALSE', ''),
+  ]) {
+    const reset = parseMailInvitation('reset', changed, 'REQUEST')!
+    expect(reset.request).not.toBeNull()
+    expect(reset.details.identity.materialKey).not.toBe(initial.details.identity.materialKey)
+  }
+})
+
+it.each([
+  [`ATTENDEE;PARTSTAT=DECLINED:MAILTO:${attendee.toUpperCase()}`],
+  [`ATTENDEE;RSVP=FALSE:mailto:${attendee}`],
+  [`ATTENDEE;RSVP=TRUE;RSVP=FALSE:mailto:${attendee}`],
+])('blocks ambiguous attendee response evidence: %s', (conflicting) => {
+  expect(
+    parseMailInvitation('part', calendar(`DTSTART:20260720T150000Z\r\n${conflicting}`), 'REQUEST'),
+  ).toMatchObject({ request: null, details: { unavailableReason: expect.any(String) } })
+})
+
+it('distinguishes omitted overlap fields from explicit values even when the display defaults match', () => {
+  const source = calendar('DTSTART;VALUE=DATE:20260720').replace('SUMMARY:Room booking\r\n', '')
+  const implicit = parseMailInvitation('implicit', source, 'REQUEST')!
+  expect(implicit).toMatchObject({
+    details: { title: 'Meeting invitation', end: '2026-07-21', recurring: false },
+    request: { recurrenceKind: null },
+  })
+  expect(implicit.request?.explicitFields).toEqual({
+    title: false,
+    start: true,
+    end: false,
+    location: false,
+    conferenceUrl: false,
+    htmlLink: false,
+  })
+  const explicit = parseMailInvitation(
+    'explicit',
+    source.replace(
+      'DTSTART;VALUE=DATE:20260720',
+      [
+        'DTSTART;VALUE=DATE:20260720',
+        'DURATION:P1D',
+        'SUMMARY:Meeting invitation',
+        'LOCATION:Room 1',
+        'URL:https://calendar.google.com/calendar/event?eid=abc',
+        'DESCRIPTION:Join https://meet.google.com/abc-defg-hij',
+        'RRULE:FREQ=WEEKLY;COUNT=3',
+      ].join('\r\n'),
+    ),
+    'REQUEST',
+  )!
+  expect(explicit).toMatchObject({
+    details: {
+      title: 'Meeting invitation',
+      end: '2026-07-21',
+      recurring: true,
+      identity: { recurrenceId: null },
+    },
+    request: { recurrenceKind: null },
+  })
+  expect(explicit.request?.explicitFields).toEqual({
+    title: true,
+    start: true,
+    end: true,
+    location: true,
+    conferenceUrl: true,
+    htmlLink: true,
+  })
+  const withDtend = parseMailInvitation(
+    'dtend',
+    source.replace('END:VEVENT', 'DTEND;VALUE=DATE:20260721\r\nEND:VEVENT'),
+    'REQUEST',
+  )!
+  expect(withDtend.request?.explicitFields.end).toBe(true)
+  expect(withDtend.details.end).toBe(implicit.details.end)
+  expect(withDtend.details.identity.materialKey).not.toBe(implicit.details.identity.materialKey)
 })
 
 it('does not treat malformed revision fields as valid or corroborating evidence', () => {
@@ -277,4 +422,41 @@ it('distinguishes mail links from recognized provider links and excludes other s
     htmlLink: null,
     htmlLinkSource: null,
   })
+  expect(
+    links(
+      'CONFERENCE:https://meet.google.com:444/abc-defg-hij\r\nURL:https://guest:pass@meet.google.com/abc-defg-hij',
+    ),
+  ).toMatchObject({
+    conferenceUrl: null,
+    conferenceLinkSource: null,
+    htmlLink: null,
+    htmlLinkSource: null,
+  })
+})
+
+it('selects a recognized video conference over dial-in regardless of property order', () => {
+  const phone = 'CONFERENCE;FEATURE=AUDIO:tel:+15550100'
+  const dialIn = 'CONFERENCE;FEATURE=AUDIO:https://notzoom.us/j/123'
+  const video = 'CONFERENCE;FEATURE=VIDEO:https://meet.google.com/abc-defg-hij'
+  const invites = [
+    [phone, dialIn, video],
+    [video, dialIn, phone],
+  ].map((accessPoints) =>
+    parseMailInvitation(
+      'part',
+      calendar(['DTSTART:20260720T150000Z', ...accessPoints].join('\r\n')),
+      'REQUEST',
+    )!,
+  )
+  for (const invite of invites) {
+    expect(invite).toMatchObject({
+      details: {
+        conferenceUrl: 'https://meet.google.com/abc-defg-hij',
+        conferenceLinkSource: 'provider',
+        identity: { materialKey: expect.any(String) },
+      },
+      request: { explicitFields: { conferenceUrl: true } },
+    })
+  }
+  expect(invites[0]!.details.identity.materialKey).toBe(invites[1]!.details.identity.materialKey)
 })
