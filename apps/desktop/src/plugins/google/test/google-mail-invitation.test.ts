@@ -687,6 +687,8 @@ it('does not borrow Calendar details or fall back to Gmail when verification is 
       htmlLink: null,
       conferenceUrl: 'https://meet.google.com/abc-defg-hij',
       responseStatus: null,
+      recordedResponseStatus: null,
+      sentResponseStatus: null,
       canRespond: false,
     })
     await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
@@ -1068,6 +1070,8 @@ it('offers join-only for verified organizer or PUBLISH mail and rejects unverifi
     kind: 'meeting',
     scope: 'single',
     canRespond: false,
+    recordedResponseStatus: null,
+    sentResponseStatus: null,
     conferenceLinkSource: 'provider',
   })
   await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
@@ -1680,26 +1684,78 @@ it('uses the same MIME discovery for thread hints and bounded invitation reads',
   expect(state.attachmentGets).toBe(0)
 })
 
-it('discloses positive Gmail and Calendar disagreement without repeating the recorded Calendar answer', async () => {
+it.each(['thread', 'separate-thread'])(
+  'discloses and resolves a Calendar disagreement with a verified reply in %s',
+  async (replyThread) => {
+    const { state, read, respond, restart } = await rig()
+    state.replyThread = replyThread
+    await read()
+    expect(await respond('accepted')).toMatchObject({
+      outcome: 'sent',
+      channel: 'gmail',
+      refreshPending: false,
+      invitation: { recordedResponseStatus: null, sentResponseStatus: 'accepted' },
+    })
+    const copy = event()
+    copy.attendees[0]!.responseStatus = 'tentative'
+    state.events.set('primary', [copy])
+    expect(await read()).toMatchObject({
+      responseStatus: 'tentative',
+      recordedResponseStatus: 'tentative',
+      sentResponseStatus: 'accepted',
+      canRespond: true,
+      unavailableReason: null,
+    })
+    expect(await respond('tentative')).toMatchObject({
+      outcome: 'unchanged',
+      channel: 'calendar',
+      refreshPending: false,
+      invitation: { recordedResponseStatus: 'tentative', sentResponseStatus: 'accepted' },
+    })
+    expect(state.calendarPatchAttempts).toBe(0)
+    expect(state.sendAttempts).toBe(1)
+
+    const settled = {
+      responseStatus: 'declined',
+      recordedResponseStatus: 'declined',
+      sentResponseStatus: null,
+      canRespond: true,
+      unavailableReason: null,
+    }
+    expect(await respond('declined')).toMatchObject({
+      outcome: 'sent',
+      channel: 'calendar',
+      refreshPending: false,
+      invitation: settled,
+    })
+    expect(await restart().read()).toMatchObject(settled)
+    expect(state.calendarPatchAttempts).toBe(1)
+    expect(state.notices).toEqual([{ calendar: 'primary', to: organizer, status: 'declined' }])
+    expect(copy.attendees).toEqual(event().attendees)
+    expect(state.sendAttempts).toBe(1)
+  },
+)
+
+it('blocks a new Calendar response if the latest Sent answers are ambiguous', async () => {
   const { state, read, respond } = await rig()
-  await read()
-  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', refreshPending: false })
   const copy = event()
   copy.attendees[0]!.responseStatus = 'tentative'
   state.events.set('primary', [copy])
+  const parent = '<update@example.net>'
+  const reply = invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')
+  state.messages.push(
+    { ...acceptedReply(parent), internalDate: '500' },
+    gmailMessage('competing-sent', 500, reply, { sent: true, parent }),
+  )
   expect(await read()).toMatchObject({
     responseStatus: null,
+    recordedResponseStatus: 'tentative',
+    sentResponseStatus: null,
     canRespond: false,
-    unavailableReason: expect.stringMatching(/tentative.*accepted/i),
+    unavailableReason: expect.any(String),
   })
-  expect(await respond('tentative')).toMatchObject({
-    outcome: 'unchanged',
-    channel: 'calendar',
-    refreshPending: true,
-    invitation: { responseStatus: null },
-  })
-  expect(state.calendarPatchAttempts).toBe(0)
-  expect(state.sendAttempts).toBe(1)
+  await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
 it('leaves a Calendar write unsettled when a competing Sent answer appears in readback', async () => {
@@ -1712,9 +1768,9 @@ it('leaves a Calendar write unsettled when a competing Sent answer appears in re
     channel: 'calendar',
     refreshPending: true,
     invitation: {
-      responseStatus: null,
-      canRespond: false,
-      unavailableReason: expect.stringMatching(/tentative.*accepted/i),
+      responseStatus: 'tentative',
+      recordedResponseStatus: 'tentative',
+      sentResponseStatus: 'accepted',
     },
   })
   expect(state.notices).toHaveLength(1)
@@ -1747,7 +1803,12 @@ it('uses a newer correlated Sent answer once a confirmed Calendar copy disappear
   state.events.set('primary', [copy])
   const older = acceptedReply('<update@example.net>')
   state.messages.push(older)
-  expect(await read()).toMatchObject({ canRespond: true, responseStatus: 'accepted' })
+  expect(await read()).toMatchObject({
+    canRespond: true,
+    responseStatus: 'accepted',
+    recordedResponseStatus: 'needsAction',
+    sentResponseStatus: 'accepted',
+  })
   expect(await respond('tentative')).toMatchObject({ channel: 'calendar', refreshPending: false })
   state.events.clear()
   const reopened = restart()

@@ -463,6 +463,8 @@ const invitation: Invitation = {
   htmlLinkSource: null,
   cancelled: false,
   responseStatus: 'needsAction',
+  recordedResponseStatus: null,
+  sentResponseStatus: null,
   canRespond: true,
   unavailableReason: null,
   responsePending: false,
