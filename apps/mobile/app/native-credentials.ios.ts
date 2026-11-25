@@ -14,7 +14,7 @@ function makeStore(native: HoliNativeCredentials): CredentialStore & {
   return {
     read() {
       const result = new interop.Reference<NSError>()
-      const data = native.readError(result)
+      const data = native.read(result)
       if (result.value) throw nativeError(result.value, 'read')
       return data
         ? NSString.alloc().initWithDataEncoding(data, NSUTF8StringEncoding).toString()
@@ -28,11 +28,11 @@ function makeStore(native: HoliNativeCredentials): CredentialStore & {
     },
     remove() {
       const result = new interop.Reference<NSError>()
-      if (!native.removeError(result) || result.value) throw nativeError(result.value, 'remove')
+      if (!native.remove(result) || result.value) throw nativeError(result.value, 'remove')
     },
     metadata() {
       const result = new interop.Reference<NSError>()
-      const value = native.metadataError(result)
+      const value = native.metadata(result)
       if (result.value) throw nativeError(result.value, 'metadata')
       return value
         ? {

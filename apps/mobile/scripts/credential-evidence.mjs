@@ -51,3 +51,38 @@ export function validateCredentialReport(report, { runId, phase, build, pid, lau
     throw new Error('Unrelated credential was not preserved')
   return report
 }
+
+export function summarizeCredentialReport(report) {
+  const phases = [
+    'verify-empty',
+    'store',
+    'replace',
+    'read',
+    'sign-out',
+    'verify-absent',
+    'delete-unrelated',
+  ]
+  const outcomes = [
+    'empty',
+    'stored',
+    'replaced',
+    'persisted',
+    'signed-out',
+    'primary-absent',
+    'failed',
+  ]
+  return {
+    schemaVersion: report?.schemaVersion === 1 ? 1 : null,
+    phase: phases.includes(report?.phase) ? report.phase : 'unexpected',
+    outcome: outcomes.includes(report?.outcome) ? report.outcome : 'unexpected',
+    pid: Number.isSafeInteger(report?.pid) && report.pid > 0 ? report.pid : null,
+    observedAt: Number.isSafeInteger(report?.observedAt) ? report.observedAt : null,
+    metadata: {
+      accessible: report?.metadata?.accessible === true,
+      synchronizable: report?.metadata?.synchronizable !== false,
+    },
+    unrelatedPreserved: report?.unrelatedPreserved === true,
+    tokenRecorded: report?.tokenRecorded !== false,
+    nativeErrorReported: Boolean(report?.error),
+  }
+}

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { validateCredentialReport } from '../scripts/credential-evidence.mjs'
+import {
+  validateCredentialReport,
+  summarizeCredentialReport,
+} from '../scripts/credential-evidence.mjs'
 
 const context = {
   runId: 'owned-run',
@@ -52,4 +55,16 @@ test('requires unrelated item preservation during sign-out', () => {
   assert.doesNotThrow(() =>
     validateCredentialReport({ ...signedOut, unrelatedPreserved: true }, expected),
   )
+})
+
+test('preserves failure observations without copying raw token or error fields', () => {
+  const receipt = summarizeCredentialReport({
+    ...report,
+    outcome: 'failed',
+    error: 'private-token',
+    credential: 'private-token',
+  })
+  assert.equal(receipt.outcome, 'failed')
+  assert.equal(receipt.nativeErrorReported, true)
+  assert.ok(!JSON.stringify(receipt).includes('private-token'))
 })

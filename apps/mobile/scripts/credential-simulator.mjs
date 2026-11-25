@@ -7,7 +7,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { runCommand } from './host-checks.mjs'
 import { readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
-import { validateCredentialReport } from './credential-evidence.mjs'
+import { createCredentialLog } from './credential-log.mjs'
+import { validateCredentialReport, summarizeCredentialReport } from './credential-evidence.mjs'
 
 const cwd = fileURLToPath(new URL('..', import.meta.url))
 const bundleId = 'ai.syv.holi.compatibility'
@@ -44,7 +45,7 @@ export async function runCredentialSimulator() {
   process.once('SIGINT', interrupt)
   process.once('SIGTERM', interrupt)
   const command = (exe, args, options = {}) =>
-    runCommand(exe, args, { cwd, signal: controller.signal, ...options })
+    runCommand(exe, args, { cwd, signal: controller.signal, outputLimit: 64 * 1024, ...options })
   const simctl = (...args) => command('xcrun', ['simctl', ...args])
   const pids = []
   const cleanupFailures = []
@@ -54,6 +55,8 @@ export async function runCredentialSimulator() {
   let provenance
   let completed = false
   let simulatorRemoved = false
+  let stage = 'setup'
+  let failure
   const reports = []
   try {
     const sourceHead = await command('git', ['rev-parse', 'HEAD'])
@@ -90,11 +93,17 @@ export async function runCredentialSimulator() {
       JSON.stringify({ xcode, runtime, runId }, null, 2),
     )
     await rm(join(cwd, 'platforms/ios/build'), { recursive: true, force: true })
-    await command('pnpm', ['run', 'build:ios'], {
-      timeout: 600_000,
-      log: join(artifacts, 'build.log'),
-      env: { ...process.env, CI: '1', ELECTRON_SKIP_BINARY_DOWNLOAD: '1' },
-    })
+    stage = 'build'
+    const buildLog = createCredentialLog(join(artifacts, 'build.log'))
+    try {
+      await command('pnpm', ['run', 'build:ios'], {
+        timeout: 600_000,
+        onOutput: (data) => buildLog.write(data),
+        env: { ...process.env, CI: '1', ELECTRON_SKIP_BINARY_DOWNLOAD: '1' },
+      })
+    } finally {
+      await writeFile(join(artifacts, 'build-log.json'), JSON.stringify(buildLog.close(), null, 2))
+    }
     const app = join(cwd, 'platforms/ios/build/Debug-iphonesimulator/mobile.app')
     const plist = async (key) =>
       command('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, join(app, 'Info.plist')])
@@ -154,6 +163,7 @@ export async function runCredentialSimulator() {
       throw new Error(`Owned app process ${info.pid} did not exit`)
     }
     for (const phase of phases) {
+      stage = phase
       await drain(active)
       await rm(reportPath, { force: true })
       const launchedAt = Date.now()
@@ -185,17 +195,36 @@ export async function runCredentialSimulator() {
         await sleep(150, undefined, { signal: controller.signal })
       }
       if (!report) throw new Error(`Timed out waiting for ${phase} evidence`)
-      validateCredentialReport(report, { runId, phase, build, pid, launchedAt, now: Date.now() })
+      await writeFile(
+        join(artifacts, `native-receipt-${phase}.json`),
+        JSON.stringify(summarizeCredentialReport(report), null, 2),
+      )
+      try {
+        validateCredentialReport(report, { runId, phase, build, pid, launchedAt, now: Date.now() })
+      } catch (error) {
+        failure = { stage: phase, reason: error.message }
+        throw error
+      }
       reports.push(report)
       await writeFile(join(artifacts, `report-${phase}.json`), JSON.stringify(report, null, 2))
     }
     completed = true
+  } catch (error) {
+    failure ??= {
+      stage,
+      reason: 'Credential acceptance did not complete',
+      timedOut: error.timedOut === true,
+      exitCode: Number.isSafeInteger(error.exitCode) ? error.exitCode : null,
+    }
+    await writeFile(join(artifacts, 'failure.json'), JSON.stringify(failure, null, 2))
+    throw error
   } finally {
     // Cleanup must remain possible after an interrupt.
     if (active && simulator) {
       try {
         await runCommand('xcrun', ['simctl', 'terminate', simulator, bundleId], {
           cwd,
+          outputLimit: 64 * 1024,
           timeout: 15_000,
         })
       } catch (error) {
@@ -230,6 +259,7 @@ export async function runCredentialSimulator() {
               ? 'passed'
               : 'incomplete-proof',
           provenance,
+          failure,
           reports,
           runId,
           phases: pids,
@@ -247,7 +277,9 @@ export async function runCredentialSimulator() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
-  runCredentialSimulator().catch((error) => {
-    console.error(error)
+  runCredentialSimulator().catch(() => {
+    console.error(
+      'Credential acceptance failed; inspect the bounded artifact receipts and build log',
+    )
     process.exitCode = 1
   })
