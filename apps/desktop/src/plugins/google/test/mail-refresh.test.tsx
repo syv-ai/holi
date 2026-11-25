@@ -555,6 +555,48 @@ test('hidden mail drops its pending answer and performs no more periodic reads',
   expect(search).toHaveBeenCalledTimes(reads)
 })
 
+test('a refused later-page removal while hidden recovers authoritative rows on return', async () => {
+  search.mockResolvedValueOnce(pageWithToken('next', 'first')).mockResolvedValueOnce(page('later'))
+  const { result, rerender } = await mount()
+  await act(async () => result.current.loadMore())
+  const refused = deferred<{ ok: true }>()
+  archive.mockReturnValueOnce(refused.promise)
+  let removal!: Promise<void>
+  await act(async () => {
+    removal = result.current.removeThreads(['later'], 'archive')
+  })
+  rerender({ account: 'account-a', visible: false })
+  await act(async () => {
+    refused.reject(new Error('Refused'))
+    await removal
+  })
+  search.mockImplementation(async (_remote, params) => ({
+    ...page('first', ...(params.uiList.loadedIds.includes('later') ? ['later'] : [])),
+    uiList: { mode: 'coverage', cursor, revalidatedIds: params.uiList.loadedIds, removedIds: [] },
+  }))
+  rerender({ account: 'account-a', visible: true })
+  await act(async () => {})
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['first', 'later'])
+  expect(result.current.writeError).toBeTruthy()
+  expect(search.mock.lastCall?.[1].uiList).not.toHaveProperty('cursor')
+})
+
+test('a manual search refresh hidden before completion resumes without waiting for polling', async () => {
+  const { result, rerender } = await mount()
+  search.mockResolvedValue(page('search-row'))
+  await act(async () => result.current.search('subject:search-row'))
+  const pending = deferred<ReturnType<typeof page>>()
+  search.mockReturnValueOnce(pending.promise)
+  await act(async () => result.current.refresh())
+  expect(result.current.list.kind).toBe('loading')
+  rerender({ account: 'account-a', visible: false })
+  await act(async () => pending.resolve(page('stale-search')))
+  search.mockResolvedValue(page('fresh-search'))
+  rerender({ account: 'account-a', visible: true })
+  await act(async () => {})
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['fresh-search'])
+})
+
 test('a hidden-era response cannot publish after showing Mail or block the next poll', async () => {
   const { result, rerender } = await mount()
   const pending = deferred<ReturnType<typeof page>>()

@@ -38,6 +38,7 @@ export function useMailList({
     () => ({
       key,
       live: false,
+      visible: false,
       revision: 0,
       activity: 0,
       request: 0,
@@ -65,7 +66,10 @@ export function useMailList({
   }>()
   const [loadingMore, setLoadingMore] = useState(false)
   const [writeError, setWriteError] = useState<string | null>(null)
-  const active = useCallback(() => current.current === owner && owner.live, [owner])
+  const active = useCallback(
+    () => current.current === owner && owner.live && owner.visible,
+    [owner],
+  )
   const paint = useCallback(
     (value: List) => {
       owner.list = value
@@ -224,7 +228,16 @@ export function useMailList({
   const latestRead = useRef(read)
   latestRead.current = read
   useEffect(() => {
-    owner.live = visible
+    owner.live = true
+    return () => {
+      owner.live = false
+      owner.restorationIds.clear()
+      owner.request++
+    }
+  }, [owner])
+
+  useEffect(() => {
+    owner.visible = visible
     owner.activity++
     if (visible) {
       setLoadingMore(owner.more)
@@ -241,7 +254,8 @@ export function useMailList({
       : undefined
     return () => {
       if (timer !== undefined) window.clearInterval(timer)
-      owner.live = false
+      owner.visible = false
+      if (owner.pendingRead?.replaceOnInvalidation) owner.reconcile = true
       owner.activity++
       owner.countsRequest++
       owner.categoryRequest++
@@ -249,20 +263,6 @@ export function useMailList({
       owner.undoToasts.clear()
     }
   }, [owner, visible, account, loadCounts])
-
-  useEffect(
-    () => () => {
-      owner.live = false
-      for (const id of owner.undoToasts) toast.dismiss(id)
-      owner.undoToasts.clear()
-      owner.restorationIds.clear()
-      owner.activity++
-      owner.request++
-      owner.countsRequest++
-      owner.categoryRequest++
-    },
-    [owner],
-  )
 
   const invalidateRead = () => {
     if (owner.pendingRead?.replaceOnInvalidation) owner.reconcile = true
@@ -295,7 +295,7 @@ export function useMailList({
       await mutate()
       return active()
     } catch (cause) {
-      if (active()) {
+      if (current.current === owner && owner.live) {
         if (removed.length > 0) {
           for (const id of removed) owner.restorationIds.add(id)
           owner.reconcile = true
