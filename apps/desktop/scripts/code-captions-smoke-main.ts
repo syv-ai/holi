@@ -1924,7 +1924,7 @@ async function run() {
   const caller = createRouter({
     registry,
     session,
-    host: { active: () => null } as unknown as RouterDeps['host'],
+    host: { active: () => null, get: () => null } as unknown as RouterDeps['host'],
     capabilities: trackedHost,
     seed: async () => ({ written: [] }),
     vaultRoot: root,
