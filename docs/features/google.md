@@ -11,6 +11,27 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - **Each vault names its account** in `userData/google-vault-accounts.json` (`owner/repo` → `sub`), outside the clone. One account may serve several vaults; linking a stored account needs no consent. _Disconnect this vault_ drops the mapping, at once, because _Use in this vault_ undoes it; _Remove from Holi_ revokes at Google, deletes tokens and cache, and unlinks every vault, so Connections asks first ("Remove … from Holi?", a destructive _Remove account_) and holds the dialog open while the revoke runs. Connections' errors and the reconnect warning are `text-destructive` and wrap rather than truncate. A new vault is never mapped automatically.
 - **Scope drift:** an old grant keeps working and 403s only the newly added calls. `missingScopes()` compares stored scopes in Google's vocabulary (`email` returns as `.../userinfo.email`) and settings offers **Reconnect**.
 - **Mail cache:** one `node:sqlite` file per account, `userData/google-cache-<sub>.db`, last 500 threads, reconciled by `history.list` deltas. The key carries every filter that narrows a list; the history cursor is per key; archive and trash arrive as label changes and land in a _left_ bucket. Bump `SHAPE_VERSION` when a cached type changes. A removed or dead account deletes the file and its sidecars.
+- **Automatic Mail refresh:** both Mail layouts share one list controller. A visible,
+  connected Inbox, category, unread, Sent or Starred list refreshes every 30 seconds;
+  Drafts and submitted searches remain manual. Hiding or unmounting a view stops
+  periodic reads. Account, vault and filter changes invalidate earlier responses;
+  refresh preserves the open reader and selected filters. Reads are coordinated with
+  pagination and optimistic writes, including markers and Undo.
+- **Loaded mail coverage:** the UI uses the existing `google.search` capability with
+  an account-bound list cursor captured before the initial page. A refresh reads
+  the fresh first-page IDs and mailbox history, hydrates arrivals and changed loaded
+  threads, and reports explicit departures using current message labels. Omission
+  from a first page is not a departure. Missing or expired history revalidates the
+  entire loaded set, including rows beyond the 500-thread disk cache. Refresh returns
+  a fresh continuation; Load more skips already loaded IDs before hydration and
+  consumes duplicate-only pages within the loaded coverage, never scanning the whole
+  mailbox. Normal refresh cost follows changed rows; history recovery follows the
+  loaded set. A failed refresh leaves usable mail in place for Retry or a later cycle.
+- **Mail counts:** successful list reads refresh Gmail's inbox totals and category
+  counts once the category picker has requested them. Failed category reads remain
+  activated for later retries. Count responses share the list's owner and mutation
+  fences; totals are not inferred from the loaded slice. Automatic refresh adds no
+  notifications or app-wide indicators.
 - **Writes:** the renderer paints first and reverts on refusal; main calls Google first and updates the cache only on success. Every thread action takes that one path. Archive and trash, of one thread or a selection, then raise one toast ("Thread moved to Trash", "2 threads archived") that stays until dismissed and offers **Undo**: undo beats a confirmation for a frequent, reversible removal. Undo calls `google.unarchive` (`INBOX` back on) or `google.untrash` (Gmail's `/untrash`), UI-door only, and re-reads the list; nothing is put back into the cache, because `history.list` brings both changes back.
 - **Mail's panes** share one left edge: the toolbar, the selection bar, the find bar and the reader's action row are each a `PaneToolbar` (`px-4`), and the thread below them is `px-4` with each message's chevron, addresses and body on the subject's edge. The reader's subject has its own wrapping row, the one place a subject the list truncated reads in full; under it, Reply, Reply all, Archive, Trash and Star stay on the row (and Join for a meeting), and Summarize, Task, Continue draft, Forward, Unsubscribe and Open in Gmail sit in one **More actions** menu, so the row fits the reader at its 280px floor. A row's checkbox shows on hover and on keyboard focus; its tab and labels are `Badge`s. Loading is skeleton rows; disconnected (with _Open Connections_), failed (with _Try again_), empty and "Pick a thread" are the shared `EmptyState`. A failed write is a `text-destructive` line above the list.
 - **Calendar** shows calendars the user owns by default; per-calendar overrides are the plugin's `calendars` setting in the vault's `.holi/settings/plugins.local.yaml`, read in main so the agent and apps honour them too. Events carry `mine`. Joining uses `conferenceData`, then the body, then the location, matching a join-link shape. A thread with an `.ics` is joined to its event by the invite's `UID`.

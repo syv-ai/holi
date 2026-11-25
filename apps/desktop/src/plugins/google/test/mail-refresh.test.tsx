@@ -177,6 +177,27 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+test('a write invalidates a stalled poll without releasing its single-flight slot', async () => {
+  const { result } = await mount()
+  const pending = deferred<ReturnType<typeof page>>()
+  search.mockReturnValueOnce(pending.promise)
+  await advance()
+  await act(async () => {
+    await result.current.removeThreads(['existing'], 'archive')
+  })
+  await advance(90_000)
+  expect(search).toHaveBeenCalledTimes(2)
+  expect(result.current.threads).toEqual([])
+  await act(async () => {
+    pending.resolve(page('existing'))
+  })
+  expect(result.current.threads).toEqual([])
+  search.mockResolvedValue(delta(['arrived'], []))
+  await advance()
+  expect(search).toHaveBeenCalledTimes(3)
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived'])
+})
+
 test('history refresh preserves later pages and continuation after cached rows disappear', async () => {
   search
     .mockResolvedValueOnce(pageWithToken('next', 'cached'))

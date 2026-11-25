@@ -41,7 +41,7 @@ export function useMailList({
       request: 0,
       countsRequest: 0,
       categoryRequest: 0,
-      pending: false,
+      pendingRead: null as number | null,
       more: false,
       writes: 0,
       reconcile: false,
@@ -91,7 +91,7 @@ export function useMailList({
     }
   }, [active, owner, remote, account, activation])
   const read = useCallback(
-    async (kind: 'initial' | 'manual' | 'poll' | 'more') => {
+    async (kind: 'initial' | 'manual' | 'poll' | 'more'): Promise<void> => {
       if (!active()) return
       if (account === null) {
         paint({ kind: 'disconnected' })
@@ -103,7 +103,7 @@ export function useMailList({
       }
       if (
         kind === 'poll' &&
-        (!supported || drafts || owner.pending || owner.more || owner.writes > 0)
+        (!supported || drafts || owner.pendingRead !== null || owner.more || owner.writes > 0)
       )
         return
       if (owner.writes > 0) {
@@ -112,7 +112,7 @@ export function useMailList({
       }
       if (
         kind === 'more' &&
-        (owner.pending ||
+        (owner.pendingRead !== null ||
           owner.more ||
           owner.list.kind !== 'ready' ||
           owner.list.nextPageToken === null)
@@ -129,7 +129,7 @@ export function useMailList({
       owner.categoryRequest++
       const at = ++owner.request
       const revision = owner.revision
-      owner.pending = !append
+      owner.pendingRead = at
       owner.more = append
       setLoadingMore(append)
       if (!append && kind !== 'poll') setListState({ owner, value: { kind: 'loading' } })
@@ -176,10 +176,14 @@ export function useMailList({
               : { kind: 'error', message: messageOf(cause, 'Could not load your mail.') },
           })
       } finally {
-        if (active() && owner.request === at) {
-          owner.pending = false
+        if (active() && owner.pendingRead === at) {
+          owner.pendingRead = null
           owner.more = false
           setLoadingMore(false)
+          if (owner.reconcile && owner.writes === 0) {
+            owner.reconcile = false
+            void latestRead.current('manual')
+          }
         }
       }
     },
@@ -215,7 +219,6 @@ export function useMailList({
     const snapshot = owner.list
     const revision = ++owner.revision
     owner.request++
-    owner.pending = false
     owner.more = false
     setLoadingMore(false)
     owner.writes++
@@ -235,7 +238,7 @@ export function useMailList({
       owner.writes--
       if (active() && owner.writes === 0) {
         loadCounts()
-        if (owner.reconcile) {
+        if (owner.reconcile && owner.pendingRead === null) {
           owner.reconcile = false
           void latestRead.current('manual')
         }
