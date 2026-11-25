@@ -1,7 +1,7 @@
 /** Real registry surface, tab wrapper, retention hook and frame; only the
  * platform capability transport is replaced. jsdom cannot execute app code. */
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { act, screen, waitFor } from '@/test/render'
+import { act, fireEvent, screen, waitFor } from '@/test/render'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 import { mountVaultAppShell } from '@/test/vault-app-shell'
 import { APP_SURFACE } from '../renderer/surface'
@@ -153,3 +153,16 @@ test.each(['close', 'disable', 'depart', 'unmount'] as const)(
     if (nextPost) expect(nextPost).not.toHaveBeenCalled()
   },
 )
+
+test('a sticky deleted app can be deliberately closed from its tombstone', async () => {
+  const f = mountVaultAppShell(APP_SURFACE)
+  f.show()
+  await waitFor(() => expect(f.frame('One')).not.toBeNull())
+  f.stick()
+  f.remove()
+  expect(f.frame('One')).toBeNull()
+  const close = await screen.findByRole('button', { name: 'Close tab' })
+  fireEvent.click(close)
+  expect(screen.queryByRole('button', { name: 'Close tab' })).toBeNull()
+  expect(screen.queryByText(/One was deleted/)).toBeNull()
+})
