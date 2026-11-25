@@ -215,9 +215,7 @@ export function analyzePairs(results, { pilot = false } = {}) {
             row.elapsedSeconds > 0 &&
             Number.isInteger(row.gcCount) &&
             row.gcCount >= 0 &&
-            Number.isInteger(row.gcCount) &&
-            row.gcCount >= 0 &&
-            Number.isInteger(row.gcDurationMs) &&
+            finite(row.gcDurationMs) &&
             row.gcDurationMs >= 0
           )
         })

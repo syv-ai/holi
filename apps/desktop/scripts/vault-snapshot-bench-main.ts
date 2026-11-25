@@ -548,29 +548,29 @@ async function run(root: string, evidence: string): Promise<void> {
       await drainPipeline()
     }
     await new Promise((resolve) => setTimeout(resolve, trial.durationSeconds * 1000))
-    measuring = false
     await drainPipeline()
-    // Drain timed publications before freezing CPU/GPU and counters.
+    measuring = false
+    // Capture the counters and buffers in the final CPU sample's synchronous
+    // seam. Later callbacks must not enter these observations during shutdown.
     sample()
     clearInterval(sampleInterval)
     sampleInterval = null
-    await captureSampling
-    captureResult = await capture.stop()
     const end = performance.now()
-    // Enqueue renderer capture at the same seam, before snapshot cloning/hash
-    // work can give its independent event loop extra time to accumulate work.
     const rendererAtEnd = win.webContents.executeJavaScript('window.snapshotBench.metrics()')
     const adapterAtEnd = adapter.metrics()
-    await drainPipeline()
-    measured = freezeMeasurement({
+    const idleAtEnd = {
       rendererSends: { count: sendStats.count, bytes: adapterAtEnd.payloadBytes },
-      publicationLatencyMs,
+      publicationLatencyMs: [...publicationLatencyMs],
       snapshotNotifications,
-      scanDurationsMs,
+      scanDurationsMs: [...scanDurationsMs],
       adapter: adapterAtEnd,
       snapshot: active.snapshot(),
-      samples,
-    })
+      samples: [...samples],
+    }
+    await captureSampling
+    captureResult = await capture.stop()
+    // Deep cloning is diagnostic allocation; keep it outside active profiling.
+    measured = freezeMeasurement(idleAtEnd)
     visibilityAfterIdle = {
       ...visibility(),
       rendererVisibility: await web.executeJavaScript('document.visibilityState'),

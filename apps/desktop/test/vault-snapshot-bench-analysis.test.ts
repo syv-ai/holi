@@ -107,6 +107,19 @@ function pairs(size: 'small' | 'large', count = 5) {
 const study = () => [...pairs('small'), ...pairs('large')]
 
 describe('snapshot benchmark analysis', () => {
+  it('accepts fractional GC duration observations but rejects nonfinite durations', () => {
+    const data = study()
+    for (const pair of data)
+      for (const trial of pair.trials)
+        for (const row of Object.values(trial.result.allocation)) {
+          row.gcCount = 1
+          row.gcDurationMs = 0.487
+        }
+    expect(analyzePairs(data).classification).toBe('gate-pass')
+    data[0]!.trials[0]!.result.allocation.main!.gcDurationMs = NaN
+    expect(analyzePairs(data).classification).toBe('incomplete')
+  })
+
   it('rejects incomplete GPU and invalid CPU process observations', () => {
     const samples = [
       { at: 1, processes: [{ pid: 1, type: 'GPU', workingSetBytes: 10, cumulativeCpuUsage: 1 }] },
