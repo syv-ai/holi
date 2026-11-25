@@ -14,10 +14,13 @@ type Scenario =
   | 'stale-endpoint'
   | 'malformed-native'
   | 'navigation-unavailable'
+  | 'navigation-unknown'
+  | 'unsafe-screen-label'
   | 'unsafe-navigation'
   | 'navigation-replaced'
 
-// Native signing, AX and real capture remain the hosted fixture's responsibility.
+// Callback protocol fixtures do not exercise native signing, AX label matching,
+// secure-field exclusion, snapshot completeness, deadlines, or real capture.
 async function fixture(scenario: Scenario) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-565-native-')))
   const profile = join(root, 'Holi')
@@ -123,7 +126,15 @@ async function fixture(scenario: Scenario) {
           permissions: { screenCapture: false, accessibility: false, unrelated: token },
         }),
       }
-    if (['navigation-unavailable', 'unsafe-navigation', 'navigation-replaced'].includes(scenario)) {
+    if (
+      [
+        'navigation-unavailable',
+        'navigation-unknown',
+        'unsafe-navigation',
+        'unsafe-screen-label',
+        'navigation-replaced',
+      ].includes(scenario)
+    ) {
       observationReturned = true
       const navigationStats: Record<string, unknown> = {
         activationSucceeded: true,
@@ -150,12 +161,20 @@ async function fixture(scenario: Scenario) {
         snapshotDepthLimitReached: false,
         snapshotReadFailed: false,
         navigationScanStarted: true,
+        lastCompleteScreenSnapshotAvailable: scenario !== 'navigation-unknown',
+        signinLabelsSeen: scenario !== 'navigation-unknown',
+        onboardingLabelsSeen: false,
+        vaultSwitcherLabelSeen: false,
+        accountMenuLabelSeen: false,
+        settingsLabelSeen: false,
+        connectionsLabelSeen: false,
         windowsSeen: 1,
         visited: 42,
         windowsStatus: 0,
         childrenStatus: 0,
       }
       if (scenario === 'unsafe-navigation') navigationStats.rawLabel = token
+      if (scenario === 'unsafe-screen-label') navigationStats.signinLabelsSeen = token
       return {
         output: JSON.stringify({
           outcome: 'observation-unavailable',
@@ -309,7 +328,13 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
     },
   )
 
-  it.each(['navigation-unavailable', 'unsafe-navigation', 'navigation-replaced'] as const)(
+  it.each([
+    'navigation-unavailable',
+    'navigation-unknown',
+    'unsafe-navigation',
+    'unsafe-screen-label',
+    'navigation-replaced',
+  ] as const)(
     'keeps %s incomplete and exposes only bound structured diagnostics',
     async (scenario) => {
       const app = await fixture(scenario)
@@ -321,7 +346,7 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
           googleConnectionsPanelAsserted: false,
           screenshot: null,
         })
-        if (scenario === 'navigation-unavailable') {
+        if (scenario === 'navigation-unavailable' || scenario === 'navigation-unknown') {
           expect(result).toMatchObject({
             navigationStats: {
               connectionsControlSeen: true,
@@ -330,10 +355,18 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
               snapshotNodeLimitReached: false,
               snapshotDepthLimitReached: false,
               navigationScanStarted: true,
+              lastCompleteScreenSnapshotAvailable: scenario !== 'navigation-unknown',
+              signinLabelsSeen: scenario !== 'navigation-unknown',
+              onboardingLabelsSeen: false,
+              vaultSwitcherLabelSeen: false,
+              accountMenuLabelSeen: false,
+              settingsLabelSeen: false,
+              connectionsLabelSeen: false,
             },
           })
         } else expect(result).not.toHaveProperty('navigationStats')
         expect(JSON.stringify(result)).not.toContain(app.token)
+        expect(app.requests()).toBe(1)
         expect(await readdir(app.evidenceDirectory)).toEqual([])
       } finally {
         await app.close()

@@ -100,6 +100,7 @@ final class NavigationStats {
   var snapshotDepthLimitReached = false
   var snapshotReadFailed = false
   var navigationScanStarted = false
+  var lastCompleteScreenLabels: ScreenLabels?
   var windowsSeen = 0
   var visited = 0
   var windowsStatus: Int32 = 0
@@ -128,7 +129,14 @@ final class NavigationStats {
       "visited": visited, "windowsStatus": windowsStatus, "childrenStatus": childrenStatus,
       "snapshotDeadlineReached": snapshotDeadlineReached, "snapshotNodeLimitReached": snapshotNodeLimitReached,
       "snapshotDepthLimitReached": snapshotDepthLimitReached, "snapshotReadFailed": snapshotReadFailed,
-      "navigationScanStarted": navigationScanStarted]
+      "navigationScanStarted": navigationScanStarted,
+      "lastCompleteScreenSnapshotAvailable": lastCompleteScreenLabels != nil,
+      "signinLabelsSeen": lastCompleteScreenLabels?.signinLabelsSeen ?? false,
+      "onboardingLabelsSeen": lastCompleteScreenLabels?.onboardingLabelsSeen ?? false,
+      "vaultSwitcherLabelSeen": lastCompleteScreenLabels?.vaultSwitcherLabelSeen ?? false,
+      "accountMenuLabelSeen": lastCompleteScreenLabels?.accountMenuLabelSeen ?? false,
+      "settingsLabelSeen": lastCompleteScreenLabels?.settingsLabelSeen ?? false,
+      "connectionsLabelSeen": lastCompleteScreenLabels?.connectionsLabelSeen ?? false]
   }
 }
 
@@ -245,6 +253,42 @@ func nodes(_ root: AXUIElement, pid: pid_t, deadline: Date, stats: NavigationSta
   }
   snapshot.traversed = stack.isEmpty && !depthLimited
   return snapshot
+}
+
+// Evidence only: exact shipped static labels, independent of AX role and of the
+// first nonempty accessible name. Never retain or emit the strings themselves.
+// All reads use the existing per-node cache and the snapshot's shared deadline.
+struct ScreenLabels {
+  var signinLabelsSeen = false
+  var onboardingLabelsSeen = false
+  var vaultSwitcherLabelSeen = false
+  var accountMenuLabelSeen = false
+  var settingsLabelSeen = false
+  var connectionsLabelSeen = false
+
+  init?(_ snapshot: WindowSnapshot) {
+    guard snapshot.complete else { return nil }
+    for node in snapshot.content {
+      guard snapshot.complete else { return nil }
+      let role = node.role
+      let subrole = node.subrole
+      guard snapshot.complete else { return nil }
+      if role == "AXSecureTextField" || subrole == "AXSecureTextField" { continue }
+      for label in [node.title, node.value, node.description] {
+        guard snapshot.complete else { return nil }
+        switch label.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "Sign in to Holi", "Continue with GitHub": signinLabelsSeen = true
+        case "A vault for notes and tasks.", "Join a vault", "Search vaults": onboardingLabelsSeen = true
+        case "Switch vault": vaultSwitcherLabelSeen = true
+        case "Account menu", "Open account menu", "Account menu, an update to look at", "Open account menu, an update to look at": accountMenuLabelSeen = true
+        case "Settings": settingsLabelSeen = true
+        case "Connections": connectionsLabelSeen = true
+        default: break
+        }
+      }
+    }
+    guard snapshot.complete else { return nil }
+  }
 }
 
 func press(_ element: AXUIElement, snapshot: WindowSnapshot) -> Bool {
@@ -375,6 +419,15 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
       guard snapshot.complete else {
         try? await Task.sleep(nanoseconds: 200_000_000)
         continue
+      }
+      let screenLabels = ScreenLabels(snapshot)
+      defer {
+        // Publish one entire complete epoch, never OR observations across trees.
+        // Later failed/incomplete epochs cannot establish absence or replace this
+        // last complete snapshot. With none available, all label bits are unknown.
+        stats.snapshotDeadlineReached = stats.snapshotDeadlineReached || Date() >= deadline
+        stats.snapshotReadFailed = stats.snapshotReadFailed || (!snapshot.valid && Date() < deadline)
+        if snapshot.complete, let screenLabels { stats.lastCompleteScreenLabels = screenLabels }
       }
       let content = snapshot.content
       if content.contains(where: { Date() < deadline && ([kAXSheetRole, "AXDialog"].contains($0.role) || $0.subrole == kAXDialogSubrole) }) {

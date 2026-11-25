@@ -49,6 +49,13 @@ function validNavigationStats(stats) {
     'snapshotDepthLimitReached',
     'snapshotReadFailed',
     'navigationScanStarted',
+    'lastCompleteScreenSnapshotAvailable',
+    'signinLabelsSeen',
+    'onboardingLabelsSeen',
+    'vaultSwitcherLabelSeen',
+    'accountMenuLabelSeen',
+    'settingsLabelSeen',
+    'connectionsLabelSeen',
   ]
   const counts = ['windowsSeen', 'visited']
   const codes = ['windowsStatus', 'childrenStatus']
