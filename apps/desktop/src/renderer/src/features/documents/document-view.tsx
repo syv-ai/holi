@@ -58,6 +58,7 @@ import {
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useVimField } from '@/hooks/use-vim-field'
 import { VimFieldMode } from '@/composites/vim-field-mode'
@@ -931,6 +932,7 @@ function DocumentEditor({
     }
   }
   const canStartChat = useAtomValue(canStartConversationAtom)
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false)
   const startConversation = useSetAtom(startConversationAtom)
 
   /** A new agent session beside the document, the passage in its input as
@@ -1120,80 +1122,164 @@ function DocumentEditor({
               </div>
             </div>
             {rewriteQueue.length > 0 ? (
-              <aside
-                aria-label="Rewrite batch overview"
-                className="hidden min-h-0 w-80 shrink-0 overflow-y-auto border-l border-border p-4 @5xl/document:block"
-              >
-                {rewriteQueue.length > 0 ? (
-                  <section
-                    aria-label="Queued rewrite requests"
-                    className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-4 sm:px-16"
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mx-4 mb-2 shrink-0 @5xl/document:hidden"
+                  onClick={() => setBatchDialogOpen(true)}
+                >
+                  Batch ({rewriteQueue.length})
+                </Button>
+                {!batchDialogOpen ? (
+                  <aside
+                    aria-label="Rewrite batch overview"
+                    className="hidden min-h-0 w-80 shrink-0 overflow-hidden border-l border-border @5xl/document:flex"
                   >
-                    <h2 className="text-sm font-medium">Rewrite batch ({rewriteQueue.length})</h2>
-                    {rewriteQueue.map((item, index) => (
-                      <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
-                          {item.passage}
-                        </span>{' '}
-                        <BatchInstructionInput
-                          id={item.id}
-                          index={index}
-                          value={item.instruction}
-                          disabled={batchSubmitting}
-                          onChange={(value) => editBatchItem(item.id, value)}
-                        />
-                        {!item.valid ? (
-                          <span role="status" className="text-sm text-muted-foreground">
-                            Target changed; reselect
-                          </span>
-                        ) : null}
+                    <section
+                      aria-label="Queued rewrite requests"
+                      className="flex min-h-0 w-full min-w-0 flex-col gap-3 p-4"
+                    >
+                      <h2 className="text-sm font-medium">Rewrite batch ({rewriteQueue.length})</h2>
+                      {rewriteQueue.map((item, index) => (
+                        <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
+                            {item.passage}
+                          </span>{' '}
+                          <BatchInstructionInput
+                            id={item.id}
+                            index={index}
+                            value={item.instruction}
+                            disabled={batchSubmitting}
+                            onChange={(value) => editBatchItem(item.id, value)}
+                          />
+                          {!item.valid ? (
+                            <span role="status" className="text-sm text-muted-foreground">
+                              Target changed; reselect
+                            </span>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => reselection(item.id)}
+                            disabled={batchSubmitting}
+                          >
+                            {item.valid ? 'Show target' : 'Use selection'}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeFromBatch(item.id)}
+                            disabled={batchSubmitting}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                      {batchError ? (
+                        <p role="alert" className="text-destructive text-sm">
+                          {batchError}
+                        </p>
+                      ) : null}
+                      {batchSubmitting ? (
+                        <p role="status" className="text-muted-foreground text-sm">
+                          Submitting batch…
+                        </p>
+                      ) : null}
+                      <div className="flex justify-end">
                         <Button
                           type="button"
-                          variant="outline"
                           size="sm"
-                          onClick={() => reselection(item.id)}
-                          disabled={batchSubmitting}
+                          disabled={
+                            batchSubmitting ||
+                            !canAsk ||
+                            rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
+                          }
+                          onClick={() => void submitBatch()}
                         >
-                          {item.valid ? 'Show target' : 'Use selection'}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeFromBatch(item.id)}
-                          disabled={batchSubmitting}
-                        >
-                          Remove
+                          Submit batch
                         </Button>
                       </div>
-                    ))}
-                    {batchError ? (
-                      <p role="alert" className="text-destructive text-sm">
-                        {batchError}
-                      </p>
-                    ) : null}
-                    {batchSubmitting ? (
-                      <p role="status" className="text-muted-foreground text-sm">
-                        Submitting batch…
-                      </p>
-                    ) : null}
-                    <div className="flex justify-end">
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={
-                          batchSubmitting ||
-                          !canAsk ||
-                          rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
-                        }
-                        onClick={() => void submitBatch()}
-                      >
-                        Submit batch
-                      </Button>
-                    </div>
-                  </section>
+                    </section>
+                  </aside>
                 ) : null}
-              </aside>
+                <Dialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
+                  <DialogContent size="lg" className="max-h-screen overflow-hidden">
+                    <DialogHeader>
+                      <DialogTitle>Rewrite batch ({rewriteQueue.length})</DialogTitle>
+                    </DialogHeader>
+                    <section
+                      aria-label="Queued rewrite requests"
+                      className="flex min-h-0 flex-col gap-3 overflow-y-auto"
+                    >
+                      {rewriteQueue.map((item, index) => (
+                        <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
+                            {item.passage}
+                          </span>
+                          <BatchInstructionInput
+                            id={item.id}
+                            index={index}
+                            value={item.instruction}
+                            disabled={batchSubmitting}
+                            onChange={(value) => editBatchItem(item.id, value)}
+                          />
+                          {!item.valid ? (
+                            <span role="status" className="text-sm text-muted-foreground">
+                              Target changed; reselect
+                            </span>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => reselection(item.id)}
+                            disabled={batchSubmitting}
+                          >
+                            {item.valid ? 'Show target' : 'Use selection'}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeFromBatch(item.id)}
+                            disabled={batchSubmitting}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                      {batchError ? (
+                        <p role="alert" className="text-destructive text-sm">
+                          {batchError}
+                        </p>
+                      ) : null}
+                      {batchSubmitting ? (
+                        <p role="status" className="text-muted-foreground text-sm">
+                          Submitting batch…
+                        </p>
+                      ) : null}
+                      <div className="flex justify-end">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={
+                            batchSubmitting ||
+                            !canAsk ||
+                            rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
+                          }
+                          onClick={() => void submitBatch()}
+                        >
+                          Submit batch
+                        </Button>
+                      </div>
+                    </section>
+                  </DialogContent>
+                </Dialog>
+              </>
             ) : null}
             {propertiesLayout === 'sidebar' ? (
               <TaskProperties
