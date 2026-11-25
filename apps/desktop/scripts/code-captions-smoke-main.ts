@@ -671,6 +671,12 @@ async function verifyTableCaption({
   assert(saved.startsWith(head), 'table caption save preserves frontmatter')
   assert(saved.includes('Native table caption'))
   assert(
+    /<!-- holi:figure -->\n\n\| Name \| Value \|\n\| --- \| --- \|\n\| Alpha \| 1 \|\n\n<!-- holi:caption -->\n\nNative table caption\n\n<!-- \/holi:figure -->/.test(
+      saved,
+    ),
+    'saved caption remains associated with the complete table',
+  )
+  assert(
     saved.includes('Alpha') && saved.includes('Name') && saved.includes('Value'),
     'table cells remain intact',
   )
@@ -678,6 +684,13 @@ async function verifyTableCaption({
   await wait(
     `window.captionFixture.state().markdown.includes('Native table caption')`,
     'saved table caption reopened',
+  )
+  const reopened = await js<any>('return window.captionFixture.state()')
+  assert(
+    /<!-- holi:figure -->[\s\S]*?\\| Alpha \\| 1 \\|[\s\S]*?<!-- holi:caption -->[\s\S]*?Native table caption[\s\S]*?<!-- \/holi:figure -->/.test(
+      reopened.markdown,
+    ),
+    'reopened caption remains associated with its table',
   )
   await js(`window.captionFixture.theme('light'); return true`)
   await capture('table-caption-light.png')
