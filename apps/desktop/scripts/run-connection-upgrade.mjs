@@ -17,8 +17,11 @@ import { connectUpgradeInspector } from './upgrade-inspector.mjs'
 import { observeFirstTargetConnections } from './upgrade-first-target.mjs'
 import { cleanupUpgradeFixture } from './upgrade-cleanup.mjs'
 import { createUpgradeInstaller, installerStatePath } from './upgrade-installer.mjs'
-import { waitForBeforePanel } from './upgrade-before-panel.mjs'
-import { observeUpgradeUiRequests, captureUpgradeUiRequests } from './upgrade-ui-requests.mjs'
+import {
+  waitForBeforePanel,
+  observeUpgradeUiRequests,
+  captureUpgradeUiRequests,
+} from './upgrade-before-panel.mjs'
 
 const exec = promisify(execFile)
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')

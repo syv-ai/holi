@@ -98,6 +98,7 @@ final class NavigationStats {
   var snapshotDeadlineReached = false
   var snapshotNodeLimitReached = false
   var snapshotDepthLimitReached = false
+  var snapshotReadFailed = false
   var navigationScanStarted = false
   var windowsSeen = 0
   var visited = 0
@@ -126,7 +127,8 @@ final class NavigationStats {
       "childrenReadAttempted": childrenReadAttempted, "windowsSeen": windowsSeen,
       "visited": visited, "windowsStatus": windowsStatus, "childrenStatus": childrenStatus,
       "snapshotDeadlineReached": snapshotDeadlineReached, "snapshotNodeLimitReached": snapshotNodeLimitReached,
-      "snapshotDepthLimitReached": snapshotDepthLimitReached, "navigationScanStarted": navigationScanStarted]
+      "snapshotDepthLimitReached": snapshotDepthLimitReached, "snapshotReadFailed": snapshotReadFailed,
+      "navigationScanStarted": navigationScanStarted]
   }
 }
 
@@ -145,16 +147,29 @@ func text(_ element: AXUIElement, _ name: String) -> String {
 }
 
 // One bounded AX traversal per observation iteration. Attribute values are cached only for this
-// snapshot; after a press the next iteration must observe a fresh tree.
+// snapshot; after a press the next iteration must observe a fresh tree. Every cold
+// role/subrole/label read shares the traversal deadline and can invalidate the tree;
+// completeness is rechecked before any press or connected-panel assertion.
 final class ObservedNode {
   let element: AXUIElement
   let parent: Int?
-  init(_ element: AXUIElement, parent: Int?) { self.element = element; self.parent = parent }
-  lazy var role = text(element, kAXRoleAttribute)
-  lazy var subrole = text(element, kAXSubroleAttribute)
-  lazy var title = text(element, kAXTitleAttribute)
-  lazy var value = text(element, kAXValueAttribute)
-  lazy var description = text(element, kAXDescriptionAttribute)
+  unowned let snapshot: WindowSnapshot
+  init(_ element: AXUIElement, parent: Int?, snapshot: WindowSnapshot) {
+    self.element = element; self.parent = parent; self.snapshot = snapshot
+  }
+  func label(_ attribute: String, required: Bool = false) -> String {
+    guard let value = snapshot.read(element, attribute, optional: !required) else { return "" }
+    guard let string = value as? String else {
+      if attribute != kAXValueAttribute { snapshot.valid = false }
+      return ""
+    }
+    return string
+  }
+  lazy var role = label(kAXRoleAttribute, required: true)
+  lazy var subrole = label(kAXSubroleAttribute)
+  lazy var title = label(kAXTitleAttribute)
+  lazy var value = label(kAXValueAttribute)
+  lazy var description = label(kAXDescriptionAttribute)
   lazy var name: String = {
     if subrole == "AXSecureTextField" { return "" }
     let titleLabel = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -165,57 +180,96 @@ final class ObservedNode {
   }()
 }
 
-struct WindowSnapshot {
-  let content: [ObservedNode]
-  let complete: Bool
+final class WindowSnapshot {
+  var content: [ObservedNode] = []
+  var valid = true
+  var traversed = false
+  let deadline: Date
+  let stats: NavigationStats?
+  init(deadline: Date, stats: NavigationStats? = nil) { self.deadline = deadline; self.stats = stats }
+  var complete: Bool { traversed && valid && Date() < deadline }
+
+  func read(_ element: AXUIElement, _ name: String, optional: Bool = false) -> CFTypeRef? {
+    guard valid, Date() < deadline else { valid = false; return nil }
+    let (value, status) = readAttribute(element, name)
+    if name == kAXWindowsAttribute { stats?.windowsStatus = status.rawValue }
+    if name == kAXChildrenAttribute, let stats {
+      if !stats.childrenReadAttempted || status != .success {
+        stats.childrenStatus = status.rawValue
+      }
+      stats.childrenReadAttempted = true
+    }
+    guard Date() < deadline else { valid = false; return nil }
+    // AXError.h defines these as unsupported attribute / supported but no value.
+    // AXChildren is required only for elements containing subelements
+    // (AXAttributeConstants.h): these two statuses, or a successful empty array,
+    // are legitimate leaves. Messaging/owner errors and malformed success are not.
+    if optional && (status == .attributeUnsupported || status == .noValue) { return nil }
+    guard status == .success, let value else {
+      valid = false
+      stats?.snapshotReadFailed = true
+      return nil
+    }
+    return value
+  }
 }
 
 func nodes(_ root: AXUIElement, pid: pid_t, deadline: Date, stats: NavigationStats? = nil) -> WindowSnapshot {
+  let snapshot = WindowSnapshot(deadline: deadline, stats: stats)
   var stack: [(AXUIElement, Int, Int?)] = [(root, 0, nil)]
-  var result: [ObservedNode] = []
   var depthLimited = false
-  while !stack.isEmpty, result.count < 1000, Date() < deadline {
+  while !stack.isEmpty, snapshot.content.count < 1000, snapshot.valid, Date() < deadline {
     let (element, depth, parent) = stack.removeLast()
-    if depth > 35 { depthLimited = true; continue }
+    if depth > 35 { depthLimited = true; break }
     var owner: pid_t = 0
-    guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { continue }
-    let index = result.count
-    result.append(ObservedNode(element, parent: parent))
-    if let stats { stats.visited = min(10000, stats.visited + 1) }
-    let (childValue, childStatus) = readAttribute(element, kAXChildrenAttribute)
-    if let stats, !stats.childrenReadAttempted {
-      stats.childrenReadAttempted = true
-      stats.childrenStatus = childStatus.rawValue
+    guard AXUIElementGetPid(element, &owner) == .success, owner == pid, Date() < deadline else {
+      snapshot.valid = false
+      stats?.snapshotReadFailed = true
+      break
     }
-    if let children = childValue as? [AXUIElement] {
+    let index = snapshot.content.count
+    let node = ObservedNode(element, parent: parent, snapshot: snapshot)
+    snapshot.content.append(node)
+    if let stats { stats.visited = min(10000, stats.visited + 1) }
+    let childValue = snapshot.read(element, kAXChildrenAttribute, optional: true)
+    if let childValue {
+      guard let children = childValue as? [AXUIElement] else { snapshot.valid = false; break }
       stack.append(contentsOf: children.reversed().map { ($0, depth + 1, index) })
     }
   }
   if let stats {
     stats.snapshotDeadlineReached = stats.snapshotDeadlineReached || Date() >= deadline
-    stats.snapshotNodeLimitReached = stats.snapshotNodeLimitReached || (!stack.isEmpty && result.count >= 1000)
+    stats.snapshotNodeLimitReached = stats.snapshotNodeLimitReached || (!stack.isEmpty && snapshot.content.count >= 1000)
     stats.snapshotDepthLimitReached = stats.snapshotDepthLimitReached || depthLimited
+    stats.snapshotReadFailed = stats.snapshotReadFailed || (!snapshot.valid && Date() < deadline)
   }
-  // Never establish uniqueness or absence of a modal/Reconnect from a capped tree.
-  return WindowSnapshot(content: result, complete: stack.isEmpty && !depthLimited && Date() < deadline)
+  snapshot.traversed = stack.isEmpty && !depthLimited
+  return snapshot
 }
 
-func press(_ element: AXUIElement) -> Bool {
+func press(_ element: AXUIElement, snapshot: WindowSnapshot) -> Bool {
+  guard snapshot.complete else { return false }
   var actions: CFArray?
   guard AXUIElementCopyActionNames(element, &actions) == .success,
-    (actions as? [String])?.contains(kAXPressAction) == true else { return false }
+    snapshot.complete, (actions as? [String])?.contains(kAXPressAction) == true else { return false }
   return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
 }
 
-func rectangle(_ window: AXUIElement) -> CGRect? {
-  guard let position = attribute(window, kAXPositionAttribute),
-    let size = attribute(window, kAXSizeAttribute),
-    CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+func rectangle(_ window: AXUIElement, snapshot: WindowSnapshot) -> CGRect? {
+  guard let position = snapshot.read(window, kAXPositionAttribute),
+    let size = snapshot.read(window, kAXSizeAttribute),
+    CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else {
+    snapshot.valid = false
+    return nil
+  }
   var point = CGPoint.zero
   var dimensions = CGSize.zero
   guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
     AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
-    dimensions.width > 0, dimensions.height > 0 else { return nil }
+    dimensions.width > 0, dimensions.height > 0 else {
+    snapshot.valid = false
+    return nil
+  }
   return CGRect(origin: point, size: dimensions)
 }
 
@@ -227,8 +281,8 @@ func matches(_ left: CGRect, _ right: CGRect) -> Bool {
 func connectedPanel(_ snapshot: WindowSnapshot, email: String, deadline: Date, stats: NavigationStats? = nil) -> Bool {
   guard snapshot.complete, Date() < deadline else { return false }
   let content = snapshot.content
-  if content.contains(where: { [kAXSheetRole, "AXDialog"].contains($0.role) || $0.subrole == kAXDialogSubrole }) { return false }
-  let heading = content.contains(where: { $0.role == "AXHeading" && $0.name == "Connections" })
+  if content.contains(where: { Date() < deadline && ([kAXSheetRole, "AXDialog"].contains($0.role) || $0.subrole == kAXDialogSubrole) }) { return false }
+  let heading = content.contains(where: { Date() < deadline && $0.role == "AXHeading" && $0.name == "Connections" })
   if heading { stats?.connectionsHeadingSeen = true }
   guard heading else { return false }
   // Accumulate descendant facts bottom-up instead of re-reading every group's
@@ -248,7 +302,7 @@ func connectedPanel(_ snapshot: WindowSnapshot, email: String, deadline: Date, s
     if [kAXGroupRole, "AXWebArea"].contains(node.role), facts[index] == 7 { connected = true }
     if let parent = node.parent { facts[parent] |= facts[index] }
   }
-  return connected && Date() < deadline
+  return connected && snapshot.complete
 }
 
 func confirmExit(_ r: Request) -> Never {
@@ -296,11 +350,25 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
   var requestedConnections = false
   while Date() < deadline {
     guard identity(r, bundle: bundle)?.start == id.start else { reject("ownership-refused", "process-changed") }
-    let (windowValue, windowStatus) = readAttribute(app, kAXWindowsAttribute)
-    stats.windowsStatus = windowStatus.rawValue
+    let discovery = WindowSnapshot(deadline: deadline, stats: stats)
+    discovery.traversed = true
+    let windowValue = discovery.read(app, kAXWindowsAttribute)
     let windows = windowValue as? [AXUIElement] ?? []
+    if !(windowValue is [AXUIElement]) { discovery.valid = false }
     stats.windowsSeen = max(stats.windowsSeen, min(10000, windows.count))
-    let candidates = windows.filter { text($0, kAXRoleAttribute) == kAXWindowRole && rectangle($0) != nil }
+    var candidates: [AXUIElement] = []
+    for window in windows {
+      guard discovery.complete else { break }
+      guard let role = discovery.read(window, kAXRoleAttribute) as? String else {
+        discovery.valid = false
+        break
+      }
+      if role == kAXWindowRole, rectangle(window, snapshot: discovery) != nil { candidates.append(window) }
+    }
+    guard discovery.complete else {
+      try? await Task.sleep(nanoseconds: 200_000_000)
+      continue
+    }
     guard candidates.count <= 1 else { reject("observation-unavailable", "ambiguous-accessibility-window") }
     if let window = candidates.first {
       let snapshot = nodes(window, pid: r.pid, deadline: deadline, stats: stats)
@@ -309,13 +377,13 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
         continue
       }
       let content = snapshot.content
-      if content.contains(where: { [kAXSheetRole, "AXDialog"].contains($0.role) || $0.subrole == kAXDialogSubrole }) {
+      if content.contains(where: { Date() < deadline && ([kAXSheetRole, "AXDialog"].contains($0.role) || $0.subrole == kAXDialogSubrole) }) {
         reject("observation-unavailable", "blocking-modal")
       }
       if connectedPanel(snapshot, email: email, deadline: deadline, stats: stats) {
-        selectedWindow = window; selectedBounds = rectangle(window); break
+        selectedWindow = window; selectedBounds = rectangle(window, snapshot: snapshot); break
       }
-      guard Date() < deadline else { break }
+      guard snapshot.complete else { continue }
       stats.navigationScanStarted = true
       if !requestedSettings {
         let connectionsControls = content.filter {
@@ -323,7 +391,7 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
         }
         if connectionsControls.count == 1 {
           stats.connectionsControlSeen = true
-          requestedSettings = Date() < deadline && press(connectionsControls[0].element)
+          requestedSettings = Date() < deadline && press(connectionsControls[0].element, snapshot: snapshot)
           requestedConnections = requestedSettings
           stats.connectionsPressSucceeded = stats.connectionsPressSucceeded || requestedSettings
           if requestedSettings { continue }
@@ -344,21 +412,21 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
           return matched
         }
         if !requestedSettings, !accountMenuOpened, triggers.count == 1 {
-          accountMenuOpened = Date() < deadline && press(triggers[0].element)
+          accountMenuOpened = Date() < deadline && press(triggers[0].element, snapshot: snapshot)
           stats.accountPressSucceeded = stats.accountPressSucceeded || accountMenuOpened
         } else if !requestedSettings, accountMenuOpened {
           let menuItems = content.filter {
             Date() < deadline && $0.role == kAXMenuItemRole && ["Settings", "Settings ⌘,", "Settings⌘,"].contains($0.name.split(whereSeparator: \.isWhitespace).joined(separator: " "))
           }
           stats.settingsMenuSeen = stats.settingsMenuSeen || !menuItems.isEmpty
-          if menuItems.count == 1 { requestedSettings = Date() < deadline && press(menuItems[0].element) }
+          if menuItems.count == 1 { requestedSettings = Date() < deadline && press(menuItems[0].element, snapshot: snapshot) }
           stats.settingsPressSucceeded = stats.settingsPressSucceeded || requestedSettings
         }
       } else if !requestedConnections {
         let connections = content.filter { Date() < deadline && [kAXButtonRole, "AXLink", kAXRadioButtonRole].contains($0.role) && $0.name == "Connections" }
         if connections.count == 1 {
           stats.connectionsControlSeen = true
-          requestedConnections = Date() < deadline && press(connections[0].element)
+          requestedConnections = Date() < deadline && press(connections[0].element, snapshot: snapshot)
           stats.connectionsPressSucceeded = stats.connectionsPressSucceeded || requestedConnections
         }
       }
@@ -391,8 +459,9 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
       contentFilter: SCContentFilter(desktopIndependentWindow: target), configuration: configuration)
     guard identity(r, bundle: bundle)?.start == id.start else { reject("ownership-refused", "process-changed") }
     let assertionDeadline = Date().addingTimeInterval(3)
-    guard let currentBounds = rectangle(window), matches(currentBounds, bounds),
-      connectedPanel(nodes(window, pid: r.pid, deadline: assertionDeadline), email: email, deadline: assertionDeadline) else {
+    let assertion = nodes(window, pid: r.pid, deadline: assertionDeadline)
+    guard let currentBounds = rectangle(window, snapshot: assertion), matches(currentBounds, bounds),
+      connectedPanel(assertion, email: email, deadline: assertionDeadline) else {
       reject("assertion-failed", "connections-panel-changed")
     }
     let data = NSMutableData()
