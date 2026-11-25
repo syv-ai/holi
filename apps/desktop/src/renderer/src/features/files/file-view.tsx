@@ -22,7 +22,6 @@ import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/
 import { useAtomValue, useSetAtom } from 'jotai'
 import { FileTextIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -46,6 +45,7 @@ import { codeFind, codeFindCount } from './code-find'
 import { CodeFindBar } from './code-find-bar'
 import { codeLook } from './code-look'
 import { MdxTrustControl } from './mdx-trust-control'
+import { MdxResourcesControl } from './mdx-resources-control'
 import { useMdxDiagnostics } from './use-mdx-diagnostics'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
 import { basename } from '@/lib/tree-paths'
@@ -407,11 +407,8 @@ function TextEditor({
       onKeyDown={vim.onKeyDown}
     >
       {/\.mdx$/i.test(path) ? (
-        <div
-          className="flex min-h-8 shrink-0 items-center gap-2 px-4 py-1 text-sm"
-          aria-live="polite"
-        >
-          <span>
+        <div className="flex min-h-8 shrink-0 flex-wrap items-center gap-2 px-4 py-1 text-sm">
+          <span aria-live="polite">
             {mdx.state.kind === 'checking'
               ? 'Checking MDX…'
               : mdx.state.kind === 'clean'
@@ -420,10 +417,8 @@ function TextEditor({
                   ? `${mdx.state.diagnostics.length} MDX diagnostic${mdx.state.diagnostics.length === 1 ? '' : 's'}`
                   : `MDX diagnostics unavailable: ${mdx.state.kind === 'unavailable' ? mdx.state.message : ''}`}
           </span>
-          {mdx.state.kind === 'unavailable' && mdxTrusted && visible ? (
-            <Button type="button" size="sm" variant="outline" onClick={mdx.retry}>
-              Retry
-            </Button>
+          {mdx.resources ? (
+            <MdxResourcesControl resources={mdx.resources} onRun={mdx.retry} />
           ) : null}
         </div>
       ) : null}
