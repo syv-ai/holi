@@ -232,7 +232,6 @@ export async function createUpgradeProviders(root) {
         })
         upstream.on('error', () => client.destroy())
         client.on('error', () => upstream.destroy())
-        upstream.on('error', () => client.destroy())
         client.on('close', () => owned.delete(client))
         upstream.on('close', () => owned.delete(upstream))
       }
