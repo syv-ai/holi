@@ -46,10 +46,14 @@ type CalendarLookup =
   | { kind: 'blocked'; reason: string; cancelled?: true }
 
 type Parsed = NonNullable<ReturnType<typeof parseMailInvitation>>
-type RequestMaterial = { details: Parsed['details']; request: NonNullable<Parsed['request']> }
-type InvitationTarget = RequestMaterial & {
+type RevisionMaterial = {
+  details: Parsed['details']
+  material: NonNullable<Parsed['revisionMaterial']>
+}
+type InvitationTarget = RevisionMaterial & {
+  request: NonNullable<Parsed['request']>
   joinOnly: boolean
-  predecessors: RequestMaterial[]
+  predecessors: RevisionMaterial[]
 }
 
 async function invitationPages<T>(
@@ -390,7 +394,7 @@ function invitationCopy(
 ): CalendarLookup {
   const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []
   const selfEmail = self[0]?.email?.toLowerCase()
-  const { details, request, joinOnly } = invitation
+  const { details, request, material, joinOnly } = invitation
   // Calendar's `self` denotes the copy, not the mailbox. Even its owner must
   // not answer for a calendar ID or alias that is not the invited mailbox.
   const attendee =
@@ -437,7 +441,7 @@ function invitationCopy(
     return blocked('The Calendar recurrence scope does not match this invitation')
   if (recurrenceId === null && details.recurring && !sameRecurrenceStart(request, event.start))
     return blocked('The Calendar time zone does not match this series invitation')
-  const { explicitFields } = request
+  const { explicitFields } = material
   if (explicitFields.recurrence) {
     const expected = recurrenceSet(request.recurrence)
     const actual = recurrenceSet(event.recurrence ?? [])
@@ -533,7 +537,7 @@ function provesChangedMaterial(
 ): boolean {
   const { predecessors } = invitation
   if (!predecessors.length) return true
-  const proves = <T>(valueOf: (request: RequestMaterial) => T, observed: T | undefined) => {
+  const proves = <T>(valueOf: (revision: RevisionMaterial) => T, observed: T | undefined) => {
     const expected = valueOf(invitation)
     return observed === expected || predecessors.every((prior) => valueOf(prior) === expected)
   }
@@ -543,7 +547,7 @@ function provesChangedMaterial(
     const millis = allDay ? NaN : instant(value)
     return Number.isFinite(millis) ? millis : value
   }
-  const prose = (copy: RequestMaterial) => words(copy.request.description)
+  const prose = (copy: RevisionMaterial) => words(copy.material.description)
   const description = prose(invitation)
   // Calendar can represent a bare join URL as structured conference data.
   // That is not a substitute for changed prose, or for a URL already present
@@ -558,7 +562,7 @@ function provesChangedMaterial(
       ))
   return Boolean(
     proves(
-      ({ details, request }) => (request.explicitFields.title ? words(details.title) : ''),
+      ({ details, material }) => (material.explicitFields.title ? words(details.title) : ''),
       textOf(event.summary),
     ) &&
     proves(({ details }) => words(details.location), textOf(event.location)) &&

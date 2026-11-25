@@ -18,12 +18,6 @@ const COMPARISON_LOOKAHEAD_YEARS = 8
 
 export class CalendarPartError extends Error {}
 
-export class AmbiguousCalendarValue extends CalendarPartError {
-  constructor() {
-    super('Calendar invitation has an ambiguous VALUE parameter')
-  }
-}
-
 export function malformed(): never {
   throw new CalendarPartError('Calendar invitation is malformed or unsupported')
 }
@@ -179,7 +173,7 @@ function contentLine(line: string) {
     // VALUE is always a single type token, on standard and extension
     // properties alike. ICAL would otherwise silently select the last one.
     if (key === 'VALUE' && (parameters.has(key) || !/^(?:[a-z\d-]+|"[a-z\d-]+")$/i.test(raw)))
-      throw new AmbiguousCalendarValue()
+      throw new CalendarPartError('Calendar invitation has an ambiguous VALUE parameter')
     // ICAL only consumes separately quoted lists for these address parameters.
     // Reject mixed/unsupported quoting rather than letting ICAL see a different
     // parameter boundary than the wire guard.

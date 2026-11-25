@@ -8,7 +8,6 @@ import {
 } from '../shared/meeting-links'
 import type { InviteAnswer } from './calendar'
 import {
-  AmbiguousCalendarValue,
   CalendarPartError,
   malformed,
   openCalendarPart,
@@ -84,6 +83,8 @@ type ParsedInvitation = {
   /** One entry per validated cancellation scope; the caller must verify the organizer. */
   cancellations: Cancellation[]
   details: MailInvitationDetails
+  /** Material from a strictly parsed revision, even when it cannot authorize an RSVP. */
+  revisionMaterial: { description: string | null; explicitFields: ExplicitFields } | null
   /** Never crosses the capability seam. Also supplies matching data for join-only mail. */
   request: {
     attendees: string[]
@@ -91,9 +92,6 @@ type ParsedInvitation = {
     attendeeStates: Record<string, AttendeeState>
     /** Canonical RRULE/RDATE/EXDATE lines, without expanding or resolving a timezone. */
     recurrence: string[]
-    description: string | null
-    /** Fields supplied by the organizer, not synthesized display defaults. */
-    explicitFields: ExplicitFields
     recurrenceKind: TimeKind | null
     /** DTSTART in its original civil basis, including the zone of future recurrences. */
     recurrenceTimeBasis: ReturnType<CalendarTimes['recurrenceTimeBasis']>
@@ -432,6 +430,7 @@ export function parseMailInvitation(
   const hint = methodOf(mimeMethod)
   let method: ParsedInvitation['method'] = null
   let recurrenceRange: ParsedInvitation['recurrenceRange'] = null
+  let revisionMaterial: ParsedInvitation['revisionMaterial'] = null
   const details: MailInvitationDetails = {
     identity: {
       messageId,
@@ -458,7 +457,7 @@ export function parseMailInvitation(
   }
   const unavailable = (reason: string, cancellations: Cancellation[] = []): ParsedInvitation => {
     details.unavailableReason = reason
-    return { method, recurrenceRange, cancellations, details, request: null }
+    return { method, recurrenceRange, cancellations, details, revisionMaterial, request: null }
   }
 
   try {
@@ -573,6 +572,10 @@ export function parseMailInvitation(
     identity.materialKey = materialKey(method, identity, material, exceptions)
     recurrenceRange = material.recurrenceRange
     Object.assign(details, material.details, { identity })
+    revisionMaterial = {
+      description: material.description,
+      explicitFields: material.explicitFields,
+    }
     // Keep an unstamped REQUEST in revision selection, but neither authorize
     // an RSVP nor derive cancellations from that malformed delivery.
     if (unstampedRequest) return unavailable('Invitation has no usable revision timestamp')
@@ -594,12 +597,11 @@ export function parseMailInvitation(
       recurrenceRange,
       cancellations,
       details,
+      revisionMaterial,
       request: {
         attendees: material.attendees,
         attendeeStates,
         recurrence: material.rules,
-        description: material.description,
-        explicitFields: material.explicitFields,
         recurrenceKind: identity.recurrenceId ? timeKind(identity.recurrenceId) : null,
         recurrenceTimeBasis,
         calendarRecurrenceZoneMatches: times.checkRecurrenceZones(recurrenceTimeBasis, events),
@@ -651,48 +653,56 @@ function buildReply(
 }
 
 /** A sent iTIP reply can describe only this organizer, invite sequence and occurrence.
- * Its DTSTAMP belongs to the reply, not the original invitation. */
+ * Its DTSTAMP belongs to the reply, not the original invitation. Null means
+ * the body establishes non-relation; an unreadable body cannot do that. */
 export function invitationReplyStatus(
   source: string,
-  identity: MailInvitationIdentity,
+  identity: Pick<MailInvitationIdentity, 'uid' | 'sequence' | 'recurrenceId'>,
   organizer: string,
   email: string,
-): InviteAnswer | 'ambiguous' | null {
+  mimeMethod?: string,
+): InviteAnswer | 'unresolved' | null {
   try {
     const { calendar: reply, resolveTimes } = openCalendarPart(source)
     const method = single(reply, 'method')
-    if (method?.type !== 'text' || methodOf(method.getFirstValue()) !== 'REPLY') return null
+    if (method && method.type !== 'text') return 'unresolved'
+    const declared = methodOf(method?.getFirstValue())
+    if (mimeMethod !== undefined && mimeMethod !== declared) return 'unresolved'
+    if (declared !== 'REPLY')
+      return !method || (declared && /^[A-Z][A-Z0-9-]*$/.test(declared)) ? null : 'unresolved'
     const events = reply.getAllSubcomponents('vevent')
-    if (events.length !== 1) return null
+    if (events.length !== 1) return 'unresolved'
     const { resolveTime } = resolveTimes()
     const entry = events[0]!
     const sent = identityOf('', entry, resolveTime)
+    if (
+      sent.uid !== identity.uid ||
+      sent.sequence !== identity.sequence ||
+      sent.recurrenceId !== identity.recurrenceId
+    )
+      return null
     const recurrence = entry.getFirstProperty('recurrence-id')
-    if (recurrence?.getParameter('range') !== undefined) return null
+    if (sent.dtstamp === null || recurrence?.getParameter('range') !== undefined)
+      return 'unresolved'
     // Validate any supplied times even when no recurrence ID needs their zones.
     for (const key of ['dtstart', 'dtend']) {
       const property = single(entry, key)
       const time = eventTime(property)
-      if (time && recurrence && property?.type !== recurrence.type) return null
+      if (time && recurrence && property?.type !== recurrence.type) return 'unresolved'
       if (time) resolveTime(time, property)
     }
-    if (
-      sent.dtstamp === null ||
-      sent.uid !== identity.uid ||
-      sent.sequence !== identity.sequence ||
-      sent.recurrenceId !== identity.recurrenceId ||
-      calendarAddress(single(entry, 'organizer')) !== organizer
-    )
-      return null
+    const sender = calendarAddress(single(entry, 'organizer'))
     const attendees = entry.getAllProperties('attendee')
-    if (attendees.length !== 1 || calendarAddress(attendees[0]) !== email) return null
+    const attendee = attendees.length === 1 ? calendarAddress(attendees[0]) : null
+    if (!sender || !attendee) return 'unresolved'
+    if (sender !== organizer || attendee !== email) return null
     const partstat = methodOf(attendees[0]!.getParameter('partstat'))
     return (
       (['accepted', 'tentative', 'declined'] as const).find(
         (answer) => PARTSTAT[answer] === partstat,
-      ) ?? null
+      ) ?? 'unresolved'
     )
-  } catch (error) {
-    return error instanceof AmbiguousCalendarValue ? 'ambiguous' : null
+  } catch {
+    return 'unresolved'
   }
 }

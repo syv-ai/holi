@@ -509,6 +509,52 @@ describe('listThreads', () => {
     expect(mimeProbe?.searchParams.get('fields')).not.toMatch(/body|data|attachmentId/i)
   })
 
+  it.each([
+    ['(forwarded (original)) message/rfc822; name="meeting (copy).eml"', false],
+    ['(unclosed message/rfc822', true],
+  ] as const)(
+    'does not promote calendar mail inside a forward in a headers-only probe (%s)',
+    async (declaration, unknown) => {
+      const id = 'incoming'
+      const root = { mimeType: 'multipart/mixed', headers: [header('To', 'me@example.com')] }
+      const { api } = gmail(
+        [{ id: 't' }],
+        { t: { id: 't', messages: [{ id, threadId: 't', labelIds: ['INBOX'], payload: root }] } },
+        [],
+        undefined,
+        [],
+        {
+          [id]: {
+            id,
+            threadId: 't',
+            payload: {
+              ...root,
+              parts: [
+                {
+                  mimeType: 'application/octet-stream',
+                  headers: [header('Content-Type', declaration)],
+                  parts: [
+                    {
+                      mimeType: 'multipart/mixed',
+                      parts: [
+                        { mimeType: 'text/calendar; method=REQUEST' },
+                        { mimeType: 'text/calendar; method=CANCEL' },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      )
+      expect((await listThreads(api)).threads[0]).toMatchObject({
+        automated: false,
+        automationUnknown: unknown,
+      })
+    },
+  )
+
   it.each(['another-message', undefined, 'requested-message'])(
     'classifies the incoming message using only an exact headers-only reply (returned ID: %s)',
     async (returnedId) => {
@@ -3102,6 +3148,7 @@ describe('fetchMessageAttachments', () => {
     const bytes = Buffer.from([0xfb, 0xef, 0xbe])
     const api = messageWith(
       {
+        mimeType: 'multipart/mixed',
         parts: [
           { filename: 'x.bin', mimeType: 'application/octet-stream', body: { attachmentId: 'a1' } },
         ],
@@ -3118,6 +3165,7 @@ describe('fetchMessageAttachments', () => {
     // An inline text part is not a file, and a forward that attached the
     // message body as a download would be nonsense.
     const api = messageWith({
+      mimeType: 'multipart/mixed',
       parts: [{ mimeType: 'text/plain', body: { data: 'aGk' } }],
     })
 

@@ -13,16 +13,16 @@ export type Invitation = ReadInvitation
 
 export function invitationResponse(invitation: Invitation) {
   const { recordedResponseStatus: recorded, responseStatus, sentResponseStatus: sent } = invitation
-  const calendarAnswer =
-    !invitation.responsePending && recorded !== 'needsAction' && recorded !== 'delegated'
-      ? recorded
-      : null
-  // A known Calendar answer is still worth showing when Gmail is unsettled.
-  // Keep that qualified display separate from the current answer and receipts.
+  const calendarAnswer = recorded !== 'needsAction' && recorded !== 'delegated' ? recorded : null
+  // A verified Calendar answer is evidence about that copy only. It cannot
+  // settle an outstanding write or turn the local receipt into a confirmation.
   const differingSent = calendarAnswer && sent !== calendarAnswer ? sent : null
   return {
-    current: differingSent ? calendarAnswer : responseStatus,
-    calendarOnly: differingSent || responseStatus === null ? calendarAnswer : null,
+    current: invitation.responsePending ? null : differingSent ? calendarAnswer : responseStatus,
+    calendarOnly:
+      invitation.responsePending || differingSent || responseStatus === null
+        ? calendarAnswer
+        : null,
     differingSent,
   }
 }
