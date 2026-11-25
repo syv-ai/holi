@@ -122,13 +122,22 @@ export async function checkCompatibility(): Promise<string> {
     }
     if (!results[0]) throw new Error('Missing status matrix results')
     workingCopy = { ...results[0], cases: results }
-    const treeResults = []
-    for (const item of fixture.cases) {
-      treeResults.push(
-        await runWorkingCopyTreeCheck(item.root, item.remote, item.branch ?? 'fixture-start'),
-      )
+    const treeManifestPath = gitEnvironment.objectForKey('HOLI_GIT_TREE_MANIFEST')
+    if (typeof treeManifestPath !== 'string') throw new Error('Missing working-copy tree manifest')
+    const treeFixture = JSON.parse(
+      File.fromPath(treeManifestPath).readTextSync((error) => {
+        if (error) throw error
+      }),
+    ) as {
+      cases: Array<{ name: string; runId: string; root: string; remote: string; branch: string }>
     }
-    workingCopy.treeCases = treeResults
+    if (!Array.isArray(treeFixture.cases) || treeFixture.cases.length === 0)
+      throw new Error('Working-copy tree manifest has no cases')
+    workingCopy.treeCases = []
+    for (const item of treeFixture.cases) {
+      const result = await runWorkingCopyTreeCheck(item.root, item.remote, item.branch)
+      workingCopy.treeCases.push({ ...result, name: item.name, runId: item.runId })
+    }
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
