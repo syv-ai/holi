@@ -488,6 +488,7 @@ it('drains actual scheduler turn polling without finishing a sibling same-id run
   expect((await post(A, '/turn/end')).ok).toBe(true)
   await stopRemote(A)
   expect(await call(B, 'schedules.list')).toMatchObject([{ runs: [{ jobId: 'abc12345' }] }])
+  expect(await call(B, 'agent.sessions')).toMatchObject([{ id: 'abc12345' }])
   expect(
     (await machineCall(B, 'agent', 'notify', 'B remains active', 'after A poll teardown')).status,
   ).toBe(200)
