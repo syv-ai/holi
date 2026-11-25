@@ -184,6 +184,7 @@ async function rig() {
     sent: new Map<string, ReturnType<typeof gmailMessage>>(),
     sentVisible: true,
     sentIndexed: true,
+    sentInternalDate: null as number | null,
     receiptError: null as number | null,
     sentSearchError: null as number | null,
     replyThread: 'thread',
@@ -385,7 +386,13 @@ async function rig() {
       state.sentMime.push(raw)
       const reply = gmailMessage(
         `reply-${state.sendAttempts}`,
-        500 + state.sendAttempts,
+        state.sentInternalDate ??
+          Math.max(
+            500,
+            ...[...state.messages, ...state.sent.values()].map(({ internalDate }) =>
+              Number(internalDate),
+            ),
+          ) + 1,
         Buffer.from(part[1]!, 'base64').toString(),
         {
           sent: true,
@@ -507,9 +514,6 @@ it('shows a past, declined primary copy and sends each RSVP to its organizer onl
 it('uses original start and the hidden secondary calendar ID for an attached, moved occurrence', async () => {
   const { state, read, respond } = await rig()
   const calendar = 'hidden@example.com'
-  state.hiddenCalendars = [calendar]
-  state.events.set(calendar, [event({ id: 'series', series: true })])
-  state.instances.set(calendar, [event({ id: 'moved', occurrence: true })])
   const attached = invite(
     'REQUEST',
     [
@@ -521,6 +525,17 @@ it('uses original start and the hidden secondary calendar ID for an attached, mo
   state.messages = [gmailMessage('update', 200, attached, { attached: true })]
   state.attachments.set('update', attached)
   const occurrence = { ...identity, recurrenceId: '2024-07-11T15:00:00.000Z' }
+  expect(await read()).toMatchObject({
+    identity: occurrence,
+    canRespond: false,
+    unavailableReason: expect.stringMatching(/time zone definition/i),
+  })
+  await expect(respond('accepted', occurrence)).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+
+  state.hiddenCalendars = [calendar]
+  state.events.set(calendar, [event({ id: 'series', series: true })])
+  state.instances.set(calendar, [event({ id: 'moved', occurrence: true })])
   expect(await read()).toMatchObject({ identity: occurrence, start, end, canRespond: true })
   expect(await respond('accepted', occurrence)).toMatchObject({
     outcome: 'sent',
@@ -528,6 +543,36 @@ it('uses original start and the hidden secondary calendar ID for an attached, mo
   })
   expect(state.notices).toEqual([{ calendar, to: organizer, status: 'accepted' }])
   expect(state.sendAttempts).toBe(0)
+})
+
+it('does not email a zoned occurrence if a verified Calendar target disappears at final preflight', async () => {
+  const { state, read, respond } = await rig()
+  state.messages = [
+    gmailMessage(
+      'update',
+      200,
+      invite(
+        'REQUEST',
+        [
+          'RECURRENCE-ID;TZID=America/New_York:20240711T110000',
+          'DTSTART:20240718T150000Z',
+          'DTEND:20240718T160000Z',
+        ].join('\r\n'),
+      ),
+    ),
+  ]
+  state.events.set('primary', [event({ id: 'moved', occurrence: true })])
+  expect(await read()).toMatchObject({ canRespond: true, scope: 'occurrence' })
+  state.refreshOnPrimaryCopy = true
+  state.onRefresh = async () => {
+    state.events.clear()
+  }
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+  expect(await read()).toMatchObject({
+    canRespond: false,
+    unavailableReason: expect.stringMatching(/time zone definition/i),
+  })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
 it('uses a threaded iTIP REPLY when Calendar has no copy and recovers its response from Sent', async () => {
@@ -574,6 +619,23 @@ it('uses a threaded iTIP REPLY when Calendar has no copy and recovers its respon
   expect(entry.getFirstProperty('attendee')?.getParameter('partstat')).toBe('TENTATIVE')
   expect(state.sentMime[0]).toContain('References: <original@example.net> <update@example.net>')
   expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it('sends an email reply without the optional DTSTART when its IANA zone was not supplied', async () => {
+  const { state, read, respond } = await rig()
+  const request = invite(
+    'REQUEST',
+    'DTSTART;TZID=America/New_York:20240718T110000\r\nDTEND:20240718T160000Z',
+  )
+  state.messages = [gmailMessage('update', 200, request, { method: 'REQUEST' })]
+  expect(await read()).toMatchObject({ start, canRespond: true })
+  expect(await respond('accepted')).toMatchObject({ channel: 'gmail', refreshPending: false })
+  const source = state.sent.get('reply-1')?.payload.parts[1]?.body.data
+  const reply = new ICAL.Component(ICAL.parse(Buffer.from(source!, 'base64url').toString()))
+  const entry = reply.getFirstSubcomponent('vevent')!
+  expect(entry.getFirstPropertyValue('uid')).toBe(uid)
+  expect(entry.hasProperty('dtstart')).toBe(false)
+  expect(entry.getFirstProperty('attendee')?.getParameter('partstat')).toBe('ACCEPTED')
 })
 
 it('does not mistake ordinary mail, a draft, or sent calendar mail for the latest incoming invitation', async () => {
@@ -1388,7 +1450,8 @@ it('does not settle a Calendar response while the matching copy still reports th
 it('marks contradictory Sent readback instead of settling or offering to send the same answer again', async () => {
   const { state, read, respond } = await rig()
   const previous = acceptedReply('<update@example.net>')
-  // Gmail reports the competing answer as later than the just-filed reply.
+  // Gmail reports the pre-existing competing answer as later than the just-filed reply.
+  state.sentInternalDate = 501
   state.messages.push({ ...previous, internalDate: '700' })
   expect(await read()).toMatchObject({ responseStatus: 'accepted', canRespond: true })
   expect(await respond('tentative')).toMatchObject({
@@ -1399,6 +1462,50 @@ it('marks contradictory Sent readback instead of settling or offering to send th
   expect(await read()).toMatchObject({ canRespond: false })
   await expect(respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   expect(state.sendAttempts).toBe(1)
+})
+
+it('uses a newer correlated Gmail answer after a confirmed Holi reply', async () => {
+  const { state, read, respond, restart } = await rig()
+  state.replyThread = 'separate-sent-thread'
+  await read()
+  expect(await respond('accepted')).toMatchObject({
+    channel: 'gmail',
+    refreshPending: false,
+    invitation: { responseStatus: 'accepted' },
+  })
+
+  const parent = '<update@example.net>'
+  const decline = gmailMessage(
+    'gmail-decline',
+    700,
+    // An old iTIP DTSTAMP does not order Gmail messages.
+    invite('REPLY', '', 3, '20240101T000000Z').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:'),
+    { sent: true, parent, method: 'REPLY' },
+  )
+  const unorderable = { ...decline, internalDate: '' }
+  state.messages.push(unorderable)
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject({ responseStatus: null, canRespond: false })
+  await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  state.messages[state.messages.length - 1] = decline
+  expect(await reopened.read()).toMatchObject({
+    responseStatus: 'declined',
+    sentResponseStatus: 'declined',
+    canRespond: true,
+  })
+  expect(await reopened.respond('declined')).toMatchObject({ outcome: 'unchanged' })
+  expect(state.sendAttempts).toBe(1)
+
+  expect(await reopened.respond('tentative')).toMatchObject({
+    channel: 'gmail',
+    outcome: 'sent',
+    refreshPending: false,
+    invitation: { responseStatus: 'tentative' },
+  })
+  expect(await reopened.read()).toMatchObject({ responseStatus: 'tentative', canRespond: true })
+  expect(await reopened.respond('tentative')).toMatchObject({ outcome: 'unchanged' })
+  expect(state.sendAttempts).toBe(2)
 })
 
 it('blocks a listed active occurrence of a verified cancelled Calendar master', async () => {

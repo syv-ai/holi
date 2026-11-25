@@ -21,6 +21,7 @@ type Delivery =
       parent: string
       organizer: string
       mailbox: string
+      priorSentTimestamp?: number
       receipt: { id: string | null; threadId: string | null } | null
     }
 
@@ -119,6 +120,10 @@ function isAttempt(value: unknown): value is InvitationAttempt {
     text(parent) &&
     text(mailbox) &&
     text(organizer) &&
+    (delivery.priorSentTimestamp === undefined ||
+      (typeof delivery.priorSentTimestamp === 'number' &&
+        Number.isSafeInteger(delivery.priorSentTimestamp) &&
+        delivery.priorSentTimestamp >= 0)) &&
     (receipt === null ||
       (record(receipt) && nullableText(receipt.id) && nullableText(receipt.threadId)))
   )

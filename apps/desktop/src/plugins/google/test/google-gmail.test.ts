@@ -8,6 +8,8 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { GoogleApi } from '../main/api'
+import { openGoogleCache } from '../main/cache'
+import { createGoogleData } from '../main/data'
 import {
   bodyHtmlOf,
   bodyTextOf,
@@ -256,6 +258,106 @@ describe('htmlToText', () => {
 })
 
 describe('listThreads', () => {
+  it('returns a usable partial Mail page through cached delta and retry', async () => {
+    let oversized = false
+    let metadataStatus = 200
+    const healthy = {
+      id: 'healthy',
+      messages: [
+        {
+          id: 'm-healthy',
+          internalDate: '1000',
+          labelIds: ['INBOX', 'Label_12'],
+          payload: {
+            mimeType: 'text/calendar',
+            headers: [
+              header('From', 'host@example.com'),
+              header('To', 'alias@example.com'),
+              header('Subject', 'Planning meeting'),
+              header('Content-Type', 'text/calendar; method=REQUEST'),
+            ],
+          },
+        },
+      ],
+    }
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input))
+      if (init?.method && init.method !== 'GET') throw new Error('Mail list only reads')
+      const path = url.pathname
+      if (path.endsWith('/settings/sendAs'))
+        return Response.json({ sendAs: [{ sendAsEmail: 'alias@example.com' }] })
+      if (path.endsWith('/labels'))
+        return Response.json({ labels: [{ id: 'Label_12', name: 'Work', type: 'user' }] })
+      if (path.endsWith('/history') && url.searchParams.get('startHistoryId') === '10' && oversized)
+        return Response.json({
+          historyId: '20',
+          history: [{ messagesAdded: [{ message: { threadId: 'oversized' } }] }],
+        })
+      if (path.endsWith('/history')) return Response.json({ historyId: oversized ? '20' : '10' })
+      if (path.endsWith('/profile')) return Response.json({ historyId: oversized ? '20' : '10' })
+      if (path.endsWith('/threads'))
+        return Response.json(
+          url.searchParams.get('q')?.includes('filename:ics')
+            ? { threads: [{ id: 'healthy' }] }
+            : { threads: [{ id: 'oversized' }, { id: 'healthy' }], nextPageToken: 'next-page' },
+        )
+      if (url.searchParams.get('format') === 'metadata') {
+        if (path.endsWith('/threads/healthy')) return Response.json(healthy)
+        if (path.endsWith('/threads/oversized')) {
+          if (metadataStatus !== 200)
+            return Response.json(
+              { error: { status: 'PERMISSION_DENIED' } },
+              { status: metadataStatus },
+            )
+          const message = {
+            id: 'm-other',
+            internalDate: '2000',
+            labelIds: ['INBOX'],
+            payload: { mimeType: 'text/plain', headers: [header('Subject', 'Other thread')] },
+          }
+          return Response.json({
+            id: 'oversized',
+            messages: oversized
+              ? Array.from({ length: 2049 }, (_, i) => ({ ...message, id: `m-${i}` }))
+              : [message],
+          })
+        }
+      }
+      throw new Error(`Unexpected Google read: ${url}`)
+    }
+    const cache = openGoogleCache(':memory:')
+    try {
+      const data = createGoogleData({
+        api: () => new GoogleApi({ accessToken: async () => 'at', fetch }),
+        cache,
+      })
+      const options = { mailbox: 'inbox' as const }
+      expect((await data.threads(options)).threads.map(({ id }) => id)).toEqual([
+        'oversized',
+        'healthy',
+      ])
+      oversized = true
+      const partial = {
+        unreadableThreadIds: ['oversized'],
+        threads: [
+          {
+            id: 'healthy',
+            subject: 'Planning meeting',
+            labels: ['Work'],
+            addressedAs: 'to',
+            hasInvite: true,
+          },
+        ],
+      }
+      expect(await data.threads(options)).toMatchObject(partial)
+      expect(await data.threads(options)).toMatchObject({ ...partial, nextPageToken: 'next-page' })
+      metadataStatus = 403
+      await expect(data.threads(options)).rejects.toMatchObject({ status: 403 })
+    } finally {
+      cache.close()
+    }
+  })
+
   it.each([
     ['new incoming after a reply', ['INBOX'], ['SENT'], ['INBOX'], true, false],
     ['draft after incoming', ['INBOX'], ['DRAFT'], undefined, true, false],

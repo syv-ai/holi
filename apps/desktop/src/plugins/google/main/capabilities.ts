@@ -862,7 +862,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
      * A page of threads matching Gmail's own search grammar; no query is the
      * inbox. Ordinary UI lists use the cache and history delta. CLI reads use
      * a fresh page; --json exposes its continuation token. Ordinary CLI text
-     * remains a thread array; --needs-reply text includes the page envelope.
+     * remains a thread array; --needs-reply and partial pages include the envelope.
      */
     'google.search': cap({
       doors: ['ui', 'cli', 'app'],
@@ -901,7 +901,11 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         return value as CliMailPage
       },
       text: (page: CliMailPage) =>
-        JSON.stringify(page[NEEDS_REPLY_CLI_TEXT] ? page : page.threads, null, 2),
+        JSON.stringify(
+          page[NEEDS_REPLY_CLI_TEXT] || page.unreadableThreadIds ? page : page.threads,
+          null,
+          2,
+        ),
     }),
 
     /** Account-bound invitation and join-only meeting cards, scoped per original occurrence. */

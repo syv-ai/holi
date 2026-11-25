@@ -1080,6 +1080,33 @@ test('loads the next page when asked', async () => {
   expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
 })
 
+test('keeps healthy Mail rows usable while retrying a partial inbox', async () => {
+  const partial = { ...page([summary()], 'page-2'), unreadableThreadIds: ['oversized'] }
+  let complete!: (result: typeof partial) => void
+  threadMock.mockResolvedValueOnce(partial).mockImplementationOnce(
+    () =>
+      new Promise<typeof partial>((resolve) => {
+        complete = resolve
+      }),
+  )
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent(/threads couldn’t be loaded/i)
+  await user.click(within(alert).getByRole('button', { name: 'Retry' }))
+  expect(within(alert).getByRole('button', { name: /Retrying/ })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: /Q2 budget/ }))
+  expect(await screen.findByRole('article')).toBeInTheDocument()
+  await act(async () => complete(partial))
+
+  expect(screen.getByRole('button', { name: /Q2 budget/ })).toBeInTheDocument()
+  expect(screen.getByRole('alert')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /load more/i })).toBeEnabled()
+  expect(setReadMock).not.toHaveBeenCalled()
+  expect(respondMock).not.toHaveBeenCalled()
+})
+
 test('lists attachments on an open message', async () => {
   withMessage(
     { body: 'see attached', html: null },

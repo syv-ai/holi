@@ -399,6 +399,31 @@ test('readable mail metadata uses opaque semantic colors for rows, drafts, and a
   expect([...size.parentElement!.classList].some((name) => /^opacity-\d+$/.test(name))).toBe(false)
 })
 
+test('retries the partial continuation without losing either page of usable Mail', async () => {
+  const first = page([summary({ unread: false })], 'page-2')
+  const second = page([summary({ id: 't2', subject: 'Second page thread' })])
+  const partial = { ...second, unreadableThreadIds: ['oversized'] }
+  searchMock.mockImplementation(async ({ pageToken }: { pageToken?: string }) => {
+    if (pageToken === undefined) return first
+    if (pageToken === 'page-2') return partial
+    throw new Error('Invalid Gmail page token')
+  })
+  const user = userEvent.setup()
+  render(<MailShell />)
+
+  await user.click(await screen.findByRole('button', { name: 'Load more' }))
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent(/threads couldn’t be loaded/i)
+  await user.click(within(alert).getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(within(alert).getByRole('button', { name: 'Retry' })).toBeEnabled())
+  expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ pageToken: 'page-2' }))
+  expect(screen.getByText('Second page thread')).toBeInTheDocument()
+  await user.click(screen.getByText('Q2 budget', { selector: 'p' }))
+  expect(await screen.findByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+  expect(markReadMock).not.toHaveBeenCalled()
+  expect(respondMock).not.toHaveBeenCalled()
+})
+
 test('opens a thread: marks it read, renders HTML in the sandboxed frame', async () => {
   const user = userEvent.setup()
   render(<MailShell />)

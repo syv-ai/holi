@@ -181,6 +181,8 @@ async function readGmailStarred(remote: string, id: string): Promise<boolean> {
       ...(pageToken === undefined ? {} : { pageToken }),
     })
     if (page.threads.some((thread) => thread.id === id)) return true
+    if (page.unreadableThreadIds?.includes(id))
+      throw new Error('Gmail could not verify whether this thread is starred.')
     pageToken = page.nextPageToken ?? undefined
   } while (pageToken !== undefined)
   return false

@@ -68,7 +68,8 @@ export interface GoogleCache {
    * between. The cursor belongs to the list it was taken for.
    */
   historyId(key: string): string | null
-  setHistoryId(key: string, id: string): void
+  /** Clear the cursor when a partial snapshot cannot safely seed a delta. */
+  setHistoryId(key: string, id: string | null): void
   /** Delete the database file. Disconnect calls this. */
   destroy(): void
   /** Terminal disconnect: unlike destroy, later use cannot reopen the cache. */
@@ -248,9 +249,11 @@ export function openGoogleCache(path: string): GoogleCache {
     },
 
     setHistoryId(key, id) {
-      database()
-        .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
-        .run(historyKey(key), id)
+      if (id === null) database().prepare('DELETE FROM meta WHERE key = ?').run(historyKey(key))
+      else
+        database()
+          .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
+          .run(historyKey(key), id)
     },
 
     destroy() {
