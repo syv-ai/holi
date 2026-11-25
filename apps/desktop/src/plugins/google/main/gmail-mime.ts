@@ -166,7 +166,12 @@ export function createMimeWalk(maxDepth = 16, format: 'partial' | 'full' = 'part
   }
   return (
     payload: RawPart | undefined,
-    collect: (part: RawPart, location: MimeLocation, forwarded: boolean) => void,
+    collect: (
+      part: RawPart,
+      location: MimeLocation,
+      forwarded: boolean,
+      unexpanded: boolean,
+    ) => void,
   ) => {
     const visit = (part: RawPart, depth: number, location: MimeLocation) => {
       bounded(--nodes >= 0 && depth <= maxDepth)
@@ -191,7 +196,8 @@ export function createMimeWalk(maxDepth = 16, format: 'partial' | 'full' = 'part
       if (format === 'full' && !isFullPart(part, routing))
         throw new CalendarScanError('Gmail returned an incomplete or invalid full MIME part')
       const forwarded = routing?.startsWith('message/') === true
-      collect(part, location, forwarded)
+      const unexpanded = routing?.startsWith('multipart/') === true && !part.parts?.length
+      collect(part, location, forwarded, unexpanded)
       if (forwarded || !part.parts?.length) return
       bounded(part.parts.length <= nodes && depth < maxDepth)
       const alternative = routing === 'multipart/alternative'

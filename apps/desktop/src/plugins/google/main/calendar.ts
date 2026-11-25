@@ -107,6 +107,7 @@ export interface RawEvent {
   start?: { date?: string; dateTime?: string; timeZone?: string }
   end?: RawEvent['start']
   endTimeUnspecified?: boolean
+  attendeesOmitted?: boolean
   attendees?: {
     self?: boolean
     responseStatus?: string

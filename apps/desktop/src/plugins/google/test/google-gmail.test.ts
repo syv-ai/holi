@@ -555,12 +555,25 @@ describe('listThreads', () => {
     },
   )
 
-  it.each(['another-message', undefined, 'requested-message'])(
-    'classifies the incoming message using only an exact headers-only reply (returned ID: %s)',
-    async (returnedId) => {
+  it.each([
+    ['another-message', 'one-thread'],
+    [undefined, 'one-thread'],
+    ['requested-message', 'another-thread'],
+    ['requested-message', 'one-thread'],
+  ])(
+    'probes a commented multipart wrapper and checks both returned IDs (%s, %s)',
+    async (returnedId, returnedThread) => {
       const threadId = 'one-thread'
       const id = 'requested-message'
-      const { api } = gmail(
+      // Gmail's metadata projection leaves the MIME children unexpanded.
+      const payload = {
+        mimeType: 'application/octet-stream',
+        headers: [
+          header('To', 'me@example.com'),
+          header('Content-Type', '(outer (comment)) multipart (type) / mixed; boundary="invite"'),
+        ],
+      }
+      const { api, seen } = gmail(
         [{ id: threadId }],
         {
           [threadId]: {
@@ -570,7 +583,7 @@ describe('listThreads', () => {
                 id,
                 threadId,
                 labelIds: ['INBOX'],
-                payload: { mimeType: 'multipart/mixed', headers: [header('To', 'me@example.com')] },
+                payload,
               },
             ],
           },
@@ -581,18 +594,32 @@ describe('listThreads', () => {
         {
           [id]: {
             id: returnedId,
-            threadId,
+            threadId: returnedThread,
             payload: {
-              mimeType: 'multipart/mixed',
+              ...payload,
               parts: [{ mimeType: 'text/calendar; method=REQUEST' }],
             },
           },
         },
       )
-      const exact = returnedId === id
+      const exact = returnedId === id && returnedThread === threadId
       expect((await listThreads(api, {}, ['me@example.com'])).threads).toMatchObject([
-        { id: threadId, automated: exact, automationUnknown: !exact, needsReply: true },
+        {
+          id: threadId,
+          hasInvite: exact,
+          automated: exact,
+          automationUnknown: !exact,
+          needsReply: true,
+        },
       ])
+      const messageReads = seen
+        .map((input) => new URL(input))
+        .filter((url) => url.pathname.includes('/messages/'))
+      expect(messageReads).toHaveLength(1)
+      expect(messageReads[0]?.pathname).toMatch(new RegExp(`/messages/${id}$`))
+      const fields = messageReads[0]?.searchParams.get('fields')
+      expect(fields).toMatch(/^id,threadId,payload\(/)
+      expect(fields).not.toMatch(/body|data|attachmentId/i)
       const cache = openGoogleCache(':memory:')
       try {
         const data = createGoogleData({ api: () => api, cache })

@@ -44,13 +44,24 @@ function invite(method = 'REQUEST', extra = '', sequence = 3, stamp = '20240701T
   ].join('\r\n')
 }
 
-const wire = (value: string) => Buffer.from(value).toString('base64url')
+const unicodeUid = 'réunion-�'
+const withUnicodeUid = (source: string) =>
+  source.replace('conference-series-1234567890-long-\r\n folded-uid', unicodeUid)
+
+/** A real invalid byte in place of the correctly encoded replacement character. */
+function invalidUidBytes(source: string): Buffer {
+  const [prefix, suffix] = withUnicodeUid(source).split('�')
+  return Buffer.concat([Buffer.from(prefix!), Buffer.from([0xff]), Buffer.from(suffix!)])
+}
+
+const wire = (value: string | Buffer) =>
+  (typeof value === 'string' ? Buffer.from(value) : value).toString('base64url')
 const json = (body: unknown, status = 200) => Response.json(body, { status })
 
 function gmailMessage(
   id: string,
   date: number,
-  calendar?: string,
+  calendar?: string | Buffer,
   options: {
     sent?: boolean
     attached?: boolean
@@ -130,6 +141,7 @@ function event(
       ? { date: '2024-07-18' }
       : { dateTime: start, ...(options.series ? { timeZone: 'UTC' } : {}) },
     end: options.allDay ? { date: '2024-07-19' } : { dateTime: options.zeroDuration ? start : end },
+    attendeesOmitted: undefined as boolean | undefined,
     htmlLink: 'https://calendar.google.com/calendar/event?eid=example',
     attendees: [
       { email: person, self: true, responseStatus: 'declined', comment: 'An existing comment' },
@@ -164,7 +176,8 @@ async function rig() {
   const state = {
     messages: [gmailMessage('update', 200, invite(), { method: 'REQUEST' })],
     fullThreadOverride: undefined as unknown,
-    attachments: new Map<string, string>(),
+    attachments: new Map<string, string | Buffer>(),
+    calendarUidQueries: [] as string[],
     events: new Map<string, ReturnType<typeof event>[]>(),
     instances: new Map<string, ReturnType<typeof event>[]>(),
     hiddenCalendars: [] as string[],
@@ -356,6 +369,8 @@ async function rig() {
         )
         return original ? json(original) : json({}, 404)
       }
+      const queryUid = url.searchParams.get('iCalUID')
+      if (queryUid !== null) state.calendarUidQueries.push(queryUid)
       if (id === 'primary' && state.primaryPages) {
         const page = Number(url.searchParams.get('pageToken') ?? 0)
         return json(state.primaryPages[page] ?? {}, page < state.primaryPages.length ? 200 : 404)
@@ -364,7 +379,7 @@ async function rig() {
         state.calendarPatchAttempts && state.calendarReadback ? [state.calendarReadback] : events
       ).filter(
         (e) =>
-          e.iCalUID === url.searchParams.get('iCalUID') &&
+          e.iCalUID === queryUid &&
           (e.status !== 'cancelled' || url.searchParams.get('showDeleted') === 'true'),
       )
       if (state.replaceOnQuery) {
@@ -412,7 +427,7 @@ async function rig() {
               Number(internalDate),
             ),
           ) + 1,
-        Buffer.from(part[1]!, 'base64').toString(),
+        Buffer.from(part[1]!, 'base64'),
         {
           sent: true,
           method: 'REPLY',
@@ -1055,6 +1070,47 @@ it('requires updated material even when the same-sequence predecessor could not 
   expect(state.calendarUpdateRequests).toHaveLength(1)
   expect(state.sendAttempts).toBe(0)
 })
+
+it.each([false, true])(
+  'requires Calendar to prove the replacement guest in a same-sequence update (write-ineligible predecessor: %s)',
+  async (missingTimes) => {
+    const { state, read, respond } = await rig()
+    const replacement = 'replacement@example.org'
+    const prior = invite('REQUEST', missingTimes ? 'COMMENT:Time to follow' : '').replace(
+      'END:VEVENT',
+      `ATTENDEE:mailto:${guest}\r\nEND:VEVENT`,
+    )
+    const latest = invite('REQUEST', '', 3, '20240702T090000Z').replace(
+      'END:VEVENT',
+      `ATTENDEE;ROLE=OPT-PARTICIPANT;RSVP=TRUE:mailto:${replacement}\r\nEND:VEVENT`,
+    )
+    state.messages = [gmailMessage('prior', 100, prior), gmailMessage('latest', 200, latest)]
+    const copy = event()
+    const replacementEntry = { ...copy.attendees[1]!, email: replacement.toUpperCase() }
+    for (const unverified of [
+      copy,
+      { ...copy, attendees: [copy.attendees[0]!] },
+      { ...copy, attendees: [copy.attendees[0]!, replacementEntry], attendeesOmitted: true },
+    ]) {
+      state.events.set('primary', [unverified])
+      expect(await read()).toMatchObject({ identity: { messageId: 'latest' }, canRespond: false })
+      await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    }
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+    const latestCopy = { ...copy, attendees: [copy.attendees[0]!, replacementEntry] }
+    state.events.set('primary', [latestCopy])
+    expect(await read()).toMatchObject({ canRespond: true })
+    expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
+    expect(latestCopy.attendees[1]).toEqual({
+      email: replacement.toUpperCase(),
+      responseStatus: 'tentative',
+      self: false,
+    })
+    expect(state.calendarUpdateRequests).toHaveLength(1)
+    expect(state.sendAttempts).toBe(0)
+  },
+)
 
 it('accepts structured conference proof when a bare join URL distinguishes same-sequence mail', async () => {
   const { state, read, respond } = await rig()
@@ -2132,6 +2188,160 @@ it('uses whole Message-ID claims from plain mail without letting duplicate heade
   }
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
+
+it('withholds an older answer when a disputed equivalent delivery has an unreadable Sent reply', async () => {
+  const { state, read, respond } = await rig()
+  const disputed = '<update@example.net>'
+  const proven = '<redelivery@example.net>'
+  const decline = invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')
+  const malformed = decline.replace('UID:', 'UID;VALUE="TEXT",URI:')
+  state.messages.push(
+    gmailMessage('redelivery', 300, invite('REQUEST', '', 3, '20240702T090000Z')),
+    { ...acceptedReply(proven), internalDate: '500' },
+    gmailMessage('plain-claim', 600, undefined, { rfcId: disputed }),
+    gmailMessage('ordinary-sent', 1000, undefined, { sent: true, parent: disputed }),
+    gmailMessage('unrelated-malformed', 1000, malformed, {
+      sent: true,
+      method: 'REPLY',
+      parent: '<unrelated@example.net>',
+    }),
+  )
+  expect(await read()).toMatchObject({ sentResponseStatus: 'accepted', canRespond: true })
+  const unresolved = gmailMessage('unresolved', 500, malformed, {
+    sent: true,
+    method: 'REPLY',
+    parent: disputed,
+  })
+  state.messages.push(unresolved)
+  for (const timestamp of ['500', '700']) {
+    unresolved.internalDate = timestamp
+    expect(await read()).toMatchObject({
+      responseStatus: null,
+      sentResponseStatus: null,
+      canRespond: false,
+      responsePending: false,
+      unavailableReason: expect.stringMatching(/Gmail.*verify/i),
+    })
+    await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  }
+  state.messages.push(gmailMessage('independent', 800, decline, { sent: true, parent: proven }))
+  expect(await read()).toMatchObject({ sentResponseStatus: 'declined', canRespond: true })
+  expect(await respond('declined')).toMatchObject({ outcome: 'unchanged' })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+})
+
+it.each(['inline', 'attachment'] as const)(
+  'does not look up an identity manufactured from invalid UTF-8 REQUEST bytes (%s)',
+  async (storage) => {
+    const { state, list, read, respond } = await rig()
+    const attached = storage === 'attachment'
+    const valid = withUnicodeUid(invite())
+    state.messages = [gmailMessage('unicode', 200, valid, { attached, method: 'REQUEST' })]
+    if (attached) state.attachments.set('unicode', valid)
+    state.events.set('primary', [{ ...event(), iCalUID: unicodeUid }])
+    expect(await read()).toMatchObject({ identity: { uid: unicodeUid }, canRespond: true })
+    expect(state.calendarUidQueries).toContain(unicodeUid)
+
+    const invalid = invalidUidBytes(invite())
+    state.messages = [gmailMessage('unicode', 200, invalid, { attached, method: 'REQUEST' })]
+    if (attached) state.attachments.set('unicode', invalid)
+    state.calendarUidQueries.length = 0
+    expect(await list()).toMatchObject({
+      invitations: [],
+      recoveryReason: expect.stringMatching(/UTF-8/i),
+    })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.calendarUidQueries).toEqual([])
+    expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+  },
+)
+
+it.each(['inline', 'attachment'] as const)(
+  'withholds invalid UTF-8 Sent evidence without releasing an accepted dispatch (%s)',
+  async (storage) => {
+    const { state, read, respond, restart } = await rig()
+    const parent = '<update@example.net>'
+    state.messages = [
+      gmailMessage('update', 200, withUnicodeUid(invite())),
+      gmailMessage(
+        'older-answer',
+        300,
+        withUnicodeUid(invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=ACCEPTED:')),
+        { sent: true, parent },
+      ),
+    ]
+    const attached = storage === 'attachment'
+    // The attached variant has no MIME method hint. Neither variant may
+    // turn the bad UID into the literal U+FFFD in the real invitation.
+    const method = attached ? undefined : 'REPLY'
+    const invalid = invalidUidBytes(
+      invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=TENTATIVE:'),
+    )
+    const unreadable = gmailMessage('newer-unreadable', 700, invalid, {
+      sent: true,
+      attached,
+      method,
+      parent,
+    })
+    if (attached) state.attachments.set(unreadable.id, invalid)
+    const unverified = {
+      responseStatus: null,
+      sentResponseStatus: null,
+      canRespond: false,
+      unavailableReason: expect.stringMatching(/Gmail.*verify/i),
+    }
+    state.messages.push(unreadable)
+    expect(await read()).toMatchObject({ ...unverified, responsePending: false })
+    await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    state.messages.pop()
+
+    state.replyThread = 'separate-sent-thread'
+    state.sentVisible = false
+    state.sentInternalDate = 500
+    expect(await read()).toMatchObject({ sentResponseStatus: 'accepted', canRespond: true })
+    expect(await respond('tentative')).toMatchObject({ outcome: 'sent', refreshPending: true })
+
+    const receipt = state.sent.get('reply-1')!
+    const rfcId = receipt.payload.headers.find(({ name }) => name === 'Message-ID')!.value
+    state.sent.set(
+      receipt.id,
+      gmailMessage(receipt.id, 500, invalid, {
+        sent: true,
+        attached,
+        method,
+        parent,
+        rfcId,
+        threadId: receipt.threadId,
+      }),
+    )
+    state.messages.push(unreadable)
+    if (attached) state.attachments.set(receipt.id, invalid)
+    state.sentVisible = true
+    const reopened = restart()
+    const unsettled = { ...unverified, responsePending: true }
+    expect(await reopened.read()).toMatchObject(unsettled)
+    await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    state.messages.push(
+      gmailMessage(
+        'independent',
+        800,
+        withUnicodeUid(invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')),
+        { sent: true, parent },
+      ),
+    )
+    expect(await reopened.read()).toMatchObject({
+      responsePending: false,
+      sentResponseStatus: 'declined',
+      canRespond: true,
+    })
+    expect(await reopened.respond('declined')).toMatchObject({ outcome: 'unchanged' })
+    state.messages.pop()
+    expect(await restart().read()).toMatchObject(unsettled)
+    expect(state.sendAttempts).toBe(1)
+    expect(state.calendarPatchAttempts).toBe(0)
+  },
+)
 
 it('withholds a live Sent reply with a contested RFC ID until a uniquely owned newer answer', async () => {
   const { state, read, respond } = await rig()

@@ -459,6 +459,10 @@ function invitationCopy(
   const calendarPageInMail = googleEventUrl(details.htmlLink)
   const timeMatches = (mail: string | null, calendar: string) =>
     mail !== null && (details.allDay ? mail === calendar : instant(mail) === instant(calendar))
+  const expectedRoster = JSON.stringify(material.attendees)
+  const requiresRoster = invitation.predecessors.some(
+    (prior) => JSON.stringify(prior.material.attendees) !== expectedRoster,
+  )
   if (
     (explicitFields.title &&
       event.summary !== undefined &&
@@ -478,7 +482,9 @@ function invitationCopy(
       calendarPageInMail &&
       htmlLink &&
       calendarPageInMail !== htmlLink) ||
-    (!cancelled && !provesChangedMaterial(invitation, event, calendarConference, htmlLink))
+    (!cancelled &&
+      ((requiresRoster && calendarRoster(event) !== expectedRoster) ||
+        !provesChangedMaterial(invitation, event, calendarConference, htmlLink)))
   )
     return blocked('The Calendar details do not match this revision of the invitation')
   if (joinOnly && (!start || !end || !explicitFields.start))
@@ -492,13 +498,13 @@ function invitationCopy(
         ? 'This Calendar copy cannot be edited'
         : null
   const url = `${base}/${encodeURIComponent(event.id ?? '')}?sendUpdates=all`
-  const proof = calendarProof(event)
+  const proof = calendarProof(event, requiresRoster ? 'roster' : undefined)
   return {
     kind: 'verified',
     target: JSON.stringify([url, selfEmail ?? organizer]),
     etag,
     proof,
-    matchesProof: (stored) => matchesCalendarProof(event, stored, proof),
+    matchesProof: (stored) => stored === proof || matchesCalendarProof(event, stored),
     revision: details.identity,
     title: event.summary,
     start,
@@ -696,17 +702,32 @@ function mailConference(event: RawEvent) {
   return { url: prose, source: prose ? ('provider' as const) : null }
 }
 
-function matchesCalendarProof(event: RawEvent, stored: string, proof = calendarProof(event)) {
+/** An omitted or anonymous attendee cannot distinguish two invitation rosters.
+ * Like invitation material, this is a set of addresses, not roles or RSVPs. */
+function calendarRoster(event: RawEvent): string | undefined {
+  if (
+    (event.attendeesOmitted !== undefined && event.attendeesOmitted !== false) ||
+    !event.attendees ||
+    event.attendees.some(({ email }) => !email)
+  )
+    return undefined
+  return JSON.stringify(
+    [...new Set(event.attendees.map(({ email }) => email!.toLowerCase()))].sort(),
+  )
+}
+
+function matchesCalendarProof(event: RawEvent, stored: string) {
   // Old journals can still prove an exact match. Only canonical proofs can
   // recognize reordered rules; never infer what a previous raw hash meant.
   return (
-    stored === proof ||
+    stored === calendarProof(event) ||
+    (calendarRoster(event) !== undefined && stored === calendarProof(event, 'roster')) ||
     stored === calendarProof(event, 'canonical-v1') ||
     (event.recurrence !== undefined && stored === calendarProof(event, 'legacy'))
   )
 }
 
-function calendarProof(event: RawEvent, version?: 'canonical-v1' | 'legacy'): string {
+function calendarProof(event: RawEvent, version?: 'roster' | 'canonical-v1' | 'legacy'): string {
   const conference = httpsLink(structuredConference(event)) ?? mailConference(event).url
   const description = words(event.description)
   const when = (time: RawEvent['start']) =>
@@ -735,9 +756,12 @@ function calendarProof(event: RawEvent, version?: 'canonical-v1' | 'legacy'): st
         event.location,
         conference,
         googleEventUrl(event.htmlLink),
-        ...(!version
+        ...(!version || version === 'roster'
           ? [conference && providerConferenceUrl(description) === conference ? '' : description]
           : []),
+        // If membership was needed to identify the copy, readback must still
+        // observe it even when falling back to a GET of the original resource.
+        ...(version === 'roster' ? [['attendees', calendarRoster(event)]] : []),
         ...(event.recurrence?.length && event.start?.timeZone !== undefined
           ? [canonicalIanaZone(event.start.timeZone) ?? event.start.timeZone]
           : []),
