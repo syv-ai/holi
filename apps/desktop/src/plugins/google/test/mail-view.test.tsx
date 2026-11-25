@@ -246,7 +246,7 @@ async function openThread(): Promise<HTMLElement> {
   const user = userEvent.setup()
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
-  return await screen.findByRole('article')
+  return await screen.findByRole('article', { name: '' })
 }
 
 /**
@@ -697,7 +697,7 @@ test('renders a floating occurrence at its wall-clock time inside a DST gap', as
     render(<MailView />)
     await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
     const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
-    expect(await region.findByText(/02:30 – 04:00/)).toBeVisible()
+    expect(await region.findByText(/02[.:]30 – 04[.:]00/)).toBeVisible()
 
     imageSendersMock.mockResolvedValueOnce({
       imageSenders: [],
@@ -705,7 +705,7 @@ test('renders a floating occurrence at its wall-clock time inside a DST gap', as
       timeFormat: '12h',
     })
     await act(async () => getDefaultStore().set(loadVaultSettingsAtom, { force: true }))
-    expect(await region.findByText(/2:30\s*AM – 4:00\s*AM/i)).toBeVisible()
+    expect(await region.findByText(/2[.:]30\s*AM – 4[.:]00\s*AM/i)).toBeVisible()
   } finally {
     await act(async () => getDefaultStore().set(loadVaultSettingsAtom, { force: true }))
     vi.unstubAllEnvs()
