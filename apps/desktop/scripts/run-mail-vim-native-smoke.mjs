@@ -16,7 +16,10 @@ const evidence = resolve(process.argv[2] ?? '/tmp/holi-563-evidence')
 const generatedOutput = resolve(desktop, 'out')
 const root = await mkdtemp(join(tmpdir(), 'holi-563-native-'))
 // Never allow a smoke run to touch the desktop app's generated output tree.
-assert(!evidence.startsWith(`${generatedOutput}/`), 'evidence must be outside apps/desktop/out')
+assert(
+  evidence !== generatedOutput && !evidence.startsWith(`${generatedOutput}/`),
+  'evidence must be outside apps/desktop/out',
+)
 let child
 let closed
 let log = ''
@@ -234,7 +237,7 @@ try {
   }
   await until(`!!document.querySelector('[aria-label="To"]')`, 'composer recipient input')
   await evaluate(
-    `window.__mailVimEvents=[];document.addEventListener('keydown',e=>{const record={type:'keydown',key:e.key,isTrusted:e.isTrusted,defaultPreventedAtCapture:e.defaultPrevented};window.__mailVimEvents.push(record);queueMicrotask(()=>record.defaultPreventedAfterDispatch=e.defaultPrevented)},true);for(const type of ['beforeinput','input'])document.addEventListener(type,e=>window.__mailVimEvents.push({type,inputType:e.inputType,data:e.data,isTrusted:e.isTrusted,target:e.target?.getAttribute?.('aria-label')??e.target?.tagName}),true)`,
+    `window.__mailVimEvents=[];window.__mailVimTrusted=[];document.addEventListener('keydown',e=>{window.__mailVimTrusted.push(e.isTrusted);const record={type:'keydown',key:e.key,isTrusted:e.isTrusted,defaultPreventedAtCapture:e.defaultPrevented};window.__mailVimEvents.push(record);setTimeout(()=>record.defaultPreventedAfterDispatch=e.defaultPrevented,0)},true);for(const type of ['beforeinput','input'])document.addEventListener(type,e=>window.__mailVimEvents.push({type,inputType:e.inputType,data:e.data,isTrusted:e.isTrusted,target:e.target?.getAttribute?.('aria-label')??e.target?.tagName}),true)`,
   )
   // Edit actual text beside a committed chip; Tab/Enter semantics remain native.
   await click('[aria-label="To"]')
@@ -1102,7 +1105,10 @@ try {
     cleanup: { root, removed: true },
     calls: allCalls,
     keyboardEvents,
-    limits: ['harness renderer entry is mail-vim-native-smoke.tsx, not the production full-shell entry', 'CDP trusted input does not establish physical OS keyboard behavior'],
+    limits: [
+      'harness renderer entry is mail-vim-native-smoke.tsx, not the production full-shell entry',
+      'CDP trusted input does not establish physical OS keyboard behavior',
+    ],
   }
   assert((await stat(join(evidence, 'composer.png'))).size > 0)
   signalOwnedElectron('SIGTERM')
