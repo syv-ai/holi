@@ -1,3 +1,4 @@
+import { createMdxNativeResourceControls } from './mdx-native-resource-controls.mjs'
 import { assertMdxNativeApprovalOrder } from './mdx-native-approval-receipt.mts'
 import { createMdxSmokeClient } from './mdx-native-smoke-client.mjs'
 import assert from 'node:assert/strict'
@@ -24,7 +25,6 @@ export async function runExternalNativeAcceptance(
     delay,
     untilDeadline,
     waitFor,
-    clickPointerAt,
     findInFile,
     cleanDiagnostics,
     settledPaint,
@@ -36,49 +36,9 @@ export async function runExternalNativeAcceptance(
   const allow = (origin) => `Allow ${origin}`
   const deny = (origin) => `Deny ${origin}`
   const revoke = (origin) => `Revoke ${origin}`
-  const trigger = 'MDX resources'
   const runDiagnostics = 'Run diagnostics'
   const parts = ['entry', 'relative', 'redirect', 'cdn']
-  const button = (label, at = null) =>
-    page.evaluate(`(() => {
-    const match = Array.from(document.querySelectorAll('button,[role="button"]')).find(item =>
-      (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(label)} &&
-      !item.closest('[aria-hidden="true"],[inert]') && item.getClientRects().length &&
-      getComputedStyle(item).visibility === 'visible' && !item.matches(':disabled,[aria-disabled="true"]'));
-    if (!match) return null;
-    const {x, y, width, height} = match.getBoundingClientRect();
-    const point = ${JSON.stringify(at)} ?? {x: x + width / 2, y: y + height / 2};
-    const hit = document.elementFromPoint(point.x, point.y);
-    return hit && match.contains(hit) ? point : null;
-  })()`)
-  const clickAt = (label, point, deadline) =>
-    clickPointerAt(page, point, (at) => button(label, at), deadline)
-  const click = async (label, deadline = performance.now() + 30000) => {
-    const point = await waitFor(() => button(label), label, { deadline })
-    await clickAt(label, point, deadline)
-  }
-  const openResources = async (expected, deadline = performance.now() + 30000) => {
-    const read = (operation) => untilDeadline(operation, deadline, expected)
-    for (;;) {
-      const state = await waitFor(
-        async () => {
-          if (await read(() => button(expected))) return { ready: true }
-          // Mutations may close the panel or leave it open while state refreshes.
-          const open = await read(() =>
-            page.evaluate(`Array.from(document.querySelectorAll('button')).some(item =>
-          (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(trigger)} &&
-          (item.getAttribute('aria-expanded') === 'true' || item.getAttribute('data-state') === 'open'))`),
-          )
-          const point = !open && (await read(() => button(trigger)))
-          return point ? { point } : false
-        },
-        expected,
-        { deadline },
-      )
-      if (state.ready) return
-      await clickAt(trigger, state.point, deadline)
-    }
-  }
+  const { button, click, openResources } = createMdxNativeResourceControls(page, ui)
   const cancelled = /abort|cancel|supersed|unavailable|invalidated/i
   const lifecycle = [
     ['approval', rawOrigin],
@@ -523,5 +483,135 @@ function requireTransport(current, baseline, origins) {
       now.tls - before.tls,
       `Not all TLS connections for ${origin} had a verified matching peer`,
     )
+  }
+}
+
+/** Runs only after the original five-event consent receipt has been finalized. */
+export async function runNestedResourceNativeAcceptance(
+  page,
+  { fixtureSha, checks, report, editAndWaitForSave, captureScreenshot, record, ui },
+) {
+  const { waitFor, cleanDiagnostics, settledPaint, windowStatus, delay } = ui
+  const cdnOrigin = fixtureOrigins[2]
+  const allow = (origin) => `Allow ${origin}`
+  const revoke = (origin) => `Revoke ${origin}`
+  const { click, openResources } = createMdxNativeResourceControls(page, ui)
+
+  const routes = ['nested-css', 'child-css', 'nested-font', 'nested-image', 'nested-audio']
+  const source = `import '${cdnOrigin}/gh/syv-ai/holi@${fixtureSha}/apps/desktop/scripts/fixtures/mdx-external/nested.css'\n\n# Nested resource diagnostics fixture\n`
+  const capture = async (stage, changes) => {
+    const status = await windowStatus(page)
+    const snapshot = (report.snapshots[stage] = {
+      ...status.network,
+      pushes: status.resourcePushes,
+    })
+    const history = assertMdxNativeApprovalOrder(snapshot)
+    assert.equal(history.length, 5 + changes, 'Unexpected nested-resource consent history')
+    assert.deepEqual(
+      history.slice(5),
+      [
+        ['approval', cdnOrigin],
+        ['revocation', cdnOrigin],
+      ].slice(0, changes),
+    )
+    return snapshot
+  }
+  const noContact = (before, after, label) => {
+    assert.equal(after.dns, before.dns, `${label}: DNS`)
+    assert.equal(after.socket, before.socket, `${label}: sockets`)
+    assert.equal(after.requests.length, before.requests.length, `${label}: requests`)
+    assert.equal(after.responses.length, before.responses.length, `${label}: responses`)
+    requireOnlyDestinations(after, before, [], label)
+  }
+  let stopVideo
+  try {
+    report.stage = 'pending nested CSS origin'
+    const before = await capture('beforeEditing', 0)
+    stopVideo = record ? await record() : null
+    await editAndWaitForSave(source, 'unapproved nested CSS source')
+    await openResources(allow(cdnOrigin))
+    await waitFor(
+      () => page.evaluate('window.__mdxSmoke.diagnostics().length > 0'),
+      'nested CSS consent diagnostic',
+    )
+    noContact(before, await capture('pending', 0), 'nested CSS before Allow')
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(`window.__mdxSmoke.theme('${theme}')`)
+      await settledPaint(page)
+      await captureScreenshot(`nested-resources-${theme}.png`)
+    }
+    if (stopVideo) await delay(700)
+    report.stage = 'approved nested resource graph'
+    await click(allow(cdnOrigin))
+    await waitFor(() => cleanDiagnostics(page), 'clean nested CSS/font/image/audio diagnostics')
+    const approved = await capture('approved', 1)
+    requireOnlyDestinations(approved, before, [cdnOrigin], 'nested resource graph')
+    requireTransport(approved, before, [cdnOrigin])
+    assert(approved.pushes > before.pushes, 'Nested approval did not push invalidation')
+    const requests = approved.requests.slice(before.requests.length)
+    assert(
+      requests.every(
+        ({ route, get, credentials }) => routes.includes(route) && get && !credentials,
+      ),
+      'Unexpected or credential-bearing nested resource request',
+    )
+    assert.deepEqual([...new Set(requests.map(({ route }) => route))].sort(), [...routes].sort())
+    for (const route of routes)
+      assert(
+        approved.responses
+          .slice(before.responses.length)
+          .some((entry) => entry.route === route && entry.status === 200),
+        `Missing successful ${route} response`,
+      )
+    assert.equal(await page.evaluate('globalThis.__mdxSmokeExecuted === undefined'), true)
+    report.stage = 'approved-origin guest probes'
+    report.guestPolicy = await page.evaluate("window.holiSmoke.call('smoke:public-guest-policy')")
+    // The receipt is Chromium's enforcing production CSP, not a failed network
+    // operation. The counters below observe only Node's typed main transport.
+    const guestPolicy = report.guestPolicy.policy
+    for (const [name, evidence] of Object.entries(guestPolicy.evidence)) {
+      assert.equal(guestPolicy.results[name], true, name)
+      assert.equal(evidence.disposition, 'enforce', name)
+      assert(evidence.policy && evidence.destination && evidence.blockedURI, name)
+    }
+    assert(guestPolicy.evidence.publicSocket, 'Missing approved-host WebSocket CSP evidence')
+    noContact(approved, await capture('guestDenied', 1), 'Node transport during guest probes')
+    report.stage = 'nested resource revocation'
+    await openResources(revoke(cdnOrigin))
+    if (stopVideo) await delay(700)
+    await click(revoke(cdnOrigin))
+    await openResources(allow(cdnOrigin))
+    await waitFor(
+      () => page.evaluate('window.__mdxSmoke.diagnostics().length > 0'),
+      'nested graph retry requires renewed consent',
+    )
+    const revoked = await capture('revokedRetry', 2)
+    noContact(approved, revoked, 'revoked nested graph retry')
+    assert(revoked.pushes > approved.pushes, 'Nested revocation did not push invalidation')
+    await captureScreenshot('nested-resources-revoked.png')
+    await editAndWaitForSave(
+      '# Editable after nested resource revocation\n',
+      'local source after nested resource revocation',
+    )
+    await waitFor(() => cleanDiagnostics(page), 'local diagnostics after nested revocation')
+    assert.equal(
+      await page.evaluate(
+        'window.__mdxSmoke.source() === "# Editable after nested resource revocation\\n"',
+      ),
+      true,
+    )
+    noContact(approved, await capture('editable', 2), 'local editing after nested revocation')
+    if (stopVideo) await delay(700)
+    checks.push(
+      'nested CSS and relative child/font/image/audio use approved typed HTTPS transport with clean diagnostics; pending/revoked retries make no observed Node contact; approved-origin guest probes have enforcing production CSP evidence and no observed Node transport contact; local editing remains usable',
+    )
+    report.stage = 'complete'
+  } finally {
+    // Retain the bounded observation even if recording finalization fails.
+    report.finalObservation = await windowStatus(page).then(
+      (status) => status.network,
+      () => null,
+    )
+    if (stopVideo) await stopVideo()
   }
 }
