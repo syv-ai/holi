@@ -68,7 +68,11 @@ export async function checkCompatibility(): Promise<string> {
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
-    if (!['normal', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(launchPhase))
+    if (
+      !['normal', 'working-copy', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(
+        launchPhase,
+      )
+    )
       throw new Error('Invalid storage phase')
     phase = 'note-metadata'
     operation = 'persist/reconstruct/remove'
@@ -107,7 +111,7 @@ export async function checkCompatibility(): Promise<string> {
     }
     phase = 'native-git-transport'
     operation = 'runGitCompatibilityCheck'
-    git = await runGitCompatibilityCheck(runId)
+    if (launchPhase !== 'working-copy') git = await runGitCompatibilityCheck(runId)
     phase = 'native-working-copy-status'
     operation = 'runWorkingCopyCheck'
     const gitEnvironment = NSProcessInfo.processInfo.environment
@@ -158,6 +162,10 @@ export async function checkCompatibility(): Promise<string> {
         item.mutation,
       )
       workingCopy.treeCases.push({ ...result, name: item.name, runId: item.runId })
+    }
+    if (launchPhase === 'working-copy') {
+      persist({ workingCopy })
+      return 'Native working-copy matrix completed'
     }
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'

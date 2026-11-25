@@ -50,6 +50,7 @@ const artifacts = process.env.HOLI_IOS_ARTIFACTS
 await mkdir(artifacts, { recursive: true })
 const runId = randomUUID()
 const bundleId = 'ai.syv.holi.compatibility'
+const workingCopyOnly = process.env.HOLI_IOS_WORKING_COPY_ONLY === '1'
 const controller = new AbortController()
 const interrupt = () => controller.abort()
 process.once('SIGINT', interrupt)
@@ -128,7 +129,7 @@ try {
   await writeFile(join(artifacts, 'binary-build.txt'), binaryInfo)
   await cp(app, join(artifacts, 'mobile.app'), { recursive: true, force: true })
 
-  gitFixture = await createGitFixture(artifacts, runId)
+  if (!workingCopyOnly) gitFixture = await createGitFixture(artifacts, runId)
   simulator = await simctl('create', `holi-265-${runId}`, deviceType, runtime.identifier)
   assert.match(simulator, /^[A-F0-9-]{36}$/)
   await writeFile(join(artifacts, 'simulator-id.txt'), simulator)
@@ -140,7 +141,7 @@ try {
     signal: controller.signal,
     metadata: { xcode, runtime: runtime.identifier, deviceType },
   })
-  await simctl('keychain', simulator, 'add-root-cert', gitFixture.cert)
+  if (gitFixture) await simctl('keychain', simulator, 'add-root-cert', gitFixture.cert)
   await simctl('status_bar', simulator, 'override', '--time', '9:41')
   await simctl('install', simulator, app)
   const container = await simctl('get_app_container', simulator, bundleId, 'data')
@@ -210,15 +211,19 @@ try {
         ...process.env,
         SIMCTL_CHILD_HOLI_COMPAT_RUN_ID: runId,
         SIMCTL_CHILD_HOLI_STORAGE_PHASE: phase,
-        ...(phase === 'normal'
+        ...(['normal', 'working-copy'].includes(phase)
           ? {
               SIMCTL_CHILD_HOLI_GIT_FIXTURE_MANIFEST: workingCopyManifest,
               SIMCTL_CHILD_HOLI_GIT_TREE_MANIFEST: treeManifest,
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: `${canonicalContainer}/Documents/holi-git-${runId}`,
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: gitFixture.url,
-              SIMCTL_CHILD_HOLI_GIT_INVALID_TLS_URL: gitFixture.invalidUrl,
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_USER: gitFixture.username,
-              SIMCTL_CHILD_HOLI_GIT_FIXTURE_PASSWORD: gitFixture.password,
+              ...(gitFixture
+                ? {
+                    SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: `${canonicalContainer}/Documents/holi-git-${runId}`,
+                    SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: gitFixture.url,
+                    SIMCTL_CHILD_HOLI_GIT_INVALID_TLS_URL: gitFixture.invalidUrl,
+                    SIMCTL_CHILD_HOLI_GIT_FIXTURE_USER: gitFixture.username,
+                    SIMCTL_CHILD_HOLI_GIT_FIXTURE_PASSWORD: gitFixture.password,
+                  }
+                : {}),
             }
           : {}),
         ...(moveCase ? { SIMCTL_CHILD_HOLI_MOVE_CASE: String(moveCase.ordinal) } : {}),
@@ -247,412 +252,482 @@ try {
     }
     throw new Error(`Timed out waiting for owned evidence: ${path}`)
   }
-  const normalProcess = await launchPhase('normal')
+  const normalProcess = await launchPhase(workingCopyOnly ? 'working-copy' : 'normal')
   const report = await waitJson(reportPath, normalProcess)
   await writeFile(join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
-  const context = {
-    runId,
-    now: Date.now(),
-    osVersion: runtime.version,
-    storageRoot: documents,
-    library,
-  }
-  validateReport(report, { ...context, ...normalProcess, phase: 'normal' })
-  const statusEvidence = validateWorkingCopyResults(
-    report.workingCopy?.cases,
-    workingCopyFixture.cases,
-    runId,
-  )
-  const treeEvidence = await verifyWorkingCopyTreeResults(
-    report.workingCopy?.treeCases,
-    treeFixture,
-  )
-  await writeFile(
-    join(artifacts, 'working-copy-tree-evidence.json'),
-    JSON.stringify(treeEvidence, null, 2),
-  )
-  for (const item of workingCopyFixture.cases) {
-    assert.equal(
-      await verifyWorkingCopyUnchanged(item.root, item.before),
-      true,
-      `Status mutated ${item.name}`,
+  if (workingCopyOnly) {
+    assert.equal(report.schemaVersion, 2)
+    assert.equal(report.runId, runId)
+    assert.equal(report.phase, 'working-copy')
+    assert.equal(report.platform, 'ios')
+    assert.equal(Number(report.osVersion.split('.')[0]), Number(runtime.version.split('.')[0]))
+    assert.ok(
+      report.startedAt >= normalProcess.launchedAt &&
+        report.finishedAt >= report.startedAt &&
+        report.finishedAt <= Date.now(),
     )
-  }
-  for (const item of workingCopyFixture.cases) {
-    for (const artifact of item.recovery)
-      assert.equal(
-        (await readFile(artifact.path)).toString('base64'),
-        artifact.bytes,
-        'Recovery artifact mutated',
-      )
-  }
-  await writeFile(
-    join(artifacts, 'working-copy-evidence.json'),
-    JSON.stringify(statusEvidence, null, 2),
-  )
-  assert.ok(gitFixture.remoteAdvanced, 'Fixture host did not advance remote after native clone')
-  assert.ok(gitFixture.authChallengeCount > 0, 'Fixture did not challenge native credentials')
-  assert.equal(gitFixture.backendFailures, 0, 'Fixture backend request failed')
-  const remoteRefs = await command('git', [
-    '--git-dir',
-    join(gitFixture.root, 'repos/fixture.git'),
-    'show-ref',
-    '--heads',
-  ])
-  const refs = Object.fromEntries(
-    remoteRefs
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        const [oid, ref] = line.split(' ')
-        return [ref, oid]
-      }),
-  )
-  assert.equal(refs['refs/heads/fixture-start'], report.git.fetchedRef)
-  assert.equal(refs['refs/heads/holi-compat'], report.git.pushedHead)
-  await writeFile(
-    join(artifacts, 'git-transport-proof.json'),
-    JSON.stringify(
-      {
-        runId,
-        authChallenges: gitFixture.authChallengeCount,
-        remoteAdvancedAfterClone: gitFixture.remoteAdvanced,
-        pushedRef: 'refs/heads/holi-compat',
-        refs: Object.keys(refs),
-      },
-      null,
-      2,
-    ),
-  )
-  const prefixProof = report.prefixNamespace
-  assert.equal(await realpath(prefixProof.rootA), prefixProof.rootA)
-  assert.equal(await realpath(prefixProof.rootB), prefixProof.rootB)
-  assert.equal(await realpath(prefixProof.privateA), prefixProof.privateA)
-  assert.equal(await realpath(prefixProof.privateB), prefixProof.privateB)
-  assert.ok(!prefixProof.privateB.startsWith(`${prefixProof.privateA}/`))
-  assert.ok(!prefixProof.privateA.startsWith(`${prefixProof.privateB}/`))
-  assert.equal(await readFile(join(prefixProof.rootA, 'same/note.md'), 'utf8'), prefixProof.bytesA)
-  assert.equal(await readFile(join(prefixProof.rootB, 'same/note.md'), 'utf8'), prefixProof.bytesB)
-  assert.equal(
-    await readFile(join(prefixProof.privateB, prefixProof.poisonName), 'utf8'),
-    prefixProof.poisonBytes,
-  )
-  assert.deepEqual(await readdir(prefixProof.privateA), [])
-  const durableNote = join(documents, `holi-storage-check-${runId}`, 'same/note.md')
-  const durableBefore = await readFile(durableNote)
-  for (const [index, name] of ['Café.md', 'Cafe\u0301.md'].entries()) {
-    const rawRoot = join(documents, `holi-raw-${runId}-${index}`)
-    assert.equal(await readFile(join(rawRoot, name), 'utf8'), 'updated raw native fixture')
-  }
-  await simctl('io', simulator, 'screenshot', join(artifacts, 'status.png'))
-  const staged = await launchPhase('stage')
-  const checkpointPath = join(documents, `holi-stage-checkpoint-${runId}.json`)
-  const marker = await waitJson(checkpointPath, staged, 30_000)
-  await writeFile(join(artifacts, 'staged-checkpoint.json'), JSON.stringify(marker, null, 2))
-  validateCheckpoint(marker, { runId, ...staged, now: Date.now(), documents, library })
-  const interruptionRoot = join(documents, `holi-storage-interruption-${runId}`)
-  assert.equal(await realpath(interruptionRoot), interruptionRoot)
-  assert.equal(await realpath(marker.stage), marker.stage)
-  assert.equal(await readFile(join(interruptionRoot, 'durable.md'), 'utf8'), interruptionBefore)
-  assert.equal(await readFile(marker.stage, 'utf8'), interruptionPending)
-  for (const [name, value] of interruptionArtifacts)
-    assert.equal(await readFile(join(interruptionRoot, name), 'utf8'), value)
-  // Verify the executable identity before sending SIGKILL to this run's exact host PID.
-  const runningBinary = await command('ps', ['-p', String(staged.pid), '-o', 'comm='])
-  assert.equal(await realpath(runningBinary), installedBinary)
-  process.kill(staged.pid, 'SIGKILL')
-  let gone = false
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try {
-      process.kill(staged.pid, 0)
-    } catch (error) {
-      if (error.code === 'ESRCH') {
-        gone = true
-        break
-      }
-      throw error
-    }
-    await sleep(50)
-  }
-  assert.ok(gone, 'Staged app did not terminate')
-  assert.equal(await readFile(join(interruptionRoot, 'durable.md'), 'utf8'), interruptionBefore)
-  assert.equal(await readFile(marker.stage, 'utf8'), interruptionPending)
-  const killedAt = Date.now()
-  await writeFile(
-    join(artifacts, 'kill-receipt.json'),
-    JSON.stringify(
-      {
-        ...staged,
-        killedAt,
-        signal: 'SIGKILL',
-        executable: installedBinary,
-        checkpoint: marker,
-        originalPreserved: true,
-        stagedBytesVerified: true,
-      },
-      null,
-      2,
-    ),
-  )
-  const recoveryProcess = await launchPhase('recovery')
-  assert.equal(
-    await realpath(await simctl('get_app_container', simulator, bundleId, 'data')),
-    canonicalContainer,
-  )
-  const recovery = await waitJson(reportPath, recoveryProcess, 30_000)
-  await writeFile(join(artifacts, 'recovery-report.json'), JSON.stringify(recovery, null, 2))
-  validateReport(recovery, {
-    ...context,
-    ...recoveryProcess,
-    now: Date.now(),
-    phase: 'recovery',
-    normalBytes: report.storage.finalBytes,
-  })
-  await assert.rejects(readFile(marker.stage), { code: 'ENOENT' })
-  assert.equal(await readFile(join(interruptionRoot, 'durable.md'), 'utf8'), interruptionAfter)
-  assert.deepEqual(await readFile(durableNote), durableBefore)
-  for (const [name, value] of interruptionArtifacts)
-    assert.equal(await readFile(join(interruptionRoot, name), 'utf8'), value)
-  process.kill(recoveryProcess.pid, 0)
-  await drainProcess(recoveryProcess)
-  activeProcess = undefined
-  const moveEvidence = []
-  const moveRootFor = (ordinal) => join(documents, `holi-move-${runId}-${ordinal}`)
-  const verifyMoveBoundary = async (caseInfo, marker) => {
-    const root = moveRootFor(caseInfo.ordinal)
-    const privatePath = stagingDirectory(library, root)
-    const privateInfo = await lstat(privatePath)
-    assert.ok(privateInfo.isDirectory() && !privateInfo.isSymbolicLink())
-    assert.equal(await realpath(privatePath), privatePath)
-    const current = await Promise.all(
-      ['from.md', 'to.md', 'back-a.md', 'back-b.md'].map(async (path) => {
-        try {
-          return [path, await readFile(join(root, path))]
-        } catch (error) {
-          if (error.code === 'ENOENT') return [path, null]
-          throw error
-        }
-      }),
-    )
-    const currentMap = Object.fromEntries(current)
-    const expectedState = moveCheckpointState(caseInfo, marker.operationId, moveBytes, root)
-    let journal = null
-    try {
-      journal = JSON.parse(
-        await readFile(join(privatePath, `move-${marker.operationId}.json`), 'utf8'),
-      )
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-    }
-    validateMoveCheckpointState(expectedState, {
-      caseInfo,
-      operationId: marker.operationId,
-      files: currentMap,
-      journal,
-    })
-    return currentMap
-  }
-  for (const caseInfo of moveCrashCases()) {
-    const root = moveRootFor(caseInfo.ordinal)
-    const privatePath = stagingDirectory(library, root)
-    const markerPath = join(documents, `holi-move-checkpoint-${runId}-${caseInfo.ordinal}.json`)
-    const stagedMove = await launchPhase('move-stage', caseInfo)
-    const marker = await waitJson(markerPath, stagedMove, 30_000)
-    validateMoveCheckpoint(marker, {
+    assert.ok(!report.error, report.error)
+    const statusEvidence = validateWorkingCopyResults(
+      report.workingCopy?.cases,
+      workingCopyFixture.cases,
       runId,
-      caseInfo,
-      ...stagedMove,
+    )
+    const treeEvidence = await verifyWorkingCopyTreeResults(
+      report.workingCopy?.treeCases,
+      treeFixture,
+    )
+    for (const item of workingCopyFixture.cases) {
+      assert.equal(
+        await verifyWorkingCopyUnchanged(item.root, item.before),
+        true,
+        `Status mutated ${item.name}`,
+      )
+      for (const artifact of item.recovery)
+        assert.equal((await readFile(artifact.path)).toString('base64'), artifact.bytes)
+    }
+    await writeFile(
+      join(artifacts, 'working-copy-evidence.json'),
+      JSON.stringify(statusEvidence, null, 2),
+    )
+    await writeFile(
+      join(artifacts, 'working-copy-tree-evidence.json'),
+      JSON.stringify(treeEvidence, null, 2),
+    )
+    await simctl('io', simulator, 'screenshot', join(artifacts, 'working-copy.png'))
+    await drainProcess(normalProcess)
+    await writeFile(
+      join(artifacts, 'acceptance.json'),
+      JSON.stringify(
+        {
+          runId,
+          simulator,
+          sourceHead: await command('git', ['rev-parse', 'HEAD']),
+          workingCopyStatusCases: statusEvidence.length,
+          workingCopyTreeCases: treeEvidence.length,
+          transportRun: false,
+          certificateTrustChanged: false,
+        },
+        null,
+        2,
+      ),
+    )
+    console.log(
+      `iOS ${runtime.version}: ${statusEvidence.length} status and ${treeEvidence.length} tree cases passed. No transport or certificate trust changes. Evidence: ${artifacts}`,
+    )
+  } else {
+    const context = {
+      runId,
       now: Date.now(),
-      root,
-      privatePath: stagingDirectory(library, root),
-    })
-    assert.equal(await realpath(root), root)
-    assert.equal(await realpath(marker.privatePath), marker.privatePath)
-    const currentMap = await verifyMoveBoundary(caseInfo, marker)
-    const runningBinary = await command('ps', ['-p', String(stagedMove.pid), '-o', 'comm='])
+      osVersion: runtime.version,
+      storageRoot: documents,
+      library,
+    }
+    validateReport(report, { ...context, ...normalProcess, phase: 'normal' })
+    const statusEvidence = validateWorkingCopyResults(
+      report.workingCopy?.cases,
+      workingCopyFixture.cases,
+      runId,
+    )
+    const treeEvidence = await verifyWorkingCopyTreeResults(
+      report.workingCopy?.treeCases,
+      treeFixture,
+    )
+    await writeFile(
+      join(artifacts, 'working-copy-tree-evidence.json'),
+      JSON.stringify(treeEvidence, null, 2),
+    )
+    for (const item of workingCopyFixture.cases) {
+      assert.equal(
+        await verifyWorkingCopyUnchanged(item.root, item.before),
+        true,
+        `Status mutated ${item.name}`,
+      )
+    }
+    for (const item of workingCopyFixture.cases) {
+      for (const artifact of item.recovery)
+        assert.equal(
+          (await readFile(artifact.path)).toString('base64'),
+          artifact.bytes,
+          'Recovery artifact mutated',
+        )
+    }
+    await writeFile(
+      join(artifacts, 'working-copy-evidence.json'),
+      JSON.stringify(statusEvidence, null, 2),
+    )
+    assert.ok(gitFixture.remoteAdvanced, 'Fixture host did not advance remote after native clone')
+    assert.ok(gitFixture.authChallengeCount > 0, 'Fixture did not challenge native credentials')
+    assert.equal(gitFixture.backendFailures, 0, 'Fixture backend request failed')
+    const remoteRefs = await command('git', [
+      '--git-dir',
+      join(gitFixture.root, 'repos/fixture.git'),
+      'show-ref',
+      '--heads',
+    ])
+    const refs = Object.fromEntries(
+      remoteRefs
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [oid, ref] = line.split(' ')
+          return [ref, oid]
+        }),
+    )
+    assert.equal(refs['refs/heads/fixture-start'], report.git.fetchedRef)
+    assert.equal(refs['refs/heads/holi-compat'], report.git.pushedHead)
+    await writeFile(
+      join(artifacts, 'git-transport-proof.json'),
+      JSON.stringify(
+        {
+          runId,
+          authChallenges: gitFixture.authChallengeCount,
+          remoteAdvancedAfterClone: gitFixture.remoteAdvanced,
+          pushedRef: 'refs/heads/holi-compat',
+          refs: Object.keys(refs),
+        },
+        null,
+        2,
+      ),
+    )
+    const prefixProof = report.prefixNamespace
+    assert.equal(await realpath(prefixProof.rootA), prefixProof.rootA)
+    assert.equal(await realpath(prefixProof.rootB), prefixProof.rootB)
+    assert.equal(await realpath(prefixProof.privateA), prefixProof.privateA)
+    assert.equal(await realpath(prefixProof.privateB), prefixProof.privateB)
+    assert.ok(!prefixProof.privateB.startsWith(`${prefixProof.privateA}/`))
+    assert.ok(!prefixProof.privateA.startsWith(`${prefixProof.privateB}/`))
+    assert.equal(
+      await readFile(join(prefixProof.rootA, 'same/note.md'), 'utf8'),
+      prefixProof.bytesA,
+    )
+    assert.equal(
+      await readFile(join(prefixProof.rootB, 'same/note.md'), 'utf8'),
+      prefixProof.bytesB,
+    )
+    assert.equal(
+      await readFile(join(prefixProof.privateB, prefixProof.poisonName), 'utf8'),
+      prefixProof.poisonBytes,
+    )
+    assert.deepEqual(await readdir(prefixProof.privateA), [])
+    const durableNote = join(documents, `holi-storage-check-${runId}`, 'same/note.md')
+    const durableBefore = await readFile(durableNote)
+    for (const [index, name] of ['Café.md', 'Cafe\u0301.md'].entries()) {
+      const rawRoot = join(documents, `holi-raw-${runId}-${index}`)
+      assert.equal(await readFile(join(rawRoot, name), 'utf8'), 'updated raw native fixture')
+    }
+    await simctl('io', simulator, 'screenshot', join(artifacts, 'status.png'))
+    const staged = await launchPhase('stage')
+    const checkpointPath = join(documents, `holi-stage-checkpoint-${runId}.json`)
+    const marker = await waitJson(checkpointPath, staged, 30_000)
+    await writeFile(join(artifacts, 'staged-checkpoint.json'), JSON.stringify(marker, null, 2))
+    validateCheckpoint(marker, { runId, ...staged, now: Date.now(), documents, library })
+    const interruptionRoot = join(documents, `holi-storage-interruption-${runId}`)
+    assert.equal(await realpath(interruptionRoot), interruptionRoot)
+    assert.equal(await realpath(marker.stage), marker.stage)
+    assert.equal(await readFile(join(interruptionRoot, 'durable.md'), 'utf8'), interruptionBefore)
+    assert.equal(await readFile(marker.stage, 'utf8'), interruptionPending)
+    for (const [name, value] of interruptionArtifacts)
+      assert.equal(await readFile(join(interruptionRoot, name), 'utf8'), value)
+    // Verify the executable identity before sending SIGKILL to this run's exact host PID.
+    const runningBinary = await command('ps', ['-p', String(staged.pid), '-o', 'comm='])
     assert.equal(await realpath(runningBinary), installedBinary)
-    process.kill(stagedMove.pid, 'SIGKILL')
-    let moveGone = false
+    process.kill(staged.pid, 'SIGKILL')
+    let gone = false
     for (let attempt = 0; attempt < 100; attempt++) {
       try {
-        process.kill(stagedMove.pid, 0)
+        process.kill(staged.pid, 0)
       } catch (error) {
         if (error.code === 'ESRCH') {
-          moveGone = true
+          gone = true
           break
         }
         throw error
       }
       await sleep(50)
     }
-    assert.ok(moveGone, `Move process ${caseInfo.ordinal} did not terminate`)
-    await drainProcess(stagedMove)
-    activeProcess = undefined
-    const bytesAfterDrain = await verifyMoveBoundary(caseInfo, marker)
-    assert.deepEqual(bytesAfterDrain, currentMap, 'Boundary bytes changed after process drain')
-    const receipt = {
-      runId,
-      ordinal: caseInfo.ordinal,
-      pid: stagedMove.pid,
-      container: canonicalContainer,
-      root,
-      marker,
-      bytesAtKill: currentMap,
-      killedAt: Date.now(),
-      signal: 'SIGKILL',
-      executable: installedBinary,
-    }
+    assert.ok(gone, 'Staged app did not terminate')
+    assert.equal(await readFile(join(interruptionRoot, 'durable.md'), 'utf8'), interruptionBefore)
+    assert.equal(await readFile(marker.stage, 'utf8'), interruptionPending)
+    const killedAt = Date.now()
     await writeFile(
-      join(artifacts, `move-${caseInfo.ordinal}-kill.json`),
-      JSON.stringify(receipt, null, 2),
-    )
-    const moveRecovery = await launchPhase('move-recovery', caseInfo)
-    assert.equal(
-      await realpath(await simctl('get_app_container', simulator, bundleId, 'data')),
-      canonicalContainer,
-    )
-    const moveReport = await waitJson(reportPath, moveRecovery, 30_000)
-    assert.equal(moveReport.runId, runId)
-    assert.equal(moveReport.phase, 'move-recovery')
-    assert.equal(moveReport.moveRestart.root, root)
-    assert.equal(moveReport.moveRestart.recovered, caseInfo.phase !== 'journal-before')
-    assert.equal(moveReport.moveRestart.malformedJournalRefused, true)
-    assert.equal(moveReport.moveRestart.conflictJournalRefused, true)
-    const wrongRootId = `20000000-0000-4000-8000-${String(caseInfo.ordinal).padStart(12, '0')}`
-    const wrongRoot = join(documents, `holi-move-wrong-root-${runId}-${caseInfo.ordinal}`)
-    const namedRoot = join(documents, `holi-move-named-root-${runId}-${caseInfo.ordinal}`)
-    const wrongRootPrivate = stagingDirectory(library, wrongRoot)
-    const wrongRootName = `move-${wrongRootId}.json`
-    const wrongRootReceipt = moveReport.moveRestart.wrongRootRefusal
-    assert.deepEqual(
-      { ...wrongRootReceipt, error: undefined },
-      {
-        receivingRoot: wrongRoot,
-        namedRoot,
-        journalName: wrongRootName,
-        error: undefined,
-        sourceUnchanged: true,
-        destinationAbsent: true,
-        namedRootUnchanged: true,
-        journalBytesPreserved: true,
-      },
-    )
-    assert.match(wrongRootReceipt.error, /Invalid move recovery journal identity/)
-    assert.equal(await realpath(wrongRoot), wrongRoot)
-    assert.equal(await realpath(namedRoot), namedRoot)
-    assert.equal(await realpath(wrongRootPrivate), wrongRootPrivate)
-    assert.equal(await readFile(join(wrongRoot, 'from.md'), 'utf8'), '[[from.md]]')
-    await assert.rejects(readFile(join(wrongRoot, 'to.md')), { code: 'ENOENT' })
-    assert.equal(await readFile(join(namedRoot, 'keep.md'), 'utf8'), 'named root preserved')
-    const wrongRootJournal = {
-      schema: 2,
-      root: namedRoot,
-      operationId: wrongRootId,
-      from: 'from.md',
-      to: 'to.md',
-      changes: [
-        { path: 'from.md', before: [...new TextEncoder().encode('[[from.md]]')], after: null },
-        { path: 'to.md', before: null, after: [...new TextEncoder().encode('[[to.md]]')] },
-      ],
-    }
-    assert.equal(
-      await readFile(join(wrongRootPrivate, wrongRootName), 'utf8'),
-      JSON.stringify(wrongRootJournal),
-    )
-    const expectedSource = caseInfo.phase === 'journal-before' ? moveBytes.source : null
-    const expectedDestination = caseInfo.phase === 'journal-before' ? null : moveBytes.moved
-    const expectedBackA = caseInfo.phase === 'journal-before' ? moveBytes.backA : moveBytes.movedA
-    const expectedBackB = caseInfo.phase === 'journal-before' ? moveBytes.backB : moveBytes.movedB
-    assert.equal(
-      await readFile(join(root, 'from.md'), 'utf8').catch((error) =>
-        error.code === 'ENOENT' ? null : Promise.reject(error),
-      ),
-      expectedSource,
-    )
-    assert.equal(
-      await readFile(join(root, 'to.md'), 'utf8').catch((error) =>
-        error.code === 'ENOENT' ? null : Promise.reject(error),
-      ),
-      expectedDestination,
-    )
-    assert.equal(await readFile(join(root, 'back-a.md'), 'utf8'), expectedBackA)
-    assert.equal(await readFile(join(root, 'back-b.md'), 'utf8'), expectedBackB)
-    assert.deepEqual(await readFile(join(root, 'occupied.md'), 'utf8'), 'occupied')
-    assert.equal(await readFile(join(root, 'Case.md'), 'utf8'), 'case alias fixture')
-    assert.equal(await readFile(join(root, 'private.local.md'), 'utf8'), 'local source')
-    assert.equal(
-      await readFile(
-        join(documents, `holi-move-other-${runId}-${caseInfo.ordinal}`, 'from.md'),
-        'utf8',
-      ),
-      'other root',
-    )
-    const malformedRoot = join(documents, `holi-move-malformed-${runId}-${caseInfo.ordinal}`)
-    const conflictRoot = join(documents, `holi-move-conflict-${runId}-${caseInfo.ordinal}`)
-    assert.equal(
-      await readFile(join(malformedRoot, 'keep.md'), 'utf8'),
-      'malformed fixture preserved',
-    )
-    assert.equal(await readFile(join(conflictRoot, 'from.md'), 'utf8'), 'newer user bytes')
-    const malformedPrivate = stagingDirectory(library, malformedRoot)
-    const conflictPrivate = stagingDirectory(library, conflictRoot)
-    assert.equal(await realpath(malformedPrivate), malformedPrivate)
-    assert.equal(await realpath(conflictPrivate), conflictPrivate)
-    const malformedId = `00000000-0000-4000-8000-${String(caseInfo.ordinal).padStart(12, '0')}`
-    const conflictId = `10000000-0000-4000-8000-${String(caseInfo.ordinal).padStart(12, '0')}`
-    assert.equal(await readFile(join(malformedPrivate, `move-${malformedId}.json`), 'utf8'), '{bad')
-    const retainedConflict = JSON.parse(
-      await readFile(join(conflictPrivate, `move-${conflictId}.json`), 'utf8'),
-    )
-    assert.equal(retainedConflict.operationId, conflictId)
-    assert.equal(retainedConflict.from, 'from.md')
-    assert.deepEqual(await readdir(privatePath), [], 'Cleaned move namespace retained artifacts')
-    moveEvidence.push(receipt)
-    await writeFile(
-      join(artifacts, `move-${caseInfo.ordinal}-evidence.json`),
+      join(artifacts, 'kill-receipt.json'),
       JSON.stringify(
         {
-          ...receipt,
-          recovered: true,
-          expectedSource,
-          expectedDestination,
-          expectedBackA,
-          expectedBackB,
-          malformedRoot,
-          conflictRoot,
+          ...staged,
+          killedAt,
+          signal: 'SIGKILL',
+          executable: installedBinary,
+          checkpoint: marker,
+          originalPreserved: true,
+          stagedBytesVerified: true,
         },
         null,
         2,
       ),
     )
-  }
-  await writeFile(
-    join(artifacts, 'move-matrix.json'),
-    JSON.stringify({ cases: moveEvidence.length, evidence: moveEvidence }, null, 2),
-  )
-  await writeFile(
-    join(artifacts, 'acceptance.json'),
-    JSON.stringify(
-      {
+    const recoveryProcess = await launchPhase('recovery')
+    assert.equal(
+      await realpath(await simctl('get_app_container', simulator, bundleId, 'data')),
+      canonicalContainer,
+    )
+    const recovery = await waitJson(reportPath, recoveryProcess, 30_000)
+    await writeFile(join(artifacts, 'recovery-report.json'), JSON.stringify(recovery, null, 2))
+    validateReport(recovery, {
+      ...context,
+      ...recoveryProcess,
+      now: Date.now(),
+      phase: 'recovery',
+      normalBytes: report.storage.finalBytes,
+    })
+    await assert.rejects(readFile(marker.stage), { code: 'ENOENT' })
+    assert.equal(await readFile(join(interruptionRoot, 'durable.md'), 'utf8'), interruptionAfter)
+    assert.deepEqual(await readFile(durableNote), durableBefore)
+    for (const [name, value] of interruptionArtifacts)
+      assert.equal(await readFile(join(interruptionRoot, name), 'utf8'), value)
+    process.kill(recoveryProcess.pid, 0)
+    await drainProcess(recoveryProcess)
+    activeProcess = undefined
+    const moveEvidence = []
+    const moveRootFor = (ordinal) => join(documents, `holi-move-${runId}-${ordinal}`)
+    const verifyMoveBoundary = async (caseInfo, marker) => {
+      const root = moveRootFor(caseInfo.ordinal)
+      const privatePath = stagingDirectory(library, root)
+      const privateInfo = await lstat(privatePath)
+      assert.ok(privateInfo.isDirectory() && !privateInfo.isSymbolicLink())
+      assert.equal(await realpath(privatePath), privatePath)
+      const current = await Promise.all(
+        ['from.md', 'to.md', 'back-a.md', 'back-b.md'].map(async (path) => {
+          try {
+            return [path, await readFile(join(root, path))]
+          } catch (error) {
+            if (error.code === 'ENOENT') return [path, null]
+            throw error
+          }
+        }),
+      )
+      const currentMap = Object.fromEntries(current)
+      const expectedState = moveCheckpointState(caseInfo, marker.operationId, moveBytes, root)
+      let journal = null
+      try {
+        journal = JSON.parse(
+          await readFile(join(privatePath, `move-${marker.operationId}.json`), 'utf8'),
+        )
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+      validateMoveCheckpointState(expectedState, {
+        caseInfo,
+        operationId: marker.operationId,
+        files: currentMap,
+        journal,
+      })
+      return currentMap
+    }
+    for (const caseInfo of moveCrashCases()) {
+      const root = moveRootFor(caseInfo.ordinal)
+      const privatePath = stagingDirectory(library, root)
+      const markerPath = join(documents, `holi-move-checkpoint-${runId}-${caseInfo.ordinal}.json`)
+      const stagedMove = await launchPhase('move-stage', caseInfo)
+      const marker = await waitJson(markerPath, stagedMove, 30_000)
+      validateMoveCheckpoint(marker, {
         runId,
-        simulator,
+        caseInfo,
+        ...stagedMove,
+        now: Date.now(),
+        root,
+        privatePath: stagingDirectory(library, root),
+      })
+      assert.equal(await realpath(root), root)
+      assert.equal(await realpath(marker.privatePath), marker.privatePath)
+      const currentMap = await verifyMoveBoundary(caseInfo, marker)
+      const runningBinary = await command('ps', ['-p', String(stagedMove.pid), '-o', 'comm='])
+      assert.equal(await realpath(runningBinary), installedBinary)
+      process.kill(stagedMove.pid, 'SIGKILL')
+      let moveGone = false
+      for (let attempt = 0; attempt < 100; attempt++) {
+        try {
+          process.kill(stagedMove.pid, 0)
+        } catch (error) {
+          if (error.code === 'ESRCH') {
+            moveGone = true
+            break
+          }
+          throw error
+        }
+        await sleep(50)
+      }
+      assert.ok(moveGone, `Move process ${caseInfo.ordinal} did not terminate`)
+      await drainProcess(stagedMove)
+      activeProcess = undefined
+      const bytesAfterDrain = await verifyMoveBoundary(caseInfo, marker)
+      assert.deepEqual(bytesAfterDrain, currentMap, 'Boundary bytes changed after process drain')
+      const receipt = {
+        runId,
+        ordinal: caseInfo.ordinal,
+        pid: stagedMove.pid,
         container: canonicalContainer,
-        normal: true,
-        stagedKill: true,
-        recovery: true,
-        gitTransport: true,
-        moveCrashCases: moveEvidence.length,
-        faultOperations: 10,
-        rawSpellings: 2,
-      },
-      null,
-      2,
-    ),
-  )
-  console.log(
-    `iOS ${runtime.version}: ${report.corpus.passed}/${report.corpus.total} format cases, native Git transport, 10 storage faults, ${moveEvidence.length} move crash cases, raw NFC/NFD and staged-kill recovery passed. Evidence: ${artifacts}`,
-  )
+        root,
+        marker,
+        bytesAtKill: currentMap,
+        killedAt: Date.now(),
+        signal: 'SIGKILL',
+        executable: installedBinary,
+      }
+      await writeFile(
+        join(artifacts, `move-${caseInfo.ordinal}-kill.json`),
+        JSON.stringify(receipt, null, 2),
+      )
+      const moveRecovery = await launchPhase('move-recovery', caseInfo)
+      assert.equal(
+        await realpath(await simctl('get_app_container', simulator, bundleId, 'data')),
+        canonicalContainer,
+      )
+      const moveReport = await waitJson(reportPath, moveRecovery, 30_000)
+      assert.equal(moveReport.runId, runId)
+      assert.equal(moveReport.phase, 'move-recovery')
+      assert.equal(moveReport.moveRestart.root, root)
+      assert.equal(moveReport.moveRestart.recovered, caseInfo.phase !== 'journal-before')
+      assert.equal(moveReport.moveRestart.malformedJournalRefused, true)
+      assert.equal(moveReport.moveRestart.conflictJournalRefused, true)
+      const wrongRootId = `20000000-0000-4000-8000-${String(caseInfo.ordinal).padStart(12, '0')}`
+      const wrongRoot = join(documents, `holi-move-wrong-root-${runId}-${caseInfo.ordinal}`)
+      const namedRoot = join(documents, `holi-move-named-root-${runId}-${caseInfo.ordinal}`)
+      const wrongRootPrivate = stagingDirectory(library, wrongRoot)
+      const wrongRootName = `move-${wrongRootId}.json`
+      const wrongRootReceipt = moveReport.moveRestart.wrongRootRefusal
+      assert.deepEqual(
+        { ...wrongRootReceipt, error: undefined },
+        {
+          receivingRoot: wrongRoot,
+          namedRoot,
+          journalName: wrongRootName,
+          error: undefined,
+          sourceUnchanged: true,
+          destinationAbsent: true,
+          namedRootUnchanged: true,
+          journalBytesPreserved: true,
+        },
+      )
+      assert.match(wrongRootReceipt.error, /Invalid move recovery journal identity/)
+      assert.equal(await realpath(wrongRoot), wrongRoot)
+      assert.equal(await realpath(namedRoot), namedRoot)
+      assert.equal(await realpath(wrongRootPrivate), wrongRootPrivate)
+      assert.equal(await readFile(join(wrongRoot, 'from.md'), 'utf8'), '[[from.md]]')
+      await assert.rejects(readFile(join(wrongRoot, 'to.md')), { code: 'ENOENT' })
+      assert.equal(await readFile(join(namedRoot, 'keep.md'), 'utf8'), 'named root preserved')
+      const wrongRootJournal = {
+        schema: 2,
+        root: namedRoot,
+        operationId: wrongRootId,
+        from: 'from.md',
+        to: 'to.md',
+        changes: [
+          { path: 'from.md', before: [...new TextEncoder().encode('[[from.md]]')], after: null },
+          { path: 'to.md', before: null, after: [...new TextEncoder().encode('[[to.md]]')] },
+        ],
+      }
+      assert.equal(
+        await readFile(join(wrongRootPrivate, wrongRootName), 'utf8'),
+        JSON.stringify(wrongRootJournal),
+      )
+      const expectedSource = caseInfo.phase === 'journal-before' ? moveBytes.source : null
+      const expectedDestination = caseInfo.phase === 'journal-before' ? null : moveBytes.moved
+      const expectedBackA = caseInfo.phase === 'journal-before' ? moveBytes.backA : moveBytes.movedA
+      const expectedBackB = caseInfo.phase === 'journal-before' ? moveBytes.backB : moveBytes.movedB
+      assert.equal(
+        await readFile(join(root, 'from.md'), 'utf8').catch((error) =>
+          error.code === 'ENOENT' ? null : Promise.reject(error),
+        ),
+        expectedSource,
+      )
+      assert.equal(
+        await readFile(join(root, 'to.md'), 'utf8').catch((error) =>
+          error.code === 'ENOENT' ? null : Promise.reject(error),
+        ),
+        expectedDestination,
+      )
+      assert.equal(await readFile(join(root, 'back-a.md'), 'utf8'), expectedBackA)
+      assert.equal(await readFile(join(root, 'back-b.md'), 'utf8'), expectedBackB)
+      assert.deepEqual(await readFile(join(root, 'occupied.md'), 'utf8'), 'occupied')
+      assert.equal(await readFile(join(root, 'Case.md'), 'utf8'), 'case alias fixture')
+      assert.equal(await readFile(join(root, 'private.local.md'), 'utf8'), 'local source')
+      assert.equal(
+        await readFile(
+          join(documents, `holi-move-other-${runId}-${caseInfo.ordinal}`, 'from.md'),
+          'utf8',
+        ),
+        'other root',
+      )
+      const malformedRoot = join(documents, `holi-move-malformed-${runId}-${caseInfo.ordinal}`)
+      const conflictRoot = join(documents, `holi-move-conflict-${runId}-${caseInfo.ordinal}`)
+      assert.equal(
+        await readFile(join(malformedRoot, 'keep.md'), 'utf8'),
+        'malformed fixture preserved',
+      )
+      assert.equal(await readFile(join(conflictRoot, 'from.md'), 'utf8'), 'newer user bytes')
+      const malformedPrivate = stagingDirectory(library, malformedRoot)
+      const conflictPrivate = stagingDirectory(library, conflictRoot)
+      assert.equal(await realpath(malformedPrivate), malformedPrivate)
+      assert.equal(await realpath(conflictPrivate), conflictPrivate)
+      const malformedId = `00000000-0000-4000-8000-${String(caseInfo.ordinal).padStart(12, '0')}`
+      const conflictId = `10000000-0000-4000-8000-${String(caseInfo.ordinal).padStart(12, '0')}`
+      assert.equal(
+        await readFile(join(malformedPrivate, `move-${malformedId}.json`), 'utf8'),
+        '{bad',
+      )
+      const retainedConflict = JSON.parse(
+        await readFile(join(conflictPrivate, `move-${conflictId}.json`), 'utf8'),
+      )
+      assert.equal(retainedConflict.operationId, conflictId)
+      assert.equal(retainedConflict.from, 'from.md')
+      assert.deepEqual(await readdir(privatePath), [], 'Cleaned move namespace retained artifacts')
+      moveEvidence.push(receipt)
+      await writeFile(
+        join(artifacts, `move-${caseInfo.ordinal}-evidence.json`),
+        JSON.stringify(
+          {
+            ...receipt,
+            recovered: true,
+            expectedSource,
+            expectedDestination,
+            expectedBackA,
+            expectedBackB,
+            malformedRoot,
+            conflictRoot,
+          },
+          null,
+          2,
+        ),
+      )
+    }
+    await writeFile(
+      join(artifacts, 'move-matrix.json'),
+      JSON.stringify({ cases: moveEvidence.length, evidence: moveEvidence }, null, 2),
+    )
+    await writeFile(
+      join(artifacts, 'acceptance.json'),
+      JSON.stringify(
+        {
+          runId,
+          simulator,
+          container: canonicalContainer,
+          normal: true,
+          stagedKill: true,
+          recovery: true,
+          gitTransport: true,
+          moveCrashCases: moveEvidence.length,
+          faultOperations: 10,
+          rawSpellings: 2,
+        },
+        null,
+        2,
+      ),
+    )
+    console.log(
+      `iOS ${runtime.version}: ${report.corpus.passed}/${report.corpus.total} format cases, native Git transport, 10 storage faults, ${moveEvidence.length} move crash cases, raw NFC/NFD and staged-kill recovery passed. Evidence: ${artifacts}`,
+    )
+  }
 } catch (error) {
   await writeFile(
     join(artifacts, 'failure.json'),
