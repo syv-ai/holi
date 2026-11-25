@@ -10,7 +10,11 @@ import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
-import { runWorkingCopyCheck, runWorkingCopyTreeCheck } from './working-copy-check.ios'
+import {
+  runWorkingCopyCheck,
+  runWorkingCopyTreeCheck,
+  type TreeFixtureMutation,
+} from './working-copy-check.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -134,13 +138,25 @@ export async function checkCompatibility(): Promise<string> {
         if (error) throw error
       }),
     ) as {
-      cases: Array<{ name: string; runId: string; root: string; remote: string; branch: string }>
+      cases: Array<{
+        name: string
+        runId: string
+        root: string
+        remote: string
+        branch: string
+        mutation?: TreeFixtureMutation
+      }>
     }
     if (!Array.isArray(treeFixture.cases) || treeFixture.cases.length === 0)
       throw new Error('Working-copy tree manifest has no cases')
     workingCopy.treeCases = []
     for (const item of treeFixture.cases) {
-      const result = await runWorkingCopyTreeCheck(item.root, item.remote, item.branch)
+      const result = await runWorkingCopyTreeCheck(
+        item.root,
+        item.remote,
+        item.branch,
+        item.mutation,
+      )
       workingCopy.treeCases.push({ ...result, name: item.name, runId: item.runId })
     }
     const documents = knownFolders.documents().path

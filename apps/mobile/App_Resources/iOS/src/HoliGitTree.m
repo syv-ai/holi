@@ -82,6 +82,9 @@ static BOOL HNGTreeObjectValid(git_repository *repo, const git_oid *oid, git_obj
   git_odb_object *object = NULL;
   git_oid actual;
   int rc = git_repository_odb(&odb, repo);
+  size_t declaredSize = 0; git_object_t declaredType;
+  if (rc == 0) rc = git_odb_read_header(&declaredSize, &declaredType, odb, oid);
+  if (rc == 0 && (declaredType != type || declaredSize > 64 * 1024 * 1024)) rc = GIT_ERROR;
   if (rc == 0) rc = git_odb_read(&object, odb, oid);
   if (rc == 0 && (git_odb_object_type(object) != type || git_odb_object_size(object) > 64 * 1024 * 1024)) rc = GIT_ERROR;
   if (rc == 0) rc = git_odb_hash(&actual, git_odb_object_data(object), git_odb_object_size(object), type);
@@ -107,7 +110,7 @@ static BOOL HNGTreeParentPaths(git_repository *repo, git_tree *tree, NSString *p
     if (!include) continue;
     if (git_tree_entry_type(entry) == GIT_OBJECT_TREE) {
       git_tree *child = NULL;
-      int rc = git_tree_lookup(&child, repo, git_tree_entry_id(entry));
+      int rc = HNGTreeObjectValid(repo, git_tree_entry_id(entry), GIT_OBJECT_TREE, error) ? git_tree_lookup(&child, repo, git_tree_entry_id(entry)) : GIT_ERROR;
       BOOL ok = rc == 0 && HNGTreeParentPaths(repo, child, path, paths, policy, visits, depth + 1, error);
       git_tree_free(child);
       if (!ok) return HNGTreeFail(error, @"Cannot inspect parent tree");
@@ -271,11 +274,20 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
       if (include) [trackedPaths addObject:path];
     }
     if (!valid) { HNGTreeFail(error, @"Unsupported index path or state"); break; }
+    if (!HNGTreeObjectValid(repo, git_reference_target(head), GIT_OBJECT_COMMIT, error)) break;
     rc = git_reference_peel((git_object **)&commit, head, GIT_OBJECT_COMMIT);
+    if (rc == 0 && !HNGTreeObjectValid(repo, git_commit_tree_id(commit), GIT_OBJECT_TREE, error)) rc = GIT_ERROR;
     if (rc == 0) rc = git_commit_tree(&tree, commit);
     if (rc < 0 || !HNGTreeObjectValid(repo, git_commit_id(commit), GIT_OBJECT_COMMIT, error)) break;
     NSUInteger visits = 0;
     if (!HNGTreeParentPaths(repo, tree, @"", trackedPaths, policy, &visits, 0, error)) break;
+    NSMutableDictionary *trackedSpellings = [NSMutableDictionary dictionary];
+    for (NSString *path in trackedPaths) {
+      NSString *key = path.precomposedStringWithCanonicalMapping.lowercaseString;
+      if (trackedSpellings[key] && ![trackedSpellings[key] isEqualToString:path]) { valid = HNGTreeFail(error, @"Ambiguous tracked filename spelling"); break; }
+      trackedSpellings[key] = path;
+    }
+    if (!valid) break;
     rc = git_repository_config(&config, repo);
     const char *unsupported[] = {"core.autocrlf", "core.eol", "core.attributesfile", "core.excludesfile"};
     for (NSUInteger i = 0; rc == 0 && i < 4; i++) {

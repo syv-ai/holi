@@ -263,10 +263,13 @@ try {
     workingCopyFixture.cases,
     runId,
   )
-  await verifyWorkingCopyTreeResults(report.workingCopy?.treeCases, treeFixture)
+  const treeEvidence = await verifyWorkingCopyTreeResults(
+    report.workingCopy?.treeCases,
+    treeFixture,
+  )
   await writeFile(
     join(artifacts, 'working-copy-tree-evidence.json'),
-    JSON.stringify(report.workingCopy?.treeCases, null, 2),
+    JSON.stringify(treeEvidence, null, 2),
   )
   for (const item of workingCopyFixture.cases) {
     assert.equal(

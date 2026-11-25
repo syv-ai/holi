@@ -65,7 +65,7 @@ function safePath(raw: string): VaultRelPath | null {
 /** Prepare a complete native tree after storage recovery, refusing ambiguous or unsafe candidates. */
 export async function prepareWorkingCopyTree(
   files: NativeFiles,
-  native: NativeWorkingCopy & NativeTreePreparation,
+  native: Pick<NativeWorkingCopy, 'identity'> & NativeTreePreparation,
   vault: { remote: string; root: string; branch: string },
 ): Promise<PreparedWorkingCopyTree> {
   if (!isRemote(vault.remote) || !vault.branch) throw new Error('Invalid vault identity')
@@ -82,10 +82,15 @@ export async function prepareWorkingCopyTree(
         const path = vaultRelPath(raw)
         const folded = vaultRelPath(raw.normalize('NFC').toLocaleLowerCase('en-US'))
         if (
-          isSecretPath(path) || isLocalOnlyPath(path) || isInIgnoredDir(path) ||
-          isSecretPath(folded) || isLocalOnlyPath(folded) || isInIgnoredDir(folded) ||
+          isSecretPath(path) ||
+          isLocalOnlyPath(path) ||
+          isInIgnoredDir(path) ||
+          isSecretPath(folded) ||
+          isLocalOnlyPath(folded) ||
+          isInIgnoredDir(folded) ||
           path.split('/').some((part) => /^\.holi-storage-/i.test(part))
-        ) return 0
+        )
+          return 0
         return 1
       } catch {
         return -1

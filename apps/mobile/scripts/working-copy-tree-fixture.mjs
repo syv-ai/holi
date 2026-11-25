@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { inflateSync } from 'node:zlib'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
@@ -108,6 +109,14 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
     'symlink',
     'unsupported-metadata',
     'unsafe-objects',
+    'directory-to-file',
+    'mode-true',
+    'mode-false',
+    'invalid-path',
+    'corrupt-blob',
+    'race-ignore',
+    'race-inventory',
+    'race-head',
   ]
   for (const name of names) {
     const root = await mkdtemp(join(parent, `holi-tree-${runId}-${name}-`))
@@ -116,6 +125,7 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
     await git(root, 'remote', 'add', 'origin', `https://github.com/${remote}.git`)
     for (const [path, bytes] of [
       ['note.md', 'base\n'],
+      ['.hidden-data', Buffer.from([0, 254])],
       ['binary.bin', Buffer.from([0, 1, 2])],
       ['run.sh', '#!/bin/sh\nexit 0\n'],
       ['gone.md', 'delete me'],
@@ -129,6 +139,7 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
     const protectedCase = ['mixed', 'protected-only', 'conflict-protected'].includes(name)
     if (protectedCase)
       for (const path of protectedNames) await put(root, path, `synthetic protected ${path}`)
+    if (name === 'directory-to-file') await put(root, 'directory/child.md', 'old child')
     await git(root, 'add', '-A')
     await git(root, 'add', '-f', 'tracked-ignored.md', ...(protectedCase ? protectedNames : []))
     await git(root, 'commit', '-m', 'fixture base')
@@ -144,6 +155,33 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
       await put(root, 'replace/child.bin', Buffer.from([9, 8]))
       await put(root, 'tracked-ignored.md', 'tracked ignored changed')
       await put(root, 'ignored-private.bin', 'untracked ignored')
+    }
+    if (name === 'directory-to-file') {
+      await rm(join(root, 'directory'), { recursive: true })
+      await put(root, 'directory', 'replacement file')
+    }
+    if (name === 'mode-true' || name === 'mode-false') {
+      await git(root, 'config', 'core.filemode', name === 'mode-true' ? 'true' : 'false')
+      await chmod(join(root, 'run.sh'), 0o755)
+    }
+    if (name === 'invalid-path') await put(root, 'bad\\name.md', 'unsupported name')
+    if (name === 'corrupt-blob') {
+      const oid = await text(root, 'rev-parse', 'HEAD:note.md')
+      await chmod(join(root, '.git/objects', oid.slice(0, 2), oid.slice(2)), 0o600)
+      await writeFile(
+        join(root, '.git/objects', oid.slice(0, 2), oid.slice(2)),
+        'corrupt existing blob',
+      )
+    }
+    let mutation
+    if (name.startsWith('race-')) mutation = { kind: name.slice(5) }
+    if (name === 'race-head') {
+      await git(root, 'checkout', '-b', 'future-head')
+      await put(root, 'head-added.md', 'new parent file')
+      await git(root, 'add', '-A')
+      await git(root, 'commit', '-m', 'future head')
+      mutation.head = await text(root, 'rev-parse', 'HEAD')
+      await git(root, 'checkout', 'fixture-start')
     }
     if (name === 'conflict-protected') {
       await git(root, 'checkout', '-b', 'side')
@@ -173,7 +211,14 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
       )
       await symlink(outside, join(root, '.git/objects', prefix))
     }
-    const refusal = !['mixed', 'noop', 'protected-only'].includes(name)
+    const refusal = ![
+      'mixed',
+      'noop',
+      'protected-only',
+      'directory-to-file',
+      'mode-true',
+      'mode-false',
+    ].includes(name)
     let expectedTree = null
     let expectedEntries = null
     if (!refusal) {
@@ -189,6 +234,14 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
           await rm(join(oracle, 'replace'))
           await put(oracle, 'replace/child.bin', Buffer.from([9, 8]))
           await put(oracle, 'tracked-ignored.md', 'tracked ignored changed')
+        }
+        if (name === 'directory-to-file') {
+          await rm(join(oracle, 'directory'), { recursive: true })
+          await put(oracle, 'directory', 'replacement file')
+        }
+        if (name === 'mode-true' || name === 'mode-false') {
+          await git(oracle, 'config', 'core.filemode', name === 'mode-true' ? 'true' : 'false')
+          await chmod(join(oracle, 'run.sh'), 0o755)
         }
         await git(oracle, 'add', '-A')
         if (protectedCase)
@@ -211,6 +264,7 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
       branch: name === 'branch' ? 'wrong-branch' : 'fixture-start',
       expectedTree,
       expectedEntries,
+      mutation,
       refusal,
       baseHead,
       unchanged: expectedTree === headTree,
@@ -232,11 +286,42 @@ export async function verifyWorkingCopyTreeResults(results, manifest) {
     assert.equal(result.runId, item.runId)
     assert.equal(result.root, item.root)
     assert.equal(result.refused, item.refusal, `${item.name}: ${result.refusal}`)
+    const injected = result.injected ?? {}
+    if (!item.mutation) assert.deepEqual(injected, {})
+    else {
+      assert.ok(Object.keys(injected).length > 0, 'Race was not exercised')
+      for (const [path, value] of Object.entries(injected)) {
+        if (item.mutation.kind === 'head') {
+          assert.equal(path, '.git/refs/heads/fixture-start')
+          assert.equal(value, `${item.mutation.head}\n`)
+        } else if (item.mutation.kind === 'ignore') {
+          assert.equal(path, '.gitignore')
+          assert.equal(value, 'ignored-*\n# concurrent synthetic edit\n')
+        } else {
+          assert.match(path, /^race-created-[1-9][0-9]*\.bin$/)
+          assert.equal(value, 'concurrent synthetic file\n')
+          assert.ok(Object.keys(injected).length <= 10)
+        }
+      }
+    }
     const after = await snapshot(item.root)
-    for (const [path, before] of Object.entries(item.before))
-      assert.deepEqual(after[path], before, `${item.name} mutated ${path}`)
+    for (const [path, before] of Object.entries(item.before)) {
+      const expected = Object.hasOwn(injected, path)
+        ? {
+            ...before,
+            size: Buffer.byteLength(injected[path]),
+            sha256: createHash('sha256').update(injected[path]).digest('hex'),
+          }
+        : before
+      assert.deepEqual(after[path], expected, `${item.name} mutated ${path}`)
+    }
     for (const [path, value] of Object.entries(after)) {
       if (Object.hasOwn(item.before, path)) continue
+      if (Object.hasOwn(injected, path)) {
+        assert.equal(value.sha256, createHash('sha256').update(injected[path]).digest('hex'))
+        assert.equal(value.size, Buffer.byteLength(injected[path]))
+        continue
+      }
       assert.equal(item.refusal, false, `Refusal mutated ${path}`)
       if (/^\.git\/objects\/[0-9a-f]{2}$/.test(path)) {
         assert.equal(value.directory, true)
@@ -245,7 +330,18 @@ export async function verifyWorkingCopyTreeResults(results, manifest) {
       assert.match(path, /^\.git\/objects\/[0-9a-f]{2}\/[0-9a-f]{38}$/)
       assert.ok(!value.link && !value.directory)
       const oid = path.replace('.git/objects/', '').replace('/', '')
-      await git(item.root, 'cat-file', '-e', oid)
+      const decoded = inflateSync(await readFile(join(item.root, path)), {
+        maxOutputLength: 64 * 1024 * 1024 + 128,
+      })
+      const end = decoded.indexOf(0)
+      assert.ok(end > 0)
+      const header = decoded
+        .subarray(0, end)
+        .toString('ascii')
+        .match(/^(blob|tree|commit|tag) (0|[1-9][0-9]*)$/)
+      assert.ok(header)
+      assert.equal(decoded.length - end - 1, Number(header[2]))
+      assert.equal(createHash('sha1').update(decoded).digest('hex'), oid)
     }
     if (item.refusal) assert.equal(result.tree, null)
     else {
@@ -262,7 +358,8 @@ export async function verifyWorkingCopyTreeResults(results, manifest) {
       root: item.root,
       refused: result.refused,
       tree: result.tree,
-      repositoryUnchanged: true,
+      repositoryUnchanged: !item.mutation,
+      onlyDeclaredConcurrentEdits: Boolean(item.mutation),
       rawEntriesVerified: !item.refusal,
     })
   }

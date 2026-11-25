@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   prepareWorkingCopyTree,
-  type NativeWorkingCopy,
   type NativeTreePreparation,
+  type NativeWorkingCopy,
+  type PreparedWorkingCopyTree,
 } from '../app/working-copy'
 import { createVaultStorage } from '../app/vault-storage'
 import { createNodeFiles } from './native-files-node'
@@ -10,95 +11,81 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const tree = {
+type Adapter = Pick<NativeWorkingCopy, 'identity'> & NativeTreePreparation
+const tree: PreparedWorkingCopyTree = {
   treeOID: 'a'.repeat(40),
   parentOID: 'b'.repeat(40),
   branch: 'main',
   unchanged: false,
 }
 const bytes = (value: string) => new TextEncoder().encode(value)
+const vault = (root: string) => ({ root, remote: 'holi/vault', branch: 'main' })
 const signal = () => {
   let resolve!: () => void
   const promise = new Promise<void>((done) => (resolve = done))
   return { promise, resolve }
 }
-
-async function root() {
-  return mkdtemp(join(tmpdir(), 'holi-tree-'))
+const root = () => mkdtemp(join(tmpdir(), 'holi-tree-'))
+// Models the classification/result contract; real native containment and Git are covered on iOS.
+function adapter(
+  paths: string[] = [],
+  prepare: (root: string, eligible: string[]) => Promise<PreparedWorkingCopyTree> = async () =>
+    tree,
+): Adapter {
+  return {
+    identity: async () => ({ remotes: ['holi/vault'], branch: 'main', attached: true }),
+    async prepareWorkingCopyTree(canonical, _remote, _branch, policy) {
+      const eligible: string[] = []
+      for (const path of paths) {
+        const decision = policy(path)
+        if (decision === -1) throw new Error('Invalid native candidate')
+        if (decision === 1) eligible.push(path)
+      }
+      return prepare(canonical, eligible)
+    },
+  }
 }
 
-describe('prepareWorkingCopyTree', () => {
-  it('classifies native inventory paths without authorizing or proving native containment', async () => {
+describe('working-copy tree preparation', () => {
+  it('includes non-note and hidden content, excluding protected aliases before content selection', async () => {
     const base = await root()
     try {
-      let decisions: Array<[string, number]> = []
-      const native: NativeWorkingCopy & NativeTreePreparation = {
-        recoveryPending: async () => false,
-        canonicalRoot: async (value) => value,
-        identity: async () => ({ remotes: ['holi/vault'], branch: 'main', attached: true }),
-        candidates: async () => [
-          { path: 'note.md' },
-          { path: 'assets/image.bin' },
-          { path: 'document.pdf' },
-          { path: '.ordinary' },
-          { path: '.env' },
-          { path: '.ENV' },
-          { path: 'private.local.md' },
-          { path: 'private.LOCAL.md' },
-          { path: '.holi-storage-test/data' },
-        ],
-        status: async () => [],
-        prepareWorkingCopyTree: async (_root, _remote, _branch, policy) => {
-          decisions = [
-            'note.md',
-            'assets/image.bin',
-            'document.pdf',
-            '.ordinary',
-            '.env',
-            '.ENV',
-            'private.local.md',
-            'private.LOCAL.md',
-            '.holi-storage-test/data',
-          ].map((path) => [path, policy(path)])
-          if (decisions.some(([, decision]) => decision === -1)) throw new Error('unsafe candidate')
-          return tree
-        },
-      }
-      const result = await prepareWorkingCopyTree(createNodeFiles(), native, {
-        root: base,
-        remote: 'holi/vault',
-        branch: 'main',
+      const candidates = [
+        'note.md',
+        'image.bin',
+        'document.pdf',
+        '.ordinary',
+        '.env',
+        '.ENV',
+        'private.local.md',
+        'private.LOCAL.md',
+        '.holi-storage-private/data',
+      ]
+      let selected: string[] = []
+      const native = adapter(candidates, async (_root, eligible) => {
+        selected = eligible
+        return tree
       })
-      expect(result).toEqual(tree)
-      expect(decisions).toEqual([
-        ['note.md', 1],
-        ['assets/image.bin', 1],
-        ['document.pdf', 1],
-        ['.ordinary', 1],
-        ['.env', 0],
-        ['.ENV', 0],
-        ['private.local.md', 0],
-        ['private.LOCAL.md', 0],
-        ['.holi-storage-test/data', 0],
-      ])
+      expect(await prepareWorkingCopyTree(createNodeFiles(), native, vault(base))).toEqual(tree)
+      expect(selected).toEqual(['note.md', 'image.bin', 'document.pdf', '.ordinary'])
     } finally {
       await rm(base, { recursive: true, force: true })
     }
   })
 
-  it('waits for a save through a canonical alias while another checkout prepares independently', async () => {
+  it('makes canonical aliases observe completed saves while another checkout remains independent', async () => {
     const base = await root()
     const other = await root()
     const alias = `${base}-alias`
     const entered = signal()
     const release = signal()
-    let armed = false
     const pending: Promise<unknown>[] = []
     const track = <T>(promise: Promise<T>) => {
       pending.push(promise)
       void promise.catch(() => undefined)
       return promise
     }
+    let armed = false
     try {
       await symlink(base, alias)
       await writeFile(join(other, 'note.md'), 'independent')
@@ -108,94 +95,60 @@ describe('prepareWorkingCopyTree', () => {
           await release.promise
         }
       })
-      const storage = createVaultStorage(files, { remote: 'holi/vault', root: base })
+      const storage = createVaultStorage(files, vault(base))
       await storage.create('note.md', bytes('before'))
       armed = true
       const saving = track(
         storage.save('note.md', bytes('saved'), (await storage.read('note.md')).revision),
       )
       await entered.promise
-      let output = ''
-      const nativeFor = (): NativeWorkingCopy & NativeTreePreparation => ({
-        recoveryPending: async () => false,
-        canonicalRoot: async (value) => files.canonicalRoot(value),
-        identity: async () => ({ remotes: ['holi/vault'], branch: 'main', attached: true }),
-        candidates: async () => [{ path: 'note.md' }],
-        status: async () => [],
-        prepareWorkingCopyTree: async (canonical) => {
-          output = await readFile(join(canonical, 'note.md'), 'utf8')
-          return tree
-        },
+      const observed = new Map<string, string>()
+      const native = adapter(['note.md'], async (canonical) => {
+        observed.set(canonical, await readFile(join(canonical, 'note.md'), 'utf8'))
+        return tree
       })
-      const waiting = track(
-        prepareWorkingCopyTree(files, nativeFor(), {
-          root: alias,
-          remote: 'holi/vault',
-          branch: 'main',
-        }),
-      )
-      const independent = await prepareWorkingCopyTree(files, nativeFor(), {
-        root: other,
-        remote: 'holi/vault',
-        branch: 'main',
-      })
-      expect(independent).toEqual(tree)
+      const waiting = track(prepareWorkingCopyTree(files, native, vault(alias)))
+      expect(await prepareWorkingCopyTree(files, native, vault(other))).toEqual(tree)
+      expect([...observed.values()]).toEqual(['independent'])
       release.resolve()
       await saving
       expect(await waiting).toEqual(tree)
-      expect(output).toBe('saved')
+      expect([...observed.values()]).toEqual(['independent', 'saved'])
     } finally {
       release.resolve()
       await Promise.allSettled(pending)
+      await rm(alias, { force: true })
       await rm(base, { recursive: true, force: true })
       await rm(other, { recursive: true, force: true })
-      await rm(alias, { recursive: true, force: true })
     }
   })
 
-  it('recovers an interrupted public move before native preparation', async () => {
+  it('recovers an interrupted public move before preparation and permits subsequent saves', async () => {
     const base = await root()
     try {
       const files = createNodeFiles()
-      const setup = createVaultStorage(files, { remote: 'holi/vault', root: base })
-      const source = await setup.create('from.md', bytes('moved bytes'))
-      const interrupted = createVaultStorage(
-        files,
-        { remote: 'holi/vault', root: base },
-        {
-          checkpoint: async (event) => {
-            if (
-              event.phase === 'file-after' &&
-              event.direction === 'after' &&
-              event.path === 'from.md'
-            )
-              throw new Error('interrupt move')
-          },
+      const storage = createVaultStorage(files, vault(base))
+      const source = await storage.create('from.md', bytes('moved bytes'))
+      const interrupted = createVaultStorage(files, vault(base), {
+        checkpoint: async (event) => {
+          if (
+            event.phase === 'file-after' &&
+            event.direction === 'after' &&
+            event.path === 'from.md'
+          )
+            throw new Error('interrupt move')
         },
-      )
+      })
       await expect(interrupted.move('from.md', 'to.md', source.revision)).rejects.toThrow()
       let observed = ''
-      const native: NativeWorkingCopy & NativeTreePreparation = {
-        recoveryPending: async () => false,
-        canonicalRoot: async (value) => files.canonicalRoot(value),
-        identity: async () => ({ remotes: ['holi/vault'], branch: 'main', attached: true }),
-        candidates: async () => [{ path: 'to.md' }],
-        status: async () => [],
-        prepareWorkingCopyTree: async (canonical) => {
-          observed = await readFile(join(canonical, 'to.md'), 'utf8')
-          return tree
-        },
-      }
-      expect(
-        await prepareWorkingCopyTree(files, native, {
-          root: base,
-          remote: 'holi/vault',
-          branch: 'main',
-        }),
-      ).toEqual(tree)
+      const native = adapter(['to.md'], async (canonical) => {
+        observed = await readFile(join(canonical, 'to.md'), 'utf8')
+        return tree
+      })
+      expect(await prepareWorkingCopyTree(files, native, vault(base))).toEqual(tree)
       expect(observed).toBe('moved bytes')
-      const current = await setup.read('to.md')
-      expect((await setup.save('to.md', bytes('ordinary save'), current.revision)).bytes).toEqual(
+      const current = await storage.read('to.md')
+      expect((await storage.save('to.md', bytes('ordinary save'), current.revision)).bytes).toEqual(
         bytes('ordinary save'),
       )
     } finally {
@@ -203,93 +156,45 @@ describe('prepareWorkingCopyTree', () => {
     }
   })
 
-  it('refuses ambiguous paths and invalid native object identifiers before exposing native output', async () => {
+  it('refuses invalid identities and unsupported names, and propagates native failure', async () => {
     const base = await root()
     try {
-      let prepared = false
-      const native: NativeWorkingCopy & NativeTreePreparation = {
-        recoveryPending: async () => false,
-        canonicalRoot: async (value) => value,
-        identity: async () => ({ remotes: ['holi/vault'], branch: 'main', attached: true }),
-        candidates: async () => [{ path: 'note.md' }],
-        status: async () => [],
-        prepareWorkingCopyTree: async () => {
-          prepared = true
-          return { ...tree, treeOID: 'a'.repeat(41) }
-        },
-      }
+      let selected = false
+      const native = adapter([], async () => {
+        selected = true
+        return tree
+      })
       await expect(
-        prepareWorkingCopyTree(createNodeFiles(), native, {
-          root: base,
-          remote: 'holi/vault',
-          branch: 'main',
-        }),
+        prepareWorkingCopyTree(createNodeFiles(), native, { ...vault(base), remote: 'bad remote' }),
       ).rejects.toThrow()
-      expect(prepared).toBe(false)
-      const invalidPath = {
-        ...native,
-        prepareWorkingCopyTree: async (
-          _root: string,
-          _remote: string,
-          _branch: string,
-          policy: (path: string) => number,
-        ) => {
-          const decisions = (await native.candidates(_root)).map(({ path }) => policy(path))
-          expect(decisions).toContain(-1)
-          throw new Error('unsafe candidate')
-        },
-        candidates: async () => [{ path: 'bad\\path.md' }],
-      }
+      expect(selected).toBe(false)
       await expect(
-        prepareWorkingCopyTree(createNodeFiles(), invalidPath, {
-          root: base,
-          remote: 'holi/vault',
-          branch: 'main',
-        }),
-      ).rejects.toThrow('unsafe candidate')
-      const invalidResult = { ...native, candidates: async () => [{ path: 'note.md' }] }
-      await expect(
-        prepareWorkingCopyTree(createNodeFiles(), invalidResult, {
-          root: base,
-          remote: 'holi/vault',
-          branch: 'main',
-        }),
-      ).rejects.toThrow()
+        prepareWorkingCopyTree(createNodeFiles(), adapter(['bad\\name.md']), vault(base)),
+      ).rejects.toThrow('Invalid native candidate')
+      const failure = adapter([], async () => {
+        throw new Error('Native refused unsafe entry')
+      })
+      await expect(prepareWorkingCopyTree(createNodeFiles(), failure, vault(base))).rejects.toThrow(
+        'Native refused unsafe entry',
+      )
     } finally {
       await rm(base, { recursive: true, force: true })
     }
   })
 
-  it('refuses invalid identity before native preparation', async () => {
+  it('rejects malformed native receipts instead of exposing a successful preparation', async () => {
     const base = await root()
     try {
-      let prepared = false
-      const native: NativeWorkingCopy & NativeTreePreparation = {
-        recoveryPending: async () => false,
-        canonicalRoot: async (value) => value,
-        identity: async () => ({ remotes: ['holi/vault'], branch: 'main', attached: true }),
-        candidates: async () => [{ path: 'note.md' }],
-        status: async () => [],
-        prepareWorkingCopyTree: async () => {
-          prepared = true
-          return tree
-        },
+      for (const invalid of [
+        { ...tree, treeOID: 'a'.repeat(41) },
+        { ...tree, parentOID: null },
+        { ...tree, branch: 'wrong' },
+      ]) {
+        const native = adapter([], async () => invalid as PreparedWorkingCopyTree)
+        await expect(
+          prepareWorkingCopyTree(createNodeFiles(), native, vault(base)),
+        ).rejects.toThrow()
       }
-      await expect(
-        prepareWorkingCopyTree(createNodeFiles(), native, {
-          root: base,
-          remote: 'bad remote',
-          branch: 'main',
-        }),
-      ).rejects.toThrow()
-      await expect(
-        prepareWorkingCopyTree(createNodeFiles(), native, {
-          root: base,
-          remote: 'holi/vault',
-          branch: 'main',
-        }),
-      ).rejects.toThrow()
-      expect(prepared).toBe(false)
     } finally {
       await rm(base, { recursive: true, force: true })
     }
