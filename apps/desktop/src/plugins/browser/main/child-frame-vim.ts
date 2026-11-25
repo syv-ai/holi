@@ -17,11 +17,10 @@ export function createChildFrameVim(
   contents: WebContents,
   presented: () => boolean,
   releaseFocus: () => void,
-  sharedAddressing?: ReturnType<typeof createFrameAddressing>,
 ) {
   const tab = {}
   let capture: FrameCapture | null = null
-  let addressing: ReturnType<typeof createFrameAddressing> | null = sharedAddressing ?? null
+  let addressing: ReturnType<typeof createFrameAddressing> | null = null
   const children = new Map<WebFrameMain, Child>()
   let enabled = false
   let revision = 0
@@ -137,6 +136,62 @@ export function createChildFrameVim(
     }
   }
 
+  async function hintWorlds() {
+    await draining
+    const owner = capture
+    if (!owner || !current(owner)) return []
+    const adapter = (addressing ??= createFrameAddressing(contents, current))
+    const frames = contents.mainFrame.frames
+      .filter((frame) => !frame.detached && /^https?:/i.test(frame.url))
+      .slice(0, 200)
+    const worlds = []
+    for (const frame of frames) {
+      if (!current(owner)) break
+      try {
+        const address = await adapter.resolve(frame, owner)
+        if (!current(owner) || !adapter.isCurrent(address)) continue
+        let child = children.get(frame)
+        if (!child || child.address !== address) {
+          child = { frame, address, nonce: '', focus: 0 }
+          children.set(frame, child)
+          child.nonce = await adapter.evaluate<string>(
+            address,
+            `${PAGE_SCRIPT}\n__holiPage.vim.armChild()`,
+          )
+        }
+        if (!current(owner) || !adapter.isCurrent(address)) continue
+        await adapter.projectDirectPoints(address, [])
+        if (!current(owner) || !adapter.isCurrent(address)) continue
+        const allowed = await adapter.evaluate<boolean>(
+          address,
+          '__holiPage.hints.enableChild(true)',
+        )
+        if (!allowed || !current(owner) || !adapter.isCurrent(address)) continue
+        const bound = child
+        worlds.push(
+          Object.freeze({
+            key: address,
+            address,
+            current: () =>
+              current(owner) && children.get(frame) === bound && adapter.isCurrent(address),
+            evaluate: <T>(expression: string) => adapter.evaluate<T>(address, expression),
+            projectDirectPoints: (points: ReadonlyArray<{ x: number; y: number }>) =>
+              adapter.projectDirectPoints(address, points),
+            clickDirect: (point: { x: number; y: number }, guard: () => boolean) =>
+              adapter.clickDirect(
+                address,
+                point,
+                () => current(owner) && children.get(frame) === bound && guard(),
+              ),
+          }),
+        )
+      } catch {
+        // Frames without supported direct geometry remain editing-only.
+      }
+    }
+    return worlds
+  }
+
   function mode(): Promise<ModeSnapshot | null> {
     if (sampling) return sampling
     const pending = sample()
@@ -155,5 +210,5 @@ export function createChildFrameVim(
     addressing = null
   }
 
-  return { configure, mode, revoke, dispose }
+  return { configure, mode, hintWorlds, revoke, dispose }
 }

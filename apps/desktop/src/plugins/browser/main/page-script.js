@@ -347,6 +347,7 @@
   let vimNonce = newVimNonce()
   let vimEnabled = false
   let childEditing = false
+  let childHintsAllowed = false
   let vimMode = 'insert'
   let vimRevision = 0
   let vimField = null
@@ -1080,6 +1081,7 @@
     'scroll',
     'resize',
     'focusin',
+    'blur',
     'pointerdown',
     'compositionstart',
     'compositionend',
@@ -1105,7 +1107,8 @@
   // Page-level hint ownership is independent of native-field normal mode.
   // Editable/custom hosts stay native unless the field Vim module owns normal mode.
   function canStartHints() {
-    if (childEditing || !vimEnabled || document.designMode === 'on') return false
+    if ((childEditing && !childHintsAllowed) || !vimEnabled || document.designMode === 'on')
+      return false
     const active = document.activeElement
     if (!(active instanceof HTMLElement) || active.getRootNode() !== document) return false
     if (
@@ -1182,6 +1185,11 @@
     a.snapshot === b.snapshot &&
     a.geometry === b.geometry
   const hints = {
+    enableChild(allowed) {
+      childHintsAllowed = childEditing && allowed === true
+      if (!childHintsAllowed) clearHints()
+      return childHintsAllowed
+    },
     reset() {
       stopHintMonitor()
       hintOwner = null
