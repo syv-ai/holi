@@ -69,6 +69,10 @@ type Cancellation = {
   identity: MailInvitationIdentity
   organizer: MailInvitationDetails['organizer']
   recurrenceRange: 'THISANDFUTURE' | null
+  /** Only STATUS:CANCELLED cancels the event for everyone. */
+  eventCancelled: boolean
+  /** Explicit calendar addresses, normalized; required for a removal. */
+  attendees: string[]
 }
 
 type ParsedInvitation = {
@@ -91,6 +95,8 @@ type ParsedInvitation = {
     recurrenceKind: TimeKind | null
     /** DTSTART in its original civil basis, including the zone of future recurrences. */
     recurrenceTimeBasis: ReturnType<CalendarTimes['recurrenceTimeBasis']>
+    /** Check the expansion zone only for a found Calendar copy, not for a Gmail reply. */
+    calendarRecurrenceZoneMatches: (zone: string | null) => boolean
     reply: (email: string, answer: InviteAnswer) => string
   } | null
 }
@@ -177,7 +183,7 @@ function attendeeState(property: ICAL.Property): AttendeeState {
 function attendeeEvidence(entry: ICAL.Component) {
   const states = new Map<string, AttendeeState>()
   for (const property of entry.getAllProperties('attendee')) {
-    const email = mailbox(property.getFirstValue())
+    const email = property.type === 'cal-address' ? mailbox(property.getFirstValue()) : null
     if (!email) continue
     const state = attendeeState(property)
     const previous = states.get(email)
@@ -271,6 +277,7 @@ function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasException
   const recurrenceRange: ParsedInvitation['recurrenceRange'] =
     range === 'THISANDFUTURE' ? range : null
   const rules = recurrenceLines(entry)
+  const referencedZoneKeys = times.recurrenceZoneKeys(entry)
   const details = {
     title,
     location,
@@ -305,6 +312,7 @@ function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasException
       status,
       recurrenceRange,
       rules,
+      ...(referencedZoneKeys.length ? { referencedZoneKeys } : {}),
       // A single moved instance has no future schedule of its own.
       ...((hasExceptions || rules.length > 0 || recurrenceRange) && recurrenceTimeBasis
         ? { recurrenceTimeBasis }
@@ -497,11 +505,16 @@ export function parseMailInvitation(
         const sender = part.material.details.organizer
         if (!sender || sender.email !== organizer?.email) malformed()
         if (!part.identity.dtstamp || !part.entry.hasProperty('sequence')) malformed()
+        const eventCancelled = part.material.status === 'CANCELLED'
+        const { attendees } = part.material
+        if (!eventCancelled && !attendees.length) malformed()
         part.identity.materialKey = materialKey(method, part.identity, part.material)
         cancellations.push({
           identity: part.identity,
           organizer: sender,
           recurrenceRange: part.material.recurrenceRange,
+          eventCancelled,
+          attendees,
         })
       }
       recurrenceRange = material.recurrenceRange
@@ -539,6 +552,8 @@ export function parseMailInvitation(
         identity: cancellation,
         organizer: sender,
         recurrenceRange: part.material.recurrenceRange,
+        eventCancelled: true,
+        attendees: part.material.attendees,
       })
     }
     const exceptions = siblings
@@ -555,6 +570,10 @@ export function parseMailInvitation(
     if (!start || !end || end < start || !recurrenceTimeBasis)
       return unavailable('Invitation has no usable start or end time')
     if (recurrenceRange) return unavailable('This invitation changes multiple occurrences')
+    const replyTimes = times.replyTimes([
+      representative.entry.getFirstProperty('dtstart'),
+      representative.entry.getFirstProperty('recurrence-id'),
+    ])
     return {
       method,
       recurrenceRange,
@@ -567,7 +586,9 @@ export function parseMailInvitation(
         explicitFields: material.explicitFields,
         recurrenceKind: identity.recurrenceId ? timeKind(identity.recurrenceId) : null,
         recurrenceTimeBasis,
-        reply: (attendee, answer) => buildReply(identity, start, organizer.email, attendee, answer),
+        calendarRecurrenceZoneMatches: times.checkRecurrenceZones(recurrenceTimeBasis, events),
+        reply: (attendee, answer) =>
+          buildReply(identity, replyTimes, organizer.email, attendee, answer),
       },
     }
   } catch (error) {
@@ -583,7 +604,7 @@ const PARTSTAT = { accepted: 'ACCEPTED', tentative: 'TENTATIVE', declined: 'DECL
 
 function buildReply(
   identity: MailInvitationIdentity,
-  start: string,
+  times: ReturnType<CalendarTimes['replyTimes']>,
   organizer: string,
   email: string,
   answer: InviteAnswer,
@@ -601,23 +622,12 @@ function buildReply(
   const attendee = reply.addPropertyWithValue('attendee', `mailto:${email}`)
   attendee.setParameter('partstat', PARTSTAT[answer])
 
-  // Preserve DATE and floating values. Known instants go out as UTC, never a
-  // TZID without its definition. The recurrence slot is independent of moved start.
-  reply.addPropertyWithValue('dtstart', replyTime(start))
-  if (identity.recurrenceId)
-    reply.addPropertyWithValue('recurrence-id', replyTime(identity.recurrenceId))
-  return calendar.toString() + '\r\n'
-}
-
-function replyTime(value: string): ICAL.Time {
-  switch (timeKind(value)) {
-    case 'date':
-      return ICAL.Time.fromDateString(value)
-    case 'floating':
-      return ICAL.Time.fromDateTimeString(value)
-    case 'instant':
-      return ICAL.Time.fromJSDate(new Date(value), true)
-  }
+  // The original RECURRENCE-ID names the organizer's slot, not the moved
+  // DTSTART or the normalized instant used for Calendar lookup and Sent evidence.
+  for (const property of times.properties) reply.addProperty(new ICAL.Property(property))
+  return calendar
+    .toString()
+    .replace(/END:VCALENDAR$/, () => [...times.definitions, 'END:VCALENDAR', ''].join('\r\n'))
 }
 
 /** A sent iTIP reply can describe only this organizer, invite sequence and occurrence.
