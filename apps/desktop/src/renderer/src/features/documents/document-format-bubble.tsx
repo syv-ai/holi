@@ -127,7 +127,7 @@ export function DocumentFormatBubble({
   const [customPassage, setCustomPassage] = useState<string | null>(null)
   /** Set as the menu closes into the prompt, so it leaves focus to the prompt. */
   const openingCustomRef = useRef(false)
-  const addingToBatchRef = useRef(false)
+  const [addingToBatch, setAddingToBatch] = useState(false)
   /** Set when the prompt closes because the person clicked elsewhere, so
    *  focus stays where they clicked rather than going back to the text. */
   const dismissedOutsideRef = useRef(false)
@@ -178,7 +178,7 @@ export function DocumentFormatBubble({
     const passage = selectedPassage()
     if (passage === '') return
     openingCustomRef.current = true
-    addingToBatchRef.current = false
+    setAddingToBatch(false)
     setCustomPassage(passage)
   }
 
@@ -187,10 +187,10 @@ export function DocumentFormatBubble({
     setCustomPassage(null)
     setCustomDraft('')
     if (passage !== null) {
-      if (addingToBatchRef.current) onAddToBatch?.(instruction, passage)
+      if (addingToBatch) onAddToBatch?.(instruction, passage)
       else onQuickCommand?.(instruction, passage)
     }
-    addingToBatchRef.current = false
+    setAddingToBatch(false)
   }
 
   return (
@@ -261,7 +261,7 @@ export function DocumentFormatBubble({
                         onClick={() => {
                           const passage = selectedPassage()
                           if (passage === '') return
-                          addingToBatchRef.current = true
+                          setAddingToBatch(true)
                           openingCustomRef.current = true
                           setCustomPassage(passage)
                         }}
@@ -304,6 +304,7 @@ export function DocumentFormatBubble({
               >
                 {/* Mounts per open, so the field always starts empty. */}
                 <AgentPrompt
+                  submitLabel={addingToBatch ? 'Add to batch' : undefined}
                   value={customDraft}
                   onValueChange={setCustomDraft}
                   task="change the selection"

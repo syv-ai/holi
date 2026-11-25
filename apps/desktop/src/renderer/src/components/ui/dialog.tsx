@@ -56,6 +56,7 @@ function DialogContent({
   showCloseButton = true,
   variant = "default",
   size = "default",
+  scrollable = false,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
@@ -64,6 +65,8 @@ function DialogContent({
   /** The width from `sm` up, for a dialog whose width is chosen at runtime
    *  (a plugin's, by the size it asked for). */
   size?: "default" | "md" | "lg" | "3xl" | "6xl" | "media"
+  /** Keep the header visible while a constrained body scrolls. */
+  scrollable?: boolean
 }) {
   const openAutoFocus = useOverlayAutoFocus(props.onOpenAutoFocus)
   const closeAutoFocus = useOverlayAutoFocus(props.onCloseAutoFocus)
@@ -81,6 +84,7 @@ function DialogContent({
           size === "6xl" && "sm:max-w-6xl",
           size === "media" &&
             "sm:max-w-6xl max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden",
+          scrollable && "h-[min(40rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden",
           className
         )}
         {...props}

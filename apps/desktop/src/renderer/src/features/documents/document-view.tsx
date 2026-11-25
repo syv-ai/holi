@@ -58,7 +58,13 @@ import {
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useVimField } from '@/hooks/use-vim-field'
 import { VimFieldMode } from '@/composites/vim-field-mode'
@@ -933,6 +939,8 @@ function DocumentEditor({
   }
   const canStartChat = useAtomValue(canStartConversationAtom)
   const [batchDialogOpen, setBatchDialogOpen] = useState(false)
+  if (batchDialogOpen && (!visible || !focused || rewriteQueue.length === 0))
+    setBatchDialogOpen(false)
   const startConversation = useSetAtom(startConversationAtom)
 
   /** A new agent session beside the document, the passage in its input as
@@ -947,6 +955,80 @@ function DocumentEditor({
   }
 
   const sidebarFits = commentable && commentsOpen ? SIDEBAR_FITS.besideComments : SIDEBAR_FITS.alone
+
+  const batchOverview = (
+    <section
+      aria-label="Queued rewrite requests"
+      className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-3"
+    >
+      {!batchDialogOpen ? (
+        <h2 className="shrink-0 text-sm font-medium">Rewrite batch ({rewriteQueue.length})</h2>
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+        {rewriteQueue.map((item, index) => (
+          <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
+              {item.passage}
+            </span>{' '}
+            <BatchInstructionInput
+              id={item.id}
+              index={index}
+              value={item.instruction}
+              disabled={batchSubmitting}
+              onChange={(value) => editBatchItem(item.id, value)}
+            />
+            {!item.valid ? (
+              <span role="status" className="text-sm text-muted-foreground">
+                Target changed; reselect
+              </span>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => reselection(item.id)}
+              disabled={batchSubmitting}
+            >
+              {item.valid ? 'Show target' : 'Use selection'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => removeFromBatch(item.id)}
+              disabled={batchSubmitting}
+            >
+              Remove
+            </Button>
+          </div>
+        ))}
+      </div>
+      {batchError ? (
+        <p role="alert" className="text-destructive text-sm">
+          {batchError}
+        </p>
+      ) : null}
+      {batchSubmitting ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Submitting batch…
+        </p>
+      ) : null}
+      <div className="flex shrink-0 justify-end">
+        <Button
+          type="button"
+          size="sm"
+          disabled={
+            batchSubmitting ||
+            !canAsk ||
+            rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
+          }
+          onClick={() => void submitBatch()}
+        >
+          Submit batch
+        </Button>
+      </div>
+    </section>
+  )
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -1012,275 +1094,157 @@ function DocumentEditor({
             }
           />
           <div inert={donePending} className="flex min-h-0 flex-1">
-            <div
-              ref={scrollerRef}
-              className="relative min-h-0 min-w-0 flex-1 overflow-y-auto"
-              onMouseDown={pressPage}
-            >
-              {/* The find bar floats at the page's top right, over the text,
+            <div className="@container/rewrite relative flex min-h-0 min-w-0 flex-1">
+              <div
+                ref={scrollerRef}
+                className="relative min-h-0 min-w-0 flex-1 overflow-y-auto"
+                onMouseDown={pressPage}
+              >
+                {/* The find bar floats at the page's top right, over the text,
                 and stays there as it scrolls. */}
-              {editor && find ? (
-                <div
-                  hidden={!focused}
-                  className={cn(
-                    'sticky top-2 z-40 flex h-0 items-start justify-end px-4',
-                    !focused && 'hidden',
-                  )}
-                >
-                  <DocumentFindBar editor={editor} request={find} onClose={() => setFind(null)} />
-                </div>
-              ) : null}
-              {/* A plugin's card for the file it claims, a link's page. */}
-              {Banner !== undefined ? (
-                <div
-                  className={cn(
-                    'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
-                    fullWidth ? 'max-w-none' : 'max-w-3xl',
-                  )}
-                >
-                  <Banner path={path} />
-                </div>
-              ) : null}
-              {/* A task's properties, on the body's column; nothing for a note.
+                {editor && find ? (
+                  <div
+                    hidden={!focused}
+                    className={cn(
+                      'sticky top-2 z-40 flex h-0 items-start justify-end px-4',
+                      !focused && 'hidden',
+                    )}
+                  >
+                    <DocumentFindBar editor={editor} request={find} onClose={() => setFind(null)} />
+                  </div>
+                ) : null}
+                {/* A plugin's card for the file it claims, a link's page. */}
+                {Banner !== undefined ? (
+                  <div
+                    className={cn(
+                      'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
+                      fullWidth ? 'max-w-none' : 'max-w-3xl',
+                    )}
+                  >
+                    <Banner path={path} />
+                  </div>
+                ) : null}
+                {/* A task's properties, on the body's column; nothing for a note.
                   In a sidebar only when the view has room for it beside the
                   text (and the comments, when they are open): narrower, they
                   stay here whatever the setting says. */}
-              <TaskProperties
-                path={path}
-                layout="inline"
-                beforeWrite={save}
-                onMoved={onMoved}
-                className={cn(
-                  'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
-                  fullWidth ? 'max-w-none' : 'max-w-3xl',
-                  propertiesLayout === 'sidebar' && sidebarFits.inline,
-                )}
-              />
-              <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
-                {editor ? (
-                  <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
-                    <EditorContent
-                      editor={editor}
-                      onKeyDown={(event) => {
-                        const mod = event.metaKey || event.ctrlKey
-                        if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
-                          event.preventDefault()
-                          openLinkEditor()
+                <TaskProperties
+                  path={path}
+                  layout="inline"
+                  beforeWrite={save}
+                  onMoved={onMoved}
+                  className={cn(
+                    'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
+                    fullWidth ? 'max-w-none' : 'max-w-3xl',
+                    propertiesLayout === 'sidebar' && sidebarFits.inline,
+                  )}
+                />
+                <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
+                  {editor ? (
+                    <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
+                      <EditorContent
+                        editor={editor}
+                        onKeyDown={(event) => {
+                          const mod = event.metaKey || event.ctrlKey
+                          if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
+                            event.preventDefault()
+                            openLinkEditor()
+                          }
+                        }}
+                        className={cn(
+                          RICH_TEXT_PROSE,
+                          'mx-auto w-full px-4 py-8 sm:px-16 sm:py-12',
+                          fullWidth ? 'max-w-none' : 'max-w-3xl',
+                          smallText && 'text-sm/6',
+                          locked && 'opacity-60',
+                        )}
+                      />
+                    </div>
+                  ) : (
+                    <DocumentSkeleton />
+                  )}
+                  {editor ? (
+                    <>
+                      <DocumentFormatBubble
+                        editor={editor}
+                        linkOpen={linkOpen}
+                        onLinkOpenChange={setLinkOpen}
+                        onQuickCommand={
+                          canAsk
+                            ? (instruction, passage) => void quickCommand(instruction, passage)
+                            : null
                         }
-                      }}
-                      className={cn(
-                        RICH_TEXT_PROSE,
-                        'mx-auto w-full px-4 py-8 sm:px-16 sm:py-12',
-                        fullWidth ? 'max-w-none' : 'max-w-3xl',
-                        smallText && 'text-sm/6',
-                        locked && 'opacity-60',
-                      )}
-                    />
-                  </div>
-                ) : (
-                  <DocumentSkeleton />
-                )}
-                {editor ? (
-                  <>
-                    <DocumentFormatBubble
-                      editor={editor}
-                      linkOpen={linkOpen}
-                      onLinkOpenChange={setLinkOpen}
-                      onQuickCommand={
-                        canAsk
-                          ? (instruction, passage) => void quickCommand(instruction, passage)
-                          : null
-                      }
-                      onAddToBatch={canAsk ? addToBatch : null}
-                      onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
-                      onComment={commentable ? () => void commentOnSelection() : null}
-                    />
-                    <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
-                    <RichTextTableBubble
-                      editor={editor}
-                      onDeleteTable={() => setDeleteTableOpen(true)}
-                    />
-                    <RichTextBlockGutter
-                      editor={editor}
-                      editable={editable}
-                      scrollerRef={pageRef}
-                      onDeleteTable={() => setDeleteTableOpen(true)}
-                      headingLink={holiLinks?.heading ?? null}
-                    />
-                  </>
-                ) : null}
-                {promptOpen
-                  ? createPortal(
-                      <AgentPrompt
-                        initial={promptInitial}
-                        onSubmit={(request) => void sendPrompt(request)}
-                        onCancel={closePrompt}
-                      />,
-                      promptBox,
-                    )
-                  : null}
+                        onAddToBatch={canAsk ? addToBatch : null}
+                        onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
+                        onComment={commentable ? () => void commentOnSelection() : null}
+                      />
+                      <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
+                      <RichTextTableBubble
+                        editor={editor}
+                        onDeleteTable={() => setDeleteTableOpen(true)}
+                      />
+                      <RichTextBlockGutter
+                        editor={editor}
+                        editable={editable}
+                        scrollerRef={pageRef}
+                        onDeleteTable={() => setDeleteTableOpen(true)}
+                        headingLink={holiLinks?.heading ?? null}
+                      />
+                    </>
+                  ) : null}
+                  {promptOpen
+                    ? createPortal(
+                        <AgentPrompt
+                          initial={promptInitial}
+                          onSubmit={(request) => void sendPrompt(request)}
+                          onCancel={closePrompt}
+                        />,
+                        promptBox,
+                      )
+                    : null}
+                </div>
               </div>
+              {rewriteQueue.length > 0 ? (
+                <>
+                  <div className="absolute right-4 bottom-4 z-20 @5xl/rewrite:hidden">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setBatchDialogOpen(true)}
+                    >
+                      Batch ({rewriteQueue.length})
+                    </Button>
+                  </div>
+                  {!batchDialogOpen ? (
+                    <aside
+                      aria-label="Rewrite batch overview"
+                      className="hidden min-h-0 w-80 shrink-0 border-l border-border p-4 @5xl/rewrite:flex"
+                    >
+                      {batchOverview}
+                    </aside>
+                  ) : null}
+                  <Dialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
+                    <DialogContent
+                      size="lg"
+                      scrollable
+                      onCloseAutoFocus={(event) => {
+                        event.preventDefault()
+                        if (visible && focused && editor && !editor.isDestroyed) editor.view.focus()
+                      }}
+                    >
+                      <DialogHeader>
+                        <DialogTitle>Rewrite batch ({rewriteQueue.length})</DialogTitle>
+                        <DialogDescription>
+                          Review the queued passages and instructions before submitting.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="flex min-h-0">{batchOverview}</div>
+                    </DialogContent>
+                  </Dialog>
+                </>
+              ) : null}
             </div>
-            {rewriteQueue.length > 0 ? (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mx-4 mb-2 shrink-0 @5xl/document:hidden"
-                  onClick={() => setBatchDialogOpen(true)}
-                >
-                  Batch ({rewriteQueue.length})
-                </Button>
-                {!batchDialogOpen ? (
-                  <aside
-                    aria-label="Rewrite batch overview"
-                    className="hidden min-h-0 w-80 shrink-0 overflow-hidden border-l border-border @5xl/document:flex"
-                  >
-                    <section
-                      aria-label="Queued rewrite requests"
-                      className="flex min-h-0 w-full min-w-0 flex-col gap-3 p-4"
-                    >
-                      <h2 className="text-sm font-medium">Rewrite batch ({rewriteQueue.length})</h2>
-                      {rewriteQueue.map((item, index) => (
-                        <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
-                            {item.passage}
-                          </span>{' '}
-                          <BatchInstructionInput
-                            id={item.id}
-                            index={index}
-                            value={item.instruction}
-                            disabled={batchSubmitting}
-                            onChange={(value) => editBatchItem(item.id, value)}
-                          />
-                          {!item.valid ? (
-                            <span role="status" className="text-sm text-muted-foreground">
-                              Target changed; reselect
-                            </span>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => reselection(item.id)}
-                            disabled={batchSubmitting}
-                          >
-                            {item.valid ? 'Show target' : 'Use selection'}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeFromBatch(item.id)}
-                            disabled={batchSubmitting}
-                          >
-                            Remove
-                          </Button>
-                        </div>
-                      ))}
-                      {batchError ? (
-                        <p role="alert" className="text-destructive text-sm">
-                          {batchError}
-                        </p>
-                      ) : null}
-                      {batchSubmitting ? (
-                        <p role="status" className="text-muted-foreground text-sm">
-                          Submitting batch…
-                        </p>
-                      ) : null}
-                      <div className="flex justify-end">
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={
-                            batchSubmitting ||
-                            !canAsk ||
-                            rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
-                          }
-                          onClick={() => void submitBatch()}
-                        >
-                          Submit batch
-                        </Button>
-                      </div>
-                    </section>
-                  </aside>
-                ) : null}
-                <Dialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
-                  <DialogContent size="lg" className="max-h-screen overflow-hidden">
-                    <DialogHeader>
-                      <DialogTitle>Rewrite batch ({rewriteQueue.length})</DialogTitle>
-                    </DialogHeader>
-                    <section
-                      aria-label="Queued rewrite requests"
-                      className="flex min-h-0 flex-col gap-3 overflow-y-auto"
-                    >
-                      {rewriteQueue.map((item, index) => (
-                        <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
-                            {item.passage}
-                          </span>
-                          <BatchInstructionInput
-                            id={item.id}
-                            index={index}
-                            value={item.instruction}
-                            disabled={batchSubmitting}
-                            onChange={(value) => editBatchItem(item.id, value)}
-                          />
-                          {!item.valid ? (
-                            <span role="status" className="text-sm text-muted-foreground">
-                              Target changed; reselect
-                            </span>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => reselection(item.id)}
-                            disabled={batchSubmitting}
-                          >
-                            {item.valid ? 'Show target' : 'Use selection'}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeFromBatch(item.id)}
-                            disabled={batchSubmitting}
-                          >
-                            Remove
-                          </Button>
-                        </div>
-                      ))}
-                      {batchError ? (
-                        <p role="alert" className="text-destructive text-sm">
-                          {batchError}
-                        </p>
-                      ) : null}
-                      {batchSubmitting ? (
-                        <p role="status" className="text-muted-foreground text-sm">
-                          Submitting batch…
-                        </p>
-                      ) : null}
-                      <div className="flex justify-end">
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={
-                            batchSubmitting ||
-                            !canAsk ||
-                            rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
-                          }
-                          onClick={() => void submitBatch()}
-                        >
-                          Submit batch
-                        </Button>
-                      </div>
-                    </section>
-                  </DialogContent>
-                </Dialog>
-              </>
-            ) : null}
             {propertiesLayout === 'sidebar' ? (
               <TaskProperties
                 path={path}
