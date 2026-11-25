@@ -19,6 +19,7 @@ import {
   focusMember,
   insertIntoActive,
   isSplit,
+  isSticky,
   MAX_SPLIT,
   moveEntry,
   moveOut,
@@ -31,6 +32,7 @@ import {
   selectEntry,
   separate,
   setShares,
+  setSticky,
   splitActive,
   stepMember,
   trackRecent,
@@ -550,5 +552,126 @@ describe('whole-entry close confirmation', () => {
     const splitId = entryIds(ws)[0]!
     expect(closesSplit(ws, { kind: 'others', id: C })).toBe(true)
     expect(closesSplit(ws, { kind: 'right', id: splitId })).toBe(false)
+  })
+})
+
+describe('sticky views', () => {
+  test('toggles at the group boundary and preserves drag order inside both groups', () => {
+    let ws = setSticky(setSticky(withTabs(A, B, C, D), C, true), A, true)
+    expect(strip(ws)).toEqual([C, A, B, D])
+    ws = moveEntry(ws, A, 0)
+    expect(strip(ws)).toEqual([A, C, B, D])
+    ws = dropOnStrip(ws, D, 0)
+    expect(strip(ws)).toEqual([A, C, D, B])
+    expect(moveEntry(ws, C, 4)).toBe(ws)
+    ws = setSticky(ws, A, false)
+    expect(strip(ws)).toEqual([C, A, D, B])
+    ws = dropOnStrip(ws, E, 0)
+    expect(strip(ws)).toEqual([C, E, A, D, B])
+    expect(setSticky(ws, C, true)).toBe(ws)
+  })
+
+  test('ordinary and bulk closes preserve sticky entries, explicit closes remove them', () => {
+    let ws = setSticky(pair(), A, true)
+    const id = split(ws).id
+    expect(closeTab(ws, A)).toBe(ws)
+    expect(closeEntry(ws, id)).toBe(ws)
+    expect(strip(closeOtherTabs(ws, C))).toEqual([[A, B], C])
+    expect(strip(closeTabsToRight(ws, id))).toEqual([[A, B]])
+    ws = closeAllTabs(ws)
+    expect(strip(ws)).toEqual([[A, B]])
+    expect(focusedTab(ws)).toBe(B)
+    ws = closeTab(ws, B)
+    expect(strip(ws)).toEqual([A])
+    expect(closeAllTabs(ws)).toBe(ws)
+    ws = closeTab(ws, A, true)
+    expect(allTabs(ws)).toEqual([])
+    expect(ws.active).toBeNull()
+    ws = reopenClosed(ws)
+    expect(strip(ws)).toEqual([A])
+    expect(isSticky(ws, A)).toBe(false)
+
+    ws = setSticky(pair(), split(pair()).id, true)
+    ws = closeEntry(ws, split(ws).id, true)
+    expect(strip(ws)).toEqual([C])
+    ws = reopenClosed(ws)
+    expect(strip(ws)).toEqual([C, [A, B]])
+    expect(isSticky(ws, split(ws).id)).toBe(false)
+  })
+
+  test('split identities toggle all members, member identities toggle only themselves', () => {
+    let ws = pair()
+    const id = split(ws).id
+    ws = setSticky(ws, id, true)
+    expect(isSticky(ws, A)).toBe(true)
+    expect(isSticky(ws, B)).toBe(true)
+    ws = setSticky(ws, A, false)
+    expect(isSticky(ws, A)).toBe(false)
+    expect(isSticky(ws, B)).toBe(true)
+    expect(isSticky(ws, id)).toBe(true)
+    ws = separate(ws, id)
+    expect(strip(ws)).toEqual([B, A, C])
+    ws = setSticky(ws, B, false)
+    expect(strip(ws)).toEqual([B, A, C])
+  })
+
+  test('sticky identity follows combine, content drops, move out and separation', () => {
+    let ws = setSticky(setSticky(withTabs(A, B, C, D), A, true), B, true)
+    ws = combineOnStrip(ws, A, D)
+    expect(strip(ws)).toEqual([B, [D, A], C])
+    expect(isSticky(ws, split(ws).id)).toBe(true)
+    ws = separate(ws, split(ws).id)
+    expect(strip(ws)).toEqual([B, A, D, C])
+    ws = insertIntoActive(selectEntry(ws, C), A, 0)
+    expect(strip(ws)).toEqual([B, [A, C], D])
+    ws = dropTab(ws, D, A, 'center')
+    expect(strip(ws)).toEqual([B, A, [D, C]])
+    expect(isSticky(ws, A)).toBe(true)
+    expect(isSticky(ws, split(ws).id)).toBe(false)
+    ws = openInSplit(ws, A)
+    expect(strip(ws)).toEqual([B, [D, C, A]])
+    ws = moveOut(ws, A, 0)
+    expect(strip(ws)).toEqual([A, B, [D, C]])
+    ws = splitActive(ws)
+    expect(isSticky(ws, split(ws).id)).toBe(true)
+    ws = replaceWithNew(ws, A)
+    expect(strip(ws).slice(0, 2)).toEqual([B, A])
+    expect(isSticky(ws, A)).toBe(true)
+  })
+
+  test('sticky launchers are not automatically replaced, alone or in a split', () => {
+    let ws = openNewTab(withTabs(A))
+    const blank = focusedTab(ws)!
+    ws = setSticky(ws, blank, true)
+    ws = openTab(ws, B)
+    expect(strip(ws)).toEqual([blank, B, A])
+    ws = openInSplit(selectEntry(ws, A), blank)
+    ws = openTab(ws, C)
+    expect(strip(ws)).toEqual([[A, blank], C, B])
+    expect(isSticky(ws, blank)).toBe(true)
+
+    ws = setSticky(withTabs(A, AGENTS_HOME_KEY), AGENTS_HOME_KEY, true)
+    ws = openTab(ws, S, (key) => key === AGENTS_HOME_KEY)
+    expect(strip(ws)).toEqual([AGENTS_HOME_KEY, S, A])
+    ws = openInSplit(selectEntry(ws, A), AGENTS_HOME_KEY)
+    ws = openTab(ws, D, (key) => key === AGENTS_HOME_KEY)
+    expect(strip(ws)).toEqual([[A, AGENTS_HOME_KEY], D, S])
+  })
+
+  test('rename carries sticky identity and authoritative removal clears it with a valid survivor', () => {
+    let ws = setSticky(setSticky(pair(), A, true), C, true)
+    ws = retargetTabs(ws, [{ from: A, to: D }])
+    expect(isSticky(ws, D)).toBe(true)
+    expect(isSticky(ws, A)).toBe(false)
+    ws = closeTabsWhere(ws, (key) => key === D)
+    expect(strip(ws)).toEqual([C, B])
+    expect(focusedTab(ws)).toBe(B)
+    ws = openTab(ws, D)
+    expect(isSticky(ws, D)).toBe(false)
+    ws = closeTabsWhere(selectEntry(ws, C), (key) => key === C)
+    expect(focusedTab(ws)).toBe(B)
+    ws = openTab(ws, C)
+    expect(isSticky(ws, C)).toBe(false)
+    expect(closeTabsWhere(ws, () => true).active).toBeNull()
   })
 })
