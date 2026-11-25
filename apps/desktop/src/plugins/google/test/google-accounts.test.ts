@@ -98,7 +98,7 @@ function deferred<T>() {
 /** Independently gated code exchanges and refresh, with real persistence. */
 async function controlledConsent(
   seed: StoredGoogleAuth[] = [],
-  onRevoke?: (token: string) => Promise<void>,
+  onRevoke?: (token: string, signal: AbortSignal | undefined) => Promise<void>,
   clients = memoryClients(null),
   vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json')),
 ) {
@@ -138,7 +138,7 @@ async function controlledConsent(
       if (String(url).endsWith('/revoke')) {
         const token = params.get('token')!
         revoked.push(token)
-        await onRevoke?.(token)
+        await onRevoke?.(token, init?.signal ?? undefined)
         return new Response('{}')
       }
       if (params.get('grant_type') === 'refresh_token') {
@@ -462,6 +462,64 @@ describe('removeAccount', () => {
     expect(revoke).toHaveBeenCalledTimes(1)
     await expect(accounts.overview(VAULT)).resolves.toMatchObject({ state: 'not-connected' })
   })
+
+  it('requires orphaned vault links to be retired before reconnecting after restart', async () => {
+    const path = join(dir, 'google-vault-accounts.json')
+    const { accounts, revoked } = await controlledConsent([auth()])
+    await accounts.link(VAULT, 'sub-1')
+    const old = (await accounts.bindingFor(VAULT))!
+    await mkdir(`${path}.tmp`)
+    try {
+      await expect(accounts.removeAccount('sub-1')).rejects.toThrow()
+      expect(old.isCurrent()).toBe(false)
+      expect(revoked).toEqual([])
+    } finally {
+      await rm(`${path}.tmp`, { recursive: true })
+    }
+
+    const vaults = createVaultAccounts(path)
+    const restarted = await controlledConsent([], undefined, undefined, vaults)
+    expect(restarted.accounts.list()).toEqual([])
+    await expect(vaults.subFor(VAULT)).resolves.toBe('sub-1')
+    // Fail only orphan cleanup. A normal link write would succeed, so the
+    // retry must not skip this cleanup just because there is no token row.
+    const unlink = vaults.unlinkAccount
+    vi.spyOn(vaults, 'unlinkAccount').mockImplementationOnce(async (sub) => {
+      await mkdir(`${path}.tmp`)
+      try {
+        await unlink(sub)
+      } finally {
+        await rm(`${path}.tmp`, { recursive: true })
+      }
+    })
+    const failed = (await restarted.accounts.connect(WORK)).wait()
+    restarted.exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-failed' }))
+    await expect(failed).rejects.toThrow()
+
+    const retry = await controlledConsent()
+    for (const remote of [VAULT, WORK]) {
+      await expect(retry.accounts.bindingFor(remote)).resolves.toBeNull()
+    }
+    const connected = (await retry.accounts.connect(WORK)).wait()
+    retry.exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }))
+    await expect(connected).resolves.toMatchObject({ kind: 'granted' })
+    await expect((await retry.accounts.bindingFor(WORK))?.session.getAccessToken()).resolves.toBe(
+      'at-fresh',
+    )
+    const providerWrite = vi.fn(async () => new Response('{}'))
+    const orphan = await retry.accounts.bindingFor(VAULT)
+    if (orphan) {
+      const api = new GoogleApi({
+        accessToken: () => orphan.session.getAccessToken(),
+        fetch: providerWrite,
+      })
+      await api.postJson('https://www.googleapis.com/calendar/v3/calendars/primary/events', {})
+    }
+    expect(orphan).toBeNull()
+    expect(providerWrite).not.toHaveBeenCalled()
+    await expect(vaults.subFor(VAULT)).resolves.toBeNull()
+    await expect(vaults.subFor(WORK)).resolves.toBe('sub-1')
+  })
 })
 
 describe('onChange', () => {
@@ -735,7 +793,7 @@ describe('consent whose vault link fails', () => {
         throw error
       }
     })
-    const { accounts, exchanges } = await controlledConsent([], undefined, undefined, vaults)
+    const { accounts, exchanges } = await controlledConsent([auth()], undefined, undefined, vaults)
     const failed = (await accounts.connect(VAULT)).wait()
     exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-failed', accessToken: 'at-failed' }))
     const rejection = expect(failed).rejects.toThrow()
@@ -1229,6 +1287,76 @@ describe('a grant that lands after it was let go', () => {
       expect(await rig.accounts.sessionFor(VAULT)).toBeNull()
     },
   )
+
+  it('keeps a same-token grant whose newer exchange is still at Google when stale consent returns', async () => {
+    const rig = await controlledConsent()
+    const stale = (await rig.accounts.connect(VAULT)).wait()
+    await rig.exchanges[0]!.started.promise
+    const current = (await rig.accounts.connect(WORK)).wait()
+    await rig.exchanges[1]!.started.promise
+
+    rig.exchanges[0]!.reply.resolve(auth({ accessToken: 'at-stale' }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    rig.exchanges[1]!.reply.resolve(auth({ accessToken: 'at-current' }))
+
+    await expect(stale).resolves.toEqual({ kind: 'cancelled' })
+    expect(rig.revoked).not.toContain('rt-1')
+    await expect(current).resolves.toMatchObject({ kind: 'granted' })
+    await expect((await rig.accounts.bindingFor(WORK))?.session.getAccessToken()).resolves.toBe(
+      'at-current',
+    )
+    await expect(rig.accounts.bindingFor(VAULT)).resolves.toBeNull()
+  })
+
+  it('aborts a hung revoke and does not publish a token with an unknown revoke outcome', async () => {
+    const revoking = deferred<void>()
+    let aborted = false
+    const rig = await controlledConsent([], async (_token, signal) => {
+      revoking.resolve()
+      signal?.throwIfAborted()
+      await new Promise<never>((_, reject) => {
+        signal?.addEventListener(
+          'abort',
+          () => {
+            aborted = true
+            reject(signal.reason)
+          },
+          { once: true },
+        )
+      })
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const stale = (await rig.accounts.connect(VAULT)).wait()
+      await rig.exchanges[0]!.started.promise
+      rig.accounts.cancelConnect()
+      rig.exchanges[0]!.reply.resolve(auth())
+      await revoking.promise
+
+      const overlapping = (await rig.accounts.connect(WORK)).wait()
+      rig.exchanges[1]!.reply.resolve(auth({ accessToken: 'at-overlap' }))
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(aborted).toBe(true)
+      await expect(stale).resolves.toEqual({ kind: 'cancelled' })
+      await expect(overlapping).resolves.toEqual({ kind: 'cancelled' })
+      await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
+
+      const retry = (await rig.accounts.connect(WORK)).wait()
+      rig.exchanges[2]!.reply.resolve(auth({ accessToken: 'at-retry' }))
+      await expect(retry).resolves.toEqual({ kind: 'cancelled' })
+      expect(rig.revoked).toEqual(['rt-1'])
+      await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
+
+      const fresh = (await rig.accounts.connect(WORK)).wait()
+      rig.exchanges[3]!.reply.resolve(auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }))
+      await expect(fresh).resolves.toMatchObject({ kind: 'granted' })
+      await expect((await rig.accounts.bindingFor(WORK))?.session.getAccessToken()).resolves.toBe(
+        'at-fresh',
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
   it('still revokes a superseded consent when its refresh token differs from the winner', async () => {
     const rig = await controlledConsent()

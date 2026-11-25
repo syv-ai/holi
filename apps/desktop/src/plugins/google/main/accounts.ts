@@ -25,6 +25,8 @@ import type { GoogleTokenStore, StoredGoogleAuth } from './token-store'
 import type { VaultAccountsStore } from './vault-accounts'
 
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
+const REVOKE_TIMEOUT_MS = 15_000
+const tokenDigest = (token: string) => createHash('sha256').update(token).digest('hex')
 
 // Kept in the encrypted row itself, so a restart between token and link writes
 // (or after failed cleanup) cannot expose that grant through any vault link.
@@ -196,19 +198,37 @@ export async function createGoogleAccounts(
       ? undefined
       : row
   }
-  const revokeUnusedGrant = (refreshToken: string): Promise<void> =>
-    serialize(async () => {
-      if (Object.values(accounts).some((auth) => auth.refreshToken === refreshToken)) return
-      if ([...removals.values()].some((removal) => removal.refreshToken === refreshToken)) return
-      if (
-        [...pendingGrants].some(
-          ([sub, grant]) =>
-            grant.refreshToken === refreshToken && grant.epoch === accountEpoch(sub),
+  // Track the code exchange through ownership of its result, not the time a
+  // person spends in the browser or the later persistence/cleanup work.
+  const exchanges = new Set<Promise<void>>()
+  let revoking: string | undefined
+  const uncertainRevokes = new Set<string>()
+  async function revokeUnusedGrant(refreshToken: string, removingSub?: string): Promise<void> {
+    for (;;) {
+      const exchanging = await serialize(async () => {
+        if (Object.values(accounts).some((auth) => auth.refreshToken === refreshToken)) return
+        if (
+          [...removals].some(
+            ([sub, removal]) => sub !== removingSub && removal.refreshToken === refreshToken,
+          )
         )
-      )
-        return
-      await revoke(refreshToken)
-    })
+          return
+        if (
+          [...pendingGrants].some(
+            ([sub, grant]) =>
+              grant.refreshToken === refreshToken && grant.epoch === accountEpoch(sub),
+          )
+        )
+          return
+        if (exchanges.size > 0) return [...exchanges]
+        await revoke(refreshToken)
+      })
+      if (!exchanging) return
+      // The exchange can queue a write to claim the token. Don't hold the
+      // writer while waiting, and recheck ownership on the next admission.
+      await Promise.all(exchanging)
+    }
+  }
 
   /** A session's window onto its own row. Writes go through here so the map has
    *  exactly one writer even while several sessions are refreshing. */
@@ -351,6 +371,8 @@ export async function createGoogleAccounts(
         },
       }
       const { id, secret } = currentClient()
+      let finishExchange: (() => void) | undefined
+      let overlappingRevoke: string | undefined
       let flow: LoopbackFlow
       try {
         flow = await startLoopbackFlow({
@@ -359,7 +381,17 @@ export async function createGoogleAccounts(
           scopes: GOOGLE_SCOPES,
           listen: deps.listen,
           openBrowser: deps.openBrowser,
-          fetch: deps.fetch,
+          fetch(input, init) {
+            overlappingRevoke = revoking
+            const done = new Promise<void>((resolve) => {
+              finishExchange = () => {
+                exchanges.delete(done)
+                resolve()
+              }
+            })
+            exchanges.add(done)
+            return (deps.fetch ?? globalThis.fetch)(input, init)
+          },
           now: deps.now,
         })
       } catch (error) {
@@ -392,11 +424,23 @@ export async function createGoogleAccounts(
       return wrapped
 
       async function finishConsent(): ReturnType<LoopbackFlow['wait']> {
-        const result = await flow.wait()
+        let result: Awaited<ReturnType<LoopbackFlow['wait']>>
+        try {
+          result = await flow.wait()
+        } finally {
+          // No yield between releasing this latch and claiming an accepted
+          // token in commitConsent. A waiting revoke sees that ownership.
+          finishExchange?.()
+        }
         if (result.kind !== 'granted') return result
 
         const { tokens } = result
         const { sub, refreshToken } = tokens
+        const digest = tokenDigest(refreshToken)
+        // An exchange can start during a revoke. Even if it finishes after
+        // the request completes, it cannot publish that retiring token.
+        if (digest === overlappingRevoke || uncertainRevokes.has(digest))
+          return { kind: 'cancelled' }
         const active = () =>
           !reservation.cancelled &&
           connecting?.id === reservation.id &&
@@ -539,8 +583,14 @@ export async function createGoogleAccounts(
           // Never reactivate an abandoned link by overwriting its quarantined row.
           await retireLocalAccount(sub)
           unused.add(abandoned.refreshToken)
+        } else if (abandoned === undefined) {
+          const links = await deps.vaults.all()
           if (!stillOwned()) return false
+          // A failed removal can leave links on disk after deleting the row.
+          // Retire them before staging any grant that could authorize them.
+          if (Object.values(links).includes(sub)) await retireLocalAccount(sub)
         }
+        if (!stillOwned()) return false
         await writeAccounts({ ...accounts, [sub]: { ...tokens, pendingConsent: true } })
         try {
           if (stillOwned()) {
@@ -580,14 +630,29 @@ export async function createGoogleAccounts(
     active?.cancel()
   }
 
-  /** Revoking needs only the token, so it works whatever the client. A failed
-   *  revoke is swallowed: see `removeAccount`. */
+  /** Only inside the writer, after ownership has been checked. */
   async function revoke(refreshToken: string): Promise<void> {
-    await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token: refreshToken }).toString(),
-    }).catch(() => undefined)
+    const digest = tokenDigest(refreshToken)
+    if (uncertainRevokes.has(digest)) return
+    revoking = digest
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), REVOKE_TIMEOUT_MS)
+    try {
+      const response = await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: refreshToken }).toString(),
+        signal: controller.signal,
+      })
+      if (!response.ok) uncertainRevokes.add(digest)
+    } catch {
+      // Aborting ends the request locally, but Google may already have acted.
+      // Keep the token ineligible for publication, without holding the writer.
+      uncertainRevokes.add(digest)
+    } finally {
+      clearTimeout(timer)
+      revoking = undefined
+    }
   }
 
   function removeAccount(sub: string): Promise<void> {
@@ -606,7 +671,7 @@ export async function createGoogleAccounts(
         await retireLocalAccount(sub)
       })
       if (removal.refreshToken !== undefined) {
-        await revoke(removal.refreshToken)
+        await revokeUnusedGrant(removal.refreshToken, sub)
         delete removal.refreshToken
       }
       await emit(sub, 'removed')
