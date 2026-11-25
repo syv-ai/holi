@@ -25,6 +25,9 @@ const nativeReasons = new Set([
 
 function validNavigationStats(stats) {
   const booleans = [
+    'manualAccessibilityRequested',
+    'manualAccessibilitySucceeded',
+    'lastCompleteWebAreaSeen',
     'activationSucceeded',
     'expectedTriggerByRole',
     'expectedTriggerByLabel',
@@ -58,7 +61,7 @@ function validNavigationStats(stats) {
     'connectionsLabelSeen',
   ]
   const counts = ['windowsSeen', 'visited']
-  const codes = ['windowsStatus', 'childrenStatus']
+  const codes = ['windowsStatus', 'childrenStatus', 'manualAccessibilityStatus']
   return (
     stats &&
     typeof stats === 'object' &&
@@ -324,6 +327,10 @@ export async function observeFirstTargetConnections({
       observed.startMicros !== identity.startMicros ||
       observed.signatureVerified !== true ||
       observed.googleConnectionsPanelAsserted !== true ||
+      !validNavigationStats(observed.navigationStats) ||
+      observed.navigationStats.manualAccessibilityRequested !== true ||
+      observed.navigationStats.manualAccessibilitySucceeded !== true ||
+      observed.navigationStats.manualAccessibilityStatus !== 0 ||
       !Number.isSafeInteger(observed.windowId) ||
       observed.windowId <= 0 ||
       observed.permissions?.screenCapture !== true ||
@@ -364,6 +371,7 @@ export async function observeFirstTargetConnections({
       windowId: observed.windowId,
       screenshot: observed.screenshot,
       permissions: { screenCapture: true, accessibility: true },
+      navigationStats: observed.navigationStats,
     }
   } catch {
     return failed('observation-unavailable', 'first-target-observation-failed')

@@ -18,9 +18,13 @@ type Scenario =
   | 'unsafe-screen-label'
   | 'unsafe-navigation'
   | 'navigation-replaced'
+  | 'manual-accessibility-refused'
+  | 'unsafe-manual-accessibility-status'
+  | 'unacknowledged-native-success'
 
 // Callback protocol fixtures do not exercise native signing, AX label matching,
 // secure-field exclusion, snapshot completeness, deadlines, or real capture.
+// They also do not prove the native AXManualAccessibility request exposes a tree.
 async function fixture(scenario: Scenario) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-565-native-')))
   const profile = join(root, 'Holi')
@@ -126,6 +130,56 @@ async function fixture(scenario: Scenario) {
           permissions: { screenCapture: false, accessibility: false, unrelated: token },
         }),
       }
+    const nativeSuccess = [
+      'observed',
+      'startup',
+      'stale-endpoint',
+      'unacknowledged-native-success',
+    ].includes(scenario)
+    const navigationStats: Record<string, unknown> = {
+      manualAccessibilityRequested: true,
+      manualAccessibilitySucceeded:
+        scenario !== 'manual-accessibility-refused' && scenario !== 'unacknowledged-native-success',
+      manualAccessibilityStatus: scenario === 'manual-accessibility-refused' ? 25205 : 0,
+      lastCompleteWebAreaSeen:
+        scenario !== 'navigation-unknown' && scenario !== 'manual-accessibility-refused',
+      activationSucceeded: scenario !== 'manual-accessibility-refused',
+      expectedTriggerByRole: false,
+      expectedTriggerByLabel: false,
+      triggerTitleSeen: false,
+      triggerDescriptionSeen: false,
+      triggerValueSeen: false,
+      settingsMenuSeen: false,
+      connectionsControlSeen: scenario !== 'manual-accessibility-refused',
+      connectionsHeadingSeen: nativeSuccess,
+      googleSeen: nativeSuccess,
+      emailSeen: nativeSuccess,
+      emailWithinLabelSeen: false,
+      disconnectSeen: nativeSuccess,
+      disconnectDescriptionSeen: false,
+      accountPressSucceeded: false,
+      settingsPressSucceeded: false,
+      connectionsPressSucceeded: false,
+      deadlineReached: !nativeSuccess && scenario !== 'manual-accessibility-refused',
+      childrenReadAttempted: scenario !== 'manual-accessibility-refused',
+      snapshotDeadlineReached: false,
+      snapshotNodeLimitReached: false,
+      snapshotDepthLimitReached: false,
+      snapshotReadFailed: false,
+      navigationScanStarted: scenario !== 'manual-accessibility-refused',
+      lastCompleteScreenSnapshotAvailable:
+        scenario !== 'navigation-unknown' && scenario !== 'manual-accessibility-refused',
+      signinLabelsSeen: scenario === 'navigation-unavailable',
+      onboardingLabelsSeen: false,
+      vaultSwitcherLabelSeen: false,
+      accountMenuLabelSeen: false,
+      settingsLabelSeen: false,
+      connectionsLabelSeen: false,
+      windowsSeen: scenario === 'manual-accessibility-refused' ? 0 : 1,
+      visited: scenario === 'manual-accessibility-refused' ? 0 : 42,
+      windowsStatus: 0,
+      childrenStatus: 0,
+    }
     if (
       [
         'navigation-unavailable',
@@ -133,46 +187,13 @@ async function fixture(scenario: Scenario) {
         'unsafe-navigation',
         'unsafe-screen-label',
         'navigation-replaced',
+        'manual-accessibility-refused',
+        'unsafe-manual-accessibility-status',
       ].includes(scenario)
     ) {
       observationReturned = true
-      const navigationStats: Record<string, unknown> = {
-        activationSucceeded: true,
-        expectedTriggerByRole: false,
-        expectedTriggerByLabel: false,
-        triggerTitleSeen: false,
-        triggerDescriptionSeen: false,
-        triggerValueSeen: false,
-        settingsMenuSeen: false,
-        connectionsControlSeen: true,
-        connectionsHeadingSeen: false,
-        googleSeen: false,
-        emailSeen: false,
-        emailWithinLabelSeen: false,
-        disconnectSeen: false,
-        disconnectDescriptionSeen: false,
-        accountPressSucceeded: false,
-        settingsPressSucceeded: false,
-        connectionsPressSucceeded: false,
-        deadlineReached: true,
-        childrenReadAttempted: true,
-        snapshotDeadlineReached: false,
-        snapshotNodeLimitReached: false,
-        snapshotDepthLimitReached: false,
-        snapshotReadFailed: false,
-        navigationScanStarted: true,
-        lastCompleteScreenSnapshotAvailable: scenario !== 'navigation-unknown',
-        signinLabelsSeen: scenario !== 'navigation-unknown',
-        onboardingLabelsSeen: false,
-        vaultSwitcherLabelSeen: false,
-        accountMenuLabelSeen: false,
-        settingsLabelSeen: false,
-        connectionsLabelSeen: false,
-        windowsSeen: 1,
-        visited: 42,
-        windowsStatus: 0,
-        childrenStatus: 0,
-      }
+      if (scenario === 'unsafe-manual-accessibility-status')
+        navigationStats.manualAccessibilityStatus = token
       if (scenario === 'unsafe-navigation') navigationStats.rawLabel = token
       if (scenario === 'unsafe-screen-label') navigationStats.signinLabelsSeen = token
       return {
@@ -216,6 +237,7 @@ async function fixture(scenario: Scenario) {
         startMicros,
         signatureVerified: true,
         windowId: 7,
+        navigationStats,
         googleConnectionsPanelAsserted: true,
         permissions: { screenCapture: true, accessibility: true },
         screenshot: 'first-target-google-connected.png',
@@ -261,6 +283,12 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
         outcome: 'observed',
         backendBoundToTarget: true,
         googleConnectionsPanelAsserted: true,
+        navigationStats: {
+          manualAccessibilityRequested: true,
+          manualAccessibilitySucceeded: true,
+          manualAccessibilityStatus: 0,
+          lastCompleteWebAreaSeen: true,
+        },
       })
       expect(await readdir(app.evidenceDirectory)).toContain(result.screenshot)
       expect(JSON.stringify(result)).not.toContain(app.token)
@@ -334,6 +362,8 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
     'unsafe-navigation',
     'unsafe-screen-label',
     'navigation-replaced',
+    'manual-accessibility-refused',
+    'unsafe-manual-accessibility-status',
   ] as const)(
     'keeps %s incomplete and exposes only bound structured diagnostics',
     async (scenario) => {
@@ -349,6 +379,10 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
         if (scenario === 'navigation-unavailable' || scenario === 'navigation-unknown') {
           expect(result).toMatchObject({
             navigationStats: {
+              manualAccessibilityRequested: true,
+              manualAccessibilitySucceeded: true,
+              manualAccessibilityStatus: 0,
+              lastCompleteWebAreaSeen: scenario !== 'navigation-unknown',
               connectionsControlSeen: true,
               deadlineReached: true,
               snapshotDeadlineReached: false,
@@ -364,6 +398,19 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
               connectionsLabelSeen: false,
             },
           })
+        } else if (scenario === 'manual-accessibility-refused') {
+          expect(result).toMatchObject({
+            backendBoundToTarget: true,
+            navigationStats: {
+              manualAccessibilityRequested: true,
+              manualAccessibilitySucceeded: false,
+              manualAccessibilityStatus: 25205,
+              navigationScanStarted: false,
+              lastCompleteScreenSnapshotAvailable: false,
+              lastCompleteWebAreaSeen: false,
+              visited: 0,
+            },
+          })
         } else expect(result).not.toHaveProperty('navigationStats')
         expect(JSON.stringify(result)).not.toContain(app.token)
         expect(app.requests()).toBe(1)
@@ -374,13 +421,20 @@ describe.skipIf(process.platform === 'win32')('first-target connection observati
     },
   )
 
-  it('rejects malformed native success without creating or accepting an image', async () => {
-    const app = await fixture('malformed-native')
-    try {
-      expect(await app.observe()).toMatchObject({ outcome: 'ownership-refused', screenshot: null })
-      expect(await readdir(app.evidenceDirectory)).toEqual([])
-    } finally {
-      await app.close()
-    }
-  })
+  it.each(['malformed-native', 'unacknowledged-native-success'] as const)(
+    'rejects %s without accepting an image',
+    async (scenario) => {
+      const app = await fixture(scenario)
+      try {
+        expect(await app.observe()).toMatchObject({
+          outcome: 'ownership-refused',
+          screenshot: null,
+        })
+        if (scenario === 'malformed-native')
+          expect(await readdir(app.evidenceDirectory)).toEqual([])
+      } finally {
+        await app.close()
+      }
+    },
+  )
 })

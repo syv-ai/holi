@@ -296,6 +296,82 @@ describe('hosted upgrade UI diagnostics', () => {
     expect(JSON.stringify(snapshot())).not.toContain(secret)
   })
 
+  it.each(['google.status', 'google.allAccounts'])(
+    'classifies the exact unavailable-method refusal for %s in the injected observer',
+    async (capability) => {
+      const { ipc, invoke } = ipcFixture()
+      // The signed producer installs the observer from its serialized function body.
+      const install = new Function(`return (${observeUpgradeUiRequests.toString()})`)()
+      const snapshot = install(ipc, remote)
+      const envelope = {
+        ok: false,
+        code: 'BAD_REQUEST',
+        message: `no such method: ${capability}`,
+      }
+      ipc.handle('holi:trpc', async () => envelope)
+      expect(await invoke('holi:trpc', null, {}, operation(capability))).toBe(envelope)
+      expect(snapshot()).toEqual([
+        {
+          capability,
+          fixtureVaultMatch: true,
+          result: 'envelope-error',
+          code: 'BAD_REQUEST',
+          refusalClass: 'method-unavailable',
+        },
+      ])
+    },
+  )
+
+  it('keeps other refusals distinct without serializing private error fields', () => {
+    const { ipc, invoke } = ipcFixture()
+    const snapshot = observeUpgradeUiRequests(ipc, remote)
+    const secret = 'token=/private/credentials email@example.invalid'
+    const messages = [
+      'no such method: google.allAccounts',
+      'no such method: google.status ',
+      `${secret} no such method: google.status`,
+      `no such method: google.status ${secret}`,
+      'params are not JSON',
+      secret,
+      { message: secret },
+      undefined,
+    ]
+    let envelope: Record<string, unknown>
+    ipc.handle('holi:trpc', () => envelope)
+    for (const message of messages) {
+      envelope = {
+        ok: false,
+        code: 'BAD_REQUEST',
+        message,
+        cause: { message: secret },
+        stack: secret,
+        identity: secret,
+        token: secret,
+        path: secret,
+        payload: secret,
+      }
+      expect(invoke('holi:trpc', null, {}, operation())).toBe(envelope)
+    }
+    expect(snapshot()).toEqual(
+      messages.map(() => ({
+        capability: 'google.status',
+        fixtureVaultMatch: true,
+        result: 'envelope-error',
+        code: 'BAD_REQUEST',
+        refusalClass: 'other',
+      })),
+    )
+    envelope = { ok: false, code: 'FORBIDDEN', message: 'no such method: google.status' }
+    expect(invoke('holi:trpc', null, {}, operation())).toBe(envelope)
+    expect(snapshot().at(-1)).toEqual({
+      capability: 'google.status',
+      fixtureVaultMatch: true,
+      result: 'envelope-error',
+      code: 'FORBIDDEN',
+    })
+    expect(JSON.stringify(snapshot())).not.toContain(secret)
+  })
+
   it('bounds diagnostics without suppressing later requests', () => {
     const { ipc, invoke } = ipcFixture()
     const snapshot = observeUpgradeUiRequests(ipc, remote)

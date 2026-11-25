@@ -139,6 +139,12 @@ export function observeUpgradeUiRequests(ipcMain, fixtureRemote) {
               ].includes(value.code)
                 ? value.code
                 : 'other'
+              if (record.code === 'BAD_REQUEST') {
+                // dev.275 and HEAD registry refusals survive router cap.run and toEnvelope.
+                // This does not distinguish an absent door from a stale lease/lifetime.
+                record.refusalClass =
+                  value.message === 'no such method: ' + capability ? 'method-unavailable' : 'other'
+              }
             }
             if (record.result === 'success') {
               if (capability === 'google.status') {

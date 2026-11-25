@@ -76,6 +76,9 @@ func identity(_ r: Request, bundle: String) -> Identity? {
 }
 
 final class NavigationStats {
+  var manualAccessibilityRequested = false
+  var manualAccessibilitySucceeded = false
+  var manualAccessibilityStatus: Int32 = 0
   var activationSucceeded = false
   var expectedTriggerByRole = false
   var expectedTriggerByLabel = false
@@ -116,7 +119,11 @@ final class NavigationStats {
   }
 
   var json: [String: Any] {
-    ["activationSucceeded": activationSucceeded, "expectedTriggerByRole": expectedTriggerByRole,
+    ["manualAccessibilityRequested": manualAccessibilityRequested,
+      "manualAccessibilitySucceeded": manualAccessibilitySucceeded,
+      "manualAccessibilityStatus": manualAccessibilityStatus,
+      "lastCompleteWebAreaSeen": lastCompleteScreenLabels?.webAreaSeen ?? false,
+      "activationSucceeded": activationSucceeded, "expectedTriggerByRole": expectedTriggerByRole,
       "expectedTriggerByLabel": expectedTriggerByLabel, "triggerTitleSeen": triggerTitleSeen,
       "triggerDescriptionSeen": triggerDescriptionSeen, "triggerValueSeen": triggerValueSeen,
       "settingsMenuSeen": settingsMenuSeen, "connectionsControlSeen": connectionsControlSeen,
@@ -259,6 +266,7 @@ func nodes(_ root: AXUIElement, pid: pid_t, deadline: Date, stats: NavigationSta
 // first nonempty accessible name. Never retain or emit the strings themselves.
 // All reads use the existing per-node cache and the snapshot's shared deadline.
 struct ScreenLabels {
+  var webAreaSeen = false
   var signinLabelsSeen = false
   var onboardingLabelsSeen = false
   var vaultSwitcherLabelSeen = false
@@ -271,6 +279,7 @@ struct ScreenLabels {
     for node in snapshot.content {
       guard snapshot.complete else { return nil }
       let role = node.role
+      webAreaSeen = webAreaSeen || role == "AXWebArea"
       let subrole = node.subrole
       guard snapshot.complete else { return nil }
       if role == "AXSecureTextField" || subrole == "AXSecureTextField" { continue }
@@ -386,6 +395,25 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
   let app = AXUIElementCreateApplication(r.pid)
   AXUIElementSetMessagingTimeout(app, 0.3)
   let stats = NavigationStats()
+  // Electron 43 documents this app-specific AT request to expose Chromium's AX
+  // tree. It is not a TCC grant. Use the already trusted, verified owned target,
+  // never a global AX element, permission prompt, or undocumented getter readback.
+  guard identity(r, bundle: bundle)?.start == id.start else { reject("ownership-refused", "process-changed") }
+  if Date() < deadline {
+    stats.manualAccessibilityRequested = true
+    let status = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    stats.manualAccessibilityStatus = status.rawValue
+    stats.manualAccessibilitySucceeded = status == .success
+  }
+  guard identity(r, bundle: bundle)?.start == id.start else { reject("ownership-refused", "process-changed") }
+  guard stats.manualAccessibilitySucceeded, Date() < deadline else {
+    stats.deadlineReached = Date() >= deadline
+    emit(["outcome": "observation-unavailable", "reason": "connections-panel-not-asserted",
+      "pid": r.pid, "startMicros": id.start, "signatureVerified": true,
+      "googleConnectionsPanelAsserted": false, "permissions": permissions,
+      "navigationStats": stats.json])
+  }
+  // Setter success alone is not renderer-tree or connected-panel evidence.
   stats.activationSucceeded = NSRunningApplication(processIdentifier: r.pid)?.activate(options: []) ?? false
   var selectedWindow: AXUIElement?
   var selectedBounds: CGRect?
@@ -534,7 +562,8 @@ func observe(_ r: Request, root: String, bundle: String, id: Identity) async -> 
     }
     emit(["outcome": "observed", "pid": r.pid, "startMicros": id.start, "signatureVerified": true,
       "windowId": target.windowID, "googleConnectionsPanelAsserted": true,
-      "screenshot": "first-target-google-connected.png", "permissions": permissions])
+      "screenshot": "first-target-google-connected.png", "permissions": permissions,
+      "navigationStats": stats.json])
   } catch {
     reject("observation-unavailable", "window-capture-failed")
   }
