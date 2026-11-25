@@ -1,4 +1,4 @@
-import type { NativeWorkingCopy } from './working-copy'
+import type { NativeTreePreparation, NativeWorkingCopy } from './working-copy'
 import { recoveryArtifactNames, recoveryDirectories } from './working-copy-recovery'
 import { nativeIO } from './native-posix.ios'
 import { knownFolders } from '@nativescript/core'
@@ -76,7 +76,7 @@ function statusRows(rows: Record<string, unknown>[]) {
 }
 
 /** iOS implementation of the semantic working-copy interface. */
-export const nativeWorkingCopy: NativeWorkingCopy = {
+export const nativeWorkingCopy: NativeWorkingCopy & NativeTreePreparation = {
   async canonicalRoot(root) {
     const value = checked((error) => HoliNativeGit.alloc().init().canonicalRootError(root, error))
     if (!value) throw new Error('Native Git returned no canonical root')
@@ -113,6 +113,24 @@ export const nativeWorkingCopy: NativeWorkingCopy = {
   },
   async recoveryPending(root) {
     return hasPendingRecovery(root)
+  },
+  async prepareWorkingCopyTree(root, remote, branch, paths) {
+    const nativePaths = NSMutableArray.alloc<string>().init()
+    for (const path of paths) nativePaths.addObject(path)
+    const value = checked((error) =>
+      HoliNativeGit.alloc()
+        .init()
+        .prepareWorkingCopyTreeRemoteBranchPathsError(root, remote, branch, nativePaths, error),
+    )
+    if (!value) throw new Error('Native Git returned no working-copy tree')
+    const result = dictionary(value)
+    const parent = result.parentOID
+    return {
+      treeOID: text(result.treeOID),
+      parentOID: parent === NSNull.null() || parent === undefined ? null : text(parent),
+      branch: text(result.branch),
+      unchanged: flag(result.unchanged),
+    }
   },
   async status(root, paths) {
     const nativePaths = NSMutableArray.alloc<string>().init()
