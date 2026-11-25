@@ -29,6 +29,7 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
       const child = ['missing-anchor', 'replacement'].includes(scenario)
         ? childProcesses.start(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
         : undefined
+      let lateJobPresent = false
       const owned = {
         size: scenario === 'unacknowledged' ? 1 : 0,
         remainingPids: scenario === 'unacknowledged' ? [12345] : [],
@@ -37,14 +38,12 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
         }),
         stopAll: async () => {
           if (scenario === 'unacknowledged') throw new Error('drain not acknowledged')
+          if (scenario.startsWith('late-job')) lateJobPresent = true
         },
       }
-      let removalAttempts = 0
-      let lateJobPresent = false
       const installer = {
         removeOwned: async () => {
-          removalAttempts++
-          if (removalAttempts === 2 && scenario.startsWith('late-job')) {
+          if (lateJobPresent) {
             if (scenario === 'late-job-refused')
               throw Object.assign(new Error('job ownership changed'), {
                 code: 'INSTALLER_STATE_OWNERSHIP_MISMATCH',
@@ -86,10 +85,7 @@ describe.skipIf(process.platform === 'win32')('upgrade fixture cleanup', () => {
             upgradeNotBeforeMicros: 0,
           },
           owned,
-          runtimePids: async () => {
-            if (scenario.startsWith('late-job')) lateJobPresent = true
-            return []
-          },
+          runtimePids: async () => [],
           command: async () => ({ stdout: '' }),
         })
         if (
