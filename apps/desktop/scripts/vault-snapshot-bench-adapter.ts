@@ -47,9 +47,20 @@ export function createSnapshotBenchAdapter(options: SnapshotAdapterOptions) {
     const presentation = presentationEpoch
     const serialized = JSON.stringify(snapshot)
     // Candidate-only content inspection: the baseline pays no fingerprint cost.
+    const initialVault = options.getVault()
     const fingerprint =
       options.mode === 'candidate' && options.fingerprint ? await options.fingerprint() : null
-    if (disposed || runtime !== runtimeEpoch || presentation !== presentationEpoch) return
+    const stillCurrent = () => {
+      const current = options.getVault()
+      return (
+        !disposed &&
+        runtime === runtimeEpoch &&
+        presentation === presentationEpoch &&
+        current?.remote === initialVault?.remote &&
+        current?.root === initialVault?.root
+      )
+    }
+    if (!stillCurrent()) return
     const send =
       options.mode === 'baseline' ||
       force ||
@@ -73,16 +84,17 @@ export function createSnapshotBenchAdapter(options: SnapshotAdapterOptions) {
     ) => {
       const start = performance.now()
       await action()
+      if (!stillCurrent()) return false
       const elapsedMs = performance.now() - start
       pluginCallbacks.push({ kind, elapsedMs })
       options.onPluginCallback?.(kind, elapsedMs)
+      return stillCurrent()
     }
-    await invoke('invalidate', () => options.host.invalidate(options.remote))
-    await invoke('reconcile', () => options.host.reconcile(vault, 'snapshot'))
-    if (disposed || runtime !== runtimeEpoch || presentation !== presentationEpoch) return
-    await invoke('snapshot', () => options.host.snapshot(options.remote, snapshot))
+    if (!(await invoke('invalidate', () => options.host.invalidate(options.remote)))) return
+    if (!(await invoke('reconcile', () => options.host.reconcile(vault, 'snapshot')))) return
+    if (!(await invoke('snapshot', () => options.host.snapshot(options.remote, snapshot)))) return
     const claims = await options.host.scanClaimsFor(vault.root)
-    if (disposed || runtime !== runtimeEpoch || presentation !== presentationEpoch) return
+    if (!stillCurrent()) return
     const now = new Set(claims.map((claim) => claim.plugin))
     const was = Object.keys(snapshot.claimed)
     if (was.length !== now.size || was.some((id) => !now.has(id))) options.refresh()

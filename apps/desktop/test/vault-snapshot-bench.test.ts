@@ -69,6 +69,33 @@ describe('real snapshot benchmark adapter', () => {
     expect(adapter.metrics().sent).toBe(2)
   })
 
+  it('discards a candidate fingerprint result after the vault changes during its await', async () => {
+    let current: { remote: string; root: string } | null = vault
+    let resolveFingerprint!: (value: string) => void
+    const host = {
+      invalidate: vi.fn(),
+      reconcile: vi.fn(),
+      snapshot: vi.fn(),
+      scanClaimsFor: vi.fn(async () => []),
+    }
+    const send = vi.fn()
+    const adapter = createSnapshotBenchAdapter({
+      mode: 'candidate',
+      remote: vault.remote,
+      getVault: () => current,
+      host,
+      send,
+      refresh: vi.fn(),
+      fingerprint: () => new Promise((resolve) => (resolveFingerprint = resolve)),
+    })
+    const pending = adapter.onSnapshot(snapshot())
+    current = { remote: 'other/vault', root: '/tmp/other' }
+    resolveFingerprint('fingerprint')
+    await pending
+    expect(send).not.toHaveBeenCalled()
+    expect(host.invalidate).not.toHaveBeenCalled()
+  })
+
   it('sends forced refresh, changed fields, A-to-B-to-A, and after an epoch', async () => {
     const { adapter, send } = fixture()
     await adapter.onSnapshot(snapshot(['a']))
