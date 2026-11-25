@@ -7,7 +7,7 @@ import {
   activeRemoteAtom,
   snapshotLoadedAtom,
 } from '../src/renderer/src/state/vaults'
-import { snapshotTasksAtom, tasksAtom } from '../src/renderer/src/state/tasks'
+import { snapshotTasksAtom } from '../src/renderer/src/state/tasks'
 import { FilesSection } from '../src/renderer/src/features/sidebar/files-section'
 import { DocumentView } from '../src/renderer/src/features/documents/document-view'
 import { PlanningView } from '../src/renderer/src/features/planning/planning-view'
@@ -33,7 +33,6 @@ function BenchConsumers() {
   const snapshot = useAtomValue(snapshotAtom)
   const loaded = useAtomValue(snapshotLoadedAtom)
   const taskRows = useAtomValue(snapshotTasksAtom)
-  const tasks = useAtomValue(tasksAtom)
   const derivedTreeItems = useMemo(() => {
     derivedComputations++
     return snapshot.docs.length + snapshot.files.length + snapshot.dirs.length
@@ -73,7 +72,6 @@ function BenchConsumers() {
       </section>
       <section className="min-w-0 flex-1" data-bench-task>
         <PlanningView onOpenTask={() => undefined} focused={false} />
-        {tasks.size > 0 && <output>{[...tasks.values()][0]?.title}</output>}
       </section>
     </main>
   )
