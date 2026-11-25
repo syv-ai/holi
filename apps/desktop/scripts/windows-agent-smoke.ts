@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { ChildProcess, execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { release } from 'node:os'
 import { join, relative } from 'node:path'
 import { finished } from 'node:stream/promises'
@@ -18,6 +19,8 @@ import { killChildTree } from '../src/main/process-group'
 import { defaultSpawnPty } from '../src/main/terminal/pty'
 import { createTerminals } from '../src/main/terminal/terminals'
 import { AgentRuntime } from '../src/plugins/agent/main/host/pty'
+import { finalizeElectronSmoke } from './windows-agent-smoke-finalization'
+import { launchOwnedWindowsPty } from '../src/main/owned-windows-pty'
 
 const root = process.env.HOLI_QA372_ROOT!
 const desktop = process.env.HOLI_QA372_DESKTOP!
@@ -191,6 +194,138 @@ const readPids = async () => {
 async function checkPidsGone(pids: number[]) {
   await bounded('fixture PID liveness', () => until(() => pids.every((pid) => !alive(pid))), 16_000)
   pendingPids.delete(pids)
+}
+
+let ownedPtyProof:
+  | {
+      schema: 'holi.windows-pty.v1'
+      pids: number[]
+      order: string[]
+      rootAbsentBeforeDrain: boolean
+      descendantsAliveBeforeDrain: boolean
+      nativeCompletionBeforeFinalization: boolean
+      allAbsentAtFinalization: boolean
+      cleanup: { allPidsAbsent: boolean }
+    }
+  | undefined
+
+async function proveOwnedPtyFinalization() {
+  const nonce = randomUUID()
+  const ledger = join(root, `owned-pty-${nonce}.json`)
+  const grandchildReady = join(root, `owned-pty-${nonce}.ready`)
+  const childScript = join(root, `owned-pty-child-${nonce}.cjs`)
+  const rootScript = join(root, `owned-pty-root-${nonce}.cjs`)
+  await writeFile(
+    childScript,
+    `
+const fs=require('node:fs'),cp=require('node:child_process');
+const grandchild=cp.spawn(process.execPath,['-e',${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(grandchildReady)},String(process.pid),{flag:'wx'});setInterval(()=>{},1000)`)}],{detached:true,stdio:'ignore',windowsHide:true});
+fs.writeFileSync(${JSON.stringify(ledger)}+'.tmp',JSON.stringify({child:process.pid,grandchild:grandchild.pid}),{flag:'wx'});
+fs.renameSync(${JSON.stringify(ledger)}+'.tmp',${JSON.stringify(ledger)});
+setInterval(()=>{},1000);
+`,
+    { flag: 'wx' },
+  )
+  await writeFile(
+    rootScript,
+    `
+const fs=require('node:fs'),cp=require('node:child_process');
+const child=cp.spawn(process.execPath,[${JSON.stringify(childScript)}],{detached:true,stdio:'ignore',windowsHide:true});child.unref();
+process.stdin.setRawMode(true);process.stdin.resume();
+let input='';process.stdin.on('data',d=>{input+=d.toString();if(input.includes('exit-root'))process.exit(0)});
+const waiting=setInterval(()=>{if(!fs.existsSync(${JSON.stringify(ledger)})||!fs.existsSync(${JSON.stringify(grandchildReady)}))return;
+const p=JSON.parse(fs.readFileSync(${JSON.stringify(ledger)},'utf8'));
+if(Number(fs.readFileSync(${JSON.stringify(grandchildReady)},'utf8'))!==p.grandchild)return;
+clearInterval(waiting);process.stdout.write(${JSON.stringify(`OWNED_READY_${nonce}\n`)});},10);
+`,
+    { flag: 'wx' },
+  )
+  const order: string[] = []
+  let pids: number[] | undefined
+  let requestedExit = false
+  let rootWitnessed = false
+  let nativeCompleted = false
+  let finalized = false
+  const observedLaunch: typeof launchOwnedWindowsPty = (options) => {
+    const launch = launchOwnedWindowsPty(options)
+    void launch.completion.then(
+      () => {
+        nativeCompleted = true
+        order.push('native-empty')
+      },
+      () => {},
+    )
+    return {
+      ...launch,
+      ready: launch.ready.then((pty) => ({
+        ...pty,
+        onExit: (callback) =>
+          pty.onExit((event) => {
+            if (requestedExit && !rootWitnessed) {
+              assert(pids, 'Missing actual PTY descendant ledger')
+              assert.equal(event.exitCode, 0)
+              assert.equal(nativeCompleted, false, 'Native cleanup preceded the root-exit witness')
+              assert.equal(alive(pids[0]!), false, 'PTY root is still alive')
+              assert(pids.slice(1).every(alive), 'Detached descendants did not survive root exit')
+              rootWitnessed = true
+              order.push('root-exit')
+            }
+            callback(event)
+          }),
+      })),
+    }
+  }
+  const runtime = new AgentRuntime({ launchWindowsPty: observedLaunch })
+  cleanup.push(() => bounded('owned ConPTY native cleanup', () => runtime.kill(), 30_000))
+  let text = ''
+  runtime.onData((data) => {
+    text += data
+    output += data
+  })
+  runtime.onExit(() => {
+    if (!requestedExit) return
+    assert(pids && rootWitnessed, 'Finalization lacks a real root-exit witness')
+    assert(nativeCompleted, 'Finalization preceded native Job completion')
+    assert(
+      pids.every((pid) => !alive(pid)),
+      'Finalization has live native descendants',
+    )
+    order.push('finalized')
+    finalized = true
+  })
+  runtime.start({ bin: nativeNode, args: [rootScript], cwd: vault, env, cols: 80, rows: 24 })
+  await until(() => text.includes(`OWNED_READY_${nonce}`))
+  const descendants = JSON.parse(await readFile(ledger, 'utf8')) as {
+    child: number
+    grandchild: number
+  }
+  assert(runtime.pid !== null)
+  pids = [runtime.pid, descendants.child, descendants.grandchild]
+  assert(pids.every((pid) => Number.isSafeInteger(pid) && pid > 1))
+  assert.equal(new Set(pids).size, 3)
+  pendingPids.add(pids)
+  assert(pids.every(alive), 'Owned PTY tree never reached live readiness')
+  order.push('ready')
+  requestedExit = true
+  runtime.write('exit-root\r')
+  await until(() => finalized)
+  await bounded('owned ConPTY finalization join', () => runtime.kill(), 30_000)
+  await checkPidsGone(pids)
+  assert.deepEqual(order, ['ready', 'root-exit', 'native-empty', 'finalized'])
+  assert.equal(runtime.isRunning, false)
+  ownedPtyProof = {
+    schema: 'holi.windows-pty.v1',
+    pids,
+    order,
+    rootAbsentBeforeDrain: true,
+    descendantsAliveBeforeDrain: true,
+    nativeCompletionBeforeFinalization: true,
+    allAbsentAtFinalization: true,
+    cleanup: { allPidsAbsent: true },
+  }
+  checks.push(
+    'native owned ConPTY finalization waits for detached child and grandchild Job drainage',
+  )
 }
 
 async function run() {
@@ -431,6 +566,8 @@ if(args[0]==='--pty') {
     }
   }
 
+  if (process.platform === 'win32') await proveOwnedPtyFinalization()
+
   const managed = spawnOwnedProgram(plan.file, [script, '--pty'], {
     cwd: vault,
     env: { ...env, ...plan.env },
@@ -488,39 +625,32 @@ if(args[0]==='--pty') {
 }
 
 async function main() {
-  const failures = new Set<unknown>()
-  try {
-    await run()
-  } catch (error) {
-    failures.add(error)
-  } finally {
-    const results = await Promise.allSettled(cleanup.map((stop) => Promise.resolve().then(stop)))
-    // Do not infer cleanup from the receipt or the PTY adapter alone. Only probe
-    // the known fixture PIDs not already observed gone, and never signal them.
-    const probes = await Promise.allSettled([...pendingPids].map(checkPidsGone))
-    for (const result of [...results, ...probes])
-      if (result.status === 'rejected') failures.add(result.reason)
-  }
-  try {
-    window?.destroy()
-  } catch (error) {
-    failures.add(error)
-  }
-  if (failures.size) throw new AggregateError([...failures], 'Dependency Electron smoke failed')
-  // Closing the last window can queue an implicit quit. Seal the report without yielding.
-  writeFileSync(
-    join(root, 'smoke-result.json'),
-    JSON.stringify({
-      ok: true,
-      runtime: 'dependency-electron',
-      platform: process.platform,
-      platformVersion: release(),
-      electron: process.versions.electron,
-      checks,
-    }),
-    { flag: 'wx' },
-  )
-  app.exit(0)
+  await finalizeElectronSmoke({
+    reportPath: join(root, 'smoke-result.json'),
+    run: async () => {
+      await run()
+      return {
+        ok: true,
+        runtime: 'dependency-electron',
+        platform: process.platform,
+        platformVersion: release(),
+        electron: process.versions.electron,
+        checks,
+        ...(ownedPtyProof ? { ownedPty: ownedPtyProof } : {}),
+      }
+    },
+    cleanup: async () => {
+      const results = await Promise.allSettled(cleanup.map((stop) => Promise.resolve().then(stop)))
+      // Only probe known fixture PIDs, never signal rediscovered processes.
+      const probes = await Promise.allSettled([...pendingPids].map(checkPidsGone))
+      const failures = [...results, ...probes].flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : [],
+      )
+      if (failures.length) throw new AggregateError(failures, 'Smoke fixture cleanup failed')
+    },
+    closeWindow: () => window?.destroy(),
+    exit: (code) => app.exit(code),
+  })
 }
 void main().catch((error) => {
   console.error(error)

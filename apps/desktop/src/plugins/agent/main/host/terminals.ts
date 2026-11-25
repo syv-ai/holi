@@ -84,6 +84,8 @@ export interface AgentTerminalsDeps {
   emit(remote: string, name: string, payload: unknown): void
   activationSignal?: AbortSignal
   spawnPty?: SpawnPty
+  platform?: AgentRuntimeDeps['platform']
+  launchWindowsPty?: AgentRuntimeDeps['launchWindowsPty']
   /** Liveness probe before every signal. Tests must inject one: a fake PTY's
    *  pid may belong to a real process on the machine running them. */
   probePid?: (pid: number) => PidState
@@ -154,7 +156,6 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
   deps.activationSignal?.addEventListener(
     'abort',
     () => {
-      if (process.platform === 'win32') return
       // Do not wait for the disposer or drop any terminal from the index. Its
       // later close joins the same drain/output/caller operation.
       for (const t of terminals.values()) void t.runtime.kill().catch(() => {})
@@ -232,6 +233,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       const runtime = new AgentRuntime({
         ...(deps.activationSignal && { activationSignal: deps.activationSignal }),
         ...(deps.spawnPty === undefined ? {} : { spawnPty: deps.spawnPty }),
+        ...(deps.platform === undefined ? {} : { platform: deps.platform }),
+        ...(deps.launchWindowsPty === undefined ? {} : { launchWindowsPty: deps.launchWindowsPty }),
         ...(deps.superviseGroup === undefined ? {} : { superviseGroup: deps.superviseGroup }),
         ...(deps.probePid === undefined ? {} : { probePid: deps.probePid }),
         ...(deps.killGraceMs === undefined ? {} : { killGraceMs: deps.killGraceMs }),

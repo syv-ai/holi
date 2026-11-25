@@ -130,6 +130,31 @@ try {
         record.checks.length > 0 &&
         record.checks.every((check) => typeof check === 'string'),
     )
+    if (process.platform === 'win32') {
+      const proof = record.ownedPty
+      assert(proof && proof.schema === 'holi.windows-pty.v1', 'Missing native owned ConPTY proof')
+      assert(
+        Array.isArray(proof.pids) &&
+          proof.pids.length === 3 &&
+          proof.pids.every((pid) => Number.isSafeInteger(pid) && pid > 1 && pid <= 0xffffffff) &&
+          new Set(proof.pids).size === 3,
+        'Invalid native PTY PID ledger',
+      )
+      assert.deepEqual(proof.order, ['ready', 'root-exit', 'native-empty', 'finalized'])
+      for (const key of [
+        'rootAbsentBeforeDrain',
+        'descendantsAliveBeforeDrain',
+        'nativeCompletionBeforeFinalization',
+        'allAbsentAtFinalization',
+      ])
+        assert.equal(proof[key], true, `Missing native PTY observation: ${key}`)
+      assert.deepEqual(proof.cleanup, { allPidsAbsent: true })
+      assert(
+        record.checks.includes(
+          'native owned ConPTY finalization waits for detached child and grandchild Job drainage',
+        ),
+      )
+    }
     result = {
       ok: true,
       runtime: record.runtime,
@@ -140,6 +165,7 @@ try {
       runId,
       runAttempt,
       checks: record.checks,
+      ...(record.ownedPty ? { ownedPty: record.ownedPty } : {}),
       cleanup: { disposableRootRemoved: true },
     }
   } catch (error) {
