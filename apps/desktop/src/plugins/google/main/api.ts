@@ -48,6 +48,12 @@ export class GoogleWriteUncertainError extends Error {
   }
 }
 
+/** Recheck provider evidence, then record a reservation before dispatch. */
+export type GoogleDispatchGate = {
+  validate: () => Promise<void>
+  reserveDispatch: () => Promise<void>
+}
+
 export interface GoogleApiDeps {
   /** `GoogleSession.getAccessToken` — refreshes and single-flights on its own. */
   accessToken: () => Promise<string>
@@ -213,11 +219,7 @@ export class GoogleApi {
   async patch(
     url: string,
     body: unknown,
-    options?: {
-      validate?: () => Promise<void>
-      ifMatch?: string
-      reserveDispatch?: () => Promise<void>
-    },
+    options?: Partial<GoogleDispatchGate> & { ifMatch?: string },
   ): Promise<void> {
     const res = await this.#write(
       'PATCH',
@@ -246,13 +248,15 @@ export class GoogleApi {
    * failure, because a send Google *accepted*, reported as failed, is a second
    * email to a real person once the caller retries.
    */
-  async postJson<T>(
-    url: string,
-    body: unknown,
-    validate?: () => Promise<void>,
-    reserveDispatch?: () => Promise<void>,
-  ): Promise<T | null> {
-    const res = await this.#write('POST', url, body, validate, undefined, reserveDispatch)
+  async postJson<T>(url: string, body: unknown, gate?: GoogleDispatchGate): Promise<T | null> {
+    const res = await this.#write(
+      'POST',
+      url,
+      body,
+      gate?.validate,
+      undefined,
+      gate?.reserveDispatch,
+    )
     // The catch is the design, not defensiveness: past this line Google has
     // already done the thing.
     return await res.json().catch(() => null)
@@ -371,7 +375,16 @@ function reasonOf(body: string): string | null {
     if (parsed === null || typeof parsed !== 'object') return null
     const error = (parsed as { error?: unknown }).error
     if (error === null || typeof error !== 'object') return null
-    const e = error as { errors?: { reason?: string }[]; status?: string }
+    const e = error as {
+      errors?: { reason?: string }[]
+      details?: { reason?: string }[]
+      status?: string
+    }
+    if (
+      Array.isArray(e.details) &&
+      e.details.some((detail) => detail?.reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT')
+    )
+      return 'ACCESS_TOKEN_SCOPE_INSUFFICIENT'
     return e.errors?.[0]?.reason ?? e.status ?? null
   } catch {
     return null

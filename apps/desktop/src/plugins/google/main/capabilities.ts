@@ -256,6 +256,22 @@ function expectedAccountParam(p: Record<string, unknown>): string | undefined {
   return sub
 }
 
+function invitationAccountParam(p: Record<string, unknown>): string {
+  const expectedAccountSub = expectedAccountParam(p)
+  if (expectedAccountSub === undefined) {
+    throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+  }
+  return expectedAccountSub
+}
+
+function invitationBindingParams(raw: unknown) {
+  const p = paramsObject(raw)
+  return {
+    expectedAccountSub: invitationAccountParam(p),
+    expectedBindingRevision: stringParam(p, 'expectedBindingRevision'),
+  }
+}
+
 function invitationParams(raw: unknown): { threadId: string; expectedAccountSub: string } {
   const p = paramsObject(raw)
   const threadId = stringParam(p, 'threadId')
@@ -264,10 +280,7 @@ function invitationParams(raw: unknown): { threadId: string; expectedAccountSub:
   } catch {
     throw new CapabilityError('BAD_REQUEST', 'threadId must be a Gmail thread id')
   }
-  const expectedAccountSub = expectedAccountParam(p)
-  if (expectedAccountSub === undefined) {
-    throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
-  }
+  const expectedAccountSub = invitationAccountParam(p)
   return { threadId, expectedAccountSub }
 }
 
@@ -538,15 +551,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         throw new CapabilityError('FORBIDDEN', `Google account changed; reload ${view}`)
     }
 
-  const invitationTarget = async (
+  const invitationBinding = async (
     remote: string,
-    {
-      expectedAccountSub,
-      threadId,
-      expectedBindingRevision,
-    }: ReturnType<typeof invitationParams> & {
-      expectedBindingRevision?: string
-    },
+    expectedAccountSub: string,
+    expectedBindingRevision?: string,
   ) => {
     const binding = await deps.accounts.bindingFor(remote)
     const session = binding?.session
@@ -564,6 +572,24 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
       if (!binding.isCurrent()) throw changed()
     }
+    return { binding, session, assertBinding }
+  }
+
+  const invitationTarget = async (
+    remote: string,
+    {
+      expectedAccountSub,
+      threadId,
+      expectedBindingRevision,
+    }: ReturnType<typeof invitationParams> & {
+      expectedBindingRevision?: string
+    },
+  ) => {
+    const { binding, session, assertBinding } = await invitationBinding(
+      remote,
+      expectedAccountSub,
+      expectedBindingRevision,
+    )
     assertBinding()
     const email = session.account?.email.toLowerCase()
     if (!email) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
@@ -885,6 +911,19 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           target.assertBinding()
           return invitation
         }),
+    }),
+    // The renderer separately checks its own reader ownership after this await.
+    'google.validateMailInvitationBinding': cap({
+      doors: ['ui'],
+      params: invitationBindingParams,
+      run: async (ctx, { expectedAccountSub, expectedBindingRevision }): Promise<void> => {
+        const { assertBinding } = await invitationBinding(
+          ctx.remote,
+          expectedAccountSub,
+          expectedBindingRevision,
+        )
+        assertBinding()
+      },
     }),
     'google.respondToMailInvitation': cap({
       doors: ['ui'],
