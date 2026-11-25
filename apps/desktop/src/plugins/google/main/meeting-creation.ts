@@ -120,6 +120,9 @@ export function meetingParams(raw: unknown): MeetingInput {
     end,
     allDay,
     location: (optionalStringParam(p, 'location') ?? '').trim(),
+    ...(p.description === undefined
+      ? {}
+      : { description: optionalStringParam(p, 'description') ?? '' }),
     guests: guests.sort(),
     meet: p.meet as boolean,
   }
@@ -155,6 +158,7 @@ interface CreatedEvent {
   id?: string
   summary?: string
   location?: string
+  description?: string
   status?: string
   start?: { date?: string; dateTime?: string }
   end?: { date?: string; dateTime?: string }
@@ -182,6 +186,7 @@ function accept(op: MeetingOperation, event: CreatedEvent | null): boolean {
   if (
     event.summary !== i.title ||
     (event.location ?? '') !== i.location ||
+    (event.description ?? '') !== (i.description ?? '') ||
     !sameTime(event.start?.date ?? event.start?.dateTime, i.start) ||
     !sameTime(event.end?.date ?? event.end?.dateTime, i.end)
   )

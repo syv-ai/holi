@@ -621,6 +621,7 @@ function EventForm({
       ...old,
       title: restored.title,
       location: restored.location,
+      description: restored.description ?? '',
       allDay: restored.allDay,
       date: restored.allDay ? restored.start : localDate(start),
       dateEnd: restored.allDay
@@ -823,7 +824,6 @@ function EventForm({
                 </div>
               )}
 
-              {/* A place is set when the event is made; moving one keeps it. */}
               <Field>
                 <FieldLabel htmlFor="event-description">Description</FieldLabel>
                 <Textarea
@@ -836,17 +836,20 @@ function EventForm({
               </Field>
 
               {mode === 'create' && (
-                <Field>
-                  <FieldLabel htmlFor="event-location">Location</FieldLabel>
-                  <Input
-                    id="event-location"
-                    value={draft.location}
-                    onChange={(event) => patch({ location: event.target.value })}
-                    disabled={saving}
-                    placeholder="Location"
-                    autoComplete="off"
-                  />
-                </Field>
+                <>
+                  {/* A place is set when the event is made; moving one keeps it. */}
+                  <Field>
+                    <FieldLabel htmlFor="event-location">Location</FieldLabel>
+                    <Input
+                      id="event-location"
+                      value={draft.location}
+                      onChange={(event) => patch({ location: event.target.value })}
+                      disabled={saving}
+                      placeholder="Location"
+                      autoComplete="off"
+                    />
+                  </Field>
+                </>
               )}
               {mode === 'create' && identity && (
                 <>

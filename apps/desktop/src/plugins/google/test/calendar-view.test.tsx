@@ -545,6 +545,8 @@ describe('the calendar view', () => {
   })
 
   test('an event of your own opens, and editing it reschedules it by its Google id', async () => {
+    const description = '<p>Keep <strong>formatted</strong> details</p>'
+    agendaMock.mockResolvedValue([{ ...FOCUS, description }, SYNC])
     const user = userEvent.setup()
     render(<CalendarView />)
     await user.click((await screen.findAllByText('Focus block'))[0]!)
@@ -558,13 +560,45 @@ describe('the calendar view', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(rescheduleMock).toHaveBeenCalledTimes(1))
     const sent = rescheduleMock.mock.calls[0]![0] as Record<string, unknown>
-    expect(sent).toMatchObject({ id: 'focus-1', title: 'Deep work' })
+    expect(sent).toMatchObject({ id: 'focus-1', title: 'Deep work', description })
     expect(Date.parse(sent['start'] as string)).toBe(Date.parse(FOCUS.start))
     expect(Date.parse(sent['end'] as string)).toBe(Date.parse(FOCUS.end))
     expect(sent['all-day']).toBeUndefined()
     // Read again, so the grid shows what Google holds.
     await waitFor(() => expect(agendaMock).toHaveBeenCalled())
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  test('saved descriptions reload into the event form, including an explicit clear', async () => {
+    let stored = { ...FOCUS, description: 'Original details' }
+    agendaMock.mockImplementation(async () => [{ ...stored }])
+    rescheduleMock.mockImplementation(async (params: Record<string, unknown>) => {
+      if (typeof params.description === 'string')
+        stored = { ...stored, description: params.description }
+      return { ok: true }
+    })
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Focus block'))[0]!)
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Edit' }),
+    )
+    expect(await screen.findByRole('textbox', { name: 'Description' })).toHaveValue(
+      'Original details',
+    )
+
+    for (const description of ['Agenda\nNext steps', '']) {
+      const field = screen.getByRole('textbox', { name: 'Description' })
+      await user.clear(field)
+      if (description) await user.paste(description)
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      await user.click((await screen.findAllByText('Focus block'))[0]!)
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', { name: 'Edit' }),
+      )
+      expect(await screen.findByRole('textbox', { name: 'Description' })).toHaveValue(description)
+    }
   })
 
   test('typing in the event title does not re-render the calendar or unchanged time selects', async () => {
