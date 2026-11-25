@@ -18,7 +18,15 @@
  *
  * **The chrome is one row.** No "Mail" heading: the tab already says so.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react'
 /**
  * `SquarePen` writes something new; `FilePen` continues something half-written.
  * `FilePen` is used for every draft marker (the row chip, the reader's continue
@@ -54,6 +62,7 @@ import { toast } from 'sonner'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
   cn,
   matchHotkey,
   openSettingsSectionAtom,
@@ -104,7 +113,7 @@ import { useMailList } from './mail/use-mail-list'
 import { googleCap } from './google-cap'
 import { explainWriteFailure, messageOf } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
-import { useGoogleAccount } from './account'
+import { googleAccountRevisionAtom, useGoogleAccount } from './account'
 import { useMailMarkers } from './use-mail-markers'
 import { useMailMarkerActions } from './use-mail-marker-actions'
 import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
@@ -152,6 +161,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
   const [threadError, setThreadError] = useState<string | null>(null)
+  const [threadRefreshing, setThreadRefreshing] = useState(false)
   const threadGeneration = useRef(0)
   /**
    * Where the list is pointed: a tab, Sent, or Drafts. One union so that
@@ -195,6 +205,8 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   /** The Gmail draft the composer is continuing, if any. */
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
+  const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
+  const accountRevision = useAtomValue(googleAccountRevisionAtom)
   const remoteRef = useRef(remote)
   remoteRef.current = remote
   /** Offered only in a vault that runs tasks. */
@@ -268,6 +280,10 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   /** Summarize shows only while a plugin provides an agent. */
   const agent = useAgentService()
   const store = useStore()
+  const readerContextIsCurrent = () =>
+    store.get(activeRemoteAtom) === remote &&
+    store.get(activeRemoteRevisionValueAtom) === remoteRevision &&
+    store.get(googleAccountRevisionAtom) === accountRevision
   /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
    *  opens with no vault at all. See `useGlobalPanelLayout`. */
   const layout = useGlobalPanelLayout('mail')
@@ -305,6 +321,13 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       composeGate.invalidate()
     },
     [composeGate],
+  )
+
+  useLayoutEffect(
+    () => () => {
+      threadGeneration.current++
+    },
+    [],
   )
 
   /** The footer's numbers. One request, and a failure leaves the footer
@@ -484,20 +507,16 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     setContinuing(undefined)
     setDraftsGeneration((generation) => generation + 1)
 
-    if (!sent || open === null || composing === null || composing.kind === 'new') return
-    const threadId = open.id
-    const originRemote = remoteRef.current
-    const generation = threadGeneration.current
-    void call((r) => googleCap.thread(r, { id: threadId }))
-      .then((thread) => {
-        if (
-          threadGeneration.current === generation &&
-          originRemote === store.get(activeRemoteAtom) &&
-          remoteRef.current === originRemote
-        )
-          setOpen(thread)
-      })
-      .catch(() => undefined)
+    if (
+      !sent ||
+      open === null ||
+      composing === null ||
+      composing.kind === 'new' ||
+      composing.threadId !== open.id ||
+      !readerContextIsCurrent()
+    )
+      return
+    void fetchThread(open.id, 'refresh')
     load()
   }
 
@@ -511,20 +530,27 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     })
   }
 
-  /** Read only the body, so retrying a failed load does not mark it read again. */
-  const fetchThread = (id: string) => {
+  /** Open, retry, and post-send refresh all read without marking the thread read.
+   * A refresh keeps the scroller and composer mounted, but withdraws the invitation
+   * until the updated thread tells us what to read for this generation. */
+  const fetchThread = (id: string, mode: 'open' | 'refresh' = 'open') => {
     const generation = ++threadGeneration.current
-    setOpen(null)
+    if (mode === 'open') setOpen(null)
+    setThreadRefreshing(mode === 'refresh')
     setThreadError(null)
+    const finish = (thread: Thread | null, error: string | null) => {
+      if (threadGeneration.current !== generation) return
+      setThreadRefreshing(false)
+      if (!readerContextIsCurrent()) {
+        setThreadError('The mail connection changed while loading this thread.')
+        return
+      }
+      if (thread !== null) setOpen(thread)
+      else setThreadError(error)
+    }
     void call((r) => googleCap.thread(r, { id })).then(
-      (found) => {
-        if (threadGeneration.current === generation) setOpen(found)
-      },
-      (error: unknown) => {
-        if (threadGeneration.current === generation) {
-          setThreadError(messageOf(error, 'Could not load this thread.'))
-        }
-      },
+      (found) => finish(found, null),
+      (error: unknown) => finish(null, messageOf(error, 'Could not load this thread.')),
     )
   }
 
@@ -632,6 +658,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       setOpen(null)
       setOpenId(null)
       setOpenSummary(null)
+      setThreadRefreshing(false)
       setThreadError(null)
     }
     return write(mutate, (threads) => threads.filter((t) => t.id !== id))
@@ -783,6 +810,24 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
         ? { kind: 'error' as const }
         : { kind: 'ready' as const, marker: openIntent.marker }
   const renderedComposeIdentity = composeGate.current()?.identity
+  const threadFailure = openId !== null && threadError !== null && (
+    <Alert variant="destructive">
+      <AlertTitle>
+        {open === null ? 'Couldn’t open this thread' : 'Couldn’t refresh this thread'}
+      </AlertTitle>
+      <AlertDescription>
+        <p className="break-words">{threadError}</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => fetchThread(openId, open === null ? 'open' : 'refresh')}
+        >
+          Retry
+        </Button>
+      </AlertDescription>
+    </Alert>
+  )
 
   const closeRenderedComposer = (): void => {
     if (
@@ -1047,26 +1092,15 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
             </div>
           ) : openId === null ? (
             <EmptyState icon={MailOpen} title="Pick a thread to read it" />
-          ) : threadError !== null ? (
-            <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3">
-              <h3 className="text-sm font-medium text-pretty break-words">{openRow?.subject}</h3>
-              <Alert variant="destructive">
-                <AlertTitle>Couldn’t open this thread</AlertTitle>
-                <AlertDescription>
-                  <p className="break-words">{threadError}</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    onClick={() => fetchThread(openId)}
-                  >
-                    Retry
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            </div>
           ) : open === null ? (
-            <LoadingRows label="Loading the thread" lines={3} />
+            threadFailure ? (
+              <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3">
+                <h3 className="text-sm font-medium text-pretty break-words">{openRow?.subject}</h3>
+                {threadFailure}
+              </div>
+            ) : (
+              <LoadingRows label="Loading the thread" lines={3} />
+            )
           ) : (
             <>
               {/* The subject on its own row, wrapping: it is the one place a
@@ -1196,12 +1230,17 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
               )}
 
               <div ref={readerRef} className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">
-                {open.id === openId && (
-                  <MailInvitation
-                    thread={open}
-                    hasInvite={openRow?.hasInvite === true}
-                    generation={threadGeneration.current}
-                  />
+                {threadRefreshing ? (
+                  <LoadingRows label="Refreshing the thread" rows={1} lines={3} />
+                ) : (
+                  threadFailure ||
+                  (open.id === openId && (
+                    <MailInvitation
+                      thread={open}
+                      hasInvite={openRow?.hasInvite === true}
+                      generation={threadGeneration.current}
+                    />
+                  ))
                 )}
                 {open.messages.map((message, index) => (
                   <MessageBlock

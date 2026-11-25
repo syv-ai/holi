@@ -2827,18 +2827,115 @@ test('switching from reply to forward rebuilds the composer', async () => {
   expect(screen.queryAllByTestId('chip-name')).toEqual([])
 })
 
-test('sending closes the composer and refetches the thread', async () => {
-  const user = await openForCompose()
-  await user.click(await screen.findByRole('button', { name: 'Reply' }))
-  const before = readMock.mock.calls.length
+test('a normal reply replaces the open invitation with a fresh cancellation without disturbing a new draft', async () => {
+  type Thread = Awaited<ReturnType<typeof googleCap.thread>>
+  const original: Thread['messages'][number] = {
+    id: invite.identity.messageId,
+    from: { name: 'Jane', email: 'jane@example.com' },
+    to: [{ name: 'Ada', email: 'ada@syv.ai' }],
+    cc: [],
+    bcc: [],
+    date: '2026-08-15T08:00:00.000Z',
+    body: 'Please join the workshop.',
+    html: null,
+    attachments: [],
+    hasCalendarPayload: true,
+  }
+  const initial: Thread = {
+    id: 't1',
+    subject: 'Q2 budget',
+    webUrl: 'https://mail.google.com/x',
+    messages: [original],
+  }
+  const cancellation = {
+    ...original,
+    id: 'm3',
+    date: '2026-08-16T08:00:00.000Z',
+    body: 'The workshop is off.',
+  }
+  const updated = { ...initial, messages: [original, cancellation] }
+  const cancelled: typeof invite = {
+    ...invite,
+    identity: {
+      ...invite.identity,
+      messageId: cancellation.id,
+      sequence: 3,
+      dtstamp: cancellation.date,
+      materialKey: 'sprint-review-cancellation',
+    },
+    cancelled: true,
+    canRespond: false,
+    responseStatus: null,
+    responseTargetKey: null,
+    unavailableReason: 'This invitation was cancelled',
+  }
+  let publishUpdate!: () => void
+  const heldRead = new Promise<void>((resolve) => (publishUpdate = resolve))
+  let backendThread = initial
+  let latestRead: Thread | undefined
+  threadMock.mockResolvedValue(page([summary()]))
+  sendMock.mockImplementation(async () => {
+    backendThread = updated
+    return { id: 'm-9' }
+  })
+  readMock.mockImplementation(async ({ id }: { id: string }) => {
+    if (id !== initial.id) throw new Error('Thread not found')
+    const thread = backendThread
+    if (thread === updated) await heldRead
+    latestRead = thread
+    return thread
+  })
+  invitationMock.mockImplementation(async (_remote, { threadId }) => {
+    if (latestRead?.id !== threadId) throw new Error('Thread not found')
+    return latestRead.messages.some((message) => message.id === cancellation.id)
+      ? invitations(cancelled)
+      : invitations({ ...invite, responseStatus: 'accepted' })
+  })
 
-  await user.click(await screen.findByRole('button', { name: 'Send' }))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  expect(await screen.findByText('Response: Accepted')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Maybe' })).toBeEnabled()
+  let releaseLink!: () => void
+  heldBindingValidation = new Promise<void>((resolve) => (releaseLink = resolve))
+  await user.click(screen.getByRole('button', { name: 'Join meeting' }))
+  await screen.findByText('Checking invitation link…')
 
-  await waitFor(() =>
-    expect(screen.queryByRole('region', { name: 'Compose mail' })).not.toBeInTheDocument(),
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  const composer = within(await screen.findByRole('region', { name: 'Compose mail' }))
+  await user.type(composer.getByRole('textbox', { name: 'Message' }), 'Thanks for the invite.')
+  await user.click(composer.getByRole('button', { name: 'Send' }))
+
+  expect(await screen.findByRole('status', { name: 'Refreshing the thread' })).toBeVisible()
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Maybe' })).not.toBeInTheDocument()
+  await act(async () => releaseLink())
+  expect(openExternal).not.toHaveBeenCalled()
+
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  const draft = within(await screen.findByRole('region', { name: 'Compose mail' }))
+  await user.type(draft.getByRole('textbox', { name: 'Message' }), 'A follow-up draft')
+  await act(async () => publishUpdate())
+
+  expect(await screen.findByText(cancellation.body)).toBeVisible()
+  const invitation = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  expect(await invitation.findByText(/invitation was cancelled/i)).toBeVisible()
+  expect(
+    invitation.queryByRole('button', { name: /^(join meeting|accept|maybe|decline)$/i }),
+  ).toBeNull()
+  expect(invitation.queryByText(/accepted/i)).not.toBeInTheDocument()
+  expect(draft.getByRole('textbox', { name: 'Message' })).toHaveTextContent('A follow-up draft')
+  expect(draft.getByRole('textbox', { name: 'Message' })).toHaveFocus()
+  expect(sendMock).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      threadId: initial.id,
+      mail: expect.objectContaining({ body: expect.stringContaining('Thanks for the invite.') }),
+    }),
   )
-  expect(sendMock).toHaveBeenCalledTimes(1)
-  expect(readMock.mock.calls.length).toBeGreaterThan(before)
+  expect(respondMock).not.toHaveBeenCalled()
 })
 
 test('a failed send keeps the composer open with the text intact', async () => {
