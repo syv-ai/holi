@@ -1,0 +1,6 @@
+@import './child.css';
+
+/* Inert diagnostics input: never applied to FileView or the compiler guest. */
+.nested-resource-fixture {
+  font-family: 'mdx-fixture';
+}
