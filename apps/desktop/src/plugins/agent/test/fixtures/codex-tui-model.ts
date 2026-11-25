@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer, type ServerResponse } from 'node:http'
 import { gunzipSync } from 'node:zlib'
 
 const maxBodyBytes = 1024 * 1024
