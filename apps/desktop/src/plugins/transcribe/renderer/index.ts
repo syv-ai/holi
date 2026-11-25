@@ -2,7 +2,7 @@
  * Transcribe's renderer side: the Meetings tab (live captions, the topics
  * and minutes, the tasks sent from them), its app in the sidebar, a meeting as a
  * folder the vault's tree opens and its New menu makes (`meeting-claim.ts`),
- * Start and Stop meeting in the command menu, a status-bar item while a
+ * Start and Stop meeting in the command menu, a top-bar item while a
  * meeting records, and the meetings kept in step with main while the vault
  * is open.
  */
