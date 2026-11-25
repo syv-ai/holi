@@ -56,7 +56,7 @@ import { ProfileDialog } from './profile-dialog'
 import {
   clearRecorderErrorAtom,
   levelAtom,
-  recorderAtom,
+  selectedRecorderAtom,
   startRecordingAtom,
   stopRecordingAtom,
 } from './recorder'
@@ -112,13 +112,13 @@ export function MeetingHeader({
 }): React.JSX.Element {
   const profiles = useAtomValue(profilesAtom)
   const [profileId, setProfileId] = useAtom(selectedProfileIdAtom)
-  const rec = useAtomValue(recorderAtom)
+  const rec = useAtomValue(selectedRecorderAtom)
   const start = useSetAtom(startRecordingAtom)
   const stop = useSetAtom(stopRecordingAtom)
   const clearError = useSetAtom(clearRecorderErrorAtom)
   const [shown, setShown] = useAtom(shownMeetingIdAtom)
   const states = useAtomValue(meetingStatesAtom)
-  const recording = states[rec.meetingId ?? '']
+  const recording = rec.meetingId === null ? undefined : states[rec.meetingId]
   // The meeting the person is looking at, else the one recording.
   const looked = meetingId ?? (path === undefined ? shown : null)
   const watched = (looked === null ? undefined : states[looked]) ?? recording

@@ -54,6 +54,12 @@ const IDLE: RecorderState = {
 
 export const recorderAtom = atom<RecorderState>(IDLE)
 
+/** The capture shown in vault-scoped views; a recording in another vault is global only. */
+export const selectedRecorderAtom = atom((get) => {
+  const recorder = get(recorderAtom)
+  return recorder.remote === get(activeRemoteAtom) ? recorder : IDLE
+})
+
 /** The capture's loudness, 0..1, about 20 times a second. Its own atom, so
  *  only the meter re-renders that often. */
 export const levelAtom = atom(0)
