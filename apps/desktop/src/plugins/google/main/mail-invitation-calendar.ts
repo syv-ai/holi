@@ -4,6 +4,8 @@ import { GoogleApiError, type GoogleApi, type GoogleParams } from './api'
 import {
   asRsvp,
   BASE,
+  calendarIsEnabled,
+  isAgendaEventVisible,
   PRIMARY_EVENTS,
   structuredConference,
   type CalendarListEntry,
@@ -82,6 +84,8 @@ const CALENDAR_PAGE_LIMIT = 10
 type CollectionKind = 'calendar#events' | 'calendar#calendarList'
 type CollectionPage<T> = { items?: T[]; nextPageToken?: string }
 
+class InvalidCalendarCollection extends Error {}
+
 async function invitationPageItems<T>(
   page: CollectionPage<T>,
   kind: CollectionKind,
@@ -95,7 +99,7 @@ async function invitationPageItems<T>(
     page.kind !== kind ||
     (page.items !== undefined && !Array.isArray(page.items))
   )
-    throw new Error('Invalid Calendar collection')
+    throw new InvalidCalendarCollection('Invalid Calendar collection')
   const items = page.items ?? []
   // Independently identified resources remain existence evidence even if a
   // sibling, page token, or later request prevents using the collection.
@@ -106,7 +110,7 @@ async function invitationPageItems<T>(
 function invitationPageToken(page: CollectionPage<unknown>): string | undefined {
   const token = page.nextPageToken
   if (token !== undefined && (typeof token !== 'string' || !/^[^\s\p{Cc}]{1,4096}$/u.test(token)))
-    throw new Error('Invalid Calendar page token')
+    throw new InvalidCalendarCollection('Invalid Calendar page token')
   return token
 }
 
@@ -127,14 +131,15 @@ async function invitationPages<T>(
   for (let index = 0; index < CALENDAR_PAGE_LIMIT; index++) {
     const page = await api.get<CollectionPage<T>>(url, { ...params, pageToken })
     const items = await invitationPageItems(page, kind, observe)
-    if (!items.every(isCollectionRow)) throw new Error('Invalid Calendar collection row')
+    if (!items.every(isCollectionRow))
+      throw new InvalidCalendarCollection('Invalid Calendar collection row')
     all.push(...items)
     pageToken = invitationPageToken(page)
     if (pageToken === undefined) return all
-    if (seen.has(pageToken)) throw new Error('Calendar repeated a page token')
+    if (seen.has(pageToken)) throw new InvalidCalendarCollection('Calendar repeated a page token')
     seen.add(pageToken)
   }
-  throw new Error('Calendar returned too many pages')
+  throw new InvalidCalendarCollection('Calendar returned too many pages')
 }
 
 function instant(value: string): number {
@@ -593,8 +598,12 @@ async function lookupInvitationCalendarCopy(
       // attendee address on a shared calendar's copy.
       if (base === PRIMARY_EVENTS) {
         if (event.iCalUID !== uid && !associated) return
+      } else if (!observedOrganizer) {
+        // With no organizer address, only the exact UID and an unambiguous
+        // self attendee for this mailbox bind possible existence. An owned
+        // calendar's ID is not in itself an alias for the invited mailbox.
+        if (event.iCalUID !== uid || !mailboxAttendee(event, mailbox)) return
       } else {
-        if (!observedOrganizer) return
         const self = uniqueSelfAttendee(event)
         const selfEmail = typeof self?.email === 'string' ? self.email.toLowerCase() : undefined
         const person = self && (self.resource === undefined || self.resource === false)
@@ -652,7 +661,7 @@ async function lookupInvitationCalendarCopy(
     if (primary[0]) return primaryCopy(primary[0])
   }
 
-  const calendars = await invitationPages<CalendarListEntry & { hidden?: boolean }>(
+  const calendars = await invitationPages<CalendarListEntry>(
     api,
     `${BASE}/users/me/calendarList`,
     'calendar#calendarList',
@@ -663,14 +672,8 @@ async function lookupInvitationCalendarCopy(
     },
   )
   const overrides = legacyJoinOnly ? await readCalendarOverrides() : null
-  // Legacy Join follows the agenda's calendar selection: hidden and
-  // deselected calendars are not offered, and owned calendars default to on.
-  const enabled = (calendar: (typeof calendars)[number]) =>
-    calendar.hidden !== true &&
-    calendar.selected !== false &&
-    !calendar.deleted &&
-    calendar.accessRole !== 'freeBusyReader' &&
-    (overrides?.[calendar.id] ?? (calendar.primary === true || calendar.accessRole === 'owner'))
+  const enabled = (calendar: CalendarListEntry) =>
+    overrides === null || calendarIsEnabled(calendar, overrides)
   let sawIneligibleCopy = false
   const navigationCandidates = (events: RawEvent[], calendarEnabled: boolean) => {
     if (!legacyJoinOnly) return events
@@ -679,7 +682,7 @@ async function lookupInvitationCalendarCopy(
     const candidates = calendarEnabled
       ? events.filter(
           (event) =>
-            legacyMeetingIsVisible(event) ||
+            isAgendaEventVisible(event) ||
             // The master still binds expanded occurrences. Their own self
             // status determines Join, not the status on the series template.
             (series && event.status !== 'cancelled' && event.recurrence?.length),
@@ -758,16 +761,6 @@ async function lookupInvitationCalendarCopy(
   )
 }
 
-function legacyMeetingIsVisible(event: RawEvent): boolean {
-  return (
-    event.status !== 'cancelled' &&
-    event.eventType !== 'workingLocation' &&
-    !event.attendees?.some(
-      ({ self, responseStatus }) => self === true && responseStatus === 'declined',
-    )
-  )
-}
-
 function uniqueSelfAttendee(event: RawEvent) {
   const attendees = event.attendees
   if (
@@ -787,9 +780,12 @@ function uniqueSelfAttendee(event: RawEvent) {
  * one attendee for the connected mailbox, not a calendar ID or alias. */
 function mailboxAttendee(event: RawEvent, mailbox: string) {
   const self = uniqueSelfAttendee(event)
-  return self?.email?.toLowerCase() === mailbox &&
-    !self.resource &&
-    event.attendees?.filter(({ email }) => email?.toLowerCase() === mailbox).length === 1
+  return typeof self?.email === 'string' &&
+    self.email.toLowerCase() === mailbox &&
+    (self.resource === undefined || self.resource === false) &&
+    event.attendees?.filter(
+      ({ email }) => typeof email === 'string' && email.toLowerCase() === mailbox,
+    ).length === 1
     ? self
     : undefined
 }
@@ -907,7 +903,7 @@ function invitationCopy(
     location: event.location,
     ...links,
     // Never fall back from an eligible legacy instance to a declined master.
-    htmlLink: invitation.legacyJoinOnly && !legacyMeetingIsVisible(event) ? null : links.htmlLink,
+    htmlLink: invitation.legacyJoinOnly && !isAgendaEventVisible(event) ? null : links.htmlLink,
     responseStatus,
     cancelled,
     unavailableReason: reason,
@@ -1083,12 +1079,13 @@ async function legacyMeetingIsCurrent(
         (row) =>
           row.id === event.id &&
           usableInvitationEvent(row) &&
-          legacyMeetingIsVisible(row) &&
+          isAgendaEventVisible(row) &&
           coherentEventTimes(row) &&
           calendarProof(row) === calendarProof(event),
       )
     )
-  } catch {
+  } catch (error) {
+    requireLocalNavigationFailure(error)
     return false
   }
 }
@@ -1131,7 +1128,7 @@ async function currentDateOccurrence(
     row &&
     usableInvitationEvent(row) &&
     coherentEventTimes(row) &&
-    legacyMeetingIsVisible(row) &&
+    isAgendaEventVisible(row) &&
     row.start?.date !== undefined &&
     row.iCalUID === uid &&
     row.recurringEventId === selected.recurringEventId &&
@@ -1186,7 +1183,7 @@ async function upcomingInvitationLinks(
         instance.recurringEventId === master.id &&
         instance.organizer?.email?.toLowerCase() === organizer &&
         instance.status !== 'cancelled' &&
-        (!legacyJoinOnly || legacyMeetingIsVisible(instance)) &&
+        (!legacyJoinOnly || isAgendaEventVisible(instance)) &&
         coherentEventTimes(instance) &&
         (instance.start?.date !== undefined) === (master.start?.date !== undefined) &&
         includesEnd(instance)
@@ -1204,9 +1201,8 @@ async function upcomingInvitationLinks(
       if (pageToken === undefined) return null
       seen.add(pageToken)
     }
-  } catch {
-    // An unavailable optional link neither invalidates the verified master
-    // nor changes how the invitation may be answered.
+  } catch (error) {
+    requireLocalNavigationFailure(error)
   }
   return null
 }
@@ -1404,6 +1400,18 @@ function propagateCalendarRefusal(error: unknown): boolean {
     error instanceof GoogleApiError &&
     (error.code === 'reconnect' || error.code === 'scope' || error.code === 'rate-limit')
   )
+}
+
+/** A malformed or unavailable optional collection can withhold its links.
+ * Account refusals and failures recording shared evidence fail the read. */
+function requireLocalNavigationFailure(error: unknown): void {
+  if (error instanceof CalendarObservationError) throw error.cause
+  if (
+    error instanceof InvalidCalendarCollection ||
+    (error instanceof GoogleApiError && !propagateCalendarRefusal(error))
+  )
+    return
+  throw error
 }
 
 function mailConference(event: RawEvent) {
