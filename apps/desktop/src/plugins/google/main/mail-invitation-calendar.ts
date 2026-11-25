@@ -46,10 +46,10 @@ type CalendarLookup =
   | { kind: 'blocked'; reason: string; cancelled?: true }
 
 type Parsed = NonNullable<ReturnType<typeof parseMailInvitation>>
-type InvitationTarget = {
-  details: Parsed['details']
-  request: NonNullable<Parsed['request']>
+type RequestMaterial = { details: Parsed['details']; request: NonNullable<Parsed['request']> }
+type InvitationTarget = RequestMaterial & {
   joinOnly: boolean
+  predecessors: RequestMaterial[]
 }
 
 async function invitationPages<T>(
@@ -455,8 +455,6 @@ function invitationCopy(
   const calendarPageInMail = googleEventUrl(details.htmlLink)
   const timeMatches = (mail: string | null, calendar: string) =>
     mail !== null && (details.allDay ? mail === calendar : instant(mail) === instant(calendar))
-  const words = (value: string | null | undefined) =>
-    value?.normalize('NFC').trim().replace(/\r\n/g, '\n') ?? ''
   if (
     (explicitFields.title &&
       event.summary !== undefined &&
@@ -472,7 +470,11 @@ function invitationCopy(
       details.conferenceUrl &&
       calendarConference &&
       details.conferenceUrl !== calendarConference) ||
-    (explicitFields.htmlLink && calendarPageInMail && htmlLink && calendarPageInMail !== htmlLink)
+    (explicitFields.htmlLink &&
+      calendarPageInMail &&
+      htmlLink &&
+      calendarPageInMail !== htmlLink) ||
+    (!cancelled && !provesChangedMaterial(invitation, event, calendarConference, htmlLink))
   )
     return blocked('The Calendar details do not match this revision of the invitation')
   if (joinOnly && (!start || !end || !explicitFields.start))
@@ -515,6 +517,63 @@ function invitationCopy(
             )
         : null,
   }
+}
+
+const words = (value: string | null | undefined) =>
+  value?.normalize('NFC').trim().replace(/\r\n/g, '\n') ?? ''
+
+/** At the same sequence, omission is not proof of material that changed.
+ * Demand a provider observation for each discriminator, while leaving normal
+ * copy verification (including Google’s omitted optional fields) unchanged. */
+function provesChangedMaterial(
+  invitation: InvitationTarget,
+  event: RawEvent,
+  conference: string | null,
+  htmlLink: string | null,
+): boolean {
+  const { predecessors } = invitation
+  if (!predecessors.length) return true
+  const proves = <T>(valueOf: (request: RequestMaterial) => T, observed: T | undefined) => {
+    const expected = valueOf(invitation)
+    return observed === expected || predecessors.every((prior) => valueOf(prior) === expected)
+  }
+  const textOf = (value: string | undefined) => (value === undefined ? undefined : words(value))
+  const timeOf = (value: string | null | undefined, allDay: boolean) => {
+    if (value == null) return undefined
+    const millis = allDay ? NaN : instant(value)
+    return Number.isFinite(millis) ? millis : value
+  }
+  const prose = (copy: RequestMaterial) => words(copy.request.description)
+  const description = prose(invitation)
+  // Calendar can represent a bare join URL as structured conference data.
+  // That is not a substitute for changed prose, or for a URL already present
+  // (in any form) in a predecessor's description.
+  const structured = providerConferenceUrl(structuredConference(event))
+  const confirmsDescription =
+    proves(prose, textOf(event.description)) ||
+    (structured &&
+      providerConferenceUrl(description) === structured &&
+      predecessors.every(
+        (prior) => prose(prior) === description || conferenceUrlIn(prose(prior)) !== structured,
+      ))
+  return Boolean(
+    proves(
+      ({ details, request }) => (request.explicitFields.title ? words(details.title) : ''),
+      textOf(event.summary),
+    ) &&
+    proves(({ details }) => words(details.location), textOf(event.location)) &&
+    confirmsDescription &&
+    proves(({ details }) => details.conferenceUrl, conference ?? undefined) &&
+    proves(({ details }) => googleEventUrl(details.htmlLink), htmlLink ?? undefined) &&
+    proves(
+      ({ details }) => timeOf(details.start, details.allDay),
+      timeOf(event.start?.date ?? event.start?.dateTime, invitation.details.allDay),
+    ) &&
+    proves(
+      ({ details }) => timeOf(details.end, details.allDay),
+      timeOf(event.end?.date ?? event.end?.dateTime, invitation.details.allDay),
+    ),
+  )
 }
 
 function sameRecurrenceStart(
@@ -637,11 +696,15 @@ function matchesCalendarProof(event: RawEvent, stored: string, proof = calendarP
   // Old journals can still prove an exact match. Only canonical proofs can
   // recognize reordered rules; never infer what a previous raw hash meant.
   return (
-    stored === proof || (event.recurrence !== undefined && stored === calendarProof(event, true))
+    stored === proof ||
+    stored === calendarProof(event, 'canonical-v1') ||
+    (event.recurrence !== undefined && stored === calendarProof(event, 'legacy'))
   )
 }
 
-function calendarProof(event: RawEvent, legacy = false): string {
+function calendarProof(event: RawEvent, version?: 'canonical-v1' | 'legacy'): string {
+  const conference = httpsLink(structuredConference(event)) ?? mailConference(event).url
+  const description = words(event.description)
   const when = (time: RawEvent['start']) =>
     time?.date ?? (time?.dateTime ? instant(time.dateTime) : null)
   // Ignore RSVP and ETag changes, but never mistake a different revision at the
@@ -656,7 +719,7 @@ function calendarProof(event: RawEvent, legacy = false): string {
         when(event.originalStartTime),
         // Use the same equality as verification. Keep raw unrecognized rules
         // distinct rather than treating them as empty or equal to each other.
-        legacy
+        version === 'legacy'
           ? event.recurrence
           : event.recurrence?.length
             ? (recurrenceSet(event.recurrence) ?? event.recurrence)
@@ -666,8 +729,11 @@ function calendarProof(event: RawEvent, legacy = false): string {
         when(event.start),
         when(event.end),
         event.location,
-        httpsLink(structuredConference(event)) ?? mailConference(event).url,
+        conference,
         googleEventUrl(event.htmlLink),
+        ...(!version
+          ? [conference && providerConferenceUrl(description) === conference ? '' : description]
+          : []),
         ...(event.recurrence?.length && event.start?.timeZone !== undefined
           ? [canonicalIanaZone(event.start.timeZone) ?? event.start.timeZone]
           : []),

@@ -44,6 +44,8 @@ export type ParentAnchor = {
   parent: string
   organizer: string
   mailbox: string
+  /** Legacy anchors without a receipt locator cannot provide independent proof. */
+  reply?: { rfcId: string; messageId: string }
 }
 
 type Journal = { version: 1; attempts: InvitationAttempt[]; parentAnchors: ParentAnchor[] }
@@ -113,7 +115,9 @@ function isParentAnchor(value: unknown): value is ParentAnchor {
     validRevision(value.revision) &&
     text(value.parent) &&
     text(value.organizer) &&
-    text(value.mailbox)
+    text(value.mailbox) &&
+    (value.reply === undefined ||
+      (record(value.reply) && text(value.reply.rfcId) && text(value.reply.messageId)))
   )
 }
 
@@ -181,8 +185,9 @@ function verifyJournal(raw: unknown): Journal {
 
 function anchorFor({ accountSub, revision, delivery }: InvitationAttempt): ParentAnchor[] {
   if (delivery.channel !== 'gmail') return []
-  const { parent, organizer, mailbox } = delivery
-  return [{ accountSub, revision, parent, organizer, mailbox }]
+  const { parent, organizer, mailbox, receipt, rfcId } = delivery
+  const reply = receipt?.id ? { rfcId, messageId: receipt.id } : undefined
+  return [{ accountSub, revision, parent, organizer, mailbox, reply }]
 }
 
 function anchorKey({ accountSub, revision, parent, organizer, mailbox }: ParentAnchor): string {
@@ -233,15 +238,16 @@ export function createMailInvitationStore(userData: string) {
     confirmAttempt: (
       confirmed: InvitationAttempt,
       replaces: (prior: InvitationAttempt) => boolean,
+      provesAnchor: (attempt: InvitationAttempt) => boolean,
     ) =>
       update((journal) => {
         const index = journal.attempts.findIndex(({ id }) => id === confirmed.id)
         if (index < 0) return journal
         const anchors = new Map(journal.parentAnchors.map((anchor) => [anchorKey(anchor), anchor]))
         const retain = (attempt: InvitationAttempt) => {
-          for (const anchor of anchorFor(attempt)) anchors.set(anchorKey(anchor), anchor)
+          if (provesAnchor(attempt))
+            for (const anchor of anchorFor(attempt)) anchors.set(anchorKey(anchor), anchor)
         }
-        retain(confirmed)
         const attempts = journal.attempts.flatMap((entry, prior) => {
           if (prior === index) return confirmed
           if (prior < index && entry.state === 'confirmed' && replaces(entry)) {
@@ -251,6 +257,7 @@ export function createMailInvitationStore(userData: string) {
           }
           return entry
         })
+        retain(confirmed)
         return { ...journal, attempts, parentAnchors: [...anchors.values()] }
       }),
   }

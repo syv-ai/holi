@@ -18,6 +18,12 @@ const COMPARISON_LOOKAHEAD_YEARS = 8
 
 export class CalendarPartError extends Error {}
 
+export class AmbiguousCalendarValue extends CalendarPartError {
+  constructor() {
+    super('Calendar invitation has an ambiguous VALUE parameter')
+  }
+}
+
 export function malformed(): never {
   throw new CalendarPartError('Calendar invitation is malformed or unsupported')
 }
@@ -104,13 +110,10 @@ function eventRule(value: string): string {
   return parts.join(';')
 }
 
-function validateRecurrenceDates(name: string, fields: string[], value: string) {
-  const types = fields.filter((field) => field.startsWith('VALUE='))
-  const zones = fields.filter((field) => field.startsWith('TZID='))
-  if (types.length > 1 || zones.length > 1 || zones[0] === 'TZID=') malformed()
-  const kind = types[0] ?? 'VALUE=DATE-TIME'
+function validateRecurrenceDates(name: string, kind: string, zones: string[], value: string) {
+  if (zones.length > 1 || zones[0] === '') malformed()
   for (const item of value.split(',')) {
-    if (kind === 'VALUE=PERIOD' && name === 'RDATE') {
+    if (kind === 'PERIOD' && name === 'RDATE') {
       const [start, end, ...rest] = item.split('/')
       if (rest.length || !start || !end || civilTime(start, 'timed') === null) malformed()
       const length = DURATION.exec(end)
@@ -120,12 +123,9 @@ function validateRecurrenceDates(name: string, fields: string[], value: string) 
       )
         malformed()
       if (zones.length && (start.endsWith('Z') || end.endsWith('Z'))) malformed()
-    } else if (kind === 'VALUE=DATE') {
+    } else if (kind === 'DATE') {
       if (zones.length || civilTime(item, 'date') === null) malformed()
-    } else if (
-      kind !== 'VALUE=DATE-TIME' ||
-      civilTime(item, zones.length ? 'local' : 'timed') === null
-    ) {
+    } else if (kind !== 'DATE-TIME' || civilTime(item, zones.length ? 'local' : 'timed') === null) {
       malformed()
     }
   }
@@ -160,6 +160,50 @@ type ZoneInput = {
   wire: string[]
 }
 
+// Read the parameter section, never the property value. RFC 6868 encodes
+// parameter quotes as ^'; only literal double quotes delimit a parameter.
+// Backslash escapes in property values (e.g. a TEXT list) are ICAL's job.
+function contentLine(line: string) {
+  const property = /^([a-z\d-]+)/i.exec(line)
+  if (!property) malformed()
+  const name = property[0].toUpperCase()
+  const parameters = new Map<string, string[]>()
+  const param = /;([a-z\d-]+)=("[^"]*"(?:,"[^"]*")*|[^":;]*)(?=[:;])/iy
+  let position = property[0].length
+  while (line[position] === ';') {
+    param.lastIndex = position
+    const match = param.exec(line)
+    if (!match) malformed()
+    const key = match[1]!.toUpperCase()
+    const raw = match[2]!
+    // VALUE is always a single type token, on standard and extension
+    // properties alike. ICAL would otherwise silently select the last one.
+    if (key === 'VALUE' && (parameters.has(key) || !/^(?:[a-z\d-]+|"[a-z\d-]+")$/i.test(raw)))
+      throw new AmbiguousCalendarValue()
+    // ICAL only consumes separately quoted lists for these address parameters.
+    // Reject mixed/unsupported quoting rather than letting ICAL see a different
+    // parameter boundary than the wire guard.
+    if (
+      raw.startsWith('"') &&
+      /^"[^"]*",/.test(raw) &&
+      !['MEMBER', 'DELEGATED-TO', 'DELEGATED-FROM'].includes(key)
+    )
+      malformed()
+    const prior = parameters.get(key) ?? []
+    prior.push(raw.replace(/^"|"$/g, '').toUpperCase())
+    parameters.set(key, prior)
+    position = param.lastIndex
+  }
+  if (line[position] !== ':') malformed()
+  return {
+    name,
+    parameters,
+    params: line.slice(property[0].length, position).toUpperCase(),
+    value: line.slice(position + 1),
+    valueStart: position + 1,
+  }
+}
+
 function inspectCalendar(lines: string[]) {
   const body: string[] = []
   const zones = new Map<string, ZoneInput>()
@@ -171,13 +215,7 @@ function inspectCalendar(lines: string[]) {
   let lastYear = -Infinity
 
   for (const line of lines) {
-    // Recognize structure and only the wire fields that must be checked before
-    // conversion. ICAL still parses content, parameters, escaping and values.
-    const property = /^([a-z\d-]+)(;(?:[^":]|"[^"]*")*)?:/i.exec(line)
-    if (!property) malformed()
-    const name = property[1]!.toUpperCase()
-    const params = (property[2] ?? '').toUpperCase()
-    const value = line.slice(property[0].length)
+    const { name, params, parameters, value, valueStart } = contentLine(line)
     const parent = stack.at(-1)
     if (name === 'BEGIN' || name === 'END') {
       if (params || !/^[a-z\d-]+$/i.test(value)) malformed()
@@ -255,7 +293,7 @@ function inspectCalendar(lines: string[]) {
       )
         throw new CalendarPartError('Invitation has an invalid revision timestamp')
       if (name === 'RRULE') {
-        body.push(line.slice(0, property[0].length) + eventRule(value))
+        body.push(line.slice(0, valueStart) + eventRule(value))
         continue
       }
       if (
@@ -263,29 +301,19 @@ function inspectCalendar(lines: string[]) {
           name,
         )
       ) {
-        const recurrenceDate = name === 'RDATE' || name === 'EXDATE'
-        const fields = params
-          .replace(/"([^"]*)"/g, (_, quoted: string) =>
-            recurrenceDate ? quoted.replace(/;/g, ':') : '""',
-          )
-          .split(';')
-          .slice(1)
-        if (name === 'ORGANIZER' || name === 'ATTENDEE') {
-          // ICAL keeps only one value for repeated scalar parameters. Count
-          // VALUE on the wire before the surviving value can authorize a reply.
-          const unique = name === 'ATTENDEE' ? ['VALUE=', 'PARTSTAT=', 'RSVP='] : ['VALUE=']
-          if (unique.some((key) => fields.filter((param) => param.startsWith(key)).length > 1))
-            malformed()
-        } else if (recurrenceDate) {
-          validateRecurrenceDates(name, fields, value)
-        } else {
-          const valueType = fields.filter((param) => param.startsWith('VALUE='))
+        const valueType = parameters.get('VALUE')?.[0] ?? 'DATE-TIME'
+        const zones = parameters.get('TZID') ?? []
+        const repeated = (key: string) => (parameters.get(key)?.length ?? 0) > 1
+        if (name === 'ATTENDEE') {
+          if (repeated('PARTSTAT') || repeated('RSVP')) malformed()
+        } else if (name === 'RDATE' || name === 'EXDATE') {
+          validateRecurrenceDates(name, valueType, zones, value)
+        } else if (name !== 'ORGANIZER') {
           if (
-            valueType.length > 1 ||
-            (valueType[0] && !/^VALUE=(DATE|DATE-TIME)$/.test(valueType[0])) ||
-            fields.filter((param) => param.startsWith('TZID=')).length > 1 ||
-            fields.filter((param) => param.startsWith('RANGE=')).length > 1 ||
-            civilTime(value, valueType[0] === 'VALUE=DATE' ? 'date' : 'timed') === null
+            !/^(DATE|DATE-TIME)$/.test(valueType) ||
+            zones.length > 1 ||
+            repeated('RANGE') ||
+            civilTime(value, valueType === 'DATE' ? 'date' : 'timed') === null
           )
             malformed()
           const year = Number(value.slice(0, 4))

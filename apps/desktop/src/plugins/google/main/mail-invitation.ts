@@ -8,6 +8,7 @@ import {
 } from '../shared/meeting-links'
 import type { InviteAnswer } from './calendar'
 import {
+  AmbiguousCalendarValue,
   CalendarPartError,
   malformed,
   openCalendarPart,
@@ -90,6 +91,7 @@ type ParsedInvitation = {
     attendeeStates: Record<string, AttendeeState>
     /** Canonical RRULE/RDATE/EXDATE lines, without expanding or resolving a timezone. */
     recurrence: string[]
+    description: string | null
     /** Fields supplied by the organizer, not synthesized display defaults. */
     explicitFields: ExplicitFields
     recurrenceKind: TimeKind | null
@@ -596,6 +598,7 @@ export function parseMailInvitation(
         attendees: material.attendees,
         attendeeStates,
         recurrence: material.rules,
+        description: material.description,
         explicitFields: material.explicitFields,
         recurrenceKind: identity.recurrenceId ? timeKind(identity.recurrenceId) : null,
         recurrenceTimeBasis,
@@ -654,7 +657,7 @@ export function invitationReplyStatus(
   identity: MailInvitationIdentity,
   organizer: string,
   email: string,
-): InviteAnswer | null {
+): InviteAnswer | 'ambiguous' | null {
   try {
     const { calendar: reply, resolveTimes } = openCalendarPart(source)
     const method = single(reply, 'method')
@@ -689,7 +692,7 @@ export function invitationReplyStatus(
         (answer) => PARTSTAT[answer] === partstat,
       ) ?? null
     )
-  } catch {
-    return null
+  } catch (error) {
+    return error instanceof AmbiguousCalendarValue ? 'ambiguous' : null
   }
 }

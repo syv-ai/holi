@@ -128,6 +128,7 @@ type CalendarReplyHeaders = {
 type CalendarMail = {
   messageId: string
   rfcId: string | null
+  claims: Set<string>
   threadId: string | null
   parent: string | null
   timestamp: number
@@ -158,15 +159,46 @@ function calendarHeaderIds(part: RawPart | undefined, name: string): string[] | 
 function messageIdClaims(part: RawPart | undefined) {
   const values = (part?.headers ?? [])
     .filter(({ name }) => name?.toLowerCase() === 'message-id')
-    .map(({ value }) => {
-      const ids = typeof value === 'string' ? normalizeMessageIds(value, true) : null
-      return ids?.length === 1 ? ids[0]! : null
-    })
+    .map(({ value }) => (typeof value === 'string' ? normalizeMessageIds(value, true) : null))
+  const only = values.length === 1 ? values[0] : null
   return {
-    rfcId: values.length === 1 ? values[0]! : null,
-    claims: new Set(values.flatMap((id) => (id === null ? [] : [id]))),
+    rfcId: only?.length === 1 ? only[0]! : null,
+    claims: new Set(values.flatMap((ids) => ids ?? [])),
   }
 }
+
+export function createMessageIdOwnership() {
+  const owners = new Map<string, string | null>()
+  const seen = new Map<string, ReturnType<typeof messageIdClaims>>()
+  const owns = ({ rfcId, messageId }: Pick<CalendarMail, 'rfcId' | 'messageId'>) =>
+    rfcId !== null && owners.get(rfcId) === messageId
+  return {
+    index(messageId: string, header: ReturnType<typeof messageIdClaims>) {
+      const previous = seen.get(messageId)
+      // A malformed or duplicate declaration can never own an ID, but every
+      // whole-header claim still contests it. A second read of the same Gmail
+      // message is not a second owner, unless the two snapshots disagree.
+      const claims = new Set([...(previous?.claims ?? []), ...header.claims])
+      const rfcId = !previous || header.rfcId === previous.rfcId ? header.rfcId : null
+      seen.set(messageId, { rfcId, claims })
+      for (const id of claims) {
+        const owner = owners.get(id)
+        owners.set(
+          id,
+          id === rfcId && (owner === undefined || owner === messageId) ? messageId : null,
+        )
+      }
+    },
+    get: (id: string) => owners.get(id),
+    has: (id: string) => owners.has(id),
+    owns,
+    contradicts(reply: { rfcId: string; messageId: string }) {
+      return (owners.has(reply.rfcId) || seen.has(reply.messageId)) && !owns(reply)
+    },
+  }
+}
+
+type MessageIdOwners = ReturnType<typeof createMessageIdOwnership>
 
 function uniqueAddressHeader(part: RawPart | undefined, name: string): string | null {
   const headers = (part?.headers ?? []).filter((header) => header.name?.toLowerCase() === name)
@@ -249,9 +281,10 @@ function sentEvidenceAddresses(value: string | null, allowGroups: boolean): stri
 
 function calendarMail(
   message: RawMessage & { id: string },
-  rfcId: string | null,
+  header: ReturnType<typeof messageIdClaims>,
   parts: CalendarMail['parts'],
 ): CalendarMail {
+  const { rfcId } = header
   const references = calendarHeaderIds(message.payload, 'references')
   const parent = calendarHeaderIds(message.payload, 'in-reply-to')
   const validThreading =
@@ -269,7 +302,7 @@ function calendarMail(
   const internalDate = Number(message.internalDate)
   return {
     messageId: message.id,
-    rfcId,
+    ...header,
     threadId: isGmailMessageId(message.threadId) ? message.threadId : null,
     parent: parentId,
     timestamp: Number.isSafeInteger(internalDate) && internalDate >= 0 ? internalDate : 0,
@@ -304,16 +337,16 @@ export async function fetchThreadCalendarPayloads(
   scan: CalendarScan,
 ) {
   const thread = await fetchFullThread(api, threadId)
-  const owners = new Map<string, string | null>()
-  const messages: CalendarMail[] = []
-  for (const message of thread) {
-    const { parts, rfcId, claims } = calendarEnvelope(api, message, scan)
-    // Duplicate headers cannot prove ownership, but each whole valid value
-    // still contests that ID. Include plain mail and drafts in this index.
-    for (const claim of claims)
-      owners.set(claim, claim === rfcId && !owners.has(claim) ? message.id : null)
-    if (parts.length) messages.push(calendarMail(message, rfcId, parts))
-  }
+  const owners = createMessageIdOwnership()
+  const headers = thread.map((message) => {
+    const header = messageIdClaims(message.payload)
+    owners.index(message.id, header)
+    return header
+  })
+  const messages = thread.flatMap((message, index) => {
+    const mail = calendarEnvelope(api, message, scan, headers[index]!)
+    return mail ? [mail] : []
+  })
   return { messages, owners }
 }
 
@@ -321,6 +354,7 @@ function calendarEnvelope(
   api: GoogleApi,
   message: RawMessage & { id: string },
   scan: CalendarScan,
+  header: ReturnType<typeof messageIdClaims>,
 ) {
   const parts = scan.partsOf(
     api,
@@ -328,41 +362,56 @@ function calendarEnvelope(
     message.payload,
     message.labelIds?.includes('DRAFT') ?? false,
   )
-  return { parts, ...messageIdClaims(message.payload) }
+  return parts.length ? calendarMail(message, header, parts) : null
 }
 
-/** The send receipt may point to a different thread. If no usable receipt
- * was returned, a bounded exact-ID search of Sent can find the same reply. */
+/** A receipt can point to a different thread. Combine it with the bounded,
+ * account-wide exact-ID Sent lookup before filtering for a positive reply. */
 export async function findSentCalendarReply(
   api: GoogleApi,
   rfcId: string,
   receipt: CalendarReplyReceipt | null,
   scan: CalendarScan,
-  matches: (message: CalendarMail) => Promise<boolean>,
-): Promise<CalendarMail | null> {
+  owners: MessageIdOwners,
+  assess: (message: CalendarMail) => Promise<'match' | 'related' | null>,
+): Promise<{ mail: CalendarMail | null; contestedTimestamp: number | null }> {
+  const unresolved = { mail: null, contestedTimestamp: null }
+  const messages = new Map<
+    string,
+    {
+      message: ReturnType<typeof validateFullMessage>
+      header: ReturnType<typeof messageIdClaims>
+    } | null
+  >()
   const read = async (id: string, threadId: string | null) => {
-    scan.evidenceRead()
-    const raw = await api
-      .get<RawMessage>(`${GMAIL_BASE}/messages/${encodeURIComponent(id)}`, {
-        format: 'full',
-      })
-      .catch((error) => {
-        // Only an individual missing message permits recovery through the exact-ID index.
-        if (error instanceof GoogleApiError && error.code === 'not-found') return undefined
-        if (error instanceof SyntaxError)
-          throw new CalendarScanError('Gmail returned an invalid full message response')
-        throw error
-      })
-    if (raw === undefined) return null
-    const message = validateFullMessage(raw, id, threadId)
-    const envelope = calendarEnvelope(api, message, scan)
-    if (envelope.rfcId !== rfcId || envelope.parts.length === 0) return null
-    const mail = calendarMail(message, envelope.rfcId, envelope.parts)
-    return (await matches(mail)) ? mail : null
+    if (!messages.has(id)) {
+      scan.evidenceRead()
+      const raw = await api
+        .get<RawMessage>(`${GMAIL_BASE}/messages/${encodeURIComponent(id)}`, { format: 'full' })
+        .catch((error) => {
+          // Only an individual missing message permits recovery through the exact-ID index.
+          if (error instanceof GoogleApiError && error.code === 'not-found') return undefined
+          if (error instanceof SyntaxError)
+            throw new CalendarScanError('Gmail returned an invalid full message response')
+          throw error
+        })
+      if (raw === undefined) messages.set(id, null)
+      else {
+        const message = validateFullMessage(raw, id, threadId)
+        const header = messageIdClaims(message.payload)
+        owners.index(message.id, header)
+        messages.set(id, { message, header })
+      }
+    }
+    const result = messages.get(id)
+    if (result && threadId !== null && result.message.threadId !== threadId)
+      throw new CalendarScanError('Gmail returned conflicting full message identities')
+    return result
   }
-  if (receipt?.id) {
-    const mail = await read(receipt.id, receipt.threadId)
-    if (mail) return mail
+  if (receipt?.id && !(await read(receipt.id, receipt.threadId))) {
+    // The send acknowledgement can precede the resource. The index may
+    // now make that same ID readable; a cached 404 is not a claimant.
+    messages.delete(receipt.id)
   }
   scan.evidenceRead()
   const page = await api.get<{
@@ -378,18 +427,40 @@ export async function findSentCalendarReply(
     page.nextPageToken !== undefined ||
     (page.messages !== undefined && (!Array.isArray(page.messages) || page.messages.length > 10))
   )
-    return null
-  const found = new Map<string, CalendarMail>()
+    return unresolved
+  let missing = false
   for (const candidate of page.messages ?? []) {
     if (
       !isGmailMessageId(candidate?.id) ||
       (candidate.threadId !== undefined && !isGmailMessageId(candidate.threadId))
     )
-      return null
-    const mail = await read(candidate.id, candidate.threadId ?? null)
-    if (mail) found.set(mail.messageId, mail)
+      return unresolved
+    // An index row for the receipt's provider ID must not change the
+    // thread identity named by that receipt, even after a transient 404.
+    const expectedThread = candidate.id === receipt?.id ? receipt.threadId : null
+    if (expectedThread && candidate.threadId && candidate.threadId !== expectedThread)
+      return unresolved
+    if (!(await read(candidate.id, expectedThread ?? candidate.threadId ?? null))) missing = true
   }
-  return found.size === 1 ? (found.values().next().value ?? null) : null
+  if (missing) return unresolved
+  let contestedTimestamp = 0
+  for (const claimed of messages.values()) {
+    if (!claimed?.header.claims.has(rfcId)) continue
+    const { message, header } = claimed
+    const mail = calendarEnvelope(api, message, scan, header)
+    if (!mail) continue
+    const evidence = await assess(mail)
+    if (!evidence) continue
+    if (owners.owns(mail)) {
+      if (evidence === 'match') return { mail, contestedTimestamp: 0 }
+      continue
+    }
+    // Ordered but contested evidence may set a floor for an independent newer
+    // answer. It can neither confirm the dispatch nor establish its parent.
+    if (!mail.timestamp) return unresolved
+    contestedTimestamp = Math.max(contestedTimestamp, mail.timestamp)
+  }
+  return { mail: null, contestedTimestamp }
 }
 
 /** Send a calendar reply to only the organizer, in the thread being answered. */

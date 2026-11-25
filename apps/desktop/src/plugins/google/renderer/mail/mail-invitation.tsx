@@ -172,6 +172,15 @@ function InvitationCard({
   const { organizer, location } = invitation
   const status =
     action === 'responding' ? 'Sending your response…' : responseNotice(card, canRespond)
+  // An accepted write and a provider's reason for withholding the current
+  // answer are separate facts. Only suppress a repeated notice.
+  const reason =
+    invitation.unavailableReason ??
+    (!refreshPending || status === null
+      ? invitation.cancelled
+        ? 'This invitation was cancelled.'
+        : 'You can’t respond to this invitation.'
+      : null)
 
   return (
     <article aria-labelledby={headingId} className="flex min-w-0 flex-col gap-2">
@@ -249,12 +258,9 @@ function InvitationCard({
           {status}
         </p>
       )}
-      {isInvitation && !canRespond && (!refreshPending || status === null) && (
+      {isInvitation && !canRespond && reason !== null && reason !== status && (
         <p role="status" className="text-muted-foreground text-sm">
-          {invitation.unavailableReason ??
-            (invitation.cancelled
-              ? 'This invitation was cancelled.'
-              : 'You can’t respond to this invitation.')}
+          {reason}
         </p>
       )}
       {error !== null && (
