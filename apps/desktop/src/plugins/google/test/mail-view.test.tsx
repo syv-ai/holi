@@ -13,6 +13,7 @@ import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
 import { activeRemoteAtom, loadVaultSettingsAtom } from '@/plugin-api'
 import { refreshGoogleAtom } from '../renderer/account'
+import type { googleCap } from '../renderer/google-cap'
 import { getDefaultStore } from 'jotai'
 
 const threadMock = vi.fn()
@@ -37,6 +38,8 @@ const discardDraftMock = vi.fn()
 const draftMock = vi.fn()
 const draftsMock = vi.fn()
 const meetingMock = vi.fn()
+const invitationMock = vi.fn<typeof googleCap.mailInvitation>()
+const respondMock = vi.fn<typeof googleCap.respondToMailInvitation>()
 const mailMarkersMock = vi.fn()
 const markerPreferencesMock = vi.fn()
 const setMailMarkerMock = vi.fn()
@@ -47,7 +50,7 @@ const createTaskMock = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
 let mailAccountSub = 'mail-view-account'
-const google: Record<string, (params: unknown) => unknown> = {
+const google: Record<string, (params: unknown, remote: string) => unknown> = {
   status: () => ({
     account: {
       sub: mailAccountSub,
@@ -91,6 +94,16 @@ const google: Record<string, (params: unknown) => unknown> = {
   draftBody: (p) => draftMock(p),
   drafts: () => draftsMock(),
   meeting: (p) => meetingMock(p),
+  mailInvitation: (p, remote) => {
+    const target = p as Parameters<typeof googleCap.mailInvitation>[1]
+    if (target.expectedAccountSub !== mailAccountSub) throw new Error('Google account changed')
+    return invitationMock(remote, target)
+  },
+  respondToMailInvitation: (p, remote) => {
+    const target = p as Parameters<typeof googleCap.respondToMailInvitation>[1]
+    if (target.expectedAccountSub !== mailAccountSub) throw new Error('Google account changed')
+    return respondMock(remote, target)
+  },
   mailMarkerAnnotations: (p) => mailMarkersMock(p),
   mailMarkerPreferences: (p) => markerPreferencesMock(p),
   setMailMarker: (p) => setMailMarkerMock(p),
@@ -121,12 +134,20 @@ vi.mock('@/lib/trpc', () => ({
     },
     cap: {
       run: {
-        mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
+        mutate: async ({
+          name,
+          paramsJson,
+          remote,
+        }: {
+          name: string
+          paramsJson?: string
+          remote: string
+        }) => {
           const params = paramsJson === undefined ? undefined : JSON.parse(paramsJson)
           if (name === 'tasks.create') return createTaskMock(params)
           const verb = google[name.replace(/^google\./, '')]
           if (verb === undefined) throw new Error(`unexpected ${name}`)
-          return verb(params)
+          return verb(params, remote)
         },
       },
     },
@@ -257,6 +278,8 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   categoryCountsMock.mockReset().mockResolvedValue({})
   meetingMock.mockReset().mockResolvedValue(null)
+  invitationMock.mockReset().mockResolvedValue(null)
+  respondMock.mockReset().mockRejectedValue(new Error('Unexpected RSVP'))
   currentAnnotations = {}
   mailMarkersMock.mockReset().mockImplementation(async () => currentAnnotations)
   markerPreferencesMock.mockReset().mockResolvedValue({ enabledOrder: ['yellow-star'] })
@@ -501,123 +524,192 @@ test('offers an unsubscribe link for a newsletter', async () => {
   expect(openExternal).toHaveBeenCalledWith('https://list.test/unsub?u=9')
 })
 
-/**
- * Joining a meeting from the reader.
- *
- * The link is NOT parsed out of the `.ics`. Main matches the invite's `UID` to
- * the calendar event and hands back that event's `conferenceUrl`, so
- * "where is the video call" has one implementation, in `calendar.ts`.
- */
-const MEETING = {
-  eventId: 'e1',
+const invite: NonNullable<Awaited<ReturnType<typeof googleCap.mailInvitation>>> = {
+  identity: { messageId: 'm1', uid: 'review', sequence: 2, recurrenceId: null },
   title: 'Sprint review',
   start: '2026-08-19T12:00:00.000Z',
   end: '2026-08-19T13:00:00.000Z',
+  allDay: false,
+  organizer: { name: 'Jane', email: 'jane@example.com' },
+  location: 'Workshop',
   conferenceUrl: 'https://teams.microsoft.com/l/meetup-join/19%3aX/0',
   htmlLink: 'https://calendar.google.com/event?eid=e1',
+  cancelled: false,
+  canRespond: true,
+  responsePending: false,
+  responseStatus: 'needsAction',
+  unavailableReason: null,
 }
 
-test('joins the meeting a thread is about', async () => {
-  withMessage({ body: 'are you free at 14:00?', html: null })
+test('joins a recognised invitation without a separate meeting lookup', async () => {
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  meetingMock.mockResolvedValue(MEETING)
+  invitationMock.mockResolvedValue(invite)
   const user = userEvent.setup()
 
-  render(<MailView />)
-  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
-  await user.click(await screen.findByRole('button', { name: /join/i }))
+  await openThread()
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  const clock = new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+  const start = new Date(invite.start!)
+  const end = new Date(invite.end!)
+  const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'full' })
+  const endDay = day.format(start) === day.format(end) ? '' : `${day.format(end)}, `
+  expect(
+    await region.findByText(
+      `${day.format(start)}, ${clock.format(start)} – ${endDay}${clock.format(end)}`,
+    ),
+  ).toBeInTheDocument()
+  await user.click(region.getByRole('button', { name: 'Join meeting' }))
 
-  expect(meetingMock).toHaveBeenCalledWith({ id: 't1' })
-  expect(openExternal).toHaveBeenCalledWith(MEETING.conferenceUrl)
+  expect(openExternal).toHaveBeenCalledWith(invite.conferenceUrl)
+  expect(meetingMock).not.toHaveBeenCalled()
 })
 
-test('spends nothing looking for a meeting in a thread that has no invite', async () => {
+test('ordinary mail opens without an invitation or meeting lookup', async () => {
   withMessage({ body: 'lunch?', html: null })
   threadMock.mockResolvedValue(page([summary({ hasInvite: false })]))
-  const user = userEvent.setup()
-
-  render(<MailView />)
-  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
-
-  // The summary already says there is no `.ics`.
+  expect(await openThread()).toHaveTextContent('lunch?')
+  expect(screen.queryByRole('region', { name: 'Calendar invitation' })).not.toBeInTheDocument()
+  expect(invitationMock).not.toHaveBeenCalled()
   expect(meetingMock).not.toHaveBeenCalled()
-  expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument()
 })
 
-/**
- * A meeting with no video call: the event is still worth reaching, but not
- * through a Join button.
- */
-test('offers the calendar page when there is nothing to join', async () => {
-  withMessage({ body: 'in the kitchen', html: null })
+test('keeps the Calendar link for calendar mail with no incoming invitation to answer', async () => {
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  meetingMock.mockResolvedValue({ ...MEETING, conferenceUrl: null })
+  meetingMock.mockResolvedValue({
+    eventId: 'e1',
+    title: invite.title,
+    start: invite.start,
+    end: invite.end,
+    conferenceUrl: null,
+    htmlLink: invite.htmlLink,
+  })
   const user = userEvent.setup()
-
-  render(<MailView />)
-  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
-  await user.click(await screen.findByRole('button', { name: /open this meeting/i }))
-
-  expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument()
-  expect(openExternal).toHaveBeenCalledWith(MEETING.htmlLink)
+  await openThread()
+  await user.click(await screen.findByRole('button', { name: 'Open this meeting' }))
+  expect(openExternal).toHaveBeenCalledWith(invite.htmlLink)
+  expect(screen.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument()
 })
 
-test('says nothing when the invite is not on the calendar', async () => {
-  withMessage({ body: 'are you free at 14:00?', html: null })
+test('explains a cancelled invitation detected from its attachment even without a list hint', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  withMessage(
+    { body: 'The workshop is off.', html: null },
+    {
+      attachments: [{ filename: 'cancel.ics', mimeType: 'text/calendar', size: 400 }],
+    },
+  )
+  invitationMock.mockResolvedValue({
+    ...invite,
+    cancelled: true,
+    canRespond: false,
+    responseStatus: null,
+    unavailableReason: 'This invitation was cancelled',
+  })
+  await openThread()
+  const region = await screen.findByRole('region', { name: 'Calendar invitation' })
+  expect(await within(region).findByText(/cancelled/i)).toBeInTheDocument()
+  expect(within(region).queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument()
+  expect(within(region).queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+})
+
+test('retries invitation read failures and reconciles uncertainty without resending', async () => {
+  const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  meetingMock.mockResolvedValue(null)
-  const user = userEvent.setup()
+  invitationMock.mockRejectedValueOnce(new Error('Calendar is temporarily unavailable'))
+  invitationMock.mockResolvedValueOnce(invite)
+  invitationMock.mockResolvedValueOnce({
+    ...invite,
+    canRespond: false,
+    responsePending: true,
+    unavailableReason: 'The response could not be confirmed',
+  })
+  invitationMock.mockResolvedValue({ ...invite, responseStatus: 'tentative' })
+  respondMock.mockResolvedValue({
+    outcome: 'uncertain',
+    channel: 'gmail',
+    answer: 'tentative',
+    invitation: null,
+    refreshPending: true,
+  })
 
-  render(<MailView />)
-  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await openThread()
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  expect(await region.findByRole('alert')).toHaveTextContent('Calendar is temporarily unavailable')
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('No response yet')).toBeInTheDocument()
+  await user.click(region.getByRole('button', { name: 'Maybe' }))
+  expect(await region.findByText(/couldn’t confirm whether/i)).toBeInTheDocument()
+  expect(region.queryByText('Response: Tentative')).not.toBeInTheDocument()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(region.getByRole('button', { name: 'Retry' })).toBeEnabled())
+  expect(region.getByRole('button', { name: 'Maybe' })).toBeDisabled()
+  expect(region.queryByText('Response: Tentative')).not.toBeInTheDocument()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
 
-  await waitFor(() => expect(meetingMock).toHaveBeenCalled())
-  // Declined, or already over: nothing to join.
-  expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: /open this meeting/i })).not.toBeInTheDocument()
+  expect(await region.findByText('Response: Tentative')).toBeInTheDocument()
+  expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
+    expectedAccountSub: 'mail-view-account',
+    threadId: 't1',
+    identity: invite.identity,
+    answer: 'tentative',
+  })
 })
 
-/**
- * The race: open an invite, then open something else before the lookup lands.
- * Without keying the answer to the thread it was asked about, the second thread
- * inherits the first one's Join button.
- */
-test('does not offer one thread’s meeting on another thread', async () => {
+test('reloads a changed invitation after a refused response without repeating the write', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValueOnce(invite)
+  invitationMock.mockResolvedValue({
+    ...invite,
+    title: 'Review at the new time',
+    identity: { ...invite.identity, sequence: 3 },
+  })
+  respondMock.mockRejectedValueOnce(
+    new Error('This invitation changed; reload it before responding'),
+  )
+
+  await openThread()
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  await user.click(await region.findByRole('button', { name: 'Decline' }))
+  expect(await region.findByRole('alert')).toBeInTheDocument()
+  expect(region.getByRole('button', { name: 'Decline' })).toBeDisabled()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByRole('heading', { name: 'Review at the new time' })).toBeInTheDocument()
+  expect(region.getByRole('button', { name: 'Decline' })).toBeEnabled()
+  expect(respondMock).toHaveBeenCalledTimes(1)
+})
+
+test('ignores an earlier invitation read after opening another thread and reopening the first', async () => {
+  const user = userEvent.setup()
+  let finish!: (value: typeof invite) => void
+  invitationMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  invitationMock.mockResolvedValue({ ...invite, title: 'New revision', responseStatus: 'accepted' })
   readMock.mockImplementation(async ({ id }: { id: string }) => ({
     id,
     subject: id === 't1' ? 'Q2 budget' : 'Lunch',
     webUrl: 'https://mail.google.com/x',
-    messages: [
-      {
-        id: `m-${id}`,
-        from: { name: 'Ada Holm', email: 'ada@syv.ai' },
-        to: [],
-        cc: [],
-        bcc: [],
-        date: '2026-08-04T09:00:00.000Z',
-        attachments: [],
-        body: 'hello',
-        html: null,
-      },
-    ],
+    messages: [],
   }))
   threadMock.mockResolvedValue(
-    page([
-      summary({ id: 't1', subject: 'Q2 budget', hasInvite: true }),
-      summary({ id: 't2', subject: 'Lunch', hasInvite: false }),
-    ]),
+    page([summary({ hasInvite: true }), summary({ id: 't2', subject: 'Lunch' })]),
   )
-  meetingMock.mockResolvedValue(MEETING)
-  const user = userEvent.setup()
-
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
-  await waitFor(() => expect(screen.getByRole('button', { name: /join/i })).toBeInTheDocument())
+  expect(
+    await screen.findByRole('status', { name: 'Loading calendar invitation' }),
+  ).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: /Lunch/ }))
-
-  await waitFor(() =>
-    expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument(),
-  )
+  expect(await screen.findByRole('heading', { name: 'Lunch' })).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Calendar invitation' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /Q2 budget/ }))
+  expect(await screen.findByRole('heading', { name: 'New revision' })).toBeInTheDocument()
+  await act(async () => finish(invite))
+  expect(screen.queryByRole('heading', { name: invite.title })).not.toBeInTheDocument()
+  expect(screen.getByText('Response: Accepted')).toBeInTheDocument()
 })
 
 test('loads the next page when asked', async () => {

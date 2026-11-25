@@ -48,7 +48,6 @@ import {
   SquarePen,
   Star,
   Trash2,
-  Video,
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -106,6 +105,7 @@ import { useGoogleAccount } from './account'
 import { useMailMarkers } from './use-mail-markers'
 import { useMailMarkerActions } from './use-mail-marker-actions'
 import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
+import { MailInvitation } from './mail/mail-invitation'
 
 interface ThreadSummary {
   id: string
@@ -129,22 +129,6 @@ interface ThreadSummary {
   /** User label names, already resolved in main. */
   labels: string[]
   unsubscribeUrl: string | null
-}
-
-/**
- * The meeting a thread turned out to be about. Mirrors `ThreadMeeting` in
- * `main/google/invite.ts`.
- *
- * `conferenceUrl` is null for a meeting with no video call; the whole value
- * being null means there is no such meeting on the calendar.
- */
-interface ThreadMeeting {
-  eventId: string
-  title: string
-  start: string
-  end: string
-  conferenceUrl: string | null
-  htmlLink: string
 }
 
 interface Thread {
@@ -200,15 +184,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   const [open, setOpen] = useState<Thread | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
-  /**
-   * The meeting the open thread is about, once main has matched its invite to a
-   * calendar event. Null until then, and for every thread that is not a meeting.
-   *
-   * **Keyed by the thread it was asked about.** The answer can land after the
-   * reader has moved on; without the key the next thread would inherit the
-   * previous one's Join button.
-   */
-  const [meeting, setMeeting] = useState<(ThreadMeeting & { threadId: string }) | null>(null)
+  const threadGeneration = useRef(0)
   /**
    * Where the list is pointed: a tab, Sent, or Drafts. One union so that
    * impossible places like "Drafts, filtered to Promotions" cannot be expressed.
@@ -554,9 +530,14 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     if (!sent || open === null || composing === null || composing.kind === 'new') return
     const threadId = open.id
     const originRemote = remoteRef.current
+    const generation = threadGeneration.current
     void call((r) => googleCap.thread(r, { id: threadId }))
       .then((thread) => {
-        if (originRemote === store.get(activeRemoteAtom) && remoteRef.current === originRemote)
+        if (
+          threadGeneration.current === generation &&
+          originRemote === store.get(activeRemoteAtom) &&
+          remoteRef.current === originRemote
+        )
           setOpen(thread)
       })
       .catch(() => undefined)
@@ -619,20 +600,14 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       setOpenId(thread.id)
       setOpenSummary(thread)
       setOpen(null)
-      setMeeting(null)
+      const generation = ++threadGeneration.current
       void call((r) => googleCap.thread(r, { id: thread.id }))
-        .then(setOpen)
-        .catch(() => setOpenId(null))
-      // Only for a thread the list already says holds an `.ics`, to avoid two
-      // requests per open. A failure is swallowed deliberately: the badge still
-      // says this is a meeting, and a convenience lookup does not merit a banner.
-      if (thread.hasInvite) {
-        void call((r) => googleCap.meeting(r, { id: thread.id }))
-          .then((found) => {
-            if (found !== null) setMeeting({ ...found, threadId: thread.id })
-          })
-          .catch(() => undefined)
-      }
+        .then((found) => {
+          if (threadGeneration.current === generation) setOpen(found)
+        })
+        .catch(() => {
+          if (threadGeneration.current === generation) setOpenId(null)
+        })
       // Only when there is something to change: the API is rate limited.
       if (thread.unread) void setRead(thread.id, true)
     }, true)
@@ -719,6 +694,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       if (!left) return false
     }
     if (openId === id) {
+      threadGeneration.current++
       setOpen(null)
       setOpenId(null)
       setOpenSummary(null)
@@ -1148,38 +1124,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                 )}
               </div>
               <PaneToolbar>
-                {/* First, as the only time-sensitive action. The link is NOT
-                    parsed out of the invite: main matched its `UID` to the
-                    calendar event, and this is that event's `conferenceUrl`,
-                    falling back to the event's page. */}
-                {meeting !== null && meeting.threadId === openId && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="secondary"
-                        size="xs"
-                        aria-label={
-                          meeting.conferenceUrl !== null
-                            ? 'Join this meeting'
-                            : 'Open this meeting in Google Calendar'
-                        }
-                        onClick={() => openExternal(meeting.conferenceUrl ?? meeting.htmlLink)}
-                      >
-                        {meeting.conferenceUrl !== null ? (
-                          <Video className="size-3.5" />
-                        ) : (
-                          <CalendarDays className="size-3.5" />
-                        )}
-                        {meeting.conferenceUrl !== null ? 'Join' : 'Meeting'}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      {meeting.conferenceUrl !== null
-                        ? `Join ${meeting.title}`
-                        : `Open ${meeting.title} in Google Calendar`}
-                    </TooltipContent>
-                  </Tooltip>
-                )}
                 {/* Reply, reply-all and forward all open the same inline
                     composer below. `replyTarget` rather than the last message:
                     replying to your own last reply addresses you. */}
@@ -1288,6 +1232,13 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
               )}
 
               <div ref={readerRef} className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">
+                {open.id === openId && (
+                  <MailInvitation
+                    thread={open}
+                    hasInvite={openRow?.hasInvite === true}
+                    generation={threadGeneration.current}
+                  />
+                )}
                 {open.messages.map((message, index) => (
                   <MessageBlock
                     key={message.id}

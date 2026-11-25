@@ -1,6 +1,5 @@
 import {
   ArchiveIcon,
-  CalendarDaysIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CornerUpLeftIcon,
@@ -15,7 +14,6 @@ import {
   SparklesIcon,
   StarIcon,
   Trash2Icon,
-  VideoIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -74,7 +72,6 @@ export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visibl
   const index = mail.threads.findIndex((t) => t.id === openId)
   const previous = index > 0 ? mail.threads[index - 1] : undefined
   const next = index !== -1 && index < mail.threads.length - 1 ? mail.threads[index + 1] : undefined
-  const meeting = mail.meeting
 
   return (
     <header
@@ -129,28 +126,6 @@ export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visibl
           aria-label="Thread actions"
           className="ml-auto flex shrink-0 items-center gap-0.5"
         >
-          {/* The only time-sensitive action: main matched the invite's UID
-              to the calendar event, and this is that event's link. */}
-          {meeting !== null && (
-            <Button
-              variant="secondary"
-              size="sm"
-              aria-label={
-                meeting.conferenceUrl !== null
-                  ? `Join ${meeting.title}`
-                  : `Open ${meeting.title} in Google Calendar`
-              }
-              onClick={() => openExternal(meeting.conferenceUrl ?? meeting.htmlLink)}
-            >
-              {meeting.conferenceUrl !== null ? (
-                <VideoIcon aria-hidden="true" />
-              ) : (
-                <CalendarDaysIcon aria-hidden="true" />
-              )}
-              {meeting.conferenceUrl !== null ? 'Join' : 'Meeting'}
-            </Button>
-          )}
-
           <Button
             variant="secondary"
             size="sm"
