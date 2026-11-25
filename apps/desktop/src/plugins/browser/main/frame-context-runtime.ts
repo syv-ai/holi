@@ -546,6 +546,12 @@ export function createFrameAddressingRuntime(
       throw new Error('frame points must be finite')
     return enqueue(async () => {
       assertDirectGeometry(state)
+      const viewport = await evaluate<{ width: number; height: number; scale: number }>(
+        address,
+        '({width:innerWidth,height:innerHeight,scale:globalThis.visualViewport?.scale ?? 1})',
+      )
+      assertDirectGeometry(state)
+      if (viewport.scale !== 1) throw new Error('direct frame geometry is unsupported')
       const world = await isolatedWorld(state.ownerContext, state.ownerContextSession, 'owner')
       assertDirectGeometry(state)
       const resolved = (await send(
@@ -564,23 +570,23 @@ export function createFrameAddressingRuntime(
           'Runtime.callFunctionOn',
           {
             objectId,
-            functionDeclaration: `function(points) {
+            functionDeclaration: `function(points, viewport) {
             const owner = this;
             const vv = window.visualViewport;
-            if ((vv && vv.scale !== 1) || (owner.contentWindow?.visualViewport && owner.contentWindow.visualViewport.scale !== 1)) return null;
+            if (vv && vv.scale !== 1) return null;
             const style = getComputedStyle(owner);
             const rect = owner.getBoundingClientRect();
             if (!owner.isConnected || rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility !== 'visible' || style.opacity === '0') return null;
             for (let node = owner; node && node.nodeType === 1; node = node.parentElement) {
               const s = getComputedStyle(node);
-              if (s.transform !== 'none' || s.translate !== 'none' || s.rotate !== 'none' || s.scale !== 'none' || s.perspective !== 'none' || (s.zoom && s.zoom !== '1' && s.zoom !== 'normal')) return null;
+              if (s.display === 'none' || s.visibility !== 'visible' || Number(s.opacity) === 0 || s.transform !== 'none' || s.translate !== 'none' || s.rotate !== 'none' || s.scale !== 'none' || s.perspective !== 'none' || (s.zoom && s.zoom !== '1' && s.zoom !== 'normal')) return null;
             }
             if (owner.getRootNode() !== document) return null;
             const left = rect.left + owner.clientLeft, top = rect.top + owner.clientTop;
             const width = owner.clientWidth, height = owner.clientHeight;
             if (!(width > 0 && height > 0)) return null;
             return points.map(({x,y}) => {
-              if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return null;
+              if (x < 0 || y < 0 || x >= viewport.width || y >= viewport.height) return null;
               const px = left + x, py = top + y;
               if (px < left || py < top || px >= left + width || py >= top + height) return null;
               const hit = document.elementFromPoint(px, py);
@@ -588,13 +594,15 @@ export function createFrameAddressingRuntime(
               return {x:px, y:py};
             });
           }`,
-            arguments: [{ value: points }],
+            arguments: [{ value: points }, { value: viewport }],
             returnByValue: true,
           },
           state.ownerContextSession,
         )) as { result?: { value?: Array<{ x: number; y: number } | null> | null } }
         assertDirectGeometry(state)
-        return response.result?.value ?? points.map(() => null)
+        if (!Array.isArray(response.result?.value))
+          throw new Error('direct frame geometry is unsupported')
+        return response.result.value
       } finally {
         await send('Runtime.releaseObject', { objectId }, state.ownerContextSession)
         assertDirectGeometry(state)
