@@ -1,5 +1,6 @@
-import { act, cleanup, renderHook, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, renderHook, screen } from '@testing-library/react'
 import { render } from '@/test/render'
+import userEvent from '@testing-library/user-event'
 import { googleRenderer } from '../renderer'
 import { Provider, createStore } from 'jotai'
 import type { ReactNode } from 'react'
@@ -10,6 +11,10 @@ import { useMail, type ThreadSummary } from '../renderer/mail/use-mail'
 
 const search = vi.fn()
 const archive = vi.fn()
+const counts = vi.fn()
+const categories = vi.fn()
+const marker = vi.fn()
+const annotations = vi.fn()
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: {
@@ -29,7 +34,18 @@ vi.mock('@/lib/trpc', () => ({
                 current: 'account-a',
               }
             case 'google.search':
-              return search(input.remote, params)
+              return Promise.resolve(search(input.remote, params)).then((answer) => {
+                if (!params.uiList) return answer
+                const request = params.uiList as { loadedIds: string[]; refresh?: boolean }
+                return {
+                  ...answer,
+                  uiList: {
+                    ...answer.uiList,
+                    mode: request.refresh ? 'coverage' : 'page',
+                    revalidatedIds: request.refresh ? request.loadedIds : [],
+                  },
+                }
+              })
             case 'google.contacts':
             case 'google.sendAs':
             case 'google.drafts':
@@ -37,9 +53,15 @@ vi.mock('@/lib/trpc', () => ({
             case 'google.archive':
               return archive(input.remote, params)
             case 'google.mailCounts':
-              return null
+              return counts(input.remote)
+            case 'google.categoryCounts':
+              return categories(input.remote)
+            case 'google.setMailMarker':
+              return marker(input.remote, params)
+            case 'google.imageSenders':
+              return []
             case 'google.mailMarkerAnnotations':
-              return {}
+              return annotations(input.remote, params)
             case 'google.mailMarkerPreferences':
               return DEFAULT_MAIL_MARKER_PREFERENCES
             case 'google.thread':
@@ -59,7 +81,7 @@ function summary(id: string): ThreadSummary {
     subject: id,
     from: { name: 'Sender', email: 'sender@example.test' },
     date: '2026-11-25T00:00:00Z',
-    snippet: id,
+    snippet: `Preview of ${id}`,
     unread: false,
     answered: false,
     messageCount: 1,
@@ -79,12 +101,39 @@ function summary(id: string): ThreadSummary {
   }
 }
 
+const cursor = { version: 1 as const, owner: 'team/one:account-a', key: 'inbox', historyId: '100' }
 function page(...ids: string[]) {
-  return { threads: ids.map(summary), nextPageToken: null, syncedAt: '2026-11-25T00:00:00Z' }
+  return pageWithToken(null, ...ids)
 }
 
 function pageWithToken(token: string | null, ...ids: string[]) {
-  return { threads: ids.map(summary), nextPageToken: token, syncedAt: '2026-11-25T00:00:00Z' }
+  return {
+    threads: ids.map(summary),
+    nextPageToken: token,
+    syncedAt: '2026-11-25T00:00:00Z',
+    uiList: {
+      mode: 'page' as 'page' | 'delta' | 'coverage',
+      cursor,
+      removedIds: [] as string[],
+      revalidatedIds: [] as string[],
+    },
+  }
+}
+function delta(
+  ids: string[],
+  loaded: string[],
+  removed: string[] = [],
+  token: string | null = null,
+) {
+  return {
+    ...pageWithToken(token, ...ids),
+    uiList: {
+      mode: 'coverage' as const,
+      cursor: { ...cursor, historyId: '101' },
+      removedIds: removed,
+      revalidatedIds: loaded,
+    },
+  }
 }
 
 function deferred<T>() {
@@ -118,6 +167,10 @@ beforeEach(() => {
   vi.useFakeTimers()
   search.mockReset().mockResolvedValue(page('existing'))
   archive.mockReset().mockResolvedValue({ ok: true })
+  counts.mockReset().mockResolvedValue({ unread: 16, total: 340 })
+  categories.mockReset().mockResolvedValue({ updates: { count: 3, more: false } })
+  marker.mockReset().mockResolvedValue({ ok: true })
+  annotations.mockReset().mockResolvedValue({})
 })
 afterEach(() => {
   cleanup()
@@ -127,73 +180,148 @@ afterEach(() => {
 test('history refresh preserves later pages and continuation after cached rows disappear', async () => {
   search
     .mockResolvedValueOnce(pageWithToken('next', 'cached'))
-    .mockResolvedValueOnce(pageWithToken(null, 'arrived', 'cached'))
+    .mockResolvedValueOnce(delta(['arrived'], ['cached'], [], 'fresh-next'))
     .mockResolvedValueOnce(pageWithToken('older', 'later'))
-    .mockResolvedValueOnce(pageWithToken(null, 'arrived'))
-    .mockResolvedValueOnce(pageWithToken(null, 'later', 'last'))
+    .mockResolvedValueOnce(delta([], ['arrived', 'cached', 'later'], ['cached'], 'fresh-older'))
+    .mockResolvedValueOnce(page('last'))
   const { result } = await mount()
   await advance()
-  expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: 'next' })
+  expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: 'fresh-next' })
   await act(async () => result.current.loadMore())
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'cached', 'later'])
-  expect(search.mock.calls[2]?.[1]).toMatchObject({ pageToken: 'next' })
+  expect(search.mock.calls[2]?.[1]).toMatchObject({
+    pageToken: 'fresh-next',
+    uiList: {
+      loadedIds: expect.arrayContaining(['cached', 'arrived']),
+      cursor: { ...cursor, historyId: '101' },
+    },
+  })
   await advance()
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'later'])
-  expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: 'older' })
+  expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: 'fresh-older' })
   await act(async () => result.current.loadMore())
-  expect(search.mock.calls[4]?.[1]).toMatchObject({ pageToken: 'older' })
-  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'later', 'last'])
+  expect(search.mock.calls[4]?.[1]).toMatchObject({ pageToken: 'fresh-older' })
+  expect(result.current.threads.map((thread) => thread.id).sort()).toEqual([
+    'arrived',
+    'last',
+    'later',
+  ])
   expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: null })
 })
 
-test('a refresh finishing during pagination cannot replace or duplicate appended rows', async () => {
+test('pagination is single flight with polling and refresh uses every loaded row', async () => {
   search.mockResolvedValueOnce(pageWithToken('next', 'cached'))
   const { result } = await mount()
-  const refresh = deferred<ReturnType<typeof page>>()
-  const later = deferred<ReturnType<typeof pageWithToken>>()
-  search.mockReturnValueOnce(refresh.promise)
-  await advance()
+  const later = deferred<ReturnType<typeof page>>()
   search.mockReturnValueOnce(later.promise)
   await act(async () => result.current.loadMore())
-  await act(async () => {
-    refresh.resolve(page('arrived', 'cached'))
-  })
-  await act(async () => {
-    later.resolve(pageWithToken('older', 'cached', 'later'))
-  })
-  expect(result.current.threads.map((thread) => thread.id)).toEqual(['cached', 'later'])
-  search.mockResolvedValue(page('arrived', 'cached'))
+  await advance(90_000)
+  expect(search).toHaveBeenCalledTimes(2)
+  await act(async () => later.resolve(pageWithToken('older', 'later')))
+  search.mockResolvedValue(delta(['arrived', 'cached'], ['cached', 'later'], [], 'fresh'))
   await advance()
-  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'cached', 'later'])
-  expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: 'older' })
+  expect(search.mock.lastCall?.[1]).toMatchObject({
+    uiList: {
+      loadedIds: expect.arrayContaining(['cached', 'later']),
+      refresh: true,
+      cursor,
+    },
+  })
+  expect(result.current.threads.map((thread) => thread.id).sort()).toEqual([
+    'arrived',
+    'cached',
+    'later',
+  ])
+  expect(result.current.list).toMatchObject({ nextPageToken: 'fresh' })
 })
 
-test('restored legacy Mail surface receives arrivals and stops polling while hidden', async () => {
-  search.mockResolvedValue(page('existing'))
-  const store = createStore()
-  store.set(activeRemoteAtom, 'team/one')
-  const mailSurface = googleRenderer.surfaces?.find((surface) => surface.kind === 'mail')
-  expect(mailSurface).toBeDefined()
-  const Surface = mailSurface!.render
-  const view = render(
-    <Provider store={store}>
-      <Surface visible />
-    </Provider>,
-  )
-  await act(async () => {})
-  expect(screen.queryAllByText('existing').length).toBeGreaterThan(0)
-  search.mockResolvedValue(page('incoming', 'existing'))
-  await advance()
-  expect(screen.queryAllByText('incoming').length).toBeGreaterThan(0)
-  view.rerender(
-    <Provider store={store}>
-      <Surface visible={false} />
-    </Provider>,
-  )
-  const calls = search.mock.calls.length
-  await advance(90_000)
-  expect(search).toHaveBeenCalledTimes(calls)
-})
+test.each(['sidebar', 'surface'] as const)(
+  '%s registration retains the reader across arrivals, updates and authoritative departures',
+  async (registration) => {
+    search.mockResolvedValueOnce(pageWithToken('next', 'existing', 'departed'))
+    const store = createStore()
+    store.set(activeRemoteAtom, 'team/one')
+    const Surface =
+      registration === 'sidebar'
+        ? googleRenderer.sidebarApps!.find((app) => app.id === 'mail')!.render
+        : googleRenderer.surfaces!.find((surface) => surface.kind === 'mail')!.render
+    const view = render(
+      <Provider store={store}>
+        <Surface visible />
+      </Provider>,
+    )
+    await act(async () => {})
+    expect(search.mock.calls[0]?.[1]).toMatchObject({ uiList: { loadedIds: [] } })
+    await act(async () => fireEvent.click(screen.getByText('existing', { exact: true })))
+    const reader = screen.getByRole('heading', { name: 'Opened mail' })
+    const update = delta(['incoming', 'existing'], ['existing', 'departed'], ['departed'], 'fresh')
+    update.threads[1] = { ...summary('existing'), snippet: 'Updated preview' }
+    search.mockResolvedValueOnce(update)
+    await advance()
+    expect(screen.getByText('incoming', { exact: true })).toBeInTheDocument()
+    expect(screen.getByText('Updated preview', { exact: true })).toBeInTheDocument()
+    expect(screen.queryByText('departed', { exact: true })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Opened mail' })).toBe(reader)
+    expect(search.mock.lastCall?.[1]).toMatchObject({
+      uiList: {
+        loadedIds: expect.arrayContaining(['existing', 'departed']),
+        refresh: true,
+        cursor,
+      },
+    })
+    const later = deferred<ReturnType<typeof page>>()
+    search.mockReturnValueOnce(later.promise)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Load more' })))
+    expect(search.mock.lastCall?.[1]).toMatchObject({ pageToken: 'fresh' })
+    const reads = search.mock.calls.length
+    await advance(90_000)
+    expect(search).toHaveBeenCalledTimes(reads)
+    await act(async () => later.resolve(page('older')))
+    search.mockResolvedValueOnce(delta(['incoming'], ['existing', 'incoming', 'older']))
+    await advance()
+    // Omission is not a departure, including mail appended beyond the first page.
+    expect(screen.getByText('older', { exact: true })).toBeInTheDocument()
+    expect(screen.getByText('existing', { exact: true })).toBeInTheDocument()
+    expect(screen.getAllByText('incoming', { exact: true })).toHaveLength(1)
+    const hidden = deferred<ReturnType<typeof page>>()
+    search.mockReturnValueOnce(hidden.promise)
+    await advance()
+    view.rerender(
+      <Provider store={store}>
+        <Surface visible={false} />
+      </Provider>,
+    )
+    await act(async () => hidden.resolve(page('hidden-result')))
+    expect(screen.queryByText('hidden-result')).toBeNull()
+    const stopped = search.mock.calls.length
+    await advance(90_000)
+    expect(search).toHaveBeenCalledTimes(stopped)
+    search.mockResolvedValue(page('restored'))
+    view.rerender(
+      <Provider store={store}>
+        <Surface visible />
+      </Provider>,
+    )
+    await act(async () => {})
+    const oldVault = deferred<ReturnType<typeof page>>()
+    search.mockReturnValueOnce(oldVault.promise)
+    await advance()
+    search.mockResolvedValue(page('current-vault'))
+    await act(async () => store.set(activeRemoteAtom, 'team/two'))
+    expect(screen.getByText('current-vault', { exact: true })).toBeInTheDocument()
+    await act(async () => oldVault.resolve(page('stale-vault')))
+    expect(screen.queryByText('stale-vault', { exact: true })).toBeNull()
+    const unmounted = deferred<ReturnType<typeof page>>()
+    search.mockReturnValueOnce(unmounted.promise)
+    await advance()
+    const beforeUnmount = search.mock.calls.length
+    view.unmount()
+    await act(async () => unmounted.resolve(page('unmounted-result')))
+    await advance()
+    expect(search).toHaveBeenCalledTimes(beforeUnmount)
+    expect(screen.queryByText('unmounted-result', { exact: true })).toBeNull()
+  },
+)
 
 test('new mail appears without manual refresh and leaves the open reader in place', async () => {
   const { result } = await mount()
@@ -278,12 +406,12 @@ test('a stalled periodic read is single flight and a later failure keeps usable 
   await advance(90_000)
   expect(search).toHaveBeenCalledTimes(2)
   await act(async () => {
-    pending.resolve(page('arrived'))
+    pending.resolve(delta(['arrived'], ['existing'], ['existing']))
   })
   search.mockRejectedValueOnce(new Error('Offline'))
   await advance()
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived'])
-  search.mockResolvedValue(page('reconnected'))
+  search.mockResolvedValue(delta(['reconnected'], ['arrived'], ['arrived']))
   await advance()
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['reconnected'])
 })
@@ -298,10 +426,10 @@ test('hidden mail drops its pending answer and performs no more periodic reads',
     pending.resolve(page('hidden-result'))
   })
   await advance(90_000)
-  expect(result.current.threads.map((thread) => thread.id)).toEqual(['existing'])
+  expect(result.current.threads).toEqual([])
   expect(search).toHaveBeenCalledTimes(2)
-  rerender({ account: 'account-a', visible: true })
   search.mockResolvedValue(page('visible-again'))
+  rerender({ account: 'account-a', visible: true })
   await advance()
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['visible-again'])
   unmount()
@@ -344,15 +472,122 @@ test.each(['account', 'vault'] as const)(
     search.mockResolvedValue(page('current-arrival', 'current'))
     await advance()
     expect(result.current.threads.map((thread) => thread.id)).toEqual([
-      'current-arrival',
       'current',
+      'current-arrival',
     ])
     await act(async () => {
       old.resolve(page('old-account'))
     })
     expect(result.current.threads.map((thread) => thread.id)).toEqual([
-      'current-arrival',
       'current',
+      'current-arrival',
     ])
+  },
+)
+
+test('pending marker writes suspend polling and manual refresh until persisted reconciliation', async () => {
+  const { result } = await mount()
+  const pending = deferred<{ ok: true }>()
+  marker.mockReturnValueOnce(pending.promise)
+  await act(async () => result.current.activateMarker('existing', false))
+  expect(result.current.threads[0]).toMatchObject({ id: 'existing', starred: true })
+  await act(async () => result.current.refresh())
+  await advance(90_000)
+  expect(search).toHaveBeenCalledTimes(1)
+  annotations.mockResolvedValue({ existing: 'yellow-star' })
+  search.mockResolvedValue({
+    ...delta(['existing'], ['existing']),
+    threads: [{ ...summary('existing'), starred: true }],
+  })
+  await act(async () => pending.resolve({ ok: true }))
+  expect(search).toHaveBeenCalledTimes(2)
+  expect(result.current.threads[0]).toMatchObject({ id: 'existing', starred: true })
+})
+
+test.each(['account', 'vault'] as const)(
+  'activated category counts recover on a poll and late counts cannot cross %s contexts',
+  async (context) => {
+    const { result, store, rerender } = await mount()
+    expect(result.current.counts).toEqual({ unread: 16, total: 340 })
+    expect(categories).not.toHaveBeenCalled()
+    categories.mockRejectedValueOnce(new Error('Offline'))
+    await act(async () => result.current.loadCategoryCounts())
+    expect(result.current.categoryCounts).toBeNull()
+    counts.mockResolvedValue({ unread: 17, total: 341 })
+    await advance()
+    expect(result.current.counts).toEqual({ unread: 17, total: 341 })
+    expect(result.current.categoryCounts).toEqual({ updates: { count: 3, more: false } })
+    const oldCounts = deferred<{ unread: number; total: number }>()
+    const oldCategories = deferred<{ updates: { count: number; more: boolean } }>()
+    counts.mockReturnValue(oldCounts.promise)
+    categories.mockReturnValue(oldCategories.promise)
+    await advance()
+    counts.mockResolvedValue({ unread: 2, total: 8 })
+    categories.mockResolvedValue({ updates: { count: 1, more: false } })
+    await act(async () => {
+      if (context === 'account') rerender({ account: 'account-b', visible: true })
+      else store.set(activeRemoteAtom, 'team/two')
+    })
+    await act(async () => result.current.loadCategoryCounts())
+    await act(async () => {
+      oldCounts.resolve({ unread: 999, total: 999 })
+      oldCategories.resolve({ updates: { count: 999, more: false } })
+    })
+    expect(result.current.counts).toEqual({ unread: 2, total: 8 })
+    expect(result.current.categoryCounts).toEqual({ updates: { count: 1, more: false } })
+  },
+)
+
+test.each(['sidebar', 'surface'] as const)(
+  '%s registration keeps selected filters and reader while counts and arrivals advance',
+  async (registration) => {
+    const store = createStore()
+    store.set(activeRemoteAtom, 'team/one')
+    const Surface =
+      registration === 'sidebar'
+        ? googleRenderer.sidebarApps!.find((app) => app.id === 'mail')!.render
+        : googleRenderer.surfaces!.find((surface) => surface.kind === 'mail')!.render
+    render(
+      <Provider store={store}>
+        <Surface visible />
+      </Provider>,
+    )
+    await act(async () => {})
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    if (registration === 'sidebar') {
+      expect(screen.getByText('16', { exact: true })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /Inbox tab:/ }))
+      await user.click(screen.getByRole('menuitemradio', { name: /Updates/ }))
+      await user.click(screen.getByRole('tab', { name: 'Unread' }))
+    } else {
+      expect(screen.getByRole('button', { name: /show unread only/i })).toHaveTextContent('16')
+      await user.click(screen.getByRole('button', { name: 'Choose a mailbox' }))
+      await user.click(screen.getByRole('menuitem', { name: /Updates/ }))
+      await user.click(screen.getByRole('button', { name: /show unread only/i }))
+    }
+    await act(async () => {})
+    await act(async () => fireEvent.click(screen.getByText('existing', { exact: true })))
+    const reader = screen.getByRole('heading', { name: 'Opened mail' })
+    counts.mockResolvedValue({ unread: 18, total: 342 })
+    categories.mockResolvedValue({ updates: { count: 5, more: false } })
+    search.mockResolvedValue(delta(['filtered-arrival'], ['existing']))
+    await advance()
+    expect(search.mock.lastCall?.[1]).toMatchObject({
+      category: 'updates',
+      unread: true,
+      uiList: { refresh: true, loadedIds: ['existing'] },
+    })
+    expect(screen.getByText('filtered-arrival', { exact: true })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Opened mail' })).toBe(reader)
+    if (registration === 'sidebar') {
+      expect(screen.getByRole('tab', { name: 'Unread' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByText('5', { exact: true })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Inbox tab: Updates' })).toBeInTheDocument()
+    } else {
+      expect(
+        screen.getByRole('button', { name: /show (unread only|all mail)/i }),
+      ).toHaveTextContent('5')
+      expect(screen.getByRole('button', { name: 'Choose a mailbox' })).toHaveTextContent('Updates')
+    }
   },
 )
