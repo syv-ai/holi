@@ -213,6 +213,27 @@ it('projects calendar MIME evidence in the reader thread without fetching calend
   }
 })
 
+it('preserves explicit description clearing through the reschedule capability', async () => {
+  let event = { id: 'event-1', summary: 'Planning', description: 'Previous details', attendees: [] }
+  const transport = vi.fn(async (url: string, init?: RequestInit) => {
+    expect(new URL(url).pathname).toBe('/calendar/v3/calendars/primary/events/event-1')
+    if (init?.method === 'PATCH') event = { ...event, ...JSON.parse(String(init.body)) }
+    return Response.json(event)
+  })
+  vi.stubGlobal('fetch', transport)
+  const r = rig()
+  try {
+    await r.call('reschedule', { id: event.id, description: '' })
+    expect(event.description).toBe('')
+    event.description = 'Keep these details'
+    await r.call('reschedule', { id: event.id, start: '2027-01-12T11:00:00Z' })
+    expect(event.description).toBe('Keep these details')
+  } finally {
+    r.dispose()
+    vi.unstubAllGlobals()
+  }
+})
+
 describe('UI-only mail markers', () => {
   it('exposes local annotations only through the expected-account UI capability', async () => {
     const annotations = vi.fn(async () => ({ t1: 'red-star' as const }))

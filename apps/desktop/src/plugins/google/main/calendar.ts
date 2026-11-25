@@ -400,6 +400,8 @@ export interface EventPatch {
   start?: string
   end?: string
   allDay?: boolean
+  /** Present (including empty) only when the caller intends to change it. */
+  description?: string
 }
 
 /**
@@ -477,6 +479,7 @@ export async function updateEvent(api: GoogleApi, id: string, patch: EventPatch)
     ...(patch.title === undefined ? {} : { summary: patch.title }),
     ...(patch.start === undefined ? {} : { start: endpoint(patch.start, patch.allDay === true) }),
     ...(patch.end === undefined ? {} : { end: endpoint(patch.end, patch.allDay === true) }),
+    ...(patch.description === undefined ? {} : { description: patch.description }),
   })
 }
 
