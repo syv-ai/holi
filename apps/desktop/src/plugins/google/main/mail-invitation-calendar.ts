@@ -267,28 +267,29 @@ function isUidlessCancellation(event: RawEvent): boolean {
   return event.iCalUID === undefined && event.status === 'cancelled'
 }
 
-// A bound primary query can associate a sparse row with an invitation for
+// A bound query can associate a sparse row with an invitation for
 // absence checks, but never supplies fields to the event itself.
-type PrimaryQueryAssociation = { uid: string; mailbox: string } & (
+type QueryAssociation = { uid: string; mailbox: string } & (
   { kind: 'uid' } | { kind: 'parent'; parentId: string }
 )
 
-type ObserveEvent = (event: RawEvent, association?: PrimaryQueryAssociation) => Promise<void>
+type ObserveEvent = (event: RawEvent, association?: QueryAssociation) => Promise<void>
 
 function observeUidQuery(
   uid: string,
   observe: ObserveEvent,
-  primary?: { mailbox: string; parentId?: string },
+  binding?: { mailbox: string; primary: boolean; parentId?: string },
 ) {
   return async (event: RawEvent) => {
     if (event.iCalUID === uid) return observe(event)
-    if (!primary || event.iCalUID !== undefined) return
-    const { mailbox, parentId } = primary
-    // Expanded UID queries can omit the UID of an active child. Only a
-    // matching primary master binds that row, and only as a possible copy.
+    if (!binding || event.iCalUID !== undefined) return
+    const { mailbox, primary, parentId } = binding
+    // Expanded UID queries can omit the UID of an active child. A verified
+    // parent binds that row only as a possible copy.
     if (parentId !== undefined && event.recurringEventId === parentId)
       await observe(event, { kind: 'parent', uid, mailbox, parentId })
-    else if (isUidlessCancellation(event)) await observe(event, { kind: 'uid', uid, mailbox })
+    else if (primary && isUidlessCancellation(event))
+      await observe(event, { kind: 'uid', uid, mailbox })
   }
 }
 
@@ -300,7 +301,8 @@ async function exactCopies(
   context: {
     organizer: string | undefined
     bindsParent: (event: RawEvent) => boolean
-    primaryMailbox?: string
+    mailbox: string
+    primary: boolean
   },
   observe: ObserveEvent,
 ): Promise<RawEvent[]> {
@@ -310,11 +312,7 @@ async function exactCopies(
     url,
     'calendar#events',
     { iCalUID: uid, singleEvents: 'false', showDeleted: 'true' },
-    observeUidQuery(
-      uid,
-      observe,
-      context.primaryMailbox ? { mailbox: context.primaryMailbox } : undefined,
-    ),
+    observeUidQuery(uid, observe, context),
   )
   if (
     events.some(
@@ -354,7 +352,6 @@ async function exactCopies(
   for (const series of activeRoots) {
     if (!series.id || !series.recurrence?.length) continue
     const verifiedParent =
-      cancelledRoots.length > 0 &&
       series.iCalUID === uid &&
       Boolean(context.organizer) &&
       series.organizer?.email?.toLowerCase() === context.organizer &&
@@ -377,14 +374,17 @@ async function exactCopies(
       async (event) => {
         if (event.recurringEventId !== parentId) return
         if (event.iCalUID === uid) await observe(event)
-        else if (context.primaryMailbox && series.iCalUID === uid && event.iCalUID === undefined)
+        else if (
+          series.iCalUID === uid &&
+          event.iCalUID === undefined &&
+          (context.primary || verifiedParent)
+        )
           await observe(event, {
             kind: 'parent',
             uid: series.iCalUID,
-            mailbox: context.primaryMailbox,
+            mailbox: context.mailbox,
             parentId,
           })
-        else if (event.iCalUID === undefined && series.iCalUID === uid) await observe(event)
       },
     )
     if (new Set(instances.map(({ id }) => id)).size !== instances.length)
@@ -623,7 +623,7 @@ async function lookupInvitationCalendarCopy(
   })
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
-    async (event: RawEvent, association?: PrimaryQueryAssociation) => {
+    async (event: RawEvent, association?: QueryAssociation) => {
       if (!hasEventResourceId(event)) return
       const observedAddress = event.organizer?.email
       const observedOrganizer =
@@ -646,11 +646,15 @@ async function lookupInvitationCalendarCopy(
       // attendee address on a shared calendar's copy.
       if (base === PRIMARY_EVENTS) {
         if (event.iCalUID !== uid && !associated) return
-      } else if (!observedOrganizer) {
-        // With no organizer address, only the exact UID and an unambiguous
-        // self attendee for this mailbox bind possible existence. An owned
-        // calendar's ID is not in itself an alias for the invited mailbox.
-        if (event.iCalUID !== uid || !mailboxAttendee(event, mailbox)) return
+      } else if (!observedOrganizer || event.iCalUID === undefined) {
+        // Sparse secondary rows need both a UID (or verified parent association)
+        // and an unambiguous self attendee for the authenticated mailbox. An
+        // owned calendar ID is not in itself an alias for that mailbox.
+        if (
+          (event.iCalUID !== uid && !(associated && association.kind === 'parent')) ||
+          !mailboxAttendee(event, mailbox)
+        )
+          return
       } else {
         const self = uniqueSelfAttendee(event)
         const selfEmail = typeof self?.email === 'string' ? self.email.toLowerCase() : undefined
@@ -673,7 +677,10 @@ async function lookupInvitationCalendarCopy(
       // different occurrence. Filter by scope when using the locator instead.
       await remember({
         uid,
-        organizer: observedOrganizer,
+        // For a sparse secondary child this is the scope of the negative
+        // association, not a claim about the organizer in the event payload.
+        organizer:
+          observedOrganizer ?? (associated && base !== PRIMARY_EVENTS ? organizer : undefined),
         ...eventLocatorScope(event),
         series,
         target: calendarCopyTarget(calendarResponseUrl(base, event), mailbox),
@@ -728,7 +735,7 @@ async function lookupInvitationCalendarCopy(
       PRIMARY_EVENTS,
       identity,
       floating,
-      { ...parentContext(), primaryMailbox: mailbox },
+      { ...parentContext(), mailbox, primary: true },
       observePrimary,
     )
     const candidates = navigationCandidates(primary)
@@ -762,7 +769,7 @@ async function lookupInvitationCalendarCopy(
       url,
       identity,
       floating,
-      parentContext(ownedCalendar),
+      { ...parentContext(ownedCalendar), mailbox, primary: false },
       observe,
     )
     const candidates = navigationCandidates(events)
@@ -939,14 +946,14 @@ function invitationCopy(
     unavailableReason: reason,
     navigation: async (selectSlot) => {
       if (cancelled) return { kind: 'default' }
-      const primary = base === PRIMARY_EVENTS ? { mailbox } : undefined
+      const primary = base === PRIMARY_EVENTS
       if (recurrenceId === null && details.recurring) {
         const upcoming = await upcomingInvitationLinks(
           api,
           base,
           event,
           invitation,
-          observeUidQuery(uid, observe, primary && { ...primary, parentId: event.id }),
+          observeUidQuery(uid, observe, { mailbox, primary, parentId: event.id }),
           selectSlot,
           (row, revision) => {
             const membership = invitationMembership(row, revision, mailbox, owned, ownedCalendar)
@@ -973,7 +980,7 @@ function invitationCopy(
           observeUidQuery(
             uid,
             observe,
-            primary && { ...primary, parentId: event.recurringEventId },
+            primary ? { mailbox, primary, parentId: event.recurringEventId } : undefined,
           ),
         ))
       )
@@ -1603,26 +1610,30 @@ export function calendarTargetIsMailbox(target: string, mailbox: string): boolea
 
 type CalendarResource =
   | { kind: 'gone' | 'unknown' }
-  | { kind: 'present'; confirms: (proof: string, answer: InviteAnswer) => boolean }
+  | {
+      kind: 'present'
+      confirms: (proof: string, answer: InviteAnswer, revision?: InvitationRevision) => boolean
+    }
 
 /** Exact resources can corroborate earlier writes. A 404 proves absence
  * only with current read access to the containing calendar. Neither fact
  * authorizes a Calendar PATCH. */
-export function createInvitationCalendarResourceLookup(
-  api: CalendarReadApi,
-  mailbox: string,
-  readCalendars: ReadCalendars,
-) {
+export function createInvitationCalendarResourceLookup(api: CalendarReadApi, mailbox: string) {
   const snapshots = new Map<string, Promise<CalendarResource>>()
   async function hasReadAccess(id: string): Promise<boolean> {
     try {
-      const calendars = await readCalendars()
-      if (id === 'primary') {
-        const primary = primaryCalendar(calendars)
-        return !!primary && readableCalendar(primary)
-      }
-      const [entry, duplicate] = calendars.filter((calendar) => calendar.id === id)
-      return !!entry && !duplicate && validCalendar(entry) && readableCalendar(entry)
+      // Calendar masks some inaccessible events as 404. Recheck the exact
+      // subscription after the event read, never against the discovery snapshot.
+      const entry = await api.get<CalendarListEntry>(
+        `${BASE}/users/me/calendarList/${encodeURIComponent(id)}`,
+      )
+      return (
+        isCollectionRow(entry) &&
+        entry.kind === 'calendar#calendarListEntry' &&
+        validCalendar(entry) &&
+        readableCalendar(entry) &&
+        (id === 'primary' ? entry.primary === true : entry.id === id)
+      )
     } catch (error) {
       if (propagateCalendarRefusal(error)) throw error
       return false
@@ -1636,7 +1647,7 @@ export function createInvitationCalendarResourceLookup(
       const event = await api.get<RawEvent>(url)
       return {
         kind: 'present',
-        confirms: (proof, answer) =>
+        confirms: (proof, answer, revision) =>
           Boolean(
             event &&
             usableInvitationEvent(event) &&
@@ -1644,7 +1655,8 @@ export function createInvitationCalendarResourceLookup(
             !event.organizer?.self &&
             coherentEventTimes(event) &&
             mailboxAttendee(event, mailbox)?.responseStatus === answer &&
-            matchesCalendarProof(event, proof),
+            matchesCalendarProof(event, proof) &&
+            (!revision || !calendarRevisionMismatch(event, revision, invitationEventLinks(event))),
           ),
       }
     } catch (error) {

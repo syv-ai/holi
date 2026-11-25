@@ -231,11 +231,24 @@ function attendeeEvidence(entry: ICAL.Component) {
   }
 }
 
+function eventStatus(
+  entry: ICAL.Component,
+): 'CONFIRMED' | 'TENTATIVE' | 'CANCELLED' | 'INVALID' | null {
+  const properties = entry.getAllProperties('status')
+  if (!properties.length) return null
+  const [property] = properties
+  if (properties.length !== 1 || property?.type !== 'text') return 'INVALID'
+  const values = property.getValues()
+  const status = typeof values[0] === 'string' ? values[0].toUpperCase() : null
+  return values.length === 1 &&
+    (status === 'CONFIRMED' || status === 'TENTATIVE' || status === 'CANCELLED')
+    ? status
+    : 'INVALID'
+}
+
 function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasExceptions: boolean) {
   const { resolveTime } = times
-  const statusProperty = single(entry, 'status')
-  if (statusProperty && statusProperty.type !== 'text') malformed()
-  const status = methodOf(statusProperty?.getFirstValue()) ?? null
+  const status = eventStatus(entry)
   const summary = single(entry, 'summary')
   const locationProperty = single(entry, 'location')
   const urlProperty = single(entry, 'url')
@@ -543,9 +556,8 @@ export function parseMailInvitation(
         const sender = part.material.details.organizer
         if (!sender || sender.email !== organizer?.email) malformed()
         if (!part.identity.dtstamp || !part.entry.hasProperty('sequence')) malformed()
-        const status = part.entry.getFirstProperty('status')
-        const value = status?.getFirstValue()
-        const eventCancelled = typeof value === 'string' && value.toUpperCase() === 'CANCELLED'
+        const { status } = part.material
+        const eventCancelled = status === 'CANCELLED'
         const { attendees } = part.material
         // Only an absent STATUS can describe removal of the named attendees.
         if (!eventCancelled && (status || !attendees.length)) malformed()
@@ -661,6 +673,12 @@ export function parseMailInvitation(
     // Keep an unstamped REQUEST in revision selection, but neither authorize
     // an RSVP nor derive cancellations from that malformed delivery.
     if (unstampedRequest) return unavailable('Invitation has no usable revision timestamp')
+    if (material.status === 'INVALID') {
+      // Keep the organizer and ordering identity, but nothing in this
+      // malformed delivery can anchor a reply or promote an embedded row.
+      embeddedOccurrences.length = 0
+      return unavailable('Invitation has an invalid event status')
+    }
     if (material.status === 'CANCELLED') {
       details.cancelled = true
       return unavailable('This invitation was cancelled', cancellations)

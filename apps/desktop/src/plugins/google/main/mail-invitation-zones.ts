@@ -157,7 +157,7 @@ type ZoneInput = {
 // Read the parameter section, never the property value. RFC 6868 encodes
 // parameter quotes as ^'; only literal double quotes delimit a parameter.
 // Backslash escapes in property values (e.g. a TEXT list) are ICAL's job.
-function contentLine(line: string) {
+function contentLine(line: string, inEvent: boolean) {
   const property = /^([a-z\d-]+)/i.exec(line)
   if (!property) malformed()
   const name = property[0].toUpperCase()
@@ -172,7 +172,11 @@ function contentLine(line: string) {
     const raw = match[2]!
     // VALUE is always a single type token, on standard and extension
     // properties alike. ICAL would otherwise silently select the last one.
-    if (key === 'VALUE' && (parameters.has(key) || !/^(?:[a-z\d-]+|"[a-z\d-]+")$/i.test(raw)))
+    if (
+      key === 'VALUE' &&
+      !(inEvent && name === 'STATUS') &&
+      (parameters.has(key) || !/^(?:[a-z\d-]+|"[a-z\d-]+")$/i.test(raw))
+    )
       throw new CalendarPartError('Calendar invitation has an ambiguous VALUE parameter')
     // ICAL only consumes separately quoted lists for these address parameters.
     // Reject mixed/unsupported quoting rather than letting ICAL see a different
@@ -209,8 +213,8 @@ function inspectCalendar(lines: string[]) {
   let lastYear = -Infinity
 
   for (const line of lines) {
-    const { name, params, parameters, value, valueStart } = contentLine(line)
     const parent = stack.at(-1)
+    const { name, params, parameters, value, valueStart } = contentLine(line, parent === 'VEVENT')
     if (name === 'BEGIN' || name === 'END') {
       if (params || !/^[a-z\d-]+$/i.test(value)) malformed()
       const kind = value.toUpperCase()
@@ -274,6 +278,13 @@ function inspectCalendar(lines: string[]) {
       continue
     }
     if (parent === 'VEVENT') {
+      const statusType = name === 'STATUS' ? parameters.get('VALUE') : undefined
+      if (statusType && (statusType.length !== 1 || statusType[0] !== 'TEXT')) {
+        // Keep an explicit invalid STATUS for event-level validation. Do not
+        // let ICAL coerce its value or throw away the surrounding revision.
+        body.push('STATUS:')
+        continue
+      }
       if (
         name === 'SEQUENCE' &&
         ((params && params !== ';VALUE=INTEGER') ||

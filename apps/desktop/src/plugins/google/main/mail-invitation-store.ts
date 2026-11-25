@@ -32,6 +32,16 @@ export type CalendarMaterialEvidence = { version: 1 } & Record<
   string
 >
 
+/** Negative source evidence only. An absent digest is a legacy source whose
+ * material cannot be reconstructed from its opaque revision key. */
+export type CalendarMaterialSource = {
+  accountSub: string
+  mailbox: string
+  organizer?: string
+  revision: Revision
+  evidence?: CalendarMaterialEvidence
+}
+
 export type SentEvidence = { timestamp: number; messageIds: string[]; answer: InviteAnswer | null }
 
 type Delivery =
@@ -92,12 +102,14 @@ export type CalendarLocator = Pick<Revision, 'uid' | 'recurrenceId'> & {
 }
 
 type Journal = {
-  version: 1
+  version: 2
+  materialHistory: CalendarMaterialSource[]
   attempts: InvitationAttempt[]
   parentAnchors: ParentAnchor[]
   calendarLocators: CalendarLocator[]
   calendarLocatorOverflow: boolean
 }
+const MAX_MATERIAL_HISTORY = 4096
 const MAX_PARENT_ANCHORS = 4096
 const MAX_CALENDAR_LOCATORS = 4096
 
@@ -209,6 +221,17 @@ function validCalendarMaterial(value: unknown): boolean {
   )
 }
 
+function isMaterialSource(value: unknown): value is CalendarMaterialSource {
+  return (
+    record(value) &&
+    text(value.accountSub) &&
+    text(value.mailbox) &&
+    (value.organizer === undefined || text(value.organizer)) &&
+    validRevision(value.revision) &&
+    (value.evidence === undefined || validCalendarMaterial(value.evidence))
+  )
+}
+
 function isAttempt(value: unknown): value is InvitationAttempt {
   if (!record(value)) return false
   const { id, accountSub, threadId, revision, calendarMaterial, answer, state, delivery } = value
@@ -266,9 +289,15 @@ function verifyJournal(raw: unknown): Journal {
     record(raw) && raw.calendarLocators !== undefined ? raw.calendarLocators : []
   const calendarLocatorOverflow =
     record(raw) && raw.calendarLocatorOverflow !== undefined ? raw.calendarLocatorOverflow : false
+  // Legacy attempts and anchors remain available to reconciliation. A current
+  // journal missing its material history is damaged, not a legacy journal.
+  const materialHistory = record(raw) && raw.version === 1 ? [] : record(raw) && raw.materialHistory
   if (
     !record(raw) ||
-    raw.version !== 1 ||
+    (raw.version !== 1 && raw.version !== 2) ||
+    !Array.isArray(materialHistory) ||
+    materialHistory.length > MAX_MATERIAL_HISTORY ||
+    !materialHistory.every(isMaterialSource) ||
     !Array.isArray(raw.attempts) ||
     !raw.attempts.every(isAttempt) ||
     new Set(raw.attempts.map(({ id }) => id)).size !== raw.attempts.length ||
@@ -283,12 +312,71 @@ function verifyJournal(raw: unknown): Journal {
     throw new Error('The mail invitation response journal is invalid; no response can be sent')
   }
   return {
-    version: 1,
+    version: 2,
+    materialHistory,
     attempts: raw.attempts,
     parentAnchors,
     calendarLocators,
     calendarLocatorOverflow,
   }
+}
+
+export function materialSourceForAttempt(
+  attempt: InvitationAttempt,
+  mailbox: string,
+): CalendarMaterialSource {
+  const { accountSub, delivery, revision, calendarMaterial: evidence } = attempt
+  const { uid, recurrenceId, sequence, dtstamp, materialKey } = revision
+  return {
+    accountSub,
+    mailbox,
+    organizer: delivery.organizer,
+    revision: {
+      uid,
+      recurrenceId,
+      sequence,
+      dtstamp,
+      materialKey,
+      ...(evidence ? {} : { mailboxResponse: revision.mailboxResponse }),
+    },
+    evidence,
+  }
+}
+
+export function materialSourceKey(
+  { accountSub, mailbox, organizer, revision, evidence }: CalendarMaterialSource,
+  includeEvidence = true,
+): string {
+  const { uid, recurrenceId, sequence, dtstamp, materialKey } = revision
+  return JSON.stringify([
+    accountSub,
+    mailbox,
+    organizer,
+    uid,
+    recurrenceId,
+    sequence,
+    dtstamp,
+    materialKey,
+    includeEvidence && evidence ? calendarMaterialFields.map((field) => evidence[field]) : null,
+  ])
+}
+
+/** A full registry cannot silently forget comparisons to make room for a write. */
+export function retainMaterialSources(
+  journal: Journal,
+  sources: CalendarMaterialSource[],
+): Journal {
+  if (!sources.length) return journal
+  const retained = new Map(
+    journal.materialHistory.map((source) => [materialSourceKey(source), source]),
+  )
+  for (const source of sources) retained.set(materialSourceKey(source), source)
+  if (retained.size > MAX_MATERIAL_HISTORY)
+    throw new CapabilityError(
+      'FORBIDDEN',
+      'The invitation journal cannot retain more revision evidence',
+    )
+  return { ...journal, materialHistory: [...retained.values()] }
 }
 
 function calendarLocatorFor({
@@ -364,7 +452,8 @@ export function createMailInvitationStore(userData: string) {
     (raw, source) =>
       source === null
         ? {
-            version: 1,
+            version: 2,
+            materialHistory: [],
             attempts: [],
             parentAnchors: [],
             calendarLocators: [],
@@ -435,11 +524,15 @@ export function createMailInvitationStore(userData: string) {
       confirmed: InvitationAttempt,
       replaces: (prior: InvitationAttempt) => boolean,
       provesAnchor: (attempt: InvitationAttempt) => boolean,
+      mailbox: string,
     ) =>
       update((journal) => {
         const index = journal.attempts.findIndex(({ id }) => id === confirmed.id)
         if (index < 0) return journal
         const anchors = new Map(journal.parentAnchors.map((anchor) => [anchorKey(anchor), anchor]))
+        const materials = new Map(
+          journal.materialHistory.map((source) => [materialSourceKey(source), source]),
+        )
         const locators = new Map(
           journal.calendarLocators.map((entry) => [calendarLocatorKey(entry), entry]),
         )
@@ -451,12 +544,16 @@ export function createMailInvitationStore(userData: string) {
           if (prior === index) return confirmed
           if (prior < index && entry.state === 'confirmed' && replaces(entry)) {
             // Compact old answers only when their independent evidence survives.
+            const source = materialSourceForAttempt(entry, mailbox)
+            const key = materialSourceKey(source)
+            if (!materials.has(key) && materials.size >= MAX_MATERIAL_HISTORY) return entry
             const locator = calendarLocatorFor(entry)
             if (locator) {
               const key = calendarLocatorKey(locator)
               if (!locators.has(key) && locators.size >= MAX_CALENDAR_LOCATORS) return entry
               locators.set(key, locator)
             }
+            materials.set(key, source)
             retain(entry)
             return []
           }
@@ -466,6 +563,7 @@ export function createMailInvitationStore(userData: string) {
         return {
           ...journal,
           attempts,
+          materialHistory: [...materials.values()],
           parentAnchors: [...anchors.values()],
           calendarLocators: [...locators.values()],
         }
