@@ -425,7 +425,11 @@ export function analyzePairs(results, { pilot = false } = {}) {
     }
   }
   const allComplete =
-    !pilot && validation.valid && Object.values(sizes).every((entry) => entry.pairs.length === 5)
+    !pilot &&
+    validation.valid &&
+    Object.values(sizes).every(
+      (entry) => entry.pairs.length === 5 && entry.pairs.every((pair) => pair.valid),
+    )
   const required = {
     ...Object.fromEntries(
       Object.entries(sizes.large.benefitGates).map(([name, status]) => [`large.${name}`, status]),

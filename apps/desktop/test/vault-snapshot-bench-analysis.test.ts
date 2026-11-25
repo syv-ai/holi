@@ -69,7 +69,7 @@ function result(mode: 'baseline' | 'candidate', elapsed: number, rate: number) {
           { at: 2, utilizationPercent: 1 },
         ],
       },
-      publicationLatencyMs: [10, 11],
+      publicationLatencyMs: mode === 'baseline' ? [20, 21] : [10, 11],
       fullCorrectness: Object.fromEntries(
         [
           'initialSnapshot',
@@ -221,7 +221,7 @@ describe('snapshot benchmark analysis', () => {
         data[0]!.trials[0]!.result.nativeUserChangesLatency.complete = false
       else data[0]!.trials[0]!.result.samples[0]!.processes = []
       const analysis = analyzePairs(data)
-      expect(analysis.classification).toBe('inconclusive')
+      expect(analysis.classification).toBe(missing === 'latency' ? 'inconclusive' : 'incomplete')
       expect(analysis.failureCauses.gates).toEqual([])
     }
   })
@@ -339,7 +339,7 @@ describe('snapshot benchmark analysis', () => {
       if (mismatch === 'bundle') data[0]!.trials[1]!.result.mainBundleSha256 = 'different-source'
       else data[0]!.trials[1]!.result.protocolRevision = 2
       const analysis = analyzePairs(data)
-      expect(analysis.classification).toBe('gate-fail')
+      expect(analysis.classification).toBe('incomplete')
       expect(analysis.failureCauses.trials[0].error).toContain('source bundle or protocol revision')
     }
   })
@@ -354,7 +354,7 @@ describe('snapshot benchmark analysis', () => {
     })
     data[0]!.trials[0]!.result.cleanupErrors = ['plugins.stopAll failed']
     const analysis = analyzePairs(data)
-    expect(analysis.classification).toBe('gate-fail')
+    expect(analysis.classification).toBe('incomplete')
     expect(analysis.failureCauses.trials[0].cleanupErrors).toEqual(['plugins.stopAll failed'])
   })
 })
