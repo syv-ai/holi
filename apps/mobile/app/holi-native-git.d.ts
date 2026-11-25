@@ -26,8 +26,9 @@ declare class HoliNativeGit extends NSObject {
     password: string,
     error: interop.Pointer | interop.Reference<NSError>,
   ): NSDictionary<string, NSObject> | null
-  materializeManagedError(
+  materializeManagedPlanError(
     root: string,
+    plan: NSDictionary<string, NSObject>,
     error: interop.Pointer | interop.Reference<NSError>,
   ): boolean
   canonicalRootError(

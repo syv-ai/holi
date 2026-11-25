@@ -91,7 +91,8 @@ static int HMAOpenReceipt(NSDictionary *receipt, NSDictionary **record, NSError 
   BOOL ok = disk && HMAValidate(disk, container, error) && [supplied isKindOfClass:NSDictionary.class] &&
     [receipt[@"stagePath"] isEqual:disk[@"stage"]] && [receipt[@"targetPath"] isEqual:disk[@"target"]] && [receipt[@"rootKey"] isEqual:disk[@"rootKey"]];
   for (NSString *key in @[@"uuid", @"container", @"stage", @"target", @"rootKey", @"remote", @"branch", @"runId"])
-    if (![supplied[key] isEqual:disk[key]]) ok = NO;
+    if (!ok) break;
+    else if (![supplied[key] isEqual:disk[key]]) ok = NO;
   if (!ok) {
     if (directory >= 0) close(directory);
     HMAFail(error, EPERM, @"Acquisition receipt does not own this stage");

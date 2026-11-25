@@ -78,6 +78,74 @@ describe('managed working copy transport', () => {
     })
   })
 
+  it('retains the original target and accepts Git branch spellings', async () => {
+    for (const branch of ['review/mobile', 'release-v2', 'review]done', 'ændringer']) {
+      const input = { ...vault, branch }
+      const { native } = transport({
+        prepare: async (root, remote, selected) => ({ remote, branch: selected, nativeId: root }),
+      })
+      const copy = createManagedWorkingCopy(native, input, 'token')
+      input.remote = 'holi/other'
+      input.root = '/other'
+      input.branch = 'other'
+      await expect(copy.acquire()).resolves.toMatchObject({
+        remote: vault.remote,
+        branch,
+        nativeId: vault.root,
+      })
+    }
+    for (const branch of [
+      'feature bad',
+      'feature\\bad',
+      '.hidden',
+      'a..b',
+      'feature.lock',
+      'x/.hidden',
+      'x/',
+      'x[1',
+      'x\nother',
+    ])
+      expect(() =>
+        createManagedWorkingCopy(transport().native, { ...vault, branch }, 'token'),
+      ).toThrow(Error)
+  })
+
+  it('refuses transport from a replacement checkout bound to the same vault', async () => {
+    let nativeId = 'first-checkout'
+    const { native, calls } = transport({
+      prepare: async () => ({ remote: vault.remote, branch: vault.branch, nativeId }),
+      reopen: async () => ({ remote: vault.remote, branch: vault.branch, nativeId }),
+    })
+    const copy = createManagedWorkingCopy(native, vault, 'token')
+    await copy.acquire()
+    nativeId = 'replacement-checkout'
+    await expect(copy.fetch()).rejects.toBeInstanceOf(Error)
+    await expect(copy.publish()).rejects.toBeInstanceOf(Error)
+    expect(calls).toEqual([])
+  })
+
+  it('retries failed canonicalization and storage recovery without sending premature traffic', async () => {
+    let canonicalUnavailable = true,
+      recoveryUnavailable = true
+    const { native, calls } = transport({
+      canonicalRoot: async (root) => {
+        if (canonicalUnavailable) throw new Error('canonicalization unavailable')
+        return root
+      },
+      recover: async () => {
+        if (recoveryUnavailable) throw new Error('recovery unavailable')
+      },
+    })
+    const copy = createManagedWorkingCopy(native, vault, 'token')
+    await expect(copy.fetch()).rejects.toBeInstanceOf(Error)
+    canonicalUnavailable = false
+    await expect(copy.fetch()).rejects.toBeInstanceOf(Error)
+    expect(calls).toEqual([])
+    recoveryUnavailable = false
+    await expect(copy.fetch()).resolves.toBeUndefined()
+    expect(calls.map(({ method }) => method)).toEqual(['fetch'])
+  })
+
   it('rejects invalid vault credentials before native preparation', () => {
     const { native } = transport()
     expect(() =>

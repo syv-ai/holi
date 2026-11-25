@@ -25,6 +25,8 @@ export type ManagedWorkingCopyIdentity = {
   remote: string
   branch: string
   nativeId: string
+  /** Private recovery locations retained after interrupted acquisitions. */
+  retainedAcquisitions?: string[]
 }
 
 export type WorkingCopyRefusal = { code: string; message: string }
@@ -32,7 +34,10 @@ export type WorkingCopyRefusal = { code: string; message: string }
 /** Semantic native transport seam: implementations own safe preparation and durable identity checks. */
 export interface ManagedWorkingCopyNative extends NativeWorkingCopy {
   /** Runs recoverMoves directly while the caller holds the canonical-root lock. */
-  recover(root: string, expected?: { remote: string; branch: string; nativeId?: string }): Promise<void>
+  recover(
+    root: string,
+    expected: { remote: string; branch: string; nativeId?: string },
+  ): Promise<void>
   prepare(
     root: string,
     remote: string,
@@ -90,7 +95,7 @@ function isValidBranch(branch: string): boolean {
         character.charCodeAt(0) <= 32 ||
         character.charCodeAt(0) === 127 ||
         character.charCodeAt(0) === 92 ||
-        '~^:?*[]'.includes(character),
+        '~^:?*['.includes(character),
     )
   )
     return false
@@ -117,7 +122,11 @@ export function createManagedWorkingCopy(
     throw new Error('Invalid working copy request')
   let canonical: Promise<string> | undefined
   let acquiredNativeId: string | undefined
-  const rootPath = () => (canonical ??= native.canonicalRoot(root))
+  const rootPath = () =>
+    (canonical ??= native.canonicalRoot(root).catch((error: unknown) => {
+      canonical = undefined
+      throw error
+    }))
   const recover = async (canonicalRoot: string) =>
     native.recover(canonicalRoot, { remote, branch, nativeId: acquiredNativeId })
   const assertIdentity = (identity: ManagedWorkingCopyIdentity) => {

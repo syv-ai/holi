@@ -4,6 +4,7 @@
 #import <fcntl.h>
 #import <sys/stat.h>
 #import <unistd.h>
+#import <CoreFoundation/CoreFoundation.h>
 
 static NSString * const HoliManagedIdentityErrorDomain = @"HoliManagedIdentity";
 static const size_t HoliManagedIdentityLimit = 16384;
@@ -18,51 +19,56 @@ static BOOL HoliValidString(id value) {
            [value rangeOfString:@"\0"].location == NSNotFound;
 }
 
-static NSDictionary<NSString *, id> * _Nullable HoliReadRecord(int gitFD, NSError **error) {
-    int fd = openat(gitFD, "holi-managed.json", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    if (fd < 0) {
-        if (error) *error = HoliIdentityError(errno, @"Managed identity is unavailable.");
-        return nil;
+static NSData *HoliReadBytes(int gitFD, const char *name, NSError **error) {
+    int fd = openat(gitFD, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) { if (error) *error = HoliIdentityError(errno, @"Managed metadata is unavailable"); return nil; }
+    struct stat before, after;
+    BOOL ok = fstat(fd, &before) == 0 && S_ISREG(before.st_mode) && before.st_size > 0 && before.st_size <= HoliManagedIdentityLimit;
+    NSMutableData *bytes = [NSMutableData data];
+    uint8_t buffer[1024];
+    while (ok) {
+        ssize_t count = read(fd, buffer, sizeof(buffer));
+        if (count < 0 && errno == EINTR) continue;
+        if (count < 0) { ok = NO; break; }
+        if (!count) break;
+        if (bytes.length + (NSUInteger)count > HoliManagedIdentityLimit) { ok = NO; break; }
+        [bytes appendBytes:buffer length:(NSUInteger)count];
     }
-    struct stat st;
-    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
-        st.st_size > HoliManagedIdentityLimit) {
-        close(fd);
-        if (error) *error = HoliIdentityError(1, @"Managed identity is not a bounded regular file.");
-        return nil;
-    }
-    NSMutableData *data = [NSMutableData dataWithLength:(NSUInteger)st.st_size];
-    size_t offset = 0;
-    while (offset < data.length) {
-        ssize_t count = read(fd, (char *)data.mutableBytes + offset, data.length - offset);
-        if (count <= 0) {
-            close(fd);
-            if (error) *error = HoliIdentityError(2, @"Managed identity could not be read completely.");
-            return nil;
-        }
-        offset += (size_t)count;
-    }
-    char extra;
-    ssize_t trailing = read(fd, &extra, 1);
+    if (ok) ok = fstat(fd, &after) == 0 && before.st_dev == after.st_dev && before.st_ino == after.st_ino &&
+        before.st_size == after.st_size && bytes.length == (NSUInteger)before.st_size &&
+        before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec && before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec;
     close(fd);
-    if (trailing != 0) {
-        if (error) *error = HoliIdentityError(3, @"Managed identity changed while being read.");
-        return nil;
+    if (!ok) { if (error) *error = HoliIdentityError(EINVAL, @"Managed metadata is not stable bounded regular data"); return nil; }
+    return bytes;
+}
+static BOOL HoliAttachedBranch(int gitFD, NSString *branch, NSError **error) {
+    NSData *data = HoliReadBytes(gitFD, "HEAD", error);
+    if (!data) return NO;
+    NSString *head = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if ([head hasSuffix:@"\n"]) head = [head substringToIndex:head.length - 1];
+    if (![head isEqual:[@"ref: refs/heads/" stringByAppendingString:branch]]) {
+        if (error) *error = HoliIdentityError(EINVAL, @"Managed checkout is detached or on another branch");
+        return NO;
     }
+    return YES;
+}
+static NSDictionary<NSString *, id> * _Nullable HoliReadRecord(int gitFD, NSError **error) {
+    NSData *data = HoliReadBytes(gitFD, "holi-managed.json", error);
+    if (!data) return nil;
     NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     NSData *json = text ? [text dataUsingEncoding:NSUTF8StringEncoding] : nil;
     id object = json ? [NSJSONSerialization JSONObjectWithData:json options:0 error:nil] : nil;
     NSArray *keys = @[@"version", @"nativeId", @"remote", @"branch", @"endpoint"];
     if (![object isKindOfClass:NSDictionary.class] || [object count] != keys.count ||
         ![[NSSet setWithArray:[object allKeys]] isEqualToSet:[NSSet setWithArray:keys]] ||
-        ![object[@"version"] isKindOfClass:NSNumber.class] || [object[@"version"] integerValue] != 1 ||
+        ![object[@"version"] isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)object[@"version"]) == CFBooleanGetTypeID() || ![object[@"version"] isEqual:@1] ||
         !HoliValidString(object[@"nativeId"]) || ![[NSUUID alloc] initWithUUIDString:object[@"nativeId"]] ||
         !HoliValidString(object[@"remote"]) || !HoliValidString(object[@"branch"]) ||
         !HoliValidString(object[@"endpoint"])) {
         if (error) *error = HoliIdentityError(4, @"Managed identity is malformed or unsupported.");
         return nil;
     }
-    return object;
+    return HoliAttachedBranch(gitFD, object[@"branch"], error) ? object : nil;
 }
 
 @implementation HoliManagedIdentity
@@ -97,6 +103,7 @@ static NSDictionary<NSString *, id> * _Nullable HoliReadRecord(int gitFD, NSErro
     }
     int gitFD = [self openGitDirectoryAtRoot:root error:error];
     if (gitFD < 0) return nil;
+    if (!HoliAttachedBranch(gitFD, branch, error)) { close(gitFD); return nil; }
     NSDictionary *identity = @{@"version": @1, @"nativeId": NSUUID.UUID.UUIDString,
                                @"remote": remote, @"branch": branch, @"endpoint": endpoint};
     NSData *data = [NSJSONSerialization dataWithJSONObject:identity options:NSJSONWritingSortedKeys error:error];

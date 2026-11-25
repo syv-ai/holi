@@ -119,6 +119,15 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   return ok;
 }
 
+typedef struct { NSUInteger urls; NSUInteger fetches; NSUInteger pushes; BOOL unsupported; } HNGSelectedConfiguration;
+static int HNGCountSelectedConfiguration(const git_config_entry *entry, void *payload) {
+  HNGSelectedConfiguration *config = payload;
+  if (!strcmp(entry->name, "remote.origin.url")) config->urls++;
+  if (!strcmp(entry->name, "remote.origin.fetch")) config->fetches++;
+  if (!strcmp(entry->name, "remote.origin.pushurl")) config->pushes++;
+  if (!strcmp(entry->name, "remote.origin.push") || !strcmp(entry->name, "remote.origin.mirror")) config->unsupported = YES;
+  return 0;
+}
 typedef struct {
   NSMutableDictionary *paths;
   NSUInteger entries;
@@ -172,14 +181,14 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
 
 - (instancetype)initWithOwner:(NSString *)owner repositoryName:(NSString *)repositoryName endpoint:(NSString *)endpoint error:(NSError **)error {
   NSRegularExpression *identity = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9._-]{1,100}$" options:0 error:nil];
-  BOOL validIdentity = owner.length > 0 && repositoryName.length > 0 && owner.length <= 100 && repositoryName.length <= 100 &&
+  BOOL validIdentity = owner.length > 0 && repositoryName.length > 0 && ![owner containsString:@".."] && ![repositoryName containsString:@".."] && ![owner isEqual:@"."] && ![repositoryName isEqual:@"."] && owner.length <= 100 && repositoryName.length <= 100 &&
       [identity numberOfMatchesInString:owner options:0 range:NSMakeRange(0, owner.length)] == 1 &&
       [identity numberOfMatchesInString:repositoryName options:0 range:NSMakeRange(0, repositoryName.length)] == 1;
   NSString *path = [NSString stringWithFormat:@"/%@/%@.git", owner, repositoryName];
   NSURLComponents *components = [NSURLComponents componentsWithString:endpoint];
   BOOL github = [endpoint isEqualToString:[NSString stringWithFormat:@"https://github.com%@", path]];
   BOOL loopback = endpoint.length <= 4096 && [components.scheme isEqualToString:@"https"] &&
-      ([components.host isEqualToString:@"127.0.0.1"] || [components.host isEqualToString:@"::1"]) &&
+      ([components.host isEqualToString:@"127.0.0.1"] || [components.host isEqualToString:@"::1"] || [components.host isEqualToString:@"[::1]"]) &&
       components.port != nil && components.port.longLongValue > 0 && components.port.longLongValue <= 65535 &&
       [components.percentEncodedPath isEqualToString:path] && !components.query && !components.fragment &&
       !components.user && !components.password;
@@ -207,7 +216,7 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
     int validationResult = git_reference_name_is_valid(&validRef, ref.UTF8String);
     validBranch = validationResult == 0 && validRef == 1;
   }
-  if (!owner.length || !repositoryName.length || !validBranch ||
+  if (!owner.length || !repositoryName.length || !validBranch || [owner containsString:@".."] || [repositoryName containsString:@".."] || [owner isEqual:@"."] || [repositoryName isEqual:@"."] ||
       [identity numberOfMatchesInString:owner options:0 range:NSMakeRange(0, owner.length)] != 1 ||
       [identity numberOfMatchesInString:repositoryName options:0 range:NSMakeRange(0, repositoryName.length)] != 1) {
     if (error) *error = HNGPathError(EINVAL, @"Invalid repository identity or branch");
@@ -514,6 +523,12 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
   int rc = git_config_open_ondisk(&live, configPath.fileSystemRepresentation);
   if (rc == 0) rc = git_config_snapshot(&disk, live);
   git_config_free(live);
+  HNGSelectedConfiguration settings = {0};
+  int bare = 1, format = -1;
+  if (rc == 0) rc = git_config_get_bool(&bare, disk, "core.bare");
+  if (rc == 0) rc = git_config_get_int32(&format, disk, "core.repositoryformatversion");
+  if (rc == 0) rc = git_config_foreach(disk, HNGCountSelectedConfiguration, &settings);
+  if (rc == 0 && (bare || format != 0 || settings.urls != 1 || settings.fetches != 1 || settings.pushes > 1 || settings.unsupported)) rc = GIT_EINVALIDSPEC;
   const char *origin = NULL, *push = NULL, *fetchSpec = NULL;
   if (rc == 0) rc = git_config_get_string(&origin, disk, "remote.origin.url");
   if (rc == 0) {
@@ -538,6 +553,8 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
   if (rc == 0) rc = git_config_open_ondisk(&isolated, effective.fileSystemRepresentation);
   if (rc == 0) rc = git_config_set_bool(isolated, "core.bare", 0);
   if (rc == 0) rc = git_config_set_bool(isolated, "core.filemode", 1);
+  if (rc == 0) rc = git_config_set_bool(isolated, "core.protecthfs", 1);
+  if (rc == 0) rc = git_config_set_bool(isolated, "core.protectntfs", 1);
   if (rc == 0) rc = git_config_set_string(isolated, "remote.origin.url", remote.UTF8String);
   if (rc == 0) rc = git_config_set_string(isolated, "remote.origin.fetch", expected.UTF8String);
   NSString *realGit = [root stringByAppendingPathComponent:@".git"];
@@ -549,6 +566,9 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
   if (rc == 0) rc = git_repository_head(&head, repo);
   const char *name = rc == 0 ? git_reference_name(head) : NULL;
   if (rc == 0 && (!git_reference_is_branch(head) || !name || strcmp(name, [[@"refs/heads/" stringByAppendingString:branch] UTF8String]))) rc = GIT_EINVALIDSPEC;
+  git_commit *headCommit = NULL;
+  if (rc == 0) rc = git_commit_lookup(&headCommit, repo, git_reference_target(head));
+  git_commit_free(headCommit);
   git_reference_free(head);
   if (rc < 0) {
     git_repository_free(repo);
@@ -861,15 +881,31 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   git_oid_tostr(baseText, sizeof(baseText), &base);
   return @{@"entries":entries, @"headTarget":[NSString stringWithUTF8String:headText], @"baseTarget":[NSString stringWithUTF8String:baseText], @"remote":record[@"remote"], @"branch":record[@"branch"], @"nativeId":record[@"nativeId"]};
 }
-- (BOOL)materializeManaged:(NSString *)root error:(NSError **)error {
+- (BOOL)materializeManaged:(NSString *)root plan:(NSDictionary *)plan error:(NSError **)error {
   NSDictionary *record = nil;
   HoliGitSnapshot *snapshot = nil;
   git_repository *repo = [self openManagedRepository:root identity:&record snapshot:&snapshot error:error];
   if (!repo) return NO;
+  git_oid current, expected;
+  NSString *ref = [@"refs/heads/" stringByAppendingString:record[@"branch"]];
+  int rc = git_reference_name_to_id(&current, repo, ref.UTF8String);
+  NSString *target = plan[@"headTarget"];
+  if (![target isKindOfClass:NSString.class] || git_oid_fromstr(&expected, target.UTF8String) < 0) rc = GIT_EINVALIDSPEC;
+  if (rc == 0 && !git_oid_equal(&current, &expected)) rc = GIT_EMODIFIED;
+  for (NSString *key in @[@"remote", @"branch", @"nativeId"])
+    if (![record[key] isEqual:plan[key]]) rc = GIT_EMODIFIED;
+  git_commit *commit = NULL;
+  git_tree *tree = NULL;
+  if (rc == 0) rc = git_commit_lookup(&commit, repo, &expected);
+  if (rc == 0) rc = git_commit_tree(&tree, commit);
   git_checkout_options options = GIT_CHECKOUT_OPTIONS_INIT;
   options.checkout_strategy = GIT_CHECKOUT_SAFE;
   options.disable_filters = 1;
-  int rc = git_checkout_head(repo, &options);
+  if (rc == 0) rc = git_checkout_tree(repo, (git_object *)tree, &options);
+  if (rc == 0) rc = git_reference_name_to_id(&current, repo, ref.UTF8String);
+  if (rc == 0 && !git_oid_equal(&current, &expected)) rc = GIT_EMODIFIED;
+  git_tree_free(tree);
+  git_commit_free(commit);
   git_repository_free(repo);
   if (![snapshot closeWithError:error]) return NO;
   if (rc < 0) { HNGError(error, rc); return NO; }

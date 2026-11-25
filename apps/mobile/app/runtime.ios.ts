@@ -11,6 +11,7 @@ import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
 import { runWorkingCopyCheck } from './working-copy-check.ios'
+import { runManagedGitCheck } from './managed-git-check.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -60,8 +61,19 @@ export async function checkCompatibility(): Promise<string> {
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
-    if (!['normal', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(launchPhase))
+    if (
+      !['normal', 'stage', 'recovery', 'move-stage', 'move-recovery', 'managed-git'].includes(
+        launchPhase,
+      )
+    )
       throw new Error('Invalid storage phase')
+    if (launchPhase === 'managed-git') {
+      phase = 'managed-git'
+      operation = 'runManagedGitCheck'
+      const managedGit = await runManagedGitCheck(runId)
+      persist({ managedGit })
+      return managedGit.ok ? 'Managed Git request completed' : 'Managed Git request refused'
+    }
     phase = 'note-metadata'
     operation = 'persist/reconstruct/remove'
     const metadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
