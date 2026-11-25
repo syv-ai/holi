@@ -15,6 +15,15 @@ NS_ASSUME_NONNULL_BEGIN
                                                username:(nullable NSString *)username
                                                password:(nullable NSString *)password
                                                   error:(NSError *_Nullable __autoreleasing *)error;
+- (nullable NSDictionary<NSString *, id> *)runSelectedBranchOperation:(NSString *)operation
+                                                                 root:(NSString *)root
+                                                               remote:(NSString *)remote
+                                                                owner:(NSString *)owner
+                                                             repositoryName:(NSString *)repositoryName
+                                                                 branch:(NSString *)branch
+                                                             username:(nullable NSString *)username
+                                                             password:(nullable NSString *)password
+                                                                error:(NSError *_Nullable __autoreleasing *)error;
 @end
 
 NS_ASSUME_NONNULL_END

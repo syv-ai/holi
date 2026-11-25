@@ -92,6 +92,40 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
 }
 
 @implementation HoliNativeGit
+
+- (NSDictionary<NSString *, id> *)runSelectedBranchOperation:(NSString *)operation root:(NSString *)root remote:(NSString *)remote owner:(NSString *)owner repositoryName:(NSString *)repositoryName branch:(NSString *)branch username:(NSString *)username password:(NSString *)password error:(NSError **)error {
+  NSRegularExpression *identity = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9-]+$" options:0 error:nil];
+  NSRegularExpression *branchPattern = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$" options:0 error:nil];
+  if (!owner.length || !repositoryName.length || !branch.length ||
+      [identity numberOfMatchesInString:owner options:0 range:NSMakeRange(0, owner.length)] != 1 ||
+      [identity numberOfMatchesInString:repositoryName options:0 range:NSMakeRange(0, repositoryName.length)] != 1 ||
+      [branchPattern numberOfMatchesInString:branch options:0 range:NSMakeRange(0, branch.length)] != 1 ||
+      [branch containsString:@".."] || [branch containsString:@"//"] || [branch hasSuffix:@"/"] || [branch containsString:@"@{"]) {
+    if (error) *error = HNGPathError(EINVAL, @"Invalid repository identity or branch");
+    return nil;
+  }
+  NSString *expected = [NSString stringWithFormat:@"https://github.com/%@/%@.git", owner, repositoryName];
+  if (![remote isEqualToString:expected]) {
+    if (error) *error = HNGPathError(EINVAL, @"Remote does not match canonical repository identity");
+    return nil;
+  }
+  if (![operation isEqualToString:@"clone"] && ![operation isEqualToString:@"fetch"] && ![operation isEqualToString:@"push"]) {
+    if (error) *error = HNGPathError(EINVAL, @"Unsupported Git operation");
+    return nil;
+  }
+  NSDictionary *result = [self runOperation:operation root:root remote:remote username:username password:password error:error];
+  if (!result) return nil;
+  NSString *expectedRef = [NSString stringWithFormat:@"refs/heads/%@", branch];
+  if (![operation isEqualToString:@"clone"] && ![NSStringFromClass([result class]) isEqualToString:@""]) {
+    NSString *reported = result[@"branch"];
+    if ([operation isEqualToString:@"push"] && ![reported isEqualToString:expectedRef]) {
+      if (error) *error = HNGPathError(EINVAL, @"Checked-out branch does not match selected branch");
+      return nil;
+    }
+  }
+  return result;
+}
+
 - (NSString *)embeddedVersion {
   HNGInitializeLibgit2();
   int major = 0, minor = 0, revision = 0;
@@ -218,12 +252,17 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   NSString *fetchTarget = @"";
   if ([operation isEqualToString:@"fetch"]) {
     git_reference *fetched = NULL;
-    if (git_reference_lookup(&fetched, repository, "refs/remotes/origin/fixture-start") == 0) {
+    git_reference *current = NULL;
+    const char *currentName = NULL;
+    if (git_repository_head(&current, repository) == 0) currentName = git_reference_name(current);
+    NSString *trackingName = currentName ? [NSString stringWithFormat:@"refs/remotes/origin/%@", [[NSString stringWithUTF8String:currentName] lastPathComponent]] : @"";
+    if (trackingName.length && git_reference_lookup(&fetched, repository, trackingName.UTF8String) == 0) {
       char oid[GIT_OID_HEXSZ + 1];
       git_oid_tostr(oid, sizeof(oid), git_reference_target(fetched));
       fetchTarget = [NSString stringWithUTF8String:oid];
     }
     git_reference_free(fetched);
+    git_reference_free(current);
   }
   BOOL remoteConstrained = YES;
   if (!isClone && !isPoison) {
