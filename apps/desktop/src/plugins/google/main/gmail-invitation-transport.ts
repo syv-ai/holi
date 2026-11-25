@@ -1,5 +1,5 @@
 import { GoogleApiError, type GoogleApi, type GoogleDispatchGate } from './api'
-import { normalizeMessageIds, parseAddresses } from './gmail-headers'
+import { normalizeMessageIds } from './gmail-headers'
 import {
   calendarMimeMethod,
   CalendarScanError,
@@ -168,7 +168,7 @@ type CalendarMail = {
   parent: string | null
   timestamp: number
   sent: boolean
-  from: string
+  organizerSender: string | null
   sentAddresses: Record<'from' | 'to' | 'cc' | 'bcc', string[] | null> | null
   replyHeaders: CalendarReplyHeaders | null
   parts: {
@@ -239,24 +239,22 @@ export function createMessageIdOwnership() {
 
 type MessageIdOwners = ReturnType<typeof createMessageIdOwnership>
 
-function uniqueAddressHeader(part: RawPart | undefined, name: string): string | null {
-  const headers = (part?.headers ?? []).filter((header) => header.name?.toLowerCase() === name)
-  const value = headers.length === 1 ? headers[0]?.value : null
-  return typeof value === 'string' ? value : null
-}
-
-function sentAddressHeader(part: RawPart | undefined, name: 'from' | 'to' | 'cc' | 'bcc') {
+function addressHeader(part: RawPart | undefined, name: 'from' | 'sender' | 'to' | 'cc' | 'bcc') {
   const headers = (part?.headers ?? []).filter((header) => header.name?.toLowerCase() === name)
   if (!headers.length) return []
   const value = headers[0]?.value
   return headers.length === 1 && typeof value === 'string'
-    ? sentEvidenceAddresses(value, name !== 'from', name === 'bcc')
+    ? parseEvidenceAddresses(
+        value,
+        name === 'to' || name === 'cc' || name === 'bcc',
+        name === 'bcc',
+      )
     : null
 }
 
-/** Unlike display parsing, Sent evidence must consume the whole unique header
+/** Unlike display parsing, address evidence must consume the whole unique header
  * within the MIME scan's header limits. Null is unknown, not an empty list. */
-function sentEvidenceAddresses(
+function parseEvidenceAddresses(
   value: string,
   allowGroups: boolean,
   allowEmpty: boolean,
@@ -347,8 +345,14 @@ function calendarMail(
     (!parent.length || !references.length || references.at(-1) === parent[0])
   const parentId = validThreading ? (parent[0] ?? references.at(-1) ?? null) : null
   const subject = (headerOf(message.payload, 'Subject') ?? '').replace(/[\r\n]+/g, ' ').trim()
-  const fromHeader = uniqueAddressHeader(message.payload, 'from')
-  const from = parseAddresses(fromHeader)
+  const from = addressHeader(message.payload, 'from')
+  const sender = addressHeader(message.payload, 'sender')
+  // There is no verified delegate or provider relay contract here. Reply-To
+  // and iTIP SENT-BY are sender-controlled, not evidence of delegation.
+  const organizerSender =
+    from?.length === 1 && (sender?.length === 0 || (sender?.length === 1 && sender[0] === from[0]))
+      ? from[0]!
+      : null
   const sent = message.labelIds?.includes('SENT') ?? false
   // The full-response validator has checked the wire int64. Only positive,
   // exactly representable values can currently order durable Sent evidence.
@@ -360,13 +364,13 @@ function calendarMail(
     parent: parentId,
     timestamp: Number.isSafeInteger(internalDate) && internalDate >= 0 ? internalDate : 0,
     sent,
-    from: from.length === 1 ? from[0]!.email : '',
+    organizerSender,
     sentAddresses: sent
       ? {
-          from: sentAddressHeader(message.payload, 'from'),
-          to: sentAddressHeader(message.payload, 'to'),
-          cc: sentAddressHeader(message.payload, 'cc'),
-          bcc: sentAddressHeader(message.payload, 'bcc'),
+          from,
+          to: addressHeader(message.payload, 'to'),
+          cc: addressHeader(message.payload, 'cc'),
+          bcc: addressHeader(message.payload, 'bcc'),
         }
       : null,
     replyHeaders:

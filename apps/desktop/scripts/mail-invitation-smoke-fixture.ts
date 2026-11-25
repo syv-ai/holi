@@ -3,7 +3,7 @@ import ICAL from 'ical.js'
 import type { CalendarListEntry, InviteAnswer, RawEvent } from '../src/plugins/google/main/calendar'
 
 export const remote = 'smoke/invitations'
-export const organizer = { name: 'Morgan Fixture', email: 'organizer@example.test' }
+export const organizer = { name: 'Morgan Fixture', email: 'organizer@localhost' }
 export const mailboxA = { sub: 'synthetic-a', email: 'mailbox-a@example.test' }
 export const mailboxB = { sub: 'synthetic-b', email: 'mailbox-b@example.test' }
 type Mailbox = typeof mailboxA
@@ -175,7 +175,7 @@ function message(invite: Invite, mailbox: Mailbox, sent?: SentReply) {
       headers: [
         header('Content-Type', 'multipart/mixed; boundary=fixture'),
         // A local-only sender domain keeps the mail list on its initials avatar.
-        header('From', sent ? mailbox.email : 'Operations Desk <dispatch@localhost>'),
+        header('From', sent ? mailbox.email : `${organizer.name} <${organizer.email}>`),
         header('To', sent?.to ?? mailbox.email),
         header('Subject', sent ? `Re: ${invite.subject}` : invite.subject),
         header('Date', new Date(mailAt + (sent ? 60_000 : 0)).toUTCString()),
