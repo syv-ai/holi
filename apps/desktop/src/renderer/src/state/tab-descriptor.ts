@@ -144,8 +144,6 @@ export function parseTabKey(key: string): TabDescriptor | null {
   }
 }
 
-/** The tab a vault path opens as: its app when it is a bundle, else the
- *  document. */
 export function isAgentTab(tab: TabDescriptor | null): boolean {
   return (
     tab?.kind === 'agents-home' ||
@@ -154,6 +152,8 @@ export function isAgentTab(tab: TabDescriptor | null): boolean {
   )
 }
 
+/** The tab a vault path opens as: its app when it is a bundle, else the
+ *  document. */
 export function tabForPath(path: string): TabDescriptor {
   return path.endsWith(APP_SUFFIX) ? { kind: 'vault-app', path } : { kind: 'doc', path }
 }

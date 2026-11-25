@@ -1,4 +1,4 @@
-import { useAtom, useAtomValue } from 'jotai'
+import { useAtomValue } from 'jotai'
 import { Button } from '@/components/ui/button'
 import {
   Sidebar,

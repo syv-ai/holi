@@ -31,11 +31,24 @@ describe('reconcileMemoryOverviewHook', () => {
     const script = join(root, '.claude', 'hooks', 'memory-overview.mjs')
     await reconcileMemoryOverviewHook(root, true)
     const enabled = await readFile(join(root, '.claude', 'settings.json'), 'utf8')
+    const managed = (settings: {
+      hooks: { SessionStart: { matcher?: string; hooks: { command: string }[] }[] }
+    }) =>
+      settings.hooks.SessionStart.filter((g) =>
+        g.hooks.some((h) => h.command.includes('.claude/hooks/memory-overview.mjs')),
+      )
+    expect(managed(JSON.parse(enabled))).toHaveLength(1)
+    expect(managed(JSON.parse(enabled))[0]!.matcher).toBeUndefined()
     await reconcileMemoryOverviewHook(root, true)
     expect(await readFile(join(root, '.claude', 'settings.json'), 'utf8')).toBe(enabled)
     await reconcileMemoryOverviewHook(root, false)
     await reconcileMemoryOverviewHook(root, false)
     const disabled = JSON.parse(await readFile(join(root, '.claude', 'settings.json'), 'utf8'))
+    expect(managed(disabled)).toHaveLength(0)
+    await reconcileMemoryOverviewHook(root, true)
+    expect(
+      managed(JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))),
+    ).toHaveLength(1)
     expect(disabled.permissions).toEqual({ allow: ['Read(*)'] })
     expect(disabled.hooks.SessionStart[0]).toEqual({
       matcher: 'startup',

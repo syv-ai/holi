@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { lstat, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { exactPath, exactPathSync } from '@holi/shared/path-safety-node'
@@ -31,7 +32,9 @@ export async function reconcileMemoryOverviewHook(
 
   const script = await exactPath(root, scriptRel)
   const hasScript = script !== null && (await stat(script)).isFile()
-  const store = jsonFileStore<Json | null>(path, (raw, text) => {
+  let expectedText: string | null = null
+  const store = jsonFileStore<Json | null>(path, (_raw, text) => {
+    expectedText = text
     if (text === null) return null
     let parsed: unknown
     try {
@@ -43,6 +46,14 @@ export async function reconcileMemoryOverviewHook(
     return parsed
   })
   const owned = () => active() && exactPathSync(root, settingsRel) === path
+  const unchanged = (): boolean => {
+    if (!owned()) return false
+    try {
+      return readFileSync(path, 'utf8') === expectedText
+    } catch {
+      return false
+    }
+  }
   const current = await store.read()
   if (current === null) return
   const groups =
@@ -89,6 +100,6 @@ export async function reconcileMemoryOverviewHook(
       return settings
     },
     owned,
-    owned,
+    unchanged,
   )
 }

@@ -629,3 +629,24 @@ describe('the schema is the only declaration', () => {
     expect(resolveAppSettings(null, null).hooks.relink).toBe(true)
   })
 })
+
+describe('optional agent features', () => {
+  it('resolves independent vault switches with local overrides and validates patches', () => {
+    const committed = JSON.stringify({ agentInbox: false, agentHistory: false, agentMemory: false })
+    const settings = resolveAppSettings(committed, 'agentMemory: true\n')
+    expect(settings).toMatchObject({
+      agentInbox: false,
+      agentHistory: false,
+      agentMemory: true,
+      warnings: [],
+    })
+    expect(parseSettingsPatch(committed, [])).toEqual({
+      patch: { agentInbox: false, agentHistory: false, agentMemory: false },
+      warnings: [],
+    })
+    const invalid = resolveAppSettings('agentInbox: never\nagentHistory: false\n', null)
+    expect(invalid.agentInbox).toBe(true)
+    expect(invalid.agentHistory).toBe(false)
+    expect(invalid.warnings).toHaveLength(1)
+  })
+})

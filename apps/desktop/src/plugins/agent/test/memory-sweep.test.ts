@@ -2,7 +2,7 @@
  * Holi's sweep of the agent's short-lived layers: expired personal memories and
  * work-log days past the keep window. Real files in a temp vault.
  */
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -73,4 +73,21 @@ describe('sweepAgentMemory', () => {
   it('is a no-op in a vault with no memory and no log', async () => {
     expect(await sweepAgentMemory(await vault({}), new Date())).toEqual([])
   })
+})
+
+it('keeps expired memory while disabled without stopping work-log retention', async () => {
+  const text = expiring('2020-01-01')
+  const root = await vault({
+    '.holi/settings/app.yaml': 'agentMemory: false\n',
+    '.holi/memory/keep.local.md': text,
+    '.holi/state/log/2020-01-01.local.md': 'old log',
+  })
+  expect(await sweepAgentMemory(root, new Date(2026, 9, 21, 12))).toEqual([
+    '.holi/state/log/2020-01-01.local.md',
+  ])
+  expect(await readFile(join(root, '.holi/memory/keep.local.md'), 'utf8')).toBe(text)
+  await writeFile(join(root, '.holi/settings/app.yaml'), 'agentMemory: true\n')
+  expect(await sweepAgentMemory(root, new Date(2026, 9, 21, 12))).toEqual([
+    '.holi/memory/keep.local.md',
+  ])
 })

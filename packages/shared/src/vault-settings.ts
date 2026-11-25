@@ -352,6 +352,9 @@ export type VaultSettingControl =
  *  with a row in the settings tab. A superset of what the ritual asks
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
+  | 'agentInbox'
+  | 'agentHistory'
+  | 'agentMemory'
   | 'dailyNotes'
   | 'hooks'
   | 'colorScheme'

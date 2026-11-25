@@ -145,20 +145,22 @@ export const agentMain: MainPlugin = {
         throw new Error(`agent activation for ${ctx.remote} was cancelled`)
     }
     try {
-      let memoryEnabled: boolean | undefined
       let memorySync = Promise.resolve()
+      let memoryQueued = false
       const syncMemory = (): Promise<void> => {
+        if (memoryQueued) return memorySync
+        memoryQueued = true
         memorySync = memorySync
           .then(async () => {
+            memoryQueued = false
             if (ctx.activationSignal.aborted) return
             const enabled = (await readVaultSettings(ctx.root)).agentMemory
-            if (enabled === memoryEnabled || ctx.activationSignal.aborted) return
+            if (ctx.activationSignal.aborted) return
             await reconcileMemoryOverviewHook(
               ctx.root,
               enabled,
               () => !ctx.activationSignal.aborted,
             )
-            memoryEnabled = enabled
           })
           .catch((error: unknown) => console.error('[agent] memory overview:', error))
         return memorySync
