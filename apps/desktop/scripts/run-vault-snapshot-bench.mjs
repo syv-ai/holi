@@ -68,6 +68,22 @@ const protocol = {
   sizes,
   trialsPerSize: pilot || smoke ? 1 : 5,
   trial: smoke ? { warmupSeconds: 1, durationSeconds: 4 } : pilot ? short : full,
+  requirements: {
+    largePublicationBenefit:
+      'required: >=10% relative AND >=5ms absolute paired savings; paired 95% CI must support both',
+    originalCpuBenefit:
+      'required: >=20% relative AND >=0.30 app CPU-seconds/minute reduction on large workload; paired 95% CI must support both',
+    allocation:
+      'main and renderer V8 sampling interval 32768 bytes; estimates include objects collected by major/minor GC and are sampled estimates, not exact total allocated bytes; GC NodePerformanceObserver and CDP tracing calibrated outside measurement window; same profiler on each mode and observer overhead included',
+    publicationWindow:
+      'from onSnapshot callback start before fingerprint/serialization through plugin pipeline and production Jotai/React settlement; excludes filesystem scan',
+    measurementWindow:
+      'at least 180s timed window with 30s warmup; drain in-flight normal publication before freeze; normalize actual CPU and allocation clock windows; diagnostics outside freeze',
+    physicalGpu:
+      'Physical IO Accelerator Device Utilization % is host-wide context only, not owned-process attribution; CPU/RSS/GPU-process metrics are distinct',
+    instrumentation:
+      'derived counters measure benchmark snapshot-consumer instrumentation, not all React commits or production memoized computations',
+  },
   sequence: 'paired baseline/candidate; order alternates by pair',
   thresholds: {
     cpu: 'primary large workload ONLY: >=20% relative and >=0.30 app CPU-seconds/minute reduction, paired 95% CI supporting each; small is a control, not a benefit veto; normalize every trial using actual sample elapsed seconds before mean and CI',
@@ -86,7 +102,8 @@ const protocol = {
   caveats: [
     'Pilot is not gate evidence.',
     'rendererSends.bytes is a serialized payload proxy, not actual wire bytes.',
-    'No hardware GPU claim.',
+    'No hardware GPU claim; host-wide Physical IO Accelerator Device Utilization % is contextual only and cannot infer benefit.',
+    '--smoke is one baseline controlled refresh, not ordinary scan-frequency or gate evidence.',
   ],
 }
 const owned = {

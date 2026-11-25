@@ -41,7 +41,7 @@ type MetricRow = {
   cpuPercent: number
   cumulativeCpuUsage?: number
   workingSetBytes: number
-  privateBytes: number
+  privateBytes?: number
 }
 
 async function run(root: string, evidence: string): Promise<void> {
@@ -92,6 +92,7 @@ async function run(root: string, evidence: string): Promise<void> {
   let scanStartedAt: { at: number; measured: boolean } | null = null
   const scanDurationsMs: number[] = []
   let measuring = false
+  const publicationLatencyMs: number[] = []
   const pipelinePromises = new Set<Promise<unknown>>()
   const sendStats = { count: 0 }
   const started = performance.now()
@@ -205,6 +206,9 @@ async function run(root: string, evidence: string): Promise<void> {
         snapshotChecksum: snapshot ? finalSnapshotDigest : null,
         rendererStats,
         snapshotNotifications: measured?.snapshotNotifications ?? null,
+        publicationLatencyMs: measured?.publicationLatencyMs ?? null,
+        publicationLatencyBoundary:
+          'timed snapshot callback entry before candidate fingerprint/serialization/plugin pipeline through adapter completion and renderer atom delivery plus snapshot-consumer layout commit and two animation frames; suppressed candidates use two animation frames after pipeline completion; excludes filesystem scan',
         snapshotNotificationDigest: snapshotDigest || finalSnapshotDigest,
         snapshotCounts: snapshot ? snapshotCount(snapshot) : null,
         scans: measured?.scanDurationsMs.length ?? 0,
@@ -246,7 +250,7 @@ async function run(root: string, evidence: string): Promise<void> {
           warmupSeconds: trial.warmupSeconds,
           measurementSeconds: trial.durationSeconds,
           diagnosticAfterMeasurement: true,
-          idle: 'all top-level counters, rendererStats, samples and CPU cover only timed idle',
+          idle: 'all top-level counters, rendererStats, samples and CPU cover only timed idle; renderer commits count snapshot-consumer layout effects, not all React commits',
           changedUpdates:
             'nativeUserChangesLatency: five real task edits after idle, restored before cleanup',
           pilot: 'extra correctness checks after changed-update diagnostics',
@@ -350,13 +354,38 @@ async function run(root: string, evidence: string): Promise<void> {
         return host!.scanClaimsFor(paths.vault)
       },
       onSnapshot(snapshot) {
+        const publicationStartedAt = measuring ? performance.now() : null
+        const sendsBeforePublication = sendStats.count
+        const rendererBefore = measuring
+          ? (win?.webContents.executeJavaScript('window.snapshotBench.metrics()') as
+              | Promise<{
+                  atomWrites: number
+                  commits: number
+                }>
+              | undefined)
+          : undefined
         const scan = scanStartedAt
         scanStartedAt = null
         if (measuring && scan?.measured) scanDurationsMs.push(performance.now() - scan.at)
         const promise = adapter!.onSnapshot(snapshot)
         pipelinePromises.add(promise)
         void promise.then(
-          () => pipelinePromises.delete(promise),
+          async () => {
+            try {
+              if (publicationStartedAt !== null) {
+                const before = await rendererBefore
+                const sent = sendStats.count > sendsBeforePublication
+                await win!.webContents.executeJavaScript(
+                  `window.snapshotBench.settlePublication(${sent}, ${before?.atomWrites ?? 0}, ${before?.commits ?? 0})`,
+                )
+                publicationLatencyMs.push(performance.now() - publicationStartedAt)
+              }
+            } catch (error) {
+              pipelineErrors.push(`publication settlement: ${String(error)}`)
+            } finally {
+              pipelinePromises.delete(promise)
+            }
+          },
           (error) => {
             pipelineErrors.push(String(error))
             pipelinePromises.delete(promise)
@@ -487,7 +516,9 @@ async function run(root: string, evidence: string): Promise<void> {
             ? { cumulativeCpuUsage: row.cpu.cumulativeCPUUsage }
             : {}),
           workingSetBytes: row.memory.workingSetSize * 1024,
-          privateBytes: (row.memory.privateBytes ?? 0) * 1024,
+          ...(typeof row.memory.privateBytes === 'number'
+            ? { privateBytes: row.memory.privateBytes * 1024 }
+            : {}),
         })),
       })
     }
@@ -516,10 +547,10 @@ async function run(root: string, evidence: string): Promise<void> {
       await drainPipeline()
     }
     await new Promise((resolve) => setTimeout(resolve, trial.durationSeconds * 1000))
-    // No await between the final sample and the frozen counter capture. Sampling
-    // stops before diagnostic RPC, filesystem writes, hashes or screenshots.
-    sample()
     measuring = false
+    await drainPipeline()
+    // Drain timed publications before freezing CPU/GPU and counters.
+    sample()
     clearInterval(sampleInterval)
     sampleInterval = null
     await captureSampling
@@ -529,8 +560,10 @@ async function run(root: string, evidence: string): Promise<void> {
     // work can give its independent event loop extra time to accumulate work.
     const rendererAtEnd = win.webContents.executeJavaScript('window.snapshotBench.metrics()')
     const adapterAtEnd = adapter.metrics()
+    await drainPipeline()
     measured = freezeMeasurement({
       rendererSends: { count: sendStats.count, bytes: adapterAtEnd.payloadBytes },
+      publicationLatencyMs,
       snapshotNotifications,
       scanDurationsMs,
       adapter: adapterAtEnd,
@@ -761,7 +794,7 @@ function aggregateProcesses(samples: Array<{ processes: MetricRow[] }>) {
       cpuPercentSum: number
       samples: number
       workingSetBytes: number
-      privateBytes: number
+      privateBytes?: number
     }
   >()
   for (const sample of samples)
@@ -773,12 +806,11 @@ function aggregateProcesses(samples: Array<{ processes: MetricRow[] }>) {
         cpuPercentSum: 0,
         samples: 0,
         workingSetBytes: 0,
-        privateBytes: 0,
       }
       item.cpuPercentSum += row.cpuPercent
       item.samples++
       item.workingSetBytes = row.workingSetBytes
-      item.privateBytes = row.privateBytes
+      if (row.privateBytes !== undefined) item.privateBytes = row.privateBytes
       totals.set(key, item)
     }
   return [...totals.values()].map((item) => ({

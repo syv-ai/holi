@@ -75,6 +75,7 @@ export function sourceVersion() {
   const files = [
     'vault-snapshot-bench-main.ts',
     'vault-snapshot-bench-analysis.mjs',
+    'vault-snapshot-bench-capture.ts',
     'vault-snapshot-bench-metrics.mjs',
     'vault-snapshot-bench-adapter.ts',
     'vault-snapshot-bench-rpc.ts',
@@ -285,6 +286,22 @@ export function analyzePairs(results, { pilot = false } = {}) {
           changedUpdateP95Ms: valid ? changedLatency(result) : null,
           changedUpdateRawMs: result?.nativeUserChangesLatency?.rawMs ?? null,
           allocation: completeAllocation(result) ? result.allocation : null,
+          allocationRates: completeAllocation(result)
+            ? Object.fromEntries(
+                ['main', 'renderer'].map((process) => {
+                  const row = result.allocation[process]
+                  const minutes = row.elapsedSeconds / 60
+                  return [
+                    process,
+                    {
+                      sampledBytesPerMinute: row.sampledBytes / minutes,
+                      gcCountPerMinute: row.gcCount / minutes,
+                      gcDurationMsPerMinute: row.gcDurationMs / minutes,
+                    },
+                  ]
+                }),
+              )
+            : null,
           physicalGpu: completeGpu(result) ? result.physicalGpu : null,
           publicationLatencyMs: completePublication(result) ? result.publicationLatencyMs : null,
           fullCorrectness: result?.fullCorrectness ?? null,
@@ -398,6 +415,36 @@ export function analyzePairs(results, { pilot = false } = {}) {
       helperCountDeltas: helperDeltas,
       publicationLatencySavingsMs: publicationSavings,
       publicationLatencyRelativeSavings: publicationRelative,
+      allocationComparison: Object.fromEntries(
+        ['main', 'renderer'].map((process) => {
+          const metrics = ['sampledBytesPerMinute', 'gcCountPerMinute', 'gcDurationMsPerMinute']
+          return [
+            process,
+            Object.fromEntries(
+              metrics.map((metric) => {
+                const differences = raw.map((pair) =>
+                  change(
+                    pair.candidate.allocationRates?.[process]?.[metric],
+                    pair.baseline.allocationRates?.[process]?.[metric],
+                  ),
+                )
+                return [
+                  metric,
+                  {
+                    baseline: raw.map(
+                      (pair) => pair.baseline.allocationRates?.[process]?.[metric] ?? null,
+                    ),
+                    candidate: raw.map(
+                      (pair) => pair.candidate.allocationRates?.[process]?.[metric] ?? null,
+                    ),
+                    difference: interval(differences),
+                  },
+                ]
+              }),
+            ),
+          ]
+        }),
+      ),
       benefitGates: {
         absoluteCpuSavings: benefitGate(cpu, 0.3),
         largePublicationLatencySavings:

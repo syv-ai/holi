@@ -98,6 +98,35 @@ window.snapshotBench = {
     documentText,
     consumerReady,
   }),
+  settlePublication: async (sent: boolean, beforeWrites: number, beforeCommits: number) => {
+    let timeout: number | undefined
+    let frameId: number | undefined
+    const frame = () =>
+      new Promise<void>((resolve) => {
+        frameId = requestAnimationFrame(() => resolve())
+      })
+    try {
+      await Promise.race([
+        (async () => {
+          if (sent) {
+            while (atomWrites <= beforeWrites || commits <= beforeCommits) await frame()
+          }
+          // Both paths use the same paint barrier; suppression is not assigned zero latency.
+          await frame()
+          await frame()
+        })(),
+        new Promise<never>((_, reject) => {
+          timeout = window.setTimeout(
+            () => reject(new Error('Snapshot consumer settlement timed out')),
+            5000,
+          )
+        }),
+      ])
+    } finally {
+      clearTimeout(timeout)
+      if (frameId !== undefined) cancelAnimationFrame(frameId)
+    }
+  },
   resetMetrics: () => {
     atomWrites = 0
     derivedComputations = 0
@@ -131,6 +160,11 @@ declare global {
         documentText: string
         consumerReady: boolean
       }
+      settlePublication: (
+        sent: boolean,
+        beforeWrites: number,
+        beforeCommits: number,
+      ) => Promise<void>
       resetMetrics: () => void
       dispose: () => void
     }
