@@ -221,7 +221,7 @@ export function selectInvitationRevisions(
   const embeddedIn = (series: Candidate, identity: Revision) =>
     series.value.cancellations.some((item) => item.identity === identity)
   const suppresses = (series: Candidate, cancellation: Revision) =>
-    revisionOrder(cancellation, identityOf(series)) === 1 || embeddedIn(series, cancellation)
+    revisionOrder(cancellation, identityOf(series)) !== -1 || embeddedIn(series, cancellation)
   const equivalent = (candidate: Candidate, other: Candidate) =>
     sameMaterial(candidate, other) &&
     responseMatches(responseOf(candidate, mailbox), responseOf(other, mailbox))
@@ -251,31 +251,35 @@ export function selectInvitationRevisions(
     }
     return { barrier }
   }
-  const scopes = scoped.map((group) =>
-    selectScope(group, eligible, mailbox, owners, equivalent, coveringCancellation),
-  )
-  const bySlot = new Map(scopes.map((entry) => [scopeKey(identityOf(entry.selected)), entry]))
+  const slots = scoped.map((group) => ({
+    entry: selectScope(group, eligible, mailbox, owners, equivalent, coveringCancellation),
+    organizers: new Set(group.map(({ value }) => value.details.organizer?.email)),
+  }))
+  const bySlot = new Map(slots.map((slot) => [scopeKey(identityOf(slot.entry.selected)), slot]))
   return {
-    scopes,
+    scopes: slots.map(({ entry }) => entry),
     suppressesSeriesSlot(series: Candidate, recurrenceId: string) {
       const revision = identityOf(series)
       const organizer = series.value.details.organizer?.email
       const slot = { ...revision, recurrenceId }
-      const occurrence = bySlot.get(scopeKey(slot))
-      if (organizer && occurrence?.selected.value.details.organizer?.email === organizer) {
+      const scopedSlot = bySlot.get(scopeKey(slot))
+      if (organizer && scopedSlot?.organizers.has(organizer)) {
+        const occurrence = scopedSlot.entry
+        const { value } = occurrence.selected
         const cancellation =
           occurrence.cancelledBy ??
-          (!occurrence.reason && occurrence.selected.value.details.cancelled
-            ? occurrence.selected
-            : null)
+          (!occurrence.reason && value.details.cancelled ? occurrence.selected : null)
         if (cancellation && suppresses(series, identityOf(cancellation))) return true
-        if (!cancellation && !occurrence.reason && occurrence.selected.value.method === 'REQUEST') {
-          // A selected live occurrence REQUEST already accounts for cancellations
-          // at that slot, including a later reinstatement after a range CANCEL.
-          return false
+        if (!cancellation) {
+          // A disputed slot is not eligible for navigation, even when Google
+          // still lists a confirmed instance. A selected live REQUEST already
+          // accounts for any cancellation, including a later reinstatement.
+          if (occurrence.reason || !value.request) return true
+          if (value.method === 'REQUEST') return false
         }
       }
-      return Boolean(coveringCancellation(slot, organizer, series).cancelledBy)
+      const covering = coveringCancellation(slot, organizer, series)
+      return Boolean(covering.conflict || covering.cancelledBy)
     },
   }
 }

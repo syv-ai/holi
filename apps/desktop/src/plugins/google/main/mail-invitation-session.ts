@@ -120,6 +120,16 @@ type Confirmation = { attempt: InvitationAttempt; mail: Mail | null; disputedPar
 type LineageMatch = (attempt: InvitationAttempt) => 'linked' | 'disputed' | null
 
 type SentAddress = { organizer: string; mailbox: string }
+// Journal updates deserialize anchors again. Bind proof to the recorded
+// context, not to the object instance or to the RFC ID alone.
+const anchorProofKey = ({
+  accountSub,
+  revision,
+  parent,
+  organizer,
+  mailbox,
+  reply,
+}: ParentAnchor) => JSON.stringify([accountSub, revision, parent, organizer, mailbox, reply])
 const sentVerificationReason = 'Gmail could not verify the latest sent response'
 
 function readPossibleReply(part: Mail['parts'][number]): Promise<string | null> {
@@ -245,6 +255,21 @@ async function sentAnswer(
   return { answers: unresolved ? [] : [...answers], unresolved }
 }
 
+/** Receipts and compacted anchors must prove the same envelope and iTIP scope. */
+async function assessReply(
+  mail: Mail,
+  revision: Revision,
+  context: SentAddress & { parent: string },
+  disputedSent: Set<Mail>,
+  answer?: InviteAnswer,
+): Promise<'match' | 'related' | 'unresolved' | null> {
+  if (mail.parent !== context.parent) return null
+  const { answers, unresolved } = await sentAnswer(mail, revision, context, disputedSent)
+  if (unresolved) return 'unresolved'
+  if (answers.length === 1 && (answer === undefined || answers[0] === answer)) return 'match'
+  return answers.length ? 'related' : null
+}
+
 async function sentResponse(
   messages: Mail[],
   ownsSent: ReturnType<typeof createSentCalendarLookup>['ownsSent'],
@@ -344,7 +369,7 @@ function relevantCalendarTargets(
       copy.accountSub === target.accountSub &&
       copy.uid === uid &&
       (copy.organizer === undefined || copy.organizer === details.organizer?.email) &&
-      calendarLocatorMayMatchScope(copy, details) &&
+      calendarLocatorMayMatchScope(copy, details.identity) &&
       (calendarTargetMailbox(copy.target) ?? target.email) === target.email
         ? [copy.target]
         : [],
@@ -403,6 +428,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     resources: CalendarResources,
     lineages: Map<string, LineageMatch>,
     parentAnchors: ParentAnchor[],
+    verifiedAnchors: Map<string, Mail>,
     disputedSent: Set<Mail>,
     receiptObscured: (attempt: InvitationAttempt, mail: Mail) => Promise<boolean>,
   ) {
@@ -462,14 +488,9 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         match !== 'disputed' ||
         delivery.confirmedSentTimestamp === undefined
       ) {
-        const assess = async (mail: Mail) => {
-          if (mail.parent !== delivery.parent) return null
-          const { answers, unresolved } = await sentAnswer(mail, revision, delivery, disputedSent)
-          if (unresolved) return 'unresolved'
-          if (answers.length === 1 && answers[0] === answer) return 'match'
-          return answers.length ? 'related' : null
-        }
-        const found = await receipts.findReply(delivery.rfcId, delivery.receipt, assess)
+        const found = await receipts.findReply(delivery.rfcId, delivery.receipt, (candidate) =>
+          assessReply(candidate, revision, delivery, disputedSent, answer),
+        )
         mail = found.mail
         if (found.unresolvedReply) unverifiedReceipts.add(id)
         if (found.contestedTimestamp) contested.set(id, found.contestedTimestamp)
@@ -507,13 +528,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       target.assertBinding()
       const matchLineage = lineages.get(key)
       const provesAnchor = (entry: InvitationAttempt) =>
-        entry.delivery.channel === 'gmail' &&
-        entry.delivery.receipt?.id != null &&
+        entry.id === attempt.id &&
         matchLineage?.(entry) === 'linked' &&
-        receipts.hasVerifiedSentOwner({
-          rfcId: entry.delivery.rfcId,
-          messageId: entry.delivery.receipt.id,
-        })
+        mail !== null &&
+        receipts.hasVerifiedFullReply(mail)
       // Compaction may retain an existing anchor without proving it again.
       // This does not grant parent evidence; a known contradiction keeps the dispatch.
       const hasStoredAnchor = (entry: InvitationAttempt) => {
@@ -530,7 +548,9 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               anchor.parent === delivery.parent &&
               sameRevision(anchor.revision, entry.revision) &&
               anchor.reply?.rfcId === delivery.rfcId &&
-              anchor.reply.messageId === delivery.receipt?.id,
+              anchor.reply.messageId === delivery.receipt?.id &&
+              (!receipts.wasRead(anchor.reply.messageId) ||
+                verifiedAnchors.has(anchorProofKey(anchor))),
           )
         )
       }
@@ -641,6 +661,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     }
     const entries = new Map(scopes.map((entry) => [scopeKey(identityOf(entry.selected)), entry]))
     const receipts = createSentCalendarLookup(api, scan, owners, messages)
+    const verifiedAnchors = new Map<string, Mail>()
     const sentParents = new Set(
       messages.flatMap((mail) => (mail.sent && mail.parent ? [mail.parent] : [])),
     )
@@ -655,8 +676,16 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         anchor.mailbox === email &&
         anchor.organizer === entry.selected.value.details.organizer?.email &&
         onLineage(entry, anchor.revision, email)
-      )
-        await receipts.checkAnchor(anchor.reply)
+      ) {
+        const { rfcId, messageId, threadId, answer } = anchor.reply
+        const { mail } = await receipts.findReply(
+          rfcId,
+          { id: messageId, threadId: threadId ?? null },
+          (candidate) => assessReply(candidate, anchor.revision, anchor, disputedSent, answer),
+          { requireLocator: true },
+        )
+        if (mail) verifiedAnchors.set(anchorProofKey(anchor), mail)
+      }
     }
     type Scope = (typeof scopes)[number]
     function evidenceParents(entry: Scope, organizer: string, anchors: ParentAnchor[]) {
@@ -673,11 +702,8 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           onLineage(entry, anchor.revision, email)
         ) {
           related.add(anchor.parent)
-          if (
-            !owners.has(anchor.parent) &&
-            anchor.reply &&
-            receipts.hasVerifiedSentOwner(anchor.reply)
-          )
+          const observed = verifiedAnchors.get(anchorProofKey(anchor))
+          if (!owners.has(anchor.parent) && observed && receipts.hasVerifiedFullReply(observed))
             verified.add(anchor.parent)
         }
       }
@@ -700,6 +726,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         resources,
         lineages,
         journal.parentAnchors,
+        verifiedAnchors,
         disputedSent,
         async (attempt, mail) => {
           const key = scopeKey(attempt.revision)
@@ -711,7 +738,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           if (lineage === 'linked') verified.add(parent)
           related.add(parent)
           const sent = await sentResponse(
-            [...messages.filter(({ messageId }) => messageId !== mail.messageId), mail],
+            [
+              ...receipts.threadEvidence().filter(({ messageId }) => messageId !== mail.messageId),
+              mail,
+            ],
             receipts.ownsSent,
             verified,
             related,
@@ -809,13 +839,14 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           responseParents.add(delivery.parent)
           relatedParents.add(delivery.parent)
         }
+        const threadEvidence = receipts.threadEvidence()
         const sentMail = receipt
-          ? [...messages.filter(({ messageId }) => messageId !== receipt.messageId), receipt]
+          ? [...threadEvidence.filter(({ messageId }) => messageId !== receipt.messageId), receipt]
           : disputedParent && delivery?.channel === 'gmail'
-            ? messages.filter(
+            ? threadEvidence.filter(
                 (mail) => mail.rfcId !== delivery.rfcId && mail.messageId !== delivery.receipt?.id,
               )
-            : messages
+            : threadEvidence
         const sent = await sentResponse(
           sentMail,
           receipts.ownsSent,
