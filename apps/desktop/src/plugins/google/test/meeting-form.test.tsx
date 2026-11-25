@@ -21,6 +21,7 @@ vi.mock('../renderer/google-cap', () => ({ googleCap: cap }))
 const draft: EventDraft = {
   title: 'Synthetic planning',
   location: '',
+  description: '',
   date: '2027-01-12',
   dateEnd: '2027-01-12',
   start: '10:00',

@@ -305,7 +305,6 @@ export function useGoogleCalendar(
         title: times.title,
         ...(times.location === '' ? {} : { location: times.location }),
         description: times.description ?? '',
-        ...(times.description === '' ? {} : { description: times.description }),
       })
       if (context.current.generation === generation && context.current.remote === remote)
         latestLoad.current()

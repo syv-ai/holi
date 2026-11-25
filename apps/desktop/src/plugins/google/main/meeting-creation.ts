@@ -27,6 +27,7 @@ export interface MeetingInput {
   end: string
   allDay: boolean
   location: string
+  description?: string
   guests: string[]
   meet: boolean
 }
@@ -134,6 +135,7 @@ function bodyOf(op: MeetingOperation) {
     start: endpoint(i.start),
     end: endpoint(i.end),
     ...(i.location ? { location: i.location } : {}),
+    ...(i.description ? { description: i.description } : {}),
     ...(i.guests.length ? { attendees: i.guests.map((email) => ({ email })) } : {}),
     extendedProperties: { private: { holiMeeting: op.fingerprint } },
     ...(i.meet

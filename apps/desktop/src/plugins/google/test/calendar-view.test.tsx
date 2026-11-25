@@ -757,6 +757,25 @@ describe('the calendar view', () => {
     })
   })
 
+  test('new meeting creation sends the multiline description to Google', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    const card = await screen.findByRole('dialog', { name: 'New event' })
+    await user.type(within(card).getByRole('textbox', { name: 'Title' }), 'Planning session')
+    await user.type(
+      within(card).getByRole('textbox', { name: 'Description' }),
+      'First line{Enter}Second line',
+    )
+    await user.click(within(card).getByRole('button', { name: 'Add event' }))
+    await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
+    expect(scheduleMock.mock.calls[0]![0]).toMatchObject({
+      title: 'Planning session',
+      description: 'First line\\nSecond line',
+    })
+  })
+
   test('Cancel and Close restore the connected origin', async () => {
     const user = userEvent.setup()
     render(<CalendarView />)

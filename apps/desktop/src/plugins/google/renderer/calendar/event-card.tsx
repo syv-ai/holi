@@ -677,6 +677,7 @@ function EventForm({
       end,
       allDay: draft.allDay,
       location: draft.location.trim(),
+      description: draft.description,
       guests: guests.trim()
         ? guests
             .split(/[,;\s]+/)
