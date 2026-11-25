@@ -28,7 +28,7 @@ import {
 import { parseCalendarMail } from './invite'
 import { projectMailInvitation, type InvitationCardSource } from './mail-invitation-projection'
 import {
-  assertEquivalentAlternatives,
+  hasConflictingAlternatives,
   identityOf,
   representationOf,
   onLineage,
@@ -155,14 +155,6 @@ function knownAlternativeGroups(parts: Alternative[]) {
     !alternatives.some(({ group }) => unknownGroups.has(group))
 }
 
-function assertKnownAlternatives(parts: Alternative[]): void {
-  assertEquivalentAlternatives(
-    parts.flatMap(({ alternatives, signature }) =>
-      signature === null ? [] : [{ alternatives, signature }],
-    ),
-  )
-}
-
 async function latestByScope({ messages, owners }: Thread, mailbox: string) {
   const candidates: Candidate[] = []
   const disputedSent = new Set<Mail>()
@@ -203,8 +195,13 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
       // Keep the envelope for parent- and date-scoped Sent reconciliation.
       else disputedSent.add(mail)
     }
-    if (!mail.sent || renditions.some(({ candidate }) => candidate))
-      assertKnownAlternatives(renditions.filter(verified))
+    // This pass compares event revisions, not REPLYs. Only the latter can
+    // be reconciled by Sent envelope, scope, and timestamp.
+    if (
+      (!mail.sent || renditions.some(({ candidate }) => candidate)) &&
+      hasConflictingAlternatives(renditions.filter(verified))
+    )
+      throw new CalendarScanError('Gmail contains conflicting calendar alternatives')
   }
   return { ...selectInvitationRevisions(candidates, mailbox, owners), disputedSent }
 }
@@ -247,17 +244,16 @@ async function sentAnswer(
         ? 'unresolved'
         : invitationReplyStatus(source, revision, organizer, mailbox, method)
     if (answer === 'unresolved') unresolved = true
-    else if (answer) answers.add(answer)
-    else unrelated = true
-    if (part.alternatives.length)
-      representations.push({
-        alternatives: part.alternatives,
-        signature: answer && answer !== 'unresolved' ? answer : `unrecognized:${source}`,
-      })
+    else if (answer) {
+      answers.add(answer)
+      representations.push({ alternatives: part.alternatives, signature: answer })
+    } else unrelated = true
   }
-  if (!unresolved && answers.size) assertEquivalentAlternatives(representations)
-  // One matching part cannot authorize readback for a mixed or malformed reply.
-  unresolved ||= unrelated && answers.size > 0
+  // Reply renditions are compared only after verifying the same envelope and
+  // iTIP scope; prose and encoding differences do not change an answer. A
+  // conflicting alternative or a mix of matching and unrelated material is
+  // uncertain evidence, not a positive answer or a conversation-wide error.
+  unresolved ||= answers.size > 0 && (unrelated || hasConflictingAlternatives(representations))
   return { answers: unresolved ? [] : [...answers], unresolved }
 }
 
@@ -855,10 +851,16 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       // owned/self Calendar copy. An incoming REQUEST never falls into this path.
       if (joinOnly && calendar?.kind !== 'verified') continue
       const verifiedCopy = calendar?.kind === 'verified' ? calendar : null
+      const occurrenceRevisionBlocked = identity.recurrenceId !== null && Boolean(entry.reason)
+      const navigationWithheld =
+        occurrenceRevisionBlocked ||
+        (calendar?.kind === 'blocked' && calendar.navigationUnverified === true)
       const decision: Resolved['decision'] = {
+        // A disputed CANCEL can be the displayed rendition, but arrival order
+        // alone doesn't confirm cancellation or remove the read-only Retry.
         cancelled:
           verifiedCopy?.cancelled ??
-          (details.cancelled ||
+          ((details.cancelled && !occurrenceRevisionBlocked) ||
             entry.cancelledBy !== undefined ||
             (calendar?.kind === 'blocked' && calendar.cancelled === true)),
         unavailableReason: verifiedCopy
@@ -1116,19 +1118,11 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       const loadUpcoming = verifiedCopy?.upcomingLinks
       cards.push({
         source: {
-          details:
-            calendar?.kind === 'blocked' && calendar.navigationUnverified
-              ? {
-                  ...details,
-                  conferenceUrl: null,
-                  conferenceLinkSource: null,
-                  htmlLink: null,
-                  htmlLinkSource: null,
-                }
-              : details,
+          details,
           bindingRevision: target.bindingRevision,
           joinOnly,
           calendar: verifiedCopy,
+          navigationWithheld,
         },
         decision,
         reply,
@@ -1137,9 +1131,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         recorded,
         priorSent,
         absentTargets,
-        upcomingLinks: loadUpcoming
-          ? () => loadUpcoming((slot) => suppressesSeriesSlot(selected, slot))
-          : null,
+        upcomingLinks:
+          !navigationWithheld && loadUpcoming
+            ? () => loadUpcoming((slot) => suppressesSeriesSlot(selected, slot))
+            : null,
       })
     }
     target.assertBinding()

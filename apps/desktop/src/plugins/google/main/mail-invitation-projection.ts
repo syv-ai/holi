@@ -12,6 +12,8 @@ export type InvitationCardSource = {
   details: Details
   bindingRevision: string
   joinOnly: boolean
+  /** Revision or Calendar evidence has disqualified navigation from any source. */
+  navigationWithheld: boolean
   calendar: Pick<
     VerifiedCopy,
     keyof InvitationLinks | 'title' | 'start' | 'end' | 'allDay' | 'location' | 'responseStatus'
@@ -50,6 +52,7 @@ export function projectMailInvitation(
     bindingRevision,
     joinOnly,
     calendar,
+    navigationWithheld,
     response,
   }: InvitationCardSource & {
     response: ResponsePresentation
@@ -66,16 +69,29 @@ export function projectMailInvitation(
     end: calendar?.end ?? details.end,
     allDay: calendar?.start ? calendar.allDay : details.allDay,
     location: calendar?.location ?? details.location,
-    conferenceUrl: usesUpcomingLinks
-      ? (upcoming?.conferenceUrl ?? null)
-      : (calendar?.conferenceUrl ?? details.conferenceUrl),
-    conferenceLinkSource: usesUpcomingLinks
-      ? (upcoming?.conferenceLinkSource ?? null)
-      : calendar?.conferenceUrl
-        ? calendar.conferenceLinkSource
-        : details.conferenceLinkSource,
-    htmlLink: htmlLink ?? (usesUpcomingLinks ? null : details.htmlLink),
-    htmlLinkSource: htmlLink ? 'calendar' : usesUpcomingLinks ? null : details.htmlLinkSource,
+    ...(navigationWithheld
+      ? {
+          conferenceUrl: null,
+          conferenceLinkSource: null,
+          htmlLink: null,
+          htmlLinkSource: null,
+        }
+      : {
+          conferenceUrl: usesUpcomingLinks
+            ? (upcoming?.conferenceUrl ?? null)
+            : (calendar?.conferenceUrl ?? details.conferenceUrl),
+          conferenceLinkSource: usesUpcomingLinks
+            ? (upcoming?.conferenceLinkSource ?? null)
+            : calendar?.conferenceUrl
+              ? calendar.conferenceLinkSource
+              : details.conferenceLinkSource,
+          htmlLink: htmlLink ?? (usesUpcomingLinks ? null : details.htmlLink),
+          htmlLinkSource: htmlLink
+            ? ('calendar' as const)
+            : usesUpcomingLinks
+              ? null
+              : details.htmlLinkSource,
+        }),
     bindingRevision,
     kind: joinOnly ? 'meeting' : 'invitation',
     scope:
