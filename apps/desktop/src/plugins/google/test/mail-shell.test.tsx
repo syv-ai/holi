@@ -151,7 +151,11 @@ vi.mock('@/lib/trpc', () => ({
   },
 }))
 
-function summary(overrides: Record<string, unknown> = {}) {
+type SearchPage = Awaited<ReturnType<typeof googleCap.search>>
+type SearchParams = NonNullable<Parameters<typeof googleCap.search>[1]>
+type ThreadSummary = SearchPage['threads'][number]
+
+function summary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
   return {
     id: 't1',
     subject: 'Q2 budget',
@@ -169,11 +173,16 @@ function summary(overrides: Record<string, unknown> = {}) {
     labels: ['Finance'],
     hasInvite: false,
     unsubscribeUrl: null,
+    replied: false,
+    lastReplyAt: null,
+    addressedAs: 'unknown',
+    automated: false,
+    needsReply: true,
     ...overrides,
   }
 }
 
-function page(threads: unknown[], nextPageToken: string | null = null) {
+function page(threads: ThreadSummary[], nextPageToken: string | null = null): SearchPage {
   return { threads, nextPageToken, syncedAt: new Date().toISOString() }
 }
 
@@ -400,6 +409,33 @@ test('readable mail metadata uses opaque semantic colors for rows, drafts, and a
   const size = within(attachment).getByText('(20 KB)')
   expect(size).toHaveClass('text-muted-foreground')
   expect([...size.parentElement!.classList].some((name) => /^opacity-\d+$/.test(name))).toBe(false)
+})
+
+test('the Mail shell drops a missing overlap without offering a retry', async () => {
+  searchMock.mockImplementation(
+    async ({ pageToken, refresh }: SearchParams): Promise<SearchPage> => {
+      if (pageToken === undefined && !refresh)
+        return page([summary(), summary({ id: 'gone', subject: 'Removed thread' })], 'page-2')
+      if (pageToken === 'page-2')
+        return {
+          ...page([summary({ id: 't2', subject: 'Second page thread' })]),
+          notFoundThreadIds: ['gone'],
+        }
+      throw new Error('Unexpected Gmail continuation or retry')
+    },
+  )
+  const user = userEvent.setup()
+  render(<MailShell />)
+
+  const list = within(await screen.findByRole('list', { name: 'Inbox' }))
+  expect(list.getByText('Removed thread')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Load more' }))
+
+  expect(await list.findByText('Second page thread')).toBeVisible()
+  expect(list.getByText('Q2 budget')).toBeVisible()
+  expect(list.queryByText('Removed thread')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
 })
 
 test('restarts pagination when retrying a partial continuation in the Mail shell', async () => {

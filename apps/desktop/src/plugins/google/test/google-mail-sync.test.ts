@@ -124,7 +124,7 @@ function gmail(routes: Routes) {
       return { ok: false, status: 404, text: async () => '{}', json: async () => ({}) }
     }
     if (routes.failedThreads?.includes(threadId)) {
-      return { ok: false, status: 500, text: async () => '{}', json: async () => ({}) }
+      return { ok: false, status: 503, text: async () => '{}', json: async () => ({}) }
     }
     return ok(routes.threads?.[threadId] ?? {})
   }) as unknown as typeof globalThis.fetch
@@ -838,6 +838,50 @@ describe('syncThreads', () => {
       ).toEqual(['healthy'])
     }
   })
+
+  it.each([404, 503])(
+    'reports an overlapping continuation metadata %i without losing the page',
+    async (status) => {
+      const initialIds = [{ id: 'overlap' }, { id: 'retained' }]
+      const first = gmail({
+        listPages: { '': { threads: initialIds, nextPageToken: 'page-2' } },
+        threads: {
+          overlap: rawThread('overlap', 'Previously visible', ['INBOX', 'UNREAD']),
+          retained: rawThread('retained', 'Still visible', ['INBOX', 'UNREAD']),
+        },
+      })
+      const unread = { unread: true }
+      const inbox = await syncThreads(first.api, cache)
+      for (const page of [inbox, await syncThreads(first.api, cache, unread)]) {
+        expect(page.threads.map(({ id }) => id)).toEqual(['overlap', 'retained'])
+      }
+      const next = gmail({
+        listPages: {
+          'page-2': { threads: [{ id: 'overlap' }, { id: 'new' }], nextPageToken: 'page-3' },
+        },
+        threads: { new: rawThread('new', 'Next page row') },
+        ...(status === 404 ? { missingThreads: ['overlap'] } : { failedThreads: ['overlap'] }),
+      })
+      const page = await syncThreads(next.api, cache, { pageToken: inbox.nextPageToken! })
+
+      expect(page.threads.map(({ id }) => id)).toEqual(['new'])
+      expect(page.nextPageToken).toBe('page-3')
+      expect(page.notFoundThreadIds).toEqual(status === 404 ? ['overlap'] : undefined)
+      expect(page.unreadableThreadIds).toEqual(status === 503 ? ['overlap'] : undefined)
+
+      // No history change has announced the disappearance. A definitive metadata
+      // 404 must still evict the summary from every cached list for this account.
+      const unchanged = gmail({ history: { historyId: '6000' } })
+      if (status === 404) {
+        expect((await syncThreads(unchanged.api, cache)).threads.map(({ id }) => id)).toEqual([
+          'retained',
+        ])
+      }
+      expect((await syncThreads(unchanged.api, cache, unread)).threads.map(({ id }) => id)).toEqual(
+        status === 404 ? ['retained'] : ['overlap', 'retained'],
+      )
+    },
+  )
 
   it('reports a failed deleted-message confirmation as pending until a fresh read', async () => {
     const first = gmail({ list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'Draft') } })

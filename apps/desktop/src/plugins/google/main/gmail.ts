@@ -348,6 +348,8 @@ export interface MailPage {
   threads: MailThreadSummary[]
   /** Unresolved metadata failures, including known failures outside this page on cached reads. */
   unreadableThreadIds?: string[]
+  /** Thread metadata 404s on a continuation, which may invalidate previously loaded rows. */
+  notFoundThreadIds?: string[]
   /** `null` when there is nothing more to load. */
   nextPageToken: string | null
   /** When these threads were actually obtained from Google, ISO. The footer
@@ -487,9 +489,16 @@ export async function fetchThreadPage(
     ids,
     knownAddresses,
   )
+  // A continuation can overlap earlier pages. Report definitive absence so
+  // the caller can evict a previously visible row instead of just skipping it.
+  const notFoundThreadIds =
+    options.pageToken === undefined
+      ? []
+      : outcomes.flatMap(({ id, kind }) => (kind === 'not-found' ? [id] : []))
   const page: MailPage = {
     threads,
     ...(unreadableThreadIds.length ? { unreadableThreadIds } : {}),
+    ...(notFoundThreadIds.length ? { notFoundThreadIds } : {}),
     nextPageToken,
     syncedAt: new Date().toISOString(),
   }

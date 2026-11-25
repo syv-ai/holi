@@ -72,6 +72,7 @@ export function useMailList(
           const replaced = new Set([
             ...page.threads.map(({ id }) => id),
             ...(page.unreadableThreadIds ?? []),
+            ...(page.notFoundThreadIds ?? []),
           ])
           return {
             ...page,
