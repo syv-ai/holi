@@ -135,7 +135,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   BOOL github = [endpoint isEqualToString:[NSString stringWithFormat:@"https://github.com%@", path]];
   BOOL loopback = endpoint.length <= 4096 && [components.scheme isEqualToString:@"https"] &&
       ([components.host isEqualToString:@"127.0.0.1"] || [components.host isEqualToString:@"::1"]) &&
-      components.port != nil && components.port > 0 && components.port <= 65535 &&
+      components.port != nil && components.port.longLongValue > 0 && components.port.longLongValue <= 65535 &&
       [components.percentEncodedPath isEqualToString:path] && !components.query && !components.fragment &&
       !components.user && !components.password;
   if (!validIdentity || (!github && !loopback)) {
