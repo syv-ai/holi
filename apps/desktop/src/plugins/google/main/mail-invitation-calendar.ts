@@ -192,26 +192,41 @@ function distinctSlots(a: string, b: string): boolean {
   return Number.isFinite(first) && Number.isFinite(second) && first !== second
 }
 
-/** Existence only: this deliberately cannot prove an exact RSVP scope. */
+type CalendarScope = Pick<CalendarLocator, 'recurrenceId' | 'occurrenceUnverified'>
+
+function eventLocatorScope(event: RawEvent): CalendarScope {
+  const instance = event.recurringEventId !== undefined || event.originalStartTime !== undefined
+  const recurrenceId = instance && usableEventLocator(event) ? occurrenceSlot(event) : null
+  return {
+    recurrenceId,
+    ...(instance && recurrenceId === null ? { occurrenceUnverified: true } : {}),
+  }
+}
+
+/** Existence only: an exact slot can rule out a different comparable slot.
+ * A root cannot rule out an occurrence (even without rules, e.g. a cancelled
+ * master), and an exception alone cannot establish absence of a root. This
+ * also applies to legacy locators that described a root as non-recurring. */
 export function calendarLocatorMayMatchScope(
-  copy: Pick<CalendarLocator, 'recurrenceId' | 'series' | 'occurrenceUnverified'>,
-  details: Parsed['details'],
+  copy: CalendarScope,
+  { recurrenceId }: Pick<Parsed['details']['identity'], 'recurrenceId'>,
 ): boolean {
-  const { recurrenceId } = details.identity
-  if (copy.occurrenceUnverified) return true
-  if (recurrenceId === null) return copy.recurrenceId === null || details.recurring
-  if (copy.recurrenceId === null) return copy.series !== false
-  return !distinctSlots(copy.recurrenceId, recurrenceId)
+  return (
+    copy.occurrenceUnverified === true ||
+    copy.recurrenceId === null ||
+    recurrenceId === null ||
+    !distinctSlots(copy.recurrenceId, recurrenceId)
+  )
 }
 
 async function exactCopies(
   api: GoogleApi,
   url: string,
-  uid: string,
-  recurrenceId: string | null,
+  identity: Parsed['details']['identity'],
   floating: boolean,
   observe: (event: RawEvent) => Promise<void>,
 ): Promise<RawEvent[]> {
+  const { uid, recurrenceId } = identity
   const events = await invitationPages<RawEvent>(
     api,
     url,
@@ -232,13 +247,17 @@ async function exactCopies(
   }
   // The unexpanded list contains the series master and sometimes exception
   // rows. No recurrence ID means the master, not any expanded occurrence.
-  const roots = events.filter((event) => !event.recurringEventId && !event.originalStartTime)
+  const possible = events.filter((event) =>
+    calendarLocatorMayMatchScope(eventLocatorScope(event), identity),
+  )
+  const roots = possible.filter((event) => !event.recurringEventId && !event.originalStartTime)
   if (new Set(events.map(({ id }) => id)).size !== events.length)
     throw new Error('Calendar returned duplicate event rows')
   // Any row for a floating series could occupy this wall-clock slot. An
   // empty UID collection is still meaningful; never query instances in a guessed zone.
-  if (floating) return events
+  if (floating) return possible
   const requireScope = (copies: RawEvent[]) => {
+    // Even rows ruled out as locators don't make a nonempty list proof of absence.
     if (events.length && !copies.length)
       throw new Error('Calendar returned events but could not verify this recurrence scope')
     return copies
@@ -246,7 +265,9 @@ async function exactCopies(
   if (recurrenceId === null) return requireScope(roots)
   if (roots.length > 1) throw new Error('Calendar returned ambiguous series rows')
   const matching = new Map(
-    events.filter((event) => sameOccurrence(event, recurrenceId)).map((event) => [event.id, event]),
+    possible
+      .filter((event) => sameOccurrence(event, recurrenceId))
+      .map((event) => [event.id, event]),
   )
   for (const series of roots) {
     if (!series.id || !series.recurrence?.length || series.status === 'cancelled') continue
@@ -411,7 +432,8 @@ async function lookupInvitationCalendarCopy(
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
 ): Promise<CalendarLookup> {
-  const { uid, recurrenceId } = invitation.details.identity
+  const { identity } = invitation.details
+  const { uid, recurrenceId } = identity
   const organizer = invitation.details.organizer?.email
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
@@ -446,21 +468,13 @@ async function lookupInvitationCalendarCopy(
           : Array.isArray(event.recurrence)
             ? event.recurrence.length > 0
             : undefined
-      const originalSlot = instance && usableEventLocator(event) ? occurrenceSlot(event) : null
-      // Do not retain a provably different occurrence for this lookup. An
-      // incomparable or missing original slot is still existence evidence.
-      if (
-        originalSlot !== null &&
-        recurrenceId !== null &&
-        distinctSlots(originalSlot, recurrenceId)
-      )
-        return
+      const scope = eventLocatorScope(event)
+      if (!calendarLocatorMayMatchScope(scope, identity)) return
       await remember({
         uid,
         organizer,
-        recurrenceId: originalSlot,
+        ...scope,
         series,
-        ...(instance && originalSlot === null ? { occurrenceUnverified: true } : {}),
         target: calendarCopyTarget(calendarResponseUrl(base, event), mailbox),
       })
     }
@@ -475,8 +489,7 @@ async function lookupInvitationCalendarCopy(
   const primary = await exactCopies(
     api,
     PRIMARY_EVENTS,
-    uid,
-    recurrenceId,
+    identity,
     floating,
     observeCopy(PRIMARY_EVENTS),
   )
@@ -519,8 +532,7 @@ async function lookupInvitationCalendarCopy(
     const events = await exactCopies(
       api,
       url,
-      uid,
-      recurrenceId,
+      identity,
       floating,
       observeCopy(url, calendar.id.toLowerCase(), calendar.accessRole === 'owner'),
     )

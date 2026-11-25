@@ -407,49 +407,40 @@ export function createSentCalendarLookup(
     message: ReturnType<typeof validateFullMessage>
     header: ReturnType<typeof messageIdClaims>
   }
-  type FullRead = { result: Promise<Snapshot | null>; sent: boolean }
-  const reads = new Map<string, FullRead>()
+  const reads = new Map<string, Promise<Snapshot | null>>()
   const search = new Map<string, Promise<Snapshot[] | null>>()
-  const complete = new Set<string>()
-  const threadSent = new Set(inThread.filter(({ sent }) => sent).map(({ messageId }) => messageId))
-  // Once an exact read is attempted, a stale thread label cannot restore its
-  // authority. Keep the thread's Message-ID claims for contestation.
-  const ownsSent = (reply: { rfcId: string | null; messageId: string }) =>
-    owners.owns(reply) && (reads.get(reply.messageId)?.sent ?? threadSent.has(reply.messageId))
-  // A complete (even empty) search checks ownership; only a successful full
-  // resource read can corroborate a stored anchor's SENT label.
-  const hasVerifiedSentOwner = (reply: { rfcId: string; messageId: string }) =>
-    complete.has(reply.rfcId) && reads.get(reply.messageId)?.sent === true && owners.owns(reply)
+  const verifiedReplies = new Map<string, CalendarMail>()
+  const hasVerifiedFullReply = (mail: CalendarMail) =>
+    verifiedReplies.get(mail.messageId) === mail && owners.owns(mail)
+  // Once an exact read is attempted, only an assessed full envelope can give
+  // positive evidence. The old envelope still contributes claims and can contest.
+  const ownsSent = (mail: CalendarMail) =>
+    mail.sent && (reads.has(mail.messageId) ? hasVerifiedFullReply(mail) : owners.owns(mail))
   const read = async (id: string, fromIndex = false) => {
     let request = reads.get(id)
     // An individual GET can return 404 before the index makes the resource
     // readable. An index row still needs a successful full read.
-    if (fromIndex && request && (await request.result) === null && reads.get(id) === request)
+    if (fromIndex && request && (await request) === null && reads.get(id) === request)
       request = undefined
     if (!request) {
       scan.evidenceRead()
-      const full: FullRead = {
-        sent: false,
-        result: api
-          .get<RawMessage>(`${GMAIL_BASE}/messages/${encodeURIComponent(id)}`, { format: 'full' })
-          .then((raw) => {
-            const message = validateFullMessage(raw, id)
-            const header = messageIdClaims(message.payload)
-            owners.index(message.id, header)
-            full.sent = message.labelIds?.includes('SENT') ?? false
-            return { message, header }
-          })
-          .catch((error) => {
-            if (error instanceof GoogleApiError && error.code === 'not-found') return null
-            if (error instanceof SyntaxError)
-              throw new CalendarScanError('Gmail returned an invalid full message response')
-            throw error
-          }),
-      }
-      reads.set(id, full)
-      request = full
+      request = api
+        .get<RawMessage>(`${GMAIL_BASE}/messages/${encodeURIComponent(id)}`, { format: 'full' })
+        .then((raw) => {
+          const message = validateFullMessage(raw, id)
+          const header = messageIdClaims(message.payload)
+          owners.index(message.id, header)
+          return { message, header }
+        })
+        .catch((error) => {
+          if (error instanceof GoogleApiError && error.code === 'not-found') return null
+          if (error instanceof SyntaxError)
+            throw new CalendarScanError('Gmail returned an invalid full message response')
+          throw error
+        })
+      reads.set(id, request)
     }
-    return request.result
+    return request
   }
   async function exact(rfcId: string): Promise<Snapshot[] | null> {
     scan.evidenceRead()
@@ -509,7 +500,6 @@ export function createSentCalendarLookup(
       else found.push(snapshot)
     }
     if (incomplete) return null
-    complete.add(rfcId)
     return found
   }
   async function gather(rfcId: string, receipt: CalendarReplyReceipt | null) {
@@ -521,32 +511,37 @@ export function createSentCalendarLookup(
     }
     const indexed = await request
     if (indexed === null) return null
-    const direct = receipt?.id ? await reads.get(receipt.id)?.result : undefined
+    const direct = receipt?.id ? await reads.get(receipt.id) : undefined
     // Even after a direct 404, the index cannot change the receipt's thread.
-    if (direct && receipt?.threadId && direct.message.threadId !== receipt.threadId) {
-      complete.delete(rfcId)
-      return null
-    }
+    if (direct && receipt?.threadId && direct.message.threadId !== receipt.threadId) return null
     return direct
       ? [direct, ...indexed.filter(({ message }) => message.id !== direct.message.id)]
       : indexed
   }
   return {
     ownsSent,
-    hasVerifiedSentOwner,
-    async checkAnchor({ rfcId, messageId }: { rfcId: string; messageId: string }) {
-      await gather(rfcId, { id: messageId, threadId: null })
-    },
+    hasVerifiedFullReply,
+    wasRead: (messageId: string) => reads.has(messageId),
+    threadEvidence: () => inThread.map((mail) => verifiedReplies.get(mail.messageId) ?? mail),
     async findReply(
       rfcId: string,
       receipt: CalendarReplyReceipt | null,
       assess: (message: CalendarMail) => Promise<'match' | 'related' | 'unresolved' | null>,
+      { requireLocator = false } = {},
     ): Promise<{
       mail: CalendarMail | null
       contestedTimestamp: number | null
       unresolvedReply: boolean
     }> {
-      const sources = await gather(rfcId, receipt)
+      // A thread hit can locate the full resource when send returned no ID
+      // and the account-wide index has not caught up. It cannot prove it.
+      const visible =
+        !receipt?.id &&
+        inThread.find((mail) => mail.sent && mail.rfcId === rfcId && owners.owns(mail))
+      const locator = visible
+        ? { id: visible.messageId, threadId: receipt?.threadId ?? visible.threadId }
+        : receipt
+      const sources = await gather(rfcId, locator)
       if (sources === null) return { mail: null, contestedTimestamp: null, unresolvedReply: true }
       const candidates = new Map<string, CalendarMail | null>()
       for (const mail of inThread) {
@@ -558,26 +553,30 @@ export function createSentCalendarLookup(
         if (candidates.has(message.id) || header.claims.has(rfcId))
           candidates.set(
             message.id,
-            header.claims.has(rfcId) ? calendarEnvelope(api, message, scan, header) : null,
+            header.claims.has(rfcId)
+              ? (verifiedReplies.get(message.id) ?? calendarEnvelope(api, message, scan, header))
+              : null,
           )
       }
       let contestedTimestamp = 0
       let unordered = false
-      let unresolvedReply = false
+      let unresolvedReply = Boolean(locator?.id)
       const sourceIds = new Set(sources.map(({ message }) => message.id))
       for (const mail of candidates.values()) {
         if (!mail) continue
         const evidence = await assess(mail)
         if (!evidence) continue
         if (evidence === 'unresolved') unresolvedReply = true
-        if (ownsSent(mail)) {
+        const full = sourceIds.has(mail.messageId)
+        if (mail.sent && owners.owns(mail) && (full || !reads.has(mail.messageId))) {
           const matchesLocator =
-            !receipt?.id ||
-            (mail.messageId === receipt.id &&
-              (!receipt.threadId || mail.threadId === receipt.threadId))
-          if (evidence === 'match' && (matchesLocator || sourceIds.has(mail.messageId)))
+            mail.messageId === receipt?.id &&
+            (!receipt.threadId || mail.threadId === receipt.threadId)
+          if (evidence === 'match' && full && (!requireLocator || matchesLocator)) {
+            verifiedReplies.set(mail.messageId, mail)
             return { mail, contestedTimestamp: 0, unresolvedReply: false }
-          if (evidence !== 'unresolved') continue
+          }
+          if (evidence !== 'unresolved' && !(evidence === 'match' && !full)) continue
         }
         // Ordered but contested or unreadable evidence may set a floor for an
         // independent newer answer. It neither confirms the write nor proves its parent.

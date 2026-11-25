@@ -52,7 +52,7 @@ export type ParentAnchor = {
   organizer: string
   mailbox: string
   /** Legacy anchors without a receipt locator cannot provide independent proof. */
-  reply?: { rfcId: string; messageId: string }
+  reply?: { rfcId: string; messageId: string; threadId?: string | null; answer?: InviteAnswer }
 }
 
 /** Existence evidence only, retained independently of confirmation and ETags. */
@@ -142,7 +142,14 @@ function isParentAnchor(value: unknown): value is ParentAnchor {
     text(value.organizer) &&
     text(value.mailbox) &&
     (value.reply === undefined ||
-      (record(value.reply) && text(value.reply.rfcId) && text(value.reply.messageId)))
+      (record(value.reply) &&
+        text(value.reply.rfcId) &&
+        text(value.reply.messageId) &&
+        (value.reply.threadId === undefined || nullableText(value.reply.threadId)) &&
+        (value.reply.answer === undefined ||
+          value.reply.answer === 'accepted' ||
+          value.reply.answer === 'tentative' ||
+          value.reply.answer === 'declined')))
   )
 }
 
@@ -278,10 +285,12 @@ export function knownCalendarLocators({ attempts, calendarLocators }: Journal): 
   ]
 }
 
-function anchorFor({ accountSub, revision, delivery }: InvitationAttempt): ParentAnchor[] {
+function anchorFor({ accountSub, revision, delivery, answer }: InvitationAttempt): ParentAnchor[] {
   if (delivery.channel !== 'gmail') return []
   const { parent, organizer, mailbox, receipt, rfcId } = delivery
-  const reply = receipt?.id ? { rfcId, messageId: receipt.id } : undefined
+  const reply = receipt?.id
+    ? { rfcId, messageId: receipt.id, threadId: receipt.threadId, answer }
+    : undefined
   return [{ accountSub, revision, parent, organizer, mailbox, reply }]
 }
 

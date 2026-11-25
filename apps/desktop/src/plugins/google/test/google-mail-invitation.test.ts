@@ -218,6 +218,7 @@ async function rig() {
     refreshOnPrimaryCopy: false,
     onRefresh: async () => {},
     sent: new Map<string, ReturnType<typeof gmailMessage>>(),
+    fullSentMessage: (message: ReturnType<typeof gmailMessage>) => message,
     sentVisible: true,
     sentIndexed: true,
     sentInternalDate: null as number | null,
@@ -295,7 +296,7 @@ async function rig() {
           state.receiptError,
         )
       const message = state.sentVisible ? state.sent.get(messagePath[1]!) : undefined
-      return message ? json(message) : json({}, 404)
+      return message ? json(state.fullSentMessage(message)) : json({}, 404)
     }
     const attachment = /\/messages\/([^/]+)\/attachments\/([^/]+)$/.exec(url.pathname)
     if (attachment) {
@@ -1592,6 +1593,65 @@ it('uses the selected mail cancellation at the original slot when joining a seri
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
+it('skips a disputed occurrence for series Join until a newer request reinstates that slot', async () => {
+  const { state, read, list } = await rig()
+  state.messages[0] = gmailMessage(
+    'update',
+    200,
+    invite().replace('END:VEVENT', 'RRULE:FREQ=WEEKLY\r\nEND:VEVENT'),
+  )
+  const master = event({ id: 'series', series: true })
+  const first = upcomingInstance('first', '2099-07-09', 'https://meet.google.com/xyz-abcd-efg')
+  const next = upcomingInstance('next', '2099-07-16', 'https://meet.google.com/klm-nopq-rst')
+  state.events.set('primary', [master])
+  state.instances.set('primary', [first, next])
+  const series = () => read(thread, 'series')
+  const original = await series()
+  expect(original).toMatchObject({ canRespond: true, conferenceUrl: first.hangoutLink })
+
+  const atSlot = (source: string) =>
+    source.replace('END:VEVENT', 'RECURRENCE-ID:20990709T150000Z\r\nEND:VEVENT')
+  const stamp = '20240702T090000Z'
+  const request = (dtstamp: string) =>
+    atSlot(
+      invite('REQUEST', 'DTSTART:20990709T150000Z\r\nDTEND:20990709T160000Z', 3, dtstamp),
+    ).replace('https://meet.google.com/abc-defg-hij', first.hangoutLink)
+  state.messages.push(
+    gmailMessage('slot-request', 300, request(stamp)),
+    gmailMessage('slot-cancel', 400, atSlot(invite('CANCEL', 'STATUS:CANCELLED', 3, stamp))),
+  )
+  expect((await list()).invitations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ scope: 'occurrence', canRespond: false, responseTargetKey: null }),
+      expect.objectContaining({
+        scope: 'series',
+        canRespond: true,
+        responseTargetKey: original!.responseTargetKey,
+        conferenceUrl: next.hangoutLink,
+        htmlLink: next.htmlLink,
+      }),
+    ]),
+  )
+
+  state.messages.push(
+    gmailMessage('slot-reinstated', 500, request('20240703T090000Z')),
+    // A dispute at the same wall-clock slot on another UID does not suppress this series.
+    gmailMessage('other-request', 600, request(stamp).replace('folded-uid', 'other-series')),
+    gmailMessage(
+      'other-cancel',
+      700,
+      atSlot(invite('CANCEL', 'STATUS:CANCELLED', 3, stamp)).replace('folded-uid', 'other-series'),
+    ),
+  )
+  expect(await series()).toMatchObject({
+    canRespond: true,
+    responseTargetKey: original!.responseTargetKey,
+    conferenceUrl: first.hangoutLink,
+    htmlLink: first.htmlLink,
+  })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
 it('uses only verified upcoming links for a series export by the organizer', async () => {
   const { state, read, respond } = await rig()
   const source = invite()
@@ -1707,23 +1767,36 @@ it('returns independent series and original occurrence cards and updates only th
   expect(state.sendAttempts).toBe(0)
 })
 
-it.each(['occurrence', 'series'] as const)(
-  'does not fall back to Gmail when Calendar has same-UID rows but cannot verify the %s',
-  async (scope) => {
-    const { state, read, respond } = await rig()
-    const recurrence =
-      scope === 'occurrence' ? 'RECURRENCE-ID:20240711T150000Z' : 'RRULE:FREQ=WEEKLY'
-    state.messages = [
-      gmailMessage('update', 200, invite().replace('END:VEVENT', `${recurrence}\r\nEND:VEVENT`)),
-    ]
-    state.events.set('primary', [event({ occurrence: scope === 'series' })])
+it.each([
+  { scope: 'occurrence', row: 'root', recurrence: 'RECURRENCE-ID:20240711T150000Z' },
+  { scope: 'occurrence', row: 'cancelled root', recurrence: 'RECURRENCE-ID:20240711T150000Z' },
+  { scope: 'series', row: 'exception', recurrence: 'RRULE:FREQ=WEEKLY' },
+  { scope: 'single', row: 'exception', recurrence: '' },
+] as const)(
+  'retains the same-UID $row as possible Calendar evidence for a $scope invitation',
+  async ({ scope, row, recurrence }) => {
+    const { state, read, restart } = await rig()
+    const request = invite().replace(
+      'END:VEVENT',
+      recurrence ? `${recurrence}\r\nEND:VEVENT` : 'END:VEVENT',
+    )
+    state.messages = [gmailMessage('update', 200, request)]
+    const copy = event({ occurrence: row === 'exception' })
+    if (row === 'cancelled root') copy.status = 'cancelled'
+    state.events.set('primary', [copy])
     expect(await read()).toMatchObject({ scope, canRespond: false })
-    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    if (row === 'cancelled root') expect(await read()).toMatchObject({ cancelled: true })
+
+    // events.list is complete but now omits the same still-readable resource.
+    state.primaryPages = [{ kind: 'calendar#events' }]
+    const reopened = restart()
+    expect(await reopened.read()).toMatchObject({ scope, canRespond: false })
+    await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
     expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 
     state.events.clear()
-    expect(await read()).toMatchObject({ scope, canRespond: true })
-    expect(await respond('accepted')).toMatchObject({
+    expect(await reopened.read()).toMatchObject({ scope, canRespond: true })
+    expect(await reopened.respond('accepted')).toMatchObject({
       channel: 'gmail',
       outcome: 'sent',
       refreshPending: false,
@@ -3058,7 +3131,35 @@ it('scopes a Sent calendar leaf with ambiguous MIME declarations by parent and p
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
-it('does not settle a newer reservation through a compacted parent without a full Sent resource', async () => {
+const replyContradictions = ['To', 'From', 'parent', 'thread', 'scope', 'answer'] as const
+
+function contradictoryReply(
+  message: ReturnType<typeof gmailMessage>,
+  field: (typeof replyContradictions)[number],
+) {
+  const full = structuredClone(message)
+  if (field === 'To' || field === 'From') {
+    full.payload.headers.find(({ name }) => name === field)!.value = guest
+  } else if (field === 'parent') {
+    for (const header of full.payload.headers) {
+      if (header.name === 'In-Reply-To' || header.name === 'References')
+        header.value = '<different-request@example.net>'
+    }
+  } else if (field === 'thread') {
+    full.threadId = 'different-thread'
+  } else {
+    const body = full.payload.parts[1]!.body
+    const source = Buffer.from(body.data!, 'base64url').toString('utf8')
+    const changed =
+      field === 'scope'
+        ? source.replace('folded-uid', 'other-event')
+        : source.replace('PARTSTAT=ACCEPTED', 'PARTSTAT=DECLINED')
+    Object.assign(body, { data: wire(changed), size: Buffer.byteLength(changed) })
+  }
+  return full
+}
+
+it('does not settle a newer reservation through a compacted parent without a corroborating full Sent envelope', async () => {
   const { state, read, respond, restart } = await rig()
   const parent = '<update@example.net>'
   await read()
@@ -3071,14 +3172,16 @@ it('does not settle a newer reservation through a compacted parent without a ful
   const anchorReply = state.sent.get('reply-1')!
   const later = { ...acceptedReply(parent), internalDate: '1200' }
   const reopened = restart()
-  const staleAnchor = { ...anchorReply }
+  const staleAnchor = structuredClone(anchorReply)
   state.messages.push(later, staleAnchor)
   state.sentIndexed = false
-  // An empty search is fine when the full anchor GET still corroborates SENT.
+  // An empty search is fine when the full anchor GET corroborates the reply.
   expect(await reopened.read()).toMatchObject({ sentResponseStatus: 'accepted', canRespond: true })
-  // The full resource still owns its RFC Message-ID, but the SENT search is empty.
-  anchorReply.labelIds = ['INBOX']
   const blocked = { sentResponseStatus: null, responseStatus: null, canRespond: false }
+  // The exact resource still owns its RFC Message-ID and is labelled SENT.
+  state.sent.set(anchorReply.id, contradictoryReply(anchorReply, 'To'))
+  expect(await reopened.read()).toMatchObject(blocked)
+  state.sent.set(anchorReply.id, { ...anchorReply, labelIds: ['INBOX'] })
   expect(await reopened.read()).toMatchObject(blocked)
   await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   state.messages.splice(-2)
@@ -3108,7 +3211,11 @@ it('does not settle a newer reservation through a compacted parent without a ful
   expect(await reopened.read()).toMatchObject({ ...blocked, responsePending: true })
   await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
 
-  anchorReply.labelIds = ['SENT']
+  for (const field of replyContradictions) {
+    state.sent.set(anchorReply.id, contradictoryReply(anchorReply, field))
+    expect(await reopened.read(), field).toMatchObject({ ...blocked, responsePending: true })
+  }
+
   state.sent.set(anchorReply.id, anchorReply)
   expect(await reopened.read()).toMatchObject({
     sentResponseStatus: 'accepted',
@@ -3118,6 +3225,36 @@ it('does not settle a newer reservation through a compacted parent without a ful
   })
   expect(await reopened.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
   expect(state.sendAttempts).toBe(3)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it('settles a new in-thread receipt only from a corroborating full Sent envelope', async () => {
+  const { state, read, respond, restart } = await rig()
+  state.sentIndexed = false
+  state.fullSentMessage = (message) => contradictoryReply(message, 'To')
+  await read()
+  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', refreshPending: true })
+
+  const reopened = restart()
+  for (const field of replyContradictions) {
+    state.fullSentMessage = (message) => contradictoryReply(message, field)
+    expect(await reopened.read(), field).toMatchObject({
+      sentResponseStatus: null,
+      responseStatus: null,
+      responsePending: true,
+      canRespond: false,
+    })
+  }
+  await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  state.fullSentMessage = (message) => message
+  expect(await reopened.read()).toMatchObject({
+    sentResponseStatus: 'accepted',
+    responsePending: false,
+    canRespond: true,
+  })
+  expect(await reopened.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
+  expect(state.sendAttempts).toBe(1)
   expect(state.calendarPatchAttempts).toBe(0)
 })
 
