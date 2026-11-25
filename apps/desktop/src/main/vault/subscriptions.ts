@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { isRemote, isSecretPath, isLocalOnlyPath, isInIgnoredDir, vaultRelPath } from '@holi/shared'
@@ -100,9 +100,43 @@ export function createSubscriptions(file: string) {
       const normalized = path === '' ? '' : vaultRelPath(path)
       if (normalized !== path || isSecretPath(normalized))
         throw new Error('This path cannot be subscribed.')
-      return (
-        (await store.read()).remotes[remote]?.find((scope) => scope.path === normalized) ?? null
-      )
+      return (await store.read()).remotes[remote]?.find((scope) => scope.path === path) ?? null
+    },
+    coveringScopeNow(
+      remote: string,
+      path: string,
+    ): {
+      scope: SubscriptionScope | null
+      isCurrent: () => boolean
+    } | null {
+      if (!isRemote(remote) || !validPath(path)) return null
+      try {
+        const text = readFileSync(file, 'utf8')
+        const scopes = parseSubscription(JSON.parse(text), text).remotes[remote] ?? []
+        const scope =
+          scopes
+            .filter(
+              (item) => item.path === path || item.path === '' || path.startsWith(`${item.path}/`),
+            )
+            .sort((a, b) => b.path.length - a.path.length)[0] ?? null
+        const identity = statSync(file, { bigint: true })
+        const fingerprint = `${identity.dev}:${identity.ino}:${identity.mtimeNs}:${identity.size}`
+        return {
+          scope,
+          isCurrent: () => {
+            try {
+              const current = statSync(file, { bigint: true })
+              return (
+                `${current.dev}:${current.ino}:${current.mtimeNs}:${current.size}` === fingerprint
+              )
+            } catch {
+              return false
+            }
+          },
+        }
+      } catch {
+        return null
+      }
     },
     async hasExplicit(remote: string): Promise<boolean> {
       if (!isRemote(remote)) return false
@@ -255,6 +289,10 @@ export function createSeenRevisions(file: string) {
       path: string,
       revision: string,
       isAncestor: (ancestor: string, descendant: string) => Promise<boolean>,
+      ownership?: {
+        stillOwned?: () => boolean | Promise<boolean>
+        publishOwned?: () => boolean
+      },
     ): Promise<SeenRevision> {
       if (
         !isRemote(remote) ||
@@ -264,30 +302,34 @@ export function createSeenRevisions(file: string) {
       )
         throw new Error('Invalid seen revision or path.')
       let answer: SeenRevision | undefined
-      await store.update(async (state) => {
-        const files = state.remotes[remote] ?? Object.create(null)
-        const normalizedRevision = revision.toLowerCase()
-        const current = Object.hasOwn(files, path) ? files[path] : undefined
-        if (current?.seen === normalizedRevision) {
-          answer = current
-          return state
-        }
-        if (current && !(await isAncestor(current.seen, normalizedRevision))) {
-          if (await isAncestor(normalizedRevision, current.seen)) {
+      await store.update(
+        async (state) => {
+          const files = state.remotes[remote] ?? Object.create(null)
+          const normalizedRevision = revision.toLowerCase()
+          const current = Object.hasOwn(files, path) ? files[path] : undefined
+          if (current?.seen === normalizedRevision) {
             answer = current
             return state
           }
-          throw new Error(
-            'Seen revision history diverged or is unavailable; review state was not changed.',
-          )
-        }
-        answer = { seen: normalizedRevision, previous: current?.seen ?? null }
-        const updatedFiles = Object.assign(Object.create(null), files, { [path]: answer })
-        const remotes = Object.assign(Object.create(null), state.remotes, {
-          [remote]: updatedFiles,
-        })
-        return { ...state, remotes }
-      })
+          if (current && !(await isAncestor(current.seen, normalizedRevision))) {
+            if (await isAncestor(normalizedRevision, current.seen)) {
+              answer = current
+              return state
+            }
+            throw new Error(
+              'Seen revision history diverged or is unavailable; review state was not changed.',
+            )
+          }
+          answer = { seen: normalizedRevision, previous: current?.seen ?? null }
+          const updatedFiles = Object.assign(Object.create(null), files, { [path]: answer })
+          const remotes = Object.assign(Object.create(null), state.remotes, {
+            [remote]: updatedFiles,
+          })
+          return { ...state, remotes }
+        },
+        ownership?.stillOwned,
+        ownership?.publishOwned,
+      )
       return answer!
     },
   }

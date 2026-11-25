@@ -13,6 +13,21 @@ export function planMoveInto(docPaths: string[], sources: string[], destFolder: 
     .filter((m) => m.from !== m.to)
 }
 
+/** The folders among `sources` (those in `dirs`), each with where it lands in
+ *  `destFolder`: what main carries after the files, so an empty folder moves and
+ *  a folder's `.gitkeep` and ignored files do not stay behind. */
+export function planMoveFolders(
+  dirs: Iterable<string>,
+  sources: string[],
+  destFolder: string,
+): Move[] {
+  const known = new Set(dirs)
+  return sources
+    .filter((source) => known.has(source))
+    .map((from) => ({ from, to: joinPath(destFolder, basename(from)) }))
+    .filter((m) => m.from !== m.to)
+}
+
 /** Rename a folder to `newName` under its parent: the new path, the files it holds
  *  (empty ⇒ a transient folder the caller renames client-side), and the moves. */
 export function planRenameFolder(

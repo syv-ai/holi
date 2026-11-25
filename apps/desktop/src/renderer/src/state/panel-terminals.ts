@@ -40,7 +40,10 @@ export function registerTerminalSink(id: string, write: (data: string) => void):
  */
 export function folderName(label: string): string {
   if (label === '/' || label === '~') return label
-  const parts = label.split('/').filter(Boolean)
+  // A backslash separates only in a Windows-shaped label (`C:\…`, `~\…`, `\\host\…`);
+  // elsewhere it is a character in a folder's name.
+  const windows = /^([A-Za-z]:|~\\|\\\\)/.test(label)
+  const parts = label.split(windows ? /[\\/]/ : '/').filter(Boolean)
   return parts.at(-1) ?? label
 }
 

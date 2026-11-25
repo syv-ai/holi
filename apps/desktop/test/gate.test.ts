@@ -20,7 +20,19 @@ type Message = { ruleId: string | null; message: string; line: number }
 const results = new Map<string, Message[]>()
 
 beforeAll(async () => {
-  const eslint = new ESLint({ cwd, overrideConfigFile: `${cwd}/eslint.config.mjs` })
+  const eslint = new ESLint({
+    cwd,
+    overrideConfigFile: `${cwd}/eslint.config.mjs`,
+    // Resolve fixture imports without indexing the whole application project.
+    overrideConfig: {
+      settings: {
+        'import/resolver': {
+          typescript: { alwaysTryTypes: true, project: `${cwd}/test/fixtures/gate/tsconfig.json` },
+          node: true,
+        },
+      },
+    },
+  })
   for (const r of await eslint.lintFiles([`${G}/**/*.{ts,tsx}`])) {
     results.set(
       r.filePath.slice(r.filePath.indexOf(`${G}/`) + G.length + 1),

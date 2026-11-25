@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, afterAll } from 'vitest'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
 import {
   moveCrashCases,
@@ -17,16 +20,18 @@ import { stagingDirectory } from '../app/storage-staging'
 
 const runId = '11111111-1111-1111-1111-111111111111'
 const corpus = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
+const fixture = mkdtempSync(join(tmpdir(), 'holi-719-host-'))
+afterAll(() => rmSync(fixture, { recursive: true, force: true }))
 const context = {
   runId,
   launchedAt: 100,
   now: 200,
   osVersion: '26.2',
-  storageRoot: '/sandbox/Documents',
-  library: '/sandbox/Library',
+  storageRoot: join(fixture, 'Documents'),
+  library: join(fixture, 'Library'),
 }
 const rawNames = ['Café.md', 'Cafe\u0301.md'].map((name, index) => ({
-  root: `/sandbox/Documents/holi-raw-${runId}-${index}`,
+  root: `${context.storageRoot}/holi-raw-${runId}-${index}`,
   name,
   names: [name],
   aliasRejected: true,
@@ -73,6 +78,13 @@ const report = {
     helpersDisabled: true,
     remoteConstrained: true,
     unsafeConfigRejected: true,
+    queuedFetchDuringSave: true,
+    queuedFetchFinalBytes: true,
+    conflictingMoveFetchRejected: true,
+    conflictingMoveBytesPreserved: true,
+    conflictingMoveJournalPreserved: true,
+    conflictingMoveRoot: join(context.storageRoot, `holi-git-move-recovery-${runId}`),
+    conflictingMoveJournalName: 'move-30000000-0000-4000-8000-000000000719.json',
   },
   storage: {
     schemaVersion: 3,
@@ -91,16 +103,16 @@ const report = {
     symlinkRejected: true,
     finalBytes: 'winner A',
   },
-  storageRoot: `/sandbox/Documents/holi-storage-check-${runId}`,
+  storageRoot: `${context.storageRoot}/holi-storage-check-${runId}`,
   prefixNamespace: (() => {
-    const prefix = `/sandbox/Documents/holi-prefix-${runId}-`
+    const prefix = `${context.storageRoot}/holi-prefix-${runId}-`
     const rootA = `${prefix}${'a'.repeat((32 - (Buffer.byteLength(prefix) % 32)) % 32)}`
     const rootB = `${rootA}x`
     return {
       rootA,
       rootB,
-      privateA: stagingDirectory('/sandbox/Library', rootA),
-      privateB: stagingDirectory('/sandbox/Library', rootB),
+      privateA: stagingDirectory(context.library, rootA),
+      privateB: stagingDirectory(context.library, rootB),
       bytesA: 'root A saved',
       bytesB: 'root B bytes',
       malformedReadRejected: true,
@@ -111,6 +123,65 @@ const report = {
     }
   })(),
 }
+
+const contentionRoot = join(context.storageRoot, `holi-git-${runId}-operation-gate`)
+mkdirSync(contentionRoot, { recursive: true })
+writeFileSync(join(contentionRoot, 'gate.md'), 'after')
+const recoveryRoot = report.git.conflictingMoveRoot
+const journalPath = join(
+  stagingDirectory(context.library, recoveryRoot),
+  report.git.conflictingMoveJournalName,
+)
+mkdirSync(recoveryRoot, { recursive: true })
+mkdirSync(stagingDirectory(context.library, recoveryRoot), { recursive: true })
+writeFileSync(join(recoveryRoot, 'from.md'), 'newer user bytes')
+const expectedJournal = JSON.stringify({
+  schema: 2,
+  root: recoveryRoot,
+  operationId: '30000000-0000-4000-8000-000000000719',
+  from: 'from.md',
+  to: 'to.md',
+  changes: [
+    { path: 'from.md', before: [...Buffer.from('original bytes')], after: null },
+    { path: 'to.md', before: null, after: [...Buffer.from('original bytes')] },
+  ],
+})
+writeFileSync(journalPath, expectedJournal)
+
+test('host rejects journal tampering and overwritten destination despite reported success', () => {
+  for (const mutate of [
+    (value) => {
+      value.schema = 1
+    },
+    (value) => {
+      value.operationId = runId
+    },
+    (value) => {
+      value.changes[0].before[0] ^= 1
+    },
+  ]) {
+    const changed = JSON.parse(expectedJournal)
+    mutate(changed)
+    writeFileSync(journalPath, JSON.stringify(changed))
+    try {
+      assert.throws(() => validateReport(report, context))
+    } finally {
+      writeFileSync(journalPath, expectedJournal)
+    }
+  }
+  writeFileSync(join(recoveryRoot, 'to.md'), 'overwritten')
+  try {
+    assert.throws(() => validateReport(report, context))
+  } finally {
+    rmSync(join(recoveryRoot, 'to.md'))
+  }
+  rmSync(journalPath)
+  try {
+    assert.throws(() => validateReport(report, context))
+  } finally {
+    writeFileSync(journalPath, expectedJournal)
+  }
+})
 
 test('host accepts only fresh complete native evidence for every bundled case', () => {
   assert.ok(corpus.total > 0)
@@ -408,6 +479,8 @@ test('native move crash matrix covers every durable event and rejects forged che
     readyAt: 120,
     operationId: '22222222-2222-4222-8222-222222222222',
   }
+  const fixture = mkdtempSync(join(tmpdir(), 'holi-719-host-'))
+  afterAll(() => rmSync(fixture, { recursive: true, force: true }))
   const context = {
     runId,
     caseInfo,

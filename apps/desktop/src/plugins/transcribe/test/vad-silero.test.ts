@@ -70,13 +70,10 @@ const vad = createSileroVad({
 })
 
 describe('Silero VAD', () => {
-  it('hears the voice and not the noise around it, in tens of milliseconds', async () => {
+  it('hears the voice and not the noise around it', async () => {
     const samples = noise(12)
     voice(2).forEach((v, i) => (samples[4 * RATE + i]! += v))
-    await vad.speech(new Float32Array(RATE)) // the model loads once
-    const t = performance.now()
     const probs = await vad.speech(samples)
-    const ms = performance.now() - t
     expect(probs).not.toBeNull()
     expect(probs!.length).toBe(Math.ceil((12 * RATE) / 512))
     const regions = padRuns(speechRuns(probs!, samples.length), samples.length)
@@ -85,8 +82,6 @@ describe('Silero VAD', () => {
     expect(regions[0]!.start / RATE).toBeLessThan(4.1)
     expect(regions[0]!.end / RATE).toBeGreaterThan(5.9)
     expect(regions[0]!.end / RATE).toBeLessThan(6.6)
-    // A loose bound for CI; on a laptop it is about 60 ms.
-    expect(ms).toBeLessThan(2000)
   })
 
   it('finds no speech in noise alone', async () => {

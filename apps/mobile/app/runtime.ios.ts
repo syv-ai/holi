@@ -4,10 +4,13 @@ import { createNativeFiles, nativeFiles } from './native-files.ios'
 import { runVaultStorageCheck } from './vault-storage-check'
 import { nativeIO } from './native-posix.ios'
 import { createVaultStorage } from './vault-storage'
+import { noteMetadataSettings } from './note-metadata-settings.ios'
+import { createNoteMetadata } from './note-metadata'
 import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
+import { runWorkingCopyCheck } from './working-copy-check.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -49,11 +52,28 @@ export async function checkCompatibility(): Promise<string> {
   let rawNames: unknown
   let prefixNamespace: Record<string, unknown>
   let git: Awaited<ReturnType<typeof runGitCompatibilityCheck>> | undefined
+  let workingCopy:
+    | (Awaited<ReturnType<typeof runWorkingCopyCheck>> & {
+        cases?: Awaited<ReturnType<typeof runWorkingCopyCheck>>[]
+      })
+    | undefined
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
     if (!['normal', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(launchPhase))
       throw new Error('Invalid storage phase')
+    phase = 'note-metadata'
+    operation = 'persist/reconstruct/remove'
+    const metadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
+    metadata.recent('diagnostic.md')
+    if (!metadata.visible(['diagnostic.md']).recents.includes('diagnostic.md'))
+      throw new Error('Note metadata persistence check failed')
+    const restoredMetadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
+    if (!restoredMetadata.visible(['diagnostic.md']).recents.includes('diagnostic.md'))
+      throw new Error('Note metadata reconstruction check failed')
+    restoredMetadata.remove('diagnostic.md')
+    phase = 'format-corpus'
+    operation = 'runVaultFormatCorpus'
     const corpus = runVaultFormatCorpus(nativeUtf8)
     if (launchPhase === 'move-stage' || launchPhase === 'move-recovery') {
       phase = launchPhase
@@ -80,6 +100,27 @@ export async function checkCompatibility(): Promise<string> {
     phase = 'native-git-transport'
     operation = 'runGitCompatibilityCheck'
     git = await runGitCompatibilityCheck(runId)
+    phase = 'native-working-copy-status'
+    operation = 'runWorkingCopyCheck'
+    const gitEnvironment = NSProcessInfo.processInfo.environment
+    const manifestPath = gitEnvironment.objectForKey('HOLI_GIT_FIXTURE_MANIFEST')
+    if (typeof manifestPath !== 'string') throw new Error('Missing working-copy fixture manifest')
+    const manifestText = File.fromPath(manifestPath).readTextSync((error) => {
+      if (error) throw error
+    })
+    const fixture = JSON.parse(manifestText) as {
+      cases: Array<{ name: string; root: string; remote: string; branch: string | null }>
+    }
+    if (!Array.isArray(fixture.cases) || fixture.cases.length === 0)
+      throw new Error('Working-copy fixture manifest has no cases')
+    const results = []
+    for (const item of fixture.cases) {
+      results.push(
+        await runWorkingCopyCheck(item.root, item.remote, item.branch ?? 'fixture-start'),
+      )
+    }
+    if (!results[0]) throw new Error('Missing status matrix results')
+    workingCopy = { ...results[0], cases: results }
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
@@ -268,6 +309,6 @@ export async function checkCompatibility(): Promise<string> {
       ...(git ? { git } : {}),
     }
   }
-  persist({ rawNames, ...evidence })
+  persist({ rawNames, workingCopy, ...evidence })
   return status
 }

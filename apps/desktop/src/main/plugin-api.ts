@@ -460,6 +460,8 @@ export {
   lockPath,
   pruneEmptiedFolder,
   removeDocFile,
+  pathUnderRoot,
+  typedVaultPath,
   withFileLock,
   withFileLocks,
   writeAtomic,
