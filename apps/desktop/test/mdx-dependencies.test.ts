@@ -116,8 +116,11 @@ describe('inspectMdxDependencies', () => {
     await mkdir(join(root, 'media'))
     await writeFile(join(root, 'media', 'font.woff2'), Buffer.from([0xff, 0xfe, 0x80]))
     await writeFile(join(root, 'media', 'photo.png'), Buffer.from([0x89, 0x50, 0xff]))
-    expect(await run("import './styles/main.css'")).toEqual([])
-    expect(inspected).toEqual(["import './styles/main.css'"])
+    const source = "import styles from './styles/main.css'"
+    expect(await run(source)).toEqual([])
+    expect(inspected).toEqual([source])
+    await rm(join(root, 'media', 'photo.png'))
+    expect(await run(source)).toHaveLength(1)
   })
 
   it('returns no diagnostics for a safe nested graph and diagnoses a missing child', async () => {
