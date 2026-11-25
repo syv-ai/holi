@@ -36,6 +36,8 @@ export interface StoredGoogleAuth {
   accessToken: string
   /** Epoch ms. */
   expiresAt: number
+  /** OAuth client that issued this grant. Missing only on legacy records. */
+  clientId?: string
   /** What was actually granted, so a failure can name the missing scope. */
   scopes: string[]
 }
@@ -136,6 +138,7 @@ function isStoredGoogleAuth(value: unknown): value is StoredGoogleAuth {
     typeof a.refreshToken === 'string' &&
     typeof a.accessToken === 'string' &&
     typeof a.expiresAt === 'number' &&
+    (a.clientId === undefined || typeof a.clientId === 'string') &&
     Array.isArray(a.scopes) &&
     a.scopes.every((s) => typeof s === 'string')
   )
