@@ -592,7 +592,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
   }
 
   const invitationTarget = async (
-    remote: string,
+    { remote, root }: { remote: string; root: string },
     {
       expectedAccountSub,
       threadId,
@@ -618,6 +618,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       accountSub: expectedAccountSub,
       bindingRevision: binding.revision,
       email,
+      readCalendarOverrides: () => overrides(root),
       assertBinding,
     }
   }
@@ -929,7 +930,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: invitationParams,
       run: (ctx, input) =>
         google(async () => {
-          const target = await invitationTarget(ctx.remote, input)
+          const target = await invitationTarget(ctx, input)
           const invitation = await mailInvitations().read(target)
           target.assertBinding()
           return invitation
@@ -953,7 +954,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: invitationResponseParams,
       run: (ctx, { identity, answer, expectedResponseTargetKey, ...target }) =>
         google(async () => {
-          const bound = await invitationTarget(ctx.remote, target)
+          const bound = await invitationTarget(ctx, target)
           const result = await mailInvitations().respond(
             bound,
             identity,

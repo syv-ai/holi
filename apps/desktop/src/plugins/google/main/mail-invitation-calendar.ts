@@ -7,6 +7,7 @@ import {
   PRIMARY_EVENTS,
   structuredConference,
   type CalendarListEntry,
+  type CalendarOverrides,
   type InviteAnswer,
   type RawEvent,
   type RsvpStatus,
@@ -512,15 +513,22 @@ export async function findInvitationCalendarCopy(
   invitation: InvitationTarget,
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
+  readCalendarOverrides: () => Promise<CalendarOverrides>,
 ): Promise<CalendarLookup> {
   try {
-    return await lookupInvitationCalendarCopy(api, invitation, mailbox, async (locator) => {
-      try {
-        await remember(locator)
-      } catch (cause) {
-        throw new CalendarObservationError('Could not retain a Calendar locator', { cause })
-      }
-    })
+    return await lookupInvitationCalendarCopy(
+      api,
+      invitation,
+      mailbox,
+      async (locator) => {
+        try {
+          await remember(locator)
+        } catch (cause) {
+          throw new CalendarObservationError('Could not retain a Calendar locator', { cause })
+        }
+      },
+      readCalendarOverrides,
+    )
   } catch (error) {
     if (error instanceof CalendarObservationError) throw error.cause
     if (error instanceof PossibleSeriesCancellation)
@@ -545,6 +553,7 @@ async function lookupInvitationCalendarCopy(
   invitation: InvitationTarget,
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
+  readCalendarOverrides: () => Promise<CalendarOverrides>,
 ): Promise<CalendarLookup> {
   const { identity } = invitation.details
   const { uid, recurrenceId } = identity
@@ -635,19 +644,15 @@ async function lookupInvitationCalendarCopy(
     kind: 'blocked',
     reason: 'More than one Calendar event matches this invitation',
   } as const
-  if (primary.length > 1) return ambiguous
-  if (primary[0])
-    return invitationCopy(
-      api,
-      PRIMARY_EVENTS,
-      primary[0],
-      invitation,
-      mailbox,
-      true,
-      observePrimary,
-    )
+  const primaryCopy = (event: RawEvent) =>
+    invitationCopy(api, PRIMARY_EVENTS, event, invitation, mailbox, true, observePrimary)
+  const { legacyJoinOnly } = invitation
+  if (!legacyJoinOnly) {
+    if (primary.length > 1) return ambiguous
+    if (primary[0]) return primaryCopy(primary[0])
+  }
 
-  const calendars = await invitationPages<CalendarListEntry>(
+  const calendars = await invitationPages<CalendarListEntry & { hidden?: boolean }>(
     api,
     `${BASE}/users/me/calendarList`,
     'calendar#calendarList',
@@ -657,20 +662,64 @@ async function lookupInvitationCalendarCopy(
       showHidden: 'true',
     },
   )
+  const overrides = legacyJoinOnly ? await readCalendarOverrides() : null
+  // Legacy Join follows the agenda's calendar selection: hidden and
+  // deselected calendars are not offered, and owned calendars default to on.
+  const enabled = (calendar: (typeof calendars)[number]) =>
+    calendar.hidden !== true &&
+    calendar.selected !== false &&
+    !calendar.deleted &&
+    calendar.accessRole !== 'freeBusyReader' &&
+    (overrides?.[calendar.id] ?? (calendar.primary === true || calendar.accessRole === 'owner'))
+  let sawIneligibleCopy = false
+  const navigationCandidates = (events: RawEvent[], calendarEnabled: boolean) => {
+    if (!legacyJoinOnly) return events
+    // exactCopies has already observed resources, including those that will
+    // never supply links. Ineligibility is not proof of absence.
+    const candidates = calendarEnabled
+      ? events.filter(
+          (event) =>
+            legacyMeetingIsVisible(event) ||
+            // The master still binds expanded occurrences. Their own self
+            // status determines Join, not the status on the series template.
+            (series && event.status !== 'cancelled' && event.recurrence?.length),
+        )
+      : []
+    if (candidates.length !== events.length) sawIneligibleCopy = true
+    return candidates
+  }
+  const validCalendar = (calendar: (typeof calendars)[number]) =>
+    (calendar.kind === undefined || calendar.kind === 'calendar#calendarListEntry') &&
+    safeCalendarId(calendar.id) &&
+    (calendar.primary === undefined || typeof calendar.primary === 'boolean') &&
+    (calendar.deleted === undefined || typeof calendar.deleted === 'boolean') &&
+    (!legacyJoinOnly ||
+      ((calendar.selected === undefined || typeof calendar.selected === 'boolean') &&
+        (calendar.hidden === undefined || typeof calendar.hidden === 'boolean'))) &&
+    (calendar.deleted ||
+      ['owner', 'writer', 'reader', 'freeBusyReader'].includes(calendar.accessRole ?? ''))
+  if (legacyJoinOnly && primary.length) {
+    // The alias locates the resource; the declared calendar ID keys its
+    // visibility and per-vault override. They are not interchangeable.
+    const declared = calendars.filter(({ primary }) => primary === true)
+    const [primaryCalendar] = declared
+    if (
+      declared.length > 1 ||
+      (primaryCalendar &&
+        (!validCalendar(primaryCalendar) ||
+          calendars.filter(({ id }) => id === primaryCalendar.id).length !== 1))
+    )
+      throw new Error('Invalid primary Calendar list entry')
+    const candidates = navigationCandidates(primary, !!primaryCalendar && enabled(primaryCalendar))
+    if (candidates.length > 1) return ambiguous
+    if (candidates[0]) return primaryCopy(candidates[0])
+  }
+
   let match: CalendarLookup | undefined
   const seen = new Set<string>()
   for (const calendar of calendars) {
-    if (
-      (calendar.kind !== undefined && calendar.kind !== 'calendar#calendarListEntry') ||
-      !safeCalendarId(calendar.id) ||
-      seen.has(calendar.id) ||
-      (calendar.primary !== undefined && typeof calendar.primary !== 'boolean') ||
-      (calendar.deleted !== undefined && typeof calendar.deleted !== 'boolean') ||
-      (!calendar.deleted &&
-        !['owner', 'writer', 'reader', 'freeBusyReader'].includes(calendar.accessRole ?? ''))
-    ) {
+    if (!validCalendar(calendar) || seen.has(calendar.id))
       throw new Error('Invalid Calendar list entry')
-    }
     seen.add(calendar.id)
     if (calendar.primary || calendar.deleted || calendar.accessRole === 'freeBusyReader') continue
     const url = `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`
@@ -684,13 +733,14 @@ async function lookupInvitationCalendarCopy(
       parentContext(ownedCalendar),
       observe,
     )
-    if (floating && events.length) return unmatchable
-    if (events.length > 1 || (events.length && match)) return ambiguous
-    if (events[0]) {
+    const candidates = navigationCandidates(events, enabled(calendar))
+    if (floating && candidates.length) return unmatchable
+    if (candidates.length > 1 || (candidates.length && match)) return ambiguous
+    if (candidates[0]) {
       match = invitationCopy(
         api,
         url,
-        events[0],
+        candidates[0],
         invitation,
         mailbox,
         calendar.accessRole === 'owner' || calendar.accessRole === 'writer',
@@ -700,7 +750,22 @@ async function lookupInvitationCalendarCopy(
       )
     }
   }
-  return match ?? { kind: 'absent' }
+  return (
+    match ??
+    (sawIneligibleCopy
+      ? { kind: 'blocked', reason: 'This Calendar copy is not visible for this meeting' }
+      : { kind: 'absent' })
+  )
+}
+
+function legacyMeetingIsVisible(event: RawEvent): boolean {
+  return (
+    event.status !== 'cancelled' &&
+    event.eventType !== 'workingLocation' &&
+    !event.attendees?.some(
+      ({ self, responseStatus }) => self === true && responseStatus === 'declined',
+    )
+  )
 }
 
 function uniqueSelfAttendee(event: RawEvent) {
@@ -841,6 +906,8 @@ function invitationCopy(
     allDay: event.start?.date !== undefined,
     location: event.location,
     ...links,
+    // Never fall back from an eligible legacy instance to a declined master.
+    htmlLink: invitation.legacyJoinOnly && !legacyMeetingIsVisible(event) ? null : links.htmlLink,
     responseStatus,
     cancelled,
     unavailableReason: reason,
@@ -860,7 +927,7 @@ function invitationCopy(
             const membership = invitationMembership(row, slot, mailbox, owned, ownedCalendar)
             return membership.allowed && !membership.organizerConflict
           },
-          navigationWindow(invitation.legacyJoinOnly),
+          invitation.legacyJoinOnly,
         )
         if (upcoming) return { kind: 'series', links: upcoming }
         return invitation.legacyJoinOnly ? { kind: 'withheld' } : { kind: 'series' }
@@ -873,7 +940,11 @@ function invitationCopy(
           event,
           uid,
           recurrenceId,
-          observeUidQuery(uid, observe, primary),
+          observeUidQuery(
+            uid,
+            observe,
+            primary && { ...primary, parentId: event.recurringEventId },
+          ),
         ))
       )
         return { kind: 'withheld' }
@@ -1012,6 +1083,7 @@ async function legacyMeetingIsCurrent(
         (row) =>
           row.id === event.id &&
           usableInvitationEvent(row) &&
+          legacyMeetingIsVisible(row) &&
           coherentEventTimes(row) &&
           calendarProof(row) === calendarProof(event),
       )
@@ -1059,7 +1131,7 @@ async function currentDateOccurrence(
     row &&
     usableInvitationEvent(row) &&
     coherentEventTimes(row) &&
-    row.status !== 'cancelled' &&
+    legacyMeetingIsVisible(row) &&
     row.start?.date !== undefined &&
     row.iCalUID === uid &&
     row.recurringEventId === selected.recurringEventId &&
@@ -1079,8 +1151,9 @@ async function upcomingInvitationLinks(
   observe: (event: RawEvent) => Promise<void>,
   selectSlot: (slot: string) => InvitationRevision | false | null,
   bindsSlot: (event: RawEvent, slot: InvitationRevision) => boolean,
-  { timeMin, includesEnd }: ReturnType<typeof navigationWindow>,
+  legacyJoinOnly: boolean,
 ): Promise<InvitationLinks | null> {
+  const { timeMin, includesEnd } = navigationWindow(legacyJoinOnly)
   let pageToken: string | undefined
   const seen = new Set<string>()
   try {
@@ -1113,6 +1186,7 @@ async function upcomingInvitationLinks(
         instance.recurringEventId === master.id &&
         instance.organizer?.email?.toLowerCase() === organizer &&
         instance.status !== 'cancelled' &&
+        (!legacyJoinOnly || legacyMeetingIsVisible(instance)) &&
         coherentEventTimes(instance) &&
         (instance.start?.date !== undefined) === (master.start?.date !== undefined) &&
         includesEnd(instance)

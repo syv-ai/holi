@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { GoogleApiError, type GoogleApi } from './api'
-import type { InviteAnswer, RsvpStatus } from './calendar'
+import type { CalendarOverrides, InviteAnswer, RsvpStatus } from './calendar'
 import {
   calendarTargetIsMailbox,
   findInvitationCalendarCopy,
@@ -56,6 +56,7 @@ export type InvitationReadTarget = {
   accountSub: string
   bindingRevision: string
   email: string
+  readCalendarOverrides: () => Promise<CalendarOverrides>
   assertBinding: () => void
 }
 type Scan = ReturnType<typeof createCalendarScan>
@@ -485,8 +486,13 @@ export function createMailInvitationReconciler(
     for (const entry of scopes) {
       const invitation = invitationFor(entry)
       if (!invitation) continue
-      const copy = await findInvitationCalendarCopy(api, invitation, email, (locator) =>
-        store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
+      const copy = await findInvitationCalendarCopy(
+        api,
+        invitation,
+        email,
+        (locator) =>
+          store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
+        target.readCalendarOverrides,
       )
       copies.set(scopeKey(invitation.details.identity), copy)
     }

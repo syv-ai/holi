@@ -574,6 +574,7 @@ async function run() {
       mark('gmail-refusal-retains-old-response-and-retry-does-not-send')
       await pause(700)
       const beforeSent = transport.snapshot()
+      transport.collideNextSendInTrash()
       const releaseSent = transport.holdSentAcknowledgement()
       try {
         await click('Accept', card)
@@ -583,15 +584,37 @@ async function run() {
       } finally {
         releaseSent()
       }
-      await expectStatus('Google accepted your response.')
-      await expectStatus('Response: Accepted')
-      assert(!(await js(`!!(${target('Retry', card)})`)))
+      await expectStatus('Google accepted your response; waiting for it to appear.')
+      await until('ambiguous receipt offers a read-only Retry', () =>
+        js(`(${target('Retry', card)})?.disabled === false`),
+      )
+      assert(!(await readCard()).includes('Response: Accepted'))
+      for (const action of ['Accept', 'Maybe', 'Decline'])
+        assert(await js(`!(${target(action, card)}) || (${target(action, card)})?.disabled`))
       assert.equal(transport.writes.length, refusedWrites + 1)
       const afterSent = transport.snapshot()
-      assert(afterSent.attachmentReads > 0)
+      assert(afterSent.attachmentReads > beforeSent.attachmentReads)
       assert(afterSent.sentReceiptMisses > beforeSent.sentReceiptMisses)
       assert(afterSent.sentIdSearches > beforeSent.sentIdSearches)
       assert(afterSent.sentReceiptReads > beforeSent.sentReceiptReads)
+      assert(afterSent.trashedReplyIndexHits > beforeSent.trashedReplyIndexHits)
+      assert(afterSent.trashedReplyReads > beforeSent.trashedReplyReads)
+      mark('out-of-thread-trashed-id-claim-keeps-an-acknowledged-gmail-reply-pending')
+
+      const responseCalls = () =>
+        rig.calls.filter(({ name }) => name === 'google.respondToMailInvitation').length
+      const callsBeforeRetry = responseCalls()
+      transport.removeTrashedReply()
+      await click('Retry', card)
+      await expectStatus('Response: Accepted')
+      assert(!(await js(`!!(${target('Retry', card)})`)))
+      assert.equal(transport.writes.length, refusedWrites + 1)
+      assert.equal(responseCalls(), callsBeforeRetry)
+      const settled = transport.snapshot()
+      assert(settled.sentIdSearches > afterSent.sentIdSearches)
+      assert(settled.sentReceiptReads > afterSent.sentReceiptReads)
+      assert.equal(settled.trashedReplyIndexHits, afterSent.trashedReplyIndexHits)
+      assert.equal(settled.trashedReplyReads, afterSent.trashedReplyReads)
       assert.equal(statSync(journalPath).mode & 0o777, 0o600)
       await capture('05-mail-view-sent-readback-dark')
       mark('gmail-itip-reply-confirms-through-exact-id-readback-from-a-separate-sent-thread')
