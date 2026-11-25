@@ -225,13 +225,23 @@ function isUidlessCancellation(event: RawEvent): boolean {
   return event.iCalUID === undefined && event.status === 'cancelled'
 }
 
+// Query context can associate a sparse tombstone with an invitation for
+// absence checks, but never supplies fields to the event itself.
+type PrimaryQueryAssociation = { uid: string; mailbox: string } & (
+  { kind: 'uid' } | { kind: 'instances'; parentId: string }
+)
+
 async function exactCopies(
   api: GoogleApi,
   url: string,
   identity: Parsed['details']['identity'],
   floating: boolean,
-  context: { organizer: string | undefined; bindsParent: (event: RawEvent) => boolean },
-  observe: (event: RawEvent, associatedByQuery?: boolean) => Promise<void>,
+  context: {
+    organizer: string | undefined
+    bindsParent: (event: RawEvent) => boolean
+    primaryMailbox?: string
+  },
+  observe: (event: RawEvent, association?: PrimaryQueryAssociation) => Promise<void>,
 ): Promise<RawEvent[]> {
   const { uid, recurrenceId, sequence } = identity
   const events = await invitationPages<RawEvent>(
@@ -241,7 +251,8 @@ async function exactCopies(
     { iCalUID: uid, singleEvents: 'false', showDeleted: 'true' },
     async (event) => {
       if (event.iCalUID === uid) await observe(event)
-      else if (url === PRIMARY_EVENTS && isUidlessCancellation(event)) await observe(event, true)
+      else if (context.primaryMailbox && isUidlessCancellation(event))
+        await observe(event, { kind: 'uid', uid, mailbox: context.primaryMailbox })
     },
   )
   if (
@@ -293,21 +304,26 @@ async function exactCopies(
       recurrenceSet(series.recurrence) !== null
     // Unmodified instances do not appear in events.list. Query for the original
     // start (not timeMin or the displayed start, which miss moved occurrences).
+    const parentId = series.id
     const instances = await invitationPages<RawEvent>(
       api,
-      `${url}/${encodeURIComponent(series.id)}/instances`,
+      `${url}/${encodeURIComponent(parentId)}/instances`,
       'calendar#events',
       {
         originalStart: recurrenceId,
         showDeleted: 'true',
       },
       async (event) => {
-        // Only a UID-verified parent can establish UID when the instance omits it.
-        if (
-          (event.iCalUID === uid || (event.iCalUID === undefined && series.iCalUID === uid)) &&
-          event.recurringEventId === series.id
-        )
-          await observe(event)
+        if (event.recurringEventId !== parentId) return
+        if (event.iCalUID === uid) await observe(event)
+        else if (context.primaryMailbox && series.iCalUID === uid && isUidlessCancellation(event))
+          await observe(event, {
+            kind: 'instances',
+            uid: series.iCalUID,
+            mailbox: context.primaryMailbox,
+            parentId,
+          })
+        else if (event.iCalUID === undefined && series.iCalUID === uid) await observe(event)
       },
     )
     if (new Set(instances.map(({ id }) => id)).size !== instances.length)
@@ -490,24 +506,25 @@ async function lookupInvitationCalendarCopy(
   })
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
-    async (event: RawEvent, associatedByQuery = false) => {
+    async (event: RawEvent, association?: PrimaryQueryAssociation) => {
       if (!hasEventResourceId(event)) return
-      // A UID-less cancellation in the authenticated primary UID query is
-      // associated with the requested UID for absence checks only. Neither it
-      // nor a tombstone with no organizer establishes organizer or RSVP proof.
+      const observedAddress = event.organizer?.email
+      const observedOrganizer =
+        typeof observedAddress === 'string' && observedAddress.trim()
+          ? observedAddress.toLowerCase()
+          : undefined
+      // An organizer object may only carry a display name. An unknown
+      // organizer can still be relevant on primary; a known address must match
+      // for an exact-UID row. A UID-less query match remains possible-only.
       const sparsePrimaryCancellation =
         base === PRIMARY_EVENTS &&
         event.status === 'cancelled' &&
-        (associatedByQuery || (event.iCalUID === uid && event.organizer === undefined))
-      // Otherwise bind the organizer independently of scope, RSVP fields,
-      // and the rest of the collection.
-      if (
-        !sparsePrimaryCancellation &&
-        (!organizer ||
-          typeof event.organizer?.email !== 'string' ||
-          event.organizer.email.toLowerCase() !== organizer)
-      )
-        return
+        ((isUidlessCancellation(event) &&
+          association?.uid === uid &&
+          association.mailbox === mailbox &&
+          (association.kind === 'uid' || association.parentId === event.recurringEventId)) ||
+          (event.iCalUID === uid && observedOrganizer === undefined))
+      if (!sparsePrimaryCancellation && (!organizer || observedOrganizer !== organizer)) return
       // The authenticated primary collection itself binds the resource to the
       // mailbox. Elsewhere, require the provider's self marker, not just an
       // attendee address on a shared calendar's copy.
@@ -552,7 +569,7 @@ async function lookupInvitationCalendarCopy(
     PRIMARY_EVENTS,
     identity,
     floating,
-    parentContext(),
+    { ...parentContext(), primaryMailbox: mailbox },
     observeCopy(PRIMARY_EVENTS),
   )
   if (floating && primary.length) return unmatchable

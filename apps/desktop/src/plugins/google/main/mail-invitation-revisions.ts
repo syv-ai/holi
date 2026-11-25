@@ -1,4 +1,4 @@
-import { CalendarScanError, type MimeLocation } from './gmail-mime'
+import type { MimeLocation } from './gmail-mime'
 import type { fetchThreadCalendarPayloads } from './gmail-invitation-transport'
 import type { parseCalendarMail } from './invite'
 import type { InvitationAttempt } from './mail-invitation-store'
@@ -104,14 +104,15 @@ function expandCancellations(candidate: Candidate, mailbox: string): Candidate[]
 
 /** Non-calendar alternatives are renditions of the prose. If two branches
  * carry calendar material, however, they must describe the same evidence. */
-export function assertEquivalentAlternatives(
+export function hasConflictingAlternatives(
   parts: {
     alternatives: MimeLocation['alternatives']
-    signature: string
+    signature: string | null
   }[],
-): void {
+): boolean {
   const groups = new Map<string, Map<number, Set<string>>>()
   for (const { alternatives, signature } of parts) {
+    if (signature === null) continue
     for (const { group, branch } of alternatives) {
       const branches = groups.get(group) ?? new Map<number, Set<string>>()
       const material = branches.get(branch) ?? new Set<string>()
@@ -127,8 +128,9 @@ export function assertEquivalentAlternatives(
         (branch) => branch.size !== first!.size || [...branch].some((key) => !first!.has(key)),
       )
     )
-      throw new CalendarScanError('Gmail contains conflicting calendar alternatives')
+      return true
   }
+  return false
 }
 
 export function representationOf(candidate: Candidate, mailbox: string): string {
