@@ -3,15 +3,12 @@ import { mkdir, realpath, open } from 'node:fs/promises'
 import { dirname, resolve, relative, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { createRequire } from 'node:module'
+import { parse as parseToml } from 'smol-toml'
 import { tmpdir } from 'node:os'
 import { runNativeInitialFixture } from './codex-session-context-native.mjs'
 
 const repositoryRoot = await realpath(resolve(dirname(fileURLToPath(import.meta.url)), '..'))
 const schema = 'holi.codex-session-context.v1'
-const { parse: parseToml } = createRequire(
-  new URL('../apps/desktop/package.json', import.meta.url),
-)('smol-toml')
 const roles = (request) =>
   Array.isArray(request?.input) &&
   request.input.some((item) => item.role === 'user') &&

@@ -1,4 +1,4 @@
-import { createRequire } from 'node:module'
+import { createServer } from 'vite'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -6,8 +6,6 @@ import { join } from 'node:path'
 
 /** Observe the existing production home/argument contract without importing personal state. */
 export async function runRestrictedContext({ root, env, bin, launch, model }) {
-  const require = createRequire(new URL('../apps/desktop/package.json', import.meta.url))
-  const { createServer } = await import(require.resolve('vite'))
   const loader = await createServer({
     configFile: false,
     root: fileURLToPath(new URL('../apps/desktop', import.meta.url)),
