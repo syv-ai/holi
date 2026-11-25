@@ -370,9 +370,9 @@ async function run(root: string, evidence: string): Promise<void> {
         // Drain the complete pending pipeline, not a resolved adapter promise whose
         // settlement still needs renderer I/O; the latter starves the main event loop.
         const promise = (async () => {
+          const before = await rendererBefore
           await adapter!.onSnapshot(snapshot)
           if (publicationStartedAt !== null) {
-            const before = await rendererBefore
             const sent = sendStats.count > sendsBeforePublication
             await win!.webContents.executeJavaScript(
               `window.snapshotBench.settlePublication(${sent}, ${before?.atomWrites ?? 0}, ${before?.commits ?? 0})`,

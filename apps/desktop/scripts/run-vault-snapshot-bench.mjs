@@ -371,7 +371,7 @@ async function runTrial({ electron, rendererOut, root, evidenceDir, sizeName, si
   child.once('error', (error) => {
     spawnError = error
   })
-  const timeoutMs = (config.warmupSeconds + config.durationSeconds + 120) * 1000
+  const timeoutMs = smoke ? 45_000 : (config.warmupSeconds + config.durationSeconds + 120) * 1000
   const outcome = await Promise.race([
     new Promise((resolveExit) =>
       child.once('close', (code, signal) => resolveExit({ code, signal })),
