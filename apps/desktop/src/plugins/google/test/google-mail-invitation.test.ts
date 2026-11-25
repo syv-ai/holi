@@ -1172,6 +1172,7 @@ it('requires Calendar to distinguish a same-sequence change to the event status'
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 
   state.events.set('primary', [{ ...copy, status: 'confirmed' }])
+  expect(await read()).toMatchObject({ canRespond: true })
   expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
   expect(state.calendarUpdateRequests).toHaveLength(1)
   expect(state.sendAttempts).toBe(0)
