@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createCancellation, type DeviceAuthHttp } from '../app/device-auth'
-import { createGitHubCredentials } from '../app/github-credentials'
+import { createGitHubCredentials, KeychainError } from '../app/github-credentials'
 
 const device = {
   device_code: 'private-code',
@@ -51,7 +51,7 @@ describe('GitHub credentials', () => {
     const credentials = createGitHubCredentials({
       read: () => value,
       write: () => {
-        throw new Error('secret storage detail')
+        throw new Error('iOS Keychain write failed (OSStatus -34018)')
       },
       remove: () => {
         throw new Error('secret storage detail')
@@ -62,9 +62,46 @@ describe('GitHub credentials', () => {
       fetch: http,
       wait: async () => {},
     })
-    await expect(auth.wait()).rejects.not.toThrow('secret storage detail')
+    const waiting = auth.wait()
+    await expect(waiting).rejects.not.toThrow('OSStatus')
+    expect(KeychainError.diagnostic(await waiting.catch((error: unknown) => error))).toBeUndefined()
     expect(credentials.readToken()).toBe('old-token')
     expect(() => credentials.signOut()).toThrow()
+    expect(() => credentials.signOut()).not.toThrow('secret storage detail')
+  })
+
+  it('retains only sanitized Keychain details after write and sign-out failures', async () => {
+    const fail = (operation: 'write' | 'remove', status: number) => () => {
+      const error = new KeychainError(operation, status)
+      error.message = 'private adapter detail'
+      error.stack = 'private stack'
+      error.cause = new Error('private cause')
+      throw error
+    }
+    const credentials = createGitHubCredentials({
+      read: () => 'old-token',
+      write: fail('write', -34018),
+      remove: fail('remove', -25308),
+    })
+    const auth = await credentials.authorize({
+      clientId: 'public',
+      fetch: http,
+      wait: async () => {},
+    })
+    expect.assertions(9)
+    const checkFailure = (operation: 'write' | 'remove', status: number) => (error: unknown) => {
+      expect(KeychainError.diagnostic(error)).toEqual({ kind: 'keychain', operation, status })
+      expect(String(error)).not.toContain('private')
+      expect((error as Error).stack).not.toContain('private stack')
+      expect(error).not.toHaveProperty('cause')
+    }
+    await auth.wait().catch(checkFailure('write', -34018))
+    try {
+      credentials.signOut()
+    } catch (error) {
+      checkFailure('remove', -25308)(error)
+    }
+    expect(credentials.readToken()).toBe('old-token')
   })
 
   it('invalidates an authorization superseded before its device code arrives', async () => {
@@ -91,6 +128,57 @@ function deferred<T>() {
   })
   return { promise, resolve }
 }
+
+it.each(['replacement', 'sign-out'])(
+  'can revoke an authorization started during %s',
+  async (action) => {
+    const { credentials, openStore } = setup()
+    const reopened = createGitHubCredentials(openStore())
+    const polling = deferred<void>()
+    const tokenReply = deferred<ReturnType<typeof response>>()
+    let latest!: ReturnType<typeof credentials.authorize>
+    let abortObserved = false
+    const latestFetch: DeviceAuthHttp = async (url, { signal }) => {
+      if (url.endsWith('/device/code')) return response(device)
+      signal.addEventListener('abort', () => {
+        abortObserved = true
+      })
+      polling.resolve()
+      return tokenReply.promise
+    }
+    const firstFetch: DeviceAuthHttp = (_url, { signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          latest = reopened.authorize({
+            clientId: 'public',
+            fetch: latestFetch,
+            wait: async () => {},
+          })
+          reject(new Error('Transport aborted'))
+        })
+      })
+    const first = credentials.authorize({ clientId: 'public', fetch: firstFetch })
+    const outerFetch = vi.fn(http)
+    if (action === 'replacement') {
+      const outer = credentials.authorize({ clientId: 'public', fetch: outerFetch })
+      await Promise.all([expect(first).rejects.toThrow(), expect(outer).rejects.toThrow()])
+    } else {
+      credentials.signOut()
+      await expect(first).rejects.toThrow()
+    }
+    const waiting = (await latest).wait()
+    await Promise.race([polling.promise, waiting])
+    try {
+      reopened.signOut()
+    } finally {
+      tokenReply.resolve(response({ access_token: 'late-token' }))
+    }
+    await expect(waiting).rejects.toThrow()
+    expect(abortObserved).toBe(true)
+    expect(outerFetch).not.toHaveBeenCalled()
+    expect(credentials.readToken()).toBeNull()
+  },
+)
 
 it.each(['cancel', 'sign-out', 'failed-sign-out', 'supersede', 'repeat-wait'])(
   'handles %s while token JSON is delayed',
