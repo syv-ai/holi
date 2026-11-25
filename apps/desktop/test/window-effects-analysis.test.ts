@@ -13,9 +13,9 @@ function pair(savingMiB = 100) {
     effect: mode,
     ready: { state },
     steady: {
-      physicalFootprint: { median: physical * MiB },
+      physicalFootprint: { median: (physical * MiB) as number | null },
       cpuPercent: { median: 1 },
-      gpuPercent: { median: 2 },
+      gpuPercent: { median: 2 as number | null },
       wsCpuPercent: { median: 3 },
     },
   })
@@ -45,6 +45,18 @@ describe('window effects comparison decision', () => {
       ).crossesPrimaryGate,
     ).toBe(false)
   })
+  it('requires an absolute saving even when the relative improvement is large', () => {
+    const small = () => {
+      const value = pair()
+      value.outcomes.A.steady.physicalFootprint.median = 200 * MiB
+      value.outcomes.B.steady.physicalFootprint.median = 140 * MiB
+      return value
+    }
+    expect(
+      compareWindowEffects(Array.from({ length: 5 }, small), tolerances, 'liquid-glass')
+        .crossesPrimaryGate,
+    ).toBe(false)
+  })
   it('rejects incomplete, invalid or differently rendered comparisons', () => {
     expect(compareWindowEffects([pair()], tolerances, 'liquid-glass').valid).toBe(false)
     const invalid = pair()
@@ -66,11 +78,23 @@ describe('window effects comparison decision', () => {
   })
   it('never turns missing counters into proof and rejects repeatable CPU regression', () => {
     const missing = pair()
-    missing.outcomes.B.steady.gpuPercent.median = null as unknown as number
+    missing.outcomes.B.steady.gpuPercent.median = null
     expect(
       compareWindowEffects([pair(), pair(), pair(), pair(), missing], tolerances, 'liquid-glass')
         .valid,
     ).toBe(false)
+    const noMemory = () => {
+      const value = pair()
+      value.outcomes.B.steady.physicalFootprint.median = null
+      return value
+    }
+    const unavailable = compareWindowEffects(
+      Array.from({ length: 5 }, noMemory),
+      tolerances,
+      'liquid-glass',
+    )
+    expect(unavailable.valid).toBe(false)
+    expect(unavailable.pairedMedianSaving).toBeNull()
     const slow = () => {
       const value = pair()
       value.outcomes.B.steady.cpuPercent.median = 4

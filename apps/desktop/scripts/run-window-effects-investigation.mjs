@@ -402,7 +402,10 @@ async function trial(mode, name) {
           { median: median(values), p05: percentile(values, 0.05), p95: percentile(values, 0.95) },
         ]),
       ),
-      observedLedgerPeak: Math.max(...samples.map((x) => x.physicalFootprint ?? 0)),
+      observedLedgerPeak: percentile(
+        samples.map((x) => x.physicalFootprint),
+        1,
+      ),
       cpuPeaksAreNotSteady: true,
     }
     await json(join(evidence, name + '-summary.json'), summary)

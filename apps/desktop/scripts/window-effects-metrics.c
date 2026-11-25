@@ -2,6 +2,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <libproc.h>
+#include <mach/mach_time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/resource.h>
@@ -20,9 +21,15 @@ int main(int argc, char **argv) {
     printf("{\"pid\":%d,\"errno\":%d}\n", pid, errno);
     return 1;
   }
-  printf("{\"pid\":%d,\"physicalFootprint\":%" PRIu64 ",\"residentSizeRSS\":%" PRIu64 ",\"lifetimeMaxPhysicalFootprint\":%" PRIu64 ",\"userTimeNs\":%" PRIu64 ",\"systemTimeNs\":%" PRIu64 ",\"startAbstime\":%" PRIu64 ",\"energyNj\":%" PRIu64 "}\n",
+  mach_timebase_info_data_t timebase;
+  if (mach_timebase_info(&timebase) != 0) return 1;
+  /* proc_pid_rusage CPU counters are Mach absolute ticks, not nanoseconds. */
+  uint64_t user_ns = (uint64_t)((long double)usage.ri_user_time * timebase.numer / timebase.denom);
+  uint64_t system_ns = (uint64_t)((long double)usage.ri_system_time * timebase.numer / timebase.denom);
+  printf("{\"pid\":%d,\"physicalFootprint\":%" PRIu64 ",\"residentSizeRSS\":%" PRIu64 ",\"lifetimeMaxPhysicalFootprint\":%" PRIu64 ",\"userTimeNs\":%" PRIu64 ",\"systemTimeNs\":%" PRIu64 ",\"startAbstime\":%" PRIu64 ",\"energyNj\":%" PRIu64 ",\"userTimeMach\":%" PRIu64 ",\"systemTimeMach\":%" PRIu64 ",\"timebaseNumer\":%u,\"timebaseDenom\":%u}\n",
          pid, usage.ri_phys_footprint, usage.ri_resident_size,
-         usage.ri_lifetime_max_phys_footprint, usage.ri_user_time,
-         usage.ri_system_time, usage.ri_proc_start_abstime, usage.ri_energy_nj);
+         usage.ri_lifetime_max_phys_footprint, user_ns, system_ns,
+         usage.ri_proc_start_abstime, usage.ri_energy_nj,
+         usage.ri_user_time, usage.ri_system_time, timebase.numer, timebase.denom);
   return 0;
 }
