@@ -6,7 +6,8 @@ Canonical terms. When a word is ambiguous, this file wins. Definitions only.
 
 A GitHub repository, cloned locally, holding markdown documents, tasks and agent config. Its
 identity is its remote (`owner/repo`); there is no vault id. A **personal vault** has one
-collaborator, a **shared vault** several.
+collaborator, a **shared vault** several. Each usable managed vault remains active in Holi
+regardless of which one the UI currently displays.
 
 ### Managed vault root
 

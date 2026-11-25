@@ -14,6 +14,7 @@ import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom } from '@/plugin-api'
+import { emptyVaultSnapshot } from '@holi/shared'
 import type { CaptureOptions } from '../shared/meeting'
 import { startCapture } from '../renderer/audio/capture'
 import { MeetingsSurface } from '../renderer/meetings-surface'
@@ -24,8 +25,12 @@ import { meetingsAtom, profilesAtom, shownMeetingIdAtom } from '../renderer/stat
 import { meeting, profile } from './meeting-fixture'
 
 const run = vi.hoisted(() => vi.fn())
+const openVault = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
-  trpc: { cap: { run: { mutate: (input: unknown) => run(input) } } },
+  trpc: {
+    cap: { run: { mutate: (input: unknown) => run(input) } },
+    vaults: { open: { mutate: (input: unknown) => openVault(input) } },
+  },
 }))
 vi.mock('../renderer/audio/capture', () => ({ startCapture: vi.fn() }))
 
@@ -52,6 +57,7 @@ const stopCapture = vi.fn(async () => {
 
 beforeEach(() => {
   options = null
+  openVault.mockReset().mockResolvedValue(emptyVaultSnapshot())
   stopCapture.mockClear()
   run.mockReset()
   run.mockImplementation(async ({ name }: { name: string }) => {
@@ -311,6 +317,64 @@ test('a chunk tried again after a lost answer is sent again, and main takes it a
   expect(store.get(recorderAtom)).toMatchObject({ failedUploads: 0, error: null })
 }, 15_000)
 
+test('a recording stays bound to its vault and only its owner can stop or discard it', async () => {
+  const store = storeFor()
+  const leaveView = transcribeRenderer.vault!('syv/vault', store)
+  await store.set(startRecordingAtom, {
+    profileId: 'planning',
+    title: '',
+    microphone: true,
+    system: true,
+  })
+  leaveView()
+  expect(stopCapture).not.toHaveBeenCalled()
+
+  store.set(activeRemoteAtom, 'other/vault')
+  store.set(meetingsAtom, [{ ...meeting, cards: 0, id: 'm9', title: 'Other vault meeting' }])
+  render(
+    <Provider store={store}>
+      <MeetingsSurface />
+      <RecordingStatusItem />
+    </Provider>,
+  )
+  expect(screen.getByRole('button', { name: 'Record' })).toBeDisabled()
+  expect(screen.queryByText('Recording · tell everyone')).toBeNull()
+  expect(screen.getByText('Other vault meeting')).toBeInTheDocument()
+
+  act(() => options?.onChunk({ n: 0, start: 0, duration: 6, wav: wav(1, 2) }))
+  await waitFor(() =>
+    expect(calls('meeting.chunk')).toEqual([
+      { meetingId: 'm9', n: 0, start: 0, duration: 6, audio: 'AQI=' },
+    ]),
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Recording meeting' }))
+  await waitFor(() => expect(store.get(activeRemoteAtom)).toBe('syv/vault'))
+  expect(openVault).toHaveBeenCalledWith({ remote: 'syv/vault' })
+  expect(store.get(shownMeetingIdAtom)).toBe('m9')
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  transcribeRenderer.backgroundEvents!['meeting-removed']!(
+    { remote: 'other/vault', payload: { meetingId: 'm9' } },
+    store,
+  )
+  transcribeRenderer.backgroundEvents!['stop-recording']!(
+    { remote: 'other/vault', payload: null },
+    store,
+  )
+  expect(stopCapture).not.toHaveBeenCalled()
+  transcribeRenderer.backgroundEvents!['stop-recording']!(
+    { remote: 'syv/vault', payload: null },
+    store,
+  )
+  await waitFor(() => expect(store.get(recorderAtom).phase).toBe('idle'))
+  expect(calls('meeting.stop')).toEqual([{ meetingId: 'm9' }])
+  expect(calls('meeting.chunk')).toHaveLength(2)
+  expect(
+    run.mock.calls
+      .filter(([c]) => ['meeting.chunk', 'meeting.stop'].includes(c.name))
+      .every(([c]) => c.remote === 'syv/vault'),
+  ).toBe(true)
+}, 15_000)
+
 test('a meeting deleted from the vault while it records stops, and sends nothing more', async () => {
   const store = storeFor()
   await store.set(startRecordingAtom, {
@@ -320,7 +384,7 @@ test('a meeting deleted from the vault while it records stops, and sends nothing
     system: true,
   })
   expect(store.get(recorderAtom).phase).toBe('recording')
-  transcribeRenderer.events!['meeting-removed']!(
+  transcribeRenderer.backgroundEvents!['meeting-removed']!(
     { remote: 'syv/vault', payload: { meetingId: 'm9' } },
     store,
   )

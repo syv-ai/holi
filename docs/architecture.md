@@ -229,12 +229,16 @@ which never answer anything a hook would print, and git's two) are routes their 
 
 A vault is a GitHub repository cloned under a Holi-managed root, `~/Holi/<owner>/<repo>`. Its
 identity is its remote. Holi never adopts a checkout the user maintains, because it commits on its
-own and would trample WIP branches and staged changes.
+own and would trample WIP branches and staged changes. Every usable managed vault stays active:
+its watcher, snapshot and sync loop continue while another vault is displayed. The UI selection
+chooses which vault is shown; it does not open, pause or close a vault. Events and CLI operations
+are addressed by remote so they cannot drift to whichever vault happens to be displayed.
 
-- **Autosave commits** keep the working tree clean, so a pull can always merge.
-- **Auto-push** sends them within seconds; a vault switch and quit commit and push at once.
+- **Autosave commits** keep each working tree clean, so a pull can always merge.
+- **Auto-push** sends them within seconds; quit commits and pushes every active vault.
 - **Auto-pull merges, never rebases.**
-- **A conflicting merge is aborted** at once, and the user may hand it to the agent to reconcile.
+- **A conflicting merge is aborted** at once, and the user may hand it to that vault's agent to reconcile.
+- **Removing a vault** stops only that vault; quitting Holi stops all active vaults.
 
 The file tree is a walk plus a watcher. Folders are real directories. A file with the `.local.`
 marker is machine-local: it shows under _show hidden files_ and never syncs. A file changing under
