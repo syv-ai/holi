@@ -31,6 +31,7 @@ afterAll(cleanupFixtures)
 async function rig(remote = REMOTE) {
   const root = await makeClone(await makeRemote())
   const table = agentCapabilities({
+    presentationLease: () => () => true,
     sessions: {} as never,
     own: {} as never,
     jobs: {} as never,

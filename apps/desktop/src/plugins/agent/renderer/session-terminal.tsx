@@ -243,11 +243,17 @@ export function SessionTerminal({
       const filtered = filterPiOutput ? filterPiOutput(data) : data
       if (filtered) term.write(filtered)
     }
+    let replayed = false
+    const pendingOutput: string[] = []
     const unregister = registerSessionTerminal(terminalId, {
       focus: () => {
         if (isLive() && visibleRef.current) term.focus()
       },
-      write: writeOutput,
+      write: (data: string) => {
+        if (!isLive()) return
+        if (replayed) writeOutput(data)
+        else pendingOutput.push(data)
+      },
     })
 
     const selection = term.onSelectionChange(() => {
@@ -366,6 +372,8 @@ export function SessionTerminal({
       const state = await agentCap.attach(remote, { id: terminalId })
       if (!isLive()) return
       if (state) writeOutput(state)
+      replayed = true
+      for (const data of pendingOutput.splice(0)) writeOutput(data)
       term.write(HIDE_CURSOR)
     })()
 
