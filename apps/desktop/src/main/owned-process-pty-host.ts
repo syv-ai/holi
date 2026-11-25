@@ -69,7 +69,8 @@ function frame(line) {
       terminal.onExit(({exitCode, signal}) => {
         ending = true;
         emit({type: 'exit', exitCode, signal});
-        closeInput();
+        // Keep the Job-owned helper until main requests native drainage.
+        // Root exit alone must not race ahead of the controller's observers.
       });
     } catch { fail('PTY startup failed'); }
     return;

@@ -131,6 +131,7 @@ export function launchOwnedWindowsPty(
     emitData(terminalText.end())
     exit = event
     for (const listener of exitListeners) listener(event)
+    requestStop()
   }
   const send = (record: object) => {
     if (failed) throw failure
