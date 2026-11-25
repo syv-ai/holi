@@ -26,6 +26,7 @@ interface Result {
   id: string
   diagnostics: MdxDiagnostic[]
   dependencies: Dependency[]
+  artifact?: string
 }
 
 type Program = Parameters<typeof analyze>[0]
@@ -297,8 +298,15 @@ root.__holiMdxReceive = (encoded) => {
     ],
     rehypePlugins: [],
   }).then(
-    () => {
-      root.__holiMdxResult = { id: request.id, diagnostics, dependencies }
+    (compiled) => {
+      // The compiler runs in its isolated offline guest. Return generated code as
+      // inert data; callers must not evaluate it in this process.
+      root.__holiMdxResult = {
+        id: request.id,
+        diagnostics,
+        dependencies,
+        artifact: String(compiled),
+      }
     },
     (error: unknown) => {
       const candidate = (error ?? {}) as ParserError

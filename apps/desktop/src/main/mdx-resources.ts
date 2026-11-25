@@ -15,7 +15,9 @@ const MAX_SOURCE_BYTES = 256 * 1024
 // JSON can use six bytes per UTF-16 code unit (e.g. a lone surrogate).
 // Each 128-byte allowance covers keys, positions and punctuation, or the UUID envelope.
 // The guest may send one extra dependency to signal overflow without returning a partial graph.
+const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
 const MAX_RESULT_BYTES =
+  MAX_ARTIFACT_BYTES +
   128 +
   (MAX_MDX_INSPECTION_DEPENDENCIES + 1) * (128 + 6 * MAX_MDX_SPECIFIER_LENGTH) +
   MAX_MDX_INSPECTION_DIAGNOSTICS * (128 + 6 * MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH)
@@ -38,6 +40,8 @@ interface MdxDependency {
 export interface MdxInspectResult {
   diagnostics: MdxDiagnostic[]
   dependencies: MdxDependency[]
+  /** Generated module text, returned as inert data and never evaluated by main. */
+  artifact?: string
 }
 
 export interface MdxResources {
@@ -399,7 +403,12 @@ export function createMdxResources(assetDirectory: string): MdxResources {
           const serialized = JSON.stringify(result)
           if (Buffer.byteLength(serialized, 'utf8') > MAX_RESULT_BYTES)
             throw makeError('MDX compiler result exceeds its size limit')
-          const envelope = result as { id?: unknown; diagnostics?: unknown; dependencies?: unknown }
+          const envelope = result as {
+            id?: unknown
+            diagnostics?: unknown
+            dependencies?: unknown
+            artifact?: unknown
+          }
           if (envelope.id === id) {
             if (
               !Array.isArray(envelope.dependencies) ||
@@ -421,9 +430,16 @@ export function createMdxResources(assetDirectory: string): MdxResources {
                 throw makeError('Invalid MDX dependency')
               return { specifier: value.specifier, line: value.line, column: value.column }
             })
+            if (
+              envelope.artifact !== undefined &&
+              (typeof envelope.artifact !== 'string' ||
+                Buffer.byteLength(envelope.artifact, 'utf8') > MAX_ARTIFACT_BYTES)
+            )
+              throw makeError('Invalid or oversized MDX compiler artifact')
             await finish(undefined, {
               diagnostics: cleanDiagnostics(envelope.diagnostics),
               dependencies,
+              ...(typeof envelope.artifact === 'string' ? { artifact: envelope.artifact } : {}),
             })
             return
           }
