@@ -127,6 +127,7 @@ export function DocumentFormatBubble({
   const [customPassage, setCustomPassage] = useState<string | null>(null)
   /** Set as the menu closes into the prompt, so it leaves focus to the prompt. */
   const openingCustomRef = useRef(false)
+  const addingToBatchRef = useRef(false)
   /** Set when the prompt closes because the person clicked elsewhere, so
    *  focus stays where they clicked rather than going back to the text. */
   const dismissedOutsideRef = useRef(false)
@@ -177,6 +178,7 @@ export function DocumentFormatBubble({
     const passage = selectedPassage()
     if (passage === '') return
     openingCustomRef.current = true
+    addingToBatchRef.current = false
     setCustomPassage(passage)
   }
 
@@ -184,7 +186,11 @@ export function DocumentFormatBubble({
     const passage = customPassage
     setCustomPassage(null)
     setCustomDraft('')
-    if (passage !== null) onQuickCommand?.(instruction, passage)
+    if (passage !== null) {
+      if (addingToBatchRef.current) onAddToBatch?.(instruction, passage)
+      else onQuickCommand?.(instruction, passage)
+    }
+    addingToBatchRef.current = false
   }
 
   return (
@@ -252,7 +258,13 @@ export function DocumentFormatBubble({
                     {onAddToBatch ? (
                       <DropdownMenuItem
                         disabled={!singleTextBlock}
-                        onClick={() => onAddToBatch('', selectedPassage())}
+                        onClick={() => {
+                          const passage = selectedPassage()
+                          if (passage === '') return
+                          addingToBatchRef.current = true
+                          openingCustomRef.current = true
+                          setCustomPassage(passage)
+                        }}
                       >
                         <PencilLineIcon aria-hidden="true" />
                         Add to batch…
