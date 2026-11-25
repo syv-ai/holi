@@ -129,6 +129,7 @@ export interface CalendarListEntry {
   summaryOverride?: string
   primary?: boolean
   selected?: boolean
+  hidden?: boolean
   deleted?: boolean
   /** `owner` | `writer` | `reader` | `freeBusyReader`. What separates a calendar
    *  that is *yours* from one you merely watch. */
@@ -180,6 +181,17 @@ function isMine(calendar: CalendarListEntry): boolean {
   return calendar.primary === true || calendar.accessRole === 'owner'
 }
 
+/** Use the declared calendar ID, not the `primary` resource alias. */
+export function calendarIsEnabled(calendar: CalendarListEntry, overrides: CalendarOverrides) {
+  return (
+    calendar.hidden !== true &&
+    calendar.selected !== false &&
+    calendar.deleted !== true &&
+    calendar.accessRole !== 'freeBusyReader' &&
+    (overrides[calendar.id] ?? isMine(calendar))
+  )
+}
+
 /**
  * Every calendar the user could draw from, each with whether it is on.
  *
@@ -202,7 +214,7 @@ export async function resolveCalendars(
     name: calendar.summaryOverride ?? calendar.summary,
     mine: isMine(calendar),
     color: calendar.backgroundColor ?? null,
-    enabled: overrides[calendar.id] ?? isMine(calendar),
+    enabled: calendarIsEnabled(calendar, overrides),
     primary: calendar.primary === true,
   }))
 }
@@ -248,7 +260,7 @@ export async function listAgenda(
           },
           (page) => page.items ?? [],
         )
-        return { calendar, raw: raw.filter(isWorthShowing) }
+        return { calendar, raw: raw.filter(isAgendaEventVisible) }
       }),
     ),
   ])
@@ -262,7 +274,7 @@ export async function listAgenda(
 /** Cancelled instances of a recurring series still come back (that is how a
  *  client learns they were cancelled), and an event the user declined is one
  *  they have already said they are not attending. */
-function isWorthShowing(event: RawEvent): boolean {
+export function isAgendaEventVisible(event: RawEvent): boolean {
   if (event.status === 'cancelled') return false
   // Google writes a `workingLocation` entry for every working day. It is a
   // setting rendered as an event, and on a week's agenda it is half the rows.

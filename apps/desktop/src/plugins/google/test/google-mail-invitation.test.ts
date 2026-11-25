@@ -201,7 +201,13 @@ async function rig() {
       })[]
     >(),
     primaryCalendarId: person,
-    secondaryCalendars: [] as { id: string; selected: boolean; hidden?: boolean }[],
+    secondaryCalendars: [] as {
+      id: string
+      selected: boolean
+      hidden?: boolean
+      accessRole?: 'owner' | 'writer' | 'reader'
+    }[],
+    secondaryUidItems: new Map<string, unknown[]>(),
     hiddenCalendars: [] as string[],
     calendarOverrides: { 'hidden@example.com': false } as Record<string, boolean>,
     // Applied PATCHes requesting Calendar updates, not notification receipts.
@@ -221,6 +227,7 @@ async function rig() {
     primaryPageErrors: new Map<number, number>(),
     expandedEmptyFirstPage: false,
     expandedPages: null as unknown[] | null,
+    navigationRefusal: null as { status: number; reason?: string } | null,
     // These fixture calendars have fixed UTC offsets over the dates under test.
     calendarDateOffsets: new Map<string, string>(),
     exactCalendarError: null as number | null,
@@ -359,7 +366,7 @@ async function rig() {
           { id: state.primaryCalendarId, primary: true, selected: true, accessRole: 'owner' },
           ...state.secondaryCalendars
             .filter((calendar) => !calendar.hidden || url.searchParams.get('showHidden') === 'true')
-            .map((calendar) => ({ ...calendar, accessRole: 'owner' })),
+            .map((calendar) => ({ accessRole: 'owner', ...calendar })),
           ...hidden.map((id) => ({ id, selected: false, hidden: true, accessRole: 'owner' })),
         ],
       })
@@ -454,6 +461,10 @@ async function rig() {
       }
       const queryUid = url.searchParams.get('iCalUID')
       if (queryUid !== null) state.calendarUidQueries.push(queryUid)
+      if (state.navigationRefusal && url.searchParams.has('timeMin')) {
+        const { status, reason } = state.navigationRefusal
+        return json({ error: { details: reason ? [{ reason }] : [] } }, status)
+      }
       const timeBound = (param: 'timeMin' | 'timeMax') =>
         Math.floor(Date.parse(url.searchParams.get(param) ?? '') / 1000) * 1000
       const min = timeBound('timeMin')
@@ -494,6 +505,8 @@ async function rig() {
           state.primaryPageErrors.get(page) ?? (page < state.primaryPages.length ? 200 : 404)
         return json(status === 200 ? state.primaryPages[page] : {}, status)
       }
+      const secondaryUidItems = queryUid !== null && state.secondaryUidItems.get(id)
+      if (secondaryUidItems) return json({ kind: 'calendar#events', items: secondaryUidItems })
       const items = (
         state.calendarPatchAttempts && state.calendarReadback ? [state.calendarReadback] : events
       ).filter(
@@ -1687,6 +1700,52 @@ it('joins the next verified series occurrence but answers only the master', asyn
   expect(state.sendAttempts).toBe(0)
 })
 
+it.each([
+  { status: 401, code: 'UNAUTHORIZED' },
+  { status: 403, reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT', code: 'FORBIDDEN' },
+  { status: 429, code: 'RATE_LIMITED' },
+])(
+  'refuses a series read on navigation HTTP $status but preserves an accepted write',
+  async (refusal) => {
+    const { state, list, read, respond } = await rig()
+    state.messages[0] = gmailMessage('update', 200, seriesWithException())
+    const master = event({ id: 'series', series: true })
+    const next = upcomingInstance('next', '2099-07-09', 'https://meet.google.com/xyz-abcd-efg')
+    state.events.set('primary', [master])
+    state.instances.set('primary', [next])
+    expect(await read()).toMatchObject({ canRespond: true, conferenceUrl: next.hangoutLink })
+
+    state.navigationRefusal = refusal
+    await expect(list()).rejects.toMatchObject({ code: refusal.code })
+    // A request for the already-recorded answer does not send and still cannot
+    // return a normal card from a refused read.
+    await expect(respond('declined')).rejects.toMatchObject({ code: refusal.code })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+    state.navigationRefusal = null
+    state.afterPatch = () => {
+      state.navigationRefusal = refusal
+    }
+    expect(await respond('accepted')).toMatchObject({
+      outcome: 'sent',
+      channel: 'calendar',
+      invitation: null,
+      refreshPending: true,
+    })
+    expect(state.calendarUpdateRequests).toMatchObject([{ eventId: master.id, status: 'accepted' }])
+
+    state.navigationRefusal = null
+    expect(await read()).toMatchObject({
+      responsePending: false,
+      responseStatus: 'accepted',
+      conferenceUrl: next.hangoutLink,
+      htmlLink: next.htmlLink,
+    })
+    expect(state.calendarPatchAttempts).toBe(1)
+    expect(state.sendAttempts).toBe(0)
+  },
+)
+
 it('joins an embedded exception only when Calendar verifies its original slot and revision', async () => {
   const { state, list, read, respond } = await rig()
   const newRoom = 'https://meet.google.com/qrs-tuvw-xyz'
@@ -2769,8 +2828,15 @@ it.each(['PUBLISH', 'EXPORT'] as const)(
     secondary.selected = true
     secondary.hidden = true
     expect((await list()).invitations).toEqual([])
+    secondary.hidden = false
+    const workingLocation = { ...secondaryCopy, eventType: 'workingLocation' }
+    state.events.set(secondary.id, [workingLocation])
+    expect((await list()).invitations).toEqual([])
     state.events.delete('primary')
+    state.events.set(secondary.id, [secondaryCopy])
     secondaryCopy.attendees[0]!.responseStatus = 'declined'
+    expect((await list()).invitations).toEqual([])
+    secondary.hidden = true
     state.messages = [gmailMessage('update', 300, invite())]
     expect(await read()).toMatchObject({
       kind: 'invitation',
@@ -2837,7 +2903,7 @@ it.each(['PUBLISH', 'EXPORT'] as const)(
 
 it('uses the Calendar end cutoff for an all-day publication with an implicit end', async () => {
   const clock = vi.spyOn(Date, 'now')
-  const { state, read } = await rig()
+  const { state, read, list } = await rig()
   state.messages = [
     gmailMessage('publication', 200, invite('PUBLISH', 'DTSTART;VALUE=DATE:20240718')),
   ]
@@ -2846,6 +2912,9 @@ it('uses the Calendar end cutoff for an all-day publication with an implicit end
   state.events.set('primary', [copy])
   clock.mockReturnValue(Date.parse('2024-07-18T23:30:00Z'))
   expect(await read()).toMatchObject({ allDay: true, end: '2024-07-19', htmlLink: copy.htmlLink })
+  state.navigationRefusal = { status: 429 }
+  await expect(list()).rejects.toMatchObject({ code: 'RATE_LIMITED' })
+  state.navigationRefusal = null
   clock.mockReturnValue(Date.parse('2024-07-19T01:00:00Z'))
   expect(await read()).toMatchObject({
     allDay: true,
@@ -3600,6 +3669,9 @@ it('does not answer a rolled-back or conflicting REQUEST after a confirmed Gmail
   const current = gmailMessage('current', 200, invite('REQUEST', '', 4))
   const stamp = '20240702T090000Z'
   const redelivery = gmailMessage('redelivery', 300, invite('REQUEST', '', 4, stamp))
+  const olderReply = { ...acceptedReply('<older@example.net>'), internalDate: '1000' }
+  state.messages = [older, olderReply]
+  expect(await read()).toMatchObject({ responseStatus: 'accepted', sentResponseStatus: 'accepted' })
   state.messages = [older, current]
   expect(await read()).toMatchObject({ identity: { messageId: 'current' }, canRespond: true })
   expect(await respond('accepted')).toMatchObject({ channel: 'gmail', refreshPending: false })
@@ -3612,18 +3684,31 @@ it('does not answer a rolled-back or conflicting REQUEST after a confirmed Gmail
 
   state.messages = [older]
   const reopened = restart()
-  const blocked = { canRespond: false, responseTargetKey: null, sentResponseStatus: null }
+  const blocked = {
+    canRespond: false,
+    responseTargetKey: null,
+    responseStatus: null,
+    sentResponseStatus: null,
+    responsePending: false,
+    unavailableReason: expect.any(String),
+  }
   expect(await reopened.read()).toMatchObject({
     ...blocked,
     identity: { messageId: 'older', sequence: 3 },
-    responseStatus: 'needsAction',
+    title: 'Design sync',
+    start,
+    end,
+    recordedResponseStatus: null,
   })
   await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
 
+  state.messages.push(olderReply)
+  expect(await reopened.read()).toMatchObject({ ...blocked, recordedResponseStatus: null })
   const olderCopy = event()
-  olderCopy.attendees[0]!.responseStatus = 'needsAction'
   state.events.set('primary', [olderCopy])
-  expect(await reopened.read()).toMatchObject({ ...blocked, responseStatus: 'needsAction' })
+  expect(await reopened.read()).toMatchObject({ ...blocked, recordedResponseStatus: 'declined' })
+  // A fresh Calendar answer belongs to that copy only, including when the
+  // user asks for the same answer; the old card cannot establish a no-op.
   await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   state.events.clear()
 
@@ -3638,7 +3723,7 @@ it('does not answer a rolled-back or conflicting REQUEST after a confirmed Gmail
     ...blocked,
     identity: { messageId: 'conflict', sequence: 4 },
     location: 'Downstairs',
-    responseStatus: 'needsAction',
+    recordedResponseStatus: null,
   })
   await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   expect(state.sendAttempts).toBe(2)
@@ -4050,6 +4135,60 @@ it('retains an active primary copy with the exact UID and no organizer address',
   expect(state.sendAttempts).toBe(1)
   expect(state.calendarPatchAttempts).toBe(0)
 })
+
+it.each(['mailbox', 'other mailbox', 'ambiguous self'] as const)(
+  'treats a sparse shared Calendar row as possible existence only when bound to the mailbox (%s)',
+  async (membership) => {
+    const { state, read, respond, restart } = await rig()
+    const secondary = 'shared@example.com'
+    state.secondaryCalendars.push({ id: secondary, selected: true, accessRole: 'writer' })
+    const request = (slot: string) =>
+      invite()
+        .replace('DESCRIPTION:https://meet.google.com/abc-defg-hij\r\n', '')
+        .replace('END:VEVENT', `RECURRENCE-ID:${slot}\r\nEND:VEVENT`)
+    const source = gmailMessage('update', 200, request('20240711T150000Z'))
+    state.messages = [source]
+    const copy = event({ occurrence: true })
+    copy.hangoutLink = 'https://meet.google.com/xyz-abcd-efg'
+    if (membership === 'other mailbox') copy.attendees[0]!.email = secondary
+    if (membership === 'ambiguous self') copy.attendees[1]!.self = true
+    state.events.set(secondary, [copy])
+    state.secondaryUidItems.set(secondary, [{ ...copy, organizer: undefined }])
+    const blocked = {
+      canRespond: false,
+      responseTargetKey: null,
+      responseStatus: null,
+      recordedResponseStatus: null,
+      conferenceUrl: null,
+      htmlLink: null,
+    }
+    expect(await read()).toMatchObject(blocked)
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    // The UID collection is now empty while the exact resource still exists.
+    state.secondaryUidItems.set(secondary, [])
+    const reopened = restart()
+    if (membership === 'mailbox') {
+      state.messages = [gmailMessage('other-slot', 300, request('20240704T150000Z'))]
+      expect(await reopened.read()).toMatchObject({ canRespond: true })
+      state.messages = [source]
+      expect(await reopened.read()).toMatchObject(blocked)
+      await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+      state.events.delete(secondary) // Exact 404 and a complete empty UID collection.
+    }
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+    expect(await reopened.read()).toMatchObject({ canRespond: true })
+    if (membership === 'mailbox') {
+      expect(await reopened.respond('accepted')).toMatchObject({
+        channel: 'gmail',
+        outcome: 'sent',
+        refreshPending: false,
+      })
+      expect(state.sendAttempts).toBe(1)
+      expect(state.calendarPatchAttempts).toBe(0)
+    }
+  },
+)
 
 it('retains sparse primary cancellations until every possible exact copy is gone', async () => {
   const { state, read, restart } = await rig()

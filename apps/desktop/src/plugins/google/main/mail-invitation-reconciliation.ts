@@ -1125,8 +1125,14 @@ export function createMailInvitationReconciler(
       if (!joinOnly && request && latestJournal.attempts.some(blockedByConfirmation)) {
         reply = null
         noopChannel = null
+        recorded = null
         responseFacts.targetKey = null
-        responseFacts.unavailableReason ??= 'This invitation does not match a confirmed revision'
+        // Even an answer linked to this older revision is not the current
+        // response. An independently verified Calendar answer remains only
+        // as recorded-copy evidence, never a no-op or dispatch target.
+        responseFacts.status = null
+        responseFacts.sentStatus = null
+        responseFacts.unavailableReason = 'This invitation does not match a confirmed revision'
       }
       const scopePending = pending.filter((attempt) => {
         if (!sameGroup(attempt.revision, identity) || supersedes(entry, attempt.revision, email))

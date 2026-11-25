@@ -315,11 +315,18 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         } finally {
           dispatching.delete(id)
         }
-        const refreshed = await selected().catch(() => null)
-        const confirmed =
-          refreshed && sameInvitation(refreshed.source.details.identity, identity)
-            ? await displayCard(refreshed)
-            : null
+        let confirmed: MailInvitation | null = null
+        try {
+          const refreshed = await selected()
+          if (refreshed && sameInvitation(refreshed.source.details.identity, identity)) {
+            const card = await displayCard(refreshed)
+            target.assertBinding()
+            confirmed = card
+          }
+        } catch {
+          // Google already accepted the write. A failed readback (including
+          // navigation or a retired binding) must not get reported as refusal.
+        }
         return {
           outcome: 'sent',
           channel,

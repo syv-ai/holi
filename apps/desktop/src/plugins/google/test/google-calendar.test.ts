@@ -263,6 +263,23 @@ describe('listAgenda', () => {
     expect(seen.some((u) => u.includes(encodeURIComponent('jane')))).toBe(false)
   })
 
+  it('keeps hidden and free/busy-only calendars off the agenda despite enabled overrides', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: {
+        items: [
+          { id: 'me@example.com', summary: 'Me', primary: true, accessRole: 'owner' },
+          { id: 'hidden', summary: 'Hidden', hidden: true, accessRole: 'owner' },
+          { id: 'room', summary: 'Room', accessRole: 'freeBusyReader' },
+        ],
+      },
+      [eventsUrl('me@example.com')]: { items: [timed('mine', 'Mine', '2026-08-04T09:00:00Z')] },
+    })
+    const agenda = await listAgenda(api, WINDOW, {
+      overrides: { primary: false, hidden: true, room: true },
+    })
+    expect(agenda.map(({ id }) => id)).toEqual(['mine'])
+  })
+
   it('marks each event with whose calendar it came from, and its colour', async () => {
     const { api } = googleApi({
       [CAL_LIST]: {
