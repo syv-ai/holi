@@ -1320,7 +1320,7 @@ async function run() {
   const host = createCapabilityHost({
     registry: capabilities,
     rootFor: async (r) => (r === remote ? vault : null),
-    active: () => null,
+    get: (_remote) => null,
     core: noCoreServices,
     pluginEnabled: async () => true,
     claims: async () => [],

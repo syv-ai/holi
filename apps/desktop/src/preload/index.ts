@@ -21,19 +21,19 @@ function pushChannel<T>(channel: string) {
  * filesystem event costs a delay rather than a permanently wrong tree, because
  * the vault's heal tick pushes the same shape on a timer.
  */
-const onSnapshot = pushChannel<unknown>('vault:snapshot')
+const onSnapshot = pushChannel<{ remote: string; snapshot: unknown }>('vault:snapshot')
 
 /** Up to date, pulling, offline (with a waiting count), no write access,
  * conflict, reconciling, or paused. Pushed on change only. */
-const onSyncState = pushChannel<unknown>('vault:sync')
+const onSyncState = pushChannel<{ remote: string; state: unknown }>('vault:sync')
 
 /** Files the large-file gate held out of the last commit (over the size cap).
  * Pushed every commit tick; empty clears the callout. */
-const onHeldBack = pushChannel<unknown>('vault:heldback')
+const onHeldBack = pushChannel<{ remote: string; files: unknown }>('vault:heldback')
 
 /** History moved: the paths a commit took, or null after a merged pull (any
  * file may have). The disk does not change on a commit, so no snapshot says so. */
-const onCommitted = pushChannel<unknown>('vault:committed')
+const onCommitted = pushChannel<{ remote: string; paths: string[] | null }>('vault:committed')
 
 /** What the skills update a vault runs on open changed (`{remote, summary,
  * changed, conflicts}`), pushed once it is through. */

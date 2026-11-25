@@ -48,7 +48,7 @@ describe('holi logs capability', () => {
     const host = createCapabilityHost({
       registry,
       rootFor: async (remote) => `/vaults/${remote}`,
-      active: () => ({ remote: 'c/d', snapshot: () => ({}) as never, refresh: async () => {} }),
+      get: (_remote) => ({ remote: 'c/d', snapshot: () => ({}) as never, refresh: async () => {} }),
       core: noCoreServices,
       pluginEnabled: async () => true,
       claims: async () => [],

@@ -216,7 +216,7 @@ async function hostedRaceHarness() {
   const caps = createCapabilityHost({
     registry,
     rootFor,
-    active: () => null,
+    get: (_remote) => null,
     core: noCoreServices,
     pluginEnabled: async (id, root, allowDrain) => (await host.serving(root, allowDrain)).has(id),
     claims: async () => [],

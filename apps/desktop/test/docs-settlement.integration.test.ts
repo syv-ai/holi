@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { createCoreServices } from '../src/main/capabilities/services'
+import { createCoreServices, type CoreServicesDeps } from '../src/main/capabilities/services'
 import { openRepo, type GitRepo } from '../src/main/git'
 import { VAULT_NAMESPACES, vaultCapabilities } from '../src/main/capabilities/vault-caps'
 import type { SyncState } from '@holi/shared'
-import { createCapabilityHost } from '../src/main/capabilities/dispatch'
+import { createCapabilityHost, type CapabilityHostDeps } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { scanVault } from '../src/main/vault/vault-store'
 import {
@@ -24,26 +24,59 @@ afterAll(cleanupFixtures)
 
 function realRepoServices(root: string, push?: (repo: GitRepo) => Promise<void>) {
   const repo = openRepo(root)
+  const runtime: NonNullable<ReturnType<CoreServicesDeps['get']>> = {
+    remote: REMOTE,
+    root,
+    syncState: () => ({ kind: 'up-to-date' }),
+    heldBack: () => [],
+    deliverNow: async (_path, verify) => {
+      await repo.commitAll('CLI note mutation', ['integration.md'])
+      if (!(await verify())) return false
+      if (push) await push(repo)
+      else await repo.push()
+      return true
+    },
+  }
   return createCoreServices({
-    active: () => ({
-      remote: REMOTE,
-      root,
-      syncState: () => ({ kind: 'up-to-date' as const }),
-      heldBack: () => [],
-      deliverNow: async (_path, verify) => {
-        await repo.commitAll('CLI note mutation', ['integration.md'])
-        if (!(await verify())) return false
-        if (push) await push(repo)
-        else await repo.push()
-        return true
-      },
-    }),
+    get: (remote) => (remote === REMOTE ? runtime : null),
     reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
     members: { get: async () => [] } as never,
   })(REMOTE, root)
 }
 
 describe('CLI note settlement with a real local origin', () => {
+  it('refuses publication when its runtime is replaced during awaited delivery', async () => {
+    const origin = await makeRemote()
+    const root = await makeClone(origin, 'replaced-settlement')
+    const before = await plainGit(origin, ['rev-parse', 'refs/heads/main'])
+    await writeFile(join(root, 'integration.md'), 'my note')
+    const repo = openRepo(root)
+    let runtime: NonNullable<ReturnType<CoreServicesDeps['get']>> = {
+      remote: REMOTE,
+      root,
+      syncState: () => ({ kind: 'up-to-date' }),
+      heldBack: () => [],
+      deliverNow: async (_path, verify) => {
+        await repo.commitAll('CLI note mutation', ['integration.md'])
+        runtime = { ...runtime }
+        if (!(await verify())) return false
+        await repo.push()
+        return true
+      },
+    }
+    const core = createCoreServices({
+      get: () => runtime,
+      reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
+      members: { get: async () => [] } as never,
+    })(REMOTE, root)
+    expect(await core.settle('integration.md', digest('my note'))).toMatchObject({
+      pushed: false,
+      reason: 'vault-not-open',
+    })
+    expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).toBe(before)
+    expect(await readFile(join(root, 'integration.md'), 'utf8')).toBe('my note')
+  })
+
   it('settles create, update and delete only after the matching commit reaches upstream; pending changes retry', async () => {
     const origin = await makeRemote()
     const root = await makeClone(origin, 'docs-settlement')
@@ -60,7 +93,10 @@ describe('CLI note settlement with a real local origin', () => {
 
     let state: SyncState = { kind: 'up-to-date' }
     let snapshot = await scanVault(root, [])
-    let active: any
+    let active:
+      | (NonNullable<ReturnType<CoreServicesDeps['get']>> &
+          NonNullable<ReturnType<CapabilityHostDeps['get']>>)
+      | null
     active = {
       remote: REMOTE,
       root,
@@ -86,7 +122,7 @@ describe('CLI note settlement with a real local origin', () => {
     }
     const reports = { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) }
     const core = createCoreServices({
-      active: () => active,
+      get: (remote) => (remote === REMOTE ? active : null),
       reports: reports as never,
       members: { get: async () => [] } as never,
     })
@@ -101,7 +137,7 @@ describe('CLI note settlement with a real local origin', () => {
     const host = createCapabilityHost({
       registry,
       rootFor: async () => root,
-      active: () => active,
+      get: (remote) => (remote === REMOTE ? active : null),
       core,
       pluginEnabled: async () => true,
       claims: async () => [],
@@ -229,19 +265,20 @@ describe('CLI note settlement with a real local origin', () => {
     const root = await makeClone(origin, 'docs-hook-rewrite')
     await writeFile(join(root, 'integration.md'), 'requested')
     const repo = openRepo(root)
+    const runtime: NonNullable<ReturnType<CoreServicesDeps['get']>> = {
+      remote: REMOTE,
+      root,
+      syncState: () => ({ kind: 'up-to-date' as const }),
+      heldBack: () => [],
+      deliverNow: async (_path, verify) => {
+        await writeFile(join(root, 'integration.md'), 'rewritten')
+        await repo.commitAll('Hook rewrite', ['integration.md'])
+        if (!(await verify())) return false
+        throw new Error('must not push a rewritten note')
+      },
+    }
     const core = createCoreServices({
-      active: () => ({
-        remote: REMOTE,
-        root,
-        syncState: () => ({ kind: 'up-to-date' as const }),
-        heldBack: () => [],
-        deliverNow: async (_path, verify) => {
-          await writeFile(join(root, 'integration.md'), 'rewritten')
-          await repo.commitAll('Hook rewrite', ['integration.md'])
-          if (!(await verify())) return false
-          throw new Error('must not push a rewritten note')
-        },
-      }),
+      get: (remote) => (remote === REMOTE ? runtime : null),
       reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
       members: { get: async () => [] } as never,
     })(REMOTE, root)
@@ -290,19 +327,20 @@ describe('CLI note settlement with a real local origin', () => {
     await expect(plainGit(root, ['rev-parse', '@{upstream}'])).rejects.toThrow()
     await writeFile(join(root, 'first.md'), 'first')
     const repo = openRepo(root)
+    const runtime: NonNullable<ReturnType<CoreServicesDeps['get']>> = {
+      remote: REMOTE,
+      root,
+      syncState: () => ({ kind: 'up-to-date' as const }),
+      heldBack: () => [],
+      deliverNow: async (_path, verify) => {
+        await repo.commitAll('Add first note', ['first.md'])
+        if (!(await verify())) return false
+        await repo.push()
+        return true
+      },
+    }
     const core = createCoreServices({
-      active: () => ({
-        remote: REMOTE,
-        root,
-        syncState: () => ({ kind: 'up-to-date' as const }),
-        heldBack: () => [],
-        deliverNow: async (_path, verify) => {
-          await repo.commitAll('Add first note', ['first.md'])
-          if (!(await verify())) return false
-          await repo.push()
-          return true
-        },
-      }),
+      get: (remote) => (remote === REMOTE ? runtime : null),
       reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
       members: { get: async () => [] } as never,
     })
