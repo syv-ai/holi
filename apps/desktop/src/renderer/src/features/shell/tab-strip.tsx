@@ -127,6 +127,11 @@ export function TabStrip({
   const setDrag = useSetAtom(tabDragAtom)
   /** Where a drag along the strip would land: before entry `n`. */
   const [dropAt, setDropAt] = useState<number | null>(null)
+  const stripGeometry = useRef<{
+    list: HTMLDivElement
+    scrollLeft: number
+    rects: Map<string, DOMRect>
+  } | null>(null)
   const [combinePreview, setCombinePreview] = useState<{
     source: string
     target: string
@@ -227,10 +232,24 @@ export function TabStrip({
   /** The insertion point under the pointer: before the first entry whose
    *  middle is right of it, else the end. */
   function indexAt(event: DragEvent<HTMLElement>): number {
-    const items = event.currentTarget.querySelectorAll<HTMLElement>('[data-entry-id]')
+    const list = event.currentTarget
+    let geometry = stripGeometry.current
+    if (geometry?.list !== list) {
+      const items = list.querySelectorAll<HTMLElement>('[data-entry-id]')
+      geometry = {
+        list,
+        scrollLeft: list.scrollLeft,
+        rects: new Map(
+          [...items].map((item) => [item.dataset.entryId!, item.getBoundingClientRect()]),
+        ),
+      }
+      stripGeometry.current = geometry
+    }
+    const scrollDelta = list.scrollLeft - geometry.scrollLeft
+    const items = [...list.querySelectorAll<HTMLElement>('[data-entry-id]')]
     for (let i = 0; i < items.length; i += 1) {
-      const rect = items[i]!.getBoundingClientRect()
-      if (event.clientX < rect.left + rect.width / 2) return i
+      const rect = geometry.rects.get(items[i]!.dataset.entryId!)
+      if (rect && event.clientX < rect.left - scrollDelta + rect.width / 2) return i
     }
     return items.length
   }
@@ -278,6 +297,9 @@ export function TabStrip({
     const at = indexAt(event)
     return dropOnStrip(ws, dragged, at) === ws ? null : { kind: 'reorder', index: at }
   }
+
+  const reorderPreview =
+    dropAt !== null && dragged !== null ? dropOnStrip(ws, dragged, dropAt) : null
 
   const previewValid =
     combinePreview !== null &&
@@ -359,6 +381,7 @@ export function TabStrip({
                 if (!(to instanceof Node) || !event.currentTarget.contains(to)) {
                   setDropAt(null)
                   setCombinePreview(null)
+                  stripGeometry.current = null
                 }
               }}
               onDrop={(event) => {
@@ -373,6 +396,7 @@ export function TabStrip({
                   combinePreview.target === drop.target
                 setDropAt(null)
                 setCombinePreview(null)
+                stripGeometry.current = null
                 setDrag(null)
                 if (!currentGesture || !ownsKey || drop === null) return
                 event.preventDefault()
@@ -385,6 +409,9 @@ export function TabStrip({
             >
               {ws.entries.map((entry, index) => {
                 const id = entryId(entry)
+                const previewOrder = reorderPreview?.entries.findIndex(
+                  (candidate) => entryId(candidate) === id,
+                )
                 const sticky = isSticky(ws, id)
                 const members = isSplit(entry) ? entry.views.map(look) : null
                 const tab = members === null ? look(id) : null
@@ -421,6 +448,9 @@ export function TabStrip({
                                 : 'tab-group'
                         }
                         data-entry-id={id}
+                        presentationOrder={
+                          previewOrder !== undefined && previewOrder >= 0 ? previewOrder : undefined
+                        }
                         data-combine-preview={targetPreview || undefined}
                         aria-description={targetPreview ? 'Split preview' : undefined}
                         data-tab-key={tab === null ? undefined : id}
