@@ -991,6 +991,17 @@ test('the same surface id in another vault gets a fresh instance', async () => {
   fireEvent.change(first, { target: { value: 'vault A only' } })
   act(() => f.store.set(activeRemoteAtom, 'mara/other'))
   f.show('one')
+  expect(first.isConnected).toBe(false)
+  expect(screen.queryByRole('textbox', { name: 'State one' })).toBeNull()
+  expect(f.acquired).toHaveBeenCalledTimes(1)
+  // The destination's open and settings complete separately. Neither an
+  // early tab request nor the old vault's settings may bypass readiness.
+  act(() => {
+    f.store.set(snapshotAtom, emptyVaultSnapshot())
+    f.store.set(openedRemoteAtom, 'mara/other')
+  })
+  expect(screen.queryByRole('textbox', { name: 'State one' })).toBeNull()
+  act(() => f.store.set(vaultSettingsAtom, { remote: 'mara/other', settings: SETTINGS }))
   const second = await screen.findByRole('textbox', { name: 'State one' })
   expect(second).not.toBe(first)
   expect(second).toHaveValue('initial')
@@ -1397,6 +1408,15 @@ test('session retention: the same session id in a different vault gets a fresh i
   f.away()
   act(() => f.store.set(activeRemoteAtom, 'mara/other'))
   f.show('one')
+  expect(first.isConnected).toBe(false)
+  expect(screen.queryByRole('textbox', { name: 'Session agent:one' })).toBeNull()
+  expect(f.acquired).toHaveBeenCalledTimes(1)
+  act(() => {
+    f.store.set(snapshotAtom, emptyVaultSnapshot())
+    f.store.set(openedRemoteAtom, 'mara/other')
+  })
+  expect(screen.queryByRole('textbox', { name: 'Session agent:one' })).toBeNull()
+  act(() => f.store.set(vaultSettingsAtom, { remote: 'mara/other', settings: SETTINGS }))
   const second = await screen.findByRole('textbox', { name: 'Session agent:one' })
   expect(second).not.toBe(first)
   expect(second.dataset.instance).not.toBe(first.dataset.instance)

@@ -635,8 +635,12 @@ describe('sticky views', () => {
     ws = splitActive(ws)
     expect(isSticky(ws, split(ws).id)).toBe(true)
     ws = replaceWithNew(ws, A)
-    expect(strip(ws).slice(0, 2)).toEqual([B, A])
+    // Moving A to the front established A→B drag order. Replacing its
+    // member keeps A sticky; the now-ordinary split follows both sticky tabs.
+    expect(strip(ws).slice(0, 2)).toEqual([A, B])
     expect(isSticky(ws, A)).toBe(true)
+    expect(isSticky(ws, B)).toBe(true)
+    expect(isSticky(ws, split(ws).id)).toBe(false)
   })
 
   test('sticky launchers are not automatically replaced, alone or in a split', () => {
