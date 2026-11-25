@@ -163,7 +163,8 @@ Otherwise:
 Bulk closes preserve every entry containing a sticky member. The right-click
 **Close** action deliberately closes a sticky view or group, keeping the normal
 save and split-confirmation workflow; an explicitly closed view reopens ordinary.
-Removing a deleted file or disabled surface still removes its tab.
+Authoritative removal and deliberate surface-close actions can still remove
+sticky tabs; disabling a plugin may leave a not-running placeholder.
 
 Closing the active ordinary tab hands over to the entry after it, else the one before. Closing
 a split member takes it out of the split, and a 2-split turns back into a tab of the one left.
