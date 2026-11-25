@@ -102,8 +102,9 @@ export function useMail(account: string | null, enabled = true) {
   const listGeneration = useRef(0)
   /** The latest list request: an older answer landing late is dropped. */
   const listRequest = useRef(0)
-  /** A periodic search holds the slot until it settles, even across rerenders. */
-  const periodicRequest = useRef(false)
+  /** The current context's outstanding list read, including the initial load. */
+  const pendingListRequest = useRef<number | null>(null)
+  const pendingWrites = useRef(new Map<symbol, typeof call>())
 
   const searching = submitted !== ''
   const showsDrafts = folder === 'drafts' && !searching
@@ -128,6 +129,7 @@ export function useMail(account: string | null, enabled = true) {
     setList({ kind: 'loading' })
     listGeneration.current++
     const at = ++listRequest.current
+    pendingListRequest.current = at
     void call((r) => googleCap.search(r, params))
       .then((page) => {
         if (listRequest.current !== at) return
@@ -148,9 +150,18 @@ export function useMail(account: string | null, enabled = true) {
               },
         )
       })
+      .finally(() => {
+        if (pendingListRequest.current === at) pendingListRequest.current = null
+      })
   }, [call, params, showsDrafts])
 
-  useEffect(load, [load])
+  useEffect(() => {
+    load()
+    return () => {
+      listRequest.current += 1
+      pendingListRequest.current = null
+    }
+  }, [load])
 
   // Keep an open, visible mailbox current without replacing the current list
   // with a loading skeleton. The request id also drops answers from an older
@@ -159,17 +170,25 @@ export function useMail(account: string | null, enabled = true) {
     if (!enabled || account === null || showsDrafts || searching) return
     let active = true
     const timer = window.setInterval(() => {
-      if (!active || periodicRequest.current) return
-      periodicRequest.current = true
+      if (
+        !active ||
+        pendingListRequest.current !== null ||
+        [...pendingWrites.current.values()].includes(call)
+      )
+        return
       const at = ++listRequest.current
+      const generation = listGeneration.current
+      pendingListRequest.current = at
       void call((r) => googleCap.search(r, params))
         .then((page) => {
-          if (active && listRequest.current === at)
+          if (active && listRequest.current === at && listGeneration.current === generation) {
+            listGeneration.current++
             setList({ kind: 'ready', threads: page.threads, nextPageToken: page.nextPageToken })
+          }
         })
         .catch(() => undefined)
         .finally(() => {
-          periodicRequest.current = false
+          if (pendingListRequest.current === at) pendingListRequest.current = null
         })
     }, 30_000)
     return () => {
@@ -269,6 +288,8 @@ export function useMail(account: string | null, enabled = true) {
     setList((previous) =>
       previous.kind === 'ready' ? { ...previous, threads: next(previous.threads) } : previous,
     )
+    const operation = Symbol()
+    pendingWrites.current.set(operation, call)
     try {
       await mutate()
       return true
@@ -282,6 +303,8 @@ export function useMail(account: string | null, enabled = true) {
       }
       setWriteError(explainWriteFailure(err))
       return false
+    } finally {
+      pendingWrites.current.delete(operation)
     }
   }
 

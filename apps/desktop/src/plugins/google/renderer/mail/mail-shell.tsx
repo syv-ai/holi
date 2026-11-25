@@ -5,8 +5,9 @@
  * `useMail`; HTML bodies go through `SandboxedHtml` as everywhere else.
  *
  * Self-contained so it can be mounted anywhere in Holi's shell: it fills its
- * parent (`h-full`) and brings its own folder rail and list column. Not
- * mounted yet; see the plugin's `index.tsx` for the surfaces that are.
+ * parent (`h-full`) and brings its own folder rail and list column. The
+ * plugin's `index.tsx` registers it as the retained Mail app; `visible`
+ * suspends automatic refresh while another app is displayed.
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
