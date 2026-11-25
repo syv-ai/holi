@@ -18,8 +18,8 @@ const responses = {
 } as const
 const answers = Object.keys(responses) as InvitationAnswer[]
 
-/** Use the list's invite hint, or calendar attachments already read with the
- * thread. Opening ordinary mail does not incur an invitation lookup. */
+/** Use the list's invite hint or the full thread's calendar MIME evidence.
+ * Opening ordinary mail does not incur an invitation lookup. */
 export function MailInvitation({
   thread,
   hasInvite,
@@ -29,16 +29,7 @@ export function MailInvitation({
   hasInvite: boolean
   generation: number
 }) {
-  if (
-    !hasInvite &&
-    !thread.messages.some(({ attachments }) =>
-      attachments.some(
-        ({ filename, mimeType }) =>
-          /\.ics$/i.test(filename) || /^(text\/calendar|application\/ics)(;|$)/i.test(mimeType),
-      ),
-    )
-  )
-    return null
+  if (!hasInvite && !thread.messages.some((message) => message.hasCalendarPayload)) return null
   return <InvitationScope threadId={thread.id} generation={generation} />
 }
 

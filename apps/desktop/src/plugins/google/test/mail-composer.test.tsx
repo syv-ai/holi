@@ -77,6 +77,7 @@ const PARENT: ThreadMessage = {
   body: 'The numbers are attached.',
   html: null,
   attachments: [],
+  hasCalendarPayload: false,
 }
 
 const REPLY: ComposeIntent = {

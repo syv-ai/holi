@@ -141,6 +141,78 @@ it('lists --full in the generated usage for google read', () => {
   expect(usage.text).toContain('[--full]')
 })
 
+it('projects calendar MIME evidence in the reader thread without fetching calendar bytes', async () => {
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Example//Calendar//EN',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    'UID:review@example.com',
+    'DTSTAMP:20260804T090000Z',
+    'DTSTART:20260819T120000Z',
+    'DTEND:20260819T130000Z',
+    'ORGANIZER:mailto:jane@example.com',
+    'ATTENDEE:mailto:ada@example.com',
+    'SUMMARY:Sprint review',
+    'END:VEVENT',
+    'END:VCALENDAR',
+    '',
+  ].join('\r\n')
+  const plain = {
+    mimeType: 'text/plain',
+    body: { data: Buffer.from('Sprint review').toString('base64url') },
+  }
+  const inline = {
+    mimeType: 'text/calendar',
+    body: { data: Buffer.from(ics).toString('base64url') },
+  }
+  const fetchThread = vi.fn(async (input: string) => {
+    const url = new URL(input)
+    if (
+      !url.pathname.endsWith('/threads/t-calendar') ||
+      url.searchParams.get('format') !== 'full'
+    ) {
+      throw new Error(`Unexpected Google request: ${url}`)
+    }
+    return Response.json({
+      id: 't-calendar',
+      messages: [
+        { id: 'ordinary', payload: plain },
+        {
+          id: 'inline',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [{ mimeType: 'multipart/alternative', parts: [plain, inline] }],
+          },
+        },
+        {
+          id: 'attachment-backed',
+          payload: {
+            mimeType: 'application/ics',
+            body: { attachmentId: 'a-calendar', size: ics.length },
+          },
+        },
+      ],
+    })
+  })
+  vi.stubGlobal('fetch', fetchThread)
+  try {
+    const { call } = rig()
+    expect(await call('thread', { id: 't-calendar' })).toMatchObject({
+      id: 't-calendar',
+      messages: [
+        { id: 'ordinary', hasCalendarPayload: false },
+        { id: 'inline', hasCalendarPayload: true, attachments: [] },
+        { id: 'attachment-backed', hasCalendarPayload: true },
+      ],
+    })
+    expect(fetchThread).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
 describe('UI-only mail markers', () => {
   it('exposes local annotations only through the expected-account UI capability', async () => {
     const annotations = vi.fn(async () => ({ t1: 'red-star' as const }))

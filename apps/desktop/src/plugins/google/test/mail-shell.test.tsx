@@ -178,6 +178,7 @@ const thread = {
       body: 'Earlier note',
       html: null,
       attachments: [],
+      hasCalendarPayload: false,
     },
     {
       id: 'm2',
@@ -189,6 +190,7 @@ const thread = {
       body: 'See the sheet',
       html: '<p>See the <b>sheet</b></p><script>alert(1)</script>',
       attachments: [{ filename: 'q2.xlsx', mimeType: 'application/vnd.ms-excel', size: 20480 }],
+      hasCalendarPayload: false,
     },
   ],
 }
@@ -490,6 +492,30 @@ test.each([
     expect(button).toBeDisabled()
   },
 )
+
+test('shows a filename-less inline invitation in the mail shell', async () => {
+  threadMock.mockResolvedValue({
+    ...thread,
+    messages: [
+      thread.messages[0]!,
+      {
+        ...thread.messages[1]!,
+        body: 'Please join the budget workshop.',
+        html: null,
+        attachments: [],
+        hasCalendarPayload: true,
+      },
+    ],
+  })
+  invitationMock.mockResolvedValue(invitation)
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  expect(await region.findByRole('heading', { name: 'Budget workshop' })).toBeInTheDocument()
+  expect(region.getByRole('button', { name: 'Accept' })).toBeEnabled()
+})
 
 test('reports Google acceptance separately from a failed status refresh and Retry only reads', async () => {
   searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))

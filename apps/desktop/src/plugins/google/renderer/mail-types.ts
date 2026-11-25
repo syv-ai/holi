@@ -33,4 +33,5 @@ export interface ThreadMessage {
   /** Raw, unsanitized HTML, or null. Only a sanitizing path may touch this. */
   html: string | null
   attachments: MailAttachment[]
+  hasCalendarPayload: boolean
 }
