@@ -258,7 +258,12 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   git_config_free(local);
   if (rc < 0 || bare || unsafe.hooks || unsafe.filters || unsafe.helpers) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository configuration"); return NULL; }
   git_repository_state_t state = git_repository_state(repo);
-  if (state != GIT_REPOSITORY_STATE_NONE && state != GIT_REPOSITORY_STATE_MERGE) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository state"); return NULL; }
+  if (state != GIT_REPOSITORY_STATE_NONE) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported repository state"); return NULL; }
+  git_index *index = NULL;
+  rc = git_repository_index(&index, repo);
+  if (rc == 0 && git_index_has_conflicts(index)) rc = GIT_ECONFLICT;
+  git_index_free(index);
+  if (rc < 0) { git_repository_free(repo); [snapshot close]; if(error)*error=HNGPathError(EINVAL,@"Unsupported or conflicted index state"); return NULL; }
   *snapshotOut = snapshot;
   return repo;
 }
