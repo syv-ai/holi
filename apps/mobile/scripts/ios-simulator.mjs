@@ -290,7 +290,7 @@ try {
       }),
   )
   assert.equal(refs['refs/heads/fixture-start'], report.git.fetchedRef)
-  assert.equal(refs['refs/heads/holi-compat'], report.git.pushedHead)
+  assert.equal(refs['refs/heads/fixture-start'], report.git.pushedHead)
   await writeFile(
     join(artifacts, 'git-transport-proof.json'),
     JSON.stringify(
@@ -298,7 +298,7 @@ try {
         runId,
         authChallenges: gitFixture.authChallengeCount,
         remoteAdvancedAfterClone: gitFixture.remoteAdvanced,
-        pushedRef: 'refs/heads/holi-compat',
+        pushedRef: 'refs/heads/fixture-start',
         refs: Object.keys(refs),
       },
       null,
@@ -726,3 +726,7 @@ try {
   process.removeListener('SIGTERM', interrupt)
 }
 if (cleanupFailures.length) throw new Error('Simulator cleanup did not complete')
+
+const managedProofPath = join(artifacts, 'managed-proof.json')
+const managedProof = JSON.parse(await readFile(managedProofPath, 'utf8'))
+await writeFile(managedProofPath, JSON.stringify({ ...managedProof, ownedCleanup: true }, null, 2))

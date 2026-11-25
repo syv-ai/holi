@@ -9,8 +9,9 @@ import {
   mkdir,
   readdir,
   cp,
+  link,
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createManagedGitFixture } from './managed-git-fixture.mjs'
 
@@ -208,6 +209,38 @@ export async function runManagedIOSScenarios({
     assert.equal(privacy.refusal.code, 'protected-content')
     assert.equal(fixture.requests.length, traffic)
     assert.equal(await fixture.git(fixture.bare, 'rev-parse', 'refs/heads/review/mobile'), outgoing)
+    const linked = targetFor('linked-reflog')
+    passed(await request('linked-reflog-clone', 'acquire', linked))
+    const reflog = join(linked.root, '.git/logs/refs/remotes/origin/review/mobile')
+    await mkdir(dirname(reflog), { recursive: true })
+    const originalLog = await readFile(reflog).catch((error) => {
+      if (error.code === 'ENOENT') return Buffer.alloc(0)
+      throw error
+    })
+    const sentinel = join(documents, `unowned-sentinel-${runId}.local.md`)
+    await writeFile(sentinel, originalLog)
+    await rm(reflog, { force: true })
+    await link(sentinel, reflog)
+    await fixture.git(fixture.seed, 'fetch', fixture.bare, 'refs/heads/review/mobile')
+    await fixture.git(fixture.seed, 'reset', '--hard', 'FETCH_HEAD')
+    await writeFile(join(fixture.seed, 'reflog-advance.md'), 'independent server advance\n')
+    await fixture.git(fixture.seed, 'add', 'reflog-advance.md')
+    await fixture.git(fixture.seed, 'commit', '-m', 'advance reflog')
+    await fixture.git(fixture.seed, 'push', fixture.bare, 'HEAD:refs/heads/review/mobile')
+    const linkTraffic = fixture.requests.length
+    const linkedFetch = await request('linked-reflog-refusal', 'fetch', linked)
+    assert.deepEqual(
+      await readFile(sentinel),
+      originalLog,
+      'Fetch modified an unowned hardlink target',
+    )
+    assert.deepEqual(await readFile(reflog), originalLog)
+    refused(linkedFetch)
+    assert.equal(fixture.requests.length, linkTraffic)
+    assert.equal(
+      await fixture.git(linked.root, 'rev-parse', 'refs/remotes/origin/review/mobile'),
+      outgoing,
+    )
     for (const branch of fixture.protectedBranches) {
       const blocked = targetFor(branch.replace('/', '-'), branch)
       refused(await request(`reject-${branch.replace('/', '-')}`, 'acquire', blocked))
@@ -285,6 +318,7 @@ export async function runManagedIOSScenarios({
       binaryBytes: 256,
       executableMode: '100755',
       unrelatedRefPreserved: true,
+      hardlinkedReflogRefused: true,
       selectedClone: fixture.selectedHead,
       fetched: advanced,
       published: outgoing,

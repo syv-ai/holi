@@ -376,8 +376,9 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
     if (result == 0) {
       const char *fetchURL = git_remote_url(gitRemote);
       const char *pushURL = git_remote_pushurl(gitRemote);
-      if (!fetchURL || strcmp(fetchURL, remote.UTF8String) || (pushURL && strcmp(pushURL, remote.UTF8String)))
+      if (!fetchURL || strcmp(fetchURL, remote.UTF8String) || (pushURL && strcmp(pushURL, remote.UTF8String))) {
         result = GIT_EINVALIDSPEC;
+      }
     }
     git_remote_connect_options connectOptions = GIT_REMOTE_CONNECT_OPTIONS_INIT;
     connectOptions.callbacks = callbacks;

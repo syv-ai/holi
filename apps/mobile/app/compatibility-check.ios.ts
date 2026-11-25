@@ -1,4 +1,4 @@
-import { knownFolders } from '@nativescript/core'
+import { File, knownFolders } from '@nativescript/core'
 import { nativeGit } from './native-git.ios'
 import { nativeIO } from './native-posix.ios'
 import { nativeFiles } from './native-files.ios'
@@ -54,18 +54,49 @@ export async function runGitCompatibilityCheck(runId: string): Promise<GitCompat
       throw new Error(`Missing Git fixture setting ${name}`)
     return value as string
   }
+  const run = async (...args: Parameters<typeof nativeGit.run>) => {
+    try {
+      return await nativeGit.run(...args)
+    } catch (error) {
+      if (error instanceof Error) error.message = `${args[0]}: ${error.message}`
+      throw error
+    }
+  }
   const root = required('HOLI_GIT_FIXTURE_ROOT')
   const remote = required('HOLI_GIT_FIXTURE_URL')
   const invalidTls = required('HOLI_GIT_INVALID_TLS_URL')
   const username = required('HOLI_GIT_FIXTURE_USER')
   const password = required('HOLI_GIT_FIXTURE_PASSWORD')
-  const clone = await nativeGit.run('clone', root, remote, username, password)
-  const poisoned = await nativeGit.run('poison', root, remote, username, password)
+  const clone = await run('clone', root, remote, username, password)
+  const fixtureConfig = File.fromPath(`${root}/.git/config`)
+  const originalConfig = fixtureConfig.readTextSync()
+  const poisoned = await run('poison', root, remote, username, password)
   if (poisoned.hooksDisabled || poisoned.filtersDisabled || poisoned.helpersDisabled)
     throw new Error('Native Git sentinel configuration was not planted')
-  const fetch = await nativeGit.run('fetch', root, remote, username, password)
+  const poisonedConfig = fixtureConfig.readTextSync()
+  let unsafeConfigRejected = false
+  try {
+    await run('fetch', root, remote, username, password)
+  } catch (error) {
+    unsafeConfigRejected = error instanceof Error && 'code' in error && Number(error.code) === -12
+  }
+  if (!unsafeConfigRejected || fixtureConfig.readTextSync() !== poisonedConfig)
+    throw new Error('Unsafe config was accepted or silently repaired')
+  fixtureConfig.writeTextSync(originalConfig.replaceAll(remote, 'https://127.0.0.1:1/attacker.git'))
+  const mismatchedConfig = fixtureConfig.readTextSync()
+  let mismatchedOriginRejected = false
+  try {
+    await run('fetch', root, remote, username, password)
+  } catch (error) {
+    mismatchedOriginRejected =
+      error instanceof Error && 'code' in error && Number(error.code) === -12
+  }
+  if (!mismatchedOriginRejected || fixtureConfig.readTextSync() !== mismatchedConfig)
+    throw new Error('Mismatched origin was accepted or silently repaired')
+  fixtureConfig.writeTextSync(originalConfig)
+  const fetch = await run('fetch', root, remote, username, password)
   const diagnosticPath = `${root}-operation-gate`
-  await nativeGit.run('clone', diagnosticPath, remote, username, password)
+  await run('clone', diagnosticPath, remote, username, password)
   let releasePublish!: () => void
   let publishPaused!: () => void
   const paused = new Promise<void>((resolve) => (publishPaused = resolve))
@@ -83,7 +114,7 @@ export async function runGitCompatibilityCheck(runId: string): Promise<GitCompat
   const saved = await diagnostic.create('gate.md', encode('before'))
   const saving = diagnostic.save('gate.md', encode('after'), saved.revision)
   await paused
-  const fetching = nativeGit.run('fetch', diagnosticPath, remote, username, password)
+  const fetching = run('fetch', diagnosticPath, remote, username, password)
   let fetchSettled = false
   void fetching.then(
     () => {
@@ -135,7 +166,7 @@ export async function runGitCompatibilityCheck(runId: string): Promise<GitCompat
   )
   let gateRecoveryError: unknown
   try {
-    await nativeGit.run('fetch', gateRecoveryRoot, remote, username, password)
+    await run('fetch', gateRecoveryRoot, remote, username, password)
   } catch (error) {
     gateRecoveryError = error
   }
@@ -158,7 +189,10 @@ export async function runGitCompatibilityCheck(runId: string): Promise<GitCompat
     throw new Error(
       'Native Git did not refuse conflicting move recovery without preserving evidence',
     )
-  const push = await nativeGit.run('push', root, remote, username, password)
+  // The host created this commit. Prepare the disposable fixture ref explicitly;
+  // transport itself must not merge or silently advance local HEAD during fetch.
+  File.fromPath(`${root}/.git/refs/heads/fixture-start`).writeTextSync(`${fetch.fetchTarget}\n`)
+  const push = await run('push', root, remote, username, password)
   const captureFailure = async (operation: () => Promise<unknown>) => {
     try {
       await operation()
@@ -168,15 +202,15 @@ export async function runGitCompatibilityCheck(runId: string): Promise<GitCompat
     throw new Error('Native Git unexpectedly accepted a failing transport fixture')
   }
   const invalidTlsFailure = await captureFailure(() =>
-    nativeGit.run('clone', `${root}-invalid-tls`, invalidTls, username, password),
+    run('clone', `${root}-invalid-tls`, invalidTls, username, password),
   )
   const authenticationFailure = await captureFailure(() =>
-    nativeGit.run('clone', `${root}-invalid-auth`, remote, username, 'incorrect-fixture-password'),
+    run('clone', `${root}-invalid-auth`, remote, username, 'incorrect-fixture-password'),
   )
   const unreachable = new URL(remote)
   unreachable.port = '1'
   const transportFailure = await captureFailure(() =>
-    nativeGit.run('clone', `${root}-invalid-transport`, unreachable.toString(), username, password),
+    run('clone', `${root}-invalid-transport`, unreachable.toString(), username, password),
   )
   const nativeFailure = (error: unknown, expectedCode: number | undefined, label: string) => {
     if (!(error instanceof Error) || !('code' in error) || !('gitErrorClass' in error))
@@ -239,7 +273,8 @@ export async function runGitCompatibilityCheck(runId: string): Promise<GitCompat
       clone.branch === 'refs/heads/fixture-start' &&
       fetch.branch === clone.branch &&
       clone.headTarget === fetch.headTarget &&
-      fetch.headTarget === push.headTarget,
+      fetch.fetchTarget === push.headTarget &&
+      mismatchedOriginRejected,
     modePreserved: (modeValue & 0o111) !== 0,
     binaryPreserved:
       binary.length === 5 &&
@@ -255,6 +290,7 @@ export async function runGitCompatibilityCheck(runId: string): Promise<GitCompat
     helpersDisabled: clone.helpersDisabled && fetch.helpersDisabled && push.helpersDisabled,
     remoteConstrained: clone.remoteConstrained && fetch.remoteConstrained && push.remoteConstrained,
     unsafeConfigRejected:
+      unsafeConfigRejected &&
       fetch.hooksDisabled &&
       fetch.filtersDisabled &&
       fetch.helpersDisabled &&
