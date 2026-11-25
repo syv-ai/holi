@@ -392,3 +392,128 @@ describe('agent terminals', () => {
     expect(terminals.open(on(undefined, null)).ok).toBe(false)
   })
 })
+
+it('keeps stale pastes and deferred output fenced while a fresh claimant adopts the terminal', async () => {
+  vi.useFakeTimers()
+  const pty = new FakePty()
+  let epoch = 0
+  const capture = () => {
+    const at = epoch
+    return () => epoch === at
+  }
+  const queued: Array<{ payload: unknown; guard?: () => boolean }> = []
+  const terminals = createAgentTerminals({
+    spawnPty: () => pty,
+    probePid: () => 'alive',
+    superviseGroup: () => ({
+      drain: async () => {
+        pty.exit()
+      },
+    }),
+    emit: (_remote, name, payload, guard) => {
+      if (name === 'pty-data') queued.push({ payload, guard })
+    },
+    pasteBackstopMs: 20,
+    log: () => {},
+  })
+  const old = capture()
+  const opened = terminals.open({ ...on(), lease: old })
+  if (!opened.ok) throw new Error(opened.message)
+  expect(terminals.claim(opened.id, old)).toBe(true)
+  const staleReplay = terminals.attach(opened.id, old)
+  pty.emit('recorded before switching')
+  epoch++
+  epoch++
+  await vi.advanceTimersByTimeAsync(0)
+  expect(await staleReplay).toBe('')
+  terminals.write(opened.id, 'stale', old)
+  terminals.resize(opened.id, 120, 50, old)
+  expect(terminals.paste(opened.id, 'stale draft', old)).toBe(false)
+  const fresh = capture()
+  expect(terminals.claim(opened.id, fresh)).toBe(true)
+  expect(await terminals.discard(opened.id, old)).toBe(false)
+  const freshReplay = terminals.attach(opened.id, fresh)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(await freshReplay).toContain('recorded before switching')
+  pty.emit('fresh output')
+  expect(queued.filter((event) => event.guard?.())).toEqual([
+    expect.objectContaining({ payload: { id: opened.id, data: 'fresh output' } }),
+  ])
+  terminals.write(opened.id, 'fresh', fresh)
+  expect(terminals.paste(opened.id, 'revoked while settling', fresh)).toBe(true)
+  epoch++
+  await vi.advanceTimersByTimeAsync(300)
+  expect(pty.writes).toEqual(['fresh'])
+  expect(queued.every((event) => event.guard?.() === false)).toBe(true)
+  const current = capture()
+  expect(terminals.paste(opened.id, 'current draft', current)).toBe(true)
+  expect(pty.writes.at(-1)).toBe('\x1b[200~current draft\x1b[201~')
+  const closing = terminals.closeAll()
+  await vi.advanceTimersByTimeAsync(0)
+  await closing
+  expect(terminals.list()).toEqual([])
+})
+
+it('allows a revoked creator to discard an unadopted terminal without an extra claim', async () => {
+  const pty = new FakePty()
+  let displayed = true
+  const origin = () => displayed
+  const terminals = createAgentTerminals({
+    spawnPty: () => pty,
+    probePid: () => 'alive',
+    superviseGroup: () => ({
+      drain: async () => {
+        pty.exit()
+      },
+    }),
+    emit: () => {},
+    log: () => {},
+  })
+  const opened = terminals.open({ ...on(), lease: origin })
+  if (!opened.ok) throw new Error(opened.message)
+  displayed = false
+  expect(await terminals.discard(opened.id, origin)).toBe(true)
+  expect(terminals.list()).toEqual([])
+})
+
+it('delivers each byte once across a replay whose parser barrier precedes live output', async () => {
+  const { terminals, spawns, sent } = setup()
+  const opened = terminals.open(on())
+  if (!opened.ok) throw new Error(opened.message)
+  const pty = spawns[0]!.pty
+  pty.emit('replay-prefix')
+  const replay = terminals.attach(opened.id, lease)
+  pty.emit('stream-tail')
+  const state = await replay
+  const live = sent
+    .filter(([name]) => name === 'pty-data')
+    .map(([, payload]) => (payload as { data: string }).data)
+    .join('')
+  const combined = state + live
+  expect(combined.match(/replay-prefix/g)).toHaveLength(1)
+  expect(combined.match(/stream-tail/g)).toHaveLength(1)
+  expect(combined.indexOf('replay-prefix')).toBeLessThan(combined.indexOf('stream-tail'))
+  pty.exit()
+  await terminals.closeAll()
+})
+
+it('settles pending replay when the terminal closes before its parser barrier', async () => {
+  const pty = new FakePty()
+  const terminals = createAgentTerminals({
+    spawnPty: () => pty,
+    probePid: () => 'alive',
+    superviseGroup: () => ({
+      drain: async () => {
+        pty.exit()
+      },
+    }),
+    emit: () => {},
+    log: () => {},
+  })
+  const opened = terminals.open(on())
+  if (!opened.ok) throw new Error(opened.message)
+  const replay = terminals.attach(opened.id, lease)
+  await terminals.close(opened.id)
+  expect(await replay).toBe('')
+  expect(terminals.list()).toEqual([])
+})

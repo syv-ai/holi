@@ -674,6 +674,7 @@ describe('agent.job', () => {
     const launch = vi.fn(async () => ({ ok: true as const, sessionId: 'abcd1234' }))
     const start = vi.fn(async () => ({ ok: true as const, sessionId: 'j0123456789ab' }))
     const caps = agentCapabilities({
+      presentationLease: () => () => true,
       sessions: { launch } as never,
       own: {} as never,
       jobs: { start } as never,
@@ -1740,6 +1741,7 @@ describe('agent.job in the vault', () => {
     const launch = vi.fn(async () => ({ ok: true as const, sessionId: 'abcd1234' }))
     const start = vi.fn(async () => ({ ok: true as const, sessionId: 'j0123456789ab' }))
     const caps = agentCapabilities({
+      presentationLease: () => () => true,
       sessions: { launch } as never,
       own: {} as never,
       jobs: { start } as never,
@@ -1801,6 +1803,7 @@ describe('Codex jobs without a per-vault grant', () => {
     const start = vi.fn(async () => ({ ok: true as const, sessionId: 'j0123456789ab' }))
     const message = vi.fn()
     const caps = agentCapabilities({
+      presentationLease: () => () => true,
       sessions: {} as never,
       own: { has: () => false } as never,
       jobs: {
@@ -1874,6 +1877,7 @@ describe('agent.scoped', () => {
       terminalId: 't1',
     }))
     const caps = agentCapabilities({
+      presentationLease: () => () => true,
       sessions: { launch } as never,
       own: {} as never,
       jobs: {} as never,
@@ -1960,11 +1964,26 @@ describe('a fenced session', () => {
       log: () => {},
     })
     let fence: Fence | undefined
+    let claimant: (() => boolean) | undefined
     const own = {
-      start: vi.fn(async (_provider: string, args: { prompt?: string; fence?: Fence }) => {
-        fence = args.fence
-        return { ok: true as const, sessionId: 'p0123456789ab', terminalId: 't1' }
-      }),
+      async discard(_id: string, lease: () => boolean) {
+        if (claimant !== lease) return false
+        await fence?.exited()
+        await fence?.retire?.()
+        claimant = undefined
+        return true
+      },
+      start: vi.fn(
+        async (
+          _provider: string,
+          args: { prompt?: string; fence?: Fence },
+          lease: () => boolean,
+        ) => {
+          claimant = lease
+          fence = args.fence
+          return { ok: true as const, sessionId: 'p0123456789ab', terminalId: 't1' }
+        },
+      ),
     }
     const fenced = createFencedSessions({
       vault: { remote: 'syv/vault', root },
@@ -1973,18 +1992,21 @@ describe('a fenced session', () => {
       copyBack: jobs.copyBack,
       log: () => {},
     })
-    const res = await fenced.start({
-      provider: {
-        id: 'codex',
-        label: 'Codex',
-        capabilities: { fenced: 'sandbox' },
-        ...(release === undefined ? {} : { release }),
-      } as never,
-      name: 'Plan: vault app',
-      prompt: 'Make it',
-      system: 'Make the app.',
-      scope,
-    })
+    const res = await fenced.start(
+      {
+        provider: {
+          id: 'codex',
+          label: 'Codex',
+          capabilities: { fenced: 'sandbox' },
+          ...(release === undefined ? {} : { release }),
+        } as never,
+        name: 'Plan: vault app',
+        prompt: 'Make it',
+        system: 'Make the app.',
+        scope,
+      },
+      () => true,
+    )
     if (fence === undefined) throw new Error('no fence')
     return { root, userData, res, own, fence, fenced }
   }
@@ -2124,12 +2146,15 @@ describe('a fenced session', () => {
     await mkdir(join(root, 'notes/Plan.app'), { recursive: true })
     own.start.mockClear()
     expect(
-      await fenced.start({
-        provider: { id: 'codex' } as never,
-        name: 'x',
-        prompt: 'x',
-        scope: SCOPE,
-      }),
+      await fenced.start(
+        {
+          provider: { id: 'codex' } as never,
+          name: 'x',
+          prompt: 'x',
+          scope: SCOPE,
+        },
+        () => true,
+      ),
     ).toEqual({ ok: false, message: takenMessage('notes/Plan.app') })
     expect(own.start).not.toHaveBeenCalled()
   })
@@ -2162,12 +2187,15 @@ describe('a fenced session', () => {
   it('opens no session once the vault is being left', async () => {
     const { fenced, own } = await fencedRig()
     own.start.mockClear()
-    const res = fenced.start({
-      provider: { id: 'codex' } as never,
-      name: 'x',
-      prompt: 'x',
-      scope: { read: ['notes/Plan.md'], write: ['notes/Other.app/**'] },
-    })
+    const res = fenced.start(
+      {
+        provider: { id: 'codex' } as never,
+        name: 'x',
+        prompt: 'x',
+        scope: { read: ['notes/Plan.md'], write: ['notes/Other.app/**'] },
+      },
+      () => true,
+    )
     await fenced.closing()
     expect(await res).toEqual({
       ok: false,
@@ -2181,12 +2209,15 @@ describe('a fenced session', () => {
     const scratchRoot = join(userData, 'agent-fenced')
     const originalEntries = (await readdir(scratchRoot)).sort()
     own.start.mockResolvedValueOnce({ ok: false, message: 'Codex is not installed.' } as never)
-    const res = await fenced.start({
-      provider: { id: 'codex' } as never,
-      name: 'x',
-      prompt: 'x',
-      scope: SCOPE,
-    })
+    const res = await fenced.start(
+      {
+        provider: { id: 'codex' } as never,
+        name: 'x',
+        prompt: 'x',
+        scope: SCOPE,
+      },
+      () => true,
+    )
     expect(res).toEqual({ ok: false, message: 'Codex is not installed.' })
     // The non-launch discarded only its own folders; the first caller still owns its fence.
     await fence.exited()

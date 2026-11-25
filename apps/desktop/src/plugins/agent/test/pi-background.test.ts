@@ -649,6 +649,7 @@ describe('Pi background runs', () => {
   it('keeps Claude as the default launch provider and dispatches explicit Pi launches', async () => {
     const calls: string[] = []
     const table = agentCapabilities({
+      presentationLease: () => () => true,
       sessions: {
         launch: async () => {
           calls.push('claude')
@@ -703,6 +704,7 @@ describe('Pi background runs', () => {
       stop: async () => ({ ok: true as const }),
     }
     const table = agentCapabilities({
+      presentationLease: () => () => true,
       sessions: {
         open: async () => ({ ok: true }),
         respawn: async () => ({ ok: true }),
@@ -975,6 +977,7 @@ describe('Pi background runs', () => {
   it('takes no tools or keep for Claude Code, and reads an answer of a Pi run only', async () => {
     const launches: unknown[] = []
     const table = agentCapabilities({
+      presentationLease: () => () => true,
       sessions: { launch: async () => ({ ok: true, sessionId: 'claude' }) } as never,
       own: { has: () => false } as never,
       jobs: { has: () => false, sessions: () => [] } as never,

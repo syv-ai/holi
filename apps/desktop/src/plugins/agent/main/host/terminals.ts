@@ -125,6 +125,12 @@ export interface AgentTerminals {
   listTerminal(): string | null
 }
 
+interface Attachment {
+  lease: PresentationLease
+  ready: boolean
+  pending: Array<{ data: string; sequence: number }>
+}
+
 interface Terminal {
   id: string
   remote: string
@@ -135,7 +141,7 @@ interface Terminal {
   appearance: TerminalAppearanceProtocol
   onInput: ((data: string) => void) | undefined
   /** False until a renderer has taken its state: output goes to the record only. */
-  attachment?: { lease: PresentationLease; ready: boolean }
+  attachment?: Attachment
   lease: PresentationLease
   claimant?: PresentationLease
   retainOnExit: boolean
@@ -193,11 +199,20 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
     lastPushed = encoded
   }
 
+  function emitData(t: Terminal, attachment: Attachment, data: string): void {
+    deps.emit(
+      t.remote,
+      'pty-data',
+      { id: t.id, data },
+      () => terminals.get(t.id) === t && t.attachment === attachment && valid(attachment.lease),
+    )
+  }
+
   function markReady(t: Terminal): void {
     if (t.ready) return
     t.ready = true
     for (const item of t.pending.splice(0))
-      if (valid(item.lease)) t.runtime.write(bracketedPaste(item.text))
+      if (valid(item.lease)) t.runtime.write(bracketedPaste(item.text), item.lease)
   }
 
   function stopInput(t: Terminal): void {
@@ -267,6 +282,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
         appearance: new TerminalAppearanceProtocol(),
         onInput,
         lease,
+        claimant: lease,
         retainOnExit: retainOnExit ?? false,
         draining: false,
         hidden: false,
@@ -288,17 +304,11 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       runtime.onData((data) => {
         hasOutput = true
         if (!t.draining) for (const reply of t.appearance.feed(data)) runtime.write(reply)
-        mirror.write(data)
+        const sequence = mirror.write(data)
         onOutput?.(data)
-        if (t.attachment) {
-          const attachment = t.attachment
-          deps.emit(
-            remote,
-            'pty-data',
-            { id, data },
-            () => terminals.get(id) === t && t.attachment === attachment && valid(attachment.lease),
-          )
-        }
+        const attachment = t.attachment
+        if (attachment?.ready) emitData(t, attachment, data)
+        else attachment?.pending.push({ data, sequence })
         // The first output means the TUI is up; a moment later it is reading
         // raw input. Only the fact of output is used, never what it says.
         if (!t.draining && !t.ready && !t.settling) {
@@ -366,13 +376,23 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       if (!valid(lease)) return ''
       const t = terminals.get(id)
       if (t === undefined) return ''
-      const attachment = { lease, ready: false }
+      const attachment: Attachment = { lease, ready: false, pending: [] }
       t.attachment = attachment
       t.claimant = lease
-      const state = await t.mirror.serialize()
-      if (terminals.get(id) !== t || t.attachment !== attachment || !valid(lease) || t.draining)
+      const { state, through } = await t.mirror.snapshot()
+      if (
+        terminals.get(id) !== t ||
+        t.attachment !== attachment ||
+        !valid(lease) ||
+        (t.draining && !t.retainOnExit)
+      ) {
+        if (t.attachment === attachment) t.attachment = undefined
+        attachment.pending.length = 0
         return ''
+      }
       attachment.ready = true
+      for (const item of attachment.pending.splice(0))
+        if (item.sequence > through) emitData(t, attachment, item.data)
       return state
     },
 
@@ -393,21 +413,20 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
     write(id, data, lease) {
       const t = terminals.get(id)
       if (!valid(lease) || t === undefined || t.draining) return
-      t.onInput?.(data)
-      t.runtime.write(data)
+      t.runtime.write(data, lease, () => t.onInput?.(data))
     },
 
     resize(id, cols, rows, lease) {
       const t = terminals.get(id)
       if (!valid(lease) || t === undefined || t.draining) return
-      t.runtime.resize(cols, rows)
+      t.runtime.resize(cols, rows, lease)
       t.mirror.resize(cols, rows)
     },
 
     paste(id, text, lease) {
       const t = terminals.get(id)
       if (!valid(lease) || t === undefined || t.draining) return false
-      if (t.ready) t.runtime.write(bracketedPaste(text))
+      if (t.ready) t.runtime.write(bracketedPaste(text), lease)
       else t.pending.push({ text, lease })
       return true
     },
@@ -415,7 +434,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
     setAppearance(id, appearance, lease) {
       const t = terminals.get(id)
       if (!valid(lease) || t === undefined || t.draining) return
-      if (t.appearance.update(appearance)) t.runtime.write(t.appearance.notification())
+      if (t.appearance.update(appearance)) t.runtime.write(t.appearance.notification(), lease)
     },
 
     close(id) {

@@ -15,6 +15,7 @@ function rig() {
   registry.register(
     ['agent'],
     agentCapabilities({
+      presentationLease: () => () => true,
       sessions: { launch } as never,
       own: {} as never,
       jobs: {} as never,
