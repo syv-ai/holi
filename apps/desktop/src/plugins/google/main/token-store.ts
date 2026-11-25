@@ -78,7 +78,7 @@ export class GoogleTokenStore {
       text = await readFile(this.#file, 'utf8')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-      throw error
+      throw new Error('the Google token store could not be read, decrypted, or parsed')
     }
 
     try {

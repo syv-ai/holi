@@ -4,7 +4,7 @@
  * Both are the kind of property that stays true right up until a well-meaning
  * fallback is added, which is why they are pinned rather than assumed.
  */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -82,6 +82,16 @@ describe('it never writes plaintext', () => {
 })
 
 describe('an unreadable file is unavailable, not disconnected', () => {
+  it('rejects filesystem read failures without exposing their details', async () => {
+    await mkdir(file)
+    const error = await new GoogleTokenStore(file, storage).read().catch((error: unknown) => error)
+
+    expect(error).toBeInstanceOf(Error)
+    expect(error).not.toHaveProperty('code')
+    expect(error).not.toHaveProperty('cause')
+    expect(JSON.stringify(error, Object.getOwnPropertyNames(error as object))).not.toContain(file)
+  })
+
   it('rejects corrupt JSON without treating it as an empty store', async () => {
     await writeFile(file, 'not json at all')
     await expect(new GoogleTokenStore(file, storage).read()).rejects.toThrow()
