@@ -105,6 +105,9 @@ const tableChecks = [
   'native-table-toolbar-add-caption-save-reopen-frontmatter-light-dark',
   'native-table-row-column-caption-edit-external-reload-and-remove',
   'native-matching-tables-caption-controls-follow-current-selection',
+  'native-table-formatted-caption-complete-save-and-reopen',
+  'native-table-duplicate-move-and-undo-preserve-association',
+  'native-table-confirmed-delete-and-undo-save-reopen',
 ]
 await assert.rejects(access(evidence), {
   code: 'ENOENT',
@@ -291,7 +294,13 @@ try {
   assert.deepEqual(result.rendererErrors, [])
   assert.deepEqual(result.denied, [])
   const requiredFiles = tablesOnly
-    ? ['table-caption-light.png', 'table-caption-dark.png', 'table-caption-saved.json']
+    ? [
+        'table-caption-light.png',
+        'table-caption-dark.png',
+        'table-caption-saved.json',
+        'table-caption-actions.png',
+        'table-actions-saved.md.txt',
+      ]
     : [
         'native-ui.pdf',
         'native-cli.pdf',

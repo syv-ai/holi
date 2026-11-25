@@ -14,7 +14,12 @@ protocol.registerSchemesAsPrivileged([
     privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
   },
 ])
-import { readMarkdownCaptionEnvelopes, readMarkdownCodeCaptions } from '@holi/shared'
+import {
+  readMarkdownCaptionEnvelopes,
+  readMarkdownCodeCaptions,
+  readMarkdownTableCaptions,
+  writeMarkdownTableCaption,
+} from '@holi/shared'
 import { init } from '@embedpdf/pdfium'
 import { PdfiumNative } from '@embedpdf/engines/pdfium'
 import { createRouter, type RouterDeps } from '../src/main/router'
@@ -648,13 +653,8 @@ async function verifyReferenceImages({
   }
 }
 
-async function verifyTableCaption({
-  js,
-  wait,
-  capture,
-  click,
-  insertText,
-}: ReturnType<typeof createEditorDriver>) {
+async function verifyTableCaption(driver: ReturnType<typeof createEditorDriver>) {
+  const { js, wait, capture, click, insertText } = driver
   const table = '| Name | Value |\n| --- | --- |\n| Alpha | 1 |'
   const document = `${head}# Table caption acceptance\n\n${table}\n`
   await js(`await window.captionFixture.replace(${JSON.stringify(document)}); return true`)
@@ -670,12 +670,7 @@ async function verifyTableCaption({
   const saved = await readFile(note, 'utf8')
   assert(saved.startsWith(head), 'table caption save preserves frontmatter')
   assert(saved.includes('Native table caption'))
-  assert(
-    /<!-- holi:figure -->\n\n\| Name \| Value \|\n\| --- \| --- \|\n\| Alpha \| 1 \|\n\n<!-- holi:caption -->\n\nNative table caption\n\n<!-- \/holi:figure -->/.test(
-      saved,
-    ),
-    'saved caption remains associated with the complete table',
-  )
+  assertTableCaption(saved, 'Native table caption', table)
   assert(
     saved.includes('Alpha') && saved.includes('Name') && saved.includes('Value'),
     'table cells remain intact',
@@ -685,13 +680,8 @@ async function verifyTableCaption({
     `window.captionFixture.state().markdown.includes('Native table caption')`,
     'saved table caption reopened',
   )
-  const reopened = await js<any>('return window.captionFixture.state()')
-  assert(
-    /<!-- holi:figure -->[\s\S]*?\\| Alpha \\| 1 \\|[\s\S]*?<!-- holi:caption -->[\s\S]*?Native table caption[\s\S]*?<!-- \/holi:figure -->/.test(
-      reopened.markdown,
-    ),
-    'reopened caption remains associated with its table',
-  )
+  const reopened = await js<{ markdown: string }>('return window.captionFixture.state()')
+  assertTableCaption(reopened.markdown, 'Native table caption', table)
   await js(`window.captionFixture.theme('light'); return true`)
   await capture('table-caption-light.png')
   await js(`window.captionFixture.theme('dark'); return true`)
@@ -761,6 +751,146 @@ async function verifyTableCaption({
     'bare table gets fresh caption controls',
   )
   mark('native-matching-tables-caption-controls-follow-current-selection')
+  await verifyTableBlocks(driver)
+}
+
+function assertTableCaption(markdown: string, caption: string, body: string, count = 1) {
+  const frames = readMarkdownTableCaptions(markdown)
+  assert.equal(frames.length, count, 'each table retains its own portable caption envelope')
+  const rows = (value: string) =>
+    value
+      .trim()
+      .split('\n')
+      .map((row) => row.split('|').map((cell) => cell.trim()))
+  for (const frame of frames) {
+    assert.equal(markdown.slice(frame.caption.from, frame.caption.to), caption)
+    assert.deepEqual(rows(markdown.slice(frame.body.from, frame.body.to)), rows(body))
+  }
+}
+
+async function verifyTableBlocks({
+  js,
+  wait,
+  click,
+  insertText,
+  press,
+  menu,
+  capture,
+}: ReturnType<typeof createEditorDriver>) {
+  const table = '| Name | Value |\n| --- | --- |\n| Alpha | 1 |'
+  const caption = 'Table **portable** caption.'
+  await js(
+    `await window.captionFixture.replace(${JSON.stringify(`${head}# Table actions\n\nBefore the table.\n\n${table}\n\nAfter the table.\n`)}); return true`,
+  )
+  await click('[data-pane="primary"] td p')
+  await wait(`document.querySelector('[aria-label="Add caption"]')`, 'table authoring control')
+  await click('[aria-label="Add caption"]')
+  await insertText('Table ')
+  press('b', ['meta'])
+  await insertText('portable')
+  press('b', ['meta'])
+  await insertText(' caption.')
+  await wait(
+    `window.captionFixture.state().markdown.includes(${JSON.stringify(caption)})`,
+    'formatted table caption',
+  )
+  await js('await window.captionFixture.flush(); return true')
+  const authored = await readFile(note, 'utf8')
+  assert(authored.startsWith(head))
+  assertTableCaption(authored, caption, table)
+  await js('await window.captionFixture.reopen(); return true')
+  await wait(
+    `document.querySelector('[data-pane="primary"] figcaption strong')?.textContent === 'portable'`,
+    'formatted caption after reopen',
+  )
+  assert.equal(
+    await js(
+      `return getComputedStyle(document.querySelector('[data-pane="primary"] figcaption')).textAlign`,
+    ),
+    'center',
+  )
+  assertTableCaption(
+    (await js<{ markdown: string }>('return window.captionFixture.state()')).markdown,
+    caption,
+    table,
+  )
+  mark('native-table-formatted-caption-complete-save-and-reopen')
+
+  await js(`window.captionFixture.select('documentFigure'); return true`)
+  await menu('Duplicate')
+  await wait(
+    `document.querySelectorAll('[data-pane="primary"] figure').length === 2`,
+    'whole table duplicated',
+  )
+  assertTableCaption(
+    (await js<{ markdown: string }>('return window.captionFixture.state()')).markdown,
+    caption,
+    table,
+    2,
+  )
+  press('z', ['meta'])
+  await wait(
+    `document.querySelectorAll('[data-pane="primary"] figure').length === 1`,
+    'table duplicate undone',
+  )
+  await js(`window.captionFixture.select('documentFigure'); return true`)
+  await menu('Move Up')
+  await wait(
+    `window.captionFixture.state().markdown.indexOf('holi:figure') < window.captionFixture.state().markdown.indexOf('Before the table.')`,
+    'table and caption move up together',
+  )
+  await js(`window.captionFixture.select('documentFigure'); return true`)
+  await menu('Move Down')
+  await wait(
+    `window.captionFixture.state().markdown.indexOf('holi:figure') > window.captionFixture.state().markdown.indexOf('Before the table.')`,
+    'table and caption move down together',
+  )
+  await js('await window.captionFixture.flush(); return true')
+  assertTableCaption(await readFile(note, 'utf8'), caption, table)
+  mark('native-table-duplicate-move-and-undo-preserve-association')
+
+  await click('[data-pane="primary"] td p')
+  await wait(
+    `document.querySelector('[aria-label="Delete"][data-toolbar-item]')`,
+    'table deletion menu',
+  )
+  await click('[aria-label="Delete"][data-toolbar-item]')
+  await wait(
+    `Array.from(document.querySelectorAll('[role="menuitem"]')).some(e => e.textContent.trim() === 'Delete Table')`,
+    'whole-table deletion option',
+  )
+  await js(
+    `Array.from(document.querySelectorAll('[role="menuitem"]')).find(e => e.textContent.trim() === 'Delete Table').setAttribute('data-table-delete', 'true'); return true`,
+  )
+  await click('[data-table-delete="true"]')
+  await wait(`document.querySelector('[role="alertdialog"]')`, 'real table deletion confirmation')
+  await js(
+    `Array.from(document.querySelectorAll('[role="alertdialog"] button')).find(e => e.textContent.trim() === 'Delete Table').setAttribute('data-table-confirm', 'true'); return true`,
+  )
+  await click('[data-table-confirm="true"]')
+  await wait(
+    `!document.querySelector('[data-pane="primary"] table') && !document.querySelector('[data-pane="primary"] figcaption')`,
+    'whole table and caption deleted',
+  )
+  await js('await window.captionFixture.flush(); return true')
+  const deleted = await readFile(note, 'utf8')
+  assert(!deleted.includes('Alpha') && !deleted.includes('holi:figure'))
+  await click('[data-pane="primary"] [role="textbox"] > p')
+  press('z', ['meta'])
+  await wait(
+    `document.querySelector('[data-pane="primary"] figcaption strong')?.textContent === 'portable'`,
+    'whole table deletion undone',
+  )
+  await js('await window.captionFixture.flush(); return true')
+  assertTableCaption(await readFile(note, 'utf8'), caption, table)
+  await js('await window.captionFixture.reopen(); return true')
+  await wait(
+    `document.querySelector('[data-pane="primary"] figcaption strong')?.textContent === 'portable'`,
+    'undone table deletion persisted',
+  )
+  await capture('table-caption-actions.png')
+  await writeFile(join(evidence, 'table-actions-saved.md.txt'), await readFile(note, 'utf8'))
+  mark('native-table-confirmed-delete-and-undo-save-reopen')
 }
 
 async function verifyParserSource({
