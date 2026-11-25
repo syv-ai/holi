@@ -672,6 +672,7 @@ test('close/reopen makes a fresh editor and same-path vault switches discard no 
   select(store, TWO)
   act(() => {
     store.set(activeRemoteAtom, 'other/repo')
+    store.set(openedRemoteAtom, 'other/repo')
     store.set(shellWorkspaceAtom, (ws) => openTab(ws, ONE))
   })
   const other = await editor()

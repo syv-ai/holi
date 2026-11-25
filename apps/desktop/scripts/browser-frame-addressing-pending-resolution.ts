@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import type { WebContents, WebFrameMain } from 'electron'
-import { createFrameAddressing, type FrameCapture } from './browser-frame-addressing'
+import {
+  createFrameAddressing,
+  type FrameCapture,
+} from '../src/plugins/browser/main/frame-addressing'
 import { proveCancelledWorldStability } from './browser-frame-addressing-cancelled-worlds'
 import { fixtureEmbeddingId, fixtureFrames } from './browser-frame-addressing-fixture'
 import {

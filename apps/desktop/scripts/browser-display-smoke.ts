@@ -65,7 +65,15 @@ async function run(): Promise<void> {
     let allowed = false
     try {
       const target = new URL(details.url)
-      allowed = target.protocol === 'http:' && target.hostname === '127.0.0.1'
+      const owned = server.address()
+      allowed =
+        target.protocol === 'http:' &&
+        (target.hostname === '127.0.0.1' ||
+          (process.env.HOLI_671_CHILD_VIM === '1' &&
+            target.hostname === 'localhost' &&
+            owned !== null &&
+            typeof owned === 'object' &&
+            target.port === String(owned.port)))
     } catch {
       allowed = false
     }
@@ -81,6 +89,19 @@ async function run(): Promise<void> {
     stallRequested = resolve
   })
   const server = createServer((request, response) => {
+    if (process.env.HOLI_671_CHILD_VIM === '1' && request.url?.startsWith('/671-')) {
+      const address = server.address()
+      assert(address && typeof address === 'object')
+      const cross = `http://localhost:${address.port}/671-cross`
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src 'self' http://localhost:${address.port}`,
+      })
+      response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body{color:CanvasText;background:Canvas;font:16px sans-serif}iframe{width:250px;height:100px}</style><label>Owned child field <input id="child-field" value="one two"></label>
+        ${request.url === '/671-parent' ? `<iframe name="duplicate" src="${cross}"></iframe><iframe name="duplicate" src="${cross}"></iframe>` : ''}
+        <script>window.nativeEvents=[];for(const type of ['keydown','input'])document.addEventListener(type,e=>window.nativeEvents.push({type,key:e.key,trusted:e.isTrusted,value:e.target.value}),true)</script>`)
+      return
+    }
     if (request.url === '/stall') {
       stallRequested()
       return
@@ -170,6 +191,7 @@ async function run(): Promise<void> {
   const registry = createCapabilityRegistry()
   const listeners = new Set<(message: unknown) => void>()
   const sent: PluginEvent[] = []
+  const reportFrames = new WeakMap<object, object | null>()
   let gate: { wait: Promise<void>; entered(): void } | undefined
   let activationGate: { wait: Promise<void>; entered(): void } | undefined
   const delayed: MainPlugin = {
@@ -199,6 +221,10 @@ async function run(): Promise<void> {
     },
     events: {
       send: (_channel, event) => {
+        if (process.env.HOLI_671_CHILD_VIM === '1' && event.name === 'vim-mode') {
+          const shown = win.contentView.children[0] as WebContentsView | undefined
+          reportFrames.set(event, shown?.webContents.focusedFrame ?? null)
+        }
         sent.push(event)
       },
       listen: (_channel, handler) => {
@@ -363,6 +389,19 @@ async function run(): Promise<void> {
   ) => {
     // CDP requests a rendered frame even when the native test window is occluded.
     // No debugger port, visibility override or substitute renderer is involved.
+    if (view.debugger.isAttached()) {
+      const { nativeTheme } = await import('electron')
+      const previous = nativeTheme.themeSource
+      try {
+        if (colorScheme) nativeTheme.themeSource = colorScheme
+        const image = await view.capturePage()
+        assert(!image.isEmpty(), `empty screenshot: ${name}`)
+        writeFileSync(join(evidence, name), image.toPNG())
+      } finally {
+        nativeTheme.themeSource = previous
+      }
+      return
+    }
     view.debugger.attach('1.3')
     try {
       await view.debugger.sendCommand('Page.enable')
@@ -453,6 +492,417 @@ async function run(): Promise<void> {
   assert.equal((staleConfigMode.payload as { mode: string }).mode, 'insert')
   mark('stale-vim-disable-request-rejected')
   await applyVimConfig(vimSnapshot, true, 4)
+  if (process.env.HOLI_671_CHILD_VIM === '1') {
+    const original = await inPage<string>(a, `document.querySelector('iframe').srcdoc`)
+    await inPage(
+      a,
+      `document.querySelector('iframe').srcdoc = '<input id="child-field" value="one two">'`,
+    )
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (
+        await inPage<boolean>(
+          a,
+          `!!document.querySelector('iframe').contentDocument?.querySelector('#child-field')`,
+        )
+      )
+        break
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    a.webContents.focus()
+    const beforeChildFocus = sent.findLast(
+      (entry) => entry.remote === 'A' && entry.name === 'vim-mode',
+    )
+    await inPage(
+      a,
+      `(() => { const frame = document.querySelector('iframe'); frame.scrollIntoView({block:'center'}); const field = frame.contentDocument.querySelector('#child-field'); field.focus(); field.setSelectionRange(4,4) })()`,
+    )
+    const childInsertMode = await waitFor(() => {
+      const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+      const mode = event?.payload as { mode?: string } | undefined
+      return event !== beforeChildFocus &&
+        mode?.mode === 'insert' &&
+        event &&
+        reportFrames.get(event) === a.webContents.focusedFrame
+        ? event
+        : undefined
+    }, 'fresh insert-mode report after native child-frame focus')
+    assert.equal((childInsertMode.payload as { mode: string }).mode, 'insert')
+    const childPress = async (key: string) => {
+      // Electron sendInputEvent targets the root widget. CDP's native keyboard
+      // dispatch follows the browser's focused widget, including an OOPIF.
+      assert(a.webContents.debugger.isAttached(), 'child readiness owns the debugger')
+      const printable = key.length === 1
+      const code = printable ? `Key${key.toUpperCase()}` : key
+      const windowsVirtualKeyCode = printable ? key.toUpperCase().charCodeAt(0) : 27
+      await a.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: printable ? 'keyDown' : 'rawKeyDown',
+        key,
+        code,
+        windowsVirtualKeyCode,
+        ...(printable ? { text: key, unmodifiedText: key } : {}),
+      })
+      await a.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key,
+        code,
+        windowsVirtualKeyCode,
+      })
+    }
+    await childPress('Escape')
+    await waitFor(() => {
+      const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+      return (event?.payload as { mode?: string } | undefined)?.mode === 'normal'
+        ? event
+        : undefined
+    }, 'child normal mode after trusted Escape')
+    await childPress('h')
+    assert.equal(
+      await inPage<number>(
+        a,
+        `document.querySelector('iframe').contentDocument.querySelector('#child-field').selectionStart`,
+      ),
+      3,
+    )
+    await childPress('l')
+    await childPress('i')
+    await childPress('x')
+    assert.equal(
+      await inPage<string>(
+        a,
+        `document.querySelector('iframe').contentDocument.querySelector('#child-field').value`,
+      ),
+      'one xtwo',
+    )
+    mark('native-child-vim-same-origin-frame-insert-report')
+    await inPage(
+      a,
+      `document.querySelector('iframe').removeAttribute('srcdoc'); document.querySelector('iframe').src = ${JSON.stringify(`${url}/671-parent`)}`,
+    )
+    let mixed = a.webContents.mainFrame.framesInSubtree.filter(
+      (frame) => frame.url === `http://localhost:${address.port}/671-cross`,
+    )
+    for (let attempt = 0; attempt < 200 && mixed.length !== 2; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      mixed = a.webContents.mainFrame.framesInSubtree.filter(
+        (frame) => frame.url === `http://localhost:${address.port}/671-cross`,
+      )
+    }
+    assert.equal(mixed.length, 2, 'both identical-URL/name nested child documents loaded')
+    assert(
+      mixed.every((frame) => frame.parent && frame.processId !== frame.parent.processId),
+      'actual cross-process nested frames required',
+    )
+    const recordChildFailure = async (expected: string) => {
+      const read = async (frame: (typeof mixed)[number], expression: string) =>
+        Promise.race([
+          frame.executeJavaScript(expression).catch((error) => ({ error: String(error) })),
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ error: 'diagnostic read timed out' }), 1000),
+          ),
+        ])
+      writeFileSync(
+        join(evidence, 'child-vim-failure.json'),
+        JSON.stringify(
+          {
+            expected,
+            focused: a.webContents.isFocused(),
+            windowFocused: win.isFocused(),
+            focusedFrame: a.webContents.focusedFrame && {
+              processId: a.webContents.focusedFrame.processId,
+              routingId: a.webContents.focusedFrame.routingId,
+            },
+            modes: sent
+              .filter((event) => event.remote === 'A' && event.name === 'vim-mode')
+              .slice(-12)
+              .map((event) => ({
+                payload: event.payload,
+                currentFrame: reportFrames.get(event) === a.webContents.focusedFrame,
+              })),
+            root: await read(
+              a.webContents.mainFrame,
+              `({ hasFocus:document.hasFocus(), active:document.activeElement?.tagName, events:window.__holiSmokeNativeEvents })`,
+            ),
+            children: await Promise.all(
+              a.webContents.mainFrame.framesInSubtree
+                .filter((frame) => frame.url === `http://localhost:${address.port}/671-cross`)
+                .map(async (frame) => ({
+                  processId: frame.processId,
+                  routingId: frame.routingId,
+                  page: await read(
+                    frame,
+                    `({ hasFocus:document.hasFocus(), active:document.activeElement?.id, value:document.querySelector('#child-field')?.value, selection:document.querySelector('#child-field')?.selectionStart, events:window.nativeEvents })`,
+                  ),
+                })),
+            ),
+          },
+          null,
+          2,
+        ),
+      )
+    }
+    const freshMode = async (after: number, mode: 'insert' | 'normal') => {
+      for (let attempt = 0; attempt < 250; attempt++) {
+        const event = sent
+          .slice(after)
+          .findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+        if (
+          (event?.payload as { mode?: string } | undefined)?.mode === mode &&
+          event &&
+          reportFrames.get(event) === a.webContents.focusedFrame
+        )
+          return
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      await recordChildFailure(mode)
+      throw new Error(`timed out after 5000ms waiting for current child ${mode} mode`)
+    }
+    const focusChild = async (frame: (typeof mixed)[number]) => {
+      const after = sent.length
+      for (let attempt = 0; attempt < 200; attempt++) {
+        if (
+          await frame
+            .executeJavaScript(`!!document.querySelector('#child-field')`)
+            .catch(() => false)
+        )
+          break
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      a.webContents.focus()
+      await frame.executeJavaScript(
+        `document.querySelector('#child-field').focus();document.querySelector('#child-field').setSelectionRange(4,4)`,
+      )
+      await waitFor(
+        () => (a.webContents.focusedFrame === frame ? true : undefined),
+        'native focus confirmation for the loaded child',
+      ).catch(async (error) => {
+        await recordChildFailure('native child focus')
+        throw error
+      })
+      await freshMode(after, 'insert')
+    }
+    const holdNormalRead = async (work: (release: () => void) => Promise<void>) => {
+      let enter!: () => void
+      let release!: () => void
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve
+      })
+      const delayed = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const originalCommand = a.webContents.debugger.sendCommand.bind(a.webContents.debugger)
+      let holdNextEvaluation = true
+      a.webContents.debugger.sendCommand = async (method, params, sessionId) => {
+        const result = await originalCommand(method, params, sessionId)
+        const observed = result?.result?.value
+        if (
+          holdNextEvaluation &&
+          method === 'Runtime.evaluate' &&
+          observed?.enabled === true &&
+          observed.mode === 'normal'
+        ) {
+          holdNextEvaluation = false
+          enter()
+          await delayed
+        }
+        return result
+      }
+      let deadline: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          entered,
+          new Promise<never>((_, reject) => {
+            deadline = setTimeout(
+              () => reject(new Error('timed out after 5000ms waiting for native child evaluation')),
+              5000,
+            )
+          }),
+        ])
+        clearTimeout(deadline)
+        await work(release)
+      } finally {
+        clearTimeout(deadline)
+        release()
+        a.webContents.debugger.sendCommand = originalCommand
+      }
+    }
+    assert(
+      mixed.every(
+        (frame) =>
+          frame.parent?.url === `${url}/671-parent` &&
+          frame.parent.parent === a.webContents.mainFrame,
+      ),
+      'nested native ancestry required',
+    )
+    assert.equal(mixed[0]!.name, mixed[1]!.name, 'duplicate frame names required')
+    const nativeFrames = mixed.map((frame) => ({
+      processId: frame.processId,
+      routingId: frame.routingId,
+      frameToken: frame.frameToken,
+      url: frame.url,
+      name: frame.name,
+      parent: {
+        processId: frame.parent!.processId,
+        routingId: frame.parent!.routingId,
+        url: frame.parent!.url,
+      },
+    }))
+    await focusChild(mixed[0]!)
+    let after = sent.length
+    await childPress('Escape')
+    await freshMode(after, 'normal')
+    await childPress('h')
+    assert.equal(
+      await mixed[0]!.executeJavaScript(`document.querySelector('#child-field').selectionStart`),
+      3,
+    )
+    await childPress('l')
+    await childPress('i')
+    await childPress('x')
+    assert.equal(
+      await mixed[0]!.executeJavaScript(`document.querySelector('#child-field').value`),
+      'one xtwo',
+    )
+    assert.equal(
+      await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').value`),
+      'one two',
+    )
+    await freshMode(after, 'insert')
+    mark('native-child-vim-nested-oopif-and-duplicate-owner-isolation')
+    after = sent.length
+    await childPress('Escape')
+    await freshMode(after, 'normal')
+    await holdNormalRead(async (release) => {
+      const resumed = sent.length
+      await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').focus()`)
+      await mixed[0]!.executeJavaScript(
+        `document.querySelector('#child-field').focus();document.querySelector('#child-field').setSelectionRange(4,4)`,
+      )
+      assert.equal(a.webContents.focusedFrame, mixed[0])
+      release()
+      await freshMode(resumed, 'insert')
+      await childPress('h')
+      assert.equal(
+        await mixed[0]!.executeJavaScript(`document.querySelector('#child-field').value`),
+        'one hxtwo',
+      )
+    })
+    await mixed[0]!.executeJavaScript(`document.querySelector('#child-field').value='one xtwo'`)
+    mark('native-child-vim-held-normal-result-rejected-after-focus-aba')
+    await focusChild(mixed[1]!)
+    await childPress('h')
+    assert.equal(
+      await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').value`),
+      'one htwo',
+      'newly focused child starts insert',
+    )
+    after = sent.length
+    await childPress('Escape')
+    await freshMode(after, 'normal')
+    await holdNormalRead(async (release) => {
+      await applyVimConfig(vimSnapshot, false, 5)
+      const off = sent.length
+      release()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      assert(
+        !sent
+          .slice(off)
+          .some(
+            (event) =>
+              event.remote === 'A' &&
+              event.name === 'vim-mode' &&
+              (event.payload as { mode?: string }).mode === 'normal',
+          ),
+        'late native mode result cannot re-enable or publish normal after disable',
+      )
+      mark('native-child-vim-late-mode-result-cannot-outlive-disable')
+    })
+    await childPress('h')
+    assert.equal(
+      await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').value`),
+      'one hhtwo',
+      'preference off restores native typing',
+    )
+    await applyVimConfig(vimSnapshot, true, 6)
+    configureVim(vimSnapshot, false, 5)
+    after = sent.length
+    await childPress('Escape')
+    await childPress('h')
+    assert.equal(
+      await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').value`),
+      'one hhtwo',
+      'stale disable cannot restore native typing over current enable',
+    )
+    assert.equal(
+      await mixed[1]!.executeJavaScript(`document.querySelector('#child-field').selectionStart`),
+      5,
+    )
+    await freshMode(after, 'normal')
+    mark('native-child-vim-stale-disable-rejected-after-enable')
+    const peer = mixed[0]!
+    const departed = mixed[1]!
+    await departed.parent!.executeJavaScript(
+      `{const old=document.querySelectorAll('iframe')[1];const fresh=document.createElement('iframe');fresh.name=old.name;fresh.src=old.src;old.replaceWith(fresh)}`,
+    )
+    let replacement: typeof departed | undefined
+    for (let attempt = 0; attempt < 200; attempt++) {
+      replacement = a.webContents.mainFrame.framesInSubtree.find(
+        (frame) =>
+          frame.url === `http://localhost:${address.port}/671-cross` &&
+          frame !== peer &&
+          frame !== departed,
+      )
+      if (replacement) break
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    assert(replacement && departed.detached, 'replacement has fresh native identity')
+    await focusChild(replacement)
+    await childPress('h')
+    assert.equal(
+      await replacement.executeJavaScript(`document.querySelector('#child-field').value`),
+      'one htwo',
+    )
+    assert.equal(
+      await peer.executeJavaScript(`document.querySelector('#child-field').value`),
+      'one xtwo',
+    )
+    const observed = (await replacement.executeJavaScript('window.nativeEvents')) as Array<{
+      type: string
+      key?: string
+      trusted: boolean
+    }>
+    assert(
+      observed.some((event) => event.type === 'keydown' && event.key === 'h') &&
+        observed.every((event) => event.trusted),
+      'trusted native events required',
+    )
+    mark('native-child-vim-replacement-reset-and-preference-passthrough')
+    writeFileSync(
+      join(evidence, 'child-vim.json'),
+      JSON.stringify(
+        {
+          ok: true,
+          source: process.env.HOLI_553_SHA,
+          sourceHash: process.env.HOLI_553_SOURCE_HASH,
+          worktreeStatus: process.env.HOLI_553_STATUS,
+          electron: process.versions.electron,
+          nativeFrames,
+          events: observed,
+        },
+        null,
+        2,
+      ),
+    )
+    const { nativeTheme } = await import('electron')
+    for (const theme of ['light', 'dark'] as const) {
+      nativeTheme.themeSource = theme
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      const image = await a.webContents.capturePage()
+      assert(!image.isEmpty())
+      writeFileSync(join(evidence, `child-vim-${theme}.png`), image.toPNG())
+    }
+    nativeTheme.themeSource = 'system'
+    await inPage(a, `document.querySelector('iframe').srcdoc = ${JSON.stringify(original)}`)
+  }
   await inPage(a, `document.querySelector('#text').focus()`)
   await waitFor(
     () => sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode'),
@@ -951,7 +1401,8 @@ async function run(): Promise<void> {
   await nativePress(a, 'Escape')
   await nativePress(a, 'Escape')
   assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one two three')
-  if (!a.webContents.debugger.isAttached()) a.webContents.debugger.attach('1.3')
+  const ownsCompositionDebugger = !a.webContents.debugger.isAttached()
+  if (ownsCompositionDebugger) a.webContents.debugger.attach('1.3')
   try {
     await a.webContents.debugger.sendCommand('Input.imeSetComposition', {
       text: '日本語',
@@ -960,7 +1411,7 @@ async function run(): Promise<void> {
     })
     await a.webContents.debugger.sendCommand('Input.insertText', { text: '日本語' })
   } finally {
-    a.webContents.debugger.detach()
+    if (ownsCompositionDebugger) a.webContents.debugger.detach()
   }
   assert((await inPage<string>(a, `document.querySelector('#text').value`)).includes('日本語'))
   mark('native-ime-composition-in-insert-mode')

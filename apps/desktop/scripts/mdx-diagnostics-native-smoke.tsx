@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { EditorView } from '@codemirror/view'
 import { forEachDiagnostic } from '@codemirror/lint'
 import { emptyVaultSnapshot } from '@holi/shared'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { FileView } from '@/features/files/file-view'
 import { activeRemoteAtom, openedRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { sessionAtom } from '@/state/session'
@@ -22,7 +23,19 @@ store.set(snapshotAtom, {
 })
 
 const errors: string[] = []
-window.addEventListener('error', (event) => errors.push(event.message))
+const layoutNotifications: string[] = []
+window.addEventListener('error', (event) => {
+  // Chromium defers remaining resize delivery to the next frame, without throwing.
+  if (
+    event.message === 'ResizeObserver loop completed with undelivered notifications.' &&
+    !event.error &&
+    (!event.filename || event.filename === window.location.href) &&
+    event.lineno === 0 &&
+    event.colno === 0
+  ) {
+    layoutNotifications.push(event.message)
+  } else errors.push(event.message)
+})
 window.addEventListener('unhandledrejection', (event) => errors.push(String(event.reason)))
 
 function Fixture() {
@@ -30,6 +43,7 @@ function Fixture() {
     Object.assign(window, {
       __mdxSmoke: {
         errors,
+        layoutNotifications,
         editor() {
           const element = document.querySelector('.cm-editor') as HTMLElement | null
           const view = element ? EditorView.findFromDOM(element) : null
@@ -69,7 +83,10 @@ function Fixture() {
   }, [])
   return (
     <Provider store={store}>
-      <FileView path={path} visible focused />
+      {/* FileView's Find bar uses the same tooltip context as the app shell. */}
+      <TooltipProvider>
+        <FileView path={path} visible focused />
+      </TooltipProvider>
     </Provider>
   )
 }
@@ -80,6 +97,7 @@ declare global {
   interface Window {
     __mdxSmoke: {
       errors: string[]
+      layoutNotifications: string[]
       editor(): EditorView
       state(): string | null
       source(): string

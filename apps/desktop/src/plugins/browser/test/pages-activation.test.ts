@@ -195,6 +195,52 @@ describe('browser page activation', () => {
     pages.dispose()
   })
 
+  it.each(['configuration', 'focus', 'document', 'native-view'] as const)(
+    'retires queued Vim mode delivery after %s ownership changes',
+    async (change) => {
+      const { createPages } = await import('../main/pages')
+      const window = win()
+      const emitted: { nonce: string; attachment: string; guard: () => boolean }[] = []
+      const pages = createPages({
+        window: () => window,
+        presentationLease: () => () => true,
+        changed: () => {},
+        address: () => {},
+        key: () => {},
+        reveal: () => {},
+        vimMode: (_id, snapshot, guard) => emitted.push({ ...snapshot, guard: guard! }),
+      })
+      let restoreNativeView: (() => void) | undefined
+      try {
+        await pages.open({ id: 'queued', reveal: false })
+        const wc = native.views[0].webContents
+        wc.emit('did-finish-load')
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        pages.place('queued', { x: 0, y: 0, width: 100, height: 100 })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        const queued = emitted.at(-1)!
+        expect(queued.guard()).toBe(true)
+        if (change === 'configuration') {
+          await pages.configureVim('queued', true, 1, queued.nonce, queued.attachment)
+        } else if (change === 'focus') {
+          wc.focusedFrame = { detached: false }
+        } else if (change === 'document') {
+          // Dispatch Electron's public navigation event contract.
+          wc.listeners.get('did-start-navigation')({ isMainFrame: true, isSameDocument: false })
+        } else {
+          native.views[0].webContents = undefined
+          restoreNativeView = () => {
+            native.views[0].webContents = wc
+          }
+        }
+        expect(queued.guard()).toBe(false)
+      } finally {
+        restoreNativeView?.()
+        pages.dispose()
+      }
+    },
+  )
+
   it('rearms ownership in one page call only for top-document navigation', async () => {
     const { createPages } = await import('../main/pages')
     const window = win()

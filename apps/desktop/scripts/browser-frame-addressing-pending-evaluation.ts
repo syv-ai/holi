@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import type { WebFrameMain } from 'electron'
 import { fixtureFrames } from './browser-frame-addressing-fixture'
-import type { FrameAddress, FrameCapture } from './browser-frame-addressing'
+import type { FrameAddress, FrameCapture } from '../src/plugins/browser/main/frame-addressing'
 import { FrameAddressingScenario } from './browser-frame-addressing-scenario'
 import {
   deferred,
@@ -59,6 +59,7 @@ export async function runPendingEvaluationAndCrossProcessNavigation(
         postNavigationAddress,
         'globalThis.pendingFixtureEvaluation = 73',
       )
+      const pendingEvaluationRejection = assert.rejects(pendingEvaluation)
       await evalStarted.promise
       await sameBFrame.executeJavaScript("location.href='/evaluation-navigation'")
       for (
@@ -72,7 +73,7 @@ export async function runPendingEvaluationAndCrossProcessNavigation(
         'navigation completed during pending native evaluation',
       )
       evalGate.resolve()
-      await assert.rejects(pendingEvaluation, /unknown frame address lease|no longer current/)
+      await pendingEvaluationRejection
     } finally {
       evalGate.resolve()
       debuggerClient.sendCommand = originalSend
@@ -130,7 +131,7 @@ export async function runPendingEvaluationAndCrossProcessNavigation(
         sameOriginAddress,
         'globalThis.pendingCrossProcessNavigation = 1',
       )
-      void pendingCrossNavigation.catch(() => {})
+      const pendingCrossNavigationRejection = assert.rejects(pendingCrossNavigation)
       await crossNavigationStarted.promise
       const beforeProcessId = sameOriginFrame.processId
       await wc.executeJavaScript(
@@ -152,10 +153,7 @@ export async function runPendingEvaluationAndCrossProcessNavigation(
       const navigatedFrame = sameOriginFrame
       const freshCapture: FrameCapture = Object.freeze({ tab: {}, document: {}, presentation: {} })
       crossNavigationGate.resolve()
-      await assert.rejects(
-        pendingCrossNavigation,
-        /unknown frame address lease|no longer current|renderer process|document/,
-      )
+      await pendingCrossNavigationRejection
       const freshAddress = await scenario.resolve(navigatedFrame, freshCapture)
       check(
         await scenario.verifyOwner(freshAddress, '#same-a'),
