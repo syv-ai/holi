@@ -426,15 +426,7 @@ try {
     protocol.pilotEffect = pilot.result.effect
   }
   await json(join(evidence, 'protocol.json'), protocol)
-  await json(join(evidence, 'environment.json'), {
-    source,
-    os: release(),
-    arch: process.arch,
-    load: loadavg(),
-    windowServerPhysical: wsPid > 0 ? metric(wsPid) : { unavailable: true },
-    globalGpu: gpu(),
-    windowServer: windowServer(),
-  })
+
   await build({
     configFile: false,
     root: desktop,
@@ -504,6 +496,15 @@ try {
     { timeout: 60000 },
   )
   assert.equal(compiler.status, 0, compiler.stderr)
+  await json(join(evidence, 'environment.json'), {
+    source,
+    os: release(),
+    arch: process.arch,
+    load: loadavg(),
+    windowServerPhysical: wsPid > 0 ? metric(wsPid) : { unavailable: true },
+    globalGpu: gpu(),
+    windowServer: windowServer(),
+  })
   if (phase === 'pilot') {
     const result = await trial('native', 'pilot-native')
     const noiseTolerances = Object.fromEntries(
