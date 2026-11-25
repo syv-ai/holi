@@ -479,6 +479,41 @@ describe('browser frame addressing ownership', () => {
     expect(owner.pendingCount).toBe(0)
     owner.dispose()
   })
+  it('cancels commands for a detached session without affecting its siblings or root', async () => {
+    const { contents, debuggerClient, events } = fixture()
+    const owner = createFrameContextSessionOwner(
+      contents,
+      () => {},
+      () => {},
+    )
+    await owner.ensureReady()
+    events.emit('message', {}, 'Target.attachedToTarget', {
+      sessionId: 'departing',
+      targetInfo: { type: 'iframe' },
+    })
+    events.emit('message', {}, 'Target.attachedToTarget', {
+      sessionId: 'healthy',
+      targetInfo: { type: 'iframe' },
+    })
+    await owner.ensureReady()
+
+    let release!: (value: unknown) => void
+    debuggerClient.sendCommand.mockImplementation((method, _params, session) => {
+      if (method === 'Runtime.pending' && session === 'departing')
+        return new Promise((resolve) => (release = resolve))
+      return Promise.resolve({ session })
+    })
+    const pending = owner.send('Runtime.pending', {}, 'departing', false)
+    events.emit('message', {}, 'Target.detachedFromTarget', { sessionId: 'departing' })
+    await expect(pending).rejects.toThrow('session detached')
+    await expect(owner.send('Runtime.pending', {}, 'healthy', false)).resolves.toEqual({
+      session: 'healthy',
+    })
+    await expect(owner.send('Runtime.pending', {}, undefined, false)).resolves.toEqual({})
+    release({})
+    owner.dispose()
+  })
+
   it('rejects stale captures before debugger attachment', async () => {
     const { child, contents } = fixture()
     const address = createFrameAddressing(contents, () => false)
