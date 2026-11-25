@@ -24,14 +24,13 @@ const MESSAGE_CONCURRENCY = 6
 const SEEN_CAP = 1_000
 
 export { MAIL_ATTENTION_EVENT }
-export type { MailAttentionSnapshot }
 
 /** The identity/lifetime facts the module needs from a connected grant. */
 export interface MailAttentionSession {
   accountSub: string | null
 }
 
-export interface MailAttentionSubscription {
+interface MailAttentionSubscription {
   remote: string
   /** Read fresh after network work, so a preference change cannot race a banner. */
   notifications(): Promise<boolean>

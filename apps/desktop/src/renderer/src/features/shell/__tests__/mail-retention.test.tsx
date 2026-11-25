@@ -541,7 +541,7 @@ test('a native mail notice focuses Inbox through the retained composer save guar
   const composer = await screen.findByRole('region', { name: 'Compose mail' })
   const subject = within(composer).getByRole('textbox', { name: 'Subject' })
   await user.type(subject, 'unsaved notice draft')
-  saveDraftMock.mockRejectedValueOnce(new Error('offline'))
+  saveDraftMock.mockRejectedValue(new Error('offline'))
 
   show(otherKey)
   await screen.findByRole('textbox', { name: 'Other app state' })
@@ -558,6 +558,7 @@ test('a native mail notice focuses Inbox through the retained composer save guar
   expect(screen.getByRole('button', { name: 'Mailbox: Sent' })).toBeInTheDocument()
   expect(subject).toHaveValue('unsaved notice draft')
 
+  saveDraftMock.mockResolvedValue({ id: 'draft-1' })
   act(() =>
     googleRenderer.events!['open-mail']!(
       { remote: 'syv-ai/vault', payload: { mailbox: 'inbox' } },

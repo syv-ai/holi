@@ -158,7 +158,7 @@ describe('ConnectionsSection', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/disk is read-only/i)
     expect(toggle).not.toBeChecked()
 
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await user.click(screen.getByRole('button', { name: 'Retry desktop mail notifications' }))
     await waitFor(() => expect(settingsWrite).toHaveBeenCalledTimes(3))
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
     expect(toggle).not.toBeChecked()
@@ -223,7 +223,7 @@ describe('ConnectionsSection', () => {
       name: 'Always load images from all senders',
     })
     await user.click(screen.getByRole('button', { name: 'Always from all senders' }))
-    expect(toggle).toBeDisabled()
+    await waitFor(() => expect(toggle).toBeDisabled())
     await act(async () => finish({ ok: true }))
     await waitFor(() => expect(toggle).toBeChecked())
     await waitFor(() => expect(toggle).toBeEnabled())
@@ -233,7 +233,9 @@ describe('ConnectionsSection', () => {
       }),
     )
     await user.click(toggle)
-    expect(await screen.findByRole('button', { name: 'Always from all senders' })).toBeDisabled()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Always from all senders' })).toBeDisabled(),
+    )
     await act(async () => finish({ ok: true }))
     await waitFor(() => expect(toggle).not.toBeChecked())
     expect(screen.getByRole('button', { name: 'Always from all senders' })).toBeEnabled()
