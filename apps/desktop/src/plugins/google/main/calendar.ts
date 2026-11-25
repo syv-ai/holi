@@ -4,7 +4,7 @@
  * invitation, the one that tells somebody.
  */
 import { fenceUntrusted } from '@holi/shared'
-import type { GoogleApi } from './api'
+import { GoogleApiError, type GoogleApi, type GoogleParams } from './api'
 import { fetchEventColors } from './event-colors'
 
 const BASE = 'https://www.googleapis.com/calendar/v3'
@@ -95,7 +95,12 @@ interface RawEvent {
   colorId?: string
   /** Present on an instance of a recurring series; it is the series' id. */
   recurringEventId?: string
-  organizer?: { displayName?: string; email?: string }
+  organizer?: { displayName?: string; email?: string; self?: boolean }
+  iCalUID?: string
+  etag?: string
+  sequence?: number
+  recurrence?: string[]
+  originalStartTime?: RawEvent['start']
   conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] }
   start?: { date?: string; dateTime?: string }
   end?: { date?: string; dateTime?: string }
@@ -281,6 +286,207 @@ export async function findEventByICalUid(
   return null
 }
 
+type InvitationCalendarCopy = {
+  kind: 'found'
+  title?: string
+  start?: string
+  end?: string
+  allDay: boolean
+  location?: string
+  conferenceUrl: string | null
+  htmlLink?: string
+  responseStatus: RsvpStatus | null
+  cancelled: boolean
+  unavailableReason: string | null
+  reply: ((answer: InviteAnswer, validate: () => Promise<void>) => Promise<void>) | null
+}
+
+async function invitationPages<T>(api: GoogleApi, url: string, params: GoogleParams): Promise<T[]> {
+  let seenPage = false
+  try {
+    return await api.getAll<T>(
+      url,
+      params,
+      ({ items }) => {
+        seenPage = true
+        return items ?? []
+      },
+      10,
+      true,
+    )
+  } catch (error) {
+    // No copy and an unavailable API are different: only the former may send iTIP.
+    if (!seenPage && error instanceof GoogleApiError && error.status === 404) return []
+    throw error
+  }
+}
+
+function sameOccurrence(event: RawEvent, recurrenceId: string): boolean {
+  const original = event.originalStartTime
+  if (!original) return false
+  if (original.date !== undefined) return original.date === recurrenceId
+  if (original.dateTime === undefined || recurrenceId.length === 10) return false
+  return Date.parse(original.dateTime) === Date.parse(recurrenceId)
+}
+
+async function exactCopies(
+  api: GoogleApi,
+  url: string,
+  uid: string,
+  recurrenceId: string | null,
+): Promise<RawEvent[]> {
+  const events = (
+    await invitationPages<RawEvent>(api, url, {
+      iCalUID: uid,
+      singleEvents: 'false',
+      showDeleted: 'true',
+    })
+  ).filter(
+    (event) =>
+      event.iCalUID === uid || (event.iCalUID === undefined && event.status === 'cancelled'),
+  )
+  // The unexpanded list contains the series master and sometimes exception
+  // rows. No recurrence ID means the master, not any expanded occurrence.
+  const roots = events.filter((event) => !event.recurringEventId && !event.originalStartTime)
+  if (recurrenceId === null) return roots
+  const matching = new Map(
+    events.filter((event) => sameOccurrence(event, recurrenceId)).map((event) => [event.id, event]),
+  )
+  for (const series of roots) {
+    if (!series.id || !series.recurrence?.length) continue
+    // Unmodified instances do not appear in events.list. Query for the original
+    // start (not timeMin or the displayed start, which miss moved occurrences).
+    const instances = await invitationPages<RawEvent>(
+      api,
+      `${url}/${encodeURIComponent(series.id)}/instances`,
+      {
+        originalStart: recurrenceId,
+        showDeleted: 'true',
+      },
+    )
+    for (const event of instances) {
+      if (
+        (event.iCalUID === undefined || event.iCalUID === uid) &&
+        sameOccurrence(event, recurrenceId)
+      ) {
+        matching.set(event.id, event)
+      }
+    }
+  }
+  // A cancelled series suppresses every occurrence even if Google no longer
+  // returns its instances. Never use the series itself as a write target.
+  return matching.size
+    ? [...matching.values()]
+    : roots.filter((root) => root.status === 'cancelled')
+}
+
+/** RSVP lookup is independent of agenda visibility, dates and RSVP state. */
+export async function findInvitationCalendarCopy(
+  api: GoogleApi,
+  invitation: { uid: string; recurrenceId: string | null; sequence: number; organizer: string },
+  mailbox: string,
+): Promise<InvitationCalendarCopy | { kind: 'missing' | 'ambiguous' }> {
+  const { uid, recurrenceId } = invitation
+  const primary = await exactCopies(api, PRIMARY_EVENTS, uid, recurrenceId)
+  if (primary.length > 1) return { kind: 'ambiguous' }
+  if (primary[0]) return invitationCopy(api, PRIMARY_EVENTS, primary[0], invitation, mailbox, true)
+
+  const calendars = await invitationPages<CalendarListEntry>(api, `${BASE}/users/me/calendarList`, {
+    minAccessRole: 'reader',
+    showDeleted: 'false',
+    showHidden: 'true',
+  })
+  let match: InvitationCalendarCopy | undefined
+  for (const calendar of calendars) {
+    if (
+      !calendar.id ||
+      calendar.primary ||
+      calendar.deleted ||
+      calendar.accessRole === 'freeBusyReader'
+    )
+      continue
+    const url = `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`
+    const events = await exactCopies(api, url, uid, recurrenceId)
+    if (events.length > 1 || (events.length && match)) return { kind: 'ambiguous' }
+    if (events[0]) {
+      match = invitationCopy(
+        api,
+        url,
+        events[0],
+        invitation,
+        mailbox,
+        calendar.accessRole === 'owner' || calendar.accessRole === 'writer',
+        calendar.accessRole === 'owner' ? calendar.id.toLowerCase() : undefined,
+      )
+    }
+  }
+  return match ?? { kind: 'missing' }
+}
+
+function invitationCopy(
+  api: GoogleApi,
+  base: string,
+  event: RawEvent,
+  invitation: { sequence: number; organizer: string },
+  mailbox: string,
+  writable: boolean,
+  ownedCalendar?: string,
+): InvitationCalendarCopy {
+  const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []
+  const selfEmail = self[0]?.email?.toLowerCase()
+  // Calendar's `self` denotes the calendar copy, not necessarily the mailbox.
+  // An owned secondary calendar is ours; a shared writer may not RSVP as its owner.
+  const attendee =
+    self.length === 1 && selfEmail && (selfEmail === mailbox || selfEmail === ownedCalendar)
+      ? self[0]
+      : undefined
+  const organizer = event.organizer?.email?.toLowerCase()
+  const cancelled = event.status === 'cancelled'
+  let reason: string | null = null
+  if (cancelled) reason = 'This Calendar event was cancelled'
+  else if (
+    event.organizer?.self ||
+    organizer === mailbox ||
+    (organizer && organizer === ownedCalendar)
+  ) {
+    reason = 'You organize this event'
+  } else if (!attendee) reason = 'This account is not an attendee of this Calendar event'
+  else if (organizer !== invitation.organizer)
+    reason = 'The Calendar organizer does not match this invitation'
+  else if (event.sequence !== undefined && event.sequence !== invitation.sequence)
+    reason =
+      event.sequence > invitation.sequence
+        ? 'Calendar has a newer revision of this event'
+        : 'Calendar has not received this revision of the invitation yet'
+  else if (!event.id || !event.etag || !writable) reason = 'This Calendar copy cannot be edited'
+  const url = `${base}/${encodeURIComponent(event.id ?? '')}?sendUpdates=all`
+  return {
+    kind: 'found',
+    title: event.summary,
+    start: event.start?.date ?? event.start?.dateTime,
+    end: event.end?.date ?? event.end?.dateTime,
+    allDay: event.start?.date !== undefined,
+    location: event.location,
+    conferenceUrl: conferenceUrlOf(event),
+    htmlLink: event.htmlLink,
+    responseStatus: asRsvp(attendee?.responseStatus),
+    cancelled,
+    unavailableReason: reason,
+    reply:
+      reason === null && attendee
+        ? (answer, validate) =>
+            api.patch(
+              url,
+              {
+                attendeesOmitted: true,
+                attendees: [{ ...attendee, responseStatus: answer }],
+              },
+              { validate, ifMatch: event.etag },
+            )
+        : null,
+  }
+}
+
 /** Cancelled instances of a recurring series still come back (that is how a
  *  client learns they were cancelled), and an event the user declined is one
  *  they have already said they are not attending. */
@@ -339,7 +545,7 @@ const JOIN_LINKS: RegExp[] = [
  * and the `&amp;` unescape. Trailing sentence punctuation is trimmed, because a
  * link written into prose ends up with the full stop attached.
  */
-function joinLinkIn(text: string | undefined): string | null {
+export function joinLinkIn(text: string | undefined): string | null {
   if (text === undefined) return null
   for (const raw of text.match(/https:\/\/[^\s"'<>]+/gi) ?? []) {
     const url = raw.replace(/&amp;/gi, '&').replace(/[.,;:)]+$/, '')

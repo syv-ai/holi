@@ -72,6 +72,8 @@ import {
 } from './gmail'
 import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
+import { createMailInvitationSession } from './mail-invitation-session'
+import type { MailInvitationIdentity } from './mail-invitation'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
 import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
@@ -252,6 +254,51 @@ function expectedAccountParam(p: Record<string, unknown>): string | undefined {
     throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub must be a Google account id')
   }
   return sub
+}
+
+function invitationParams(raw: unknown): { threadId: string; expectedAccountSub: string } {
+  const p = paramsObject(raw)
+  const threadId = stringParam(p, 'threadId')
+  try {
+    validateThreadId(threadId)
+  } catch {
+    throw new CapabilityError('BAD_REQUEST', 'threadId must be a Gmail thread id')
+  }
+  const expectedAccountSub = expectedAccountParam(p)
+  if (expectedAccountSub === undefined) {
+    throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+  }
+  return { threadId, expectedAccountSub }
+}
+
+function invitationResponseParams(raw: unknown): ReturnType<typeof invitationParams> & {
+  identity: MailInvitationIdentity
+  answer: InviteAnswer
+} {
+  const p = paramsObject(raw)
+  const { sequence, recurrenceId, ...target } = paramsObject(p.identity)
+  if (
+    typeof sequence !== 'number' ||
+    !Number.isSafeInteger(sequence) ||
+    sequence < 0 ||
+    (recurrenceId !== null && (typeof recurrenceId !== 'string' || !recurrenceId))
+  ) {
+    throw new CapabilityError('BAD_REQUEST', 'Invalid invitation identity')
+  }
+  const answer = p.answer
+  if (answer !== 'accepted' && answer !== 'tentative' && answer !== 'declined') {
+    throw new CapabilityError('BAD_REQUEST', 'Invalid invitation response')
+  }
+  return {
+    ...invitationParams(raw),
+    answer,
+    identity: {
+      messageId: stringParam(target, 'messageId'),
+      uid: stringParam(target, 'uid'),
+      sequence,
+      recurrenceId,
+    },
+  }
 }
 
 function composeParams(raw: unknown): ComposeWrite & { expectedAccountSub?: string } {
@@ -449,6 +496,12 @@ function accountsText(value: GoogleAccountsOverview): string {
 }
 
 const capabilityDisposers = new WeakMap<object, () => void>()
+// A plugin is activated per vault; outstanding responses belong to the mailbox,
+// so a different vault linked to that mailbox must not replay an uncertain send.
+const invitationSessions = new WeakMap<
+  GoogleAccountsManager,
+  ReturnType<typeof createMailInvitationSession>
+>()
 
 export function disposeGoogleCapabilities(capabilities: object): void {
   capabilityDisposers.get(capabilities)?.()
@@ -476,12 +529,39 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     return { session, data }
   }
 
-  const validateSession = (remote: string, session: GoogleSession) => async () => {
-    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-    const current = await deps.accounts.sessionFor(remote)
-    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-    if (current !== session)
-      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+  const validateSession =
+    (remote: string, session: GoogleSession, view = 'the composer') =>
+    async () => {
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      const current = await deps.accounts.sessionFor(remote)
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      if (current !== session)
+        throw new CapabilityError('FORBIDDEN', `Google account changed; reload ${view}`)
+    }
+
+  const mailInvitations = invitationSessions.get(deps.accounts) ?? createMailInvitationSession()
+  invitationSessions.set(deps.accounts, mailInvitations)
+  const invitationTarget = async (
+    remote: string,
+    { expectedAccountSub, threadId }: ReturnType<typeof invitationParams>,
+  ) => {
+    const session = await deps.accounts.sessionFor(remote)
+    if (session?.accountSub !== expectedAccountSub) {
+      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the invitation')
+    }
+    const email = session.account?.email.toLowerCase()
+    if (!email) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
+    const validate = validateSession(remote, session, 'the invitation')
+    return {
+      api: new GoogleApi({
+        accessToken: () => session.getAccessToken(),
+        validateRequest: validate,
+      }),
+      threadId,
+      accountSub: expectedAccountSub,
+      email,
+      validateSession: validate,
+    }
   }
 
   const dataOf = async (remote: string): Promise<GoogleData> => {
@@ -784,6 +864,22 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: async (ctx, { id }) =>
         google(async () =>
           resolveThreadMeeting(apiOf(ctx.remote), id, { overrides: await overrides(ctx.root) }),
+        ),
+    }),
+
+    /** Unlike Join, an invitation is actionable even without a Calendar copy. */
+    'google.mailInvitation': cap({
+      doors: ['ui'],
+      params: invitationParams,
+      run: (ctx, input) =>
+        google(async () => mailInvitations.read(await invitationTarget(ctx.remote, input))),
+    }),
+    'google.respondToMailInvitation': cap({
+      doors: ['ui'],
+      params: invitationResponseParams,
+      run: (ctx, { identity, answer, ...target }) =>
+        google(async () =>
+          mailInvitations.respond(await invitationTarget(ctx.remote, target), identity, answer),
         ),
     }),
 
