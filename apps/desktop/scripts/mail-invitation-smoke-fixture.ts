@@ -67,6 +67,7 @@ const occurrenceStart = '2026-11-25T16:20:00Z'
 const occurrenceEnd = '2026-11-25T17:05:00Z'
 const primary = `${calendar}/calendars/primary/events`
 const sharedCalendar = 'fixture-shared@example.test'
+const sentThreadId = 'thread-sent-workshop'
 const wire = (text: string) => Buffer.from(text).toString('base64url')
 const header = (name: string, value: string) => ({ name, value })
 const mailId = (invite: Invite) =>
@@ -120,7 +121,7 @@ function message(invite: Invite, mailbox: Mailbox, sent?: SentReply) {
     : 'Details are in the calendar invitation.'
   return {
     id: sent?.id ?? mailId(invite),
-    threadId: invite.id,
+    threadId: sent ? sentThreadId : invite.id,
     internalDate: String(mailAt + (sent ? 60_000 : 0)),
     snippet: text,
     labelIds: sent ? ['SENT'] : ['INBOX'],
@@ -231,6 +232,7 @@ export function createInvitationTransport() {
   let losePatchAcknowledgement = false
   let tokenRefreshes = 0
   let heldCalendarRead: { skip: number; entered: () => void; released: Promise<void> } | undefined
+  let heldSentAcknowledgement: Promise<void> | undefined
   const writes: {
     account: string
     method: 'PATCH' | 'POST'
@@ -245,6 +247,7 @@ export function createInvitationTransport() {
   }[] = []
   const rejected: string[] = []
   let attachmentReads = 0
+  let sentReceiptMisses = 0
   let sentReceiptReads = 0
   let sentIdSearches = 0
   let pendingReceiptIndex = false
@@ -364,6 +367,7 @@ export function createInvitationTransport() {
           return Response.json({ threadsTotal: invites.length, threadsUnread: 0 })
         if (resource === `${api}/labels`) return Response.json({ labels: [] })
         if (resource === `${api}/drafts`) return Response.json({ drafts: [] })
+        const reply = mailbox === mailboxA && sent ? message(attachment, mailbox, sent) : null
         if (resource === `${api}/threads`) {
           const q = query.get('q') ?? ''
           const window = /^has:attachment filename:ics after:(\d+) before:(\d+)$/.exec(q)
@@ -382,7 +386,9 @@ export function createInvitationTransport() {
             : q.includes('is:unread') || q.includes('is:starred')
               ? []
               : q.includes('in:sent')
-                ? invites.filter((invite) => invite === attachment && sent)
+                ? reply
+                  ? [{ id: reply.threadId }]
+                  : []
                 : invites
           return Response.json({ threads: matches.map(({ id }) => ({ id })) })
         }
@@ -397,44 +403,46 @@ export function createInvitationTransport() {
               ? sent
               : null
           return Response.json({
-            messages: reply ? [{ id: reply.id, threadId: attachment.id }] : [],
+            messages: reply ? [{ id: reply.id, threadId: sentThreadId }] : [],
           })
         }
+        const format = query.get('format')
+        if (reply && resource === `${api}/messages/${reply.id}`) {
+          assert.equal(format, 'full')
+          assert(!query.has('fields'))
+          if (pendingReceiptIndex) {
+            // The accepted receipt can briefly precede the message resource.
+            pendingReceiptIndex = false
+            sentReceiptMisses++
+            return notFound()
+          }
+          sentReceiptReads++
+          return Response.json(reply)
+        }
+        const threadResource = (id: string, messages: ReturnType<typeof message>[]) => {
+          assert(format === 'full' || format === 'metadata')
+          return Response.json({
+            id,
+            historyId: '100',
+            snippet: messages[0]?.snippet,
+            messages:
+              format === 'metadata'
+                ? messages.map(({ payload, ...item }) => ({
+                    ...item,
+                    payload: { mimeType: payload.mimeType, headers: payload.headers },
+                  }))
+                : messages,
+          })
+        }
+        if (reply && resource === `${api}/threads/${reply.threadId}`)
+          return threadResource(reply.threadId, [reply])
         for (const invite of invites) {
           const incoming = message(invite, mailbox)
-          const reply = invite === attachment && sent ? message(invite, mailbox, sent) : null
-          const format = query.get('format')
-          if (resource === `${api}/threads/${invite.id}`) {
-            assert(format === 'full' || format === 'metadata')
-            const messages = reply
-              ? [incoming, reply]
-              : invite === series
-                ? [incoming, message(occurrence, mailbox)]
-                : [incoming]
-            return Response.json({
-              id: invite.id,
-              historyId: '100',
-              snippet: incoming.snippet,
-              messages:
-                format === 'metadata'
-                  ? messages.map(({ payload, ...item }) => ({
-                      ...item,
-                      payload: { mimeType: payload.mimeType, headers: payload.headers },
-                    }))
-                  : messages,
-            })
-          }
-          if (reply && resource === `${api}/messages/${reply.id}`) {
-            assert.equal(format, 'full')
-            assert(!query.has('fields'))
-            if (pendingReceiptIndex) {
-              // The accepted receipt can briefly precede the message resource.
-              pendingReceiptIndex = false
-              return Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 })
-            }
-            sentReceiptReads++
-            return Response.json(reply)
-          }
+          if (resource === `${api}/threads/${invite.id}`)
+            return threadResource(
+              invite.id,
+              invite === series ? [incoming, message(occurrence, mailbox)] : [incoming],
+            )
           const selected =
             resource === `${api}/messages/${incoming.id}`
               ? incoming
@@ -516,7 +524,7 @@ export function createInvitationTransport() {
         assert.equal(
           body.threadId,
           attachment.id,
-          'iTIP Reply must stay in its original Gmail thread',
+          'iTIP Reply must request threading with the original invitation',
         )
         const reply = readReply(body.raw, attachment, mailbox)
         const evidence = {
@@ -536,7 +544,10 @@ export function createInvitationTransport() {
         sent = { id: 'fixture-sent-reply', ...reply }
         pendingReceiptIndex = true
         writes.push({ ...evidence, status: 200, messageId: sent.id })
-        return Response.json({ id: sent.id, threadId: attachment.id, labelIds: ['SENT'] })
+        await heldSentAcknowledgement
+        // Gmail owns the final grouping. The reply still references the original
+        // invitation but its message is never available from that thread's GET.
+        return Response.json({ id: sent.id, threadId: sentThreadId, labelIds: ['SENT'] })
       }
       throw new Error('Unhandled fixture endpoint')
     } catch (error) {
@@ -559,6 +570,11 @@ export function createInvitationTransport() {
     loseNextPatchAcknowledgement: () => {
       losePatchAcknowledgement = true
     },
+    holdSentAcknowledgement() {
+      let release!: () => void
+      heldSentAcknowledgement = new Promise<void>((resolve) => (release = resolve))
+      return release
+    },
     holdCalendarRead(skip = 0) {
       let enter!: () => void
       let release!: () => void
@@ -573,6 +589,7 @@ export function createInvitationTransport() {
     },
     snapshot: () => ({
       attachmentReads,
+      sentReceiptMisses,
       sentReceiptReads,
       sentIdSearches,
       tokenRefreshes,

@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/plugin-api'
 import { googleAccountRevisionAtom, useGoogleAccount } from '../account'
-import { timeOf, type TimeFormat } from '../calendar/calendar-format'
+import type { TimeFormat } from '../calendar/calendar-format'
 import { useTimeFormat } from '../calendar/calendar-settings'
 import { googleEventUrl, httpsLink, providerConferenceUrl } from '../../shared/meeting-links'
 import type { ThreadMessage } from '../mail-types'
@@ -106,9 +106,9 @@ function InvitationDetails(scope: Parameters<typeof useMailInvitation>[0]) {
           key={card.key}
           card={card}
           clock={clock}
-          sending={busy !== 'reading' && busy?.responding === card.key}
+          action={typeof busy === 'object' && busy?.key === card.key ? busy.action : null}
           blocked={busy !== null || readError !== null}
-          open={(url) => void openLink(url)}
+          open={(url) => void openLink(card, url)}
           respond={(answer) => void respond(card, answer)}
         />
       ))}
@@ -142,14 +142,14 @@ const scopeLabels = { series: 'Whole series', occurrence: 'This occurrence' }
 function InvitationCard({
   card,
   clock,
-  sending,
+  action,
   blocked,
   open,
   respond,
 }: {
   card: InvitationCardState
   clock: TimeFormat
-  sending: boolean
+  action: 'responding' | 'opening' | null
   blocked: boolean
   open: (url: string) => void
   respond: (answer: InvitationAnswer) => void
@@ -162,19 +162,20 @@ function InvitationCard({
   const knownResponse = response && response !== 'needsAction' ? responses[response] : null
   const date = invitationDate(invitation, clock)
   const { organizer, location } = invitation
-  const status = sending
-    ? 'Sending your response…'
-    : receipt === 'sent'
-      ? refreshPending
-        ? 'Google accepted your response, but its status has not been refreshed.'
-        : 'Google accepted your response.'
-      : receipt === 'uncertain' && refreshPending
-        ? 'We couldn’t confirm whether Google accepted your response. Retry only checks its status.'
-        : receipt === 'unchanged'
-          ? 'This was already your recorded response.'
-          : refreshPending && canRespond
-            ? 'Check your response status before responding again.'
-            : null
+  const status =
+    action === 'responding'
+      ? 'Sending your response…'
+      : receipt === 'sent'
+        ? refreshPending
+          ? 'Google accepted your response, but its status has not been refreshed.'
+          : 'Google accepted your response.'
+        : receipt === 'uncertain' && refreshPending
+          ? 'We couldn’t confirm whether Google accepted your response. Retry only checks its status.'
+          : receipt === 'unchanged'
+            ? 'This was already your recorded response.'
+            : refreshPending && canRespond
+              ? 'Check your response status before responding again.'
+              : null
 
   return (
     <article aria-labelledby={headingId} className="flex min-w-0 flex-col gap-2">
@@ -230,8 +231,15 @@ function InvitationCard({
               {responses[answer].action}
             </Button>
           ))}
-        {!invitation.cancelled && <InvitationLink invitation={invitation} open={open} />}
+        {!invitation.cancelled && (
+          <InvitationLink invitation={invitation} blocked={blocked || error !== null} open={open} />
+        )}
       </div>
+      {action === 'opening' && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Checking invitation link…
+        </p>
+      )}
       {status !== null && (
         <p role="status" className="text-muted-foreground text-sm">
           {status}
@@ -256,9 +264,11 @@ function InvitationCard({
 
 function InvitationLink({
   invitation,
+  blocked,
   open,
 }: {
   invitation: Invitation
+  blocked: boolean
   open: (url: string) => void
 }) {
   const hostId = useId()
@@ -284,6 +294,7 @@ function InvitationLink({
           size="sm"
           variant="outline"
           aria-describedby={hostId}
+          disabled={blocked}
           onClick={() => open(url)}
         >
           Open email link
@@ -294,7 +305,13 @@ function InvitationLink({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button type="button" size="sm" variant="secondary" onClick={() => open(url)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={blocked}
+          onClick={() => open(url)}
+        >
           {conference ? 'Join meeting' : 'Open in Google Calendar'}
         </Button>
       </TooltipTrigger>
@@ -307,15 +324,18 @@ function InvitationLink({
   )
 }
 
-function invitationDate({ start, end, allDay }: Invitation, clock: TimeFormat): string | null {
+function invitationDate(
+  { start, end, allDay, floating }: Invitation,
+  clock: TimeFormat,
+): string | null {
   if (start === null) return null
-  const first = new Date(start)
+  // UTC is just a formatting axis for floating ISO values. Parsing them in the
+  // host zone would silently move a time that falls inside a DST gap.
+  const first = new Date(floating ? `${start}Z` : start)
   if (Number.isNaN(first.getTime())) return null
-  const last = end === null ? null : new Date(end)
-  const day = new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'full',
-    ...(allDay ? { timeZone: 'UTC' } : {}),
-  })
+  const last = end === null ? null : new Date(floating ? `${end}Z` : end)
+  const timeZone = allDay || floating ? 'UTC' : undefined
+  const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeZone })
   const firstDay = day.format(first)
   const later = last !== null && last > first
   if (allDay) {
@@ -324,8 +344,14 @@ function invitationDate({ start, end, allDay }: Invitation, clock: TimeFormat): 
     const lastDay = later ? day.format(last) : firstDay
     return `${firstDay === lastDay ? firstDay : `${firstDay} – ${lastDay}`} · All day`
   }
-  const begins = `${firstDay}, ${timeOf(first, clock)}`
+  const time = new Intl.DateTimeFormat(
+    undefined,
+    clock === '12h'
+      ? { hour: 'numeric', minute: '2-digit', hour12: true, timeZone }
+      : { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone },
+  )
+  const begins = `${firstDay}, ${time.format(first)}`
   if (!later) return begins
   const lastDay = day.format(last)
-  return `${begins} – ${lastDay === firstDay ? '' : `${lastDay}, `}${timeOf(last, clock)}`
+  return `${begins} – ${lastDay === firstDay ? '' : `${lastDay}, `}${time.format(last)}`
 }

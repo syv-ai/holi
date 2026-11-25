@@ -220,6 +220,7 @@ function googleRig() {
     'google.mailMarkerAnnotations',
     'google.mailMarkerPreferences',
     'google.mailInvitation',
+    'google.validateMailInvitationBinding',
     'google.respondToMailInvitation',
   ])
   const calls: { name: string; params: unknown; linkedAccount: string; verdict?: string }[] = []
@@ -554,15 +555,28 @@ async function run() {
       assert.equal(transport.writes.length, refusedWrites)
       mark('gmail-refusal-retains-old-response-and-retry-does-not-send')
       await pause(700)
-      await click('Maybe', card)
+      const beforeSent = transport.snapshot()
+      const releaseSent = transport.holdSentAcknowledgement()
+      try {
+        await click('Maybe', card)
+        await expectStatus('Sending your response…')
+        await expectStatus('No response yet')
+        assert(!(await readCard()).includes('Response: Tentative'))
+      } finally {
+        releaseSent()
+      }
+      await expectStatus('Google accepted your response.')
       await expectStatus('Response: Tentative')
+      assert(!(await js(`!!(${target('Retry', card)})`)))
       assert.equal(transport.writes.length, refusedWrites + 1)
-      assert(transport.snapshot().attachmentReads > 0)
-      assert(transport.snapshot().sentIdSearches > 0)
-      assert(transport.snapshot().sentReceiptReads > 0)
+      const afterSent = transport.snapshot()
+      assert(afterSent.attachmentReads > 0)
+      assert(afterSent.sentReceiptMisses > beforeSent.sentReceiptMisses)
+      assert(afterSent.sentIdSearches > beforeSent.sentIdSearches)
+      assert(afterSent.sentReceiptReads > beforeSent.sentReceiptReads)
       assert.equal(statSync(journalPath).mode & 0o777, 0o600)
       await capture('05-mail-view-sent-readback-dark')
-      mark('gmail-threaded-itip-reply-recovers-response-from-sent')
+      mark('gmail-itip-reply-confirms-through-exact-id-readback-from-a-separate-sent-thread')
       await pause(700)
     } finally {
       clearInterval(record)
