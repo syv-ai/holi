@@ -69,6 +69,8 @@
         "scripts/folder-subscriptions-native-smoke.tsx",
         "scripts/rich-text-vim-native-smoke-main.ts",
         "scripts/rich-text-vim-native-smoke.tsx",
+        // Window-effects investigation main is built by its Node runner through Vite.
+        "scripts/window-effects-investigation-main.ts",
         // Issue #507 native packaged MDX diagnostics fixture entries.
         "scripts/mdx-diagnostics-native-smoke-main.ts",
         "scripts/mdx-diagnostics-native-smoke.tsx",

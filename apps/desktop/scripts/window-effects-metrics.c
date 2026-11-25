@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <libproc.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,9 +11,9 @@ int main(int argc, char **argv) {
   if (argc != 2) return 2;
   char *end = NULL;
   long pid_value = strtol(argv[1], &end, 10);
-  if (!end || *end || pid_value <= 0) return 2;
+  if (!end || end == argv[1] || *end || pid_value <= 0 || pid_value > INT_MAX || (long)(pid_t)pid_value != pid_value) return 2;
   pid_t pid = (pid_t)pid_value;
-  struct rusage_info_v6 usage;
+  struct rusage_info_v6 usage = {0};
   errno = 0;
   int result = proc_pid_rusage(pid, RUSAGE_INFO_V6, (rusage_info_t *)&usage);
   if (result != 0) {
