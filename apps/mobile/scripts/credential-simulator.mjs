@@ -109,6 +109,7 @@ export async function runCredentialSimulator() {
     } finally {
       await writeFile(join(artifacts, 'build-log.json'), JSON.stringify(buildLog.close(), null, 2))
     }
+    stage = 'verify-build'
     const app = join(cwd, 'platforms/ios/build/Debug-iphonesimulator/mobile.app')
     const plist = async (key) =>
       command('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, join(app, 'Info.plist')])
@@ -126,7 +127,7 @@ export async function runCredentialSimulator() {
       'Source checkout must be clean',
     )
     const bundleHash = createHash('sha256')
-      .update(await readFile(join(app, 'app/bundle.js')))
+      .update(await readFile(join(app, 'app/bundle.mjs')))
       .digest('hex')
     provenance = {
       sourceHead,
@@ -207,6 +208,7 @@ export async function runCredentialSimulator() {
     failure ??= {
       stage,
       reason: 'Credential acceptance did not complete',
+      filesystemError: ['ENOENT', 'EACCES', 'EPERM'].includes(error.code) ? error.code : null,
       timedOut: error.timedOut === true,
       exitCode: Number.isSafeInteger(error.exitCode) ? error.exitCode : null,
     }
