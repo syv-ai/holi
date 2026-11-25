@@ -21,7 +21,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSDictionary<NSString *, id> *)prepareWorkingCopyTree:(NSString *)root
                                                             remote:(NSString *)remote
                                                              branch:(NSString *)branch
-                                                              paths:(NSArray<NSString *> *)paths
+                                                             policy:(NSInteger (^)(NSString *path))policy
                                                               error:(NSError *_Nullable __autoreleasing *)error;
 @end
 
