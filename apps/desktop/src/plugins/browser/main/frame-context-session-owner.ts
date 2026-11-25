@@ -13,6 +13,7 @@ export function createFrameContextSessionOwner(
   const initialized = new Set<string>()
   const attached = new Set<string>()
   const setups = new Map<string, Promise<void>>()
+  const sessionCancellations = new Map<string, ReturnType<typeof createFrameContextCancellation>>()
   let owns = false
   let terminal = false
   let disposed = false
@@ -35,24 +36,35 @@ export function createFrameContextSessionOwner(
   ) => {
     assertAvailable()
     const before = epoch
+    const sessionCancellation =
+      sessionId === undefined || sessionId === '' ? undefined : sessionCancellations.get(sessionId)
+    if (sessionId && !sessionCancellation)
+      throw new Error('debugger session is no longer available')
     try {
       const command =
         sessionId === undefined || sessionId === ''
           ? client.sendCommand(method, params)
           : client.sendCommand(method, params, sessionId)
-      const result = await cancellation.run(command)
+      const result = await (sessionCancellation ?? cancellation).run(command)
       assertAvailable()
       if (before !== epoch) throw new Error('debugger epoch changed during command')
       return result
     } catch (error) {
-      if (failOnCommandError) fail('debugger command failed')
+      const detachedSession =
+        sessionCancellation !== undefined &&
+        sessionCancellations.get(sessionId!) !== sessionCancellation
+      if (failOnCommandError && !detachedSession) fail('debugger command failed')
       throw error
     }
   }
   const fail = (reason: string) => {
     if (terminal) return
     terminal = true
-    cancellation.cancel(new Error(reason || 'debugger ownership was lost'))
+    const error = new Error(reason || 'debugger ownership was lost')
+    cancellation.cancel(error)
+    for (const sessionCancellation of sessionCancellations.values())
+      sessionCancellation.cancel(error)
+    sessionCancellations.clear()
     invalidate()
     client.removeListener('message', onMessage)
     client.removeListener('detach', onDetach)
@@ -130,6 +142,7 @@ export function createFrameContextSessionOwner(
           void send('Target.detachFromTarget', { sessionId: id }, session).catch(() => {})
         } else if (!attached.has(id)) {
           attached.add(id)
+          sessionCancellations.set(id, createFrameContextCancellation())
           const setup = initializeSession(id)
           setups.set(id, setup)
           void setup.catch(() => {})
@@ -140,6 +153,8 @@ export function createFrameContextSessionOwner(
       attached.delete(id)
       initialized.delete(id)
       setups.delete(id)
+      sessionCancellations.get(id)?.cancel(new Error('debugger session detached'))
+      sessionCancellations.delete(id)
     }
     onProtocolEvent(method, params, session)
   }
@@ -152,7 +167,11 @@ export function createFrameContextSessionOwner(
     if (disposed) return
     disposed = true
     terminal = true
-    cancellation.cancel(new Error('frame addressing is no longer available'))
+    const error = new Error('frame addressing is no longer available')
+    cancellation.cancel(error)
+    for (const sessionCancellation of sessionCancellations.values())
+      sessionCancellation.cancel(error)
+    sessionCancellations.clear()
     invalidate()
     client.removeListener('message', onMessage)
     client.removeListener('detach', onDetach)

@@ -697,9 +697,11 @@ describe('durable note moves', () => {
     expect(readFinished).toBe(false)
     expect(saveFinished).toBe(false)
     release()
-    await expect(moving).resolves.toMatchObject({ path: 'renamed.md' })
-    await expect(reading).rejects.toThrow()
-    await expect(saving).rejects.toThrow()
+    await Promise.all([
+      expect(moving).resolves.toMatchObject({ path: 'renamed.md' }),
+      expect(reading).rejects.toThrow(),
+      expect(saving).rejects.toThrow(),
+    ])
     expect(saveFinished).toBe(true)
     expect(string((await other.read('same.md')).bytes)).toBe('right')
     expect(string((await second.read('renamed.md')).bytes)).toBe('left')
