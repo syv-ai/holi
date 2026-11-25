@@ -44,8 +44,11 @@ export interface TerminalSummary {
   title: string
 }
 
+export type PresentationLease = () => boolean
+
 /** @public exported for its test */
 export interface OpenArgs {
+  lease: PresentationLease
   /** The vault it is opened in, which its events are about. */
   remote: string
   /** The vault clone it runs in. */
@@ -81,7 +84,7 @@ export interface OpenArgs {
 
 export interface AgentTerminalsDeps {
   /** Tell the renderer `name` about the vault `remote`. */
-  emit(remote: string, name: string, payload: unknown): void
+  emit(remote: string, name: string, payload: unknown, guard?: () => boolean): void
   activationSignal?: AbortSignal
   spawnPty?: SpawnPty
   platform?: AgentRuntimeDeps['platform']
@@ -102,13 +105,15 @@ export interface AgentTerminalsDeps {
 export interface AgentTerminals {
   open(args: OpenArgs): { ok: true; id: string } | { ok: false; message: string }
   /** A renderer is taking over this terminal: its replayable state. */
-  attach(id: string): Promise<string>
-  write(id: string, data: string): void
-  resize(id: string, cols: number, rows: number): void
+  attach(id: string, lease: PresentationLease): Promise<string>
+  claim(id: string, lease: PresentationLease): boolean
+  discard(id: string, originatingLease: PresentationLease): Promise<boolean>
+  write(id: string, data: string, lease: PresentationLease): void
+  resize(id: string, cols: number, rows: number, lease: PresentationLease): void
   /** Put text in the terminal's input, unsent. False for a terminal that is gone. */
-  paste(id: string, text: string): boolean
+  paste(id: string, text: string, lease: PresentationLease): boolean
   /** Set the appearance the child sees through OSC colour queries. */
-  setAppearance(id: string, appearance: unknown): void
+  setAppearance(id: string, appearance: unknown, lease: PresentationLease): void
   /** End the client. Joins physical proof, then bounds output and callbacks.
    * A caller must not race this settlement with a shorter overall deadline. */
   close(id: string): Promise<void>
@@ -130,7 +135,9 @@ interface Terminal {
   appearance: TerminalAppearanceProtocol
   onInput: ((data: string) => void) | undefined
   /** False until a renderer has taken its state: output goes to the record only. */
-  attached: boolean
+  attachment?: { lease: PresentationLease }
+  lease: PresentationLease
+  claimant?: PresentationLease
   retainOnExit: boolean
   draining: boolean
   hidden: boolean
@@ -139,7 +146,7 @@ interface Terminal {
   ready: boolean
   /** The settle timer is running. */
   settling: boolean
-  pending: string[]
+  pending: Array<{ text: string; lease: PresentationLease }>
   timers: ReturnType<typeof setTimeout>[]
 }
 
@@ -163,6 +170,13 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
     { once: true },
   )
   let lastPushed = ''
+  const valid = (lease: PresentationLease): boolean => {
+    try {
+      return lease()
+    } catch {
+      return false
+    }
+  }
 
   const rows = (published = false): TerminalSummary[] =>
     [...terminals.values()]
@@ -182,7 +196,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
   function markReady(t: Terminal): void {
     if (t.ready) return
     t.ready = true
-    for (const text of t.pending.splice(0)) t.runtime.write(bracketedPaste(text))
+    for (const item of t.pending.splice(0))
+      if (valid(item.lease)) t.runtime.write(bracketedPaste(item.text))
   }
 
   function stopInput(t: Terminal): void {
@@ -215,7 +230,9 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       cols,
       rows,
       notice,
+      lease,
     }) {
+      if (!valid(lease)) return { ok: false, message: 'The presentation is no longer active.' }
       if (deps.activationSignal?.aborted)
         return { ok: false, message: 'The vault was left before the terminal opened.' }
       if (command === null) return { ok: false, message: notInstalled }
@@ -249,7 +266,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
         mirror,
         appearance: new TerminalAppearanceProtocol(),
         onInput,
-        attached: false,
+        lease,
         retainOnExit: retainOnExit ?? false,
         draining: false,
         hidden: false,
@@ -273,7 +290,15 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
         if (!t.draining) for (const reply of t.appearance.feed(data)) runtime.write(reply)
         mirror.write(data)
         onOutput?.(data)
-        if (t.attached) deps.emit(remote, 'pty-data', { id, data })
+        if (t.attachment) {
+          const attachment = t.attachment
+          deps.emit(
+            remote,
+            'pty-data',
+            { id, data },
+            () => terminals.get(id) === t && t.attachment === attachment && valid(attachment.lease),
+          )
+        }
         // The first output means the TUI is up; a moment later it is reading
         // raw input. Only the fact of output is used, never what it says.
         if (!t.draining && !t.ready && !t.settling) {
@@ -288,7 +313,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
           log(`terminal ${id} exited (code ${e.exitCode})`)
           // Notify while still indexed. A failing notification must not let
           // close/reopen miss this terminal or retire its session underneath it.
-          deps.emit(remote, 'pty-exit', { id, code: e.exitCode })
+          deps.emit(remote, 'pty-exit', { id, code: e.exitCode }, () => valid(t.lease))
           if (!t.retainOnExit) {
             t.hidden = true
             pushList(remote)
@@ -335,44 +360,57 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       return { ok: true, id }
     },
 
-    async attach(id) {
+    async attach(id, lease) {
+      if (!valid(lease)) return ''
       const t = terminals.get(id)
       if (t === undefined) return ''
-      // Serialise BEFORE opening the tap: a chunk that lands mid-serialise goes
-      // to the record only, never both replayed and streamed. Closed first,
-      // because a re-attach (a pane move remounts the view) finds it open.
-      t.attached = false
+      const attachment = { lease }
+      t.attachment = attachment
+      t.claimant = lease
       const state = await t.mirror.serialize()
-      if (terminals.has(id)) t.attached = true
+      if (terminals.get(id) !== t || t.attachment !== attachment || !valid(lease)) return ''
       return state
     },
 
-    write(id, data) {
+    claim(id, lease) {
       const t = terminals.get(id)
-      if (t === undefined) return
-      if (t.draining) return
+      if (!valid(lease) || t === undefined || t.draining) return false
+      t.claimant = lease
+      return true
+    },
+
+    async discard(id, originatingLease) {
+      const t = terminals.get(id)
+      if (t === undefined || t.claimant !== originatingLease) return false
+      await api.close(id)
+      return true
+    },
+
+    write(id, data, lease) {
+      const t = terminals.get(id)
+      if (!valid(lease) || t === undefined || t.draining) return
       t.onInput?.(data)
       t.runtime.write(data)
     },
 
-    resize(id, cols, rows) {
+    resize(id, cols, rows, lease) {
       const t = terminals.get(id)
-      if (t === undefined || t.draining) return
+      if (!valid(lease) || t === undefined || t.draining) return
       t.runtime.resize(cols, rows)
       t.mirror.resize(cols, rows)
     },
 
-    paste(id, text) {
+    paste(id, text, lease) {
       const t = terminals.get(id)
-      if (t === undefined || t.draining) return false
+      if (!valid(lease) || t === undefined || t.draining) return false
       if (t.ready) t.runtime.write(bracketedPaste(text))
-      else t.pending.push(text)
+      else t.pending.push({ text, lease })
       return true
     },
 
-    setAppearance(id, appearance) {
+    setAppearance(id, appearance, lease) {
       const t = terminals.get(id)
-      if (t === undefined || t.draining) return
+      if (!valid(lease) || t === undefined || t.draining) return
       if (t.appearance.update(appearance)) t.runtime.write(t.appearance.notification())
     },
 
@@ -381,6 +419,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       if (t === undefined) return Promise.resolve()
       // Public exit and its callbacks own retirement. An unconfirmed exit is
       // not a synthetic close; a retained transcript is retired only here.
+      t.attachment = undefined
       return (t.closeWork ??= t.runtime.kill().then(() => {
         if (terminals.get(id) !== t) return
         t.hidden = true
