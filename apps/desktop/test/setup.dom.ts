@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, configure } from '@testing-library/react'
+import { setTimeout as nodeSetTimeout } from 'node:timers/promises'
+import { act, cleanup, configure } from '@testing-library/react'
 import { afterEach, beforeEach } from 'vitest'
 
 // Workspaces persist across stores by design, but not across independent tests.
@@ -9,7 +10,14 @@ beforeEach(() => {
     if (key.startsWith('holi.workspace.')) localStorage.removeItem(key)
   }
 })
-afterEach(() => cleanup())
+afterEach(async () => {
+  await act(async () => {
+    cleanup()
+    // Radix schedules focus-scope cleanup on the next task. Use Node's timer so
+    // this still advances when a test has enabled Vitest's fake timers.
+    await nodeSetTimeout(0)
+  })
+})
 
 // How long `findBy` and `waitFor` wait for their condition. A bound on a
 // failure only: a passing query returns as soon as it holds. Testing Library's
