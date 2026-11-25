@@ -9,7 +9,6 @@ import { type RendererPlugin } from '@/plugin-api'
 import { GOOGLE_INFO } from '../info'
 import { googleConnectedAtom } from './account'
 import { ConnectionsSection } from './connections-section'
-import { MailView } from './mail-view'
 import { CalendarView } from './calendar/calendar-view'
 import { CalendarSettingsSection } from './calendar/calendar-settings-section'
 import { MailShell } from './mail/mail-shell'
@@ -21,7 +20,8 @@ export const googleRenderer: RendererPlugin = {
       kind: 'mail',
       label: 'Mail',
       icon: Mail,
-      render: MailView,
+      // Restored legacy Mail tabs use the same data lifecycle as new app tabs.
+      render: MailShell,
       openAs: { kind: 'app', id: 'mail' },
     },
   ],

@@ -105,6 +105,9 @@ export function useMail(account: string | null, enabled = true) {
   /** The current context's outstanding list read, including the initial load. */
   const pendingListRequest = useRef<number | null>(null)
   const pendingWrites = useRef(new Map<symbol, typeof call>())
+  /** Only the cached prefix is authoritative on a history refresh; later pages bypass it. */
+  const cachedThreadIds = useRef(new Set<string>())
+  const paginationRequest = useRef<symbol | null>(null)
 
   const searching = submitted !== ''
   const showsDrafts = folder === 'drafts' && !searching
@@ -125,6 +128,8 @@ export function useMail(account: string | null, enabled = true) {
   }, [searching, submitted, unreadOnly, folder, category])
 
   const load = useCallback(() => {
+    paginationRequest.current = null
+    setLoadingMore(false)
     if (showsDrafts) return
     setList({ kind: 'loading' })
     listGeneration.current++
@@ -133,6 +138,7 @@ export function useMail(account: string | null, enabled = true) {
     void call((r) => googleCap.search(r, params))
       .then((page) => {
         if (listRequest.current !== at) return
+        cachedThreadIds.current = new Set(page.threads.map((thread) => thread.id))
         setList({
           kind: 'ready',
           threads: page.threads,
@@ -160,6 +166,7 @@ export function useMail(account: string | null, enabled = true) {
     return () => {
       listRequest.current += 1
       pendingListRequest.current = null
+      paginationRequest.current = null
     }
   }, [load])
 
@@ -173,6 +180,7 @@ export function useMail(account: string | null, enabled = true) {
       if (
         !active ||
         pendingListRequest.current !== null ||
+        paginationRequest.current !== null ||
         [...pendingWrites.current.values()].includes(call)
       )
         return
@@ -181,9 +189,32 @@ export function useMail(account: string | null, enabled = true) {
       pendingListRequest.current = at
       void call((r) => googleCap.search(r, params))
         .then((page) => {
-          if (active && listRequest.current === at && listGeneration.current === generation) {
+          if (
+            active &&
+            listRequest.current === at &&
+            listGeneration.current === generation &&
+            paginationRequest.current === null
+          ) {
             listGeneration.current++
-            setList({ kind: 'ready', threads: page.threads, nextPageToken: page.nextPageToken })
+            const previousCachedIds = cachedThreadIds.current
+            const refreshedIds = new Set(page.threads.map((thread) => thread.id))
+            cachedThreadIds.current = refreshedIds
+            setList((previous) => ({
+              kind: 'ready',
+              threads: [
+                ...page.threads,
+                ...(previous.kind === 'ready'
+                  ? previous.threads.filter(
+                      (thread) => !previousCachedIds.has(thread.id) && !refreshedIds.has(thread.id),
+                    )
+                  : []),
+              ],
+              // History deltas have no continuation; they do not exhaust Gmail's later pages.
+              nextPageToken:
+                previous.kind === 'ready'
+                  ? (previous.nextPageToken ?? page.nextPageToken)
+                  : page.nextPageToken,
+            }))
           }
         })
         .catch(() => undefined)
@@ -253,24 +284,39 @@ export function useMail(account: string | null, enabled = true) {
   /** The next page, appended. A button, not an infinite scroll: Gmail is
    *  rate limited and one flick would spend a minute's quota. */
   const loadMore = () => {
-    if (list.kind !== 'ready' || list.nextPageToken === null) return
+    if (list.kind !== 'ready' || list.nextPageToken === null || paginationRequest.current !== null)
+      return
     const pageToken = list.nextPageToken
+    const request = Symbol()
+    paginationRequest.current = request
     setLoadingMore(true)
     void call((r) => googleCap.search(r, { ...params, pageToken }))
       .then((page) => {
+        if (paginationRequest.current !== request) return
         listGeneration.current++
         setList((previous) =>
           previous.kind === 'ready'
             ? {
                 kind: 'ready',
-                threads: [...previous.threads, ...page.threads],
+                threads: [
+                  ...previous.threads,
+                  ...page.threads.filter(
+                    (thread) => !previous.threads.some((old) => old.id === thread.id),
+                  ),
+                ],
                 nextPageToken: page.nextPageToken,
               }
             : previous,
         )
       })
-      .catch((err: unknown) => setWriteError(explainWriteFailure(err)))
-      .finally(() => setLoadingMore(false))
+      .catch((err: unknown) => {
+        if (paginationRequest.current === request) setWriteError(explainWriteFailure(err))
+      })
+      .finally(() => {
+        if (paginationRequest.current !== request) return
+        paginationRequest.current = null
+        setLoadingMore(false)
+      })
   }
 
   /**
