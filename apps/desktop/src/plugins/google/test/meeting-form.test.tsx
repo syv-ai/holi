@@ -21,6 +21,7 @@ vi.mock('../renderer/google-cap', () => ({ googleCap: cap }))
 const draft: EventDraft = {
   title: 'Synthetic planning',
   location: '',
+  description: '',
   date: '2027-01-12',
   dateEnd: '2027-01-12',
   start: '10:00',
@@ -39,6 +40,7 @@ const op: MeetingOperation = {
     end: '2027-01-12T11:00:00Z',
     allDay: false,
     location: '',
+    description: 'First line\nSecond line',
     guests: ['guest@example.com'],
     meet: true,
   },
@@ -167,6 +169,8 @@ it('restores unresolved intent on reopen, checks read-only, and explicitly retri
   expect(await screen.findByText(/Delivery is uncertain/)).toBeInTheDocument()
   expect(screen.getByLabelText('Guests')).toHaveValue('guest@example.com')
   expect(screen.getByLabelText('Title')).toBeDisabled()
+  expect(screen.getByLabelText('Description')).toHaveValue('First line\nSecond line')
+  expect(screen.getByLabelText('Description')).toBeDisabled()
   expect(screen.getByText('Close', { selector: 'button' })).toBeInTheDocument()
   expect(screen.queryByText('Cancel', { selector: 'button' })).not.toBeInTheDocument()
   expect(cap.createMeeting).not.toHaveBeenCalled()
@@ -180,6 +184,7 @@ it('restores unresolved intent on reopen, checks read-only, and explicitly retri
   card({ initial: { ...draft, title: 'A different form' } })
   await screen.findByText(/Delivery is uncertain/)
   expect(screen.getByLabelText('Title')).toHaveValue(draft.title)
+  expect(screen.getByLabelText('Description')).toHaveValue('First line\nSecond line')
   await user.click(screen.getByRole('button', { name: 'Retry same meeting' }))
   await waitFor(() => expect(cap.createMeeting).toHaveBeenCalledWith(identity.remote, op.input))
 })

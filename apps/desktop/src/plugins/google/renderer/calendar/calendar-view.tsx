@@ -128,6 +128,7 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
     googleId: event.data?.googleId,
     title: event.title,
     location: event.data?.location ?? '',
+    description: event.data?.description ?? '',
     date: localDate(start),
     dateEnd: localDate(lastDay < start ? start : lastDay),
     start: hhmm(start),
@@ -247,6 +248,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
       const draft: EventDraft = {
         title: '',
         location: '',
+        description: '',
         date: startDay,
         dateEnd: lastDay < startDay ? startDay : lastDay,
         start: allDay ? '09:00' : hhmm(start),
@@ -334,7 +336,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
     pending.current = true
     setSaving(true)
     try {
-      const times = { title, start, end, allDay: draft.allDay }
+      const times = { title, start, end, allDay: draft.allDay, description: draft.description }
       if (draft.googleId === undefined) return false
       await calendar.update(draft.googleId, times)
       if (identity === cardIdentity.current) {
