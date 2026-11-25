@@ -67,7 +67,18 @@ test('a fresh store restores every tab kind, sticky split metadata and exact str
   // not overwrite it with an initially empty workspace.
   const early = launch()
   early.set(openTabAtom, { kind: 'doc', path: 'Early.md' })
-  expect(allTabs(early.get(shellWorkspaceAtom))).toEqual([...allTabs(saved), 'Early.md'])
+  // Closing Closed.md selected the first ordinary document. A plain open
+  // belongs immediately after that active entry, not at the strip's end.
+  expect(saved.active).toBe(keys[0])
+  expect(allTabs(early.get(shellWorkspaceAtom))).toEqual([
+    keys[10],
+    'Beside.md',
+    keys[2],
+    keys[0],
+    'Early.md',
+    keys[1],
+    ...keys.slice(3, 10),
+  ])
   early.set(shellWorkspaceAtom, openNewTab)
   expect(allTabs(early.get(shellWorkspaceAtom))).toContain('holi:new:42')
 })
