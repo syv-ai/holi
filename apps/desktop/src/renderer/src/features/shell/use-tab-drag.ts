@@ -17,7 +17,7 @@
  * Separate, Replace with…, Move out of split, and ⌥-click.
  */
 import { atom, useSetAtom, useStore } from 'jotai'
-import { useCallback, type DragEvent } from 'react'
+import { useCallback, useRef, type DragEvent } from 'react'
 
 import { activeSplit, tabIsOpen, type ShellWorkspace } from '@/state/shell-workspace'
 import { tabKey, type TabDescriptor } from '@/state/tab-descriptor'
@@ -47,6 +47,7 @@ interface DragSourceProps {
 export function useTabDragSource(): (key: string) => DragSourceProps {
   const setDrag = useSetAtom(tabDragAtom)
   const store = useStore()
+  const session = useRef(0)
   return useCallback(
     (key: string) => ({
       draggable: true,
@@ -55,12 +56,15 @@ export function useTabDragSource(): (key: string) => DragSourceProps {
         event.dataTransfer.effectAllowed = 'move'
         // A frame later: changing the page under the pointer in dragstart
         // itself can cancel the drag.
+        const started = ++session.current
         window.setTimeout(() => {
+          if (session.current !== started) return
           const ws = store.get(shellWorkspaceAtom)
           setDrag({ key, vault: store.get(activeRemoteAtom), wasOpen: tabIsOpen(ws, key) })
         }, 0)
       },
       onDragEnd: () => {
+        session.current += 1
         setDrag(null)
       },
     }),
@@ -94,6 +98,7 @@ export function useTabDrag(): {
   const source = useTabDragSource()
   const setDrag = useSetAtom(tabDragAtom)
   const store = useStore()
+  const session = useRef(0)
   return useCallback(
     (tab: TabDescriptor | null, options?: { alongside: true }) => {
       if (tab === null) return {}
@@ -102,12 +107,15 @@ export function useTabDrag(): {
       return {
         onDragStartCapture: (event: DragEvent) => {
           event.dataTransfer.setData(TAB_MIME, key)
+          const started = ++session.current
           window.setTimeout(() => {
+            if (session.current !== started) return
             const ws = store.get(shellWorkspaceAtom)
             setDrag({ key, vault: store.get(activeRemoteAtom), wasOpen: tabIsOpen(ws, key) })
           }, 0)
         },
         onDragEndCapture: () => {
+          session.current += 1
           setDrag(null)
         },
       }
