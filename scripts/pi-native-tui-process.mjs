@@ -16,6 +16,8 @@ export async function startOwnedPty({
   stateDirectory,
   timeoutMs,
   maxOutputBytes = 262144,
+  cols = 80,
+  rows = 24,
 }) {
   if (
     !command ||
@@ -26,15 +28,25 @@ export async function startOwnedPty({
     !Number.isFinite(timeoutMs) ||
     timeoutMs <= 0 ||
     !Number.isFinite(maxOutputBytes) ||
-    maxOutputBytes <= 0
+    maxOutputBytes <= 0 ||
+    !Number.isInteger(cols) ||
+    cols < 1 ||
+    cols > 65535 ||
+    !Number.isInteger(rows) ||
+    rows < 1 ||
+    rows > 65535
   )
     throw new TypeError('Invalid owned PTY configuration')
   await mkdir(stateDirectory, { recursive: true })
-  const child = spawn('python3', [worker, JSON.stringify({ command, args, cwd, env })], {
-    cwd,
-    env: { ...env, PYTHONUNBUFFERED: '1' },
-    stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
-  })
+  const child = spawn(
+    'python3',
+    [worker, JSON.stringify({ command, args, cwd, env, cols, rows })],
+    {
+      cwd,
+      env: { ...env, PYTHONUNBUFFERED: '1' },
+      stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
+    },
+  )
   let anchorPid, nativePid, nativeExit, failure, drain, closePromise
   let output = Buffer.alloc(0),
     events = '',
