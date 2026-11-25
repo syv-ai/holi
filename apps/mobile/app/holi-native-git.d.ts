@@ -3,6 +3,12 @@
 declare class HoliNativeGit extends NSObject {
   static alloc(): HoliNativeGit
   init(): this
+  initWithOwnerRepositoryNameEndpointError(
+    owner: string,
+    repositoryName: string,
+    endpoint: string,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): HoliNativeGit | null
   embeddedVersion(): string
   canonicalRootError(
     root: string,
