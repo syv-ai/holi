@@ -47,6 +47,7 @@ import { tabDragAtom } from '@/features/shell/use-tab-drag'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { agentsSelectionAtom } from '@/state/agents-slots'
 import {
+  activeRemoteRevisionValueAtom,
   activeRemoteAtom,
   historyEpochsAtom,
   openedRemoteAtom,
@@ -1131,7 +1132,12 @@ test('a view not open yet, dragged from the sidebar, opens in the gap', async ()
   layOut()
   const dataTransfer = transfer()
   dataTransfer.setData('application/x-holi-tab', 'C.md')
-  store.set(tabDragAtom, { key: 'C.md', vault: 'mara/notes', wasOpen: false })
+  store.set(tabDragAtom, {
+    key: 'C.md',
+    vault: 'mara/notes',
+    vaultRevision: store.get(activeRemoteRevisionValueAtom),
+    wasOpen: false,
+  })
   const target = await catcher()
   fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 50))
   await waitFor(() => expect(target.dataset.dropSlot).toBe('insert:0'))
