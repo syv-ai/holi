@@ -1,15 +1,39 @@
 import { A, B, adapters, harness, rig, tempDirectory, waitForFile } from './activation-fixture'
-import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { basename, delimiter, join } from 'node:path'
-import { expect, it } from 'vitest'
+import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
 import { claudeProvider } from '../main/claude/index'
 import { PRESETS } from '../main/harness/record'
 
+const ownedDirectories: string[] = []
+afterEach(() => vi.unstubAllEnvs())
+// The activation rig joins child drainage in afterEach before directories vanish.
+afterAll(async () => {
+  await Promise.all(
+    ownedDirectories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  )
+})
+
+async function ownedDirectory(prefix: string) {
+  const dir = await tempDirectory(prefix)
+  ownedDirectories.push(dir)
+  return dir
+}
+
+function hostileInheritedEnv(userData: string) {
+  // Keep host executables (git and the native process supervisor) available.
+  vi.stubEnv(
+    'PATH',
+    [join(userData, 'wrong-bin'), process.env.PATH].filter(Boolean).join(delimiter),
+  )
+  vi.stubEnv('HOLI_BIN', join(userData, 'wrong-bin', 'holi'))
+}
+
 async function fixture() {
-  const userData = await tempDirectory('holi-launch-binding-')
+  const userData = await ownedDirectory('holi-launch-binding-')
   const bins = { [A]: join(userData, 'commands-a'), [B]: join(userData, 'commands-b') }
   for (const bin of Object.values(bins)) await mkdir(bin)
   // Model the prepared-bin contract at the plugin seam, without knowing core's
@@ -31,14 +55,17 @@ function binding(env: Record<string, string>, bin: string) {
 }
 
 it('binds retained activation terminals and regenerated background settings after presets', async () => {
-  const { host, enter, call, bins, userData } = await fixture()
+  const { host, enter, call, bins, userData, roots } = await fixture()
   await enter(A)
   await enter(B)
   const personHome = join(userData, 'person-home')
   await mkdir(personHome)
-  const hostile = {
-    PATH: '/preset-bin',
-    HOLI_BIN: '/wrong/holi',
+  await writeFile(
+    join(personHome, 'auth.json'),
+    JSON.stringify({ tokens: { access_token: 'synthetic' } }),
+  )
+  hostileInheritedEnv(userData)
+  const presetEnv = {
     KEEP_ME: 'yes',
     CODEX_HOME: personHome,
     PI_CODING_AGENT_DIR: personHome,
@@ -46,11 +73,15 @@ it('binds retained activation terminals and regenerated background settings afte
   for (const id of ['codex', 'pi']) {
     const preset = PRESETS.find((item) => item.id === id)!
     await call(B, 'agent.harnessSave', {
-      harness: { ...preset, command: { bin: process.execPath, args: ['--preset'] }, env: hostile },
+      harness: {
+        ...preset,
+        command: { bin: process.execPath, args: ['--preset'] },
+        env: presetEnv,
+      },
     })
   }
   await call(B, 'agent.harnessSave', {
-    harness: { ...harness, command: { bin: process.execPath, args: [] }, env: hostile },
+    harness: { ...harness, command: { bin: process.execPath, args: [] }, env: presetEnv },
     create: true,
   })
   for (const remote of [A, B] as const) {
@@ -95,8 +126,17 @@ it('binds retained activation terminals and regenerated background settings afte
     // A later configure must repair stale settings without dropping other keys.
     await writeFile(
       join(launched.env.CLAUDE_CONFIG_DIR!, 'settings.json'),
-      JSON.stringify({ env: { ...hostile, EXTRA: 'kept' } }),
+      JSON.stringify({
+        env: { ...presetEnv, PATH: '/stale', HOLI_BIN: '/wrong/holi', EXTRA: 'kept' },
+      }),
     )
+    // Opening another terminal reuses the existing activation's config; use the
+    // provider's public configure interface to model the later regeneration.
+    await claudeProvider({
+      userData,
+      holiBin: () => join(bins[remote], 'holi'),
+      systemPrefersDark: () => false,
+    }).configure({ remote, root: roots[remote] })
     expect(await call(remote, 'agent.open', { login: true })).toMatchObject({ ok: true })
     const refreshed = JSON.parse(
       await readFile(join(launched.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8'),
@@ -133,7 +173,11 @@ const readline = require('node:readline');
 const args = process.argv.slice(2);
 const rpc = args.includes('--mode');
 const capture = rpc ? path.basename(path.dirname(process.env.HOLI_BIN)) + '-rpc' : 'job';
-fs.writeFileSync(path.join(process.env.CAPTURE_DIR, capture), JSON.stringify({ env: process.env, cwd: process.cwd(), args }));
+const env = Object.fromEntries(
+  ['PATH', 'HOLI_BIN', 'HOLI_AGENT_SESSION', 'CODEX_HOME', 'CAPTURE_DIR']
+    .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]])
+);
+fs.writeFileSync(path.join(process.env.CAPTURE_DIR, capture), JSON.stringify({ env, cwd: process.cwd(), args }));
 if (!rpc) {
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 'fixture-thread' }));
   console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 0, output_tokens: 0 } }));
@@ -141,11 +185,16 @@ if (!rpc) {
   readline.createInterface({ input: process.stdin }).on('line', line => {
     const cmd = JSON.parse(line);
     if (cmd.type === 'prompt') {
+      console.log(JSON.stringify({ type: 'response', id: cmd.id, command: cmd.type, success: true }));
       console.log(JSON.stringify({ type: 'agent_start' }));
       console.log(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }));
-      console.log(JSON.stringify({ type: 'agent_settled' }));
+      console.log(JSON.stringify({ type: 'agent_settled', aborted: false }));
     } else if (cmd.type === 'get_session_stats') {
-      console.log(JSON.stringify({ type: 'response', id: cmd.id, success: true, data: {} }));
+      console.log(JSON.stringify({ type: 'response', id: cmd.id, command: cmd.type, success: true, data: { tokens: { input: 0, output: 0, total: 0 } } }));
+    } else if (cmd.type === 'abort') {
+      console.log(JSON.stringify({ type: 'response', id: cmd.id, command: cmd.type, success: true }));
+    } else {
+      console.log(JSON.stringify({ type: 'response', id: cmd.id, command: cmd.type, success: false, error: 'Unsupported fixture command' }));
     }
   });
 }
@@ -154,18 +203,22 @@ if (!rpc) {
     await chmod(executable, 0o755)
     const personHome = join(userData, 'codex-person')
     await mkdir(personHome)
+    await writeFile(
+      join(personHome, 'auth.json'),
+      JSON.stringify({ tokens: { access_token: 'synthetic' } }),
+    )
     await enter(A)
     await enter(B)
+    hostileInheritedEnv(userData)
     for (const id of ['codex', 'pi']) {
       await call(B, 'agent.harnessSave', {
         harness: {
           ...PRESETS.find((item) => item.id === id)!,
           command: { bin: executable, args: [] },
           env: {
-            PATH: '/wrong',
-            HOLI_BIN: '/wrong/holi',
             CAPTURE_DIR: userData,
             CODEX_HOME: personHome,
+            PI_CODING_AGENT_DIR: personHome,
           },
         },
       })
@@ -223,7 +276,7 @@ if (!rpc) {
 it.skipIf(process.platform === 'win32')(
   'keeps community commands and the owning holi available after Claude settings regeneration',
   async () => {
-    const userData = await tempDirectory('holi-claude-settings-path-')
+    const userData = await ownedDirectory('holi-claude-settings-path-')
     const root = join(userData, 'vault')
     const bin = join(userData, 'own-bin')
     const commands = join(root, PLUGIN_COMMANDS_DIR)
