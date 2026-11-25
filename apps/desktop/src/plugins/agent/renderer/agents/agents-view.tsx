@@ -31,7 +31,13 @@ import {
   FrameTitle,
 } from '@/components/ui/frame'
 import { Input } from '@/components/ui/input'
-import { activeRemoteAtom, agentsSlotsAtom, useNow } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  activeVaultSettingsAtom,
+  agentsSlotsAtom,
+  openSettingsSectionAtom,
+  useNow,
+} from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 import { SessionTerminal } from '../session-terminal'
 import { inboxCountAtom } from '../state/agents-status'
@@ -387,6 +393,16 @@ export function AgentsView({
   visible?: boolean
 }): React.JSX.Element {
   const view = agentsViewOf(selection)
+  const settings = useAtomValue(activeVaultSettingsAtom)
+  const openSettings = useSetAtom(openSettingsSectionAtom)
+  const optional =
+    view.kind === 'inbox'
+      ? { name: 'Inbox', enabled: settings?.agentInbox }
+      : view.kind === 'history'
+        ? { name: 'History', enabled: settings?.agentHistory }
+        : view.kind === 'memory'
+          ? { name: 'Memory', enabled: settings?.agentMemory }
+          : null
   const sessions = useAtomValue(agentSessionsAtom)
   const slots = useAtomValue(agentsSlotsAtom)
   const slot = view.kind === 'slot' ? slots.find((s) => s.plugin === view.owner) : undefined
@@ -398,6 +414,20 @@ export function AgentsView({
   const missing =
     (view.kind === 'session' && !sessions.some((s) => s.id === view.id)) ||
     (view.kind === 'slot' && slot?.main === undefined)
+
+  if (optional !== null && settings === null) {
+    return <Skeleton className="flex-1" aria-label="Loading feature settings" />
+  }
+  if (optional !== null && !optional.enabled) {
+    return (
+      <IconStackEmpty
+        icon={Inbox}
+        title={`${optional.name} is off`}
+        description="Enable it in Settings to use it in this vault."
+        action={{ label: 'Open Settings', onClick: () => openSettings('general') }}
+      />
+    )
+  }
 
   return (
     // No ground of its own: on macOS the window is glass, and the shell's

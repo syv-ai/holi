@@ -6,7 +6,7 @@
  */
 import { atom } from 'jotai'
 import { Brain, History, Inbox, MessageSquare } from 'lucide-react'
-import type { CommandMenuEntry } from '@/plugin-api'
+import { activeVaultSettingsAtom, type CommandMenuEntry } from '@/plugin-api'
 import { inboxCountAtom } from './agents-status'
 import { agentsViewAtom } from './agents-view'
 import { openSessionRowAtom, sessionRowsAtom } from './session-list'
@@ -17,7 +17,8 @@ const STATE_WORDS = { 'needs-you': 'Needs you', working: 'Working', done: 'Done'
 
 export const agentMenuEntriesAtom = atom((get): readonly CommandMenuEntry[] => {
   const inbox = get(inboxCountAtom)
-  return [
+  const settings = get(activeVaultSettingsAtom)
+  const entries: CommandMenuEntry[] = [
     {
       id: 'inbox',
       label: 'Inbox',
@@ -54,18 +55,30 @@ export const agentMenuEntriesAtom = atom((get): readonly CommandMenuEntry[] => {
         }
       }),
   ]
+  return entries.filter((entry) =>
+    entry.id === 'inbox'
+      ? settings?.agentInbox
+      : entry.id === 'history'
+        ? settings?.agentHistory
+        : entry.id === 'memory'
+          ? settings?.agentMemory
+          : true,
+  )
 })
 
 export const runAgentMenuEntryAtom = atom(null, (get, set, id: string): void => {
   if (id === 'inbox') {
+    if (!get(activeVaultSettingsAtom)?.agentInbox) return
     set(agentsViewAtom, { kind: 'inbox' })
     return
   }
   if (id === 'history') {
+    if (!get(activeVaultSettingsAtom)?.agentHistory) return
     set(agentsViewAtom, { kind: 'history' })
     return
   }
   if (id === 'memory') {
+    if (!get(activeVaultSettingsAtom)?.agentMemory) return
     set(agentsViewAtom, { kind: 'memory' })
     return
   }

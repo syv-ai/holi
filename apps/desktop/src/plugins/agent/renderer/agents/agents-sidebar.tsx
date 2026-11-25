@@ -16,8 +16,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Brain, History, Inbox } from 'lucide-react'
 import { SidebarMenu } from '@/components/ui/sidebar'
-import { agentsSlotsAtom } from '@/plugin-api'
-import { activeVaultSettingsAtom } from '@/state/settings'
+import { agentsSlotsAtom, activeVaultSettingsAtom } from '@/plugin-api'
 import { SessionList } from '../sessions/session-list'
 import { inboxCountAtom } from '../state/agents-status'
 import { agentsViewAtom } from '../state/agents-view'
@@ -32,6 +31,7 @@ export function AgentsNavigation(): React.JSX.Element {
   const inbox = useAtomValue(inboxCountAtom)
   const slots = useAtomValue(agentsSlotsAtom)
   const settings = useAtomValue(activeVaultSettingsAtom)
+  const sections = slots.filter((s) => (s.order ?? 200) < SESSIONS_ORDER)
 
   return (
     <nav
@@ -71,13 +71,15 @@ export function AgentsNavigation(): React.JSX.Element {
         ) : null}
         {slots.map((slot) => (slot.nav === undefined ? null : <slot.nav key={slot.plugin} />))}
       </SidebarMenu>
+      {sections.map((slot) =>
+        slot.sidebar === undefined ? null : <slot.sidebar key={slot.plugin} />,
+      )}
     </nav>
   )
 }
 
 export function AgentsSidebar(): React.JSX.Element {
   const slots = useAtomValue(agentsSlotsAtom)
-  const before = slots.filter((s) => (s.order ?? 200) < SESSIONS_ORDER)
   const after = slots.filter((s) => (s.order ?? 200) >= SESSIONS_ORDER)
 
   return (
@@ -86,9 +88,6 @@ export function AgentsSidebar(): React.JSX.Element {
       data-agents-sidebar=""
     >
       <SessionList />
-      {before.map((slot) =>
-        slot.sidebar === undefined ? null : <slot.sidebar key={slot.plugin} />,
-      )}
       {after.map((slot) =>
         slot.sidebar === undefined ? null : <slot.sidebar key={slot.plugin} />,
       )}

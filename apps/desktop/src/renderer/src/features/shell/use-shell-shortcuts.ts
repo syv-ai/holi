@@ -1,4 +1,4 @@
-import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
 
@@ -9,7 +9,7 @@ import { runningPluginsAtom } from '@/state/plugins'
 import { useShortcutHandlers } from '@/hooks/use-shortcuts'
 import { shortcutsDialogOpenAtom } from '@/state/shortcuts'
 import { appModeAtom } from '@/state/app-mode'
-import { BOARD_KEY } from '@/state/tab-descriptor'
+import { BOARD_KEY, isAgentTab, parseTabKey } from '@/state/tab-descriptor'
 
 /** What the shell can do, for its keys (`lib/shortcuts.ts`). */
 export interface ShellActions {
@@ -49,7 +49,7 @@ export interface ShellActions {
 /** The app shell's handlers for the shortcut table. */
 export function useShellShortcuts(shell: ShellActions): void {
   const setDialogOpen = useSetAtom(shortcutsDialogOpenAtom)
-  const [section, setSection] = useAtom(appModeAtom)
+  const setSection = useSetAtom(appModeAtom)
   const newAgentSession = useSetAtom(newAgentSessionAtom)
   const showAgentsOverview = useSetAtom(showAgentsOverviewAtom)
   const ensureDaily = useSetAtom(ensureTodaysDailyAtom)
@@ -122,10 +122,10 @@ export function useShellShortcuts(shell: ShellActions): void {
     'split.separate': shell.separate,
     'split.next': shell.stepMember === undefined ? undefined : () => shell.stepMember?.(1),
     'split.previous': shell.stepMember === undefined ? undefined : () => shell.stepMember?.(-1),
-    // ⌘N is the side's own new: a session on the Agents side (the mode's
-    // `newSession`), a document on the Documents side.
+    // ⌘N follows the focused view; the unified sidebar has no active mode.
     'document.new': () => {
-      if (section === 'agents' && hasAgents && newAgentSession()) return
+      const tab = activeTabId === null ? null : parseTabKey(activeTabId)
+      if (isAgentTab(tab) && hasAgents && newAgentSession()) return
       shell.newDocument()
     },
     'scratchpad.open': shell.openScratchpad,

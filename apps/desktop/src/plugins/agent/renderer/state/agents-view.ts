@@ -8,7 +8,7 @@
  * 'session:<job id>'}` is the agent's public name for one.
  */
 import { atom } from 'jotai'
-import { agentsSelectionAtom, appModeAtom } from '@/plugin-api'
+import { activeVaultSettingsAtom, agentsSelectionAtom, appModeAtom } from '@/plugin-api'
 
 /** The agent's plugin id: the owner of its own rows. */
 const AGENT_OWNER = 'agent'
@@ -64,8 +64,12 @@ export const historyFocusAtom = atom(0)
 
 /** ⌘J (the mode's `overview`): the History in front, its field focused, to
  *  find a session or type a new one's first prompt. */
-export const showHistoryAtom = atom(null, (_get, set) => {
+export const showHistoryAtom = atom(null, (get, set) => {
   set(appModeAtom, 'agents')
+  if (!get(activeVaultSettingsAtom)?.agentHistory) {
+    set(agentsViewAtom, { kind: 'home' })
+    return
+  }
   set(agentsViewAtom, { kind: 'history' })
   set(historyFocusAtom, (n) => n + 1)
 })

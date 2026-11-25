@@ -10,7 +10,12 @@ const isObject = (value: unknown): value is Json =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 
 /** Keep the memory overview command in an adopted vault's SessionStart hooks. */
-export async function reconcileMemoryOverviewHook(root: string, enabled: boolean): Promise<void> {
+export async function reconcileMemoryOverviewHook(
+  root: string,
+  enabled: boolean,
+  active: () => boolean = () => true,
+): Promise<void> {
+  if (!active()) return
   const settingsRel = '.claude/settings.json'
   const scriptRel = hookScript('memory-overview')
   const exists = await lstat(join(root, settingsRel)).then(
@@ -37,7 +42,21 @@ export async function reconcileMemoryOverviewHook(root: string, enabled: boolean
     if (!isObject(parsed)) throw new Error(`Malformed Claude settings: ${settingsRel}`)
     return parsed
   })
-  const owned = () => exactPathSync(root, settingsRel) === path
+  const owned = () => active() && exactPathSync(root, settingsRel) === path
+  const current = await store.read()
+  if (current === null) return
+  const groups =
+    isObject(current.hooks) && Array.isArray(current.hooks.SessionStart)
+      ? current.hooks.SessionStart
+      : []
+  const command = hookCommand('memory-overview')
+  const present = groups.some(
+    (group) =>
+      isObject(group) &&
+      Array.isArray(group.hooks) &&
+      group.hooks.some((entry: unknown) => isObject(entry) && entry.command === command),
+  )
+  if ((enabled && (!hasScript || present)) || (!enabled && !present)) return
   await store.update(
     (current) => {
       if (current === null) return null
@@ -59,11 +78,7 @@ export async function reconcileMemoryOverviewHook(root: string, enabled: boolean
           found = true
           return [group]
         }
-        if (enabled && hasScript && !found && retained.length >= 0) {
-          // Insert alongside this group's existing hooks, preserving its attributes.
-          found = true
-          return [{ ...group, hooks: [...retained, { type: 'command', command }] }]
-        }
+        if (retained.length === entries.length) return [group]
         if (retained.length === 0) return []
         return [{ ...group, hooks: retained }]
       })
