@@ -62,7 +62,10 @@ posix.each(cells)(
       a.exit()
       if (immediateDrain)
         expect(await bounded(immediateDrain, 'synchronous drain via public exit')).toBe(true)
-      expect(await bounded(a.exited.promise, 'A root exit')).toBe(7)
+      expect(
+        await bounded(a.exited.promise, 'A root exit'),
+        `A root signal: ${a.child?.signalCode}; provider errors: ${a.errors}`,
+      ).toBe(7)
       await bounded(a.drain.entered, 'A drain entered')
       await bounded(a.nativeClosed.promise, 'ignored stdio closes with descendant still alive')
       a.close.open()
