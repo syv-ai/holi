@@ -40,7 +40,9 @@ const setAllImages = vi.fn()
 const mailMarkerPreferences = vi.fn()
 const setMailMarkerPreferences = vi.fn()
 const settingsRead = vi.fn()
+const settingsWrite = vi.fn()
 let allImages = false
+let mailNotifications = false
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
@@ -66,7 +68,10 @@ const google: Record<string, (params: unknown) => unknown> = {
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
-    settings: { read: { query: () => settingsRead() } },
+    settings: {
+      read: { query: () => settingsRead() },
+      write: { mutate: (input: unknown) => settingsWrite(input) },
+    },
     cap: {
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
@@ -103,13 +108,62 @@ beforeEach(() => {
   mailMarkerPreferences.mockResolvedValue({ enabledOrder: ['yellow-star'] })
   setMailMarkerPreferences.mockResolvedValue({ ok: true })
   allImages = false
+  mailNotifications = false
+  settingsWrite.mockImplementation(async ({ localJson }: { localJson?: string }) => {
+    if (localJson !== undefined) {
+      const patch = JSON.parse(localJson) as { google?: { mailNotifications?: boolean } }
+      if (typeof patch.google?.mailNotifications === 'boolean')
+        mailNotifications = patch.google.mailNotifications
+    }
+    return { warnings: [] }
+  })
   settingsRead.mockImplementation(async () => ({
-    pluginValues: { google: { imageSenders: [], imagesFromAllSenders: allImages } },
+    pluginValues: {
+      google: {
+        imageSenders: [],
+        imagesFromAllSenders: allImages,
+        mailNotifications,
+      },
+    },
     plugins: { vault: {}, localOff: [] },
   }))
 })
 
 describe('ConnectionsSection', () => {
+  it('saves desktop mail notifications locally and retries a refused change', async () => {
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/vault')
+    status.mockResolvedValue({ account: ADA, missingScopes: [] })
+    accounts.mockResolvedValue({ accounts: [ADA], current: ADA.sub })
+    await store.set(loadVaultSettingsAtom, { force: true })
+    rtlRender(
+      <Provider store={store}>
+        <ConnectionsSection />
+      </Provider>,
+    )
+
+    const user = userEvent.setup()
+    const toggle = await screen.findByRole('switch', {
+      name: 'Show desktop mail notifications',
+    })
+    await user.click(toggle)
+    await waitFor(() => expect(toggle).toBeChecked())
+    expect(settingsWrite).toHaveBeenLastCalledWith({
+      remote: 'syv-ai/vault',
+      localJson: JSON.stringify({ google: { mailNotifications: true } }),
+    })
+
+    settingsWrite.mockRejectedValueOnce(new Error('disk is read-only'))
+    await user.click(toggle)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/disk is read-only/i)
+    expect(toggle).not.toBeChecked()
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(settingsWrite).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(toggle).not.toBeChecked()
+  })
+
   it('shows a settings read retry and retries a failed write without racing the switch', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/vault')
