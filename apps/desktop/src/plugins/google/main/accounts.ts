@@ -85,13 +85,7 @@ export interface GoogleAccountsManager {
   ): () => void
   /** The client in use and where it came from. The secret stays in main. */
   client(): { id: string; source: GoogleClientSource }
-  /**
-   * Set this machine's own client, or `null` to go back to the environment's
-   * or the shipped one. **A grant belongs to the client that made it**, so a
-   * change that reaches Google as a different client removes every account,
-   * revoking each, exactly as `removeAccount` does. Saving the client in use
-   * again changes nothing.
-   */
+  /** Set this machine's future-connect client, or null for environment/shipped. */
   setClient(own: GoogleClient | null): Promise<void>
 }
 
@@ -138,6 +132,20 @@ export async function createGoogleAccounts(
   /** The person's own client, loaded once: main is its only writer. */
   let own: GoogleClient | null = (await deps.clients?.read()) ?? null
   const currentClient = () => resolveClient(own, deps.env)
+  // Bind old records to the effective client before any default can move.
+  const legacyMigration = serialize(async () => {
+    if (!Object.values(accounts).some((auth) => auth.clientId === undefined)) return
+    const clientId = currentClient().id
+    const migrated = Object.fromEntries(
+      Object.entries(accounts).map(([sub, auth]) => [
+        sub,
+        auth.clientId ? auth : { ...auth, clientId },
+      ]),
+    )
+    await deps.store.write(migrated)
+    accounts = migrated
+  })
+  await legacyMigration
 
   const emit = async (
     sub: string | null,
@@ -232,7 +240,10 @@ export async function createGoogleAccounts(
     if (session === undefined) {
       session = new GoogleSession({
         account: refFor(sub),
-        client: currentClient,
+        client: () => {
+          const auth = accounts[sub]
+          return { ...currentClient(), id: auth?.clientId ?? currentClient().id }
+        },
         fetch: deps.fetch,
         now: deps.now,
       })
@@ -310,6 +321,11 @@ export async function createGoogleAccounts(
           }
 
           const { tokens } = result
+          const prior = accounts[tokens.sub]
+          if (prior !== undefined && prior.clientId !== id) {
+            if (connecting?.id === reservation.id) connecting = null
+            throw new Error('this Google account is connected with a different OAuth client')
+          }
           // A cancel or a client change that arrived while the code was being
           // exchanged: the flow cannot stop a request already sent, so the
           // grant comes back anyway. Keeping it would save an account the
@@ -347,6 +363,7 @@ export async function createGoogleAccounts(
                   accessToken: tokens.accessToken,
                   expiresAt: tokens.expiresAt,
                   scopes: tokens.scopes,
+                  clientId: id,
                 },
               }
             })
@@ -475,15 +492,25 @@ export async function createGoogleAccounts(
       if (clients === undefined)
         return Promise.reject(new Error('no store for an own Google client'))
       const change = (switching ?? Promise.resolve()).then(async () => {
-        if (!sameClient(currentClient(), resolveClient(next, deps.env))) {
-          clientEpoch += 1
-          cancelFlow()
-          const subs = Object.keys(accounts)
-          await Promise.all(subs.map((sub) => revokeAccount(sub)))
-          for (const sub of subs) await dropAccount(sub)
+        const current = currentClient()
+        const replacement = resolveClient(next, deps.env)
+        if (!sameClient(current, replacement)) {
+          // Ensure legacy grants are durable under the PREVIOUS default first.
+          const migrated = Object.fromEntries(
+            Object.entries(accounts).map(([sub, auth]) => [
+              sub,
+              auth.clientId ? auth : { ...auth, clientId: current.id },
+            ]),
+          )
+          if (Object.keys(migrated).some((sub) => migrated[sub] !== accounts[sub])) {
+            await deps.store.write(migrated)
+            accounts = migrated
+          }
         }
         await clients.write(next)
         own = next
+        clientEpoch += 1
+        cancelFlow()
       })
       switching = change.then(
         () => undefined,
