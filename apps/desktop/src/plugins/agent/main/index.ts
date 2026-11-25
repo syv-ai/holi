@@ -510,7 +510,9 @@ export const agentMain: MainPlugin = {
       let sweeping: Promise<unknown> = Promise.resolve()
       const sweep = (): void => {
         sweeping = sweeping.then(() =>
-          sweepAgentMemory(ctx.root, new Date()).catch((err: unknown) =>
+          readVaultSettings(ctx.root).then((settings) =>
+            settings.agentMemory ? sweepAgentMemory(ctx.root, new Date()) : undefined,
+          ).catch((err: unknown) =>
             console.error('[agent] memory sweep:', err),
           ),
         )

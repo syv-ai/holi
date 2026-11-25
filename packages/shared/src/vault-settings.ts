@@ -481,6 +481,18 @@ export interface VaultSetting {
  * and the seed read only the `askedAtBirth` subset.
  */
 export const VAULT_SETTINGS: readonly VaultSetting[] = [
+  ...(['agentInbox', 'agentHistory', 'agentMemory'] as const).map((key) => ({
+    key,
+    label: key === 'agentInbox' ? 'Agent inbox' : key === 'agentHistory' ? 'Agent history' : 'Agent memory',
+    explanation: 'Show this optional agent feature in this vault.',
+    type: { kind: 'boolean' as const },
+    default: true,
+    target: 'committed' as const,
+    askedAtBirth: false,
+    whereToChange: SETTINGS_FILE_HINT,
+    section: 'general' as const,
+  })),
+
   {
     key: 'dailyNotes',
     label: 'Keep a daily note',
