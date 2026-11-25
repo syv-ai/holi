@@ -8,6 +8,8 @@ import {
   type VaultRelPath,
 } from '@holi/shared/mobile-path-safety'
 import { withVaultLock } from './vault-lock'
+import { withVaultOperation } from './operation-gate'
+import type { NativeFiles } from './native-files'
 
 export type WorkingCopyChange = {
   path: VaultRelPath
@@ -22,6 +24,22 @@ export type WorkingCopyStatus = {
 }
 
 /** Native adapter exposes semantic identity and status, never libgit2 constants. */
+export type PreparedWorkingCopyTree = {
+  treeOID: string
+  parentOID: string | null
+  branch: string
+  unchanged: boolean
+}
+
+export interface NativeTreePreparation {
+  prepareWorkingCopyTree(
+    root: string,
+    remote: string,
+    branch: string,
+    paths: VaultRelPath[],
+  ): Promise<PreparedWorkingCopyTree>
+}
+
 export interface NativeWorkingCopy {
   recoveryPending(root: string): Promise<boolean>
   canonicalRoot(root: string): Promise<string>
@@ -42,6 +60,48 @@ function safePath(raw: string): VaultRelPath | null {
   const path = vaultRelPath(shown)
   if (isSecretPath(path) || isLocalOnlyPath(path) || isInIgnoredDir(path)) return null
   return path
+}
+
+/** Prepare a complete native tree after storage recovery, refusing ambiguous or unsafe candidates. */
+export async function prepareWorkingCopyTree(
+  files: NativeFiles,
+  native: NativeWorkingCopy & NativeTreePreparation,
+  vault: { remote: string; root: string; branch: string },
+): Promise<PreparedWorkingCopyTree> {
+  if (!isRemote(vault.remote) || !vault.branch) throw new Error('Invalid vault identity')
+  return withVaultOperation(files, vault.root, async (root) => {
+    const identity = await native.identity(root)
+    if (
+      !identity.attached ||
+      identity.branch !== vault.branch ||
+      !identity.remotes.includes(vault.remote)
+    )
+      throw new Error('Working copy identity does not match vault')
+    const candidates = await native.candidates(root)
+    const unique = new Map<string, VaultRelPath>()
+    const aliases = new Set<string>()
+    for (const candidate of candidates) {
+      const path = safePath(candidate.path)
+      if (!path) continue
+      const key = path.normalize('NFC').toLocaleLowerCase('en-US')
+      if (aliases.has(key)) throw new Error('Ambiguous working copy paths')
+      aliases.add(key)
+      unique.set(path, path)
+    }
+    const paths = [...unique.values()].sort()
+    for (const path of paths) {
+      if (!(await native.authorize(root, path))) throw new Error('Unsafe working copy path')
+    }
+    const result = await native.prepareWorkingCopyTree(root, vault.remote, vault.branch, paths)
+    if (
+      !/^[0-9a-f]{40,64}$/i.test(result.treeOID) ||
+      (result.parentOID !== null && !/^[0-9a-f]{40,64}$/i.test(result.parentOID)) ||
+      result.branch !== vault.branch ||
+      typeof result.unchanged !== 'boolean'
+    )
+      throw new Error('Native Git returned an invalid working-copy tree')
+    return result
+  })
 }
 
 /** Read-only status for an already-attached managed clone. Never performs storage recovery. */
