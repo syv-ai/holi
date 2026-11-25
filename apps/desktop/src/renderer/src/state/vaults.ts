@@ -484,7 +484,9 @@ export function subscribeToVault(
   )
   const offEvents = tables.map(([id, handlers]) =>
     window.holi.plugin.on(id, ({ remote, name, payload }) => {
-      if (remote !== store.get(activeRemoteAtom)) return
+      // Capture shutdown is addressed to its owning vault and must survive a
+      // displayed-vault switch. Other plugin events remain selection-scoped.
+      if (name !== 'stop-recording' && remote !== store.get(activeRemoteAtom)) return
       if (Object.hasOwn(handlers, name)) handlers[name]!({ remote, payload }, store)
     }),
   )
