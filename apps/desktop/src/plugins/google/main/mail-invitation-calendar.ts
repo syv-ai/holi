@@ -11,7 +11,7 @@ import {
   type RawEvent,
   type RsvpStatus,
 } from './calendar'
-import type { parseMailInvitation } from './mail-invitation'
+import type { CalendarRevisionFields, parseMailInvitation } from './mail-invitation'
 import type { CalendarLocator, CalendarMaterialEvidence } from './mail-invitation-store'
 import {
   conferenceUrlIn,
@@ -43,7 +43,7 @@ type InvitationCalendarCopy = {
   reply: { url: string; etag: string; attendee: NonNullable<RawEvent['attendees']>[number] } | null
   /** False withholds all links; null means series navigation found no eligible instance. */
   navigation: (
-    selectSlot: (slot: string) => InvitationTarget | false | null,
+    selectSlot: (slot: string) => InvitationRevision | false | null,
   ) => Promise<InvitationLinks | false | null | undefined>
 }
 
@@ -62,14 +62,14 @@ type RevisionMaterial = {
   details: Parsed['details']
   material: NonNullable<Parsed['revisionMaterial']>
 }
-export type InvitationTarget = RevisionMaterial & {
-  request: NonNullable<Parsed['request']>
+export type InvitationRevision = RevisionMaterial & {
+  fields: CalendarRevisionFields
   joinOnly: boolean
-  legacyJoinOnly: boolean
   evidence: CalendarMaterialEvidence
   predecessors: CalendarMaterialEvidence[]
   unknownPredecessor: boolean
 }
+export type InvitationTarget = InvitationRevision & { legacyJoinOnly: boolean }
 
 const CALENDAR_PAGE_LIMIT = 10
 
@@ -596,9 +596,9 @@ async function lookupInvitationCalendarCopy(
       })
     }
   const series = recurrenceId === null && invitation.details.recurring
-  const basis = invitation.request.recurrenceTimeBasis
+  const basis = invitation.fields.recurrenceTimeBasis
   const floating =
-    invitation.request.recurrenceKind === 'floating' || (series && basis?.kind === 'floating')
+    invitation.fields.recurrenceKind === 'floating' || (series && basis?.kind === 'floating')
   const unmatchable = {
     kind: 'blocked',
     reason: 'Calendar cannot verify a floating recurrence',
@@ -719,6 +719,35 @@ function calendarCopyTarget(url: string, mailbox: string): string {
   return JSON.stringify([url, mailbox])
 }
 
+function invitationMembership(
+  event: RawEvent,
+  { fields, joinOnly }: InvitationRevision,
+  mailbox: string,
+  owned: boolean,
+  ownedCalendar?: string,
+) {
+  const organizer = event.organizer?.email?.toLowerCase()
+  const organizes =
+    event.organizer?.self === true && (organizer === mailbox || organizer === ownedCalendar)
+  const self = joinOnly ? uniqueSelfAttendee(event) : undefined
+  const selfEmail = self?.email?.toLowerCase()
+  const attendee = joinOnly
+    ? selfEmail && (selfEmail === mailbox || selfEmail === ownedCalendar)
+      ? self
+      : undefined
+    : fields.attendees.includes(mailbox)
+      ? mailboxAttendee(event, mailbox)
+      : undefined
+  return {
+    attendee,
+    allowed: joinOnly
+      ? owned && (organizes || Boolean(attendee && !attendee.resource))
+      : !!attendee,
+    organizerConflict:
+      !joinOnly && (event.organizer?.self || organizer === mailbox || organizer === ownedCalendar),
+  }
+}
+
 function invitationCopy(
   api: CalendarReadApi,
   base: string,
@@ -730,16 +759,14 @@ function invitationCopy(
   ownedCalendar?: string,
   owned = base === PRIMARY_EVENTS,
 ): CalendarLookup {
-  const { details, request, joinOnly } = invitation
-  const self = joinOnly ? uniqueSelfAttendee(event) : undefined
-  const selfEmail = self?.email?.toLowerCase()
-  const attendee = joinOnly
-    ? selfEmail && (selfEmail === mailbox || selfEmail === ownedCalendar)
-      ? self
-      : undefined
-    : request.attendees.includes(mailbox)
-      ? mailboxAttendee(event, mailbox)
-      : undefined
+  const { details, joinOnly } = invitation
+  const { attendee, allowed, organizerConflict } = invitationMembership(
+    event,
+    invitation,
+    mailbox,
+    owned,
+    ownedCalendar,
+  )
   const organizer = event.organizer?.email?.toLowerCase()
   const { uid, recurrenceId } = details.identity
   const blocked = (reason: string): CalendarLookup => ({ kind: 'blocked', reason })
@@ -762,16 +789,8 @@ function invitationCopy(
     }
   if (!organizer || organizer !== details.organizer?.email)
     return blocked('The Calendar organizer does not match this invitation')
-  const organizes =
-    event.organizer?.self === true && (organizer === mailbox || organizer === ownedCalendar)
-  if (
-    joinOnly
-      ? !owned || (!organizes && (!attendee || attendee.resource))
-      : !attendee || attendee.resource
-  )
-    return blocked('This account cannot verify its place on this Calendar event')
-  if (!joinOnly && (event.organizer?.self || organizer === mailbox || organizer === ownedCalendar))
-    return blocked('You organize this event')
+  if (!allowed) return blocked('This account cannot verify its place on this Calendar event')
+  if (organizerConflict) return blocked('You organize this event')
   const links = invitationEventLinks(event)
   const requiresRoster = rosterChanged(invitation)
   const mismatch = calendarRevisionMismatch(event, invitation, links, requiresRoster)
@@ -818,6 +837,10 @@ function invitationCopy(
           organizer,
           observe,
           selectSlot,
+          (row, slot) => {
+            const membership = invitationMembership(row, slot, mailbox, owned, ownedCalendar)
+            return membership.allowed && !membership.organizerConflict
+          },
           navigationWindow(invitation.legacyJoinOnly),
         )
       if (
@@ -840,7 +863,7 @@ function invitationEventLinks(event: RawEvent): InvitationLinks {
   }
 }
 
-function rosterChanged({ evidence, predecessors }: InvitationTarget) {
+function rosterChanged({ evidence, predecessors }: InvitationRevision) {
   return predecessors.some((prior) => prior.attendees !== evidence.attendees)
 }
 
@@ -848,11 +871,11 @@ function rosterChanged({ evidence, predecessors }: InvitationTarget) {
  * Membership and permission to respond are separate from this comparison. */
 function calendarRevisionMismatch(
   event: RawEvent,
-  invitation: InvitationTarget,
+  invitation: InvitationRevision,
   { conferenceUrl, htmlLink }: InvitationLinks,
   requiresRoster = rosterChanged(invitation),
 ): string | null {
-  const { details, request, material, joinOnly } = invitation
+  const { details, fields, material, joinOnly } = invitation
   const { sequence, recurrenceId } = details.identity
   const cancelled = event.status === 'cancelled'
   if ((event.sequence ?? 0) !== sequence)
@@ -861,11 +884,11 @@ function calendarRevisionMismatch(
       : 'Calendar has not received this revision of the invitation yet'
   if (recurrenceId === null && Boolean(event.recurrence?.length) !== details.recurring)
     return 'The Calendar recurrence scope does not match this invitation'
-  if (recurrenceId === null && details.recurring && !sameRecurrenceStart(request, event.start))
+  if (recurrenceId === null && details.recurring && !sameRecurrenceStart(fields, event.start))
     return 'The Calendar time zone does not match this series invitation'
   const { explicitFields } = material
   if (explicitFields.recurrence) {
-    const expected = recurrenceSet(request.recurrence)
+    const expected = recurrenceSet(fields.recurrence)
     const actual = recurrenceSet(event.recurrence ?? [])
     if (expected === null || actual === null || expected !== actual)
       return 'Calendar could not verify the recurrence of this invitation'
@@ -1025,7 +1048,8 @@ async function upcomingInvitationLinks(
   uid: string,
   organizer: string,
   observe: (event: RawEvent) => Promise<void>,
-  selectSlot: (slot: string) => InvitationTarget | false | null,
+  selectSlot: (slot: string) => InvitationRevision | false | null,
+  bindsSlot: (event: RawEvent, slot: InvitationRevision) => boolean,
   { timeMin, includesEnd }: ReturnType<typeof navigationWindow>,
 ): Promise<InvitationLinks | null> {
   let pageToken: string | undefined
@@ -1068,7 +1092,8 @@ async function upcomingInvitationLinks(
         const links = invitationEventLinks(instance)
         if (
           slot !== false &&
-          (!slot || !calendarRevisionMismatch(instance, slot, links)) &&
+          (!slot ||
+            (bindsSlot(instance, slot) && !calendarRevisionMismatch(instance, slot, links))) &&
           (links.conferenceUrl || links.htmlLink)
         )
           return links
@@ -1126,7 +1151,7 @@ export function invitationMaterialEvidence({
  * Demand a provider observation for each discriminator, while leaving normal
  * copy verification (including Google’s omitted optional fields) unchanged. */
 function provesChangedMaterial(
-  { predecessors, evidence, details, material }: InvitationTarget,
+  { predecessors, evidence, details, material }: InvitationRevision,
   event: RawEvent,
   conference: string | null,
   htmlLink: string | null,
@@ -1174,19 +1199,14 @@ function provesChangedMaterial(
   )
 }
 
-function sameRecurrenceStart(
-  request: InvitationTarget['request'],
-  start: RawEvent['start'],
-): boolean {
-  const basis = request.recurrenceTimeBasis
+function sameRecurrenceStart(fields: CalendarRevisionFields, start: RawEvent['start']): boolean {
+  const basis = fields.recurrenceTimeBasis
   if (!start || !basis) return false
   if (basis.kind === 'date')
     return (
-      start.date === basis.wallStart &&
-      request.calendarRecurrenceZoneMatches(start.timeZone ?? null)
+      start.date === basis.wallStart && fields.calendarRecurrenceZoneMatches(start.timeZone ?? null)
     )
-  if (!start.dateTime || !request.calendarRecurrenceZoneMatches(start.timeZone ?? null))
-    return false
+  if (!start.dateTime || !fields.calendarRecurrenceZoneMatches(start.timeZone ?? null)) return false
   // Calendar requires a named expansion zone for a timed recurring event.
   // A serialized offset (even Z) alone only describes the first instant.
   const expectedZone = canonicalIanaZone(start.timeZone)

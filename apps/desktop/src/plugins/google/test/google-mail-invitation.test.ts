@@ -1614,6 +1614,21 @@ function upcomingInstance(id: string, day: string, link: string) {
   }
 }
 
+function seriesWithException(...occurrences: string[]) {
+  const exceptions = occurrences
+    .map((source) => source.slice(source.indexOf('BEGIN:VEVENT'), source.indexOf('END:VCALENDAR')))
+    .join('')
+  return invite()
+    .replace('END:VEVENT', 'RRULE:FREQ=WEEKLY\r\nEND:VEVENT')
+    .replace('END:VCALENDAR', `${exceptions}END:VCALENDAR`)
+}
+
+function movedRequest(stamp: string, room: string) {
+  return invite('REQUEST', 'DTSTART:20990711T150000Z\r\nDTEND:20990711T160000Z', 3, stamp)
+    .replace('https://meet.google.com/abc-defg-hij', room)
+    .replace('END:VEVENT', 'RECURRENCE-ID:20990709T150000Z\r\nEND:VEVENT')
+}
+
 it('joins the next verified series occurrence but answers only the master', async () => {
   const { state, read, respond } = await rig()
   state.messages[0] = gmailMessage(
@@ -1647,6 +1662,135 @@ it('joins the next verified series occurrence but answers only the master', asyn
   expect(state.calendarUpdateRequests.map(({ eventId }) => eventId)).toEqual([master.id])
   expect(later.attendees[0]?.responseStatus).toBe('declined')
   expect(state.sendAttempts).toBe(0)
+})
+
+it('joins an embedded exception only when Calendar verifies its original slot and revision', async () => {
+  const { state, list, read, respond } = await rig()
+  const newRoom = 'https://meet.google.com/qrs-tuvw-xyz'
+  state.messages[0] = gmailMessage(
+    'update',
+    200,
+    seriesWithException(movedRequest('20240702T090000Z', newRoom)),
+  )
+  const master = event({ id: 'series', series: true })
+  const stale = upcomingInstance('moved', '2099-07-09', 'https://meet.google.com/xyz-abcd-efg')
+  const later = upcomingInstance('later', '2099-07-16', 'https://meet.google.com/klm-nopq-rst')
+  state.events.set('primary', [master])
+  state.instances.set('primary', [stale, later])
+
+  const { invitations } = await list()
+  expect(invitations).toHaveLength(1)
+  const [series] = invitations
+  const skipsStale = {
+    scope: 'series',
+    canRespond: true,
+    conferenceUrl: later.hangoutLink,
+    htmlLink: later.htmlLink,
+    responseTargetKey: series!.responseTargetKey,
+  }
+  expect(series).toMatchObject(skipsStale)
+  // A current URL alone is not proof; the actual start and end are still stale.
+  const wrongTime = { ...stale, hangoutLink: newRoom }
+  state.instances.set('primary', [wrongTime, later])
+  expect(await read()).toMatchObject(skipsStale)
+
+  const current = {
+    ...wrongTime,
+    start: { dateTime: '2099-07-11T15:00:00Z' },
+    end: { dateTime: '2099-07-11T16:00:00Z' },
+    originalStartTime: { dateTime: '2099-07-09T11:00:00-04:00' },
+  }
+  state.instances.set('primary', [current, later])
+  const joined = {
+    ...skipsStale,
+    identity: series!.identity,
+    conferenceUrl: newRoom,
+    htmlLink: current.htmlLink,
+  }
+  expect(await read()).toMatchObject(joined)
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+  expect(await respond('accepted')).toMatchObject({
+    channel: 'calendar',
+    refreshPending: false,
+    invitation: { conferenceUrl: newRoom, htmlLink: current.htmlLink },
+  })
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.calendarUpdateRequests.map(({ eventId }) => eventId)).toEqual([master.id])
+  expect(current.attendees[0]?.responseStatus).toBe('declined')
+  expect(state.sendAttempts).toBe(0)
+})
+
+it('orders embedded and separately mailed evidence together for series Join', async () => {
+  const { state, read } = await rig()
+  const embeddedRoom = 'https://meet.google.com/qrs-tuvw-xyz'
+  const separateRoom = 'https://meet.google.com/xyz-abcd-efg'
+  const stamp = '20240702T090000Z'
+  const series = gmailMessage('update', 200, seriesWithException(movedRequest(stamp, embeddedRoom)))
+  const later = upcomingInstance('later', '2099-07-16', 'https://meet.google.com/klm-nopq-rst')
+  const providerRow = {
+    ...upcomingInstance('moved', '2099-07-11', separateRoom),
+    originalStartTime: { dateTime: '2099-07-09T15:00:00Z' },
+  }
+  state.events.set('primary', [event({ id: 'series', series: true })])
+  state.instances.set('primary', [providerRow, later])
+  const join = () => read(thread, 'series')
+  const separatelyMailed = (revision: string) =>
+    gmailMessage('separate', 400, movedRequest(revision, separateRoom))
+
+  // Arrival and a matching row cannot override a newer embedded revision.
+  state.messages = [series, separatelyMailed('20240701T090000Z')]
+  expect(await join()).toMatchObject({ conferenceUrl: later.hangoutLink })
+  providerRow.hangoutLink = embeddedRoom
+  expect(await join()).toMatchObject({ conferenceUrl: embeddedRoom })
+
+  // Neither of two different versions with the same revision fields proves the slot.
+  state.messages = [series, separatelyMailed(stamp)]
+  expect(await join()).toMatchObject({ conferenceUrl: later.hangoutLink })
+
+  state.messages = [series, separatelyMailed('20240703T090000Z')]
+  expect(await join()).toMatchObject({ conferenceUrl: later.hangoutLink })
+  providerRow.hangoutLink = separateRoom
+  expect(await join()).toMatchObject({
+    conferenceUrl: separateRoom,
+    htmlLink: providerRow.htmlLink,
+  })
+})
+
+it('requires a verified live embedded revision to reinstate a slot covered by an embedded cancellation', async () => {
+  const { state, read } = await rig()
+  const room = 'https://meet.google.com/qrs-tuvw-xyz'
+  const cancelled = invite('REQUEST', 'STATUS:CANCELLED', 3, '20240702T090000Z').replace(
+    'END:VEVENT',
+    'RECURRENCE-ID;RANGE=THISANDFUTURE:20990702T150000Z\r\nEND:VEVENT',
+  )
+  const reinstated = movedRequest('20240703T090000Z', room)
+  const master = event({ id: 'series', series: true })
+  const instance = {
+    ...upcomingInstance('moved', '2099-07-11', room),
+    originalStartTime: { dateTime: '2099-07-09T15:00:00Z' },
+  }
+  state.events.set('primary', [master])
+  const unknown = upcomingInstance('unknown', '2099-07-16', 'https://meet.google.com/klm-nopq-rst')
+  state.instances.set('primary', [instance, unknown])
+  const series = () => read(thread, 'series')
+  const withCancellation = (live: string) =>
+    gmailMessage('update', 200, seriesWithException(cancelled, live))
+  const withheld = { canRespond: true, conferenceUrl: null, htmlLink: master.htmlLink }
+
+  state.messages = [withCancellation(movedRequest('20240701T090000Z', room))]
+  expect(await series()).toMatchObject(withheld)
+  // An exception with no independent organizer evidence cannot restore Join.
+  state.messages = [
+    withCancellation(reinstated.replace(`ORGANIZER;CN=Host:mailto:${organizer}\r\n`, '')),
+  ]
+  expect(await series()).toMatchObject(withheld)
+  state.messages = [withCancellation(reinstated)]
+  expect(await series()).toMatchObject({
+    canRespond: true,
+    conferenceUrl: room,
+    htmlLink: instance.htmlLink,
+  })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
 it.each(['PUBLISH', 'EXPORT'] as const)(
@@ -1723,7 +1867,11 @@ it.each(['PUBLISH', 'EXPORT'] as const)(
   },
 )
 
-it.each(['joined', 'ineligible before a failed continuation'] as const)(
+it.each([
+  'joined',
+  'linkless before a failed continuation',
+  'stale embedded revision before a failed continuation',
+] as const)(
   'retains the original slot of a %s navigation-only Calendar instance',
   async (discovery) => {
     const { state, read, restart } = await rig()
@@ -1738,16 +1886,26 @@ it.each(['joined', 'ineligible before a failed continuation'] as const)(
     state.events.set('primary', [master]) // Unexpanded UID results expose only the master.
     state.instances.set('primary', [slotB])
     if (discovery !== 'joined') {
-      slotB.hangoutLink = ''
-      slotB.htmlLink = ''
+      if (discovery === 'linkless before a failed continuation') {
+        slotB.hangoutLink = ''
+        slotB.htmlLink = ''
+      } else {
+        state.messages[0] = gmailMessage(
+          'update',
+          200,
+          seriesWithException(
+            movedRequest('20240702T090000Z', 'https://meet.google.com/qrs-tuvw-xyz'),
+          ),
+        )
+      }
       // Page 2 is unavailable, but page 1 already established a resource.
       state.expandedPages = [{ kind: 'calendar#events', items: [slotB], nextPageToken: '1' }]
     }
     expect(await read()).toMatchObject({
       scope: 'series',
       canRespond: true,
-      conferenceUrl: slotB.hangoutLink || null,
-      htmlLink: slotB.htmlLink || master.htmlLink,
+      conferenceUrl: discovery === 'joined' ? slotB.hangoutLink : null,
+      htmlLink: discovery === 'joined' ? slotB.htmlLink : master.htmlLink,
     })
 
     state.events.clear() // The master now returns 404. The instance still returns 200.
