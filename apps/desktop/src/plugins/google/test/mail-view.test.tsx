@@ -752,6 +752,20 @@ test('shows RSVP controls for an inline invitation without a filename or list ba
   expect(screen.queryByLabelText('Meeting invite')).not.toBeInTheDocument()
 })
 
+test('shows Delegated as a recorded response, not as an RSVP action', async () => {
+  withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
+  invitationMock.mockResolvedValue(invitations({ ...invite, responseStatus: 'delegated' }))
+  await openThread()
+
+  const card = within(await screen.findByRole('article', { name: invite.title }))
+  expect(card.getByText('Response: Delegated')).toBeVisible()
+  expect(card.queryByText('No response yet')).not.toBeInTheDocument()
+  expect(card.getAllByRole('button')).toHaveLength(4) // Three RSVP actions and the meeting link.
+  for (const name of ['Accept', 'Maybe', 'Decline', 'Join meeting']) {
+    expect(card.getByRole('button', { name })).toBeEnabled()
+  }
+})
+
 test('ordinary mail opens without an invitation or meeting lookup', async () => {
   withMessage({ body: 'lunch?', html: null })
   threadMock.mockResolvedValue(page([summary({ hasInvite: false })]))

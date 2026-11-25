@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import ICAL from 'ical.js'
-import type { InviteAnswer } from '../src/plugins/google/main/calendar'
+import type { CalendarListEntry, InviteAnswer, RawEvent } from '../src/plugins/google/main/calendar'
 
 export const remote = 'smoke/invitations'
 export const organizer = { name: 'Morgan Fixture', email: 'organizer@example.test' }
@@ -60,6 +60,7 @@ const googleGmail = 'https://www.googleapis.com/gmail/v1/users/me'
 const calendar = 'https://www.googleapis.com/calendar/v3'
 const people = 'https://people.googleapis.com/v1'
 const eventId = 'fixture-event'
+const attachmentEventId = 'fixture-workshop'
 const seriesId = 'fixture-series'
 export const occurrenceId = 'fixture-occurrence'
 const occurrenceSlot = '2026-11-25T15:20:00Z'
@@ -76,12 +77,24 @@ const rfcId = (invite: Invite) => `<${mailId(invite)}@example.test>`
 const token = (mailbox: Mailbox) => `offline-only-${mailbox.sub}`
 export { token as fixtureToken }
 
-function calendarItems<T>(kind: 'calendar#events' | 'calendar#calendarList', items?: T[]) {
+type Collections = {
+  'calendar#events': RawEvent
+  'calendar#calendarList': CalendarListEntry
+}
+
+function calendarItems<K extends keyof Collections>(kind: K, items?: Collections[K][]) {
   return Response.json(items === undefined ? { kind } : { kind, items })
 }
 
+function googleError(code: number, status: string, reason: string, message: string) {
+  return Response.json(
+    { error: { code, status, message, errors: [{ message, domain: 'global', reason }] } },
+    { status: code },
+  )
+}
+
 function notFound() {
-  return Response.json({ error: { code: 404, status: 'NOT_FOUND' } }, { status: 404 })
+  return googleError(404, 'NOT_FOUND', 'notFound', 'Not Found')
 }
 
 function invitationSource(invite: Invite, mailbox: Mailbox) {
@@ -250,11 +263,15 @@ export function createInvitationTransport() {
   let sentReceiptMisses = 0
   let sentReceiptReads = 0
   let sentIdSearches = 0
+  let attachmentCopyReads = 0
   let pendingReceiptIndex = false
   const calendarReadbackVersions = new Set<number>()
   const requestCounts: Record<string, number> = {}
   const event = (id: string) => {
     const { invite, version, attendee } = targets.get(id)!
+    // The ICS master uses UTC DTSTART/DTEND and the instance's RECURRENCE-ID
+    // is also UTC. Google uses the master's named zone to expand the RRULE.
+    const zone = id === seriesId || id === occurrenceId ? { timeZone: 'UTC' } : {}
     return {
       kind: 'calendar#event',
       id,
@@ -263,18 +280,18 @@ export function createInvitationTransport() {
       sequence,
       summary: invite.title,
       location: invite.location,
-      hangoutLink: invite.join,
-      htmlLink: 'https://calendar.google.com/calendar/event?eid=synthetic-fixture',
+      ...(invite.attached ? {} : { hangoutLink: invite.join }),
+      htmlLink: `https://calendar.google.com/calendar/event?eid=${id}`,
       organizer: { email: organizer.email, self: false },
       status: 'confirmed',
-      start: { dateTime: id === occurrenceId ? occurrenceStart : start },
-      end: { dateTime: id === occurrenceId ? occurrenceEnd : end },
+      start: { dateTime: id === occurrenceId ? occurrenceStart : start, ...zone },
+      end: { dateTime: id === occurrenceId ? occurrenceEnd : end, ...zone },
       attendees: [attendee, guest],
       ...(id === seriesId ? { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=4'] } : {}),
       ...(id === occurrenceId
-        ? { recurringEventId: seriesId, originalStartTime: { dateTime: occurrenceSlot } }
+        ? { recurringEventId: seriesId, originalStartTime: { dateTime: occurrenceSlot, ...zone } }
         : {}),
-    }
+    } satisfies RawEvent
   }
 
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -295,7 +312,10 @@ export function createInvitationTransport() {
       const mailbox = [mailboxA, mailboxB].find(
         (item) => headers.get('Authorization') === `Bearer ${token(item)}`,
       )
-      assert(mailbox, 'Google call did not use a fixture account')
+      if (!mailbox) {
+        rejected.push(`${summary}: Google call did not use a fixture account`)
+        return googleError(401, 'UNAUTHENTICATED', 'authError', 'Invalid Credentials')
+      }
       const key = `${mailbox.sub} ${summary}`
       requestCounts[key] = (requestCounts[key] ?? 0) + 1
       const invites = mailbox === mailboxA ? [inline, attachment, series] : [other]
@@ -305,17 +325,34 @@ export function createInvitationTransport() {
           return Response.json({ connections: [] })
         if (resource === `${people}/otherContacts`) return Response.json({ otherContacts: [] })
         if (resource === `${calendar}/users/me/calendarList`) {
-          if (mailbox === mailboxB) return calendarItems('calendar#calendarList')
-          return calendarItems('calendar#calendarList', [
-            { id: mailbox.email, primary: true, selected: true, accessRole: 'owner' },
-            { id: sharedCalendar, accessRole: 'reader' },
-          ])
+          const calendars: CalendarListEntry[] = [
+            {
+              kind: 'calendar#calendarListEntry',
+              id: mailbox.email,
+              summary: 'Operations Calendar',
+              primary: true,
+              selected: true,
+              accessRole: 'owner',
+            },
+          ]
+          if (mailbox === mailboxA)
+            calendars.push({
+              kind: 'calendar#calendarListEntry',
+              id: sharedCalendar,
+              summary: 'Shared Calendar',
+              accessRole: 'reader',
+            })
+          return calendarItems('calendar#calendarList', calendars)
         }
         if (
           resource === primary ||
           resource === `${calendar}/calendars/${encodeURIComponent(mailbox.email)}/events`
         ) {
-          const matched = mailbox === mailboxA && query.get('iCalUID') === inline.uid
+          const uid = query.get('iCalUID')
+          assert(uid, 'invitation reads must select an iCalUID')
+          assert.equal(query.get('singleEvents'), 'false')
+          assert.equal(query.get('showDeleted'), 'true')
+          const matched = mailbox === mailboxA && uid === inline.uid
           if (matched) {
             const version = targets.get(eventId)!.version
             if (version > 1) calendarReadbackVersions.add(version)
@@ -327,24 +364,25 @@ export function createInvitationTransport() {
             }
             return calendarItems('calendar#events', [event(eventId)])
           }
-          if (mailbox === mailboxA && query.get('iCalUID') === series.uid)
+          if (mailbox === mailboxA && uid === series.uid)
             return calendarItems('calendar#events', [event(seriesId)])
-          if (
-            mailbox === mailboxA &&
-            query.get('iCalUID') === attachment.uid &&
-            missNextAttachmentCollection
-          ) {
+          if (mailbox === mailboxA && uid === attachment.uid && missNextAttachmentCollection) {
             missNextAttachmentCollection = false
             return notFound()
+          }
+          if (mailbox === mailboxA && uid === attachment.uid && targets.has(attachmentEventId)) {
+            attachmentCopyReads++
+            return calendarItems('calendar#events', [event(attachmentEventId)])
           }
           return calendarItems('calendar#events')
         }
         if (resource === `${calendar}/calendars/${encodeURIComponent(sharedCalendar)}/events`) {
-          assert.equal(mailbox, mailboxA)
+          if (mailbox !== mailboxA) return notFound()
           return calendarItems('calendar#events', [])
         }
         if (resource === `${primary}/${seriesId}/instances`) {
-          assert.equal(mailbox, mailboxA)
+          if (mailbox !== mailboxA) return notFound()
+          assert.equal(query.get('showDeleted'), 'true')
           assert.equal(Date.parse(query.get('originalStart') ?? ''), Date.parse(occurrenceSlot))
           return calendarItems('calendar#events', [event(occurrenceId)])
         }
@@ -485,7 +523,10 @@ export function createInvitationTransport() {
           target && (id === eventId || id === occurrenceId),
           'must only write to the selected event or occurrence',
         )
-        assert.equal(mailbox, mailboxA, 'must not write to a different Google account')
+        if (mailbox !== mailboxA) {
+          rejected.push(`${summary}: must not write to a different Google account`)
+          return notFound()
+        }
         const ifMatch = headers.get('If-Match') ?? ''
         assert.equal(ifMatch, event(id).etag)
         assert.equal(query.get('sendUpdates'), 'all')
@@ -519,7 +560,10 @@ export function createInvitationTransport() {
         return Response.json(event(id))
       }
       if (method === 'POST' && resource === `${gmail}/messages/send`) {
-        assert.equal(mailbox, mailboxA, 'must not send from a different Google account')
+        if (mailbox !== mailboxA) {
+          rejected.push(`${summary}: must not send from a different Google account`)
+          return googleError(403, 'PERMISSION_DENIED', 'forbidden', 'Forbidden')
+        }
         const body = JSON.parse(String(init?.body))
         assert.equal(
           body.threadId,
@@ -538,7 +582,12 @@ export function createInvitationTransport() {
         if (refuseNextSend) {
           refuseNextSend = false
           writes.push({ ...evidence, status: 403 })
-          return Response.json({ error: { status: 'insufficientPermissions' } }, { status: 403 })
+          return googleError(
+            403,
+            'PERMISSION_DENIED',
+            'insufficientPermissions',
+            'Request had insufficient authentication scopes.',
+          )
         }
         assert(!sent, 'the fixture should receive exactly one accepted Gmail REPLY')
         sent = { id: 'fixture-sent-reply', ...reply }
@@ -567,6 +616,13 @@ export function createInvitationTransport() {
     refuseNextSend: () => {
       refuseNextSend = true
     },
+    addCalendarCopyOfAttachment() {
+      targets.set(attachmentEventId, {
+        invite: attachment,
+        version: 1,
+        attendee: { ...originalAttendee },
+      })
+    },
     loseNextPatchAcknowledgement: () => {
       losePatchAcknowledgement = true
     },
@@ -592,6 +648,7 @@ export function createInvitationTransport() {
       sentReceiptMisses,
       sentReceiptReads,
       sentIdSearches,
+      attachmentCopyReads,
       tokenRefreshes,
       calendarReadbacks: calendarReadbackVersions.size,
       calendarResponse: targets.get(eventId)!.attendee.responseStatus,

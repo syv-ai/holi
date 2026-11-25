@@ -9,7 +9,10 @@ type ReadInput = Parameters<typeof googleCap.mailInvitation>[1]
 type ReadResult = Awaited<ReturnType<typeof googleCap.mailInvitation>>
 export type Invitation = ReadResult['invitations'][number]
 export type InvitationAnswer = Parameters<typeof googleCap.respondToMailInvitation>[1]['answer']
-type Receipt = 'sent' | 'uncertain' | 'unchanged'
+type Receipt = Pick<
+  Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>,
+  'outcome' | 'answer'
+> & { hasReadback: boolean }
 
 // A new parent, binding, or material revision cannot inherit a local receipt.
 function cardKey({ bindingRevision, kind, scope, identity }: Invitation): string {
@@ -107,11 +110,12 @@ export function useMailInvitation({
         return {
           cards: invitations.map((invitation) => {
             const key = cardKey(invitation)
+            const receipt = receipts.get(key)
             return {
               key,
               invitation,
               error: null,
-              receipt: receipts.get(key) ?? null,
+              receipt: receipt ? { ...receipt, hasReadback: true } : null,
               refreshPending: invitation.responsePending,
             }
           }),
@@ -142,6 +146,7 @@ export function useMailInvitation({
       !invitation.canRespond ||
       invitation.cancelled ||
       invitation.responseStatus === answer ||
+      !currentCards.current.includes(card) ||
       state.busy !== null ||
       state.readError !== null ||
       card.refreshPending ||
@@ -174,12 +179,10 @@ export function useMailInvitation({
       updateCard(null, (current) => ({
         ...current,
         invitation: sameRevision && updated !== null ? updated : current.invitation,
-        receipt: sameRevision ? result.outcome : null,
-        refreshPending:
-          !sameRevision ||
-          result.refreshPending ||
-          result.outcome === 'uncertain' ||
-          updated?.responsePending === true,
+        receipt: sameRevision
+          ? { outcome: result.outcome, answer: result.answer, hasReadback: updated !== null }
+          : null,
+        refreshPending: !sameRevision || result.refreshPending || updated?.responsePending === true,
       }))
     } catch (error) {
       if (request()) {

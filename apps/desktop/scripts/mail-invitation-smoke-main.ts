@@ -541,6 +541,13 @@ async function run() {
       )
       await expectStatus('No response yet')
       assert.equal(transport.writes.at(-1)?.status, 403)
+      assert(
+        rig.calls.some(
+          ({ name, verdict }) =>
+            name === 'google.respondToMailInvitation' && verdict === 'FORBIDDEN',
+        ),
+        'the real capability must classify the Gmail scope refusal',
+      )
       assert.equal(transport.snapshot().sentReceiptReads, 0)
       await capture('04-mail-view-refusal-dark')
       const refusedWrites = transport.writes.length
@@ -632,6 +639,24 @@ async function run() {
     assert.equal(transport.snapshot().seriesResponse, 'needsAction')
     assert.equal(transport.snapshot().occurrenceResponse, 'accepted')
     mark('mail-view-series-and-moved-occurrence-have-independent-external-targets')
+
+    const writesBeforeCalendarCopy = transport.writes.length
+    const readsBeforeCalendarCopy = transport.snapshot()
+    transport.addCalendarCopyOfAttachment()
+    await open('surface', attachment)
+    await until('the verified Sent answer survives the new Calendar copy', async () => {
+      const observed = transport.snapshot()
+      return (
+        observed.attachmentCopyReads > readsBeforeCalendarCopy.attachmentCopyReads &&
+        observed.sentReceiptReads > readsBeforeCalendarCopy.sentReceiptReads &&
+        (await containsCard(attachment.title, 'Response: Tentative')) &&
+        (await containsCard(attachment.title, 'Open in Google Calendar'))
+      )
+    })
+    assert(!(await containsCard(attachment.title, 'No response yet')))
+    assert.equal(transport.writes.length, writesBeforeCalendarCopy)
+    mark('a-new-unanswered-calendar-copy-does-not-erase-a-confirmed-itip-response')
+
     await click('Sidebar mail')
     await js('document.documentElement.dataset.theme = "light"')
     await open('shell', inline)
