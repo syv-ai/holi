@@ -730,7 +730,6 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           rfcId,
           { id: messageId, threadId: threadId ?? null },
           (candidate) => assessReply(candidate, anchor.revision, anchor, disputedSent, answer),
-          { requireLocator: true },
         )
         if (mail) {
           verifiedAnchors.set(anchorProofKey(anchor), mail)

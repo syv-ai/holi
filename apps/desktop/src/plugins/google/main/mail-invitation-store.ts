@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { CapabilityError, jsonFileStore } from '../../../main/plugin-api'
 import type { InviteAnswer } from './calendar'
+import type { CalendarReplyReceipt } from './gmail-invitation-transport'
 import type { MailInvitationIdentity } from './mail-invitation'
 
 type Revision = Omit<MailInvitationIdentity, 'messageId'> & {
@@ -31,7 +32,7 @@ type Delivery =
       priorSentTimestamp?: number
       /** Verified provider order, not proof that the parent still belongs to this invitation. */
       confirmedSentTimestamp?: number
-      receipt: { id: string | null; threadId: string | null } | null
+      receipt: CalendarReplyReceipt | null
     }
 
 export type InvitationAttempt = {
@@ -215,7 +216,10 @@ function isAttempt(value: unknown): value is InvitationAttempt {
         Number.isSafeInteger(delivery.confirmedSentTimestamp) &&
         delivery.confirmedSentTimestamp > 0)) &&
     (receipt === null ||
-      (record(receipt) && nullableText(receipt.id) && nullableText(receipt.threadId)))
+      (record(receipt) &&
+        nullableText(receipt.id) &&
+        nullableText(receipt.threadId) &&
+        (receipt.invalidLocator === undefined || receipt.invalidLocator === true)))
   )
 }
 

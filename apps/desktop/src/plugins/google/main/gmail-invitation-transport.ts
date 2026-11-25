@@ -172,7 +172,11 @@ type CalendarMail = {
   }[]
 }
 
-type CalendarReplyReceipt = { id: string | null; threadId: string | null }
+export type CalendarReplyReceipt = {
+  id: string | null
+  threadId: string | null
+  invalidLocator?: true
+}
 
 /** Do not accept a good-looking substring of an invalid header, or choose
  * between duplicate headers. Missing is distinct from invalid. */
@@ -548,7 +552,6 @@ export function createSentCalendarLookup(
       rfcId: string,
       receipt: CalendarReplyReceipt | null,
       assess: (message: CalendarMail) => Promise<'match' | 'related' | 'unresolved' | null>,
-      { requireLocator = false } = {},
     ): Promise<{
       mail: CalendarMail | null
       contestedTimestamp: number | null
@@ -581,7 +584,7 @@ export function createSentCalendarLookup(
       }
       let contestedTimestamp = 0
       let unordered = false
-      let unresolvedReply = Boolean(locator?.id)
+      let unresolvedReply = Boolean(locator?.id || receipt?.threadId || receipt?.invalidLocator)
       const sourceIds = new Set(sources.map(({ message }) => message.id))
       for (const mail of candidates.values()) {
         if (!mail) continue
@@ -590,10 +593,14 @@ export function createSentCalendarLookup(
         if (evidence === 'unresolved') unresolvedReply = true
         const full = sourceIds.has(mail.messageId)
         if (mail.sent && owners.owns(mail) && (full || !reads.has(mail.messageId))) {
-          const matchesLocator =
-            mail.messageId === receipt?.id &&
-            (!receipt.threadId || mail.threadId === receipt.threadId)
-          if (evidence === 'match' && full && (!requireLocator || matchesLocator)) {
+          // The index corroborates the receipt; it cannot substitute another
+          // Gmail message for an acknowledged ID, even with the same RFC ID.
+          const matchesReceipt =
+            !receipt?.invalidLocator &&
+            mail.rfcId === rfcId &&
+            (!receipt?.id || mail.messageId === receipt.id) &&
+            (!receipt?.threadId || mail.threadId === receipt.threadId)
+          if (evidence === 'match' && full && matchesReceipt) {
             verifiedReplies.set(mail.messageId, mail)
             return { mail, contestedTimestamp: 0, unresolvedReply: false }
           }
@@ -639,7 +646,7 @@ export async function sendCalendarReply(
       },
     ],
   })
-  const sent = await api.postJson<{ id?: string; threadId?: string }>(
+  const sent = await api.postJson<{ id?: unknown; threadId?: unknown }>(
     `${GMAIL_BASE}/messages/send`,
     {
       raw: toBase64Url(`From: ${from}\r\nMessage-ID: ${rfcId}\r\n${message}`),
@@ -647,6 +654,11 @@ export async function sendCalendarReply(
     },
     gate,
   )
-  const identifier = (value: unknown) => (isGmailMessageId(value) ? value : null)
-  return { id: identifier(sent?.id), threadId: identifier(sent?.threadId) }
+  const id = isGmailMessageId(sent?.id) ? sent.id : null
+  const actualThreadId = isGmailMessageId(sent?.threadId) ? sent.threadId : null
+  // A supplied but unusable ID isn't permission for RFC-only recovery.
+  const invalidLocator =
+    (sent?.id !== undefined && id === null) ||
+    (sent?.threadId !== undefined && actualThreadId === null)
+  return { id, threadId: actualThreadId, ...(invalidLocator ? { invalidLocator: true } : {}) }
 }
