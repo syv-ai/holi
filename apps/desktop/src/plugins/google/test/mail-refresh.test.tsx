@@ -542,7 +542,7 @@ test('hidden mail drops its pending answer and performs no more periodic reads',
     pending.resolve(page('hidden-result'))
   })
   await advance(90_000)
-  expect(result.current.threads).toEqual([])
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['existing'])
   expect(search).toHaveBeenCalledTimes(2)
   search.mockResolvedValue(page('visible-again'))
   rerender({ account: 'account-a', visible: true })

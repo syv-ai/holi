@@ -35,7 +35,10 @@ const trashMock = vi.fn()
 const saveDraftMock = vi.fn()
 const saveDraftAccounts: string[] = []
 const useAccountMock = vi.fn()
-const toastMock = vi.fn()
+const toastMock = Object.assign(
+  vi.fn(() => 'toast-id'),
+  { dismiss: vi.fn() },
+)
 const openExternal = vi.fn()
 
 let currentAccount = 'a'
@@ -78,7 +81,9 @@ const google: Record<string, (params: unknown) => unknown> = {
 
 vi.mock('sonner', async (original) => ({
   ...(await original<typeof import('sonner')>()),
-  toast: (...args: unknown[]) => toastMock(...args),
+  toast: Object.assign((...args: unknown[]) => toastMock(...args), {
+    dismiss: (...args: unknown[]) => toastMock.dismiss(...args),
+  }),
 }))
 
 vi.mock('@/lib/trpc', () => ({
