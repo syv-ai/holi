@@ -62,9 +62,11 @@ it('binds a generated vault CLI despite cwd changes and refuses foreign selector
   })
   const installations = createVaultCliInstallations(dir, server, process.execPath)
   try {
-    for (const name of ['a', 'b']) {
-      const remote = `owner/${name}`,
-        root = join(dir, name)
+    for (const [name, remote] of [
+      ['a', 'Owner/Notes'],
+      ['b', 'owner/b'],
+    ]) {
+      const root = join(dir, name)
       await mkdir(root)
       roots.set(remote, root)
       await registry.add({ remote, name, path: root, lastOpenedAt: '2026-01-01' })
@@ -99,8 +101,8 @@ it('binds a generated vault CLI despite cwd changes and refuses foreign selector
       )
     const human = await installHoliCli(dir)
     const [binDir, sameBin] = await Promise.all([
-      installations.forRemote('OWNER/A'),
-      installations.forRemote('owner/a'),
+      installations.forRemote('Owner/Notes'),
+      installations.forRemote('owner/notes'),
     ])
     expect(sameBin).toBe(binDir)
     const otherBin = await installations.forRemote('owner/b')
@@ -122,11 +124,11 @@ it('binds a generated vault CLI despite cwd changes and refuses foreign selector
     for (const cwd of [roots.get('owner/b')!, dir]) {
       expect(await run(scoped, cwd, ['probe', 'read'])).toMatchObject({
         code: 0,
-        stdout: 'owner/a\n',
+        stdout: 'Owner/Notes\n',
       })
     }
     expect(
-      await run(human, roots.get('owner/a')!, ['probe', 'read', '--vault=owner/b']),
+      await run(human, roots.get('Owner/Notes')!, ['probe', 'read', '--vault=owner/b']),
     ).toMatchObject({ code: 0, stdout: 'owner/b\n' })
     expect(await run(join(otherBin, 'holi'), dir, ['probe', 'read'])).toMatchObject({
       code: 0,
@@ -182,16 +184,16 @@ exec '${curl}' "$@"
       cwd: dir,
       env: { PATH: `${tools}:${process.env.PATH}`, TMPDIR: scratch },
     })
-    expect(secured.stdout).toBe('owner/a\n')
+    expect(secured.stdout).toBe('Owner/Notes\n')
     const argv = await readFile(evidence, 'utf8')
-    expect(argv).not.toContain(server.tokenForVault('owner/a'))
+    expect(argv).not.toContain(server.tokenForVault('Owner/Notes'))
     expect(argv).not.toContain(machine.token)
     expect(argv).not.toContain('?t=')
     expect(argv).toContain('--config')
     if (process.platform !== 'win32')
       expect(await readFile(`${evidence}.mode`, 'utf8')).toMatch(/^-rw-------/)
     expect(await readdir(scratch)).toEqual([])
-    const token = server.tokenForVault('owner/a')
+    const token = server.tokenForVault('Owner/Notes')
     for (const [path, header] of [
       ['/cli?t=' + token, token],
       ['/hook', token],
@@ -210,14 +212,78 @@ exec '${curl}' "$@"
       await (
         await fetch(`http://127.0.0.1:${server.port()}/hook?t=${token}`, { method: 'POST' })
       ).text(),
-    ).toBe('owner/a')
+    ).toBe('Owner/Notes')
     await installations.dispose()
     await expect(lstat(descriptor)).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await run(scoped, dir, ['probe', 'read'])).code).not.toBe(0)
-    await expect(installations.forRemote('owner/a')).rejects.toThrow()
+    await expect(installations.forRemote('owner/notes')).rejects.toThrow()
   } finally {
     await installations.dispose()
     await machine?.dispose()
+    await server.stop()
+    await rm(dir, { recursive: true, force: true })
+  }
+}, 30_000)
+
+it('installs distinct usable CLIs for remotes with reserved or trailing-dot segments', async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'holi-vault-cli-names-')))
+  const capabilities = createCapabilityRegistry()
+  const remotes = ['owner/con', 'owner/con.', 'owner/con..', 'aux/Notes']
+  const roots = new Map<string, string>()
+  const host = createCapabilityHost({
+    registry: capabilities,
+    rootFor: async (remote) => roots.get(remote) ?? null,
+    get: () => null,
+    core: noCoreServices,
+    pluginEnabled: async () => true,
+    claims: async () => [],
+  })
+  const server = createBridgeServer({
+    log: () => {},
+    cli: {
+      dispatch: host.dispatch,
+      commands: (remote) => capabilities.commands(remote),
+      rootFor: async (remote) => roots.get(remote) ?? null,
+    },
+  })
+  const installations = createVaultCliInstallations(dir, server, process.execPath)
+  try {
+    for (const [index, remote] of remotes.entries()) {
+      const root = join(dir, `root-${index}`)
+      await mkdir(root)
+      roots.set(remote, root)
+      capabilities.register(
+        ['probe'],
+        {
+          'probe.read': cap({
+            doors: ['cli'],
+            cli: { args: [], summary: 'report vault' },
+            params: () => null,
+            run: async (ctx) => ctx.remote,
+            text: (value) => value,
+          }),
+        },
+        'probe',
+        remote,
+      )
+    }
+    await server.start()
+    const bins = new Set<string>()
+    for (const remote of remotes) {
+      const bin = await installations.forRemote(remote)
+      bins.add(bin)
+      expect(
+        (
+          await exec(join(bin, 'holi'), ['probe', 'read'], {
+            cwd: dir,
+            env: { PATH: process.env.PATH },
+          })
+        ).stdout,
+      ).toBe(`${remote}\n`)
+    }
+    expect(bins.size).toBe(remotes.length)
+  } finally {
+    await installations.dispose()
     await server.stop()
     await rm(dir, { recursive: true, force: true })
   }

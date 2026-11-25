@@ -2,6 +2,10 @@ import { A, B, adapters, harness, rig, tempDirectory, waitForFile } from './acti
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, delimiter, join } from 'node:path'
 import { expect, it } from 'vitest'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
+import { claudeProvider } from '../main/claude/index'
 import { PRESETS } from '../main/harness/record'
 
 async function fixture() {
@@ -197,5 +201,52 @@ if (!rpc) {
         keep: true,
       }),
     ).toMatchObject({ ok: true })
+  },
+)
+
+it.skipIf(process.platform === 'win32')(
+  'keeps community commands and the owning holi available after Claude settings regeneration',
+  async () => {
+    const userData = await tempDirectory('holi-claude-settings-path-')
+    const root = join(userData, 'vault')
+    const bin = join(userData, 'own-bin')
+    const commands = join(root, PLUGIN_COMMANDS_DIR)
+    await mkdir(bin)
+    await mkdir(commands, { recursive: true })
+    await writeFile(join(bin, 'holi'), '#!/bin/sh\nprintf "own-vault"\n', { mode: 0o755 })
+    await writeFile(join(commands, 'community-probe'), '#!/bin/sh\nprintf "community"\n', {
+      mode: 0o755,
+    })
+    // Even a community command with the trusted name cannot replace our CLI.
+    await writeFile(join(commands, 'holi'), '#!/bin/sh\nprintf "foreign"\n', { mode: 0o755 })
+    const provider = claudeProvider({
+      userData,
+      holiBin: () => join(bin, 'holi'),
+      systemPrefersDark: () => false,
+    })
+    const target = { remote: A, root }
+    const config = await provider.configure(target)
+    expect(config).not.toBeNull()
+    const settingsPath = join(config!.dir, 'settings.json')
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
+      binding(settings.env, bin)
+      // Settings override the spawn environment: use only the stamped env here.
+      for (const [command, answer] of [
+        ['holi', 'own-vault'],
+        ['community-probe', 'community'],
+      ] as const) {
+        expect(
+          (await promisify(execFile)(command, [], { cwd: root, env: settings.env })).stdout,
+        ).toBe(answer)
+      }
+      if (attempt === 0) {
+        await writeFile(
+          settingsPath,
+          JSON.stringify({ env: { PATH: '/stale', HOLI_BIN: '/wrong' } }),
+        )
+        await provider.configure(target)
+      }
+    }
   },
 )
