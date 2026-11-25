@@ -76,6 +76,20 @@ describe('window effects comparison decision', () => {
       ).valid,
     ).toBe(false)
   })
+  it('keeps matched fallback measurements diagnostic instead of proving liquid-glass benefit', () => {
+    const fallback = () => {
+      const value = pair()
+      value.outcomes.A.effect = 'vibrancy-fallback'
+      return value
+    }
+    const result = compareWindowEffects(
+      Array.from({ length: 5 }, fallback),
+      tolerances,
+      'vibrancy-fallback',
+    )
+    expect(result.valid).toBe(false)
+    expect(result.crossesPrimaryGate).toBe(false)
+  })
   it('never turns missing counters into proof and rejects repeatable CPU regression', () => {
     const missing = pair()
     missing.outcomes.B.steady.gpuPercent.median = null

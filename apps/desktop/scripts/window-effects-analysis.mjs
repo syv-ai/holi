@@ -18,6 +18,7 @@ export function compareWindowEffects(pairs, tolerances, pilotEffect) {
       A.valid &&
       B.valid &&
       A.effect === pilotEffect &&
+      pilotEffect === 'liquid-glass' &&
       B.effect === 'opaque' &&
       a > 0 &&
       b > 0 &&
