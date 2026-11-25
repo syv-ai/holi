@@ -102,7 +102,6 @@ type JobSpec = JobSpecBase & ({ scope: JobScope } | { allow: readonly string[] }
 export type JobResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
 export interface JobsDeps {
-  binDir?: () => string | null
   platform?: NodeJS.Platform
   vault: VaultRef
   /** This vault's private scratch root from `agentScratchRoots`. */
@@ -765,7 +764,6 @@ export function createJobs(deps: JobsDeps): Jobs {
     run: JobRun,
     write: readonly string[],
   ): { ok: true } | { ok: false; message: string } {
-    run = { ...run, binDir: deps.binDir?.() }
     const { id, provider } = job
     const receipt = job.files.turn()
     job.busy = true

@@ -151,11 +151,13 @@ export function bindAgentBinEnv(
   binDir: string | null | undefined,
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
-  if (!binDir) return base
   const env = { ...base }
-  if (platform === 'win32') {
-    for (const key of Object.keys(env)) if (key.toUpperCase() === 'HOLI_BIN') delete env[key]
+  for (const key of Object.keys(env)) {
+    if (key === 'HOLI_BIN' || (platform === 'win32' && key.toUpperCase() === 'HOLI_BIN'))
+      delete env[key]
   }
+  // A fenced target has no CLI authority, even if its preset supplies one.
+  if (!binDir) return env
   env.HOLI_BIN = join(binDir, 'holi')
   return withPath(
     env,

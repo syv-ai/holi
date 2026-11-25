@@ -571,7 +571,6 @@ export function createWindowsJobs(deps: JobsDeps): Jobs {
     run: JobRun,
     write: readonly string[],
   ): Promise<{ ok: true } | { ok: false; message: string }> {
-    run = { ...run, binDir: deps.binDir?.() }
     const { id, provider } = job
     job.busy = true
     delete job.windowsStopOperation

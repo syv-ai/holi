@@ -228,7 +228,7 @@ exec '${curl}' "$@"
 it('installs distinct usable CLIs for remotes with reserved or trailing-dot segments', async () => {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'holi-vault-cli-names-')))
   const capabilities = createCapabilityRegistry()
-  const remotes = ['owner/con', 'owner/con.', 'owner/con..', 'aux/Notes']
+  const remotes = ['owner/con', 'owner/con.', 'owner/prn.', 'aux/Notes']
   const roots = new Map<string, string>()
   const host = createCapabilityHost({
     registry: capabilities,
