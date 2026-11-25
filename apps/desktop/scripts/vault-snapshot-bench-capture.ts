@@ -43,31 +43,10 @@ async function readHostGpuUtilization(): Promise<number> {
     timeout: 5000,
     maxBuffer: 4 * 1024 * 1024,
   })
-  const json = await new Promise<string>((resolve, reject) => {
-    const child = execFile(
-      'plutil',
-      ['-convert', 'json', '-o', '-', '--', '-'],
-      { encoding: 'utf8', timeout: 5000 },
-      (error, output) => (error ? reject(error) : resolve(output)),
-    )
-    child.stdin?.on('error', reject)
-    child.stdin?.end(stdout)
-  })
-  const values: number[] = []
-  function visit(value: unknown): void {
-    if (!value || typeof value !== 'object') return
-    if (Array.isArray(value)) {
-      value.forEach(visit)
-      return
-    }
-    const stats = (value as Record<string, unknown>).PerformanceStatistics
-    if (stats && typeof stats === 'object') {
-      const n = (stats as Record<string, unknown>)['Device Utilization %']
-      if (typeof n === 'number') values.push(n)
-    }
-    Object.values(value).forEach(visit)
-  }
-  visit(JSON.parse(json))
+  // Other IORegistry properties contain plist data values that cannot become JSON.
+  // Read only the numeric counter from the OS-generated XML, rejecting multiple devices.
+  const counter = /<key>Device Utilization %<\/key>\s*<(integer|real)>(-?\d+(?:\.\d+)?)<\/\1>/g
+  const values = Array.from(stdout.matchAll(counter), (match) => Number(match[2]))
   if (values.length !== 1 || !Number.isFinite(values[0]) || values[0]! < 0 || values[0]! > 100)
     throw new Error('IOAccelerator physical utilization is missing or ambiguous')
   return values[0]!
