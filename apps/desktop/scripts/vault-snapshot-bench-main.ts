@@ -104,14 +104,19 @@ async function run(root: string, evidence: string): Promise<void> {
   let nativeUserChangesLatency: any = null
   const cleanupErrors: string[] = []
   const pipelineErrors: string[] = []
-  const drainPipeline = async () => {
+  const settlePipeline = async () => {
     while (pipelinePromises.size) await Promise.allSettled([...pipelinePromises])
+  }
+  const drainPipeline = async () => {
+    await settlePipeline()
     if (pipelineErrors.length) throw new Error(pipelineErrors.join('; '))
   }
   const pilotAssertions: string[] = []
   let pilotValid = true
   let tasksEnabled = true
   const cleanup = async () => {
+    measuring = false
+    adapter?.dispose()
     if (sampleInterval) clearInterval(sampleInterval)
     sampleInterval = null
     await captureSampling
@@ -136,11 +141,10 @@ async function run(root: string, evidence: string): Promise<void> {
       }
     }
     try {
-      await drainPipeline()
+      await settlePipeline()
     } catch (error) {
       cleanupErrors.push(`pipeline.drain: ${error}`)
     }
-    adapter?.dispose()
     if (host) {
       try {
         await host.stopAll()

@@ -188,15 +188,12 @@ export async function startBenchmarkCapture(web: WebContents): Promise<Benchmark
     disposed = true
     observer.disconnect()
     let failure: unknown
+    // Cancellation discards profiles. Detaching the owned sessions stops their
+    // profilers without waiting to collect abandoned heap-profile data.
     try {
       await endTrace()
     } catch (error) {
       failure = error
-    }
-    try {
-      await stopSampling()
-    } catch {
-      /* Sampling can already be stopped after a successful capture. */
     }
     cdp.removeListener('message', onMessage)
     if (cdp.isAttached()) cdp.detach()
