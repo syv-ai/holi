@@ -176,6 +176,27 @@ afterEach(async () => {
   vi.useRealTimers()
 })
 
+test('StrictMode replay queues an initial replacement without overlapping reads or waiting for a poll', async () => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'team/one')
+  const initial = deferred<ReturnType<typeof page>>()
+  search.mockReturnValueOnce(initial.promise).mockResolvedValue(page('current-ready'))
+  const { result } = renderHook(() => useMail('account-a', true), {
+    reactStrictMode: true,
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <Provider store={store}>{children}</Provider>
+    ),
+  })
+  await act(async () => {})
+  expect(search).toHaveBeenCalledTimes(1)
+  await act(async () => {
+    initial.resolve(page('retired-initial'))
+  })
+  expect(search).toHaveBeenCalledTimes(2)
+  expect(result.current.list.kind).toBe('ready')
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['current-ready'])
+})
+
 test('a write invalidates a stalled poll without releasing its single-flight slot', async () => {
   const { result } = await mount()
   const pending = deferred<ReturnType<typeof page>>()

@@ -124,7 +124,7 @@ export function useMailList({
         return
       // Only the physical read that owns this slot may release it, even after a write.
       if (owner.pendingRead !== null) {
-        if (kind === 'manual') owner.reconcile = true
+        if (kind === 'manual' || kind === 'initial') owner.reconcile = true
         return
       }
       if (drafts) {
