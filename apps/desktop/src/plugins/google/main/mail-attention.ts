@@ -11,6 +11,7 @@ import type { Notice } from '../../../main/plugin-api'
 import { MAIL_ATTENTION_EVENT, OPEN_MAIL_EVENT, type MailAttentionSnapshot } from '../shared/types'
 import { GoogleApiError, type GoogleApi } from './api'
 import { fetchMailCounts } from './gmail'
+import { mapPooled } from './map-pooled'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const HISTORY_URL = `${BASE}/history`
@@ -445,25 +446,6 @@ async function safeHistoryId(api: GoogleApi): Promise<string | null> {
   } catch {
     return null
   }
-}
-
-async function mapPooled<T, R>(
-  values: readonly T[],
-  size: number,
-  work: (value: T) => Promise<R>,
-): Promise<R[]> {
-  const result = new Array<R>(values.length)
-  let next = 0
-  await Promise.all(
-    Array.from({ length: Math.min(size, values.length) }, async () => {
-      while (next < values.length) {
-        const index = next
-        next += 1
-        result[index] = await work(values[index]!)
-      }
-    }),
-  )
-  return result
 }
 
 function remember(seen: Set<string>, ids: readonly string[]): void {
