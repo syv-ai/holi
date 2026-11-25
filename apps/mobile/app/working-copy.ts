@@ -80,6 +80,7 @@ export async function prepareWorkingCopyTree(
     const policy = (raw: string): number => {
       try {
         const path = vaultRelPath(raw)
+        if (path !== raw) return -1
         const folded = vaultRelPath(raw.normalize('NFC').toLocaleLowerCase('en-US'))
         if (
           isSecretPath(path) ||

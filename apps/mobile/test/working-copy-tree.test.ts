@@ -168,9 +168,11 @@ describe('working-copy tree preparation', () => {
         prepareWorkingCopyTree(createNodeFiles(), native, { ...vault(base), remote: 'bad remote' }),
       ).rejects.toThrow()
       expect(selected).toBe(false)
-      await expect(
-        prepareWorkingCopyTree(createNodeFiles(), adapter(['bad\\name.md']), vault(base)),
-      ).rejects.toThrow('Invalid native candidate')
+      for (const path of ['bad\\name.md', 'dir//note.md']) {
+        await expect(
+          prepareWorkingCopyTree(createNodeFiles(), adapter([path]), vault(base)),
+        ).rejects.toThrow('Invalid native candidate')
+      }
       const failure = adapter([], async () => {
         throw new Error('Native refused unsafe entry')
       })
