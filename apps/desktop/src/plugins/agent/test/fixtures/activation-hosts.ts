@@ -75,7 +75,7 @@ export function activationHosts(
   const capabilities = createCapabilityHost({
     registry,
     rootFor: async (remote) => roots[remote as Remote] ?? null,
-    active: () => null,
+    get: (_remote) => null,
     core: noCoreServices,
     pluginEnabled: async (plugin, root) => (await host.serving(root)).has(plugin),
     claims: (root) => host.scanClaimsFor(root),

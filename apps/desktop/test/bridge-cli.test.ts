@@ -124,7 +124,7 @@ function bridge(table: Record<string, AnyCapability>, namespaces: string[]): Bri
       dispatch: createCapabilityHost({
         registry,
         rootFor: async () => dir,
-        active: () => null,
+        get: (_remote) => null,
         core: noCoreServices,
         pluginEnabled: async () => true,
         claims: async () => [],

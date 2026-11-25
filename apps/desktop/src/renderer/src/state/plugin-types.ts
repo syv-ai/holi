@@ -606,6 +606,8 @@ export interface RendererPlugin {
   /** Handlers for the plugin's events, by name. Subscribed at boot for every
    *  installed plugin. */
   events?: Readonly<Record<string, PluginEventHandler>>
+  /** Handlers for events that must reach this plugin regardless of the selected vault. */
+  backgroundEvents?: Readonly<Record<string, PluginEventHandler>>
   /** Its path claims, or an atom of them for a plugin whose claims follow
    *  what main tells it (the community plugins' files). */
   claims?: readonly PathClaim[] | Atom<readonly PathClaim[]>

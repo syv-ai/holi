@@ -35,6 +35,8 @@
         "scripts/windows-agent-smoke.ts",
         "scripts/browser-display-smoke.ts",
         "scripts/browser-frame-addressing-smoke.ts",
+        "scripts/multi-vault-smoke-main.ts",
+        "scripts/multi-vault-smoke-renderer.tsx",
         "scripts/code-captions-smoke-main.ts",
         "scripts/code-captions-smoke-renderer.tsx",
         "scripts/browser-display-fixture/index.html",

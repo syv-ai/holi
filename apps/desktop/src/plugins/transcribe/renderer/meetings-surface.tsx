@@ -16,7 +16,7 @@ import { meetingName } from './meeting-claim'
 import { MeetingHeader } from './meeting-header'
 import { MeetingScreen } from './meeting-screen'
 import { PastMeetings } from './past-meetings'
-import { recorderAtom } from './recorder'
+import { selectedRecorderAtom } from './recorder'
 import { meetingsAtom, shownMeetingIdAtom } from './state'
 
 export function MeetingsSurface({
@@ -58,7 +58,7 @@ export function MeetingsSurface({
  *  meeting itself. */
 function MeetingFolder({ path, visible }: { path: string; visible: boolean }): React.JSX.Element {
   const list = useAtomValue(meetingsAtom)
-  const rec = useAtomValue(recorderAtom)
+  const rec = useAtomValue(selectedRecorderAtom)
   // A meeting that moved away or was deleted is not this folder's, whatever
   // path its record last had (main follows folders by the id in them).
   const meeting = list?.find((m) => m.folder === path && m.away !== true)

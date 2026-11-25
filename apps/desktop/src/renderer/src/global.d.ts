@@ -17,13 +17,13 @@ declare global {
       trpc(op: TrpcOpWire): Promise<TrpcEnvelope>
       vault: {
         /** Each returns its unsubscribe closure. */
-        onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
-        onSyncState(cb: (state: SyncState) => void): () => void
+        onSnapshot(cb: (event: { remote: string; snapshot: VaultSnapshot }) => void): () => void
+        onSyncState(cb: (event: { remote: string; state: SyncState }) => void): () => void
         /** The large-file gate's held-back set; empty clears the callout. */
-        onHeldBack(cb: (files: HeldBackFile[]) => void): () => void
+        onHeldBack(cb: (event: { remote: string; files: HeldBackFile[] }) => void): () => void
         /** The paths a commit took, or null when a merged pull may have
          *  moved any file's history. */
-        onCommitted(cb: (paths: string[] | null) => void): () => void
+        onCommitted(cb: (event: { remote: string; paths: string[] | null }) => void): () => void
         /**
          * Main is quitting and wants the buffer on disk before it commits.
          * Freeze editors and write every dirty buffer, then acknowledge the

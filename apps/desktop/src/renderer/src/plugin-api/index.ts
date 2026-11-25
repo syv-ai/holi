@@ -70,6 +70,7 @@ export {
   vaultsAtom,
 } from '@/state/vaults'
 export { openDocumentAtom, openDocumentRequestAtom } from '@/state/open-document'
+export { /** @public */ openVaultAtom } from '@/state/vaults'
 export { openTabAtom } from '@/state/shell-tabs'
 // A sidebar row drags as the tab it opens (docs/features/tabs-panes.md, Drag targets).
 export { useTabDrag } from '@/features/shell/use-tab-drag'

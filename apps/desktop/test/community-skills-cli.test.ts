@@ -157,12 +157,15 @@ async function setup() {
     registry,
     rootFor: async (remote) =>
       remote === 'owner/vault-a' ? vaultA : remote === 'owner/vault-b' ? vaultB : null,
-    active: () => ({
-      remote: 'owner/vault-b',
-      root: vaultB,
-      snapshot: () => ({ files: [] }) as never,
-      refresh: async () => undefined,
-    }),
+    get: (remote) =>
+      remote === 'owner/vault-b'
+        ? {
+            remote: 'owner/vault-b',
+            root: vaultB,
+            snapshot: () => ({ files: [] }) as never,
+            refresh: async () => undefined,
+          }
+        : null,
     core: noCoreServices,
     pluginEnabled: async () => true,
     claims: async () => [],
