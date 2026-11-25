@@ -155,6 +155,19 @@ function calendarHeaderIds(part: RawPart | undefined, name: string): string[] | 
   return ids?.length ? ids : null
 }
 
+function messageIdClaims(part: RawPart | undefined) {
+  const values = (part?.headers ?? [])
+    .filter(({ name }) => name?.toLowerCase() === 'message-id')
+    .map(({ value }) => {
+      const ids = typeof value === 'string' ? normalizeMessageIds(value, true) : null
+      return ids?.length === 1 ? ids[0]! : null
+    })
+  return {
+    rfcId: values.length === 1 ? values[0]! : null,
+    claims: new Set(values.flatMap((id) => (id === null ? [] : [id]))),
+  }
+}
+
 function uniqueAddressHeader(part: RawPart | undefined, name: string): string | null {
   const headers = (part?.headers ?? []).filter((header) => header.name?.toLowerCase() === name)
   const value = headers.length === 1 ? headers[0]?.value : null
@@ -294,10 +307,11 @@ export async function fetchThreadCalendarPayloads(
   const owners = new Map<string, string | null>()
   const messages: CalendarMail[] = []
   for (const message of thread) {
-    const { parts, rfcId } = calendarEnvelope(api, message, scan)
-    // RFC Message-ID ownership is a property of the entire conversation,
-    // not of the calendar parts that happen to be relevant to this scope.
-    if (rfcId) owners.set(rfcId, owners.has(rfcId) ? null : message.id)
+    const { parts, rfcId, claims } = calendarEnvelope(api, message, scan)
+    // Duplicate headers cannot prove ownership, but each whole valid value
+    // still contests that ID. Include plain mail and drafts in this index.
+    for (const claim of claims)
+      owners.set(claim, claim === rfcId && !owners.has(claim) ? message.id : null)
     if (parts.length) messages.push(calendarMail(message, rfcId, parts))
   }
   return { messages, owners }
@@ -314,8 +328,7 @@ function calendarEnvelope(
     message.payload,
     message.labelIds?.includes('DRAFT') ?? false,
   )
-  const ids = calendarHeaderIds(message.payload, 'message-id')
-  return { parts, rfcId: ids?.length === 1 ? ids[0]! : null }
+  return { parts, ...messageIdClaims(message.payload) }
 }
 
 /** The send receipt may point to a different thread. If no usable receipt

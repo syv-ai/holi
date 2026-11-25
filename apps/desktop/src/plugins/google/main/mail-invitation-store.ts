@@ -22,6 +22,8 @@ type Delivery =
       organizer: string
       mailbox: string
       priorSentTimestamp?: number
+      /** Verified provider order, not proof that the parent still belongs to this invitation. */
+      confirmedSentTimestamp?: number
       receipt: { id: string | null; threadId: string | null } | null
     }
 
@@ -151,6 +153,10 @@ function isAttempt(value: unknown): value is InvitationAttempt {
       (typeof delivery.priorSentTimestamp === 'number' &&
         Number.isSafeInteger(delivery.priorSentTimestamp) &&
         delivery.priorSentTimestamp >= 0)) &&
+    (delivery.confirmedSentTimestamp === undefined ||
+      (typeof delivery.confirmedSentTimestamp === 'number' &&
+        Number.isSafeInteger(delivery.confirmedSentTimestamp) &&
+        delivery.confirmedSentTimestamp > 0)) &&
     (receipt === null ||
       (record(receipt) && nullableText(receipt.id) && nullableText(receipt.threadId)))
   )

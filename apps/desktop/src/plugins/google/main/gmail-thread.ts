@@ -1,5 +1,5 @@
 import type { GoogleApi } from './api'
-import { CalendarScanError, type RawPart } from './gmail-mime'
+import { CalendarScanError, createMimeWalk, type RawPart } from './gmail-mime'
 
 export const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
@@ -36,37 +36,6 @@ function validInternalDate(value: unknown): boolean {
   return millis >= -limit && millis < limit
 }
 
-function isFullPayload(payload: RawPart | undefined): boolean {
-  if (
-    !payload ||
-    !record(payload) ||
-    typeof payload.mimeType !== 'string' ||
-    !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:;[^\r\n]*)?$/.test(
-      payload.mimeType,
-    )
-  )
-    return false
-  const { body, parts } = payload
-  if (parts !== undefined && !Array.isArray(parts)) return false
-  if (
-    body !== undefined &&
-    (!record(body) ||
-      (body.size !== undefined && (!Number.isSafeInteger(body.size) || body.size < 0)) ||
-      (body.data !== undefined && typeof body.data !== 'string') ||
-      (body.attachmentId !== undefined &&
-        (typeof body.attachmentId !== 'string' || !body.attachmentId)))
-  )
-    return false
-  // A container may have an empty body, but the full response must include
-  // its children. A zero-byte leaf or attachment may have no inline data.
-  return (
-    Boolean(parts?.length) ||
-    (!/^multipart\//i.test(payload.mimeType) &&
-      body !== undefined &&
-      (body.size === 0 || body.data !== undefined || body.attachmentId !== undefined))
-  )
-}
-
 function validMessageMetadata(message: RawMessage): boolean {
   return (
     (message.labelIds === undefined ||
@@ -87,8 +56,7 @@ function fullMessageMatches(
     isGmailMessageId(message.id) &&
     message.id === id &&
     (threadId === null ? isGmailMessageId(message.threadId) : message.threadId === threadId) &&
-    validMessageMetadata(message) &&
-    isFullPayload(message.payload)
+    validMessageMetadata(message)
   )
 }
 
@@ -100,6 +68,7 @@ export function validateFullMessage(
 ): ThreadMessage {
   if (!fullMessageMatches(message, id, threadId))
     throw new CalendarScanError('Gmail returned an invalid full message response')
+  createMimeWalk(undefined, 'full')(message.payload, () => {})
   return message
 }
 
@@ -126,6 +95,7 @@ export function threadMessages(
     throw invalidThreadResponse(format)
   if (thread.messages.length > 2048)
     throw new CalendarScanError('Gmail thread messages exceed the scan limits')
+  const validate = format === 'full' ? createMimeWalk(undefined, 'full') : null
   const seen = new Set<string>()
   return thread.messages.map((message) => {
     if (
@@ -140,6 +110,7 @@ export function threadMessages(
           !validMessageMetadata(message))
     )
       throw invalidThreadResponse(format)
+    validate?.(message.payload, () => {})
     seen.add(message.id)
     return message as ThreadMessage
   })
