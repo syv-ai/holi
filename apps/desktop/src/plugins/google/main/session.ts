@@ -16,6 +16,12 @@ import { post, TOKEN_URL } from './loopback-flow'
 import { resolveClient, type GoogleClient } from './credentials'
 import type { StoredGoogleAuth } from './token-store'
 
+export const GOOGLE_CALENDAR_READ_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
+export const GOOGLE_CALENDAR_WRITE_SCOPE = 'https://www.googleapis.com/auth/calendar.events'
+// Choosing an existing file needs access beyond drive.file. The same grant
+// must let Holi add an individual viewer, not just find the file.
+export const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive'
+
 /**
  * The scopes Holi asks Google for (docs/features/google.md).
  *
@@ -43,7 +49,7 @@ export const GOOGLE_SCOPES = [
   'openid',
   'email',
   'https://www.googleapis.com/auth/gmail.modify',
-  'https://www.googleapis.com/auth/calendar.readonly',
+  GOOGLE_CALENDAR_READ_SCOPE,
   'https://www.googleapis.com/auth/contacts.readonly',
   'https://www.googleapis.com/auth/contacts.other.readonly',
   // Calendar writes: the UI can explicitly create a meeting with guests and
@@ -52,7 +58,8 @@ export const GOOGLE_SCOPES = [
   // reschedule/unschedule capabilities refuse attendee events; approved raw
   // API writes can modify them. `calendar.readonly` stays alongside this scope
   // because the events scope does not read the full list.
-  'https://www.googleapis.com/auth/calendar.events',
+  GOOGLE_CALENDAR_WRITE_SCOPE,
+  GOOGLE_DRIVE_SCOPE,
 ]
 
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
@@ -263,6 +270,10 @@ export class GoogleSession {
       ...auth,
       accessToken: String(body.access_token),
       expiresAt: this.#now() + Number(body.expires_in) * 1000,
+      // OAuth may omit scope if unchanged. An explicit scope is the refreshed
+      // token's grant and must be checked again before any attachment I/O.
+      scopes:
+        typeof body.scope === 'string' ? body.scope.split(/\s+/).filter(Boolean) : auth.scopes,
       // **Rotation.** Google may hand back a new refresh token; when it does,
       // the old one is dead and persisting it would break the next refresh.
       // When it does not, the existing one stays valid.

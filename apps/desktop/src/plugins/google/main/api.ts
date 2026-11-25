@@ -40,6 +40,14 @@ export class GoogleApiError extends Error {
   }
 }
 
+class UncertainGoogleWriteError extends GoogleApiError {}
+
+/** A write that reached the transport but did not receive a definitive verdict.
+ * Errors from the reads in a write's validation are not write outcomes. */
+export function isUncertainGoogleWrite(error: unknown): boolean {
+  return error instanceof UncertainGoogleWriteError
+}
+
 export interface GoogleApiDeps {
   /** `GoogleSession.getAccessToken` — refreshes and single-flights on its own. */
   accessToken: () => Promise<string>
@@ -49,6 +57,42 @@ export interface GoogleApiDeps {
 
 /** A hung request must not stall a panel with no error and nothing to cancel. */
 const REQUEST_TIMEOUT_MS = 20_000
+
+type RequestOptions = { ifMatch?: string; signal?: AbortSignal }
+
+/** A caller's deadline includes waiting for shared work, such as token refresh.
+ * It cancels the wait, not work another caller may still need. */
+export async function untilGoogleAbort<T>(
+  signal: AbortSignal | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (!signal) return work()
+  signal.throwIfAborted()
+  let abort!: () => void
+  const expired = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+  })
+  try {
+    return await Promise.race([
+      expired,
+      Promise.resolve().then(() => {
+        signal.throwIfAborted()
+        return work()
+      }),
+    ])
+  } finally {
+    signal.removeEventListener('abort', abort)
+  }
+}
+
+function requestSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
+}
+
+export const googleReconnectNeeded = (error: unknown): boolean =>
+  error instanceof GoogleApiError && (error.code === 'scope' || error.code === 'reconnect')
 
 /** Query parameters. An **array value means a repeated key** — see `get`. */
 export type GoogleParams = Record<string, string | string[] | undefined>
@@ -60,7 +104,12 @@ export class GoogleApi {
     this.#deps = deps
   }
 
-  async get<T>(url: string, params: GoogleParams = {}): Promise<T> {
+  async get<T>(
+    url: string,
+    params: GoogleParams = {},
+    validate?: () => Promise<void>,
+    options?: { signal?: AbortSignal },
+  ): Promise<T> {
     const query = new URLSearchParams()
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined) continue
@@ -73,10 +122,26 @@ export class GoogleApi {
     }
     const full = query.size > 0 ? `${url}?${query.toString()}` : url
 
-    let token: string
+    const token = await this.#accessToken(options?.signal)
+    if (validate) await untilGoogleAbort(options?.signal, validate)
+    const signal = requestSignal(options?.signal)
+    const res = await untilGoogleAbort(signal, () => {
+      this.#deps.beforeRequest?.()
+      return (this.#deps.fetch ?? globalThis.fetch)(full, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        signal,
+      })
+    })
+
+    if (!res.ok) throw await classify(res, signal)
+    return (await untilGoogleAbort(signal, () => res.json())) as T
+  }
+
+  async #accessToken(signal?: AbortSignal): Promise<string> {
     try {
-      token = await this.#deps.accessToken()
+      return await untilGoogleAbort(signal, () => this.#deps.accessToken())
     } catch (err) {
+      signal?.throwIfAborted()
       // A dead grant surfaces here rather than as a 401, because the refresh
       // failed before a request was ever made.
       throw new GoogleApiError(
@@ -85,60 +150,57 @@ export class GoogleApi {
         err instanceof Error ? err.message : 'not connected to Google',
       )
     }
-
-    const res = await (this.#deps.fetch ?? globalThis.fetch)(full, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-
-    if (!res.ok) throw await classify(res)
-    return (await res.json()) as T
   }
 
-  /**
-   * The shared write path: token, request, and Google's refusal turned into a
-   * `GoogleApiError`. Each verb only decides what to do with a success.
-   *
-   * No query-parameter path, deliberately: every write carries its arguments in
-   * the body, bar the literal `?sendUpdates=none` the calendar appends itself.
-   */
-  async #write(
+  /** Mint the token, then validate before sending it. A validation refusal
+   * is not an uncertain write. Each caller decides what to do with the response. */
+  async #send(
     method: string,
     url: string,
     body?: unknown,
     validate?: () => Promise<void>,
-  ): Promise<Response> {
-    let token: string
-    try {
-      token = await this.#deps.accessToken()
-    } catch (err) {
-      // A dead grant surfaces here rather than as a 401, because the refresh
-      // failed before a request was ever made.
-      throw new GoogleApiError(
-        'reconnect',
-        401,
-        err instanceof Error ? err.message : 'not connected to Google',
-      )
-    }
-
-    this.#deps.beforeRequest?.()
-    await validate?.()
-    const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
+    options?: RequestOptions,
+  ) {
+    const token = await this.#accessToken(options?.signal)
+    if (validate) await untilGoogleAbort(options?.signal, validate)
+    options?.signal?.throwIfAborted()
+    const init: RequestInit = {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(options?.ifMatch ? { 'If-Match': options.ifMatch } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+    }
+    this.#deps.beforeRequest?.()
+    const signal = requestSignal(options?.signal)
+    const isWrite = method !== 'GET' && method !== 'HEAD'
+    let res: Response
+    let dispatched = false
+    try {
+      res = await untilGoogleAbort(signal, () => {
+        dispatched = true
+        return (this.#deps.fetch ?? globalThis.fetch)(url, { ...init, signal })
+      })
+    } catch (error) {
+      if (!dispatched) throw error
+      const Failure = isWrite ? UncertainGoogleWriteError : GoogleApiError
+      throw new Failure('unknown', 0, 'Google did not return a response')
+    }
 
     // A 403 here is most often `insufficientPermissions` (a grant older than
     // GOOGLE_SCOPES), which `classify` maps to `scope` so the UI can offer the
     // reconnect that fixes it. See `GoogleSession.missingScopes`.
-    if (!res.ok) throw await classify(res)
-    return res
+    if (!res.ok) {
+      const error = await classify(res, signal)
+      if (isWrite && (res.status === 408 || res.status >= 500)) {
+        throw new UncertainGoogleWriteError(error.code, error.status, error.message)
+      }
+      throw error
+    }
+    return { res, signal }
   }
 
   /**
@@ -150,10 +212,10 @@ export class GoogleApi {
    * mailbox no longer has.
    */
   async post(url: string, body: unknown): Promise<void> {
-    const res = await this.#write('POST', url, body)
+    const { res, signal } = await this.#send('POST', url, body)
     // Drained rather than ignored: leaving a body unread holds the connection
     // open. Whether it parses is not this function's business.
-    await res.text().catch(() => '')
+    await untilGoogleAbort(signal, () => res.text()).catch(() => '')
   }
 
   /**
@@ -164,14 +226,14 @@ export class GoogleApi {
    * event must not be able to erase its description.
    */
   async patch(url: string, body: unknown): Promise<void> {
-    const res = await this.#write('PATCH', url, body)
-    await res.text().catch(() => '')
+    const { res, signal } = await this.#send('PATCH', url, body)
+    await untilGoogleAbort(signal, () => res.text()).catch(() => '')
   }
 
   /** A delete: `events.delete`. Answers 204 with no body. */
   async del(url: string): Promise<void> {
-    const res = await this.#write('DELETE', url)
-    await res.text().catch(() => '')
+    const { res, signal } = await this.#send('DELETE', url)
+    await untilGoogleAbort(signal, () => res.text()).catch(() => '')
   }
 
   /**
@@ -185,10 +247,10 @@ export class GoogleApi {
    * email to a real person once the caller retries.
    */
   async postJson<T>(url: string, body: unknown): Promise<T | null> {
-    const res = await this.#write('POST', url, body)
+    const { res, signal } = await this.#send('POST', url, body)
     // The catch is the design, not defensiveness: past this line Google has
     // already done the thing.
-    return await res.json().catch(() => null)
+    return await untilGoogleAbort(signal, () => res.json()).catch(() => null)
   }
 
   /**
@@ -202,8 +264,8 @@ export class GoogleApi {
    * worked, and we could not read what it said.
    */
   async putJson<T>(url: string, body: unknown): Promise<T | null> {
-    const res = await this.#write('PUT', url, body)
-    return await res.json().catch(() => null)
+    const { res, signal } = await this.#send('PUT', url, body)
+    return await untilGoogleAbort(signal, () => res.json()).catch(() => null)
   }
 
   /**
@@ -211,15 +273,17 @@ export class GoogleApi {
    * `passthrough.ts` has already built and judged. JSON comes back parsed, an
    * empty answer (a 204) as `null`, anything else as its text. Read as text
    * first because a 2xx is a done thing whether or not its body parses.
+   * `validate` also applies to GET, after token refresh and before I/O.
    */
   async request(
     method: string,
     url: string,
     body?: unknown,
     validate?: () => Promise<void>,
+    options?: RequestOptions,
   ): Promise<unknown> {
-    const res = await this.#write(method, url, body, validate)
-    const text = await res.text().catch(() => '')
+    const { res, signal } = await this.#send(method, url, body, validate, options)
+    const text = await untilGoogleAbort(signal, () => res.text()).catch(() => '')
     if (text === '') return null
     try {
       return JSON.parse(text) as unknown
@@ -263,8 +327,8 @@ export class GoogleApi {
  * *scope* or the quota is not. Sending someone to reconnect for a rate limit
  * sends them to fix the wrong thing.
  */
-async function classify(res: Response): Promise<GoogleApiError> {
-  const body = await res.text().catch(() => '')
+async function classify(res: Response, signal: AbortSignal): Promise<GoogleApiError> {
+  const body = await untilGoogleAbort(signal, () => res.text()).catch(() => '')
   const reason = reasonOf(body)
 
   if (res.status === 401) {
@@ -298,7 +362,13 @@ function reasonOf(body: string): string | null {
     if (parsed === null || typeof parsed !== 'object') return null
     const error = (parsed as { error?: unknown }).error
     if (error === null || typeof error !== 'object') return null
-    const e = error as { errors?: { reason?: string }[]; status?: string }
+    const e = error as {
+      errors?: { reason?: string }[]
+      details?: { reason?: string }[]
+      status?: string
+    }
+    if (e.details?.some((detail) => detail?.reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT'))
+      return 'ACCESS_TOKEN_SCOPE_INSUFFICIENT'
     return e.errors?.[0]?.reason ?? e.status ?? null
   } catch {
     return null
