@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
 import { loadavg } from 'node:os'
 import { processObservables } from './vault-snapshot-bench-metrics.mjs'
 import { freezeMeasurement, trialSucceeded } from './vault-snapshot-bench-analysis.mjs'
@@ -322,6 +322,7 @@ async function run(root: string, evidence: string): Promise<void> {
         void active?.refresh()
       },
       pluginReady: () => true,
+      fingerprint: async () => contentFingerprint(paths.vault),
     })
     host.setDisplayed(remote)
     active = await openActiveVault({
@@ -687,6 +688,25 @@ async function run(root: string, evidence: string): Promise<void> {
   } catch (error) {
     await finish(error)
   }
+}
+
+function contentFingerprint(root: string): string {
+  const hash = createHash('sha256')
+  const walk = (directory: string, prefix = '') => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      if (entry.name === '.git') continue
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) walk(path, relative)
+      else if (entry.isFile()) {
+        hash.update(relative).update('\\0').update(readFileSync(path)).update('\\0')
+      }
+    }
+  }
+  walk(root)
+  return hash.digest('hex')
 }
 
 function digest(text: string): string {

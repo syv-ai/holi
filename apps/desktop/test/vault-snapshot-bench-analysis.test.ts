@@ -40,7 +40,7 @@ function result(mode: 'baseline' | 'candidate', elapsed: number, rate: number) {
       cleanupErrors: [] as string[],
       cpuSeconds: (rate * elapsed) / 60,
       sampleElapsedSeconds: elapsed,
-      protocolRevision: 3,
+      protocolRevision: 4,
       mainBundleSha256: 'test-source',
       scanDurationsMs: [10, 11, 12],
       nativeUserChangesLatency: {
@@ -49,6 +49,42 @@ function result(mode: 'baseline' | 'candidate', elapsed: number, rate: number) {
         p95Ms: 100,
       },
       rendererSends: { count: mode === 'baseline' ? 6 : 0, bytes: mode === 'baseline' ? 1000 : 0 },
+      allocation: Object.fromEntries(
+        ['main', 'renderer'].map((process) => [
+          process,
+          {
+            sampledBytes: 1024,
+            elapsedSeconds: elapsed,
+            gcCount: 0,
+            gcDurationMs: 0,
+          },
+        ]),
+      ),
+      physicalGpu: {
+        available: true,
+        source: 'test',
+        scope: 'host',
+        samples: [
+          { at: 1, utilizationPercent: 0 },
+          { at: 2, utilizationPercent: 1 },
+        ],
+      },
+      publicationLatencyMs: [10, 11],
+      fullCorrectness: Object.fromEntries(
+        [
+          'initialSnapshot',
+          'unchangedHeal',
+          'restoredMtimeNote',
+          'taskChanges',
+          'fileCreateDeleteRename',
+          'settingsChanges',
+          'pluginEnablement',
+          'explicitRefresh',
+          'droppedWatcherRecovery',
+          'vaultAba',
+          'staleRemote',
+        ].map((key) => [key, true]),
+      ),
       samples: [
         { at: 20, processes: rows(0) },
         { at: 20 + elapsed / 2, processes: rows(elapsed / 2) },
@@ -137,7 +173,7 @@ describe('snapshot benchmark analysis', () => {
     expect(analysis.sourceVersion.sha256['vault-snapshot-bench-analysis.mjs']).toMatch(
       /^[a-f0-9]{64}$/,
     )
-    expect(analysis.protocolRevision).toBe(3)
+    expect(analysis.protocolRevision).toBe(4)
   })
 
   it.each([115, 1025])(

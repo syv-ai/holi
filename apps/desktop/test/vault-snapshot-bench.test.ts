@@ -44,6 +44,31 @@ describe('real snapshot benchmark adapter', () => {
     expect(adapter.metrics().suppressed).toBe(1)
   })
 
+  it('detects changed file bodies when the snapshot metadata is unchanged', async () => {
+    let body = 'before'
+    const host = {
+      invalidate: vi.fn(),
+      reconcile: vi.fn(),
+      snapshot: vi.fn(),
+      scanClaimsFor: vi.fn(async () => []),
+    }
+    const send = vi.fn()
+    const adapter = createSnapshotBenchAdapter({
+      mode: 'candidate',
+      remote: vault.remote,
+      getVault: () => vault,
+      host,
+      send,
+      refresh: vi.fn(),
+      fingerprint: async () => body,
+    })
+    await adapter.onSnapshot(snapshot())
+    body = 'after, with restored metadata'
+    await adapter.onSnapshot(snapshot())
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(adapter.metrics().sent).toBe(2)
+  })
+
   it('sends forced refresh, changed fields, A-to-B-to-A, and after an epoch', async () => {
     const { adapter, send } = fixture()
     await adapter.onSnapshot(snapshot(['a']))

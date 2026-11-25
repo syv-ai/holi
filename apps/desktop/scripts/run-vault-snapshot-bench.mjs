@@ -24,6 +24,7 @@ import { analyzePairs, validatePairs, sourceVersion } from './vault-snapshot-ben
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const cli = process.argv.slice(2)
 const pilot = cli.includes('--pilot')
+const smoke = cli.includes('--smoke')
 const evidence = resolve(
   cli.includes('--') ? cli[cli.indexOf('--') + 1] : '/tmp/holi-544-verification-20261116',
 )
@@ -53,10 +54,10 @@ const protocol = {
     ],
     appliesBeforeFullStudy: true,
   },
-  mode: pilot ? 'pilot-not-gate-evidence' : 'full-gate-run',
+  mode: smoke ? 'smoke-not-evidence' : pilot ? 'pilot-not-gate-evidence' : 'full-gate-run',
   sizes,
-  trialsPerSize: pilot ? 1 : 5,
-  trial: pilot ? short : full,
+  trialsPerSize: pilot || smoke ? 1 : 5,
+  trial: smoke ? { warmupSeconds: 1, durationSeconds: 4 } : pilot ? short : full,
   sequence: 'paired baseline/candidate; order alternates by pair',
   thresholds: {
     cpu: 'primary large workload ONLY: >=20% relative and >=0.30 app CPU-seconds/minute reduction, paired 95% CI supporting each; small is a control, not a benefit veto; normalize every trial using actual sample elapsed seconds before mean and CI',
@@ -281,7 +282,7 @@ async function runTrial({ electron, rendererOut, root, evidenceDir, sizeName, si
   await cp(rendererOut, join(trialRoot, 'renderer'), { recursive: true })
   for (const file of ['main.cjs', 'renderer.html', 'preload.cjs', 'package.json'])
     await copyFile(join(root, file), join(trialRoot, file))
-  const config = pilot ? short : full
+  const config = smoke ? { warmupSeconds: 1, durationSeconds: 4 } : pilot ? short : full
   const env = {
     ...safeEnv,
     HOME: isolatedHome,
@@ -305,7 +306,7 @@ async function runTrial({ electron, rendererOut, root, evidenceDir, sizeName, si
       mode,
       size: sizeName,
       ...config,
-      pilot,
+      pilot: pilot || smoke,
     }),
   }
   const log = createWriteStream(join(evidenceDir, 'electron.log'), { flags: 'w' })

@@ -16,12 +16,14 @@ export interface SnapshotAdapterOptions {
   onSend?: (serialized: string) => void
   refresh: () => void
   pluginReady?: () => boolean
+  fingerprint?: () => Promise<string>
   onPluginCallback?: (kind: 'invalidate' | 'reconcile' | 'snapshot', elapsedMs: number) => void
 }
 
 /** Mirrors main/index.ts snapshot callback order; candidate mode gates only the renderer payload. */
 export function createSnapshotBenchAdapter(options: SnapshotAdapterOptions) {
   let lastSerialized: string | null = null
+  let lastFingerprint: string | null = null
   let runtimeEpoch = 0
   let presentationEpoch = 0
   let disposed = false
@@ -35,6 +37,7 @@ export function createSnapshotBenchAdapter(options: SnapshotAdapterOptions) {
     runtimeEpoch++
     presentationEpoch++
     lastSerialized = null
+    lastFingerprint = null
   }
 
   async function onSnapshot(snapshot: VaultSnapshot, force = false): Promise<void> {
@@ -43,13 +46,19 @@ export function createSnapshotBenchAdapter(options: SnapshotAdapterOptions) {
     const runtime = runtimeEpoch
     const presentation = presentationEpoch
     const serialized = JSON.stringify(snapshot)
+    // Candidate-only content inspection: the baseline pays no fingerprint cost.
+    const fingerprint =
+      options.mode === 'candidate' && options.fingerprint ? await options.fingerprint() : null
+    if (disposed || runtime !== runtimeEpoch || presentation !== presentationEpoch) return
     const send =
       options.mode === 'baseline' ||
       force ||
       lastSerialized === null ||
-      lastSerialized !== serialized
+      lastSerialized !== serialized ||
+      (fingerprint !== null && fingerprint !== lastFingerprint)
     if (send) {
       lastSerialized = serialized
+      lastFingerprint = fingerprint
       sent++
       payloadBytes += Buffer.byteLength(serialized)
       options.send({ remote: options.remote, snapshot })

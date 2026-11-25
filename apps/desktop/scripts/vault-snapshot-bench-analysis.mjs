@@ -212,9 +212,11 @@ export function analyzePairs(results, { pilot = false } = {}) {
             row.sampledBytes >= 0 &&
             finite(row.elapsedSeconds) &&
             row.elapsedSeconds > 0 &&
-            finite(row.gcCount) &&
+            Number.isInteger(row.gcCount) &&
             row.gcCount >= 0 &&
-            finite(row.gcDurationMs) &&
+            Number.isInteger(row.gcCount) &&
+            row.gcCount >= 0 &&
+            Number.isInteger(row.gcDurationMs) &&
             row.gcDurationMs >= 0
           )
         })
@@ -222,10 +224,12 @@ export function analyzePairs(results, { pilot = false } = {}) {
         const gpu = value?.physicalGpu
         return (
           gpu &&
-          typeof gpu.available === 'boolean' &&
+          gpu.available === true &&
           typeof gpu.source === 'string' &&
+          gpu.source.trim().length > 0 &&
           ['host', 'owned'].includes(gpu.scope) &&
           Array.isArray(gpu.samples) &&
+          gpu.samples.length >= 2 &&
           gpu.samples.every(
             (sample) =>
               finite(sample?.at) &&
@@ -234,13 +238,24 @@ export function analyzePairs(results, { pilot = false } = {}) {
               sample.utilizationPercent >= 0 &&
               sample.utilizationPercent <= 100,
           ) &&
-          (gpu.available || typeof gpu.missingReason === 'string')
+          gpu.samples.every((sample, index) => index === 0 || sample.at > gpu.samples[index - 1].at)
         )
       }
-      const correctnessKeys = Object.keys(baseline?.pilotCorrectness ?? {})
+      const correctnessKeys = [
+        'initialSnapshot',
+        'unchangedHeal',
+        'restoredMtimeNote',
+        'taskChanges',
+        'fileCreateDeleteRename',
+        'settingsChanges',
+        'pluginEnablement',
+        'explicitRefresh',
+        'droppedWatcherRecovery',
+        'vaultAba',
+        'staleRemote',
+      ]
       const completeCorrectness = (value) =>
         value?.fullCorrectness &&
-        correctnessKeys.length > 0 &&
         correctnessKeys.every((key) => value.fullCorrectness[key] === true) &&
         Object.values(value.fullCorrectness).every((item) => item === true)
       const completePublication = (value) =>
@@ -251,6 +266,9 @@ export function analyzePairs(results, { pilot = false } = {}) {
         completeAllocation(value) &&
         completeGpu(value) &&
         completePublication(value) &&
+        processObservables(value) !== null &&
+        processObservables(value, (row) => /gpu/i.test(`${row.type} ${row.name ?? ''}`)) !== null &&
+        processObservables(value, (row) => !['Browser', 'Tab'].includes(row.type)) !== null &&
         (pilot || completeCorrectness(value))
       const evidenceValid = completeEvidence(baseline) && completeEvidence(candidate)
       const valid = trialValid && evidenceValid
@@ -378,6 +396,8 @@ export function analyzePairs(results, { pilot = false } = {}) {
       memoryRegression: memory,
       gpuRegression: gpu,
       helperCountDeltas: helperDeltas,
+      publicationLatencySavingsMs: publicationSavings,
+      publicationLatencyRelativeSavings: publicationRelative,
       benefitGates: {
         absoluteCpuSavings: benefitGate(cpu, 0.3),
         largePublicationLatencySavings:
@@ -390,8 +410,6 @@ export function analyzePairs(results, { pilot = false } = {}) {
                 ? 'fail'
                 : 'inconclusive'
             : 'not-primary',
-        publicationLatencySavingsMs: publicationSavings,
-        publicationLatencyRelativeSavings: publicationRelative,
         relativeCpuSavings: benefitGate(cpuRelative, 0.2),
       },
       guardrailGates: {
