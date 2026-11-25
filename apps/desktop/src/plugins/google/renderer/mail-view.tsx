@@ -51,7 +51,6 @@ import {
   Video,
   X,
 } from 'lucide-react'
-import { toast } from 'sonner'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   activeRemoteAtom,
@@ -606,24 +605,14 @@ function MailViewAccount({ accountSub, visible }: { accountSub: string | null; v
    * reappear.
    */
   const removeThreads = async (ids: readonly string[], kind: 'archive' | 'trash') => {
-    const done = await Promise.all(
+    const done = await Promise.allSettled(
       ids.map((id) => removeThread(id, () => call((r) => googleCap[kind](r, { id })))),
     )
-    const moved = ids.filter((_, index) => done[index])
+    const moved = ids.filter((_, index) => done[index]?.status === 'fulfilled' && done[index].value)
     if (moved.length === 0) return
-    const subject = moved.length === 1 ? 'Thread' : `${moved.length} threads`
-    toast(kind === 'archive' ? `${subject} archived` : `${subject} moved to Trash`, {
-      duration: Infinity,
-      closeButton: true,
-      action: {
-        label: 'Undo',
-        onClick: () => {
-          const inverse = kind === 'archive' ? googleCap.unarchive : googleCap.untrash
-          void Promise.all(moved.map((id) => write(() => call((r) => inverse(r, { id }))))).finally(
-            load,
-          )
-        },
-      },
+    mailList.offerRemovalUndo(kind, moved, (id) => {
+      const inverse = kind === 'archive' ? googleCap.unarchive : googleCap.untrash
+      return call((r) => inverse(r, { id }))
     })
   }
 

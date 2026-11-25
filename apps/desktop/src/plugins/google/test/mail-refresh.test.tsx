@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, renderHook, screen } from '@testing-library/react'
 import { render } from '@/test/render'
 import userEvent from '@testing-library/user-event'
+import { Toaster, toast } from 'sonner'
 import { googleRenderer } from '../renderer'
 import { Provider, createStore } from 'jotai'
 import type { ReactNode } from 'react'
@@ -11,6 +12,7 @@ import { useMail, type ThreadSummary } from '../renderer/mail/use-mail'
 
 const search = vi.fn()
 const archive = vi.fn()
+const unarchive = vi.fn()
 const counts = vi.fn()
 const categories = vi.fn()
 const marker = vi.fn()
@@ -34,24 +36,15 @@ vi.mock('@/lib/trpc', () => ({
                 current: 'account-a',
               }
             case 'google.search':
-              return Promise.resolve(search(input.remote, params)).then((answer) => {
-                if (!params.uiList) return answer
-                const request = params.uiList as { loadedIds: string[]; refresh?: boolean }
-                return {
-                  ...answer,
-                  uiList: {
-                    ...answer.uiList,
-                    mode: request.refresh ? 'coverage' : 'page',
-                    revalidatedIds: request.refresh ? request.loadedIds : [],
-                  },
-                }
-              })
+              return search(input.remote, params)
             case 'google.contacts':
             case 'google.sendAs':
             case 'google.drafts':
               return []
             case 'google.archive':
               return archive(input.remote, params)
+            case 'google.unarchive':
+              return unarchive(input.remote, params)
             case 'google.mailCounts':
               return counts(input.remote)
             case 'google.categoryCounts':
@@ -128,20 +121,22 @@ function delta(
   return {
     ...pageWithToken(token, ...ids),
     uiList: {
-      mode: 'coverage' as const,
+      mode: 'delta' as const,
       cursor: { ...cursor, historyId: '101' },
       removedIds: removed,
-      revalidatedIds: loaded,
+      revalidatedIds: loaded.filter((id) => ids.includes(id) || removed.includes(id)),
     },
   }
 }
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (cause: Error) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 async function advance(ms = 30_000) {
@@ -167,12 +162,14 @@ beforeEach(() => {
   vi.useFakeTimers()
   search.mockReset().mockResolvedValue(page('existing'))
   archive.mockReset().mockResolvedValue({ ok: true })
+  unarchive.mockReset().mockResolvedValue({ ok: true })
   counts.mockReset().mockResolvedValue({ unread: 16, total: 340 })
   categories.mockReset().mockResolvedValue({ updates: { count: 3, more: false } })
   marker.mockReset().mockResolvedValue({ ok: true })
   annotations.mockReset().mockResolvedValue({})
 })
 afterEach(() => {
+  toast.dismiss()
   cleanup()
   vi.useRealTimers()
 })
@@ -610,5 +607,104 @@ test.each(['sidebar', 'surface'] as const)(
       ).toHaveTextContent('5')
       expect(screen.getByRole('button', { name: 'Choose a mailbox' })).toHaveTextContent('Updates')
     }
+  },
+)
+
+test('manual refresh queues behind a stalled poll and stays single flight across timers', async () => {
+  const { result } = await mount()
+  const poll = deferred<ReturnType<typeof page>>()
+  const manual = deferred<ReturnType<typeof page>>()
+  search.mockReturnValueOnce(poll.promise).mockReturnValueOnce(manual.promise)
+  await advance()
+  await act(async () => result.current.refresh())
+  await advance(90_000)
+  expect(search).toHaveBeenCalledTimes(2)
+  expect(result.current.threads.map((row) => row.id)).toEqual(['existing'])
+  await act(async () => poll.resolve(delta(['incoming'], ['existing'])))
+  expect(search).toHaveBeenCalledTimes(3)
+  await advance(90_000)
+  expect(search).toHaveBeenCalledTimes(3)
+  await act(async () => manual.resolve(delta(['manual'], ['existing', 'incoming'])))
+  expect(result.current.threads.map((row) => row.id)).toEqual(['existing', 'incoming', 'manual'])
+})
+
+test('mixed later-page bulk failures recover only refused rows after all concurrent writes settle', async () => {
+  search
+    .mockResolvedValueOnce(pageWithToken('next', 'first'))
+    .mockResolvedValueOnce(page('later-a', 'later-b'))
+  const { result } = await mount()
+  await act(async () => result.current.loadMore())
+  const refused = deferred<{ ok: true }>()
+  const moved = deferred<{ ok: true }>()
+  const concurrent = deferred<{ ok: true }>()
+  archive.mockImplementation((_remote, { id }) =>
+    id === 'later-a' ? refused.promise : id === 'later-b' ? moved.promise : concurrent.promise,
+  )
+  // Coverage returns the surviving candidate even though it is beyond the first page.
+  search.mockImplementation(async (_remote, params) => ({
+    ...page(...(params.uiList.loadedIds.includes('later-a') ? ['later-a'] : [])),
+    uiList: {
+      mode: 'coverage',
+      cursor,
+      revalidatedIds: params.uiList.loadedIds,
+      removedIds: params.uiList.loadedIds.filter((id: string) => id !== 'later-a'),
+    },
+  }))
+  let bulk!: Promise<void>
+  let other!: Promise<void>
+  await act(async () => {
+    bulk = result.current.removeThreads(['later-a', 'later-b'], 'archive')
+    other = result.current.removeThreads(['first'], 'archive')
+  })
+  await act(async () => refused.reject(new Error('Refused')))
+  await advance(90_000)
+  expect(search).toHaveBeenCalledTimes(2)
+  await act(async () => {
+    moved.resolve({ ok: true })
+    await bulk
+  })
+  expect(search).toHaveBeenCalledTimes(2)
+  await act(async () => {
+    concurrent.resolve({ ok: true })
+    await other
+  })
+  expect(result.current.threads.map((row) => row.id)).toEqual(['later-a'])
+  expect(result.current.writeError).toBeTruthy()
+  expect(search.mock.lastCall?.[1].uiList).not.toHaveProperty('cursor')
+})
+
+test('Undo restores later-page mail through authoritative coverage', async () => {
+  render(<Toaster />)
+  search.mockResolvedValueOnce(pageWithToken('next', 'first')).mockResolvedValueOnce(page('later'))
+  const { result } = await mount()
+  await act(async () => result.current.loadMore())
+  await act(async () => result.current.removeThreads(['later'], 'archive'))
+  await advance(1)
+  search.mockImplementation(async (_remote, params) => ({
+    ...page('first', ...(params.uiList.loadedIds.includes('later') ? ['later'] : [])),
+    uiList: { mode: 'coverage', cursor, revalidatedIds: params.uiList.loadedIds, removedIds: [] },
+  }))
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Undo' })))
+  expect(unarchive).toHaveBeenCalledWith('team/one', { id: 'later' })
+  expect(result.current.threads.map((row) => row.id)).toEqual(['first', 'later'])
+  expect(search.mock.lastCall?.[1].uiList).not.toHaveProperty('cursor')
+})
+
+test.each(['folder', 'filter', 'hidden'] as const)(
+  'Undo is visibly dismissed when its %s owner retires',
+  async (change) => {
+    render(<Toaster />)
+    const { result, rerender } = await mount()
+    await act(async () => result.current.removeThreads(['existing'], 'archive'))
+    await advance(1)
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
+    await act(async () => {
+      if (change === 'folder') result.current.setFolder('sent')
+      else if (change === 'filter') result.current.setUnreadOnly(true)
+      else rerender({ account: 'account-a', visible: false })
+    })
+    await advance(1_000)
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull()
+    expect(unarchive).not.toHaveBeenCalled()
   },
 )

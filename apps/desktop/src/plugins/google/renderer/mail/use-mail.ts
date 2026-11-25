@@ -9,7 +9,6 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAtomValue } from 'jotai'
-import { toast } from 'sonner'
 import { activeRemoteAtom } from '@/plugin-api'
 import { googleCap } from '../google-cap'
 import { useMailMarkers } from '../use-mail-markers'
@@ -187,7 +186,7 @@ export function useMail(account: string | null, enabled = true) {
    */
   const removeThreads = async (ids: readonly string[], kind: 'archive' | 'trash') => {
     if (openId !== null && ids.includes(openId)) closeThread()
-    const done = await Promise.all(
+    const done = await Promise.allSettled(
       ids.map((id) =>
         write(
           () => call((r) => googleCap[kind](r, { id })),
@@ -195,21 +194,11 @@ export function useMail(account: string | null, enabled = true) {
         ),
       ),
     )
-    const moved = ids.filter((_, index) => done[index])
+    const moved = ids.filter((_, index) => done[index]?.status === 'fulfilled' && done[index].value)
     if (moved.length === 0) return
-    const subject = moved.length === 1 ? 'Thread' : `${moved.length} threads`
-    toast(kind === 'archive' ? `${subject} archived` : `${subject} moved to Trash`, {
-      duration: Infinity,
-      closeButton: true,
-      action: {
-        label: 'Undo',
-        onClick: () => {
-          const inverse = kind === 'archive' ? googleCap.unarchive : googleCap.untrash
-          void Promise.all(moved.map((id) => write(() => call((r) => inverse(r, { id }))))).finally(
-            load,
-          )
-        },
-      },
+    mailList.offerRemovalUndo(kind, moved, (id) => {
+      const inverse = kind === 'archive' ? googleCap.unarchive : googleCap.untrash
+      return call((r) => inverse(r, { id }))
     })
   }
 
