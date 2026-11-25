@@ -101,6 +101,20 @@ const toSystem = (url: string): void => void shell.openExternal(url)
 type ChildHintWorld = Awaited<
   ReturnType<ReturnType<typeof createChildFrameVim>['hintWorlds']>
 >[number]
+type HintInput = { world: ChildHintWorld | null; local: number; global: number }
+type RawHintEvent = {
+  type: 'request' | 'key' | 'revoke'
+  owner?: PageHintOwner
+  key?: string
+  code?: string
+  repeat?: boolean
+  capture?: number
+  isComposing?: boolean
+  metaKey?: boolean
+  ctrlKey?: boolean
+  altKey?: boolean
+  shiftKey?: boolean
+}
 type ChildHintTarget = {
   world: ChildHintWorld
   localId: string
@@ -163,6 +177,9 @@ interface Tab {
   hintClosed: boolean
   hintZoom: number
   childHints: ChildHintBatch | null
+  hintInput: HintInput | null
+  hintRetiredInput: HintInput | null
+  hintCaptureSequence: number
 }
 
 let shared: Session | null = null
@@ -406,6 +423,30 @@ export function createPages(deps: PagesDeps): Pages & {
       .catch(() => {})
   }
 
+  async function pollHintWorlds(tab: Tab) {
+    const events: { world: ChildHintWorld | null; value: RawHintEvent }[] = []
+    const root = await inPage<RawHintEvent[]>(tab, '__holiPage.hints.poll()').catch(() => [])
+    for (const value of root) events.push({ world: null, value })
+    const focused = await tab.childVim!.hintWorlds(true).catch(() => [])
+    const worlds = new Map((tab.childHints?.worlds ?? []).map((world) => [world.key, world]))
+    for (const world of focused) worlds.set(world.key, world)
+    for (const input of [tab.hintInput, tab.hintRetiredInput])
+      if (input?.world) worlds.set(input.world.key, input.world)
+    for (const world of worlds.values()) {
+      if (!world.current()) {
+        revokeHints(tab)
+        continue
+      }
+      const values = await world.evaluate<RawHintEvent[]>('__holiPage.hints.poll()').catch(() => [])
+      if (!world.current()) {
+        revokeHints(tab)
+        continue
+      }
+      for (const value of values) events.push({ world, value })
+    }
+    return events
+  }
+
   function drainHintEvents(tab: Tab): void {
     const emitHint = deps.hints
     if (!emitHint || tab.hintDraining || tab.vimNonce === null || tab.attachmentId === null) return
@@ -413,21 +454,7 @@ export function createPages(deps: PagesDeps): Pages & {
     const nonce = tab.vimNonce
     const attachment = tab.attachmentId
     const generation = tab.vimGeneration
-    void inPage<
-      {
-        type: 'request' | 'key' | 'revoke'
-        owner?: PageHintOwner
-        key?: string
-        code?: string
-        repeat?: boolean
-        capture?: number
-        isComposing?: boolean
-        metaKey?: boolean
-        ctrlKey?: boolean
-        altKey?: boolean
-        shiftKey?: boolean
-      }[]
-    >(tab, '__holiPage.hints.poll()')
+    void pollHintWorlds(tab)
       .then((events) => {
         if (
           !Array.isArray(events) ||
@@ -437,7 +464,52 @@ export function createPages(deps: PagesDeps): Pages & {
           tab.vimGeneration !== generation
         )
           return
-        for (const value of events) {
+        for (const { world, value: raw } of events) {
+          let value = raw
+          if (value.type === 'request') {
+            if (!Number.isSafeInteger(value.capture)) continue
+            const input: HintInput = {
+              world,
+              local: value.capture!,
+              global: ++tab.hintCaptureSequence,
+            }
+            tab.hintInput = input
+            tab.hintRetiredInput = null
+            value = { ...value, capture: input.global }
+          } else if (value.capture !== undefined) {
+            const input = [tab.hintInput, tab.hintRetiredInput].find(
+              (input) =>
+                input &&
+                input.local === value.capture &&
+                (input.world?.key ?? null) === (world?.key ?? null),
+            )
+            if (!input) continue
+            value = { ...value, capture: input.global }
+          } else if (
+            world &&
+            !tab.childHints?.worlds.some((child) => child.key === world.key) &&
+            tab.hintInput?.world?.key !== world.key &&
+            tab.hintRetiredInput?.world?.key !== world.key
+          ) {
+            continue
+          }
+          if (
+            value.owner &&
+            tab.hintPendingOwner &&
+            sameHintOwner(value.owner, tab.hintPendingOwner)
+          ) {
+            if (value.type === 'revoke') {
+              revokeHints(tab)
+              continue
+            }
+            if (value.type === 'key') {
+              const capture = tab.hintRequestCapture ?? 0
+              let pending = tab.hintPendingKeys.get(capture)
+              if (!pending) tab.hintPendingKeys.set(capture, (pending = []))
+              if (pending.length < 32) pending.push(value)
+              continue
+            }
+          }
           if (value.type === 'request') {
             const request = ++tab.hintRequest
             const origin = randomUUID()
@@ -564,6 +636,8 @@ export function createPages(deps: PagesDeps): Pages & {
 
   function revokeHints(tab: Tab): void {
     retireChildHints(tab)
+    tab.hintInput = null
+    tab.hintRetiredInput = null
     const owner = tab.hintOwner ?? tab.hintPendingOwner
     tab.hintOwner = null
     tab.hintPendingOwner = null
@@ -715,7 +789,7 @@ export function createPages(deps: PagesDeps): Pages & {
     const zoom = deps.window()?.webContents.getZoomFactor() ?? 1
     const targets = await inPage<PageHintTarget[] | null>(
       tab,
-      `__holiPage.hints.discover(${JSON.stringify({ ...ownerBase, snapshot, geometry, capture: tab.hintRequestCapture })})`,
+      `__holiPage.hints.discover(${JSON.stringify({ ...ownerBase, snapshot, geometry, capture: tab.hintInput?.world ? null : (tab.hintInput?.local ?? null) })})`,
     ).catch(() => null)
     if (
       !targets ||
@@ -759,7 +833,7 @@ export function createPages(deps: PagesDeps): Pages & {
       batch.worlds.push(world)
       try {
         const childTargets = await world.evaluate<PageHintTarget[] | null>(
-          `__holiPage.hints.discover(${JSON.stringify({ ...pendingOwner, capture: null })})`,
+          `__holiPage.hints.discover(${JSON.stringify({ ...pendingOwner, capture: tab.hintInput?.world?.key === world.key ? tab.hintInput.local : null })})`,
         )
         if (!ownsDiscovery()) {
           retireChildHints(tab, pendingOwner)
@@ -803,11 +877,11 @@ export function createPages(deps: PagesDeps): Pages & {
     tab.hintZoom = zoom
     tab.hintOwner = owner
     const capture = tab.hintRequestCapture
-    const pendingKeys = capture === null ? [] : (tab.hintPendingKeys.get(capture) ?? [])
-    if (capture !== null) tab.hintPendingKeys.delete(capture)
+    const pendingKeys = tab.hintPendingKeys.get(capture ?? 0) ?? []
+    tab.hintPendingKeys.delete(capture ?? 0)
     if (capture !== null) tab.hintCaptureOwner = { capture, owner }
     for (const key of pendingKeys) {
-      const { capture: _capture, ...rawKey } = key as typeof key & { capture?: number }
+      const { capture: _capture, type: _type, owner: _owner, ...rawKey } = key as RawHintEvent
       deps.hints?.({ ...owner, type: 'key', ...rawKey }, () => hintOwns(tab, owner))
     }
     return {
@@ -908,6 +982,10 @@ export function createPages(deps: PagesDeps): Pages & {
     tab.hintOwner = null
     tab.hintPendingOwner = null
     const retiredOwner = tab.hintCaptureOwner?.owner ?? owner
+    if (tab.hintInput) {
+      tab.hintRetiredInput = tab.hintInput
+      tab.hintInput = null
+    }
     if (retiredOwner) {
       tab.hintRetiredCapture = {
         capture: tab.hintRequestCapture,
@@ -936,6 +1014,50 @@ export function createPages(deps: PagesDeps): Pages & {
     if (zoom !== tab.hintZoom) {
       revokeHints(tab)
       return false
+    }
+    const batch = tab.childHints
+    const child = batch?.targets.get(id)
+    if (child) {
+      const owns = () =>
+        hintOwns(tab, owner) &&
+        tab.childHints === batch &&
+        child.world.current() &&
+        generation === tab.vimGeneration &&
+        attachment === tab.attachmentId &&
+        lease === tab.shownLease &&
+        zoom === (deps.window()?.webContents.getZoomFactor() ?? 1) &&
+        JSON.stringify(bounds) === JSON.stringify(tab.view.getBounds())
+      const local = () =>
+        child.world
+          .evaluate<{ x: number; y: number; field: boolean } | null>(
+            `__holiPage.hints.activate(${JSON.stringify(owner)}, ${JSON.stringify(child.localId)})`,
+          )
+          .catch(() => null)
+      let point = await local()
+      if (!point || !owns() || point.x !== child.point.x || point.y !== child.point.y) return false
+      if (point.field) {
+        const entered = await child.world
+          .evaluate<boolean>(
+            `__holiPage.hints.enterInsert(${JSON.stringify(owner)}, ${JSON.stringify(child.localId)})`,
+          )
+          .catch(() => false)
+        if (!entered || !owns()) return false
+      }
+      point = await local()
+      if (!point || !owns() || point.x !== child.point.x || point.y !== child.point.y) return false
+      const projected = await child.world.projectDirectPoints([point]).catch(() => [])
+      if (
+        !owns() ||
+        !projected[0] ||
+        projected[0].x !== child.projected.x ||
+        projected[0].y !== child.projected.y
+      ) {
+        await clearHints(owner)
+        return false
+      }
+      const clicked = await child.world.clickDirect(point, owns, child.projected).catch(() => false)
+      await clearHints(owner)
+      return clicked
     }
     const point = await inPage<{ x: number; y: number; field: boolean } | null>(
       tab,
@@ -1308,6 +1430,9 @@ export function createPages(deps: PagesDeps): Pages & {
       hintClosed: false,
       hintZoom: 1,
       childHints: null,
+      hintInput: null,
+      hintRetiredInput: null,
+      hintCaptureSequence: 0,
     }
     tab.childVim = createChildFrameVim(
       view.webContents,

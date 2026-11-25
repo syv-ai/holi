@@ -879,6 +879,7 @@
       return vimNonce
     },
     rearm() {
+      childHintsAllowed = false
       vimNonce = newVimNonce()
       vimEnabled = false
       vimMode = 'insert'
@@ -1187,7 +1188,7 @@
   const hints = {
     enableChild(allowed) {
       childHintsAllowed = childEditing && allowed === true
-      if (!childHintsAllowed) clearHints()
+      if (!childHintsAllowed) invalidateHints()
       return childHintsAllowed
     },
     reset() {

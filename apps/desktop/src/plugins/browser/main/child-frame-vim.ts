@@ -9,6 +9,7 @@ type Child = {
   nonce: string
   focus: number
   unobserve?: () => void
+  ready?: Promise<void>
 }
 type ModeSnapshot = EditingState & { current: () => boolean }
 
@@ -46,7 +47,7 @@ export function createChildFrameVim(
           before
             .evaluate(
               child.address,
-              `globalThis.__holiPage?.vim.reset(${disabling}, globalThis.__holiPage.vim.documentNonce())`,
+              `globalThis.__holiPage?.hints.reset(); globalThis.__holiPage?.vim.reset(${disabling}, globalThis.__holiPage.vim.documentNonce())`,
             )
             .catch(() => {}),
         )
@@ -72,6 +73,27 @@ export function createChildFrameVim(
     capture = Object.freeze({ tab, document: {}, presentation: {} })
   }
 
+  async function prepare(frame: WebFrameMain, owner: FrameCapture) {
+    const adapter = (addressing ??= createFrameAddressing(contents, current))
+    const address = await adapter.resolve(frame, owner)
+    if (!current(owner) || !adapter.isCurrent(address)) throw new Error('child world departed')
+    let child = children.get(frame)
+    if (!child || child.address !== address) {
+      child = { frame, address, nonce: '', focus: 0 }
+      children.set(frame, child)
+      const bound = child
+      child.ready = adapter
+        .evaluate<string>(address, `${PAGE_SCRIPT}\n__holiPage.vim.armChild()`)
+        .then((nonce) => {
+          bound.nonce = nonce
+        })
+    }
+    await child.ready
+    if (!current(owner) || children.get(frame) !== child || !adapter.isCurrent(address))
+      throw new Error('child world departed')
+    return child
+  }
+
   async function sample(): Promise<ModeSnapshot | null> {
     await draining
     const owner = capture
@@ -82,22 +104,8 @@ export function createChildFrameVim(
     const focused = (): boolean =>
       current(owner) && contents.focusedFrame === frame && !frame.detached
     try {
-      const address = await adapter.resolve(frame, owner)
-      if (!focused()) return null
-      let child = children.get(frame)
-      if (!child || child.address !== address) {
-        // Remember the address before dispatch so revoke can disable a pending
-        // initialization without waiting for its nonce to return.
-        child = { frame, address, nonce: '', focus: 0 }
-        children.set(frame, child)
-        const nonce = await adapter.evaluate<string>(
-          address,
-          `${PAGE_SCRIPT}\n__holiPage.vim.armChild()`,
-        )
-        if (!current(owner) || children.get(frame) !== child || !adapter.isCurrent(address))
-          return null
-        child.nonce = nonce
-      }
+      const child = await prepare(frame, owner)
+      const address = child.address
       if (!focused()) return null
       if (!child.unobserve) {
         const observed = child
@@ -136,30 +144,25 @@ export function createChildFrameVim(
     }
   }
 
-  async function hintWorlds() {
+  async function hintWorlds(onlyFocused = false) {
     await draining
     const owner = capture
     if (!owner || !current(owner)) return []
     const adapter = (addressing ??= createFrameAddressing(contents, current))
     const frames = contents.mainFrame.frames
-      .filter((frame) => !frame.detached && /^https?:/i.test(frame.url))
+      .filter(
+        (frame) =>
+          !frame.detached &&
+          /^https?:/i.test(frame.url) &&
+          (!onlyFocused || frame === contents.focusedFrame),
+      )
       .slice(0, 200)
     const worlds = []
     for (const frame of frames) {
       if (!current(owner)) break
       try {
-        const address = await adapter.resolve(frame, owner)
-        if (!current(owner) || !adapter.isCurrent(address)) continue
-        let child = children.get(frame)
-        if (!child || child.address !== address) {
-          child = { frame, address, nonce: '', focus: 0 }
-          children.set(frame, child)
-          child.nonce = await adapter.evaluate<string>(
-            address,
-            `${PAGE_SCRIPT}\n__holiPage.vim.armChild()`,
-          )
-        }
-        if (!current(owner) || !adapter.isCurrent(address)) continue
+        const child = await prepare(frame, owner)
+        const address = child.address
         await adapter.projectDirectPoints(address, [])
         if (!current(owner) || !adapter.isCurrent(address)) continue
         const allowed = await adapter.evaluate<boolean>(
@@ -177,16 +180,25 @@ export function createChildFrameVim(
             evaluate: <T>(expression: string) => adapter.evaluate<T>(address, expression),
             projectDirectPoints: (points: ReadonlyArray<{ x: number; y: number }>) =>
               adapter.projectDirectPoints(address, points),
-            clickDirect: (point: { x: number; y: number }, guard: () => boolean) =>
+            clickDirect: (
+              point: { x: number; y: number },
+              guard: () => boolean,
+              expected?: { x: number; y: number },
+            ) =>
               adapter.clickDirect(
                 address,
                 point,
                 () => current(owner) && children.get(frame) === bound && guard(),
+                expected,
               ),
           }),
         )
       } catch {
-        // Frames without supported direct geometry remain editing-only.
+        const child = children.get(frame)
+        if (child && adapter.isCurrent(child.address))
+          await adapter
+            .evaluate(child.address, '__holiPage.hints.enableChild(false)')
+            .catch(() => {})
       }
     }
     return worlds

@@ -587,7 +587,7 @@ export function createFrameAddressingRuntime(
             if (!(width > 0 && height > 0)) return null;
             return points.map(({x,y}) => {
               if (x < 0 || y < 0 || x >= viewport.width || y >= viewport.height) return null;
-              const px = left + x, py = top + y;
+              const px = Math.round(left + x), py = Math.round(top + y);
               if (px < left || py < top || px >= left + width || py >= top + height) return null;
               const hit = document.elementFromPoint(px, py);
               if (hit !== owner) return null;
@@ -613,10 +613,12 @@ export function createFrameAddressingRuntime(
     address: FrameAddress,
     point: { x: number; y: number },
     currentGuard: () => boolean,
+    expected?: { x: number; y: number },
   ): Promise<boolean> {
     const projected = await projectDirectPoints(address, [point])
     if (!projected[0] || !currentGuard() || !isCurrentAddress(address)) return false
     const { x, y } = projected[0]
+    if (expected && (x !== expected.x || y !== expected.y)) return false
     // The caller must verify its target hit/nonce before invoking this method.
     contents.focus()
     if (!currentGuard() || !isCurrentAddress(address)) return false
