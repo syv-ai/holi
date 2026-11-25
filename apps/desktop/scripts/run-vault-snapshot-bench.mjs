@@ -25,9 +25,11 @@ const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const cli = process.argv.slice(2)
 const pilot = cli.includes('--pilot')
 const smoke = cli.includes('--smoke')
-const evidence = resolve(
-  cli.includes('--') ? cli[cli.indexOf('--') + 1] : '/tmp/holi-544-verification-20261116',
-)
+const delimiterIndex = cli.indexOf('--')
+const evidenceArg = delimiterIndex >= 0 ? cli[delimiterIndex + 1] : null
+if (delimiterIndex >= 0 && (!evidenceArg || evidenceArg.startsWith('--')))
+  throw new Error("Expected an evidence directory after '--'")
+const evidence = resolve(evidenceArg ?? '/tmp/holi-544-verification-20261116')
 const full = { warmupSeconds: 30, durationSeconds: 180 }
 const short = { warmupSeconds: 5, durationSeconds: 35 }
 const sizes = { small: { notes: 100, tasks: 20 }, large: { notes: 5000, tasks: 2000 } }
@@ -41,8 +43,16 @@ const safeEnv = Object.fromEntries(
 )
 const protocol = {
   issue: 544,
-  revision: 3,
-  sourceVersion: sourceVersion(),
+  revision: 4,
+  sourceVersion: {
+    ...sourceVersion(),
+    sha256: {
+      ...sourceVersion().sha256,
+      'run-vault-snapshot-bench.mjs': createHash('sha256')
+        .update(await readFile(fileURLToPath(import.meta.url)))
+        .digest('hex'),
+    },
+  },
   workloadAmendment: {
     original: { notes: 10000, tasks: 2000 },
     reason:
@@ -54,7 +64,7 @@ const protocol = {
     ],
     appliesBeforeFullStudy: true,
   },
-  mode: smoke ? 'smoke-not-evidence' : pilot ? 'pilot-not-gate-evidence' : 'full-gate-run',
+  mode: smoke ? 'smoke-not-gate-evidence' : pilot ? 'pilot-not-gate-evidence' : 'full-gate-run',
   sizes,
   trialsPerSize: pilot || smoke ? 1 : 5,
   trial: smoke ? { warmupSeconds: 1, durationSeconds: 4 } : pilot ? short : full,
@@ -90,6 +100,7 @@ const owned = {
 }
 let root
 let success = false
+let smokeTrialOk = false
 let interrupted = null
 let currentChild = null
 let stopSignalResolve
@@ -306,7 +317,8 @@ async function runTrial({ electron, rendererOut, root, evidenceDir, sizeName, si
       mode,
       size: sizeName,
       ...config,
-      pilot: pilot || smoke,
+      pilot: pilot,
+      smoke,
     }),
   }
   const log = createWriteStream(join(evidenceDir, 'electron.log'), { flags: 'w' })
@@ -483,11 +495,16 @@ try {
     JSON.stringify({ name: 'holi-snapshot-bench', main: 'main.cjs' }),
   )
   const results = []
-  const trialsPerSize = pilot ? 1 : 5
-  for (const [sizeName, size] of Object.entries(sizes)) {
+  const trialsPerSize = pilot || smoke ? 1 : 5
+  const selectedSizes = smoke ? [['small', sizes.small]] : Object.entries(sizes)
+  for (const [sizeName, size] of selectedSizes) {
     for (let pair = 1; pair <= trialsPerSize; pair++) {
       if (interrupted) throw new Error(`Interrupted by ${interrupted}`)
-      const order = pair % 2 === 1 ? ['baseline', 'candidate'] : ['candidate', 'baseline']
+      const order = smoke
+        ? ['baseline']
+        : pair % 2 === 1
+          ? ['baseline', 'candidate']
+          : ['candidate', 'baseline']
       const trials = []
       for (const mode of order) {
         const dir = join(evidence, sizeName, `pair-${pair}`, mode)
@@ -503,6 +520,7 @@ try {
             mode,
           }),
         )
+        if (smoke) smokeTrialOk = trials.at(-1).result.ok === true
         await rm(trials.at(-1).fixture ? owned.trialRoots.at(-1).path : '', {
           recursive: true,
           force: true,
@@ -511,18 +529,26 @@ try {
         owned.removedRoots.push(owned.trialRoots.at(-1).path)
         await saveLedger()
       }
-      results.push({ size: sizeName, pair, trials })
+      results.push({ size: sizeName, pair, smoke, trials })
       await writeFile(join(evidence, 'trials.json'), JSON.stringify(results, null, 2))
     }
   }
-  const validation = validatePairs(results, pilot)
-  if (!validation.valid)
-    throw new Error(`Paired result validation failed: ${validation.problems.join('; ')}`)
-  const analysis = analyzePairs(results, { pilot })
-  await writeFile(
-    join(evidence, pilot ? 'pilot-result.json' : 'analysis.json'),
-    JSON.stringify(analysis, null, 2),
-  )
+  if (!smoke) {
+    const validation = validatePairs(results, pilot)
+    if (!validation.valid)
+      throw new Error(`Paired result validation failed: ${validation.problems.join('; ')}`)
+    const analysis = analyzePairs(results, { pilot })
+    await writeFile(
+      join(evidence, pilot ? 'pilot-result.json' : 'analysis.json'),
+      JSON.stringify(analysis, null, 2),
+    )
+  } else if (
+    results.length !== 1 ||
+    results[0].trials.length !== 1 ||
+    results[0].trials[0].mode !== 'baseline'
+  ) {
+    throw new Error('Smoke requires exactly one small baseline trial')
+  }
   success = true
 } catch (error) {
   recordCleanupError(
@@ -549,6 +575,10 @@ try {
       recordCleanupError(`runtime root removal failed: ${error}`)
     }
   } else if (root) owned.runtimeRootRemoved = false
+  if (smoke) {
+    success = smokeTrialOk && owned.cleanupErrors.length === 0 && owned.runtimeRootRemoved === true
+    if (!success) process.exitCode = 1
+  }
   owned.success = success
   owned.completedAt = new Date().toISOString()
   try {

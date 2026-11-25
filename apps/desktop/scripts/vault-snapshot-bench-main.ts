@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
+import { startBenchmarkCapture, type BenchmarkCapture } from './vault-snapshot-bench-capture'
 import { mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
 import { loadavg } from 'node:os'
 import { processObservables } from './vault-snapshot-bench-metrics.mjs'
@@ -30,6 +31,7 @@ const trial = JSON.parse(trialText) as {
   warmupSeconds: number
   durationSeconds: number
   pilot: boolean
+  smoke?: boolean
 }
 type MetricRow = {
   at: number
@@ -75,6 +77,9 @@ async function run(root: string, evidence: string): Promise<void> {
   let adapter: ReturnType<typeof createSnapshotBenchAdapter> | null = null
   let host: ReturnType<typeof createPluginHost> | null = null
   let sampleInterval: NodeJS.Timeout | null = null
+  let capture: BenchmarkCapture | null = null
+  let captureResult: Awaited<ReturnType<BenchmarkCapture['stop']>> | null = null
+  let captureSampling = Promise.resolve()
   const cleanupLedger: string[] = []
   const samples: Array<{
     at: number
@@ -108,6 +113,13 @@ async function run(root: string, evidence: string): Promise<void> {
   const cleanup = async () => {
     if (sampleInterval) clearInterval(sampleInterval)
     sampleInterval = null
+    await captureSampling
+    try {
+      await capture?.dispose()
+    } catch (error) {
+      cleanupErrors.push(`capture.dispose: ${error}`)
+    }
+    capture = null
     // Close the watcher first, then drain callbacks before stopping their host.
     if (active) {
       try {
@@ -179,7 +191,9 @@ async function run(root: string, evidence: string): Promise<void> {
             (measured?.scanDurationsMs.length ?? 0) > 0 &&
             Boolean(rendererStats) &&
             (measured?.adapter.scans ?? 0) > 0 &&
-            Boolean(snapshot),
+            Boolean(snapshot) &&
+            Boolean(captureResult?.physicalGpu.available) &&
+            Boolean(captureResult?.allocation.main && captureResult?.allocation.renderer),
         }),
         error:
           error === undefined && observationError === undefined
@@ -202,7 +216,10 @@ async function run(root: string, evidence: string): Promise<void> {
           rendererSends: { count: sendStats.count },
           adapter: adapter?.metrics(),
         },
-        protocolRevision: 3,
+        allocation: captureResult?.allocation ?? null,
+        physicalGpu: captureResult?.physicalGpu ?? null,
+        profilingOverhead: captureResult?.profilingOverhead ?? null,
+        protocolRevision: 4,
         mainBundleSha256: digest(readFileSync(join(root, 'main.cjs'), 'utf8')),
         electron: process.versions.electron,
         chromium: process.versions.chrome,
@@ -253,7 +270,7 @@ async function run(root: string, evidence: string): Promise<void> {
       console.error(cleanupError)
       process.exitCode = 1
     }
-    app.quit()
+    app.exit(Number(process.exitCode ?? 0))
   }
   process.once('SIGINT', () => void finish(new Error('SIGINT')))
   process.once('SIGTERM', () => void finish(new Error('SIGTERM')))
@@ -447,10 +464,18 @@ async function run(root: string, evidence: string): Promise<void> {
     )
     const sample = () => {
       const at = performance.now()
+      const atSeconds = (at - started) / 1000
+      if (capture) {
+        captureSampling = captureSampling
+          .then(() => capture!.samplePhysicalGpu(atSeconds))
+          .catch((error) => {
+            pipelineErrors.push(`physical GPU sample: ${String(error)}`)
+          })
+      }
       const rows = app.getAppMetrics()
       samples.push({
-        at: (at - started) / 1000,
-        elapsedSeconds: samples.length ? (at - started) / 1000 - samples.at(-1)!.at : 0,
+        at: atSeconds,
+        elapsedSeconds: samples.length ? atSeconds - samples.at(-1)!.at : 0,
         hostLoad: loadavg(),
         processes: rows.map((row) => ({
           at: (at - started) / 1000,
@@ -468,6 +493,7 @@ async function run(root: string, evidence: string): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, trial.warmupSeconds * 1000))
     await drainPipeline()
+    capture = await startBenchmarkCapture(win.webContents)
     await win.webContents.executeJavaScript('window.snapshotBench.resetMetrics()')
     adapter.resetMetrics()
     samples.length = 0
@@ -484,6 +510,11 @@ async function run(root: string, evidence: string): Promise<void> {
     measuring = true
     const begin = performance.now()
     sampleInterval = setInterval(() => void sample(), 1000)
+    if (trial.smoke) {
+      // Smoke drives one controlled publication; it does not measure ordinary scan frequency.
+      await active.refresh()
+      await drainPipeline()
+    }
     await new Promise((resolve) => setTimeout(resolve, trial.durationSeconds * 1000))
     // No await between the final sample and the frozen counter capture. Sampling
     // stops before diagnostic RPC, filesystem writes, hashes or screenshots.
@@ -491,6 +522,8 @@ async function run(root: string, evidence: string): Promise<void> {
     measuring = false
     clearInterval(sampleInterval)
     sampleInterval = null
+    await captureSampling
+    captureResult = await capture.stop()
     const end = performance.now()
     // Enqueue renderer capture at the same seam, before snapshot cloning/hash
     // work can give its independent event loop extra time to accumulate work.
@@ -756,6 +789,6 @@ function aggregateProcesses(samples: Array<{ processes: MetricRow[] }>) {
 
 void run(root, evidence).catch((error) => {
   console.error(error)
-  app.quit()
   process.exitCode = 1
+  app.exit(1)
 })
