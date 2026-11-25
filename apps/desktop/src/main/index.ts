@@ -1288,37 +1288,6 @@ async function main(): Promise<void> {
           else await dialog.showMessageBox(mainWindow, options)
         },
         async proceed() {
-          // Retrying pending consent removals and flushing buffers can both veto quit
-          // before tearing down the compiler, plugins, vault or updater.
-          channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
-          const result = await requestFlush(channel)
-          if (result !== 'flushed') {
-            console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
-            return false
-          }
-          invalidateMdxDiagnostics(false)
-          await drainShutdown({
-            stopBackground: async () => {
-              await vaultStartup
-              await plugins.stopBackground()
-            },
-            stopPlugins: () => plugins.stopAll(),
-            closeTerminals: () => terminals.closeAll(),
-            disposeUpdater: () => updater.dispose(),
-            settleVault: async () => {
-              for (const { remote } of await registry.list()) {
-                await settleVaultForQuit(host.get(remote))
-              }
-            },
-            closeVaults: () => host.closeAll(),
-            closeBridge: async () => {
-              const endpoint = cliEndpoint
-              await endpoint?.dispose()
-              cliEndpoint = null
-              await bridge.stop()
-            },
-          })
-        async proceed() {
           // Retrying consent removals and flushing buffers can both veto quit
           // before tearing down the compiler, plugins, vaults or updater.
           channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
