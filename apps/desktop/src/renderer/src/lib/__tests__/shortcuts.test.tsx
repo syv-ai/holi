@@ -126,7 +126,7 @@ describe('resolveShortcut', () => {
   })
 
   test('⌘9 is the ninth key of one row', () => {
-    const match = resolveShortcut(ev({ metaKey: true, key: '9' }), ctx())
+    const match = resolveShortcut(ev({ metaKey: true, key: '9' }), ctx({ capture: true }))
     expect(match?.shortcut.id).toBe('tab.goto')
     expect(match?.index).toBe(8)
   })
@@ -161,6 +161,21 @@ describe('the dispatcher', () => {
     )
     fireEvent.keyDown(document.body, { key: 's', metaKey: true, altKey: true })
     expect(openScratchpad).toHaveBeenCalledOnce()
+  })
+
+  test('numbered tab navigation survives a widget stopping key propagation', () => {
+    const goto = vi.fn()
+    render(
+      <Provider store={createStore()}>
+        <Host handlers={{ 'tab.goto': goto }} />
+      </Provider>,
+    )
+    const calendarWidget = document.createElement('div')
+    document.body.append(calendarWidget)
+    calendarWidget.addEventListener('keydown', (event) => event.stopPropagation())
+    fireEvent.keyDown(calendarWidget, { key: '2', metaKey: true })
+    expect(goto).toHaveBeenCalledWith(1, expect.any(KeyboardEvent))
+    calendarWidget.remove()
   })
 
   test('runs a live key on the page and not in a field', () => {
