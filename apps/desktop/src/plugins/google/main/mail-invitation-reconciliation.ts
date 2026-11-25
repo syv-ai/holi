@@ -25,6 +25,7 @@ import {
   identityOf,
   representationOf,
   onLineage,
+  revisionOrder,
   sameGroup,
   sameRevision,
   scopeKey,
@@ -90,6 +91,8 @@ export type InvitationFacts = {
   recorded: InviteAnswer | null
   priorSent: SentEvidence | null
   absentTargets: Set<string>
+  /** Recheck against durable evidence at reservation, independently of the provider target. */
+  blockedByConfirmation: (attempt: InvitationAttempt) => boolean
   navigation: (() => Promise<InvitationLinks | false | null | undefined>) | null
 }
 type ReadResult = { cards: InvitationFacts[]; recoveryReason: string | null }
@@ -356,6 +359,23 @@ function calendarInvitation(
   }
 }
 
+function bindsConfirmation(
+  attempt: InvitationAttempt,
+  { accountSub, email }: InvitationReadTarget,
+  { identity, organizer }: Candidate['value']['details'],
+): boolean {
+  const { delivery } = attempt
+  return (
+    attempt.accountSub === accountSub &&
+    sameGroup(attempt.revision, identity) &&
+    organizer !== null &&
+    delivery.organizer === organizer.email &&
+    (delivery.channel === 'gmail'
+      ? delivery.mailbox === email
+      : calendarTargetIsMailbox(delivery.target, email))
+  )
+}
+
 function responseTargetKey(channel: Channel, target: string): string {
   return createHash('sha256')
     .update(JSON.stringify([channel, target]))
@@ -589,7 +609,7 @@ export function createMailInvitationReconciler(
     }
 
     async function reconcileAttempts() {
-      let parentAnchors = journal.parentAnchors
+      let latestJournal = journal
       const pending: InvitationAttempt[] = []
       const contested = new Map<string, number>()
       const unverifiedReceipts = new Set<string>()
@@ -709,7 +729,7 @@ export function createMailInvitationReconciler(
             delivery.channel === 'gmail' &&
             delivery.receipt?.id != null &&
             !owners.contradicts({ rfcId: delivery.rfcId, messageId: delivery.receipt.id }) &&
-            parentAnchors.some(
+            latestJournal.parentAnchors.some(
               (anchor) =>
                 anchor.accountSub === entry.accountSub &&
                 anchor.mailbox === delivery.mailbox &&
@@ -723,22 +743,32 @@ export function createMailInvitationReconciler(
             )
           )
         }
-        const journal = await store.confirmAttempt(
+        const scope = entries.get(key)?.selected.value.details
+        latestJournal = await store.confirmAttempt(
           attempt,
-          (entry) =>
-            matchLineage?.(attempt) === 'linked' &&
-            entry.accountSub === target.accountSub &&
-            matchLineage(entry) === 'linked' &&
-            (entry.delivery.channel !== 'gmail' || hasStoredAnchor(entry) || provesAnchor(entry)),
+          (entry) => {
+            // Compaction must preserve the durable revision frontier as well as
+            // the old locator. Dispatch order alone cannot retire a version.
+            const order = revisionOrder(attempt.revision, entry.revision)
+            return (
+              (order === 0 || order === 1) &&
+              scope !== undefined &&
+              bindsConfirmation(attempt, target, scope) &&
+              bindsConfirmation(entry, target, scope) &&
+              matchLineage?.(attempt) === 'linked' &&
+              matchLineage(entry) === 'linked' &&
+              (entry.delivery.channel !== 'gmail' || hasStoredAnchor(entry) || provesAnchor(entry))
+            )
+          },
           provesAnchor,
         )
         gmailOutcomes.delete(attempt.id)
-        parentAnchors = journal.parentAnchors
       }
-      return { pending, confirmations, parentAnchors, contested, unverifiedReceipts }
+      return { pending, confirmations, latestJournal, contested, unverifiedReceipts }
     }
-    const { pending, confirmations, parentAnchors, contested, unverifiedReceipts } =
+    const { pending, confirmations, latestJournal, contested, unverifiedReceipts } =
       await reconcileAttempts()
+    const { parentAnchors } = latestJournal
     const cards: InvitationFacts[] = []
     const displayedPending = new Set<string>()
     for (const entry of scopes) {
@@ -986,6 +1016,19 @@ export function createMailInvitationReconciler(
             calendarObserved,
           ])
       }
+      // Off-lineage confirmation is negative version evidence only. It must
+      // not supply a status, parent, or target for the revision being shown.
+      const blockedByConfirmation = (attempt: InvitationAttempt) =>
+        attempt.state === 'confirmed' &&
+        bindsConfirmation(attempt, target, details) &&
+        !onLineage(entry, attempt.revision, email) &&
+        !supersedes(entry, attempt.revision, email)
+      if (!joinOnly && request && latestJournal.attempts.some(blockedByConfirmation)) {
+        reply = null
+        noopChannel = null
+        responseFacts.targetKey = null
+        responseFacts.unavailableReason ??= 'This invitation does not match a confirmed revision'
+      }
       const scopePending = pending.filter((attempt) => {
         if (!sameGroup(attempt.revision, identity) || supersedes(entry, attempt.revision, email))
           return false
@@ -1037,6 +1080,7 @@ export function createMailInvitationReconciler(
         recorded,
         priorSent,
         absentTargets,
+        blockedByConfirmation,
         navigation:
           !navigationWithheld && verifiedCopy
             ? () =>

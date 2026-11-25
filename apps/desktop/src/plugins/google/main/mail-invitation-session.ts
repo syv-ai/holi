@@ -208,6 +208,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         try {
           await store.addAttempt(attempt)
           let absentTargets: Set<string> = new Set()
+          let blockedByConfirmation = current.blockedByConfirmation
           const validate = async () => {
             // Runs after the write token has been obtained. Recheck the channel,
             // exact Calendar target/ETag or proven absence, and the prior answer.
@@ -236,10 +237,14 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             )
               throw conflict()
             absentTargets = newest.absentTargets
+            blockedByConfirmation = newest.blockedByConfirmation
           }
           const reserveDispatch = async () => {
             await store.update((journal) => {
-              if (!journal.attempts.some((entry) => entry.id === id && entry.state === 'prepared'))
+              if (
+                !journal.attempts.some((entry) => entry.id === id && entry.state === 'prepared') ||
+                journal.attempts.some(blockedByConfirmation)
+              )
                 throw conflict()
               // A concurrent reader can discover another copy after preflight.
               if (

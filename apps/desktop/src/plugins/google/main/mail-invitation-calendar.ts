@@ -254,7 +254,7 @@ function isUidlessCancellation(event: RawEvent): boolean {
   return event.iCalUID === undefined && event.status === 'cancelled'
 }
 
-// Query context can associate a sparse tombstone with an invitation for
+// A bound primary query can associate a sparse row with an invitation for
 // absence checks, but never supplies fields to the event itself.
 type PrimaryQueryAssociation = { uid: string; mailbox: string } & (
   { kind: 'uid' } | { kind: 'instances'; parentId: string }
@@ -351,7 +351,7 @@ async function exactCopies(
       async (event) => {
         if (event.recurringEventId !== parentId) return
         if (event.iCalUID === uid) await observe(event)
-        else if (context.primaryMailbox && series.iCalUID === uid && isUidlessCancellation(event))
+        else if (context.primaryMailbox && series.iCalUID === uid && event.iCalUID === undefined)
           await observe(event, {
             kind: 'instances',
             uid: series.iCalUID,
@@ -550,19 +550,22 @@ async function lookupInvitationCalendarCopy(
           : undefined
       // On the authenticated primary calendar, an exact-UID row with no
       // organizer address is possible existence evidence, whatever its status.
-      // A UID-less cancellation needs the bound query context even for that.
-      const possiblePrimaryCopy =
-        base === PRIMARY_EVENTS &&
-        ((event.iCalUID === uid && observedOrganizer === undefined) ||
-          (isUidlessCancellation(event) &&
-            association?.uid === uid &&
-            association.mailbox === mailbox &&
-            (association.kind === 'uid' || association.parentId === event.recurringEventId)))
-      if (!possiblePrimaryCopy && (!organizer || observedOrganizer !== organizer)) return
+      // For a UID-less row, only the bound query can attest possible existence.
+      const associated =
+        event.iCalUID === undefined &&
+        association?.uid === uid &&
+        association.mailbox === mailbox &&
+        (association.kind === 'uid'
+          ? isUidlessCancellation(event)
+          : association.parentId === event.recurringEventId)
+      if (observedOrganizer !== undefined && observedOrganizer !== organizer) return
       // The authenticated primary collection itself binds the resource to the
       // mailbox. Elsewhere, require the provider's self marker, not just an
       // attendee address on a shared calendar's copy.
-      if (base !== PRIMARY_EVENTS) {
+      if (base === PRIMARY_EVENTS) {
+        if (event.iCalUID !== uid && !associated) return
+      } else {
+        if (!observedOrganizer) return
         const self = uniqueSelfAttendee(event)
         const selfEmail = typeof self?.email === 'string' ? self.email.toLowerCase() : undefined
         const person = self && (self.resource === undefined || self.resource === false)
@@ -584,7 +587,7 @@ async function lookupInvitationCalendarCopy(
       // different occurrence. Filter by scope when using the locator instead.
       await remember({
         uid,
-        organizer: possiblePrimaryCopy ? undefined : observedOrganizer,
+        organizer: observedOrganizer,
         ...eventLocatorScope(event),
         series,
         target: calendarCopyTarget(calendarResponseUrl(base, event), mailbox),
@@ -749,6 +752,12 @@ function invitationCopy(
       (recurrenceId !== null && !event.recurringEventId))
   )
     return { kind: 'blocked', reason: 'This Calendar event was cancelled', cancelled: true }
+  if (event.iCalUID !== uid)
+    return {
+      kind: 'blocked',
+      reason: 'Calendar could not verify the identity of this occurrence',
+      navigationUnverified: true,
+    }
   if (!organizer || organizer !== details.organizer?.email)
     return blocked('The Calendar organizer does not match this invitation')
   const organizes =
@@ -799,7 +808,16 @@ function invitationCopy(
     navigation: async (selectSlot) => {
       if (cancelled) return undefined
       if (recurrenceId === null && details.recurring)
-        return upcomingInvitationLinks(api, base, event, uid, organizer, observe, selectSlot)
+        return upcomingInvitationLinks(
+          api,
+          base,
+          event,
+          uid,
+          organizer,
+          observe,
+          selectSlot,
+          navigationWindow(invitation.legacyJoinOnly),
+        )
       if (
         invitation.legacyJoinOnly &&
         !(await legacyMeetingIsCurrent(api, base, event, uid, recurrenceId, observe))
@@ -894,8 +912,18 @@ function calendarRevisionMismatch(
   return null
 }
 
-/** The previous meeting reader used events.list's exclusive end cutoff, with
- * a one-hour grace period. DATEs use the calendar's zone, not the host's. */
+/** Calendar applies timeMin to the exclusive end in the calendar's zone.
+ * Also check timed events against the precise cutoff; never guess a DATE's zone.
+ * Only publications and exports get the legacy reader's one-hour grace. */
+function navigationWindow(legacyJoinOnly: boolean) {
+  const cutoff = Date.now() - (legacyJoinOnly ? 60 * 60 * 1000 : 0)
+  return {
+    timeMin: new Date(cutoff).toISOString(),
+    includesEnd: (event: RawEvent) =>
+      event.end?.dateTime === undefined || instant(event.end.dateTime) > cutoff,
+  }
+}
+
 async function legacyMeetingIsCurrent(
   api: CalendarReadApi,
   base: string,
@@ -904,9 +932,8 @@ async function legacyMeetingIsCurrent(
   recurrenceId: string | null,
   observe: (event: RawEvent) => Promise<void>,
 ): Promise<boolean> {
-  const cutoff = Date.now() - 60 * 60 * 1000
-  if (event.end?.dateTime !== undefined) return instant(event.end.dateTime) > cutoff
-  const timeMin = new Date(cutoff).toISOString()
+  const { timeMin, includesEnd } = navigationWindow(true)
+  if (event.end?.dateTime !== undefined) return includesEnd(event)
   try {
     if (recurrenceId !== null)
       return await currentDateOccurrence(api, base, event, uid, recurrenceId, timeMin, observe)
@@ -994,9 +1021,8 @@ async function upcomingInvitationLinks(
   organizer: string,
   observe: (event: RawEvent) => Promise<void>,
   selectSlot: (slot: string) => InvitationTarget | false | null,
+  { timeMin, includesEnd }: ReturnType<typeof navigationWindow>,
 ): Promise<InvitationLinks | null> {
-  const now = Date.now()
-  const timeMin = new Date(now).toISOString()
   let pageToken: string | undefined
   const seen = new Set<string>()
   try {
@@ -1031,9 +1057,7 @@ async function upcomingInvitationLinks(
         instance.status !== 'cancelled' &&
         coherentEventTimes(instance) &&
         (instance.start?.date !== undefined) === (master.start?.date !== undefined) &&
-        // timeMin applies to the exclusive end. For DATEs Google applies its
-        // calendar timezone; converting those dates ourselves would guess it.
-        (instance.end?.dateTime === undefined || instant(instance.end.dateTime) > now)
+        includesEnd(instance)
       ) {
         const slot = selectSlot(occurrenceSlot(instance)!)
         const links = invitationEventLinks(instance)
