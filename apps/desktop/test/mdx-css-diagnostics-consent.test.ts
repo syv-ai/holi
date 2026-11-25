@@ -69,7 +69,12 @@ it('resolves nested CSS imports and binary assets from the final redirected styl
   )
 })
 
-it('requires fresh consent before DNS or TLS contact with an origin discovered in nested CSS', async () => {
+it.each([
+  'image-set',
+  '-webkit-image-set',
+  String.raw`im\61 ge-set`,
+  String.raw`-webkit-im\61 ge-set`,
+])('requires fresh consent before contact with a string candidate in nested %s', async (name) => {
   const { mdx, owner, network, compile, approve } = await fixture()
   network.routes.respond = (req, res) => {
     if (req.url === '/start.css') {
@@ -77,7 +82,7 @@ it('requires fresh consent before DNS or TLS contact with an origin discovered i
       res.end('@import "./nested.css";')
     } else if (req.url === '/nested.css') {
       res.setHeader('Content-Type', 'text/css')
-      res.end('a { background: url(https://two.example/photo.png) }')
+      res.end(`a { background: ${name}("https://two.example/photo.png" 1x) }`)
     } else if (req.headers.host === 'two.example' && req.url === '/photo.png') {
       res.setHeader('Content-Type', 'image/png')
       res.end(Buffer.from([0x89, 0xff]))

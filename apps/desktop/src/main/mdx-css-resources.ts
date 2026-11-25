@@ -105,7 +105,15 @@ export function inspectMdxCssResources(source: string): {
       } else {
         walk(tree, (node) => {
           if (node.type === 'Url') add(node.value, 'asset', at(node))
-          else if (node.type === 'Raw') report('Unsupported CSS resource syntax.', at(node))
+          else if (
+            node.type === 'Function' &&
+            ['image-set', '-webkit-image-set'].includes(ident.decode(node.name).toLowerCase())
+          ) {
+            // Only direct strings are image candidates; strings in type() are MIME hints.
+            node.children.forEach((child) => {
+              if (child.type === 'String') add(child.value, 'asset', at(child))
+            })
+          } else if (node.type === 'Raw') report('Unsupported CSS resource syntax.', at(node))
           else if (node.type === 'Function' && ident.decode(node.name).toLowerCase() === 'url') {
             // Escaped function names are not recognized as Url by css-tree. Only a
             // single parsed string is unambiguously static in that spelling.

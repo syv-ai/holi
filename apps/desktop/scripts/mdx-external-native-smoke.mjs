@@ -1,3 +1,4 @@
+import { createMdxNativeResourceControls } from './mdx-native-resource-controls.mjs'
 import { assertMdxNativeApprovalOrder } from './mdx-native-approval-receipt.mts'
 import { createMdxSmokeClient } from './mdx-native-smoke-client.mjs'
 import assert from 'node:assert/strict'
@@ -24,7 +25,6 @@ export async function runExternalNativeAcceptance(
     delay,
     untilDeadline,
     waitFor,
-    clickPointerAt,
     findInFile,
     cleanDiagnostics,
     settledPaint,
@@ -36,49 +36,9 @@ export async function runExternalNativeAcceptance(
   const allow = (origin) => `Allow ${origin}`
   const deny = (origin) => `Deny ${origin}`
   const revoke = (origin) => `Revoke ${origin}`
-  const trigger = 'MDX resources'
   const runDiagnostics = 'Run diagnostics'
   const parts = ['entry', 'relative', 'redirect', 'cdn']
-  const button = (label, at = null) =>
-    page.evaluate(`(() => {
-    const match = Array.from(document.querySelectorAll('button,[role="button"]')).find(item =>
-      (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(label)} &&
-      !item.closest('[aria-hidden="true"],[inert]') && item.getClientRects().length &&
-      getComputedStyle(item).visibility === 'visible' && !item.matches(':disabled,[aria-disabled="true"]'));
-    if (!match) return null;
-    const {x, y, width, height} = match.getBoundingClientRect();
-    const point = ${JSON.stringify(at)} ?? {x: x + width / 2, y: y + height / 2};
-    const hit = document.elementFromPoint(point.x, point.y);
-    return hit && match.contains(hit) ? point : null;
-  })()`)
-  const clickAt = (label, point, deadline) =>
-    clickPointerAt(page, point, (at) => button(label, at), deadline)
-  const click = async (label, deadline = performance.now() + 30000) => {
-    const point = await waitFor(() => button(label), label, { deadline })
-    await clickAt(label, point, deadline)
-  }
-  const openResources = async (expected, deadline = performance.now() + 30000) => {
-    const read = (operation) => untilDeadline(operation, deadline, expected)
-    for (;;) {
-      const state = await waitFor(
-        async () => {
-          if (await read(() => button(expected))) return { ready: true }
-          // Mutations may close the panel or leave it open while state refreshes.
-          const open = await read(() =>
-            page.evaluate(`Array.from(document.querySelectorAll('button')).some(item =>
-          (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(trigger)} &&
-          (item.getAttribute('aria-expanded') === 'true' || item.getAttribute('data-state') === 'open'))`),
-          )
-          const point = !open && (await read(() => button(trigger)))
-          return point ? { point } : false
-        },
-        expected,
-        { deadline },
-      )
-      if (state.ready) return
-      await clickAt(trigger, state.point, deadline)
-    }
-  }
+  const { button, click, openResources } = createMdxNativeResourceControls(page, ui)
   const cancelled = /abort|cancel|supersed|unavailable|invalidated/i
   const lifecycle = [
     ['approval', rawOrigin],
@@ -531,59 +491,11 @@ export async function runNestedResourceNativeAcceptance(
   page,
   { fixtureSha, checks, report, editAndWaitForSave, captureScreenshot, record, ui },
 ) {
-  const {
-    waitFor,
-    untilDeadline,
-    clickPointerAt,
-    cleanDiagnostics,
-    settledPaint,
-    windowStatus,
-    delay,
-  } = ui
+  const { waitFor, cleanDiagnostics, settledPaint, windowStatus, delay } = ui
   const cdnOrigin = fixtureOrigins[2]
   const allow = (origin) => `Allow ${origin}`
   const revoke = (origin) => `Revoke ${origin}`
-  const trigger = 'MDX resources'
-  const button = (label, at = null) =>
-    page.evaluate(`(() => {
-    const match = Array.from(document.querySelectorAll('button,[role="button"]')).find(item =>
-      (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(label)} &&
-      !item.closest('[aria-hidden="true"],[inert]') && item.getClientRects().length &&
-      getComputedStyle(item).visibility === 'visible' && !item.matches(':disabled,[aria-disabled="true"]'));
-    if (!match) return null;
-    const {x, y, width, height} = match.getBoundingClientRect();
-    const point = ${JSON.stringify(at)} ?? {x: x + width / 2, y: y + height / 2};
-    const hit = document.elementFromPoint(point.x, point.y);
-    return hit && match.contains(hit) ? point : null;
-  })()`)
-  const clickAt = (label, point, deadline) =>
-    clickPointerAt(page, point, (at) => button(label, at), deadline)
-  const click = async (label, deadline = performance.now() + 30000) => {
-    const point = await waitFor(() => button(label), label, { deadline })
-    await clickAt(label, point, deadline)
-  }
-  const openResources = async (expected, deadline = performance.now() + 30000) => {
-    const read = (operation) => untilDeadline(operation, deadline, expected)
-    for (;;) {
-      const state = await waitFor(
-        async () => {
-          if (await read(() => button(expected))) return { ready: true }
-          // Mutations may close the panel or leave it open while state refreshes.
-          const open = await read(() =>
-            page.evaluate(`Array.from(document.querySelectorAll('button')).some(item =>
-          (item.getAttribute('aria-label') || item.textContent.trim()) === ${JSON.stringify(trigger)} &&
-          (item.getAttribute('aria-expanded') === 'true' || item.getAttribute('data-state') === 'open'))`),
-          )
-          const point = !open && (await read(() => button(trigger)))
-          return point ? { point } : false
-        },
-        expected,
-        { deadline },
-      )
-      if (state.ready) return
-      await clickAt(trigger, state.point, deadline)
-    }
-  }
+  const { click, openResources } = createMdxNativeResourceControls(page, ui)
 
   const routes = ['nested-css', 'child-css', 'nested-font', 'nested-image', 'nested-audio']
   const source = `import '${cdnOrigin}/gh/syv-ai/holi@${fixtureSha}/apps/desktop/scripts/fixtures/mdx-external/nested.css'\n\n# Nested resource diagnostics fixture\n`
@@ -654,7 +566,16 @@ export async function runNestedResourceNativeAcceptance(
     assert.equal(await page.evaluate('globalThis.__mdxSmokeExecuted === undefined'), true)
     report.stage = 'approved-origin guest probes'
     report.guestPolicy = await page.evaluate("window.holiSmoke.call('smoke:public-guest-policy')")
-    noContact(approved, await capture('guestDenied', 1), 'approved origin via guest mechanisms')
+    // The receipt is Chromium's enforcing production CSP, not a failed network
+    // operation. The counters below observe only Node's typed main transport.
+    const guestPolicy = report.guestPolicy.policy
+    for (const [name, evidence] of Object.entries(guestPolicy.evidence)) {
+      assert.equal(guestPolicy.results[name], true, name)
+      assert.equal(evidence.disposition, 'enforce', name)
+      assert(evidence.policy && evidence.destination && evidence.blockedURI, name)
+    }
+    assert(guestPolicy.evidence.publicSocket, 'Missing approved-host WebSocket CSP evidence')
+    noContact(approved, await capture('guestDenied', 1), 'Node transport during guest probes')
     report.stage = 'nested resource revocation'
     await openResources(revoke(cdnOrigin))
     if (stopVideo) await delay(700)
@@ -682,7 +603,7 @@ export async function runNestedResourceNativeAcceptance(
     noContact(approved, await capture('editable', 2), 'local editing after nested revocation')
     if (stopVideo) await delay(700)
     checks.push(
-      'nested CSS and relative child/font/image/audio use approved typed HTTPS transport with clean diagnostics; pending/revoked retries and approved-origin guest probes make no observed Node contact; local editing remains usable',
+      'nested CSS and relative child/font/image/audio use approved typed HTTPS transport with clean diagnostics; pending/revoked retries make no observed Node contact; approved-origin guest probes have enforcing production CSP evidence and no observed Node transport contact; local editing remains usable',
     )
     report.stage = 'complete'
   } finally {

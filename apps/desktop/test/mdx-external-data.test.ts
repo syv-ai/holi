@@ -134,13 +134,16 @@ describe('fetchMdxExternalResourceData', () => {
   })
 
   it('revalidates redirected responses using the requested resource kind', async () => {
-    network.routes.respond = (_, res) => redirectTo(res, 'https://two.example/image.png')
     network.routes.respond = (req, res) => {
-      if (req.url === '/') return redirectTo(res, 'https://two.example/image.png')
+      if (req.url === '/index.png') return redirectTo(res, 'https://two.example/image.png')
       res.setHeader('Content-Type', 'text/css')
       res.end('body {}')
     }
     await expect(fetchResource('asset')).rejects.toMatchObject({ code: 'unsupported-format' })
+    expect(network.requests.map((req) => [req.headers.host, req.url])).toEqual([
+      ['one.example', '/index.png'],
+      ['two.example', '/image.png'],
+    ])
   })
 })
 

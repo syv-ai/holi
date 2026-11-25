@@ -57,6 +57,27 @@ a { content: 'url(not-an-edge.png)'; /* url(ignored) */
     expect(result.diagnostics[0].column).toBeGreaterThan(0)
   })
 
+  it.each([
+    'image-set',
+    '-webkit-image-set',
+    String.raw`im\61 ge-set`,
+    String.raw`-webkit-im\61 ge-set`,
+  ])('discovers string candidates in %s without treating MIME hints as resources', (name) => {
+    const result = inspectMdxCssResources(
+      `a { background: ${name}("https://other.example/photo.png" 1x type("image/png"), url(./large.png) 2x) }`,
+    )
+    expect(result.diagnostics).toEqual([])
+    expect(result.dependencies.map(({ specifier, kind }) => ({ specifier, kind }))).toEqual([
+      { specifier: 'https://other.example/photo.png', kind: 'asset' },
+      { specifier: './large.png', kind: 'asset' },
+    ])
+    const invalid = inspectMdxCssResources(
+      `@import './valid.css'; a { background: ${name}("data:image/png;base64,AAAA" 1x) }`,
+    )
+    expect(invalid.diagnostics.length).toBeGreaterThan(0)
+    expect(invalid.dependencies).toEqual([])
+  })
+
   it('accepts ordinary CSS without resources and preserves duplicate edges', () => {
     expect(inspectMdxCssResources('a { color: var(--color); content: "hello" }')).toEqual({
       diagnostics: [],

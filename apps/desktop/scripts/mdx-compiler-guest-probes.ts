@@ -26,7 +26,7 @@ export async function createGuestProbes() {
   const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   let next: Mode | null = null
   let prepared: ((contents: WebContents) => void) | null = null
-  let policy: Record<string, unknown> | null = null
+  let policy: { results: Record<string, unknown>; evidence: Record<string, unknown> } | null = null
   let executionChecks = 0
   let probeFailure: Error | null = null
   const storage: Array<{ cookie: string; local: number; session: number }> = []
@@ -118,37 +118,71 @@ export async function createGuestProbes() {
               Promise.resolve(promise).then(finish, () => finish('denied'));
             });
             const results = {};
+            const evidence = {};
+            // Observe the guest's unmodified production CSP. An error/failed handshake
+            // is never proof of precontact denial, and Node counters cannot see Chromium.
+            const policyDenied = (name, url, directive, operation) => new Promise(resolve => {
+              let cleanup = () => {};
+              const finish = value => {
+                clearTimeout(timer);
+                removeEventListener('securitypolicyviolation', violation);
+                cleanup();
+                resolve(value);
+              };
+              const violation = event => {
+                if (event.disposition !== 'enforce' || event.effectiveDirective !== directive) return;
+                try {
+                  const blocked = new URL(event.blockedURI);
+                  const target = new URL(url);
+                  // Cross-origin CSP reports may deliberately strip path information.
+                  if (blocked.origin !== target.origin ||
+                      (blocked.href !== target.href && blocked.href !== target.origin + '/')) return;
+                  evidence[name] = { destination: url, blockedURI: event.blockedURI,
+                    directive: event.effectiveDirective, disposition: event.disposition,
+                    policy: event.originalPolicy };
+                  finish(true);
+                } catch {}
+              };
+              const timer = setTimeout(() => finish(false), 1500);
+              addEventListener('securitypolicyviolation', violation);
+              try { cleanup = operation() || cleanup; } catch { /* no policy evidence yet */ }
+            });
             results.loopback = await denied(${JSON.stringify(endpoint + '/canary')});
             // Consent authorizes main's typed transport, never guest networking.
             const publicBase = ${JSON.stringify(publicBase)};
-            results.publicFetch = await denied(publicBase + '/nested.css');
-            results.publicImport = await bounded(import(publicBase + '/entry.js').then(() => false, () => true));
-            results.publicXhr = await bounded(new Promise(resolve => {
-              try { const xhr = new XMLHttpRequest(); xhr.onerror = () => resolve(true); xhr.onload = () => resolve(false);
-                xhr.open('GET', publicBase + '/tiny.png'); xhr.send(); } catch { resolve(true) }
-            }));
-            results.publicCss = await bounded(new Promise(resolve => {
-              const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = publicBase + '/nested.css';
-              link.onerror = () => resolve(true); link.onload = () => resolve(false); document.head.append(link);
-            }));
-            results.publicImage = await bounded(new Promise(resolve => {
-              const image = new Image(); image.onerror = () => resolve(true); image.onload = () => resolve(false); image.src = publicBase + '/tiny.png';
-            }));
-            results.publicFont = await bounded(new FontFace('public-probe', 'url("' + publicBase + '/tiny.woff2")').load().then(() => false, () => true));
-            results.publicAudio = await bounded(new Promise(resolve => {
-              const audio = document.createElement('audio'); audio.onerror = () => resolve(true); audio.oncanplaythrough = () => resolve(false);
-              audio.src = publicBase + '/tiny.wav'; audio.load();
-            }));
-            results.publicSocket = await bounded(new Promise(resolve => {
-              try { const socket = new WebSocket(publicBase.replace('https:', 'wss:'));
-                socket.onerror = () => { socket.close(); resolve(true) }; socket.onopen = () => { socket.close(); resolve(false) };
-              } catch { resolve(true) }
-            }));
-            results.publicWorker = await bounded(new Promise(resolve => {
-              try { const worker = new Worker(publicBase + '/entry.js'); worker.onerror = () => { worker.terminate(); resolve(true) };
-                worker.onmessage = () => { worker.terminate(); resolve(false) };
-              } catch { resolve(true) }
-            }));
+            const probe = async (name, path, directive, operation) => {
+              const url = publicBase + path;
+              results[name] = await policyDenied(name, url, directive, () => operation(url));
+            };
+            await probe('publicFetch', '/nested.css', 'connect-src', url => { void fetch(url).catch(() => {}); });
+            await probe('publicImport', '/entry.js', 'script-src-elem', url => { void import(url).catch(() => {}); });
+            await probe('publicXhr', '/tiny.png', 'connect-src', url => {
+              const xhr = new XMLHttpRequest(); xhr.open('GET', url); xhr.send();
+              return () => xhr.abort();
+            });
+            await probe('publicCss', '/nested.css', 'style-src-elem', url => {
+              const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = url;
+              document.head.append(link); return () => link.remove();
+            });
+            await probe('publicImage', '/tiny.png', 'img-src', url => {
+              const image = new Image(); image.src = url; return () => { image.src = ''; };
+            });
+            await probe('publicFont', '/tiny.woff2', 'font-src', url => {
+              void new FontFace('public-probe', 'url("' + url + '")').load().catch(() => {});
+            });
+            await probe('publicAudio', '/tiny.wav', 'media-src', url => {
+              const audio = document.createElement('audio'); audio.src = url; audio.load();
+              return () => { audio.removeAttribute('src'); audio.load(); };
+            });
+            const socketUrl = publicBase.replace('https:', 'wss:');
+            results.publicSocket = await policyDenied('publicSocket', socketUrl, 'connect-src', () => {
+              const socket = new WebSocket(socketUrl);
+              socket.onerror = () => {}; return () => socket.close();
+            });
+            await probe('publicWorker', '/entry.js', 'worker-src', url => {
+              const worker = new Worker(url); worker.onerror = () => {};
+              return () => worker.terminate();
+            });
             results.publicPopup = window.open(publicBase + '/tiny.png') === null;
             results.external = await denied('https://outside.invalid/canary');
             results.dynamicImport = await bounded(import(${JSON.stringify(endpoint + '/module.js')})
@@ -233,7 +267,7 @@ export async function createGuestProbes() {
             location.href = '${origin}/not-an-asset';
             await new Promise(resolve => setTimeout(resolve, 100));
             results.navigation = location.href === '${origin}/guest.html';
-            return results;
+            return { results, evidence };
           })()`)
           await contents.executeJavaScript('window.__release507()')
         })
@@ -255,7 +289,12 @@ export async function createGuestProbes() {
       assert.deepEqual(output, [])
       if (probeFailure) throw probeFailure
       assert(policy, 'The actual guest policy probe did not complete')
-      for (const [name, value] of Object.entries(policy)) assert.equal(value, true, name)
+      for (const [name, value] of Object.entries(policy.results)) assert.equal(value, true, name)
+      assert.equal(
+        Object.keys(policy.evidence).length,
+        9,
+        'Missing approved-host enforcing CSP evidence',
+      )
       assert.equal(traffic, 0, 'A denied guest request reached the loopback server')
       assert(executionChecks > 0, 'The actual compiler output was not observed')
       await compiler.compile(owner, '# A fresh guest has empty storage\n')
