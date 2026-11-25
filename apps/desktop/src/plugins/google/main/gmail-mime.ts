@@ -26,6 +26,7 @@ export type MimeLocation = {
 export class CalendarScanError extends Error {}
 
 const MIME_TYPE = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+)[ \t]*\/[ \t]*([!#$%&'*+.^_`|~0-9A-Za-z-]+)$/
+const GENERIC_MEDIA_TYPE = 'application/octet-stream'
 
 // MIME permits comments between tokens. A comment is whitespace, never part
 // of a token or a quoted parameter. The walker bounds header size first.
@@ -72,27 +73,24 @@ function mediaType(value: string | undefined) {
     : (mimeDeclaration(value)?.mediaType ?? value.split(';', 1)[0]!.trim().toLowerCase())
 }
 
-function declaresMediaType(part: RawPart, pattern: RegExp): boolean {
-  const matches = (value: string | undefined) => pattern.test(mediaType(value) ?? '')
-  return (
-    matches(part.mimeType) ||
-    Boolean(
-      part.headers?.some(
-        (header) => header.name?.toLowerCase() === 'content-type' && matches(header.value),
-      ),
-    )
-  )
+function contentTypes(part: RawPart): (string | undefined)[] {
+  return (part.headers ?? [])
+    .filter(({ name }) => name?.toLowerCase() === 'content-type')
+    .map(({ value }) => value)
+}
+
+function isCalendarMediaType(type: string | undefined): boolean {
+  return type === 'text/calendar' || type === 'application/ics'
 }
 
 function routingMediaType(part: RawPart): string | undefined {
-  const headers = (part.headers ?? []).filter(({ name }) => name?.toLowerCase() === 'content-type')
-  const declarations = [
-    ...(part.mimeType === undefined ? [] : [part.mimeType]),
-    ...headers.map(({ value }) => value),
-  ].map((value) => ({
-    parsed: value === undefined ? null : mimeDeclaration(value),
-    bareType: value?.split(';', 1)[0]!.trim().toLowerCase(),
-  }))
+  const headers = contentTypes(part)
+  const declarations = [...(part.mimeType === undefined ? [] : [part.mimeType]), ...headers].map(
+    (value) => ({
+      parsed: value === undefined ? null : mimeDeclaration(value),
+      bareType: value?.split(';', 1)[0]!.trim().toLowerCase(),
+    }),
+  )
   const containerType = /^(multipart|message)\//
   const container = declarations.find(({ parsed, bareType }) =>
     containerType.test(parsed?.mediaType ?? bareType ?? ''),
@@ -106,8 +104,7 @@ function routingMediaType(part: RawPart): string | undefined {
   if (
     headers.length > 1 ||
     declarations.some(
-      ({ parsed }) =>
-        parsed!.mediaType !== routing && parsed!.mediaType !== 'application/octet-stream',
+      ({ parsed }) => parsed!.mediaType !== routing && parsed!.mediaType !== GENERIC_MEDIA_TYPE,
     )
   )
     throw new CalendarScanError('Gmail returned conflicting MIME container declarations')
@@ -117,7 +114,8 @@ function routingMediaType(part: RawPart): string | undefined {
 export function isCalendarPart(part: RawPart): boolean {
   return (
     part.filename?.toLowerCase().endsWith('.ics') === true ||
-    declaresMediaType(part, /^(text\/calendar|application\/ics)$/i)
+    isCalendarMediaType(mediaType(part.mimeType)) ||
+    contentTypes(part).some((value) => isCalendarMediaType(mediaType(value)))
   )
 }
 
@@ -217,16 +215,26 @@ export function createMimeWalk(maxDepth = 16, format: 'partial' | 'full' = 'part
   }
 }
 
-// A missing MIME method leaves the iCalendar METHOD authoritative. A malformed
-// or contradictory declaration does not, even when another part looks usable.
+/** Validate the declarations of a possible calendar leaf. Undefined defers to
+ * the iCalendar METHOD; null is unreadable leaf evidence, not a failed walk.
+ * Discovery is deliberately independent so conflicts cannot erase the hint. */
 export function calendarMimeMethod(part: RawPart): string | undefined | null {
-  const headers = (part.headers ?? []).filter(({ name }) => name?.toLowerCase() === 'content-type')
-  if (headers.length > 1 || (headers.length && typeof headers[0]?.value !== 'string')) return null
+  const headers = contentTypes(part)
+  if (headers.length > 1 || (headers.length === 1 && typeof headers[0] !== 'string')) return null
+  let concreteType: string | undefined
   let method: string | undefined
-  for (const value of [headers[0]?.value, part.mimeType]) {
+  for (const value of [headers[0], part.mimeType]) {
     if (value === undefined) continue
     const type = mimeDeclaration(value)
     if (!type?.parameters) return null
+    // A generic wrapper may defer to a concrete declaration. Gmail also uses
+    // application/ics for a text/calendar attachment. A filename can discover
+    // a leaf without either alias, but cannot reconcile two concrete types.
+    if (type.mediaType !== GENERIC_MEDIA_TYPE) {
+      const concrete = isCalendarMediaType(type.mediaType) ? 'text/calendar' : type.mediaType
+      if (concreteType !== undefined && concreteType !== concrete) return null
+      concreteType = concrete
+    }
     const hint = type.parameters.get('method')?.toUpperCase()
     if (hint !== undefined) {
       if (!/^[A-Z][A-Z0-9-]*$/.test(hint) || (method !== undefined && method !== hint)) return null
