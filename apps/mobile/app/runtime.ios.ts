@@ -10,7 +10,7 @@ import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
-import { runWorkingCopyCheck } from './working-copy-check.ios'
+import { runWorkingCopyCheck, runWorkingCopyTreeCheck } from './working-copy-check.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -55,6 +55,7 @@ export async function checkCompatibility(): Promise<string> {
   let workingCopy:
     | (Awaited<ReturnType<typeof runWorkingCopyCheck>> & {
         cases?: Awaited<ReturnType<typeof runWorkingCopyCheck>>[]
+        treeCases?: Awaited<ReturnType<typeof runWorkingCopyTreeCheck>>[]
       })
     | undefined
   try {
@@ -121,6 +122,13 @@ export async function checkCompatibility(): Promise<string> {
     }
     if (!results[0]) throw new Error('Missing status matrix results')
     workingCopy = { ...results[0], cases: results }
+    const treeResults = []
+    for (const item of fixture.cases) {
+      treeResults.push(
+        await runWorkingCopyTreeCheck(item.root, item.remote, item.branch ?? 'fixture-start'),
+      )
+    }
+    workingCopy.treeCases = treeResults
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
