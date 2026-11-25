@@ -5,7 +5,7 @@ import {
   waitForFixtureFrames,
 } from './browser-frame-addressing-fixture'
 import { randomBytes } from 'node:crypto'
-import type { FrameCapture } from './browser-frame-addressing'
+import type { FrameCapture } from '../src/plugins/browser/main/frame-addressing'
 import { FrameAddressingScenario } from './browser-frame-addressing-scenario'
 import {
   deferred,

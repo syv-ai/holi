@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { fixtureFrames } from './browser-frame-addressing-fixture'
 import type { BrowserWindow, WebContents, WebFrameMain } from 'electron'
-import type { FrameAddress, FrameCapture } from './browser-frame-addressing'
+import type { FrameAddress, FrameCapture } from '../src/plugins/browser/main/frame-addressing'
 import { FrameAddressingScenario } from './browser-frame-addressing-scenario'
 import {
   deferred,

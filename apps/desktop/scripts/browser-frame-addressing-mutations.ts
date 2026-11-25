@@ -1,4 +1,4 @@
-import type { FrameCapture } from './browser-frame-addressing'
+import type { FrameCapture } from '../src/plugins/browser/main/frame-addressing'
 import {
   fixtureEmbeddingId,
   fixtureFrames,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import type { FrameAddress, FrameCapture } from './browser-frame-addressing'
+import type { FrameAddress, FrameCapture } from '../src/plugins/browser/main/frame-addressing'
 import { FrameAddressingScenario } from './browser-frame-addressing-scenario'
 import { fixtureEmbeddingId, fixtureFrames } from './browser-frame-addressing-fixture'
 import { resetFixture, type Check, type PhaseInput } from './browser-frame-addressing-phase-fixture'

@@ -48,6 +48,7 @@ import {
 } from '../shared/page'
 import type { Pages, Rect } from './capabilities'
 import PAGE_SCRIPT from './page-script.js?raw'
+import { createChildFrameVim } from './child-frame-vim'
 
 const PARTITION = 'persist:holi-browser'
 /** The isolated world `page-script.js` runs in. Any id but 0, the page's. */
@@ -117,6 +118,9 @@ interface Tab {
   vimPoll: ReturnType<typeof setInterval> | null
   vimLastSnapshot: string | null
   vimNavigationPending: boolean
+  childVim: ReturnType<typeof createChildFrameVim> | null
+  vimEnabled: boolean
+  vimFocusedFrame: object | null
   hintRequest: number
   hintOwner: PageHintOwner | null
   hintPendingOwner: PageHintOwner | null
@@ -274,7 +278,7 @@ export function createPages(deps: PagesDeps): Pages & {
   }
 
   const isLive = (tab: Tab): boolean =>
-    !disposed && tabs.get(tab.id) === tab && !tab.view.webContents.isDestroyed()
+    !disposed && tabs.get(tab.id) === tab && tab.view.webContents?.isDestroyed() === false
 
   const isPresented = (tab: Tab): boolean =>
     isLive(tab) &&
@@ -340,24 +344,48 @@ export function createPages(deps: PagesDeps): Pages & {
     const attachment = tab.attachmentId
     if (attachment === null) return
     const generation = tab.vimGeneration
+    const configuration = tab.vimRevision
+    const requestOwner = tab.vimRequestOwner
+    const requestRevision = tab.vimRequestRevision
     const sequence = ++tab.vimModeSequence
-    void inPage<{ revision: number; mode: 'insert' | 'normal' }>(tab, '__holiPage.vim.mode()')
+    const focused = tab.view.webContents.focusedFrame
+    if (tab.vimFocusedFrame !== (focused ?? null)) {
+      tab.vimFocusedFrame = focused ?? null
+      tab.vimLastSnapshot = null
+    }
+    const owns = () =>
+      isPresented(tab) &&
+      tab.attachmentId === attachment &&
+      tab.vimNonce === nonce &&
+      tab.vimGeneration === generation &&
+      tab.vimRevision === configuration &&
+      tab.vimRequestOwner === requestOwner &&
+      tab.vimRequestRevision === requestRevision &&
+      tab.view.webContents.focusedFrame === focused
+    const child = focused && focused !== tab.view.webContents.mainFrame
+    const sampled = child
+      ? tab.childVim!.mode().then((state) =>
+          state
+            ? { revision: configuration, mode: state.mode, current: state.current }
+            : !tab.vimEnabled
+              ? {
+                  revision: configuration,
+                  mode: 'insert' as const,
+                  current: () => !tab.vimEnabled,
+                }
+              : null,
+        )
+      : inPage<{ revision: number; mode: 'insert' | 'normal' }>(tab, '__holiPage.vim.mode()').then(
+          (state) => ({ ...state, current: () => true }),
+        )
+    void sampled
       .then((mode) => {
-        if (
-          !isPresented(tab) ||
-          tab.vimNonce !== nonce ||
-          tab.vimGeneration !== generation ||
-          sequence !== tab.vimModeSequence
-        )
-          return
-        const snapshot = JSON.stringify({ nonce, attachment, ...mode })
-        if (tab.vimLastSnapshot === snapshot) return
-        tab.vimLastSnapshot = snapshot
-        deps.vimMode?.(
-          tab.id,
-          { nonce, attachment, ...mode },
-          () => isPresented(tab) && tab.attachmentId === attachment,
-        )
+        if (!mode || !owns() || !mode.current() || sequence !== tab.vimModeSequence) return
+        const snapshot = { nonce, attachment, revision: mode.revision, mode: mode.mode }
+        const key = JSON.stringify(snapshot)
+        if (tab.vimLastSnapshot === key) return
+        tab.vimLastSnapshot = key
+        deps.vimMode?.(tab.id, snapshot, () => owns() && mode.current())
       })
       .catch(() => {})
   }
@@ -522,6 +550,8 @@ export function createPages(deps: PagesDeps): Pages & {
 
   function resetVimOwnership(tab: Tab): void {
     tab.vimGeneration++
+    tab.vimEnabled = false
+    tab.childVim?.revoke()
     revokeHints(tab)
     tab.vimNonce = null
     tab.vimModeSequence++
@@ -565,7 +595,6 @@ export function createPages(deps: PagesDeps): Pages & {
       requestRevision < 1
     )
       return
-    if (!enabled) revokeHints(tab)
     const owner = `${nonce}:${attachment}`
     if (tab.vimRequestOwner !== owner) {
       tab.vimRequestOwner = owner
@@ -573,25 +602,31 @@ export function createPages(deps: PagesDeps): Pages & {
     }
     if (requestRevision <= tab.vimRequestRevision) return
     tab.vimRequestRevision = requestRevision
+    if (!enabled) {
+      revokeHints(tab)
+      tab.vimEnabled = false
+      void tab.childVim?.configure(false)
+    }
     const generation = tab.vimGeneration
     const attachmentId = tab.attachmentId
     const ownerRevision = tab.vimRequestRevision
     const revision = ++tab.vimRevision
+    const owns = () =>
+      isPresented(tab) &&
+      generation === tab.vimGeneration &&
+      nonce === tab.vimNonce &&
+      attachmentId === tab.attachmentId &&
+      owner === tab.vimRequestOwner &&
+      ownerRevision === tab.vimRequestRevision
     try {
       const applied = await inPage<boolean>(
         tab,
         `__holiPage.vim.configure(${enabled}, ${revision}, ${JSON.stringify(nonce)})`,
       )
-      if (
-        !applied ||
-        !isPresented(tab) ||
-        generation !== tab.vimGeneration ||
-        nonce !== tab.vimNonce ||
-        attachmentId !== tab.attachmentId ||
-        owner !== tab.vimRequestOwner ||
-        ownerRevision !== tab.vimRequestRevision
-      )
-        return
+      if (!applied || !owns()) return
+      await tab.childVim?.configure(enabled)
+      if (!owns()) return
+      tab.vimEnabled = enabled
       reportVim(tab)
     } catch {
       // Navigation owns the next initialization and mode snapshot.
@@ -961,6 +996,7 @@ export function createPages(deps: PagesDeps): Pages & {
     wc.on('will-navigate', (event) => guard(event, event.url))
     wc.on('will-redirect', (event) => guard(event, event.url))
     wc.on('did-start-navigation', (event) => {
+      tab.childVim?.revoke()
       if (event.isMainFrame) {
         if (!event.isSameDocument) {
           tab.error = null
@@ -971,7 +1007,10 @@ export function createPages(deps: PagesDeps): Pages & {
       changed()
     })
     wc.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
-      if (!isMainFrame) return
+      if (!isMainFrame) {
+        if (isPresented(tab) && tab.vimEnabled) tab.childVim?.configure(true)
+        return
+      }
       tab.vimNavigationPending = false
       if (code !== ERR_ABORTED) {
         tab.error = { code, description, url }
@@ -1006,12 +1045,18 @@ export function createPages(deps: PagesDeps): Pages & {
       changed()
     })
     wc.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
-      if (!isMainFrame) return
+      if (!isMainFrame) {
+        if (isPresented(tab) && tab.vimEnabled) tab.childVim?.configure(true)
+        return
+      }
       // History API and fragment changes retain the document, but relinquish
       // its prior Vim owner and arm it again as insert mode.
       resetVimOwnership(tab)
       void initializeVim(tab)
       changed()
+    })
+    wc.on('did-frame-finish-load', (_event, isMainFrame) => {
+      if (!isMainFrame && isPresented(tab) && tab.vimEnabled) tab.childVim?.configure(true)
     })
     wc.on('did-finish-load', () => {
       tab.vimNavigationPending = false
@@ -1108,6 +1153,9 @@ export function createPages(deps: PagesDeps): Pages & {
       vimPoll: null,
       vimLastSnapshot: null,
       vimNavigationPending: false,
+      childVim: null,
+      vimEnabled: false,
+      vimFocusedFrame: null,
       hintRequest: 0,
       hintOwner: null,
       hintPendingOwner: null,
@@ -1123,6 +1171,14 @@ export function createPages(deps: PagesDeps): Pages & {
       hintClosed: false,
       hintZoom: 1,
     }
+    tab.childVim = createChildFrameVim(
+      view.webContents,
+      () => isPresented(tab),
+      () => {
+        const win = tab.shownIn
+        if (win && !win.isDestroyed()) win.webContents.focus()
+      },
+    )
     tabs.set(tab.id, tab)
     current = tab.id
     watch(tab)
@@ -1133,6 +1189,8 @@ export function createPages(deps: PagesDeps): Pages & {
   }
 
   function hide(tab: Tab): void {
+    tab.childVim?.revoke(true)
+    tab.vimEnabled = false
     const win = tab.shownIn
     revokeHints(tab)
     tab.shownIn = null
@@ -1219,6 +1277,7 @@ export function createPages(deps: PagesDeps): Pages & {
       const tab = tabs.get(id)
       if (tab === undefined) return
       hide(tab)
+      tab.childVim?.dispose()
       tabs.delete(id)
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
       if (current === id) current = [...tabs.keys()].at(-1) ?? null
@@ -1391,6 +1450,7 @@ export function createPages(deps: PagesDeps): Pages & {
       for (const id of [...tabs.keys()]) {
         const tab = tabs.get(id)!
         hide(tab)
+        tab.childVim?.dispose()
         if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
       }
       tabs.clear()
