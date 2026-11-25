@@ -134,6 +134,10 @@ export async function runAppHintInteractions(
   }
   const requestHints = async () => {
     await focusGuest()
+    await evaluate(
+      `window.fixtureNeutralFocused=false;document.querySelector('iframe')?.contentWindow?.postMessage({kind:'fixture-neutral-focus'},'*')`,
+    )
+    await waitFor(`window.fixtureNeutralFocused===true`, 'guest did not leave its editable field')
     await waitFor(`window.fixtureVimEnabled===true`, 'Vim preference was not ready')
     await input('f')
     await waitFor(

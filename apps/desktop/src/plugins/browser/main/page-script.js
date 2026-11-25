@@ -346,6 +346,7 @@
   const newVimNonce = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
   let vimNonce = newVimNonce()
   let vimEnabled = false
+  let childEditing = false
   let vimMode = 'insert'
   let vimRevision = 0
   let vimField = null
@@ -703,7 +704,8 @@
   }
   const onVimKey = (event) => {
     if (!event.isTrusted) return
-    if (onHintKey(event)) return
+    if (childEditing && !document.hasFocus()) return
+    if (!childEditing && onHintKey(event)) return
     const target = event.target
     flushHostMutations()
     if (
@@ -855,7 +857,23 @@
     true,
   )
   document.addEventListener('keydown', onVimKey, true)
+  const suspendChild = () => {
+    if (!childEditing) return
+    vimEnabled = false
+    resetOwnership()
+  }
+  window.addEventListener('blur', suspendChild)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) suspendChild()
+  })
   const vim = {
+    armChild() {
+      childEditing = true
+      return this.rearm()
+    },
+    editingState() {
+      return { ...this.mode(), enabled: vimEnabled }
+    },
     documentNonce() {
       return vimNonce
     },
@@ -1087,7 +1105,7 @@
   // Page-level hint ownership is independent of native-field normal mode.
   // Editable/custom hosts stay native unless the field Vim module owns normal mode.
   function canStartHints() {
-    if (!vimEnabled || document.designMode === 'on') return false
+    if (childEditing || !vimEnabled || document.designMode === 'on') return false
     const active = document.activeElement
     if (!(active instanceof HTMLElement) || active.getRootNode() !== document) return false
     if (

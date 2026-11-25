@@ -9,7 +9,7 @@ type RuntimeContext = FrameContext
 const worldNamesByContents = new WeakMap<WebContents, Map<string, string>>()
 
 /** Adapter-local authenticated context indices plus a persistent, non-authoritative world namespace. */
-export function createFrameContextRuntime(contents: WebContents) {
+function createFrameContextRuntime(contents: WebContents) {
   let names = worldNamesByContents.get(contents)
   if (!names) worldNamesByContents.set(contents, (names = new Map()))
   const metadata = createFrameContextMetadata()
@@ -67,6 +67,10 @@ export function createFrameAddressingRuntime(
   const leases = new WeakMap<object, Map<WebFrameMain, FrameAddress>>()
   const captureStates = new Map<object, Set<AddressState>>()
   const revoked = new WeakSet<object>()
+  const focusObservers = new WeakMap<FrameAddress, Set<(focused: boolean) => void>>()
+  const focusInitialized = new WeakSet<FrameAddress>()
+  const focusBindings = new Map<string, { state: AddressState; token: string }>()
+  const focusBindingName = `__holi_focus_${randomBytes(16).toString('hex')}`
   const worldWaiters = new Map<string, { context: Context; resolve: (context: Context) => void }>()
   let queue: Promise<unknown> = Promise.resolve()
   let disposed = false
@@ -159,8 +163,32 @@ export function createFrameAddressingRuntime(
     })
   }
 
+  function removeFocusBinding(state: AddressState): void {
+    const key = `${identity(state.sessionId)}\0${state.contextId}`
+    const binding = focusBindings.get(key)
+    if (binding?.state !== state) return
+    focusBindings.delete(key)
+    if (state.address) focusInitialized.delete(state.address)
+    // Unique context and registration token prevent delayed cleanup from
+    // removing a replacement document's or returning owner's observation.
+    void send(
+      'Runtime.evaluate',
+      {
+        expression: `(() => { const hook = globalThis.__holiFrameFocusObserver; if (hook?.token === ${JSON.stringify(binding.token)}) { hook.cleanup(); delete globalThis.__holiFrameFocusObserver; } })()`,
+        uniqueContextId: state.uniqueId,
+      },
+      state.sessionId,
+      false,
+    ).catch(() => {})
+  }
+
   const retire = (state: AddressState) => {
-    if (state.address) states.delete(state.address)
+    if (state.address) {
+      states.delete(state.address)
+      focusObservers.get(state.address)?.clear()
+      focusObservers.delete(state.address)
+      removeFocusBinding(state)
+    }
     const group = captureStates.get(state.capture as object)
     group?.delete(state)
     if (!group?.size) captureStates.delete(state.capture as object)
@@ -259,6 +287,34 @@ export function createFrameAddressingRuntime(
       } else if (typeof c.auxData?.frameId === 'string') {
         // CDP can replay an isolated world before its authenticated default descriptor.
         rememberWorld(session, c.auxData.frameId, c)
+      }
+    } else if (method === 'Runtime.bindingCalled') {
+      if (params.name !== focusBindingName || typeof params.executionContextId !== 'number') return
+      const key = `${identity(session)}\0${params.executionContextId}`
+      const binding = focusBindings.get(key)
+      if (
+        !binding ||
+        binding.state.sessionId !== session ||
+        !isCurrentAddress(binding.state.address!)
+      )
+        return
+      const context = metadata.lookup(session, params.executionContextId)
+      if (
+        !context ||
+        context.isDefault ||
+        context.frameId !== binding.state.frameId ||
+        context.uniqueId !== binding.state.uniqueId ||
+        context.generation !== binding.state.generation
+      )
+        return
+      try {
+        const event = JSON.parse(params.payload)
+        if (event?.token !== binding.token || (event.type !== 'focus' && event.type !== 'blur'))
+          return
+        for (const observer of focusObservers.get(binding.state.address!) ?? [])
+          observer(event.type === 'focus')
+      } catch {
+        // A malformed page-world payload has no effect.
       }
     } else if (method === 'Page.frameDetached') {
       const frameId = params.frameId
@@ -526,6 +582,81 @@ export function createFrameAddressingRuntime(
       return described.node?.backendNodeId === state.backendNodeId
     })
   }
+  function isCurrentAddress(address: FrameAddress): boolean {
+    const state = states.get(address)
+    if (!state || disposed || states.get(address) !== state) return false
+    try {
+      assertCurrent(state.frame, state.capture)
+      if (state.frame.processId !== state.nativeProcessId || state.frame.url !== state.nativeUrl)
+        return false
+      assertTargetWorld(state)
+      for (const ancestor of state.ownerChain) {
+        assertCurrent(ancestor.frame, state.capture)
+        assertContext(state.capture, ancestor.context, ancestor.sessionId)
+      }
+      return state.epoch === owner.epoch && states.get(address) === state
+    } catch {
+      return false
+    }
+  }
+  async function observeFocus(address: FrameAddress, onChange: (focused: boolean) => void) {
+    const state = states.get(address)
+    if (!state) throw new Error('unknown frame address lease')
+    const assertLease = () => {
+      if (states.get(address) !== state || !isCurrentAddress(address))
+        throw new Error('frame address lease is no longer current')
+    }
+    assertLease()
+    let observers = focusObservers.get(address)
+    if (!observers) focusObservers.set(address, (observers = new Set()))
+    observers.add(onChange)
+    try {
+      if (!focusInitialized.has(address)) {
+        await send(
+          'Runtime.addBinding',
+          { name: focusBindingName, executionContextName: runtime.worldNames.forPurpose('frame') },
+          state.sessionId,
+        )
+        assertLease()
+        const key = `${identity(state.sessionId)}\0${state.contextId}`
+        const token = randomBytes(16).toString('hex')
+        focusBindings.set(key, { state, token })
+        const installed = await evaluate<boolean>(
+          address,
+          `(() => {
+            const name = ${JSON.stringify(focusBindingName)};
+            const remembered = globalThis.__holiFrameFocusBinding;
+            const send = globalThis[name] ?? (remembered?.name === name ? remembered.send : undefined);
+            if (typeof send !== 'function') throw new Error('focus binding missing');
+            globalThis.__holiFrameFocusBinding = { name, send };
+            globalThis.__holiFrameFocusObserver?.cleanup();
+            const token = ${JSON.stringify(token)};
+            const report = event => { if (event.isTrusted) send(JSON.stringify({type:event.type,token})); };
+            addEventListener('focus', report, true); addEventListener('blur', report, true);
+            globalThis.__holiFrameFocusObserver = { token, cleanup() {
+              removeEventListener('focus', report, true); removeEventListener('blur', report, true);
+            }};
+            delete globalThis[${JSON.stringify(focusBindingName)}]; return true;
+          })()`,
+        )
+        if (!installed) throw new Error('native focus observation was not installed')
+        assertLease()
+        focusInitialized.add(address)
+      }
+    } catch (error) {
+      observers.delete(onChange)
+      if (!observers.size) focusObservers.delete(address)
+      throw error
+    }
+    return () => {
+      const ownObservers = focusObservers.get(address)
+      ownObservers?.delete(onChange)
+      if (!ownObservers?.size) {
+        focusObservers.delete(address)
+        removeFocusBinding(state)
+      }
+    }
+  }
   async function evaluate<T>(address: FrameAddress, expression: string): Promise<T> {
     const state = states.get(address)
     if (!state) throw new Error('unknown frame address lease')
@@ -577,5 +708,13 @@ export function createFrameAddressingRuntime(
   }
   contents.on('render-process-gone', revokeAll)
   contents.on('destroyed', revokeAll)
-  return Object.freeze({ resolve, evaluate, verifyOwner, revoke, dispose })
+  return Object.freeze({
+    resolve,
+    evaluate,
+    verifyOwner,
+    isCurrent: (address: FrameAddress) => isCurrentAddress(address),
+    observeFocus,
+    revoke,
+    dispose,
+  })
 }
