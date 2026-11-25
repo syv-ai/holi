@@ -374,7 +374,7 @@ export function validateSharedGraph(graph) {
   assert.ok(graph.edges.some((edge) => edge.from === 'mobile-path-safety.ts'))
 }
 
-/** Kill the complete CLI/build process group on timeout or cancellation. */
+/** Stop the owned CLI group on timeout/cancellation; forced build shutdown is not drain proof. */
 export function runCommand(
   command,
   args,
@@ -404,19 +404,20 @@ export function runCommand(
     let failure
     let killTimer
     let settled = false
+    let terminationRequested = false
     const finish = async (code, exitSignal = null) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       clearTimeout(killTimer)
       signal?.removeEventListener('abort', abort)
-      let processGroupUndrained = false
+      let drainUnconfirmed = drainProcessGroup && (terminationRequested || exitSignal !== null)
       if (drainProcessGroup && child.pid && process.platform !== 'win32') {
-        // Xcode/NativeScript build descendants can outlive the CLI and close their
-        // pipes. Check the owned process group rather than treating close as proof.
+        // Natural pipe closure alone doesn't prove that the owned group stopped.
+        // Conversely, after forced shutdown an empty group doesn't rule out escaped
+        // fixture writers. Never infer that they stopped or signal a shared service.
         try {
           const start = performance.now()
-          kill(failure ? 'SIGKILL' : 'SIGTERM')
           while (true) {
             try {
               process.kill(-child.pid, 0)
@@ -426,21 +427,25 @@ export function runCommand(
             }
             const elapsed = performance.now() - start
             if (elapsed >= killGrace + 2_000) throw new Error('Build process group did not drain')
-            if (elapsed >= killGrace) kill('SIGKILL')
+            if (drainUnconfirmed || elapsed >= killGrace) {
+              drainUnconfirmed = true
+              kill('SIGKILL')
+            }
             await new Promise((done) => setTimeout(done, 25))
           }
         } catch (error) {
-          processGroupUndrained = true
+          drainUnconfirmed = true
           failure ??= error
         }
       } else if (failure) kill('SIGKILL')
+      if (drainUnconfirmed) failure ??= new Error('Build process drain could not be confirmed')
       if (failure || code !== 0) {
         reject(
           Object.assign(new Error(`${failure?.message ?? `Exit ${code}: ${command}`}\n${output}`), {
             exitCode: code,
             signal: exitSignal,
             code: failure?.code,
-            processGroupUndrained,
+            drainUnconfirmed,
             timedOut: failure?.message.startsWith('Timed out:') ?? false,
           }),
         )
@@ -458,6 +463,7 @@ export function runCommand(
     const stop = (reason) => {
       if (failure) return
       failure = reason
+      terminationRequested = Boolean(child.pid)
       kill('SIGTERM')
       killTimer = setTimeout(() => {
         kill('SIGKILL')

@@ -1,9 +1,12 @@
+import { execFile } from 'node:child_process'
 import { mkdtemp, writeFile, appendFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
+import { promisify } from 'node:util'
 import { test } from 'vitest'
 import {
+  validateCredentialBuildIdentity,
   validateCredentialReport,
   summarizeCredentialReport,
   waitForCredentialReport,
@@ -30,6 +33,37 @@ const report = {
   tokenRecorded: false,
   metadata: { accessible: true, synchronizable: false },
 }
+
+test('projects the exact built SDK and minimum OS into credential provenance', () => {
+  const bundleId = 'ai.syv.holi.compatibility'
+  const plist = {
+    CFBundleIdentifier: bundleId,
+    CFBundleExecutable: 'mobile',
+    CFBundleVersion: '1.0.0',
+    DTPlatformName: 'iphonesimulator',
+    DTSDKName: 'iphonesimulator26.2',
+    DTSDKBuild: '23C53',
+    DTXcodeBuild: '17C52',
+    MinimumOSVersion: '26.0',
+    privateValue: 'must-not-be-published',
+  }
+  assert.deepEqual(validateCredentialBuildIdentity(plist, bundleId), {
+    bundleId,
+    build: '1.0.0',
+    sdkName: 'iphonesimulator26.2',
+    sdkBuild: '23C53',
+    minimumOSVersion: '26.0',
+  })
+  for (const change of [
+    { DTSDKName: undefined },
+    { DTSDKName: 'iphoneos26.2' },
+    { DTSDKBuild: undefined },
+    { DTSDKBuild: '23C53\nprivate-value' },
+    { MinimumOSVersion: '25.0' },
+    { MinimumOSVersion: 26 },
+  ])
+    assert.throws(() => validateCredentialBuildIdentity({ ...plist, ...change }, bundleId))
+})
 
 test('accepts native credential storage observed by the current build and process', () => {
   assert.deepEqual(validateCredentialReport(report, context), report)
@@ -109,6 +143,37 @@ test('observes a complete report when publication overlaps polling', async () =>
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test.skipIf(process.platform === 'win32')(
+  'rejects a real FIFO report without a writer',
+  async () => {
+    const run = promisify(execFile)
+    const dir = await mkdtemp(join(tmpdir(), 'holi770-fifo-'))
+    try {
+      const path = join(dir, 'report.json')
+      const supervision = { timeout: 2000, killSignal: 'SIGKILL' }
+      await run('mkfifo', [path], supervision)
+      const script = `
+      import assert from 'node:assert/strict';
+      const { waitForCredentialReport } = await import(process.argv[1]);
+      await assert.rejects(waitForCredentialReport(process.argv[2]), /Invalid or oversized evidence JSON/);
+    `
+      await run(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          script,
+          new URL('../scripts/credential-evidence.mjs', import.meta.url).href,
+          path,
+        ],
+        supervision,
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  },
+)
 
 test('retains bounded native Keychain status without arbitrary error details', () => {
   const error = { kind: 'keychain', operation: 'read', status: -34018, message: 'private-token' }

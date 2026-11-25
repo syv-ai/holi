@@ -10,6 +10,7 @@ import { buildCredentialApp } from './credential-build.mjs'
 import { ownCredentialSimulator } from './credential-device.mjs'
 import { credentialFailure } from './credential-log.mjs'
 import {
+  validateCredentialBuildIdentity,
   validateCredentialReport,
   summarizeCredentialReport,
   waitForCredentialReport,
@@ -61,7 +62,7 @@ async function runCredentialSimulator() {
   const buildReceipts = []
   let device
   let fixture
-  let buildMayBeRunning = false
+  let buildDrainUnconfirmed = false
   let provenance
   let completed = false
   let stage = 'setup'
@@ -114,14 +115,14 @@ async function runCredentialSimulator() {
       signal,
     })
     stage = 'verify-build'
-    const plist = (key) =>
-      command('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, join(app, 'Info.plist')])
-    assert.equal(await plist('MinimumOSVersion'), '26.0')
-    assert.equal(await plist('CFBundleIdentifier'), bundleId)
-    assert.equal(await plist('DTPlatformName'), 'iphonesimulator')
-    assert.equal(await plist('CFBundleExecutable'), 'mobile')
-    const build = await plist('CFBundleVersion')
-    assert.match(build, /^\d{1,10}(?:\.\d{1,10}){0,2}$/)
+    const info = await command('/usr/bin/plutil', [
+      '-convert',
+      'json',
+      '-o',
+      '-',
+      join(app, 'Info.plist'),
+    ])
+    const buildIdentity = validateCredentialBuildIdentity(JSON.parse(info), bundleId)
     const hash = async (file) =>
       createHash('sha256')
         .update(await readFile(join(app, file)))
@@ -132,8 +133,7 @@ async function runCredentialSimulator() {
       provisioning: false,
       binaryHash: await hash('mobile'),
       bundleHash: await hash('app/bundle.mjs'),
-      bundleId,
-      build,
+      ...buildIdentity,
       ...toolchain,
     }
     await receipt('provenance', provenance)
@@ -193,7 +193,7 @@ async function runCredentialSimulator() {
       const observed = validateCredentialReport(report, {
         runId,
         phase,
-        build,
+        build: buildIdentity.build,
         pid,
         launchedAt,
         now: Date.now(),
@@ -204,7 +204,7 @@ async function runCredentialSimulator() {
     signal.throwIfAborted()
     completed = true
   } catch (error) {
-    buildMayBeRunning = error.processGroupUndrained === true
+    buildDrainUnconfirmed = stage === 'build' && error.drainUnconfirmed === true
     failure = { stage, ...credentialFailure(error, signal) }
     throw error
   } finally {
@@ -216,7 +216,7 @@ async function runCredentialSimulator() {
       simulatorCleanup = await device?.cleanup()
     } finally {
       if (fixture) {
-        if (buildMayBeRunning) buildCleanup = 'drain-unconfirmed'
+        if (buildDrainUnconfirmed) buildCleanup = 'drain-unconfirmed'
         else {
           try {
             await rm(fixture, { recursive: true, force: true })
@@ -242,7 +242,13 @@ async function runCredentialSimulator() {
         runId,
         phases: pids,
         buildCommands: buildReceipts,
-        finalOwnedCleanup: { simulator: simulatorCleanup, build: buildCleanup },
+        finalOwnedCleanup: {
+          simulator: simulatorCleanup,
+          build: buildCleanup,
+          ...(buildCleanup === 'drain-unconfirmed' || buildCleanup === 'remove-failed'
+            ? { retainedBuildWorkspace: fixture }
+            : {}),
+        },
       })
       if (!passed) process.exitCode = 1
     }

@@ -3,22 +3,18 @@ import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { recordCredentialCommand } from './credential-log.mjs'
 
-/** Build from the exact commit, with a fixture-local workspace, modules and Xcode output. */
-export async function buildCredentialApp({ root, sourceHead, command, receipts, signal }) {
-  const run = (stage, exe, args, options) =>
-    recordCredentialCommand(
-      receipts,
-      stage,
-      () => command(exe, args, { drainProcessGroup: true, ...options }),
-      signal,
-    )
-  const store = await run('dependency-store', 'pnpm', ['store', 'path'])
+/**
+ * Materialize the committed build inputs, independent of the caller's checkout subdirectory.
+ * @public The snapshot can be exercised without invoking the native build.
+ */
+export async function snapshotCredentialSource({ root, sourceHead, run }) {
+  const repository = await run('source-root', 'git', ['rev-parse', '--show-toplevel'])
   const archive = join(root, 'source.tar')
   const source = join(root, 'source')
-  const home = join(root, 'home')
-  const tmp = join(root, 'tmp')
-  for (const path of [source, home, tmp]) await mkdir(path)
+  await mkdir(source)
   await run('snapshot', 'git', [
+    '-C',
+    repository,
     'archive',
     `--output=${archive}`,
     sourceHead,
@@ -43,6 +39,23 @@ export async function buildCredentialApp({ root, sourceHead, command, receipts, 
   for (const entry of await readdir(source, { recursive: true, withFileTypes: true })) {
     assert.ok(entry.isDirectory() || entry.isFile(), 'Build snapshot contains a nonregular file')
   }
+  return source
+}
+
+/** Build from the exact commit, with a fixture-local workspace, modules and Xcode output. */
+export async function buildCredentialApp({ root, sourceHead, command, receipts, signal }) {
+  const run = (stage, exe, args, options) =>
+    recordCredentialCommand(
+      receipts,
+      stage,
+      () => command(exe, args, { drainProcessGroup: true, ...options }),
+      signal,
+    )
+  const store = await run('dependency-store', 'pnpm', ['store', 'path'])
+  const source = await snapshotCredentialSource({ root, sourceHead, run })
+  const home = join(root, 'home')
+  const tmp = join(root, 'tmp')
+  for (const path of [home, tmp]) await mkdir(path)
   const lockfile = join(source, 'pnpm-lock.yaml')
   const lock = await readFile(lockfile)
   const { PATH, DEVELOPER_DIR, HOME, GEM_HOME, GEM_PATH, COREPACK_HOME, XDG_CACHE_HOME } =
