@@ -195,7 +195,7 @@ try {
     contextBridge.exposeInMainWorld('holiSmoke', {
       denialReceipt: () => denialReceipt,
       call: (channel, input) => {
-        if (!['smoke:status', 'smoke:scenarios', 'smoke:other-document', 'smoke:hold-compiler', 'smoke:guest-healthy', 'smoke:arm-stream', 'smoke:stream-status', 'smoke:start-error-page-race', 'smoke:error-page-result'].includes(channel))
+        if (!['smoke:status', 'smoke:scenarios', 'smoke:other-document', 'smoke:hold-compiler', 'smoke:guest-healthy', 'smoke:public-guest-policy', 'smoke:arm-stream', 'smoke:stream-status', 'smoke:start-error-page-race', 'smoke:error-page-result'].includes(channel))
           return Promise.reject(Error('Denied fixture operation'));
         return ipcRenderer.invoke(channel, input);
       },
