@@ -191,6 +191,7 @@ export function useMailInvitation({
         threadId,
         expectedAccountSub,
         expectedBindingRevision: invitation.bindingRevision,
+        expectedResponseTargetKey: invitation.responseTargetKey,
         identity: invitation.identity,
         answer,
       })

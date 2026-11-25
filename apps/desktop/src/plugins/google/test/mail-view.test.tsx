@@ -545,6 +545,7 @@ const invite: Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations'
   recurring: false,
   scope: 'single',
   bindingRevision: 'view-binding-1',
+  responseTargetKey: 'a'.repeat(64),
   identity: {
     messageId: 'm1',
     uid: 'review',
@@ -929,6 +930,7 @@ test('keeps an uncertain occurrence response separate from the series and refres
     scope: 'occurrence',
     recurring: true,
     title: 'Moved design review',
+    responseTargetKey: 'b'.repeat(64),
     identity: { ...invite.identity, messageId: 'm2', recurrenceId: '2026-08-19T12:00:00.000Z' },
   } as const
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
@@ -962,6 +964,7 @@ test('keeps an uncertain occurrence response separate from the series and refres
   expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
     expectedAccountSub: 'mail-view-account',
     expectedBindingRevision: occurrence.bindingRevision,
+    expectedResponseTargetKey: occurrence.responseTargetKey,
     threadId: 't1',
     identity: occurrence.identity,
     answer: 'declined',
@@ -1064,6 +1067,7 @@ test('retries invitation read failures and reconciles uncertainty without resend
   expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
     expectedAccountSub: 'mail-view-account',
     expectedBindingRevision: invite.bindingRevision,
+    expectedResponseTargetKey: invite.responseTargetKey,
     threadId: 't1',
     identity: invite.identity,
     answer: 'tentative',

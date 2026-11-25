@@ -291,6 +291,7 @@ function invitationParams(raw: unknown): { threadId: string; expectedAccountSub:
 function invitationResponseParams(raw: unknown): ReturnType<typeof invitationParams> & {
   identity: MailInvitationIdentity
   expectedBindingRevision: string
+  expectedResponseTargetKey: string | null
   answer: InviteAnswer
 } {
   const p = paramsObject(raw)
@@ -309,9 +310,18 @@ function invitationResponseParams(raw: unknown): ReturnType<typeof invitationPar
   if (answer !== 'accepted' && answer !== 'tentative' && answer !== 'declined') {
     throw new CapabilityError('BAD_REQUEST', 'Invalid invitation response')
   }
+  const expectedResponseTargetKey = p.expectedResponseTargetKey
+  if (
+    expectedResponseTargetKey !== null &&
+    (typeof expectedResponseTargetKey !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(expectedResponseTargetKey))
+  ) {
+    throw new CapabilityError('BAD_REQUEST', 'Invalid invitation response target')
+  }
   return {
     ...invitationParams(raw),
     expectedBindingRevision: stringParam(p, 'expectedBindingRevision'),
+    expectedResponseTargetKey,
     answer,
     identity: {
       messageId: stringParam(target, 'messageId'),
@@ -941,10 +951,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.respondToMailInvitation': cap({
       doors: ['ui'],
       params: invitationResponseParams,
-      run: (ctx, { identity, answer, ...target }) =>
+      run: (ctx, { identity, answer, expectedResponseTargetKey, ...target }) =>
         google(async () => {
           const bound = await invitationTarget(ctx.remote, target)
-          const result = await mailInvitations().respond(bound, identity, answer)
+          const result = await mailInvitations().respond(
+            bound,
+            identity,
+            answer,
+            expectedResponseTargetKey,
+          )
           try {
             bound.assertBinding()
             return result

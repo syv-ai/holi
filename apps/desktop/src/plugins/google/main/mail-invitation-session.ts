@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { CapabilityError } from '../../../main/plugin-api'
 import {
   GoogleApiError,
@@ -9,6 +9,7 @@ import {
 import type { InviteAnswer } from './calendar'
 import {
   calendarTargetIsMailbox,
+  calendarTargetMailbox,
   findInvitationCalendarCopy,
   createInvitationCalendarResourceLookup,
 } from './mail-invitation-calendar'
@@ -35,11 +36,13 @@ import {
   supersedes,
   type Candidate,
 } from './mail-invitation-revisions'
-import type {
-  createMailInvitationStore,
-  InvitationAttempt,
-  ParentAnchor,
-  SentEvidence,
+import {
+  knownCalendarLocators,
+  type CalendarLocator,
+  type createMailInvitationStore,
+  type InvitationAttempt,
+  type ParentAnchor,
+  type SentEvidence,
 } from './mail-invitation-store'
 import {
   invitationReplyStatus,
@@ -53,6 +56,8 @@ type Mail = Thread['messages'][number]
 type Revision = InvitationAttempt['revision']
 type MailInvitation = Invitation['details'] & {
   bindingRevision: string
+  /** Echoed on an action; only main resolves a provider resource. */
+  responseTargetKey: string | null
   kind: 'invitation' | 'meeting'
   scope: 'single' | 'series' | 'occurrence'
   responseStatus: NonNullable<Revision['mailboxResponse']>['responseStatus'] | null
@@ -106,6 +111,8 @@ type Resolved = {
   response: Revision['mailboxResponse']
   recorded: InviteAnswer | null
   priorSent: SentEvidence | null
+  absentTargets: Set<string>
+  upcomingLinks: Extract<CalendarCopy, { kind: 'verified' }>['upcomingLinks']
 }
 type ReadResult = { cards: Resolved[]; recoveryReason: string | null }
 type CalendarCopy = Awaited<ReturnType<typeof findInvitationCalendarCopy>>
@@ -280,10 +287,55 @@ function sameWriteTarget(a: Reply, b: Reply): boolean {
   return a.channel === 'gmail' && b.channel === 'gmail' && a.target === b.target
 }
 
+function responseTargetKey(channel: Channel, target: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify([channel, target]))
+    .digest('hex')
+}
+
+function relevantCalendarTargets(
+  locators: CalendarLocator[],
+  target: Target,
+  invitation: Pick<MailInvitation, 'identity' | 'organizer' | 'scope'>,
+): Set<string> {
+  const { uid, recurrenceId } = invitation.identity
+  // An occurrence can still belong to a known series even if events.list
+  // omits both. Other occurrences do not identify its original slot.
+  return new Set(
+    locators.flatMap((copy) =>
+      copy.accountSub === target.accountSub &&
+      copy.uid === uid &&
+      (copy.organizer === undefined || copy.organizer === invitation.organizer?.email) &&
+      (copy.recurrenceId === recurrenceId ||
+        (recurrenceId !== null && copy.recurrenceId === null && copy.series !== false) ||
+        invitation.scope === 'series') &&
+      (calendarTargetMailbox(copy.target) ?? target.email) === target.email
+        ? [copy.target]
+        : [],
+    ),
+  )
+}
+
+/** Resolve navigation only on the way out, never during write preflight. */
+async function withUpcomingLinks({ invitation, upcomingLinks }: Resolved): Promise<MailInvitation> {
+  const links = await upcomingLinks?.()
+  if (!links) return invitation
+  return {
+    ...invitation,
+    conferenceUrl: links.conferenceUrl,
+    conferenceLinkSource: links.conferenceLinkSource,
+    htmlLink: links.htmlLink ?? invitation.htmlLink,
+    htmlLinkSource: links.htmlLink ? 'calendar' : invitation.htmlLinkSource,
+  }
+}
+
 // A no-op found by final preflight must leave the gate before reservation.
 // It is not a provider refusal or an uncertain dispatch.
 class AlreadyRecorded extends Error {
-  constructor(readonly result: RespondResult) {
+  constructor(
+    readonly result: RespondResult,
+    readonly card: Resolved,
+  ) {
     super()
   }
 }
@@ -472,7 +524,6 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
   ): Promise<ReadResult> => {
     const { api, threadId, accountSub, email } = target
     target.assertBinding()
-    const journal = await store.read()
     let missingThread = false
     const thread = await fetchThreadCalendarPayloads(api, threadId, scan).catch((error): Thread => {
       if (!(error instanceof GoogleApiError) || error.status !== 404) throw error
@@ -485,15 +536,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       ? incoming.filter((entry) => sameGroup(identityOf(entry.selected), selection))
       : incoming
     target.assertBinding()
-    const relevant = journal.attempts.filter(
-      (attempt) =>
-        attempt.accountSub === accountSub &&
-        attempt.id !== excludeAttempt &&
-        (selection
-          ? sameGroup(attempt.revision, selection)
-          : attempt.threadId === threadId ||
-            scopes.some((entry) => sameGroup(identityOf(entry.selected), attempt.revision))),
-    )
+    const found: CalendarLocator[] = []
     const copies = new Map<string, CalendarCopy>()
     const resources = createInvitationCalendarResourceLookup(api, email)
     for (const entry of scopes) {
@@ -519,8 +562,34 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           email,
         )
         copies.set(scopeKey(details.identity), copy)
+        if (copy.kind === 'verified') {
+          const { uid, recurrenceId } = details.identity
+          found.push({
+            accountSub,
+            organizer: details.organizer.email,
+            uid,
+            recurrenceId,
+            series: recurrenceId === null && details.recurring,
+            target: copy.target,
+          })
+        }
       }
     }
+    // An invitation may be displayed without any dispatch. Remember its
+    // verified resource before returning, without issuing a provider write.
+    target.assertBinding()
+    const journal = await store.rememberCalendarLocators(await store.read(), found)
+    target.assertBinding()
+    const known = knownCalendarLocators(journal)
+    const relevant = journal.attempts.filter(
+      (attempt) =>
+        attempt.accountSub === accountSub &&
+        attempt.id !== excludeAttempt &&
+        (selection
+          ? sameGroup(attempt.revision, selection)
+          : attempt.threadId === threadId ||
+            scopes.some((entry) => sameGroup(identityOf(entry.selected), attempt.revision))),
+    )
     const lineages = new Map<string, LineageMatch>()
     for (const entry of scopes) {
       const { organizer, identity } = entry.selected.value.details
@@ -632,6 +701,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         ...details,
         cancelled: details.cancelled || entry.cancelled === true,
         bindingRevision: target.bindingRevision,
+        responseTargetKey: null,
         kind: joinOnly ? 'meeting' : 'invitation',
         scope:
           identity.recurrenceId !== null ? 'occurrence' : details.recurring ? 'series' : 'single',
@@ -642,6 +712,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         responsePending: false,
       }
       let reply: Reply | null = null
+      const absentTargets = new Set<string>()
       let noopChannel: Channel | null = null
       let recorded: InviteAnswer | null = null
       let priorSent: SentEvidence | null = null
@@ -659,14 +730,24 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         invitation.end = calendar.end ?? invitation.end
         if (calendar.start) invitation.allDay = calendar.allDay
         invitation.location = calendar.location ?? invitation.location
-        if (calendar.conferenceUrl) {
-          invitation.conferenceUrl = calendar.conferenceUrl
-          invitation.conferenceLinkSource = calendar.conferenceLinkSource
-        }
-        if (calendar.htmlLink) {
+        if (calendar.upcomingLinks) {
+          // Neither the master nor the original mail proves where to join
+          // an upcoming occurrence. Its Calendar page is still useful.
+          invitation.conferenceUrl = null
+          invitation.conferenceLinkSource = null
           invitation.htmlLink = calendar.htmlLink
-          invitation.htmlLinkSource = 'calendar'
+          invitation.htmlLinkSource = invitation.htmlLink ? 'calendar' : null
+        } else {
+          if (calendar.conferenceUrl) {
+            invitation.conferenceUrl = calendar.conferenceUrl
+            invitation.conferenceLinkSource = calendar.conferenceLinkSource
+          }
+          if (calendar.htmlLink) {
+            invitation.htmlLink = calendar.htmlLink
+            invitation.htmlLinkSource = 'calendar'
+          }
         }
+        if (!joinOnly) invitation.responseTargetKey = responseTargetKey('calendar', calendar.target)
         invitation.responseStatus = calendar.responseStatus
         invitation.cancelled = calendar.cancelled
         invitation.unavailableReason = calendar.unavailableReason
@@ -753,22 +834,17 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         const historical = confirmation?.attempt.answer ?? null
         const historicalCalendar =
           delivery?.channel === 'calendar' && !sameTarget ? historical : null
-        let absenceContradicted = false
+        let absenceContradicted = journal.calendarLocatorOverflow
         let exactConfirmed = false
         if (calendar.kind === 'absent') {
           // A complete list can still disagree with an exact resource read.
           // Any known target for this scope must be gone before Gmail can write.
-          for (const attempt of relevant) {
-            if (
-              attempt.state !== 'prepared' &&
-              attempt.delivery.channel === 'calendar' &&
-              sameGroup(attempt.revision, identity) &&
-              calendarTargetIsMailbox(attempt.delivery.target, email) &&
-              (await resources(attempt.delivery.target)).kind !== 'gone'
-            ) {
+          for (const locator of relevantCalendarTargets(known, target, invitation)) {
+            if ((await resources(locator)).kind !== 'gone') {
               absenceContradicted = true
               break
             }
+            absentTargets.add(locator)
           }
           if (absenceContradicted && delivery?.channel === 'calendar' && historical)
             exactConfirmed = await exactCalendarAnswer(resources, delivery, historical)
@@ -854,8 +930,17 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         }
         // This exact read can establish a read-only no-op for the confirmed
         // answer; it is not the selected collection copy or a writable target.
-        if (exactConfirmed && !responseUnverified && invitation.responseStatus === historical)
+        if (
+          exactConfirmed &&
+          delivery?.channel === 'calendar' &&
+          !responseUnverified &&
+          invitation.responseStatus === historical
+        ) {
           noopChannel = 'calendar'
+          invitation.responseTargetKey = responseTargetKey('calendar', delivery.target)
+        }
+        if (reply?.channel === 'gmail')
+          invitation.responseTargetKey = responseTargetKey('gmail', reply.target)
         if (reply)
           reply.key = JSON.stringify([
             reply.key,
@@ -900,7 +985,16 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         }
       }
       invitation.canRespond = reply !== null && !responseUnverified && !invitation.responsePending
-      cards.push({ invitation, reply, noopChannel, response: entry.response, recorded, priorSent })
+      cards.push({
+        invitation,
+        reply,
+        noopChannel,
+        response: entry.response,
+        recorded,
+        priorSent,
+        absentTargets,
+        upcomingLinks: calendar?.kind === 'verified' ? calendar.upcomingLinks : null,
+      })
     }
     target.assertBinding()
     return {
@@ -917,10 +1011,12 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     async read(target: Target) {
       try {
         const result = await read(target, createCalendarScan())
-        return {
-          invitations: result.cards.map(({ invitation }) => invitation),
-          recoveryReason: result.recoveryReason,
+        const invitations = []
+        for (const card of result.cards) {
+          invitations.push(await withUpcomingLinks(card))
+          target.assertBinding()
         }
+        return { invitations, recoveryReason: result.recoveryReason }
       } catch (error) {
         target.assertBinding()
         if (error instanceof CalendarScanError)
@@ -932,6 +1028,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       target: Target,
       identity: MailInvitationIdentity,
       answer: InviteAnswer,
+      expectedResponseTargetKey: string | null,
     ): Promise<RespondResult> {
       const { accountSub, threadId, email } = target
       const key = JSON.stringify([accountSub, scopeKey(identity)])
@@ -968,7 +1065,12 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           }
         }
         const recorded = unchanged(current)
-        if (recorded) return recorded
+        if (
+          (recorded || invitation.canRespond) &&
+          invitation.responseTargetKey !== expectedResponseTargetKey
+        )
+          throw conflict()
+        if (recorded) return { ...recorded, invitation: await withUpcomingLinks(current) }
         if (!reply || !invitation.canRespond)
           throw new CapabilityError(
             'FORBIDDEN',
@@ -996,7 +1098,14 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           state: 'prepared',
           delivery:
             channel === 'calendar'
-              ? { channel, target: reply.target, proof: reply.proof, priorSent: current.priorSent }
+              ? {
+                  channel,
+                  target: reply.target,
+                  proof: reply.proof,
+                  priorSent: current.priorSent,
+                  organizer: invitation.organizer?.email,
+                  series: invitation.scope === 'series',
+                }
               : {
                   channel,
                   rfcId,
@@ -1010,6 +1119,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         dispatching.add(id)
         try {
           await store.addAttempt(attempt)
+          let absentTargets: Set<string> = new Set()
           const validate = async () => {
             // Runs after the write token has been obtained. Recheck the channel,
             // exact Calendar target/ETag or proven absence, and the prior answer.
@@ -1018,7 +1128,8 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               !newest ||
               !sameInvitation(newest.invitation.identity, identity) ||
               newest.response?.responseStatus !== current.response?.responseStatus ||
-              newest.response?.rsvp !== current.response?.rsvp
+              newest.response?.rsvp !== current.response?.rsvp ||
+              newest.invitation.responseTargetKey !== expectedResponseTargetKey
             )
               throw conflict()
             const recorded = unchanged(newest)
@@ -1028,7 +1139,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
                 newest.noopChannel !== null ||
                 (newest.reply && sameWriteTarget(newest.reply, reply)))
             )
-              throw new AlreadyRecorded(recorded)
+              throw new AlreadyRecorded(recorded, newest)
             if (
               !newest.reply ||
               !newest.invitation.canRespond ||
@@ -1037,10 +1148,20 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               newest.invitation.responseStatus !== invitation.responseStatus
             )
               throw conflict()
+            absentTargets = newest.absentTargets
           }
           const reserveDispatch = async () => {
             await store.update((journal) => {
               if (!journal.attempts.some((entry) => entry.id === id && entry.state === 'prepared'))
+                throw conflict()
+              // A concurrent reader can discover another copy after preflight.
+              if (
+                channel === 'gmail' &&
+                (journal.calendarLocatorOverflow ||
+                  [
+                    ...relevantCalendarTargets(knownCalendarLocators(journal), target, invitation),
+                  ].some((locator) => !absentTargets.has(locator)))
+              )
                 throw conflict()
               return {
                 ...journal,
@@ -1086,7 +1207,8 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             }
             // Preflight refused before dispatch, or Google definitively refused.
             await changeAttempt(id, () => null)
-            if (error instanceof AlreadyRecorded) return error.result
+            if (error instanceof AlreadyRecorded)
+              return { ...error.result, invitation: await withUpcomingLinks(error.card) }
             if (
               error instanceof GoogleApiError &&
               (error.status === 412 || (channel === 'calendar' && error.status === 404))
@@ -1100,7 +1222,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         const refreshed = await selected().catch(() => null)
         const confirmed =
           refreshed && sameInvitation(refreshed.invitation.identity, identity)
-            ? refreshed.invitation
+            ? await withUpcomingLinks(refreshed)
             : null
         return {
           outcome: 'sent',

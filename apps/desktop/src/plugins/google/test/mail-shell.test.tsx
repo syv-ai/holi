@@ -473,6 +473,7 @@ const invitation: Invitation = {
   recurring: true,
   scope: 'occurrence',
   bindingRevision: 'shell-binding-1',
+  responseTargetKey: 'c'.repeat(64),
   identity: {
     uid: 'q2-review',
     messageId: 'm2',
@@ -543,6 +544,7 @@ test.each([
       threadId: 't1',
       expectedAccountSub: 'a',
       expectedBindingRevision: invitation.bindingRevision,
+      expectedResponseTargetKey: invitation.responseTargetKey,
       identity: invitation.identity,
       answer,
     })
@@ -765,6 +767,7 @@ test('a response from a previous account opening cannot change the visible invit
     threadId: 't1',
     expectedAccountSub: 'a',
     expectedBindingRevision: invitation.bindingRevision,
+    expectedResponseTargetKey: invitation.responseTargetKey,
     identity: invitation.identity,
     answer: 'declined',
   })
