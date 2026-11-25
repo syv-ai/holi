@@ -9,7 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
                                   error:(NSError *_Nullable __autoreleasing *)error;
 - (NSString *)embeddedVersion;
 - (nullable NSDictionary<NSString *, id> *)managedIdentity:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
-- (nullable NSArray<NSDictionary<NSString *, id> *> *)committedEntries:(NSString *)root history:(BOOL)history error:(NSError *_Nullable __autoreleasing *)error;
+- (nullable NSDictionary<NSString *, id> *)committedEntries:(NSString *)root history:(BOOL)history error:(NSError *_Nullable __autoreleasing *)error;
 - (BOOL)materializeManaged:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSString *)canonicalRoot:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSDictionary<NSString *, id> *)workingCopyIdentity:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
@@ -31,6 +31,7 @@ NS_ASSUME_NONNULL_BEGIN
                                                              username:(nullable NSString *)username
                                                              password:(nullable NSString *)password
                                                                 error:(NSError *_Nullable __autoreleasing *)error;
+- (nullable NSDictionary *)publishManaged:(NSString *)root plan:(NSDictionary *)plan username:(NSString *)username password:(NSString *)password error:(NSError *_Nullable __autoreleasing *)error;
 @end
 
 NS_ASSUME_NONNULL_END

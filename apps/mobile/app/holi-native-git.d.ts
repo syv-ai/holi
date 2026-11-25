@@ -10,9 +10,26 @@ declare class HoliNativeGit extends NSObject {
     error: interop.Pointer | interop.Reference<NSError>,
   ): HoliNativeGit | null
   embeddedVersion(): string
-  managedIdentityError(root: string, error: interop.Pointer | interop.Reference<NSError>): NSDictionary<string, NSObject> | null
-  committedEntriesHistoryError(root: string, history: boolean, error: interop.Pointer | interop.Reference<NSError>): NSArray<NSDictionary<string, NSObject>> | null
-  materializeManagedError(root: string, error: interop.Pointer | interop.Reference<NSError>): boolean
+  managedIdentityError(
+    root: string,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): NSDictionary<string, NSObject> | null
+  committedEntriesHistoryError(
+    root: string,
+    history: boolean,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): NSDictionary<string, NSObject> | null
+  publishManagedPlanUsernamePasswordError(
+    root: string,
+    plan: NSDictionary<string, NSObject>,
+    username: string,
+    password: string,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): NSDictionary<string, NSObject> | null
+  materializeManagedError(
+    root: string,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): boolean
   canonicalRootError(
     root: string,
     error: interop.Pointer | interop.Reference<NSError>,
