@@ -1,7 +1,16 @@
 'use client'
 
 import type { EntryCloseRequest } from '@/state/shell-close'
-import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from 'react'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   CheckIcon,
@@ -131,15 +140,10 @@ export function TabStrip({
     scrollLeft: number
     lastScrollLeft: number
     intendedScrollLeft: number
+    workspace: ShellWorkspace
+    vaultRevision: number
     rects: Map<string, DOMRect>
   } | null>(null)
-  const restoreStripScroll = () => {
-    const geometry = stripGeometry.current
-    if (geometry === null) return
-    requestAnimationFrame(() => {
-      if (geometry.list.isConnected) geometry.list.scrollLeft = geometry.intendedScrollLeft
-    })
-  }
   const [preview, setPreview] = useState<{
     target: string | null
     index: number
@@ -155,6 +159,22 @@ export function TabStrip({
     drag?.vaultRevision === vaultRevision
   const displayed = previewCurrent ? preview : null
   const dropAt = displayed?.target === null ? displayed.index : null
+  const clearPreview = useCallback(() => {
+    if (displayed === null) stripGeometry.current = null
+    setPreview(null)
+  }, [displayed])
+  useLayoutEffect(() => {
+    const geometry = stripGeometry.current
+    if (geometry === null) return
+    if (geometry.workspace === ws && geometry.vaultRevision === vaultRevision) {
+      // Layout, not pointer movement, may clamp the viewport. Restore its
+      // intended offset when room returns, and start the next scroll delta
+      // from the post-projection position rather than counting that clamp.
+      geometry.list.scrollLeft = geometry.intendedScrollLeft
+      geometry.lastScrollLeft = geometry.list.scrollLeft
+    }
+    if (displayed === null) stripGeometry.current = null
+  }, [displayed, ws, vaultRevision, drag])
   /** The member of a split's pill that was right-clicked, whose own
    *  actions its menu offers: a member has no header of its own. */
   const [menuMember, setMenuMember] = useState<string | null>(null)
@@ -225,14 +245,9 @@ export function TabStrip({
   }, [drag, remote, vaultRevision, ws, dragVault, dragWasOpen, dragged, setDrag])
 
   useEffect(() => {
-    const clear = () => {
-      setPreview(null)
-      restoreStripScroll()
-      stripGeometry.current = null
-    }
-    window.addEventListener('resize', clear)
-    return () => window.removeEventListener('resize', clear)
-  }, [])
+    window.addEventListener('resize', clearPreview)
+    return () => window.removeEventListener('resize', clearPreview)
+  }, [clearPreview])
 
   useEffect(() => {
     const list = listRef.current
@@ -271,6 +286,8 @@ export function TabStrip({
         scrollLeft: list.scrollLeft,
         lastScrollLeft: list.scrollLeft,
         intendedScrollLeft: list.scrollLeft,
+        workspace: ws,
+        vaultRevision,
         rects: new Map(
           [...list.querySelectorAll<HTMLElement>('[data-entry-id]')].map((item) => [
             item.dataset.entryId!,
@@ -281,15 +298,8 @@ export function TabStrip({
       stripGeometry.current = geometry
     }
     const actualScroll = list.scrollLeft
-    const currentMax = Math.max(0, list.scrollWidth - list.clientWidth)
-    // A preview can shrink the strip and clamp scrollLeft. That clamp is not
-    // user scroll intent; retain the intended offset until genuine movement.
-    if (actualScroll !== geometry.lastScrollLeft) {
-      const delta = actualScroll - geometry.lastScrollLeft
-      const wasClamp = actualScroll === Math.min(geometry.lastScrollLeft, currentMax)
-      if (!wasClamp) geometry.intendedScrollLeft += delta
-      geometry.lastScrollLeft = actualScroll
-    }
+    geometry.intendedScrollLeft += actualScroll - geometry.lastScrollLeft
+    geometry.lastScrollLeft = actualScroll
     const x = event.clientX + geometry.intendedScrollLeft - geometry.scrollLeft
     const slots = [...geometry.rects]
     const at = slots.findIndex(([, rect]) => x < rect.left + rect.width / 2)
@@ -413,9 +423,7 @@ export function TabStrip({
                   event.clientY < rect.bottom
                 )
                   return
-                setPreview(null)
-                restoreStripScroll()
-                stripGeometry.current = null
+                clearPreview()
               }}
               onDrop={(event) => {
                 const key = event.dataTransfer.getData(TAB_MIME)
@@ -424,9 +432,7 @@ export function TabStrip({
                   displayed !== null &&
                   event.dataTransfer.types.includes(TAB_MIME) &&
                   key === displayed.drag.key
-                setPreview(null)
-                restoreStripScroll()
-                stripGeometry.current = null
+                clearPreview()
                 setDrag(null)
                 if (!valid || displayed === null) return
                 event.preventDefault()

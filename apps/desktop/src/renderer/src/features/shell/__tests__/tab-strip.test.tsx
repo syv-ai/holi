@@ -12,6 +12,7 @@ import {
   openInSplit,
   openTab,
   selectEntry,
+  setSticky,
 } from '@/state/shell-workspace'
 import { activeRemoteRevisionValueAtom, activeRemoteAtom } from '@/state/vaults'
 import { tabDragAtom } from '../use-tab-drag'
@@ -792,3 +793,104 @@ test('switching away and back cannot commit the old strip preview', () => {
   fireEvent(list, dragEvent('drop', transfer, 150))
   expect(store.get(shellWorkspaceAtom)).toBe(before)
 })
+
+test.each(['leave', 'end'])(
+  'overflow clamping cannot retarget a stationary combine; %s restores the viewport',
+  (reason) => {
+    const workspace = ['A.md', 'B.md', 'C.md', 'D.md'].reduce(
+      (ws, key) => openTab(ws, key),
+      emptyWorkspace(),
+    )
+    const { store, list, tabs, transfer } = setup(workspace)
+    act(() =>
+      store.set(tabDragAtom, {
+        key: 'D.md',
+        vault: 'owner/vault',
+        vaultRevision: store.get(activeRemoteRevisionValueAtom),
+        wasOpen: true,
+      }),
+    )
+    transfer.setData(MIME, 'D.md')
+    // A small layout adapter: a projected C/D group reduces the scroll extent,
+    // and reading or writing the viewport follows the browser's clamping contract.
+    const extent = () =>
+      [...list.querySelectorAll('[role="tab"]')].some((node) =>
+        /[BC].*D/.test(node.getAttribute('aria-label') ?? ''),
+      )
+        ? 340
+        : 400
+    let scroll = 200
+    Object.defineProperties(list, {
+      clientWidth: { configurable: true, get: () => 200 },
+      scrollWidth: { configurable: true, get: extent },
+      scrollLeft: {
+        configurable: true,
+        get: () => Math.min(scroll, extent() - 200),
+        set: (value) => {
+          scroll = Math.max(0, Math.min(value, extent() - 200))
+        },
+      },
+    })
+    tabs.forEach((tab, index) =>
+      vi.mocked(tab.getBoundingClientRect).mockReturnValue({
+        left: index * 100 - 200,
+        right: index * 100 - 100,
+        width: 100,
+        top: 0,
+        bottom: 36,
+        height: 36,
+        x: index * 100 - 200,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect),
+    )
+    fireEvent(list, dragEvent('dragover', transfer, 25))
+    expect(list.scrollLeft).toBe(140)
+    fireEvent(list, dragEvent('dragover', transfer, 25))
+    expect(screen.getByRole('tab', { name: /C.*D/ })).toBeInTheDocument()
+    expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+    if (reason === 'leave') fireEvent.dragLeave(list, { relatedTarget: document.body })
+    else act(() => store.set(tabDragAtom, null))
+    expect(list.scrollLeft).toBe(200)
+    expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+    if (reason === 'leave') {
+      fireEvent(list, dragEvent('dragover', transfer, 25))
+      list.scrollLeft = 80
+      fireEvent(list, dragEvent('dragover', transfer, 25))
+      expect(screen.getByRole('tab', { name: /B.*D/ })).toBeInTheDocument()
+      fireEvent.dragLeave(list, { relatedTarget: document.body })
+      expect(list.scrollLeft).toBe(140)
+      expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+    }
+  },
+)
+
+test.each([false, true])(
+  'sticky target preview preserves the source and commits its members (group=%s)',
+  (group) => {
+    let workspace = openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md')
+    if (group) workspace = openTab(combineOnStrip(workspace, 'B.md', 'A.md'), 'C.md')
+    workspace = setSticky(workspace, 'A.md', true)
+    const { store, list, transfer } = setup(workspace)
+    const key = group ? 'C.md' : 'B.md'
+    const source = screen.getByRole('tab', { name: group ? 'C' : 'B' })
+    transfer.setData(MIME, key)
+    act(() =>
+      store.set(tabDragAtom, {
+        key,
+        vault: 'owner/vault',
+        vaultRevision: store.get(activeRemoteRevisionValueAtom),
+        wasOpen: true,
+      }),
+    )
+    fireEvent(list, dragEvent('dragover', transfer, 50))
+    expect(screen.getByRole('tab', { name: group ? /A.*B.*C/ : /A.*B/ })).toBeInTheDocument()
+    expect(source.isConnected).toBe(true)
+    expect(store.get(shellWorkspaceAtom)).toBe(workspace)
+    fireEvent(list, dragEvent('drop', transfer, 50))
+    expect(store.get(shellWorkspaceAtom).entries).toMatchObject([
+      { views: group ? ['A.md', 'B.md', 'C.md'] : ['A.md', 'B.md'] },
+    ])
+    expect(store.get(shellWorkspaceAtom).sticky).toEqual(['A.md'])
+  },
+)
