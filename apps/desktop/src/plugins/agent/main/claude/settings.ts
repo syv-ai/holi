@@ -16,7 +16,7 @@ import type { SettingsFragment } from '../../../../main/plugin-api'
 
 export const hookScript = (script: string) => `.claude/hooks/${script}.mjs`
 
-const hookCommand = (script: string, args: string[] = []) =>
+export const hookCommand = (script: string, args: string[] = []) =>
   [`node "$CLAUDE_PROJECT_DIR/${hookScript(script)}"`, ...args].join(' ')
 
 type Json = Record<string, unknown>
