@@ -132,11 +132,16 @@ export async function createGuestProbes() {
               const violation = event => {
                 if (event.disposition !== 'enforce' || event.effectiveDirective !== directive) return;
                 try {
-                  const blocked = new URL(event.blockedURI);
                   const target = new URL(url);
-                  // Cross-origin CSP reports may deliberately strip path information.
-                  if (blocked.origin !== target.origin ||
-                      (blocked.href !== target.href && blocked.href !== target.origin + '/')) return;
+                  // Chromium can report blocked blob workers as the scheme alone.
+                  const blobWorker = directive === 'worker-src' && target.protocol === 'blob:' &&
+                    ['blob', 'blob:'].includes(event.blockedURI);
+                  if (!blobWorker) {
+                    const blocked = new URL(event.blockedURI);
+                    // Cross-origin CSP reports may deliberately strip path information.
+                    if (blocked.origin !== target.origin ||
+                        (blocked.href !== target.href && blocked.href !== target.origin + '/')) return;
+                  }
                   evidence[name] = { destination: url, blockedURI: event.blockedURI,
                     directive: event.effectiveDirective, disposition: event.disposition,
                     policy: event.originalPolicy };
@@ -179,10 +184,21 @@ export async function createGuestProbes() {
               const socket = new WebSocket(socketUrl);
               socket.onerror = () => {}; return () => socket.close();
             });
-            await probe('publicWorker', '/entry.js', 'worker-src', url => {
-              const worker = new Worker(url); worker.onerror = () => {};
-              return () => worker.terminate();
-            });
+            // A classic cross-origin constructor can fail its same-origin check before
+            // reaching CSP. Use a same-origin blob loader for the public import instead.
+            const workerImport = publicBase + '/entry.js';
+            const publicWorkerUrl = URL.createObjectURL(new Blob([
+              'importScripts(' + JSON.stringify(workerImport) + ');',
+            ], { type: 'text/javascript' }));
+            try {
+              results.publicWorker = await policyDenied('publicWorker', publicWorkerUrl, 'worker-src', () => {
+                const worker = new Worker(publicWorkerUrl); worker.onerror = () => {};
+                return () => worker.terminate();
+              });
+              if (evidence.publicWorker) evidence.publicWorker.importDestination = workerImport;
+            } finally {
+              URL.revokeObjectURL(publicWorkerUrl);
+            }
             results.publicPopup = window.open(publicBase + '/tiny.png') === null;
             results.external = await denied('https://outside.invalid/canary');
             results.dynamicImport = await bounded(import(${JSON.stringify(endpoint + '/module.js')})
