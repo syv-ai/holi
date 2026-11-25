@@ -66,7 +66,7 @@ export async function assertMacDesktopAvailable({ signal, run = runConsoleStateQ
     )
 }
 
-export async function clickNativeBanner({ appName, title, timeoutMs = 12_000, signal }) {
+export async function clickOwnedNativeNotification({ appName, title, timeoutMs = 12_000, signal }) {
   if (typeof appName !== 'string' || !appName || typeof title !== 'string' || !title)
     throw new TypeError('appName and title are required')
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 90_000)
@@ -119,7 +119,14 @@ export async function clickNativeBanner({ appName, title, timeoutMs = 12_000, si
     const result = await processes.run('/usr/bin/osascript', ['-e', script], {
       timeoutMs: timeoutMs + 2000,
     })
-    return result.output.trim()
+    const resultText = result.output.trim()
+    if (resultText !== 'clicked') throw new Error(`unexpected native notification click result: ${resultText}`)
+    return {
+      interaction: 'native-notification-click',
+      appName,
+      title,
+      result: resultText,
+    }
   } finally {
     await processes.stopAll()
   }
