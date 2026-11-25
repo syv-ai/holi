@@ -113,7 +113,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 100))
   }
   await evaluate(
-    `document.documentElement.dataset.theme='light';document.documentElement.classList.remove('dark');document.documentElement.dataset.glass=${JSON.stringify(mode === 'opaque' ? 'solid' : 'glass')};${mode === 'opaque' ? "document.documentElement.style.background='#f8f8f8';document.body.style.background='#f8f8f8';" : ''}window.richTextVimFixture.mode(false);window.richTextVimFixture.focus('primary')`,
+    `document.documentElement.dataset.theme='light';document.documentElement.classList.remove('dark');document.documentElement.dataset.glass=${JSON.stringify(mode === 'opaque' ? 'solid' : 'frosted')};${mode === 'opaque' ? "document.documentElement.style.background='var(--background)';document.body.style.background='var(--background)';" : ''}window.richTextVimFixture.mode(false);window.richTextVimFixture.focus('primary')`,
   )
   win.center()
   win.show()
