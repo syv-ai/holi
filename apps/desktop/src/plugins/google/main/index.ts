@@ -18,6 +18,7 @@ import { openGoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
 import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
+import { createMailAttention, MAIL_ATTENTION_EVENT, type MailAttention } from './mail-attention'
 import { createMailMarkerStore } from './markers'
 import { googleSeed } from './seed'
 import { createMeetingCreation } from './meeting-creation'
@@ -27,6 +28,7 @@ import { startGoogleTriggers } from './triggers'
 type GoogleOwner = {
   accounts: Awaited<ReturnType<typeof import('./electron').createGoogleAccountsManager>>
   dataForSession: (session: GoogleSession) => GoogleData
+  mailAttention: MailAttention
 }
 
 // Google credentials and mail cache belong to this Electron process, not to a
@@ -47,6 +49,14 @@ export const googleMain: MainPlugin = {
         const accounts = await createGoogleAccountsManager(ctx.userData)
         const bySub = new Map<string, { data: GoogleData; session: GoogleSession }>()
         const markersBySub = new Map<string, ReturnType<typeof createMailMarkerStore>>()
+        const mailAttention = createMailAttention({
+          sessionFor: (remote) => accounts.sessionFor(remote),
+          apiFor: (session) => {
+            const sub = session.accountSub
+            if (sub === null) throw new Error('that Google account is no longer connected')
+            return accountApi(sub, (accountSub) => accounts.sessionForSub(accountSub))()
+          },
+        })
         const dataForSession = (session: GoogleSession): GoogleData => {
           const sub = session.accountSub
           if (sub === null || accounts.sessionForSub(sub) !== session)
@@ -80,39 +90,46 @@ export const googleMain: MainPlugin = {
           return data
         }
         accounts.onChange(async (sub, reason) => {
-          if (sub === null) return
-          // Linking another vault does not replace the grant or its shared cache.
-          if (bySub.get(sub)?.session === accounts.sessionForSub(sub)) return
-          // An old request can still finish after reconnecting the same account.
-          // Retire its data handle and cache so it cannot return or persist stale rows.
-          bySub.get(sub)?.data.forget()
-          bySub.delete(sub)
-          if (!/^[A-Za-z0-9_-]+$/.test(sub)) return
-          // An expired grant can be reconnected to the same Google identity;
-          // keep its durable annotations. Only deliberate account deletion
-          // removes them (including an explicit removal after expiry).
           try {
-            if (reason === 'removed') {
-              const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
-              markersBySub.delete(sub)
-              await markers.purge()
+            if (sub === null) return
+            // Linking another vault does not replace the grant or its shared cache.
+            if (bySub.get(sub)?.session === accounts.sessionForSub(sub)) return
+            // An old request can still finish after reconnecting the same account.
+            // Retire its data handle and cache so it cannot return or persist stale rows.
+            bySub.get(sub)?.data.forget()
+            bySub.delete(sub)
+            if (!/^[A-Za-z0-9_-]+$/.test(sub)) return
+            // An expired grant can be reconnected to the same Google identity;
+            // keep its durable annotations. Only deliberate account deletion
+            // removes them (including an explicit removal after expiry).
+            try {
+              if (reason === 'removed') {
+                const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
+                markersBySub.delete(sub)
+                await markers.purge()
+              }
+            } catch (error) {
+              throw new Error(
+                `Google account was removed, but personal mail markers could not be deleted: ${String(error)}`,
+              )
+            } finally {
+              // Also erase accounts that never opened a data handle this process.
+              const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
+              retired.retire()
             }
-          } catch (error) {
-            throw new Error(
-              `Google account was removed, but personal mail markers could not be deleted: ${String(error)}`,
-            )
           } finally {
-            // Also erase accounts that never opened a data handle this process.
-            const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
-            retired.retire()
+            // A dead grant can be discovered by this module's own in-flight token refresh;
+            // re-resolve immediately without waiting on that same poll. Other lifecycle
+            // changes drain the retired account before the settings action completes.
+            await mailAttention.refresh({ drain: reason !== 'expired' })
           }
         })
-        return { accounts, dataForSession }
+        return { accounts, dataForSession, mailAttention }
       })()
       owners.set(ctx.userData, ownerPromise)
       void ownerPromise.catch(() => owners.delete(ctx.userData))
     }
-    const { accounts, dataForSession } = await ownerPromise
+    const { accounts, dataForSession, mailAttention } = await ownerPromise
 
     /**
      * Keep a removed account's cache off the disk. On `onChange` rather than
@@ -130,17 +147,28 @@ export const googleMain: MainPlugin = {
       const { pluginValues } = await readVaultSettings(root)
       return {
         calendars: pluginSettingValue(pluginValues, GOOGLE_INFO, 'calendars') as CalendarOverrides,
+        mailNotifications:
+          pluginSettingValue(pluginValues, GOOGLE_INFO, 'mailNotifications') === true,
         imageSenders: pluginSettingValue(pluginValues, GOOGLE_INFO, 'imageSenders') as string[],
         imagesFromAllSenders:
           pluginSettingValue(pluginValues, GOOGLE_INFO, 'imagesFromAllSenders') === true,
       }
     }
 
+    const attention = await mailAttention.subscribe({
+      remote: ctx.remote,
+      signal: ctx.activationSignal,
+      notifications: async () => (await readSettings(ctx.root)).mailNotifications,
+      changed: (snapshot) => ctx.emit(ctx.remote, MAIL_ATTENTION_EVENT, snapshot),
+      notify: (notice) => ctx.notify(notice),
+    })
+
     const capabilities = googleCapabilities({
       accounts,
       meetings: createMeetingCreation({ userData: ctx.userData, accounts }),
       dataFor,
       dataForSession,
+      mailAttention: attention,
       settings: {
         read: readSettings,
         write: async (root, values) => {
@@ -159,11 +187,12 @@ export const googleMain: MainPlugin = {
     })
 
     let stopped = false
-    return () => {
+    return async () => {
       if (stopped) return
       stopped = true
       stopTriggers()
       disposeGoogleCapabilities(capabilities)
+      await attention.stop()
     }
   },
 }
