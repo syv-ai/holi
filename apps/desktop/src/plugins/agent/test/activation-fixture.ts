@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, vi } from 'vitest'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { createCoreServices, createUiReports } from '../../../main/capabilities/services'
-import { emptyVaultSnapshot } from '@holi/shared'
+import { emptyVaultSnapshot, scanVault } from '@holi/shared'
 import { createMembersCache } from '../../../main/github/members-cache'
 import { createPluginHost } from '../../../main/plugin-host/host'
 import { createBridgeServer } from '../../../main/bridge/server'
@@ -387,6 +387,7 @@ export async function rig(
     holdAutomationsDisposer?: { entered: () => void; wait: Promise<void>; turnEnded?: () => void }
     agentDisposerStarted?: () => void
     retainedContexts?: boolean
+    realSnapshots?: boolean
   },
 ) {
   userData ??= await tempDirectory('h674-agent-')
@@ -396,7 +397,7 @@ export async function rig(
     await mkdir(join(root, '.holi/settings'), { recursive: true })
     await writeFile(
       join(root, '.holi/settings/plugins.yaml'),
-      'plugins:\n  automations: true\n  holis: true\n',
+      `plugins:\n  automations: true\n  holis: true\n${(lifecycle?.plugins ?? []).map((plugin) => `  ${plugin.info.id}: true\n`).join('')}`,
     )
     await writeFile(
       join(root, '.fixture-owner'),
@@ -586,8 +587,12 @@ export async function rig(
       return {
         remote,
         root,
-        snapshot: emptyVaultSnapshot,
-        refresh: async () => emptyVaultSnapshot(),
+        snapshot: lifecycle?.realSnapshots
+          ? async () => scanVault(root, await host.scanClaimsFor(root))
+          : emptyVaultSnapshot,
+        refresh: lifecycle?.realSnapshots
+          ? async () => scanVault(root, await host.scanClaimsFor(root))
+          : async () => emptyVaultSnapshot(),
         pause: () => pause(remote),
         resume: () => resume(remote),
         drainSync: async () => {},
