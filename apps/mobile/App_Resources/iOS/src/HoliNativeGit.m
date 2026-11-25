@@ -1,5 +1,6 @@
 #import "HoliNativeGit.h"
 #import "HoliGitSnapshot.h"
+#import "HoliManagedIdentity.h"
 #import <git2.h>
 #import <sys/stat.h>
 #import <errno.h>
@@ -197,6 +198,9 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     } else if (errno != ENOENT) { HNGError(error, errno); return nil; }
   } else {
     if (selectedBranch) {
+      HoliManagedIdentity *managedIdentity = [HoliManagedIdentity new];
+      NSDictionary *identity = [managedIdentity readIdentityAtRoot:root error:error];
+      if (!identity || ![managedIdentity matchesRemote:identity remote:remote branch:selectedBranch endpoint:remote error:error]) return nil;
       HoliGitSnapshot *snapshot = nil;
       repository = [self openSelectedRepository:root remote:remote branch:selectedBranch snapshot:&snapshot error:error];
       if (!repository) return nil;
@@ -308,6 +312,13 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     git_remote_free(gitRemote);
   }
   if (result < 0) { HNGError(error, result); git_repository_free(repository); return nil; }
+  if (isClone && selectedBranch) {
+    HoliManagedIdentity *managedIdentity = [HoliManagedIdentity new];
+    if (![managedIdentity createIdentityAtRoot:root remote:remote branch:selectedBranch endpoint:remote error:error]) {
+      git_repository_free(repository);
+      return nil;
+    }
+  }
   git_reference *head = NULL;
   NSString *branch = @"";
   if (git_repository_head(&head, repository) == 0) {
