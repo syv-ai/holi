@@ -71,7 +71,6 @@ import {
   type MailPage,
 } from './gmail'
 import { CLIENT_ID_SUFFIX } from './credentials'
-import { resolveThreadMeeting } from './invite'
 import type { createMailInvitationSession } from './mail-invitation-session'
 import type { MailInvitationIdentity } from './mail-invitation'
 import type { LoopbackFlow } from './loopback-flow'
@@ -875,21 +874,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         JSON.stringify(page[NEEDS_REPLY_CLI_TEXT] ? page : page.threads, null, 2),
     }),
 
-    /**
-     * The meeting a thread is about, or null. Asked only for a thread whose
-     * summary carries an invite, and never cached: a moved meeting's join link
-     * is rewritten, and a stale one sends the person to an empty room.
-     */
-    'google.meeting': cap({
-      doors: ['ui'],
-      params: idParams,
-      run: async (ctx, { id }) =>
-        google(async () =>
-          resolveThreadMeeting(apiOf(ctx.remote), id, { overrides: await overrides(ctx.root) }),
-        ),
-    }),
-
-    /** Unlike Join, an invitation is actionable even without a Calendar copy. */
+    /** Account-bound invitation and join-only meeting cards, scoped per original occurrence. */
     'google.mailInvitation': cap({
       doors: ['ui'],
       params: invitationParams,

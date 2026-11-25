@@ -56,8 +56,7 @@ export interface GoogleApiDeps {
   /** Check an account-bound client after token refresh, immediately before dispatch.
    * For this client, distinguish an indeterminate dispatch from a refusal. */
   validateRequest?: () => Promise<void>
-  /** Synchronous invitation binding check: no await may separate it from dispatch.
-   * Keep an invitation write reserved when the target returns 404. */
+  /** Synchronous invitation binding check: no await may separate it from dispatch. */
   assertRequest?: () => void
 }
 
@@ -131,6 +130,7 @@ export class GoogleApi {
     body?: unknown,
     validate?: () => Promise<void>,
     ifMatch?: string,
+    reserveDispatch?: () => Promise<void>,
   ): Promise<Response> {
     let token: string
     try {
@@ -148,23 +148,27 @@ export class GoogleApi {
     this.#deps.beforeRequest?.()
     if (validate) await validate()
     if (this.#deps.validateRequest) await this.#deps.validateRequest()
+    const init: RequestInit = {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(ifMatch === undefined ? {} : { 'If-Match': ifMatch }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }
+    if (reserveDispatch) await reserveDispatch()
     this.#deps.assertRequest?.()
     let res: Response
     try {
       res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-          ...(ifMatch === undefined ? {} : { 'If-Match': ifMatch }),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...init,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch (error) {
       // Do not reclassify a refusal from validation or token minting: no write left Holi.
-      if (this.#deps.validateRequest || this.#deps.assertRequest)
+      if (reserveDispatch || this.#deps.validateRequest || this.#deps.assertRequest)
         throw new GoogleWriteUncertainError(error)
       throw error
     }
@@ -172,10 +176,10 @@ export class GoogleApi {
     if (!res.ok) {
       const error = await classify(res)
       if (
-        (this.#deps.validateRequest || this.#deps.assertRequest) &&
+        (reserveDispatch || this.#deps.validateRequest || this.#deps.assertRequest) &&
         (error.status === 408 ||
           error.status >= 500 ||
-          (this.#deps.assertRequest !== undefined && error.status === 404))
+          (method !== 'PATCH' && this.#deps.assertRequest !== undefined && error.status === 404))
       ) {
         throw new GoogleWriteUncertainError(error)
       }
@@ -209,9 +213,20 @@ export class GoogleApi {
   async patch(
     url: string,
     body: unknown,
-    options?: { validate?: () => Promise<void>; ifMatch?: string },
+    options?: {
+      validate?: () => Promise<void>
+      ifMatch?: string
+      reserveDispatch?: () => Promise<void>
+    },
   ): Promise<void> {
-    const res = await this.#write('PATCH', url, body, options?.validate, options?.ifMatch)
+    const res = await this.#write(
+      'PATCH',
+      url,
+      body,
+      options?.validate,
+      options?.ifMatch,
+      options?.reserveDispatch,
+    )
     await res.text().catch(() => '')
   }
 
@@ -231,8 +246,13 @@ export class GoogleApi {
    * failure, because a send Google *accepted*, reported as failed, is a second
    * email to a real person once the caller retries.
    */
-  async postJson<T>(url: string, body: unknown, validate?: () => Promise<void>): Promise<T | null> {
-    const res = await this.#write('POST', url, body, validate)
+  async postJson<T>(
+    url: string,
+    body: unknown,
+    validate?: () => Promise<void>,
+    reserveDispatch?: () => Promise<void>,
+  ): Promise<T | null> {
+    const res = await this.#write('POST', url, body, validate, undefined, reserveDispatch)
     // The catch is the design, not defensiveness: past this line Google has
     // already done the thing.
     return await res.json().catch(() => null)
@@ -290,6 +310,7 @@ export class GoogleApi {
   ): Promise<T[]> {
     const all: T[] = []
     let pageToken: string | undefined
+    const seen = new Set<string>()
     for (let i = 0; i < cap; i++) {
       const page = await this.get<{ items?: T[]; nextPageToken?: string }>(url, {
         ...params,
@@ -298,6 +319,8 @@ export class GoogleApi {
       all.push(...items(page))
       pageToken = page.nextPageToken
       if (pageToken === undefined) break
+      if (requireComplete && seen.has(pageToken)) throw new Error('Google repeated a page token')
+      seen.add(pageToken)
     }
     if (requireComplete && pageToken !== undefined)
       throw new Error('Google returned too many pages')
