@@ -334,11 +334,13 @@ async function rig() {
           403,
         )
       const instances = state.instances.get(decodeURIComponent(instancePath[1]!)) ?? []
+      const seriesId = decodeURIComponent(instancePath[2]!)
       const original = url.searchParams.get('originalStart')
       return json({
         kind: 'calendar#events',
         items: instances.filter(
           (item) =>
+            item.recurringEventId === seriesId &&
             Date.parse(item.originalStartTime?.dateTime ?? '') === Date.parse(original ?? ''),
         ),
       })
@@ -652,6 +654,55 @@ it.each(['all-day', 'zero-duration'] as const)(
     expect(state.sendAttempts).toBe(0)
   },
 )
+
+it.each(['DTEND:20240718T150000Z', 'DURATION:PT0S'])(
+  'does not authorize either RSVP channel for an explicit zero interval (%s)',
+  async (interval) => {
+    const { state, read, respond } = await rig()
+    state.messages = [
+      gmailMessage('older', 100, invite()),
+      gmailMessage(
+        'update',
+        200,
+        invite('REQUEST', `DTSTART:20240718T150000Z\r\n${interval}`, 3, '20240702T090000Z'),
+      ),
+    ]
+    state.events.set('primary', [event({ zeroDuration: true })])
+    expect(await read()).toMatchObject({ identity, start, end: start, canRespond: false })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    state.events.clear()
+    expect(await read()).toMatchObject({ identity, canRespond: false })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+  },
+)
+
+it.each([
+  { dtstart: 'DTSTART:20240718T150000Z', start, end: start, allDay: false },
+  { dtstart: 'DTSTART;VALUE=DATE:20240718', start: '2024-07-18', end: '2024-07-19', allDay: true },
+])('sends an iTIP reply without an explicit interval for $dtstart', async (times) => {
+  const { state, read, respond } = await rig()
+  state.messages = [gmailMessage('update', 200, invite('REQUEST', times.dtstart))]
+  expect(await read()).toMatchObject({
+    start: times.start,
+    end: times.end,
+    allDay: times.allDay,
+    canRespond: true,
+  })
+  expect(await respond('accepted')).toMatchObject({
+    outcome: 'sent',
+    channel: 'gmail',
+    refreshPending: false,
+    invitation: { responseStatus: 'accepted' },
+  })
+  const encoded = state.sent.get('reply-1')?.payload.parts[1]?.body.data
+  const reply = Buffer.from(encoded!, 'base64url').toString('utf8')
+  expect(reply.split('\r\n')).toContain(times.dtstart)
+  expect(reply).not.toMatch(/^(DTEND|DURATION)[:;]/m)
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
 
 it('uses original start and the hidden secondary calendar ID for an attached, moved occurrence', async () => {
   const { state, read, respond } = await rig()
@@ -2944,6 +2995,8 @@ it('uses a newer Gmail answer on a verified old parent after equivalent REQUEST 
     `"Example, Me" (nested (comment)) <${person}>`
   lateAccepted.payload.headers.find(({ name }) => name === 'To')!.value =
     `Undisclosed:;, "Host, Organizer" <${organizer}> (host)`
+  // Independent manual replies do not claim to match Holi's organizer-only send.
+  lateAccepted.payload.headers.push({ name: 'Cc', value: guest })
   state.messages.push(lateAccepted)
   const afterCompaction = restart()
   expect(await afterCompaction.read()).toMatchObject({
@@ -3131,7 +3184,18 @@ it('scopes a Sent calendar leaf with ambiguous MIME declarations by parent and p
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
-const replyContradictions = ['To', 'From', 'parent', 'thread', 'scope', 'answer'] as const
+const replyContradictions = [
+  'To',
+  'From',
+  'parent',
+  'thread',
+  'scope',
+  'answer',
+  'extra Cc',
+  'extra Bcc',
+  'malformed Cc',
+  'duplicate Bcc',
+] as const
 
 function contradictoryReply(
   message: ReturnType<typeof gmailMessage>,
@@ -3140,6 +3204,12 @@ function contradictoryReply(
   const full = structuredClone(message)
   if (field === 'To' || field === 'From') {
     full.payload.headers.find(({ name }) => name === field)!.value = guest
+  } else if (field === 'extra Cc' || field === 'extra Bcc') {
+    full.payload.headers.push({ name: field.slice(6), value: `Guests:\r\n ${guest};` })
+  } else if (field === 'malformed Cc') {
+    full.payload.headers.push({ name: 'Cc', value: 'Undisclosed:;, (unclosed' })
+  } else if (field === 'duplicate Bcc') {
+    full.payload.headers.push({ name: 'Bcc', value: '' }, { name: 'bcc', value: '' })
   } else if (field === 'parent') {
     for (const header of full.payload.headers) {
       if (header.name === 'In-Reply-To' || header.name === 'References')
@@ -3231,9 +3301,13 @@ it('does not settle a newer reservation through a compacted parent without a cor
 it('settles a new in-thread receipt only from a corroborating full Sent envelope', async () => {
   const { state, read, respond, restart } = await rig()
   state.sentIndexed = false
-  state.fullSentMessage = (message) => contradictoryReply(message, 'To')
+  state.fullSentMessage = (message) => contradictoryReply(message, 'extra Cc')
   await read()
-  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', refreshPending: true })
+  expect(await respond('accepted')).toMatchObject({
+    outcome: 'sent',
+    refreshPending: true,
+    invitation: { sentResponseStatus: null, responsePending: true, canRespond: false },
+  })
 
   const reopened = restart()
   for (const field of replyContradictions) {
@@ -3929,6 +4003,60 @@ it('blocks a listed active occurrence of a verified cancelled Calendar master', 
   expect(await read()).toMatchObject({ scope: 'occurrence', cancelled: true, canRespond: false })
   await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
+it('requires a verified different parent before disregarding a possible Calendar series cancellation', async () => {
+  const { state, read, respond, restart } = await rig()
+  state.messages[0] = gmailMessage(
+    'update',
+    200,
+    invite().replace('END:VEVENT', 'RECURRENCE-ID:20240711T150000Z\r\nEND:VEVENT'),
+  )
+  const tombstone = { ...event({ id: 'old-series' }), status: 'cancelled', sequence: 2 }
+  const instance = event({ id: 'listed-instance', occurrence: true })
+  state.events.set('primary', [tombstone, instance])
+  expect(await read()).toMatchObject({
+    scope: 'occurrence',
+    canRespond: false,
+    conferenceUrl: null,
+    htmlLink: null,
+  })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  // The collection may hide the disputed rows without deleting their resources.
+  state.primaryPages = [{ kind: 'calendar#events' }]
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject({ scope: 'occurrence', canRespond: false })
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.primaryPages = null
+  const currentParent = event({ id: 'series', series: true })
+  state.events.set('primary', [tombstone, currentParent, instance])
+  // A name match alone does not corroborate the original slot in the series.
+  expect(await reopened.read()).toMatchObject({ scope: 'occurrence', canRespond: false })
+  state.instances.set('primary', [instance])
+  tombstone.sequence = identity.sequence
+  expect(await reopened.read()).toMatchObject({ scope: 'occurrence', canRespond: false })
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  tombstone.sequence = identity.sequence - 1
+  expect(await reopened.read()).toMatchObject({
+    scope: 'occurrence',
+    cancelled: false,
+    canRespond: true,
+    htmlLink: instance.htmlLink,
+  })
+  expect(await reopened.respond('accepted')).toMatchObject({
+    outcome: 'sent',
+    channel: 'calendar',
+    refreshPending: false,
+  })
+  expect(state.calendarUpdateRequests).toEqual([
+    { calendar: 'primary', eventId: instance.id, sendUpdates: 'all', status: 'accepted' },
+  ])
+  expect(state.sendAttempts).toBe(0)
 })
 
 it.each(['multi-CANCEL', 'embedded exceptions'])(

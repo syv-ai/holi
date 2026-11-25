@@ -213,17 +213,22 @@ async function sentAnswer(
   revision: Revision,
   { mailbox, organizer }: SentAddress,
   disputedSent: Set<Mail>,
+  requireOrganizerOnly = false,
 ) {
   const addresses = mail.sentAddresses
   if (
     !mail.sent ||
     !addresses ||
-    addresses.from.length !== 1 ||
+    addresses.from?.length !== 1 ||
     addresses.from[0] !== mailbox ||
-    addresses.to.length !== 1 ||
+    addresses.to?.length !== 1 ||
     addresses.to[0] !== organizer
   )
     return { answers: [], unresolved: false }
+  // Holi sends only to the organizer. Extra or unknown recipients in the
+  // full snapshot cannot corroborate Holi's exact dispatch.
+  if (requireOrganizerOnly && (addresses.cc?.length !== 0 || addresses.bcc?.length !== 0))
+    return { answers: [], unresolved: true }
   const answers = new Set<InviteAnswer>()
   const representations = []
   let unrelated = false
@@ -264,7 +269,7 @@ async function assessReply(
   answer?: InviteAnswer,
 ): Promise<'match' | 'related' | 'unresolved' | null> {
   if (mail.parent !== context.parent) return null
-  const { answers, unresolved } = await sentAnswer(mail, revision, context, disputedSent)
+  const { answers, unresolved } = await sentAnswer(mail, revision, context, disputedSent, true)
   if (unresolved) return 'unresolved'
   if (answers.length === 1 && (answer === undefined || answers[0] === answer)) return 'match'
   return answers.length ? 'related' : null
@@ -660,16 +665,41 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       })
     }
     const entries = new Map(scopes.map((entry) => [scopeKey(identityOf(entry.selected)), entry]))
-    const receipts = createSentCalendarLookup(api, scan, owners, messages)
+    const dispatchIds = new Set<string>()
+    const dispatchRfcIds = new Set<string>()
+    const reserveReply = (rfcId: string, messageId: string | null | undefined) => {
+      dispatchRfcIds.add(rfcId)
+      if (messageId) dispatchIds.add(messageId)
+    }
+    for (const { accountSub: account, delivery } of journal.attempts) {
+      if (account === accountSub && delivery.channel === 'gmail' && delivery.mailbox === email)
+        reserveReply(delivery.rfcId, delivery.receipt?.id)
+    }
+    for (const { accountSub: account, mailbox, reply } of journal.parentAnchors) {
+      if (account === accountSub && mailbox === email && reply)
+        reserveReply(reply.rfcId, reply.messageId)
+    }
+    const receipts = createSentCalendarLookup(
+      api,
+      scan,
+      owners,
+      messages,
+      (mail) =>
+        dispatchIds.has(mail.messageId) || [...mail.claims].some((id) => dispatchRfcIds.has(id)),
+    )
     const verifiedAnchors = new Map<string, Mail>()
+    const verifiedParentContexts = new Set<string>()
     const sentParents = new Set(
       messages.flatMap((mail) => (mail.sent && mail.parent ? [mail.parent] : [])),
     )
     // Only check historical anchors that could make a visible reply positive.
     // Do not scan the whole journal on each view or re-use ownership across reads.
-    for (const anchor of journal.parentAnchors) {
+    for (const anchor of [...journal.parentAnchors].reverse()) {
       if (!anchor.reply || !sentParents.has(anchor.parent) || owners.has(anchor.parent)) continue
-      const entry = entries.get(scopeKey(anchor.revision))
+      const scope = scopeKey(anchor.revision)
+      const parentContext = JSON.stringify([scope, anchor.parent])
+      if (verifiedParentContexts.has(parentContext)) continue
+      const entry = entries.get(scope)
       if (
         entry &&
         anchor.accountSub === accountSub &&
@@ -684,7 +714,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           (candidate) => assessReply(candidate, anchor.revision, anchor, disputedSent, answer),
           { requireLocator: true },
         )
-        if (mail) verifiedAnchors.set(anchorProofKey(anchor), mail)
+        if (mail) {
+          verifiedAnchors.set(anchorProofKey(anchor), mail)
+          verifiedParentContexts.add(parentContext)
+        }
       }
     }
     type Scope = (typeof scopes)[number]
@@ -1027,7 +1060,16 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       const loadUpcoming = verifiedCopy?.upcomingLinks
       cards.push({
         source: {
-          details,
+          details:
+            calendar?.kind === 'blocked' && calendar.navigationUnverified
+              ? {
+                  ...details,
+                  conferenceUrl: null,
+                  conferenceLinkSource: null,
+                  htmlLink: null,
+                  htmlLinkSource: null,
+                }
+              : details,
           bindingRevision: target.bindingRevision,
           joinOnly,
           calendar: verifiedCopy,

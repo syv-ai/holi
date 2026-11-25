@@ -333,6 +333,9 @@ function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasException
     },
     recurrenceTimeBasis,
     attendeeStates,
+    // RFC 5545 requires a later explicit end and a positive explicit
+    // duration. A timed event with neither property can end at its start.
+    invalidExplicitInterval: explicitFields.end && (!start || !end || end <= start),
   }
 }
 
@@ -594,7 +597,14 @@ export function parseMailInvitation(
       return unavailable('This invitation was cancelled', cancellations)
     }
     if (!organizer) return unavailable('Invitation has no usable organizer address')
-    if (!start || !end || end < start || !recurrenceTimeBasis)
+    // Retain the parsed identity and material so this REQUEST still takes
+    // part in ordering and cannot revive an earlier writable revision.
+    if (
+      !start ||
+      !end ||
+      !recurrenceTimeBasis ||
+      parts.some((part) => part.invalidExplicitInterval)
+    )
       return unavailable('Invitation has no usable start or end time')
     if (recurrenceRange) return unavailable('This invitation changes multiple occurrences')
     const replyUnavailableReason = method === 'REQUEST' ? null : 'This calendar mail is join-only'
