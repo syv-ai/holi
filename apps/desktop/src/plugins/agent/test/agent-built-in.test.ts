@@ -69,7 +69,7 @@ it('runs whatever a stale plugins.yaml pins for it', async () => {
   const capabilities = createCapabilityHost({
     registry,
     rootFor: async () => root,
-    active: () => null,
+    get: (_remote) => null,
     core: noCoreServices,
     pluginEnabled: async (plugin, at) => (await host.enabled(at)).has(plugin),
     claims: (at) => host.scanClaimsFor(at),

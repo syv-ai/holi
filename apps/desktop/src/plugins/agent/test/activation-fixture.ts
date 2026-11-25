@@ -498,9 +498,8 @@ export async function rig(
   })
   const reports = createUiReports()
   const core = createCoreServices({
-    active: () => {
-      if (activeRemote === null) return null
-      const remote = activeRemote
+    get: (remote) => {
+      if (activeRemote !== remote) return null
       return {
         remote,
         root: roots[remote],
@@ -515,9 +514,8 @@ export async function rig(
   const capabilities = createCapabilityHost({
     registry,
     rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
-    active: () => {
-      if (activeRemote === null) return null
-      const remote = activeRemote
+    get: (remote) => {
+      if (activeRemote !== remote) return null
       const root = roots[remote]
       return {
         remote,

@@ -243,9 +243,9 @@ export const openVaultAtom = atom(
     set(attemptedOpenRevisionAtom, selectionRevision)
 
     // A cross-vault open (`onOpen` below) arrives with the old vault's editors
-    // still mounted: what was typed goes into the vault it was typed in, before
-    // that one closes. A switch from the vault menu flushed already
-    // (`applyVaultSwitchAtom`), and this finds nothing left to write.
+    // still mounted: what was typed goes into the vault it was typed in before
+    // changing the display. A switch from the vault menu flushed already
+    // (`switchVaultAtom`), and this finds nothing left to write.
     await flushAllBuffers()
     // A newer selection or open request owns the main-process transition now.
     // Do not switch the renderer or clear per-vault state for a stale request.
@@ -337,12 +337,38 @@ export function subscribeToVault(
   store: JotaiStore,
   plugins: readonly RendererPlugin[] = [],
 ): () => void {
-  const offSnapshot = window.holi.vault.onSnapshot((snapshot) => store.set(snapshotAtom, snapshot))
-  const offSync = window.holi.vault.onSyncState((state) => store.set(syncStateAtom, state))
-  const offHeldBack = window.holi.vault.onHeldBack((files) => store.set(heldBackAtom, files))
-  const offCommitted = window.holi.vault.onCommitted((paths) =>
-    store.set(historyEpochsAtom, (e) => bumpHistoryEpochs(e, paths)),
+  const presentationByRemote = new Map<
+    string,
+    { syncState?: SyncState; heldBack?: HeldBackFile[] }
+  >()
+  const applyPresentation = (remote: string | null) => {
+    if (!remote) return
+    const cached = presentationByRemote.get(remote)
+    if (cached?.syncState !== undefined) store.set(syncStateAtom, cached.syncState)
+    if (cached?.heldBack !== undefined) store.set(heldBackAtom, cached.heldBack)
+  }
+  const offSelection = store.sub(activeRemoteAtom, () =>
+    applyPresentation(store.get(activeRemoteAtom)),
   )
+  const offSnapshot = window.holi.vault.onSnapshot(({ remote, snapshot }) => {
+    if (store.get(activeRemoteAtom) === remote) store.set(snapshotAtom, snapshot)
+  })
+  const offSync = window.holi.vault.onSyncState(({ remote, state }) => {
+    const cached = presentationByRemote.get(remote) ?? {}
+    cached.syncState = state
+    presentationByRemote.set(remote, cached)
+    if (store.get(activeRemoteAtom) === remote) store.set(syncStateAtom, state)
+  })
+  const offHeldBack = window.holi.vault.onHeldBack(({ remote, files }) => {
+    const cached = presentationByRemote.get(remote) ?? {}
+    cached.heldBack = files
+    presentationByRemote.set(remote, cached)
+    if (store.get(activeRemoteAtom) === remote) store.set(heldBackAtom, files)
+  })
+  const offCommitted = window.holi.vault.onCommitted(({ remote, paths }) => {
+    if (store.get(activeRemoteAtom) === remote)
+      store.set(historyEpochsAtom, (e) => bumpHistoryEpochs(e, paths))
+  })
   // Main asks for a path in a tab: a clicked reminder's task, `holi docs open`,
   // a Holi link. Cross-vault, the switch runs here, not in main, so
   // `activeRemoteAtom` stays truthful; the path opens once the new vault's
@@ -453,15 +479,23 @@ export function subscribeToVault(
       (err: unknown) => window.holi.vault.located({ id, error: (err as Error).message }),
     )
   })
-  const tables = plugins.flatMap((p) =>
-    p.events === undefined ? [] : [[p.info.id, p.events] as const],
-  )
-  const offEvents = tables.map(([id, handlers]) =>
-    window.holi.plugin.on(id, ({ remote, name, payload }) => {
-      if (Object.hasOwn(handlers, name)) handlers[name]!({ remote, payload }, store)
-    }),
-  )
+  const offEvents = plugins.flatMap((plugin) => {
+    if (plugin.events === undefined && plugin.backgroundEvents === undefined) return []
+    return [
+      window.holi.plugin.on(plugin.info.id, ({ remote, name, payload }) => {
+        const background = plugin.backgroundEvents
+        const handlers =
+          background !== undefined && Object.hasOwn(background, name)
+            ? background
+            : remote === store.get(activeRemoteAtom)
+              ? plugin.events
+              : undefined
+        if (handlers && Object.hasOwn(handlers, name)) handlers[name]!({ remote, payload }, store)
+      }),
+    ]
+  })
   return () => {
+    offSelection()
     offSnapshot()
     offSync()
     offHeldBack()

@@ -42,7 +42,7 @@ describe('app-door write cancellation', () => {
     const host = createCapabilityHost({
       registry,
       rootFor: async (target) => (target === remote ? root : null),
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async () => true,
       claims: async () => [],

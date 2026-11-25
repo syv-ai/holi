@@ -1600,15 +1600,27 @@ export interface VaultHost {
   /** Share cold-start preparation without starting or selecting the runtime. */
   prepare(remote: string, preparation?: (coldStart: boolean) => Promise<void>): Promise<void>
   /** Open and select a vault, admitting cold-start work before selection. */
-  open(remote: string, prepare?: (coldStart: boolean) => Promise<void>): Promise<ActiveVault>
+  open(
+    remote: string,
+    prepare?: (coldStart: boolean) => Promise<void>,
+    ready?: (vault: ActiveVault) => Promise<void>,
+  ): Promise<ActiveVault>
   /** Get an existing runtime or start one without changing the selected vault. */
   getOrOpen(remote: string): Promise<ActiveVault>
+  /** Run startup work while this remote's lifetime cannot be closed or removed. */
+  withRuntime<T>(
+    remote: string,
+    preparation: (coldStart: boolean) => Promise<void>,
+    operation: (vault: ActiveVault) => Promise<T>,
+  ): Promise<T>
   /** Look up a running runtime without starting it. */
   get(remote: string): ActiveVault | null
   /** Close the selected runtime, preserving switch/quit behavior. */
   close(): Promise<void>
   /** Close one runtime without affecting another. */
   close(remote: string): Promise<void>
+  /** Drain this lifetime and unregister it under the same per-remote lock. */
+  remove(remote: string, afterClose?: () => Promise<void>): Promise<void>
   /** Drain starts and close every runtime. */
   closeAll(): Promise<void>
 }
@@ -1701,11 +1713,22 @@ export function createVaultHost(args: {
     selectionQueue = run.catch(() => {})
     return run
   }
-  function serialiseClose(remote: string, priorSelection: Promise<unknown>): Promise<void> {
+  function serialiseClose(
+    remote: string,
+    priorSelection: Promise<unknown>,
+    unregister = false,
+    afterClose?: () => Promise<void>,
+  ): Promise<void> {
     const previous = closeQueues.get(remote) ?? Promise.resolve()
     const run = previous
       .then(() => priorSelection)
-      .then(() => serialise(remote, () => closeRuntime(remote)))
+      .then(() =>
+        serialise(remote, async () => {
+          await closeRuntime(remote)
+          await afterClose?.()
+          if (unregister) await args.registry.remove(remote)
+        }),
+      )
     const settled = run.catch(() => {})
     closeQueues.set(remote, settled)
     void settled.then(() => {
@@ -1720,15 +1743,13 @@ export function createVaultHost(args: {
     const vault = runtimes.get(remote)
     if (vault === undefined) return
     const errors: unknown[] = []
-    if (current === vault) {
-      try {
-        await args.onLeave?.(remote)
-      } catch (err) {
-        console.error('[vault] leave hook failed:', err)
-        throw err
-      }
-      current = null
+    try {
+      await args.onLeave?.(remote)
+    } catch (err) {
+      console.error('[vault] leave hook failed:', err)
+      throw err
     }
+    if (current === vault) current = null
     runtimes.delete(remote)
     preparedStarts.delete(remote)
     stopCallbacks.get(remote)?.()
@@ -1837,6 +1858,21 @@ export function createVaultHost(args: {
     }
   }
 
+  async function prepareLocked(
+    remote: string,
+    preparation?: (coldStart: boolean) => Promise<void>,
+  ): Promise<void> {
+    if (runtimes.has(remote)) {
+      await preparation?.(false)
+      return
+    }
+    if (preparedStarts.has(remote)) return
+    await args.beforeOpen?.(remote)
+    if (preparation) await preparation(true)
+    else await args.prepareClone?.(remote)
+    preparedStarts.add(remote)
+  }
+
   async function prepareForOpen(
     remote: string,
     preparation?: (coldStart: boolean) => Promise<void>,
@@ -1847,23 +1883,13 @@ export function createVaultHost(args: {
       return
     }
     if (runtimes.has(remote)) {
-      await serialise(remote, () => preparation?.(false) ?? Promise.resolve())
+      await serialise(remote, () => prepareLocked(remote, preparation))
       return
     }
     if (preparedStarts.has(remote)) return
     const pending = startPreparations.get(remote)
     if (pending !== undefined) return pending
-    const opening = serialise(remote, async () => {
-      if (runtimes.has(remote)) {
-        await preparation?.(false)
-        return
-      }
-      if (preparedStarts.has(remote)) return
-      await args.beforeOpen?.(remote)
-      if (preparation) await preparation(true)
-      else await args.prepareClone?.(remote)
-      preparedStarts.add(remote)
-    })
+    const opening = serialise(remote, () => prepareLocked(remote, preparation))
     const settled = opening.finally(() => {
       if (startPreparations.get(remote) === settled) startPreparations.delete(remote)
     })
@@ -1882,7 +1908,20 @@ export function createVaultHost(args: {
       const priorClose = closeQueues.get(remote) ?? Promise.resolve()
       return admit(() => priorClose.then(() => serialise(remote, () => start(remote))))
     },
-    open: (remote, preparation) => {
+    withRuntime: (remote, preparation, operation) => {
+      const priorClose = closeQueues.get(remote) ?? Promise.resolve()
+      return admit(() =>
+        priorClose.then(() =>
+          serialise(remote, async () => {
+            if (!(await args.registry.list()).some((entry) => entry.remote === remote))
+              throw new Error(`no such vault: ${remote}`)
+            await prepareLocked(remote, preparation)
+            return operation(await start(remote))
+          }),
+        ),
+      )
+    },
+    open: (remote, preparation, ready) => {
       const priorClose = closeQueues.get(remote) ?? Promise.resolve()
       return admit(() => {
         // Prepare independent remotes concurrently, but reserve selection now so
@@ -1896,16 +1935,12 @@ export function createVaultHost(args: {
           if (!runtimes.has(remote) && !preparedStarts.has(remote)) {
             await prepareForOpen(remote, preparation)
           }
-          if (current?.remote === remote) {
-            notify(() => args.onSnapshot(remote, current!.snapshot()))
-            notify(() => args.onSyncState(remote, current!.syncState()))
-            notify(() => args.onHeldBack?.(remote, current!.heldBack()))
-            return current
-          }
-          const previous = current?.remote
-          if (previous !== undefined) await serialise(previous, () => closeRuntime(previous))
-          const vault = await serialise(remote, () => start(remote))
-          current = vault
+          const vault = await serialise(remote, async () => {
+            const runtime = await start(remote)
+            current = runtime
+            await ready?.(runtime)
+            return runtime
+          })
           // Startup callbacks can precede the runtime's insertion into `runtimes`.
           // Replay its authoritative view after selection so those first updates survive.
           notify(() => args.onSnapshot(remote, vault.snapshot()))
@@ -1927,6 +1962,12 @@ export function createVaultHost(args: {
               // preceded, even when no runtime ever made it to closeRuntime.
               preparedStarts.delete(remote)
             }),
+      ),
+    remove: (remote, afterClose) =>
+      trackClose(
+        serialiseClose(remote, selectionQueue, true, afterClose).finally(() => {
+          preparedStarts.delete(remote)
+        }),
       ),
     closeAll: () => {
       if (closingAll !== null) return closingAll

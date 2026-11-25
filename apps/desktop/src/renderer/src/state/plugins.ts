@@ -145,12 +145,6 @@ export const leaveReasonByPluginAtom = atom((get): ReadonlyMap<string, string> =
   return reasons
 })
 
-/** Why leaving the open vault costs something now: every running plugin's
- *  `leaveGuard` sentence. Empty when leaving costs nothing. */
-export const leaveReasonsAtom = atom((get): readonly string[] => [
-  ...get(leaveReasonByPluginAtom).values(),
-])
-
 /** The first running plugin that provides an agent, or null with none. */
 const agentProviderAtom = atom(
   (get): RendererPlugin | null =>
