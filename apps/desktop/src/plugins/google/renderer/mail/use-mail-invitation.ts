@@ -13,10 +13,13 @@ type Receipt = 'sent' | 'uncertain' | 'unchanged'
 
 function sameInvitation(a: Invitation, b: Invitation): boolean {
   return (
+    a.bindingRevision === b.bindingRevision &&
     a.identity.messageId === b.identity.messageId &&
     a.identity.uid === b.identity.uid &&
     a.identity.sequence === b.identity.sequence &&
-    a.identity.recurrenceId === b.identity.recurrenceId
+    a.identity.recurrenceId === b.identity.recurrenceId &&
+    a.identity.dtstamp === b.identity.dtstamp &&
+    a.identity.materialKey === b.identity.materialKey
   )
 }
 
@@ -136,6 +139,7 @@ export function useMailInvitation({
       const result = await googleCap.respondToMailInvitation(remote, {
         threadId,
         expectedAccountSub,
+        expectedBindingRevision: invitation.bindingRevision,
         identity: invitation.identity,
         answer,
       })

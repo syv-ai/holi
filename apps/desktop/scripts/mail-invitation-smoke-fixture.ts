@@ -28,7 +28,7 @@ export const attachment = {
   subject: 'Operations mail: attached invitation',
   title: 'Field workshop briefing',
   location: 'Training room 5',
-  join: 'https://meet.google.com/klm-nopq-rst',
+  join: 'https://xn--bcher-kva.example.test/meet.google.com',
   uid: 'field-workshop@example.test',
   attached: true,
 }
@@ -67,7 +67,7 @@ function invitationSource(invite: Invite, mailbox: Mailbox) {
     'DTEND:20261118T160500Z',
     `SUMMARY:${invite.title}`,
     `LOCATION:${invite.location.replaceAll(',', '\\,')}`,
-    `DESCRIPTION:Join ${invite.join}`,
+    ...(invite.attached ? [`URL:${invite.join}`] : [`DESCRIPTION:Join ${invite.join}`]),
     `ORGANIZER;CN=${organizer.name}:mailto:${organizer.email}`,
     `ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${mailbox.email}`,
     `ATTENDEE:mailto:${guest.email}`,
@@ -77,7 +77,9 @@ function invitationSource(invite: Invite, mailbox: Mailbox) {
   ].join('\r\n')
 }
 
-function message(invite: Invite, mailbox: Mailbox, sent?: { id: string; source: string }) {
+type SentReply = ReturnType<typeof readReply> & { id: string }
+
+function message(invite: Invite, mailbox: Mailbox, sent?: SentReply) {
   const body = sent?.source ?? invitationSource(invite, mailbox)
   const attachmentId = !sent && invite.attached ? 'calendar-attachment' : undefined
   const method = sent ? 'REPLY' : 'REQUEST'
@@ -99,18 +101,25 @@ function message(invite: Invite, mailbox: Mailbox, sent?: { id: string; source: 
         header('To', sent ? organizer.email : mailbox.email),
         header('Subject', sent ? `Re: ${invite.subject}` : invite.subject),
         header('Date', new Date(mailAt + (sent ? 60_000 : 0)).toUTCString()),
-        header('Message-ID', sent ? `<${sent.id}@example.test>` : rfcId(invite)),
+        header('Message-ID', sent?.rfcId ?? rfcId(invite)),
+        ...(sent
+          ? [header('In-Reply-To', sent.parent), header('References', sent.references)]
+          : []),
       ],
       parts: [
         { mimeType: 'text/plain', body: { data: wire(text), size: Buffer.byteLength(text) } },
         {
           mimeType: 'text/calendar',
-          filename: 'meeting.ics',
+          ...(attachmentId || sent ? { filename: sent ? 'invite.ics' : 'meeting.ics' } : {}),
           headers: [
             header('Content-Type', `text/calendar; method=${method}; charset=UTF-8`),
             header(
               'Content-Disposition',
-              `${attachmentId ? 'attachment' : 'inline'}; filename="meeting.ics"`,
+              attachmentId
+                ? 'attachment; filename="meeting.ics"'
+                : sent
+                  ? 'inline; filename="invite.ics"'
+                  : 'inline',
             ),
           ],
           body: {
@@ -133,8 +142,12 @@ function readReply(raw: string, invite: Invite, mailbox: Mailbox) {
   assert.equal(field('To'), organizer.email)
   assert.equal(field('Cc'), undefined)
   assert.equal(field('Bcc'), undefined)
-  assert.equal(field('In-Reply-To'), rfcId(invite))
-  assert(field('References')?.split(' ').includes(rfcId(invite)))
+  const outgoingId = field('Message-ID')
+  const parent = field('In-Reply-To')
+  const references = field('References')
+  assert(outgoingId && /^<[a-f0-9-]{36}@holi\.invalid>$/.test(outgoingId))
+  assert.equal(parent, rfcId(invite))
+  assert(references && references.split(' ').includes(parent))
   assert.equal(field('Subject'), `Re: ${invite.subject}`)
   const part =
     /^Content-Type: text\/calendar; method=REPLY[^\r\n]*\r\n(?:[^\r\n]+\r\n)*\r\n([A-Za-z0-9+/=\r\n]+)(?=--)/im.exec(
@@ -157,7 +170,13 @@ function readReply(raw: string, invite: Invite, mailbox: Mailbox) {
   )
   const status = attendees[0]?.getParameter('partstat')
   assert(typeof status === 'string' && ['ACCEPTED', 'TENTATIVE', 'DECLINED'].includes(status))
-  return { source, answer: status.toLowerCase() as InviteAnswer }
+  return {
+    source,
+    answer: status.toLowerCase() as InviteAnswer,
+    rfcId: outgoingId,
+    parent,
+    references,
+  }
 }
 
 /** Synthetic Google owns the authoritative attendee state and persisted Sent message.
@@ -170,16 +189,18 @@ export function createInvitationTransport() {
     comment: 'Fixture comment',
   }
   let version = 1
-  let sent: { id: string; source: string } | undefined
+  let sent: SentReply | undefined
   let refuseNextSend = false
-  let heldCalendarRead: { entered: () => void; released: Promise<void> } | undefined
+  let losePatchAcknowledgement = false
+  let tokenRefreshes = 0
+  let heldCalendarRead: { skip: number; entered: () => void; released: Promise<void> } | undefined
   const writes: {
     account: string
     method: 'PATCH' | 'POST'
     resource: string
     to: string
     answer: InviteAnswer
-    status: number
+    status: number | 'transport error'
     uid?: string
     sendUpdates?: string
     ifMatch?: string
@@ -187,7 +208,9 @@ export function createInvitationTransport() {
   }[] = []
   const rejected: string[] = []
   let attachmentReads = 0
-  let sentReadbacks = 0
+  let sentReceiptReads = 0
+  let sentIdSearches = 0
+  let pendingReceiptIndex = false
   const calendarReadbackVersions = new Set<number>()
   const requestCounts: Record<string, number> = {}
   const event = () => ({
@@ -210,8 +233,17 @@ export function createInvitationTransport() {
     const url = new URL(input instanceof Request ? input.url : input)
     const method = init?.method ?? 'GET'
     const headers = new Headers(init?.headers)
-    const summary = `${method} ${url.origin}${url.pathname}`
+    const resource = `${url.origin}${url.pathname}`
+    const summary = `${method} ${resource}`
     try {
+      if (method === 'POST' && resource === 'https://oauth2.googleapis.com/token') {
+        const form = new URLSearchParams(String(init?.body))
+        assert.equal(form.get('client_id'), 'offline-fixture')
+        assert.equal(form.get('grant_type'), 'refresh_token')
+        assert.equal(form.get('refresh_token'), `refresh-${mailboxA.sub}`)
+        tokenRefreshes++
+        return Response.json({ access_token: token(mailboxA), expires_in: 3600 })
+      }
       const mailbox = [mailboxA, mailboxB].find(
         (item) => headers.get('Authorization') === `Bearer ${token(item)}`,
       )
@@ -220,7 +252,6 @@ export function createInvitationTransport() {
       requestCounts[key] = (requestCounts[key] ?? 0) + 1
       const invites = mailbox === mailboxA ? [inline, attachment] : [other]
       const query = url.searchParams
-      const resource = `${url.origin}${url.pathname}`
       if (method === 'GET') {
         if (resource === `${people}/people/me/connections`)
           return Response.json({ connections: [] })
@@ -236,7 +267,7 @@ export function createInvitationTransport() {
         ) {
           const matched = mailbox === mailboxA && query.get('iCalUID') === inline.uid
           if (matched && version > 1) calendarReadbackVersions.add(version)
-          if (matched && heldCalendarRead) {
+          if (matched && heldCalendarRead && heldCalendarRead.skip-- === 0) {
             const pending = heldCalendarRead
             heldCalendarRead = undefined
             pending.entered()
@@ -256,13 +287,39 @@ export function createInvitationTransport() {
         if (resource === `${api}/drafts`) return Response.json({ drafts: [] })
         if (resource === `${api}/threads`) {
           const q = query.get('q') ?? ''
-          const matches =
-            q.includes('is:unread') || q.includes('is:starred')
+          const window = /^has:attachment filename:ics after:(\d+) before:(\d+)$/.exec(q)
+          const matches = window
+            ? invites.filter((invite) => {
+                const incoming = message(invite, mailbox)
+                const time = Number(incoming.internalDate) / 1000
+                return (
+                  time >= Number(window[1]) &&
+                  time < Number(window[2]) &&
+                  incoming.payload.parts.some(
+                    (part) => 'filename' in part && part.filename?.endsWith('.ics'),
+                  )
+                )
+              })
+            : q.includes('is:unread') || q.includes('is:starred')
               ? []
               : q.includes('in:sent')
                 ? invites.filter((invite) => invite === attachment && sent)
                 : invites
           return Response.json({ threads: matches.map(({ id }) => ({ id })) })
+        }
+        if (resource === `${api}/messages`) {
+          assert.equal(query.get('labelIds'), 'SENT')
+          assert.equal(query.get('maxResults'), '10')
+          const q = query.get('q')
+          assert.match(q ?? '', /^rfc822msgid:[a-f0-9-]{36}@holi\.invalid$/)
+          sentIdSearches++
+          const reply =
+            mailbox === mailboxA && sent && q === `rfc822msgid:${sent.rfcId.slice(1, -1)}`
+              ? sent
+              : null
+          return Response.json({
+            messages: reply ? [{ id: reply.id, threadId: attachment.id }] : [],
+          })
         }
         for (const invite of invites) {
           const incoming = message(invite, mailbox)
@@ -270,7 +327,6 @@ export function createInvitationTransport() {
           const format = query.get('format')
           if (resource === `${api}/threads/${invite.id}`) {
             assert(format === 'full' || format === 'metadata')
-            if (reply && format === 'full') sentReadbacks++
             const messages = reply ? [incoming, reply] : [incoming]
             return Response.json({
               id: invite.id,
@@ -284,6 +340,17 @@ export function createInvitationTransport() {
                     }))
                   : messages,
             })
+          }
+          if (reply && resource === `${api}/messages/${reply.id}`) {
+            assert.equal(format, 'full')
+            assert(!query.has('fields'))
+            if (pendingReceiptIndex) {
+              // The accepted receipt can briefly precede the message resource.
+              pendingReceiptIndex = false
+              return Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 })
+            }
+            sentReceiptReads++
+            return Response.json(reply)
           }
           if (
             resource === `${api}/messages/${incoming.id}` &&
@@ -329,13 +396,20 @@ export function createInvitationTransport() {
           resource: url.pathname,
           to: organizer.email,
           answer,
-          status: 200,
+          status: losePatchAcknowledgement ? 'transport error' : 200,
           ifMatch,
           sendUpdates: 'all',
           uid: inline.uid,
         })
         attendee = { ...attendee, responseStatus: answer }
         version++
+        if (losePatchAcknowledgement) {
+          losePatchAcknowledgement = false
+          // Google applied the PATCH; the connection closed before the client saw a response.
+          return Promise.reject(
+            new Error('Fixture Calendar connection closed after applying PATCH'),
+          )
+        }
         return Response.json(event())
       }
       if (method === 'POST' && resource === `${gmail}/messages/send`) {
@@ -346,13 +420,13 @@ export function createInvitationTransport() {
           attachment.id,
           'iTIP Reply must stay in its original Gmail thread',
         )
-        const { source, answer } = readReply(body.raw, attachment, mailbox)
+        const reply = readReply(body.raw, attachment, mailbox)
         const evidence = {
           account: mailbox.sub,
           method,
           resource: url.pathname,
           to: organizer.email,
-          answer,
+          answer: reply.answer,
           uid: attachment.uid,
         } as const
         if (refuseNextSend) {
@@ -361,7 +435,8 @@ export function createInvitationTransport() {
           return Response.json({ error: { status: 'insufficientPermissions' } }, { status: 403 })
         }
         assert(!sent, 'the fixture should receive exactly one accepted Gmail REPLY')
-        sent = { id: 'fixture-sent-reply', source }
+        sent = { id: 'fixture-sent-reply', ...reply }
+        pendingReceiptIndex = true
         writes.push({ ...evidence, status: 200, messageId: sent.id })
         return Response.json({ id: sent.id, threadId: attachment.id, labelIds: ['SENT'] })
       }
@@ -380,7 +455,10 @@ export function createInvitationTransport() {
     refuseNextSend: () => {
       refuseNextSend = true
     },
-    holdCalendarRead() {
+    loseNextPatchAcknowledgement: () => {
+      losePatchAcknowledgement = true
+    },
+    holdCalendarRead(skip = 0) {
       let enter!: () => void
       let release!: () => void
       const entered = new Promise<void>((resolve) => {
@@ -389,12 +467,14 @@ export function createInvitationTransport() {
       const released = new Promise<void>((resolve) => {
         release = resolve
       })
-      heldCalendarRead = { entered: enter, released }
+      heldCalendarRead = { skip, entered: enter, released }
       return { entered, release }
     },
     snapshot: () => ({
       attachmentReads,
-      sentReadbacks,
+      sentReceiptReads,
+      sentIdSearches,
+      tokenRefreshes,
       calendarReadbacks: calendarReadbackVersions.size,
       calendarResponse: attendee.responseStatus,
       otherGuest: event().attendees[1],

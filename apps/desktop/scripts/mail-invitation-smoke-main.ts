@@ -18,8 +18,11 @@ import {
   GOOGLE_NAMESPACES,
 } from '../src/plugins/google/main/capabilities'
 import { createGoogleData } from '../src/plugins/google/main/data'
+import { createMailInvitationSession } from '../src/plugins/google/main/mail-invitation-session'
+import { createMailInvitationStore } from '../src/plugins/google/main/mail-invitation-store'
 import { createMailMarkerStore } from '../src/plugins/google/main/markers'
 import { GOOGLE_SCOPES, GoogleSession } from '../src/plugins/google/main/session'
+import type { StoredGoogleAuth } from '../src/plugins/google/main/token-store'
 import {
   attachment,
   createInvitationTransport,
@@ -37,6 +40,7 @@ const root = __dirname
 const html = join(root, 'renderer.html')
 const htmlUrl = pathToFileURL(html).href
 const userData = join(root, 'user-data')
+const journalPath = join(userData, 'google-mail-invitations.json')
 const evidence = join(root, 'evidence')
 const vault = join(root, 'vault')
 const frames = join(root, 'frames')
@@ -90,21 +94,26 @@ function googleRig() {
   const transport = createInvitationTransport()
   globalThis.fetch = transport.fetch
   let current = mailboxA
+  let revision = 1
+  const client = { id: 'offline-fixture', source: 'shipped' } as const
+  const grants = new Map<string, StoredGoogleAuth>()
   const sessions = new Map(
     [mailboxA, mailboxB].map((account) => {
-      const auth = {
+      grants.set(account.sub, {
         ...account,
         accessToken: fixtureToken(account),
-        refreshToken: 'never-refresh',
+        refreshToken: `refresh-${account.sub}`,
         expiresAt: Number.MAX_SAFE_INTEGER,
         scopes: [...GOOGLE_SCOPES],
-      }
+      })
       const session = new GoogleSession({
         account: {
-          read: () => auth,
+          read: () => grants.get(account.sub) ?? null,
           generation: () => 1,
-          async write() {
-            throw new Error('Fixture grant must not refresh')
+          async write(auth, expectedGeneration) {
+            assert.equal(expectedGeneration, 1)
+            assert.equal(auth.sub, account.sub)
+            grants.set(account.sub, auth)
           },
           async expire() {
             throw new Error('Fixture grant must not expire')
@@ -113,7 +122,8 @@ function googleRig() {
             throw new Error('Fixture grant must not be removed')
           },
         },
-        client: () => ({ id: 'offline-fixture' }),
+        client: () => client,
+        fetch: transport.fetch,
       })
       return [account.sub, session] as const
     }),
@@ -129,24 +139,45 @@ function googleRig() {
       return [session, store] as const
     }),
   )
+  const accounts: Pick<
+    GoogleAccountsManager,
+    'sessionFor' | 'bindingFor' | 'overview' | 'list' | 'link'
+  > = {
+    async sessionFor(owner) {
+      assert.equal(owner, remote)
+      return sessions.get(current.sub)!
+    },
+    async bindingFor(owner) {
+      assert.equal(owner, remote)
+      const linkedRevision = revision
+      return {
+        session: sessions.get(current.sub)!,
+        revision: `fixture-binding-${linkedRevision}`,
+        isCurrent: () => revision === linkedRevision,
+      }
+    },
+    async overview(owner) {
+      assert.equal(owner, remote)
+      return {
+        remote,
+        state: 'connected',
+        account: { ...current, missingScopes: [], otherVaults: 0 },
+        client,
+      }
+    },
+    list: () => [mailboxA, mailboxB],
+    async link(owner, sub) {
+      assert.equal(owner, remote)
+      const account = [mailboxA, mailboxB].find((item) => item.sub === sub)
+      assert(account)
+      current = account
+      revision++
+    },
+  }
   const registry = createCapabilityRegistry()
   const capabilities = googleCapabilities({
-    accounts: {
-      async sessionFor(owner: string) {
-        assert.equal(owner, remote)
-        return sessions.get(current.sub)!
-      },
-      async overview() {
-        return { state: 'connected' }
-      },
-      list: () => [mailboxA, mailboxB],
-      async link(owner: string, sub: string) {
-        assert.equal(owner, remote)
-        const account = [mailboxA, mailboxB].find((item) => item.sub === sub)
-        assert(account)
-        current = account
-      },
-    } as unknown as GoogleAccountsManager,
+    accounts: accounts as GoogleAccountsManager,
+    mailInvitations: createMailInvitationSession(createMailInvitationStore(userData)),
     dataFor: async (owner) => {
       assert.equal(owner, remote)
       return data.get(sessions.get(current.sub)!)!
@@ -216,6 +247,9 @@ function googleRig() {
     transport,
     invoke,
     calls,
+    expireAccessToken: () => {
+      grants.get(mailboxA.sub)!.expiresAt = 0
+    },
     dispose: () => {
       disposeGoogleCapabilities(capabilities)
       for (const store of data.values()) store.forget()
@@ -348,9 +382,12 @@ async function run() {
     )
     const { js, until, click, clickElement } = drive(window)
     const readCard = () => js<string>(`document.querySelector(${literal(card)})?.innerText ?? ''`)
-    const open = (view: 'shell' | 'surface', invite: typeof inline) => {
+    const rowSelector = (view: 'shell' | 'surface', invite: typeof inline) => {
       const scope = view === 'shell' ? 'Production MailShell' : 'Production MailView'
-      const row = `[aria-label="${scope}"] #${invite.id}`
+      return `[aria-label="${scope}"] #${invite.id}`
+    }
+    const open = (view: 'shell' | 'surface', invite: typeof inline) => {
+      const row = rowSelector(view, invite)
       // MailShell's listitem handles clicks on its subject; MailView uses a row button.
       const selector = `${row} ${view === 'shell' ? 'p' : 'button'}`
       return clickElement(
@@ -369,15 +406,24 @@ async function run() {
         organizer.email,
         invite.location,
         'November 18, 2026',
-        'Join meeting',
         'Accept',
         'Maybe',
         'Decline',
       ])
         assert(text.includes(field), `invitation is missing ${field}: ${text}`)
       assert.match(text, /15:20.*16:05|3:20\s*PM.*4:05\s*PM/i)
-      await click('Join meeting', card)
-      await until(`external target for ${invite.title}`, () => external.at(-1) === invite.join)
+      const priorOpens = external.length
+      if (invite.attached) {
+        assert(text.includes(`Destination: ${new URL(invite.join).hostname}`))
+        assert(!text.includes('Join meeting') && !text.includes('Open this meeting'))
+        await click('Open email link', card)
+      } else {
+        await click('Join meeting', card)
+      }
+      await until(
+        `external target for ${invite.title}`,
+        () => external.length === priorOpens + 1 && external.at(-1) === invite.join,
+      )
     }
     const capture = async (name: string) => {
       await js(
@@ -402,10 +448,20 @@ async function run() {
     await window.loadFile(html)
     window.focus()
     contents.focus()
+    const badge = '[aria-label="Meeting invite"]'
+    const inlineRow = rowSelector('shell', inline)
+    const attachedRow = rowSelector('shell', attachment)
+    await until('attached invite appears as the positive list-badge control', () =>
+      js(
+        `!!document.querySelector(${literal(`${attachedRow} ${badge}`)})?.getClientRects().length`,
+      ),
+    )
+    assert(await js(`!!document.querySelector(${literal(inlineRow)})?.getClientRects().length`))
+    assert.equal(await js(`!!document.querySelector(${literal(`${inlineRow} ${badge}`)})`), false)
     await open('shell', inline)
     await expectDetails(inline)
     await expectStatus('No response yet')
-    mark('mail-shell-inline-invitation-shows-details-and-initial-response')
+    mark('mail-shell-filename-less-inline-invite-has-no-list-badge-but-opens-a-card')
     await capture('01-shell-before-light')
 
     let frame = 0
@@ -437,7 +493,16 @@ async function run() {
       ] as const) {
         const before = transport.writes.length
         await pause(700)
+        if (answer === 'declined') transport.loseNextPatchAcknowledgement()
         await click(action, card)
+        if (answer === 'declined') {
+          await expectStatus('Retry only checks its status')
+          await expectStatus('Response: Tentative')
+          assert.equal(transport.writes.length, before + 1)
+          assert.equal(transport.snapshot().tokenRefreshes, 0)
+          rig.expireAccessToken()
+          await click('Retry', card)
+        }
         await expectStatus(`Response: ${label}`)
         assert.equal(transport.writes.length, before + 1)
         assert.equal(transport.writes[before]?.answer, answer)
@@ -445,7 +510,8 @@ async function run() {
         assert.equal(transport.snapshot().calendarReadbacks, before + 1)
         await capture(`02-shell-${answer}-light`)
       }
-      mark('mail-shell-accept-maybe-decline-patch-and-reread-calendar')
+      assert.equal(transport.snapshot().tokenRefreshes, 1)
+      mark('mail-shell-three-calendar-answers-including-read-only-retry-after-uncertain-patch')
       await click('Mail surface')
       await js('document.documentElement.dataset.theme = "dark"')
       await open('surface', attachment)
@@ -464,7 +530,7 @@ async function run() {
       )
       await expectStatus('No response yet')
       assert.equal(transport.writes.at(-1)?.status, 403)
-      assert.equal(transport.snapshot().sentReadbacks, 0)
+      assert.equal(transport.snapshot().sentReceiptReads, 0)
       await capture('04-mail-view-refusal-dark')
       const refusedWrites = transport.writes.length
       const attachmentReadsBeforeRetry = transport.snapshot().attachmentReads
@@ -482,7 +548,9 @@ async function run() {
       await expectStatus('Response: Tentative')
       assert.equal(transport.writes.length, refusedWrites + 1)
       assert(transport.snapshot().attachmentReads > 0)
-      assert(transport.snapshot().sentReadbacks > 0)
+      assert(transport.snapshot().sentIdSearches > 0)
+      assert(transport.snapshot().sentReceiptReads > 0)
+      assert.equal(statSync(journalPath).mode & 0o777, 0o600)
       await capture('05-mail-view-sent-readback-dark')
       mark('gmail-threaded-itip-reply-recovers-response-from-sent')
       await pause(700)
@@ -513,7 +581,7 @@ async function run() {
     await js('document.documentElement.dataset.theme = "light"')
     await open('shell', inline)
     await expectStatus('Response: Declined')
-    const held = transport.holdCalendarRead()
+    const held = transport.holdCalendarRead(1)
     const writesBeforeSwitch = transport.writes.length
     const callsBeforeSwitch = rig.calls.length
     try {
@@ -522,7 +590,10 @@ async function run() {
       void held.entered.then(() => {
         entered = true
       })
-      await until('old-account response reading its Calendar copy', () => entered)
+      await until(
+        'old-account response rechecking its Calendar copy before dispatch',
+        () => entered,
+      )
       await click(`Google account ${mailboxA.email}`)
       await click(mailboxB.email)
       await until('account B loaded in production shell', () =>
@@ -570,7 +641,7 @@ async function run() {
           '/calendar/v3/calendars/primary/events/fixture-event',
           organizer.email,
           answer,
-          200,
+          answer === 'declined' ? 'transport error' : 200,
         ]),
         ...[403, 200].map((status) => [
           mailboxA.sub,

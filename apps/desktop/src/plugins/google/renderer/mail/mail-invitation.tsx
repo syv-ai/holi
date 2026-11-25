@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { useAtomValue } from 'jotai'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -62,6 +63,7 @@ function InvitationDetails(scope: Parameters<typeof useMailInvitation>[0]) {
   const { invitation, meeting, error, busy, receipt, refreshPending, read, respond } =
     useMailInvitation(scope)
   const clock = useTimeFormat()
+  const linkHostId = useId()
   const pending = refreshPending || invitation?.responsePending === true
   const canRespond = invitation?.canRespond === true && !invitation.cancelled
   const showResponses = canRespond || (pending && invitation !== null && !invitation.cancelled)
@@ -70,6 +72,11 @@ function InvitationDetails(scope: Parameters<typeof useMailInvitation>[0]) {
     ? null
     : httpsUrl(invitation?.conferenceUrl ?? meeting?.conferenceUrl)
   const meetingUrl = conference ?? httpsUrl(invitation?.htmlLink ?? meeting?.htmlLink)
+  const linkSource = conference ? invitation?.conferenceLinkSource : invitation?.htmlLinkSource
+  const emailHost =
+    invitation !== null && linkSource !== 'provider' && linkSource !== 'calendar'
+      ? (meetingUrl?.hostname ?? null)
+      : null
   const retry =
     error !== null || pending || (invitation !== null && !canRespond && !invitation.cancelled)
 
@@ -147,7 +154,7 @@ function InvitationDetails(scope: Parameters<typeof useMailInvitation>[0]) {
           )}
         </>
       )}
-      {(showResponses || meetingUrl !== null) && (
+      {(showResponses || (meetingUrl !== null && emailHost === null)) && (
         <div className="flex flex-wrap items-center gap-2">
           {showResponses &&
             answers.map((answer) => (
@@ -162,16 +169,32 @@ function InvitationDetails(scope: Parameters<typeof useMailInvitation>[0]) {
                 {responses[answer].action}
               </Button>
             ))}
-          {meetingUrl !== null && (
+          {meetingUrl !== null && emailHost === null && (
             <Button
               type="button"
               size="sm"
               variant="secondary"
-              onClick={() => openExternal(meetingUrl)}
+              onClick={() => openExternal(meetingUrl.href)}
             >
               {conference === null ? 'Open this meeting' : 'Join meeting'}
             </Button>
           )}
+        </div>
+      )}
+      {meetingUrl !== null && emailHost !== null && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p id={linkHostId} className="min-w-0 text-sm text-muted-foreground wrap-anywhere">
+            Destination: <bdi dir="ltr">{emailHost}</bdi>
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-describedby={linkHostId}
+            onClick={() => openExternal(meetingUrl.href)}
+          >
+            Open email link
+          </Button>
         </div>
       )}
       {status !== null && (
@@ -220,10 +243,12 @@ function InvitationDetails(scope: Parameters<typeof useMailInvitation>[0]) {
   )
 }
 
-function httpsUrl(value: string | null | undefined): string | null {
+function httpsUrl(value: string | null | undefined): URL | null {
   if (!value) return null
   try {
-    return new URL(value).protocol === 'https:' ? value : null
+    // URL exposes the actual ASCII (Punycode for IDNs) hostname, not mail copy.
+    const url = new URL(value)
+    return url.protocol === 'https:' && !url.username && !url.password ? url : null
   } catch {
     return null
   }
