@@ -372,7 +372,7 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
       const uris = [...pdf.matchAll(/\/URI\s*\((.*?)\)/g)].map((match) => match[1])
       const pages = await readPdfPages(outPath)
       const text = pages.flatMap((page) => page.runs.map((run) => run.text)).join(' ')
-      expect(text.replace(/\s+/g, ' ').match(/Edge caption\./g)).toHaveLength(
+      expect(text.replace(/\s+/g, ' ').match(/Edge caption\./g) ?? []).toHaveLength(
         scenario.name === 'paired-backslashes' ? 1 : 0,
       )
       results.push(
@@ -385,6 +385,7 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
         }),
       )
     }
+    expect(results).toHaveLength(2)
     expect(results[0]).toBe(results[1])
   })
 
