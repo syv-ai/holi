@@ -30,9 +30,12 @@ import {
   inline,
   mailboxA,
   mailboxB,
+  occurrence,
+  occurrenceId,
   organizer,
   other,
   remote,
+  series,
 } from './mail-invitation-smoke-fixture'
 
 const ipc = 'holi-invitation-fixture'
@@ -213,7 +216,6 @@ function googleRig() {
     'google.sendAs',
     'google.drafts',
     'google.thread',
-    'google.meeting',
     'google.imageSenders',
     'google.mailMarkerAnnotations',
     'google.mailMarkerPreferences',
@@ -415,7 +417,7 @@ async function run() {
       const priorOpens = external.length
       if (invite.attached) {
         assert(text.includes(`Destination: ${new URL(invite.join).hostname}`))
-        assert(!text.includes('Join meeting') && !text.includes('Open this meeting'))
+        assert(!text.includes('Join meeting') && !text.includes('Open in Google Calendar'))
         await click('Open email link', card)
       } else {
         await click('Join meeting', card)
@@ -514,7 +516,15 @@ async function run() {
       mark('mail-shell-three-calendar-answers-including-read-only-retry-after-uncertain-patch')
       await click('Mail surface')
       await js('document.documentElement.dataset.theme = "dark"')
+      transport.missAttachmentCollection()
       await open('surface', attachment)
+      await expectStatus('Calendar could not verify')
+      assert(!(await readCard()).includes('Accept'))
+      const writesBeforeCollectionRetry = transport.writes.length
+      await click('Retry', card)
+      await expectStatus('No response yet')
+      assert.equal(transport.writes.length, writesBeforeCollectionRetry)
+      mark('calendar-collection-404-blocks-rsvp-until-a-read-confirms-absence')
       await expectDetails(attachment)
       await expectStatus('No response yet')
       await capture('03-mail-view-before-dark')
@@ -577,6 +587,37 @@ async function run() {
     await expectStatus('Response: Tentative')
     await capture('06-mail-view-narrow-dark')
     window.setContentSize(1280, 920)
+    await open('surface', series)
+    const scopedCards = `${card} article`
+    const matchesCard = (title: string) =>
+      `[...document.querySelectorAll(${literal(scopedCards)})].find(e => e.querySelector('h4')?.textContent === ${literal(title)})`
+    const containsCard = (title: string, text: string) =>
+      js<boolean>(`!!(${matchesCard(title)})?.innerText.includes(${literal(text)})`)
+    await until(
+      'series and occurrence are rendered separately',
+      async () =>
+        (await containsCard(series.title, 'Whole series')) &&
+        (await containsCard(occurrence.title, 'This occurrence')),
+    )
+    const priorScopedWrites = transport.writes.length
+    await clickElement(
+      'Accept',
+      `[...(${matchesCard(occurrence.title)}).querySelectorAll('button')].find(e => e.innerText === 'Accept')`,
+    )
+    await until(
+      'only the moved occurrence shows the accepted response',
+      async () =>
+        (await containsCard(occurrence.title, 'Response: Accepted')) &&
+        (await containsCard(series.title, 'No response yet')),
+    )
+    assert.equal(transport.writes.length, priorScopedWrites + 1)
+    assert.equal(
+      transport.writes.at(-1)?.resource,
+      `/calendar/v3/calendars/primary/events/${occurrenceId}`,
+    )
+    assert.equal(transport.snapshot().seriesResponse, 'needsAction')
+    assert.equal(transport.snapshot().occurrenceResponse, 'accepted')
+    mark('mail-view-series-and-moved-occurrence-have-independent-external-targets')
     await click('Sidebar mail')
     await js('document.documentElement.dataset.theme = "light"')
     await open('shell', inline)
@@ -651,6 +692,14 @@ async function run() {
           'tentative',
           status,
         ]),
+        [
+          mailboxA.sub,
+          'PATCH',
+          `/calendar/v3/calendars/primary/events/${occurrenceId}`,
+          organizer.email,
+          'accepted',
+          200,
+        ],
       ],
     )
     const trustedClicks = await js<string[]>('window.fixtureClicks')

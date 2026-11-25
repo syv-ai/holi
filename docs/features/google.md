@@ -12,8 +12,38 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - **Scope drift:** an old grant keeps working and 403s only the newly added calls. `missingScopes()` compares stored scopes in Google's vocabulary (`email` returns as `.../userinfo.email`) and settings offers **Reconnect**.
 - **Mail cache:** one `node:sqlite` file per account, `userData/google-cache-<sub>.db`, last 500 threads, reconciled by `history.list` deltas. The key carries every filter that narrows a list; the history cursor is per key; archive and trash arrive as label changes and land in a _left_ bucket. Bump `SHAPE_VERSION` when a cached type changes. A removed or dead account deletes the file and its sidecars.
 - **Writes:** the renderer paints first and reverts on refusal; main calls Google first and updates the cache only on success. Every thread action takes that one path. Archive and trash, of one thread or a selection, then raise one toast ("Thread moved to Trash", "2 threads archived") that stays until dismissed and offers **Undo**: undo beats a confirmation for a frequent, reversible removal. Undo calls `google.unarchive` (`INBOX` back on) or `google.untrash` (Gmail's `/untrash`), UI-door only, and re-reads the list; nothing is put back into the cache, because `history.list` brings both changes back.
-- **Mail's panes** share one left edge: the toolbar, the selection bar, the find bar and the reader's action row are each a `PaneToolbar` (`px-4`), and the thread below them is `px-4` with each message's chevron, addresses and body on the subject's edge. The reader's subject has its own wrapping row, the one place a subject the list truncated reads in full; under it, Reply, Reply all, Archive, Trash and Star stay on the row (and Join for a meeting), and Summarize, Task, Continue draft, Forward, Unsubscribe and Open in Gmail sit in one **More actions** menu, so the row fits the reader at its 280px floor. A row's checkbox shows on hover and on keyboard focus; its tab and labels are `Badge`s. Loading is skeleton rows; disconnected (with _Open Connections_), failed (with _Try again_), empty and "Pick a thread" are the shared `EmptyState`. A failed write is a `text-destructive` line above the list.
-- **Calendar** shows calendars the user owns by default; per-calendar overrides are the plugin's `calendars` setting in the vault's `.holi/settings/plugins.local.yaml`, read in main so the agent and apps honour them too. Events carry `mine`. Joining uses `conferenceData`, then the body, then the location, matching a join-link shape. A thread with an `.ics` is joined to its event by the invite's `UID`.
+- **Mail's panes** share one left edge: the toolbar, selection bar, find bar and
+  reader's action row use `PaneToolbar`; the subject wraps on its own row. Reply,
+  Reply all, Archive, Trash and Star stay on the action row. Summarize, Task,
+  Continue draft, Forward, Unsubscribe and Open in Gmail sit in **More actions** so
+  the row fits the reader at its 280px floor. A row's checkbox shows on hover and
+  keyboard focus. Loading uses skeleton rows; disconnected, failed, empty and
+  “Pick a thread” use the shared `EmptyState`. Failed writes appear above the list.
+- **Meeting invitations in Mail** use the same cards in both readers. A calendar
+  MIME part can open a card even when the thread has no attachment badge. The
+  cards show the organizer, time, location and confirmed response when known. A
+  series and a separately invited occurrence have distinct cards: Accept, Maybe
+  and Decline apply only to the eligible invitation on that card. A verified
+  meeting without a response to make can still offer a link, but not RSVP.
+- **Mail RSVP** updates only the attendee's entry on a verified, writable Calendar
+  copy, using the selected series or original occurrence. Only when Calendar
+  verifies that no matching copy exists does Holi send a threaded iTIP reply
+  through Gmail to the organizer. A blocked or inconclusive Calendar lookup is
+  not permission to send mail. Main binds the response to the vault's linked
+  account and the exact invitation revision; the reader also rechecks its
+  ownership and linked account before opening a card link. A pending or refused
+  response is not shown as confirmed. **Retry** checks the thread and provider
+  status again; it never repeats the send.
+- **Calendar** shows calendars the user owns by default; per-calendar overrides
+  are the plugin's `calendars` setting in the vault's
+  `.holi/settings/plugins.local.yaml`, read in main so the agent and apps honour
+  them too. Events carry `mine`. Calendar prefers structured conference fields
+  over links in the description or location. Mail and Calendar recognize the
+  same conference hosts and paths in prose. In Mail, **Join meeting** requires
+  a recognized conference URL, and **Open in Google Calendar** requires a Google
+  event URL. An unrecognized explicit HTTPS link from the invitation instead
+  shows its actual host beside **Open email link**; prose alone cannot add such a
+  link to the card.
 - **The calendar view** (`renderer/calendar/`, the `calendar` app tab) is ReUI's `event-calendar-3` block over the same capabilities: a rail with the calendars picker, a mini month and the selected day, beside ReUI's event calendar in day, week (the default), month and agenda views, Monday first. The view selector's Agenda is the calendar list; there is no separate Agenda launcher. A tab's **Open in split view** puts Calendar beside another view, and opening Calendar again focuses its existing tab or split. Two of the plugin's settings, the vault's (committed in `plugins.yaml`, overridable in `plugins.local.yaml`) and shown under Settings, Google, Calendar, shape how it reads: `timeFormat` (`24h`, or `12h`) is the clock of every time it writes, the grid's gutter, the chips, the rail, the anchored event card and the form's time selects, and `weekNumbers` (on) puts ISO week numbers down the side of its month. A sideways trackpad swipe or a shift-scroll over it pages one day, week or month in that direction and the view slides in from that side; one swipe is one period, however long its momentum runs, and vertical scrolling stays the grid's (`use-wheel-swipe.ts`, on the calendar's own `api.next`/`api.prev`, so the stock ReUI files stay as installed). It asks `google.agenda` for whatever range the calendar shows (at most 92 days) and `google.calendars` for the colours and the picker, whose ticks are `google.setCalendar`. An event Holi may change, a solo one on the primary calendar (the account's address), can be dragged, resized, edited and deleted; the drag paints first and Google's refusal puts it back with a toast. Moves and edits are `google.reschedule`, deletes `google.unschedule` (both refused by main when anyone is invited), and the CLI's `google.schedule` remains silent solo creation. In the anchored event card, the UI can create an event on the primary calendar with guest addresses and optionally Google Meet (off by default). Sending invitations requires the explicit **Create and send invitations** action; Enter never sends. A solo event uses **Add event**. Each submission is durably bound to its account and stable event ID before Google is called. Reopening and checking status are read-only: uncertain delivery keeps the submitted details locked until its status is known, and a created event with a pending or failed Meet is recovered without creating a duplicate event. Other events open in the anchored card, with descriptions in the sandboxed frame, or in Google Calendar. Holi does not offer calendar CRUD, booking facts or notes.
 - **Composer:** markdown with a preview through the reader's sanitiser and frame; main sends exactly the previewed HTML as `multipart/alternative`, the markdown as the plain part, marked `X-Holi-Source: markdown`. Drafts live in Gmail and all of them open (unmarked ones via `turndown`). Autosave from the first edit, 2 s idle, single-flight. Reply is sender-only unless reply-all. Edit and Preview are a `ToggleGroup`; the editor is named "Message", and the compose dialog's visible title, "New message", is its accessible name.
 - **Linking** a thread or event makes a task with the permalink as a plain markdown link in its body ([tasks](tasks.md)).
@@ -47,7 +77,6 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - Encrypting the cache: needs a native module and forecloses FTS5.
 - Per-vault cache or wipe-on-switch: mail is account data, and wiping refetches on every switch.
 - Calendar `syncToken`: incompatible with `timeMin`/`timeMax`.
-- Parsing join links from the `.ics`: a second, drifting source of truth.
 - `labels.get` for tab counts: counts archived mail.
 - A refcounted single disconnect: one button with hidden meanings.
 - Rich-text composing or a local draft store: a second model, a second home.

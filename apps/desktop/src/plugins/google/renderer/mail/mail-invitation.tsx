@@ -5,12 +5,19 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
-import { activeRemoteAtom, activeRemoteRevisionValueAtom, openExternal } from '@/plugin-api'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/plugin-api'
 import { googleAccountRevisionAtom, useGoogleAccount } from '../account'
 import { timeOf, type TimeFormat } from '../calendar/calendar-format'
 import { useTimeFormat } from '../calendar/calendar-settings'
+import { googleEventUrl, httpsLink, providerConferenceUrl } from '../../shared/meeting-links'
 import type { ThreadMessage } from '../mail-types'
-import { useMailInvitation, type Invitation, type InvitationAnswer } from './use-mail-invitation'
+import {
+  useMailInvitation,
+  type Invitation,
+  type InvitationAnswer,
+  type InvitationCardState,
+} from './use-mail-invitation'
 
 const responses = {
   accepted: { action: 'Accept', label: 'Accepted', variant: 'success' },
@@ -60,169 +67,56 @@ function InvitationScope({ threadId, generation }: { threadId: string; generatio
 }
 
 function InvitationDetails(scope: Parameters<typeof useMailInvitation>[0]) {
-  const { invitation, meeting, error, busy, receipt, refreshPending, read, respond } =
+  const { cards, readError, recoveryReason, busy, openLink, read, respond } =
     useMailInvitation(scope)
   const clock = useTimeFormat()
-  const linkHostId = useId()
-  const pending = refreshPending || invitation?.responsePending === true
-  const canRespond = invitation?.canRespond === true && !invitation.cancelled
-  const showResponses = canRespond || (pending && invitation !== null && !invitation.cancelled)
-  const blocked = busy !== null || pending || error !== null
-  const conference = invitation?.cancelled
-    ? null
-    : httpsUrl(invitation?.conferenceUrl ?? meeting?.conferenceUrl)
-  const meetingUrl = conference ?? httpsUrl(invitation?.htmlLink ?? meeting?.htmlLink)
-  const linkSource = conference ? invitation?.conferenceLinkSource : invitation?.htmlLinkSource
-  const emailHost =
-    invitation !== null && linkSource !== 'provider' && linkSource !== 'calendar'
-      ? (meetingUrl?.hostname ?? null)
-      : null
   const retry =
-    error !== null || pending || (invitation !== null && !canRespond && !invitation.cancelled)
-
-  if (
-    invitation === null &&
-    meeting === null &&
-    busy === null &&
-    error === null &&
-    receipt === null
-  ) {
-    return null
-  }
-
-  const response = invitation?.responseStatus
-  const knownResponse = response && response !== 'needsAction' ? responses[response] : null
-  const date = invitation && invitationDate(invitation, clock)
-  const organizer = invitation?.organizer
-  const status =
-    busy === 'responding'
-      ? 'Sending your response…'
-      : receipt === 'sent'
-        ? pending
-          ? 'Google accepted your response, but its status has not been refreshed.'
-          : 'Google accepted your response.'
-        : receipt === 'uncertain' && pending
-          ? 'We couldn’t confirm whether Google accepted your response. Retry only checks its status.'
-          : receipt === 'unchanged'
-            ? 'This was already your recorded response.'
-            : null
+    readError !== null ||
+    recoveryReason !== null ||
+    cards.some(
+      (card) =>
+        card.error !== null ||
+        card.refreshPending ||
+        (card.invitation.kind === 'invitation' &&
+          !card.invitation.canRespond &&
+          !card.invitation.cancelled),
+    )
+  if (cards.length === 0 && busy === null && !retry) return null
 
   return (
     <section aria-label="Calendar invitation" className="flex min-w-0 flex-col gap-3 pt-4">
-      {invitation === null && meeting === null && busy === 'reading' && (
-        <div role="status" aria-label="Loading calendar invitation" className="flex flex-col gap-2">
-          <Skeleton className="h-5 w-1/2" />
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-7 w-1/3" />
-        </div>
-      )}
-      {invitation !== null && (
-        <>
-          <div className="flex flex-wrap items-center gap-2">
-            <h4 className="min-w-0 text-sm font-medium tracking-tight wrap-anywhere">
-              {invitation.title}
-            </h4>
-            {knownResponse ? (
-              <Badge variant={knownResponse.variant}>Response: {knownResponse.label}</Badge>
-            ) : response === 'needsAction' ? (
-              <Badge variant="secondary">No response yet</Badge>
-            ) : null}
-          </div>
-          {(date || organizer || invitation.location) && (
-            <dl className="flex flex-col gap-1 text-sm">
-              {date && (
-                <div className="flex gap-2">
-                  <dt className="text-muted-foreground">When</dt>
-                  <dd>{date}</dd>
-                </div>
-              )}
-              {organizer && (
-                <div className="flex gap-2">
-                  <dt className="text-muted-foreground">Organiser</dt>
-                  <dd className="min-w-0 wrap-anywhere">
-                    {organizer.name ? `${organizer.name} <${organizer.email}>` : organizer.email}
-                  </dd>
-                </div>
-              )}
-              {invitation.location && (
-                <div className="flex gap-2">
-                  <dt className="text-muted-foreground">Location</dt>
-                  <dd className="min-w-0 wrap-anywhere">{invitation.location}</dd>
-                </div>
-              )}
-            </dl>
-          )}
-        </>
-      )}
-      {(showResponses || (meetingUrl !== null && emailHost === null)) && (
-        <div className="flex flex-wrap items-center gap-2">
-          {showResponses &&
-            answers.map((answer) => (
-              <Button
-                key={answer}
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={blocked || response === answer}
-                onClick={() => void respond(answer)}
-              >
-                {responses[answer].action}
-              </Button>
-            ))}
-          {meetingUrl !== null && emailHost === null && (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={() => openExternal(meetingUrl.href)}
-            >
-              {conference === null ? 'Open this meeting' : 'Join meeting'}
-            </Button>
-          )}
-        </div>
-      )}
-      {meetingUrl !== null && emailHost !== null && (
-        <div className="flex flex-wrap items-center gap-2">
-          <p id={linkHostId} className="min-w-0 text-sm text-muted-foreground wrap-anywhere">
-            Destination: <bdi dir="ltr">{emailHost}</bdi>
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            aria-describedby={linkHostId}
-            onClick={() => openExternal(meetingUrl.href)}
+      {busy === 'reading' &&
+        (cards.length === 0 ? (
+          <div
+            role="status"
+            aria-label="Loading calendar invitation"
+            className="flex flex-col gap-2"
           >
-            Open email link
-          </Button>
-        </div>
-      )}
-      {status !== null && (
-        <p role="status" className="text-muted-foreground text-sm">
-          {status}
-        </p>
-      )}
-      {busy === 'reading' && invitation !== null && (
-        <p role="status" className="text-muted-foreground text-sm">
-          Checking invitation status…
-        </p>
-      )}
-      {invitation !== null && !canRespond && (!pending || status === null) && (
-        <p role="status" className="text-muted-foreground text-sm">
-          {invitation.unavailableReason ??
-            (invitation.cancelled
-              ? 'This invitation was cancelled.'
-              : 'You can’t respond to this invitation.')}
-        </p>
-      )}
-      {invitation === null && receipt !== null && busy === null && error === null && (
-        <p role="status" className="text-muted-foreground text-sm">
-          The invitation is no longer available in this thread.
-        </p>
-      )}
-      {error !== null && (
+            <Skeleton className="h-5 w-1/2" />
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-7 w-1/3" />
+          </div>
+        ) : (
+          <p role="status" className="text-muted-foreground text-sm">
+            Checking invitation status…
+          </p>
+        ))}
+      {cards.map((card) => (
+        <InvitationCard
+          key={card.key}
+          card={card}
+          clock={clock}
+          sending={busy !== 'reading' && busy?.responding === card.key}
+          blocked={busy !== null || readError !== null}
+          open={(url) => void openLink(url)}
+          respond={(answer) => void respond(card, answer)}
+        />
+      ))}
+      {(readError ?? recoveryReason) !== null && (
         <Alert variant="destructive">
-          <AlertDescription className="min-w-0 wrap-anywhere">{error}</AlertDescription>
+          <AlertDescription className="min-w-0 wrap-anywhere">
+            {readError ?? recoveryReason}
+          </AlertDescription>
         </Alert>
       )}
       {retry && (
@@ -243,15 +137,174 @@ function InvitationDetails(scope: Parameters<typeof useMailInvitation>[0]) {
   )
 }
 
-function httpsUrl(value: string | null | undefined): URL | null {
-  if (!value) return null
-  try {
-    // URL exposes the actual ASCII (Punycode for IDNs) hostname, not mail copy.
-    const url = new URL(value)
-    return url.protocol === 'https:' && !url.username && !url.password ? url : null
-  } catch {
-    return null
+const scopeLabels = { series: 'Whole series', occurrence: 'This occurrence' }
+
+function InvitationCard({
+  card,
+  clock,
+  sending,
+  blocked,
+  open,
+  respond,
+}: {
+  card: InvitationCardState
+  clock: TimeFormat
+  sending: boolean
+  blocked: boolean
+  open: (url: string) => void
+  respond: (answer: InvitationAnswer) => void
+}) {
+  const { invitation, error, receipt, refreshPending } = card
+  const headingId = useId()
+  const isInvitation = invitation.kind === 'invitation'
+  const canRespond = isInvitation && invitation.canRespond && !invitation.cancelled
+  const response = isInvitation ? invitation.responseStatus : null
+  const knownResponse = response && response !== 'needsAction' ? responses[response] : null
+  const date = invitationDate(invitation, clock)
+  const { organizer, location } = invitation
+  const status = sending
+    ? 'Sending your response…'
+    : receipt === 'sent'
+      ? refreshPending
+        ? 'Google accepted your response, but its status has not been refreshed.'
+        : 'Google accepted your response.'
+      : receipt === 'uncertain' && refreshPending
+        ? 'We couldn’t confirm whether Google accepted your response. Retry only checks its status.'
+        : receipt === 'unchanged'
+          ? 'This was already your recorded response.'
+          : refreshPending && canRespond
+            ? 'Check your response status before responding again.'
+            : null
+
+  return (
+    <article aria-labelledby={headingId} className="flex min-w-0 flex-col gap-2">
+      <Separator />
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 id={headingId} className="min-w-0 text-sm font-medium tracking-tight wrap-anywhere">
+          {invitation.title}
+        </h4>
+        {invitation.scope !== 'single' && (
+          <Badge variant="secondary">{scopeLabels[invitation.scope]}</Badge>
+        )}
+        {knownResponse ? (
+          <Badge variant={knownResponse.variant}>Response: {knownResponse.label}</Badge>
+        ) : response === 'needsAction' ? (
+          <Badge variant="secondary">No response yet</Badge>
+        ) : null}
+      </div>
+      {(date || organizer || location) && (
+        <dl className="flex flex-col gap-1 text-sm">
+          {date && (
+            <div className="flex gap-2">
+              <dt className="text-muted-foreground">When</dt>
+              <dd>{date}</dd>
+            </div>
+          )}
+          {organizer && (
+            <div className="flex gap-2">
+              <dt className="text-muted-foreground">Organiser</dt>
+              <dd className="min-w-0 wrap-anywhere">
+                {organizer.name ? `${organizer.name} <${organizer.email}>` : organizer.email}
+              </dd>
+            </div>
+          )}
+          {location && (
+            <div className="flex gap-2">
+              <dt className="text-muted-foreground">Location</dt>
+              <dd className="min-w-0 wrap-anywhere">{location}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {canRespond &&
+          answers.map((answer) => (
+            <Button
+              key={answer}
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={blocked || refreshPending || error !== null || response === answer}
+              onClick={() => respond(answer)}
+            >
+              {responses[answer].action}
+            </Button>
+          ))}
+        {!invitation.cancelled && <InvitationLink invitation={invitation} open={open} />}
+      </div>
+      {status !== null && (
+        <p role="status" className="text-muted-foreground text-sm">
+          {status}
+        </p>
+      )}
+      {isInvitation && !canRespond && (!refreshPending || status === null) && (
+        <p role="status" className="text-muted-foreground text-sm">
+          {invitation.unavailableReason ??
+            (invitation.cancelled
+              ? 'This invitation was cancelled.'
+              : 'You can’t respond to this invitation.')}
+        </p>
+      )}
+      {error !== null && (
+        <Alert variant="destructive">
+          <AlertDescription className="min-w-0 wrap-anywhere">{error}</AlertDescription>
+        </Alert>
+      )}
+    </article>
+  )
+}
+
+function InvitationLink({
+  invitation,
+  open,
+}: {
+  invitation: Invitation
+  open: (url: string) => void
+}) {
+  const hostId = useId()
+  // A Calendar match is not proof that the organizer's description contained a
+  // real conference link. Reclassify by destination, not by the source label.
+  const conference =
+    providerConferenceUrl(invitation.conferenceUrl) ?? providerConferenceUrl(invitation.htmlLink)
+  const event = googleEventUrl(invitation.htmlLink)
+  const email =
+    (invitation.conferenceLinkSource === 'mail' ? httpsLink(invitation.conferenceUrl) : null) ??
+    (invitation.htmlLinkSource === 'mail' ? httpsLink(invitation.htmlLink) : null)
+  const url = conference ?? event ?? email
+  if (!url) return null
+  const host = new URL(url).hostname
+  if (!conference && !event) {
+    return (
+      <>
+        <p id={hostId} className="min-w-0 text-sm text-muted-foreground wrap-anywhere">
+          Destination: <bdi dir="ltr">{host}</bdi>
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-describedby={hostId}
+          onClick={() => open(url)}
+        >
+          Open email link
+        </Button>
+      </>
+    )
   }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button type="button" size="sm" variant="secondary" onClick={() => open(url)}>
+          {conference ? 'Join meeting' : 'Open in Google Calendar'}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        <bdi dir="ltr" className="wrap-anywhere">
+          {host}
+        </bdi>
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 function invitationDate({ start, end, allDay }: Invitation, clock: TimeFormat): string | null {

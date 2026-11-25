@@ -39,19 +39,49 @@ export const other = {
   location: 'East Annex',
   uid: 'second-mailbox@example.test',
 }
-type Invite = typeof inline
+type Invite = typeof inline & { scope?: 'series' | 'occurrence' }
+
+export const series: Invite = {
+  ...inline,
+  id: 'threadseries',
+  subject: 'Operations mail: review series and moved occurrence',
+  title: 'Harbor planning series',
+  uid: 'harbor-planning@example.test',
+  scope: 'series',
+}
+export const occurrence: Invite = {
+  ...series,
+  title: 'Harbor planning moved occurrence',
+  scope: 'occurrence',
+}
 
 const gmail = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const googleGmail = 'https://www.googleapis.com/gmail/v1/users/me'
 const calendar = 'https://www.googleapis.com/calendar/v3'
 const people = 'https://people.googleapis.com/v1'
 const eventId = 'fixture-event'
+const seriesId = 'fixture-series'
+export const occurrenceId = 'fixture-occurrence'
+const occurrenceSlot = '2026-11-25T15:20:00Z'
+const occurrenceStart = '2026-11-25T16:20:00Z'
+const occurrenceEnd = '2026-11-25T17:05:00Z'
+const primary = `${calendar}/calendars/primary/events`
+const sharedCalendar = 'fixture-shared@example.test'
 const wire = (text: string) => Buffer.from(text).toString('base64url')
 const header = (name: string, value: string) => ({ name, value })
-const mailId = (invite: Invite) => `mail-${invite.id}`
+const mailId = (invite: Invite) =>
+  `mail-${invite.id}${invite.scope === 'occurrence' ? '-occurrence' : ''}`
 const rfcId = (invite: Invite) => `<${mailId(invite)}@example.test>`
 const token = (mailbox: Mailbox) => `offline-only-${mailbox.sub}`
 export { token as fixtureToken }
+
+function calendarItems<T>(kind: 'calendar#events' | 'calendar#calendarList', items?: T[]) {
+  return Response.json(items === undefined ? { kind } : { kind, items })
+}
+
+function notFound() {
+  return Response.json({ error: { code: 404, status: 'NOT_FOUND' } }, { status: 404 })
+}
 
 function invitationSource(invite: Invite, mailbox: Mailbox) {
   return [
@@ -63,8 +93,10 @@ function invitationSource(invite: Invite, mailbox: Mailbox) {
     `UID:${invite.uid}`,
     `SEQUENCE:${sequence}`,
     'DTSTAMP:20261112T100000Z',
-    'DTSTART:20261118T152000Z',
-    'DTEND:20261118T160500Z',
+    ...(invite.scope === 'occurrence'
+      ? ['RECURRENCE-ID:20261125T152000Z', 'DTSTART:20261125T162000Z', 'DTEND:20261125T170500Z']
+      : ['DTSTART:20261118T152000Z', 'DTEND:20261118T160500Z']),
+    ...(invite.scope === 'series' ? ['RRULE:FREQ=WEEKLY;COUNT=4'] : []),
     `SUMMARY:${invite.title}`,
     `LOCATION:${invite.location.replaceAll(',', '\\,')}`,
     ...(invite.attached ? [`URL:${invite.join}`] : [`DESCRIPTION:Join ${invite.join}`]),
@@ -182,15 +214,20 @@ function readReply(raw: string, invite: Invite, mailbox: Mailbox) {
 /** Synthetic Google owns the authoritative attendee state and persisted Sent message.
  * The same thread ID in the other mailbox belongs to a different event. */
 export function createInvitationTransport() {
-  let attendee = {
+  const originalAttendee = {
     email: mailboxA.email,
     self: true,
     responseStatus: 'needsAction',
     comment: 'Fixture comment',
   }
-  let version = 1
+  const targets = new Map([
+    [eventId, { invite: inline as Invite, version: 1, attendee: { ...originalAttendee } }],
+    [seriesId, { invite: series, version: 1, attendee: { ...originalAttendee } }],
+    [occurrenceId, { invite: occurrence, version: 1, attendee: { ...originalAttendee } }],
+  ])
   let sent: SentReply | undefined
   let refuseNextSend = false
+  let missNextAttachmentCollection = false
   let losePatchAcknowledgement = false
   let tokenRefreshes = 0
   let heldCalendarRead: { skip: number; entered: () => void; released: Promise<void> } | undefined
@@ -213,21 +250,29 @@ export function createInvitationTransport() {
   let pendingReceiptIndex = false
   const calendarReadbackVersions = new Set<number>()
   const requestCounts: Record<string, number> = {}
-  const event = () => ({
-    id: eventId,
-    etag: `"fixture-${version}"`,
-    iCalUID: inline.uid,
-    sequence,
-    summary: inline.title,
-    location: inline.location,
-    hangoutLink: inline.join,
-    htmlLink: 'https://calendar.google.com/calendar/event?eid=synthetic-fixture',
-    organizer: { email: organizer.email, self: false },
-    status: 'confirmed',
-    start: { dateTime: start },
-    end: { dateTime: end },
-    attendees: [attendee, guest],
-  })
+  const event = (id: string) => {
+    const { invite, version, attendee } = targets.get(id)!
+    return {
+      kind: 'calendar#event',
+      id,
+      etag: `"${id}-${version}"`,
+      iCalUID: invite.uid,
+      sequence,
+      summary: invite.title,
+      location: invite.location,
+      hangoutLink: invite.join,
+      htmlLink: 'https://calendar.google.com/calendar/event?eid=synthetic-fixture',
+      organizer: { email: organizer.email, self: false },
+      status: 'confirmed',
+      start: { dateTime: id === occurrenceId ? occurrenceStart : start },
+      end: { dateTime: id === occurrenceId ? occurrenceEnd : end },
+      attendees: [attendee, guest],
+      ...(id === seriesId ? { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=4'] } : {}),
+      ...(id === occurrenceId
+        ? { recurringEventId: seriesId, originalStartTime: { dateTime: occurrenceSlot } }
+        : {}),
+    }
+  }
 
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input)
@@ -250,30 +295,64 @@ export function createInvitationTransport() {
       assert(mailbox, 'Google call did not use a fixture account')
       const key = `${mailbox.sub} ${summary}`
       requestCounts[key] = (requestCounts[key] ?? 0) + 1
-      const invites = mailbox === mailboxA ? [inline, attachment] : [other]
+      const invites = mailbox === mailboxA ? [inline, attachment, series] : [other]
       const query = url.searchParams
       if (method === 'GET') {
         if (resource === `${people}/people/me/connections`)
           return Response.json({ connections: [] })
         if (resource === `${people}/otherContacts`) return Response.json({ otherContacts: [] })
         if (resource === `${calendar}/users/me/calendarList`) {
-          return Response.json({
-            items: [{ id: mailbox.email, primary: true, selected: true, accessRole: 'owner' }],
-          })
+          if (mailbox === mailboxB) return calendarItems('calendar#calendarList')
+          return calendarItems('calendar#calendarList', [
+            { id: mailbox.email, primary: true, selected: true, accessRole: 'owner' },
+            { id: sharedCalendar, accessRole: 'reader' },
+          ])
         }
         if (
-          resource === `${calendar}/calendars/primary/events` ||
+          resource === primary ||
           resource === `${calendar}/calendars/${encodeURIComponent(mailbox.email)}/events`
         ) {
           const matched = mailbox === mailboxA && query.get('iCalUID') === inline.uid
-          if (matched && version > 1) calendarReadbackVersions.add(version)
-          if (matched && heldCalendarRead && heldCalendarRead.skip-- === 0) {
-            const pending = heldCalendarRead
-            heldCalendarRead = undefined
-            pending.entered()
-            await pending.released
+          if (matched) {
+            const version = targets.get(eventId)!.version
+            if (version > 1) calendarReadbackVersions.add(version)
+            if (heldCalendarRead && heldCalendarRead.skip-- === 0) {
+              const pending = heldCalendarRead
+              heldCalendarRead = undefined
+              pending.entered()
+              await pending.released
+            }
+            return calendarItems('calendar#events', [event(eventId)])
           }
-          return Response.json({ items: matched ? [event()] : [] })
+          if (mailbox === mailboxA && query.get('iCalUID') === series.uid)
+            return calendarItems('calendar#events', [event(seriesId)])
+          if (
+            mailbox === mailboxA &&
+            query.get('iCalUID') === attachment.uid &&
+            missNextAttachmentCollection
+          ) {
+            missNextAttachmentCollection = false
+            return notFound()
+          }
+          return calendarItems('calendar#events')
+        }
+        if (resource === `${calendar}/calendars/${encodeURIComponent(sharedCalendar)}/events`) {
+          assert.equal(mailbox, mailboxA)
+          return calendarItems('calendar#events', [])
+        }
+        if (resource === `${primary}/${seriesId}/instances`) {
+          assert.equal(mailbox, mailboxA)
+          assert.equal(Date.parse(query.get('originalStart') ?? ''), Date.parse(occurrenceSlot))
+          return calendarItems('calendar#events', [event(occurrenceId)])
+        }
+        // A collection denial isn't an empty list; a missing exact event isn't
+        // a collection response at all. Keep both distinct from typed empties.
+        if (resource.startsWith(`${calendar}/calendars/`) && resource.endsWith('/events'))
+          return notFound()
+        if (resource.startsWith(`${primary}/`)) {
+          const id = resource.slice(primary.length + 1)
+          if (!id.includes('/'))
+            return mailbox === mailboxA && targets.has(id) ? Response.json(event(id)) : notFound()
         }
         const api = resource.startsWith(`${gmail}/`) ? gmail : googleGmail
         if (resource === `${api}/settings/sendAs`)
@@ -327,7 +406,11 @@ export function createInvitationTransport() {
           const format = query.get('format')
           if (resource === `${api}/threads/${invite.id}`) {
             assert(format === 'full' || format === 'metadata')
-            const messages = reply ? [incoming, reply] : [incoming]
+            const messages = reply
+              ? [incoming, reply]
+              : invite === series
+                ? [incoming, message(occurrence, mailbox)]
+                : [incoming]
             return Response.json({
               id: invite.id,
               historyId: '100',
@@ -352,19 +435,27 @@ export function createInvitationTransport() {
             sentReceiptReads++
             return Response.json(reply)
           }
-          if (
-            resource === `${api}/messages/${incoming.id}` &&
-            format === 'full' &&
-            query.has('fields')
-          ) {
-            const { payload } = incoming
+          const selected =
+            resource === `${api}/messages/${incoming.id}`
+              ? incoming
+              : invite === series && resource === `${api}/messages/${mailId(occurrence)}`
+                ? message(occurrence, mailbox)
+                : null
+          if (selected && format === 'full' && query.has('fields')) {
+            const { payload } = selected
             return Response.json({
-              id: incoming.id,
+              id: selected.id,
               threadId: invite.id,
               payload: {
                 mimeType: payload.mimeType,
                 headers: payload.headers,
-                parts: payload.parts.map(({ body: _body, ...part }) => part),
+                parts: payload.parts.map(({ body, ...part }) => ({
+                  ...part,
+                  body: {
+                    size: body.size,
+                    ...('attachmentId' in body ? { attachmentId: body.attachmentId } : {}),
+                  },
+                })),
               },
             })
           }
@@ -378,17 +469,24 @@ export function createInvitationTransport() {
           }
         }
       }
-      if (method === 'PATCH' && resource === `${calendar}/calendars/primary/events/${eventId}`) {
+      if (method === 'PATCH' && resource.startsWith(`${primary}/`)) {
+        const id = resource.slice(primary.length + 1)
+        const target = targets.get(id)
+        if (!target && !id.includes('/')) return notFound()
+        assert(
+          target && (id === eventId || id === occurrenceId),
+          'must only write to the selected event or occurrence',
+        )
         assert.equal(mailbox, mailboxA, 'must not write to a different Google account')
         const ifMatch = headers.get('If-Match') ?? ''
-        assert.equal(ifMatch, event().etag)
+        assert.equal(ifMatch, event(id).etag)
         assert.equal(query.get('sendUpdates'), 'all')
         const body = JSON.parse(String(init?.body))
         const answer: InviteAnswer = body.attendees?.[0]?.responseStatus
         assert(['accepted', 'tentative', 'declined'].includes(answer))
         assert.deepEqual(body, {
           attendeesOmitted: true,
-          attendees: [{ ...attendee, responseStatus: answer }],
+          attendees: [{ ...target.attendee, responseStatus: answer }],
         })
         writes.push({
           account: mailbox.sub,
@@ -399,10 +497,10 @@ export function createInvitationTransport() {
           status: losePatchAcknowledgement ? 'transport error' : 200,
           ifMatch,
           sendUpdates: 'all',
-          uid: inline.uid,
+          uid: target.invite.uid,
         })
-        attendee = { ...attendee, responseStatus: answer }
-        version++
+        target.attendee = { ...target.attendee, responseStatus: answer }
+        target.version++
         if (losePatchAcknowledgement) {
           losePatchAcknowledgement = false
           // Google applied the PATCH; the connection closed before the client saw a response.
@@ -410,7 +508,7 @@ export function createInvitationTransport() {
             new Error('Fixture Calendar connection closed after applying PATCH'),
           )
         }
-        return Response.json(event())
+        return Response.json(event(id))
       }
       if (method === 'POST' && resource === `${gmail}/messages/send`) {
         assert.equal(mailbox, mailboxA, 'must not send from a different Google account')
@@ -452,6 +550,9 @@ export function createInvitationTransport() {
     writes,
     rejected,
     requestCounts,
+    missAttachmentCollection: () => {
+      missNextAttachmentCollection = true
+    },
     refuseNextSend: () => {
       refuseNextSend = true
     },
@@ -476,8 +577,10 @@ export function createInvitationTransport() {
       sentIdSearches,
       tokenRefreshes,
       calendarReadbacks: calendarReadbackVersions.size,
-      calendarResponse: attendee.responseStatus,
-      otherGuest: event().attendees[1],
+      calendarResponse: targets.get(eventId)!.attendee.responseStatus,
+      seriesResponse: targets.get(seriesId)!.attendee.responseStatus,
+      occurrenceResponse: targets.get(occurrenceId)!.attendee.responseStatus,
+      otherGuest: event(eventId).attendees[1],
     }),
   }
 }
