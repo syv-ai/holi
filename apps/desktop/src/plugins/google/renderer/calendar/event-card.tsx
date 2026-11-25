@@ -19,6 +19,7 @@ import { cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
 import { Field, FieldDescription, FieldLabel, FieldSet } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { dayAfter, localDate } from '@holi/shared'
 import { subDays } from 'date-fns'
@@ -65,6 +66,7 @@ export interface EventDraft {
   googleId?: string
   title: string
   location: string
+  description: string
   date: string
   /** Inclusive last day. */
   dateEnd: string
@@ -619,6 +621,7 @@ function EventForm({
       ...old,
       title: restored.title,
       location: restored.location,
+      description: restored.description ?? '',
       allDay: restored.allDay,
       date: restored.allDay ? restored.start : localDate(start),
       dateEnd: restored.allDay
@@ -675,6 +678,7 @@ function EventForm({
       end,
       allDay: draft.allDay,
       location: draft.location.trim(),
+      description: draft.description,
       guests: guests.trim()
         ? guests
             .split(/[,;\s]+/)
@@ -820,19 +824,32 @@ function EventForm({
                 </div>
               )}
 
-              {/* A place is set when the event is made; moving one keeps it. */}
+              <Field>
+                <FieldLabel htmlFor="event-description">Description</FieldLabel>
+                <Textarea
+                  id="event-description"
+                  value={draft.description}
+                  onChange={(event) => patch({ description: event.target.value })}
+                  disabled={saving}
+                  placeholder="Description (optional)"
+                />
+              </Field>
+
               {mode === 'create' && (
-                <Field>
-                  <FieldLabel htmlFor="event-location">Location</FieldLabel>
-                  <Input
-                    id="event-location"
-                    value={draft.location}
-                    onChange={(event) => patch({ location: event.target.value })}
-                    disabled={saving}
-                    placeholder="Location"
-                    autoComplete="off"
-                  />
-                </Field>
+                <>
+                  {/* A place is set when the event is made; moving one keeps it. */}
+                  <Field>
+                    <FieldLabel htmlFor="event-location">Location</FieldLabel>
+                    <Input
+                      id="event-location"
+                      value={draft.location}
+                      onChange={(event) => patch({ location: event.target.value })}
+                      disabled={saving}
+                      placeholder="Location"
+                      autoComplete="off"
+                    />
+                  </Field>
+                </>
               )}
               {mode === 'create' && identity && (
                 <>
