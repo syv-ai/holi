@@ -656,9 +656,9 @@ export class AgentRuntime {
     this.pty?.resize(next.cols, next.rows)
   }
 
-  /** Join physical POSIX proof, public PTY exit (after tail output), and
-   * async exit callbacks. Windows and injected unsupervised PTYs retain the
-   * legacy signalling path; their public exit is not POSIX kernel proof. */
+  /** Join native Job/group proof, terminal output and caller finalization.
+   * Only injected unsupervised compatibility PTYs use legacy signalling;
+   * a production Windows root exit never substitutes for native Job zero. */
   kill(): Promise<void> {
     if (this.startupCleanup) return this.startupCleanup
     if (this.windowsLaunch) {
