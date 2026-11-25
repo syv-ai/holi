@@ -31,7 +31,9 @@ export type WorkingCopyRefusal = { code: string; message: string }
 
 /** Semantic native transport seam: implementations own safe preparation and durable identity checks. */
 export interface ManagedWorkingCopyNative extends NativeWorkingCopy {
-  prepare(root: string, remote: string, branch: string): Promise<ManagedWorkingCopyIdentity>
+  /** Runs recoverMoves directly while the caller holds the canonical-root lock. */
+  recover(root: string): Promise<void>
+  prepare(root: string, remote: string, branch: string, credential: string): Promise<ManagedWorkingCopyIdentity>
   reopen(root: string): Promise<ManagedWorkingCopyIdentity>
   fetch(root: string, identity: ManagedWorkingCopyIdentity, credential: string): Promise<void | WorkingCopyRefusal>
   publish(root: string, identity: ManagedWorkingCopyIdentity, credential: string): Promise<void | WorkingCopyRefusal>
@@ -60,23 +62,39 @@ function safePath(raw: string): VaultRelPath | null {
   return path
 }
 
+function isValidBranch(branch: string): boolean {
+  if (!branch || branch.startsWith('-') || branch.startsWith('/') || branch.endsWith('/') ||
+    branch.endsWith('.') || branch.includes('..') || branch.includes('//') ||
+    branch.includes('@{') || /[~^:?*\\[\\]\\\\]/.test(branch) || /\\s/.test(branch)) return false
+  return branch.split('/').every((part) => part !== '' && part !== '.' &&
+    part !== '..' && !part.startsWith('.') && !part.endsWith('.lock'))
+}
+
 /** Acquires or reopens a managed clone and offers credential-scoped network operations. */
 export function createManagedWorkingCopy(
   native: ManagedWorkingCopyNative,
   vault: { remote: string; root: string; branch: string },
   credential: string,
 ) {
-  if (!isRemote(vault.remote) || !vault.branch || !credential)
+  const { remote, root, branch } = vault
+  if (!isRemote(remote) || !isValidBranch(branch) || !credential)
     throw new Error('Invalid working copy request')
   let canonical: Promise<string> | undefined
-  const rootPath = () => (canonical ??= native.canonicalRoot(vault.root))
+  let acquiredNativeId: string | undefined
+  const rootPath = () => (canonical ??= native.canonicalRoot(root))
+  const recover = async (canonicalRoot: string) => native.recover(canonicalRoot)
   const assertIdentity = (identity: ManagedWorkingCopyIdentity) => {
-    if (identity.remote !== vault.remote || identity.branch !== vault.branch || !identity.nativeId)
-      throw new Error('Working copy identity does not match vault')
+    if (
+      !identity || typeof identity.nativeId !== 'string' || !identity.nativeId ||
+      identity.remote !== remote || identity.branch !== branch ||
+      (acquiredNativeId !== undefined && acquiredNativeId !== identity.nativeId)
+    ) throw new Error('Working copy identity does not match vault')
+    acquiredNativeId ??= identity.nativeId
   }
   const operate = async (action: 'fetch' | 'publish') => {
     const root = await rootPath()
     return withVaultLock(root, async () => {
+      await recover(root)
       const identity = await native.reopen(root)
       assertIdentity(identity)
       const result = await native[action](root, identity, credential)
@@ -87,7 +105,8 @@ export function createManagedWorkingCopy(
     async acquire() {
       const root = await rootPath()
       return withVaultLock(root, async () => {
-        const identity = await native.prepare(root, vault.remote, vault.branch)
+        await recover(root)
+        const identity = await native.prepare(root, remote, branch, credential)
         assertIdentity(identity)
         return identity
       })
@@ -95,6 +114,7 @@ export function createManagedWorkingCopy(
     async reopen() {
       const root = await rootPath()
       return withVaultLock(root, async () => {
+        await recover(root)
         const identity = await native.reopen(root)
         assertIdentity(identity)
         return identity
