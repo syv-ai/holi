@@ -2400,6 +2400,7 @@ it('uses only verified upcoming links for a series export by the organizer', asy
     '2099-07-09',
     'https://teams.microsoft.com/l/meetup-join/19%3aX/0',
   )
+  next.attendees = []
   state.instances.set('primary', [next])
   expect(await read()).toMatchObject({
     kind: 'meeting',
