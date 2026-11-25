@@ -132,21 +132,6 @@ export async function createGoogleAccounts(
   /** The person's own client, loaded once: main is its only writer. */
   let own: GoogleClient | null = (await deps.clients?.read()) ?? null
   const currentClient = () => resolveClient(own, deps.env)
-  // Bind old records to the effective client before any default can move.
-  const legacyMigration = serialize(async () => {
-    if (!Object.values(accounts).some((auth) => auth.clientId === undefined)) return
-    const clientId = currentClient().id
-    const migrated = Object.fromEntries(
-      Object.entries(accounts).map(([sub, auth]) => [
-        sub,
-        auth.clientId ? auth : { ...auth, clientId },
-      ]),
-    )
-    await deps.store.write(migrated)
-    accounts = migrated
-  })
-  await legacyMigration
-
   const emit = async (
     sub: string | null,
     reason: 'connected' | 'expired' | 'removed' | 'unlinked' = 'connected',
@@ -159,6 +144,29 @@ export async function createGoogleAccounts(
     const write = writes.then(operation)
     writes = write.catch(() => undefined)
     return write
+  }
+  // Best-effort legacy binding: an unavailable keychain or transient disk
+  // failure must not make otherwise readable accounts unusable at startup.
+  try {
+    const client = currentClient()
+    const migrated = Object.fromEntries(
+      Object.entries(accounts).map(([sub, auth]) => [
+        sub,
+        auth.clientId && auth.clientSecret
+          ? auth
+          : {
+              ...auth,
+              clientId: auth.clientId ?? client.id,
+              clientSecret: auth.clientSecret ?? client.secret,
+            },
+      ]),
+    )
+    if (Object.keys(migrated).some((sub) => migrated[sub] !== accounts[sub])) {
+      await deps.store.write(migrated)
+      accounts = migrated
+    }
+  } catch {
+    // The in-memory legacy account remains available under the unchanged default.
   }
   const persist = (change: (current: GoogleAccounts) => GoogleAccounts): Promise<void> =>
     serialize(async () => {
@@ -242,7 +250,10 @@ export async function createGoogleAccounts(
         account: refFor(sub),
         client: () => {
           const auth = accounts[sub]
-          return { ...currentClient(), id: auth?.clientId ?? currentClient().id }
+          const fallback = currentClient()
+          return auth?.clientId && auth.clientSecret
+            ? { id: auth.clientId, secret: auth.clientSecret }
+            : fallback
         },
         fetch: deps.fetch,
         now: deps.now,
@@ -364,6 +375,7 @@ export async function createGoogleAccounts(
                   expiresAt: tokens.expiresAt,
                   scopes: tokens.scopes,
                   clientId: id,
+                  clientSecret: secret,
                 },
               }
             })
@@ -499,7 +511,13 @@ export async function createGoogleAccounts(
           const migrated = Object.fromEntries(
             Object.entries(accounts).map(([sub, auth]) => [
               sub,
-              auth.clientId ? auth : { ...auth, clientId: current.id },
+              auth.clientId && auth.clientSecret
+                ? auth
+                : {
+                    ...auth,
+                    clientId: auth.clientId ?? current.id,
+                    clientSecret: auth.clientSecret ?? current.secret,
+                  },
             ]),
           )
           if (Object.keys(migrated).some((sub) => migrated[sub] !== accounts[sub])) {
