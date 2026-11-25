@@ -22,6 +22,13 @@ import { Parser } from 'htmlparser2'
 import { GoogleApiError, type GoogleApi, type GoogleDispatchGate } from './api'
 import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
+import {
+  CalendarScanError,
+  createMimeWalk,
+  isCalendarPart,
+  type MimeLocation,
+  type RawPart,
+} from './gmail-mime'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -156,19 +163,6 @@ export interface MailThread {
   subject: string
   webUrl: string
   messages: MailMessage[]
-}
-
-interface RawHeader {
-  name?: string
-  value?: string
-}
-
-interface RawPart {
-  mimeType?: string
-  filename?: string
-  headers?: RawHeader[]
-  body?: { data?: string; size?: number; attachmentId?: string }
-  parts?: RawPart[]
 }
 
 interface RawMessage {
@@ -336,70 +330,41 @@ function decodeBody(data: string | undefined): string {
  * @public exported for its test
  */
 export function bodyTextOf(payload: RawPart | undefined, { trim = true } = {}): string {
-  const plain = findPart(payload, 'text/plain')
-  if (plain !== null) {
-    const text = decodeBody(plain.body?.data)
-    return trim ? text.trim() : text
-  }
+  const { plain, html, fallback } = bodyParts(payload)
+  return projectText(plain, html, fallback, trim)
+}
 
-  const html = findPart(payload, 'text/html')
-  if (html !== null) return htmlToText(decodeBody(html.body?.data))
-
-  // A single-part message carries its body on the payload itself.
-  const text = decodeBody(payload?.body?.data)
+function projectText(
+  plain: RawPart | null,
+  html: RawPart | null,
+  payload: RawPart | undefined,
+  trim = true,
+): string {
+  if (!plain && html) return htmlToText(decodeBody(html.body?.data))
+  const text = decodeBody((plain ?? payload)?.body?.data)
   return trim ? text.trim() : text
 }
 
-/**
- * The message's HTML, exactly as Google returned it, or `null`.
- *
- * Verbatim on purpose. Trimming or pre-stripping here would give the renderer's
- * sanitizer a subtly different input from the one it is tested against, and
- * would invite the belief that main already made this safe. It did not.
- * @public exported for its test
- */
+/** Unsanitized HTML exactly as returned by Gmail. @public exported for its test */
 export function bodyHtmlOf(payload: RawPart | undefined): string | null {
-  // `findPart` matches the payload itself, so a single-part HTML message needs
-  // no separate branch here.
-  const html = findPart(payload, 'text/html')
-  if (html === null) return null
-  const raw = decodeBody(html.body?.data)
-  // An empty part is "no HTML", not "empty HTML": the UI branches on null, and
-  // a blank string would render a blank message instead of the text body.
-  return raw === '' ? null : raw
+  return decodeBody(bodyParts(payload).html?.body?.data) || null
 }
 
-/**
- * Every attachment in a message, however deep in the MIME tree.
- *
- * **A filename is what makes a part a file.** That is the same rule `findPart`
- * uses in reverse to refuse an attachment as the body.
- */
-function attachmentsOf(part: RawPart | undefined): MailAttachment[] {
-  if (part === undefined) return []
-  const here: MailAttachment[] =
-    part.filename !== undefined && part.filename !== ''
-      ? [
-          {
-            filename: part.filename,
-            mimeType: part.mimeType ?? 'application/octet-stream',
-            size: part.body?.size ?? 0,
-          },
-        ]
-      : []
-  return [...here, ...(part.parts ?? []).flatMap((child) => attachmentsOf(child))]
+type PreferredBody = { plain: RawPart | null; html: RawPart | null; fallback?: RawPart }
+
+function considerBody(preferred: PreferredBody, part: RawPart, root: boolean, forwarded: boolean) {
+  if (forwarded || part.filename || part.body?.data === undefined) return
+  if (root) preferred.fallback = part
+  if (part.mimeType === 'text/plain') preferred.plain ??= part
+  if (part.mimeType === 'text/html') preferred.html ??= part
 }
 
-function findPart(part: RawPart | undefined, mimeType: string): RawPart | null {
-  if (part === undefined) return null
-  // An attachment is never the message body, even when its type matches.
-  const isAttachment = part.filename !== undefined && part.filename !== ''
-  if (part.mimeType === mimeType && !isAttachment && part.body?.data !== undefined) return part
-  for (const child of part.parts ?? []) {
-    const found = findPart(child, mimeType)
-    if (found !== null) return found
-  }
-  return null
+function bodyParts(payload: RawPart | undefined): PreferredBody {
+  const preferred: PreferredBody = { plain: null, html: null }
+  createMimeWalk()(payload, (part, location, forwarded) =>
+    considerBody(preferred, part, location.path === '0', forwarded),
+  )
+  return preferred
 }
 
 /**
@@ -688,6 +653,12 @@ export async function fetchThreadSummaries(
       }),
   )
 
+  for (const thread of threads) {
+    const walk = createMimeWalk(MIME_EVIDENCE_DEPTH)
+    if ((thread.messages?.length ?? 0) > 2048)
+      throw new CalendarScanError('Gmail MIME data exceeds the scan limits')
+    for (const message of thread.messages ?? []) walk(message.payload, () => {})
+  }
   const names = await labelNames
   const summaries = threads
     .map((thread) => summarize(thread, names, knownAddresses))
@@ -721,17 +692,12 @@ function mimeEvidenceFields(depth: number): string {
     : `${headers},parts(${mimeEvidenceFields(depth - 1)})`
 }
 
-function hasUnexaminedMimeDepth(part: RawPart | undefined, depth: number): boolean {
-  if (part === undefined) return false
-  if (depth === 0) return (part.parts?.length ?? 0) > 0
-  return (part.parts ?? []).some((child) => hasUnexaminedMimeDepth(child, depth - 1))
-}
-
 async function fetchLatestIncomingInvitations(
   api: GoogleApi,
   threads: RawThread[],
 ): Promise<{ invitationIds: Set<string>; unknownIds: Set<string> }> {
   const unknownIds = new Set<string>()
+  const invitationIds = new Set<string>()
   const ids = threads.flatMap((thread) => {
     if (thread.id === undefined) return []
     const messages = thread.messages ?? []
@@ -743,7 +709,10 @@ async function fetchLatestIncomingInvitations(
     }
 
     const hasOtherEvidence = hasAutomationHeaderEvidence(payload)
-    if (hasInvitationMethod(payload)) return []
+    if (hasInvitationMethod(payload)) {
+      invitationIds.add(thread.id)
+      return []
+    }
     const contentType = headerOf(payload, 'Content-Type')
     const mainType = parseHeaderParameters(contentType ?? '')?.main.toLowerCase()
     const multipart =
@@ -763,18 +732,16 @@ async function fetchLatestIncomingInvitations(
           fields: `id,threadId,payload(${mimeEvidenceFields(MIME_EVIDENCE_DEPTH)})`,
         },
       )
-      if (message.threadId !== threadId) return { threadId, invitation: false, unknown: true }
-      return {
-        threadId,
-        invitation: hasInvitationMethod(message.payload),
-        unknown:
-          message.payload === undefined ||
-          hasUnexaminedMimeDepth(message.payload, MIME_EVIDENCE_DEPTH),
-      }
+      if (message.threadId !== threadId || !message.payload)
+        return { threadId, invitation: false, unknown: true }
+      return { threadId, invitation: hasInvitationMethod(message.payload), unknown: false }
     } catch (error) {
       // A message can disappear after its thread metadata was fetched. Omit that
       // thread's invitation evidence; do not turn a lookup failure into proof.
-      if (error instanceof GoogleApiError && error.status === 404) {
+      if (
+        error instanceof CalendarScanError ||
+        (error instanceof GoogleApiError && error.status === 404)
+      ) {
         return { threadId, invitation: false, unknown: true }
       }
       throw error
@@ -782,9 +749,10 @@ async function fetchLatestIncomingInvitations(
   })
   const found = results.filter((result): result is NonNullable<typeof result> => result !== null)
   return {
-    invitationIds: new Set(
-      found.filter((result) => result.invitation).map((result) => result.threadId),
-    ),
+    invitationIds: new Set([
+      ...invitationIds,
+      ...found.filter((result) => result.invitation).map((result) => result.threadId),
+    ]),
     unknownIds: new Set([
       ...unknownIds,
       ...found.filter((result) => result.unknown).map((result) => result.threadId),
@@ -793,16 +761,15 @@ async function fetchLatestIncomingInvitations(
 }
 
 /** Only a valid invitation method on a calendar MIME part is positive evidence. */
-function hasInvitationMethod(part: RawPart | undefined): boolean {
-  if (part === undefined) return false
-  if (part.mimeType?.toLowerCase() === 'text/calendar') {
-    const contentType = headerOf(part, 'Content-Type')
-    const method = parseHeaderParameters(contentType ?? '')?.parameters.get('method')
-    if (method !== undefined && ['request', 'reply', 'cancel'].includes(method.toLowerCase())) {
-      return true
+function hasInvitationMethod(payload: RawPart): boolean {
+  let found = false
+  createMimeWalk(MIME_EVIDENCE_DEPTH)(payload, (part, _location, forwarded) => {
+    if (!forwarded && isCalendarPart(part)) {
+      const method = calendarMimeMethod(part)
+      if (method && ['REQUEST', 'REPLY', 'CANCEL'].includes(method)) found = true
     }
-  }
-  return (part.parts ?? []).some(hasInvitationMethod)
+  })
+  return found
 }
 
 /**
@@ -1038,17 +1005,6 @@ function summarize(
     own !== null && addresses.some((address) => own.has(address.email))
   const listEvidence =
     latestIncoming !== undefined && hasAutomationHeaderEvidence(latestIncoming.payload)
-  const contentType =
-    latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'Content-Type')
-  const mimeType = contentType?.split(';', 1)[0]?.trim().toLowerCase()
-  // Only a genuine invitation method is positive evidence. PUBLISH calendars and
-  // arbitrary text/attachments mentioning calendar are not necessarily automation.
-  const calendarParameters = contentType === null ? null : parseHeaderParameters(contentType)
-  const invitation =
-    mimeType === 'text/calendar' &&
-    ['request', 'reply', 'cancel'].includes(
-      calendarParameters?.parameters.get('method')?.toLowerCase() ?? '',
-    )
 
   return {
     id: thread.id,
@@ -1099,7 +1055,7 @@ function summarize(
               ? 'cc'
               : 'neither',
     // Conservative evidence only; unknown MIME depth is reported separately.
-    automated: latestIncoming !== undefined && (listEvidence || invitation),
+    automated: listEvidence,
     needsReply:
       latestIncoming !== undefined &&
       messages.indexOf(latestIncoming) >
@@ -1125,27 +1081,52 @@ function isoDate(message: RawMessage): string {
 export async function readThread(api: GoogleApi, threadId: string): Promise<MailThread> {
   const thread = await api.get<RawThread>(`${BASE}/threads/${threadId}`, { format: 'full' })
   const messages = thread.messages ?? []
-  const first = messages[0]
-  const hints = calendarHints(messages)
-
-  return {
-    id: threadId,
-    subject: headerOf(first?.payload, 'Subject')?.trim() || '(no subject)',
-    webUrl: messageUrl(headerOf(first?.payload, 'Message-ID'), threadId),
-    messages: messages.map((message, index) => ({
+  if (messages.length > 2048) throw new CalendarScanError('Gmail MIME data exceeds the scan limits')
+  const walk = createMimeWalk()
+  let bodyBudget = 16 * 1024 * 1024
+  const projected = messages.map((message): MailMessage => {
+    const preferred: PreferredBody = { plain: null, html: null }
+    let hasCalendarPayload = false
+    const attachments: MailAttachment[] = []
+    walk(message.payload, (part, location, forwarded) => {
+      if (part.filename) {
+        attachments.push({
+          filename: part.filename,
+          mimeType: part.mimeType ?? 'application/octet-stream',
+          size: part.body?.size ?? 0,
+        })
+      }
+      if (!forwarded && isCalendarPart(part)) hasCalendarPayload = true
+      considerBody(preferred, part, location.path === '0', forwarded)
+    })
+    const { plain, html, fallback } = preferred
+    // Charge only data that will actually be decoded, including the root fallback.
+    for (const part of new Set([plain ?? html ?? fallback, html])) {
+      const data = part?.body?.data
+      if (data === undefined) continue
+      if (typeof data !== 'string' || (bodyBudget -= data.length) < 0)
+        throw new CalendarScanError('Gmail MIME data exceeds the reader limits')
+    }
+    return {
       id: message.id ?? '',
       from: parseAddress(headerOf(message.payload, 'From')),
       to: parseAddresses(headerOf(message.payload, 'To')),
       cc: parseAddresses(headerOf(message.payload, 'Cc')),
-      // Present only on the account's own sent copy: see `MailMessage.bcc`.
-      // No extra request: this thread is already read at `format=full`.
       bcc: parseAddresses(headerOf(message.payload, 'Bcc')),
       date: isoDate(message),
-      body: bodyTextOf(message.payload),
-      html: bodyHtmlOf(message.payload),
-      attachments: attachmentsOf(message.payload),
-      hasCalendarPayload: hints[index] === true,
-    })),
+      body: projectText(plain, html, fallback),
+      html: decodeBody(html?.body?.data) || null,
+      attachments,
+      hasCalendarPayload:
+        calendarMailId(message.id) && !message.labelIds?.includes('DRAFT') && hasCalendarPayload,
+    }
+  })
+  const first = messages[0]
+  return {
+    id: threadId,
+    subject: headerOf(first?.payload, 'Subject')?.trim() || '(no subject)',
+    webUrl: messageUrl(headerOf(first?.payload, 'Message-ID'), threadId),
+    messages: projected,
   }
 }
 
@@ -1805,14 +1786,13 @@ export async function fetchAttachment(
 
 const MAX_CALENDAR_PART_BYTES = 256 * 1024
 
-export class CalendarScanError extends Error {}
-
 /** Each public read or response owns one budget, including all evidence and
  * preflight reads. Revalidation still gets a fresh provider snapshot. */
 export function createCalendarScan() {
   let bytes = 1024 * 1024
   let parts = 32
-  let nodes = 2048
+  const walk = createMimeWalk()
+  const evidence = new Map<string, { data: string | undefined; read?: () => Promise<string> }>()
   let attachments = 8
   let evidenceReads = 32
   const check = (within: boolean) => {
@@ -1824,68 +1804,77 @@ export function createCalendarScan() {
     check(value <= MAX_CALENDAR_PART_BYTES && value <= bytes)
     return value
   }
+  async function readPart(api: GoogleApi, messageId: string, part: RawPart): Promise<string> {
+    const declared = size(part.body?.size)
+    let encoded: unknown = part.body?.data
+    const attachment = part.body?.attachmentId
+    if (attachment !== undefined) {
+      if (typeof attachment !== 'string' || !attachment || encoded !== undefined)
+        throw new CalendarScanError('Invalid Gmail calendar attachment')
+      check(--attachments >= 0)
+      const body = await api.get<{ size?: number; data?: string }>(
+        `${BASE}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachment)}`,
+      )
+      if (size(body?.size) !== declared)
+        throw new CalendarScanError('Gmail calendar attachment size changed')
+      encoded = body?.data
+    }
+    if (encoded === undefined && declared === 0) return ''
+    if (typeof encoded !== 'string') throw new CalendarScanError('Missing Gmail calendar part data')
+    check(encoded.length <= Math.ceil(Math.min(bytes, MAX_CALENDAR_PART_BYTES, declared) / 3) * 4)
+    if (!/^[a-z0-9_-]*={0,2}$/i.test(encoded) || encoded.replace(/=+$/, '').length % 4 === 1)
+      throw new CalendarScanError('Invalid Gmail calendar part encoding')
+    const decoded = Buffer.from(encoded, 'base64url')
+    check(decoded.length <= MAX_CALENDAR_PART_BYTES && decoded.length <= bytes)
+    if (decoded.length !== declared) throw new CalendarScanError('Invalid Gmail calendar part size')
+    bytes -= decoded.length
+    return decoded.toString('utf8')
+  }
   return {
-    partsOf(payload: RawPart | undefined): RawPart[] {
-      const found: RawPart[] = []
-      const visit = (part: RawPart, depth: number) => {
-        check(--nodes >= 0 && depth <= 16)
-        if (!part || typeof part !== 'object' || Array.isArray(part))
-          throw new CalendarScanError('Invalid Gmail MIME part')
-        if (
-          (part.mimeType !== undefined && typeof part.mimeType !== 'string') ||
-          (part.filename !== undefined && typeof part.filename !== 'string') ||
-          (part.parts !== undefined && !Array.isArray(part.parts)) ||
-          (part.headers !== undefined &&
-            (!Array.isArray(part.headers) ||
-              part.headers.some(
-                (header) =>
-                  !header ||
-                  typeof header !== 'object' ||
-                  (header.name !== undefined && typeof header.name !== 'string'),
-              )))
-        )
-          throw new CalendarScanError('Invalid Gmail MIME part')
-        if (declaresMediaType(part, /^message\/rfc822$/i)) return
-        if (
-          part.filename?.toLowerCase().endsWith('.ics') ||
-          declaresMediaType(part, /^(text\/calendar|application\/ics)$/i)
-        ) {
-          check(--parts >= 0)
-          found.push(part)
-        }
-        for (const child of part.parts ?? []) visit(child, depth + 1)
-      }
-      if (payload !== undefined) visit(payload, 0)
-      else check(--nodes >= 0)
+    partsOf(
+      api: GoogleApi,
+      messageId: string,
+      payload: RawPart | undefined,
+    ): CalendarMail['parts'] {
+      const found: CalendarMail['parts'] = []
+      walk(payload, (part, location, forwarded) => {
+        if (forwarded || !isCalendarPart(part)) return
+        const method = calendarMimeMethod(part)
+        const data = part.body?.data
+        const attachment = part.body?.attachmentId
+        const declared = part.body?.size
+        if (declared !== undefined && (!Number.isSafeInteger(declared) || declared < 0))
+          throw new CalendarScanError('Invalid Gmail calendar part size')
+        if (data !== undefined)
+          check(
+            typeof data === 'string' && data.length <= Math.ceil(MAX_CALENDAR_PART_BYTES / 3) * 4,
+          )
+        if (attachment !== undefined)
+          check(typeof attachment === 'string' && attachment.length <= 4096)
+        // Fresh routing headers and labels are projected below. Only the
+        // identical part at the identical MIME location can share evidence.
+        const key = JSON.stringify([
+          messageId,
+          location.path,
+          location.alternatives,
+          part.mimeType,
+          part.filename,
+          part.headers,
+          declared,
+          attachment,
+        ])
+        const prior = evidence.get(key)
+        const identical = prior && prior.data === data
+        if (!identical) check(--parts >= 0)
+        let decoded: Promise<string> | undefined
+        const read =
+          (identical && prior.read) || (() => (decoded ??= readPart(api, messageId, part)))
+        // Attachments must still be fetched under their own budget. Reusing
+        // the descriptor is not proof that Gmail returned the same bytes.
+        if (!identical) evidence.set(key, { data, ...(attachment === undefined ? { read } : {}) })
+        found.push({ method, alternatives: location.alternatives, read })
+      })
       return found
-    },
-    async readPart(api: GoogleApi, messageId: string, part: RawPart): Promise<string> {
-      const declared = size(part.body?.size)
-      let encoded: unknown = part.body?.data
-      const attachment = part.body?.attachmentId
-      if (attachment !== undefined) {
-        if (typeof attachment !== 'string' || !attachment || encoded !== undefined)
-          throw new CalendarScanError('Invalid Gmail calendar attachment')
-        check(--attachments >= 0)
-        const body = await api.get<{ size?: number; data?: string }>(
-          `${BASE}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachment)}`,
-        )
-        if (size(body?.size) !== declared)
-          throw new CalendarScanError('Gmail calendar attachment size changed')
-        encoded = body?.data
-      }
-      if (encoded === undefined && declared === 0) return ''
-      if (typeof encoded !== 'string')
-        throw new CalendarScanError('Missing Gmail calendar part data')
-      check(encoded.length <= Math.ceil(Math.min(bytes, MAX_CALENDAR_PART_BYTES, declared) / 3) * 4)
-      if (!/^[a-z0-9_-]*={0,2}$/i.test(encoded) || encoded.replace(/=+$/, '').length % 4 === 1)
-        throw new CalendarScanError('Invalid Gmail calendar part encoding')
-      const decoded = Buffer.from(encoded, 'base64url')
-      check(decoded.length <= MAX_CALENDAR_PART_BYTES && decoded.length <= bytes)
-      if (decoded.length !== declared)
-        throw new CalendarScanError('Invalid Gmail calendar part size')
-      bytes -= decoded.length
-      return decoded.toString('utf8')
     },
     evidenceRead() {
       check(--evidenceReads >= 0)
@@ -1911,7 +1900,11 @@ type CalendarMail = {
   from: string
   to: string[]
   replyHeaders: CalendarReplyHeaders | null
-  parts: { method: string | undefined | null; read: () => Promise<string> }[]
+  parts: {
+    method: string | undefined | null
+    alternatives: MimeLocation['alternatives']
+    read: () => Promise<string>
+  }[]
 }
 
 type CalendarReplyReceipt = { id: string | null; threadId: string | null }
@@ -1938,7 +1931,7 @@ function calendarMail(
 ): CalendarMail | null {
   const id = message.id
   if (!calendarMailId(id) || message.labelIds?.includes('DRAFT')) return null
-  const parts = scan.partsOf(message.payload)
+  const parts = scan.partsOf(api, id, message.payload)
   if (parts.length === 0) return null
   const ids = calendarHeaderIds(message.payload, 'message-id')
   const rfcId = ids?.length === 1 ? ids[0]! : null
@@ -1952,12 +1945,13 @@ function calendarMail(
   const parentId = validThreading ? (parent[0] ?? references.at(-1) ?? null) : null
   const subject = (headerOf(message.payload, 'Subject') ?? '').replace(/[\r\n]+/g, ' ').trim()
   const from = parseAddresses(headerOf(message.payload, 'From'))
+  const internalDate = Number(message.internalDate)
   return {
     messageId: id,
     rfcId,
     threadId: calendarMailId(message.threadId) ? message.threadId : null,
     parent: parentId,
-    timestamp: Number(message.internalDate) || 0,
+    timestamp: Number.isSafeInteger(internalDate) && internalDate >= 0 ? internalDate : 0,
     sent: message.labelIds?.includes('SENT') ?? false,
     from: from.length === 1 ? from[0]!.email : '',
     to: parseAddresses(headerOf(message.payload, 'To')).map(({ email }) => email),
@@ -1972,13 +1966,7 @@ function calendarMail(
             ],
           }
         : null,
-    parts: parts.map((part) => {
-      let decoded: Promise<string> | undefined
-      return {
-        method: calendarMimeMethod(part),
-        read: () => (decoded ??= scan.readPart(api, id, part)),
-      }
-    }),
+    parts,
   }
 }
 
@@ -2003,7 +1991,8 @@ export async function fetchThreadCalendarPayloads(
         !message ||
         !calendarMailId(message.id) ||
         (message.threadId !== undefined && message.threadId !== threadId),
-    )
+    ) ||
+    new Set(thread.messages.map(({ id }) => id)).size !== thread.messages.length
   ) {
     throw new CalendarScanError('Gmail could not verify this invitation thread')
   }
@@ -2122,36 +2111,6 @@ function calendarMimeMethod(part: RawPart): string | undefined | null {
   return method
 }
 
-function declaresMediaType(part: RawPart, pattern: RegExp): boolean {
-  const matches = (value: unknown) =>
-    typeof value === 'string' && pattern.test(value.split(';', 1)[0]!.trim())
-  return (
-    matches(part.mimeType) ||
-    Boolean(
-      part.headers?.some(
-        (header) => header.name?.toLowerCase() === 'content-type' && matches(header.value),
-      ),
-    )
-  )
-}
-
-function calendarHints(messages: RawMessage[]): boolean[] {
-  const scan = createCalendarScan()
-  try {
-    return messages.map(
-      (message) =>
-        calendarMailId(message.id) &&
-        !message.labelIds?.includes('DRAFT') &&
-        scan.partsOf(message.payload).length > 0,
-    )
-  } catch (error) {
-    if (!(error instanceof CalendarScanError)) throw error
-    // A failed discovery is not a negative hint. Let the invitation reader
-    // surface the scan refusal instead of silently hiding the invitation.
-    return messages.map((message) => !message.labelIds?.includes('DRAFT'))
-  }
-}
-
 /** Gmail omits `threadId` on a loose draft; `null` is "belongs to no thread". */
 function threadIdOf(message: RawMessage | undefined): string | null {
   const threadId = message?.threadId
@@ -2160,8 +2119,7 @@ function threadIdOf(message: RawMessage | undefined): string | null {
 
 /**
  * An attachment as it appears in a message payload, with the id needed to
- * fetch it. `attachmentsOf` deliberately drops that id: it feeds the reader,
- * which shows names and sizes and never downloads anything.
+ * fetch it. The reader shows only names and sizes and never downloads anything.
  */
 interface AttachmentRef {
   filename: string
@@ -2173,33 +2131,29 @@ interface AttachmentRef {
 }
 
 function attachmentRefsOf(part: RawPart | undefined): AttachmentRef[] {
-  if (part === undefined) return []
-  const body = part.body
-  const here: AttachmentRef[] =
-    part.filename !== undefined &&
-    part.filename !== '' &&
-    body !== undefined &&
-    (body.attachmentId !== undefined || body.data !== undefined || body.size === 0)
-      ? [
-          {
-            filename: part.filename,
-            mimeType: part.mimeType ?? 'application/octet-stream',
-            ...(body.attachmentId === undefined ? {} : { attachmentId: body.attachmentId }),
-            ...(body.data === undefined
-              ? body.size === 0
-                ? { data: '' }
-                : {}
-              : { data: body.data }),
-            ...(headerOf(part, 'Content-Disposition')?.toLowerCase().startsWith('inline')
-              ? { disposition: 'inline' as const }
-              : {}),
-            ...(headerOf(part, 'Content-ID') === null
-              ? {}
-              : { contentId: headerOf(part, 'Content-ID')! }),
-          },
-        ]
-      : []
-  return [...here, ...(part.parts ?? []).flatMap((child) => attachmentRefsOf(child))]
+  const refs: AttachmentRef[] = []
+  createMimeWalk()(part, (part) => {
+    const body = part.body
+    if (
+      part.filename !== undefined &&
+      part.filename !== '' &&
+      body !== undefined &&
+      (body.attachmentId !== undefined || body.data !== undefined || body.size === 0)
+    )
+      refs.push({
+        filename: part.filename,
+        mimeType: part.mimeType ?? 'application/octet-stream',
+        ...(body.attachmentId === undefined ? {} : { attachmentId: body.attachmentId }),
+        ...(body.data === undefined ? (body.size === 0 ? { data: '' } : {}) : { data: body.data }),
+        ...(headerOf(part, 'Content-Disposition')?.toLowerCase().startsWith('inline')
+          ? { disposition: 'inline' as const }
+          : {}),
+        ...(headerOf(part, 'Content-ID') === null
+          ? {}
+          : { contentId: headerOf(part, 'Content-ID')! }),
+      })
+  })
+  return refs
 }
 
 async function draftAttachments(api: GoogleApi, draftId: string): Promise<MailPart[]> {

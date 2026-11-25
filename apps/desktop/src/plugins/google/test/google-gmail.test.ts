@@ -351,46 +351,61 @@ describe('listThreads', () => {
     expect(mimeProbe?.searchParams.get('fields')).not.toMatch(/body|data|attachmentId/i)
   })
 
-  it('marks MIME invitation evidence beyond the inspected depth as unknown', async () => {
-    let nested: Record<string, unknown> = {
-      mimeType: 'multipart/mixed',
-      parts: [{ mimeType: 'text/calendar' }],
-    }
-    for (let depth = 0; depth < 8; depth += 1) {
-      nested = { mimeType: 'multipart/mixed', parts: [nested] }
-    }
-    const { api } = gmail(
-      [{ id: 'nested-thread' }],
-      {
-        'nested-thread': {
-          id: 'nested-thread',
-          messages: [
-            {
-              id: 'nested-message',
-              internalDate: '1000',
-              labelIds: ['INBOX'],
-              payload: { mimeType: 'multipart/mixed' },
-            },
-          ],
+  it.each(['depth', 'header count', 'header bytes'])(
+    'reports exhausted MIME invitation evidence as unknown (%s)',
+    async (limit) => {
+      const calendar = {
+        mimeType: 'text/calendar',
+        headers: [header('Content-Type', 'text/calendar; method=REQUEST')],
+      }
+      let nested: Record<string, unknown> = { mimeType: 'multipart/mixed', parts: [calendar] }
+      if (limit === 'depth') {
+        for (let depth = 0; depth < 9; depth += 1) {
+          nested = {
+            mimeType: 'multipart/mixed',
+            parts: depth === 8 ? [calendar, nested] : [nested],
+          }
+        }
+      } else {
+        const headers =
+          limit === 'header count'
+            ? Array.from({ length: 200 }, () => header('X-Header', 'value'))
+            : [header('X-Large', 'x'.repeat(64 * 1024))]
+        nested.parts = [calendar, { mimeType: 'text/plain', headers }]
+      }
+      const { api } = gmail(
+        [{ id: 'nested-thread' }],
+        {
+          'nested-thread': {
+            id: 'nested-thread',
+            messages: [
+              {
+                id: 'nested-message',
+                internalDate: '1000',
+                labelIds: ['INBOX'],
+                payload: { mimeType: 'multipart/mixed' },
+              },
+            ],
+          },
         },
-      },
-      [],
-      undefined,
-      [],
-      {
-        'nested-message': {
-          id: 'nested-message',
-          threadId: 'nested-thread',
-          payload: nested,
+        [],
+        undefined,
+        [],
+        {
+          'nested-message': {
+            id: 'nested-message',
+            threadId: 'nested-thread',
+            payload: nested,
+          },
         },
-      },
-    )
+      )
 
-    expect((await listThreads(api)).threads[0]).toMatchObject({
-      automated: false,
-      automationUnknown: true,
-    })
-  })
+      expect((await listThreads(api)).threads[0]).toMatchObject({
+        automated: false,
+        automationUnknown: true,
+      })
+    },
+  )
 
   it('omits a vanished MIME probe per thread without losing the page or continuation', async () => {
     const incoming = (id: string, threadId: string) => ({
