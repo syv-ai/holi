@@ -2,6 +2,7 @@
 #import "HoliGitSnapshot.h"
 #import "HoliManagedIdentity.h"
 #import <git2.h>
+#import <git2/sys/repository.h>
 #import <sys/stat.h>
 #import <errno.h>
 #import <fcntl.h>
@@ -24,8 +25,7 @@ typedef struct { const char *username; const char *password; NSString *origin; B
 typedef struct { uint32_t marker; HNGCredentials *credentials; NSString *branch; NSString *remote; } HNGSelectedClone;
 static const uint32_t HNGSelectedCloneMarker = 0x484e4743;
 static int HNGCredentialCallback(git_credential **out, const char *url, const char *username_from_url, unsigned int allowed, void *payload) {
-  HNGSelectedClone *clone = payload;
-  HNGCredentials *credentials = clone->marker == HNGSelectedCloneMarker ? clone->credentials : (HNGCredentials *)payload;
+  HNGCredentials *credentials = payload;
   NSURL *requested = [NSURL URLWithString:[NSString stringWithUTF8String:url ?: ""]];
   NSURL *permitted = [NSURL URLWithString:credentials->origin];
   NSNumber *requestedPort = requested.port ?: @443;
@@ -57,13 +57,8 @@ static int HNGSelectedRepository(git_repository **out, const char *path, int bar
 static int HNGSelectedRemote(git_remote **out, git_repository *repo, const char *name, const char *url, void *payload) {
   HNGSelectedClone *clone = payload;
   if (!name || strcmp(name, "origin") || !url || strcmp(url, clone->remote.UTF8String)) return GIT_EINVALIDSPEC;
-  int result = git_remote_create(out, repo, "origin", clone->remote.UTF8String);
-  if (result == 0) {
-    NSString *spec = [NSString stringWithFormat:@"+refs/heads/%@:refs/remotes/origin/%@", clone->branch, clone->branch];
-    char *copy = strdup(spec.UTF8String);
-    if (!copy) result = GIT_ERROR;
-    else { git_strarray specs = { &copy, 1 }; result = git_remote_set_fetchspecs(*out, &specs); free(copy); }
-  }
+  NSString *spec = [NSString stringWithFormat:@"+refs/heads/%@:refs/remotes/origin/%@", clone->branch, clone->branch];
+  int result = git_remote_create_with_fetchspec(out, repo, "origin", clone->remote.UTF8String, spec.UTF8String);
   if (result < 0) { git_remote_free(*out); *out = NULL; }
   return result;
 }
@@ -180,6 +175,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
   HNGInitializeLibgit2();
   const char *rootPath = root.fileSystemRepresentation;
   git_repository *repository = NULL;
+  HoliGitSnapshot *operationSnapshot = nil;
   int result = 0;
   BOOL isClone = [operation isEqualToString:@"clone"];
   BOOL isPoison = [operation isEqualToString:@"poison"];
@@ -200,11 +196,10 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     if (selectedBranch) {
       HoliManagedIdentity *managedIdentity = [HoliManagedIdentity new];
       NSDictionary *identity = [managedIdentity readIdentityAtRoot:root error:error];
-      if (!identity || ![managedIdentity matchesRemote:identity remote:remote branch:selectedBranch endpoint:remote error:error]) return nil;
-      HoliGitSnapshot *snapshot = nil;
-      repository = [self openSelectedRepository:root remote:remote branch:selectedBranch snapshot:&snapshot error:error];
+      NSString *identityRemote = [remoteURL.path substringWithRange:NSMakeRange(1, remoteURL.path.length - 5)];
+      if (!identity || ![managedIdentity identity:identity matchesRemote:identityRemote branch:selectedBranch endpoint:remote error:error]) return nil;
+      repository = [self openSelectedRepository:root remote:remote branch:selectedBranch snapshot:&operationSnapshot error:error];
       if (!repository) return nil;
-      [snapshot close];
     } else {
       result = git_repository_open_ext(&repository, rootPath, GIT_REPOSITORY_OPEN_NO_SEARCH, NULL);
       if (result < 0) { HNGError(error, result); return nil; }
@@ -223,13 +218,13 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     git_clone_options options = GIT_CLONE_OPTIONS_INIT;
     options.fetch_opts.callbacks = callbacks;
     options.fetch_opts.download_tags = GIT_REMOTE_DOWNLOAD_TAGS_NONE;
-    options.checkout_branch = [@"refs/heads/" stringByAppendingString:selectedBranch].UTF8String;
+    options.checkout_branch = selectedBranch.UTF8String;
     options.checkout_opts.checkout_strategy = GIT_CHECKOUT_NONE;
     options.repository_cb = HNGSelectedRepository;
     options.repository_cb_payload = &cloneContext;
     options.remote_cb = HNGSelectedRemote;
     options.remote_cb_payload = &cloneContext;
-    options.fetch_opts.callbacks.payload = &cloneContext;
+    options.fetch_opts.callbacks.payload = &credentials;
     result = git_clone(&repository, remote.UTF8String, rootPath, &options);
   } else if (isClone) {
     git_clone_options options = GIT_CLONE_OPTIONS_INIT;
@@ -256,7 +251,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
       if (result == 0 && (!headRef || !(headName = git_reference_name(headRef)) ||
           ![[@"refs/heads/" stringByAppendingString:selectedBranch] isEqualToString:[NSString stringWithUTF8String:headName]])) result = GIT_EINVALIDSPEC;
       git_reference_free(headRef);
-      if (result < 0) { if (error) *error = HNGPathError(EINVAL, @"Checked-out branch does not match selected branch"); git_repository_free(repository); return nil; }
+      if (result < 0) { if (error) *error = HNGPathError(EINVAL, @"Checked-out branch does not match selected branch"); git_repository_free(repository); [operationSnapshot close]; return nil; }
     }
     result = HNGDisableUnsafeConfig(repository);
     git_remote *gitRemote = NULL;
@@ -311,10 +306,11 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     if (gitRemote && git_remote_connected(gitRemote)) git_remote_disconnect(gitRemote);
     git_remote_free(gitRemote);
   }
-  if (result < 0) { HNGError(error, result); git_repository_free(repository); return nil; }
+  if (result < 0) { HNGError(error, result); git_repository_free(repository); [operationSnapshot close]; return nil; }
   if (isClone && selectedBranch) {
     HoliManagedIdentity *managedIdentity = [HoliManagedIdentity new];
-    if (![managedIdentity createIdentityAtRoot:root remote:remote branch:selectedBranch endpoint:remote error:error]) {
+    NSString *identityRemote = [remoteURL.path substringWithRange:NSMakeRange(1, remoteURL.path.length - 5)];
+    if (![managedIdentity createIdentityAtRoot:root remote:identityRemote branch:selectedBranch endpoint:remote error:error]) {
       git_repository_free(repository);
       return nil;
     }
@@ -364,6 +360,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     git_config_free(config);
   }
   git_repository_free(repository);
+  if (operationSnapshot && ![operationSnapshot closeWithError:error]) return nil;
   return @{ @"operation": operation, @"credentialChallenge": @(credentials.challenged), @"success": @YES, @"branch": branch, @"fetchTarget": fetchTarget, @"headTarget": headTarget, @"hooksDisabled": @(!unsafe.hooks), @"filtersDisabled": @(!unsafe.filters), @"helpersDisabled": @(!unsafe.helpers), @"remoteConstrained": @(remoteConstrained) };
 }
 - (NSString *)canonicalRoot:(NSString *)root error:(NSError **)error {
@@ -404,42 +401,54 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
 - (git_repository *)openSelectedRepository:(NSString *)root remote:(NSString *)remote branch:(NSString *)branch snapshot:(HoliGitSnapshot **)snapshotOut error:(NSError **)error {
   HoliGitSnapshot *snapshot = [[HoliGitSnapshot alloc] initWithRoot:root error:error];
   if (!snapshot) return NULL;
-  NSString *gitDir = [snapshot.path stringByAppendingPathComponent:@".git"];
-  NSString *configPath = [gitDir stringByAppendingPathComponent:@"config"];
-  git_config *diskConfig = NULL;
-  git_config *isolated = NULL;
+  NSString *configPath = [snapshot.path stringByAppendingPathComponent:@".git/config"];
+  git_config *live = NULL, *disk = NULL, *isolated = NULL;
   git_repository *repo = NULL;
-  int rc = git_config_new(&diskConfig);
-  if (rc == 0) rc = git_config_add_file_ondisk(diskConfig, configPath.fileSystemRepresentation, GIT_CONFIG_LEVEL_LOCAL, NULL, 0);
-  const char *origin = NULL;
-  const char *push = NULL;
-  const char *fetchSpec = NULL;
-  if (rc == 0) rc = git_config_get_string(&origin, diskConfig, "remote.origin.url");
-  int pushResult = rc == 0 ? git_config_get_string(&push, diskConfig, "remote.origin.pushurl") : rc;
-  if (pushResult == GIT_ENOTFOUND) push = NULL;
-  else if (pushResult < 0) rc = pushResult;
-  NSString *expectedSpec = [NSString stringWithFormat:@"+refs/heads/%@:refs/remotes/origin/%@", branch, branch];
-  int specResult = rc == 0 ? git_config_get_string(&fetchSpec, diskConfig, "remote.origin.fetch") : rc;
-  if (strcmp(origin ?: "", remote.UTF8String) || (push && strcmp(push, remote.UTF8String)) || specResult != 0 || strcmp(fetchSpec, expectedSpec.UTF8String)) rc = GIT_EINVALIDSPEC;
+  int rc = git_config_open_ondisk(&live, configPath.fileSystemRepresentation);
+  if (rc == 0) rc = git_config_snapshot(&disk, live);
+  git_config_free(live);
+  const char *origin = NULL, *push = NULL, *fetchSpec = NULL;
+  if (rc == 0) rc = git_config_get_string(&origin, disk, "remote.origin.url");
+  if (rc == 0) {
+    int read = git_config_get_string(&push, disk, "remote.origin.pushurl");
+    if (read == GIT_ENOTFOUND) push = NULL;
+    else if (read < 0) rc = read;
+  }
+  NSString *expected = [NSString stringWithFormat:@"+refs/heads/%@:refs/remotes/origin/%@", branch, branch];
+  if (rc == 0) rc = git_config_get_string(&fetchSpec, disk, "remote.origin.fetch");
+  if (rc == 0 && (strcmp(origin, remote.UTF8String) || (push && strcmp(push, remote.UTF8String)) || strcmp(fetchSpec, expected.UTF8String))) rc = GIT_EINVALIDSPEC;
   HNGUnsafeConfig unsafe = {0};
-  if (rc == 0) rc = git_config_foreach(diskConfig, HNGInspectConfig, &unsafe);
+  if (rc == 0) rc = git_config_foreach(disk, HNGInspectConfig, &unsafe);
   if (rc == 0 && (unsafe.hooks || unsafe.filters || unsafe.helpers)) rc = GIT_EINVALIDSPEC;
-  if (rc == 0) rc = git_config_new(&isolated);
+  // The private snapshot supplies only a writable config backend. Objects and
+  // refs below belong to the real checkout; user configuration is never edited.
+  NSString *effective = [snapshot.path stringByAppendingPathComponent:@"transport-config"];
+  if (rc == 0) {
+    int fd = open(effective.fileSystemRepresentation, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0600);
+    if (fd < 0) rc = GIT_ERROR;
+    else close(fd);
+  }
+  if (rc == 0) rc = git_config_open_ondisk(&isolated, effective.fileSystemRepresentation);
   if (rc == 0) rc = git_config_set_bool(isolated, "core.bare", 0);
   if (rc == 0) rc = git_config_set_bool(isolated, "core.filemode", 1);
   if (rc == 0) rc = git_config_set_string(isolated, "remote.origin.url", remote.UTF8String);
-  if (rc == 0) rc = git_config_set_string(isolated, "remote.origin.fetch", expectedSpec.UTF8String);
-  if (rc == 0 && push) rc = git_config_set_string(isolated, "remote.origin.pushurl", remote.UTF8String);
-  if (rc == 0) rc = git_repository_open_holi(&repo, gitDir.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH | GIT_REPOSITORY_OPEN_BARE, NULL, isolated);
+  if (rc == 0) rc = git_config_set_string(isolated, "remote.origin.fetch", expected.UTF8String);
+  NSString *realGit = [root stringByAppendingPathComponent:@".git"];
+  if (rc == 0) rc = git_repository_open_holi(&repo, realGit.fileSystemRepresentation, GIT_REPOSITORY_OPEN_NO_SEARCH | GIT_REPOSITORY_OPEN_BARE, NULL, isolated);
+  if (rc == 0) rc = git_repository_set_workdir(repo, root.fileSystemRepresentation, 0);
   git_config_free(isolated);
-  git_config_free(diskConfig);
-  if (rc < 0) { git_repository_free(repo); [snapshot close]; if (error) *error = HNGPathError(EINVAL, @"Unsupported or mismatched selected-branch repository metadata"); return NULL; }
+  git_config_free(disk);
   git_reference *head = NULL;
-  rc = git_repository_head(&head, repo);
-  const char *headName = rc == 0 ? git_reference_name(head) : NULL;
-  if (!headName || strcmp(headName, [[@"refs/heads/" stringByAppendingString:branch] UTF8String])) rc = GIT_EINVALIDSPEC;
+  if (rc == 0) rc = git_repository_head(&head, repo);
+  const char *name = rc == 0 ? git_reference_name(head) : NULL;
+  if (rc == 0 && (!git_reference_is_branch(head) || !name || strcmp(name, [[@"refs/heads/" stringByAppendingString:branch] UTF8String]))) rc = GIT_EINVALIDSPEC;
   git_reference_free(head);
-  if (rc < 0) { git_repository_free(repo); [snapshot close]; if (error) *error = HNGPathError(EINVAL, @"Checked-out branch does not match selected branch"); return NULL; }
+  if (rc < 0) {
+    git_repository_free(repo);
+    [snapshot close];
+    if (error) *error = HNGPathError(EINVAL, @"Unsupported or mismatched managed repository");
+    return NULL;
+  }
   *snapshotOut = snapshot;
   return repo;
 }

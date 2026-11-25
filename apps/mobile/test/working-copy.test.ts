@@ -39,8 +39,12 @@ describe('managed working copy transport', () => {
       recover: async () => {},
       prepare: async () => ({ remote: vault.remote, branch: vault.branch, nativeId: 'checkout-1' }),
       reopen: async () => ({ remote: vault.remote, branch: vault.branch, nativeId: 'checkout-1' }),
-      fetch: async (_root, _identity, credential) => { calls.push({ method: 'fetch', credential }) },
-      publish: async (_root, _identity, credential) => { calls.push({ method: 'publish', credential }) },
+      fetch: async (_root, _identity, credential) => {
+        calls.push({ method: 'fetch', credential })
+      },
+      publish: async (_root, _identity, credential) => {
+        calls.push({ method: 'publish', credential })
+      },
       ...overrides,
     }
     return { native, calls }
@@ -60,17 +64,25 @@ describe('managed working copy transport', () => {
   })
 
   it('rejects a durable checkout rebound to another branch and propagates native refusal', async () => {
-    const rebound = transport({ reopen: async () => ({ remote: vault.remote, branch: 'other', nativeId: 'checkout-1' }) })
+    const rebound = transport({
+      reopen: async () => ({ remote: vault.remote, branch: 'other', nativeId: 'checkout-1' }),
+    })
     await expect(createManagedWorkingCopy(rebound.native, vault, 'token').fetch()).rejects.toThrow()
-    const refused = transport({ fetch: async () => ({ code: 'auth', message: 'authentication refused' }) })
-    await expect(createManagedWorkingCopy(refused.native, vault, 'token').fetch()).rejects.toMatchObject({
+    const refused = transport({
+      fetch: async () => ({ code: 'auth', message: 'authentication refused' }),
+    })
+    await expect(
+      createManagedWorkingCopy(refused.native, vault, 'token').fetch(),
+    ).rejects.toMatchObject({
       refusal: { code: 'auth' },
     })
   })
 
   it('rejects invalid vault credentials before native preparation', () => {
     const { native } = transport()
-    expect(() => createManagedWorkingCopy(native, { ...vault, remote: 'not a remote' }, 'token')).toThrow()
+    expect(() =>
+      createManagedWorkingCopy(native, { ...vault, remote: 'not a remote' }, 'token'),
+    ).toThrow()
     expect(() => createManagedWorkingCopy(native, vault, '')).toThrow()
   })
 })

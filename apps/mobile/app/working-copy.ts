@@ -33,10 +33,23 @@ export type WorkingCopyRefusal = { code: string; message: string }
 export interface ManagedWorkingCopyNative extends NativeWorkingCopy {
   /** Runs recoverMoves directly while the caller holds the canonical-root lock. */
   recover(root: string): Promise<void>
-  prepare(root: string, remote: string, branch: string, credential: string): Promise<ManagedWorkingCopyIdentity>
+  prepare(
+    root: string,
+    remote: string,
+    branch: string,
+    credential: string,
+  ): Promise<ManagedWorkingCopyIdentity>
   reopen(root: string): Promise<ManagedWorkingCopyIdentity>
-  fetch(root: string, identity: ManagedWorkingCopyIdentity, credential: string): Promise<void | WorkingCopyRefusal>
-  publish(root: string, identity: ManagedWorkingCopyIdentity, credential: string): Promise<void | WorkingCopyRefusal>
+  fetch(
+    root: string,
+    identity: ManagedWorkingCopyIdentity,
+    credential: string,
+  ): Promise<void | WorkingCopyRefusal>
+  publish(
+    root: string,
+    identity: ManagedWorkingCopyIdentity,
+    credential: string,
+  ): Promise<void | WorkingCopyRefusal>
 }
 
 /** Native adapter exposes semantic identity and status, never libgit2 constants. */
@@ -63,11 +76,34 @@ function safePath(raw: string): VaultRelPath | null {
 }
 
 function isValidBranch(branch: string): boolean {
-  if (!branch || branch.startsWith('-') || branch.startsWith('/') || branch.endsWith('/') ||
-    branch.endsWith('.') || branch.includes('..') || branch.includes('//') ||
-    branch.includes('@{') || /[~^:?*\\[\\]\\\\]/.test(branch) || /\\s/.test(branch)) return false
-  return branch.split('/').every((part) => part !== '' && part !== '.' &&
-    part !== '..' && !part.startsWith('.') && !part.endsWith('.lock'))
+  if (
+    !branch ||
+    branch.startsWith('-') ||
+    branch.startsWith('/') ||
+    branch.endsWith('/') ||
+    branch.endsWith('.') ||
+    branch.includes('..') ||
+    branch.includes('//') ||
+    branch.includes('@{') ||
+    [...branch].some(
+      (character) =>
+        character.charCodeAt(0) <= 32 ||
+        character.charCodeAt(0) === 127 ||
+        character.charCodeAt(0) === 92 ||
+        '~^:?*[]'.includes(character),
+    )
+  )
+    return false
+  return branch
+    .split('/')
+    .every(
+      (part) =>
+        part !== '' &&
+        part !== '.' &&
+        part !== '..' &&
+        !part.startsWith('.') &&
+        !part.endsWith('.lock'),
+    )
 }
 
 /** Acquires or reopens a managed clone and offers credential-scoped network operations. */
@@ -85,10 +121,14 @@ export function createManagedWorkingCopy(
   const recover = async (canonicalRoot: string) => native.recover(canonicalRoot)
   const assertIdentity = (identity: ManagedWorkingCopyIdentity) => {
     if (
-      !identity || typeof identity.nativeId !== 'string' || !identity.nativeId ||
-      identity.remote !== remote || identity.branch !== branch ||
+      !identity ||
+      typeof identity.nativeId !== 'string' ||
+      !identity.nativeId ||
+      identity.remote !== remote ||
+      identity.branch !== branch ||
       (acquiredNativeId !== undefined && acquiredNativeId !== identity.nativeId)
-    ) throw new Error('Working copy identity does not match vault')
+    )
+      throw new Error('Working copy identity does not match vault')
     acquiredNativeId ??= identity.nativeId
   }
   const operate = async (action: 'fetch' | 'publish') => {
