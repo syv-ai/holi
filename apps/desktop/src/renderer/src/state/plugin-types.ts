@@ -639,6 +639,8 @@ export interface RendererPlugin {
   drawers?: readonly ComponentType[]
   /** Its items in the status bar (`StatusItem`). */
   statusItems?: readonly StatusItem[]
+  /** Optional content in the shell's brand position, shown while visible is true. */
+  titleBarItem?: { visible: Atom<boolean>; Component: ComponentType }
   /**
    * Why leaving the open vault (switching, or adding one) costs something
    * now, as a sentence, or null when it costs nothing. Core asks before

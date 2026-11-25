@@ -415,3 +415,28 @@ test('a capture Holi may not start closes the meeting and says what to do', asyn
   expect(calls('meeting.stop')).toEqual([{ meetingId: 'm9' }])
   expect(screen.getByRole('button', { name: 'Record' })).toBeEnabled()
 }, 15_000)
+
+test('the recording shortcut advances elapsed time and disappears after stopping', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+  vi.setSystemTime(new Date('2026-11-25T12:00:00Z'))
+  const store = storeFor()
+  render(
+    <Provider store={store}>
+      <RecordingStatusItem />
+    </Provider>,
+  )
+  expect(screen.queryByRole('button', { name: 'Recording meeting' })).toBeNull()
+  await act(() =>
+    store.set(startRecordingAtom, {
+      profileId: null,
+      title: '',
+      microphone: true,
+      system: false,
+    }),
+  )
+  expect(screen.getByRole('button', { name: 'Recording meeting' })).toHaveTextContent('0:00')
+  await act(() => vi.advanceTimersByTimeAsync(62_000))
+  expect(screen.getByRole('button', { name: 'Recording meeting' })).toHaveTextContent('1:02')
+  await act(() => store.set(stopRecordingAtom))
+  expect(screen.queryByRole('button', { name: 'Recording meeting' })).toBeNull()
+}, 15_000)
