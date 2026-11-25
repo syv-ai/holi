@@ -1,7 +1,16 @@
 'use client'
 
 import type { EntryCloseRequest } from '@/state/shell-close'
-import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from 'react'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   CheckIcon,
@@ -44,7 +53,7 @@ import { cn } from '@/lib/cn'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { openingBeside } from '@/state/alt-open'
-import { activeRemoteAtom } from '@/state/vaults'
+import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/state/vaults'
 import {
   activeSplit,
   tabIsOpen,
@@ -124,13 +133,48 @@ export function TabStrip({
   const dragVault = drag?.vault ?? null
   const dragWasOpen = drag?.wasOpen ?? false
   const remote = useAtomValue(activeRemoteAtom)
+  const vaultRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const setDrag = useSetAtom(tabDragAtom)
-  /** Where a drag along the strip would land: before entry `n`. */
-  const [dropAt, setDropAt] = useState<number | null>(null)
-  const [combinePreview, setCombinePreview] = useState<{
-    source: string
-    target: string
+  const stripGeometry = useRef<{
+    list: HTMLElement
+    scrollLeft: number
+    lastScrollLeft: number
+    intendedScrollLeft: number
+    workspace: ShellWorkspace
+    vaultRevision: number
+    rects: Map<string, DOMRect>
   } | null>(null)
+  const [preview, setPreview] = useState<{
+    target: string | null
+    index: number
+    next: ShellWorkspace
+    drag: NonNullable<typeof drag>
+    workspace: ShellWorkspace
+  } | null>(null)
+  const previewCurrent =
+    preview !== null &&
+    preview.drag === drag &&
+    preview.workspace === ws &&
+    dragVault === remote &&
+    drag?.vaultRevision === vaultRevision
+  const displayed = previewCurrent ? preview : null
+  const dropAt = displayed?.target === null ? displayed.index : null
+  const clearPreview = useCallback(() => {
+    if (displayed === null) stripGeometry.current = null
+    setPreview(null)
+  }, [displayed])
+  useLayoutEffect(() => {
+    const geometry = stripGeometry.current
+    if (geometry === null) return
+    if (geometry.workspace === ws && geometry.vaultRevision === vaultRevision) {
+      // Layout, not pointer movement, may clamp the viewport. Restore its
+      // intended offset when room returns, and start the next scroll delta
+      // from the post-projection position rather than counting that clamp.
+      geometry.list.scrollLeft = geometry.intendedScrollLeft
+      geometry.lastScrollLeft = geometry.list.scrollLeft
+    }
+    if (displayed === null) stripGeometry.current = null
+  }, [displayed, ws, vaultRevision, drag])
   /** The member of a split's pill that was right-clicked, whose own
    *  actions its menu offers: a member has no header of its own. */
   const [menuMember, setMenuMember] = useState<string | null>(null)
@@ -188,19 +232,22 @@ export function TabStrip({
   const listRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
   useEffect(() => {
-    if (dragged === null) return
-    const sourceExists = tabIsOpen(ws, dragged)
-    if (dragVault === remote && (!dragWasOpen || sourceExists)) return
-    setDrag(null)
-    setDropAt(null)
-    setCombinePreview(null)
-  }, [dragVault, dragWasOpen, dragged, remote, setDrag, ws])
+    if (
+      dragged !== null &&
+      (dragVault !== remote ||
+        drag?.vaultRevision !== vaultRevision ||
+        (dragWasOpen && !tabIsOpen(ws, dragged)))
+    ) {
+      setDrag(null)
+    }
+    setPreview(null)
+    stripGeometry.current = null
+  }, [drag, remote, vaultRevision, ws, dragVault, dragWasOpen, dragged, setDrag])
 
   useEffect(() => {
-    if (dragged !== null && dragVault === remote) return
-    setDropAt(null)
-    setCombinePreview(null)
-  }, [dragged, dragVault, remote])
+    window.addEventListener('resize', clearPreview)
+    return () => window.removeEventListener('resize', clearPreview)
+  }, [clearPreview])
 
   useEffect(() => {
     const list = listRef.current
@@ -220,74 +267,83 @@ export function TabStrip({
     return (
       store.get(activeRemoteAtom) === remote &&
       store.get(shellWorkspaceAtom) === ws &&
-      store.get(tabDragAtom) === drag
+      store.get(tabDragAtom) === drag &&
+      drag?.vaultRevision === store.get(activeRemoteRevisionValueAtom)
     )
   }
 
-  /** The insertion point under the pointer: before the first entry whose
-   *  middle is right of it, else the end. */
-  function indexAt(event: DragEvent<HTMLElement>): number {
-    const items = event.currentTarget.querySelectorAll<HTMLElement>('[data-entry-id]')
-    for (let i = 0; i < items.length; i += 1) {
-      const rect = items[i]!.getBoundingClientRect()
-      if (event.clientX < rect.left + rect.width / 2) return i
-    }
-    return items.length
-  }
-
-  /** Where a drag over the strip would land, or null when it would change
-   *  nothing (an entry dropped where it is). */
-  function stripDrop(
-    event: DragEvent<HTMLElement>,
-  ):
-    | { kind: 'reorder'; index: number }
-    | { kind: 'combine'; target: string; next: ShellWorkspace }
-    | null {
+  /** Capture the resting slots before presentation moves them. Scrolling
+   *  translates these same zones; hover never measures a displaced entry. */
+  function stripDrop(event: DragEvent<HTMLElement>): typeof preview {
     if (!draggable || !event.dataTransfer.types.includes(TAB_MIME)) return null
-    if (!gestureContextCurrent() || dragged === null || dragVault !== remote) return null
-    const sourceExists = tabIsOpen(ws, dragged)
-    if (!sourceExists && (dragWasOpen || !isViewKey(dragged))) {
-      setDropAt(null)
-      setCombinePreview(null)
-      return null
-    }
-    const items = event.currentTarget.querySelectorAll<HTMLElement>('[data-entry-id]')
-    for (const item of items) {
-      const rect = item.getBoundingClientRect()
-      if (event.clientX < rect.left || event.clientX > rect.right) continue
-      const position = rect.width === 0 ? 0 : (event.clientX - rect.left) / rect.width
-      const id = item.dataset.entryId
-      if (id === undefined) return null
-      if (stripDropZone(position) === 'combine') {
-        const next = combineOnStrip(ws, dragged, id)
-        if (next !== ws) {
-          setCombinePreview((current) =>
-            current?.source === dragged && current.target === id
-              ? current
-              : { source: dragged, target: id },
-          )
-          return { kind: 'combine', target: id, next }
-        }
+    if (!gestureContextCurrent() || drag === null || drag.vault !== remote) return null
+    if (!tabIsOpen(ws, drag.key) && (drag.wasOpen || !isViewKey(drag.key))) return null
+    const list = event.currentTarget
+    let geometry = stripGeometry.current
+    if (geometry === null) {
+      geometry = {
+        list,
+        scrollLeft: list.scrollLeft,
+        lastScrollLeft: list.scrollLeft,
+        intendedScrollLeft: list.scrollLeft,
+        workspace: ws,
+        vaultRevision,
+        rects: new Map(
+          [...list.querySelectorAll<HTMLElement>('[data-entry-id]')].map((item) => [
+            item.dataset.entryId!,
+            item.getBoundingClientRect(),
+          ]),
+        ),
       }
-      setCombinePreview(null)
-      setDropAt(indexAt(event))
-      const at = indexAt(event)
-      return dropOnStrip(ws, dragged, at) === ws ? null : { kind: 'reorder', index: at }
+      stripGeometry.current = geometry
     }
-    setCombinePreview(null)
-    const at = indexAt(event)
-    return dropOnStrip(ws, dragged, at) === ws ? null : { kind: 'reorder', index: at }
+    const actualScroll = list.scrollLeft
+    geometry.intendedScrollLeft += actualScroll - geometry.lastScrollLeft
+    geometry.lastScrollLeft = actualScroll
+    const x = event.clientX + geometry.intendedScrollLeft - geometry.scrollLeft
+    const slots = [...geometry.rects]
+    const at = slots.findIndex(([, rect]) => x < rect.left + rect.width / 2)
+    const index = at < 0 ? slots.length : at
+    const hit = slots.find(([, rect]) => x >= rect.left && x <= rect.right)
+    if (hit !== undefined) {
+      const [target, rect] = hit
+      if (stripDropZone(rect.width > 0 ? (x - rect.left) / rect.width : 0) === 'combine') {
+        if (displayed?.target === target) return displayed
+        const next = combineOnStrip(ws, drag.key, target)
+        if (next !== ws) return { target, index, next, drag, workspace: ws }
+      }
+    }
+    if (displayed?.target === null && displayed.index === index) return displayed
+    const next = dropOnStrip(ws, drag.key, index)
+    return next === ws ? null : { target: null, index, next, drag, workspace: ws }
   }
 
-  const previewValid =
-    combinePreview !== null &&
-    dragVault === remote &&
-    dragged === combinePreview.source &&
-    !(dragWasOpen && !tabIsOpen(ws, combinePreview.source)) &&
-    (() => {
-      const next = combineOnStrip(ws, combinePreview.source, combinePreview.target)
-      return next !== ws
-    })()
+  /** Keep every original DOM subtree in place while projecting the result.
+   *  A detached member can collapse its original group to one remaining view. */
+  const projection = ws.entries.map((entry) => {
+    if (displayed === null) return { entry, order: undefined }
+    const id = entryId(entry)
+    let next = displayed.next.entries.find((candidate) => entryId(candidate) === id)
+    if (displayed.target === id) {
+      next = displayed.next.entries.find(
+        (candidate) => entryId(candidate) === displayed.next.active,
+      )
+    } else if (next === undefined && isSplit(entry) && entry.views.includes(displayed.drag.key)) {
+      next = displayed.next.entries.find(
+        (candidate) =>
+          typeof candidate === 'string' &&
+          entry.views.includes(candidate) &&
+          candidate !== displayed.drag.key,
+      )
+    }
+    return {
+      entry: next,
+      order: next === undefined ? undefined : displayed.next.entries.indexOf(next),
+    }
+  })
+  const newcomers =
+    displayed?.next.entries.filter((entry) => !projection.some((item) => item.entry === entry)) ??
+    []
 
   /** An entry as the tab switcher lists it: a tab's mark and title, a
    *  split's members side by side, as in the strip. */
@@ -347,62 +403,57 @@ export function TabStrip({
               // still scrolls, and the tab count says when it holds more.
               className="no-scrollbar min-w-0 flex-1 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
               onDragOver={(event) => {
-                const drop = stripDrop(event)
-                const at = drop?.kind === 'reorder' ? drop.index : null
-                if (at !== dropAt) setDropAt(at)
-                if (drop === null) return
+                const next = stripDrop(event)
+                setPreview(next)
+                if (next === null) return
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'move'
               }}
               onDragLeave={(event) => {
                 const to = event.relatedTarget
-                if (!(to instanceof Node) || !event.currentTarget.contains(to)) {
-                  setDropAt(null)
-                  setCombinePreview(null)
-                }
+                if (to instanceof Node && event.currentTarget.contains(to)) return
+                // Preview layout can move a child out from under the pointer;
+                // its dragleave is not a departure from the strip itself.
+                const rect = event.currentTarget.getBoundingClientRect()
+                if (
+                  rect.width > 0 &&
+                  event.clientX >= rect.left &&
+                  event.clientX < rect.right &&
+                  event.clientY >= rect.top &&
+                  event.clientY < rect.bottom
+                )
+                  return
+                clearPreview()
               }}
               onDrop={(event) => {
-                const currentGesture = gestureContextCurrent()
-                const drop = currentGesture ? stripDrop(event) : null
                 const key = event.dataTransfer.getData(TAB_MIME)
-                const ownsKey = key !== '' && key === dragged && key === store.get(tabDragAtom)?.key
-                const validPreview =
-                  previewValid &&
-                  combinePreview?.source === key &&
-                  drop?.kind === 'combine' &&
-                  combinePreview.target === drop.target
-                setDropAt(null)
-                setCombinePreview(null)
+                const valid =
+                  gestureContextCurrent() &&
+                  displayed !== null &&
+                  event.dataTransfer.types.includes(TAB_MIME) &&
+                  key === displayed.drag.key
+                clearPreview()
                 setDrag(null)
-                if (!currentGesture || !ownsKey || drop === null) return
+                if (!valid || displayed === null) return
                 event.preventDefault()
-                if (drop.kind === 'combine') {
-                  if (validPreview) act((w) => combineOnStrip(w, key, drop.target))
-                } else {
-                  act((w) => dropOnStrip(w, key, drop.index))
-                }
+                act(() => displayed.next)
               }}
             >
               {ws.entries.map((entry, index) => {
                 const id = entryId(entry)
-                const sticky = isSticky(ws, id)
+                const projected = projection[index]!
+                const presented = projected.entry ?? entry
+                const sticky = isSticky(displayed?.next ?? ws, entryId(presented))
                 const members = isSplit(entry) ? entry.views.map(look) : null
                 const tab = members === null ? look(id) : null
-                const targetPreview = previewValid && combinePreview?.target === id
-                const combined =
-                  targetPreview && combinePreview !== null
-                    ? combineOnStrip(ws, combinePreview.source, id)
-                    : null
-                const combinedEntry =
-                  combined?.entries.find((candidate) => entryId(candidate) === combined.active) ??
-                  undefined
+                const targetPreview = displayed?.target === id
+                const changed = projected.entry !== undefined && presented !== entry
                 const previewMembers =
-                  targetPreview && isSplit(combinedEntry) ? combinedEntry.views.map(look) : null
-                const label = targetPreview
-                  ? `Split view: ${previewMembers!.map(spoken).join(', ')}`
-                  : tab !== null
-                    ? spoken(tab)
-                    : `Split view: ${members!.map(spoken).join(', ')}`
+                  changed && isSplit(presented) ? presented.views.map(look) : null
+                const previewTab = changed && typeof presented === 'string' ? look(presented) : null
+                const label = isSplit(presented)
+                  ? `Split view: ${presented.views.map((key) => spoken(look(key))).join(', ')}`
+                  : spoken(look(presented))
                 return (
                   <ContextMenu key={id} onOpenChange={captureMenu}>
                     <ContextMenuTrigger asChild>
@@ -411,16 +462,18 @@ export function TabStrip({
                       <TabsEntry
                         size={
                           sticky
-                            ? tab !== null
-                              ? 'sticky'
-                              : 'sticky-group'
-                            : tab !== null
-                              ? 'tab'
-                              : members!.length > 2
+                            ? isSplit(presented)
+                              ? 'sticky-group'
+                              : 'sticky'
+                            : isSplit(presented)
+                              ? presented.views.length > 2
                                 ? 'tab-wide'
                                 : 'tab-group'
+                              : 'tab'
                         }
                         data-entry-id={id}
+                        presentationOrder={projected.order}
+                        presentation={projected.entry === undefined ? 'removed' : 'normal'}
                         data-combine-preview={targetPreview || undefined}
                         aria-description={targetPreview ? 'Split preview' : undefined}
                         data-tab-key={tab === null ? undefined : id}
@@ -479,7 +532,8 @@ export function TabStrip({
                                 <span
                                   className={cn(
                                     'flex min-w-0 flex-1 items-center gap-2',
-                                    targetPreview && 'opacity-0',
+                                    changed && 'opacity-0',
+                                    changed && sticky && 'absolute inset-0',
                                   )}
                                 >
                                   {tab !== null ? (
@@ -503,12 +557,28 @@ export function TabStrip({
                                     />
                                   )}
                                 </span>
-                                {previewMembers !== null ? (
+                                {previewMembers !== null || previewTab !== null ? (
                                   <span
                                     aria-hidden="true"
-                                    className="pointer-events-none absolute inset-0 flex items-center"
+                                    className={cn(
+                                      'pointer-events-none flex min-w-0 items-center gap-2',
+                                      sticky ? 'relative' : 'absolute inset-0',
+                                    )}
                                   >
-                                    <SplitMembers members={previewMembers} focused={null} />
+                                    {previewMembers !== null ? (
+                                      <SplitMembers
+                                        members={previewMembers}
+                                        focused={null}
+                                        compact={sticky}
+                                      />
+                                    ) : (
+                                      <>
+                                        <TabMark tab={previewTab!} dot={sticky} />
+                                        <span hidden={sticky} className="truncate">
+                                          {previewTab!.title}
+                                        </span>
+                                      </>
+                                    )}
                                   </span>
                                 ) : null}
                               </span>
@@ -575,6 +645,30 @@ export function TabStrip({
                       onReopen={() => menuAct(reopenClosed)}
                     />
                   </ContextMenu>
+                )
+              })}
+              {newcomers.map((entry) => {
+                const key = entryId(entry)
+                const sticky = isSticky(displayed!.next, key)
+                return (
+                  <TabsEntry
+                    key={`preview:${key}`}
+                    aria-hidden="true"
+                    presentation="ghost"
+                    size={sticky ? 'sticky' : 'tab'}
+                    presentationOrder={displayed!.next.entries.indexOf(entry)}
+                  >
+                    {isSplit(entry) ? (
+                      <SplitMembers members={entry.views.map(look)} focused={null} />
+                    ) : (
+                      <>
+                        <TabMark tab={look(entry)} dot={sticky} />
+                        <span hidden={sticky} className="truncate">
+                          {look(entry).title}
+                        </span>
+                      </>
+                    )}
+                  </TabsEntry>
                 )
               })}
             </TabsList>
