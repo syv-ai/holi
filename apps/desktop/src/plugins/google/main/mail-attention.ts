@@ -42,7 +42,7 @@ interface MailAttentionSubscription {
   signal?: AbortSignal
 }
 
-export interface MailAttentionLease {
+interface MailAttentionLease {
   snapshot(): MailAttentionSnapshot
   stop(): Promise<void>
 }

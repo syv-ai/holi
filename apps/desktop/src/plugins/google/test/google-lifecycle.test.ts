@@ -280,7 +280,7 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
     ])
     await expect(relinking).resolves.toEqual({ ok: true })
 
-    expect(await r.call(A, 'status')).toMatchObject({ state: 'needs-reconnect', account: null })
+    expect(await r.call(A, 'status')).toMatchObject({ needsReconnect: true, account: null })
     expect(await r.call(A, 'mailAttention')).toMatchObject({
       accountSub: null,
       status: 'disconnected',

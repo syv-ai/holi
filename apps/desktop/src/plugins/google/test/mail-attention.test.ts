@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { GoogleApi } from '../main/api'
-import {
-  createMailAttention,
-  type MailAttentionLease,
-  type MailAttentionSession,
-} from '../main/mail-attention'
+import { createMailAttention, type MailAttentionSession } from '../main/mail-attention'
 import type { MailAttentionSnapshot } from '../shared/types'
 
 interface Session extends MailAttentionSession {
@@ -138,7 +134,7 @@ function rig() {
     sessions.set(remote, session)
     servers.set(session, server)
   }
-  const subscribe = async (remote: string): Promise<MailAttentionLease> => {
+  const subscribe = async (remote: string) => {
     notices.set(remote, [])
     snapshots.set(remote, [])
     preferences.set(remote, false)
