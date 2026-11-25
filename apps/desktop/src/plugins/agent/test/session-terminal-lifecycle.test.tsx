@@ -594,3 +594,24 @@ test('AgentsView does not reuse the previous vault window while its new window i
     ['fixture/second', { id: 'second-vault-window' }],
   ])
 })
+
+test('renders replay before live bytes that arrive while attachment is pending', async () => {
+  const attach = deferred<string>()
+  mocks.attach.mockReturnValueOnce(attach.promise)
+  render(
+    <Provider store={fixture()}>
+      <SessionTerminal terminalId={ID} visible />
+    </Provider>,
+  )
+  const term = XtermDouble.instances[0]!
+  act(() => terminals.receivePtyData({ id: ID, data: 'stream-tail' }))
+  expect(term.write.mock.calls.flat()).not.toContain('stream-tail')
+  await act(async () => {
+    attach.resolve('replay-prefix')
+  })
+  act(() => terminals.receivePtyData({ id: ID, data: 'next-output' }))
+  const content = term.write.mock.calls
+    .map(([data]) => data)
+    .filter((data) => ['replay-prefix', 'stream-tail', 'next-output'].includes(data))
+  expect(content).toEqual(['replay-prefix', 'stream-tail', 'next-output'])
+})

@@ -123,6 +123,7 @@ async function setup() {
     throw new Error('A managed Codex ask must not use another session implementation')
   }
   const table = agentCapabilities({
+    presentationLease: () => () => true,
     sessions: {
       ensure: async () => {},
       sessions: () => [],

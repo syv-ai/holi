@@ -47,6 +47,7 @@ function setup(
     capabilities,
   }
   const opened: OpenArgs[] = []
+  const claims = new Map<string, OpenArgs['lease']>()
   const closed: string[] = []
   const pastes: Array<[string, string]> = []
   const edges: string[] = []
@@ -60,9 +61,21 @@ function setup(
     terminals: {
       open: (args) => {
         opened.push(args)
+        claims.set(`term-${opened.length}`, args.lease)
         return { ok: true, id: `term-${opened.length}` }
       },
+      claim(id, lease) {
+        if (!lease() || !claims.has(id)) return false
+        claims.set(id, lease)
+        return true
+      },
+      async discard(id, lease) {
+        if (claims.get(id) !== lease) return false
+        await this.close(id)
+        return true
+      },
       close: async (id) => {
+        claims.delete(id)
         closed.push(id)
         const exit = () => finishExit(opened[Number(id.slice(5)) - 1])
         if (closeTerminal !== undefined) return closeTerminal(id, exit)
@@ -136,7 +149,7 @@ describe('sessions Holi runs', () => {
 
   it('starts one in a terminal of its own, named by its id', async () => {
     const t = setup()
-    const res = await t.sessions.start('codex', { cols: 100, rows: 30 })
+    const res = await t.sessions.start('codex', { cols: 100, rows: 30 }, () => true)
     if (!res.ok) throw new Error(res.message)
 
     expect(res.sessionId).toMatch(PTY_SESSION_ID)
@@ -162,7 +175,7 @@ describe('sessions Holi runs', () => {
 
   it('is working from a first prompt, and through the vault bracket', async () => {
     const t = setup()
-    const res = await t.sessions.start('codex', { prompt: 'Tidy the inbox\nplease' })
+    const res = await t.sessions.start('codex', { prompt: 'Tidy the inbox\nplease' }, () => true)
     if (!res.ok) throw new Error(res.message)
     expect(t.asked[0]?.prompt).toBe('Tidy the inbox\nplease')
     expect(t.sessions.sessions()[0]).toMatchObject({ name: 'Tidy the inbox', state: 'working' })
@@ -176,7 +189,7 @@ describe('sessions Holi runs', () => {
 
   it('reads a turn off its terminal, and asks for the person on a notification', async () => {
     const t = setup()
-    const res = await t.sessions.start('codex', {})
+    const res = await t.sessions.start('codex', {}, () => true)
     if (!res.ok) throw new Error(res.message)
     const term = t.opened[0]!
 
@@ -196,7 +209,7 @@ describe('sessions Holi runs', () => {
 
   it('is named by what its hook reports, unless it has a name', async () => {
     const t = setup()
-    const res = await t.sessions.start('codex', {})
+    const res = await t.sessions.start('codex', {}, () => true)
     if (!res.ok) throw new Error(res.message)
     t.sessions.noteConversation(res.sessionId, {
       name: 'Plan the week',
@@ -213,7 +226,7 @@ describe('sessions Holi runs', () => {
     const t = setup('codex', undefined, {}, async () => {
       throw new Error('kill failed')
     })
-    const started = await t.sessions.start('codex', {})
+    const started = await t.sessions.start('codex', {}, () => true)
     if (!started.ok) throw new Error(started.message)
     await expect(t.sessions.stop(started.sessionId)).rejects.toThrow(/kill failed/)
     expect(t.sessions.has(started.sessionId)).toBe(true)
@@ -225,7 +238,7 @@ describe('sessions Holi runs', () => {
     const t = setup('pi', { read: async () => [], write }, {}, async () => {
       throw cause
     })
-    const started = await t.sessions.start('pi', {})
+    const started = await t.sessions.start('pi', {}, () => true)
     if (!started.ok) throw new Error(started.message)
     await expect(t.sessions.leave()).rejects.toThrow('PTY sessions did not drain')
     expect(write).not.toHaveBeenCalled()
@@ -240,9 +253,13 @@ describe('sessions Holi runs', () => {
         rows = next
       },
     })
-    const started = await t.sessions.start('codex', {
-      resume: '123e4567-e89b-42d3-a456-426614174000',
-    })
+    const started = await t.sessions.start(
+      'codex',
+      {
+        resume: '123e4567-e89b-42d3-a456-426614174000',
+      },
+      () => true,
+    )
     if (!started.ok) throw new Error(started.message)
     const term = t.opened[0]!
     await term.onExit?.('Last title')
@@ -250,7 +267,9 @@ describe('sessions Holi runs', () => {
     expect(t.histories).toEqual([])
     expect(await t.sessions.past()).toEqual([])
     expect(t.sessions.terminalOf(started.sessionId)).toBe(started.terminalId)
-    expect(await t.sessions.start('codex', { sessionId: started.sessionId })).toMatchObject({
+    expect(
+      await t.sessions.start('codex', { sessionId: started.sessionId }, () => true),
+    ).toMatchObject({
       ok: false,
     })
     term.onRetired?.()
@@ -267,7 +286,7 @@ describe('sessions Holi runs', () => {
     })
     const t = setup('codex', { read: async () => [], write })
     const conversationId = '123e4567-e89b-42d3-a456-426614174000'
-    const started = await t.sessions.start('codex', { resume: conversationId })
+    const started = await t.sessions.start('codex', { resume: conversationId }, () => true)
     if (!started.ok) throw new Error(started.message)
     await expect(finishExit(t.opened[0])).rejects.toBe(cause)
     await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
@@ -277,11 +296,11 @@ describe('sessions Holi runs', () => {
 
   it('pastes an ask unsent, and stops by ending its terminal', async () => {
     const t = setup()
-    const res = await t.sessions.start('codex', {})
+    const res = await t.sessions.start('codex', {}, () => true)
     if (!res.ok) throw new Error(res.message)
     t.opened[0]!.onInput?.('\r')
 
-    expect(t.sessions.send(res.sessionId, 'look at Q4.md')).toEqual({
+    expect(t.sessions.send(res.sessionId, 'look at Q4.md', () => true)).toEqual({
       ok: true,
       terminalId: res.terminalId,
     })
@@ -292,12 +311,12 @@ describe('sessions Holi runs', () => {
     expect(t.sessions.has(res.sessionId)).toBe(false)
     // Gone mid-turn: nothing recorded.
     expect(t.edges.at(-1)).toBe(`forget:${res.sessionId}`)
-    expect(t.sessions.send(res.sessionId, 'hello').ok).toBe(false)
+    expect(t.sessions.send(res.sessionId, 'hello', () => true).ok).toBe(false)
   })
 
   it('clears an exited Pi turn without leaving a working state or bracket', async () => {
     const t = setup('pi')
-    const started = await t.sessions.start('pi', { prompt: 'Do work' })
+    const started = await t.sessions.start('pi', { prompt: 'Do work' }, () => true)
     if (!started.ok) throw new Error(started.message)
     expect(t.sessions.sessions()[0]?.state).toBe('working')
     expect(t.edges).toEqual([`begin:${started.sessionId}`])
@@ -312,7 +331,7 @@ describe('sessions Holi runs', () => {
 
   it('keeps Pi conversation UUIDs separate from Holi PTY ids', async () => {
     const t = setup('pi')
-    const result = await t.sessions.start('pi', {})
+    const result = await t.sessions.start('pi', {}, () => true)
     if (!result.ok) throw new Error(result.message)
     expect(result.sessionId).toMatch(PTY_SESSION_ID)
     expect(t.asked[0]?.session).toBe(result.sessionId)
@@ -329,7 +348,7 @@ describe('sessions Holi runs', () => {
       },
     }
     const first = setup('pi', store)
-    const started = await first.sessions.start('pi', {})
+    const started = await first.sessions.start('pi', {}, () => true)
     if (!started.ok) throw new Error(started.message)
     await first.sessions.stop(started.sessionId)
     await first.sessions.past()
@@ -337,7 +356,7 @@ describe('sessions Holi runs', () => {
     const conversationId = history[0]?.conversationId
     const reopened = setup('pi', store)
     expect(await reopened.sessions.hasPast(started.sessionId)).toBe(true)
-    const result = await reopened.sessions.reopen(started.sessionId, {})
+    const result = await reopened.sessions.reopen(started.sessionId, {}, () => true)
     expect(result).toMatchObject({ ok: true, sessionId: started.sessionId })
     expect(reopened.asked[0]).toMatchObject({ session: started.sessionId, resume: conversationId })
     expect(reopened.sessions.sessions()[0]?.id).toBe(started.sessionId)
@@ -352,13 +371,13 @@ describe('sessions Holi runs', () => {
       },
     }
     const first = setup('pi', store)
-    const started = await first.sessions.start('pi', { name: 'Original' })
+    const started = await first.sessions.start('pi', { name: 'Original' }, () => true)
     if (!started.ok) throw new Error(started.message)
     await first.sessions.stop(started.sessionId)
     await first.sessions.past()
 
     const reopened = setup('pi', store)
-    const opening = reopened.sessions.reopen(started.sessionId, {})
+    const opening = reopened.sessions.reopen(started.sessionId, {}, () => true)
     await vi.waitFor(() => expect(reopened.opened).toHaveLength(1))
     await reopened.sessions.stop(started.sessionId)
     expect(await opening).toMatchObject({ ok: true })
@@ -369,7 +388,7 @@ describe('sessions Holi runs', () => {
 
   it('keeps an unnamed session’s last terminal title in History', async () => {
     const t = setup('pi')
-    const started = await t.sessions.start('pi', {})
+    const started = await t.sessions.start('pi', {}, () => true)
     if (!started.ok) throw new Error(started.message)
     await finishExit(t.opened[0], 'Pi plan')
     expect(t.sessions.has(started.sessionId)).toBe(true)
@@ -381,7 +400,7 @@ describe('sessions Holi runs', () => {
 
   it('keeps an exited Pi session open with its terminal attached until explicitly stopped', async () => {
     const t = setup('pi')
-    const started = await t.sessions.start('pi', {})
+    const started = await t.sessions.start('pi', {}, () => true)
     if (!started.ok) throw new Error(started.message)
 
     await finishExit(t.opened[0], 'Pi terminal title')
@@ -399,15 +418,15 @@ describe('sessions Holi runs', () => {
 
   it('forks a live Pi conversation under a new UUID and does not persist native picker sessions', async () => {
     const t = setup('pi')
-    const original = await t.sessions.start('pi', {})
+    const original = await t.sessions.start('pi', {}, () => true)
     if (!original.ok) throw new Error(original.message)
-    const fork = await t.sessions.duplicate(original.sessionId, {})
+    const fork = await t.sessions.duplicate(original.sessionId, {}, () => true)
     if (!fork.ok) throw new Error(fork.message)
     expect(fork.sessionId).not.toBe(original.sessionId)
     expect(t.asked[1]).toMatchObject({ fork: t.asked[0]?.conversation })
     expect(t.asked[1]?.conversation).toMatch(CONVERSATION_ID)
 
-    const picker = await t.sessions.start('pi', { resume: 'pick' })
+    const picker = await t.sessions.start('pi', { resume: 'pick' }, () => true)
     if (!picker.ok) throw new Error(picker.message)
     expect(t.asked[2]?.session).toMatch(PTY_SESSION_ID)
     expect(t.asked[2]?.conversation).toBeUndefined()
@@ -418,31 +437,35 @@ describe('sessions Holi runs', () => {
   it('resumes a native UUID under a new PTY id and rejects invalid conversation identifiers', async () => {
     const t = setup('pi')
     const conversationId = '123e4567-e89b-42d3-a456-426614174000'
-    const resumed = await t.sessions.start('pi', { resume: conversationId })
+    const resumed = await t.sessions.start('pi', { resume: conversationId }, () => true)
     if (!resumed.ok) throw new Error(resumed.message)
     expect(resumed.sessionId).toMatch(PTY_SESSION_ID)
     expect(resumed.sessionId).not.toBe(conversationId)
     expect(t.asked[0]).toMatchObject({ session: resumed.sessionId, resume: conversationId })
     expect(t.sessions.sessions()[0]?.conversationId).toBe(conversationId)
-    expect(await t.sessions.start('pi', { resume: 'not-a-uuid' })).toMatchObject({ ok: false })
-    expect(await t.sessions.start('pi', { fork: 'not-a-uuid' })).toMatchObject({ ok: false })
+    expect(await t.sessions.start('pi', { resume: 'not-a-uuid' }, () => true)).toMatchObject({
+      ok: false,
+    })
+    expect(await t.sessions.start('pi', { fork: 'not-a-uuid' }, () => true)).toMatchObject({
+      ok: false,
+    })
   })
 
   it('refuses a provider it does not run', async () => {
     const t = setup()
-    expect((await t.sessions.start('claude', {})).ok).toBe(false)
+    expect((await t.sessions.start('claude', {}, () => true)).ok).toBe(false)
   })
 
   it('runs a background provider only for its sign-in, which reads no turns off its terminal', async () => {
     const background = {} as NonNullable<AgentProvider['capabilities']['background']>
     const t = setup('codex', undefined, { background })
-    expect((await t.sessions.start('codex', {})).ok).toBe(false)
+    expect((await t.sessions.start('codex', {}, () => true)).ok).toBe(false)
 
-    const res = await t.sessions.start('codex', { login: true })
+    const res = await t.sessions.start('codex', { login: true }, () => true)
     if (!res.ok) throw new Error(res.message)
     expect(t.asked[0]?.login).toBe(true)
     // One sign-in at a time.
-    expect(await t.sessions.start('codex', { login: true })).toEqual(res)
+    expect(await t.sessions.start('codex', { login: true }, () => true)).toEqual(res)
     t.opened[0]!.onInput?.('/login\r')
     expect(t.sessions.sessions()).toEqual([
       expect.objectContaining({ id: res.sessionId, state: 'idle' }),
@@ -460,7 +483,7 @@ describe('sessions Holi runs', () => {
     let finish!: (value: { dir: string }) => void
     t.provider.configure = () => new Promise((resolve) => (finish = resolve))
 
-    const starting = t.sessions.start('codex', { login: true })
+    const starting = t.sessions.start('codex', { login: true }, () => true)
     const leaving = t.sessions.leave()
     finish({ dir: '/home/.codex' })
 
@@ -478,7 +501,9 @@ describe('sessions Holi runs', () => {
     t.provider.configure = () => {
       throw cause
     }
-    const started = t.sessions.start('codex', { login: true }).catch((error: unknown) => error)
+    const started = t.sessions
+      .start('codex', { login: true }, () => true)
+      .catch((error: unknown) => error)
     await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [cause] })
     expect(await started).toBe(cause)
   })
@@ -493,7 +518,7 @@ describe('sessions Holi runs', () => {
       notice: 'Sign in',
     }
 
-    const starting = t.sessions.start('codex', { login: true })
+    const starting = t.sessions.start('codex', { login: true }, () => true)
     for (let i = 0; i < 10 && finish === undefined; i++) await Promise.resolve()
     const leaving = t.sessions.leave()
     finish(true)
@@ -515,7 +540,7 @@ describe('sessions Holi runs', () => {
       }),
       exited: vi.fn(async () => ({})),
     }
-    const res = await t.sessions.start('codex', { prompt: 'Make the app', fence })
+    const res = await t.sessions.start('codex', { prompt: 'Make the app', fence }, () => true)
     if (!res.ok) throw new Error(res.message)
     expect(t.opened[0]?.cwd).toBe('/scratch/abc')
     expect(t.asked[0]?.fence).toEqual({ dir: '/scratch/abc', state: '/scratch/abc.agent' })
@@ -550,7 +575,7 @@ describe('sessions Holi runs', () => {
       turnEnded: async () => ({}),
       exited: () => new Promise<FenceCopy>((resolve) => (finish = resolve)),
     }
-    const started = await t.sessions.start('codex', { prompt: 'Make the app', fence })
+    const started = await t.sessions.start('codex', { prompt: 'Make the app', fence }, () => true)
     if (!started.ok) throw new Error(started.message)
     finishExit(t.opened[0])
     expect(t.sessions.sessions()[0]).toMatchObject({ id: started.sessionId, copying: true })
@@ -584,7 +609,7 @@ describe('sessions Holi runs', () => {
       turnEnded: async () => ({}),
       exited: () => new Promise<FenceCopy>((resolve) => (finish = resolve)),
     }
-    const started = await t.sessions.start('codex', { prompt: 'Make the app', fence })
+    const started = await t.sessions.start('codex', { prompt: 'Make the app', fence }, () => true)
     if (!started.ok) throw new Error(started.message)
     t.opened[0]?.onInput?.('\r')
 
@@ -624,8 +649,8 @@ describe('sessions Holi runs', () => {
       },
     }
     const t = setup('pi', store)
-    const first = await t.sessions.start('pi', { prompt: 'First' })
-    const second = await t.sessions.start('pi', { prompt: 'Second' })
+    const first = await t.sessions.start('pi', { prompt: 'First' }, () => true)
+    const second = await t.sessions.start('pi', { prompt: 'Second' }, () => true)
     if (!first.ok || !second.ok) throw new Error('Pi session did not start')
 
     await expect(t.sessions.leave()).rejects.toThrow(/PTY sessions did not drain/)
@@ -646,8 +671,8 @@ describe('sessions Holi runs', () => {
       },
     }
     const t = setup('pi', store)
-    const active = await t.sessions.start('pi', { prompt: 'Still working' })
-    const exited = await t.sessions.start('pi', { name: 'Already finished' })
+    const active = await t.sessions.start('pi', { prompt: 'Still working' }, () => true)
+    const exited = await t.sessions.start('pi', { name: 'Already finished' }, () => true)
     if (!active.ok || !exited.ok) throw new Error('Pi session did not start')
     finishExit(t.opened[1])
     await t.sessions.leave()
@@ -671,10 +696,14 @@ describe('sessions Holi runs', () => {
       turnEnded: async () => ({}),
       exited: async () => copy,
     })
-    const partial = await t.sessions.start('codex', {
-      fence: fenced({ leftOut: 'Holi left out app.local.yaml.' }),
-    })
-    const clean = await t.sessions.start('codex', { fence: fenced({}) })
+    const partial = await t.sessions.start(
+      'codex',
+      {
+        fence: fenced({ leftOut: 'Holi left out app.local.yaml.' }),
+      },
+      () => true,
+    )
+    const clean = await t.sessions.start('codex', { fence: fenced({}) }, () => true)
     if (!partial.ok || !clean.ok) throw new Error('fenced session did not start')
     finishExit(t.opened[0])
     finishExit(t.opened[1])
@@ -696,7 +725,7 @@ describe('sessions Holi runs', () => {
       turnEnded: async () => ({}),
       exited: async () => ({}),
     }
-    expect(await t.sessions.start('codex', { prompt: 'x', fence })).toEqual({
+    expect(await t.sessions.start('codex', { prompt: 'x', fence }, () => true)).toEqual({
       ok: false,
       message: 'Codex cannot run fenced to a folder.',
     })

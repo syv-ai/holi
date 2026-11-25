@@ -288,10 +288,12 @@ it('serializes overlapping PTY history updates across activations and drains sto
     command: { bin: process.execPath, args: [] },
   }
   await call(A, 'agent.harnessSave', { harness: pi })
+  host.setDisplayed(A)
   const aStarted = (await call(A, 'agent.start', { provider: 'pi', prompt: 'A work' })) as {
     ok: boolean
     sessionId: string
   }
+  host.setDisplayed(B)
   const bStarted = (await call(B, 'agent.start', { provider: 'pi', prompt: 'B work' })) as {
     ok: boolean
     sessionId: string
@@ -570,7 +572,8 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
     const settledA = await post(A, '/turn/end', '&job=abc12345&pending=2')
     expect(settledA.status).toBe(200)
 
-    host.setDisplayed(A)
+    // Background work for A remains activation-bound even while B owns the display.
+    host.setDisplayed(B)
     await expect(
       call(A, 'agent.message', { session: 'abc12345', text: 'message A' }),
     ).resolves.toEqual({ ok: true })
@@ -1070,6 +1073,7 @@ it('keeps real native provider commands and vault configuration local after a sh
     env: { OWNER_TEST: 'first', CODEX_HOME: join(userData, 'synthetic-codex') },
   }
   await call(A, 'agent.harnessSave', { harness: codex })
+  host.setDisplayed(B)
   expect(await call(B, 'agent.start', { provider: 'codex', prompt: 'B first' })).toMatchObject({
     ok: true,
   })
@@ -1086,6 +1090,7 @@ it('keeps real native provider commands and vault configuration local after a sh
     },
   })
   expect(adapters.pty).toHaveLength(1)
+  host.setDisplayed(B)
   expect(await call(B, 'agent.start', { provider: 'codex', prompt: 'B next' })).toMatchObject({
     ok: true,
   })
@@ -1095,6 +1100,7 @@ it('keeps real native provider commands and vault configuration local after a sh
     env: { OWNER_TEST: 'second' },
   })
   expect(first.env.OWNER_TEST).toBe('first')
+  host.setDisplayed(A)
   expect(await call(A, 'agent.start', { provider: 'codex', prompt: 'A next' })).toMatchObject({
     ok: true,
   })
@@ -1153,6 +1159,7 @@ it('keeps real native provider commands and vault configuration local after a sh
   expect(scheduled[2].cwd).toBe(roots[B])
   expect(scheduled[2].env.CLAUDE_CONFIG_DIR).toBe(launches[1]![2].env.CLAUDE_CONFIG_DIR)
   await host.stop(A)
+  host.setDisplayed(B)
   expect(await call(B, 'agent.start', { provider: 'codex', prompt: 'B survives' })).toMatchObject({
     ok: true,
   })
@@ -1195,6 +1202,7 @@ it('rejects late UI config dispatch after A releases ownership but before unregi
     expect(sent.filter((event) => event.name === 'providers')).toHaveLength(bNotices)
     expect(await call(B, 'agent.harnesses')).toEqual(bListing)
 
+    host.setDisplayed(B)
     expect(
       await call(B, 'agent.start', { provider: 'codex', prompt: 'B remains live' }),
     ).toMatchObject({ ok: true })
@@ -1889,6 +1897,7 @@ it.each(['start', 'fork', 'respawn'] as const)(
       return ''
     })
     const invoke = (remote: typeof A | typeof B) => {
+      host.setDisplayed(remote)
       if (operation === 'start') return call(remote, 'agent.start', { prompt: `${remote} start` })
       if (operation === 'fork') return call(remote, 'agent.duplicate', { id: sessionId })
       return call(remote, 'agent.respawn', { id: sessionId })
@@ -1995,8 +2004,10 @@ it('retains failed cleanup of a cancelled real respawn and refuses replacement',
   try {
     await enter(A)
     await enter(B)
+    host.setDisplayed(A)
     const respawning = call(A, 'agent.respawn', { id: 'abc12345' })
     await entered.promise
+    host.setDisplayed(B)
     expect(await call(B, 'agent.respawn', { id: 'abc12345' })).toMatchObject({ ok: true })
     expectFailedDrain()
     const stopping = host.stop(A).catch((error: unknown) => error)
