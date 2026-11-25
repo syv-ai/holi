@@ -242,7 +242,9 @@ export class GoogleSession {
     try {
       body = await post(this.#fetch(), TOKEN_URL, {
         client_id: auth.clientId ?? client.id,
-        ...(client.secret === undefined ? {} : { client_secret: client.secret }),
+        ...((auth.clientId !== undefined ? auth.clientSecret : client.secret) === undefined
+          ? {}
+          : { client_secret: auth.clientId !== undefined ? auth.clientSecret : client.secret }),
         refresh_token: auth.refreshToken,
         grant_type: 'refresh_token',
       })
