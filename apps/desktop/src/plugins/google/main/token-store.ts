@@ -97,7 +97,7 @@ export class GoogleTokenStore {
         if (isStoredGoogleAuth(auth)) valid[sub] = auth
       }
       return valid
-    } catch (error) {
+    } catch {
       throw new Error('the Google token store could not be read, decrypted, or parsed')
     }
   }

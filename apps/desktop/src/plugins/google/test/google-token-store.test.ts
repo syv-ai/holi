@@ -121,15 +121,10 @@ describe('an unreadable file is unavailable, not disconnected', () => {
       JSON.stringify({ v: 1, data: Buffer.from(`{ "secret": "${secret}"`).toString('base64') }),
     )
 
-    try {
-      await new GoogleTokenStore(file, storage).read()
-      throw new Error('expected read to reject')
-    } catch (error) {
-      expect(JSON.stringify(error, Object.getOwnPropertyNames(error as object))).not.toContain(
-        secret,
-      )
-      expect(String(error)).not.toContain(secret)
-    }
+    const error = await new GoogleTokenStore(file, storage).read().catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(Error)
+    expect(JSON.stringify(error, Object.getOwnPropertyNames(error as object))).not.toContain(secret)
+    expect(String(error)).not.toContain(secret)
   })
 
   it('drops only the malformed entry, keeping a readable one beside it', async () => {
