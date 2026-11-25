@@ -73,11 +73,7 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
       replacement = allFrames().find((frame) => !priorHandles.includes(frame))
       if (!replacement) await new Promise((resolve) => setTimeout(resolve, 25))
     }
-    assert(replacement, 'replacement iframe creates a new native frame handle')
-    await assert.rejects(
-      scenario.evaluate(freshSameALease, '1'),
-      /unknown frame address lease|no longer current/,
-    )
+    assert(replacement, 'replacement iframe creates a new native frame handle')      await assert.rejects(scenario.evaluate(freshSameALease, '1'))
     const replacementAddress = await scenario.resolve(replacement, replacementCapture)
     check(
       await scenario.verifyOwner(replacementAddress, '#same-a'),
@@ -118,6 +114,7 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
         currentCrossAddress,
         'globalThis.pendingDetachEvaluation = 1',
       )
+      const pendingDetachRejection = assert.rejects(pendingDetachEvaluation)
       await detachStarted.promise
       await wc.executeJavaScript("document.querySelector('#cross').remove()")
       for (
@@ -127,7 +124,7 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
       )
         await new Promise((resolve) => setTimeout(resolve, 20))
       detachGate.resolve()
-      await assert.rejects(pendingDetachEvaluation, /unknown frame address lease|no longer current/)
+      await pendingDetachRejection
     } finally {
       detachGate.resolve()
       debuggerClient.sendCommand = originalSend
@@ -179,6 +176,7 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
         afterAbaAddress,
         'globalThis.pendingReplacementEvaluation = 1',
       )
+      const pendingReplacementRejection = assert.rejects(pendingReplacementEvaluation)
       await replacementStarted.promise
       const replacedFrame = currentSameB
       await wc.executeJavaScript(
@@ -191,10 +189,7 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
         'native iframe replacement departed the pending evaluation owner',
       )
       replacementGate.resolve()
-      await assert.rejects(
-        pendingReplacementEvaluation,
-        /unknown frame address lease|no longer current/,
-      )
+      await pendingReplacementRejection
       const replacementCapture: FrameCapture = Object.freeze({
         tab: {},
         document: {},

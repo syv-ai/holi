@@ -36,11 +36,11 @@ export function createFrameContextSessionOwner(
   ) => {
     assertAvailable()
     const before = epoch
+    const sessionCancellation =
+      sessionId === undefined || sessionId === ''
+        ? undefined
+        : sessionCancellations.get(sessionId)
     try {
-      const sessionCancellation =
-        sessionId === undefined || sessionId === ''
-          ? undefined
-          : sessionCancellations.get(sessionId)
       if (sessionId && !sessionCancellation)
         throw new Error('debugger session is no longer available')
       const command =
@@ -52,7 +52,10 @@ export function createFrameContextSessionOwner(
       if (before !== epoch) throw new Error('debugger epoch changed during command')
       return result
     } catch (error) {
-      if (failOnCommandError) fail('debugger command failed')
+      const detachedSession =
+        sessionCancellation !== undefined &&
+        sessionCancellations.get(sessionId!) !== sessionCancellation
+      if (failOnCommandError && !detachedSession) fail('debugger command failed')
       throw error
     }
   }
