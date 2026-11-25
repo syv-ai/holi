@@ -41,9 +41,9 @@ import {
   unarchiveThread,
   untrashThread,
   type ListThreadsOptions,
-  type MailAddress,
   type MailPage,
 } from './gmail'
+import type { MailAddress } from './gmail-headers'
 import type { MailPart, OutgoingMail } from './mime'
 import {
   DEFAULT_MAIL_MARKER_PREFERENCES,

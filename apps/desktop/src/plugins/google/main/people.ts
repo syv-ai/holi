@@ -21,7 +21,7 @@
  * and degrading to it is correct.
  */
 import type { GoogleApi } from './api'
-import type { MailAddress } from './gmail'
+import type { MailAddress } from './gmail-headers'
 
 const BASE = 'https://people.googleapis.com/v1'
 

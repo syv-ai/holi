@@ -106,6 +106,7 @@ export interface RawEvent {
   conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] }
   start?: { date?: string; dateTime?: string; timeZone?: string }
   end?: RawEvent['start']
+  endTimeUnspecified?: boolean
   attendees?: {
     self?: boolean
     responseStatus?: string

@@ -1,5 +1,5 @@
 import { CalendarScanError, type MimeLocation } from './gmail-mime'
-import type { fetchThreadCalendarPayloads } from './gmail'
+import type { fetchThreadCalendarPayloads } from './gmail-invitation-transport'
 import type { parseCalendarMail } from './invite'
 import type { InvitationAttempt } from './mail-invitation-store'
 import type { MailInvitationIdentity } from './mail-invitation'
@@ -150,7 +150,21 @@ export function selectInvitationRevisions(deliveries: Candidate[], mailbox: stri
         b.mail.timestamp - a.mail.timestamp ||
         a.mail.messageId.localeCompare(b.mail.messageId),
     )
-  const unknown = candidates.find((candidate) => !identityOf(candidate).materialKey)
+  // Publications/exports can identify a meeting, but say nothing about a
+  // REQUEST's revision or response. Keep real REQUESTs (including ambiguous
+  // ones) and CANCELs in the ordering for their own scope.
+  const requestScopes = new Set(
+    candidates
+      .filter((candidate) => candidate.value.method === 'REQUEST' && identityOf(candidate).uid)
+      .map((candidate) => scopeKey(identityOf(candidate))),
+  )
+  const supersededJoins = new Set(
+    candidates.filter(
+      (candidate) => candidate.joinOnly && requestScopes.has(scopeKey(identityOf(candidate))),
+    ),
+  )
+  const revisions = candidates.filter((candidate) => !supersededJoins.has(candidate))
+  const unknown = revisions.find((candidate) => !identityOf(candidate).materialKey)
   if (unknown)
     return [
       blocked(
@@ -160,7 +174,7 @@ export function selectInvitationRevisions(deliveries: Candidate[], mailbox: stri
       ),
     ]
   const groups = new Map<string, Candidate[]>()
-  for (const candidate of candidates) {
+  for (const candidate of revisions) {
     const key = scopeKey(identityOf(candidate))
     const group = groups.get(key) ?? []
     group.push(candidate)
@@ -184,13 +198,17 @@ export function selectInvitationRevisions(deliveries: Candidate[], mailbox: stri
       value.details.organizer &&
       (value.details.identity.recurrenceId === null || value.recurrenceRange === 'THISANDFUTURE'),
   )
-  return scoped.map((group) => selectScope(group, eligible, cancellations, mailbox))
+  // Excluded exports still count when checking whether a visible message
+  // actually owns an RFC Message-ID used to match Sent evidence.
+  const parentEvidence = [...eligible, ...supersededJoins]
+  return scoped.map((group) => selectScope(group, eligible, cancellations, parentEvidence, mailbox))
 }
 
 function selectScope(
   group: Candidate[],
   candidates: Candidate[],
   cancellations: Candidate[],
+  parentEvidence: Candidate[],
   mailbox: string,
 ): Incoming {
   const sequence = Math.max(...group.map((candidate) => identityOf(candidate).sequence))
@@ -258,7 +276,7 @@ function selectScope(
     const parent = candidate.mail.replyHeaders?.inReplyTo
     if (
       parent &&
-      candidates.every(
+      parentEvidence.every(
         (other) =>
           other.mail.rfcId !== parent ||
           (candidate.mail.messageId === other.mail.messageId &&

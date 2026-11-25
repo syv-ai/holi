@@ -110,6 +110,8 @@ function event(
     id?: string
     occurrence?: boolean
     series?: boolean
+    allDay?: boolean
+    zeroDuration?: boolean
     location?: string
     description?: string
   } = {},
@@ -124,8 +126,10 @@ function event(
     description: options.description,
     status: 'confirmed',
     organizer: { email: organizer, self: false },
-    start: { dateTime: start, ...(options.series ? { timeZone: 'UTC' } : {}) },
-    end: { dateTime: end },
+    start: options.allDay
+      ? { date: '2024-07-18' }
+      : { dateTime: start, ...(options.series ? { timeZone: 'UTC' } : {}) },
+    end: options.allDay ? { date: '2024-07-19' } : { dateTime: options.zeroDuration ? start : end },
     htmlLink: 'https://calendar.google.com/calendar/event?eid=example',
     attendees: [
       { email: person, self: true, responseStatus: 'declined', comment: 'An existing comment' },
@@ -159,6 +163,7 @@ async function rig() {
   let now = 0
   const state = {
     messages: [gmailMessage('update', 200, invite(), { method: 'REQUEST' })],
+    fullThreadOverride: undefined as unknown,
     attachments: new Map<string, string>(),
     events: new Map<string, ReturnType<typeof event>[]>(),
     instances: new Map<string, ReturnType<typeof event>[]>(),
@@ -229,7 +234,7 @@ async function rig() {
       throw new Error('The transport received credentials for a different mailbox')
     }
     if (url.pathname.endsWith('/threads/thread') && url.searchParams.get('format') === 'full') {
-      return json({ id: 'thread', messages: state.messages })
+      return json(state.fullThreadOverride ?? { id: 'thread', messages: state.messages })
     }
     if (url.pathname.endsWith('/messages') && url.searchParams.get('labelIds') === 'SENT') {
       if (state.sentSearchError) return json({}, state.sentSearchError)
@@ -519,6 +524,51 @@ it('patches only the attendee on the primary copy of a past invitation and confi
   expect(primary.attendees).toEqual(event().attendees)
   expect(state.sendAttempts).toBe(0)
 })
+
+it('does not answer a partial, incoherent, or unconditionally writable Calendar copy', async () => {
+  const { state, read, respond } = await rig()
+  const valid = event()
+  state.events.set('primary', [valid])
+  for (const incomplete of [
+    { start: undefined },
+    { end: undefined },
+    { endTimeUnspecified: true },
+    { end: { date: '2024-07-19' } },
+    { end: { dateTime: '2024-06-31T16:00:00Z' } },
+    { etag: undefined },
+    { etag: '*' },
+    { etag: 'W/"version"' },
+    { etag: '"version", "other"' },
+    { etag: '"version"\r\n' },
+    { etag: 'version' },
+  ]) {
+    state.primaryPages = [{ kind: 'calendar#events', items: [{ ...valid, ...incomplete }] }]
+    expect(await read()).toMatchObject({ canRespond: false })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+  }
+  state.primaryPages = null
+  expect(await read()).toMatchObject({ canRespond: true })
+  expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.sendAttempts).toBe(0)
+})
+
+it.each(['all-day', 'zero-duration'] as const)(
+  'can RSVP to a complete %s Calendar copy',
+  async (kind) => {
+    const { state, read, respond } = await rig()
+    const allDay = kind === 'all-day'
+    const times = allDay
+      ? 'DTSTART;VALUE=DATE:20240718\r\nDTEND;VALUE=DATE:20240719'
+      : 'DTSTART:20240718T150000Z'
+    state.messages = [gmailMessage('update', 200, invite('REQUEST', times))]
+    state.events.set('primary', [event({ allDay, zeroDuration: !allDay })])
+    expect(await read()).toMatchObject({ allDay, canRespond: true })
+    expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
+    expect(state.sendAttempts).toBe(0)
+  },
+)
 
 it('uses original start and the hidden secondary calendar ID for an attached, moved occurrence', async () => {
   const { state, read, respond } = await rig()
@@ -1200,6 +1250,28 @@ it('offers join-only for verified organizer or PUBLISH mail and rejects unverifi
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
+it.each(['PUBLISH', 'EXPORT'] as const)(
+  'keeps the REQUEST actionable when a later %s has the same UID and scope',
+  async (method) => {
+    const { state, list, read, respond } = await rig()
+    let later = invite(method, '', 4, '20240702T090000Z')
+    if (method === 'EXPORT') later = later.replace('METHOD:EXPORT\r\n', '')
+    state.messages.push(gmailMessage('later', 300, later))
+    expect(await list()).toMatchObject({
+      invitations: [{ identity, kind: 'invitation', canRespond: true }],
+    })
+    await read()
+    expect(await respond('accepted')).toMatchObject({
+      channel: 'gmail',
+      refreshPending: false,
+      invitation: { identity, sentResponseStatus: 'accepted' },
+    })
+    state.messages.push(gmailMessage('cancel', 400, invite('CANCEL', 'STATUS:CANCELLED', 4)))
+    expect(await read()).toMatchObject({ cancelled: true, canRespond: false })
+    expect(state.sendAttempts).toBe(1)
+  },
+)
+
 it('allows a methodless export to open only a verified meeting, never to RSVP', async () => {
   const { state, read, respond, list } = await rig()
   const source = invite().replace('METHOD:REQUEST\r\n', '')
@@ -1233,6 +1305,18 @@ it('allows a methodless export to open only a verified meeting, never to RSVP', 
       expect.objectContaining({ kind: 'meeting' }),
     )
   }
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
+it('never uses invitation evidence from a different full Gmail thread', async () => {
+  const { state, list } = await rig()
+  state.fullThreadOverride = {
+    id: 'wrong-thread',
+    messages: [gmailMessage('elsewhere', 200, invite(), { threadId: 'wrong-thread' })],
+  }
+  expect(await list()).toMatchObject({ invitations: [], recoveryReason: expect.any(String) })
+  state.fullThreadOverride = undefined
+  expect(await list()).toMatchObject({ invitations: [{ identity, canRespond: true }] })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
@@ -1729,6 +1813,8 @@ it.each([
   'missing stamp',
   'invalid stamp',
   'duplicate stamp',
+  'text organizer',
+  'text attendee',
   'duplicate From',
   'duplicate To',
   'unclosed From comment',
@@ -1742,14 +1828,15 @@ it.each([
   expect(await respond('accepted')).toMatchObject({ channel: 'gmail', refreshPending: false })
   const stamp = 'DTSTAMP:20240701T090000Z\r\n'
   const valid = invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')
-  const source =
-    defect === 'missing stamp'
-      ? valid.replace(stamp, '')
-      : defect === 'invalid stamp'
-        ? valid.replace(stamp, 'DTSTAMP:20240701T090000\r\n')
-        : defect === 'duplicate stamp'
-          ? valid.replace(stamp, `${stamp}${stamp}`)
-          : valid
+  const calendarDefects: Record<string, [string, string]> = {
+    'missing stamp': [stamp, ''],
+    'invalid stamp': [stamp, 'DTSTAMP:20240701T090000\r\n'],
+    'duplicate stamp': [stamp, `${stamp}${stamp}`],
+    'text organizer': ['ORGANIZER;', 'ORGANIZER;VALUE=TEXT;'],
+    'text attendee': ['ATTENDEE;', 'ATTENDEE;VALUE=TEXT;'],
+  }
+  const calendarDefect = calendarDefects[defect]
+  const source = calendarDefect ? valid.replace(...calendarDefect) : valid
   const newer = gmailMessage('newer-decline', 700, source, {
     sent: true,
     method: 'REPLY',

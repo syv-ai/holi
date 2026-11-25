@@ -733,10 +733,46 @@ describe('syncThreads', () => {
     expect(page.threads.map((t) => t.id)).toEqual(['t1'])
   })
 
-  it('does not advance the cursor when a deleted message confirmation fails', async () => {
+  it('evicts a changed thread after a metadata 404, including from another cached list', async () => {
+    const list = [{ id: 'deleted' }, { id: 'healthy' }]
+    const first = gmail({
+      list,
+      threads: {
+        deleted: rawThread('deleted', 'Removed', ['INBOX', 'UNREAD']),
+        healthy: rawThread('healthy', 'Still here', ['INBOX', 'UNREAD']),
+      },
+    })
+    const unread = { unread: true }
+    expect((await syncThreads(first.api, cache, unread)).threads.map(({ id }) => id)).toEqual([
+      'deleted',
+      'healthy',
+    ])
+    await syncThreads(first.api, cache)
+
+    // The thread vanished after the history snapshot; there is no explicit
+    // deletion in this delta, only a refetch of a changed conversation.
+    const delta = gmail({
+      history: {
+        historyId: '6000',
+        history: [{ messagesAdded: [{ message: { id: 'incoming', threadId: 'deleted' } }] }],
+      },
+      missingThreads: ['deleted'],
+    })
+    const updated = await syncThreads(delta.api, cache)
+    expect(updated.threads.map(({ id }) => id)).toEqual(['healthy'])
+    expect(updated).not.toHaveProperty('unreadableThreadIds')
+
+    const unchanged = gmail({ history: { historyId: '6000' } })
+    for (const options of [{}, unread]) {
+      expect(
+        (await syncThreads(unchanged.api, cache, options)).threads.map(({ id }) => id),
+      ).toEqual(['healthy'])
+    }
+  })
+
+  it('reports a failed deleted-message confirmation as pending until a fresh read', async () => {
     const first = gmail({ list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'Draft') } })
     await syncThreads(first.api, cache, {})
-    const cursor = cache.historyId(cacheKey({}))
 
     const second = gmail({
       list: [{ id: 't1' }],
@@ -747,8 +783,18 @@ describe('syncThreads', () => {
       failedThreads: ['t1'],
     })
 
-    await expect(syncThreads(second.api, cache, {})).rejects.toThrow()
-    expect(cache.historyId(cacheKey({}))).toBe(cursor)
+    expect(await syncThreads(second.api, cache)).toMatchObject({
+      threads: [],
+      unreadableThreadIds: ['t1'],
+    })
+    const fresh = gmail({
+      list: [{ id: 't1' }],
+      threads: { t1: rawThread('t1', 'Remaining message') },
+      profile: { historyId: '6001' },
+    })
+    const recovered = await syncThreads(fresh.api, cache)
+    expect(recovered.threads.map(({ subject }) => subject)).toEqual(['Remaining message'])
+    expect(recovered).not.toHaveProperty('unreadableThreadIds')
   })
 
   it('refreshes an explicit query instead of using mailbox history', async () => {

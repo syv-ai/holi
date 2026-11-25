@@ -141,6 +141,49 @@ it('lists --full in the generated usage for google read', () => {
   expect(usage.text).toContain('[--full]')
 })
 
+it('rejects malformed or wrong full Gmail threads and can reread the requested thread', async () => {
+  const message = {
+    id: 'm-1',
+    threadId: 'selected',
+    payload: {
+      mimeType: 'text/plain',
+      body: { data: Buffer.from('The selected message').toString('base64url') },
+    },
+  }
+  const valid = { id: 'selected', messages: [message] }
+  const wrongMessage = { ...message, threadId: 'other' }
+  const invalidReplies = [
+    {},
+    { ...valid, id: 'other', messages: [wrongMessage] },
+    { ...valid, messages: [wrongMessage] },
+    { ...valid, messages: [{ ...message, threadId: undefined }] },
+    { ...valid, messages: [message, message] },
+  ]
+  const replies = [...invalidReplies, valid]
+  const fetchThread: typeof fetch = async (input) => {
+    const url = new URL(String(input))
+    if (!url.pathname.endsWith('/threads/selected') || url.searchParams.get('format') !== 'full')
+      throw new Error(`Unexpected Google request: ${url}`)
+    return Response.json(replies.shift())
+  }
+  vi.stubGlobal('fetch', fetchThread)
+  try {
+    const { call } = rig()
+    for (const _ of invalidReplies) {
+      await expect(call('thread', { id: 'selected' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: expect.stringMatching(/Gmail.*thread/i),
+      })
+    }
+    expect(await call('thread', { id: 'selected' })).toMatchObject({
+      id: 'selected',
+      messages: [{ id: 'm-1', body: 'The selected message' }],
+    })
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
 it('projects calendar MIME evidence in the reader thread without fetching calendar bytes', async () => {
   const ics = [
     'BEGIN:VCALENDAR',
@@ -178,9 +221,10 @@ it('projects calendar MIME evidence in the reader thread without fetching calend
     return Response.json({
       id: 't-calendar',
       messages: [
-        { id: 'ordinary', payload: plain },
+        { id: 'ordinary', threadId: 't-calendar', payload: plain },
         {
           id: 'inline',
+          threadId: 't-calendar',
           payload: {
             mimeType: 'multipart/mixed',
             parts: [{ mimeType: 'multipart/alternative', parts: [plain, inline] }],
@@ -188,6 +232,7 @@ it('projects calendar MIME evidence in the reader thread without fetching calend
         },
         {
           id: 'attachment-backed',
+          threadId: 't-calendar',
           payload: {
             mimeType: 'application/ics',
             body: { attachmentId: 'a-calendar', size: ics.length },
@@ -1152,6 +1197,7 @@ describe('what other people wrote, at the CLI door', () => {
           messages: [
             {
               id: 'm-plain',
+              threadId: 't-read',
               internalDate: '1000',
               payload: {
                 headers: [
@@ -1164,6 +1210,7 @@ describe('what other people wrote, at the CLI door', () => {
             },
             {
               id: 'm-html',
+              threadId: 't-read',
               internalDate: '2000',
               payload: {
                 headers: [{ name: 'From', value: 'Claire <claire@example.fr>' }],
@@ -1173,6 +1220,7 @@ describe('what other people wrote, at the CLI door', () => {
             },
             {
               id: 'm-html-bottom',
+              threadId: 't-read',
               internalDate: '3000',
               payload: {
                 headers: [{ name: 'From', value: 'Ada <ada@example.com>' }],

@@ -262,6 +262,7 @@ describe('listThreads', () => {
     let oversized = false
     let outsideFirstPage = false
     let metadataStatus = 200
+    let mailboxStatus = 200
     let malformedMetadata: object | null | undefined
     const healthy = {
       id: 'healthy',
@@ -297,7 +298,8 @@ describe('listThreads', () => {
         })
       if (path.endsWith('/history')) return Response.json({ historyId: oversized ? '20' : '10' })
       if (path.endsWith('/profile')) return Response.json({ historyId: oversized ? '20' : '10' })
-      if (path.endsWith('/threads'))
+      if (path.endsWith('/threads')) {
+        if (mailboxStatus !== 200) return Response.json({}, { status: mailboxStatus })
         return Response.json(
           url.searchParams.get('q')?.includes('filename:ics')
             ? { threads: [{ id: 'healthy' }] }
@@ -310,12 +312,15 @@ describe('listThreads', () => {
                   nextPageToken: 'next-page',
                 },
         )
+      }
       if (url.searchParams.get('format') === 'metadata') {
         if (path.endsWith('/threads/healthy')) return Response.json(healthy)
         if (path.endsWith('/threads/oversized')) {
           if (metadataStatus !== 200)
             return Response.json(
-              { error: { status: 'PERMISSION_DENIED' } },
+              metadataStatus === 403
+                ? { error: { details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } }
+                : {},
               { status: metadataStatus },
             )
           if (malformedMetadata !== undefined) return Response.json(malformedMetadata)
@@ -373,9 +378,19 @@ describe('listThreads', () => {
         })
       }
       malformedMetadata = undefined
+      metadataStatus = 503
+      expect(await data.threads(options, { refresh: true })).toMatchObject({
+        ...partial,
+        nextPageToken: 'next-page',
+      })
       metadataStatus = 403
-      await expect(data.threads(options, { refresh: true })).rejects.toMatchObject({ status: 403 })
+      await expect(data.threads(options, { refresh: true })).rejects.toMatchObject({
+        code: 'scope',
+      })
       metadataStatus = 200
+      mailboxStatus = 503
+      await expect(data.threads(options, { refresh: true })).rejects.toMatchObject({ status: 503 })
+      mailboxStatus = 200
       oversized = false
       const recovered = await data.threads(options, { refresh: true })
       expect(recovered).toMatchObject({ threads: partial.threads, nextPageToken: 'next-page' })
@@ -494,6 +509,56 @@ describe('listThreads', () => {
     expect(mimeProbe?.searchParams.get('fields')).toMatch(/^id,threadId,payload\(/)
     expect(mimeProbe?.searchParams.get('fields')).not.toMatch(/body|data|attachmentId/i)
   })
+
+  it.each(['another-message', undefined, 'requested-message'])(
+    'classifies the incoming message using only an exact headers-only reply (returned ID: %s)',
+    async (returnedId) => {
+      const threadId = 'one-thread'
+      const id = 'requested-message'
+      const { api } = gmail(
+        [{ id: threadId }],
+        {
+          [threadId]: {
+            id: threadId,
+            messages: [
+              {
+                id,
+                threadId,
+                labelIds: ['INBOX'],
+                payload: { mimeType: 'multipart/mixed', headers: [header('To', 'me@example.com')] },
+              },
+            ],
+          },
+        },
+        [],
+        undefined,
+        [],
+        {
+          [id]: {
+            id: returnedId,
+            threadId,
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [{ mimeType: 'text/calendar; method=REQUEST' }],
+            },
+          },
+        },
+      )
+      const exact = returnedId === id
+      expect((await listThreads(api, {}, ['me@example.com'])).threads).toMatchObject([
+        { id: threadId, automated: exact, automationUnknown: !exact, needsReply: true },
+      ])
+      const cache = openGoogleCache(':memory:')
+      try {
+        const data = createGoogleData({ api: () => api, cache })
+        expect((await data.threads({ needsReply: true })).threads.map(({ id }) => id)).toEqual(
+          exact ? [] : [threadId],
+        )
+      } finally {
+        cache.close()
+      }
+    },
+  )
 
   it.each(['depth', 'header count', 'header bytes'])(
     'reports exhausted MIME invitation evidence as unknown (%s)',
@@ -1318,6 +1383,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               headers: [
                 header('From', 'ada@syv.ai'),
@@ -1347,6 +1413,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000000000000',
             payload: {
               headers: [
@@ -1391,6 +1458,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000',
             payload: {
               headers: [header('Subject', 'The deck')],
@@ -1423,6 +1491,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               headers: [],
               mimeType: 'multipart/alternative',
@@ -1448,6 +1517,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               headers: [],
               mimeType: 'multipart/mixed',
@@ -1482,6 +1552,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               headers: [
                 header('To', 'jane@x.com'),
@@ -1505,7 +1576,7 @@ describe('readThread', () => {
 
   it('shows an untitled thread rather than an empty heading', async () => {
     const { api } = gmail([], {
-      t1: { id: 't1', messages: [{ id: 'm1', payload: { headers: [] } }] },
+      t1: { id: 't1', messages: [{ id: 'm1', threadId: 't1', payload: { headers: [] } }] },
     })
 
     expect((await readThread(api, 't1')).subject).toBe('(no subject)')
@@ -1524,6 +1595,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000000000000',
             payload: {
               headers: [header('Subject', 'Newsletter')],
@@ -1553,6 +1625,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: { headers: [], mimeType: 'text/plain', body: { data: b64('hi') } },
           },
         ],
@@ -1572,7 +1645,13 @@ describe('textOnly', () => {
     const { api } = gmail([], {
       t1: {
         id: 't1',
-        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+        messages: [
+          {
+            id: 'm1',
+            threadId: 't1',
+            payload: { mimeType: 'text/html', body: { data: b64(html) } },
+          },
+        ],
       },
     })
 
@@ -1588,7 +1667,13 @@ describe('textOnly', () => {
     const { api } = gmail([], {
       t1: {
         id: 't1',
-        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+        messages: [
+          {
+            id: 'm1',
+            threadId: 't1',
+            payload: { mimeType: 'text/html', body: { data: b64(html) } },
+          },
+        ],
       },
     })
     const thread = await readThread(api, 't1')
@@ -1608,9 +1693,11 @@ describe('textOnly', () => {
     const html = '<p>On Tuesday Ada wrote:</p><blockquote><p>Old quoted text.</p>'
     const { api } = gmail([], {
       t1: {
+        id: 't1',
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               mimeType: 'multipart/alternative',
               parts: [
@@ -1619,7 +1706,11 @@ describe('textOnly', () => {
               ],
             },
           },
-          { id: 'm2', payload: { mimeType: 'text/html', body: { data: b64(html) } } },
+          {
+            id: 'm2',
+            threadId: 't1',
+            payload: { mimeType: 'text/html', body: { data: b64(html) } },
+          },
         ],
       },
     })
@@ -1774,6 +1865,7 @@ describe('addresses', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000',
             payload: {
               mimeType: 'text/plain',
@@ -1799,6 +1891,7 @@ describe('addresses', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000',
             payload: {
               mimeType: 'text/plain',
@@ -2085,6 +2178,7 @@ describe('send, draft and reply', () => {
     messages: [
       {
         id: 'm1',
+        threadId: 't1',
         labelIds: ['INBOX'],
         internalDate: '1000',
         payload: {
@@ -2098,6 +2192,7 @@ describe('send, draft and reply', () => {
       },
       {
         id: 'm2',
+        threadId: 't1',
         labelIds: ['SENT'],
         internalDate: '2000',
         payload: {
@@ -2111,6 +2206,7 @@ describe('send, draft and reply', () => {
       },
       {
         id: 'm3',
+        threadId: 't1',
         labelIds: ['INBOX'],
         internalDate: '3000',
         payload: {
