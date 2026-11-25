@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { createVaultStorage } from '../app/vault-storage'
 import { createNodeFiles } from './native-files-node'
-import { createWorkingCopy, type NativeWorkingCopy } from '../app/working-copy'
+import {
+  createManagedWorkingCopy,
+  createWorkingCopy,
+  type ManagedWorkingCopyNative,
+  type NativeWorkingCopy,
+} from '../app/working-copy'
 
 function adapter(overrides: Partial<NativeWorkingCopy> = {}) {
   const calls: string[] = []
@@ -24,6 +29,50 @@ function adapter(overrides: Partial<NativeWorkingCopy> = {}) {
 }
 
 const vault = { remote: 'holi/vault', root: '/vault', branch: 'main' }
+
+describe('managed working copy transport', () => {
+  function transport(overrides: Partial<ManagedWorkingCopyNative> = {}) {
+    const base = adapter().native
+    const calls: Array<{ method: string; credential?: string }> = []
+    const native: ManagedWorkingCopyNative = {
+      ...base,
+      prepare: async () => ({ remote: vault.remote, branch: vault.branch, nativeId: 'checkout-1' }),
+      reopen: async () => ({ remote: vault.remote, branch: vault.branch, nativeId: 'checkout-1' }),
+      fetch: async (_root, _identity, credential) => { calls.push({ method: 'fetch', credential }) },
+      publish: async (_root, _identity, credential) => { calls.push({ method: 'publish', credential }) },
+      ...overrides,
+    }
+    return { native, calls }
+  }
+
+  it('acquires, reopens, and keeps credentials scoped to this vault operation', async () => {
+    const { native, calls } = transport()
+    const copy = createManagedWorkingCopy(native, vault, 'short-lived-token')
+    await copy.acquire()
+    await copy.reopen()
+    await copy.fetch()
+    await copy.publish()
+    expect(calls).toEqual([
+      { method: 'fetch', credential: 'short-lived-token' },
+      { method: 'publish', credential: 'short-lived-token' },
+    ])
+  })
+
+  it('rejects a durable checkout rebound to another branch and propagates native refusal', async () => {
+    const rebound = transport({ reopen: async () => ({ remote: vault.remote, branch: 'other', nativeId: 'checkout-1' }) })
+    await expect(createManagedWorkingCopy(rebound.native, vault, 'token').fetch()).rejects.toThrow()
+    const refused = transport({ fetch: async () => ({ code: 'auth', message: 'authentication refused' }) })
+    await expect(createManagedWorkingCopy(refused.native, vault, 'token').fetch()).rejects.toMatchObject({
+      refusal: { code: 'auth' },
+    })
+  })
+
+  it('rejects invalid vault credentials before native preparation', () => {
+    const { native } = transport()
+    expect(() => createManagedWorkingCopy(native, { ...vault, remote: 'not a remote' }, 'token')).toThrow()
+    expect(() => createManagedWorkingCopy(native, vault, '')).toThrow()
+  })
+})
 
 describe('working copy status', () => {
   it('filters local, secret, ignored and invalid candidates before authorization and status', async () => {
