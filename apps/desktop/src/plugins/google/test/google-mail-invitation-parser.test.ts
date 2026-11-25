@@ -155,7 +155,7 @@ it.each(['America/New_York', 'Asia/Tokyo'])(
   (tz) => {
     vi.stubEnv('TZ', tz)
     try {
-      for (const { fields, definition, recurrenceKind, occurrence, wire } of [
+      for (const { fields, definition, recurrenceKind, occurrence, wire, floating } of [
         {
           fields: 'DTSTART;VALUE=DATE:20260720\r\nRECURRENCE-ID;VALUE=DATE:20260713',
           recurrenceKind: 'date',
@@ -163,10 +163,11 @@ it.each(['America/New_York', 'Asia/Tokyo'])(
           wire: ['DTSTART;VALUE=DATE:20260720', 'RECURRENCE-ID;VALUE=DATE:20260713'],
         },
         {
-          fields: 'DTSTART:20260308T013000\r\nRECURRENCE-ID:20260301T013000\r\nDURATION:PT2H',
+          fields: 'DTSTART:20260308T023000\r\nRECURRENCE-ID:20260301T013000\r\nDURATION:PT1H',
           recurrenceKind: 'floating',
           occurrence: '2026-03-01T01:30:00',
-          wire: ['DTSTART:20260308T013000', 'RECURRENCE-ID:20260301T013000'],
+          floating: true,
+          wire: ['DTSTART:20260308T023000', 'RECURRENCE-ID:20260301T013000'],
         },
         {
           fields: 'DTSTART:20260308T063000Z\r\nRECURRENCE-ID:20260301T013000',
@@ -192,12 +193,16 @@ it.each(['America/New_York', 'Asia/Tokyo'])(
       ]) {
         const invite = parseMailInvitation('part', calendar(fields, { definition }), 'REQUEST')!
         expect(invite).toMatchObject({
-          details: { recurring: true, identity: { recurrenceId: occurrence } },
+          details: {
+            recurring: true,
+            floating: floating ?? false,
+            identity: { recurrenceId: occurrence },
+          },
           request: { recurrenceKind },
         })
-        if (fields.includes('DURATION')) {
+        if (floating) {
           expect(invite.details).toMatchObject({
-            start: '2026-03-08T01:30:00',
+            start: '2026-03-08T02:30:00',
             end: '2026-03-08T03:30:00',
           })
         }
@@ -269,42 +274,58 @@ it('separates the parent message and revision from normalized invitation materia
   expect(cancelled.details.identity.materialKey).not.toBe(first.details.identity.materialKey)
 })
 
-it('preserves normalized attendee response evidence and identifies reconfirmation changes', () => {
+it('preserves normalized attendee response evidence without changing event material', () => {
   const source = calendar(
     [
       'DTSTART:20260720T150000Z',
-      'ATTENDEE;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:Accepted@example.net',
-      'ATTENDEE;RSVP=true;PARTSTAT=tentative:mailto:tentative@example.net',
-      'ATTENDEE;PARTSTAT=DECLINED:mailto:declined@example.net',
+      'ATTENDEE;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:Other@example.net',
     ].join('\r\n'),
   )
   const initial = parseMailInvitation('initial', source, 'REQUEST')!
   expect(initial.request?.attendeeStates).toEqual({
     [attendee]: { responseStatus: 'needsAction', rsvp: null },
-    'accepted@example.net': { responseStatus: 'accepted', rsvp: false },
-    'tentative@example.net': { responseStatus: 'tentative', rsvp: true },
-    'declined@example.net': { responseStatus: 'declined', rsvp: null },
+    'other@example.net': { responseStatus: 'accepted', rsvp: false },
   })
   expect(initial.details.identity.materialKey).toEqual(expect.any(String))
-  const redelivery = source
-    .replace('20260601T150000Z', '20260602T150000Z')
-    .replace(
+  const redelivery = source.replace('20260601T150000Z', '20260602T150000Z')
+  const canonical = parseMailInvitation(
+    'redelivery',
+    redelivery.replace(
       `ATTENDEE:mailto:${attendee}`,
       `ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:${attendee}\r\nATTENDEE:MAILTO:${attendee.toUpperCase()}`,
-    )
-  const canonical = parseMailInvitation('redelivery', redelivery, undefined)!
+    ),
+    undefined,
+  )!
   expect(canonical.request?.attendeeStates).toEqual(initial.request?.attendeeStates)
   expect(canonical.details.identity.materialKey).toBe(initial.details.identity.materialKey)
 
-  for (const changed of [
-    source.replace('PARTSTAT=ACCEPTED', 'PARTSTAT=NEEDS-ACTION'),
-    source.replace('RSVP=FALSE', 'RSVP=TRUE'),
-    source.replace(';RSVP=FALSE', ''),
-  ]) {
-    const reset = parseMailInvitation('reset', changed, 'REQUEST')!
-    expect(reset.request).not.toBeNull()
-    expect(reset.details.identity.materialKey).not.toBe(initial.details.identity.materialKey)
+  for (const [parameters, state] of [
+    ['PARTSTAT=tentative;RSVP=FALSE', { responseStatus: 'tentative', rsvp: false }],
+    ['PARTSTAT=ACCEPTED;RSVP=true', { responseStatus: 'accepted', rsvp: true }],
+    ['PARTSTAT=DECLINED', { responseStatus: 'declined', rsvp: null }],
+  ] as const) {
+    const reset = parseMailInvitation(
+      'other-guest-update',
+      redelivery.replace('PARTSTAT=ACCEPTED;RSVP=FALSE', parameters),
+      'REQUEST',
+    )!
+    expect(reset.details.identity.materialKey).toBe(initial.details.identity.materialKey)
+    expect(reset.request?.attendeeStates[attendee]).toEqual(
+      initial.request?.attendeeStates[attendee],
+    )
+    expect(reset.request?.attendeeStates['other@example.net']).toEqual(state)
   }
+
+  const ownReset = parseMailInvitation(
+    'mailbox-reset',
+    redelivery.replace(`ATTENDEE:mailto:${attendee}`, `ATTENDEE;RSVP=TRUE:mailto:${attendee}`),
+    'REQUEST',
+  )!
+  expect(ownReset.details.identity.materialKey).toBe(initial.details.identity.materialKey)
+  expect(ownReset.request?.attendeeStates[attendee]).toEqual({
+    responseStatus: 'needsAction',
+    rsvp: true,
+  })
 })
 
 it.each([
@@ -322,7 +343,7 @@ it('distinguishes omitted overlap fields from explicit values even when the disp
   const implicit = parseMailInvitation('implicit', source, 'REQUEST')!
   expect(implicit).toMatchObject({
     details: { title: 'Meeting invitation', end: '2026-07-21', recurring: false },
-    request: { recurrenceKind: null },
+    request: { recurrenceKind: null, recurrence: [] },
   })
   expect(implicit.request?.explicitFields).toEqual({
     title: false,
@@ -331,6 +352,7 @@ it('distinguishes omitted overlap fields from explicit values even when the disp
     location: false,
     conferenceUrl: false,
     htmlLink: false,
+    recurrence: false,
   })
   const explicit = parseMailInvitation(
     'explicit',
@@ -355,7 +377,7 @@ it('distinguishes omitted overlap fields from explicit values even when the disp
       recurring: true,
       identity: { recurrenceId: null },
     },
-    request: { recurrenceKind: null },
+    request: { recurrenceKind: null, recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] },
   })
   expect(explicit.request?.explicitFields).toEqual({
     title: true,
@@ -364,6 +386,7 @@ it('distinguishes omitted overlap fields from explicit values even when the disp
     location: true,
     conferenceUrl: true,
     htmlLink: true,
+    recurrence: true,
   })
   const withDtend = parseMailInvitation(
     'dtend',
@@ -374,6 +397,105 @@ it('distinguishes omitted overlap fields from explicit values even when the disp
   expect(withDtend.details.end).toBe(implicit.details.end)
   expect(withDtend.details.identity.materialKey).not.toBe(implicit.details.identity.materialKey)
 })
+
+it('preserves organizer and revision evidence for cancellations that omit DTSTART', () => {
+  const master = parseMailInvitation('cancel', calendar('', { method: 'CANCEL' }), 'CANCEL')
+  expect(master).toMatchObject({
+    method: 'CANCEL',
+    recurrenceRange: null,
+    request: null,
+    details: {
+      cancelled: true,
+      start: null,
+      organizer: { email: organizer },
+      identity: {
+        uid: 'room-booking@example.net',
+        sequence: 3,
+        dtstamp: '2026-06-01T15:00:00.000Z',
+        recurrenceId: null,
+        materialKey: expect.any(String),
+      },
+    },
+  })
+
+  const occurrence = 'RECURRENCE-ID;VALUE=DATE:20260720'
+  const single = parseMailInvitation('cancel', calendar(occurrence, { method: 'CANCEL' }), 'CANCEL')
+  const ranged = parseMailInvitation(
+    'cancel',
+    calendar(occurrence.replace(';VALUE', ';RANGE=thisandfuture;VALUE'), { method: 'CANCEL' }),
+    'CANCEL',
+  )
+  expect(single?.recurrenceRange).toBeNull()
+  expect(ranged).toMatchObject({
+    method: 'CANCEL',
+    recurrenceRange: 'THISANDFUTURE',
+    request: null,
+    details: {
+      cancelled: true,
+      identity: { recurrenceId: '2026-07-20', materialKey: expect.any(String) },
+    },
+  })
+  expect(ranged?.details.identity.materialKey).not.toBe(single?.details.identity.materialKey)
+
+  for (const range of ['THISANDPRIOR', 'THISANDFUTURE;RANGE=THISANDFUTURE']) {
+    const invalid = calendar(occurrence.replace(';VALUE', `;RANGE=${range};VALUE`), {
+      method: 'CANCEL',
+    })
+    expect(parseMailInvitation('cancel', invalid, 'CANCEL')).toMatchObject({
+      request: null,
+      details: { identity: { materialKey: null }, unavailableReason: expect.any(String) },
+    })
+  }
+})
+
+it('canonicalizes explicit recurrence without expanding rules or guessing timezones', () => {
+  const fields = [
+    'DTSTART:20260720T150000Z',
+    'RRULE:FREQ=WEEKLY;COUNT=1000000;BYDAY=WE,MO',
+    'RDATE;TZID=America/New_York:20260722T110000,20260721T110000',
+    'EXDATE:20260727T150000Z',
+  ] as const
+  const original = parseMailInvitation('series', calendar(fields.join('\r\n')), 'REQUEST')!
+  const equivalent = parseMailInvitation(
+    'redelivery',
+    calendar(
+      [
+        fields[0],
+        fields[3],
+        'rdate;TZID="America/New_York":20260721T110000',
+        'rdate;TZID=America/New_York:20260722T110000',
+        'rrule:count=1000000;byday=mo,we;freq=weekly;interval=1;wkst=MO',
+      ].join('\r\n'),
+    ),
+    'REQUEST',
+  )!
+  expect(original.request?.recurrence).toEqual([
+    'EXDATE:20260727T150000Z',
+    'RDATE;TZID=America/New_York:20260721T110000,20260722T110000',
+    'RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=1000000',
+  ])
+  expect(equivalent.request?.recurrence).toEqual(original.request?.recurrence)
+  expect(equivalent.details.identity.materialKey).toBe(original.details.identity.materialKey)
+
+  const changed = parseMailInvitation(
+    'edited',
+    calendar(fields.join('\r\n').replace('20260727', '20260728')),
+    'REQUEST',
+  )!
+  expect(changed.details.identity.materialKey).not.toBe(original.details.identity.materialKey)
+})
+
+it.each(['RRULE:FREQ=WEEKLY;COUNT=3extra', 'EXDATE:20260727T150000Zextra'])(
+  'does not turn a malformed recurrence line into valid overlap evidence: %s',
+  (recurrence) => {
+    expect(
+      parseMailInvitation('part', calendar(`DTSTART:20260720T150000Z\r\n${recurrence}`), 'REQUEST'),
+    ).toMatchObject({
+      request: null,
+      details: { identity: { materialKey: null } },
+    })
+  },
+)
 
 it('does not treat malformed revision fields as valid or corroborating evidence', () => {
   const identity = parseMailInvitation('part', calendar(), 'REQUEST')!.details.identity
