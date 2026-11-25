@@ -708,6 +708,41 @@ it('keeps attendee removals restricted to explicitly named mailboxes', () => {
   }
 })
 
+it.each([null, 'STATUS;VALUE=TEXT:CONFIRMED', 'STATUS:TENTATIVE'])(
+  'allows an absent or supported typed event status in a REQUEST (%j)',
+  (status) => {
+    const fields = ['DTSTART:20260720T150000Z', status].filter(Boolean).join('\r\n')
+    expect(parseMailInvitation('part', calendar(fields), 'REQUEST')).toMatchObject({
+      method: 'REQUEST',
+      request: expect.any(Object),
+      details: { unavailableReason: null },
+    })
+  },
+)
+
+it.each([
+  'STATUS;VALUE=DATE:CONFIRMED',
+  'STATUS;VALUE=TEXT;VALUE=TEXT:CONFIRMED',
+  'STATUS:CONFIRMED\r\nSTATUS:CONFIRMED',
+])('retains the REQUEST identity when the STATUS property is malformed (%j)', (status) => {
+  expect(
+    parseMailInvitation('part', calendar(`DTSTART:20260720T150000Z\r\n${status}`), 'REQUEST'),
+  ).toMatchObject({
+    method: 'REQUEST',
+    request: null,
+    details: {
+      identity: {
+        uid: 'room-booking@example.net',
+        sequence: 3,
+        dtstamp: '2026-06-01T15:00:00.000Z',
+        materialKey: expect.any(String),
+      },
+      organizer: { email: organizer },
+      unavailableReason: expect.stringMatching(/status/i),
+    },
+  })
+})
+
 it.each(['CONFIRMED', 'TENTATIVE', '', ' CANCELLED ', 'CANCELLED\r\nSTATUS:CANCELLED'])(
   'does not report a cancellation or attendee removal for invalid explicit STATUS %j',
   (status) => {

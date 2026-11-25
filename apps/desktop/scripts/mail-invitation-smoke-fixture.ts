@@ -373,7 +373,8 @@ export function createInvitationTransport() {
         if (resource === `${people}/people/me/connections`)
           return Response.json({ connections: [] })
         if (resource === `${people}/otherContacts`) return Response.json({ otherContacts: [] })
-        if (resource === `${calendar}/users/me/calendarList`) {
+        const calendarList = `${calendar}/users/me/calendarList`
+        if (resource === calendarList || resource.startsWith(`${calendarList}/`)) {
           const calendars: CalendarListEntry[] = [
             {
               kind: 'calendar#calendarListEntry',
@@ -391,7 +392,10 @@ export function createInvitationTransport() {
               summary: 'Shared Calendar',
               accessRole: 'reader',
             })
-          return calendarItems('calendar#calendarList', calendars)
+          if (resource === calendarList) return calendarItems('calendar#calendarList', calendars)
+          const id = decodeURIComponent(resource.slice(calendarList.length + 1))
+          const entry = calendars.find((row) => (id === 'primary' ? row.primary : row.id === id))
+          return entry ? Response.json(entry) : notFound()
         }
         if (
           resource === primary ||

@@ -20,6 +20,8 @@ import {
 import { sameInvitation, scopeKey } from './mail-invitation-revisions'
 import {
   knownCalendarLocators,
+  materialSourceForAttempt,
+  retainMaterialSources,
   type createMailInvitationStore,
   type InvitationAttempt,
 } from './mail-invitation-store'
@@ -115,8 +117,10 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       const key = JSON.stringify([accountSub, scopeKey(identity)])
       const scan = createCalendarScan()
       const readOnly = readTarget(target)
-      const selected = async (excludeAttempt?: string) =>
-        (await readFacts(readOnly, scan, identity, excludeAttempt)).cards[0]
+      const selected = async (
+        excludeAttempt?: string,
+        sources?: InvitationFacts['visibleMaterialSources'],
+      ) => (await readFacts(readOnly, scan, identity, excludeAttempt, sources)).cards[0]
       if (busy.has(key))
         throw new CapabilityError('CONFLICT', 'An invitation response is already in progress')
       busy.add(key)
@@ -205,11 +209,11 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         try {
           await store.addAttempt(attempt)
           let absentTargets: Set<string> = new Set()
-          let blocksReservation = current.blocksReservation
+          let { blocksReservation, visibleMaterialSources } = current
           const validate = async () => {
             // Runs after the write token has been obtained. Recheck the channel,
             // exact Calendar target/ETag or proven absence, and the prior answer.
-            const newest = await selected(id)
+            const newest = await selected(id, visibleMaterialSources)
             if (
               !newest ||
               !sameInvitation(newest.source.details.identity, identity) ||
@@ -235,12 +239,13 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               throw conflict()
             absentTargets = newest.absentTargets
             blocksReservation = newest.blocksReservation
+            visibleMaterialSources = [...visibleMaterialSources, ...newest.visibleMaterialSources]
           }
           const reserveDispatch = async () => {
             await store.update((journal) => {
               if (
                 !journal.attempts.some((entry) => entry.id === id && entry.state === 'prepared') ||
-                journal.attempts.some(blocksReservation)
+                blocksReservation(journal)
               )
                 throw conflict()
               // A concurrent reader can discover another copy after preflight.
@@ -252,12 +257,15 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
                   ].some((locator) => !absentTargets.has(locator)))
               )
                 throw conflict()
-              return {
-                ...journal,
-                attempts: journal.attempts.map((entry) =>
-                  entry.id === id ? { ...entry, state: 'unresolved' } : entry,
-                ),
-              }
+              return retainMaterialSources(
+                {
+                  ...journal,
+                  attempts: journal.attempts.map((entry) =>
+                    entry.id === id ? { ...entry, state: 'unresolved' } : entry,
+                  ),
+                },
+                [...visibleMaterialSources, materialSourceForAttempt(attempt, email)],
+              )
             })
           }
           const gate: GoogleDispatchGate = { validate, reserveDispatch }

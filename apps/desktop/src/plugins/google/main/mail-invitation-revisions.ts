@@ -496,7 +496,9 @@ function selectScope(
   const provenParents = new Set<string>()
   const possibleParents = new Set<string>()
   for (const candidate of lineage) {
-    if (candidate.embedded) continue // The containing message is not an occurrence RSVP parent.
+    // The containing message is not an occurrence RSVP parent, and a
+    // malformed REQUEST can order revisions but cannot anchor a reply.
+    if (candidate.embedded || !candidate.value.request) continue
     // Ownership disputes cannot erase the link from known REQUEST material
     // to a claimed parent. Such a link can withhold, but never confirm, an answer.
     for (const claim of candidate.mail.claims) possibleParents.add(claim)
