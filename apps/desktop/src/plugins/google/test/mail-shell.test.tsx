@@ -3,12 +3,13 @@
  * capabilities: what it asks Gmail for, what it shows, and that HTML bodies
  * still go through the sandboxed frame.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { atom, getDefaultStore } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
+import type { googleCap } from '../renderer/google-cap'
 import { mailCatchUpByVaultAtom } from '../renderer/mail/mail-catch-up'
 import { ConnectionsSection } from '../renderer/connections-section'
 import { resetMailImagesForTests } from '../renderer/mail-images'
@@ -20,6 +21,8 @@ const draftsMock = vi.fn()
 const saveDraftMock = vi.fn()
 const draftBodyMock = vi.fn()
 const markReadMock = vi.fn()
+const invitationMock = vi.fn<typeof googleCap.mailInvitation>()
+const respondMock = vi.fn<typeof googleCap.respondToMailInvitation>()
 const starMock = vi.fn()
 const mailMarkersMock = vi.fn()
 const setMailMarkerMock = vi.fn()
@@ -50,7 +53,7 @@ vi.mock('@/plugin-api', async (importOriginal) => {
   }
 })
 
-const google: Record<string, (params: unknown) => unknown> = {
+const google: Record<string, (params: unknown, remote: string) => unknown> = {
   status: () => ({
     account:
       accountSub === ''
@@ -82,6 +85,16 @@ const google: Record<string, (params: unknown) => unknown> = {
   contacts: () => [],
   sendAs: () => ['ada@syv.ai'],
   meeting: () => null,
+  mailInvitation: (p, remote) => {
+    const target = p as Parameters<typeof googleCap.mailInvitation>[1]
+    if (target.expectedAccountSub !== accountSub) throw new Error('Google account changed')
+    return invitationMock(remote, target)
+  },
+  respondToMailInvitation: (p, remote) => {
+    const target = p as Parameters<typeof googleCap.respondToMailInvitation>[1]
+    if (target.expectedAccountSub !== accountSub) throw new Error('Google account changed')
+    return respondMock(remote, target)
+  },
   'mark-read': (p) => markReadMock(p),
   star: (p) => starMock(p),
   mailMarkerAnnotations: (p) => mailMarkersMock(p),
@@ -117,7 +130,7 @@ vi.mock('@/lib/trpc', () => ({
           if (name === 'agent.stop') return agentStopMock(remote, params)
           const verb = google[name.replace(/^google\./, '')]
           if (verb === undefined) throw new Error(`unexpected ${name}`)
-          return verb(params)
+          return verb(params, remote)
         },
       },
     },
@@ -196,6 +209,8 @@ beforeEach(() => {
     foreign: false,
   })
   markReadMock.mockReset().mockResolvedValue({ ok: true })
+  invitationMock.mockReset().mockResolvedValue(null)
+  respondMock.mockReset().mockRejectedValue(new Error('Unexpected RSVP'))
   starMock.mockReset().mockResolvedValue({ ok: true })
   mailMarkersMock.mockReset().mockResolvedValue({})
   setMailMarkerMock.mockReset().mockResolvedValue({ ok: true })
@@ -402,6 +417,153 @@ test('opens a thread: marks it read, renders HTML in the sandboxed frame', async
   expect(attachment.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   await user.click(attachment)
   expect(openExternal).toHaveBeenCalledWith('https://mail.google.com/x')
+})
+
+type Invitation = NonNullable<Awaited<ReturnType<typeof googleCap.mailInvitation>>>
+type Response = Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>
+const invitation: Invitation = {
+  identity: { uid: 'q2-review', messageId: 'm2', sequence: 3, recurrenceId: '2026-08-18' },
+  title: 'Budget workshop',
+  start: '2026-08-18',
+  end: '2026-08-20',
+  allDay: true,
+  organizer: { name: 'Jane Doe', email: 'jane@example.com' },
+  location: 'Workshop',
+  conferenceUrl: 'https://meet.google.com/abc-defg-hij',
+  htmlLink: null,
+  cancelled: false,
+  responseStatus: 'needsAction',
+  canRespond: true,
+  unavailableReason: null,
+  responsePending: false,
+}
+
+test.each([
+  ['Accept', 'accepted', 'Accepted'],
+  ['Maybe', 'tentative', 'Tentative'],
+  ['Decline', 'declined', 'Declined'],
+] as const)(
+  'shows the invite and records %s only after Google confirms it',
+  async (label, answer, confirmed) => {
+    searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+    invitationMock.mockResolvedValue(invitation)
+    let finish!: (result: Response) => void
+    respondMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+    const user = userEvent.setup()
+    render(<MailShell />)
+    await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+    const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+    expect(await region.findByRole('heading', { name: invitation.title })).toBeInTheDocument()
+    const date = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeZone: 'UTC' })
+    expect(
+      region.getByText(
+        `${date.format(new Date('2026-08-18'))} – ${date.format(new Date('2026-08-19'))} · All day`,
+      ),
+    ).toBeInTheDocument()
+    expect(region.getByText('Jane Doe <jane@example.com>')).toBeInTheDocument()
+    expect(region.getByText('Workshop')).toBeInTheDocument()
+    expect(region.getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+
+    const button = region.getByRole('button', { name: label })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    for (const action of ['Accept', 'Maybe', 'Decline']) {
+      expect(region.getByRole('button', { name: action })).toBeDisabled()
+    }
+    expect(region.queryByText(`Response: ${confirmed}`)).not.toBeInTheDocument()
+    expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
+      threadId: 't1',
+      expectedAccountSub: 'a',
+      identity: invitation.identity,
+      answer,
+    })
+    await act(async () =>
+      finish({
+        outcome: 'sent',
+        channel: 'calendar',
+        answer,
+        invitation: { ...invitation, responseStatus: answer },
+        refreshPending: false,
+      }),
+    )
+    expect(await region.findByText(`Response: ${confirmed}`)).toBeInTheDocument()
+    expect(button).toBeDisabled()
+  },
+)
+
+test('reports Google acceptance separately from a failed status refresh and Retry only reads', async () => {
+  searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValueOnce(invitation)
+  invitationMock.mockRejectedValueOnce(new Error('Refresh unavailable'))
+  invitationMock.mockResolvedValue({ ...invitation, responseStatus: 'accepted' })
+  respondMock.mockResolvedValue({
+    outcome: 'sent',
+    channel: 'gmail',
+    answer: 'accepted',
+    invitation: null,
+    refreshPending: true,
+  })
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  await user.click(await region.findByRole('button', { name: 'Accept' }))
+  expect(await region.findByText(/Google accepted.*not been refreshed/i)).toBeInTheDocument()
+  expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByRole('alert')).toHaveTextContent('Refresh unavailable')
+  expect(region.getByRole('button', { name: 'Decline' })).toBeDisabled()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('Response: Accepted')).toBeInTheDocument()
+  expect(respondMock).toHaveBeenCalledTimes(1)
+})
+
+test('a response from a previous account opening cannot change the visible invite after A–B–A', async () => {
+  searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValueOnce(invitation)
+  invitationMock.mockImplementation(async (_remote, target) =>
+    target.expectedAccountSub === 'b'
+      ? {
+          ...invitation,
+          title: 'Another mailbox’s workshop',
+          identity: { ...invitation.identity, messageId: 'm-other' },
+        }
+      : { ...invitation, title: 'Rescheduled workshop', responseStatus: 'accepted' },
+  )
+  let finish!: (result: Response) => void
+  respondMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  await user.click(await screen.findByRole('button', { name: 'Decline' }))
+  expect(screen.getByRole('button', { name: 'Maybe' })).toBeDisabled()
+  for (const [email, title] of [
+    ['ada@home.test', 'Another mailbox’s workshop'],
+    ['ada@syv.ai', 'Rescheduled workshop'],
+  ] as const) {
+    await user.click(screen.getByRole('button', { name: /Google account/ }))
+    await user.click(await screen.findByRole('menuitem', { name: email }))
+    await screen.findByRole('button', { name: `Google account ${email}` })
+    await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+    expect(await screen.findByRole('heading', { name: title })).toBeInTheDocument()
+  }
+  await act(async () =>
+    finish({
+      outcome: 'sent',
+      channel: 'calendar',
+      answer: 'declined',
+      refreshPending: false,
+      invitation: { ...invitation, responseStatus: 'declined' },
+    }),
+  )
+  expect(screen.getByText('Response: Accepted')).toBeInTheDocument()
+  expect(screen.queryByText('Response: Declined')).not.toBeInTheDocument()
+  expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
+    threadId: 't1',
+    expectedAccountSub: 'a',
+    identity: invitation.identity,
+    answer: 'declined',
+  })
 })
 
 test('the Unread tab asks Gmail for unread threads only', async () => {

@@ -28,7 +28,6 @@ export type CategoryCounts = Awaited<ReturnType<typeof googleCap.categoryCounts>
 export type MailCategory = NonNullable<
   NonNullable<Parameters<typeof googleCap.search>[1]>['category']
 >
-export type ThreadMeeting = NonNullable<Awaited<ReturnType<typeof googleCap.meeting>>>
 export type { MailAddress }
 
 export type ListState =
@@ -94,9 +93,7 @@ export function useMail(account: string | null) {
   const [writeError, setWriteError] = useState<string | null>(null)
   const [reader, setReader] = useState<ReaderState>({ kind: 'idle' })
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
-  /** Keyed by the thread it was asked about, so a late answer never gives the
-   *  next thread the previous one's Join button. */
-  const [meeting, setMeeting] = useState<(ThreadMeeting & { threadId: string }) | null>(null)
+  const threadGeneration = useRef(0)
   /** Bumped by everything that replaces the list, so a refused write knows
    *  whether its snapshot is still a valid undo. */
   const listGeneration = useRef(0)
@@ -273,9 +270,9 @@ export function useMail(account: string | null) {
     reader.kind === 'idle' ? null : reader.kind === 'ready' ? reader.thread.id : reader.id
 
   const closeThread = () => {
+    threadGeneration.current++
     setReader({ kind: 'idle' })
     setOpenSummary(null)
-    setMeeting(null)
   }
 
   /**
@@ -311,41 +308,24 @@ export function useMail(account: string | null) {
   }
 
   const fetchThread = (id: string) => {
+    const generation = ++threadGeneration.current
     setReader({ kind: 'loading', id })
     void call((r) => googleCap.thread(r, { id }))
-      .then((thread) =>
-        setReader((current) =>
-          current.kind === 'loading' && current.id === id ? { kind: 'ready', thread } : current,
-        ),
-      )
-      .catch((err: unknown) =>
-        setReader((current) =>
-          current.kind === 'loading' && current.id === id
-            ? {
-                kind: 'error',
-                id,
-                message: messageOf(err, 'Could not load this thread.'),
-              }
-            : current,
-        ),
-      )
+      .then((thread) => {
+        if (threadGeneration.current === generation) setReader({ kind: 'ready', thread })
+      })
+      .catch((err: unknown) => {
+        if (threadGeneration.current === generation) {
+          setReader({ kind: 'error', id, message: messageOf(err, 'Could not load this thread.') })
+        }
+      })
   }
 
   /** Open a thread, keeping its row: flags such as the unsubscribe link come
    *  from the list and are not refetched. */
   const openThread = (thread: ThreadSummary) => {
     setOpenSummary(thread)
-    setMeeting(null)
     fetchThread(thread.id)
-    // Only for a thread the list says holds an invite: a second request per
-    // open otherwise. A failure is swallowed; the row already says "meeting".
-    if (thread.hasInvite) {
-      void call((r) => googleCap.meeting(r, { id: thread.id }))
-        .then((found) => {
-          if (found !== null) setMeeting({ ...found, threadId: thread.id })
-        })
-        .catch(() => undefined)
-    }
     if (thread.unread) void setRead(thread.id, true)
   }
 
@@ -419,7 +399,7 @@ export function useMail(account: string | null) {
     reader,
     openId,
     openRow,
-    meeting: meeting !== null && meeting.threadId === openId ? meeting : null,
+    threadGeneration: threadGeneration.current,
     openThread,
     closeThread,
     reloadThread,

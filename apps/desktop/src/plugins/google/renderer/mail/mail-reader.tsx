@@ -26,6 +26,7 @@ import { messageStamp } from '../mail-stamp'
 import type { MailAddress, MailAttachment, ThreadMessage } from '../mail-types'
 import { SandboxedHtml } from '../sandboxed-html'
 import { fileSize, initialsOf } from './data'
+import { MailInvitation } from './mail-invitation'
 import type { MailState } from './use-mail'
 import { openExternal } from '@/plugin-api'
 
@@ -118,6 +119,13 @@ export function MailReader({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="flex flex-col px-4 pb-8">
+        {visible && (
+          <MailInvitation
+            thread={thread}
+            hasInvite={mail.openRow?.hasInvite === true}
+            generation={mail.threadGeneration}
+          />
+        )}
         {thread.messages.map((message, index) => (
           <MessageBlock
             key={message.id}
