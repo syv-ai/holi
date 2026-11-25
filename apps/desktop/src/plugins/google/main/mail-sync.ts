@@ -194,10 +194,10 @@ export async function syncThreads(
     knownAddresses,
   )
   const refreshed = [...refetched.threads, ...queryMatches.threads]
-  const available = new Set(refreshed.map((thread) => thread.id))
-  // A deleted message can be a draft, not a conversation. A thread disappears
-  // only when refetch or the authoritative list query confirms it is gone.
-  for (const id of deleted) if (!available.has(id)) gone.add(id)
+  const outcomes = [...queryMatches.outcomes, ...refetched.outcomes]
+  // A deletion can race any changed-row read, not just messagesDeleted. Only
+  // the provider's 404 proves the entire conversation was removed.
+  for (const { id, kind } of outcomes) if (kind === 'not-found') gone.add(id)
   const unreadableThreadIds = [
     ...queryMatches.unreadableThreadIds,
     ...refetched.unreadableThreadIds,
@@ -213,7 +213,7 @@ export async function syncThreads(
     cache,
     pendingKey,
     { threads, unreadableThreadIds, nextPageToken: null, syncedAt: new Date().toISOString() },
-    [...queryMatches.outcomes, ...refetched.outcomes],
+    outcomes,
   )
 }
 
@@ -224,6 +224,10 @@ function recordReads(
   outcomes: ThreadMetadataOutcome[],
 ): MailPage {
   const { unreadableThreadIds: _, ...snapshot } = page
+  // A 404 from threads.get invalidates every cached list for this account,
+  // unlike a query departure. The cache stores summaries, not reader bodies
+  // or vault annotations.
+  for (const { id, kind } of outcomes) if (kind === 'not-found') cache.dropThread(id)
   const failed = outcomes.filter(({ kind }) => kind === 'unreadable').map(({ id }) => id)
   // A failed read stays pending but moves to the end so repeated failures
   // cannot starve the rest of the bounded off-page probe queue.

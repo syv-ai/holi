@@ -84,7 +84,13 @@ async function invitationPages<T>(
 }
 
 function instant(value: string): number {
-  return /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? Date.parse(value) : NaN
+  // Do not let Date.parse roll over invalid dates or truncate precision that
+  // could distinguish two revisions or invert an interval.
+  const rfc3339 =
+    /^(\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3}0*)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i.exec(
+      value,
+    )
+  return rfc3339 && value === rfc3339[0] && date(rfc3339[1]) ? Date.parse(value) : NaN
 }
 
 function date(value: unknown): value is string {
@@ -99,12 +105,33 @@ function date(value: unknown): value is string {
 function validTime(value: RawEvent['start']): boolean {
   return Boolean(
     value &&
-    (value.timeZone === undefined || typeof value.timeZone === 'string') &&
+    (value.timeZone === undefined ||
+      (typeof value.timeZone === 'string' && canonicalIanaZone(value.timeZone) !== null)) &&
     ((date(value.date) && value.dateTime === undefined) ||
       (value.date === undefined &&
         typeof value.dateTime === 'string' &&
         Number.isFinite(instant(value.dateTime)))),
   )
+}
+
+function coherentEventTimes(event: RawEvent): boolean {
+  const { start, end, originalStartTime, endTimeUnspecified } = event
+  // Google can emit a placeholder end even when the end time is unspecified.
+  if (!start || !end || (endTimeUnspecified !== undefined && endTimeUnspecified !== false))
+    return false
+  const allDay = start.date !== undefined
+  if (originalStartTime && (originalStartTime.date !== undefined) !== allDay) return false
+  // Calendar's DATE end is exclusive. A timed event can have zero duration.
+  return start.date !== undefined
+    ? end.date !== undefined && end.date > start.date
+    : start.dateTime !== undefined &&
+        end.dateTime !== undefined &&
+        instant(end.dateTime) >= instant(start.dateTime)
+}
+
+/** If-Match must bind to exactly one strong validator, never a wildcard or list. */
+function strongEventEtag(value: string | undefined): string | null {
+  return value?.endsWith('"') && /^"[\x21\x23-\x7e\x80-\xff]*"$/.test(value) ? value : null
 }
 
 function sameOccurrence(event: RawEvent, recurrenceId: string): boolean {
@@ -420,6 +447,8 @@ function invitationCopy(
   const start = event.start?.date ?? event.start?.dateTime
   const end = event.end?.date ?? event.end?.dateTime
   const allDay = event.start?.date !== undefined
+  if (!cancelled && (!coherentEventTimes(event) || allDay !== details.allDay))
+    return blocked('Calendar could not verify the start and end of this event')
   const { url: conferenceUrl, source: conferenceLinkSource } = mailConference(event)
   const calendarConference = httpsLink(structuredConference(event)) ?? conferenceUrl
   const htmlLink = googleEventUrl(event.htmlLink)
@@ -448,7 +477,7 @@ function invitationCopy(
     return blocked('The Calendar details do not match this revision of the invitation')
   if (joinOnly && (!start || !end || !explicitFields.start))
     return blocked('Calendar could not verify the time of this meeting')
-  const etag = event.etag || null
+  const etag = strongEventEtag(event.etag)
   const reason = cancelled
     ? 'This Calendar event was cancelled'
     : joinOnly

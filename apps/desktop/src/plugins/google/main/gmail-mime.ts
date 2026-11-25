@@ -1,3 +1,5 @@
+import { parseHeaderParameters } from './gmail-headers'
+
 interface RawHeader {
   name?: string
   value?: string
@@ -9,6 +11,11 @@ export interface RawPart {
   headers?: RawHeader[]
   body?: { data?: string; size?: number; attachmentId?: string }
   parts?: RawPart[]
+}
+
+export function headerOf(part: RawPart | undefined, name: string): string | null {
+  const found = part?.headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())
+  return found?.value ?? null
 }
 
 export type MimeLocation = {
@@ -93,4 +100,26 @@ export function createMimeWalk(maxDepth = 16) {
     if (payload === undefined) bounded(--nodes >= 0)
     else visit(payload, 0, { path: '0', alternatives: [] })
   }
+}
+
+// A missing MIME method leaves the iCalendar METHOD authoritative. A malformed
+// or contradictory declaration does not, even when another part looks usable.
+export function calendarMimeMethod(part: RawPart): string | undefined | null {
+  const headers = (part.headers ?? []).filter(({ name }) => name?.toLowerCase() === 'content-type')
+  if (headers.length > 1 || (headers.length && typeof headers[0]?.value !== 'string')) return null
+  let method: string | undefined
+  for (const value of [headers[0]?.value, part.mimeType]) {
+    if (value === undefined) continue
+    const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
+    if (/[\r\n\x00]/.test(unfolded)) return null
+    const type = parseHeaderParameters(unfolded)
+    if (!type || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(type.main))
+      return null
+    const hint = type.parameters.get('method')?.toUpperCase()
+    if (hint !== undefined) {
+      if (!/^[A-Z][A-Z0-9-]*$/.test(hint) || (method !== undefined && method !== hint)) return null
+      method = hint
+    }
+  }
+  return method
 }

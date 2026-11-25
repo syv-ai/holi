@@ -183,10 +183,14 @@ function attendeeState(property: ICAL.Property): AttendeeState {
   return { responseStatus, rsvp: rsvp === undefined ? null : flag === 'TRUE' }
 }
 
+function calendarAddress(property: ICAL.Property | null | undefined): string | null {
+  return property?.type === 'cal-address' ? mailbox(property.getFirstValue()) : null
+}
+
 function attendeeEvidence(entry: ICAL.Component) {
   const states = new Map<string, AttendeeState>()
   for (const property of entry.getAllProperties('attendee')) {
-    const email = property.type === 'cal-address' ? mailbox(property.getFirstValue()) : null
+    const email = calendarAddress(property)
     if (!email) continue
     const state = attendeeState(property)
     const previous = states.get(email)
@@ -236,8 +240,7 @@ function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasException
   const conferenceUrl = providerLink ?? conferenceLinks[0] ?? null
   const conferenceLinkSource: LinkSource = providerLink ? 'provider' : conferenceUrl ? 'mail' : null
   const organizerProperty = single(entry, 'organizer')
-  const email =
-    organizerProperty?.type === 'cal-address' ? mailbox(organizerProperty.getFirstValue()) : null
+  const email = calendarAddress(organizerProperty)
   const name = text(organizerProperty?.getParameter('cn'))
   const organizer = email ? { email, ...(name ? { name } : {}) } : null
   const { attendees, attendeeStates } = attendeeEvidence(entry)
@@ -668,11 +671,11 @@ export function invitationReplyStatus(
       sent.uid !== identity.uid ||
       sent.sequence !== identity.sequence ||
       sent.recurrenceId !== identity.recurrenceId ||
-      mailbox(single(entry, 'organizer')?.getFirstValue()) !== organizer
+      calendarAddress(single(entry, 'organizer')) !== organizer
     )
       return null
     const attendees = entry.getAllProperties('attendee')
-    if (attendees.length !== 1 || mailbox(attendees[0]!.getFirstValue()) !== email) return null
+    if (attendees.length !== 1 || calendarAddress(attendees[0]) !== email) return null
     const partstat = methodOf(attendees[0]!.getParameter('partstat'))
     return (
       (['accepted', 'tentative', 'declined'] as const).find(

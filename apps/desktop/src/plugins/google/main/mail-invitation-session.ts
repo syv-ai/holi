@@ -18,7 +18,7 @@ import {
   fetchThreadCalendarPayloads,
   findSentCalendarReply,
   sendCalendarReply,
-} from './gmail'
+} from './gmail-invitation-transport'
 import { parseCalendarMail } from './invite'
 import {
   assertEquivalentAlternatives,

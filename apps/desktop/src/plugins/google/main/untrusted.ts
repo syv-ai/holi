@@ -20,7 +20,8 @@
  */
 import { fenceUntrusted } from '@holi/shared'
 import type { CalendarEvent } from './calendar'
-import type { AgentMailThread, MailAddress, MailThreadSummary } from './gmail'
+import type { AgentMailThread, MailThreadSummary } from './gmail'
+import type { MailAddress } from './gmail-headers'
 
 const mail = (text: string, from?: string): string =>
   fenceUntrusted(text, 'mail', from === undefined ? {} : { from })
