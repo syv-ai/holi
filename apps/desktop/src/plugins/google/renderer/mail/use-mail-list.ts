@@ -237,6 +237,11 @@ export function useMailList({
     }
   }, [owner, visible, account, loadCounts])
 
+  const invalidateRead = () => {
+    if (owner.pendingRead !== null && owner.list.kind !== 'ready') owner.reconcile = true
+    return ++owner.revision
+  }
+
   const write = async (
     mutate: () => Promise<unknown>,
     next: (threads: Summary[]) => Summary[] = (threads) => threads,
@@ -244,8 +249,7 @@ export function useMailList({
   ): Promise<boolean> => {
     if (!active()) return false
     const snapshot = owner.list
-    if (owner.pendingRead !== null && snapshot.kind !== 'ready') owner.reconcile = true
-    const revision = ++owner.revision
+    const revision = invalidateRead()
     owner.request++
     owner.more = false
     setLoadingMore(false)
@@ -327,7 +331,7 @@ export function useMailList({
     },
     markerChanged: (id: string, starred: boolean) => {
       if (!active()) return
-      owner.revision++
+      invalidateRead()
       if (owner.list.kind === 'ready')
         paint({
           ...owner.list,

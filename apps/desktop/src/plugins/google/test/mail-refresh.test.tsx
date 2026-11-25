@@ -559,6 +559,45 @@ test.each(['account', 'vault'] as const)(
   },
 )
 
+test('a queued marker intent replaces an invalidated search before its retired drain settles', async () => {
+  const { result } = await mount()
+  await act(async () => {
+    result.current.openThread(summary('existing'))
+  })
+  const retiredMarker = deferred<{ ok: true }>()
+  marker.mockReturnValueOnce(retiredMarker.promise)
+  await act(async () => {
+    result.current.activateMarker('existing', false)
+  })
+  const replacement = {
+    threads: [summary('search-match')],
+    nextPageToken: null,
+    syncedAt: '2026-11-25T00:00:00Z',
+  }
+  const pendingSearch = deferred<typeof replacement>()
+  search.mockReturnValueOnce(pendingSearch.promise).mockResolvedValue(replacement)
+  await act(async () => {
+    result.current.search('subject:queued')
+  })
+  await act(async () => {
+    result.current.activateMarker('existing', false)
+  })
+  expect(marker).toHaveBeenCalledTimes(1)
+  expect(search).toHaveBeenCalledTimes(2)
+  await act(async () => {
+    pendingSearch.resolve({ ...replacement, threads: [summary('retired-search')] })
+  })
+  expect(result.current.list.kind).toBe('ready')
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['search-match'])
+  expect(result.current.openId).toBe('existing')
+  annotations.mockResolvedValue({ existing: 'yellow-star' })
+  await act(async () => {
+    retiredMarker.resolve({ ok: true })
+  })
+  expect(result.current.searching).toBe(true)
+  expect(result.current.list.kind).toBe('ready')
+})
+
 test('pending marker writes suspend polling and manual refresh until persisted reconciliation', async () => {
   const { result } = await mount()
   const pending = deferred<{ ok: true }>()
