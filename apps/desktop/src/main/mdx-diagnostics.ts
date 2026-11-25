@@ -4,7 +4,7 @@ import { inspectMdxDependencies } from './mdx-dependencies'
 import type { MdxConsentStore } from './mdx-consent'
 import { createMdxConsentCoordinator } from './mdx-consent-coordination'
 import { canonicalGitHubRemote } from './mdx-trust'
-import { fetchMdxExternalData, MdxExternalDataError } from './mdx-external-data'
+import { fetchMdxExternalResourceData, MdxExternalDataError } from './mdx-external-data'
 import { realpathSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
@@ -65,7 +65,9 @@ export function createMdxDiagnostics(options: {
   rootCurrent?(identity: Identity, root: string): boolean
   external?: {
     consent: MdxConsentStore
-    fetch?: typeof fetchMdxExternalData
+    fetch?: (
+      input: Parameters<typeof fetchMdxExternalResourceData>[0],
+    ) => Promise<{ url: string; text?: string; bytes?: Uint8Array }>
     changed?(remote: string): void
   }
   trusted(identity: Identity): Promise<boolean>
@@ -385,9 +387,10 @@ export function createMdxDiagnostics(options: {
             if (!(await options.trusted(lease.identity)) || !running()) fail('MDX context changed')
           },
           external: external && {
-            async fetch(url, signal, localTreeCurrent, discoveryOrigins) {
+            async fetch(url, signal, localTreeCurrent, discoveryOrigins, kind = 'module') {
               try {
-                return await (external.fetch ?? fetchMdxExternalData)({
+                const fetch = external.fetch ?? fetchMdxExternalResourceData
+                return await fetch({
                   url,
                   signal,
                   async assertAccess(origin, accessSignal) {
@@ -409,6 +412,7 @@ export function createMdxDiagnostics(options: {
                     if (allowed) discoveryOrigins.add(origin)
                     return allowed
                   },
+                  kind,
                 })
               } catch (error) {
                 if (
