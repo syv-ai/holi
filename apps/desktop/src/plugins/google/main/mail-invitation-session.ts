@@ -689,16 +689,34 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     )
     const verifiedAnchors = new Map<string, Mail>()
     const verifiedParentContexts = new Set<string>()
-    const sentParents = new Set(
-      messages.flatMap((mail) => (mail.sent && mail.parent ? [mail.parent] : [])),
-    )
-    // Only check historical anchors that could make a visible reply positive.
-    // Do not scan the whole journal on each view or re-use ownership across reads.
+    const sentInThread = messages.filter((mail) => mail.sent)
+    const sentParents = new Set(sentInThread.flatMap(({ parent }) => (parent ? [parent] : [])))
+    const sentIds = new Set(sentInThread.map(({ messageId }) => messageId))
+    const latestDeliveries = new Map<string, InvitationAttempt['delivery']>()
+    for (const attempt of relevant) {
+      const { delivery, revision, state } = attempt
+      const scope = scopeKey(revision)
+      if (state !== 'prepared' && lineages.get(scope)?.(attempt))
+        latestDeliveries.set(scope, delivery)
+    }
+    // A visible REQUEST can prove its own parent ID, not the full envelope of
+    // a historical Holi reply. When the latest dispatch is through Calendar,
+    // reverify the in-thread replies it recorded as predecessors before hiding
+    // them as superseded. Do not re-read every compacted reply.
     for (const anchor of [...journal.parentAnchors].reverse()) {
-      if (!anchor.reply || !sentParents.has(anchor.parent) || owners.has(anchor.parent)) continue
+      if (!anchor.reply) continue
       const scope = scopeKey(anchor.revision)
       const parentContext = JSON.stringify([scope, anchor.parent])
-      if (verifiedParentContexts.has(parentContext)) continue
+      const needsParentProof =
+        sentParents.has(anchor.parent) &&
+        !owners.has(anchor.parent) &&
+        !verifiedParentContexts.has(parentContext)
+      const latest = latestDeliveries.get(scope)
+      const needsPredecessorProof =
+        latest?.channel === 'calendar' &&
+        sentIds.has(anchor.reply.messageId) &&
+        latest.priorSent?.messageIds.includes(anchor.reply.messageId)
+      if (!needsParentProof && !needsPredecessorProof) continue
       const entry = entries.get(scope)
       if (
         entry &&
@@ -716,7 +734,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         )
         if (mail) {
           verifiedAnchors.set(anchorProofKey(anchor), mail)
-          verifiedParentContexts.add(parentContext)
+          if (needsParentProof) verifiedParentContexts.add(parentContext)
         }
       }
     }
