@@ -1,4 +1,6 @@
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook, screen } from '@testing-library/react'
+import { render } from '@/test/render'
+import { googleRenderer } from '../renderer'
 import { Provider, createStore } from 'jotai'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -15,6 +17,16 @@ vi.mock('@/lib/trpc', () => ({
         mutate: async (input: { name: string; remote: string; paramsJson?: string }) => {
           const params = JSON.parse(input.paramsJson ?? '{}') as Record<string, unknown>
           switch (input.name) {
+            case 'google.status':
+              return {
+                account: { email: 'sender@example.test', sub: 'account-a' },
+                missingScopes: [],
+              }
+            case 'google.allAccounts':
+              return {
+                accounts: [{ sub: 'account-a', email: 'sender@example.test' }],
+                current: 'account-a',
+              }
             case 'google.search':
               return search(input.remote, params)
             case 'google.contacts':
@@ -70,6 +82,10 @@ function page(...ids: string[]) {
   return { threads: ids.map(summary), nextPageToken: null }
 }
 
+function pageWithToken(token: string | null, ...ids: string[]) {
+  return { threads: ids.map(summary), nextPageToken: token }
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((done) => {
@@ -105,6 +121,49 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+})
+
+test('history refresh preserves later pages and continuation after cached rows disappear', async () => {
+  search
+    .mockResolvedValueOnce(pageWithToken('next', 'cached'))
+    .mockResolvedValueOnce(pageWithToken(null, 'later'))
+    .mockResolvedValueOnce(pageWithToken(null, 'arrived'))
+  const { result } = await mount()
+  await act(async () => result.current.loadMore())
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['cached', 'later'])
+  await advance()
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'later'])
+  expect(search.mock.calls[1]?.[1]).toMatchObject({ pageToken: 'next' })
+  expect(result.current.list).toMatchObject({ kind: 'ready', nextPageToken: 'next' })
+  await act(async () => result.current.loadMore())
+  expect(search.mock.calls[3]?.[1]).toMatchObject({ pageToken: 'next' })
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrived', 'later'])
+})
+
+test('restored legacy Mail surface receives arrivals and stops polling while hidden', async () => {
+  search.mockResolvedValue(page('existing'))
+  const store = createStore()
+  store.set(activeRemoteAtom, 'team/one')
+  const mailSurface = googleRenderer.surfaces?.find((surface) => surface.kind === 'mail')
+  expect(mailSurface).toBeDefined()
+  const Surface = mailSurface!.render
+  const view = render(
+    <Provider store={store}>
+      <Surface visible />
+    </Provider>,
+  )
+  await screen.findByText('existing')
+  search.mockResolvedValue(page('incoming', 'existing'))
+  await advance()
+  await screen.findByText('incoming')
+  view.rerender(
+    <Provider store={store}>
+      <Surface visible={false} />
+    </Provider>,
+  )
+  const calls = search.mock.calls.length
+  await advance(90_000)
+  expect(search).toHaveBeenCalledTimes(calls)
 })
 
 test('new mail appears without manual refresh and leaves the open reader in place', async () => {
@@ -220,6 +279,22 @@ test('hidden mail drops its pending answer and performs no more periodic reads',
   const reads = search.mock.calls.length
   await advance(90_000)
   expect(search).toHaveBeenCalledTimes(reads)
+})
+
+test('a deferred later page cannot cross an account switch or lose the current rows', async () => {
+  const { result, rerender } = await mount()
+  const later = deferred<ReturnType<typeof page>>()
+  search.mockReturnValueOnce(later.promise)
+  await act(async () => result.current.loadMore())
+  rerender({ account: 'account-b', visible: true })
+  await advance()
+  await act(async () => {
+    later.resolve(page('wrong-route'))
+  })
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['existing'])
+  expect(new Set(result.current.threads.map((thread) => thread.id)).size).toBe(
+    result.current.threads.length,
+  )
 })
 
 test.each(['account', 'vault'] as const)(
