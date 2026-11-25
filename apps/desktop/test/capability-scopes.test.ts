@@ -89,7 +89,7 @@ describe('remote-scoped capability registrations', () => {
     const host = createCapabilityHost({
       registry,
       rootFor: async () => '/A',
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled,
       claims: async () => [],
@@ -139,7 +139,7 @@ describe('remote-scoped capability registrations', () => {
     const host = createCapabilityHost({
       registry,
       rootFor: async () => '/A',
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled,
       claims: async () => [],
@@ -218,7 +218,7 @@ describe('remote-scoped capability registrations', () => {
               resolveRoot = resolve
             }))
           : Promise.resolve(remote === 'A' ? '/A' : '/B'),
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async () => true,
       claims: async () => [],
@@ -256,7 +256,7 @@ describe('remote-scoped capability registrations', () => {
     const host = createCapabilityHost({
       registry,
       rootFor: async () => '/vault',
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async () => true,
       claims: async () => [],

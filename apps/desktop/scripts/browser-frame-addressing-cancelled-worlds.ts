@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import type { WebContents, WebFrameMain } from 'electron'
-import { createFrameAddressing, type FrameCapture } from './browser-frame-addressing'
+import {
+  createFrameAddressing,
+  type FrameCapture,
+} from '../src/plugins/browser/main/frame-addressing'
 import { deferred, type Check } from './browser-frame-addressing-phase-fixture'
 
 /** Observe actual native worlds across cancelled replies, not adapter cache counters. */

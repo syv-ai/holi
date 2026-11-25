@@ -470,7 +470,7 @@ export function createRouter(deps: RouterDeps) {
       registry: createCapabilityRegistry(),
       rootFor: async (remote) =>
         (await deps.registry.list()).find((e) => e.remote === remote)?.path ?? null,
-      active: () => deps.host.active(),
+      get: (remote) => deps.host.get(remote),
       core: noCoreServices,
       pluginEnabled: async () => true,
       claims: (root) => deps.plugins.scanClaimsFor(root),
@@ -506,10 +506,8 @@ export function createRouter(deps: RouterDeps) {
     const result = await opts.next()
     if (opts.type !== 'mutation') return result
     const raw = (await opts.getRawInput()) as { remote?: unknown } | null
-    const active = deps.host.active()
-    // Only the live vault has a cache to go stale; a write to any other vault is
-    // read straight off disk by `vaults.snapshot` anyway.
-    if (active !== null && active.remote === raw?.remote) {
+    const active = typeof raw?.remote === 'string' ? deps.host.get(raw.remote) : null
+    if (active !== null) {
       await active.refresh().catch((err) => console.error('[router] post-write rescan:', err))
     }
     return result
@@ -542,44 +540,49 @@ export function createRouter(deps: RouterDeps) {
   ): Promise<VaultSnapshot> {
     const finishTransition = beginMdxTrustTransition()
     try {
-      const active = await deps.host.open(remote, async (coldStart) => {
-        if (!coldStart) return
-        const { repo, outcome } = await ensureClone({
-          root: deps.vaultRoot,
-          remote,
-          url: url ?? cloneUrlFor(remote),
-          deps: { token: () => deps.session.token() },
-        })
-        // Validate before any preparation or seed side effects. A rejected clone
-        // is never entered into the registry.
-        if (opts.requireVault && !(await isVaultClone(repo.root))) {
-          if (outcome.kind === 'cloned') await rm(repo.root, { recursive: true, force: true })
-          throw new Error(
-            `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
-          )
-        }
-        await (deps.prepareClone ?? prepareManagedClone)(repo.root)
-        await deps.seed(repo.root)
-        // A new vault's README, beside the seed so it lands in the first commit.
-        // Not a once-seed file: it is written from this vault's own answer. Never
-        // over one that is already there (`wx`).
-        if (opts.readme !== undefined) {
-          await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
-            (err: NodeJS.ErrnoException) => {
-              if (err.code !== 'EEXIST') throw err
-            },
-          )
-        }
-        await deps.registry.add({
-          remote,
-          path: repo.root,
-          name: repoName(remote),
-          lastOpenedAt: now(),
-        })
-      })
-      deps.plugins.setDisplayed(remote)
-      await deps.plugins.reconcile(active, 'open')
-      deps.opened?.(remote)
+      const active = await deps.host.open(
+        remote,
+        async (coldStart) => {
+          if (!coldStart) return
+          const { repo, outcome } = await ensureClone({
+            root: deps.vaultRoot,
+            remote,
+            url: url ?? cloneUrlFor(remote),
+            deps: { token: () => deps.session.token() },
+          })
+          // Validate before any preparation or seed side effects. A rejected clone
+          // is never entered into the registry.
+          if (opts.requireVault && !(await isVaultClone(repo.root))) {
+            if (outcome.kind === 'cloned') await rm(repo.root, { recursive: true, force: true })
+            throw new Error(
+              `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
+            )
+          }
+          await (deps.prepareClone ?? prepareManagedClone)(repo.root)
+          await deps.seed(repo.root)
+          // A new vault's README, beside the seed so it lands in the first commit.
+          // Not a once-seed file: it is written from this vault's own answer. Never
+          // over one that is already there (`wx`).
+          if (opts.readme !== undefined) {
+            await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
+              (err: NodeJS.ErrnoException) => {
+                if (err.code !== 'EEXIST') throw err
+              },
+            )
+          }
+          await deps.registry.add({
+            remote,
+            path: repo.root,
+            name: repoName(remote),
+            lastOpenedAt: now(),
+          })
+        },
+        async (runtime) => {
+          deps.plugins.setDisplayed(remote)
+          await deps.plugins.reconcile(runtime, 'open')
+          deps.opened?.(remote)
+        },
+      )
       return await active.snapshot()
     } finally {
       finishTransition()
@@ -600,8 +603,8 @@ export function createRouter(deps: RouterDeps) {
    * one — a second walk could only disagree with what the renderer already has —
    * and a fresh scan otherwise. */
   async function snapshotFor(remote: string): Promise<VaultSnapshot> {
-    const active = deps.host.active()
-    if (active?.remote === remote) return active.snapshot()
+    const active = deps.host.get(remote)
+    if (active !== null) return active.snapshot()
     const root = await rootFor(remote)
     return scanVault(root, await deps.plugins.scanClaimsFor(root))
   }
@@ -697,8 +700,8 @@ export function createRouter(deps: RouterDeps) {
    * than being committed from here, where its pre-commit hook has no endpoint.
    */
   async function settleVault(remote: string): Promise<{ ahead: number; dirty: boolean }> {
-    const active = deps.host.active()
-    if (active?.remote === remote) {
+    const active = deps.host.get(remote)
+    if (active !== null) {
       await active.commitNow()
       await active.pushNow()
       const { ahead, dirty } = await active.repo.status()
@@ -744,9 +747,7 @@ export function createRouter(deps: RouterDeps) {
     const finishTransition = beginMdxTrustTransition()
     try {
       const root = await rootFor(remote)
-      await deps.host.close(remote)
-      await deps.trashItem(root)
-      await deps.registry.remove(remote)
+      await deps.host.remove(remote, () => deps.trashItem(root))
       await deps.plugins.syncBackground()
     } finally {
       finishTransition()
@@ -901,20 +902,19 @@ export function createRouter(deps: RouterDeps) {
          * Before `host.open`, for `addVault`'s reason: nothing can be committed
          * ahead of the `.gitignore`.
          */
-        if (deps.host.get(input.remote) === null) {
-          await deps.host.prepare(input.remote, (coldStart) =>
-            coldStart ? (deps.prepareClone ?? prepareManagedClone)(root) : Promise.resolve(),
-          )
-        }
-        await deps.seed(root)
+        await deps.host.prepare(input.remote, async (coldStart) => {
+          if (coldStart) await (deps.prepareClone ?? prepareManagedClone)(root)
+          await deps.seed(root)
+        })
         await deps.registry.touch(input.remote, now())
         if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
-        const active = await deps.host.open(input.remote)
+        const active = await deps.host.open(input.remote, undefined, async (runtime) => {
+          if (revision !== vaultOpenRevision) return
+          deps.plugins.setDisplayed(input.remote)
+          await deps.plugins.reconcile(runtime, 'open')
+          if (revision === vaultOpenRevision) deps.opened?.(input.remote)
+        })
         if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
-        deps.plugins.setDisplayed(input.remote)
-        await deps.plugins.reconcile(active, 'open')
-        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
-        deps.opened?.(input.remote)
         if (revision === vaultOpenRevision) completedVaultOpenRevision = revision
         return active.snapshot()
       }),
@@ -949,7 +949,7 @@ export function createRouter(deps: RouterDeps) {
         // a "vault" that exists only locally is not one anybody can be invited
         // to. A brand-new repo should not wait out the coalesce timer to become
         // shareable, so kick the push explicitly.
-        const active = deps.host.active()
+        const active = deps.host.get(repo.remote)
         if (active !== null) {
           await active.commitNow()
           await active.pushNow()
@@ -973,7 +973,7 @@ export function createRouter(deps: RouterDeps) {
       .mutation(async ({ input }) => {
         const finishTransition = beginMdxTrustTransition()
         try {
-          await deps.registry.remove(input.remote)
+          await deps.host.remove(input.remote)
           await deps.plugins.syncBackground()
         } finally {
           finishTransition()
@@ -2109,16 +2109,14 @@ export function createRouter(deps: RouterDeps) {
         // turned off stops now, not at the vault's next open.
         if ('plugins' in committed.patch || 'plugins' in local.patch) {
           deps.plugins.invalidate(input.remote)
-          if (deps.host.active()?.remote === input.remote) {
-            const active = deps.host.active()
-            if (active !== null) await deps.plugins.reconcile(active, 'settings')
+          const active = deps.host.get(input.remote)
+          if (active !== null) {
+            await deps.plugins.reconcile(active, 'settings')
           } else {
             await deps.seed(root)
           }
-          // Which files are claimed follows the plugins, so the open vault's
-          // snapshot is scanned again now rather than at its next change.
-          const active = deps.host.active()
-          if (active?.remote === input.remote) {
+          // Refresh the addressed runtime's claims, even while another vault is displayed.
+          if (active !== null) {
             await active.refresh().catch((err) => console.error('[router] rescan:', err))
           }
         }
@@ -2342,8 +2340,8 @@ export function createRouter(deps: RouterDeps) {
     create: t.procedure
       .input((raw: unknown) => ({ ...fields({ remote: 'string' })(raw), ...sizeOf(raw) }))
       .mutation(({ input }): TerminalOpened => {
-        const active = deps.host.active()
-        if (active === null || active.remote !== input.remote) {
+        const active = deps.host.get(input.remote)
+        if (active === null) {
           return { ok: false, message: 'That vault is not open.' }
         }
         return terminalsOrThrow().create({

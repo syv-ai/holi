@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createFrameContextMetadata } from '../scripts/frame-context-metadata'
+import { createFrameContextMetadata } from '../src/plugins/browser/main/frame-context-metadata'
 
 const defaultContext = (id: number, uniqueId: string, generation: number, sessionId?: string) => ({
   frameId: 'frame',

@@ -40,8 +40,8 @@ export interface CoreServices {
 }
 
 export interface CoreServicesDeps {
-  /** The open vault's remote and sync state, or null with none open. */
-  active(): {
+  /** Look up the runtime for a specific vault; null when it is not open. */
+  get(remote: string): {
     remote: string
     root: string
     syncState(): SyncState
@@ -88,15 +88,15 @@ export function createCoreServices(
 ): (remote: string, root: string) => CoreServices {
   return (remote, root) => ({
     syncState: () => {
-      const active = deps.active()
+      const active = deps.get(remote)
       return active?.remote === remote ? active.syncState() : null
     },
     recents: () => deps.reports.get(remote).recents,
     members: () => deps.members.get(remote),
     repo: () => openRepo(root),
     settle: async (path, expectedRevision) => {
-      const active = deps.active()
-      if (active?.remote !== remote || active.root !== root) {
+      const active = deps.get(remote)
+      if (!active || active.remote !== remote || active.root !== root) {
         return { commitSha: null, pushed: false, phase: 'commit', reason: 'vault-not-open' }
       }
       const state = active.syncState()
@@ -117,8 +117,12 @@ export function createCoreServices(
       let waitFailure: 'vault-not-open' | 'sync-blocked' | 'oversized' | null = null
       try {
         const delivered = await active.deliverNow(path, async () => {
-          const stillActive = deps.active()
-          if (stillActive?.remote !== remote || stillActive.root !== root) {
+          const stillActive = deps.get(remote)
+          if (
+            stillActive !== active ||
+            stillActive.remote !== remote ||
+            stillActive.root !== root
+          ) {
             waitFailure = 'vault-not-open'
             return false
           }
@@ -165,6 +169,10 @@ export function createCoreServices(
               ? current.ok
               : (committedRevision !== expectedRevision || worktreeRevision !== expectedRevision) &&
                 !normalizationOnly
+          if (deps.get(remote) !== active) {
+            waitFailure = 'vault-not-open'
+            return false
+          }
           return !postHookMismatch
         })
         if (postHookMismatch) {
@@ -177,10 +185,10 @@ export function createCoreServices(
           }
         }
         if (!delivered || !commitSha) {
-          const afterWait = deps.active()
+          const afterWait = deps.get(remote)
           const reason =
             waitFailure ??
-            (afterWait?.remote !== remote || afterWait.root !== root
+            (afterWait !== active || afterWait.remote !== remote || afterWait.root !== root
               ? 'vault-not-open'
               : (() => {
                   const afterWaitState = afterWait.syncState()
@@ -203,8 +211,8 @@ export function createCoreServices(
             reason: reason ?? 'no-commit',
           }
         }
-        const stillActive = deps.active()
-        if (stillActive?.remote !== remote || stillActive.root !== root) {
+        const stillActive = deps.get(remote)
+        if (stillActive !== active || stillActive.remote !== remote || stillActive.root !== root) {
           return {
             commitSha,
             pushed: false,
@@ -233,6 +241,15 @@ export function createCoreServices(
         const finalWorktree = await readFile(join(root, path)).catch(() => null)
         const finalWorktreeRevision =
           finalWorktree === null ? null : createHash('sha256').update(finalWorktree).digest('hex')
+        if (deps.get(remote) !== active) {
+          return {
+            commitSha,
+            pushed: false,
+            phase: 'push',
+            reason: 'vault-not-open',
+            revision: committedRevision,
+          }
+        }
         if (
           head.ok &&
           origin.ok &&

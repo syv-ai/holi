@@ -3,7 +3,7 @@ import {
   createFrameAddressing,
   type FrameAddress,
   type FrameCapture,
-} from './browser-frame-addressing'
+} from '../src/plugins/browser/main/frame-addressing'
 
 /** Private fixture owner for one adapter generation and only that generation's leases. */
 export class FrameAddressingScenario {

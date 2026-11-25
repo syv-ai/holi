@@ -132,7 +132,7 @@ describe('agent.turnFiles', () => {
       registry,
       rootFor: async (remote) =>
         remote === remoteA ? first.root : remote === remoteB ? second.root : null,
-      active: () => ({
+      get: () => ({
         remote: remoteB,
         root: second.root,
         snapshot: () => ({}) as never,

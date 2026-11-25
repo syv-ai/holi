@@ -111,7 +111,7 @@ describe('generated CLI registry routing', () => {
     const host = createCapabilityHost({
       registry: capabilities,
       rootFor,
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async () => {
         await pause?.()

@@ -41,7 +41,6 @@ import {
 import { Tabs, TabsEntry, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
-import { saveBeforeClosing } from '@/lib/buffer-registry'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { openingBeside } from '@/state/alt-open'
@@ -49,13 +48,14 @@ import { activeRemoteAtom } from '@/state/vaults'
 import {
   activeSplit,
   tabIsOpen,
-  closeTab,
   combineOnStrip,
   dropOnStrip,
   entriesByRecency,
   entryId,
   focusMember,
   isSplit,
+  isSticky,
+  setSticky,
   isViewKey,
   MAX_SPLIT,
   moveOut,
@@ -160,9 +160,27 @@ export function TabStrip({
       },
     }
   }
-  const act = (change: (w: ShellWorkspace) => ShellWorkspace) => setWs(change)
-  const close = (change: (w: ShellWorkspace) => ShellWorkspace) =>
-    void saveBeforeClosing(() => setWs(change), true).catch(() => {})
+  const menuContext = useRef<{ remote: string | null; workspace: ShellWorkspace } | null>(null)
+  const captureMenu = (open: boolean) => {
+    if (open) menuContext.current = { remote, workspace: ws }
+  }
+  const menuCurrent = () =>
+    menuContext.current?.remote === store.get(activeRemoteAtom) &&
+    menuContext.current?.workspace === store.get(shellWorkspaceAtom)
+  const menuAct = (change: (w: ShellWorkspace) => ShellWorkspace) => {
+    if (menuCurrent()) setWs(change)
+  }
+  const menuClose = (request: EntryCloseRequest) => {
+    if (menuCurrent()) onCloseRequest(request)
+  }
+  const current = () =>
+    store.get(activeRemoteAtom) === remote && store.get(shellWorkspaceAtom) === ws
+  const act = (change: (w: ShellWorkspace) => ShellWorkspace) => {
+    if (current()) setWs(change)
+  }
+  const requestClose = (request: EntryCloseRequest) => {
+    if (current()) onCloseRequest(request)
+  }
   const split = activeSplit(ws)
   const count = ws.entries.length
   /** Whether the strip holds more tabs than it shows, which is when it says
@@ -367,6 +385,7 @@ export function TabStrip({
             >
               {ws.entries.map((entry, index) => {
                 const id = entryId(entry)
+                const sticky = isSticky(ws, id)
                 const members = isSplit(entry) ? entry.views.map(look) : null
                 const tab = members === null ? look(id) : null
                 const targetPreview = previewValid && combinePreview?.target === id
@@ -385,12 +404,22 @@ export function TabStrip({
                     ? spoken(tab)
                     : `Split view: ${members!.map(spoken).join(', ')}`
                 return (
-                  <ContextMenu key={id}>
+                  <ContextMenu key={id} onOpenChange={captureMenu}>
                     <ContextMenuTrigger asChild>
                       {/* The close button is the trigger's sibling: a button
                         cannot hold another button. */}
                       <TabsEntry
-                        size={tab !== null ? 'tab' : members!.length > 2 ? 'tab-wide' : 'tab-group'}
+                        size={
+                          sticky
+                            ? tab !== null
+                              ? 'sticky'
+                              : 'sticky-group'
+                            : tab !== null
+                              ? 'tab'
+                              : members!.length > 2
+                                ? 'tab-wide'
+                                : 'tab-group'
+                        }
                         data-entry-id={id}
                         data-combine-preview={targetPreview || undefined}
                         aria-description={targetPreview ? 'Split preview' : undefined}
@@ -406,93 +435,109 @@ export function TabStrip({
                           )
                         }
                       >
-                        <TabsTrigger
-                          value={id}
-                          data-combine-preview={targetPreview || undefined}
-                          aria-label={label}
-                          onClick={(event) => {
-                            const member = (event.target as HTMLElement)
-                              .closest<HTMLElement>('[data-member]')
-                              ?.getAttribute('data-member')
-                            const key = member ?? id
-                            const wholeGroup = ws.entries.some(
-                              (candidate) => isSplit(candidate) && candidate.id === id,
-                            )
-                            // A primary-modifier click opens the clicked view
-                            // beside the active one rather than selecting it.
-                            if (event.altKey) openingBeside()
-                            if (
-                              !event.shiftKey &&
-                              (event.metaKey || event.ctrlKey || event.altKey)
-                            ) {
-                              event.preventDefault()
-                              event.stopPropagation()
-                              if ((wholeGroup && member === null) || !isViewKey(key)) {
-                                const sourceGroup = entry as ShellSplit
-                                if (ws.active !== sourceGroup.id) {
-                                  act(() => combineOnStrip(ws, sourceGroup.id, ws.active ?? ''))
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TabsTrigger
+                              value={id}
+                              data-combine-preview={targetPreview || undefined}
+                              aria-label={label}
+                              aria-description={sticky ? 'Sticky tab' : undefined}
+                              onClick={(event) => {
+                                const member = (event.target as HTMLElement)
+                                  .closest<HTMLElement>('[data-member]')
+                                  ?.getAttribute('data-member')
+                                const key = member ?? id
+                                const wholeGroup = ws.entries.some(
+                                  (candidate) => isSplit(candidate) && candidate.id === id,
+                                )
+                                // A primary-modifier click opens the clicked view
+                                // beside the active one rather than selecting it.
+                                if (event.altKey) openingBeside()
+                                if (
+                                  !event.shiftKey &&
+                                  (event.metaKey || event.ctrlKey || event.altKey)
+                                ) {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  if ((wholeGroup && member === null) || !isViewKey(key)) {
+                                    const sourceGroup = entry as ShellSplit
+                                    if (ws.active !== sourceGroup.id) {
+                                      act(() => combineOnStrip(ws, sourceGroup.id, ws.active ?? ''))
+                                    }
+                                  } else {
+                                    act((w) => openInSplit(w, key))
+                                  }
+                                  return
                                 }
-                              } else {
-                                act((w) => openInSplit(w, key))
-                              }
-                              return
-                            }
-                            if (member) act((w) => focusMember(w, id, member))
-                            else if (ws.active !== id) act((w) => selectEntry(w, id))
-                          }}
-                          variant="tab"
-                        >
-                          {/* Transparent, not invisible: Chromium must keep the same native drag target. */}
-                          <span className="relative flex min-w-0 flex-1 items-center gap-2">
-                            <span
-                              className={cn(
-                                'flex min-w-0 flex-1 items-center gap-2',
-                                targetPreview && 'opacity-0',
-                              )}
+                                if (member) act((w) => focusMember(w, id, member))
+                                else if (ws.active !== id) act((w) => selectEntry(w, id))
+                              }}
+                              variant={sticky ? 'sticky' : 'tab'}
                             >
-                              {tab !== null ? (
-                                <>
-                                  <TabMark tab={tab} dot={false} />
-                                  <span className="truncate">{tab.title}</span>
-                                  {tab.status !== undefined ? (
-                                    <TabStatus status={tab.status} />
-                                  ) : null}
-                                </>
-                              ) : (
-                                <SplitMembers
-                                  drag={draggable ? memberDrag : undefined}
-                                  members={members!}
-                                  focused={split?.id === id ? (entry as ShellSplit).focused : null}
-                                />
-                              )}
-                            </span>
-                            {previewMembers !== null ? (
-                              <span
-                                aria-hidden="true"
-                                className="pointer-events-none absolute inset-0 flex items-center"
-                              >
-                                <SplitMembers members={previewMembers} focused={null} />
+                              {/* Transparent, not invisible: Chromium must keep the same native drag target. */}
+                              <span className="relative flex min-w-0 flex-1 items-center gap-2">
+                                <span
+                                  className={cn(
+                                    'flex min-w-0 flex-1 items-center gap-2',
+                                    targetPreview && 'opacity-0',
+                                  )}
+                                >
+                                  {tab !== null ? (
+                                    <>
+                                      <TabMark tab={tab} dot={sticky} />
+                                      <span hidden={sticky} className="truncate">
+                                        {tab.title}
+                                      </span>
+                                      {!sticky && tab.status !== undefined ? (
+                                        <TabStatus status={tab.status} />
+                                      ) : null}
+                                    </>
+                                  ) : (
+                                    <SplitMembers
+                                      drag={draggable ? memberDrag : undefined}
+                                      members={members!}
+                                      compact={sticky}
+                                      focused={
+                                        split?.id === id ? (entry as ShellSplit).focused : null
+                                      }
+                                    />
+                                  )}
+                                </span>
+                                {previewMembers !== null ? (
+                                  <span
+                                    aria-hidden="true"
+                                    className="pointer-events-none absolute inset-0 flex items-center"
+                                  >
+                                    <SplitMembers members={previewMembers} focused={null} />
+                                  </span>
+                                ) : null}
                               </span>
-                            ) : null}
-                          </span>
-                        </TabsTrigger>
+                            </TabsTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {label}
+                            {sticky ? ', sticky' : ''}
+                          </TooltipContent>
+                        </Tooltip>
                         {/* Shown on hover and keyboard focus, and always on the tab
                           in front unless its status badge holds the place. */}
-                        <span
-                          className={cn(
-                            'absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 has-focus-visible:opacity-100',
-                            tab?.status === undefined && 'group-has-data-active/tab:opacity-100',
-                          )}
-                        >
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            aria-label={tab !== null ? `Close ${tab.title}` : 'Close split view'}
-                            onClick={() => onCloseRequest({ kind: 'entry', id })}
+                        {!sticky ? (
+                          <span
+                            className={cn(
+                              'absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 has-focus-visible:opacity-100',
+                              tab?.status === undefined && 'group-has-data-active/tab:opacity-100',
+                            )}
                           >
-                            <XIcon aria-hidden="true" />
-                          </Button>
-                        </span>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={tab !== null ? `Close ${tab.title}` : 'Close split view'}
+                              onClick={() => requestClose({ kind: 'entry', id })}
+                            >
+                              <XIcon aria-hidden="true" />
+                            </Button>
+                          </span>
+                        ) : null}
                       </TabsEntry>
                     </ContextMenuTrigger>
                     <EntryMenu
@@ -502,17 +547,32 @@ export function TabStrip({
                           ? (members!.find((m) => m.id === menuMember) ?? null)
                           : null
                       }
-                      onMoveOut={(key) => act((w) => moveOut(w, key))}
-                      onReplace={(key) => close((w) => replaceWithNew(w, key))}
-                      onCloseMember={(key) => close((w) => closeTab(w, key))}
+                      onMoveOut={(key) => menuAct((w) => moveOut(w, key))}
+                      onReplace={(key) => menuAct((w) => replaceWithNew(w, key))}
+                      onCloseMember={(key) =>
+                        menuClose({ kind: 'member', id: key, explicit: true })
+                      }
+                      sticky={isSticky(
+                        ws,
+                        menuMember !== null && isSplit(entry) && entry.views.includes(menuMember)
+                          ? menuMember
+                          : id,
+                      )}
+                      onSticky={() => {
+                        const key =
+                          menuMember !== null && isSplit(entry) && entry.views.includes(menuMember)
+                            ? menuMember
+                            : id
+                        menuAct((w) => setSticky(w, key, !isSticky(w, key)))
+                      }}
                       last={index === count - 1}
                       only={count < 2}
-                      onOpenInSplit={() => act((w) => openInSplit(w, id))}
-                      onSeparate={() => act((w) => separate(w, id))}
-                      onClose={() => onCloseRequest({ kind: 'entry', id })}
-                      onCloseOthers={() => onCloseRequest({ kind: 'others', id })}
-                      onCloseRight={() => onCloseRequest({ kind: 'right', id })}
-                      onReopen={() => act(reopenClosed)}
+                      onOpenInSplit={() => menuAct((w) => openInSplit(w, id))}
+                      onSeparate={() => menuAct((w) => separate(w, id))}
+                      onClose={() => menuClose({ kind: 'entry', id, explicit: true })}
+                      onCloseOthers={() => menuClose({ kind: 'others', id })}
+                      onCloseRight={() => menuClose({ kind: 'right', id })}
+                      onReopen={() => menuAct(reopenClosed)}
                     />
                   </ContextMenu>
                 )
@@ -539,7 +599,7 @@ export function TabStrip({
           </Tooltip>
         </Tabs>
 
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={captureMenu}>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon-sm" aria-label="Tab options">
               <EllipsisVerticalIcon aria-hidden="true" />
@@ -548,29 +608,26 @@ export function TabStrip({
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem
               disabled={ws.active === null || (split !== null && split.views.length >= MAX_SPLIT)}
-              onSelect={() => act(splitActive)}
+              onSelect={() => menuAct(splitActive)}
             >
               <Columns2Icon aria-hidden="true" />
               Split view
               <DropdownMenuShortcut>⌘\</DropdownMenuShortcut>
             </DropdownMenuItem>
             {split !== null ? (
-              <DropdownMenuItem onSelect={() => act((w) => separate(w, split.id))}>
+              <DropdownMenuItem onSelect={() => menuAct((w) => separate(w, split.id))}>
                 <UngroupIcon aria-hidden="true" />
                 Separate
                 <DropdownMenuShortcut>⇧⌘\</DropdownMenuShortcut>
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => act(reopenClosed)}>
+            <DropdownMenuItem onSelect={() => menuAct(reopenClosed)}>
               <RotateCcwIcon aria-hidden="true" />
               Reopen closed tab
               <DropdownMenuShortcut>⇧⌘T</DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={count === 0}
-              onSelect={() => onCloseRequest({ kind: 'all' })}
-            >
+            <DropdownMenuItem disabled={count === 0} onSelect={() => menuClose({ kind: 'all' })}>
               <XIcon aria-hidden="true" />
               Close all tabs
               <DropdownMenuShortcut>⌥⌘W</DropdownMenuShortcut>
@@ -589,9 +646,11 @@ function SplitMembers({
   members,
   focused,
   drag,
+  compact = false,
 }: {
   members: HeaderTab[]
   focused: string | null
+  compact?: boolean
   drag?: (key: string) => object
 }) {
   return (
@@ -608,7 +667,9 @@ function SplitMembers({
             )}
           >
             <TabMark tab={member} />
-            <span className="truncate">{member.title}</span>
+            <span hidden={compact} className="truncate">
+              {member.title}
+            </span>
           </span>
         </Fragment>
       ))}
@@ -621,6 +682,8 @@ function EntryMenu({
   split,
   member,
   onMoveOut,
+  sticky,
+  onSticky,
   onReplace,
   onCloseMember,
   last,
@@ -635,6 +698,8 @@ function EntryMenu({
   split: ShellSplit | null
   /** The right-clicked member of a split's pill, if any. */
   member: HeaderTab | null
+  sticky: boolean
+  onSticky: () => void
   onMoveOut: (key: string) => void
   onReplace: (key: string) => void
   onCloseMember: (key: string) => void
@@ -649,6 +714,10 @@ function EntryMenu({
 }) {
   return (
     <ContextMenuContent className="w-56">
+      <ContextMenuItem onSelect={onSticky}>
+        {sticky ? 'Make non-sticky' : 'Make sticky'}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
       {member !== null ? (
         <>
           <ContextMenuLabel className="text-muted-foreground truncate text-xs font-normal">

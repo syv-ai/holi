@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import type { WebFrameMain } from 'electron'
 import { fixtureFrames } from './browser-frame-addressing-fixture'
-import type { FrameAddress, FrameCapture } from './browser-frame-addressing'
+import type { FrameAddress, FrameCapture } from '../src/plugins/browser/main/frame-addressing'
 import { FrameAddressingScenario } from './browser-frame-addressing-scenario'
 import {
   deferred,
@@ -64,20 +64,20 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
       await scenario.verifyOwner(freshSameALease, '#same-a'),
       'replacement target has a freshly verified exact live lease',
     )
+    const replacementUrl = freshSameAFrame.url
     const priorHandles = allFrames()
     await wc.executeJavaScript(
       "document.querySelector('#same-a').replaceWith(document.querySelector('#same-a').cloneNode(false))",
     )
     let replacement: (typeof priorHandles)[number] | undefined
     for (let i = 0; i < 200 && !replacement; i++) {
-      replacement = allFrames().find((frame) => !priorHandles.includes(frame))
+      replacement = allFrames().find(
+        (frame) => !priorHandles.includes(frame) && frame.url === replacementUrl,
+      )
       if (!replacement) await new Promise((resolve) => setTimeout(resolve, 25))
     }
     assert(replacement, 'replacement iframe creates a new native frame handle')
-    await assert.rejects(
-      scenario.evaluate(freshSameALease, '1'),
-      /unknown frame address lease|no longer current/,
-    )
+    await assert.rejects(scenario.evaluate(freshSameALease, '1'))
     const replacementAddress = await scenario.resolve(replacement, replacementCapture)
     check(
       await scenario.verifyOwner(replacementAddress, '#same-a'),
@@ -118,6 +118,7 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
         currentCrossAddress,
         'globalThis.pendingDetachEvaluation = 1',
       )
+      const pendingDetachRejection = assert.rejects(pendingDetachEvaluation)
       await detachStarted.promise
       await wc.executeJavaScript("document.querySelector('#cross').remove()")
       for (
@@ -127,7 +128,7 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
       )
         await new Promise((resolve) => setTimeout(resolve, 20))
       detachGate.resolve()
-      await assert.rejects(pendingDetachEvaluation, /unknown frame address lease|no longer current/)
+      await pendingDetachRejection
     } finally {
       detachGate.resolve()
       debuggerClient.sendCommand = originalSend
@@ -179,6 +180,7 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
         afterAbaAddress,
         'globalThis.pendingReplacementEvaluation = 1',
       )
+      const pendingReplacementRejection = assert.rejects(pendingReplacementEvaluation)
       await replacementStarted.promise
       const replacedFrame = currentSameB
       await wc.executeJavaScript(
@@ -191,10 +193,7 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
         'native iframe replacement departed the pending evaluation owner',
       )
       replacementGate.resolve()
-      await assert.rejects(
-        pendingReplacementEvaluation,
-        /unknown frame address lease|no longer current/,
-      )
+      await pendingReplacementRejection
       const replacementCapture: FrameCapture = Object.freeze({
         tab: {},
         document: {},

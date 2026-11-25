@@ -64,7 +64,7 @@ describe('app frame activation lifetime', () => {
     const capabilityHost = createCapabilityHost({
       registry,
       rootFor: async (remote) => (remote === REMOTE_A ? rootA : remote === REMOTE_B ? rootB : null),
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async (plugin, root) => (await pluginHost.serving(root)).has(plugin),
       claims: async () => [],

@@ -1,3 +1,4 @@
+import { vaultSettingsAtom } from '@/state/settings'
 /** Real text editors exercise the shell's connected retention and buffer ownership. */
 import { EditorSelection } from '@codemirror/state'
 import { useEffect, useState } from 'react'
@@ -9,9 +10,16 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { coreContributionAtom } from '@/state/plugins'
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  openedRemoteAtom,
+  snapshotAtom,
+  subscribeToVault,
+  vaultsAtom,
+} from '@/state/vaults'
+import { installFakeHoli } from '@/test/fake-holi'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { AGENTS_HOME_KEY } from '@/state/tab-descriptor'
+import { AGENTS_HOME_KEY, tabKey } from '@/state/tab-descriptor'
 import {
   activeSplit,
   closeTab,
@@ -31,6 +39,7 @@ const read = vi.fn(
   async (_input: { remote: string; path: string }) => 'first line\nsecond line\nthird line\n',
 )
 const write = vi.fn(async (_input: unknown) => ({ ok: true, warnings: [] as string[] }))
+const reopen = vi.fn()
 const files = () =>
   ['src/one.ts', 'src/two.ts', 'notes/one.md', 'settings.json'].map((path) => ({
     path,
@@ -53,7 +62,8 @@ vi.mock('@/lib/trpc', () => {
               : null
   const procedure = (name: string) => ({
     query: (input?: unknown) => Promise.resolve(answer(name, input)),
-    mutate: name === 'notes.write' ? write : async () => ({ ok: true }),
+    mutate:
+      name === 'notes.write' ? write : name === 'vaults.open' ? reopen : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
   })
   const router = (name: string) =>
@@ -108,6 +118,8 @@ afterEach(() => {
 function fixture(initial = ['src/one.ts', 'src/two.ts']) {
   const store = createStore()
   store.set(activeRemoteAtom, 'owner/repo')
+  store.set(openedRemoteAtom, 'owner/repo')
+  store.set(vaultSettingsAtom, { remote: 'owner/repo', settings })
   store.set(vaultsAtom, [
     { remote: 'owner/repo', path: '/vault', name: 'repo', lastOpenedAt: '' },
   ] as never)
@@ -241,7 +253,10 @@ test('visited launchers retain scroll, close fresh, and dispose when the vault c
   const reopened = document.querySelector<HTMLElement>('[data-slot="empty-view-content"]')!
   expect(reopened).not.toBe(original)
 
-  act(() => store.set(activeRemoteAtom, 'owner/another-vault'))
+  act(() => {
+    store.set(activeRemoteAtom, 'owner/another-vault')
+    store.set(openedRemoteAtom, 'owner/another-vault')
+  })
   await waitFor(() =>
     expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull(),
   )
@@ -524,7 +539,10 @@ test('a retained plugin path keeps its live state through switches and splits, t
   await waitFor(() =>
     expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).not.toBeNull(),
   )
-  act(() => store.set(activeRemoteAtom, 'other/repo'))
+  act(() => {
+    store.set(activeRemoteAtom, 'other/repo')
+    store.set(openedRemoteAtom, 'other/repo')
+  })
   await waitFor(() =>
     expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBeNull(),
   )
@@ -565,6 +583,7 @@ test('a new vault owns its same-path editor and ignores a departed pending read'
   await screen.findByRole('status', { name: 'Loading file' })
   act(() => {
     store.set(activeRemoteAtom, 'other/repo')
+    store.set(openedRemoteAtom, 'other/repo')
     store.set(snapshotAtom, { ...emptyVaultSnapshot(), files: files() })
     store.set(shellWorkspaceAtom, (ws) => openTab(ws, 'src/one.ts'))
   })
@@ -641,4 +660,69 @@ test('a disk read started before a local save cannot replace that save but later
   diskChanged(store, 'src/one.ts', 'after local save')
   await waitFor(() => expect(cm.state.doc.toString()).toBe('new external text after the save'))
   expect(editor()).toBe(cm.dom)
+})
+
+test('failed navigation flush retains the dirty editor during recovery without admitting new surfaces', async () => {
+  const platform = installFakeHoli()
+  let finishRecovery!: (snapshot: ReturnType<typeof emptyVaultSnapshot>) => void
+  reopen.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finishRecovery = resolve
+      }),
+  )
+  const store = fixture(['settings.json'])
+  const unsubscribe = subscribeToVault(store)
+  try {
+    const cm = await cmFor('settings.json')
+    replace(cm, '{"unfinished":')
+    write.mockRejectedValue(new Error('disk full'))
+    act(() =>
+      platform.pushNavigate({
+        remote: 'owner/other',
+        plugin: 'agent',
+        name: 'focus',
+        payload: null,
+      }),
+    )
+    await waitFor(() => expect(store.get(openedRemoteAtom)).toBeNull())
+    expect(store.get(activeRemoteAtom)).toBe('owner/repo')
+    expect(cm.dom.isConnected).toBe(true)
+    expect(cm.state.doc.toString()).toBe('{"unfinished":')
+    act(() => {
+      store.set(coreContributionAtom, {
+        surfaces: [
+          {
+            kind: 'recovery-test',
+            label: 'Recovery test',
+            icon: () => null,
+            keepMounted: true,
+            render: () => <p>New plugin surface</p>,
+          },
+        ],
+        rail: [],
+        claims: [],
+      })
+      store.set(shellWorkspaceAtom, (ws) =>
+        openInSplit(ws, tabKey({ kind: 'surface', surface: 'recovery-test' })),
+      )
+    })
+    expect(screen.queryByText('New plugin surface')).toBeNull()
+    expect(screen.getByRole('status', { name: 'Loading view' })).toBeInTheDocument()
+    expect(editor('settings.json')).toBe(cm.dom)
+    await act(async () => finishRecovery({ ...emptyVaultSnapshot(), files: files() }))
+    await screen.findByText('New plugin surface')
+    expect(await cmFor('settings.json')).toBe(cm)
+    write.mockResolvedValue({ ok: true, warnings: [] })
+    await act(() => flushAllBuffers())
+    expect(write).toHaveBeenLastCalledWith({
+      remote: 'owner/repo',
+      path: 'settings.json',
+      text: '{"unfinished":',
+    })
+  } finally {
+    unsubscribe()
+    cleanup()
+    platform.restore()
+  }
 })

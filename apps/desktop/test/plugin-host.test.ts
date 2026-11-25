@@ -165,7 +165,7 @@ function rig(
     registry,
     rootFor: async (remote) =>
       opts.roots?.[remote] ?? (remote === (opts.remote ?? 'o/r') ? root : null),
-    active: () => null,
+    get: (_remote) => null,
     core: noCoreServices,
     pluginEnabled: async (plugin, at, allowDrain) =>
       (await host.serving(at, allowDrain)).has(plugin),

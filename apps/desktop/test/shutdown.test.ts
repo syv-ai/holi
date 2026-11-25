@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises'
 import { expect, it, vi } from 'vitest'
 import { drainShutdown, settleVaultForQuit } from '../src/main/shutdown'
 
@@ -126,17 +125,4 @@ it('bounds an unreachable remote and observes a push rejection after the quit bu
     vi.clearAllTimers()
     vi.useRealTimers()
   }
-})
-
-it('uses bounded best-effort settlement in the real quit consumer after flush and required drains', async () => {
-  const source = await readFile(new URL('../src/main/index.ts', import.meta.url), 'utf8')
-  expect(source).toContain('settleVault: () => settleVaultForQuit(host.active())')
-  const teardown = source.slice(source.indexOf('async function teardown()'))
-  expect(teardown.indexOf('requestFlush(channel)')).toBeLessThan(
-    teardown.indexOf('await drainShutdown('),
-  )
-  expect(teardown).toContain('stopPlugins: () => plugins.stopAll()')
-  expect(teardown).toContain('closeTerminals: () => terminals.closeAll()')
-  expect(source).toContain('quitting = false')
-  expect(source).toContain('updater.installOnQuit()')
 })

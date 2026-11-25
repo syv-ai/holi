@@ -101,7 +101,7 @@ describe('the capability host', () => {
     return createCapabilityHost({
       registry: caps,
       rootFor: async () => '/vault',
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async (plugin) => pluginEnabled(plugin),
       claims: async () => [],
@@ -137,7 +137,7 @@ describe('the capability host', () => {
     const h = createCapabilityHost({
       registry: caps,
       rootFor: async () => '/vault',
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async () => true,
       claims: async () => [],
@@ -223,7 +223,7 @@ describe('the capability host', () => {
     const h = createCapabilityHost({
       registry: caps,
       rootFor: async () => '/vault',
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async () => true,
       claims: async () => [],
@@ -261,7 +261,7 @@ describe('the capability host', () => {
     const h = createCapabilityHost({
       registry: caps,
       rootFor: async () => '/vault',
-      active: () => null,
+      get: (_remote) => null,
       core: noCoreServices,
       pluginEnabled: async () => true,
       claims: async () => [],

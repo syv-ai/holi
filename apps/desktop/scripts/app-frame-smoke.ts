@@ -113,7 +113,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
   const capabilityHost = createCapabilityHost({
     registry,
     rootFor: async (remote) => rootForRemote(remote),
-    active: () => null,
+    get: (_remote) => null,
     core: noCoreServices,
     pluginEnabled: async (plugin, vaultRoot) => (await host.serving(vaultRoot)).has(plugin),
     claims: async () => [],

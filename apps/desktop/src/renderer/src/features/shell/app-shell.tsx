@@ -1,6 +1,6 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
 import { SCRATCHPAD_PATH, VAULT_SETTING_DEFAULTS } from '@holi/shared'
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -33,7 +33,6 @@ import {
 // entry of it.
 import {
   activeSplit,
-  closeTab as closeTabIn,
   entryIds,
   entryOf,
   entryViews,
@@ -47,6 +46,7 @@ import {
   selectEntry,
   separate,
   setShares,
+  isSplit,
   splitActive,
   stepMember,
 } from '@/state/shell-workspace'
@@ -55,12 +55,12 @@ import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descr
 import { shellTabForPathAtom } from '@/state/surfaces'
 import {
   activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
   openedRemoteAtom,
   snapshotAtom,
   snapshotLoadedAtom,
 } from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
-import { saveBeforeClosing } from '@/lib/buffer-registry'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
 import { useHoliLinkPaste } from '@/hooks/use-holi-link-paste'
 import { useActivityLog } from '@/state/activity'
@@ -82,6 +82,9 @@ import { readShares, writeShares } from './split-shares'
 import { SplitView, type MemberSlot } from './split-view'
 import { isLauncherSurfaceKey, useRetainedSurfaces } from './retained-surfaces'
 import { isCoreTextFilePath } from '@/features/files/file-view'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { claimsAtom } from '@/state/plugins'
 import { TabStrip } from './tab-strip'
 import { TabView } from './tab-view'
@@ -101,7 +104,9 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const vaultRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const snapshotLoaded = useAtomValue(snapshotLoadedAtom)
+  const openedRemote = useAtomValue(openedRemoteAtom)
   const settings = useAtomValue(vaultSettingsAtom)
   const loadSettings = useSetAtom(loadVaultSettingsAtom)
   const store = useStore()
@@ -111,9 +116,19 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     settings !== null && settings.remote === remote
       ? settings.settings.confirmCloseSplitTabs
       : VAULT_SETTING_DEFAULTS.confirmCloseSplitTabs
+  const [settingsReadFailed, setSettingsReadFailed] = useState<string | null>(null)
+  const [settingsReadAttempt, setSettingsReadAttempt] = useState(0)
   useEffect(() => {
-    void loadSettings().catch((error: unknown) => console.warn('[settings] read failed:', error))
-  }, [loadSettings, remote])
+    let disposed = false
+    setSettingsReadFailed(null)
+    void loadSettings().catch((error: unknown) => {
+      console.warn('[settings] read failed:', error)
+      if (!disposed) setSettingsReadFailed(remote)
+    })
+    return () => {
+      disposed = true
+    }
+  }, [loadSettings, remote, settingsReadAttempt])
   useEffect(() => {
     if (pendingClose !== null && pendingClose.remote !== remote) setPendingClose(null)
   }, [pendingClose, remote])
@@ -170,9 +185,18 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const splitId = split?.id ?? null
   const memberCount = split?.views.length ?? 1
   const seeded = useRef(new Set<string>())
+  const seenVaults = useRef(new Set<string | null>())
+  // Existing layouts (including restored ones) already own their widths.
+  // Only splits made after this vault first appears use the count preference.
+  if (!seenVaults.current.has(remote)) {
+    seenVaults.current.add(remote)
+    for (const entry of ws.entries) {
+      if (isSplit(entry)) seeded.current.add(`${remote}:${entry.id}:${entry.views.length}`)
+    }
+  }
   useEffect(() => {
     if (splitId === null) return
-    const seen = `${splitId}:${memberCount}`
+    const seen = `${remote}:${splitId}:${memberCount}`
     if (seeded.current.has(seen)) return
     seeded.current.add(seen)
     const stored = readShares(remote, memberCount)
@@ -216,10 +240,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   function closeTab(key: string) {
-    void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)), true).catch(() => {})
+    requestEntryClose({ kind: 'member', id: key })
   }
 
   function requestEntryClose(request: EntryCloseRequest) {
+    if (store.get(activeRemoteAtom) !== remote || store.get(shellWorkspaceAtom) !== ws) return
     const current = store.get(shellWorkspaceAtom)
     const intent = { remote: store.get(activeRemoteAtom), workspace: current, request }
     if (closesSplit(current, request) && closeConfirmationEnabled) {
@@ -403,24 +428,52 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         className="data-pane-focused:before:bg-ring relative flex min-h-0 min-w-0 flex-1 flex-col data-pane-focused:before:absolute data-pane-focused:before:inset-x-0 data-pane-focused:before:top-0 data-pane-focused:before:z-10 data-pane-focused:before:h-px"
       >
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <TabView
-            tab={tab}
-            visible={visible}
-            focused={isFocused}
-            settingsNavInSidebar={isFocused && settingsActive && !isMobile && sidebarOpen}
-            onOpen={openTabKey}
-            onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
-            reading={
-              tab === null
-                ? null
-                : (entryViews(entryOf(ws, tab) ?? tab)
-                    .map((member) => tabPath(member))
-                    .find((path) => path !== null && path !== tab) ?? null)
+          <VaultReadyView
+            key={vaultRevision}
+            ready={
+              remote !== null &&
+              openedRemote === remote &&
+              snapshotLoaded &&
+              settings?.remote === remote
             }
-            onMoved={(from, to) => retargetTabs([{ from, to }])}
-            onNewDocument={newDocument}
-            onOpenSearch={() => setSearchOpen(true)}
-          />
+            fallback={
+              settingsReadFailed === remote && remote !== null ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Could not load this vault's settings</AlertTitle>
+                  <AlertDescription>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSettingsReadAttempt((attempt) => attempt + 1)}
+                    >
+                      Retry
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Skeleton className="h-full w-full" role="status" aria-label="Loading view" />
+              )
+            }
+          >
+            <TabView
+              tab={tab}
+              visible={visible}
+              focused={isFocused}
+              settingsNavInSidebar={isFocused && settingsActive && !isMobile && sidebarOpen}
+              onOpen={openTabKey}
+              onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
+              reading={
+                tab === null
+                  ? null
+                  : (entryViews(entryOf(ws, tab) ?? tab)
+                      .map((member) => tabPath(member))
+                      .find((path) => path !== null && path !== tab) ?? null)
+              }
+              onMoved={(from, to) => retargetTabs([{ from, to }])}
+              onNewDocument={newDocument}
+              onOpenSearch={() => setSearchOpen(true)}
+            />
+          </VaultReadyView>
         </div>
       </section>
     )
@@ -629,4 +682,21 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       <HostHintLayer scopeKey={`${remote}:${ws.active}:${focusedKey}`} />
     </SidebarProvider>
   )
+}
+
+/** Admission belongs to each mounted view, not the whole vault: recovery must
+ * retain dirty editors without admitting a newly selected plugin surface.
+ * The selection revision resets admission even for an A→B→A transition. */
+function VaultReadyView({
+  ready,
+  children,
+  fallback,
+}: {
+  ready: boolean
+  children: ReactNode
+  fallback: ReactNode
+}) {
+  const [admitted, setAdmitted] = useState(ready)
+  if (ready && !admitted) setAdmitted(true)
+  return ready || admitted ? children : fallback
 }
