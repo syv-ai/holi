@@ -1,12 +1,15 @@
 """Keep a PTY session anchor owned until the final process-group signal."""
 
 import errno
+import fcntl
 import json
 import os
 import pty
 import select
 import signal
+import struct
 import sys
+import termios
 import time
 import tty
 import typing as t
@@ -19,6 +22,7 @@ class NativeSpec(t.TypedDict):
     args: list[str]
     cwd: str
     env: dict[str, str]
+    terminalSize: t.NotRequired[dict[str, int]]
 
 
 def main() -> None:
@@ -156,6 +160,12 @@ def _anchor(*, spec: NativeSpec, commands: int, events: int) -> None:
     """
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, signal.SIG_IGN)
+    if size := spec.get("terminalSize"):
+        fcntl.ioctl(
+            0,
+            termios.TIOCSWINSZ,
+            struct.pack("HHHH", size["rows"], size["columns"], 0, 0),
+        )
     tty.setraw(0)
     native = os.fork()
     if native == 0:
