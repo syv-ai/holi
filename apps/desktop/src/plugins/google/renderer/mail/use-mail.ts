@@ -102,6 +102,8 @@ export function useMail(account: string | null, enabled = true) {
   const listGeneration = useRef(0)
   /** The latest list request: an older answer landing late is dropped. */
   const listRequest = useRef(0)
+  /** A periodic search holds the slot until it settles, even across rerenders. */
+  const periodicRequest = useRef(false)
 
   const searching = submitted !== ''
   const showsDrafts = folder === 'drafts' && !searching
@@ -155,18 +157,26 @@ export function useMail(account: string | null, enabled = true) {
   // account, vault, or query when the context changes.
   useEffect(() => {
     if (!enabled || account === null || showsDrafts || searching) return
+    let active = true
     const timer = window.setInterval(() => {
-      if (listRequest.current !== 0 && list.kind === 'loading') return
+      if (!active || periodicRequest.current) return
+      periodicRequest.current = true
       const at = ++listRequest.current
       void call((r) => googleCap.search(r, params))
         .then((page) => {
-          if (listRequest.current !== at) return
-          setList({ kind: 'ready', threads: page.threads, nextPageToken: page.nextPageToken })
+          if (active && listRequest.current === at)
+            setList({ kind: 'ready', threads: page.threads, nextPageToken: page.nextPageToken })
         })
         .catch(() => undefined)
+        .finally(() => {
+          periodicRequest.current = false
+        })
     }, 30_000)
-    return () => window.clearInterval(timer)
-  }, [enabled, account, showsDrafts, searching, call, params, list.kind])
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [enabled, account, showsDrafts, searching, call, params])
 
   useEffect(() => {
     if (!showsDrafts) return
