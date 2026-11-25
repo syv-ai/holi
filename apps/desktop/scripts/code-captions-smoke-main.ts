@@ -1132,8 +1132,16 @@ async function verifyTableViews({
   press('f', ['meta'])
   await wait(`document.querySelector('input[aria-label="Find"]')`, 'table caption find field')
   await click('input[aria-label="Find"]')
-  press('a', ['meta'])
+  await wait(
+    `document.activeElement === document.querySelector('input[aria-label="Find"]')`,
+    'table caption find input owns native typing',
+  )
+  await js(`document.querySelector('input[aria-label="Find"]').select(); return true`)
   await insertText('portable')
+  await wait(
+    `document.querySelector('input[aria-label="Find"]')?.value === 'portable'`,
+    'native typing replaces the seeded table caption find query',
+  )
   await wait(
     `document.querySelector('[role="search"]')?.textContent.includes('1 of 1')`,
     'table caption find match',
