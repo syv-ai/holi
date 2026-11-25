@@ -1930,6 +1930,7 @@ describe('agent.scoped', () => {
         system: 'Make the app.',
         cols: 90,
       }),
+      expect.any(Function),
     )
   })
 

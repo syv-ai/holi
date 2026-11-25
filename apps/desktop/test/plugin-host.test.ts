@@ -1928,6 +1928,7 @@ describe('activation cancellation and teardown failures', () => {
         capabilities: {},
       }
       const dispose = vi.fn()
+      let lease = () => false
       const sessions = createPtySessions({
         vault,
         terminals,
@@ -1940,15 +1941,19 @@ describe('activation cancellation and teardown failures', () => {
         plugins: [
           {
             info: { id: 'fake', label: 'Fake', default: true },
-            activate: () => () => {
-              dispose()
-              return sessions.leave()
+            activate: (ctx) => {
+              lease = ctx.presentationLease()
+              return () => {
+                dispose()
+                return sessions.leave()
+              }
             },
           },
         ],
       })
+      host.setDisplayed('A')
       await host.reconcile(vault, 'open')
-      const started = await sessions.start('codex', {})
+      const started = await sessions.start('codex', {}, lease)
       if (!started.ok) throw new Error(started.message)
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
       try {

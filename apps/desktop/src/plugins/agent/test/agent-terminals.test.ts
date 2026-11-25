@@ -72,6 +72,45 @@ afterEach(() => {
 })
 
 describe('agent terminals', () => {
+  it('reclaims a retained exited transcript after returning without reopening input', async () => {
+    let epoch = 0
+    const original = () => epoch === 0
+    const pty = new FakePty()
+    const resized = vi.spyOn(pty, 'resize')
+    const exited = vi.fn()
+    const terminals = createAgentTerminals({
+      emit: () => {},
+      spawnPty: () => pty,
+      superviseGroup: () => ({ drain: async () => {} }),
+      log: () => {},
+    })
+    const opened = terminals.open({
+      ...on('retained-pi'),
+      lease: original,
+      retainOnExit: true,
+      onExit: exited,
+    })
+    if (!opened.ok) throw new Error(opened.message)
+    try {
+      pty.emit('retained transcript')
+      pty.exit()
+      await vi.waitFor(() => expect(exited).toHaveBeenCalledOnce())
+      epoch = 1
+      epoch = 2
+      expect(terminals.claim(opened.id, original)).toBe(false)
+      const returned = () => epoch === 2
+      expect(terminals.claim(opened.id, returned)).toBe(true)
+      expect(await terminals.attach(opened.id, returned)).toContain('retained transcript')
+      terminals.write(opened.id, 'blocked', returned)
+      expect(terminals.paste(opened.id, 'blocked', returned)).toBe(false)
+      terminals.resize(opened.id, 120, 40, returned)
+      expect(pty.writes).toEqual([])
+      expect(resized).not.toHaveBeenCalled()
+    } finally {
+      await terminals.closeAll()
+    }
+  })
+
   it('joins repeat close with a rejecting natural-exit callback', async () => {
     const pty = new FakePty()
     const proof = vi.fn(async () => {})

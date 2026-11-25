@@ -398,7 +398,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
 
     claim(id, lease) {
       const t = terminals.get(id)
-      if (!valid(lease) || t === undefined || t.draining) return false
+      if (!valid(lease) || t === undefined || (t.draining && !t.retainOnExit)) return false
       t.claimant = lease
       return true
     },
@@ -442,7 +442,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       if (t === undefined) return Promise.resolve()
       // Public exit and its callbacks own retirement. An unconfirmed exit is
       // not a synthetic close; a retained transcript is retired only here.
-      t.attachment = undefined
+      // Drain fences input immediately; the current display still receives
+      // tail output until public exit and caller finalization finish.
       return (t.closeWork ??= t.runtime.kill().then(() => {
         if (terminals.get(id) !== t) return
         t.hidden = true

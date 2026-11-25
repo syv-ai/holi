@@ -340,10 +340,15 @@ it.each(['root exit', 'explicit Stop'] as const)(
       expect(t.copyBack).toHaveBeenCalledOnce()
       expect(proof).toHaveBeenCalledOnce()
       data('terminal tail')
-      expect(t.emit).toHaveBeenCalledWith('test/vault', 'pty-data', {
-        id: run.terminalId,
-        data: 'terminal tail',
-      })
+      expect(t.emit).toHaveBeenCalledWith(
+        'test/vault',
+        'pty-data',
+        {
+          id: run.terminalId,
+          data: 'terminal tail',
+        },
+        expect.any(Function),
+      )
       if (reason === 'root exit') {
         physical.resolve()
         await vi.advanceTimersByTimeAsync(5)
