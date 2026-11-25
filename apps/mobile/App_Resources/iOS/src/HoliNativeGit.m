@@ -15,7 +15,7 @@ static void HNGInitializeLibgit2(void) {
 }
 static void HNGError(NSError **error, int code) {
   const git_error *detail = git_error_last();
-  NSString *message = detail && detail->message ? [NSString stringWithUTF8String:detail->message] : @"libgit2 operation failed";
+  NSString *message = @"Git operation failed";
   if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey: message, @"gitErrorClass": @(detail ? detail->klass : GIT_ERROR_NONE)}];
 }
 
@@ -26,7 +26,9 @@ static int HNGCredentialCallback(git_credential **out, const char *url, const ch
   NSURL *permitted = [NSURL URLWithString:credentials->origin];
   NSNumber *requestedPort = requested.port ?: @443;
   NSNumber *permittedPort = permitted.port ?: @443;
-  if (![requested.scheme.lowercaseString isEqualToString:@"https"] || ![requested.host.lowercaseString isEqualToString:permitted.host.lowercaseString] || ![requestedPort isEqualToNumber:permittedPort]) return GIT_EAUTH;
+  NSString *requestedPath = requested.path.stringByStandardizingPath;
+  NSString *permittedPath = permitted.path.stringByStandardizingPath;
+  if (![requested.scheme.lowercaseString isEqualToString:@"https"] || ![requested.host.lowercaseString isEqualToString:permitted.host.lowercaseString] || ![requestedPort isEqualToNumber:permittedPort] || ![requestedPath isEqualToString:permittedPath] || requested.user || requested.password) return GIT_EAUTH;
   credentials->challenged = YES;
   if (credentials->attempted || !(allowed & GIT_CREDENTIAL_USERPASS_PLAINTEXT) || !credentials->username || !credentials->password) return GIT_EAUTH;
   credentials->attempted = YES;
@@ -35,18 +37,16 @@ static int HNGCredentialCallback(git_credential **out, const char *url, const ch
 static int HNGTransferProgress(const git_indexer_progress *stats, void *payload) { return 0; }
 static int HNGPushUpdate(const char *refname, const char *status, void *payload) { return status ? GIT_ERROR : 0; }
 typedef struct { BOOL hooks; BOOL filters; BOOL helpers; } HNGUnsafeConfig;
+static int HNGInspectConfig(const git_config_entry *entry, void *payload);
 static int HNGDisableUnsafeConfig(git_repository *repository) {
   git_config *config = NULL;
   int result = git_repository_config(&config, repository);
   if (result < 0) return result;
-  const char *keys[] = { "core.hookspath", "filter.holi-sentinel.smudge", "credential.helper" };
-  for (NSUInteger index = 0; index < sizeof(keys) / sizeof(keys[0]); index++) {
-    result = git_config_delete_multivar(config, keys[index], ".*");
-    if (result == GIT_ENOTFOUND) result = 0;
-    if (result < 0) break;
-  }
+  HNGUnsafeConfig unsafe = {0};
+  result = git_config_foreach(config, HNGInspectConfig, &unsafe);
   git_config_free(config);
-  return result;
+  if (result < 0) return result;
+  return unsafe.hooks || unsafe.filters || unsafe.helpers ? GIT_EINVALIDSPEC : 0;
 }
 static int HNGCollectTree(const char *rootPath, const git_tree_entry *entry, void *payload) {
   NSMutableSet *paths=(__bridge NSMutableSet *)payload;
@@ -207,7 +207,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     if (result == 0) {
       const char *fetchURL = git_remote_url(gitRemote);
       const char *pushURL = git_remote_pushurl(gitRemote);
-      if (!fetchURL || !pushURL || strcmp(fetchURL, remote.UTF8String) || strcmp(pushURL, remote.UTF8String))
+      if (!fetchURL || strcmp(fetchURL, remote.UTF8String) || (pushURL && strcmp(pushURL, remote.UTF8String)))
         result = GIT_EINVALIDSPEC;
     }
     if (result == 0) result = git_remote_connect(gitRemote, [operation isEqualToString:@"push"] ? GIT_DIRECTION_PUSH : GIT_DIRECTION_FETCH, &callbacks, NULL, NULL);
@@ -289,7 +289,7 @@ static BOOL HNGCollectNames(int fd, NSString *prefix, NSMutableSet *paths, NSErr
     if (git_remote_lookup(&verifiedRemote, repository, "origin") == 0) {
       const char *fetchURL = git_remote_url(verifiedRemote);
       const char *pushURL = git_remote_pushurl(verifiedRemote);
-      remoteConstrained = fetchURL && pushURL && !strcmp(fetchURL, remote.UTF8String) && !strcmp(pushURL, remote.UTF8String);
+      remoteConstrained = fetchURL && !strcmp(fetchURL, remote.UTF8String) && (!pushURL || !strcmp(pushURL, remote.UTF8String));
     } else remoteConstrained = NO;
     git_remote_free(verifiedRemote);
   }
