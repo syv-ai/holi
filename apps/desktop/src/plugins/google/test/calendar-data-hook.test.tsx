@@ -68,6 +68,7 @@ describe('useGoogleCalendar context fencing', () => {
       create = result.current.create({
         title: 'Saved event',
         location: '',
+        description: '',
         start: new Date(2026, 8, 7, 9),
         end: new Date(2026, 8, 7, 10),
         allDay: false,
@@ -106,6 +107,7 @@ describe('useGoogleCalendar context fencing', () => {
       create = result.current.create({
         title: 'Old account',
         location: '',
+        description: '',
         start: new Date(2026, 8, 7, 9),
         end: new Date(2026, 8, 7, 10),
         allDay: false,

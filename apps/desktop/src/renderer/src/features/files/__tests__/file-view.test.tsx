@@ -4,9 +4,25 @@
  * text as code in the plain editor, which saves it, but not while json does
  * not parse; and History, the file's commits, each opening its changes.
  */
+import {
+  createFileViewStore,
+  fileDiff,
+  historyList,
+  lastStore,
+  mdxAcquire,
+  mdxApprove,
+  mdxCancel,
+  mdxCompile,
+  mdxRevoke,
+  mdxStatus,
+  read,
+  setup,
+  typeInto,
+  write,
+} from '@/test/file-view-fixture'
 import { emptyVaultSnapshot } from '@holi/shared'
-import { createStore, Provider } from 'jotai'
-import { afterEach, expect, test, vi } from 'vitest'
+import { Provider } from 'jotai'
+import { expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import {
@@ -15,117 +31,11 @@ import {
   saveAllBuffers,
   saveBuffersOnBlur,
 } from '@/lib/buffer-registry'
-import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { vimCodeEditingAtom } from '@/state/preferences'
-import { activeRemoteAtom, openedRemoteAtom, snapshotAtom } from '@/state/vaults'
-import { sessionAtom } from '@/state/session'
+import { snapshotAtom } from '@/state/vaults'
 import { FileView, isCoreTextFilePath } from '../file-view'
-import { HostHintLayer } from '@/features/shell/host-hint-layer'
-import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
 import { installHintLayout } from '@/test/host-hint-layout'
-
-let lastStore: ReturnType<typeof createStore>
-const read = vi.fn()
-const write = vi.fn()
-const historyList = vi.fn()
-const fileDiff = vi.fn()
-const mdxStatus = vi.fn()
-const mdxApprove = vi.fn()
-const mdxRevoke = vi.fn()
-const mdxCompile = vi.fn().mockResolvedValue([])
-const mdxAcquire = vi.fn()
-const mdxCancel = vi.fn()
-const mdxRelease = vi.fn()
-
-vi.mock('@/lib/trpc', () => ({
-  trpc: {
-    notes: {
-      read: { query: (input: unknown) => read(input) },
-      write: { mutate: (input: unknown) => write(input) },
-    },
-    github: {
-      fileContributors: { query: () => Promise.resolve([]) },
-    },
-    history: {
-      list: { query: (input: unknown) => historyList(input) },
-      fileDiff: { query: (input: unknown) => fileDiff(input) },
-    },
-    mdxTrust: {
-      status: { query: (input: unknown) => mdxStatus(input) },
-      approve: { mutate: (input: unknown) => mdxApprove(input) },
-      revoke: { mutate: (input: unknown) => mdxRevoke(input) },
-      compile: { mutate: (input: unknown) => mdxCompile(input) },
-      acquireDiagnosticsLease: { mutate: (input: unknown) => mdxAcquire(input) },
-      cancelCompile: { mutate: (input: unknown) => mdxCancel(input) },
-      releaseDiagnosticsLease: { mutate: (input: unknown) => mdxRelease(input) },
-    },
-  },
-}))
-
-afterEach(() => {
-  read.mockReset()
-  write.mockReset()
-  historyList.mockReset()
-  fileDiff.mockReset()
-  mdxStatus.mockReset()
-  mdxApprove.mockReset()
-  mdxRevoke.mockReset()
-  mdxCompile.mockReset().mockResolvedValue([])
-  mdxAcquire.mockReset().mockResolvedValue({ lease: 'test-lease' })
-  mdxCancel.mockReset().mockResolvedValue({ ok: true })
-  mdxRelease.mockReset().mockResolvedValue({ ok: true })
-})
-
-function HintKeys() {
-  useShortcutDispatcher()
-  return <HostHintLayer scopeKey="fixture:file" />
-}
-
-function setup(path: string, claims = false, vimEnabled = false, hints = false) {
-  const store = createStore()
-  lastStore = store
-  store.set(activeRemoteAtom, 'syv-ai/site')
-  store.set(openedRemoteAtom, 'syv-ai/site')
-  store.set(sessionAtom, { login: 'fixture-user' })
-  store.set(vimCodeEditingAtom, vimEnabled)
-  store.set(snapshotAtom, {
-    ...emptyVaultSnapshot(),
-    files: [{ path, updatedAt: '2026-10-23T10:00:00Z' }],
-  })
-  if (claims) {
-    store.set(coreContributionAtom, {
-      surfaces: [],
-      rail: [],
-      claims: [
-        {
-          match: (p: string) => p.endsWith('.pdf'),
-          view: ({ path: p }: { path: string }) => <p>Claimed {p}</p>,
-        },
-      ],
-    })
-  }
-  return render(
-    <Provider store={store}>
-      <FileView path={path} />
-      {hints ? <HintKeys /> : null}
-    </Provider>,
-  )
-}
-
-/** Types into the CodeMirror document, the way a keystroke would land. */
-async function typeInto(text: string) {
-  const content = await waitFor(() => {
-    const node = document.querySelector<HTMLElement>('.cm-content')
-    if (node === null) throw new Error('no editor yet')
-    return node
-  })
-  const { EditorView } = await import('@codemirror/view')
-  const view = EditorView.findFromDOM(content)!
-  view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: text },
-  })
-}
 
 test('only paths actually routed to the core text editor are retainable', () => {
   const pdfClaim = {
@@ -886,15 +796,7 @@ test('MDX trust requires explicit confirmation and can be cancelled or approved'
 test('MDX teardown preserves another linter’s diagnostics in a mounted non-MDX editor', async () => {
   read.mockResolvedValue('{ invalid json')
   historyList.mockResolvedValue([])
-  const store = createStore()
-  lastStore = store
-  store.set(activeRemoteAtom, 'syv-ai/site')
-  store.set(openedRemoteAtom, 'syv-ai/site')
-  store.set(sessionAtom, { login: 'fixture-user' })
-  store.set(snapshotAtom, {
-    ...emptyVaultSnapshot(),
-    files: [{ path: 'config.json', updatedAt: '2026-10-23T10:00:00Z' }],
-  })
+  const store = createFileViewStore('config.json')
   const rendered = render(
     <Provider store={store}>
       <FileView path="config.json" visible />

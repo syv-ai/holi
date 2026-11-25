@@ -811,10 +811,10 @@ describe('calendar writes', () => {
     expect(writes).toHaveLength(0)
   })
 
-  it('refuses to move an event that has attendees, without calling Google', async () => {
+  it('refuses to modify an event that has attendees, without calling Google', async () => {
     const { writes, api } = writable(WITH_ATTENDEES)
 
-    await expect(updateEvent(api, 'ev-2', { start: '2026-08-06T12:00:00Z' })).rejects.toThrow(
+    await expect(updateEvent(api, 'ev-2', { description: 'Changed details' })).rejects.toThrow(
       /attendee/i,
     )
 
@@ -840,8 +840,26 @@ describe('calendar writes', () => {
     const body = writes[0]!.body as Record<string, unknown>
     // A patch that also sent `summary: undefined` would blank the title.
     expect(body.summary).toBeUndefined()
+    expect(body).not.toHaveProperty('description')
     expect((body.start as Record<string, string>).dateTime).toBe('2026-08-06T10:00:00Z')
   })
+
+  it.each(['Agenda\nNext steps', ''])(
+    'patches an explicitly supplied description (%j)',
+    async (description) => {
+      const { writes, api } = writable({ ...SOLO, description: 'Previous details' })
+
+      await updateEvent(api, 'ev-1', { description })
+
+      expect(writes).toEqual([
+        {
+          method: 'PATCH',
+          url: `${PRIMARY}/ev-1?sendUpdates=none`,
+          body: { description },
+        },
+      ])
+    },
+  )
 
   it('treats an empty attendees array as no attendees', async () => {
     // Google returns `attendees: []` on some solo events. Refusing those would

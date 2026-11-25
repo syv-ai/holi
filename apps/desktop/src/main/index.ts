@@ -26,14 +26,16 @@ import {
   shell,
   type Tray,
 } from 'electron'
-import { HOLI_LINK_SCHEME, holiLinkInArgv } from '@holi/shared'
+import { HOLI_LINK_SCHEME, MDX_RESOURCE_EVENTS, holiLinkInArgv } from '@holi/shared'
 import { openHoliLink as openCheckedHoliLink } from './holi-link-opener'
 import { requestFlush } from './flush'
 import { captureTab } from './tab-capture'
 import { isApplicationSender, unauthorizedApplicationSender } from './application-sender'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
-import { createMdxTrustStore } from './mdx-trust'
+import { canonicalGitHubRemote, createMdxTrustStore } from './mdx-trust'
+import { createMdxConsentStore, withMdxConsentQuit } from './mdx-consent'
+import { trackMdxDocument } from './mdx-document-lifetime'
 import { createMdxResources } from './mdx-resources'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
@@ -54,7 +56,7 @@ import { createAppFrameLeases } from './plugin-host/app-frame-leases'
 import { trackAppFrameDocuments } from './plugin-host/app-frame-navigation'
 import { appLeaseFromHost } from '../plugins/apps/shared/bundle'
 import { createNativeRequestWindows } from './plugin-host/native-request-windows'
-import type { PluginEventsDeps } from './plugin-host/events'
+import { pluginEvents, type PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
   changedBy,
@@ -112,7 +114,8 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
 let mainWindow: BrowserWindow | null = null
-let invalidateMdxDiagnostics = (): void => {}
+let mdxDocumentReady = () => false
+let invalidateMdxDiagnostics = (_retireDocument?: boolean): void => {}
 let closeMdxDiagnostics = (): void => {}
 let appFrameLeases: ReturnType<typeof createAppFrameLeases> | null = null
 let mainEntryDocument: string | null = null
@@ -251,12 +254,9 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
-  win.once('closed', () => invalidateMdxDiagnostics())
-  win.webContents.on('did-start-navigation', (event) => {
-    if (event.isMainFrame && !event.isSameDocument) invalidateMdxDiagnostics()
+  mdxDocumentReady = trackMdxDocument(win.webContents, (retireDocument) => {
+    if (mainWindow === win) invalidateMdxDiagnostics(retireDocument)
   })
-  win.webContents.on('render-process-gone', () => invalidateMdxDiagnostics())
-  win.webContents.once('destroyed', () => invalidateMdxDiagnostics())
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   // Pin authorization to the intended application document, never to a URL
   // supplied by an IPC sender.
@@ -281,7 +281,10 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   }
   if (liquid) applyLiquidGlass(win)
   win.on('closed', () => {
-    if (mainWindow === win) mainWindow = null
+    if (mainWindow !== win) return
+    mainWindow = null
+    mdxDocumentReady = () => false
+    invalidateMdxDiagnostics()
   })
   // The window's console joins main's in the Logs tab.
   win.webContents.on('console-message', (details) =>
@@ -353,6 +356,8 @@ async function main(): Promise<void> {
   const session = await createSession()
   // One app-owned handle; never construct a separate trust store per renderer request.
   const mdxTrust = createMdxTrustStore(join(app.getPath('userData'), 'mdx-trust.json'))
+  const mdxConsent = createMdxConsentStore(join(app.getPath('userData'), 'mdx-consent.json'))
+  let mdxShuttingDown = false
   const mdxCompiler = createMdxResources(join(app.getAppPath(), 'out/mdx-compiler'))
   session.onGenerationChange(() => mdxCompiler.invalidate())
   app.on('will-quit', () => {
@@ -425,6 +430,23 @@ async function main(): Promise<void> {
     listen: (channel, handler) =>
       listenForPluginMessages(channel, handler, authorizeApplicationSender),
     liveRemote: () => plugins.displayed(),
+  }
+  const mdxEvents = pluginEvents(eventsDeps, MDX_RESOURCE_EVENTS)
+  const notifyMdxResourcesChanged = (remote: string) => {
+    if (!mdxDocumentReady() || mdxShuttingDown || !mainWindow || mainWindow.isDestroyed()) return
+    try {
+      const contents = mainWindow.webContents
+      if (
+        isApplicationSender(
+          { sender: contents, senderFrame: contents.mainFrame },
+          contents,
+          mainEntryDocument,
+        )
+      )
+        mdxEvents.emit(remote, 'changed', null)
+    } catch {
+      // The application document can disappear independently of a completed store write.
+    }
   }
 
   // Every capability, from every door. Created ahead of the vault host so
@@ -967,15 +989,7 @@ async function main(): Promise<void> {
       }
       loggedUpdate = line
     },
-    beforeInstall: async () => {
-      if (quitting || confirmingQuit) return false
-      confirmingQuit = true
-      const go = await confirmQuit().catch(() => false)
-      const ready = go && (await teardown())
-      quitting = ready
-      confirmingQuit = false
-      return ready
-    },
+    beforeInstall: prepareQuit,
     // The vault, plugins and terminals are already stopped and `quitting` is
     // set, so staying open would leave a window with nothing behind it: say
     // why, then finish the exit. The next launch offers the update again.
@@ -1020,7 +1034,10 @@ async function main(): Promise<void> {
     registry,
     session,
     mdxTrust,
+    mdxConsent,
     mdxCompiler,
+    mdxApplicationReady: () => mdxDocumentReady() && !mdxShuttingDown,
+    onMdxResourcesChanged: notifyMdxResourcesChanged,
     onMdxDiagnosticsInvalidate: (invalidate) => {
       invalidateMdxDiagnostics = invalidate
     },
@@ -1216,22 +1233,26 @@ async function main(): Promise<void> {
   app.on('before-quit', (event) => {
     if (quitting) return
     event.preventDefault()
-    if (confirmingQuit) return
-    confirmingQuit = true
-    void confirmQuit()
-      .catch(() => false)
-      .then(async (go) => {
-        if (go) await teardownAndQuit()
-        confirmingQuit = false
-      })
+    void teardownAndQuit()
   })
 
-  async function teardownAndQuit(): Promise<void> {
-    if (!(await teardown())) {
-      quitting = false
-      return
+  async function prepareQuit(): Promise<boolean> {
+    if (quitting || confirmingQuit) return false
+    confirmingQuit = true
+    try {
+      quitting = (await confirmQuit()) && (await teardown())
+      return quitting
+    } catch (error) {
+      // In particular, the updater must never interpret a rejected preflight as approval.
+      console.error('[quit] preflight failed; quit cancelled:', error)
+      return false
+    } finally {
+      confirmingQuit = false
     }
-    quitting = true
+  }
+
+  async function teardownAndQuit(): Promise<void> {
+    if (!(await prepareQuit())) return
     // Only install a candidate downloaded from the selected channel. Squirrel
     // may have staged a different channel's candidate during its check.
     if (updater.installOnQuit()) return
@@ -1239,47 +1260,72 @@ async function main(): Promise<void> {
   }
 
   /** Everything a quit does before the process goes: by ⌘Q, the tray, or an
-   *  update's restart. Never throws. */
+   *  update's restart. */
   async function teardown(): Promise<boolean> {
-    const channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
+    let channel: ReturnType<typeof createRendererFlushChannel> | undefined
     try {
-      // Ask before tearing down anything: a failed flush must leave the app
-      // usable so the person can correct the problem and retry quit.
-      const result = await requestFlush(channel)
-      if (result !== 'flushed') {
-        console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
-        return false
-      }
-      // Stop the work across vaults and in the active vault only after dirty
-      // buffers are safe on disk. A failed drain keeps quit cancellable and
-      // leaves the updater and vault infrastructure available for a retry.
-      await drainShutdown({
-        stopBackground: async () => {
-          await vaultStartup
-          await plugins.stopBackground()
+      return await withMdxConsentQuit({
+        consent: mdxConsent,
+        pauseAdmission: () => {
+          mdxShuttingDown = true
         },
-        stopPlugins: () => plugins.stopAll(),
-        closeTerminals: () => terminals.closeAll(),
-        disposeUpdater: () => updater.dispose(),
-        settleVault: async () => {
-          for (const { remote } of await registry.list()) {
-            await settleVaultForQuit(host.get(remote))
+        resumeAdmission: () => {
+          mdxShuttingDown = false
+          const active = host.active()
+          if (active) notifyMdxResourcesChanged(canonicalGitHubRemote(active.remote))
+        },
+        async reportBlocked(error) {
+          console.error('[quit] unsaved MDX resource revocation; quit cancelled:', error)
+          openWindow()
+          const options: Electron.MessageBoxOptions = {
+            type: 'error',
+            buttons: ['OK'],
+            message: 'Holi stayed open because an MDX resource revocation could not be saved.',
+            detail:
+              'The resource is blocked for this run, but the saved permission may still allow it on restart. Check that Holi can write to its local data folder, then try quitting or restarting to update again. Holi will retry saving the revocation.',
           }
+          if (mainWindow === null) await dialog.showMessageBox(options)
+          else await dialog.showMessageBox(mainWindow, options)
         },
-        closeVaults: () => host.closeAll(),
-        closeBridge: async () => {
-          const endpoint = cliEndpoint
-          await endpoint?.dispose()
-          cliEndpoint = null
-          await bridge.stop()
+        async proceed() {
+          // Retrying consent removals and flushing buffers can both veto quit
+          // before tearing down the compiler, plugins, vaults or updater.
+          channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
+          const result = await requestFlush(channel)
+          if (result !== 'flushed') {
+            console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
+            return false
+          }
+          invalidateMdxDiagnostics(false)
+          await drainShutdown({
+            stopBackground: async () => {
+              await vaultStartup
+              await plugins.stopBackground()
+            },
+            stopPlugins: () => plugins.stopAll(),
+            closeTerminals: () => terminals.closeAll(),
+            disposeUpdater: () => updater.dispose(),
+            settleVault: async () => {
+              for (const { remote } of await registry.list()) {
+                await settleVaultForQuit(host.get(remote))
+              }
+            },
+            closeVaults: () => host.closeAll(),
+            closeBridge: async () => {
+              const endpoint = cliEndpoint
+              await endpoint?.dispose()
+              cliEndpoint = null
+              await bridge.stop()
+            },
+          })
+          return true
         },
       })
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
-      channel.cancel?.()
+      channel?.cancel?.()
       return false
     }
-    return true
   }
 }
 
