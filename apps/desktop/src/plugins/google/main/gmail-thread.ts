@@ -112,7 +112,10 @@ export function threadMessages(
   })
 }
 
-export async function fetchFullThread(api: GoogleApi, threadId: string): Promise<ThreadMessage[]> {
+export async function fetchFullThread(
+  api: Pick<GoogleApi, 'get'>,
+  threadId: string,
+): Promise<ThreadMessage[]> {
   let thread: RawThread
   try {
     thread = await api.get<RawThread>(`${GMAIL_BASE}/threads/${encodeURIComponent(threadId)}`, {

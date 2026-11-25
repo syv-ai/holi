@@ -157,7 +157,12 @@ function event(
     ],
     ...(options.series ? { recurrence: ['RRULE:FREQ=WEEKLY'] } : {}),
     ...(options.occurrence
-      ? { recurringEventId: 'series', originalStartTime: { dateTime: '2024-07-11T11:00:00-04:00' } }
+      ? {
+          recurringEventId: 'series',
+          originalStartTime: options.allDay
+            ? { date: '2024-07-11' }
+            : { dateTime: '2024-07-11T11:00:00-04:00' },
+        }
       : {}),
   }
 }
@@ -213,6 +218,8 @@ async function rig() {
     primaryPageErrors: new Map<number, number>(),
     expandedEmptyFirstPage: false,
     expandedPages: null as unknown[] | null,
+    // These fixture calendars have fixed UTC offsets over the dates under test.
+    calendarDateOffsets: new Map<string, string>(),
     exactCalendarError: null as number | null,
     omitAfterPatch: false,
     afterPatch: () => {},
@@ -360,7 +367,9 @@ async function rig() {
           (item) =>
             item.recurringEventId === seriesId &&
             (item.status !== 'cancelled' || url.searchParams.get('showDeleted') === 'true') &&
-            Date.parse(item.originalStartTime?.dateTime ?? '') === Date.parse(original ?? ''),
+            (item.originalStartTime?.date !== undefined
+              ? item.originalStartTime.date === original
+              : Date.parse(item.originalStartTime?.dateTime ?? '') === Date.parse(original ?? '')),
         ),
       })
     }
@@ -418,10 +427,22 @@ async function rig() {
       }
       const queryUid = url.searchParams.get('iCalUID')
       if (queryUid !== null) state.calendarUidQueries.push(queryUid)
+      const timeBound = (param: 'timeMin' | 'timeMax') =>
+        Math.floor(Date.parse(url.searchParams.get(param) ?? '') / 1000) * 1000
+      const min = timeBound('timeMin')
+      const max = timeBound('timeMax')
+      const calendarInstant = (time: ReturnType<typeof event>['start']) =>
+        Date.parse(
+          time.date === undefined
+            ? (time.dateTime ?? '')
+            : `${time.date}T00:00:00${state.calendarDateOffsets.get(id) ?? 'Z'}`,
+        )
+      const withinTimeBounds = (row: Pick<ReturnType<typeof event>, 'start' | 'end'>) =>
+        (!url.searchParams.has('timeMin') || calendarInstant(row.end) > min) &&
+        (!url.searchParams.has('timeMax') || calendarInstant(row.start) < max)
       if (url.searchParams.get('singleEvents') === 'true') {
         if (state.expandedEmptyFirstPage && !url.searchParams.has('pageToken'))
           return json({ kind: 'calendar#events', nextPageToken: '0' })
-        const threshold = Date.parse(url.searchParams.get('timeMin') ?? '')
         const limit = Number(url.searchParams.get('maxResults') ?? '250')
         const offset = Number(url.searchParams.get('pageToken') ?? '0')
         if (state.expandedPages)
@@ -431,15 +452,9 @@ async function rig() {
         const upcoming = (state.instances.get(id) ?? [])
           .filter(
             (event) =>
-              event.iCalUID === queryUid &&
-              event.status !== 'cancelled' &&
-              Date.parse(event.end.date ?? event.end.dateTime ?? '') > threshold,
+              event.iCalUID === queryUid && event.status !== 'cancelled' && withinTimeBounds(event),
           )
-          .sort(
-            (a, b) =>
-              Date.parse(a.start.date ?? a.start.dateTime ?? '') -
-              Date.parse(b.start.date ?? b.start.dateTime ?? ''),
-          )
+          .sort((a, b) => calendarInstant(a.start) - calendarInstant(b.start))
         return json({
           kind: 'calendar#events',
           items: upcoming.slice(offset, offset + limit),
@@ -458,10 +473,7 @@ async function rig() {
         (e) =>
           e.iCalUID === queryUid &&
           (e.status !== 'cancelled' || url.searchParams.get('showDeleted') === 'true') &&
-          // The fixture calendar is UTC, including the exclusive end of a DATE.
-          (!url.searchParams.has('timeMin') ||
-            Date.parse(e.end.date ?? e.end.dateTime ?? '') >
-              Date.parse(url.searchParams.get('timeMin')!)),
+          withinTimeBounds(e),
       )
       if (state.replaceOnQuery) {
         state.replaceOnQuery = false
@@ -2357,6 +2369,106 @@ it('uses the Calendar end cutoff for an all-day publication with an implicit end
     conferenceUrl: null,
     canRespond: false,
   })
+})
+
+it.each(['PUBLISH', 'EXPORT'] as const)(
+  'expires %s occurrence links from the moved end, not the original slot',
+  async (method) => {
+    const clock = vi.spyOn(Date, 'now')
+    const { state, read, respond } = await rig()
+    const conferenceUrl = 'https://meet.google.com/abc-defg-hij'
+    const htmlLink = 'https://calendar.google.com/calendar/event?eid=moved'
+    const moved = (kind: string) =>
+      invite(kind).replace(
+        'END:VEVENT',
+        `RECURRENCE-ID:20240711T150000Z\r\nURL:${htmlLink}\r\nEND:VEVENT`,
+      )
+    state.messages = [gmailMessage('update', 200, moved(method).replace('METHOD:EXPORT\r\n', ''))]
+    state.events.set('primary', [{ ...event({ id: 'moved', occurrence: true }), htmlLink: '' }])
+
+    // The original slot was a week earlier. The actual occurrence is joinable
+    // before it starts, while ongoing, and in the grace period. Both links come from mail.
+    for (const time of ['14:00:00', '15:30:00', '16:59:59']) {
+      clock.mockReturnValue(Date.parse(`2024-07-18T${time}Z`))
+      expect(await read()).toMatchObject({ scope: 'occurrence', conferenceUrl, htmlLink })
+    }
+    for (const time of ['17:00:00', '18:00:00']) {
+      clock.mockReturnValue(Date.parse(`2024-07-18T${time}Z`))
+      expect(await read()).toMatchObject({
+        kind: 'meeting',
+        scope: 'occurrence',
+        start,
+        end,
+        location: 'Upstairs',
+        conferenceUrl: null,
+        conferenceLinkSource: null,
+        htmlLink: null,
+        htmlLinkSource: null,
+        canRespond: false,
+      })
+    }
+
+    state.messages = [gmailMessage('update', 300, moved('REQUEST'))]
+    expect(await read()).toMatchObject({
+      kind: 'invitation',
+      scope: 'occurrence',
+      canRespond: true,
+    })
+    expect(await respond('accepted')).toMatchObject({ channel: 'calendar', outcome: 'sent' })
+    expect(state.calendarUpdateRequests).toMatchObject([{ eventId: 'moved', status: 'accepted' }])
+    expect(state.sendAttempts).toBe(0)
+  },
+)
+
+it('uses the calendar-zone end of the exact DATE occurrence, not a future neighbor', async () => {
+  const clock = vi.spyOn(Date, 'now')
+  const { state, read } = await rig()
+  state.calendarDateOffsets.set('primary', '+09:00')
+  state.expandedEmptyFirstPage = true
+  state.messages = [
+    gmailMessage(
+      'publication',
+      200,
+      invite('PUBLISH', 'DTSTART;VALUE=DATE:20240718\r\nRECURRENCE-ID;VALUE=DATE:20240711'),
+    ),
+  ]
+  const copy = event({ id: 'moved', occurrence: true, allDay: true })
+  const neighbor = {
+    ...copy,
+    id: 'neighbor',
+    start: { date: '2024-07-20' },
+    end: { date: '2024-07-21' },
+    originalStartTime: { date: '2024-07-25' },
+    hangoutLink: 'https://meet.google.com/xyz-abcd-efg',
+    htmlLink: 'https://calendar.google.com/calendar/event?eid=neighbor',
+  }
+  state.events.set('primary', [event({ id: 'series', series: true, allDay: true }), copy])
+  state.instances.set('primary', [copy, neighbor])
+
+  // The implicit end is midnight July 19 in the calendar's zone (15:00 UTC).
+  // Calendar can return an empty page before the qualifying exact occurrence.
+  clock.mockReturnValue(Date.parse('2024-07-18T15:59:59Z'))
+  expect(await read()).toMatchObject({
+    scope: 'occurrence',
+    allDay: true,
+    start: '2024-07-18',
+    end: '2024-07-19',
+    htmlLink: copy.htmlLink,
+    conferenceUrl: 'https://meet.google.com/abc-defg-hij',
+  })
+  clock.mockReturnValue(Date.parse('2024-07-18T16:00:00Z'))
+  expect(await read()).toMatchObject({
+    scope: 'occurrence',
+    allDay: true,
+    start: '2024-07-18',
+    end: '2024-07-19',
+    conferenceUrl: null,
+    htmlLink: null,
+    canRespond: false,
+  })
+  // At the same instant a different calendar zone still has time left.
+  state.calendarDateOffsets.set('primary', '-04:00')
+  expect(await read()).toMatchObject({ htmlLink: copy.htmlLink })
 })
 
 it.each(['PUBLISH', 'EXPORT'] as const)(

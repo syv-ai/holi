@@ -343,6 +343,13 @@ export function createMailInvitationStore(userData: string) {
   return {
     read: store.read,
     update,
+    changeAttempt: (id: string, change: (attempt: InvitationAttempt) => InvitationAttempt | null) =>
+      update((journal) => ({
+        ...journal,
+        attempts: journal.attempts.flatMap(
+          (attempt) => (attempt.id === id ? change(attempt) : attempt) ?? [],
+        ),
+      })),
     async rememberCalendarLocator(locator: CalendarLocator, assertBinding: () => void) {
       assertBinding()
       const key = calendarLocatorKey(locator)

@@ -18,6 +18,8 @@ import {
 } from './gmail-thread'
 import { buildRfc822, toBase64Url } from './mime'
 
+type GmailReadApi = Pick<GoogleApi, 'get'>
+
 const MAX_CALENDAR_PART_BYTES = 256 * 1024
 const calendarUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
@@ -43,7 +45,7 @@ export function createCalendarScan() {
     check(value <= MAX_CALENDAR_PART_BYTES && value <= bytes)
     return value
   }
-  async function readPart(api: GoogleApi, messageId: string, part: RawPart): Promise<string> {
+  async function readPart(api: GmailReadApi, messageId: string, part: RawPart): Promise<string> {
     let encoded: unknown = part.body?.data
     const attachment = part.body?.attachmentId
     const expectedSize = size(part.body?.size)
@@ -97,7 +99,7 @@ export function createCalendarScan() {
   }
   return {
     partsOf(
-      api: GoogleApi,
+      api: GmailReadApi,
       messageId: string,
       payload: RawPart | undefined,
       draft: boolean,
@@ -381,7 +383,7 @@ function calendarMail(
 /** Read calendar MIME for revision selection and Sent evidence, including
  * attachments fetched only when the caller consumes their parts. */
 export async function fetchThreadCalendarPayloads(
-  api: GoogleApi,
+  api: GmailReadApi,
   threadId: string,
   scan: CalendarScan,
 ) {
@@ -400,7 +402,7 @@ export async function fetchThreadCalendarPayloads(
 }
 
 function calendarEnvelope(
-  api: GoogleApi,
+  api: GmailReadApi,
   message: RawMessage & { id: string },
   scan: CalendarScan,
   header: ReturnType<typeof messageIdClaims>,
@@ -418,7 +420,7 @@ function calendarEnvelope(
  * when threads.get already returned an apparently matching reply. The lookup
  * owns only this provider snapshot; preflight and readback start a fresh one. */
 export function createSentCalendarLookup(
-  api: GoogleApi,
+  api: GmailReadApi,
   scan: CalendarScan,
   owners: MessageIdOwners,
   inThread: CalendarMail[],

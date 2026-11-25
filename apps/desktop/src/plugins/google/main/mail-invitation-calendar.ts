@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { canonicalIanaZone } from '../shared/time-zones'
-import { GoogleApiError, type GoogleApi, type GoogleDispatchGate, type GoogleParams } from './api'
+import { GoogleApiError, type GoogleApi, type GoogleParams } from './api'
 import {
   asRsvp,
   BASE,
@@ -20,6 +20,8 @@ import {
   providerConferenceUrl,
 } from '../shared/meeting-links'
 
+type CalendarReadApi = Pick<GoogleApi, 'get'>
+
 type InvitationCalendarCopy = {
   kind: 'verified'
   target: string
@@ -38,7 +40,7 @@ type InvitationCalendarCopy = {
   responseStatus: RsvpStatus | null
   cancelled: boolean
   unavailableReason: string | null
-  reply: ((answer: InviteAnswer, gate: GoogleDispatchGate) => Promise<void>) | null
+  reply: { url: string; etag: string; attendee: NonNullable<RawEvent['attendees']>[number] } | null
   /** False withholds all links; null means series navigation found no eligible instance. */
   navigation: (
     selectSlot: (slot: string) => InvitationTarget | false | null,
@@ -105,7 +107,7 @@ function isCollectionRow(item: unknown): boolean {
 }
 
 async function invitationPages<T>(
-  api: GoogleApi,
+  api: CalendarReadApi,
   url: string,
   kind: CollectionKind,
   params: GoogleParams,
@@ -215,7 +217,7 @@ function eventLocatorScope(event: RawEvent): CalendarScope {
  * A root cannot rule out an occurrence (even without rules, e.g. a cancelled
  * master), and an exception alone cannot establish absence of a root. This
  * also applies to legacy locators that described a root as non-recurring. */
-export function calendarLocatorMayMatchScope(
+function calendarLocatorMayMatchScope(
   copy: CalendarScope,
   { recurrenceId }: Pick<Parsed['details']['identity'], 'recurrenceId'>,
 ): boolean {
@@ -224,6 +226,25 @@ export function calendarLocatorMayMatchScope(
     copy.recurrenceId === null ||
     recurrenceId === null ||
     !distinctSlots(copy.recurrenceId, recurrenceId)
+  )
+}
+
+export function relevantCalendarTargets(
+  locators: CalendarLocator[],
+  target: { accountSub: string; email: string },
+  details: Parsed['details'],
+): Set<string> {
+  const { uid } = details.identity
+  return new Set(
+    locators.flatMap((copy) =>
+      copy.accountSub === target.accountSub &&
+      copy.uid === uid &&
+      (copy.organizer === undefined || copy.organizer === details.organizer?.email) &&
+      calendarLocatorMayMatchScope(copy, details.identity) &&
+      (calendarTargetMailbox(copy.target) ?? target.email) === target.email
+        ? [copy.target]
+        : [],
+    ),
   )
 }
 
@@ -250,7 +271,7 @@ function observeUidQuery(uid: string, observe: ObserveEvent, primaryMailbox?: st
 }
 
 async function exactCopies(
-  api: GoogleApi,
+  api: CalendarReadApi,
   url: string,
   identity: Parsed['details']['identity'],
   floating: boolean,
@@ -467,7 +488,7 @@ class CalendarObservationError extends Error {}
 
 /** RSVP lookup is independent of agenda visibility, dates and RSVP state. */
 export async function findInvitationCalendarCopy(
-  api: GoogleApi,
+  api: CalendarReadApi,
   invitation: InvitationTarget,
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
@@ -500,7 +521,7 @@ export async function findInvitationCalendarCopy(
 }
 
 async function lookupInvitationCalendarCopy(
-  api: GoogleApi,
+  api: CalendarReadApi,
   invitation: InvitationTarget,
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
@@ -694,7 +715,7 @@ function calendarCopyTarget(url: string, mailbox: string): string {
 }
 
 function invitationCopy(
-  api: GoogleApi,
+  api: CalendarReadApi,
   base: string,
   event: RawEvent,
   invitation: InvitationTarget,
@@ -776,25 +797,17 @@ function invitationCopy(
     cancelled,
     unavailableReason: reason,
     navigation: async (selectSlot) => {
-      if (cancelled || recurrenceId !== null) return undefined
-      if (details.recurring)
+      if (cancelled) return undefined
+      if (recurrenceId === null && details.recurring)
         return upcomingInvitationLinks(api, base, event, uid, organizer, observe, selectSlot)
       if (
         invitation.legacyJoinOnly &&
-        !(await legacyMeetingIsCurrent(api, base, event, uid, observe))
+        !(await legacyMeetingIsCurrent(api, base, event, uid, recurrenceId, observe))
       )
         return false
       return undefined
     },
-    reply:
-      !joinOnly && reason === null && etag
-        ? (answer, gate) =>
-            api.patch(
-              url,
-              { attendeesOmitted: true, attendees: [{ ...attendee, responseStatus: answer }] },
-              { ...gate, ifMatch: etag },
-            )
-        : null,
+    reply: !joinOnly && reason === null && etag && attendee ? { url, etag, attendee } : null,
   }
 }
 
@@ -884,15 +897,19 @@ function calendarRevisionMismatch(
 /** The previous meeting reader used events.list's exclusive end cutoff, with
  * a one-hour grace period. DATEs use the calendar's zone, not the host's. */
 async function legacyMeetingIsCurrent(
-  api: GoogleApi,
+  api: CalendarReadApi,
   base: string,
   event: RawEvent,
   uid: string,
+  recurrenceId: string | null,
   observe: (event: RawEvent) => Promise<void>,
 ): Promise<boolean> {
   const cutoff = Date.now() - 60 * 60 * 1000
   if (event.end?.dateTime !== undefined) return instant(event.end.dateTime) > cutoff
+  const timeMin = new Date(cutoff).toISOString()
   try {
+    if (recurrenceId !== null)
+      return await currentDateOccurrence(api, base, event, uid, recurrenceId, timeMin, observe)
     const rows = await invitationPages<RawEvent>(
       api,
       base,
@@ -901,7 +918,7 @@ async function legacyMeetingIsCurrent(
         iCalUID: uid,
         singleEvents: 'false',
         showDeleted: 'false',
-        timeMin: new Date(cutoff).toISOString(),
+        timeMin,
       },
       observe,
     )
@@ -920,10 +937,57 @@ async function legacyMeetingIsCurrent(
   }
 }
 
-/** Only Join uses the ordered, expanded view. Its instances never provide
+/** Ask events.list to apply its exclusive end filter in the calendar's zone.
+ * This read can corroborate the selected DATE occurrence, never replace it. */
+async function currentDateOccurrence(
+  api: CalendarReadApi,
+  base: string,
+  selected: RawEvent,
+  uid: string,
+  recurrenceId: string,
+  timeMin: string,
+  observe: (event: RawEvent) => Promise<void>,
+): Promise<boolean> {
+  const end = selected.end?.date
+  if (!end) return false
+  // DATE ends are at midnight in the calendar's zone, less than a day
+  // either side of UTC midnight. Bound the search without choosing a zone.
+  const latestEnd = Date.parse(end) + 24 * 60 * 60 * 1000
+  if (Date.parse(timeMin) >= latestEnd) return false
+  const rows = await invitationPages<RawEvent>(
+    api,
+    base,
+    'calendar#events',
+    {
+      iCalUID: uid,
+      singleEvents: 'true',
+      orderBy: 'startTime',
+      showDeleted: 'false',
+      timeMin,
+      timeMax: new Date(latestEnd).toISOString(),
+    },
+    observe,
+  )
+  const matches = rows.filter(({ id }) => id === selected.id)
+  const [row] = matches
+  return Boolean(
+    matches.length === 1 &&
+    row &&
+    usableInvitationEvent(row) &&
+    coherentEventTimes(row) &&
+    row.status !== 'cancelled' &&
+    row.start?.date !== undefined &&
+    row.iCalUID === uid &&
+    row.recurringEventId === selected.recurringEventId &&
+    sameOccurrence(row, recurrenceId) &&
+    calendarProof(row) === calendarProof(selected),
+  )
+}
+
+/** Series Join uses the ordered, expanded view. Its instances never provide
  * RSVP material, a write validator, or proof of absence for the master. */
 async function upcomingInvitationLinks(
-  api: GoogleApi,
+  api: CalendarReadApi,
   base: string,
   master: RawEvent,
   uid: string,
@@ -1272,7 +1336,7 @@ function calendarTargetParts(target: string): [string, string] | null {
   return null
 }
 
-export function calendarTargetMailbox(target: string): string | null {
+function calendarTargetMailbox(target: string): string | null {
   return calendarTargetParts(target)?.[1] ?? null
 }
 
@@ -1304,7 +1368,7 @@ type CalendarResource =
 
 /** Exact resources can corroborate earlier writes, and only a resource 404
  * corroborates absence for a known target. Neither authorizes a Calendar PATCH. */
-export function createInvitationCalendarResourceLookup(api: GoogleApi, mailbox: string) {
+export function createInvitationCalendarResourceLookup(api: CalendarReadApi, mailbox: string) {
   const snapshots = new Map<string, Promise<CalendarResource>>()
   async function read(url: string): Promise<CalendarResource> {
     try {
