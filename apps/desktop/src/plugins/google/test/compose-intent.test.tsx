@@ -19,6 +19,7 @@ function message(overrides: Partial<ThreadMessage> = {}): ThreadMessage {
     body: 'The numbers are attached.',
     html: null,
     attachments: [],
+    hasCalendarPayload: false,
     ...overrides,
   }
 }

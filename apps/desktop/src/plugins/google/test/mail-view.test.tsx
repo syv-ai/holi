@@ -209,6 +209,7 @@ function withMessage(message: Message, extra: Record<string, unknown> = {}) {
         bcc: [],
         date: '2026-08-04T09:00:00.000Z',
         attachments: [],
+        hasCalendarPayload: false,
         ...message,
         ...extra,
       },
@@ -265,6 +266,7 @@ beforeEach(() => {
         bcc: [],
         date: '2026-08-04T09:00:00.000Z',
         attachments: [],
+        hasCalendarPayload: false,
         body: 'a body',
         html: null,
       },
@@ -568,6 +570,18 @@ test('joins a recognised invitation without a separate meeting lookup', async ()
   expect(meetingMock).not.toHaveBeenCalled()
 })
 
+test('shows RSVP controls for an inline invitation without a filename or list badge', async () => {
+  withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
+  invitationMock.mockResolvedValue(invite)
+
+  await openThread()
+
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  expect(await region.findByRole('heading', { name: 'Sprint review' })).toBeInTheDocument()
+  expect(region.getByRole('button', { name: 'Accept' })).toBeEnabled()
+  expect(screen.queryByLabelText('Meeting invite')).not.toBeInTheDocument()
+})
+
 test('ordinary mail opens without an invitation or meeting lookup', async () => {
   withMessage({ body: 'lunch?', html: null })
   threadMock.mockResolvedValue(page([summary({ hasInvite: false })]))
@@ -600,6 +614,7 @@ test('explains a cancelled invitation detected from its attachment even without 
     { body: 'The workshop is off.', html: null },
     {
       attachments: [{ filename: 'cancel.ics', mimeType: 'text/calendar', size: 400 }],
+      hasCalendarPayload: true,
     },
   )
   invitationMock.mockResolvedValue({

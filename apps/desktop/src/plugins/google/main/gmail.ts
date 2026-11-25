@@ -131,6 +131,9 @@ interface MailMessage {
   /** Every part with a filename, however deep. **No extra request**: the
    *  thread is already fetched at `format=full`, so the parts are in hand. */
   attachments: MailAttachment[]
+  /** A calendar part is present in the MIME tree, including filename-less inline parts.
+   *  This triggers discovery in the reader; it does not establish an invitation. */
+  hasCalendarPayload: boolean
   /** Plain text, for the agent and as the UI's fallback. See the module note. */
   body: string
   /** The raw HTML part, or `null`. **Unsanitized**: the renderer sanitizes it
@@ -138,8 +141,8 @@ interface MailMessage {
   html: string | null
 }
 
-/** What the agent sees: the same thread with the markup removed. */
-type AgentMailMessage = Omit<MailMessage, 'html'>
+/** What the agent sees: the same thread without markup or the reader's lookup hint. */
+type AgentMailMessage = Omit<MailMessage, 'html' | 'hasCalendarPayload'>
 
 export interface AgentMailThread {
   id: string
@@ -1140,6 +1143,7 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
       body: bodyTextOf(message.payload),
       html: bodyHtmlOf(message.payload),
       attachments: attachmentsOf(message.payload),
+      hasCalendarPayload: calendarPartOf(message.payload) !== undefined,
     })),
   }
 }
@@ -1191,7 +1195,7 @@ export function textOnly(
     id: thread.id,
     subject: thread.subject,
     webUrl: thread.webUrl,
-    messages: thread.messages.map(({ html: _html, ...message }) => ({
+    messages: thread.messages.map(({ html: _html, hasCalendarPayload: _calendar, ...message }) => ({
       ...message,
       body: full
         ? message.body
