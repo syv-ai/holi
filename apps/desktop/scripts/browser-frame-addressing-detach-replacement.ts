@@ -64,13 +64,16 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
       await scenario.verifyOwner(freshSameALease, '#same-a'),
       'replacement target has a freshly verified exact live lease',
     )
+    const replacementUrl = freshSameAFrame.url
     const priorHandles = allFrames()
     await wc.executeJavaScript(
       "document.querySelector('#same-a').replaceWith(document.querySelector('#same-a').cloneNode(false))",
     )
     let replacement: (typeof priorHandles)[number] | undefined
     for (let i = 0; i < 200 && !replacement; i++) {
-      replacement = allFrames().find((frame) => !priorHandles.includes(frame))
+      replacement = allFrames().find(
+        (frame) => !priorHandles.includes(frame) && frame.url === replacementUrl,
+      )
       if (!replacement) await new Promise((resolve) => setTimeout(resolve, 25))
     }
     assert(replacement, 'replacement iframe creates a new native frame handle')
