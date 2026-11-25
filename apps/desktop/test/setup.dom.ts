@@ -1,7 +1,14 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup, configure } from '@testing-library/react'
-import { afterEach } from 'vitest'
+import { afterEach, beforeEach } from 'vitest'
 
+// Workspaces persist across stores by design, but not across independent tests.
+// Clear only this namespace; restoration tests retain storage within each test.
+beforeEach(() => {
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith('holi.workspace.')) localStorage.removeItem(key)
+  }
+})
 afterEach(() => cleanup())
 
 // How long `findBy` and `waitFor` wait for their condition. A bound on a

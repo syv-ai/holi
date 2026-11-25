@@ -1,6 +1,6 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
 import { SCRATCHPAD_PATH, VAULT_SETTING_DEFAULTS } from '@holi/shared'
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -55,6 +55,7 @@ import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descr
 import { shellTabForPathAtom } from '@/state/surfaces'
 import {
   activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
   openedRemoteAtom,
   snapshotAtom,
   snapshotLoadedAtom,
@@ -103,6 +104,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const vaultRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const snapshotLoaded = useAtomValue(snapshotLoadedAtom)
   const openedRemote = useAtomValue(openedRemoteAtom)
   const settings = useAtomValue(vaultSettingsAtom)
@@ -426,10 +428,33 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         className="data-pane-focused:before:bg-ring relative flex min-h-0 min-w-0 flex-1 flex-col data-pane-focused:before:absolute data-pane-focused:before:inset-x-0 data-pane-focused:before:top-0 data-pane-focused:before:z-10 data-pane-focused:before:h-px"
       >
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {remote !== null &&
-          openedRemote === remote &&
-          snapshotLoaded &&
-          settings?.remote === remote ? (
+          <VaultReadyView
+            key={vaultRevision}
+            ready={
+              remote !== null &&
+              openedRemote === remote &&
+              snapshotLoaded &&
+              settings?.remote === remote
+            }
+            fallback={
+              settingsReadFailed === remote && remote !== null ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Could not load this vault's settings</AlertTitle>
+                  <AlertDescription>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSettingsReadAttempt((attempt) => attempt + 1)}
+                    >
+                      Retry
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Skeleton className="h-full w-full" role="status" aria-label="Loading view" />
+              )
+            }
+          >
             <TabView
               tab={tab}
               visible={visible}
@@ -448,22 +473,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
               onNewDocument={newDocument}
               onOpenSearch={() => setSearchOpen(true)}
             />
-          ) : settingsReadFailed === remote && remote !== null ? (
-            <Alert variant="destructive">
-              <AlertTitle>Could not load this vault's settings</AlertTitle>
-              <AlertDescription>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setSettingsReadAttempt((attempt) => attempt + 1)}
-                >
-                  Retry
-                </Button>
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <Skeleton className="h-full w-full" role="status" aria-label="Loading view" />
-          )}
+          </VaultReadyView>
         </div>
       </section>
     )
@@ -672,4 +682,21 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       <HostHintLayer scopeKey={`${remote}:${ws.active}:${focusedKey}`} />
     </SidebarProvider>
   )
+}
+
+/** Admission belongs to each mounted view, not the whole vault: recovery must
+ * retain dirty editors without admitting a newly selected plugin surface.
+ * The selection revision resets admission even for an A→B→A transition. */
+function VaultReadyView({
+  ready,
+  children,
+  fallback,
+}: {
+  ready: boolean
+  children: ReactNode
+  fallback: ReactNode
+}) {
+  const [admitted, setAdmitted] = useState(ready)
+  if (ready && !admitted) setAdmitted(true)
+  return ready || admitted ? children : fallback
 }

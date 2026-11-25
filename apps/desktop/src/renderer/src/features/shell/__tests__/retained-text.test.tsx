@@ -10,9 +10,16 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { coreContributionAtom } from '@/state/plugins'
-import { activeRemoteAtom, openedRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  openedRemoteAtom,
+  snapshotAtom,
+  subscribeToVault,
+  vaultsAtom,
+} from '@/state/vaults'
+import { installFakeHoli } from '@/test/fake-holi'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { AGENTS_HOME_KEY } from '@/state/tab-descriptor'
+import { AGENTS_HOME_KEY, tabKey } from '@/state/tab-descriptor'
 import {
   activeSplit,
   closeTab,
@@ -32,6 +39,7 @@ const read = vi.fn(
   async (_input: { remote: string; path: string }) => 'first line\nsecond line\nthird line\n',
 )
 const write = vi.fn(async (_input: unknown) => ({ ok: true, warnings: [] as string[] }))
+const reopen = vi.fn()
 const files = () =>
   ['src/one.ts', 'src/two.ts', 'notes/one.md', 'settings.json'].map((path) => ({
     path,
@@ -54,7 +62,8 @@ vi.mock('@/lib/trpc', () => {
               : null
   const procedure = (name: string) => ({
     query: (input?: unknown) => Promise.resolve(answer(name, input)),
-    mutate: name === 'notes.write' ? write : async () => ({ ok: true }),
+    mutate:
+      name === 'notes.write' ? write : name === 'vaults.open' ? reopen : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
   })
   const router = (name: string) =>
@@ -651,4 +660,69 @@ test('a disk read started before a local save cannot replace that save but later
   diskChanged(store, 'src/one.ts', 'after local save')
   await waitFor(() => expect(cm.state.doc.toString()).toBe('new external text after the save'))
   expect(editor()).toBe(cm.dom)
+})
+
+test('failed navigation flush retains the dirty editor during recovery without admitting new surfaces', async () => {
+  const platform = installFakeHoli()
+  let finishRecovery!: (snapshot: ReturnType<typeof emptyVaultSnapshot>) => void
+  reopen.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finishRecovery = resolve
+      }),
+  )
+  const store = fixture(['settings.json'])
+  const unsubscribe = subscribeToVault(store)
+  try {
+    const cm = await cmFor('settings.json')
+    replace(cm, '{"unfinished":')
+    write.mockRejectedValue(new Error('disk full'))
+    act(() =>
+      platform.pushNavigate({
+        remote: 'owner/other',
+        plugin: 'agent',
+        name: 'focus',
+        payload: null,
+      }),
+    )
+    await waitFor(() => expect(store.get(openedRemoteAtom)).toBeNull())
+    expect(store.get(activeRemoteAtom)).toBe('owner/repo')
+    expect(cm.dom.isConnected).toBe(true)
+    expect(cm.state.doc.toString()).toBe('{"unfinished":')
+    act(() => {
+      store.set(coreContributionAtom, {
+        surfaces: [
+          {
+            kind: 'recovery-test',
+            label: 'Recovery test',
+            icon: () => null,
+            keepMounted: true,
+            render: () => <p>New plugin surface</p>,
+          },
+        ],
+        rail: [],
+        claims: [],
+      })
+      store.set(shellWorkspaceAtom, (ws) =>
+        openInSplit(ws, tabKey({ kind: 'surface', surface: 'recovery-test' })),
+      )
+    })
+    expect(screen.queryByText('New plugin surface')).toBeNull()
+    expect(screen.getByRole('status', { name: 'Loading view' })).toBeInTheDocument()
+    expect(editor('settings.json')).toBe(cm.dom)
+    await act(async () => finishRecovery({ ...emptyVaultSnapshot(), files: files() }))
+    await screen.findByText('New plugin surface')
+    expect(await cmFor('settings.json')).toBe(cm)
+    write.mockResolvedValue({ ok: true, warnings: [] })
+    await act(() => flushAllBuffers())
+    expect(write).toHaveBeenLastCalledWith({
+      remote: 'owner/repo',
+      path: 'settings.json',
+      text: '{"unfinished":',
+    })
+  } finally {
+    unsubscribe()
+    cleanup()
+    platform.restore()
+  }
 })
