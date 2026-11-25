@@ -1809,27 +1809,36 @@ export async function fetchAttachment(
  * already opened it.
  */
 export async function fetchThreadIcs(api: GoogleApi, threadId: string): Promise<string | null> {
+  const payloads = await fetchThreadCalendarPayloads(api, threadId)
+  return payloads[0]?.calendarText ?? null
+}
+
+/** Calendar payloads in a Gmail thread, scoped to the authenticated account. */
+export async function fetchThreadCalendarPayloads(
+  api: GoogleApi,
+  threadId: string,
+): Promise<Array<{ messageId: string; date: string; sent: boolean; calendarText: string }>> {
   const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
     format: 'full',
   })
-
+  const result: Array<{ messageId: string; date: string; sent: boolean; calendarText: string }> = []
   for (const message of thread.messages ?? []) {
-    const part = calendarPartOf(message.payload)
-    if (part === undefined) continue
-
-    // Inline: already in hand, no second request.
-    if (part.body?.data !== undefined) {
-      return Buffer.from(part.body.data, 'base64url').toString('utf8')
+    if (!message.id) continue
+    const date = message.internalDate ? new Date(Number(message.internalDate)).toISOString() : ''
+    const sent = message.labelIds?.includes('SENT') ?? false
+    for (const part of calendarPartsOf(message.payload)) {
+      let text: string | null = null
+      if (part.body?.data !== undefined) text = Buffer.from(part.body.data, 'base64url').toString('utf8')
+      else if (part.body?.attachmentId) {
+        const fetched = await fetchAttachment(api, message.id, part.body.attachmentId, {
+          filename: part.filename ?? 'invite.ics', mimeType: part.mimeType ?? 'text/calendar',
+        })
+        text = Buffer.from(fetched.data, 'base64').toString('utf8')
+      }
+      if (text !== null) result.push({ messageId: message.id, date, sent, calendarText: text })
     }
-    const attachmentId = part.body?.attachmentId
-    if (attachmentId === undefined || message.id === undefined) continue
-    const fetched = await fetchAttachment(api, message.id, attachmentId, {
-      filename: part.filename ?? 'invite.ics',
-      mimeType: part.mimeType ?? 'text/calendar',
-    })
-    return Buffer.from(fetched.data, 'base64').toString('utf8')
   }
-  return null
+  return result
 }
 
 /**
@@ -1840,18 +1849,16 @@ export async function fetchThreadIcs(api: GoogleApi, threadId: string): Promise<
  * on the type alone misses real invites and matching on the name alone misses
  * the inline part, which has no filename.
  */
-function calendarPartOf(part: RawPart | undefined): RawPart | undefined {
-  if (part === undefined) return undefined
+function calendarPartsOf(part: RawPart | undefined): RawPart[] {
+  if (part === undefined) return []
   const type = part.mimeType?.toLowerCase() ?? ''
   const name = part.filename?.toLowerCase() ?? ''
-  if (type.startsWith('text/calendar') || type === 'application/ics' || name.endsWith('.ics')) {
-    return part
-  }
-  for (const child of part.parts ?? []) {
-    const found = calendarPartOf(child)
-    if (found !== undefined) return found
-  }
-  return undefined
+  const own = type.startsWith('text/calendar') || type === 'application/ics' || name.endsWith('.ics')
+  return [...(own ? [part] : []), ...(part.parts ?? []).flatMap(calendarPartsOf)]
+}
+
+function calendarPartOf(part: RawPart | undefined): RawPart | undefined {
+  return calendarPartsOf(part)[0]
 }
 
 /** Gmail omits `threadId` on a loose draft; `null` is "belongs to no thread". */
