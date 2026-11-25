@@ -134,7 +134,10 @@ function rig(
     log: () => {},
   })
   const start = () =>
-    fenced.start({ provider, name: 'fenced', prompt: 'go', scope: { read: [], write: [] } })
+    fenced.start(
+      { provider, name: 'fenced', prompt: 'go', scope: { read: [], write: [] } },
+      () => true,
+    )
   return {
     terminals,
     sessions,
@@ -315,7 +318,7 @@ it.each(['root exit', 'explicit Stop'] as const)(
     try {
       const run = await t.start()
       if (!run.ok) throw new Error(run.message)
-      const attached = t.terminals.attach(run.terminalId)
+      const attached = t.terminals.attach(run.terminalId, () => true)
       await vi.advanceTimersByTimeAsync(1)
       await attached
       t.copyBack.mockImplementationOnce(() => admitted.promise)
@@ -337,10 +340,15 @@ it.each(['root exit', 'explicit Stop'] as const)(
       expect(t.copyBack).toHaveBeenCalledOnce()
       expect(proof).toHaveBeenCalledOnce()
       data('terminal tail')
-      expect(t.emit).toHaveBeenCalledWith('test/vault', 'pty-data', {
-        id: run.terminalId,
-        data: 'terminal tail',
-      })
+      expect(t.emit).toHaveBeenCalledWith(
+        'test/vault',
+        'pty-data',
+        {
+          id: run.terminalId,
+          data: 'terminal tail',
+        },
+        expect.any(Function),
+      )
       if (reason === 'root exit') {
         physical.resolve()
         await vi.advanceTimersByTimeAsync(5)
@@ -357,7 +365,9 @@ it.each(['root exit', 'explicit Stop'] as const)(
       expect(t.copyBack).toHaveBeenCalledTimes(2)
       expect(t.terminals.launchedFor(run.sessionId)).toBe(run.terminalId)
       expect(t.sessions.has(run.sessionId)).toBe(true)
-      expect(await t.sessions.start('codex', { sessionId: run.sessionId })).toMatchObject({
+      expect(
+        await t.sessions.start('codex', { sessionId: run.sessionId }, () => true),
+      ).toMatchObject({
         ok: false,
       })
       const again = t.sessions.stop(run.sessionId)
