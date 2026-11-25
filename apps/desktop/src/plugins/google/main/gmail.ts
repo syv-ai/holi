@@ -22,7 +22,7 @@ import { Parser } from 'htmlparser2'
 import type { MailListResult } from './mail-list-types'
 import { GoogleApiError, type GoogleApi } from './api'
 import { cleanMailText } from './mail-text'
-import { fetchLabelNames } from './labels'
+import { fetchLabelNames, fetchLabelNamesStrict } from './labels'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -696,21 +696,7 @@ export async function fetchThreadSummaries(
 
   // ONCE per call, not once per thread: resolving a chip must not cost a
   // request. It runs concurrently with the threads for the same reason.
-  const labelNames =
-    membership === undefined
-      ? fetchLabelNames(api)
-      : api
-          .get<{ labels?: { id?: string; name?: string; type?: string }[] }>(`${BASE}/labels`)
-          .then(
-            (page) =>
-              new Map(
-                (page.labels ?? []).flatMap((label) =>
-                  label.type === 'user' && label.id !== undefined && label.name !== undefined
-                    ? [[label.id, label.name] as const]
-                    : [],
-                ),
-              ),
-          )
+  const labelNames = membership === undefined ? fetchLabelNames(api) : fetchLabelNamesStrict(api)
 
   const [names, threads] = await Promise.all([
     labelNames,
