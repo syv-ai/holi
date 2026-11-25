@@ -8,6 +8,10 @@ type Thread = Awaited<ReturnType<typeof fetchThreadCalendarPayloads>>
 type Mail = Thread['messages'][number]
 type Revision = InvitationAttempt['revision']
 export type Candidate = NonNullable<ReturnType<typeof parseCalendarMail>> & { mail: Mail }
+type RevisionSelection = {
+  scopes: Incoming[]
+  suppressesSeriesSlot: (series: Candidate, slot: string) => boolean
+}
 type Incoming = {
   selected: Candidate
   provenParents: Set<string>
@@ -16,7 +20,7 @@ type Incoming = {
   response: NonNullable<Revision['mailboxResponse']> | null
   barrier?: Revision
   reason?: string
-  cancelled?: boolean
+  cancelledBy?: Candidate
 }
 
 export function sameGroup(a: Revision, b: Revision): boolean {
@@ -152,7 +156,7 @@ export function selectInvitationRevisions(
   deliveries: Candidate[],
   mailbox: string,
   owners: Thread['owners'],
-): Incoming[] {
+): RevisionSelection {
   // Arrival breaks ties among equivalent deliveries. Sequence and DTSTAMP
   // order revisions within a scope, and establish whether an applicable CANCEL is newer.
   const candidates = deliveries
@@ -179,13 +183,16 @@ export function selectInvitationRevisions(
   const revisions = candidates.filter((candidate) => !supersededJoins.has(candidate))
   const unknown = revisions.find((candidate) => !identityOf(candidate).materialKey)
   if (unknown)
-    return [
-      blocked(
-        unknown,
-        unknown.value.details.unavailableReason ??
-          'Gmail could not identify a revision in this conversation',
-      ),
-    ]
+    return {
+      scopes: [
+        blocked(
+          unknown,
+          unknown.value.details.unavailableReason ??
+            'Gmail could not identify a revision in this conversation',
+        ),
+      ],
+      suppressesSeriesSlot: () => false,
+    }
   const groups = new Map<string, Candidate[]>()
   for (const candidate of revisions) {
     const key = scopeKey(identityOf(candidate))
@@ -211,15 +218,78 @@ export function selectInvitationRevisions(
       value.details.organizer &&
       (value.details.identity.recurrenceId === null || value.recurrenceRange === 'THISANDFUTURE'),
   )
-  return scoped.map((group) => selectScope(group, eligible, cancellations, mailbox, owners))
+  const embeddedIn = (series: Candidate, identity: Revision) =>
+    series.value.cancellations.some((item) => item.identity === identity)
+  const suppresses = (series: Candidate, cancellation: Revision) =>
+    revisionOrder(cancellation, identityOf(series)) === 1 || embeddedIn(series, cancellation)
+  const equivalent = (candidate: Candidate, other: Candidate) =>
+    sameMaterial(candidate, other) &&
+    responseMatches(responseOf(candidate, mailbox), responseOf(other, mailbox))
+  const verifyCancellation = (cancel: Candidate) =>
+    !eligible.some(
+      (other) =>
+        sameGroup(identityOf(other), identityOf(cancel)) &&
+        (revisionOrder(identityOf(other), identityOf(cancel)) ?? 0) === 0 &&
+        !equivalent(cancel, other),
+    )
+  const coveringCancellation = (
+    revision: Revision,
+    organizer: string | undefined,
+    series?: Candidate,
+  ) => {
+    let barrier: Revision | undefined
+    for (const cancel of cancellations) {
+      const cancellation = identityOf(cancel)
+      if (cancel.value.details.organizer?.email !== organizer || !covers(cancellation, revision))
+        continue
+      const order = revisionOrder(cancellation, revision)
+      const embedded = series && embeddedIn(series, cancellation)
+      if (!embedded && (order === null || order === 0)) return { conflict: true }
+      if (embedded || order === 1)
+        return verifyCancellation(cancel) ? { cancelledBy: cancel } : { conflict: true }
+      if (!barrier || revisionOrder(cancellation, barrier) !== -1) barrier = cancellation
+    }
+    return { barrier }
+  }
+  const scopes = scoped.map((group) =>
+    selectScope(group, eligible, mailbox, owners, equivalent, coveringCancellation),
+  )
+  const bySlot = new Map(scopes.map((entry) => [scopeKey(identityOf(entry.selected)), entry]))
+  return {
+    scopes,
+    suppressesSeriesSlot(series: Candidate, recurrenceId: string) {
+      const revision = identityOf(series)
+      const organizer = series.value.details.organizer?.email
+      const slot = { ...revision, recurrenceId }
+      const occurrence = bySlot.get(scopeKey(slot))
+      if (organizer && occurrence?.selected.value.details.organizer?.email === organizer) {
+        const cancellation =
+          occurrence.cancelledBy ??
+          (!occurrence.reason && occurrence.selected.value.details.cancelled
+            ? occurrence.selected
+            : null)
+        if (cancellation && suppresses(series, identityOf(cancellation))) return true
+        if (!cancellation && !occurrence.reason && occurrence.selected.value.method === 'REQUEST') {
+          // A selected live occurrence REQUEST already accounts for cancellations
+          // at that slot, including a later reinstatement after a range CANCEL.
+          return false
+        }
+      }
+      return Boolean(coveringCancellation(slot, organizer, series).cancelledBy)
+    },
+  }
 }
 
 function selectScope(
   group: Candidate[],
   candidates: Candidate[],
-  cancellations: Candidate[],
   mailbox: string,
   owners: Thread['owners'],
+  equivalent: (candidate: Candidate, other: Candidate) => boolean,
+  coveringCancellation: (
+    revision: Revision,
+    organizer: string | undefined,
+  ) => { conflict?: boolean; cancelledBy?: Candidate; barrier?: Revision },
 ): Incoming {
   const sequence = Math.max(...group.map((candidate) => identityOf(candidate).sequence))
   const history = group.filter((candidate) => identityOf(candidate).sequence === sequence)
@@ -231,9 +301,6 @@ function selectScope(
   const latest = history.filter((candidate) => identityOf(candidate).dtstamp === newest)
   const selected = latest[0]!
   const response = responseOf(selected, mailbox)
-  const equivalent = (candidate: Candidate, other: Candidate) =>
-    sameMaterial(candidate, other) &&
-    responseMatches(responseOf(candidate, mailbox), responseOf(other, mailbox))
   const organizer = selected.value.details.organizer?.email
   if (group.some((candidate) => candidate.value.details.organizer?.email !== organizer))
     return blocked(selected, 'This occurrence has conflicting organizers')
@@ -245,27 +312,9 @@ function selectScope(
 
   // Compare series/range cancellation with each covered occurrence, not
   // arrival order. An older cancellation is still a barrier for Sent evidence.
-  const covered = cancellations.filter((cancel) => covers(cancel, selected))
-  let barrier: Revision | undefined
-  for (const cancel of covered) {
-    if (cancel.value.details.organizer?.email !== organizer) continue
-    const cancellation = identityOf(cancel)
-    const order = revisionOrder(cancellation, identityOf(selected))
-    if (order === null || order === 0)
-      return blocked(selected, 'This occurrence conflicts with a series cancellation')
-    if (order > 0) {
-      const verified = !candidates.some(
-        (other) =>
-          sameGroup(identityOf(other), cancellation) &&
-          (revisionOrder(identityOf(other), cancellation) ?? 0) === 0 &&
-          !equivalent(cancel, other),
-      )
-      if (!verified)
-        return blocked(selected, 'This occurrence conflicts with a series cancellation')
-      return { ...blocked(selected, 'This invitation was cancelled'), cancelled: true }
-    }
-    if (!barrier || revisionOrder(cancellation, barrier) !== -1) barrier = cancellation
-  }
+  const { conflict, cancelledBy, barrier } = coveringCancellation(identityOf(selected), organizer)
+  if (conflict) return blocked(selected, 'This occurrence conflicts with a series cancellation')
+  if (cancelledBy) return { ...blocked(selected, 'This invitation was cancelled'), cancelledBy }
   const newerThanCancellation = (candidate: Candidate) =>
     !barrier || revisionOrder(identityOf(candidate), barrier) === 1
   // For Sent continuity walk backwards through equal event material and the
@@ -305,10 +354,10 @@ function selectScope(
   return { selected, history, provenParents, possibleParents, response, barrier }
 }
 
-function covers(cancel: Candidate, selected: Candidate): boolean {
-  const first = identityOf(cancel).recurrenceId
-  const slot = identityOf(selected).recurrenceId
-  if (identityOf(cancel).uid !== identityOf(selected).uid || !slot || first === slot) return false // Exact cancellation was handled by scope selection.
+function covers(cancel: Revision, selected: Revision): boolean {
+  const first = cancel.recurrenceId
+  const slot = selected.recurrenceId
+  if (cancel.uid !== selected.uid || !slot || first === slot) return false // Exact cancellation was handled by scope selection.
   if (!first) return true
   // Parser-normalized dates, UTC instants and floating clocks sort within
   // their own value kind. Never convert between kinds to infer coverage.

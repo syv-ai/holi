@@ -21,11 +21,9 @@ import { buildRfc822, toBase64Url } from './mime'
 const MAX_CALENDAR_PART_BYTES = 256 * 1024
 const calendarUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
-export class CalendarTextEncodingError extends CalendarScanError {
-  constructor() {
-    super('Gmail calendar part is not valid UTF-8')
-  }
-}
+/** An unreadable leaf is not a failed scan. Only ordered, related Sent
+ * evidence may defer a leaf error; the shared resource limits still abort. */
+export class CalendarLeafError extends CalendarScanError {}
 
 /** Each public read or response owns one budget, including all evidence and
  * preflight reads. Revalidation still gets a fresh provider snapshot. */
@@ -41,39 +39,52 @@ export function createCalendarScan() {
   }
   const size = (value: unknown): number => {
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
-      throw new CalendarScanError('Invalid Gmail calendar part size')
+      throw new CalendarLeafError('Invalid Gmail calendar part size')
     check(value <= MAX_CALENDAR_PART_BYTES && value <= bytes)
     return value
   }
   async function readPart(api: GoogleApi, messageId: string, part: RawPart): Promise<string> {
-    const declared = size(part.body?.size)
     let encoded: unknown = part.body?.data
     const attachment = part.body?.attachmentId
+    const expectedSize = size(part.body?.size)
+    let attachmentSize: unknown = expectedSize
     if (attachment !== undefined) {
       if (typeof attachment !== 'string' || !attachment || encoded !== undefined)
-        throw new CalendarScanError('Invalid Gmail calendar attachment')
+        throw new CalendarLeafError('Invalid Gmail calendar attachment')
       check(--attachments >= 0)
-      const body = await api.get<{ size?: number; data?: string }>(
-        `${GMAIL_BASE}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachment)}`,
-      )
-      if (size(body?.size) !== declared)
-        throw new CalendarScanError('Gmail calendar attachment size changed')
+      const body = await api
+        .get<{ size?: number; data?: string }>(
+          `${GMAIL_BASE}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachment)}`,
+        )
+        .catch((error) => {
+          if (error instanceof GoogleApiError && error.code === 'not-found')
+            throw new CalendarLeafError('Gmail could not find the calendar attachment')
+          if (error instanceof SyntaxError)
+            throw new CalendarLeafError('Gmail returned an invalid calendar attachment')
+          throw error
+        })
       encoded = body?.data
+      attachmentSize = body?.size
     }
-    if (encoded === undefined && declared === 0) return ''
-    if (typeof encoded !== 'string') throw new CalendarScanError('Missing Gmail calendar part data')
-    check(encoded.length <= Math.ceil(Math.min(bytes, MAX_CALENDAR_PART_BYTES, declared) / 3) * 4)
+    if (typeof encoded === 'string')
+      check(encoded.length <= Math.ceil(Math.min(bytes, MAX_CALENDAR_PART_BYTES) / 3) * 4)
+    const actualSize = size(attachmentSize)
+    if (encoded === undefined && actualSize === 0) encoded = ''
+    if (typeof encoded !== 'string') throw new CalendarLeafError('Missing Gmail calendar part data')
     if (!/^[a-z0-9_-]*={0,2}$/i.test(encoded) || encoded.replace(/=+$/, '').length % 4 === 1)
-      throw new CalendarScanError('Invalid Gmail calendar part encoding')
+      throw new CalendarLeafError('Invalid Gmail calendar part encoding')
     const decoded = Buffer.from(encoded, 'base64url')
     check(decoded.length <= MAX_CALENDAR_PART_BYTES && decoded.length <= bytes)
-    if (decoded.length !== declared) throw new CalendarScanError('Invalid Gmail calendar part size')
     bytes -= decoded.length
+    if (actualSize !== expectedSize)
+      throw new CalendarLeafError('Gmail calendar attachment size changed')
+    if (decoded.length !== expectedSize)
+      throw new CalendarLeafError('Invalid Gmail calendar part size')
     try {
       return calendarUtf8.decode(decoded)
     } catch {
       // Do not manufacture an identity by replacing malformed wire bytes.
-      throw new CalendarTextEncodingError()
+      throw new CalendarLeafError('Gmail calendar part is not valid UTF-8')
     }
   }
   return {
@@ -90,8 +101,6 @@ export function createCalendarScan() {
         const data = part.body?.data
         const attachment = part.body?.attachmentId
         const declared = part.body?.size
-        if (declared !== undefined && (!Number.isSafeInteger(declared) || declared < 0))
-          throw new CalendarScanError('Invalid Gmail calendar part size')
         if (data !== undefined)
           check(
             typeof data === 'string' && data.length <= Math.ceil(MAX_CALENDAR_PART_BYTES / 3) * 4,
@@ -394,7 +403,7 @@ export function createSentCalendarLookup(
   const complete = new Set<string>()
   const hasVerifiedOwner = (reply: { rfcId: string; messageId: string }) =>
     complete.has(reply.rfcId) && owners.owns(reply)
-  const read = async (id: string, threadId: string | null, fromIndex = false) => {
+  const read = async (id: string, fromIndex = false) => {
     // An individual GET can return 404 before the index makes the resource
     // readable. An index row still needs a successful full read.
     if (fromIndex && reads.has(id) && (await reads.get(id)) === null) reads.delete(id)
@@ -404,7 +413,7 @@ export function createSentCalendarLookup(
       request = api
         .get<RawMessage>(`${GMAIL_BASE}/messages/${encodeURIComponent(id)}`, { format: 'full' })
         .then((raw) => {
-          const message = validateFullMessage(raw, id, threadId)
+          const message = validateFullMessage(raw, id)
           const header = messageIdClaims(message.payload)
           owners.index(message.id, header)
           return { message, header }
@@ -417,10 +426,7 @@ export function createSentCalendarLookup(
         })
       reads.set(id, request)
     }
-    const result = await request
-    if (result && threadId !== null && result.message.threadId !== threadId)
-      throw new CalendarScanError('Gmail returned conflicting full message identities')
-    return result
+    return request
   }
   async function exact(rfcId: string): Promise<Snapshot[] | null> {
     scan.evidenceRead()
@@ -465,18 +471,26 @@ export function createSentCalendarLookup(
       candidates.set(candidate.id, candidate.threadId ?? null)
     }
     const found = []
-    let missing = false
+    let incomplete = false
     for (const [id, threadId] of candidates) {
-      const snapshot = await read(id, threadId, true)
-      if (snapshot) found.push(snapshot)
-      else missing = true
+      const snapshot = await read(id, true)
+      // Index every full resource's claims, even plain mail or a duplicate
+      // declaration. A contradictory hit cannot certify the search as complete.
+      if (
+        !snapshot ||
+        (threadId !== null && snapshot.message.threadId !== threadId) ||
+        !snapshot.header.claims.has(rfcId) ||
+        !snapshot.message.labelIds?.includes('SENT')
+      )
+        incomplete = true
+      else found.push(snapshot)
     }
-    if (missing) return null
+    if (incomplete) return null
     complete.add(rfcId)
     return found
   }
   async function gather(rfcId: string, receipt: CalendarReplyReceipt | null) {
-    if (receipt?.id) await read(receipt.id, receipt.threadId)
+    if (receipt?.id) await read(receipt.id)
     let request = search.get(rfcId)
     if (!request) {
       request = exact(rfcId)
@@ -486,7 +500,10 @@ export function createSentCalendarLookup(
     if (indexed === null) return null
     const direct = receipt?.id ? await reads.get(receipt.id) : undefined
     // Even after a direct 404, the index cannot change the receipt's thread.
-    if (direct && receipt?.threadId && direct.message.threadId !== receipt.threadId) return null
+    if (direct && receipt?.threadId && direct.message.threadId !== receipt.threadId) {
+      complete.delete(rfcId)
+      return null
+    }
     return direct
       ? [direct, ...indexed.filter(({ message }) => message.id !== direct.message.id)]
       : indexed
