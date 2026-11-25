@@ -73,7 +73,8 @@ export async function runDetachAndReplacement(input: PhaseInput): Promise<void> 
       replacement = allFrames().find((frame) => !priorHandles.includes(frame))
       if (!replacement) await new Promise((resolve) => setTimeout(resolve, 25))
     }
-    assert(replacement, 'replacement iframe creates a new native frame handle')      await assert.rejects(scenario.evaluate(freshSameALease, '1'))
+    assert(replacement, 'replacement iframe creates a new native frame handle')
+    await assert.rejects(scenario.evaluate(freshSameALease, '1'))
     const replacementAddress = await scenario.resolve(replacement, replacementCapture)
     check(
       await scenario.verifyOwner(replacementAddress, '#same-a'),

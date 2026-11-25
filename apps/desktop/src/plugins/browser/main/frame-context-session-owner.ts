@@ -37,12 +37,10 @@ export function createFrameContextSessionOwner(
     assertAvailable()
     const before = epoch
     const sessionCancellation =
-      sessionId === undefined || sessionId === ''
-        ? undefined
-        : sessionCancellations.get(sessionId)
+      sessionId === undefined || sessionId === '' ? undefined : sessionCancellations.get(sessionId)
+    if (sessionId && !sessionCancellation)
+      throw new Error('debugger session is no longer available')
     try {
-      if (sessionId && !sessionCancellation)
-        throw new Error('debugger session is no longer available')
       const command =
         sessionId === undefined || sessionId === ''
           ? client.sendCommand(method, params)
