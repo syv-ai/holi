@@ -37,17 +37,22 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
   copy, using the selected series or original occurrence. Only when Calendar
   verifies that no matching copy exists does Holi send an iTIP reply through Gmail to
   the organizer. Holi requests threading with reply headers and the original thread ID;
-  Gmail can put the reply in a separate Sent thread and readback can still correlate it
-  by message ID. A blocked or inconclusive Calendar lookup is not permission to send
-  mail. When Calendar and a verified Sent reply disagree, the card distinguishes the
-  answer recorded in Calendar from the answer in Sent. It disables an answer already
-  recorded at the current target. An unanswered Calendar copy does not erase a
-  confirmed reply. Google's acceptance of a write does not prove organizer delivery.
+  Gmail can put the reply in a separate Sent thread. Readback checks account-wide
+  Sent ownership of its message ID even if the reply is in the original thread. A
+  blocked or inconclusive Calendar lookup is not permission to send mail. An exact
+  Calendar resource can confirm an earlier response without authorizing another
+  write when the collection omits the copy. Gmail fallback also needs a not-found
+  response for that known resource. When Calendar and a verified Sent reply
+  disagree, the card distinguishes the answer recorded in Calendar from the answer
+  in Sent. It disables an answer already recorded at the current target. An
+  unanswered Calendar copy does not erase a confirmed reply. Google's acceptance
+  of a write does not prove organizer delivery.
   Main binds the response to the vault's linked account and exact invitation revision.
   Opening a card link checks the binding revision in main without contacting Google,
   then rechecks that the reader still owns the card. A pending or refused response is
-  not shown as confirmed. **Retry** checks the thread and provider status again; it
-  never repeats the send or opens a link.
+  not shown as confirmed. After a write without readback, the card keeps the meeting
+  details but withholds the response badge until a fresh read. **Retry** checks the
+  thread and provider status again; it never repeats the send or opens a link.
 - **Calendar** shows calendars the user owns by default; per-calendar overrides
   are the plugin's `calendars` setting in the vault's
   `.holi/settings/plugins.local.yaml`, read in main so the agent and apps honour

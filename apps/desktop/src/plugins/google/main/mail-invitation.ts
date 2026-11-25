@@ -86,6 +86,7 @@ type ParsedInvitation = {
   /** Material from a strictly parsed revision, even when it cannot authorize an RSVP. */
   revisionMaterial: {
     description: string | null
+    status: string | null
     explicitFields: ExplicitFields
     attendees: string[]
     /** Canonical embedded exception material, including each original slot. */
@@ -580,6 +581,7 @@ export function parseMailInvitation(
     Object.assign(details, material.details, { identity })
     revisionMaterial = {
       description: material.description,
+      status: material.status,
       explicitFields: material.explicitFields,
       attendees: material.attendees,
       exceptionsKey: JSON.stringify(exceptions),

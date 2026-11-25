@@ -11,7 +11,8 @@ type ReadInvitation = ReadResult['invitations'][number]
 export type InvitationAnswer = Parameters<typeof googleCap.respondToMailInvitation>[1]['answer']
 export type Invitation = ReadInvitation
 
-export function invitationResponse(invitation: Invitation) {
+export function invitationResponse({ invitation, responseFresh }: InvitationCardState) {
+  if (!responseFresh) return { current: null, calendarOnly: null, differingSent: null }
   const { recordedResponseStatus: recorded, responseStatus, sentResponseStatus: sent } = invitation
   const calendarAnswer = recorded !== 'needsAction' && recorded !== 'delegated' ? recorded : null
   // A verified Calendar answer is evidence about that copy only. It cannot
@@ -29,7 +30,7 @@ export function invitationResponse(invitation: Invitation) {
 type Receipt = Pick<
   Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>,
   'outcome' | 'answer'
-> & { hasReadback: boolean }
+>
 
 // A new parent, binding, or material revision cannot inherit a local receipt.
 function cardKey({ bindingRevision, kind, scope, identity }: Invitation): string {
@@ -52,6 +53,8 @@ export interface InvitationCardState {
   invitation: Invitation
   error: string | null
   receipt: Receipt | null
+  /** The displayed response is backed by a read after the last write result. */
+  responseFresh: boolean
   refreshPending: boolean
 }
 
@@ -132,7 +135,8 @@ export function useMailInvitation({
               key,
               invitation,
               error: null,
-              receipt: receipt ? { ...receipt, hasReadback: true } : null,
+              receipt: receipt ?? null,
+              responseFresh: true,
               refreshPending: invitation.responsePending,
             }
           }),
@@ -162,7 +166,7 @@ export function useMailInvitation({
       invitation.kind !== 'invitation' ||
       !invitation.canRespond ||
       invitation.cancelled ||
-      invitationResponse(invitation).current === answer ||
+      invitationResponse(card).current === answer ||
       !currentCards.current.includes(card) ||
       state.busy !== null ||
       state.readError !== null ||
@@ -196,10 +200,10 @@ export function useMailInvitation({
       updateCard(null, (current) => ({
         ...current,
         invitation: sameRevision && updated !== null ? updated : current.invitation,
-        receipt: sameRevision
-          ? { outcome: result.outcome, answer: result.answer, hasReadback: updated !== null }
-          : null,
-        refreshPending: !sameRevision || result.refreshPending || updated?.responsePending === true,
+        receipt: sameRevision ? { outcome: result.outcome, answer: result.answer } : null,
+        responseFresh: sameRevision && updated !== null,
+        refreshPending:
+          updated === null || !sameRevision || result.refreshPending || updated.responsePending,
       }))
     } catch (error) {
       if (request()) {

@@ -514,7 +514,7 @@ function invitationCopy(
           ? 'This Calendar copy cannot be edited'
           : null
   const url = `${base}/${encodeURIComponent(event.id ?? '')}?sendUpdates=all`
-  const proof = calendarProof(event, requiresRoster ? 'roster' : undefined)
+  const proof = calendarProof(event, requiresRoster)
   return {
     kind: 'verified',
     target: JSON.stringify([url, attendee?.email?.toLowerCase() ?? organizer]),
@@ -595,6 +595,9 @@ function provesChangedMaterial(
       ({ details, material }) => (material.explicitFields.title ? words(details.title) : ''),
       textOf(event.summary),
     ) &&
+    // An omitted STATUS is distinct in the mail's material hash. Neither
+    // an omitted provider status nor an assumed default proves a change.
+    proves(({ material }) => material.status, event.status?.toUpperCase()) &&
     proves(({ details }) => words(details.location), textOf(event.location)) &&
     confirmsDescription &&
     proves(({ details }) => details.conferenceUrl, conference ?? undefined) &&
@@ -741,17 +744,24 @@ function calendarRoster(event: RawEvent): string | undefined {
 }
 
 function matchesCalendarProof(event: RawEvent, stored: string) {
-  // Old journals can still prove an exact match. Only canonical proofs can
-  // recognize reordered rules; never infer what a previous raw hash meant.
+  // Old journals can still prove an exact match to their recorded fields.
+  // New writes also bind the event status, not just the attendee's answer.
+  const rosterKnown = calendarRoster(event) !== undefined
   return (
     stored === calendarProof(event) ||
-    (calendarRoster(event) !== undefined && stored === calendarProof(event, 'roster')) ||
-    stored === calendarProof(event, 'canonical-v1') ||
-    (event.recurrence !== undefined && stored === calendarProof(event, 'legacy'))
+    (rosterKnown && stored === calendarProof(event, true)) ||
+    stored === calendarProof(event, false, 'prose') ||
+    (rosterKnown && stored === calendarProof(event, true, 'prose')) ||
+    stored === calendarProof(event, false, 'canonical-v1') ||
+    (event.recurrence !== undefined && stored === calendarProof(event, false, 'legacy'))
   )
 }
 
-function calendarProof(event: RawEvent, version?: 'roster' | 'canonical-v1' | 'legacy'): string {
+function calendarProof(
+  event: RawEvent,
+  roster = false,
+  version: 'status' | 'prose' | 'canonical-v1' | 'legacy' = 'status',
+): string {
   const conference = httpsLink(structuredConference(event)) ?? mailConference(event).url
   const description = words(event.description)
   const when = (time: RawEvent['start']) =>
@@ -780,15 +790,16 @@ function calendarProof(event: RawEvent, version?: 'roster' | 'canonical-v1' | 'l
         event.location,
         conference,
         googleEventUrl(event.htmlLink),
-        ...(!version || version === 'roster'
+        ...(version === 'status' || version === 'prose'
           ? [conference && providerConferenceUrl(description) === conference ? '' : description]
           : []),
         // If membership was needed to identify the copy, readback must still
         // observe it even when falling back to a GET of the original resource.
-        ...(version === 'roster' ? [['attendees', calendarRoster(event)]] : []),
+        ...(roster ? [['attendees', calendarRoster(event)]] : []),
         ...(event.recurrence?.length && event.start?.timeZone !== undefined
           ? [canonicalIanaZone(event.start.timeZone) ?? event.start.timeZone]
           : []),
+        ...(version === 'status' ? [['status', event.status ?? null]] : []),
       ]),
     )
     .digest('hex')
@@ -816,29 +827,47 @@ export function calendarTargetIsMailbox(target: string, mailbox: string): boolea
   return calendarTargetUrl(target, mailbox) !== null
 }
 
-/** Only a read of the original identity can reconcile a superseded Calendar
- * attempt. Deletion or a newer event at the original URL is not a refusal. */
-export async function verifyInvitationCalendarResponse(
-  api: GoogleApi,
-  target: string,
-  proof: string,
-  answer: InviteAnswer,
-  mailbox: string,
-): Promise<boolean> {
-  const url = calendarTargetUrl(target, mailbox)
-  if (!url) return false
-  const event = await api.get<RawEvent>(url).catch((error) => {
-    if (propagateCalendarRefusal(error)) throw error
-    return null
-  })
-  if (
-    !event ||
-    !usableInvitationEvent(event) ||
-    event.status === 'cancelled' ||
-    event.organizer?.self ||
-    !coherentEventTimes(event) ||
-    !matchesCalendarProof(event, proof)
-  )
-    return false
-  return mailboxAttendee(event, mailbox)?.responseStatus === answer
+type CalendarResource =
+  | { kind: 'gone' | 'unknown' }
+  | { kind: 'present'; confirms: (proof: string, answer: InviteAnswer) => boolean }
+
+/** Exact resources can corroborate earlier writes, and only a resource 404
+ * corroborates absence for a known target. Neither authorizes a Calendar PATCH. */
+export function createInvitationCalendarResourceLookup(api: GoogleApi, mailbox: string) {
+  const snapshots = new Map<string, Promise<CalendarResource>>()
+  async function read(url: string): Promise<CalendarResource> {
+    try {
+      const event = await api.get<RawEvent>(url)
+      return {
+        kind: 'present',
+        confirms: (proof, answer) =>
+          Boolean(
+            event &&
+            usableInvitationEvent(event) &&
+            event.status !== 'cancelled' &&
+            !event.organizer?.self &&
+            coherentEventTimes(event) &&
+            mailboxAttendee(event, mailbox)?.responseStatus === answer &&
+            matchesCalendarProof(event, proof),
+          ),
+      }
+    } catch (error) {
+      if (propagateCalendarRefusal(error)) throw error
+      return {
+        kind: error instanceof GoogleApiError && error.status === 404 ? 'gone' : 'unknown',
+      }
+    }
+  }
+  return (target: string): Promise<CalendarResource> => {
+    const url = calendarTargetUrl(target, mailbox)
+    if (!url) return Promise.resolve({ kind: 'unknown' })
+    let snapshot = snapshots.get(url)
+    if (!snapshot) {
+      // Historical targets share a bounded budget within this snapshot.
+      if (snapshots.size >= 32) return Promise.resolve({ kind: 'unknown' })
+      snapshot = read(url)
+      snapshots.set(url, snapshot)
+    }
+    return snapshot
+  }
 }
