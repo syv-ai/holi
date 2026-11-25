@@ -8,6 +8,9 @@ NS_ASSUME_NONNULL_BEGIN
                                endpoint:(NSString *)endpoint
                                   error:(NSError *_Nullable __autoreleasing *)error;
 - (NSString *)embeddedVersion;
+- (nullable NSDictionary<NSString *, id> *)managedIdentity:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
+- (nullable NSArray<NSDictionary<NSString *, id> *> *)committedEntries:(NSString *)root history:(BOOL)history error:(NSError *_Nullable __autoreleasing *)error;
+- (BOOL)materializeManaged:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSString *)canonicalRoot:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSDictionary<NSString *, id> *)workingCopyIdentity:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSArray<NSDictionary<NSString *, id> *> *)workingCopyCandidates:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
