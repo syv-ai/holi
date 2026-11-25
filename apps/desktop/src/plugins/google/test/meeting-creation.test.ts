@@ -22,6 +22,7 @@ const input: MeetingInput = {
   end: '2027-01-12T11:00:00Z',
   allDay: false,
   location: 'Synthetic room',
+  description: 'Agenda\nNext steps',
   guests: ['guest@example.com'],
   meet: false,
 }
@@ -217,6 +218,7 @@ it('inserts primary invitations through the UI with exact query/body and separat
     start: { dateTime: input.start, timeZone: 'UTC' },
     end: { dateTime: input.end, timeZone: 'UTC' },
     location: input.location,
+    description: input.description,
     attendees: [{ email: 'guest@example.com' }],
     extendedProperties: { private: { holiMeeting: op.fingerprint } },
     conferenceData: {
@@ -248,9 +250,49 @@ it('solo all-day creation is silent and omits attendees/conference data', async 
   })
   const post = r.calls.find((c) => c.method === 'POST')!
   expect(post.url.search).toBe('?sendUpdates=none')
-  expect(post.body).toMatchObject({ start: { date: '2027-01-12' }, end: { date: '2027-01-13' } })
+  expect(post.body).toMatchObject({
+    start: { date: '2027-01-12' },
+    end: { date: '2027-01-13' },
+    description: 'Agenda\nNext steps',
+  })
   expect(post.body).not.toHaveProperty('attendees')
   expect(post.body).not.toHaveProperty('conferenceData')
+})
+
+it('refuses a retry whose description changes while the prior send is unresolved', async () => {
+  const r = await rig()
+  r.mode('missing')
+  await r.meetings.submit('owner/repo', input)
+  const posts = r.calls.filter((call) => call.method === 'POST').length
+  await expect(
+    r.make().submit('owner/repo', { ...input, description: 'Changed agenda' }),
+  ).rejects.toThrow(/unresolved/)
+  expect(r.calls.filter((call) => call.method === 'POST')).toHaveLength(posts)
+})
+
+it('keeps the description optional across an unresolved send and restart', async () => {
+  const r = await rig()
+  const withoutDescription = { ...input }
+  delete withoutDescription.description
+  r.mode('missing')
+  const operation = await r.run('createMeeting', withoutDescription)
+  const restarted = r.make()
+  expect((await restarted.state('owner/repo', input.sub)).operation).toEqual(operation)
+  r.mode('normal')
+  expect(await restarted.submit('owner/repo', withoutDescription)).toMatchObject({ accepted: true })
+  for (const post of r.calls.filter((call) => call.method === 'POST'))
+    expect(post.body).not.toHaveProperty('description')
+})
+
+it('does not acknowledge a recovered event with a different description', async () => {
+  const r = await rig()
+  r.mode('missing')
+  const operation = (await r.run('createMeeting', input)) as MeetingOperation
+  const sent = r.calls.find((call) => call.method === 'POST')!.body!
+  r.events.set(operation.eventId, { ...sent, description: 'Different details' })
+  r.mode('normal')
+  await expect(r.run('checkMeeting', { sub: input.sub })).rejects.toThrow(/does not match/)
+  expect(r.calls.filter((call) => call.method === 'POST')).toHaveLength(1)
 })
 
 it('refuses unsupported Meet before any send without requiring new OAuth scopes', async () => {
