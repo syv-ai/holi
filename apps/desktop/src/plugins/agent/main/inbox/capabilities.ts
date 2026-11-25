@@ -53,6 +53,7 @@ const NOTIFY_TEXT: Record<RaiseResult, string> = {
   banner: 'notified',
   inbox: 'added to the inbox',
   repeat: 'already in the inbox, not repeated',
+  disabled: 'Inbox is disabled in Settings.',
 }
 
 export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
@@ -97,6 +98,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
           const link = notice.path === undefined ? '' : ` [[${notice.path}]]`
           const line = `${notice.title}: ${notice.line}${link}`
           const result = await deps.inbox.raise(notice)
+          if (result === 'disabled') throw new CapabilityError('FORBIDDEN', NOTIFY_TEXT.disabled)
           if (result !== 'repeat') await logQuietly(ctx.root, line)
           return result
         })

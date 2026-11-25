@@ -126,6 +126,7 @@ export interface AgentCapabilitiesDeps {
   /** Commit the open vault now. */
   commitNow(): Promise<unknown>
   trackMutation?<T>(work: () => Promise<T>): Promise<T>
+  agentHistoryEnabled?: () => boolean | Promise<boolean>
   captureFinalization?: () => <T>(work: () => Promise<T>) => Promise<T>
   /** Pi's per-job RPC supervisor; unlike Claude it is managed by Holi. */
   pi?: {
@@ -308,9 +309,12 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       doors: ['ui'],
       params: noParams,
       run: async (ctx): Promise<SessionSummary[]> => {
-        if (!live(ctx)) return []
+        if (!live(ctx) || (deps.agentHistoryEnabled && !(await deps.agentHistoryEnabled())))
+          return []
         await deps.sessions.ensure()
-        return [...deps.sessions.past(), ...(await deps.own.past())]
+        if (deps.agentHistoryEnabled && !(await deps.agentHistoryEnabled())) return []
+        const past = [...deps.sessions.past(), ...(await deps.own.past())]
+        return deps.agentHistoryEnabled && !(await deps.agentHistoryEnabled()) ? [] : past
       },
     }),
 

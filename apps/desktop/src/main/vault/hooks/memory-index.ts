@@ -73,7 +73,7 @@ export async function memoryIndex(
 ): Promise<TransformResult> {
   if (!touchesSharedMemory(staged)) return { changed: [], notes: [] }
   const settings = await readVaultSettings(root)
-  if (!settings.hooks['memory-index']) return { changed: [], notes: [] }
+  if (!settings.agentMemory || !settings.hooks['memory-index']) return { changed: [], notes: [] }
   if (await hasUnstagedSharedMemory(root)) {
     return {
       changed: [],

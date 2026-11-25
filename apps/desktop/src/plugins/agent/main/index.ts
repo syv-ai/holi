@@ -187,8 +187,14 @@ export const agentMain: MainPlugin = {
       let ownPast: SessionSummary[] = []
       let jobRows: SessionSummary[] = []
       const pushHistory = (): void => {
-        if (ctx.activationSignal.aborted) return
-        ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
+        void trackOwned(
+          (async () => {
+            if (ctx.activationSignal.aborted || !(await readVaultSettings(ctx.root)).agentHistory)
+              return
+            if (!ctx.activationSignal.aborted)
+              ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
+          })(),
+        ).catch((error: unknown) => console.error('[agent] history:', error))
       }
       const pushSessions = (): void => {
         if (ctx.activationSignal.aborted) return
@@ -326,6 +332,7 @@ export const agentMain: MainPlugin = {
       // vault's inbox, and a banner while Holi is out of sight.
       const inbox = createInbox({
         store: jsonFileStore(join(ctx.root, INBOX_FILE), parseInbox),
+        enabled: async () => (await readVaultSettings(ctx.root)).agentInbox,
         notify: (notice) => {
           if (!ctx.activationSignal.aborted) return ctx.notify(notice)
           return false
@@ -352,6 +359,7 @@ export const agentMain: MainPlugin = {
           captureFinalization: () => ctx.captureFinalization(),
           pi,
           defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
+          agentHistoryEnabled: async () => (await readVaultSettings(ctx.root)).agentHistory,
         }),
         ...inboxCapabilities({ inbox, liveRemote, trackMutation }),
         ...harnessCapabilities({
@@ -510,9 +518,7 @@ export const agentMain: MainPlugin = {
       let sweeping: Promise<unknown> = Promise.resolve()
       const sweep = (): void => {
         sweeping = sweeping.then(() =>
-          readVaultSettings(ctx.root).then((settings) =>
-            settings.agentMemory ? sweepAgentMemory(ctx.root, new Date()) : undefined,
-          ).catch((err: unknown) =>
+          sweepAgentMemory(ctx.root, new Date()).catch((err: unknown) =>
             console.error('[agent] memory sweep:', err),
           ),
         )

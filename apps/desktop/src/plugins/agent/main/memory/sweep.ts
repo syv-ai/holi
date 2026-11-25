@@ -14,6 +14,7 @@ import { lstat, readdir, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { MEMORY_DIR, isExpiredMemory, isLocalOnlyPath, localDate } from '@holi/shared'
 import { staleWorkLogs, WORK_LOG_DIR, WORK_LOG_KEEP_DAYS } from '../inbox/work-log'
+import { readVaultSettings } from '../../../../main/plugin-api'
 
 /** Hourly: a memory set to end at 15:00 is gone by 16:00. The session
  *  overview already leaves an expired one out, so the minute does not matter. */
@@ -61,9 +62,11 @@ async function remove(root: string, path: string): Promise<string | null> {
  *  later `expires` a moment ago survives. */
 export async function sweepAgentMemory(root: string, now: Date): Promise<string[]> {
   const deleted: string[] = []
-  for (const path of await personalMemories(root)) {
+  const memoryEnabled = (await readVaultSettings(root)).agentMemory
+  for (const path of memoryEnabled ? await personalMemories(root) : []) {
     const text = await readFile(join(root, path), 'utf8').catch(() => null)
     if (text === null || !isExpiredMemory(path, text, now)) continue
+    if (!(await readVaultSettings(root)).agentMemory) continue
     const gone = await remove(root, path)
     if (gone !== null) deleted.push(gone)
   }
