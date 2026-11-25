@@ -7,7 +7,7 @@
  * refresh latch), that unlinking a vault is not a disconnect, and that removing
  * an account takes every vault pointing at it down with it.
  */
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -100,8 +100,9 @@ async function controlledConsent(
   seed: StoredGoogleAuth[] = [],
   onRevoke?: (token: string) => Promise<void>,
   clients = memoryClients(null),
+  vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json')),
 ) {
-  await store.write(Object.fromEntries(seed.map((row) => [row.sub, row])))
+  if (seed.length > 0) await store.write(Object.fromEntries(seed.map((row) => [row.sub, row])))
   let now = NOW
   const states = new Map<string, string>()
   const exchanges: Array<{
@@ -114,7 +115,7 @@ async function controlledConsent(
   const refreshReply = deferred<Response>()
   const accounts = await createGoogleAccounts({
     store,
-    vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+    vaults,
     clients,
     env: {},
     now: () => now,
@@ -666,6 +667,155 @@ describe('the client credentials', () => {
     await expect(current.session.getAccessToken()).resolves.toBe('at-new')
     expect(before.isCurrent()).toBe(false)
     await expect(accounts.bindingFor('other/linked')).resolves.toBeNull()
+  })
+})
+
+describe('consent whose vault link fails', () => {
+  it('retires a replacement grant and its old links when the link write fails', async () => {
+    const path = join(dir, 'google-vault-accounts.json')
+    const vaults = createVaultAccounts(path)
+    const { accounts, exchanges, revoked } = await controlledConsent(
+      [auth()],
+      undefined,
+      undefined,
+      vaults,
+    )
+    await accounts.link(WORK, 'sub-1')
+    const oldBinding = (await accounts.bindingFor(WORK))!
+    const link = vaults.link
+    // An actual write refusal that clears in time for retirement to succeed.
+    vi.spyOn(vaults, 'link').mockImplementationOnce(async (remote, sub) => {
+      await mkdir(`${path}.tmp`)
+      try {
+        await link(remote, sub)
+      } finally {
+        await rm(`${path}.tmp`, { recursive: true })
+      }
+    })
+
+    const failed = (await accounts.connect(VAULT)).wait()
+    exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-failed', accessToken: 'at-failed' }))
+    await expect(failed).rejects.toThrow()
+    expect(revoked).toContain('rt-failed')
+    expect(oldBinding.isCurrent()).toBe(false)
+    expect(accounts.list()).toEqual([])
+    await expect(accounts.sessionFor(WORK)).resolves.toBeNull()
+    await expect(accounts.bindingFor(VAULT)).resolves.toBeNull()
+
+    const restarted = await controlledConsent()
+    expect(restarted.accounts.list()).toEqual([])
+    await expect(restarted.accounts.bindingFor(WORK)).resolves.toBeNull()
+    const fresh = (await accounts.connect(VAULT)).wait()
+    exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }))
+    await expect(fresh).resolves.toMatchObject({ kind: 'granted' })
+    const binding = await accounts.bindingFor(VAULT)
+    await expect(binding?.session.getAccessToken()).resolves.toBe('at-fresh')
+    await expect(accounts.bindingFor(WORK)).resolves.toBeNull()
+  })
+
+  it('keeps a partially published link unauthorized across restart even if retirement fails', async () => {
+    const path = join(dir, 'google-vault-accounts.json')
+    const vaults = createVaultAccounts(path)
+    // The vault link is published before the expired marker is cleared. Fail
+    // that second write, then fail unlinking so the published link survives.
+    await vaults.link(VAULT, 'sub-1')
+    await vaults.expireAccount('sub-1')
+    await vaults.link(WORK, 'sub-1')
+    await mkdir(join(dir, 'google-vault-accounts.expired.json.tmp'))
+    const atFailure = deferred<void>()
+    const finishFailure = deferred<void>()
+    const link = vaults.link
+    vi.spyOn(vaults, 'link').mockImplementationOnce(async (remote, sub) => {
+      try {
+        await link(remote, sub)
+      } catch (error) {
+        await mkdir(`${path}.tmp`)
+        atFailure.resolve()
+        await finishFailure.promise
+        throw error
+      }
+    })
+    const { accounts, exchanges } = await controlledConsent([], undefined, undefined, vaults)
+    const failed = (await accounts.connect(VAULT)).wait()
+    exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-failed', accessToken: 'at-failed' }))
+    const rejection = expect(failed).rejects.toThrow()
+    await atFailure.promise
+    try {
+      expect(accounts.list()).toEqual([])
+      await expect(accounts.bindingFor(VAULT)).resolves.toBeNull()
+      await expect(accounts.bindingFor(WORK)).resolves.toBeNull()
+    } finally {
+      finishFailure.resolve()
+      await rejection
+    }
+
+    expect(await vaults.all()).toMatchObject({ [VAULT]: 'sub-1', [WORK]: 'sub-1' })
+    const restarted = await controlledConsent()
+    expect(restarted.accounts.list()).toEqual([])
+    expect(restarted.accounts.sessionForSub('sub-1')).toBeNull()
+    await expect(restarted.accounts.link('other/vault', 'sub-1')).rejects.toThrow()
+    for (const remote of [VAULT, WORK]) {
+      await expect(restarted.accounts.sessionFor(remote)).resolves.toBeNull()
+      await expect(restarted.accounts.bindingFor(remote)).resolves.toBeNull()
+      await expect(restarted.accounts.overview(remote)).resolves.toMatchObject({ account: null })
+    }
+
+    await rm(`${path}.tmp`, { recursive: true })
+    await rm(join(dir, 'google-vault-accounts.expired.json.tmp'), { recursive: true })
+    const retry = (await restarted.accounts.connect(WORK)).wait()
+    restarted.exchanges[0]!.reply.resolve(
+      auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }),
+    )
+    await expect(retry).resolves.toMatchObject({ kind: 'granted' })
+    expect(restarted.revoked).toContain('rt-failed')
+    await expect(
+      (await restarted.accounts.bindingFor(WORK))?.session.getAccessToken(),
+    ).resolves.toBe('at-fresh')
+    await expect(restarted.accounts.bindingFor(VAULT)).resolves.toBeNull()
+  })
+
+  it('drains a pending link before publishing a different client', async () => {
+    const path = join(dir, 'google-vault-accounts.json')
+    const vaults = createVaultAccounts(path)
+    const clients = createClientStore(join(dir, 'google-client.enc'), storage)
+    const old = { id: 'old.apps.googleusercontent.com' }
+    const next = { id: 'next.apps.googleusercontent.com' }
+    await clients.write(old)
+    const { accounts, exchanges, revoked } = await controlledConsent([], undefined, clients, vaults)
+    const linkStarted = deferred<void>()
+    const finishLink = deferred<void>()
+    const link = vaults.link
+    vi.spyOn(vaults, 'link').mockImplementationOnce(async (remote, sub) => {
+      linkStarted.resolve()
+      await finishLink.promise
+      await link(remote, sub)
+    })
+    const overtaken = (await accounts.connect(VAULT)).wait()
+    exchanges[0]!.reply.resolve(auth())
+    await linkStarted.promise
+    const change = accounts.setClient(next)
+    try {
+      const restarted = await controlledConsent([], undefined, clients)
+      expect(restarted.accounts.client().id).toBe(old.id)
+      expect(restarted.accounts.list()).toEqual([])
+    } finally {
+      finishLink.resolve()
+      await change
+    }
+    await expect(overtaken).resolves.toMatchObject({ kind: 'cancelled' })
+    expect(revoked).toEqual(['rt-1'])
+
+    const restarted = await controlledConsent([], undefined, clients)
+    expect(restarted.accounts.client().id).toBe(next.id)
+    const fresh = (await restarted.accounts.connect(WORK)).wait()
+    restarted.exchanges[0]!.reply.resolve(
+      auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }),
+    )
+    await expect(fresh).resolves.toMatchObject({ kind: 'granted' })
+    await expect(restarted.accounts.bindingFor(VAULT)).resolves.toBeNull()
+    await expect(
+      (await restarted.accounts.bindingFor(WORK))?.session.getAccessToken(),
+    ).resolves.toBe('at-fresh')
   })
 })
 
