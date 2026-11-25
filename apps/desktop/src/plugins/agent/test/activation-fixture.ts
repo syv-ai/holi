@@ -7,7 +7,8 @@ import { afterEach, beforeEach, expect, vi } from 'vitest'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { createCoreServices, createUiReports } from '../../../main/capabilities/services'
-import { emptyVaultSnapshot, scanVault } from '@holi/shared'
+import { emptyVaultSnapshot } from '@holi/shared'
+import { scanVault } from '../../../main/vault/vault-store'
 import { createMembersCache } from '../../../main/github/members-cache'
 import { createPluginHost } from '../../../main/plugin-host/host'
 import { createBridgeServer } from '../../../main/bridge/server'
@@ -397,7 +398,7 @@ export async function rig(
     await mkdir(join(root, '.holi/settings'), { recursive: true })
     await writeFile(
       join(root, '.holi/settings/plugins.yaml'),
-      `plugins:\n  automations: true\n  holis: true\n${(lifecycle?.plugins ?? []).map((plugin) => `  ${plugin.info.id}: true\n`).join('')}`,
+      'plugins:\n  automations: true\n  holis: true\n',
     )
     await writeFile(
       join(root, '.fixture-owner'),
@@ -559,6 +560,7 @@ export async function rig(
       ).value,
   })
   const retainedRemotes = new Set<string>()
+  const snapshots = { [A]: emptyVaultSnapshot(), [B]: emptyVaultSnapshot() }
   const reports = createUiReports()
   const core = createCoreServices({
     get: (remote) => {
@@ -587,12 +589,12 @@ export async function rig(
       return {
         remote,
         root,
-        snapshot: lifecycle?.realSnapshots
-          ? async () => scanVault(root, await host.scanClaimsFor(root))
-          : emptyVaultSnapshot,
-        refresh: lifecycle?.realSnapshots
-          ? async () => scanVault(root, await host.scanClaimsFor(root))
-          : async () => emptyVaultSnapshot(),
+        snapshot: () => (lifecycle?.realSnapshots ? snapshots[remote] : emptyVaultSnapshot()),
+        refresh: async () => {
+          if (!lifecycle?.realSnapshots) return emptyVaultSnapshot()
+          snapshots[remote] = await scanVault(root, await host.scanClaimsFor(root))
+          return snapshots[remote]
+        },
         pause: () => pause(remote),
         resume: () => resume(remote),
         drainSync: async () => {},
@@ -637,7 +639,15 @@ export async function rig(
       if (lifecycle?.retainedContexts) retainedRemotes.add(remote)
       host.setDisplayed(remote)
     }
-    return host.reconcile(openVault(remote), 'open')
+    const opened = host.reconcile(openVault(remote), 'open')
+    return lifecycle?.realSnapshots
+      ? opened.then(async () => {
+          snapshots[remote] = await scanVault(
+            roots[remote],
+            await host.scanClaimsFor(roots[remote]),
+          )
+        })
+      : opened
   }
   const replace = (remote: typeof A | typeof B) => host.reconcile(openVault(remote), 'open')
   const machineCall = (remote: typeof A | typeof B, ...args: string[]) =>

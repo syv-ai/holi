@@ -82,6 +82,16 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
   let docsReadGate: { entered(): void; wait: Promise<void>; release(): void } | undefined
   let captureGate:
     { entered(): void; wait: Promise<void>; release(): void; used: boolean } | undefined
+  let resourceGate:
+    | {
+        url: string
+        used: boolean
+        entered(): void
+        wait: Promise<void>
+        release(): void
+        response(status: number): void
+      }
+    | undefined
   const captureResults: boolean[] = []
   const waitForCaptureResult = async (after: number, expected: boolean): Promise<void> => {
     const until = Date.now() + 8_000
@@ -217,6 +227,16 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     },
   )
   protocol.handle('holi-app', async (request) => {
+    const held = resourceGate
+    if (held && !held.used && request.url === held.url) {
+      held.used = true
+      held.entered()
+      await held.wait
+      const response = await serve(request)
+      held.response(response.status)
+      resourceGate = undefined
+      return response
+    }
     // Keep the classic script pending while the command document can send messages.
     if (new URL(request.url).pathname.endsWith('/command.js')) {
       await new Promise((resolve) => setTimeout(resolve, 350))
@@ -721,10 +741,112 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     const reloadedLease = appFrames.resolveToken(fixtureLease.token)
     assert(reloadedLease?.valid(frameWindow), 'fresh root reload lease is not valid')
     mark('root-renderer-reload-revokes-old-lease-and-fresh-frame-reads-own-note')
+
+    const teardownCaptureStart = captureResults.length
+    const teardownCapture = holdNextCapture()
+    const previousNonce = fixtureLease.nonce
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-reload'},'*')`,
+    )
+    await teardownCapture.waiting
+    await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+8000;const poll=()=>{if(window.fixtureNonces?.a!==${JSON.stringify(previousNonce)}&&(document.querySelector('#bridge-read-result')?.textContent??'').includes('owned-a'))resolve(true);else if(Date.now()>end)reject(new Error('fresh A document before teardown not ready'));else setTimeout(poll,25)};poll()})`,
+    )
+    const retiringLease = { ...fixtureLease }
+    const retiringFrame = frameWindow.webContents.mainFrame.framesInSubtree.find((frame) =>
+      frame.url.startsWith(`holi-app://${leasedAppHost(bundle, retiringLease.token)}/`),
+    )
+    assert(retiringFrame, 'actual A child frame is required')
+    let resourceEntered!: () => void
+    let releaseResource!: () => void
+    let resourceResponse!: (status: number) => void
+    const resourceStarted = new Promise<void>((resolve) => {
+      resourceEntered = resolve
+    })
+    const resourceWait = new Promise<void>((resolve) => {
+      releaseResource = resolve
+    })
+    const resourceStatus = new Promise<number>((resolve) => {
+      resourceResponse = resolve
+    })
+    const resourceUrl = new URL('nested/pixel.svg?isolation-474', retiringFrame.url).href
+    resourceGate = {
+      url: resourceUrl,
+      used: false,
+      entered: resourceEntered,
+      wait: resourceWait,
+      release: releaseResource,
+      response: resourceResponse,
+    }
+    await retiringFrame.executeJavaScript(
+      `(()=>{const image=new Image();image.src=${JSON.stringify(resourceUrl)};document.body.append(image);return true})()`,
+    )
+    await resourceStarted
+    active = vault('B')
+    host.setDisplayed(active.remote)
+    await host.reconcile(active, 'open')
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-vault',remote:'ada/b'},'*')`,
+    )
+    await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+12000;const poll=()=>{if((document.querySelector('#bridge-read-result')?.textContent??'').includes('owned-b'))resolve(true);else if(Date.now()>end)reject(new Error('B did not become readable during A teardown'));else setTimeout(poll,25)};poll()})`,
+    )
+    assert(fixtureLease)
+    const siblingLease = { ...fixtureLease }
+    assert.notEqual(siblingLease.token, retiringLease.token)
+    const readSibling = async () => {
+      const valid = await capabilityHost.dispatch({
+        door: 'ui',
+        remote: 'ada/b',
+        name: 'apps.frameLeaseValid',
+        params: { bundle, ...siblingLease },
+      })
+      assert.equal(valid.value, true, 'B native document lease must remain live')
+      const result = await capabilityHost.dispatch({
+        door: 'ui',
+        remote: 'ada/b',
+        name: 'apps.call',
+        params: { bundle, method: 'docs.read', params: { path: 'note.md' }, ...siblingLease },
+      })
+      assert.match(String(result.value), /owned-b/)
+      assert.doesNotMatch(String(result.value), /owned-a/)
+    }
+    const stoppingA = host.stop('ada/a')
+    // Release admitted work after retirement begins so stop can finish draining.
+    teardownCapture.release()
+    releaseResource()
+    await stoppingA
+    await waitForCaptureResult(teardownCaptureStart, false)
+    assert.equal(await resourceStatus, 404, 'retired A resource cannot borrow B authority')
+    assert.equal(retiringFrame.detached, true, 'departed A native child must be detached')
+    await readSibling()
+    await assert.rejects(
+      capabilityHost.dispatch({
+        door: 'ui',
+        remote: 'ada/a',
+        name: 'apps.call',
+        params: { bundle, method: 'docs.read', params: { path: 'note.md' }, ...retiringLease },
+      }),
+    )
+    mark('integrated-stop-a-rejects-held-resource-capture-and-door-preserves-b-native-lease')
+    await host.reconcile(vault('A'), 'open')
+    await readSibling()
+    writeFileSync(join(roots.A, '.holi/settings/plugins.yaml'), 'plugins:\n  apps: false\n')
+    await host.reconcile(vault('A'), 'settings')
+    await readSibling()
+    writeFileSync(join(roots.A, '.holi/settings/plugins.yaml'), 'plugins:\n  apps: true\n')
+    await host.reconcile(vault('A'), 'settings')
+    assert.deepEqual(host.failures('ada/a'), {})
+    await readSibling()
+    mark('integrated-restart-disable-reenable-a-preserves-b-app-door-and-native-origin')
+    await captureFixture('app-frame-b-after-a-teardown.png')
     ipcMain.removeHandler('holi:trpc')
     await host.stopAll()
     return checks
   } finally {
+    docsReadGate?.release()
+    captureGate?.release()
+    resourceGate?.release()
     ipcMain.removeHandler('holi:trpc')
     ipcMain.off('plugin:apps', onPluginEvent)
     inboundPluginEvents.clear()

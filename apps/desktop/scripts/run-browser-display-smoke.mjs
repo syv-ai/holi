@@ -38,6 +38,12 @@ const childVimAcceptance = process.env.HOLI_671_CHILD_VIM === '1'
 const hintsAcceptance = process.env.HOLI_524_HINTS === '1'
 const toolbarAcceptance = !appHintsOnly && (process.env.HOLI_553_UI === '1' || hintsAcceptance)
 const recordingPath = join(evidence, 'interaction.mp4')
+await mkdir(evidence, { recursive: true })
+assert.equal(
+  readdirSync(evidence).length,
+  0,
+  `native smoke evidence directory must be fresh: ${evidence}`,
+)
 const root = await mkdtemp(join(tmpdir(), 'holi-523-smoke-'))
 process.once('exit', () => rmSync(root, { recursive: true, force: true }))
 const ownedAppName = `HoliSmoke-app-hints-${process.pid}-${randomUUID()}.app`
@@ -46,12 +52,6 @@ let child
 let closed
 let log = ''
 try {
-  await mkdir(evidence, { recursive: true })
-  assert.equal(
-    readdirSync(evidence).length,
-    0,
-    `native smoke evidence directory must be fresh: ${evidence}`,
-  )
   if (appHintVideo) {
     for (const executable of ['ffmpeg', 'ffprobe'])
       execFileSync(executable, ['-version'], { timeout: 10_000, stdio: 'pipe' })
@@ -470,6 +470,8 @@ try {
     'production-app-frame-navigation-replacement-cannot-reach-hostbridge',
     'native-child-dom-removal-revokes-lease-and-suppresses-queued-bridge-reply',
     'root-renderer-reload-revokes-old-lease-and-fresh-frame-reads-own-note',
+    'integrated-stop-a-rejects-held-resource-capture-and-door-preserves-b-native-lease',
+    'integrated-restart-disable-reenable-a-preserves-b-app-door-and-native-origin',
     'native-svg-replacement-revokes-before-subsequent-capability-use-b',
     'revoked-app-lease-denied-b',
     'production-command-runner-result-a',
@@ -606,6 +608,7 @@ try {
       'vault-app-b.png',
       'app-frame-read-a.png',
       'app-frame-read-b.png',
+      'app-frame-b-after-a-teardown.png',
       'app-hints-light.png',
       'app-hints-dark.png',
     ],

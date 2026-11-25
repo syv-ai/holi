@@ -65,15 +65,19 @@ describe('automation and Holi activation contexts', () => {
 
     await writeVaultNote(roots[A], 'A')
     await writeVaultNote(roots[B], 'B')
-    for (const [remote, definition, fact] of [
-      [A, a, 'fact A'],
-      [B, b, 'fact B'],
-    ] as const) {
-      const report = await machineCall(remote, 'holis', 'report', definition.id, `report ${fact}`)
-      expect(report.status).toBe(200)
-      const remembered = await machineCall(remote, 'holis', 'remember', definition.id, fact)
-      expect(remembered.status).toBe(200)
-    }
+    await Promise.all(
+      (
+        [
+          [A, a, 'fact A'],
+          [B, b, 'fact B'],
+        ] as const
+      ).map(async ([remote, definition, fact]) => {
+        const report = await machineCall(remote, 'holis', 'report', definition.id, `report ${fact}`)
+        expect(report.status).toBe(200)
+        const remembered = await machineCall(remote, 'holis', 'remember', definition.id, fact)
+        expect(remembered.status).toBe(200)
+      }),
+    )
     expect((await machineCall(A, 'holis', 'recall', a.id)).body).toContain('fact A')
     expect((await machineCall(B, 'holis', 'recall', b.id)).body).toContain('fact B')
     expect((await machineCall(A, 'holis', 'recall', a.id)).body).not.toContain('fact B')
@@ -91,6 +95,10 @@ describe('automation and Holi activation contexts', () => {
     expect(await call(B, 'holis.list')).toMatchObject([{ id: b.id, status: 'approved' }])
     await enter(A)
     expect(await call(A, 'holis.list')).toMatchObject([{ id: a.id, status: 'approved' }])
+    const restoredMemory = (await machineCall(A, 'holis', 'recall', a.id)).body
+    expect(restoredMemory).toContain('fact A')
+    expect(restoredMemory).not.toContain('fact B')
+    expect((await machineCall(B, 'holis', 'recall', b.id)).body).toContain('fact B')
   })
 })
 
@@ -453,8 +461,8 @@ it('drains actual scheduler turn polling without finishing a sibling same-id run
   await enter(A)
   await enter(B)
   const states = new Map<string, string>([
-    [roots[A], 'working'],
-    [roots[B], 'working'],
+    [roots[A], 'busy'],
+    [roots[B], 'busy'],
   ])
   adapters.run.mockImplementation(async (_bin, args, options) => {
     if (args.includes('--bg')) return 'backgrounded · abc12345 · Inbox'
@@ -501,5 +509,69 @@ it('drains actual scheduler turn polling without finishing a sibling same-id run
   await vi.waitFor(async () => {
     const schedules = (await call(B, 'schedules.list')) as { runs: { finishedAt?: string }[] }[]
     expect(schedules[0]!.runs[0]!.finishedAt).toEqual(expect.any(String))
+  })
+})
+
+it('keeps the sibling scheduler timer running through stop, restart and disable', async () => {
+  vi.useFakeTimers({
+    toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+  })
+  vi.setSystemTime(new Date('2026-01-15T10:00:00'))
+  const { enter, call, roots, stopRemote, reconcileSettings } = await rig(
+    undefined,
+    undefined,
+    true,
+    {
+      retainedContexts: true,
+    },
+  )
+  const launches = new Map<string, number>()
+  adapters.run.mockImplementation(async (_bin, args, options) => {
+    if (!args.includes('--bg')) return '[]'
+    const root = options.cwd ?? ''
+    const count = (launches.get(root) ?? 0) + 1
+    launches.set(root, count)
+    return `backgrounded · ${count === 1 ? 'abc12345' : 'def12345'} · Timer`
+  })
+  await enter(A)
+  await enter(B)
+  const enable = async (remote: typeof A | typeof B, name: string, cron: string) => {
+    const saved = (await call(remote, 'schedules.save', {
+      draft: { name, crons: [cron], prompt: 'Inspect the owned note.' },
+    })) as { path: string; fingerprint: string }
+    await call(remote, 'schedules.enable', { schedule: saved.path, fingerprint: saved.fingerprint })
+  }
+  await Promise.all(([A, B] as const).map((remote) => enable(remote, 'Same timer', '1 10 15 1 *')))
+  await stopRemote(A)
+  vi.setSystemTime(new Date('2026-01-15T10:02:00'))
+  await vi.advanceTimersByTimeAsync(6_000)
+  await vi.waitFor(async () => {
+    expect(await call(B, 'schedules.list')).toMatchObject([
+      { runs: [{ trigger: 'schedule', outcome: 'started', jobId: 'abc12345' }] },
+    ])
+  })
+  await enter(A)
+  await vi.advanceTimersByTimeAsync(6_000)
+  await vi.waitFor(async () => {
+    expect(await call(A, 'schedules.list')).toMatchObject([
+      { runs: [{ trigger: 'schedule', outcome: 'started', jobId: 'abc12345' }] },
+    ])
+  })
+  await writeFile(
+    join(roots[A], '.holi/settings/plugins.yaml'),
+    'plugins:\n  automations: false\n  holis: true\n',
+  )
+  await reconcileSettings(A)
+  await expect(call(A, 'schedules.list')).rejects.toThrow()
+  await enable(B, 'Next timer', '3 10 15 1 *')
+  vi.setSystemTime(new Date('2026-01-15T10:04:00'))
+  await vi.advanceTimersByTimeAsync(30_000)
+  await vi.waitFor(async () => {
+    expect(await call(B, 'schedules.list')).toContainEqual(
+      expect.objectContaining({
+        name: 'Next timer',
+        runs: [expect.objectContaining({ trigger: 'schedule', outcome: 'started' })],
+      }),
+    )
   })
 })
