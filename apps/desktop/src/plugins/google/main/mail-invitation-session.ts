@@ -128,8 +128,12 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
     const representations = []
     let hasCandidate = false
     for (const part of mail.parts) {
-      if (part.method === null)
+      if (part.method === null) {
+        // Incoming ambiguity could hide a newer REQUEST or CANCEL. A Sent
+        // leaf could instead be a reply: assess its envelope and order below.
+        if (mail.sent) continue
         throw new CalendarScanError('Gmail could not verify the calendar MIME declaration')
+      }
       if (mail.sent && part.method === 'REPLY' && !part.alternatives.length) continue
       // A Sent part without a revision declaration may be a reply even
       // when its bytes cannot be read. Assess it against known parents below.
@@ -220,11 +224,12 @@ async function sentResponse(
     // unreadable reply may be ignored when settling a dispatch reservation.
     if (older && (!couldObscureReceipt || (!contested && answers.size === 1))) continue
     const matched = await sentAnswer(message, revision, address)
-    if (matched.unresolved && (protectReceiptSince === undefined || couldObscureReceipt))
-      unresolved = true
-    if (older || (!matched.unresolved && (!parents.has(parent) || !matched.answers.length)))
-      continue
-    const disputed = matched.unresolved || !owners.owns(message)
+    // A matching REPLY to a possible-only parent can contest the current
+    // answer, but neither its contents nor its envelope prove that parent.
+    const unverified = matched.unresolved || (matched.answers.length > 0 && !parents.has(parent))
+    if (unverified && (protectReceiptSince === undefined || couldObscureReceipt)) unresolved = true
+    if (older || (!unverified && !matched.answers.length)) continue
+    const disputed = unverified || !owners.owns(message)
     if (message.timestamp === 0) {
       if (disputed) unorderedContest = true
       else for (const answer of matched.answers) unordered.add(answer)
@@ -787,10 +792,12 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         // Two verified answers can differ without making the current write target ambiguous.
         // Only a writable Calendar copy and actual Sent evidence allow resolving that difference.
         const canResolveDifference = reply?.channel === 'calendar' && sentStatus !== null
-        responseUnverified = gmailUnverified || (answersDiffer && !canResolveDifference)
+        const calendarUnverified = calendar.kind === 'verified' && calendarObserved === null
+        responseUnverified =
+          gmailUnverified || calendarUnverified || (answersDiffer && !canResolveDifference)
         if (responseUnverified) {
           if (gmailUnverified) invitation.unavailableReason = sentVerificationReason
-          else
+          else if (answersDiffer)
             invitation.unavailableReason ??= `Calendar records ${calendarStatus}, but the other confirmed response is ${otherAnswer}.`
           invitation.responseStatus = null
         } else {

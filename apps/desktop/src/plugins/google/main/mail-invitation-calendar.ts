@@ -382,6 +382,22 @@ async function lookupInvitationCalendarCopy(
   return match ?? { kind: 'absent' }
 }
 
+function uniqueSelfAttendee(event: RawEvent) {
+  const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []
+  return self.length === 1 ? self[0] : undefined
+}
+
+/** Calendar's `self` identifies the copy; an RSVP must also identify exactly
+ * one attendee for the connected mailbox, not a calendar ID or alias. */
+function mailboxAttendee(event: RawEvent, mailbox: string) {
+  const self = uniqueSelfAttendee(event)
+  return self?.email?.toLowerCase() === mailbox &&
+    !self.resource &&
+    event.attendees?.filter(({ email }) => email?.toLowerCase() === mailbox).length === 1
+    ? self
+    : undefined
+}
+
 function invitationCopy(
   api: GoogleApi,
   base: string,
@@ -392,20 +408,15 @@ function invitationCopy(
   ownedCalendar?: string,
   owned = base === PRIMARY_EVENTS,
 ): CalendarLookup {
-  const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []
-  const selfEmail = self[0]?.email?.toLowerCase()
   const { details, request, material, joinOnly } = invitation
-  // Calendar's `self` denotes the copy, not the mailbox. Even its owner must
-  // not answer for a calendar ID or alias that is not the invited mailbox.
-  const attendee =
-    self.length === 1 &&
-    selfEmail &&
-    (joinOnly
-      ? selfEmail === mailbox || selfEmail === ownedCalendar
-      : selfEmail === mailbox &&
-        request.attendees.includes(mailbox) &&
-        event.attendees?.filter((guest) => guest.email?.toLowerCase() === mailbox).length === 1)
-      ? self[0]
+  const self = joinOnly ? uniqueSelfAttendee(event) : undefined
+  const selfEmail = self?.email?.toLowerCase()
+  const attendee = joinOnly
+    ? selfEmail && (selfEmail === mailbox || selfEmail === ownedCalendar)
+      ? self
+      : undefined
+    : request.attendees.includes(mailbox)
+      ? mailboxAttendee(event, mailbox)
       : undefined
   const organizer = event.organizer?.email?.toLowerCase()
   const { sequence, recurrenceId } = details.identity
@@ -490,18 +501,23 @@ function invitationCopy(
   if (joinOnly && (!start || !end || !explicitFields.start))
     return blocked('Calendar could not verify the time of this meeting')
   const etag = strongEventEtag(event.etag)
+  // Only an explicit needsAction is a reset. An omitted status cannot
+  // corroborate a dispatch or make that response safe to send again.
+  const responseStatus = joinOnly || cancelled ? null : asRsvp(attendee?.responseStatus)
   const reason = cancelled
     ? 'This Calendar event was cancelled'
     : joinOnly
       ? null
-      : !etag || !writable
-        ? 'This Calendar copy cannot be edited'
-        : null
+      : responseStatus === null
+        ? 'Calendar could not verify your response on this event'
+        : !etag || !writable
+          ? 'This Calendar copy cannot be edited'
+          : null
   const url = `${base}/${encodeURIComponent(event.id ?? '')}?sendUpdates=all`
   const proof = calendarProof(event, requiresRoster ? 'roster' : undefined)
   return {
     kind: 'verified',
-    target: JSON.stringify([url, selfEmail ?? organizer]),
+    target: JSON.stringify([url, attendee?.email?.toLowerCase() ?? organizer]),
     etag,
     proof,
     matchesProof: (stored) => stored === proof || matchesCalendarProof(event, stored),
@@ -514,7 +530,7 @@ function invitationCopy(
     conferenceUrl,
     conferenceLinkSource,
     htmlLink,
-    responseStatus: joinOnly || cancelled ? null : asRsvp(attendee?.responseStatus),
+    responseStatus,
     cancelled,
     unavailableReason: reason,
     reply:
@@ -543,6 +559,14 @@ function provesChangedMaterial(
 ): boolean {
   const { predecessors } = invitation
   if (!predecessors.length) return true
+  // A series master cannot prove changes to embedded exception rows. A
+  // nonempty Calendar lookup must not authorize RSVP on that master or by mail.
+  if (
+    predecessors.some(
+      ({ material }) => material.exceptionsKey !== invitation.material.exceptionsKey,
+    )
+  )
+    return false
   const proves = <T>(valueOf: (revision: RevisionMaterial) => T, observed: T | undefined) => {
     const expected = valueOf(invitation)
     return observed === expected || predecessors.every((prior) => valueOf(prior) === expected)
@@ -812,14 +836,9 @@ export async function verifyInvitationCalendarResponse(
     !usableInvitationEvent(event) ||
     event.status === 'cancelled' ||
     event.organizer?.self ||
+    !coherentEventTimes(event) ||
     !matchesCalendarProof(event, proof)
   )
     return false
-  const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []
-  return (
-    self.length === 1 &&
-    !self[0]?.resource &&
-    self[0]?.email?.toLowerCase() === mailbox &&
-    self[0]?.responseStatus === answer
-  )
+  return mailboxAttendee(event, mailbox)?.responseStatus === answer
 }

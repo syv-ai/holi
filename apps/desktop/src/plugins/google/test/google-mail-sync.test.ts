@@ -12,6 +12,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GoogleApi } from '../main/api'
 import { openGoogleCache, type GoogleCache } from '../main/cache'
@@ -64,6 +65,8 @@ interface Routes {
   list?: { id: string }[]
   listPages?: Record<string, { threads: { id: string }[]; nextPageToken?: string }>
   threads?: Record<string, unknown>
+  /** Headers-only `messages.get` responses; no MIME bodies. */
+  mimeProbes?: Record<string, unknown>
   /** `history.list`. A number means "answer this status instead". */
   history?: unknown | number
   historyPages?: Record<string, unknown | number>
@@ -98,8 +101,23 @@ function gmail(routes: Routes) {
       return ok(historyPage ?? { historyId: '5000' })
     }
     if (path.endsWith('/threads')) {
-      const token = new URL(url).searchParams.get('pageToken') ?? ''
-      return ok(routes.listPages?.[token] ?? { threads: routes.list ?? [] })
+      const params = new URL(url).searchParams
+      if (params.get('q')?.includes('filename:ics')) return ok({})
+      return ok(routes.listPages?.[params.get('pageToken') ?? ''] ?? { threads: routes.list ?? [] })
+    }
+    const mimeProbe = /\/messages\/([^/]+)$/.exec(path)
+    if (mimeProbe) {
+      const params = new URL(url).searchParams
+      const fields = params.get('fields') ?? ''
+      if (
+        params.get('format') !== 'full' ||
+        !fields.includes('parts(') ||
+        /body|data|attachmentId/i.test(fields)
+      )
+        throw new Error('Expected a masked MIME structure probe')
+      const probe = routes.mimeProbes?.[mimeProbe[1]!]
+      if (!probe) throw new Error('No message for MIME structure probe')
+      return ok(probe)
     }
     const threadId = path.split('/').pop()!
     if (routes.missingThreads?.includes(threadId)) {
@@ -216,6 +234,57 @@ describe('syncThreads', () => {
     // The whole point: the list is served from the cache and NOTHING is
     // refetched. One request instead of twenty-six.
     expect(threadGets(second.seen)).toHaveLength(0)
+  })
+
+  it('rebuilds an older invitation classification even when mailbox history is unchanged', async () => {
+    const id = 't1'
+    const messageId = 't1-m1'
+    const metadata = rawThread(id, 'Inline invite')
+    const payload = {
+      mimeType: 'application/octet-stream',
+      headers: [
+        ...metadata.messages[0]!.payload.headers,
+        {
+          name: 'Content-Type',
+          value: '(outer (comment)) multipart (type) / mixed; boundary="invite"',
+        },
+      ],
+    }
+    const provider = gmail({
+      list: [{ id }],
+      threads: { [id]: { id, messages: [{ ...metadata.messages[0], payload }] } },
+      mimeProbes: {
+        [messageId]: {
+          id: messageId,
+          threadId: id,
+          payload: { ...payload, parts: [{ mimeType: 'text/calendar; method=REQUEST' }] },
+        },
+      },
+      history: { historyId: '5000' },
+    })
+    const key = cacheKey({})
+    const current = await syncThreads(provider.api, cache, {})
+    // Persist the previous release's classification of the same provider row.
+    cache.writeThreads(
+      key,
+      current.threads.map((thread) => ({ ...thread, hasInvite: false, automated: false })),
+    )
+    cache.close()
+    const path = join(dir, 'cache.db')
+    const legacy = new DatabaseSync(path)
+    legacy.prepare("UPDATE meta SET value = '6' WHERE key = 'shape'").run()
+    legacy.close()
+
+    cache = openGoogleCache(path)
+    cache.ensureShape()
+    const upgraded = await syncThreads(provider.api, cache, {})
+    expect(upgraded.threads).toMatchObject([{ id, hasInvite: true, automated: true }])
+
+    cache.close()
+    cache = openGoogleCache(path)
+    cache.ensureShape()
+    const unchanged = gmail({ history: { historyId: '5000' } })
+    expect((await syncThreads(unchanged.api, cache, {})).threads).toMatchObject(upgraded.threads)
   })
 
   it('observes sent-only changes for cached inbox threads without importing unrelated threads', async () => {

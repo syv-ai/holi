@@ -455,17 +455,18 @@ async function run() {
     const badge = '[aria-label="Meeting invite"]'
     const inlineRow = rowSelector('shell', inline)
     const attachedRow = rowSelector('shell', attachment)
-    await until('attached invite appears as the positive list-badge control', () =>
+    await until('attached invite appears with a list badge', () =>
       js(
         `!!document.querySelector(${literal(`${attachedRow} ${badge}`)})?.getClientRects().length`,
       ),
     )
-    assert(await js(`!!document.querySelector(${literal(inlineRow)})?.getClientRects().length`))
-    assert.equal(await js(`!!document.querySelector(${literal(`${inlineRow} ${badge}`)})`), false)
+    await until('filename-less inline invite appears with a list badge', () =>
+      js(`!!document.querySelector(${literal(`${inlineRow} ${badge}`)})?.getClientRects().length`),
+    )
     await open('shell', inline)
     await expectDetails(inline)
     await expectStatus('No response yet')
-    mark('mail-shell-filename-less-inline-invite-has-no-list-badge-but-opens-a-card')
+    mark('mail-shell-filename-less-inline-invite-has-list-badge-and-opens-a-card')
     await capture('01-shell-before-light')
 
     let frame = 0
