@@ -409,6 +409,19 @@ if [ -L "\$endpoint" ] || [ ! -f "\$endpoint" ]; then
   exit 1
 fi
 
+# A vault-local credential takes precedence over the machine credential.
+holi_dir=$(pwd -P)
+while [ ! -f "$holi_dir/.holi/vault" ] && [ "$holi_dir" != / ]; do holi_dir=$(dirname "$holi_dir"); done
+scoped=0
+if [ -f "$holi_dir/.holi/vault" ]; then
+  scoped=1
+  holi_env="$holi_dir/.holi/state/bridge.local.env"
+  if [ ! -f "$holi_env" ] || [ -L "$holi_env" ]; then echo "holi: vault CLI credential is missing or unsafe." >&2; exit 1; fi
+  HOLI_BRIDGE_PORT=$(grep '^HOLI_BRIDGE_PORT=' "$holi_env" | head -n 1 | cut -d= -f2-)
+  HOLI_BRIDGE_TOKEN=$(grep '^HOLI_BRIDGE_TOKEN=' "$holi_env" | head -n 1 | cut -d= -f2-)
+  case "$HOLI_BRIDGE_PORT" in ''|*[!0-9]*) echo "holi: vault CLI credential is malformed." >&2; exit 1 ;; esac
+  case "$HOLI_BRIDGE_TOKEN" in ????????*) ;; *) echo "holi: vault CLI credential is malformed." >&2; exit 1 ;; esac
+fi
 # Accept only the canonical descriptor written by Holi, in exact field order.
 # Parsing as data avoids ever evaluating content from a file.
 parsed=\$(awk '
@@ -429,6 +442,7 @@ parsed=\$(awk '
 }
 port=\${parsed%% *}
 token=\${parsed#* }
+if [ "$scoped" -eq 1 ]; then port=$HOLI_BRIDGE_PORT; token=$HOLI_BRIDGE_TOKEN; fi
 
 umask 077
 out=\$(mktemp) || { echo "holi: cannot create a private response file." >&2; exit 1; }
@@ -436,7 +450,7 @@ config=\$(mktemp) || { rm -f "\$out"; echo "holi: cannot create a private creden
 cleanup() { rm -f "\$out" "\$config"; }
 trap cleanup EXIT
 trap 'cleanup; exit 1' HUP INT TERM
-printf 'header = "x-holi-cli-token: %s"\\n' "\$token" > "\$config"
+if [ "\$scoped" -eq 0 ]; then printf 'header = "x-holi-cli-token: %s"\\n' "\$token" > "\$config"; fi
 unset token parsed
 
 cwd=\$(pwd -P) || { echo "holi: cannot determine physical working directory." >&2; exit 1; }
@@ -449,8 +463,13 @@ set -- "\$@" --data-urlencode "cwd=\$cwd"
 ${jobField}
 
 send() {
-  curl -q --noproxy '*' -sS --config "\$config" -X POST -o "\$out" -w '%{http_code}' \\
-    "http://127.0.0.1:\$port/cli" "\$@"
+  if [ "\$scoped" -eq 1 ]; then
+    curl -q --noproxy '*' -sS -X POST -o "\$out" -w '%{http_code}' \\
+      "http://127.0.0.1:\$port/cli?t=\$HOLI_BRIDGE_TOKEN" "\$@"
+  else
+    curl -q --noproxy '*' -sS --config "\$config" -X POST -o "\$out" -w '%{http_code}' \\
+      "http://127.0.0.1:\$port/cli" "\$@"
+  fi
 }
 code=\$(send "\$@") || { echo "holi: could not reach the running Holi app." >&2; exit 1; }
 if [ "\$code" = 428 ]; then
