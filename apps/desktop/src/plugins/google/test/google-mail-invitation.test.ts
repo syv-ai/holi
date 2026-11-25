@@ -3252,6 +3252,100 @@ it('does not answer a rolled-back or conflicting REQUEST after a confirmed Gmail
   expect(state.calendarPatchAttempts).toBe(0)
 })
 
+it.each(['calendar', 'gmail'] as const)(
+  'needs fresh Calendar material for a later same-sequence REQUEST after a confirmed %s reply',
+  async (channel) => {
+    const { state, read, respond, restart } = await rig()
+    const replacement = 'replacement@example.org'
+    const prior = invite('REQUEST', '', 4).replace(
+      'END:VEVENT',
+      `ATTENDEE:mailto:${guest}\r\nEND:VEVENT`,
+    )
+    const oldCopy = { ...event(), sequence: 4 }
+    state.messages = [gmailMessage('prior', 200, prior)]
+    if (channel === 'calendar') state.events.set('primary', [oldCopy])
+    else state.replyThread = 'separate-thread'
+    expect(await read()).toMatchObject({ canRespond: true })
+    expect(await respond('accepted')).toMatchObject({ channel, refreshPending: false })
+    const writesBeforeUpdate = [state.calendarPatchAttempts, state.sendAttempts]
+
+    const latest = prior.replace('20240701T090000Z', '20240702T090000Z').replace(guest, replacement)
+    // The Gmail case also changes prose: even a current roster cannot prove
+    // a changed description that the provider omits.
+    const description = 'Bring the plans'
+    state.messages = [
+      gmailMessage(
+        'latest',
+        300,
+        channel === 'gmail'
+          ? latest.replace(/^DESCRIPTION:[^\r\n]*/m, `DESCRIPTION:${description}`)
+          : latest,
+      ),
+    ]
+    // The same Calendar resource still has the prior roster and answer. The
+    // connected mailbox remains the unique self attendee in both revisions.
+    oldCopy.attendees[0]!.responseStatus = 'accepted'
+    state.events.set('primary', [oldCopy])
+    const reopened = restart()
+    const blocked = {
+      identity: { messageId: 'latest', sequence: 4 },
+      canRespond: false,
+      responseStatus: null,
+      recordedResponseStatus: null,
+      sentResponseStatus: null,
+      responsePending: false,
+      responseTargetKey: null,
+      unavailableReason: expect.any(String),
+    }
+    expect(await reopened.read()).toMatchObject(blocked)
+    await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    // Collection omission cannot turn the already observed resource into
+    // permission to fall back to Gmail while the exact GET still finds it.
+    state.primaryPages = [{ kind: 'calendar#events' }]
+    expect(await reopened.read()).toMatchObject(blocked)
+    await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    state.primaryPages = null
+
+    const current = {
+      ...oldCopy,
+      etag: '"updated"',
+      attendees: [
+        { ...oldCopy.attendees[0]!, responseStatus: 'needsAction' },
+        { ...oldCopy.attendees[1]!, email: replacement },
+      ],
+    }
+    state.events.set('primary', [current])
+    if (channel === 'gmail') {
+      expect(await reopened.read()).toMatchObject(blocked)
+      await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+      current.description = description
+    }
+    await expect(respond('declined')).rejects.toMatchObject({ code: 'CONFLICT' })
+    await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect([state.calendarPatchAttempts, state.sendAttempts]).toEqual(writesBeforeUpdate)
+
+    expect(await reopened.read()).toMatchObject({
+      identity: { messageId: 'latest', sequence: 4 },
+      responseTargetKey: expect.any(String),
+      responseStatus: 'needsAction',
+      canRespond: true,
+    })
+    expect(await reopened.respond('declined')).toMatchObject({
+      channel: 'calendar',
+      refreshPending: false,
+      invitation: { responseStatus: 'declined' },
+    })
+    expect(state.calendarUpdateRequests.at(-1)).toMatchObject({
+      calendar: 'primary',
+      eventId: current.id,
+      status: 'declined',
+    })
+    expect(state.calendarPatchAttempts).toBe(writesBeforeUpdate[0]! + 1)
+    expect(state.sendAttempts).toBe(writesBeforeUpdate[1])
+  },
+)
+
 it('keeps the master and a different original slot eligible after an occurrence confirmation', async () => {
   const { state, read, respond, restart } = await rig()
   const occurrence = (sequence: number, slot: string) =>

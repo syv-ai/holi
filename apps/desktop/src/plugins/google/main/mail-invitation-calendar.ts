@@ -12,7 +12,7 @@ import {
   type RsvpStatus,
 } from './calendar'
 import type { parseMailInvitation } from './mail-invitation'
-import type { CalendarLocator } from './mail-invitation-store'
+import type { CalendarLocator, CalendarMaterialEvidence } from './mail-invitation-store'
 import {
   conferenceUrlIn,
   googleEventUrl,
@@ -66,7 +66,9 @@ export type InvitationTarget = RevisionMaterial & {
   request: NonNullable<Parsed['request']>
   joinOnly: boolean
   legacyJoinOnly: boolean
-  predecessors: RevisionMaterial[]
+  evidence: CalendarMaterialEvidence
+  predecessors: CalendarMaterialEvidence[]
+  unknownPredecessor: boolean
 }
 
 const CALENDAR_PAGE_LIMIT = 10
@@ -838,9 +840,8 @@ function invitationEventLinks(event: RawEvent): InvitationLinks {
   }
 }
 
-function rosterChanged({ material, predecessors }: InvitationTarget) {
-  const expected = JSON.stringify(material.attendees)
-  return predecessors.some((prior) => JSON.stringify(prior.material.attendees) !== expected)
+function rosterChanged({ evidence, predecessors }: InvitationTarget) {
+  return predecessors.some((prior) => prior.attendees !== evidence.attendees)
 }
 
 /** Both an occurrence card and a series' Join must verify the same mail material.
@@ -878,7 +879,7 @@ function calendarRevisionMismatch(
   const calendarPageInMail = googleEventUrl(details.htmlLink)
   const timeMatches = (mail: string | null, calendar: string) =>
     mail !== null && (details.allDay ? mail === calendar : instant(mail) === instant(calendar))
-  const expectedRoster = JSON.stringify(material.attendees)
+  const observedRoster = requiresRoster ? calendarRoster(event) : undefined
   if (
     (explicitFields.title &&
       event.summary !== undefined &&
@@ -903,12 +904,16 @@ function calendarRevisionMismatch(
         (material.status === 'CONFIRMED' || material.status === 'TENTATIVE') &&
         event.status !== undefined &&
         event.status.toUpperCase() !== material.status) ||
-        (requiresRoster && calendarRoster(event) !== expectedRoster) ||
+        (requiresRoster &&
+          (observedRoster === undefined ||
+            materialDigest(observedRoster) !== invitation.evidence.attendees)) ||
         !provesChangedMaterial(invitation, event, calendarConference, htmlLink)))
   )
     return 'The Calendar details do not match this revision of the invitation'
   if (joinOnly && (!start || !end || !explicitFields.start))
     return 'Calendar could not verify the time of this meeting'
+  if (!cancelled && invitation.unknownPredecessor)
+    return 'Calendar could not distinguish this revision from an earlier invitation'
   return null
 }
 
@@ -1081,67 +1086,90 @@ async function upcomingInvitationLinks(
 const words = (value: string | null | undefined) =>
   value?.normalize('NFC').trim().replace(/\r\n/g, '\n') ?? ''
 
+const textOf = (value: string | undefined) => (value === undefined ? undefined : words(value))
+
+function materialTime(value: string | null | undefined, allDay: boolean) {
+  if (value == null) return null
+  const millis = allDay ? NaN : instant(value)
+  return Number.isFinite(millis) ? millis : value
+}
+
+function materialDigest(value: string | number | null): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+/** The same canonical comparison inputs for visible and durable predecessors.
+ * Keep per-field digests so a material change can require the relevant Google
+ * observation without persisting prose, guest addresses or exception rows. */
+export function invitationMaterialEvidence({
+  details,
+  material,
+}: RevisionMaterial): CalendarMaterialEvidence {
+  const description = words(material.description)
+  return {
+    version: 1,
+    attendees: materialDigest(JSON.stringify(material.attendees)),
+    exceptions: materialDigest(material.exceptionsKey),
+    title: materialDigest(material.explicitFields.title ? words(details.title) : ''),
+    status: materialDigest(material.status),
+    location: materialDigest(words(details.location)),
+    description: materialDigest(description),
+    descriptionConference: materialDigest(conferenceUrlIn(description)),
+    conference: materialDigest(details.conferenceUrl),
+    htmlLink: materialDigest(googleEventUrl(details.htmlLink)),
+    start: materialDigest(materialTime(details.start, details.allDay)),
+    end: materialDigest(materialTime(details.end, details.allDay)),
+  }
+}
+
 /** At the same sequence, omission is not proof of material that changed.
  * Demand a provider observation for each discriminator, while leaving normal
  * copy verification (including Google’s omitted optional fields) unchanged. */
 function provesChangedMaterial(
-  invitation: InvitationTarget,
+  { predecessors, evidence, details, material }: InvitationTarget,
   event: RawEvent,
   conference: string | null,
   htmlLink: string | null,
 ): boolean {
-  const { predecessors } = invitation
   if (!predecessors.length) return true
   // A series master cannot prove changes to embedded exception rows. A
   // nonempty Calendar lookup must not authorize RSVP on that master or by mail.
-  if (
-    predecessors.some(
-      ({ material }) => material.exceptionsKey !== invitation.material.exceptionsKey,
-    )
-  )
-    return false
-  const proves = <T>(valueOf: (revision: RevisionMaterial) => T, observed: T | undefined) => {
-    const expected = valueOf(invitation)
-    return observed === expected || predecessors.every((prior) => valueOf(prior) === expected)
-  }
-  const textOf = (value: string | undefined) => (value === undefined ? undefined : words(value))
-  const timeOf = (value: string | null | undefined, allDay: boolean) => {
-    if (value == null) return undefined
-    const millis = allDay ? NaN : instant(value)
-    return Number.isFinite(millis) ? millis : value
-  }
-  const prose = (copy: RevisionMaterial) => words(copy.material.description)
-  const description = prose(invitation)
+  if (predecessors.some((prior) => prior.exceptions !== evidence.exceptions)) return false
+  const proves = (
+    field: Exclude<keyof CalendarMaterialEvidence, 'version'>,
+    observed: string | number | undefined,
+  ) =>
+    predecessors.every((prior) => prior[field] === evidence[field]) ||
+    (observed !== undefined && materialDigest(observed) === evidence[field])
   // Calendar can represent a bare join URL as structured conference data.
   // That is not a substitute for changed prose, or for a URL already present
   // (in any form) in a predecessor's description.
   const structured = providerConferenceUrl(structuredConference(event))
   const confirmsDescription =
-    proves(prose, textOf(event.description)) ||
+    proves('description', textOf(event.description)) ||
     (structured &&
-      providerConferenceUrl(description) === structured &&
+      providerConferenceUrl(words(material.description)) === structured &&
       predecessors.every(
-        (prior) => prose(prior) === description || conferenceUrlIn(prose(prior)) !== structured,
+        (prior) =>
+          prior.description === evidence.description ||
+          prior.descriptionConference !== materialDigest(structured),
       ))
   return Boolean(
-    proves(
-      ({ details, material }) => (material.explicitFields.title ? words(details.title) : ''),
-      textOf(event.summary),
-    ) &&
+    proves('title', textOf(event.summary)) &&
     // An omitted STATUS is distinct in the mail's material hash. Neither
     // an omitted provider status nor an assumed default proves a change.
-    proves(({ material }) => material.status, event.status?.toUpperCase()) &&
-    proves(({ details }) => words(details.location), textOf(event.location)) &&
+    proves('status', event.status?.toUpperCase()) &&
+    proves('location', textOf(event.location)) &&
     confirmsDescription &&
-    proves(({ details }) => details.conferenceUrl, conference ?? undefined) &&
-    proves(({ details }) => googleEventUrl(details.htmlLink), htmlLink ?? undefined) &&
+    proves('conference', conference ?? undefined) &&
+    proves('htmlLink', htmlLink ?? undefined) &&
     proves(
-      ({ details }) => timeOf(details.start, details.allDay),
-      timeOf(event.start?.date ?? event.start?.dateTime, invitation.details.allDay),
+      'start',
+      materialTime(event.start?.date ?? event.start?.dateTime, details.allDay) ?? undefined,
     ) &&
     proves(
-      ({ details }) => timeOf(details.end, details.allDay),
-      timeOf(event.end?.date ?? event.end?.dateTime, invitation.details.allDay),
+      'end',
+      materialTime(event.end?.date ?? event.end?.dateTime, details.allDay) ?? undefined,
     ),
   )
 }

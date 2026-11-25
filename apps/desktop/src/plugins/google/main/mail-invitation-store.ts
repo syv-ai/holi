@@ -12,6 +12,26 @@ type Revision = Omit<MailInvitationIdentity, 'messageId'> & {
   } | null
 }
 
+const calendarMaterialFields = [
+  'attendees',
+  'exceptions',
+  'title',
+  'status',
+  'location',
+  'description',
+  'descriptionConference',
+  'conference',
+  'htmlLink',
+  'start',
+  'end',
+] as const
+
+/** Comparison inputs from the REQUEST, not a Calendar observation or a reply receipt. */
+export type CalendarMaterialEvidence = { version: 1 } & Record<
+  (typeof calendarMaterialFields)[number],
+  string
+>
+
 export type SentEvidence = { timestamp: number; messageIds: string[]; answer: InviteAnswer | null }
 
 type Delivery =
@@ -42,6 +62,8 @@ export type InvitationAttempt = {
   accountSub: string
   threadId: string
   revision: Revision
+  /** Absent on older attempts. No message text or guest addresses are stored here. */
+  calendarMaterial?: CalendarMaterialEvidence
   answer: InviteAnswer
   state: 'prepared' | 'unresolved' | 'accepted' | 'confirmed'
   delivery: Delivery
@@ -176,14 +198,26 @@ function isCalendarLocator(value: unknown): value is CalendarLocator {
   )
 }
 
+function validCalendarMaterial(value: unknown): boolean {
+  return (
+    record(value) &&
+    value.version === 1 &&
+    calendarMaterialFields.every((field) => {
+      const digest = value[field]
+      return typeof digest === 'string' && digest.length === 64 && /^[0-9a-f]+$/.test(digest)
+    })
+  )
+}
+
 function isAttempt(value: unknown): value is InvitationAttempt {
   if (!record(value)) return false
-  const { id, accountSub, threadId, revision, answer, state, delivery } = value
+  const { id, accountSub, threadId, revision, calendarMaterial, answer, state, delivery } = value
   if (
     !text(id) ||
     !text(accountSub) ||
     !text(threadId) ||
     !validRevision(revision) ||
+    (calendarMaterial !== undefined && !validCalendarMaterial(calendarMaterial)) ||
     (answer !== 'accepted' && answer !== 'tentative' && answer !== 'declined') ||
     (state !== 'prepared' &&
       state !== 'unresolved' &&
@@ -196,6 +230,7 @@ function isAttempt(value: unknown): value is InvitationAttempt {
   if (delivery.channel === 'calendar')
     return (
       text(delivery.target) &&
+      (calendarMaterial === undefined || text(delivery.organizer)) &&
       validCalendarScope(delivery) &&
       validSentEvidence(delivery.priorSent) &&
       (delivery.proof === undefined ||

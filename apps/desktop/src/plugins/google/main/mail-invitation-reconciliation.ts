@@ -4,6 +4,7 @@ import type { InviteAnswer, RsvpStatus } from './calendar'
 import {
   calendarTargetIsMailbox,
   findInvitationCalendarCopy,
+  invitationMaterialEvidence,
   relevantCalendarTargets,
   createInvitationCalendarResourceLookup,
   type InvitationTarget,
@@ -45,6 +46,7 @@ import { invitationReplyStatus } from './mail-invitation'
 type Thread = Awaited<ReturnType<typeof fetchThreadCalendarPayloads>>
 type Mail = Thread['messages'][number]
 type Revision = InvitationAttempt['revision']
+type Scope = Awaited<ReturnType<typeof latestByScope>>['scopes'][number]
 type Channel = InvitationAttempt['delivery']['channel']
 export type InvitationReadTarget = {
   api: Pick<GoogleApi, 'get'>
@@ -88,11 +90,12 @@ export type InvitationFacts = {
   reply: Reply | null
   noopChannel: Channel | null
   response: Revision['mailboxResponse']
+  calendarMaterial: InvitationAttempt['calendarMaterial']
   recorded: InviteAnswer | null
   priorSent: SentEvidence | null
   absentTargets: Set<string>
-  /** Recheck against durable evidence at reservation, independently of the provider target. */
-  blockedByConfirmation: (attempt: InvitationAttempt) => boolean
+  /** Recheck durable revision evidence atomically with reservation. */
+  blocksReservation: (attempt: InvitationAttempt) => boolean
   navigation: (() => Promise<InvitationLinks | false | null | undefined>) | null
 }
 type ReadResult = { cards: InvitationFacts[]; recoveryReason: string | null }
@@ -331,31 +334,56 @@ function isAnswer(status: ResponseFacts['status']): status is InviteAnswer {
 }
 
 function calendarInvitation(
-  entry: Awaited<ReturnType<typeof latestByScope>>['scopes'][number],
-  email: string,
+  entry: Scope,
+  target: InvitationReadTarget,
+  attempts: InvitationAttempt[],
 ): InvitationTarget | null {
   const { details, request, revisionMaterial } = entry.selected.value
   if (entry.reason || !request || !revisionMaterial || !details.organizer) return null
+  const { email } = target
   const legacyJoinOnly = entry.selected.joinOnly
+  const evidence = invitationMaterialEvidence({ details, material: revisionMaterial })
   // Revision selection has already limited history to this scope and sequence.
   // Calendar must distinguish the selected REQUEST from each strictly earlier
   // REQUEST it might still be showing, for both the occurrence card and Join.
-  const predecessors = entry.history.flatMap(({ value }) =>
-    value.method === 'REQUEST' &&
-    value.revisionMaterial &&
-    value.details.identity.dtstamp !== null &&
-    details.identity.dtstamp !== null &&
-    value.details.identity.dtstamp < details.identity.dtstamp
-      ? [{ details: value.details, material: value.revisionMaterial }]
-      : [],
-  )
+  const visibleRevisions: Revision[] = []
+  const predecessors = entry.history.flatMap(({ value }) => {
+    const { identity } = value.details
+    if (
+      value.method !== 'REQUEST' ||
+      !value.revisionMaterial ||
+      revisionOrder(identity, details.identity) !== -1
+    )
+      return []
+    visibleRevisions.push(identity)
+    return [
+      invitationMaterialEvidence({ details: value.details, material: value.revisionMaterial }),
+    ]
+  })
+  let unknownPredecessor = false
+  for (const attempt of attempts) {
+    if (!calendarPredecessor(attempt, target, entry)) continue
+    if (attempt.calendarMaterial) {
+      predecessors.push(attempt.calendarMaterial)
+    } else if (
+      attempt.delivery.organizer === undefined ||
+      (!visibleRevisions.some((prior) => sameRevision(prior, attempt.revision)) &&
+        !onLineage(entry, attempt.revision, email))
+    ) {
+      // Legacy evidence cannot reconstruct a removed, materially different
+      // REQUEST. An opaque revision hash does not tell Calendar what to prove.
+      unknownPredecessor = true
+    }
+  }
   return {
     details,
     request,
     material: revisionMaterial,
     joinOnly: legacyJoinOnly || entry.selected.mail.sent || details.organizer.email === email,
     legacyJoinOnly,
+    evidence,
     predecessors,
+    unknownPredecessor,
   }
 }
 
@@ -373,6 +401,33 @@ function bindsConfirmation(
     (delivery.channel === 'gmail'
       ? delivery.mailbox === email
       : calendarTargetIsMailbox(delivery.target, email))
+  )
+}
+
+function calendarPredecessor(
+  attempt: InvitationAttempt,
+  target: InvitationReadTarget,
+  { selected: { value } }: Scope,
+): boolean {
+  const { details, method } = value
+  // Sequence changes are verified directly by Calendar. A same-sequence
+  // predecessor can impose material checks even when the version frontier
+  // permits a newer REQUEST. An unbound legacy organizer supplies no material.
+  if (
+    method !== 'REQUEST' ||
+    attempt.state === 'prepared' ||
+    attempt.revision.sequence !== details.identity.sequence ||
+    revisionOrder(attempt.revision, details.identity) !== -1
+  )
+    return false
+  const { delivery } = attempt
+  return (
+    bindsConfirmation(attempt, target, details) ||
+    (delivery.channel === 'calendar' &&
+      delivery.organizer === undefined &&
+      attempt.accountSub === target.accountSub &&
+      sameGroup(attempt.revision, details.identity) &&
+      calendarTargetIsMailbox(delivery.target, target.email))
   )
 }
 
@@ -412,13 +467,14 @@ export function createMailInvitationReconciler(
 
   async function collectCalendarCopies(
     target: InvitationReadTarget,
-    scopes: Awaited<ReturnType<typeof latestByScope>>['scopes'],
+    scopes: Scope[],
+    invitationFor: (scope: Scope) => InvitationTarget | null,
   ) {
     const { api, accountSub, email } = target
     const copies = new Map<string, CalendarCopy>()
     target.assertBinding()
     for (const entry of scopes) {
-      const invitation = calendarInvitation(entry, email)
+      const invitation = invitationFor(entry)
       if (!invitation) continue
       const copy = await findInvitationCalendarCopy(api, invitation, email, (locator) =>
         store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
@@ -449,7 +505,21 @@ export function createMailInvitationReconciler(
     const scopes = selection
       ? incoming.filter((entry) => sameGroup(identityOf(entry.selected), selection))
       : incoming
-    const { copies, journal: durable } = await collectCalendarCopies(target, scopes)
+    // Calendar verification needs the REQUEST material that was durable when
+    // the lookup began. New same-sequence predecessors invalidate that snapshot.
+    const beforeCalendar = await store.read()
+    const observedAttempts = new Set(
+      beforeCalendar.attempts.filter(({ state }) => state !== 'prepared').map(({ id }) => id),
+    )
+    const unseenPredecessor = (entry: Scope, attempt: InvitationAttempt) =>
+      !observedAttempts.has(attempt.id) && calendarPredecessor(attempt, target, entry)
+    const invitations = new Map<Scope, InvitationTarget | null>()
+    const invitationFor = (entry: Scope) => {
+      if (!invitations.has(entry))
+        invitations.set(entry, calendarInvitation(entry, target, beforeCalendar.attempts))
+      return invitations.get(entry) ?? null
+    }
+    const { copies, journal: durable } = await collectCalendarCopies(target, scopes, invitationFor)
     // Use the same locator for dispatch exclusion, Sent evidence, and readback,
     // even when a known outcome could not be written to the journal.
     const journal = { ...durable, attempts: durable.attempts.map(withGmailOutcome) }
@@ -554,7 +624,6 @@ export function createMailInvitationReconciler(
         }
       }
     }
-    type Scope = (typeof scopes)[number]
     function evidenceParents(entry: Scope, organizer: string, anchors: ParentAnchor[]) {
       const key = scopeKey(identityOf(entry.selected))
       const verified = new Set(
@@ -747,8 +816,9 @@ export function createMailInvitationReconciler(
         latestJournal = await store.confirmAttempt(
           attempt,
           (entry) => {
-            // Compaction must preserve the durable revision frontier as well as
-            // the old locator. Dispatch order alone cannot retire a version.
+            // Compaction must preserve the durable revision frontier, distinct
+            // predecessor material and the old locator. Only the same lineage
+            // can replace a confirmation; dispatch order alone is not enough.
             const order = revisionOrder(attempt.revision, entry.revision)
             return (
               (order === 0 || order === 1) &&
@@ -777,7 +847,16 @@ export function createMailInvitationReconciler(
       const identity = details.identity
       const organizer = details.organizer?.email
       const joinOnly = selected.joinOnly || selected.mail.sent || organizer === email
-      const calendar = copies.get(scopeKey(identity))
+      const copy = copies.get(scopeKey(identity))
+      const calendar: CalendarCopy | undefined =
+        copy?.kind === 'verified' &&
+        !copy.cancelled &&
+        latestJournal.attempts.some((attempt) => unseenPredecessor(entry, attempt))
+          ? {
+              kind: 'blocked',
+              reason: 'Calendar verification is out of date; reload this invitation',
+            }
+          : copy
       // Join-only mail does not get any link without a verified
       // owned/self Calendar copy. An incoming REQUEST never falls into this path.
       if (joinOnly && calendar?.kind !== 'verified') continue
@@ -1077,16 +1156,24 @@ export function createMailInvitationReconciler(
         reply,
         noopChannel,
         response: entry.response,
+        calendarMaterial: invitationFor(entry)?.evidence,
         recorded,
         priorSent,
         absentTargets,
-        blockedByConfirmation,
+        blocksReservation: (attempt) =>
+          blockedByConfirmation(attempt) ||
+          (reply?.channel === 'calendar' && unseenPredecessor(entry, attempt)),
         navigation:
           !navigationWithheld && verifiedCopy
             ? () =>
                 verifiedCopy.navigation((slot) => {
                   const occurrence = selectSeriesSlot(selected, slot)
-                  return occurrence ? (calendarInvitation(occurrence, email) ?? false) : occurrence
+                  if (!occurrence) return occurrence
+                  return latestJournal.attempts.some((attempt) =>
+                    unseenPredecessor(occurrence, attempt),
+                  )
+                    ? false
+                    : (invitationFor(occurrence) ?? false)
                 })
             : null,
       })
