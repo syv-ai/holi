@@ -1117,7 +1117,11 @@ it('publishes only the finalized evidence by atomic rename and does not overwrit
     cleanup: { proofWorkspaceRemoved: true },
     skippedRequiredCases: 0,
   })
-  expect(proof.requiredCases).toHaveLength(86)
+  expect(proof.requiredCases).toEqual(
+    Object.entries(required).flatMap(([file, titles]) =>
+      titles.map((title) => ({ file, title, status: 'passed' })),
+    ),
+  )
   expect(proof.nativeCases).toHaveLength(13)
   expect(proof.controlCases).toHaveLength(7)
   expect(proof.producerCases).toHaveLength(22)
