@@ -6,6 +6,7 @@ import { shellWorkspaceAtom } from './shell-tabs'
 import {
   closeAllTabs,
   closeEntry,
+  closeTab,
   closeOtherTabs,
   closeTabsToRight,
   entryId,
@@ -14,7 +15,8 @@ import {
 } from './shell-workspace'
 
 export type EntryCloseRequest =
-  | { kind: 'entry'; id: string }
+  | { kind: 'entry'; id: string; explicit?: boolean }
+  | { kind: 'member'; id: string; explicit?: boolean }
   | { kind: 'others'; id: string }
   | { kind: 'right'; id: string }
   | { kind: 'all' }
@@ -33,7 +35,7 @@ export async function saveEntryClose(
   const current = () =>
     store.get(activeRemoteAtom) === intent.remote &&
     store.get(shellWorkspaceAtom) === intent.workspace
-  if (!current()) return
+  if (!current() || applyEntryClose(intent.workspace, intent.request) === intent.workspace) return
   await saveBeforeClosing(() => {
     if (!current()) return
     store.set(shellWorkspaceAtom, (ws) => confirmEntryClose(ws, intent.workspace, intent.request))
@@ -46,7 +48,9 @@ export async function saveEntryClose(
 export function applyEntryClose(ws: ShellWorkspace, request: EntryCloseRequest): ShellWorkspace {
   switch (request.kind) {
     case 'entry':
-      return closeEntry(ws, request.id)
+      return closeEntry(ws, request.id, request.explicit)
+    case 'member':
+      return closeTab(ws, request.id, request.explicit)
     case 'others':
       return closeOtherTabs(ws, request.id)
     case 'right':
@@ -58,20 +62,11 @@ export function applyEntryClose(ws: ShellWorkspace, request: EntryCloseRequest):
 
 /** Whether the request removes at least one split entry. */
 export function closesSplit(ws: ShellWorkspace, request: EntryCloseRequest): boolean {
-  const targetIds = new Set(
-    request.kind === 'entry'
-      ? [request.id]
-      : ws.entries
-          .filter((entry) => {
-            const id = entryId(entry)
-            if (request.kind === 'all') return true
-            const index = ws.entries.findIndex((item) => entryId(item) === id)
-            const anchor = ws.entries.findIndex((item) => entryId(item) === request.id)
-            return request.kind === 'others' ? id !== request.id : index > anchor
-          })
-          .map(entryId),
+  const remaining = new Set(applyEntryClose(ws, request).entries.map(entryId))
+  return (
+    request.kind !== 'member' &&
+    ws.entries.some((entry) => isSplit(entry) && !remaining.has(entryId(entry)))
   )
-  return ws.entries.some((entry) => targetIds.has(entryId(entry)) && isSplit(entry))
 }
 
 /** Confirmation is valid only for the unchanged workspace captured at request time.

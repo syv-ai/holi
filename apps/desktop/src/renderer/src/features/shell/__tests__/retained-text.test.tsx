@@ -1,3 +1,4 @@
+import { vaultSettingsAtom } from '@/state/settings'
 /** Real text editors exercise the shell's connected retention and buffer ownership. */
 import { EditorSelection } from '@codemirror/state'
 import { useEffect, useState } from 'react'
@@ -9,7 +10,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { coreContributionAtom } from '@/state/plugins'
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { AGENTS_HOME_KEY } from '@/state/tab-descriptor'
 import {
@@ -108,6 +109,8 @@ afterEach(() => {
 function fixture(initial = ['src/one.ts', 'src/two.ts']) {
   const store = createStore()
   store.set(activeRemoteAtom, 'owner/repo')
+  store.set(openedRemoteAtom, 'owner/repo')
+  store.set(vaultSettingsAtom, { remote: 'owner/repo', settings })
   store.set(vaultsAtom, [
     { remote: 'owner/repo', path: '/vault', name: 'repo', lastOpenedAt: '' },
   ] as never)
@@ -241,7 +244,10 @@ test('visited launchers retain scroll, close fresh, and dispose when the vault c
   const reopened = document.querySelector<HTMLElement>('[data-slot="empty-view-content"]')!
   expect(reopened).not.toBe(original)
 
-  act(() => store.set(activeRemoteAtom, 'owner/another-vault'))
+  act(() => {
+    store.set(activeRemoteAtom, 'owner/another-vault')
+    store.set(openedRemoteAtom, 'owner/another-vault')
+  })
   await waitFor(() =>
     expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull(),
   )
@@ -524,7 +530,10 @@ test('a retained plugin path keeps its live state through switches and splits, t
   await waitFor(() =>
     expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).not.toBeNull(),
   )
-  act(() => store.set(activeRemoteAtom, 'other/repo'))
+  act(() => {
+    store.set(activeRemoteAtom, 'other/repo')
+    store.set(openedRemoteAtom, 'other/repo')
+  })
   await waitFor(() =>
     expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBeNull(),
   )
@@ -565,6 +574,7 @@ test('a new vault owns its same-path editor and ignores a departed pending read'
   await screen.findByRole('status', { name: 'Loading file' })
   act(() => {
     store.set(activeRemoteAtom, 'other/repo')
+    store.set(openedRemoteAtom, 'other/repo')
     store.set(snapshotAtom, { ...emptyVaultSnapshot(), files: files() })
     store.set(shellWorkspaceAtom, (ws) => openTab(ws, 'src/one.ts'))
   })
