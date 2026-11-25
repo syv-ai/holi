@@ -544,14 +544,32 @@ test('hidden mail drops its pending answer and performs no more periodic reads',
   await advance(90_000)
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['existing'])
   expect(search).toHaveBeenCalledTimes(2)
-  search.mockResolvedValue(page('visible-again'))
+  search.mockResolvedValue(delta(['visible-again'], ['existing'], ['existing']))
   rerender({ account: 'account-a', visible: true })
+  expect(search).toHaveBeenCalledTimes(2)
   await advance()
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['visible-again'])
   unmount()
   const reads = search.mock.calls.length
   await advance(90_000)
   expect(search).toHaveBeenCalledTimes(reads)
+})
+
+test('a hidden-era response cannot publish after showing Mail or block the next poll', async () => {
+  const { result, rerender } = await mount()
+  const pending = deferred<ReturnType<typeof page>>()
+  search.mockReturnValueOnce(pending.promise)
+  await advance()
+  rerender({ account: 'account-a', visible: false })
+  await advance(90_000)
+  rerender({ account: 'account-a', visible: true })
+  await advance()
+  expect(search).toHaveBeenCalledTimes(2)
+  await act(async () => pending.resolve(page('stale-hidden-answer')))
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['existing'])
+  search.mockResolvedValue(delta(['arrival'], ['existing']))
+  await advance()
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['arrival', 'existing'])
 })
 
 test('a deferred later page cannot cross an account switch or lose the current rows', async () => {

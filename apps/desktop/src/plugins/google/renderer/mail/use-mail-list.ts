@@ -208,11 +208,11 @@ export function useMailList({
               : { kind: 'error', message: messageOf(cause, 'Could not load your mail.') },
           })
       } finally {
-        if (active() && owner.pendingRead === pendingRead) {
+        if (owner.pendingRead === pendingRead) {
           owner.pendingRead = null
           owner.more = false
-          setLoadingMore(false)
-          if (owner.reconcile && owner.writes === 0) {
+          if (active()) setLoadingMore(false)
+          if (active() && owner.reconcile && owner.writes === 0) {
             owner.reconcile = false
             void latestRead.current('manual')
           }
@@ -225,22 +225,28 @@ export function useMailList({
   latestRead.current = read
   useEffect(() => {
     owner.live = visible
+    owner.activity++
     if (visible) {
-      owner.live = true
-      owner.activity++
-      if (owner.list.kind === 'loading') void latestRead.current('initial')
+      setLoadingMore(owner.more)
+      if (owner.list.kind === 'loading' || owner.reconcile) {
+        owner.reconcile = false
+        void latestRead.current(owner.list.kind === 'loading' ? 'initial' : 'manual')
+      }
       loadCounts()
-    } else {
+    }
+    const timer = visible
+      ? window.setInterval(() => {
+          if (account !== null) void latestRead.current('poll')
+        }, 30_000)
+      : undefined
+    return () => {
+      if (timer !== undefined) window.clearInterval(timer)
       owner.live = false
       owner.activity++
       owner.countsRequest++
       owner.categoryRequest++
-    }
-    const timer = window.setInterval(() => {
-      if (visible && account !== null) void latestRead.current('poll')
-    }, 30_000)
-    return () => {
-      window.clearInterval(timer)
+      for (const id of owner.undoToasts) toast.dismiss(id)
+      owner.undoToasts.clear()
     }
   }, [owner, visible, account, loadCounts])
 
