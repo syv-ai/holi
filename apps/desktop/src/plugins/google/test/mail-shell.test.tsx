@@ -73,13 +73,17 @@ const google: Record<string, (params: unknown) => unknown> = {
   search: async (p) => {
     const answer = await searchMock(p)
     const request = (p as { uiList?: { loadedIds: string[]; refresh?: boolean } }).uiList
-    if (!request) return answer
+    if (!request || answer.uiList) return answer
     return {
       ...answer,
       uiList: {
-        ...answer.uiList,
         mode: request.refresh ? 'coverage' : 'page',
         revalidatedIds: request.refresh ? request.loadedIds : [],
+        removedIds: request.refresh
+          ? request.loadedIds.filter(
+              (id) => !answer.threads.some((thread: { id: string }) => thread.id === id),
+            )
+          : [],
       },
     }
   },
@@ -107,10 +111,16 @@ const google: Record<string, (params: unknown) => unknown> = {
   forgetImageSenders: () => ({ ok: true }),
 }
 
-vi.mock('sonner', async (original) => ({
-  ...(await original<typeof import('sonner')>()),
-  toast: (...args: unknown[]) => toastMock(...args),
-}))
+vi.mock('sonner', async (original) => {
+  const sonner = await original<typeof import('sonner')>()
+  return {
+    ...sonner,
+    toast: Object.assign((...args: Parameters<typeof sonner.toast>) => {
+      toastMock(...args)
+      return sonner.toast(...args)
+    }, sonner.toast),
+  }
+})
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {

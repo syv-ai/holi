@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { googleCap } from '../google-cap'
 import { explainWriteFailure, isDisconnected, messageOf } from '../google-errors'
 
@@ -45,6 +46,9 @@ export function useMailList({
       more: false,
       writes: 0,
       reconcile: false,
+      // Failed removals and Undo must revalidate IDs no longer in the displayed slice.
+      restorationIds: new Set<string>(),
+      undoToasts: new Set<string | number>(),
       cursor: undefined as NonNullable<Page['uiList']>['cursor'] | undefined,
       list: { kind: 'loading' } as List,
     }),
@@ -118,6 +122,11 @@ export function useMailList({
           owner.list.nextPageToken === null)
       )
         return
+      // Only the physical read that owns this slot may release it, even after a write.
+      if (owner.pendingRead !== null) {
+        if (kind === 'manual') owner.reconcile = true
+        return
+      }
       if (drafts) {
         loadCounts()
         return
@@ -141,9 +150,17 @@ export function useMailList({
           ...(supported
             ? {
                 uiList: {
-                  loadedIds:
-                    previous.kind === 'ready' ? previous.threads.map((thread) => thread.id) : [],
-                  ...(owner.cursor === undefined ? {} : { cursor: owner.cursor }),
+                  loadedIds: [
+                    ...new Set([
+                      ...(previous.kind === 'ready'
+                        ? previous.threads.map((thread) => thread.id)
+                        : []),
+                      ...owner.restorationIds,
+                    ]),
+                  ],
+                  ...(owner.cursor === undefined || owner.restorationIds.size > 0
+                    ? {}
+                    : { cursor: owner.cursor }),
                   ...(refresh ? { refresh: true } : {}),
                 },
               }
@@ -155,6 +172,12 @@ export function useMailList({
         const rows = new Map(retained.map((thread) => [thread.id, thread]))
         for (const id of page.uiList?.removedIds ?? []) rows.delete(id)
         for (const thread of page.threads) rows.set(thread.id, thread)
+        for (const id of [
+          ...(page.uiList?.revalidatedIds ?? []),
+          ...(page.uiList?.removedIds ?? []),
+          ...page.threads.map((thread) => thread.id),
+        ])
+          owner.restorationIds.delete(id)
         paint({
           kind: 'ready',
           threads: [...rows.values()].sort(
@@ -204,6 +227,9 @@ export function useMailList({
     }, 30_000)
     return () => {
       owner.live = false
+      for (const id of owner.undoToasts) toast.dismiss(id)
+      owner.undoToasts.clear()
+      owner.restorationIds.clear()
       owner.request++
       owner.countsRequest++
       owner.categoryRequest++
@@ -214,6 +240,7 @@ export function useMailList({
   const write = async (
     mutate: () => Promise<unknown>,
     next: (threads: Summary[]) => Summary[] = (threads) => threads,
+    restorationIds: readonly string[] = [],
   ): Promise<boolean> => {
     if (!active()) return false
     const snapshot = owner.list
@@ -223,13 +250,24 @@ export function useMailList({
     setLoadingMore(false)
     owner.writes++
     setWriteError(null)
-    if (snapshot.kind === 'ready') paint({ ...snapshot, threads: next(snapshot.threads) })
+    const updated = snapshot.kind === 'ready' ? next(snapshot.threads) : []
+    const updatedIds = new Set(updated.map((thread) => thread.id))
+    const removed =
+      snapshot.kind === 'ready'
+        ? snapshot.threads.filter((thread) => !updatedIds.has(thread.id)).map((thread) => thread.id)
+        : []
+    for (const id of restorationIds) owner.restorationIds.add(id)
+    if (restorationIds.length > 0) owner.reconcile = true
+    if (snapshot.kind === 'ready') paint({ ...snapshot, threads: updated })
     try {
       await mutate()
       return active()
     } catch (cause) {
       if (active()) {
-        if (owner.revision === revision) paint(snapshot)
+        if (removed.length > 0) {
+          for (const id of removed) owner.restorationIds.add(id)
+          owner.reconcile = true
+        } else if (owner.revision === revision) paint(snapshot)
         else owner.reconcile = true
         setWriteError(explainWriteFailure(cause))
       }
@@ -263,6 +301,29 @@ export function useMailList({
       loadCounts()
     },
     write,
+    offerRemovalUndo: (
+      kind: 'archive' | 'trash',
+      ids: readonly string[],
+      restore: (id: string) => Promise<unknown>,
+    ) => {
+      if (!active() || ids.length === 0) return
+      const subject = ids.length === 1 ? 'Thread' : `${ids.length} threads`
+      const id = toast(kind === 'archive' ? `${subject} archived` : `${subject} moved to Trash`, {
+        duration: Infinity,
+        closeButton: true,
+        onDismiss: (item) => {
+          owner.undoToasts.delete(item.id)
+        },
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            owner.undoToasts.delete(id)
+            void Promise.allSettled(ids.map((id) => write(() => restore(id), undefined, [id])))
+          },
+        },
+      })
+      owner.undoToasts.add(id)
+    },
     markerChanged: (id: string, starred: boolean) => {
       if (!active()) return
       owner.revision++
