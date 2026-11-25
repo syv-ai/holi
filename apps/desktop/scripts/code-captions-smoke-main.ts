@@ -39,7 +39,11 @@ const exec = promisify(execFile)
 const root = process.env.HOLI_535_ROOT!
 const evidence = process.env.HOLI_535_EVIDENCE!
 const typst = process.env.HOLI_535_TYPST!
-assert(root && evidence && typst, 'runner must provide isolated roots and Typst')
+const scope = process.env.HOLI_535_SCOPE ?? 'full'
+assert(['full', 'tables-only'].includes(scope), 'unknown caption acceptance scope')
+const tablesOnly = scope === 'tables-only'
+assert(root && evidence, 'runner must provide isolated roots')
+if (!tablesOnly) assert(typst, 'full caption acceptance requires Typst')
 const remote = 'fixture/captions'
 const vault = join(root, 'vault')
 const path = 'notes/Code-caption.md'
@@ -1256,6 +1260,7 @@ async function seedVault() {
     roots.profile,
     roots.session,
     join(root, 'app-data'),
+    join(vault, '.holi'),
     join(vault, 'notes'),
     join(vault, 'assets'),
   ])
@@ -1304,19 +1309,20 @@ async function run() {
       throw new Error('No GitHub access in caption acceptance')
     },
   })
-  const mermaid = createMermaidWindow()
+  const mermaid = tablesOnly ? undefined : createMermaidWindow()
   const capabilities = createCapabilityRegistry()
-  capabilities.register(
-    PDF_NAMESPACES,
-    pdfCapabilities({
-      typst: async () => typst,
-      diagrams: (sources) => mermaid.draw(sources),
-      signatures: {
-        read: async () => [],
-        write: async () => {},
-      } as unknown as PdfCapabilityDeps['signatures'],
-    }),
-  )
+  if (mermaid)
+    capabilities.register(
+      PDF_NAMESPACES,
+      pdfCapabilities({
+        typst: async () => typst,
+        diagrams: (sources) => mermaid.draw(sources),
+        signatures: {
+          read: async () => [],
+          write: async () => {},
+        } as unknown as PdfCapabilityDeps['signatures'],
+      }),
+    )
   const host = createCapabilityHost({
     registry: capabilities,
     rootFor: async (r) => (r === remote ? vault : null),
@@ -1520,6 +1526,15 @@ async function run() {
     await wait(`window.captionFixture?.state()?.json`, 'production DocumentView')
     mark('production-document-view-with-real-router-filesystem')
     recording = await recordInteraction(win)
+    if (tablesOnly) {
+      await verifyTableCaption(driver)
+      assert.deepEqual(denied, [])
+      assert.deepEqual(await js('return window.captionFixture.errors'), [])
+      assert.deepEqual(rendererErrors, [])
+      ok = true
+      // Return through the same recording, receipt, window and bridge teardown.
+      return
+    }
     await js(`window.captionFixture.select('codeBlock'); return true`)
     await menu('Add caption')
     await wait(`document.querySelector('figcaption')`, 'native caption')
@@ -2602,6 +2617,7 @@ async function run() {
       JSON.stringify(
         {
           ok,
+          scope,
           checks,
           captures,
           roots,
@@ -2618,9 +2634,10 @@ async function run() {
     )
     ipcMain.removeHandler('holi-caption-fixture')
     if (!win.isDestroyed()) win.destroy()
-    mermaid.close()
+    mermaid?.close()
     await bridge.stop()
     await endpoint.dispose()
+    if (tablesOnly && ok) app.quit()
   }
   app.quit()
 }
