@@ -2,10 +2,13 @@ import { Provider, createStore } from 'jotai'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 import type { Task } from '@holi/shared'
-import { DEFAULT_STATUSES, emptyVaultSnapshot } from '@holi/shared'
+import { DEFAULT_STATUSES, emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { AppWindowIcon } from 'lucide-react'
 import { render, screen, waitFor } from '@/test/render'
 import { nowAtom } from '@/state/clock'
 import { recordStatusesReadAtom } from '@/state/planning'
+import { vaultSettingsAtom } from '@/state/settings'
+import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import {
   activeRemoteAtom,
   activeRemoteRevisionValueAtom,
@@ -34,6 +37,16 @@ const task = (path: string, due?: string, status = 'todo') =>
 function setup(tasks: Task[] | null = []) {
   const store = createStore()
   store.set(activeRemoteAtom, 'owner/vault')
+  store.set(installedPluginsAtom, [{ info: { id: 'tasks', label: 'Tasks', default: true } }])
+  store.set(vaultSettingsAtom, {
+    remote: 'owner/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, warnings: [] },
+  })
+  store.set(coreContributionAtom, {
+    surfaces: [{ kind: 'app', label: 'Apps', icon: AppWindowIcon, render: () => null }],
+    rail: [],
+    claims: [],
+  })
   store.set(openedRemoteAtom, tasks === null ? null : 'owner/vault')
   store.set(recordStatusesReadAtom, {
     remote: 'owner/vault',
@@ -122,6 +135,83 @@ test('empty/loading states have no count; active Board remains keyboard-operable
   render(loadingNav())
   expect(screen.getByRole('button', { name: 'Board, 0 open tasks' })).toBeInTheDocument()
   expect(document.querySelector('[data-slot="sidebar-menu-badge"]')).not.toBeInTheDocument()
+})
+
+test('vault task setting reactively hides the full Board row and restores it', async () => {
+  const { store, nav } = setup([task('projects/task.due.md', '2026-11-12')])
+  const view = render(nav())
+  expect(
+    screen.getByRole('button', { name: 'Board, 0 overdue, 1 due today, 1 open tasks' }),
+  ).toHaveAttribute('data-testid', 'board-drag-binding')
+  expect(screen.getByText('1 due')).toBeInTheDocument()
+
+  store.set(vaultSettingsAtom, {
+    remote: 'owner/vault',
+    settings: {
+      ...VAULT_SETTING_DEFAULTS,
+      warnings: [],
+      plugins: { ...VAULT_SETTING_DEFAULTS.plugins, vault: { tasks: false } },
+    },
+  })
+  await waitFor(() => expect(screen.queryByText('Board')).not.toBeInTheDocument())
+  expect(document.querySelector('[data-testid="board-drag-binding"]')).not.toBeInTheDocument()
+  expect(document.querySelector('[data-slot="sidebar-menu-badge"]')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Search/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Apps' })).toBeInTheDocument()
+
+  store.set(vaultSettingsAtom, {
+    remote: 'owner/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, warnings: [] },
+  })
+  expect(
+    await screen.findByRole('button', { name: 'Board, 0 overdue, 1 due today, 1 open tasks' }),
+  ).toHaveAttribute('data-testid', 'board-drag-binding')
+  expect(screen.getByText('1 due')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Search/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Apps' })).toBeInTheDocument()
+  view.unmount()
+})
+
+test('plugin settings for another remote do not hide Board', () => {
+  const { store, nav } = setup([task('projects/task.open.md')])
+  store.set(vaultSettingsAtom, {
+    remote: 'someone/else',
+    settings: {
+      ...VAULT_SETTING_DEFAULTS,
+      warnings: [],
+      plugins: { ...VAULT_SETTING_DEFAULTS.plugins, vault: { tasks: false } },
+    },
+  })
+  render(nav())
+  expect(screen.getByRole('button', { name: 'Board, 1 open tasks' })).toBeInTheDocument()
+})
+
+test('collapsed Board and due badge follow enabled tasks while Search remains', async () => {
+  const { store, appSidebar } = setup([task('projects/task.due.md', '2026-11-12')])
+  const view = render(appSidebar(true))
+  expect(
+    screen.getByRole('button', { name: 'Board, 0 overdue, 1 due today, 1 open tasks' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('1', { selector: '[data-slot="sidebar-menu-badge"]' }),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Search/ })).toBeInTheDocument()
+
+  store.set(vaultSettingsAtom, {
+    remote: 'owner/vault',
+    settings: {
+      ...VAULT_SETTING_DEFAULTS,
+      warnings: [],
+      plugins: { ...VAULT_SETTING_DEFAULTS.plugins, vault: { tasks: false } },
+    },
+  })
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: /Board/ })).not.toBeInTheDocument(),
+  )
+  expect(document.querySelector('[data-slot="sidebar-menu-badge"]')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Search/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Apps' })).toBeInTheDocument()
+  view.unmount()
 })
 
 test('Board badge stays hidden until the displayed vault statuses settle', async () => {
