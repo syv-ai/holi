@@ -235,7 +235,11 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script is
   generated at `<Electron userData>/bin/holi`, and Holi supplies its path as `HOLI_BIN` to its
-  Claude sessions; it finds the bridge through the vault's `bridge.local.env`. A CLI document write exits 0 only when
+  Claude sessions; it finds the bridge through the vault's `bridge.local.env`. **Credential scope
+  caveat:** this generated command currently reads the machine-wide CLI endpoint descriptor, so an
+  agent can select another live vault with `--vault`. The bridge's vault-local credential rejects
+  foreign selectors, but agent-launched CLI calls are not yet wired to that credential. A person's
+  own terminal CLI remains machine-wide by design. A CLI document write exits 0 only when
   pushed; exit 1 preserves a pending receipt (or reports a refusal), and exit 2 is a CLI usage error. All reversible
   or read-only (a record write is a file change in git history) except `google send`,
   `google reply`, `google respond` and a `google api` call that is not a `GET`, which the send
