@@ -175,6 +175,16 @@ test.each(['Session', 'File'])(
         await vi.runAllTimersAsync()
       })
       expect(store.get(tabDragAtom)).toBeNull()
+      act(() => store.set(activeRemoteAtom, 'owner/vault'))
+      fireEvent.dragStart(row, { dataTransfer: transfer() })
+      act(() => {
+        store.set(activeRemoteAtom, 'other/vault')
+        store.set(activeRemoteAtom, 'owner/vault')
+      })
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+      expect(store.get(tabDragAtom)).toBeNull()
       fireEvent.dragStart(row, { dataTransfer: transfer() })
       view.unmount()
       await act(async () => {

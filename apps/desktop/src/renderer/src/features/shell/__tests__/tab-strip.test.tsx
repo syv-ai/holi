@@ -13,7 +13,7 @@ import {
   openTab,
   selectEntry,
 } from '@/state/shell-workspace'
-import { activeRemoteAtom } from '@/state/vaults'
+import { activeRemoteRevisionValueAtom, activeRemoteAtom } from '@/state/vaults'
 import { tabDragAtom } from '../use-tab-drag'
 
 vi.mock('@/lib/trpc', () => {
@@ -69,7 +69,12 @@ function setup(workspace = openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md')) {
     effectAllowed: 'all',
   } as unknown as DataTransfer
   act(() => {
-    store.set(tabDragAtom, { key: 'A.md', vault: 'owner/vault', wasOpen: true })
+    store.set(tabDragAtom, {
+      key: 'A.md',
+      vault: 'owner/vault',
+      vaultRevision: store.get(activeRemoteRevisionValueAtom),
+      wasOpen: true,
+    })
   })
   return { store, list, tabs, transfer }
 }
@@ -238,7 +243,14 @@ test.each(['whole split', 'split member'])('unused space moves a %s to the end',
   if (split === undefined || typeof split === 'string') throw new Error('expected split')
   const key = source === 'whole split' ? split.id : 'A.md'
   transfer.setData(MIME, key)
-  act(() => store.set(tabDragAtom, { key, vault: 'owner/vault', wasOpen: true }))
+  act(() =>
+    store.set(tabDragAtom, {
+      key,
+      vault: 'owner/vault',
+      vaultRevision: store.get(activeRemoteRevisionValueAtom),
+      wasOpen: true,
+    }),
+  )
   fireEvent(list, dragEvent('dragover', transfer, 900))
   fireEvent(list, dragEvent('drop', transfer, 900))
   expect(store.get(shellWorkspaceAtom).entries).toEqual(
@@ -251,7 +263,14 @@ test('an end drop of the last entry remains a no-op', () => {
   const { store, list, transfer } = setup()
   const before = store.get(shellWorkspaceAtom)
   transfer.setData(MIME, 'B.md')
-  act(() => store.set(tabDragAtom, { key: 'B.md', vault: 'owner/vault', wasOpen: true }))
+  act(() =>
+    store.set(tabDragAtom, {
+      key: 'B.md',
+      vault: 'owner/vault',
+      vaultRevision: store.get(activeRemoteRevisionValueAtom),
+      wasOpen: true,
+    }),
+  )
   const over = dragEvent('dragover', transfer, 900)
   fireEvent(list, over)
   expect(over.defaultPrevented).toBe(false)
@@ -492,7 +511,14 @@ test('split preview retains its hovered member and hides original labels until l
 test('combine targeting stays stable when the preview changes the measured footprint', () => {
   const { store, list, tabs, transfer } = setup()
   transfer.setData(MIME, 'B.md')
-  act(() => store.set(tabDragAtom, { key: 'B.md', vault: 'owner/vault', wasOpen: true }))
+  act(() =>
+    store.set(tabDragAtom, {
+      key: 'B.md',
+      vault: 'owner/vault',
+      vaultRevision: store.get(activeRemoteRevisionValueAtom),
+      wasOpen: true,
+    }),
+  )
   const before = store.get(shellWorkspaceAtom)
   fireEvent(list, dragEvent('dragover', transfer, 25))
   expect(screen.getByRole('tab', { name: 'Split view: A, B' })).toBeInTheDocument()
@@ -531,7 +557,14 @@ test('interior and edge previews switch without detaching the dragged title', ()
   const workspace = openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md')
   const { store, list, transfer } = setup(workspace)
   transfer.setData(MIME, 'B.md')
-  act(() => store.set(tabDragAtom, { key: 'B.md', vault: 'owner/vault', wasOpen: true }))
+  act(() =>
+    store.set(tabDragAtom, {
+      key: 'B.md',
+      vault: 'owner/vault',
+      vaultRevision: store.get(activeRemoteRevisionValueAtom),
+      wasOpen: true,
+    }),
+  )
   const title = screen.getByText('B')
   fireEvent(list, dragEvent('dragover', transfer, 25))
   expect(screen.getByRole('tab', { name: 'Split view: A, B' })).toBeInTheDocument()
@@ -564,7 +597,14 @@ test('leaving a sidebar insertion preview removes its label without opening the 
   const { store, list, transfer } = setup()
   const before = store.get(shellWorkspaceAtom)
   transfer.setData(MIME, 'C.md')
-  act(() => store.set(tabDragAtom, { key: 'C.md', vault: 'owner/vault', wasOpen: false }))
+  act(() =>
+    store.set(tabDragAtom, {
+      key: 'C.md',
+      vault: 'owner/vault',
+      vaultRevision: store.get(activeRemoteRevisionValueAtom),
+      wasOpen: false,
+    }),
+  )
   fireEvent(list, dragEvent('dragover', transfer, 900))
   expect(screen.getByText('C')).toBeInTheDocument()
   expect(store.get(shellWorkspaceAtom)).toBe(before)
@@ -616,7 +656,12 @@ test('an unopened sidebar view previews and combines in the same vault', () => {
   const unopened = 'C.md'
   transfer.setData(MIME, unopened)
   act(() => {
-    store.set(tabDragAtom, { key: unopened, vault: 'owner/vault', wasOpen: false })
+    store.set(tabDragAtom, {
+      key: unopened,
+      vault: 'owner/vault',
+      vaultRevision: store.get(activeRemoteRevisionValueAtom),
+      wasOpen: false,
+    })
   })
   fireEvent(list, dragEvent('dragover', transfer, 150))
   expect(document.querySelector('[data-combine-preview="true"]')).not.toBeNull()
@@ -637,7 +682,12 @@ test('a whole split entry can be dragged from the strip and combined as a group'
   if (split === undefined || typeof split === 'string') throw new Error('expected split')
   transfer.setData(MIME, split.id)
   act(() => {
-    store.set(tabDragAtom, { key: split.id, vault: 'owner/vault', wasOpen: true })
+    store.set(tabDragAtom, {
+      key: split.id,
+      vault: 'owner/vault',
+      vaultRevision: store.get(activeRemoteRevisionValueAtom),
+      wasOpen: true,
+    })
   })
   fireEvent(list, dragEvent('dragover', transfer, 150))
   expect(document.querySelector('[data-combine-preview="true"]')).not.toBeNull()
@@ -729,4 +779,16 @@ test('a menu opened in one vault cannot mark the matching tab in the next vault'
   const item = screen.queryByRole('menuitem', { name: 'Make sticky' })
   if (item !== null) fireEvent.click(item)
   expect(store.get(shellWorkspaceAtom).sticky).toEqual([])
+})
+
+test('switching away and back cannot commit the old strip preview', () => {
+  const { store, list, transfer } = setup()
+  const before = store.get(shellWorkspaceAtom)
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  act(() => {
+    store.set(activeRemoteAtom, 'other/vault')
+    store.set(activeRemoteAtom, 'owner/vault')
+  })
+  fireEvent(list, dragEvent('drop', transfer, 150))
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
 })

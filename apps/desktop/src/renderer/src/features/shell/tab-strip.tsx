@@ -44,7 +44,7 @@ import { cn } from '@/lib/cn'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { openingBeside } from '@/state/alt-open'
-import { activeRemoteAtom } from '@/state/vaults'
+import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/state/vaults'
 import {
   activeSplit,
   tabIsOpen,
@@ -124,6 +124,7 @@ export function TabStrip({
   const dragVault = drag?.vault ?? null
   const dragWasOpen = drag?.wasOpen ?? false
   const remote = useAtomValue(activeRemoteAtom)
+  const vaultRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const setDrag = useSetAtom(tabDragAtom)
   const stripGeometry = useRef<{
     list: HTMLElement
@@ -138,7 +139,11 @@ export function TabStrip({
     workspace: ShellWorkspace
   } | null>(null)
   const previewCurrent =
-    preview !== null && preview.drag === drag && preview.workspace === ws && dragVault === remote
+    preview !== null &&
+    preview.drag === drag &&
+    preview.workspace === ws &&
+    dragVault === remote &&
+    drag?.vaultRevision === vaultRevision
   const displayed = previewCurrent ? preview : null
   const dropAt = displayed?.target === null ? displayed.index : null
   /** The member of a split's pill that was right-clicked, whose own
@@ -198,12 +203,17 @@ export function TabStrip({
   const listRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
   useEffect(() => {
-    if (dragged !== null && (dragVault !== remote || (dragWasOpen && !tabIsOpen(ws, dragged)))) {
+    if (
+      dragged !== null &&
+      (dragVault !== remote ||
+        drag?.vaultRevision !== vaultRevision ||
+        (dragWasOpen && !tabIsOpen(ws, dragged)))
+    ) {
       setDrag(null)
     }
     setPreview(null)
     stripGeometry.current = null
-  }, [drag, remote, ws, dragVault, dragWasOpen, dragged, setDrag])
+  }, [drag, remote, vaultRevision, ws, dragVault, dragWasOpen, dragged, setDrag])
 
   useEffect(() => {
     const clear = () => {
@@ -232,7 +242,8 @@ export function TabStrip({
     return (
       store.get(activeRemoteAtom) === remote &&
       store.get(shellWorkspaceAtom) === ws &&
-      store.get(tabDragAtom) === drag
+      store.get(tabDragAtom) === drag &&
+      drag?.vaultRevision === store.get(activeRemoteRevisionValueAtom)
     )
   }
 

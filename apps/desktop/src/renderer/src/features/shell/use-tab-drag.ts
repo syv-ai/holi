@@ -22,7 +22,7 @@ import { useCallback, useEffect, useRef, type DragEvent } from 'react'
 import { activeSplit, tabIsOpen, type ShellWorkspace } from '@/state/shell-workspace'
 import { tabKey, type TabDescriptor } from '@/state/tab-descriptor'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { activeRemoteAtom } from '@/state/vaults'
+import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/state/vaults'
 
 /** The drag's MIME type; its data is the tab's key or the split's id. */
 export const TAB_MIME = 'application/x-holi-tab'
@@ -33,9 +33,12 @@ export function stripDropZone(position: number): 'combine' | 'reorder' {
 }
 
 /** One native drag session, cleared as a unit on every end or cancellation. */
-export const tabDragAtom = atom<{ key: string; vault: string | null; wasOpen: boolean } | null>(
-  null,
-)
+export const tabDragAtom = atom<{
+  key: string
+  vault: string | null
+  vaultRevision: number
+  wasOpen: boolean
+} | null>(null)
 
 interface DragSourceProps {
   draggable: true
@@ -65,14 +68,16 @@ export function useTabDragSource(): (key: string) => DragSourceProps {
         const started = ++session.current
         const workspace = store.get(shellWorkspaceAtom)
         const vault = store.get(activeRemoteAtom)
+        const vaultRevision = store.get(activeRemoteRevisionValueAtom)
         window.setTimeout(() => {
           if (
             session.current !== started ||
             store.get(shellWorkspaceAtom) !== workspace ||
-            store.get(activeRemoteAtom) !== vault
+            store.get(activeRemoteAtom) !== vault ||
+            store.get(activeRemoteRevisionValueAtom) !== vaultRevision
           )
             return
-          setDrag({ key, vault, wasOpen: tabIsOpen(workspace, key) })
+          setDrag({ key, vault, vaultRevision, wasOpen: tabIsOpen(workspace, key) })
         }, 0)
       },
       onDragEnd: () => {
@@ -128,14 +133,16 @@ export function useTabDrag(): {
           const started = ++session.current
           const workspace = store.get(shellWorkspaceAtom)
           const vault = store.get(activeRemoteAtom)
+          const vaultRevision = store.get(activeRemoteRevisionValueAtom)
           window.setTimeout(() => {
             if (
               session.current !== started ||
               store.get(shellWorkspaceAtom) !== workspace ||
-              store.get(activeRemoteAtom) !== vault
+              store.get(activeRemoteAtom) !== vault ||
+              store.get(activeRemoteRevisionValueAtom) !== vaultRevision
             )
               return
-            setDrag({ key, vault, wasOpen: tabIsOpen(workspace, key) })
+            setDrag({ key, vault, vaultRevision, wasOpen: tabIsOpen(workspace, key) })
           }, 0)
         },
         onDragEndCapture: () => {
