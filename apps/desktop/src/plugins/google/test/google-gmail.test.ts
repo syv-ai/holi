@@ -1391,6 +1391,7 @@ describe('readThread', () => {
                 header('Cc', '"Carol, Jones: Esq." <carol@syv.ai>'),
               ],
               mimeType: 'text/plain',
+              body: { size: 0 },
             },
           },
         ],
@@ -1576,7 +1577,12 @@ describe('readThread', () => {
 
   it('shows an untitled thread rather than an empty heading', async () => {
     const { api } = gmail([], {
-      t1: { id: 't1', messages: [{ id: 'm1', threadId: 't1', payload: { headers: [] } }] },
+      t1: {
+        id: 't1',
+        messages: [
+          { id: 'm1', threadId: 't1', payload: { mimeType: 'text/plain', body: { size: 0 } } },
+        ],
+      },
     })
 
     expect((await readThread(api, 't1')).subject).toBe('(no subject)')
@@ -2182,6 +2188,8 @@ describe('send, draft and reply', () => {
         labelIds: ['INBOX'],
         internalDate: '1000',
         payload: {
+          mimeType: 'text/plain',
+          body: { size: 0 },
           headers: [
             header('Message-ID', '<msg-1@mail.example>'),
             header('Subject', 'Q2 budget'),
@@ -2196,6 +2204,8 @@ describe('send, draft and reply', () => {
         labelIds: ['SENT'],
         internalDate: '2000',
         payload: {
+          mimeType: 'text/plain',
+          body: { size: 0 },
           headers: [
             header('Message-ID', '<msg-2@mail.example>'),
             header('Subject', 'Re: Q2 budget'),
@@ -2210,6 +2220,8 @@ describe('send, draft and reply', () => {
         labelIds: ['INBOX'],
         internalDate: '3000',
         payload: {
+          mimeType: 'text/plain',
+          body: { size: 0 },
           headers: [
             header('Message-ID', '<msg-3@mail.example>'),
             header('Subject', 'Re: Q2 budget'),

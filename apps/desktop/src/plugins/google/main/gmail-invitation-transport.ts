@@ -9,7 +9,13 @@ import {
   type MimeLocation,
   type RawPart,
 } from './gmail-mime'
-import { fetchFullThread, GMAIL_BASE, isGmailMessageId, type RawMessage } from './gmail-thread'
+import {
+  fetchFullThread,
+  GMAIL_BASE,
+  isGmailMessageId,
+  validateFullMessage,
+  type RawMessage,
+} from './gmail-thread'
 import { buildRfc822, toBase64Url } from './mime'
 
 const MAX_CALENDAR_PART_BYTES = 256 * 1024
@@ -63,10 +69,11 @@ export function createCalendarScan() {
       api: GoogleApi,
       messageId: string,
       payload: RawPart | undefined,
+      draft: boolean,
     ): CalendarMail['parts'] {
       const found: CalendarMail['parts'] = []
       walk(payload, (part, location, forwarded) => {
-        if (forwarded || !isCalendarPart(part)) return
+        if (draft || forwarded || !isCalendarPart(part)) return
         const method = calendarMimeMethod(part)
         const data = part.body?.data
         const attachment = part.body?.attachmentId
@@ -228,16 +235,10 @@ function sentEvidenceAddresses(value: string | null, allowGroups: boolean): stri
 }
 
 function calendarMail(
-  api: GoogleApi,
-  message: RawMessage,
-  scan: CalendarScan,
-): CalendarMail | null {
-  const id = message.id
-  if (!isGmailMessageId(id) || message.labelIds?.includes('DRAFT')) return null
-  const parts = scan.partsOf(api, id, message.payload)
-  if (parts.length === 0) return null
-  const ids = calendarHeaderIds(message.payload, 'message-id')
-  const rfcId = ids?.length === 1 ? ids[0]! : null
+  message: RawMessage & { id: string },
+  rfcId: string | null,
+  parts: CalendarMail['parts'],
+): CalendarMail {
   const references = calendarHeaderIds(message.payload, 'references')
   const parent = calendarHeaderIds(message.payload, 'in-reply-to')
   const validThreading =
@@ -250,9 +251,11 @@ function calendarMail(
   const fromHeader = uniqueAddressHeader(message.payload, 'from')
   const from = parseAddresses(fromHeader)
   const sent = message.labelIds?.includes('SENT') ?? false
+  // The full-response validator has checked the wire int64. Only positive,
+  // exactly representable values can currently order durable Sent evidence.
   const internalDate = Number(message.internalDate)
   return {
-    messageId: id,
+    messageId: message.id,
     rfcId,
     threadId: isGmailMessageId(message.threadId) ? message.threadId : null,
     parent: parentId,
@@ -286,9 +289,33 @@ export async function fetchThreadCalendarPayloads(
   api: GoogleApi,
   threadId: string,
   scan: CalendarScan,
-): Promise<CalendarMail[]> {
-  const messages = await fetchFullThread(api, threadId)
-  return messages.flatMap((message) => calendarMail(api, message, scan) ?? [])
+) {
+  const thread = await fetchFullThread(api, threadId)
+  const owners = new Map<string, string | null>()
+  const messages: CalendarMail[] = []
+  for (const message of thread) {
+    const { parts, rfcId } = calendarEnvelope(api, message, scan)
+    // RFC Message-ID ownership is a property of the entire conversation,
+    // not of the calendar parts that happen to be relevant to this scope.
+    if (rfcId) owners.set(rfcId, owners.has(rfcId) ? null : message.id)
+    if (parts.length) messages.push(calendarMail(message, rfcId, parts))
+  }
+  return { messages, owners }
+}
+
+function calendarEnvelope(
+  api: GoogleApi,
+  message: RawMessage & { id: string },
+  scan: CalendarScan,
+) {
+  const parts = scan.partsOf(
+    api,
+    message.id,
+    message.payload,
+    message.labelIds?.includes('DRAFT') ?? false,
+  )
+  const ids = calendarHeaderIds(message.payload, 'message-id')
+  return { parts, rfcId: ids?.length === 1 ? ids[0]! : null }
 }
 
 /** The send receipt may point to a different thread. If no usable receipt
@@ -308,12 +335,17 @@ export async function findSentCalendarReply(
       })
       .catch((error) => {
         // Only an individual missing message permits recovery through the exact-ID index.
-        if (error instanceof GoogleApiError && error.code === 'not-found') return null
+        if (error instanceof GoogleApiError && error.code === 'not-found') return undefined
+        if (error instanceof SyntaxError)
+          throw new CalendarScanError('Gmail returned an invalid full message response')
         throw error
       })
-    if (raw?.id !== id || (threadId !== null && raw.threadId !== threadId)) return null
-    const mail = calendarMail(api, raw, scan)
-    return mail?.rfcId === rfcId && (await matches(mail)) ? mail : null
+    if (raw === undefined) return null
+    const message = validateFullMessage(raw, id, threadId)
+    const envelope = calendarEnvelope(api, message, scan)
+    if (envelope.rfcId !== rfcId || envelope.parts.length === 0) return null
+    const mail = calendarMail(message, envelope.rfcId, envelope.parts)
+    return (await matches(mail)) ? mail : null
   }
   if (receipt?.id) {
     const mail = await read(receipt.id, receipt.threadId)
@@ -336,7 +368,11 @@ export async function findSentCalendarReply(
     return null
   const found = new Map<string, CalendarMail>()
   for (const candidate of page.messages ?? []) {
-    if (!isGmailMessageId(candidate?.id)) return null
+    if (
+      !isGmailMessageId(candidate?.id) ||
+      (candidate.threadId !== undefined && !isGmailMessageId(candidate.threadId))
+    )
+      return null
     const mail = await read(candidate.id, candidate.threadId ?? null)
     if (mail) found.set(mail.messageId, mail)
   }

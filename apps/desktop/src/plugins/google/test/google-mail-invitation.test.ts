@@ -67,7 +67,7 @@ function gmailMessage(
   return {
     id,
     threadId: options.threadId ?? 'thread',
-    internalDate: String(date),
+    internalDate: String(date) as string | undefined,
     labelIds: options.draft ? ['DRAFT'] : options.sent ? ['SENT'] : ['INBOX'],
     payload: {
       mimeType: 'multipart/mixed',
@@ -527,7 +527,7 @@ it('patches only the attendee on the primary copy of a past invitation and confi
 
 it('does not answer a partial, incoherent, or unconditionally writable Calendar copy', async () => {
   const { state, read, respond } = await rig()
-  const valid = event()
+  const valid = { ...event(), etag: '"version,opaque"' }
   state.events.set('primary', [valid])
   for (const incomplete of [
     { start: undefined },
@@ -1272,9 +1272,45 @@ it.each(['PUBLISH', 'EXPORT'] as const)(
   },
 )
 
+it.each(['PUBLISH', 'EXPORT'] as const)(
+  'uses one Gmail parent for a REQUEST with a %s sidecar, but rejects competing ownership or REQUESTs',
+  async (method) => {
+    const { state, read, respond } = await rig()
+    const mixed = state.messages[0]!
+    let source = invite(method, '', 4).replace('SUMMARY:Design sync', 'SUMMARY:Public meeting')
+    if (method === 'EXPORT') source = source.replace('METHOD:EXPORT\r\n', '')
+    const sidecar = gmailMessage('sidecar', 300, source)
+    mixed.payload.parts.push(sidecar.payload.parts[1]!)
+    expect(await read()).toMatchObject({ identity, canRespond: true })
+    expect(await respond('accepted')).toMatchObject({
+      channel: 'gmail',
+      refreshPending: false,
+      invitation: { sentResponseStatus: 'accepted' },
+    })
+
+    sidecar.payload.headers.find(({ name }) => name === 'Message-ID')!.value =
+      '<update@example.net>'
+    state.messages.push(sidecar)
+    expect(await read()).toMatchObject({ canRespond: false, sentResponseStatus: null })
+    await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    state.messages.pop()
+
+    mixed.payload.parts.push(
+      gmailMessage('competing', 300, invite().replace('LOCATION:Upstairs', 'LOCATION:Downstairs'))
+        .payload.parts[1]!,
+    )
+    expect(await read()).toMatchObject({ canRespond: false, sentResponseStatus: null })
+    await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.sendAttempts).toBe(1)
+    expect(state.calendarPatchAttempts).toBe(0)
+  },
+)
+
 it('allows a methodless export to open only a verified meeting, never to RSVP', async () => {
   const { state, read, respond, list } = await rig()
-  const source = invite().replace('METHOD:REQUEST\r\n', '')
+  const source = invite()
+    .replace('METHOD:REQUEST\r\n', '')
+    .replace('DTSTAMP:20240701T090000Z\r\n', '')
   state.messages = [gmailMessage('export', 200, source)]
   expect((await list()).invitations).toEqual([])
 
@@ -1317,6 +1353,57 @@ it('never uses invitation evidence from a different full Gmail thread', async ()
   expect(await list()).toMatchObject({ invitations: [], recoveryReason: expect.any(String) })
   state.fullThreadOverride = undefined
   expect(await list()).toMatchObject({ invitations: [{ identity, canRespond: true }] })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
+it.each(['ORGANIZER', 'ATTENDEE'] as const)(
+  'does not authorize an RSVP with duplicate VALUE on %s, even next to a valid REQUEST',
+  async (property) => {
+    const { state, list, read, respond } = await rig()
+    const quotedName = 'CN="Name;VALUE=TEXT"'
+    const valid = (params: string) =>
+      invite().replace(
+        new RegExp(`${property}(?:;CN=Host)?:`),
+        `${property};${quotedName};${params}:`,
+      )
+    state.messages = [gmailMessage('update', 200, valid('VALUE=CAL-ADDRESS'))]
+    expect(await read()).toMatchObject({ identity, canRespond: true })
+    for (const params of ['value="TEXT";VALUE=CAL-ADDRESS', 'value=CAL-ADDRESS;VALUE=TEXT']) {
+      state.messages[1] = gmailMessage('ambiguous', 300, valid(params))
+      expect(await list()).toMatchObject({
+        invitations: [{ canRespond: false, unavailableReason: expect.any(String) }],
+      })
+      await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+    }
+    expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+  },
+)
+
+it('keeps a visible unstamped REQUEST nonactionable on both channels without falling back', async () => {
+  const { state, read, respond } = await rig()
+  const stamped = state.messages[0]!
+  const unstamped = gmailMessage(
+    'unstamped',
+    300,
+    invite().replace('DTSTAMP:20240701T090000Z\r\n', ''),
+  )
+  for (const hasCalendarCopy of [false, true]) {
+    if (hasCalendarCopy) state.events.set('primary', [event()])
+    state.messages = [unstamped]
+    expect(await read()).toMatchObject({
+      identity: { messageId: 'unstamped', uid, dtstamp: null },
+      kind: 'invitation',
+      cancelled: false,
+      canRespond: false,
+      unavailableReason: expect.any(String),
+    })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    state.messages.push(stamped)
+    expect(await read()).toMatchObject({ kind: 'invitation', cancelled: false, canRespond: false })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    state.messages = [stamped]
+    expect(await read()).toMatchObject({ canRespond: true })
+  }
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
@@ -1701,7 +1788,7 @@ it('uses a newer Gmail answer on a verified old parent after equivalent REQUEST 
     invite('REPLY', '', 3, '20240101T000000Z').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:'),
     { sent: true, parent, method: 'REPLY' },
   )
-  const unorderable = { ...decline, internalDate: '' }
+  const unorderable = { ...decline, internalDate: undefined }
   state.messages.push(unorderable)
   const reopened = restart()
   expect(await reopened.read()).toMatchObject({ responseStatus: null, canRespond: false })
@@ -1757,6 +1844,15 @@ it('uses a newer Gmail answer on a verified old parent after equivalent REQUEST 
   })
   expect(await afterCompaction.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
 
+  // Plain mail claiming the now-absent parent invalidates even a persisted
+  // anchor. The latest receipt (on the different redelivery) still holds.
+  state.messages.push(gmailMessage('plain-claim', 1150, undefined, { rfcId: parent }))
+  expect(await restart().read()).toMatchObject({
+    sentResponseStatus: 'tentative',
+    responseStatus: 'tentative',
+  })
+  state.messages.pop()
+
   const copy = event()
   copy.attendees[0]!.responseStatus = 'needsAction'
   state.events.set('primary', [copy])
@@ -1809,12 +1905,53 @@ it('uses a newer Gmail answer on a verified old parent after equivalent REQUEST 
   expect(state.calendarPatchAttempts).toBe(1)
 })
 
+it('uses the full Gmail thread to distinguish unrelated prose from a competing parent', async () => {
+  const { state, read, respond } = await rig()
+  state.messages.push(acceptedReply('<update@example.net>'), gmailMessage('plain', 550))
+  expect(await read()).toMatchObject({ canRespond: true, sentResponseStatus: 'accepted' })
+  state.messages.push(gmailMessage('claim', 600, undefined, { rfcId: '<update@example.net>' }))
+  expect(await read()).toMatchObject({ canRespond: false, sentResponseStatus: null })
+  await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+})
+
+it('cannot order a competing Sent answer against a receipt with a malformed Gmail timestamp', async () => {
+  const { state, read, respond, list } = await rig()
+  state.replyThread = 'separate-sent-thread'
+  state.sendReplyMode = 'empty' // Recover through the exact RFC Message-ID index.
+  state.sentInternalDate = 501
+  await read()
+  expect(await respond('accepted')).toMatchObject({ channel: 'gmail', refreshPending: false })
+  const receipt = state.sent.get('reply-1')!
+  receipt.internalDate = '0x1f5'
+  state.messages.push(
+    gmailMessage(
+      'newer-decline',
+      700,
+      invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:'),
+      { sent: true, parent: '<update@example.net>', method: 'REPLY' },
+    ),
+  )
+  expect(await list()).toMatchObject({
+    invitations: [],
+    recoveryReason: expect.stringMatching(/Gmail.*full message/i),
+  })
+  receipt.internalDate = '501'
+  expect(await read()).toMatchObject({ responseStatus: 'declined', sentResponseStatus: 'declined' })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
 it.each([
   'missing stamp',
   'invalid stamp',
   'duplicate stamp',
   'text organizer',
   'text attendee',
+  'duplicate organizer VALUE (TEXT first)',
+  'duplicate organizer VALUE (TEXT last)',
+  'duplicate attendee VALUE (TEXT first)',
+  'duplicate attendee VALUE (TEXT last)',
   'duplicate From',
   'duplicate To',
   'unclosed From comment',
@@ -1834,6 +1971,19 @@ it.each([
     'duplicate stamp': [stamp, `${stamp}${stamp}`],
     'text organizer': ['ORGANIZER;', 'ORGANIZER;VALUE=TEXT;'],
     'text attendee': ['ATTENDEE;', 'ATTENDEE;VALUE=TEXT;'],
+    'duplicate organizer VALUE (TEXT first)': [
+      'ORGANIZER;',
+      'ORGANIZER;value="TEXT";VALUE=CAL-ADDRESS;',
+    ],
+    'duplicate organizer VALUE (TEXT last)': [
+      'ORGANIZER;',
+      'ORGANIZER;value=CAL-ADDRESS;VALUE=TEXT;',
+    ],
+    'duplicate attendee VALUE (TEXT first)': [
+      'ATTENDEE;',
+      'ATTENDEE;value="TEXT";VALUE=CAL-ADDRESS;',
+    ],
+    'duplicate attendee VALUE (TEXT last)': ['ATTENDEE;', 'ATTENDEE;value=CAL-ADDRESS;VALUE=TEXT;'],
   }
   const calendarDefect = calendarDefects[defect]
   const source = calendarDefect ? valid.replace(...calendarDefect) : valid
