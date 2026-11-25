@@ -124,10 +124,9 @@ export const nativeWorkingCopy: NativeWorkingCopy & NativeTreePreparation = {
     )
     if (!value) throw new Error('Native Git returned no working-copy tree')
     const result = dictionary(value)
-    const parent = result.parentOID
     return {
       treeOID: text(result.treeOID),
-      parentOID: parent === NSNull.null() || parent === undefined ? null : text(parent),
+      parentOID: text(result.parentOID),
       branch: text(result.branch),
       unchanged: flag(result.unchanged),
     }

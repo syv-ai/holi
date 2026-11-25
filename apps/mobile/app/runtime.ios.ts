@@ -55,7 +55,10 @@ export async function checkCompatibility(): Promise<string> {
   let workingCopy:
     | (Awaited<ReturnType<typeof runWorkingCopyCheck>> & {
         cases?: Awaited<ReturnType<typeof runWorkingCopyCheck>>[]
-        treeCases?: Awaited<ReturnType<typeof runWorkingCopyTreeCheck>>[]
+        treeCases?: (Awaited<ReturnType<typeof runWorkingCopyTreeCheck>> & {
+          name: string
+          runId: string
+        })[]
       })
     | undefined
   try {
@@ -122,6 +125,8 @@ export async function checkCompatibility(): Promise<string> {
     }
     if (!results[0]) throw new Error('Missing status matrix results')
     workingCopy = { ...results[0], cases: results }
+    phase = 'native-working-copy-tree'
+    operation = 'runWorkingCopyTreeCheck'
     const treeManifestPath = gitEnvironment.objectForKey('HOLI_GIT_TREE_MANIFEST')
     if (typeof treeManifestPath !== 'string') throw new Error('Missing working-copy tree manifest')
     const treeFixture = JSON.parse(

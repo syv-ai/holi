@@ -9,7 +9,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const tree = { treeOID: 'a'.repeat(40), parentOID: null, branch: 'main', unchanged: false }
+const tree = {
+  treeOID: 'a'.repeat(40),
+  parentOID: 'b'.repeat(40),
+  branch: 'main',
+  unchanged: false,
+}
 
 describe('prepareWorkingCopyTree', () => {
   it('authorizes the complete eligible inventory and excludes protected aliases before preparation', async () => {
@@ -25,8 +30,8 @@ describe('prepareWorkingCopyTree', () => {
           { path: 'assets/image.bin' },
           { path: '.env' },
           { path: 'private.local.md' },
-          { path: 'again/note.md'.normalize('NFC') },
-          { path: 'AGAIN/note.md' },
+          { path: '.ENV' },
+          { path: 'TOKEN.LOCAL.bin' },
         ],
         authorize: async () => true,
         status: async () => [],

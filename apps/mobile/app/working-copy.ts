@@ -26,7 +26,7 @@ export type WorkingCopyStatus = {
 /** Native adapter exposes semantic identity and status, never libgit2 constants. */
 export type PreparedWorkingCopyTree = {
   treeOID: string
-  parentOID: string | null
+  parentOID: string
   branch: string
   unchanged: boolean
 }
@@ -82,7 +82,7 @@ export async function prepareWorkingCopyTree(
     const aliases = new Set<string>()
     for (const candidate of candidates) {
       const path = safePath(candidate.path)
-      if (!path) continue
+      if (!path || !safePath(candidate.path.normalize('NFC').toLocaleLowerCase('en-US'))) continue
       const key = path.normalize('NFC').toLocaleLowerCase('en-US')
       if (aliases.has(key)) throw new Error('Ambiguous working copy paths')
       aliases.add(key)
@@ -94,8 +94,8 @@ export async function prepareWorkingCopyTree(
     }
     const result = await native.prepareWorkingCopyTree(root, vault.remote, vault.branch, paths)
     if (
-      !/^[0-9a-f]{40,64}$/i.test(result.treeOID) ||
-      (result.parentOID !== null && !/^[0-9a-f]{40,64}$/i.test(result.parentOID)) ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(result.treeOID) ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(result.parentOID) ||
       result.branch !== vault.branch ||
       typeof result.unchanged !== 'boolean'
     )

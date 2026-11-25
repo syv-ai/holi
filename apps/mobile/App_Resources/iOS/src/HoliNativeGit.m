@@ -533,7 +533,8 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
     NSSet *objectsBefore = HNGLooseObjects(snapshot.path);
     if (!metadata) { HNGTreeFail(error, @"Existing metadata lock or unreadable metadata"); break; }
     rootFD = open(root.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (rootFD < 0 || !HNGPrepareIgnores(repo, snapshot, rootFD, paths, error)) break;
+    if (rootFD < 0) { HNGTreeFail(error, @"Cannot open tree preparation root"); break; }
+    if (!HNGPrepareIgnores(repo, snapshot, rootFD, paths, error)) break;
     rc = git_index_new(&prepared);
     if (rc < 0) { HNGError(error, rc); break; }
     NSMutableSet *names = [NSMutableSet set];
