@@ -512,8 +512,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     const target = {
       root: deps.vault.root,
       configDir: config.dir,
-      // Command authority belongs to the activation, including in scratch.
-      binDir: deps.binDir(),
+      // Holi's commands reach the vault: a fenced session has none.
+      binDir: fence === undefined ? deps.binDir() : null,
     }
     // Filled in once the terminal exists; its callbacks only run after.
     let session: Session | null = null

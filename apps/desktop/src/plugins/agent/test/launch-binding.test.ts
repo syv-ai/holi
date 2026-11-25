@@ -1,5 +1,5 @@
 import { A, B, adapters, harness, rig, tempDirectory, waitForFile } from './activation-fixture'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { basename, delimiter, join } from 'node:path'
 import { expect, it } from 'vitest'
 import { execFile } from 'node:child_process'
@@ -79,7 +79,11 @@ it('binds retained activation terminals and regenerated background settings afte
           scope: { read: [], write: [] },
         }),
       ).toMatchObject({ ok: true })
-      binding(adapters.pty.at(-1)!.env, bins[remote])
+      const fencedEnv = adapters.pty.at(-1)!.env
+      expect(fencedEnv.HOLI_BIN).toBeUndefined()
+      for (const bin of Object.values(bins)) {
+        expect(fencedEnv.PATH?.split(delimiter)).not.toContain(bin)
+      }
     }
     expect(await call(remote, 'agent.open', { login: true })).toMatchObject({ ok: true })
     const launched = adapters.pty.at(-1)!
@@ -116,7 +120,7 @@ it('binds retained activation terminals and regenerated background settings afte
 })
 
 it.skipIf(process.platform === 'win32')(
-  'binds actual Codex job and Pi RPC children independently of their cwd',
+  'excludes CLI authority from actual Codex jobs while binding Pi RPC children',
   async () => {
     const { host, enter, call, bins, userData } = await fixture()
     const executable = join(userData, 'native-launch-fixture')
@@ -128,8 +132,8 @@ const path = require('node:path');
 const readline = require('node:readline');
 const args = process.argv.slice(2);
 const rpc = args.includes('--mode');
-const owner = path.basename(path.dirname(process.env.HOLI_BIN));
-fs.writeFileSync(path.join(process.env.CAPTURE_DIR, owner + (rpc ? '-rpc' : '-job')), JSON.stringify({ env: process.env, cwd: process.cwd(), args }));
+const capture = rpc ? path.basename(path.dirname(process.env.HOLI_BIN)) + '-rpc' : 'job';
+fs.writeFileSync(path.join(process.env.CAPTURE_DIR, capture), JSON.stringify({ env: process.env, cwd: process.cwd(), args }));
 if (!rpc) {
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 'fixture-thread' }));
   console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 0, output_tokens: 0 } }));
@@ -185,9 +189,21 @@ if (!rpc) {
       ).toMatchObject({ ok: true })
       for (const kind of ['job', 'rpc']) {
         const captured = JSON.parse(
-          await waitForFile(join(userData, `${basename(bins[remote])}-${kind}`)),
+          await waitForFile(
+            join(userData, kind === 'job' ? 'job' : `${basename(bins[remote])}-rpc`),
+          ),
         )
-        binding(captured.env, bins[remote])
+        if (kind === 'job') {
+          expect(captured.env.HOLI_BIN).toBeUndefined()
+          expect(captured.env.HOLI_AGENT_SESSION).toBeUndefined()
+          for (const bin of Object.values(bins)) {
+            expect(captured.env.PATH?.split(delimiter)).not.toContain(bin)
+          }
+          expect(captured.env.CODEX_HOME).not.toBe(personHome)
+          await unlink(join(userData, 'job'))
+        } else {
+          binding(captured.env, bins[remote])
+        }
         expect(captured.args).not.toContain('--dangerously-skip-permissions')
       }
     }

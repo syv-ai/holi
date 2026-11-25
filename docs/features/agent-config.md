@@ -235,12 +235,14 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script is
   generated at `<Electron userData>/bin/holi` for the person's terminal. Holi-launched
-  agents receive a separate `holi` executable as `HOLI_BIN`, bound to their vault's
-  private endpoint descriptor. Its vault-local credential rejects
-  another `--vault` selector, including after changing directory; missing, malformed
-  or stale credentials fail without using the machine credential. Interactive,
-  background and job launches retain the owning vault's CLI path. Claude's
-  regenerated settings also supply that path to background sessions. Tokens travel
+  unfenced interactive and background agents receive a separate `holi` executable
+  as `HOLI_BIN`, bound to their vault's private endpoint descriptor. Its vault-local
+  credential rejects another `--vault` selector, including after changing directory;
+  missing, malformed or stale credentials fail without using the machine credential.
+  Fenced PTY sessions and scratch jobs receive no Holi CLI: their writes must pass
+  through checked copy-back, rather than mutate the vault directly through HTTP
+  outside the fence. Claude's regenerated settings also supply the owning vault's
+  CLI path to background sessions. Tokens travel
   in a private curl configuration, not URLs or process arguments. The person's
   terminal keeps the machine-wide executable, including inside a vault. These CLI
   credentials do not sandbox native processes' filesystem access or replace native
