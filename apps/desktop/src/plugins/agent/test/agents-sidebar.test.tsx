@@ -11,7 +11,7 @@ import { Provider, createStore, type PrimitiveAtom } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, agentsSelectionAtom, type AgentsSessionItem } from '@/plugin-api'
 import { SidebarProvider } from '@/components/ui/sidebar'
-import { AgentsSidebar } from '../renderer/agents/agents-sidebar'
+import { AgentsNavigation, AgentsSidebar } from '../renderer/agents/agents-sidebar'
 import { agentsStatusAtom, inboxCountAtom } from '../renderer/state/agents-status'
 import { agentsViewAtom, showHistoryAtom } from '../renderer/state/agents-view'
 import { SessionHistory } from '../renderer/sessions/session-list'
@@ -24,6 +24,22 @@ import {
   type OpenRecord,
 } from '../renderer/state/session-list'
 import { agentSessionsAtom } from '../renderer/state/sessions'
+
+// These workflows run with the public settings contract enabled. Dynamic
+// settings loading and disabled views are covered in optional-navigation.
+vi.mock('@/plugin-api', async (original) => {
+  const real = await original<typeof import('@/plugin-api')>()
+  const { atom } = await import('jotai')
+  const { resolveAppSettings } = await import('@holi/shared')
+  return {
+    ...real,
+    activeVaultSettingsAtom: atom({
+      ...resolveAppSettings(null, null),
+      plugins: { vault: {}, localOff: [] },
+      pluginValues: {},
+    }),
+  }
+})
 
 const agentCap = vi.hoisted(() => ({
   stop: vi.fn(async () => ({ ok: true })),
@@ -161,6 +177,7 @@ function setup({
   render(
     <Provider store={store}>
       <SidebarProvider>
+        <AgentsNavigation />
         <AgentsSidebar />
         {history && (
           <div data-agents-history="">

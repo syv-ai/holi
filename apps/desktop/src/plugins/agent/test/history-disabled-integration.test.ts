@@ -1,4 +1,4 @@
-import { A, rig } from './activation-fixture'
+import { A, adapters, rig } from './activation-fixture'
 import { openTurnLog, TURNS_FILE } from '../main/host/turn-log'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -9,6 +9,14 @@ it('keeps live sessions and persisted turn records independent of the history sw
   const settings = join(roots[A], '.holi/settings/app.yaml')
   await mkdir(join(roots[A], '.holi/settings'), { recursive: true })
   await writeFile(settings, 'agentHistory: false\n')
+  adapters.run.mockImplementation(async (_bin, args, opts) =>
+    args[0] === 'agents'
+      ? JSON.stringify([
+          { kind: 'background', id: 'abc12345', cwd: opts.cwd, pid: process.pid, status: 'idle' },
+          { kind: 'background', id: 'deadbeef', cwd: opts.cwd, state: 'completed' },
+        ])
+      : '[]',
+  )
   await enter(A)
 
   // History controls browsing, not the active session or turn-record APIs.
@@ -22,6 +30,6 @@ it('keeps live sessions and persisted turn records independent of the history sw
 
   await writeFile(settings, 'agentHistory: true\n')
   await expect(call(A, 'agent.history')).resolves.toEqual([
-    expect.objectContaining({ id: 'abc12345', state: 'idle' }),
+    expect.objectContaining({ id: 'deadbeef', state: 'idle' }),
   ])
 })
