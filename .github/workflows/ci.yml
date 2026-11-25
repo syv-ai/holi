@@ -134,6 +134,35 @@ jobs:
           path: ${{ runner.temp }}/codex-exec-producer/evidence.json
           if-no-files-found: error
 
+  native-codex-tui-producer:
+    name: Native Codex TUI production consumers
+    runs-on: macos-26-intel
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install repository test dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Prove pinned native TUI emission and production consumption
+        env:
+          HOLI_CODEX_TUI_EVIDENCE: ${{ runner.temp }}/codex-tui-producer/evidence.json
+        run: node scripts/codex-tui-producer.mjs
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: native-codex-tui-producer-evidence
+          path: ${{ runner.temp }}/codex-tui-producer/evidence.json
+          if-no-files-found: error
+
   native-codex-sandbox:
     name: Native Codex sandbox enforcement
     runs-on: macos-26-intel
