@@ -239,8 +239,10 @@ async function rig() {
     sentIndexed: true,
     sentInternalDate: null as number | null,
     receiptError: null as number | null,
+    receiptErrors: new Map<string, number>(),
     receiptMissOnce: false,
     sentSearchError: null as number | null,
+    sentSearchErrors: new Map<string, number>(),
     sentSearchBody: undefined as unknown,
     replyThread: 'thread',
     sendReceiptId: undefined as string | undefined,
@@ -294,6 +296,8 @@ async function rig() {
       if (state.sentSearchError) return json({}, state.sentSearchError)
       if (state.sentSearchBody !== undefined) return json(state.sentSearchBody)
       const query = url.searchParams.get('q')
+      const status = query && state.sentSearchErrors.get(query)
+      if (status) return json({}, status)
       const matching =
         state.sentVisible && state.sentIndexed
           ? [...state.sent.values()].filter(
@@ -321,7 +325,10 @@ async function rig() {
           { error: { details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } },
           state.receiptError,
         )
-      const message = state.sentVisible ? state.sent.get(messagePath[1]!) : undefined
+      const id = messagePath[1]!
+      const status = state.receiptErrors.get(id)
+      if (status) return json({}, status)
+      const message = state.sentVisible ? state.sent.get(id) : undefined
       return message ? json(state.fullSentMessage(message)) : json({}, 404)
     }
     const attachment = /\/messages\/([^/]+)\/attachments\/([^/]+)$/.exec(url.pathname)
@@ -1756,6 +1763,66 @@ it('orders embedded and separately mailed evidence together for series Join', as
   })
 })
 
+it('does not order conflicting MIME alternatives as independent embedded revisions', async () => {
+  const { state, read, list } = await rig()
+  const embeddedRoom = 'https://meet.google.com/qrs-tuvw-xyz'
+  const separateRoom = 'https://meet.google.com/xyz-abcd-efg'
+  const first = seriesWithException(movedRequest('20240701T090000Z', embeddedRoom))
+  const last = seriesWithException(movedRequest('20240703T090000Z', embeddedRoom))
+  const master = gmailMessage('update', 200, first)
+  const redelivery = gmailMessage('reissued', 100, last)
+  const intermediate = gmailMessage(
+    'occurrence',
+    300,
+    movedRequest('20240702T090000Z', separateRoom),
+  )
+  const moved = {
+    ...upcomingInstance('moved', '2099-07-11', embeddedRoom),
+    originalStartTime: { dateTime: '2099-07-09T15:00:00Z' },
+    description: embeddedRoom,
+  }
+  const next = upcomingInstance('next', '2099-07-16', 'https://meet.google.com/klm-nopq-rst')
+  state.events.set('primary', [event({ id: 'series', series: true })])
+  state.instances.set('primary', [moved, next])
+  state.messages = [master, redelivery, intermediate]
+  const series = await read(thread, 'series')
+  // Two real deliveries can order the exceptions even though the master is unchanged.
+  expect(series).toMatchObject({ canRespond: true, conferenceUrl: embeddedRoom })
+
+  master.payload.mimeType = 'multipart/alternative'
+  master.payload.parts.push(redelivery.payload.parts[1]!)
+  state.messages = [master, intermediate]
+  const { invitations } = await list()
+  expect(invitations).toHaveLength(2) // The alternatives did not make occurrence cards.
+  const rsvp = {
+    identity: series!.identity,
+    responseTargetKey: series!.responseTargetKey,
+    canRespond: true,
+  }
+  expect(invitations.find(({ scope }) => scope === 'series')).toMatchObject({
+    ...rsvp,
+    conferenceUrl: next.hangoutLink,
+    htmlLink: next.htmlLink,
+  })
+
+  // Equivalent alternatives leave the independently mailed update in force.
+  master.payload.parts[2] = gmailMessage(
+    'equivalent',
+    100,
+    first.replaceAll('\r\n', '\n'),
+  ).payload.parts[1]!
+  moved.hangoutLink = moved.description = separateRoom
+  const current = { ...rsvp, conferenceUrl: separateRoom, htmlLink: moved.htmlLink }
+  expect(await read(thread, 'series')).toMatchObject(current)
+
+  // Even if the alternatives still disagree, strictly newer independent proof
+  // can reinstate the slot without granting either branch authority.
+  master.payload.parts[2] = redelivery.payload.parts[1]!
+  state.messages[1] = gmailMessage('newer', 400, movedRequest('20240704T090000Z', separateRoom))
+  expect(await read(thread, 'series')).toMatchObject(current)
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+})
+
 it('requires a verified live embedded revision to reinstate a slot covered by an embedded cancellation', async () => {
   const { state, read } = await rig()
   const room = 'https://meet.google.com/qrs-tuvw-xyz'
@@ -1861,6 +1928,31 @@ it.each(['PUBLISH', 'EXPORT'] as const)(
       conferenceUrl: next.hangoutLink,
       htmlLink: next.htmlLink,
     })
+    state.instances.set(
+      'primary',
+      state.instances.get('primary')!.filter(({ id }) => id === first.id),
+    )
+    clock.mockReturnValue(halfPastEnd + 30 * 60 * 1000)
+    state.messages = [gmailMessage('legacy', 200, source(method))]
+    expect(await read()).toMatchObject({
+      scope: 'series',
+      kind: 'meeting',
+      title: 'Design sync',
+      start: master.start.date ?? master.start.dateTime,
+      canRespond: false,
+      conferenceUrl: null,
+      conferenceLinkSource: null,
+      htmlLink: null,
+      htmlLinkSource: null,
+    })
+    state.messages = [gmailMessage('request', 300, source('REQUEST'))]
+    expect(await read()).toMatchObject({
+      scope: 'series',
+      kind: 'invitation',
+      canRespond: true,
+      conferenceUrl: null,
+      htmlLink: master.htmlLink,
+    })
     expect(await respond('accepted')).toMatchObject({ channel: 'calendar', outcome: 'sent' })
     expect(state.calendarUpdateRequests).toMatchObject([{ eventId: master.id, status: 'accepted' }])
     expect(state.sendAttempts).toBe(0)
@@ -1871,6 +1963,7 @@ it.each([
   'joined',
   'linkless before a failed continuation',
   'stale embedded revision before a failed continuation',
+  'UID-less child before a failed continuation',
 ] as const)(
   'retains the original slot of a %s navigation-only Calendar instance',
   async (discovery) => {
@@ -1884,12 +1977,16 @@ it.each([
     const slotB = upcomingInstance('slot-b', '2099-07-10', 'https://meet.google.com/xyz-abcd-efg')
     slotB.originalStartTime = { dateTime: '2099-07-09T15:00:00Z' }
     state.events.set('primary', [master]) // Unexpanded UID results expose only the master.
-    state.instances.set('primary', [slotB])
+    const row =
+      discovery === 'UID-less child before a failed continuation'
+        ? { ...slotB, iCalUID: undefined, organizer: undefined }
+        : slotB
+    state.instances.set('primary', [row])
     if (discovery !== 'joined') {
       if (discovery === 'linkless before a failed continuation') {
         slotB.hangoutLink = ''
         slotB.htmlLink = ''
-      } else {
+      } else if (discovery === 'stale embedded revision before a failed continuation') {
         state.messages[0] = gmailMessage(
           'update',
           200,
@@ -1899,7 +1996,7 @@ it.each([
         )
       }
       // Page 2 is unavailable, but page 1 already established a resource.
-      state.expandedPages = [{ kind: 'calendar#events', items: [slotB], nextPageToken: '1' }]
+      state.expandedPages = [{ kind: 'calendar#events', items: [row], nextPageToken: '1' }]
     }
     expect(await read()).toMatchObject({
       scope: 'series',
@@ -2240,7 +2337,7 @@ it('uses only verified upcoming links for a series export by the organizer', asy
     kind: 'meeting',
     canRespond: false,
     conferenceUrl: null,
-    htmlLink: master.htmlLink,
+    htmlLink: null,
   })
   state.instances.set('primary', [{ ...next, organizer: master.organizer }])
   expect(await read()).toMatchObject({
@@ -5541,8 +5638,76 @@ it.each(['thread', 'separate-thread'])(
   },
 )
 
+it.each(['full message', 'exact Message-ID index'] as const)(
+  'keeps a %s 503 local to the affected Gmail response',
+  async (resource) => {
+    const { state, read, respond, restart } = await rig()
+    const other = gmailMessage('other', 100, invite().replace('folded-uid', 'other-uid'))
+    const copy = { ...event(), iCalUID: uid.replace('folded-uid', 'other-uid') }
+    state.events.set('primary', [copy])
+    state.messages.push(other)
+    state.replyThread = 'separate-thread'
+    state.sentVisible = false
+    expect(await read()).toMatchObject({ canRespond: true })
+    expect(await respond('accepted')).toMatchObject({
+      channel: 'gmail',
+      outcome: 'sent',
+      refreshPending: true,
+    })
+
+    const receipt = state.sent.get('reply-1')!
+    const rfcId = receipt.payload.headers.find(({ name }) => name === 'Message-ID')!.value
+    state.sentVisible = true
+    if (resource === 'full message') state.receiptErrors.set(receipt.id, 503)
+    else state.sentSearchErrors.set(`rfc822msgid:${rfcId.slice(1, -1)}`, 503)
+
+    const reopened = restart()
+    const pending = {
+      responsePending: true,
+      canRespond: false,
+      responseStatus: null,
+      sentResponseStatus: null,
+    }
+    // The other card is still readable; neither the index nor the full
+    // envelope alone is enough to settle the pending response.
+    const { invitations } = await reopened.list()
+    expect(invitations).toHaveLength(2)
+    expect(invitations.find(({ identity }) => identity.uid === uid)).toMatchObject(pending)
+    const independent = invitations.find(({ identity }) => identity.uid === copy.iCalUID)!
+    expect(independent).toMatchObject({ canRespond: true, recordedResponseStatus: 'declined' })
+    expect(await reopened.read()).toMatchObject(pending)
+    await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    expect(
+      await reopened.call('respondToMailInvitation', {
+        ...thread,
+        identity: independent.identity,
+        expectedBindingRevision: independent.bindingRevision,
+        expectedResponseTargetKey: independent.responseTargetKey,
+        answer: 'tentative',
+      }),
+    ).toMatchObject({
+      channel: 'calendar',
+      outcome: 'sent',
+      invitation: { recordedResponseStatus: 'tentative' },
+    })
+    state.receiptErrors.clear()
+    state.sentSearchErrors.clear()
+    const recovered = await reopened.list()
+    expect(recovered.invitations.find(({ identity }) => identity.uid === uid)).toMatchObject({
+      responsePending: false,
+      canRespond: true,
+      responseStatus: 'accepted',
+      sentResponseStatus: 'accepted',
+    })
+    expect(state.sendAttempts).toBe(1)
+    expect(state.calendarUpdateRequests).toMatchObject([{ eventId: copy.id, status: 'tentative' }])
+  },
+)
+
 it.each([
   { receiptError: 403, sentSearchError: null, code: 'FORBIDDEN' },
+  { receiptError: 429, sentSearchError: null, code: 'RATE_LIMITED' },
   { receiptError: 404, sentSearchError: 401, code: 'UNAUTHORIZED' },
   { receiptError: 404, sentSearchError: 404, code: 'NOT_FOUND' },
 ])(

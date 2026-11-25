@@ -109,35 +109,93 @@ function expandCancellations(candidate: Candidate, mailbox: string): Candidate[]
   ]
 }
 
-/** Non-calendar alternatives are renditions of the prose. If two branches
- * carry calendar material, however, they must describe the same evidence. */
-export function hasConflictingAlternatives(
-  parts: {
-    alternatives: MimeLocation['alternatives']
-    signature: string | null
-  }[],
-): boolean {
-  const groups = new Map<string, Map<number, Set<string>>>()
-  for (const { alternatives, signature } of parts) {
+type AlternativePart = { alternatives: MimeLocation['alternatives']; signature: string | null }
+
+function alternativeBranches<T extends AlternativePart>(parts: T[]) {
+  type Known = T & { signature: string }
+  const groups = new Map<string, Map<number, Known[]>>()
+  for (const part of parts) {
+    const { signature } = part
     if (signature === null) continue
-    for (const { group, branch } of alternatives) {
-      const branches = groups.get(group) ?? new Map<number, Set<string>>()
-      const material = branches.get(branch) ?? new Set<string>()
-      material.add(signature)
-      branches.set(branch, material)
+    for (const { group, branch } of part.alternatives) {
+      const branches = groups.get(group) ?? new Map<number, Known[]>()
+      const renditions = branches.get(branch) ?? []
+      renditions.push({ ...part, signature })
+      branches.set(branch, renditions)
       groups.set(group, branches)
     }
   }
-  for (const branches of groups.values()) {
-    const [first, ...others] = branches.values()
-    if (
-      others.some(
-        (branch) => branch.size !== first!.size || [...branch].some((key) => !first!.has(key)),
-      )
-    )
-      return true
+  return [...groups.values()]
+}
+
+function representationsDiffer([first, ...others]: Set<string>[]): boolean {
+  return Boolean(
+    first &&
+    others.some(
+      (branch) => branch.size !== first.size || [...branch].some((key) => !first.has(key)),
+    ),
+  )
+}
+
+/** Non-calendar alternatives are renditions of the prose. If two branches
+ * carry calendar material, however, they must describe the same evidence. */
+export function hasConflictingAlternatives(parts: AlternativePart[]): boolean {
+  return alternativeBranches(parts).some((branches) =>
+    representationsDiffer(
+      [...branches.values()].map((parts) => new Set(parts.map(({ signature }) => signature))),
+    ),
+  )
+}
+
+/** The stable master representation deliberately excludes live exceptions'
+ * version fields. Compare those separately, within each MIME alternative and
+ * original slot, without making them part of the master's RSVP revision. */
+export function disputedEmbeddedAlternatives(
+  parts: (AlternativePart & { candidate: Candidate | null })[],
+  mailbox: string,
+): EmbeddedOccurrence[] {
+  const disputed: EmbeddedOccurrence[] = []
+  type SlotEvidence = { occurrence: EmbeddedOccurrence; signature: string }
+  for (const branches of alternativeBranches(parts)) {
+    if (branches.size < 2) continue
+    const slots = new Map<string, Map<number, SlotEvidence[]>>()
+    for (const [branch, renditions] of branches) {
+      for (const { signature, candidate } of renditions) {
+        for (const occurrence of candidate?.value.embeddedOccurrences ?? []) {
+          const { recurrenceId, sequence, dtstamp, materialKey } = occurrence.details.identity
+          const states = occurrence.fields?.attendeeStates
+          const response = states && Object.hasOwn(states, mailbox) ? states[mailbox] : null
+          const key = JSON.stringify([signature, recurrenceId])
+          const byBranch = slots.get(key) ?? new Map<number, SlotEvidence[]>()
+          const evidence = byBranch.get(branch) ?? []
+          evidence.push({
+            occurrence,
+            signature: JSON.stringify([
+              sequence,
+              dtstamp,
+              materialKey,
+              occurrence.recurrenceRange,
+              Boolean(occurrence.fields),
+              response,
+            ]),
+          })
+          byBranch.set(branch, evidence)
+          slots.set(key, byBranch)
+        }
+      }
+    }
+    for (const byBranch of slots.values()) {
+      const evidence = [...branches.keys()].map((branch) => byBranch.get(branch) ?? [])
+      if (
+        representationsDiffer(
+          evidence.map((items) => new Set(items.map(({ signature }) => signature))),
+        )
+      ) {
+        for (const items of evidence) for (const { occurrence } of items) disputed.push(occurrence)
+      }
+    }
   }
-  return false
+  return disputed
 }
 
 export function representationOf(candidate: Candidate, mailbox: string): string {
@@ -205,6 +263,7 @@ export function selectInvitationRevisions(
   deliveries: Candidate[],
   mailbox: string,
   owners: Thread['owners'],
+  disputedEmbedded: ReadonlySet<EmbeddedOccurrence>,
 ): RevisionSelection {
   // Arrival breaks ties among equivalent deliveries. Sequence and DTSTAMP
   // order revisions within a scope, and establish whether an applicable CANCEL is newer.
@@ -333,6 +392,24 @@ export function selectInvitationRevisions(
         )
         occurrence = selectScope(group, group, mailbox, owners, equivalent, coveringCancellation)
       }
+      // Alternative branches are not independent deliveries. Keep their
+      // revisions as possible predecessors but never choose one as proof of
+      // this slot. Only a newer exact revision from another message can
+      // resolve the dispute, regardless of which branch was rendered.
+      if (
+        embedded.some(
+          (candidate) =>
+            candidate.embedded &&
+            disputedEmbedded.has(candidate.embedded) &&
+            (sameGroup(identityOf(candidate), slot) ||
+              (candidate.value.recurrenceRange === 'THISANDFUTURE' &&
+                covers(identityOf(candidate), slot))) &&
+            (!occurrence ||
+              occurrence.selected.mail === candidate.mail ||
+              revisionOrder(identityOf(occurrence.selected), identityOf(candidate)) !== 1),
+        )
+      )
+        return false
       // A live range exception cannot describe future rows exactly. Only a
       // strictly newer, verified exact revision can resolve that uncertainty.
       if (

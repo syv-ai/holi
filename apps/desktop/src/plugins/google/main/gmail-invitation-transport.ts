@@ -23,6 +23,10 @@ type GmailReadApi = Pick<GoogleApi, 'get'>
 const MAX_CALENDAR_PART_BYTES = 256 * 1024
 const calendarUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
+function sentResourceUnavailable(error: unknown): boolean {
+  return error instanceof GoogleApiError && error.code === 'unknown' && error.status === 503
+}
+
 /** An unreadable leaf is not a failed scan. Only ordered, related Sent
  * evidence may defer a leaf error; the shared resource limits still abort. */
 export class CalendarLeafError extends CalendarScanError {}
@@ -430,7 +434,7 @@ export function createSentCalendarLookup(
     message: ReturnType<typeof validateFullMessage>
     header: ReturnType<typeof messageIdClaims>
   }
-  const reads = new Map<string, Promise<Snapshot | null>>()
+  const reads = new Map<string, Promise<Snapshot | 'unavailable' | null>>()
   const search = new Map<string, Promise<Snapshot[] | null>>()
   const verifiedReplies = new Map<string, CalendarMail>()
   const hasVerifiedFullReply = (mail: CalendarMail) =>
@@ -461,6 +465,9 @@ export function createSentCalendarLookup(
         })
         .catch((error) => {
           if (error instanceof GoogleApiError && error.code === 'not-found') return null
+          // Unlike a 404, an unreadable receipt cannot be retried as an index
+          // hit or replaced by the thread projection in this snapshot.
+          if (sentResourceUnavailable(error)) return 'unavailable' as const
           if (error instanceof SyntaxError)
             throw new CalendarScanError('Gmail returned an invalid full message response')
           throw error
@@ -478,7 +485,7 @@ export function createSentCalendarLookup(
         maxResults: '10',
       })
       .catch((error) => {
-        if (error instanceof SyntaxError) return null
+        if (error instanceof SyntaxError || sentResourceUnavailable(error)) return null
         throw error
       })
     if (!page || typeof page !== 'object' || Array.isArray(page)) return null
@@ -519,6 +526,7 @@ export function createSentCalendarLookup(
       // declaration. A contradictory hit cannot certify the search as complete.
       if (
         !snapshot ||
+        snapshot === 'unavailable' ||
         (threadId !== null && snapshot.message.threadId !== threadId) ||
         !snapshot.header.claims.has(rfcId) ||
         !snapshot.message.labelIds?.includes('SENT')
@@ -539,6 +547,7 @@ export function createSentCalendarLookup(
     const indexed = await request
     if (indexed === null) return null
     const direct = receipt.id ? await reads.get(receipt.id) : undefined
+    if (direct === 'unavailable') return null
     // Even after a direct 404, the index cannot change the receipt's thread.
     if (direct && receipt.threadId && direct.message.threadId !== receipt.threadId) return null
     return direct

@@ -9,7 +9,7 @@ import {
   createInvitationCalendarResourceLookup,
   type InvitationTarget,
   type InvitationRevision,
-  type InvitationLinks,
+  type InvitationNavigation,
 } from './mail-invitation-calendar'
 import { CalendarScanError } from './gmail-mime'
 import {
@@ -23,6 +23,7 @@ import {
 import { parseCalendarMail } from './invite'
 import type { InvitationCardSource } from './mail-invitation-projection'
 import {
+  disputedEmbeddedAlternatives,
   hasConflictingAlternatives,
   identityOf,
   representationOf,
@@ -97,7 +98,7 @@ export type InvitationFacts = {
   absentTargets: Set<string>
   /** Recheck durable revision evidence atomically with reservation. */
   blocksReservation: (attempt: InvitationAttempt) => boolean
-  navigation: (() => Promise<InvitationLinks | false | null | undefined>) | null
+  navigation: () => Promise<InvitationNavigation>
 }
 type ReadResult = { cards: InvitationFacts[]; recoveryReason: string | null }
 type CalendarCopy = Awaited<ReturnType<typeof findInvitationCalendarCopy>>
@@ -143,6 +144,7 @@ function knownAlternativeGroups(parts: Alternative[]) {
 
 async function latestByScope({ messages, owners }: Thread, mailbox: string) {
   const candidates: Candidate[] = []
+  const disputedEmbedded = new Set<Candidate['value']['embeddedOccurrences'][number]>()
   const disputedSent = new Set<Mail>()
   for (const mail of messages) {
     if (mail.sent && mail.from !== mailbox) continue
@@ -183,13 +185,18 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
     }
     // This pass compares event revisions, not REPLYs. Only the latter can
     // be reconciled by Sent envelope, scope, and timestamp.
-    if (
-      (!mail.sent || renditions.some(({ candidate }) => candidate)) &&
-      hasConflictingAlternatives(renditions.filter(verified))
-    )
-      throw new CalendarScanError('Gmail contains conflicting calendar alternatives')
+    if (!mail.sent || renditions.some(({ candidate }) => candidate)) {
+      const known = renditions.filter(verified)
+      if (hasConflictingAlternatives(known))
+        throw new CalendarScanError('Gmail contains conflicting calendar alternatives')
+      for (const occurrence of disputedEmbeddedAlternatives(known, mailbox))
+        disputedEmbedded.add(occurrence)
+    }
   }
-  return { ...selectInvitationRevisions(candidates, mailbox, owners), disputedSent }
+  return {
+    ...selectInvitationRevisions(candidates, mailbox, owners, disputedEmbedded),
+    disputedSent,
+  }
 }
 
 async function sentAnswer(
@@ -1156,7 +1163,6 @@ export function createMailInvitationReconciler(
           bindingRevision: target.bindingRevision,
           joinOnly,
           calendar: verifiedCopy,
-          navigationWithheld,
         },
         responseFacts,
         responseUnverified,
@@ -1170,19 +1176,17 @@ export function createMailInvitationReconciler(
         blocksReservation: (attempt) =>
           blockedByConfirmation(attempt) ||
           (reply?.channel === 'calendar' && unseenPredecessor(entry, attempt)),
-        navigation:
-          !navigationWithheld && verifiedCopy
-            ? () =>
-                verifiedCopy.navigation((slot) => {
-                  const occurrence = selectSeriesSlot(selected, slot)
-                  if (!occurrence) return occurrence
-                  return latestJournal.attempts.some((attempt) =>
-                    unseenPredecessor(occurrence, attempt),
-                  )
-                    ? false
-                    : (revisionFor(occurrence) ?? false)
-                })
-            : null,
+        navigation: async () => {
+          if (navigationWithheld) return { kind: 'withheld' }
+          if (!verifiedCopy) return { kind: 'default' }
+          return verifiedCopy.navigation((slot) => {
+            const occurrence = selectSeriesSlot(selected, slot)
+            if (!occurrence) return occurrence
+            return latestJournal.attempts.some((attempt) => unseenPredecessor(occurrence, attempt))
+              ? false
+              : (revisionFor(occurrence) ?? false)
+          })
+        },
       })
     }
     target.assertBinding()

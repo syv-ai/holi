@@ -56,15 +56,11 @@ function canWrite(card: InvitationFacts): card is InvitationFacts & { reply: Rep
 /** Resolve navigation only on the way out, never during write preflight. */
 async function displayCard(card: InvitationFacts): Promise<MailInvitation> {
   const { source, responseFacts, navigation } = card
-  const links = await navigation?.()
-  return projectMailInvitation(
-    {
-      ...source,
-      navigationWithheld: source.navigationWithheld || links === false,
-      response: { ...responseFacts, canRespond: canWrite(card) },
-    },
-    links === false ? undefined : links,
-  )
+  return projectMailInvitation({
+    ...source,
+    navigation: await navigation(),
+    response: { ...responseFacts, canRespond: canWrite(card) },
+  })
 }
 
 // A no-op found by final preflight must leave the gate before reservation.
