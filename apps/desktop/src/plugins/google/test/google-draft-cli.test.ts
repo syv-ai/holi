@@ -55,18 +55,28 @@ function rig() {
               {
                 id: 'old',
                 threadId,
-                payload: { headers: [{ name: 'Message-ID', value: '<old@example.test>' }] },
+                payload: {
+                  mimeType: 'text/plain',
+                  body: { size: 0 },
+                  headers: [{ name: 'Message-ID', value: '<old@example.test>' }],
+                },
               },
               {
                 id: 'draft',
                 threadId,
                 labelIds: ['DRAFT'],
-                payload: { headers: [{ name: 'Message-ID', value: '<draft@example.test>' }] },
+                payload: {
+                  mimeType: 'text/plain',
+                  body: { size: 0 },
+                  headers: [{ name: 'Message-ID', value: '<draft@example.test>' }],
+                },
               },
               {
                 id: 'latest',
                 threadId,
                 payload: {
+                  mimeType: 'text/plain',
+                  body: { size: 0 },
                   headers: [
                     { name: 'Message-ID', value: ' (latest) <"id with space"@-example> (tail)' },
                     {

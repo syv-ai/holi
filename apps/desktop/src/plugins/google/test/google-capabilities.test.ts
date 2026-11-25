@@ -150,7 +150,13 @@ it('rejects malformed or wrong full Gmail threads and can reread the requested t
       body: { data: Buffer.from('The selected message').toString('base64url') },
     },
   }
-  const valid = { id: 'selected', messages: [message] }
+  const emptyText = {
+    id: 'm-2',
+    threadId: 'selected',
+    internalDate: '1000',
+    payload: { mimeType: 'text/plain', body: { size: 0 } },
+  }
+  const valid = { id: 'selected', messages: [message, emptyText] }
   const wrongMessage = { ...message, threadId: 'other' }
   const invalidReplies = [
     {},
@@ -158,6 +164,10 @@ it('rejects malformed or wrong full Gmail threads and can reread the requested t
     { ...valid, messages: [wrongMessage] },
     { ...valid, messages: [{ ...message, threadId: undefined }] },
     { ...valid, messages: [message, message] },
+    { ...valid, messages: [{ ...message, payload: {} }] },
+    ...['0x100', '1e3', ' 1000 ', '1000\n', 'Infinity', '9223372036854775808'].map(
+      (internalDate) => ({ ...valid, messages: [{ ...message, internalDate }] }),
+    ),
   ]
   const replies = [...invalidReplies, valid]
   const fetchThread: typeof fetch = async (input) => {
@@ -177,7 +187,10 @@ it('rejects malformed or wrong full Gmail threads and can reread the requested t
     }
     expect(await call('thread', { id: 'selected' })).toMatchObject({
       id: 'selected',
-      messages: [{ id: 'm-1', body: 'The selected message' }],
+      messages: [
+        { id: 'm-1', body: 'The selected message' },
+        { id: 'm-2', body: '', hasCalendarPayload: false },
+      ],
     })
   } finally {
     vi.unstubAllGlobals()

@@ -46,7 +46,8 @@ import {
 } from './mail-invitation'
 
 type Invitation = NonNullable<ReturnType<typeof parseMailInvitation>>
-type Mail = Awaited<ReturnType<typeof fetchThreadCalendarPayloads>>[number]
+type Thread = Awaited<ReturnType<typeof fetchThreadCalendarPayloads>>
+type Mail = Thread['messages'][number]
 type Revision = InvitationAttempt['revision']
 type MailInvitation = Invitation['details'] & {
   bindingRevision: string
@@ -110,7 +111,7 @@ type Corroborates = (attempt: InvitationAttempt) => boolean
 
 type SentAddress = { organizer: string; mailbox: string }
 
-async function latestByScope(messages: Mail[], mailbox: string) {
+async function latestByScope({ messages, owners }: Thread, mailbox: string) {
   const candidates: Candidate[] = []
   for (const mail of messages) {
     if (mail.sent && mail.from !== mailbox) continue
@@ -136,7 +137,7 @@ async function latestByScope(messages: Mail[], mailbox: string) {
     }
     if (hasCandidate || !mail.sent) assertEquivalentAlternatives(representations)
   }
-  return selectInvitationRevisions(candidates, mailbox)
+  return selectInvitationRevisions(candidates, mailbox, owners)
 }
 
 async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }: SentAddress) {
@@ -367,12 +368,13 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     target.assertBinding()
     const journal = await store.read()
     let missingThread = false
-    const messages = await fetchThreadCalendarPayloads(api, threadId, scan).catch((error) => {
+    const thread = await fetchThreadCalendarPayloads(api, threadId, scan).catch((error): Thread => {
       if (!(error instanceof GoogleApiError) || error.status !== 404) throw error
       missingThread = true
-      return []
+      return { messages: [], owners: new Map() }
     })
-    const incoming = await latestByScope(messages, email)
+    const { messages, owners } = thread
+    const incoming = await latestByScope(thread, email)
     const scopes = selection
       ? incoming.filter((entry) => sameGroup(identityOf(entry.selected), selection))
       : incoming
@@ -396,7 +398,6 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         copies.set(scopeKey(details.identity), copy)
       }
     }
-    const visibleParents = new Set(messages.flatMap((message) => message.rfcId ?? []))
     const lineages = new Map<string, Corroborates>()
     for (const entry of scopes) {
       const { organizer, identity } = entry.selected.value.details
@@ -408,7 +409,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             ? calendarTargetIsMailbox(delivery.target, email)
             : delivery.organizer === organizer?.email &&
               delivery.mailbox === email &&
-              (entry.parents.has(delivery.parent) || !visibleParents.has(delivery.parent))),
+              (entry.parents.has(delivery.parent) || !owners.has(delivery.parent))),
       )
     }
     const { pending, confirmations, parentAnchors } = await reconcile(
@@ -508,7 +509,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             anchor.accountSub === accountSub &&
             anchor.mailbox === email &&
             anchor.organizer === organizer &&
-            !visibleParents.has(anchor.parent) &&
+            !owners.has(anchor.parent) &&
             onLineage(entry, anchor.revision, email)
           )
             responseParents.add(anchor.parent)

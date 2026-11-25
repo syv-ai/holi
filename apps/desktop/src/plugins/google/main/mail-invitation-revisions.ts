@@ -4,7 +4,8 @@ import type { parseCalendarMail } from './invite'
 import type { InvitationAttempt } from './mail-invitation-store'
 import type { MailInvitationIdentity } from './mail-invitation'
 
-type Mail = Awaited<ReturnType<typeof fetchThreadCalendarPayloads>>[number]
+type Thread = Awaited<ReturnType<typeof fetchThreadCalendarPayloads>>
+type Mail = Thread['messages'][number]
 type Revision = InvitationAttempt['revision']
 export type Candidate = NonNullable<ReturnType<typeof parseCalendarMail>> & { mail: Mail }
 type Incoming = {
@@ -139,7 +140,11 @@ export function representationOf(candidate: Candidate, mailbox: string): string 
   ])
 }
 
-export function selectInvitationRevisions(deliveries: Candidate[], mailbox: string): Incoming[] {
+export function selectInvitationRevisions(
+  deliveries: Candidate[],
+  mailbox: string,
+  owners: Thread['owners'],
+): Incoming[] {
   // Arrival breaks ties among equivalent deliveries. Sequence and DTSTAMP
   // order revisions within a scope, and establish whether an applicable CANCEL is newer.
   const candidates = deliveries
@@ -198,18 +203,15 @@ export function selectInvitationRevisions(deliveries: Candidate[], mailbox: stri
       value.details.organizer &&
       (value.details.identity.recurrenceId === null || value.recurrenceRange === 'THISANDFUTURE'),
   )
-  // Excluded exports still count when checking whether a visible message
-  // actually owns an RFC Message-ID used to match Sent evidence.
-  const parentEvidence = [...eligible, ...supersededJoins]
-  return scoped.map((group) => selectScope(group, eligible, cancellations, parentEvidence, mailbox))
+  return scoped.map((group) => selectScope(group, eligible, cancellations, mailbox, owners))
 }
 
 function selectScope(
   group: Candidate[],
   candidates: Candidate[],
   cancellations: Candidate[],
-  parentEvidence: Candidate[],
   mailbox: string,
+  owners: Thread['owners'],
 ): Incoming {
   const sequence = Math.max(...group.map((candidate) => identityOf(candidate).sequence))
   const history = group.filter((candidate) => identityOf(candidate).sequence === sequence)
@@ -276,11 +278,13 @@ function selectScope(
     const parent = candidate.mail.replyHeaders?.inReplyTo
     if (
       parent &&
-      parentEvidence.every(
+      owners.get(parent) === candidate.mail.messageId &&
+      // Only one Gmail message may own the parent. Within it, other scopes
+      // and the join-only sidecars excluded from ordering aren't REQUEST evidence.
+      candidates.every(
         (other) =>
-          other.mail.rfcId !== parent ||
-          (candidate.mail.messageId === other.mail.messageId &&
-            !sameGroup(identityOf(candidate), identityOf(other))) ||
+          other.mail.messageId !== candidate.mail.messageId ||
+          !sameGroup(identityOf(candidate), identityOf(other)) ||
           (sameRevision(identityOf(candidate), identityOf(other)) && equivalent(candidate, other)),
       )
     )

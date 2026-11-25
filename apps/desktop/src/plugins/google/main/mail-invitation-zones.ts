@@ -258,7 +258,11 @@ function inspectCalendar(lines: string[]) {
         body.push(line.slice(0, property[0].length) + eventRule(value))
         continue
       }
-      if (['ATTENDEE', 'DTSTART', 'DTEND', 'RECURRENCE-ID', 'RDATE', 'EXDATE'].includes(name)) {
+      if (
+        ['ORGANIZER', 'ATTENDEE', 'DTSTART', 'DTEND', 'RECURRENCE-ID', 'RDATE', 'EXDATE'].includes(
+          name,
+        )
+      ) {
         const recurrenceDate = name === 'RDATE' || name === 'EXDATE'
         const fields = params
           .replace(/"([^"]*)"/g, (_, quoted: string) =>
@@ -266,14 +270,11 @@ function inspectCalendar(lines: string[]) {
           )
           .split(';')
           .slice(1)
-        if (name === 'ATTENDEE') {
-          // ICAL keeps only one value for repeated scalar parameters. Reject
-          // them before ambiguous response evidence can be silently discarded.
-          if (
-            ['PARTSTAT=', 'RSVP='].some(
-              (key) => fields.filter((param) => param.startsWith(key)).length > 1,
-            )
-          )
+        if (name === 'ORGANIZER' || name === 'ATTENDEE') {
+          // ICAL keeps only one value for repeated scalar parameters. Count
+          // VALUE on the wire before the surviving value can authorize a reply.
+          const unique = name === 'ATTENDEE' ? ['VALUE=', 'PARTSTAT=', 'RSVP='] : ['VALUE=']
+          if (unique.some((key) => fields.filter((param) => param.startsWith(key)).length > 1))
             malformed()
         } else if (recurrenceDate) {
           validateRecurrenceDates(name, fields, value)

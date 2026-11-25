@@ -24,6 +24,85 @@ export function isGmailMessageId(value: unknown): value is string {
 
 type ThreadMessage = RawMessage & { id: string }
 
+function record(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function validInternalDate(value: unknown): boolean {
+  // Gmail sends a signed int64 as a decimal string, not a JS number or ISO date.
+  if (typeof value !== 'string' || !/^-?[0-9]{1,19}$/.test(value)) return false
+  const millis = BigInt(value)
+  const limit = 1n << 63n
+  return millis >= -limit && millis < limit
+}
+
+function isFullPayload(payload: RawPart | undefined): boolean {
+  if (
+    !payload ||
+    !record(payload) ||
+    typeof payload.mimeType !== 'string' ||
+    !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:;[^\r\n]*)?$/.test(
+      payload.mimeType,
+    )
+  )
+    return false
+  const { body, parts } = payload
+  if (parts !== undefined && !Array.isArray(parts)) return false
+  if (
+    body !== undefined &&
+    (!record(body) ||
+      (body.size !== undefined && (!Number.isSafeInteger(body.size) || body.size < 0)) ||
+      (body.data !== undefined && typeof body.data !== 'string') ||
+      (body.attachmentId !== undefined &&
+        (typeof body.attachmentId !== 'string' || !body.attachmentId)))
+  )
+    return false
+  // A container may have an empty body, but the full response must include
+  // its children. A zero-byte leaf or attachment may have no inline data.
+  return (
+    Boolean(parts?.length) ||
+    (!/^multipart\//i.test(payload.mimeType) &&
+      body !== undefined &&
+      (body.size === 0 || body.data !== undefined || body.attachmentId !== undefined))
+  )
+}
+
+function validMessageMetadata(message: RawMessage): boolean {
+  return (
+    (message.labelIds === undefined ||
+      (Array.isArray(message.labelIds) &&
+        message.labelIds.every((label) => typeof label === 'string'))) &&
+    (message.internalDate === undefined || validInternalDate(message.internalDate)) &&
+    (message.snippet === undefined || typeof message.snippet === 'string')
+  )
+}
+
+function fullMessageMatches(
+  message: RawMessage,
+  id: string,
+  threadId: string | null,
+): message is ThreadMessage {
+  return (
+    record(message) &&
+    isGmailMessageId(message.id) &&
+    message.id === id &&
+    (threadId === null ? isGmailMessageId(message.threadId) : message.threadId === threadId) &&
+    validMessageMetadata(message) &&
+    isFullPayload(message.payload)
+  )
+}
+
+/** The unmasked full-message contract also applies to a Sent message read by ID. */
+export function validateFullMessage(
+  message: RawMessage,
+  id: string,
+  threadId: string | null,
+): ThreadMessage {
+  if (!fullMessageMatches(message, id, threadId))
+    throw new CalendarScanError('Gmail returned an invalid full message response')
+  return message
+}
+
 function invalidThreadResponse(format: 'metadata' | 'full') {
   return new CalendarScanError(`Gmail returned an invalid ${format} thread response`)
 }
@@ -55,20 +134,10 @@ export function threadMessages(
       Array.isArray(message) ||
       !isGmailMessageId(message.id) ||
       seen.has(message.id) ||
-      (message.threadId !== id && (format === 'full' || message.threadId !== undefined)) ||
-      (format === 'full' &&
-        (!message.payload ||
-          typeof message.payload !== 'object' ||
-          Array.isArray(message.payload))) ||
-      (message.labelIds !== undefined &&
-        (!Array.isArray(message.labelIds) ||
-          message.labelIds.some((label) => typeof label !== 'string'))) ||
-      (message.internalDate !== undefined &&
-        (typeof message.internalDate !== 'string' ||
-          (format === 'metadata' &&
-            (!/^\d+$/.test(message.internalDate) ||
-              Number(message.internalDate) > 8_640_000_000_000_000)))) ||
-      (message.snippet !== undefined && typeof message.snippet !== 'string')
+      (format === 'full'
+        ? !fullMessageMatches(message, message.id, id)
+        : (message.threadId !== undefined && message.threadId !== id) ||
+          !validMessageMetadata(message))
     )
       throw invalidThreadResponse(format)
     seen.add(message.id)

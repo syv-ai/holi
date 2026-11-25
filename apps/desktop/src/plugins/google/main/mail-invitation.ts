@@ -527,6 +527,8 @@ export function parseMailInvitation(
       return unavailable('This invitation was cancelled', cancellations)
     }
 
+    const unstampedRequest =
+      method === 'REQUEST' && parts.some(({ identity }) => identity.dtstamp === null)
     for (const part of siblings) {
       const ownOrganizer = part.material.details.organizer
       // An explicitly malformed or different organizer cannot inherit the master.
@@ -535,7 +537,7 @@ export function parseMailInvitation(
         (!ownOrganizer || ownOrganizer.email !== organizer?.email)
       )
         malformed()
-      if (part.material.status !== 'CANCELLED') continue
+      if (unstampedRequest || part.material.status !== 'CANCELLED') continue
       const occurrence = part.identity.recurrenceId
       if (
         !organizer ||
@@ -568,9 +570,14 @@ export function parseMailInvitation(
       .sort()
     identity.materialKey = materialKey(method, identity, material, exceptions)
     recurrenceRange = material.recurrenceRange
-    const cancelled = material.status === 'CANCELLED'
-    Object.assign(details, material.details, { identity, cancelled })
-    if (cancelled) return unavailable('This invitation was cancelled', cancellations)
+    Object.assign(details, material.details, { identity })
+    // Keep an unstamped REQUEST in revision selection, but neither authorize
+    // an RSVP nor derive cancellations from that malformed delivery.
+    if (unstampedRequest) return unavailable('Invitation has no usable revision timestamp')
+    if (material.status === 'CANCELLED') {
+      details.cancelled = true
+      return unavailable('This invitation was cancelled', cancellations)
+    }
     if (!organizer) return unavailable('Invitation has no usable organizer address')
     if (!start || !end || end < start || !recurrenceTimeBasis)
       return unavailable('Invitation has no usable start or end time')
