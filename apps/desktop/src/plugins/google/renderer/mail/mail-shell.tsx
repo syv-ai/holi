@@ -241,7 +241,7 @@ function MailAccountShell({
   onCatchUpCleanup: () => void
 }) {
   const { currentSub } = useGoogleAccount()
-  const mail = useMail(account)
+  const mail = useMail(account, visible)
   const remote = useAtomValue(activeRemoteAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   const openNote = useSetAtom(openDocumentAtom)

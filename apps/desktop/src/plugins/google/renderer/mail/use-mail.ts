@@ -66,7 +66,7 @@ export function replyTarget(thread: Thread, sendAs: readonly string[]): ThreadMe
  * `account` is the Google account the vault reads from (its `sub`): a switch
  * of account re-asks everything, as a switch of vault does.
  */
-export function useMail(account: string | null) {
+export function useMail(account: string | null, enabled = true) {
   const remote = useAtomValue(activeRemoteAtom)
   /** One of Google's calls, for the open vault; refused with none open. */
   const call = useCallback(
@@ -149,6 +149,24 @@ export function useMail(account: string | null) {
   }, [call, params, showsDrafts])
 
   useEffect(load, [load])
+
+  // Keep an open, visible mailbox current without replacing the current list
+  // with a loading skeleton. The request id also drops answers from an older
+  // account, vault, or query when the context changes.
+  useEffect(() => {
+    if (!enabled || account === null || showsDrafts || searching) return
+    const timer = window.setInterval(() => {
+      if (listRequest.current !== 0 && list.kind === 'loading') return
+      const at = ++listRequest.current
+      void call((r) => googleCap.search(r, params))
+        .then((page) => {
+          if (listRequest.current !== at) return
+          setList({ kind: 'ready', threads: page.threads, nextPageToken: page.nextPageToken })
+        })
+        .catch(() => undefined)
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [enabled, account, showsDrafts, searching, call, params, list.kind])
 
   useEffect(() => {
     if (!showsDrafts) return
