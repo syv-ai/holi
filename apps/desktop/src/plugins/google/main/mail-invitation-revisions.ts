@@ -39,6 +39,11 @@ export const scopeKey = ({ uid, recurrenceId }: Revision) => JSON.stringify([uid
 function sameMaterial(a: Candidate, b: Candidate): boolean {
   const first = identityOf(a)
   const second = identityOf(b)
+  if (a.value.method === 'CANCEL' && b.value.method === 'CANCEL')
+    return (
+      a.value.details.organizer?.email === b.value.details.organizer?.email &&
+      a.value.recurrenceRange === b.value.recurrenceRange
+    )
   return (
     a.published === b.published &&
     a.value.method !== null &&
@@ -53,17 +58,45 @@ function blocked(selected: Candidate, reason: string): Incoming {
   return { selected, reason, parents: new Set(), history: [], response: null }
 }
 
+/** Treat validated cancellation entries as revision evidence for their own
+ * scope. An embedded exception never replaces the containing REQUEST. */
+function expandCancellations(candidate: Candidate): Candidate[] {
+  const { value } = candidate
+  if (candidate.published || !value.cancellations.length) return [candidate]
+  return [
+    ...(value.method === 'CANCEL' ? [] : [candidate]),
+    ...value.cancellations.map(({ identity, organizer, recurrenceRange }): Candidate => ({
+      ...candidate,
+      value: {
+        ...value,
+        method: 'CANCEL',
+        recurrenceRange,
+        details: {
+          ...value.details,
+          // The representative's DTSTART may refer to a different occurrence.
+          ...(sameGroup(identity, value.details.identity) ? {} : { start: null, end: null }),
+          identity,
+          organizer,
+          cancelled: true,
+          unavailableReason: 'This invitation was cancelled',
+        },
+        request: null,
+      },
+    })),
+  ]
+}
+
 export function selectInvitationRevisions(deliveries: Candidate[], mailbox: string): Incoming[] {
   // Arrival breaks ties among equivalent deliveries. Sequence and DTSTAMP
   // order revisions within a scope, and establish whether an applicable CANCEL is newer.
-  const candidates = [...deliveries].sort(
-    (a, b) =>
-      Number(a.mail.sent) - Number(b.mail.sent) ||
-      b.mail.timestamp - a.mail.timestamp ||
-      a.mail.messageId.localeCompare(b.mail.messageId),
-  )
-  const first = candidates[0]
-  if (!first) return []
+  const candidates = deliveries
+    .flatMap(expandCancellations)
+    .sort(
+      (a, b) =>
+        Number(a.mail.sent) - Number(b.mail.sent) ||
+        b.mail.timestamp - a.mail.timestamp ||
+        a.mail.messageId.localeCompare(b.mail.messageId),
+    )
   const unknown = candidates.find((candidate) => !identityOf(candidate).materialKey)
   if (unknown)
     return [
@@ -75,22 +108,30 @@ export function selectInvitationRevisions(deliveries: Candidate[], mailbox: stri
     ]
   const groups = new Map<string, Candidate[]>()
   for (const candidate of candidates) {
-    const identity = identityOf(candidate)
-    if (identity.uid !== identityOf(first).uid)
-      return [blocked(first, 'This conversation contains unrelated invitations')]
-    const key = scopeKey(identity)
+    const key = scopeKey(identityOf(candidate))
     const group = groups.get(key) ?? []
     group.push(candidate)
     groups.set(key, group)
   }
-  const cancellations = candidates.filter(
+  const scoped = [...groups.values()].map((group) => {
+    const requests = group.filter(({ value }) => value.method !== 'CANCEL')
+    if (!requests.length) return group
+    const organizers = new Set(requests.map(({ value }) => value.details.organizer?.email))
+    return group.filter(
+      ({ value }) =>
+        value.method !== 'CANCEL' ||
+        (value.details.organizer !== null && organizers.has(value.details.organizer.email)),
+    )
+  })
+  const eligible = scoped.flat()
+  const cancellations = eligible.filter(
     ({ value, published }) =>
       !published &&
       value.method === 'CANCEL' &&
       value.details.organizer &&
       (value.details.identity.recurrenceId === null || value.recurrenceRange === 'THISANDFUTURE'),
   )
-  return [...groups.values()].map((group) => selectScope(group, candidates, cancellations, mailbox))
+  return scoped.map((group) => selectScope(group, eligible, cancellations, mailbox))
 }
 
 function selectScope(
@@ -180,7 +221,7 @@ function selectScope(
 function covers(cancel: Candidate, selected: Candidate): boolean {
   const first = identityOf(cancel).recurrenceId
   const slot = identityOf(selected).recurrenceId
-  if (!slot || first === slot) return false // Exact cancellation was handled by scope selection.
+  if (identityOf(cancel).uid !== identityOf(selected).uid || !slot || first === slot) return false // Exact cancellation was handled by scope selection.
   if (!first) return true
   // Parser-normalized dates, UTC instants and floating clocks sort within
   // their own value kind. Never convert between kinds to infer coverage.

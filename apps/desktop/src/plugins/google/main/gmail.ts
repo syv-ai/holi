@@ -1126,12 +1126,13 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
   const thread = await api.get<RawThread>(`${BASE}/threads/${threadId}`, { format: 'full' })
   const messages = thread.messages ?? []
   const first = messages[0]
+  const hints = calendarHints(messages)
 
   return {
     id: threadId,
     subject: headerOf(first?.payload, 'Subject')?.trim() || '(no subject)',
     webUrl: messageUrl(headerOf(first?.payload, 'Message-ID'), threadId),
-    messages: messages.map((message) => ({
+    messages: messages.map((message, index) => ({
       id: message.id ?? '',
       from: parseAddress(headerOf(message.payload, 'From')),
       to: parseAddresses(headerOf(message.payload, 'To')),
@@ -1143,7 +1144,7 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
       body: bodyTextOf(message.payload),
       html: bodyHtmlOf(message.payload),
       attachments: attachmentsOf(message.payload),
-      hasCalendarPayload: calendarPartOf(message.payload) !== undefined,
+      hasCalendarPayload: hints[index] === true,
     })),
   }
 }
@@ -1833,11 +1834,22 @@ export function createCalendarScan() {
         if (
           (part.mimeType !== undefined && typeof part.mimeType !== 'string') ||
           (part.filename !== undefined && typeof part.filename !== 'string') ||
-          (part.parts !== undefined && !Array.isArray(part.parts))
+          (part.parts !== undefined && !Array.isArray(part.parts)) ||
+          (part.headers !== undefined &&
+            (!Array.isArray(part.headers) ||
+              part.headers.some(
+                (header) =>
+                  !header ||
+                  typeof header !== 'object' ||
+                  (header.name !== undefined && typeof header.name !== 'string'),
+              )))
         )
           throw new CalendarScanError('Invalid Gmail MIME part')
-        if (part.mimeType?.toLowerCase() === 'message/rfc822') return
-        if (isCalendarPart(part) || contentTypeDeclaresCalendar(part)) {
+        if (declaresMediaType(part, /^message\/rfc822$/i)) return
+        if (
+          part.filename?.toLowerCase().endsWith('.ics') ||
+          declaresMediaType(part, /^(text\/calendar|application\/ics)$/i)
+        ) {
           check(--parts >= 0)
           found.push(part)
         }
@@ -1882,13 +1894,6 @@ export function createCalendarScan() {
 }
 
 type CalendarScan = ReturnType<typeof createCalendarScan>
-
-// A lookup failure is not corroboration. A bounded or invalid MIME scan
-// must block the operation, not masquerade as a missing Sent message.
-export function ignoreMissingCalendarEvidence(error: unknown): null {
-  if (error instanceof CalendarScanError) throw error
-  return null
-}
 
 type CalendarReplyHeaders = {
   subject: string
@@ -2016,15 +2021,21 @@ export async function findSentCalendarReply(
 ): Promise<CalendarMail | null> {
   const read = async (id: string, threadId: string | null) => {
     scan.evidenceRead()
-    const raw = await api.get<RawMessage>(`${BASE}/messages/${encodeURIComponent(id)}`, {
-      format: 'full',
-    })
+    const raw = await api
+      .get<RawMessage>(`${BASE}/messages/${encodeURIComponent(id)}`, {
+        format: 'full',
+      })
+      .catch((error) => {
+        // Only an individual missing message permits recovery through the exact-ID index.
+        if (error instanceof GoogleApiError && error.code === 'not-found') return null
+        throw error
+      })
     if (raw?.id !== id || (threadId !== null && raw.threadId !== threadId)) return null
     const mail = calendarMail(api, raw, scan)
     return mail?.rfcId === rfcId && (await matches(mail)) ? mail : null
   }
   if (receipt?.id) {
-    const mail = await read(receipt.id, receipt.threadId).catch(ignoreMissingCalendarEvidence)
+    const mail = await read(receipt.id, receipt.threadId)
     if (mail) return mail
   }
   scan.evidenceRead()
@@ -2045,9 +2056,7 @@ export async function findSentCalendarReply(
   const found = new Map<string, CalendarMail>()
   for (const candidate of page.messages ?? []) {
     if (!calendarMailId(candidate?.id)) return null
-    const mail = await read(candidate.id, candidate.threadId ?? null).catch(
-      ignoreMissingCalendarEvidence,
-    )
+    const mail = await read(candidate.id, candidate.threadId ?? null)
     if (mail) found.set(mail.messageId, mail)
   }
   return found.size === 1 ? (found.values().next().value ?? null) : null
@@ -2113,30 +2122,34 @@ function calendarMimeMethod(part: RawPart): string | undefined | null {
   return method
 }
 
-function contentTypeDeclaresCalendar(part: RawPart): boolean {
-  return Boolean(
-    part.headers?.some(
-      (header) =>
-        header.name?.toLowerCase() === 'content-type' &&
-        typeof header.value === 'string' &&
-        /^\s*(?:text\/calendar|application\/ics)(?:\s*;|\s*$)/i.test(header.value),
-    ),
+function declaresMediaType(part: RawPart, pattern: RegExp): boolean {
+  const matches = (value: unknown) =>
+    typeof value === 'string' && pattern.test(value.split(';', 1)[0]!.trim())
+  return (
+    matches(part.mimeType) ||
+    Boolean(
+      part.headers?.some(
+        (header) => header.name?.toLowerCase() === 'content-type' && matches(header.value),
+      ),
+    )
   )
 }
 
-function isCalendarPart(part: RawPart): boolean {
-  const type = part.mimeType?.toLowerCase() ?? ''
-  const name = part.filename?.toLowerCase() ?? ''
-  return type.startsWith('text/calendar') || type === 'application/ics' || name.endsWith('.ics')
-}
-
-function calendarPartOf(part: RawPart | undefined): RawPart | undefined {
-  if (!part || isCalendarPart(part)) return part
-  for (const child of part.parts ?? []) {
-    const found = calendarPartOf(child)
-    if (found) return found
+function calendarHints(messages: RawMessage[]): boolean[] {
+  const scan = createCalendarScan()
+  try {
+    return messages.map(
+      (message) =>
+        calendarMailId(message.id) &&
+        !message.labelIds?.includes('DRAFT') &&
+        scan.partsOf(message.payload).length > 0,
+    )
+  } catch (error) {
+    if (!(error instanceof CalendarScanError)) throw error
+    // A failed discovery is not a negative hint. Let the invitation reader
+    // surface the scan refusal instead of silently hiding the invitation.
+    return messages.map((message) => !message.labelIds?.includes('DRAFT'))
   }
-  return undefined
 }
 
 /** Gmail omits `threadId` on a loose draft; `null` is "belongs to no thread". */

@@ -104,8 +104,8 @@ export interface RawEvent {
   recurrence?: string[]
   originalStartTime?: RawEvent['start']
   conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] }
-  start?: { date?: string; dateTime?: string }
-  end?: { date?: string; dateTime?: string }
+  start?: { date?: string; dateTime?: string; timeZone?: string }
+  end?: RawEvent['start']
   attendees?: {
     self?: boolean
     responseStatus?: string
