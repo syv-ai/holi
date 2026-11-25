@@ -35,18 +35,22 @@ export function createGitHubCredentials(store: CredentialStore) {
       const controller = createCancellation()
       const externalSignal = options.signal
       const cleanup = () => {
-        externalSignal?.removeEventListener('abort', cancel)
         if (active === cancel) active = undefined
+        try {
+          externalSignal?.removeEventListener('abort', cancel)
+        } catch {
+          // A caller's signal adapter cannot veto local revocation or hide a storage failure.
+        }
       }
       const cancel = () => {
         controller.abort()
         cleanup()
       }
       active = cancel
-      externalSignal?.addEventListener('abort', cancel)
-      if (externalSignal?.aborted) controller.abort()
       let session
       try {
+        externalSignal?.addEventListener('abort', cancel)
+        if (externalSignal?.aborted) controller.abort()
         session = await authorizeWithGitHub({ ...options, signal: controller.signal })
       } catch {
         cleanup()

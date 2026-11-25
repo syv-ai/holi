@@ -13,6 +13,33 @@ const outcomes = new Map([
 const metadataPhases = ['store', 'replace', 'read']
 const isolationPhases = ['sign-out', 'verify-absent']
 
+/** Project only the checked build identity from the built application's Info.plist. */
+export function validateCredentialBuildIdentity(plist, bundleId) {
+  if (
+    plist?.CFBundleIdentifier !== bundleId ||
+    plist?.DTPlatformName !== 'iphonesimulator' ||
+    plist?.CFBundleExecutable !== 'mobile'
+  )
+    throw new Error('Unexpected credential acceptance app identity')
+  const {
+    MinimumOSVersion: minimumOSVersion,
+    DTSDKName: sdkName,
+    DTSDKBuild: sdkBuild,
+    CFBundleVersion: build,
+  } = plist
+  if (minimumOSVersion !== '26.0') throw new Error('Unexpected app minimum OS version')
+  if (
+    typeof sdkName !== 'string' ||
+    !/^iphonesimulator\d{1,3}(?:\.\d{1,3}){1,2}$/.test(sdkName) ||
+    typeof sdkBuild !== 'string' ||
+    !/^\d{1,3}[A-Z]\d{1,6}[a-z]?$/.test(sdkBuild)
+  )
+    throw new Error('Invalid built app SDK identity')
+  if (typeof build !== 'string' || !/^\d{1,10}(?:\.\d{1,10}){0,2}$/.test(build))
+    throw new Error('Invalid credential acceptance app build version')
+  return { bundleId, build, sdkName, sdkBuild, minimumOSVersion }
+}
+
 export function validateCredentialReport(report, { runId, phase, build, pid, launchedAt, now }) {
   const fields = [
     'schemaVersion',

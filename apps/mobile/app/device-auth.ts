@@ -43,14 +43,22 @@ export function createCancellation() {
         get aborted() {
           return aborted
         },
-        addEventListener: (_type: 'abort', listener: () => void) => listeners.add(listener),
+        addEventListener: (_type: 'abort', listener: () => void) => {
+          if (!aborted) listeners.add(listener)
+        },
         removeEventListener: (_type: 'abort', listener: () => void) => listeners.delete(listener),
       }
     },
     abort() {
       if (aborted) return
       aborted = true
-      for (const listener of listeners) listener()
+      for (const listener of listeners) {
+        try {
+          listener()
+        } catch {
+          // Adapter listeners must not prevent other observers or credential revocation.
+        }
+      }
       listeners.clear()
     },
   }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test, afterAll } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
@@ -525,6 +526,64 @@ test('host command failures and timeouts cannot pass', async () => {
     /Timed out/,
   )
 })
+
+test.skipIf(process.platform === 'win32')(
+  'does not confirm build drainage while an escaped worker still holds the pipes',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'holi770-drain-'))
+    const lease = join(root, 'worker-lease')
+    const stopped = join(root, 'worker-stopped')
+    const abort = new AbortController()
+    let ready = false
+    try {
+      writeFileSync(lease, '')
+      const worker = `
+        const { existsSync, writeFileSync } = require('node:fs');
+        if (!existsSync(${JSON.stringify(lease)})) process.exit(0);
+        const timer = setInterval(() => {
+          if (!existsSync(${JSON.stringify(lease)})) {
+            clearInterval(timer);
+            writeFileSync(${JSON.stringify(stopped)}, '');
+          }
+        }, 20);
+        setTimeout(() => process.exit(0), 5000).unref();
+        console.log('escaped worker ready');
+      `
+      const leader = `
+        require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(worker)}], {
+          detached: true, stdio: ['ignore', 'inherit', 'inherit'],
+        }).unref();
+        setInterval(() => {}, 1000);
+      `
+      await assert.rejects(
+        runCommand(process.execPath, ['-e', leader], {
+          signal: abort.signal,
+          timeout: 2000,
+          killGrace: 200,
+          drainProcessGroup: true,
+          onOutput(data) {
+            if (data.toString().includes('escaped worker ready')) {
+              ready = true
+              abort.abort()
+            }
+          },
+        }),
+        (error) => ready && error.drainUnconfirmed === true,
+      )
+    } finally {
+      abort.abort()
+      rmSync(lease, { force: true })
+      try {
+        if (ready) {
+          for (let i = 0; i < 50 && !existsSync(stopped); i++) await sleep(20)
+          assert.ok(existsSync(stopped), 'escaped worker did not acknowledge lease release')
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  },
+)
 
 test('native move checkpoint states reject interchangeable pre/post evidence', () => {
   const operationId = '22222222-2222-4222-8222-222222222222'
