@@ -41,16 +41,21 @@ type InvitationCalendarCopy = {
   cancelled: boolean
   unavailableReason: string | null
   reply: { url: string; etag: string; attendee: NonNullable<RawEvent['attendees']>[number] } | null
-  /** False withholds all links; null means series navigation found no eligible instance. */
   navigation: (
     selectSlot: (slot: string) => InvitationRevision | false | null,
-  ) => Promise<InvitationLinks | false | null | undefined>
+  ) => Promise<InvitationNavigation>
 }
 
 export type InvitationLinks = Pick<
   InvitationCalendarCopy,
   'conferenceUrl' | 'conferenceLinkSource' | 'htmlLink'
 >
+
+export type InvitationNavigation =
+  | { kind: 'default' }
+  | { kind: 'withheld' }
+  /** Use the occurrence's links with a master page fallback, never the master’s room. */
+  | { kind: 'series'; links?: InvitationLinks }
 
 type CalendarLookup =
   | InvitationCalendarCopy
@@ -259,16 +264,25 @@ function isUidlessCancellation(event: RawEvent): boolean {
 // A bound primary query can associate a sparse row with an invitation for
 // absence checks, but never supplies fields to the event itself.
 type PrimaryQueryAssociation = { uid: string; mailbox: string } & (
-  { kind: 'uid' } | { kind: 'instances'; parentId: string }
+  { kind: 'uid' } | { kind: 'parent'; parentId: string }
 )
 
 type ObserveEvent = (event: RawEvent, association?: PrimaryQueryAssociation) => Promise<void>
 
-function observeUidQuery(uid: string, observe: ObserveEvent, primaryMailbox?: string) {
+function observeUidQuery(
+  uid: string,
+  observe: ObserveEvent,
+  primary?: { mailbox: string; parentId?: string },
+) {
   return async (event: RawEvent) => {
-    if (event.iCalUID === uid) await observe(event)
-    else if (primaryMailbox && isUidlessCancellation(event))
-      await observe(event, { kind: 'uid', uid, mailbox: primaryMailbox })
+    if (event.iCalUID === uid) return observe(event)
+    if (!primary || event.iCalUID !== undefined) return
+    const { mailbox, parentId } = primary
+    // Expanded UID queries can omit the UID of an active child. Only a
+    // matching primary master binds that row, and only as a possible copy.
+    if (parentId !== undefined && event.recurringEventId === parentId)
+      await observe(event, { kind: 'parent', uid, mailbox, parentId })
+    else if (isUidlessCancellation(event)) await observe(event, { kind: 'uid', uid, mailbox })
   }
 }
 
@@ -290,7 +304,11 @@ async function exactCopies(
     url,
     'calendar#events',
     { iCalUID: uid, singleEvents: 'false', showDeleted: 'true' },
-    observeUidQuery(uid, observe, context.primaryMailbox),
+    observeUidQuery(
+      uid,
+      observe,
+      context.primaryMailbox ? { mailbox: context.primaryMailbox } : undefined,
+    ),
   )
   if (
     events.some(
@@ -355,7 +373,7 @@ async function exactCopies(
         if (event.iCalUID === uid) await observe(event)
         else if (context.primaryMailbox && series.iCalUID === uid && event.iCalUID === undefined)
           await observe(event, {
-            kind: 'instances',
+            kind: 'parent',
             uid: series.iCalUID,
             mailbox: context.primaryMailbox,
             parentId,
@@ -626,7 +644,7 @@ async function lookupInvitationCalendarCopy(
       invitation,
       mailbox,
       true,
-      observeUidQuery(uid, observePrimary, mailbox),
+      observePrimary,
     )
 
   const calendars = await invitationPages<CalendarListEntry>(
@@ -676,7 +694,7 @@ async function lookupInvitationCalendarCopy(
         invitation,
         mailbox,
         calendar.accessRole === 'owner' || calendar.accessRole === 'writer',
-        observeUidQuery(uid, observe),
+        observe,
         ownedCalendar,
         calendar.accessRole === 'owner',
       )
@@ -755,7 +773,7 @@ function invitationCopy(
   invitation: InvitationTarget,
   mailbox: string,
   writable: boolean,
-  observe: (event: RawEvent) => Promise<void>,
+  observe: ObserveEvent,
   ownedCalendar?: string,
   owned = base === PRIMARY_EVENTS,
 ): CalendarLookup {
@@ -827,15 +845,16 @@ function invitationCopy(
     cancelled,
     unavailableReason: reason,
     navigation: async (selectSlot) => {
-      if (cancelled) return undefined
-      if (recurrenceId === null && details.recurring)
-        return upcomingInvitationLinks(
+      if (cancelled) return { kind: 'default' }
+      const primary = base === PRIMARY_EVENTS ? { mailbox } : undefined
+      if (recurrenceId === null && details.recurring) {
+        const upcoming = await upcomingInvitationLinks(
           api,
           base,
           event,
           uid,
           organizer,
-          observe,
+          observeUidQuery(uid, observe, primary && { ...primary, parentId: event.id }),
           selectSlot,
           (row, slot) => {
             const membership = invitationMembership(row, slot, mailbox, owned, ownedCalendar)
@@ -843,12 +862,22 @@ function invitationCopy(
           },
           navigationWindow(invitation.legacyJoinOnly),
         )
+        if (upcoming) return { kind: 'series', links: upcoming }
+        return invitation.legacyJoinOnly ? { kind: 'withheld' } : { kind: 'series' }
+      }
       if (
         invitation.legacyJoinOnly &&
-        !(await legacyMeetingIsCurrent(api, base, event, uid, recurrenceId, observe))
+        !(await legacyMeetingIsCurrent(
+          api,
+          base,
+          event,
+          uid,
+          recurrenceId,
+          observeUidQuery(uid, observe, primary),
+        ))
       )
-        return false
-      return undefined
+        return { kind: 'withheld' }
+      return { kind: 'default' }
     },
     reply: !joinOnly && reason === null && etag && attendee ? { url, etag, attendee } : null,
   }

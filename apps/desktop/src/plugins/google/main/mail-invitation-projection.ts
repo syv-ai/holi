@@ -1,5 +1,9 @@
 import type { InviteAnswer, RsvpStatus } from './calendar'
-import type { findInvitationCalendarCopy, InvitationLinks } from './mail-invitation-calendar'
+import type {
+  findInvitationCalendarCopy,
+  InvitationLinks,
+  InvitationNavigation,
+} from './mail-invitation-calendar'
 import type { parseMailInvitation } from './mail-invitation'
 
 type Details = NonNullable<ReturnType<typeof parseMailInvitation>>['details']
@@ -12,8 +16,6 @@ export type InvitationCardSource = {
   details: Details
   bindingRevision: string
   joinOnly: boolean
-  /** Revision or Calendar evidence has disqualified navigation from any source. */
-  navigationWithheld: boolean
   calendar: Pick<
     VerifiedCopy,
     keyof InvitationLinks | 'title' | 'start' | 'end' | 'allDay' | 'location'
@@ -47,21 +49,19 @@ type ResponsePresentation = {
 }
 
 /** Format an already resolved card. No provider or dispatch decision lives here. */
-export function projectMailInvitation(
-  {
-    details,
-    bindingRevision,
-    joinOnly,
-    calendar,
-    navigationWithheld,
-    response,
-  }: InvitationCardSource & {
-    response: ResponsePresentation
-  },
-  // Null means navigation is series-based, but no eligible instance was found.
-  upcoming?: InvitationLinks | null,
-): MailInvitation {
-  const usesUpcomingLinks = upcoming !== undefined
+export function projectMailInvitation({
+  details,
+  bindingRevision,
+  joinOnly,
+  calendar,
+  response,
+  navigation,
+}: InvitationCardSource & {
+  response: ResponsePresentation
+  navigation: InvitationNavigation
+}): MailInvitation {
+  const usesUpcomingLinks = navigation.kind === 'series'
+  const upcoming = usesUpcomingLinks ? navigation.links : undefined
   const htmlLink = upcoming?.htmlLink ?? calendar?.htmlLink
   return {
     ...details,
@@ -70,7 +70,7 @@ export function projectMailInvitation(
     end: calendar?.end ?? details.end,
     allDay: calendar?.start ? calendar.allDay : details.allDay,
     location: calendar?.location ?? details.location,
-    ...(navigationWithheld
+    ...(navigation.kind === 'withheld'
       ? {
           conferenceUrl: null,
           conferenceLinkSource: null,
