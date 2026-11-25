@@ -38,6 +38,8 @@ export interface StoredGoogleAuth {
   expiresAt: number
   /** OAuth client that issued this grant. Missing only on legacy records. */
   clientId?: string
+  /** Encrypted with the grant; required to refresh after the machine default changes. */
+  clientSecret?: string
   /** What was actually granted, so a failure can name the missing scope. */
   scopes: string[]
 }
@@ -139,6 +141,7 @@ function isStoredGoogleAuth(value: unknown): value is StoredGoogleAuth {
     typeof a.accessToken === 'string' &&
     typeof a.expiresAt === 'number' &&
     (a.clientId === undefined || typeof a.clientId === 'string') &&
+    (a.clientSecret === undefined || typeof a.clientSecret === 'string') &&
     Array.isArray(a.scopes) &&
     a.scopes.every((s) => typeof s === 'string')
   )

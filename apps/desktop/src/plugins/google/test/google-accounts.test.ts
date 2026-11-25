@@ -501,7 +501,7 @@ describe('the client credentials', () => {
     expect(await clients.read()).toEqual(two)
   })
 
-  it('removes every account, revoking each, when the client changes', async () => {
+  it('keeps accounts and vault sessions when the future-connect client changes', async () => {
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }))
     const accounts = await manager(
       [auth(), auth({ sub: 'sub-2', email: 'work@syv.ai' })],
@@ -516,13 +516,12 @@ describe('the client credentials', () => {
 
     await accounts.setClient({ id: 'other.apps.googleusercontent.com', secret: 's' })
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
-    expect(accounts.list()).toEqual([])
-    expect(await accounts.sessionFor(VAULT)).toBeNull()
-    expect(await accounts.sessionFor(WORK)).toBeNull()
-    // Each one named, so its cache is deleted with it.
-    expect(changed).toEqual(['sub-1', 'sub-2'])
-    expect(await store.read()).toEqual({})
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(accounts.list()).toHaveLength(2)
+    expect(await accounts.sessionFor(VAULT)).not.toBeNull()
+    expect(await accounts.sessionFor(WORK)).not.toBeNull()
+    expect(changed).toEqual([])
+    expect(Object.keys(await store.read())).toEqual(['sub-1', 'sub-2'])
   })
 
   it('keeps every account when the same client is saved again', async () => {
