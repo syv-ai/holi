@@ -1797,44 +1797,92 @@ export async function fetchAttachment(
   }
 }
 
-/**
- * The `.ics` in a thread, as text, or null when there is none.
- *
- * Owns the Gmail half of the meeting lookup and nothing else: which part is the
- * invite, and how to get its bytes. What the bytes *mean* is `invite.ts`.
- *
- * Two shapes, because invites arrive in both and only one of them costs a
- * request. Outlook attaches the invite (`filename: 'invite.ics'`, bytes behind
- * an `attachmentId`); Google Calendar sends `text/calendar` **inline**, with the
- * data in the part itself.
- *
- * `format: 'full'`, the expensive fetch this module normally refuses. It is
- * affordable here because this runs for ONE thread, only when a reader has
- * already opened it.
- */
-export async function fetchThreadIcs(api: GoogleApi, threadId: string): Promise<string | null> {
-  const thread = await fullCalendarThread(api, threadId)
-  for (const message of thread.messages ?? []) {
-    const part = calendarPartOf(message.payload)
-    if (part === undefined) continue
-    const source = await readCalendarPart(api, message.id, part)
-    if (source !== null) return source
+const MAX_CALENDAR_PART_BYTES = 256 * 1024
+
+export class CalendarScanError extends Error {}
+
+/** Each public read or response owns one budget, including all evidence and
+ * preflight reads. Revalidation still gets a fresh provider snapshot. */
+export function createCalendarScan() {
+  let bytes = 1024 * 1024
+  let parts = 32
+  let nodes = 2048
+  let attachments = 8
+  let evidenceReads = 32
+  const check = (within: boolean) => {
+    if (!within) throw new CalendarScanError('Gmail calendar data exceeds the scan limits')
   }
+  const size = (value: unknown): number => {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
+      throw new CalendarScanError('Invalid Gmail calendar part size')
+    check(value <= MAX_CALENDAR_PART_BYTES && value <= bytes)
+    return value
+  }
+  return {
+    partsOf(payload: RawPart | undefined): RawPart[] {
+      const found: RawPart[] = []
+      const visit = (part: RawPart, depth: number) => {
+        check(--nodes >= 0 && depth <= 16)
+        if (!part || typeof part !== 'object' || Array.isArray(part))
+          throw new CalendarScanError('Invalid Gmail MIME part')
+        if (
+          (part.mimeType !== undefined && typeof part.mimeType !== 'string') ||
+          (part.filename !== undefined && typeof part.filename !== 'string') ||
+          (part.parts !== undefined && !Array.isArray(part.parts))
+        )
+          throw new CalendarScanError('Invalid Gmail MIME part')
+        if (part.mimeType?.toLowerCase() === 'message/rfc822') return
+        if (isCalendarPart(part)) {
+          check(--parts >= 0)
+          found.push(part)
+        }
+        for (const child of part.parts ?? []) visit(child, depth + 1)
+      }
+      if (payload !== undefined) visit(payload, 0)
+      else check(--nodes >= 0)
+      return found
+    },
+    async readPart(api: GoogleApi, messageId: string, part: RawPart): Promise<string> {
+      const declared = size(part.body?.size)
+      let encoded: unknown = part.body?.data
+      const attachment = part.body?.attachmentId
+      if (attachment !== undefined) {
+        if (typeof attachment !== 'string' || !attachment || encoded !== undefined)
+          throw new CalendarScanError('Invalid Gmail calendar attachment')
+        check(--attachments >= 0)
+        const body = await api.get<{ size?: number; data?: string }>(
+          `${BASE}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachment)}`,
+        )
+        if (size(body?.size) !== declared)
+          throw new CalendarScanError('Gmail calendar attachment size changed')
+        encoded = body?.data
+      }
+      if (encoded === undefined && declared === 0) return ''
+      if (typeof encoded !== 'string')
+        throw new CalendarScanError('Missing Gmail calendar part data')
+      check(encoded.length <= Math.ceil(Math.min(bytes, MAX_CALENDAR_PART_BYTES, declared) / 3) * 4)
+      if (!/^[a-z0-9_-]*={0,2}$/i.test(encoded) || encoded.replace(/=+$/, '').length % 4 === 1)
+        throw new CalendarScanError('Invalid Gmail calendar part encoding')
+      const decoded = Buffer.from(encoded, 'base64url')
+      check(decoded.length <= MAX_CALENDAR_PART_BYTES && decoded.length <= bytes)
+      if (decoded.length !== declared)
+        throw new CalendarScanError('Invalid Gmail calendar part size')
+      bytes -= decoded.length
+      return decoded.toString('utf8')
+    },
+    evidenceRead() {
+      check(--evidenceReads >= 0)
+    },
+  }
+}
+
+type CalendarScan = ReturnType<typeof createCalendarScan>
+
+// A lookup failure is not corroboration. A bounded or invalid MIME scan
+// must block the operation, not masquerade as a missing Sent message.
+export function ignoreMissingCalendarEvidence(error: unknown): null {
+  if (error instanceof CalendarScanError) throw error
   return null
-}
-
-function fullCalendarThread(api: GoogleApi, threadId: string): Promise<RawThread> {
-  return api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, { format: 'full' })
-}
-
-async function readCalendarPart(api: GoogleApi, messageId: string | undefined, part: RawPart) {
-  if (part.body?.data !== undefined) return decodeBody(part.body.data)
-  if (!part.body?.attachmentId || !messageId) return null
-  const fetched = await fetchAttachment(api, messageId, part.body.attachmentId, {
-    filename: part.filename ?? 'invite.ics',
-    mimeType: part.mimeType ?? 'text/calendar',
-  })
-  return Buffer.from(fetched.data, 'base64').toString('utf8')
 }
 
 type CalendarReplyHeaders = {
@@ -1873,10 +1921,14 @@ function calendarHeaderIds(part: RawPart | undefined, name: string): string[] | 
   return ids?.length ? ids : null
 }
 
-function calendarMail(api: GoogleApi, message: RawMessage): CalendarMail | null {
+function calendarMail(
+  api: GoogleApi,
+  message: RawMessage,
+  scan: CalendarScan,
+): CalendarMail | null {
   const id = message.id
   if (!calendarMailId(id) || message.labelIds?.includes('DRAFT')) return null
-  const parts = calendarPartsOf(message.payload)
+  const parts = scan.partsOf(message.payload)
   if (parts.length === 0) return null
   const ids = calendarHeaderIds(message.payload, 'message-id')
   const rfcId = ids?.length === 1 ? ids[0]! : null
@@ -1909,12 +1961,15 @@ function calendarMail(api: GoogleApi, message: RawMessage): CalendarMail | null 
             ],
           }
         : null,
-    parts: parts.map((part) => ({
-      method: parseHeaderParameters(
-        headerOf(part, 'Content-Type') ?? part.mimeType ?? '',
-      )?.parameters.get('method'),
-      read: async () => (await readCalendarPart(api, id, part)) ?? '',
-    })),
+    parts: parts.map((part) => {
+      let decoded: Promise<string> | undefined
+      return {
+        method: parseHeaderParameters(
+          headerOf(part, 'Content-Type') ?? part.mimeType ?? '',
+        )?.parameters.get('method'),
+        read: () => (decoded ??= scan.readPart(api, id, part)),
+      }
+    }),
   }
 }
 
@@ -1923,12 +1978,17 @@ function calendarMail(api: GoogleApi, message: RawMessage): CalendarMail | null 
 export async function fetchThreadCalendarPayloads(
   api: GoogleApi,
   threadId: string,
+  scan: CalendarScan,
 ): Promise<CalendarMail[]> {
-  const thread = await fullCalendarThread(api, threadId)
+  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
+    format: 'full',
+  })
+  if (!thread || thread.id !== threadId || !Array.isArray(thread.messages)) {
+    throw new CalendarScanError('Gmail could not verify this invitation thread')
+  }
+  if (thread.messages.length > 2048)
+    throw new CalendarScanError('Gmail calendar data exceeds the scan limits')
   if (
-    !thread ||
-    thread.id !== threadId ||
-    !Array.isArray(thread.messages) ||
     thread.messages.some(
       (message) =>
         !message ||
@@ -1936,9 +1996,9 @@ export async function fetchThreadCalendarPayloads(
         (message.threadId !== undefined && message.threadId !== threadId),
     )
   ) {
-    throw new Error('Gmail could not verify this invitation thread')
+    throw new CalendarScanError('Gmail could not verify this invitation thread')
   }
-  return thread.messages.flatMap((message) => calendarMail(api, message) ?? [])
+  return thread.messages.flatMap((message) => calendarMail(api, message, scan) ?? [])
 }
 
 /** The send receipt may point to a different thread. If no usable receipt
@@ -1947,20 +2007,23 @@ export async function findSentCalendarReply(
   api: GoogleApi,
   rfcId: string,
   receipt: CalendarReplyReceipt | null,
+  scan: CalendarScan,
   matches: (message: CalendarMail) => Promise<boolean>,
 ): Promise<CalendarMail | null> {
   const read = async (id: string, threadId: string | null) => {
+    scan.evidenceRead()
     const raw = await api.get<RawMessage>(`${BASE}/messages/${encodeURIComponent(id)}`, {
       format: 'full',
     })
     if (raw?.id !== id || (threadId !== null && raw.threadId !== threadId)) return null
-    const mail = calendarMail(api, raw)
+    const mail = calendarMail(api, raw, scan)
     return mail?.rfcId === rfcId && (await matches(mail)) ? mail : null
   }
   if (receipt?.id) {
-    const mail = await read(receipt.id, receipt.threadId).catch(() => null)
+    const mail = await read(receipt.id, receipt.threadId).catch(ignoreMissingCalendarEvidence)
     if (mail) return mail
   }
+  scan.evidenceRead()
   const page = await api.get<{
     messages?: Pick<RawMessage, 'id' | 'threadId'>[]
     nextPageToken?: string
@@ -1972,14 +2035,15 @@ export async function findSentCalendarReply(
   if (
     !page ||
     page.nextPageToken !== undefined ||
-    !Array.isArray(page.messages) ||
-    page.messages.length > 10
+    (page.messages !== undefined && (!Array.isArray(page.messages) || page.messages.length > 10))
   )
     return null
   const found = new Map<string, CalendarMail>()
-  for (const candidate of page.messages) {
+  for (const candidate of page.messages ?? []) {
     if (!calendarMailId(candidate?.id)) return null
-    const mail = await read(candidate.id, candidate.threadId ?? null).catch(() => null)
+    const mail = await read(candidate.id, candidate.threadId ?? null).catch(
+      ignoreMissingCalendarEvidence,
+    )
     if (mail) found.set(mail.messageId, mail)
   }
   return found.size === 1 ? (found.values().next().value ?? null) : null
@@ -1994,7 +2058,7 @@ export async function sendCalendarReply(
   from: string,
   organizer: string,
   calendarText: string,
-  validate: () => Promise<void>,
+  gate: { validate: () => Promise<void>; reserveDispatch: () => Promise<void> },
 ): Promise<CalendarReplyReceipt> {
   // The caller supplies the verified mailbox, not a From header from the invitation.
   if (/[\r\n]/.test(from)) throw new Error('Invalid calendar reply sender')
@@ -2017,7 +2081,8 @@ export async function sendCalendarReply(
       raw: toBase64Url(`From: ${from}\r\nMessage-ID: ${rfcId}\r\n${message}`),
       threadId,
     },
-    validate,
+    gate.validate,
+    gate.reserveDispatch,
   )
   const identifier = (value: unknown) => (calendarMailId(value) ? value : null)
   return { id: identifier(sent?.id), threadId: identifier(sent?.threadId) }
@@ -2027,11 +2092,6 @@ function isCalendarPart(part: RawPart): boolean {
   const type = part.mimeType?.toLowerCase() ?? ''
   const name = part.filename?.toLowerCase() ?? ''
   return type.startsWith('text/calendar') || type === 'application/ics' || name.endsWith('.ics')
-}
-
-function calendarPartsOf(part: RawPart | undefined): RawPart[] {
-  if (!part || part.mimeType?.toLowerCase() === 'message/rfc822') return []
-  return [...(isCalendarPart(part) ? [part] : []), ...(part.parts ?? []).flatMap(calendarPartsOf)]
 }
 
 function calendarPartOf(part: RawPart | undefined): RawPart | undefined {

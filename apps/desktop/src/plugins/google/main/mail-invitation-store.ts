@@ -6,7 +6,7 @@ import type { MailInvitationIdentity } from './mail-invitation'
 type Revision = Omit<MailInvitationIdentity, 'messageId'>
 
 type Delivery =
-  | { channel: 'calendar'; target: string }
+  | { channel: 'calendar'; target: string; proof?: string }
   | {
       channel: 'gmail'
       rfcId: string
@@ -22,7 +22,7 @@ export type InvitationAttempt = {
   threadId: string
   revision: Revision
   answer: InviteAnswer
-  state: 'unresolved' | 'accepted' | 'confirmed'
+  state: 'prepared' | 'unresolved' | 'accepted' | 'confirmed'
   delivery: Delivery
 }
 
@@ -56,12 +56,21 @@ function isAttempt(value: unknown): value is InvitationAttempt {
     !nullableText(revision.dtstamp) ||
     !text(revision.materialKey) ||
     (answer !== 'accepted' && answer !== 'tentative' && answer !== 'declined') ||
-    (state !== 'unresolved' && state !== 'accepted' && state !== 'confirmed') ||
+    (state !== 'prepared' &&
+      state !== 'unresolved' &&
+      state !== 'accepted' &&
+      state !== 'confirmed') ||
     !record(delivery)
   ) {
     return false
   }
-  if (delivery.channel === 'calendar') return state !== 'confirmed' && text(delivery.target)
+  if (delivery.channel === 'calendar')
+    return (
+      state !== 'confirmed' &&
+      text(delivery.target) &&
+      (delivery.proof === undefined ||
+        (typeof delivery.proof === 'string' && /^[0-9a-f]{64}$/.test(delivery.proof)))
+    )
   if (delivery.channel !== 'gmail') return false
   const { rfcId, parent, mailbox, organizer, receipt } = delivery
   return (

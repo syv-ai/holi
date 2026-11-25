@@ -3,9 +3,17 @@
  * the agent's attendee-free calendar writes at the bottom, and answering an
  * invitation, the one that tells somebody.
  */
+import { createHash } from 'node:crypto'
 import { fenceUntrusted } from '@holi/shared'
 import { GoogleApiError, type GoogleApi, type GoogleParams } from './api'
 import { fetchEventColors } from './event-colors'
+import type { parseMailInvitation } from './mail-invitation'
+import {
+  conferenceUrlIn,
+  googleEventUrl,
+  httpsLink,
+  providerConferenceUrl,
+} from '../shared/meeting-links'
 
 const BASE = 'https://www.googleapis.com/calendar/v3'
 
@@ -79,6 +87,7 @@ export interface CalendarEvent {
 }
 
 interface RawEvent {
+  kind?: string
   id?: string
   summary?: string
   status?: string
@@ -116,6 +125,7 @@ interface RawEvent {
 }
 
 interface CalendarListEntry {
+  kind?: string
   id: string
   summary: string
   /** The name *the user* gave this calendar. Google Calendar displays it in
@@ -254,75 +264,92 @@ export async function listAgenda(
     .sort(byStart)
 }
 
-/**
- * The one event an invite is about, found by the `UID` in its `.ics`.
- *
- * The UID is the identity iCalendar itself defines, and Google indexes it, so
- * this is an exact match rather than a guess from a subject line and a time.
- *
- * **Instances, from now on, one of them.** `singleEvents` expands a series, and
- * `timeMin` makes "the invite you are reading" resolve to the occurrence
- * actually coming up. A meeting entirely in the past therefore answers `null`,
- * deliberately: there is nothing to join.
- *
- * No palette request: the caller wants a link, not a tint.
- */
-export async function findEventByICalUid(
-  api: GoogleApi,
-  iCalUID: string,
-  options: { overrides?: CalendarOverrides; from?: string } = {},
-): Promise<CalendarEvent | null> {
-  const calendars = (await resolveCalendars(api, options.overrides ?? {})).filter((c) => c.enabled)
-  const timeMin = options.from ?? new Date(Date.now() - 60 * 60 * 1000).toISOString()
-
-  for (const calendar of calendars) {
-    const page = await api.get<{ items?: RawEvent[] }>(
-      `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`,
-      { iCalUID, singleEvents: 'true', orderBy: 'startTime', timeMin, maxResults: '1' },
-    )
-    const event = (page.items ?? []).filter(isWorthShowing)[0]
-    if (event !== undefined) return toCalendarEvent(event, calendar, {})
-  }
-  return null
-}
-
 type InvitationCalendarCopy = {
   kind: 'verified'
   target: string
   etag: string | null
+  proof: string
+  revision: Parsed['details']['identity']
   title?: string
   start?: string
   end?: string
   allDay: boolean
   location?: string
   conferenceUrl: string | null
-  htmlLink?: string
+  conferenceLinkSource: 'calendar' | 'provider' | null
+  htmlLink: string | null
   responseStatus: RsvpStatus | null
   cancelled: boolean
   unavailableReason: string | null
-  reply: ((answer: InviteAnswer, validate: () => Promise<void>) => Promise<void>) | null
+  reply: ((answer: InviteAnswer, gate: InvitationDispatchGate) => Promise<void>) | null
 }
 
 type CalendarLookup =
   InvitationCalendarCopy | { kind: 'absent' } | { kind: 'blocked'; reason: string }
 
-async function invitationPages<T>(api: GoogleApi, url: string, params: GoogleParams): Promise<T[]> {
+type InvitationDispatchGate = {
+  validate: () => Promise<void>
+  reserveDispatch: () => Promise<void>
+}
+
+type Parsed = NonNullable<ReturnType<typeof parseMailInvitation>>
+type InvitationTarget = {
+  details: Parsed['details']
+  request: NonNullable<Parsed['request']>
+  joinOnly: boolean
+}
+
+async function invitationPages<T>(
+  api: GoogleApi,
+  url: string,
+  kind: 'calendar#events' | 'calendar#calendarList',
+  params: GoogleParams,
+): Promise<T[]> {
   return api.getAll<T>(
     url,
     params,
     (page) => {
       if (
         !page ||
-        !Array.isArray(page.items) ||
-        page.items.some((item) => !item || typeof item !== 'object' || Array.isArray(item)) ||
+        typeof page !== 'object' ||
+        Array.isArray(page) ||
+        !('kind' in page) ||
+        page.kind !== kind ||
+        (page.items !== undefined &&
+          (!Array.isArray(page.items) ||
+            page.items.some((item) => !item || typeof item !== 'object' || Array.isArray(item)))) ||
         (page.nextPageToken !== undefined &&
-          (typeof page.nextPageToken !== 'string' || !page.nextPageToken))
+          (typeof page.nextPageToken !== 'string' ||
+            !/^[^\s\p{Cc}]{1,4096}$/u.test(page.nextPageToken)))
       )
         throw new Error('Invalid Calendar collection')
-      return page.items
+      return page.items ?? []
     },
     10,
     true,
+  )
+}
+
+function instant(value: string): number {
+  return /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? Date.parse(value) : NaN
+}
+
+function date(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString().slice(0, 10) === value
+  )
+}
+
+function validTime(value: RawEvent['start']): boolean {
+  return Boolean(
+    value &&
+    ((date(value.date) && value.dateTime === undefined) ||
+      (value.date === undefined &&
+        typeof value.dateTime === 'string' &&
+        Number.isFinite(instant(value.dateTime)))),
   )
 }
 
@@ -330,8 +357,7 @@ function sameOccurrence(event: RawEvent, recurrenceId: string): boolean {
   const original = event.originalStartTime
   if (!original) return false
   if (original.date !== undefined) return original.date === recurrenceId
-  if (original.dateTime === undefined || recurrenceId.length === 10) return false
-  return Date.parse(original.dateTime) === Date.parse(recurrenceId)
+  return original.dateTime !== undefined && instant(original.dateTime) === instant(recurrenceId)
 }
 
 async function exactCopies(
@@ -340,7 +366,7 @@ async function exactCopies(
   uid: string,
   recurrenceId: string | null,
 ): Promise<RawEvent[]> {
-  const events = await invitationPages<RawEvent>(api, url, {
+  const events = await invitationPages<RawEvent>(api, url, 'calendar#events', {
     iCalUID: uid,
     singleEvents: 'false',
     showDeleted: 'true',
@@ -357,7 +383,10 @@ async function exactCopies(
   // The unexpanded list contains the series master and sometimes exception
   // rows. No recurrence ID means the master, not any expanded occurrence.
   const roots = events.filter((event) => !event.recurringEventId && !event.originalStartTime)
+  if (new Set(events.map(({ id }) => id)).size !== events.length)
+    throw new Error('Calendar returned duplicate event rows')
   if (recurrenceId === null) return roots
+  if (roots.length > 1) throw new Error('Calendar returned ambiguous series rows')
   const matching = new Map(
     events.filter((event) => sameOccurrence(event, recurrenceId)).map((event) => [event.id, event]),
   )
@@ -368,20 +397,26 @@ async function exactCopies(
     const instances = await invitationPages<RawEvent>(
       api,
       `${url}/${encodeURIComponent(series.id)}/instances`,
+      'calendar#events',
       {
         originalStart: recurrenceId,
         showDeleted: 'true',
       },
     )
+    if (new Set(instances.map(({ id }) => id)).size !== instances.length)
+      throw new Error('Calendar returned duplicate instance rows')
     for (const event of instances) {
       if (
         !usableInvitationEvent(event) ||
         (event.iCalUID !== undefined && event.iCalUID !== uid) ||
-        (event.recurringEventId !== undefined && event.recurringEventId !== series.id) ||
+        event.recurringEventId !== series.id ||
         !sameOccurrence(event, recurrenceId)
       ) {
         throw new Error('Invalid Calendar instance for this invitation')
       }
+      const listed = matching.get(event.id)
+      if (listed && (listed.etag !== event.etag || calendarProof(listed) !== calendarProof(event)))
+        throw new Error('Calendar returned conflicting instance rows')
       matching.set(event.id, event)
     }
   }
@@ -395,23 +430,64 @@ async function exactCopies(
 function usableInvitationEvent(event: RawEvent): boolean {
   const original = event.originalStartTime
   return (
+    (event.kind === undefined || event.kind === 'calendar#event') &&
     typeof event.id === 'string' &&
-    Boolean(event.id) &&
+    /^[A-Za-z0-9_-]+$/.test(event.id) &&
+    (event.status === undefined ||
+      ['confirmed', 'tentative', 'cancelled'].includes(event.status)) &&
+    (event.sequence === undefined ||
+      (Number.isSafeInteger(event.sequence) && event.sequence >= 0)) &&
     (event.recurrence === undefined ||
       (Array.isArray(event.recurrence) &&
         event.recurrence.every((rule) => typeof rule === 'string'))) &&
-    (event.recurringEventId === undefined ||
-      (typeof event.recurringEventId === 'string' &&
+    (event.recurringEventId === undefined
+      ? original === undefined
+      : typeof event.recurringEventId === 'string' &&
         Boolean(event.recurringEventId) &&
-        Boolean(original))) &&
-    (original === undefined ||
+        validTime(original)) &&
+    (event.start === undefined || validTime(event.start)) &&
+    (event.end === undefined || validTime(event.end)) &&
+    (event.organizer === undefined ||
+      (event.organizer &&
+        typeof event.organizer === 'object' &&
+        !Array.isArray(event.organizer) &&
+        (event.organizer.email === undefined || typeof event.organizer.email === 'string') &&
+        (event.organizer.self === undefined || typeof event.organizer.self === 'boolean'))) &&
+    (event.attendees === undefined ||
+      (Array.isArray(event.attendees) &&
+        event.attendees.every(
+          (attendee) =>
+            attendee &&
+            typeof attendee === 'object' &&
+            !Array.isArray(attendee) &&
+            (attendee.email === undefined || typeof attendee.email === 'string') &&
+            (attendee.self === undefined || typeof attendee.self === 'boolean') &&
+            (attendee.resource === undefined || typeof attendee.resource === 'boolean') &&
+            (attendee.responseStatus === undefined || asRsvp(attendee.responseStatus) !== null),
+        ))) &&
+    [
+      event.summary,
+      event.description,
+      event.location,
+      event.htmlLink,
+      event.hangoutLink,
+      event.etag,
+    ].every((value) => value === undefined || typeof value === 'string') &&
+    (event.conferenceData === undefined ||
       Boolean(
-        original &&
-        ((typeof original.date === 'string' &&
-          /^\d{4}-\d{2}-\d{2}$/.test(original.date) &&
-          Number.isFinite(Date.parse(original.date))) ||
-          (typeof original.dateTime === 'string' &&
-            Number.isFinite(Date.parse(original.dateTime)))),
+        event.conferenceData &&
+        typeof event.conferenceData === 'object' &&
+        !Array.isArray(event.conferenceData) &&
+        (event.conferenceData.entryPoints === undefined ||
+          (Array.isArray(event.conferenceData.entryPoints) &&
+            event.conferenceData.entryPoints.every(
+              (point) =>
+                point &&
+                typeof point === 'object' &&
+                !Array.isArray(point) &&
+                (point.entryPointType === undefined || typeof point.entryPointType === 'string') &&
+                (point.uri === undefined || typeof point.uri === 'string'),
+            ))),
       ))
   )
 }
@@ -419,7 +495,7 @@ function usableInvitationEvent(event: RawEvent): boolean {
 /** RSVP lookup is independent of agenda visibility, dates and RSVP state. */
 export async function findInvitationCalendarCopy(
   api: GoogleApi,
-  invitation: { uid: string; recurrenceId: string | null; sequence: number; organizer: string },
+  invitation: InvitationTarget,
   mailbox: string,
 ): Promise<CalendarLookup> {
   try {
@@ -436,10 +512,16 @@ export async function findInvitationCalendarCopy(
 
 async function lookupInvitationCalendarCopy(
   api: GoogleApi,
-  invitation: { uid: string; recurrenceId: string | null; sequence: number; organizer: string },
+  invitation: InvitationTarget,
   mailbox: string,
 ): Promise<CalendarLookup> {
-  const { uid, recurrenceId } = invitation
+  const { uid, recurrenceId } = invitation.details.identity
+  if (
+    recurrenceId !== null &&
+    invitation.request.recurrenceKind !== 'date' &&
+    invitation.request.recurrenceKind !== 'instant'
+  )
+    return { kind: 'blocked', reason: 'Calendar cannot verify a floating occurrence' }
   const primary = await exactCopies(api, PRIMARY_EVENTS, uid, recurrenceId)
   const ambiguous = {
     kind: 'blocked',
@@ -448,16 +530,24 @@ async function lookupInvitationCalendarCopy(
   if (primary.length > 1) return ambiguous
   if (primary[0]) return invitationCopy(api, PRIMARY_EVENTS, primary[0], invitation, mailbox, true)
 
-  const calendars = await invitationPages<CalendarListEntry>(api, `${BASE}/users/me/calendarList`, {
-    minAccessRole: 'reader',
-    showDeleted: 'false',
-    showHidden: 'true',
-  })
+  const calendars = await invitationPages<CalendarListEntry>(
+    api,
+    `${BASE}/users/me/calendarList`,
+    'calendar#calendarList',
+    {
+      minAccessRole: 'reader',
+      showDeleted: 'false',
+      showHidden: 'true',
+    },
+  )
   let match: CalendarLookup | undefined
+  const seen = new Set<string>()
   for (const calendar of calendars) {
     if (
+      (calendar.kind !== undefined && calendar.kind !== 'calendar#calendarListEntry') ||
       typeof calendar.id !== 'string' ||
-      !calendar.id ||
+      !/^[^\s\p{Cc}/?#]+$/u.test(calendar.id) ||
+      seen.has(calendar.id) ||
       (calendar.primary !== undefined && typeof calendar.primary !== 'boolean') ||
       (calendar.deleted !== undefined && typeof calendar.deleted !== 'boolean') ||
       (!calendar.deleted &&
@@ -465,6 +555,7 @@ async function lookupInvitationCalendarCopy(
     ) {
       throw new Error('Invalid Calendar list entry')
     }
+    seen.add(calendar.id)
     if (calendar.primary || calendar.deleted || calendar.accessRole === 'freeBusyReader') continue
     const url = `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`
     const events = await exactCopies(api, url, uid, recurrenceId)
@@ -478,6 +569,7 @@ async function lookupInvitationCalendarCopy(
         mailbox,
         calendar.accessRole === 'owner' || calendar.accessRole === 'writer',
         calendar.accessRole === 'owner' ? calendar.id.toLowerCase() : undefined,
+        calendar.accessRole === 'owner',
       )
     }
   }
@@ -488,10 +580,11 @@ function invitationCopy(
   api: GoogleApi,
   base: string,
   event: RawEvent,
-  invitation: { sequence: number; organizer: string },
+  invitation: InvitationTarget,
   mailbox: string,
   writable: boolean,
   ownedCalendar?: string,
+  owned = base === PRIMARY_EVENTS,
 ): CalendarLookup {
   const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []
   const selfEmail = self[0]?.email?.toLowerCase()
@@ -502,60 +595,170 @@ function invitationCopy(
       ? self[0]
       : undefined
   const organizer = event.organizer?.email?.toLowerCase()
-  const cancelled = event.status === 'cancelled'
+  const { details, request, joinOnly } = invitation
+  const { sequence, recurrenceId } = details.identity
   const blocked = (reason: string): CalendarLookup => ({ kind: 'blocked', reason })
-  if (cancelled && (!attendee || organizer !== invitation.organizer))
+  const cancelled = event.status === 'cancelled'
+  if (cancelled && (joinOnly || !attendee || organizer !== details.organizer?.email))
     return blocked('This Calendar event was cancelled')
-  if (
-    event.organizer?.self ||
-    organizer === mailbox ||
-    (ownedCalendar && organizer === ownedCalendar)
-  )
-    return blocked('You organize this event')
-  if (organizer !== invitation.organizer)
+  if (organizer !== details.organizer?.email)
     return blocked('The Calendar organizer does not match this invitation')
-  if (!attendee || attendee.resource)
-    return blocked('This account is not an attendee of this Calendar event')
-  if ((event.sequence ?? 0) !== invitation.sequence)
+  const organizes =
+    event.organizer?.self === true && (organizer === mailbox || organizer === ownedCalendar)
+  if (
+    joinOnly
+      ? !owned || (!organizes && (!attendee || attendee.resource))
+      : !attendee || attendee.resource
+  )
+    return blocked('This account cannot verify its place on this Calendar event')
+  if (!joinOnly && (event.organizer?.self || organizer === mailbox || organizer === ownedCalendar))
+    return blocked('You organize this event')
+  if ((event.sequence ?? 0) !== sequence)
     return blocked(
-      (event.sequence ?? 0) > invitation.sequence
+      (event.sequence ?? 0) > sequence
         ? 'Calendar has a newer revision of this event'
         : 'Calendar has not received this revision of the invitation yet',
     )
-  const etag = typeof event.etag === 'string' && event.etag ? event.etag : null
+  if (recurrenceId === null && Boolean(event.recurrence?.length) !== details.recurring)
+    return blocked('The Calendar recurrence scope does not match this invitation')
+  const { explicitFields } = request
+  const start = event.start?.date ?? event.start?.dateTime
+  const end = event.end?.date ?? event.end?.dateTime
+  const allDay = event.start?.date !== undefined
+  const { url: conferenceUrl, source: conferenceLinkSource } = mailConference(event)
+  const calendarConference = httpsLink(structuredConference(event)) ?? conferenceUrl
+  const htmlLink = googleEventUrl(event.htmlLink)
+  const calendarPageInMail = googleEventUrl(details.htmlLink)
+  const timeMatches = (mail: string | null, calendar: string) =>
+    mail !== null && (details.allDay ? mail === calendar : instant(mail) === instant(calendar))
+  const words = (value: string | null | undefined) =>
+    value?.normalize('NFC').trim().replace(/\r\n/g, '\n') ?? ''
+  if (
+    (explicitFields.title &&
+      event.summary !== undefined &&
+      words(event.summary) !== words(details.title)) ||
+    ((joinOnly || explicitFields.start) &&
+      start !== undefined &&
+      !timeMatches(details.start, start)) ||
+    ((joinOnly || explicitFields.end) && end !== undefined && !timeMatches(details.end, end)) ||
+    (explicitFields.location &&
+      event.location !== undefined &&
+      words(event.location) !== words(details.location)) ||
+    (explicitFields.conferenceUrl &&
+      details.conferenceUrl &&
+      calendarConference &&
+      details.conferenceUrl !== calendarConference) ||
+    (explicitFields.htmlLink && calendarPageInMail && htmlLink && calendarPageInMail !== htmlLink)
+  )
+    return blocked('The Calendar details do not match this revision of the invitation')
+  if (joinOnly && (!start || !end || !explicitFields.start))
+    return blocked('Calendar could not verify the time of this meeting')
+  const etag = event.etag || null
   const reason = cancelled
     ? 'This Calendar event was cancelled'
-    : !etag || !writable
-      ? 'This Calendar copy cannot be edited'
-      : null
+    : joinOnly
+      ? null
+      : !etag || !writable
+        ? 'This Calendar copy cannot be edited'
+        : null
   const url = `${base}/${encodeURIComponent(event.id ?? '')}?sendUpdates=all`
   return {
     kind: 'verified',
-    target: JSON.stringify([url, selfEmail]),
+    target: JSON.stringify([url, selfEmail ?? organizer]),
     etag,
+    proof: calendarProof(event),
+    revision: details.identity,
     title: event.summary,
-    start: event.start?.date ?? event.start?.dateTime,
-    end: event.end?.date ?? event.end?.dateTime,
-    allDay: event.start?.date !== undefined,
+    start,
+    end,
+    allDay,
     location: event.location,
-    conferenceUrl: conferenceUrlOf(event),
-    htmlLink: event.htmlLink,
-    responseStatus: asRsvp(attendee?.responseStatus),
+    conferenceUrl,
+    conferenceLinkSource,
+    htmlLink,
+    responseStatus: joinOnly || cancelled ? null : asRsvp(attendee?.responseStatus),
     cancelled,
     unavailableReason: reason,
     reply:
-      reason === null && etag
-        ? (answer, validate) =>
+      !joinOnly && reason === null && etag
+        ? (answer, gate) =>
             api.patch(
               url,
-              {
-                attendeesOmitted: true,
-                attendees: [{ ...attendee, responseStatus: answer }],
-              },
-              { validate, ifMatch: etag },
+              { attendeesOmitted: true, attendees: [{ ...attendee, responseStatus: answer }] },
+              { ...gate, ifMatch: etag },
             )
         : null,
   }
+}
+
+function mailConference(event: RawEvent) {
+  const structured = providerConferenceUrl(structuredConference(event))
+  if (structured) return { url: structured, source: 'calendar' as const }
+  const prose = conferenceUrlIn(event.description) ?? conferenceUrlIn(event.location)
+  return { url: prose, source: prose ? ('provider' as const) : null }
+}
+
+function calendarProof(event: RawEvent): string {
+  const when = (time: RawEvent['start']) =>
+    time?.date ?? (time?.dateTime ? instant(time.dateTime) : null)
+  // Ignore RSVP and ETag changes, but never mistake a different revision at the
+  // same resource URL for confirmation of an earlier write.
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        event.id,
+        event.iCalUID,
+        event.sequence ?? 0,
+        event.recurringEventId,
+        when(event.originalStartTime),
+        event.recurrence,
+        event.organizer?.email?.toLowerCase(),
+        event.summary,
+        when(event.start),
+        when(event.end),
+        event.location,
+        httpsLink(structuredConference(event)) ?? mailConference(event).url,
+        googleEventUrl(event.htmlLink),
+      ]),
+    )
+    .digest('hex')
+}
+
+/** Only a read of the original identity can reconcile a superseded Calendar
+ * attempt. Deletion or a newer event at the original URL is not a refusal. */
+export async function verifyInvitationCalendarResponse(
+  api: GoogleApi,
+  target: string,
+  proof: string,
+  answer: InviteAnswer,
+): Promise<boolean> {
+  const binding: unknown = JSON.parse(target)
+  if (!Array.isArray(binding) || binding.length !== 2) return false
+  const [url, mailbox] = binding as unknown[]
+  if (
+    typeof url !== 'string' ||
+    typeof mailbox !== 'string' ||
+    !/^https:\/\/www\.googleapis\.com\/calendar\/v3\/calendars\/[^/?#]+\/events\/[\w-]+\?sendUpdates=all$/.test(
+      url,
+    )
+  )
+    return false
+  const event = await api.get<RawEvent>(url.split('?')[0]!)
+  if (
+    !event ||
+    !usableInvitationEvent(event) ||
+    event.status === 'cancelled' ||
+    event.organizer?.self ||
+    calendarProof(event) !== proof
+  )
+    return false
+  const self = event.attendees?.filter((attendee) => attendee.self === true) ?? []
+  return (
+    self.length === 1 &&
+    !self[0]?.resource &&
+    self[0]?.email?.toLowerCase() === mailbox &&
+    self[0]?.responseStatus === answer
+  )
 }
 
 /** Cancelled instances of a recurring series still come back (that is how a
@@ -590,67 +793,18 @@ function asRsvp(status: string | undefined): RsvpStatus | null {
   return RSVP_STATUSES.find((s) => s === status) ?? null
 }
 
-/**
- * Join links Holi will follow out of an invite's prose, recognised by the shape
- * of the URL.
- *
- * An allowlist, and deliberately not "the first `https://` in the body". A real
- * Teams invite also carries `aka.ms/JoinTeamsMeeting`, a "Learn More" page and
- * often a dial-in lookup, any of which would win a first-URL race.
- *
- * Scoped to Meet, Zoom, Teams. Adding a host here is cheap; guessing at one is
- * not, because the failure is silent.
- */
-const JOIN_LINKS: RegExp[] = [
-  /^https:\/\/teams\.microsoft\.(?:com|us)\/l\/meetup-join\//i,
-  /^https:\/\/teams\.live\.com\/meet\//i,
-  /^https:\/\/[\w.-]*zoom\.us\/(?:j|w|my)\//i,
-  /^https:\/\/meet\.google\.com\/[a-z]{3}-/i,
-]
-
-/**
- * The first recognised join link in a block of text, or null.
- *
- * The text is an invite body, which Google hands over as HTML, so a URL arrives
- * inside `href="…"` with its ampersands escaped, hence both the delimiter set
- * and the `&amp;` unescape. Trailing sentence punctuation is trimmed, because a
- * link written into prose ends up with the full stop attached.
- */
-export function joinLinkIn(text: string | undefined): string | null {
-  if (text === undefined) return null
-  for (const raw of text.match(/https:\/\/[^\s"'<>]+/gi) ?? []) {
-    const url = raw.replace(/&amp;/gi, '&').replace(/[.,;:)]+$/, '')
-    if (JOIN_LINKS.some((pattern) => pattern.test(url))) return url
-  }
-  return null
+function structuredConference(event: RawEvent): string | undefined {
+  return (
+    event.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')?.uri ??
+    event.hangoutLink
+  )
 }
 
-/**
- * The video link, whoever hosts it.
- *
- * Four sources, in descending order of how much Google itself vouches for them:
- *
- * 1. `conferenceData`'s video entry point: the structured answer.
- * 2. `hangoutLink`: Meet-only, so a fallback rather than the answer.
- * 3. the invite's own body, then its location.
- *
- * (3) exists because Google only fills `conferenceData` for conferences *it*
- * created. A Teams meeting organised in Outlook and synced in over Exchange has
- * neither structured field, and its join link lives in the body as an anchor.
- * `location` is second because it usually just says "Microsoft Teams Meeting".
- *
- * Google's structured fields win over the prose deliberately: when a meeting is
- * moved, `conferenceData` is rewritten and a link left in the description is
- * not.
- */
 function conferenceUrlOf(event: RawEvent): string | null {
-  const video = event.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')
   return (
-    video?.uri ??
-    event.hangoutLink ??
-    joinLinkIn(event.description) ??
-    joinLinkIn(event.location) ??
-    null
+    structuredConference(event) ??
+    conferenceUrlIn(event.description) ??
+    conferenceUrlIn(event.location)
   )
 }
 
