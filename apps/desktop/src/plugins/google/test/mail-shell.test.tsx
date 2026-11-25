@@ -85,7 +85,6 @@ const google: Record<string, (params: unknown, remote: string) => unknown> = {
   categoryCounts: () => ({}),
   contacts: () => [],
   sendAs: () => ['ada@syv.ai'],
-  meeting: () => null,
   mailInvitation: (p, remote) => {
     const target = p as Parameters<typeof googleCap.mailInvitation>[1]
     if (target.expectedAccountSub !== accountSub) throw new Error('Google account changed')
@@ -216,7 +215,7 @@ beforeEach(() => {
     foreign: false,
   })
   markReadMock.mockReset().mockResolvedValue({ ok: true })
-  invitationMock.mockReset().mockResolvedValue(null)
+  invitationMock.mockReset().mockResolvedValue(invitations())
   respondMock.mockReset().mockRejectedValue(new Error('Unexpected RSVP'))
   starMock.mockReset().mockResolvedValue({ ok: true })
   mailMarkersMock.mockReset().mockResolvedValue({})
@@ -428,9 +427,12 @@ test('opens a thread: marks it read, renders HTML in the sandboxed frame', async
   expect(openExternal).toHaveBeenCalledWith('https://mail.google.com/x')
 })
 
-type Invitation = NonNullable<Awaited<ReturnType<typeof googleCap.mailInvitation>>>
+type Invitation = Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations'][number]
 type Response = Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>
 const invitation: Invitation = {
+  kind: 'invitation',
+  recurring: true,
+  scope: 'occurrence',
   bindingRevision: 'shell-binding-1',
   identity: {
     uid: 'q2-review',
@@ -457,6 +459,11 @@ const invitation: Invitation = {
   responsePending: false,
 }
 
+function invitations(
+  ...cards: Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations']
+) {
+  return { invitations: cards, recoveryReason: null }
+}
 test.each([
   ['Accept', 'accepted', 'Accepted'],
   ['Maybe', 'tentative', 'Tentative'],
@@ -465,7 +472,7 @@ test.each([
   'shows the invite and records %s only after Google confirms it',
   async (label, answer, confirmed) => {
     searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-    invitationMock.mockResolvedValue(invitation)
+    invitationMock.mockResolvedValue(invitations(invitation))
     let finish!: (result: Response) => void
     respondMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
     const user = userEvent.setup()
@@ -525,7 +532,7 @@ test('shows a filename-less inline invitation in the mail shell', async () => {
       },
     ],
   })
-  invitationMock.mockResolvedValue(invitation)
+  invitationMock.mockResolvedValue(invitations(invitation))
   const user = userEvent.setup()
   render(<MailShell />)
   await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
@@ -537,9 +544,9 @@ test('shows a filename-less inline invitation in the mail shell', async () => {
 
 test('reports Google acceptance separately from a failed status refresh and Retry only reads', async () => {
   searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  invitationMock.mockResolvedValueOnce(invitation)
+  invitationMock.mockResolvedValueOnce(invitations(invitation))
   invitationMock.mockRejectedValueOnce(new Error('Refresh unavailable'))
-  invitationMock.mockResolvedValue({ ...invitation, responseStatus: 'accepted' })
+  invitationMock.mockResolvedValue(invitations({ ...invitation, responseStatus: 'accepted' }))
   respondMock.mockResolvedValue({
     outcome: 'sent',
     channel: 'gmail',
@@ -564,21 +571,21 @@ test('reports Google acceptance separately from a failed status refresh and Retr
 
 test('a response from a previous account opening cannot change the visible invite after A–B–A', async () => {
   searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  invitationMock.mockResolvedValueOnce(invitation)
+  invitationMock.mockResolvedValueOnce(invitations(invitation))
   invitationMock.mockImplementation(async (_remote, target) =>
     target.expectedAccountSub === 'b'
-      ? {
+      ? invitations({
           ...invitation,
           bindingRevision: `shell-binding-${accountBinding}`,
           title: 'Another mailbox’s workshop',
           identity: { ...invitation.identity, messageId: 'm-other', uid: 'other-workshop' },
-        }
-      : {
+        })
+      : invitations({
           ...invitation,
           bindingRevision: `shell-binding-${accountBinding}`,
           title: 'Budget workshop',
           responseStatus: 'accepted',
-        },
+        }),
   )
   let finish!: (result: Response) => void
   respondMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))

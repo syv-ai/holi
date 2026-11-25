@@ -1,39 +1,49 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from 'jotai'
-import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/plugin-api'
+import { activeRemoteAtom, activeRemoteRevisionValueAtom, openExternal } from '@/plugin-api'
 import { googleAccountRevisionAtom } from '../account'
 import { googleCap } from '../google-cap'
 import { messageOf } from '../google-errors'
 
 type ReadInput = Parameters<typeof googleCap.mailInvitation>[1]
-export type Invitation = NonNullable<Awaited<ReturnType<typeof googleCap.mailInvitation>>>
+type ReadResult = Awaited<ReturnType<typeof googleCap.mailInvitation>>
+export type Invitation = ReadResult['invitations'][number]
 export type InvitationAnswer = Parameters<typeof googleCap.respondToMailInvitation>[1]['answer']
-type Meeting = Awaited<ReturnType<typeof googleCap.meeting>>
 type Receipt = 'sent' | 'uncertain' | 'unchanged'
 
-function sameInvitation(a: Invitation, b: Invitation): boolean {
-  return (
-    a.bindingRevision === b.bindingRevision &&
-    a.identity.messageId === b.identity.messageId &&
-    a.identity.uid === b.identity.uid &&
-    a.identity.sequence === b.identity.sequence &&
-    a.identity.recurrenceId === b.identity.recurrenceId &&
-    a.identity.dtstamp === b.identity.dtstamp &&
-    a.identity.materialKey === b.identity.materialKey
-  )
+// A new parent, binding, or material revision cannot inherit a local receipt.
+function cardKey({ bindingRevision, kind, scope, identity }: Invitation): string {
+  const { messageId, uid, sequence, recurrenceId, dtstamp, materialKey } = identity
+  return JSON.stringify([
+    bindingRevision,
+    kind,
+    scope,
+    messageId,
+    uid,
+    sequence,
+    recurrenceId,
+    dtstamp,
+    materialKey,
+  ])
 }
 
-interface InvitationState {
-  invitation: Invitation | null
-  meeting: Meeting
-  busy: 'reading' | 'responding' | null
+export interface InvitationCardState {
+  key: string
+  invitation: Invitation
   error: string | null
   receipt: Receipt | null
   refreshPending: boolean
 }
 
-/** One keyed reader opening owns these results. The store revisions also close
- * the gap between a vault/account transition and React committing the new reader. */
+interface InvitationState {
+  cards: InvitationCardState[]
+  busy: 'reading' | { responding: string } | null
+  readError: string | null
+  recoveryReason: string | null
+}
+
+/** One keyed reader opening owns these results. Check the live store as well as
+ * its mounted lifetime: React may not yet have committed a vault/account change. */
 export function useMailInvitation({
   remote,
   remoteRevision,
@@ -45,12 +55,10 @@ export function useMailInvitation({
   const owner = useRef<object | null>(null)
   const flight = useRef(false)
   const [state, setState] = useState<InvitationState>({
-    invitation: null,
-    meeting: null,
+    cards: [],
     busy: 'reading',
-    error: null,
-    receipt: null,
-    refreshPending: false,
+    readError: null,
+    recoveryReason: null,
   })
 
   useLayoutEffect(() => {
@@ -66,51 +74,56 @@ export function useMailInvitation({
     if (state.busy === null) flight.current = false
   }, [state])
 
-  const begin = useCallback(() => {
-    const lifetime = owner.current
-    const isCurrent = () =>
-      lifetime !== null &&
-      owner.current === lifetime &&
+  const ownsReader = useCallback(
+    () =>
+      owner.current !== null &&
       store.get(activeRemoteAtom) === remote &&
       store.get(activeRemoteRevisionValueAtom) === remoteRevision &&
-      store.get(googleAccountRevisionAtom) === accountRevision
-    if (!isCurrent() || flight.current) return null
+      store.get(googleAccountRevisionAtom) === accountRevision,
+    [store, remote, remoteRevision, accountRevision],
+  )
+
+  const begin = useCallback(() => {
+    const lifetime = owner.current
+    if (!ownsReader() || flight.current) return null
     flight.current = true
-    return isCurrent
-  }, [store, remote, remoteRevision, accountRevision])
+    return () => owner.current === lifetime && ownsReader()
+  }, [ownsReader])
 
   const read = useCallback(async () => {
     const request = begin()
     if (request === null) return
-    setState((previous) => ({ ...previous, busy: 'reading', error: null }))
+    setState((previous) => ({ ...previous, busy: 'reading', readError: null }))
     try {
-      const invitation = await googleCap.mailInvitation(remote, { threadId, expectedAccountSub })
+      const { invitations, recoveryReason } = await googleCap.mailInvitation(remote, {
+        threadId,
+        expectedAccountSub,
+      })
       if (!request()) return
-      // Preserve Join for other calendar mail (e.g. the organizer's sent
-      // invitation), but never ask for a second match for a recognized invite.
-      const meeting =
-        invitation === null
-          ? await googleCap.meeting(remote, { id: threadId }).catch(() => null)
-          : null
-      if (!request()) return
-      setState((previous) => ({
-        invitation,
-        meeting,
-        busy: null,
-        error: null,
-        receipt:
-          invitation === null ||
-          (previous.invitation !== null && sameInvitation(previous.invitation, invitation))
-            ? previous.receipt
-            : null,
-        refreshPending: invitation?.responsePending === true,
-      }))
+      setState((previous) => {
+        const receipts = new Map(previous.cards.map((card) => [card.key, card.receipt]))
+        return {
+          cards: invitations.map((invitation) => {
+            const key = cardKey(invitation)
+            return {
+              key,
+              invitation,
+              error: null,
+              receipt: receipts.get(key) ?? null,
+              refreshPending: invitation.responsePending,
+            }
+          }),
+          busy: null,
+          readError: null,
+          recoveryReason,
+        }
+      })
     } catch (error) {
       if (request()) {
         setState((previous) => ({
           ...previous,
           busy: null,
-          error: messageOf(error, 'Could not read the invitation.'),
+          readError: messageOf(error, 'Could not read the invitation.'),
         }))
       }
     }
@@ -120,21 +133,31 @@ export function useMailInvitation({
     void read()
   }, [read])
 
-  const { invitation } = state
-  const respond = async (answer: InvitationAnswer) => {
+  const respond = async (card: InvitationCardState, answer: InvitationAnswer) => {
+    const { key, invitation } = card
     if (
-      !invitation?.canRespond ||
+      invitation.kind !== 'invitation' ||
+      !invitation.canRespond ||
       invitation.cancelled ||
-      invitation.responsePending ||
       invitation.responseStatus === answer ||
       state.busy !== null ||
-      state.refreshPending ||
-      state.error !== null
+      state.readError !== null ||
+      card.refreshPending ||
+      card.error !== null
     )
       return
     const request = begin()
     if (request === null) return
-    setState((previous) => ({ ...previous, busy: 'responding', receipt: null }))
+    const updateCard = (
+      busy: InvitationState['busy'],
+      update: (current: InvitationCardState) => InvitationCardState,
+    ) =>
+      setState((previous) => ({
+        ...previous,
+        busy,
+        cards: previous.cards.map((current) => (current.key === key ? update(current) : current)),
+      }))
+    updateCard({ responding: key }, (current) => ({ ...current, receipt: null }))
     try {
       const result = await googleCap.respondToMailInvitation(remote, {
         threadId,
@@ -144,24 +167,23 @@ export function useMailInvitation({
         answer,
       })
       if (!request()) return
-      setState({
-        invitation: result.invitation ?? invitation,
-        meeting: null,
-        busy: null,
-        error: null,
-        receipt:
-          result.invitation === null || sameInvitation(invitation, result.invitation)
-            ? result.outcome
-            : null,
-        refreshPending: result.refreshPending || result.outcome === 'uncertain',
-      })
+      const updated = result.invitation
+      const sameRevision = updated === null || cardKey(updated) === key
+      updateCard(null, (current) => ({
+        ...current,
+        invitation: sameRevision && updated !== null ? updated : current.invitation,
+        receipt: sameRevision ? result.outcome : null,
+        refreshPending:
+          !sameRevision ||
+          result.refreshPending ||
+          result.outcome === 'uncertain' ||
+          updated?.responsePending === true,
+      }))
     } catch (error) {
       if (request()) {
-        // Even a refused response must be re-read before another explicit RSVP:
-        // the invitation or the Calendar copy may have changed.
-        setState((previous) => ({
-          ...previous,
-          busy: null,
+        // A refused response also needs a read before another RSVP for this card.
+        updateCard(null, (current) => ({
+          ...current,
           error: messageOf(
             error,
             'Could not confirm your response. Check its status before responding again.',
@@ -171,5 +193,13 @@ export function useMailInvitation({
     }
   }
 
-  return { ...state, read, respond }
+  const openLink = async (url: string) => {
+    const lifetime = owner.current
+    if (!ownsReader()) return
+    const accounts = await googleCap.allAccounts(remote).catch(() => null)
+    if (owner.current === lifetime && ownsReader() && accounts?.current === expectedAccountSub)
+      openExternal(url)
+  }
+
+  return { ...state, openLink, read, respond }
 }

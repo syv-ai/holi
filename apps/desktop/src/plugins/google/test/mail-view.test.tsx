@@ -37,7 +37,6 @@ const sendMock = vi.fn()
 const discardDraftMock = vi.fn()
 const draftMock = vi.fn()
 const draftsMock = vi.fn()
-const meetingMock = vi.fn()
 const invitationMock = vi.fn<typeof googleCap.mailInvitation>()
 const respondMock = vi.fn<typeof googleCap.respondToMailInvitation>()
 const mailMarkersMock = vi.fn()
@@ -93,7 +92,6 @@ const google: Record<string, (params: unknown, remote: string) => unknown> = {
   discardDraft: (p) => discardDraftMock(p),
   draftBody: (p) => draftMock(p),
   drafts: () => draftsMock(),
-  meeting: (p) => meetingMock(p),
   mailInvitation: (p, remote) => {
     const target = p as Parameters<typeof googleCap.mailInvitation>[1]
     if (target.expectedAccountSub !== mailAccountSub) throw new Error('Google account changed')
@@ -283,8 +281,7 @@ beforeEach(() => {
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
   categoryCountsMock.mockReset().mockResolvedValue({})
-  meetingMock.mockReset().mockResolvedValue(null)
-  invitationMock.mockReset().mockResolvedValue(null)
+  invitationMock.mockReset().mockResolvedValue(invitations())
   respondMock.mockReset().mockRejectedValue(new Error('Unexpected RSVP'))
   currentAnnotations = {}
   mailMarkersMock.mockReset().mockImplementation(async () => currentAnnotations)
@@ -530,7 +527,10 @@ test('offers an unsubscribe link for a newsletter', async () => {
   expect(openExternal).toHaveBeenCalledWith('https://list.test/unsub?u=9')
 })
 
-const invite: NonNullable<Awaited<ReturnType<typeof googleCap.mailInvitation>>> = {
+const invite: Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations'][number] = {
+  kind: 'invitation',
+  recurring: false,
+  scope: 'single',
   bindingRevision: 'view-binding-1',
   identity: {
     messageId: 'm1',
@@ -557,9 +557,14 @@ const invite: NonNullable<Awaited<ReturnType<typeof googleCap.mailInvitation>>> 
   unavailableReason: null,
 }
 
-test('joins a recognised invitation without a separate meeting lookup', async () => {
+function invitations(
+  ...cards: Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations']
+) {
+  return { invitations: cards, recoveryReason: null }
+}
+test('joins a recognised conference from the invitation card', async () => {
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  invitationMock.mockResolvedValue(invite)
+  invitationMock.mockResolvedValue(invitations(invite))
   const user = userEvent.setup()
 
   await openThread()
@@ -580,8 +585,19 @@ test('joins a recognised invitation without a separate meeting lookup', async ()
   ).toBeInTheDocument()
   await user.click(region.getByRole('button', { name: 'Join meeting' }))
 
-  expect(openExternal).toHaveBeenCalledWith(invite.conferenceUrl)
-  expect(meetingMock).not.toHaveBeenCalled()
+  await waitFor(() => expect(openExternal).toHaveBeenCalledWith(invite.conferenceUrl))
+})
+
+test('does not open a link from a reader whose Google account was relinked', async () => {
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValue(invitations(invite))
+  const user = userEvent.setup()
+  await openThread()
+  const join = await screen.findByRole('button', { name: 'Join meeting' })
+  // The connector can change before this reader receives its refresh notification.
+  mailAccountSub = 'account-b'
+  await user.click(join)
+  expect(openExternal).not.toHaveBeenCalled()
 })
 
 test.each(['conference', 'event'] as const)(
@@ -590,29 +606,33 @@ test.each(['conference', 'event'] as const)(
     const user = userEvent.setup()
     const url = 'https://xn--bcher-kva.example.test/meet.google.com'
     threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-    invitationMock.mockResolvedValue({
-      ...invite,
-      conferenceUrl: link === 'conference' ? url : null,
-      conferenceLinkSource: link === 'conference' ? 'mail' : null,
-      htmlLink: link === 'event' ? url : null,
-      htmlLinkSource: link === 'event' ? 'mail' : null,
-    })
+    invitationMock.mockResolvedValue(
+      invitations({
+        ...invite,
+        conferenceUrl: link === 'conference' ? url : null,
+        conferenceLinkSource: link === 'conference' ? 'mail' : null,
+        htmlLink: link === 'event' ? url : null,
+        htmlLinkSource: link === 'event' ? 'mail' : null,
+      }),
+    )
 
     await openThread()
     const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
     const open = await region.findByRole('button', { name: 'Open email link' })
     expect(region.getByText('xn--bcher-kva.example.test')).toBeVisible()
     expect(open).toHaveAccessibleDescription('Destination: xn--bcher-kva.example.test')
-    expect(region.queryByRole('button', { name: /join meeting|open this meeting/i })).toBeNull()
+    expect(
+      region.queryByRole('button', { name: /join meeting|open in google calendar/i }),
+    ).toBeNull()
     expect(openExternal).not.toHaveBeenCalled()
     await user.click(open)
-    expect(openExternal).toHaveBeenCalledExactlyOnceWith(url)
+    await waitFor(() => expect(openExternal).toHaveBeenCalledExactlyOnceWith(url))
   },
 )
 
 test('shows RSVP controls for an inline invitation without a filename or list badge', async () => {
   withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
-  invitationMock.mockResolvedValue(invite)
+  invitationMock.mockResolvedValue(invitations(invite))
 
   await openThread()
 
@@ -628,24 +648,109 @@ test('ordinary mail opens without an invitation or meeting lookup', async () => 
   expect(await openThread()).toHaveTextContent('lunch?')
   expect(screen.queryByRole('region', { name: 'Calendar invitation' })).not.toBeInTheDocument()
   expect(invitationMock).not.toHaveBeenCalled()
-  expect(meetingMock).not.toHaveBeenCalled()
 })
 
-test('keeps the Calendar link for calendar mail with no incoming invitation to answer', async () => {
+test('keeps a same-account meeting card join-only, with a strict Calendar fallback', async () => {
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  meetingMock.mockResolvedValue({
-    eventId: 'e1',
-    title: invite.title,
-    start: invite.start,
-    end: invite.end,
-    conferenceUrl: null,
-    htmlLink: invite.htmlLink,
+  invitationMock.mockResolvedValue(
+    invitations({
+      ...invite,
+      kind: 'meeting',
+      canRespond: false,
+      responseStatus: null,
+      conferenceUrl: 'https://notzoom.us/j/123',
+      conferenceLinkSource: 'calendar',
+    }),
+  )
+  const user = userEvent.setup()
+  await openThread()
+  const card = within(await screen.findByRole('article', { name: invite.title }))
+  expect(card.queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+  expect(card.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument()
+  await user.click(card.getByRole('button', { name: 'Open in Google Calendar' }))
+  await waitFor(() => expect(openExternal).toHaveBeenCalledExactlyOnceWith(invite.htmlLink))
+})
+
+test('keeps an uncertain occurrence response separate from the series and refreshes both without resending', async () => {
+  const series = {
+    ...invite,
+    scope: 'series',
+    recurring: true,
+    title: 'Design review series',
+  } as const
+  const occurrence = {
+    ...invite,
+    scope: 'occurrence',
+    recurring: true,
+    title: 'Moved design review',
+    identity: { ...invite.identity, messageId: 'm2', recurrenceId: '2026-08-19T12:00:00.000Z' },
+  } as const
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValueOnce(invitations(series, occurrence))
+  invitationMock.mockResolvedValue(
+    invitations(series, { ...occurrence, responseStatus: 'declined' }),
+  )
+  respondMock.mockResolvedValueOnce({
+    outcome: 'uncertain',
+    channel: 'calendar',
+    answer: 'declined',
+    invitation: { ...occurrence, responsePending: true },
+    refreshPending: true,
   })
   const user = userEvent.setup()
   await openThread()
-  await user.click(await screen.findByRole('button', { name: 'Open this meeting' }))
-  expect(openExternal).toHaveBeenCalledWith(invite.htmlLink)
+  const whole = within(await screen.findByRole('article', { name: series.title }))
+  const instance = within(screen.getByRole('article', { name: occurrence.title }))
+  expect(whole.getByText('Whole series')).toBeVisible()
+  expect(instance.getByText('This occurrence')).toBeVisible()
+  await user.click(instance.getByRole('button', { name: 'Decline' }))
+  expect(await instance.findByText(/couldn’t confirm whether/i)).toBeVisible()
+  expect(instance.getByRole('button', { name: 'Accept' })).toBeDisabled()
+  expect(whole.getByRole('button', { name: 'Accept' })).toBeEnabled()
+  expect(whole.getByText('No response yet')).toBeVisible()
+  expect(instance.queryByText('Response: Declined')).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await instance.findByText('Response: Declined')).toBeVisible()
+  expect(whole.getByText('No response yet')).toBeVisible()
+  expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
+    expectedAccountSub: 'mail-view-account',
+    expectedBindingRevision: occurrence.bindingRevision,
+    threadId: 't1',
+    identity: occurrence.identity,
+    answer: 'declined',
+  })
+})
+
+test('shows read-only recovery even when no invitation cards can be reconstructed', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValueOnce({
+    invitations: [],
+    recoveryReason: 'Could not confirm a previous response',
+  })
+  await openThread()
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Could not confirm a previous response',
+  )
   expect(screen.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('region', { name: 'Calendar invitation' })).not.toBeInTheDocument(),
+  )
+  expect(respondMock).not.toHaveBeenCalled()
+})
+
+test('an empty invitation result cannot promote a thread badge into a meeting', async () => {
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  await openThread()
+  await waitFor(() =>
+    expect(screen.queryByRole('region', { name: 'Calendar invitation' })).not.toBeInTheDocument(),
+  )
+  expect(
+    screen.queryByRole('button', { name: /join meeting|open in google calendar/i }),
+  ).not.toBeInTheDocument()
+  expect(openExternal).not.toHaveBeenCalled()
 })
 
 test('explains a cancelled invitation detected from its attachment even without a list hint', async () => {
@@ -657,13 +762,15 @@ test('explains a cancelled invitation detected from its attachment even without 
       hasCalendarPayload: true,
     },
   )
-  invitationMock.mockResolvedValue({
-    ...invite,
-    cancelled: true,
-    canRespond: false,
-    responseStatus: null,
-    unavailableReason: 'This invitation was cancelled',
-  })
+  invitationMock.mockResolvedValue(
+    invitations({
+      ...invite,
+      cancelled: true,
+      canRespond: false,
+      responseStatus: null,
+      unavailableReason: 'This invitation was cancelled',
+    }),
+  )
   await openThread()
   const region = await screen.findByRole('region', { name: 'Calendar invitation' })
   expect(await within(region).findByText(/cancelled/i)).toBeInTheDocument()
@@ -675,14 +782,16 @@ test('retries invitation read failures and reconciles uncertainty without resend
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
   invitationMock.mockRejectedValueOnce(new Error('Calendar is temporarily unavailable'))
-  invitationMock.mockResolvedValueOnce(invite)
-  invitationMock.mockResolvedValueOnce({
-    ...invite,
-    canRespond: false,
-    responsePending: true,
-    unavailableReason: 'The response could not be confirmed',
-  })
-  invitationMock.mockResolvedValue({ ...invite, responseStatus: 'tentative' })
+  invitationMock.mockResolvedValueOnce(invitations(invite))
+  invitationMock.mockResolvedValueOnce(
+    invitations({
+      ...invite,
+      canRespond: false,
+      responsePending: true,
+      unavailableReason: 'The response could not be confirmed',
+    }),
+  )
+  invitationMock.mockResolvedValue(invitations({ ...invite, responseStatus: 'tentative' }))
   respondMock.mockResolvedValue({
     outcome: 'uncertain',
     channel: 'gmail',
@@ -701,7 +810,7 @@ test('retries invitation read failures and reconciles uncertainty without resend
   expect(region.queryByText('Response: Tentative')).not.toBeInTheDocument()
   await user.click(region.getByRole('button', { name: 'Retry' }))
   await waitFor(() => expect(region.getByRole('button', { name: 'Retry' })).toBeEnabled())
-  expect(region.getByRole('button', { name: 'Maybe' })).toBeDisabled()
+  expect(region.queryByRole('button', { name: 'Maybe' })).not.toBeInTheDocument()
   expect(region.queryByText('Response: Tentative')).not.toBeInTheDocument()
   await user.click(region.getByRole('button', { name: 'Retry' }))
 
@@ -718,12 +827,18 @@ test('retries invitation read failures and reconciles uncertainty without resend
 test('reloads a changed invitation after a refused response without repeating the write', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  invitationMock.mockResolvedValueOnce(invite)
-  invitationMock.mockResolvedValue({
-    ...invite,
-    title: 'Review at the new time',
-    identity: { ...invite.identity, dtstamp: '2026-08-16T08:00:00.000Z', materialKey: 'new-time' },
-  })
+  invitationMock.mockResolvedValueOnce(invitations(invite))
+  invitationMock.mockResolvedValue(
+    invitations({
+      ...invite,
+      title: 'Review at the new time',
+      identity: {
+        ...invite.identity,
+        dtstamp: '2026-08-16T08:00:00.000Z',
+        materialKey: 'new-time',
+      },
+    }),
+  )
   respondMock.mockRejectedValueOnce(
     new Error('This invitation changed; reload it before responding'),
   )
@@ -742,11 +857,13 @@ test('reloads a changed invitation after a refused response without repeating th
 test('does not attach a previous RSVP receipt to a different invitation revision', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  invitationMock.mockResolvedValueOnce(invite).mockResolvedValue({
-    ...invite,
-    title: 'Review at the new time',
-    identity: { ...invite.identity, materialKey: 'new-time' },
-  })
+  invitationMock.mockResolvedValueOnce(invitations(invite)).mockResolvedValue(
+    invitations({
+      ...invite,
+      title: 'Review at the new time',
+      identity: { ...invite.identity, materialKey: 'new-time' },
+    }),
+  )
   respondMock.mockResolvedValue({
     outcome: 'sent',
     channel: 'calendar',
@@ -767,9 +884,11 @@ test('does not attach a previous RSVP receipt to a different invitation revision
 
 test('ignores an earlier invitation read after opening another thread and reopening the first', async () => {
   const user = userEvent.setup()
-  let finish!: (value: typeof invite) => void
+  let finish!: (value: ReturnType<typeof invitations>) => void
   invitationMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
-  invitationMock.mockResolvedValue({ ...invite, title: 'New revision', responseStatus: 'accepted' })
+  invitationMock.mockResolvedValue(
+    invitations({ ...invite, title: 'New revision', responseStatus: 'accepted' }),
+  )
   readMock.mockImplementation(async ({ id }: { id: string }) => ({
     id,
     subject: id === 't1' ? 'Q2 budget' : 'Lunch',
@@ -789,7 +908,7 @@ test('ignores an earlier invitation read after opening another thread and reopen
   expect(screen.queryByRole('region', { name: 'Calendar invitation' })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: /Q2 budget/ }))
   expect(await screen.findByRole('heading', { name: 'New revision' })).toBeInTheDocument()
-  await act(async () => finish(invite))
+  await act(async () => finish(invitations(invite)))
   expect(screen.queryByRole('heading', { name: invite.title })).not.toBeInTheDocument()
   expect(screen.getByText('Response: Accepted')).toBeInTheDocument()
 })
