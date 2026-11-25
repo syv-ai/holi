@@ -142,9 +142,15 @@ function event(
       : { dateTime: start, ...(options.series ? { timeZone: 'UTC' } : {}) },
     end: options.allDay ? { date: '2024-07-19' } : { dateTime: options.zeroDuration ? start : end },
     attendeesOmitted: undefined as boolean | undefined,
+    endTimeUnspecified: undefined as boolean | undefined,
     htmlLink: 'https://calendar.google.com/calendar/event?eid=example',
     attendees: [
-      { email: person, self: true, responseStatus: 'declined', comment: 'An existing comment' },
+      {
+        email: person,
+        self: true,
+        responseStatus: 'declined' as string | undefined,
+        comment: 'An existing comment',
+      },
       { email: guest, self: false, responseStatus: 'tentative' },
     ],
     ...(options.series ? { recurrence: ['RRULE:FREQ=WEEKLY'] } : {}),
@@ -340,14 +346,17 @@ async function rig() {
           attendeesOmitted: boolean
           attendees: typeof currentEvent.attendees
         }
+        const attendee = update.attendees[0]
         if (
           !update.attendeesOmitted ||
           update.attendees.length !== 1 ||
-          update.attendees[0]?.email !== currentEvent.attendees.find(({ self }) => self)?.email
+          !attendee?.responseStatus ||
+          !['accepted', 'tentative', 'declined'].includes(attendee.responseStatus) ||
+          attendee.email !== currentEvent.attendees.find(({ self }) => self)?.email
         ) {
           return json({ error: 'Only the RSVP of the calendar attendee may change' }, 400)
         }
-        currentEvent.attendees[0] = update.attendees[0]!
+        currentEvent.attendees[0] = attendee
         currentEvent.etag = `"version-${state.calendarPatchAttempts}"`
         const sendUpdates = url.searchParams.get('sendUpdates')
         if (sendUpdates === 'all') {
@@ -355,7 +364,7 @@ async function rig() {
             calendar: id,
             eventId: currentEvent.id,
             sendUpdates,
-            status: currentEvent.attendees[0].responseStatus,
+            status: attendee.responseStatus,
           })
         }
         if (state.omitAfterPatch) state.primaryPages = [{ kind: 'calendar#events' }]
@@ -1069,6 +1078,44 @@ it('requires updated material even when the same-sequence predecessor could not 
   expect(await respond('accepted')).toMatchObject({ channel: 'calendar', refreshPending: false })
   expect(state.calendarUpdateRequests).toHaveLength(1)
   expect(state.sendAttempts).toBe(0)
+})
+
+it('does not answer a series master when only an embedded exception moved at the same sequence', async () => {
+  const { state, read, respond } = await rig()
+  const request = (stamp: string, exceptionHour: number) =>
+    invite('REQUEST', '', 3, stamp)
+      .replace('END:VEVENT', 'RRULE:FREQ=WEEKLY\r\nEND:VEVENT')
+      .replace(
+        'END:VCALENDAR',
+        [
+          'BEGIN:VEVENT',
+          `UID:${uid}`,
+          'SEQUENCE:3',
+          `DTSTAMP:${stamp}`,
+          'RECURRENCE-ID:20240725T150000Z',
+          `DTSTART:20240725T${exceptionHour}0000Z`,
+          `DTEND:20240725T${exceptionHour + 1}0000Z`,
+          'END:VEVENT',
+          'END:VCALENDAR',
+        ].join('\r\n'),
+      )
+  state.messages = [
+    gmailMessage('prior', 100, request('20240701T090000Z', 16)),
+    gmailMessage('redelivery', 200, request('20240702T090000Z', 16)),
+  ]
+  state.events.set('primary', [event({ series: true })])
+  expect(await read()).toMatchObject({ scope: 'series', canRespond: true })
+
+  state.messages.push(gmailMessage('moved', 300, request('20240703T090000Z', 17)))
+  expect(await read()).toMatchObject({ identity: { messageId: 'moved' }, canRespond: false })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.events.clear()
+  expect(await read()).toMatchObject({ canRespond: true })
+  expect(await respond('accepted')).toMatchObject({ channel: 'gmail', refreshPending: false })
+  expect(state.calendarPatchAttempts).toBe(0)
+  expect(state.sendAttempts).toBe(1)
 })
 
 it.each([false, true])(
@@ -1982,6 +2029,74 @@ it('uses a fresh Calendar reset but remembers the confirmed answer when that cop
   expect(state.sendAttempts).toBe(0)
 })
 
+it('does not treat an omitted self response after confirmed Calendar delivery as a reset', async () => {
+  const { state, read, respond, restart } = await rig()
+  const copy = event()
+  state.events.set('primary', [copy])
+  await read()
+  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', refreshPending: false })
+
+  copy.attendees[0]!.responseStatus = undefined
+  const reopened = restart()
+  expect(await reopened.read()).toMatchObject({
+    recordedResponseStatus: null,
+    responseStatus: null,
+    canRespond: false,
+  })
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(await reopened.read()).toMatchObject({ canRespond: false })
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.sendAttempts).toBe(0)
+
+  copy.attendees[0]!.responseStatus = 'accepted'
+  expect(await reopened.read()).toMatchObject({ responseStatus: 'accepted', canRespond: true })
+  expect(await reopened.respond('accepted')).toMatchObject({
+    outcome: 'unchanged',
+    refreshPending: false,
+  })
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.sendAttempts).toBe(0)
+})
+
+it.each(['duplicate mailbox attendee', 'unspecified end'])(
+  'keeps Calendar delivery pending when exact readback has %s',
+  async (defect) => {
+    const { state, read, respond, restart } = await rig()
+    const copy = event()
+    const originalGuest = { ...copy.attendees[1]! }
+    state.events.set('primary', [copy])
+    state.omitAfterPatch = true
+    state.afterPatch = () => {
+      if (defect === 'duplicate mailbox attendee')
+        copy.attendees.push({ ...copy.attendees[0]!, email: person.toUpperCase(), self: false })
+      else copy.endTimeUnspecified = true
+    }
+    await read()
+    expect(await respond('accepted')).toMatchObject({
+      outcome: 'sent',
+      refreshPending: true,
+      invitation: { canRespond: false, responsePending: true },
+    })
+    const reopened = restart()
+    expect(await reopened.read()).toMatchObject({ canRespond: false, responsePending: true })
+    await expect(reopened.respond('tentative')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    copy.attendees.splice(2)
+    copy.endTimeUnspecified = undefined
+    expect(await reopened.read()).toMatchObject({
+      responseStatus: 'accepted',
+      responsePending: false,
+    })
+    expect(await reopened.respond('accepted')).toMatchObject({
+      outcome: 'unchanged',
+      refreshPending: false,
+    })
+    expect(copy.attendees[1]).toEqual(originalGuest)
+    expect(state.calendarPatchAttempts).toBe(1)
+    expect(state.sendAttempts).toBe(0)
+  },
+)
+
 it('does not settle a Calendar response while the matching copy still reports the previous answer', async () => {
   const { state, read, respond, restart } = await rig()
   state.events.set('primary', [event()])
@@ -2096,26 +2211,21 @@ it('uses a newer Gmail answer on a verified old parent after equivalent REQUEST 
   expect(await afterCompaction.respond('accepted')).toMatchObject({ outcome: 'unchanged' })
 
   // Even an anchor's original reply needs uncontested ownership. A plain
-  // claimant found after compaction cannot validate later mail to that parent.
+  // claimant found after compaction leaves later mail on a possible-only parent.
   const anchorRfcId = state.sent
     .get('reply-1')!
     .payload.headers.find(({ name }) => name === 'Message-ID')!.value
   state.messages.push(gmailMessage('anchor-id-claim', 1140, undefined, { rfcId: anchorRfcId }))
-  expect(await restart().read()).toMatchObject({
-    sentResponseStatus: 'tentative',
-    responseStatus: 'tentative',
-  })
+  const disputedAnswer = { sentResponseStatus: null, responseStatus: null, canRespond: false }
+  expect(await restart().read()).toMatchObject(disputedAnswer)
   state.messages.pop()
 
   // Plain mail claiming the now-absent parent invalidates even a persisted
-  // anchor. The latest receipt (on the different redelivery) still holds.
+  // anchor. Its later valid REPLY still contests the older redelivery receipt.
   const claim = gmailMessage('plain-claim', 1150, undefined, { rfcId: '<plain@example.net>' })
   claim.payload.headers.push({ name: 'message-id', value: parent })
   state.messages.push(claim)
-  expect(await restart().read()).toMatchObject({
-    sentResponseStatus: 'tentative',
-    responseStatus: 'tentative',
-  })
+  expect(await restart().read()).toMatchObject(disputedAnswer)
   state.messages.pop()
 
   const copy = event()
@@ -2189,42 +2299,85 @@ it('uses whole Message-ID claims from plain mail without letting duplicate heade
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
-it('withholds an older answer when a disputed equivalent delivery has an unreadable Sent reply', async () => {
+it.each(['valid', 'unreadable'])(
+  'withholds an older answer when a disputed equivalent delivery has a %s Sent reply',
+  async (reply) => {
+    const { state, read, respond } = await rig()
+    const disputed = '<update@example.net>'
+    const proven = '<redelivery@example.net>'
+    const decline = invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')
+    const malformed = decline.replace('UID:', 'UID;VALUE="TEXT",URI:')
+    state.messages.push(
+      gmailMessage('redelivery', 300, invite('REQUEST', '', 3, '20240702T090000Z')),
+      { ...acceptedReply(proven), internalDate: '500' },
+      gmailMessage('plain-claim', 600, undefined, { rfcId: disputed }),
+      gmailMessage('ordinary-sent', 1000, undefined, { sent: true, parent: disputed }),
+      gmailMessage('unrelated-malformed', 1000, malformed, {
+        sent: true,
+        method: 'REPLY',
+        parent: '<unrelated@example.net>',
+      }),
+    )
+    expect(await read()).toMatchObject({ sentResponseStatus: 'accepted', canRespond: true })
+    const disputedReply = gmailMessage(
+      'disputed-reply',
+      500,
+      reply === 'valid' ? decline : malformed,
+      {
+        sent: true,
+        method: 'REPLY',
+        parent: disputed,
+      },
+    )
+    state.messages.push(disputedReply)
+    for (const timestamp of ['500', '700']) {
+      disputedReply.internalDate = timestamp
+      expect(await read()).toMatchObject({
+        responseStatus: null,
+        sentResponseStatus: null,
+        canRespond: false,
+        responsePending: false,
+        unavailableReason: expect.stringMatching(/Gmail.*verify/i),
+      })
+      await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    }
+    state.messages.push(gmailMessage('independent', 800, decline, { sent: true, parent: proven }))
+    expect(await read()).toMatchObject({ sentResponseStatus: 'declined', canRespond: true })
+    expect(await respond('declined')).toMatchObject({ outcome: 'unchanged' })
+    expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+  },
+)
+
+it('scopes a Sent calendar leaf with ambiguous MIME declarations by parent and provider order', async () => {
   const { state, read, respond } = await rig()
-  const disputed = '<update@example.net>'
-  const proven = '<redelivery@example.net>'
+  const parent = '<update@example.net>'
   const decline = invite('REPLY').replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=DECLINED:')
-  const malformed = decline.replace('UID:', 'UID;VALUE="TEXT",URI:')
   state.messages.push(
-    gmailMessage('redelivery', 300, invite('REQUEST', '', 3, '20240702T090000Z')),
-    { ...acceptedReply(proven), internalDate: '500' },
-    gmailMessage('plain-claim', 600, undefined, { rfcId: disputed }),
-    gmailMessage('ordinary-sent', 1000, undefined, { sent: true, parent: disputed }),
-    gmailMessage('unrelated-malformed', 1000, malformed, {
+    { ...acceptedReply(parent), internalDate: '500' },
+    gmailMessage('unrelated-sent', 1000, decline, {
       sent: true,
-      method: 'REPLY',
       parent: '<unrelated@example.net>',
+      contentTypes: ['text/calendar; method=REPLY', 'text/calendar; method=REPLY'],
     }),
   )
   expect(await read()).toMatchObject({ sentResponseStatus: 'accepted', canRespond: true })
-  const unresolved = gmailMessage('unresolved', 500, malformed, {
+  expect(await respond('accepted')).toMatchObject({ outcome: 'unchanged' })
+
+  const related = gmailMessage('related-sent', 700, decline, {
     sent: true,
+    parent,
     method: 'REPLY',
-    parent: disputed,
   })
-  state.messages.push(unresolved)
-  for (const timestamp of ['500', '700']) {
-    unresolved.internalDate = timestamp
-    expect(await read()).toMatchObject({
-      responseStatus: null,
-      sentResponseStatus: null,
-      canRespond: false,
-      responsePending: false,
-      unavailableReason: expect.stringMatching(/Gmail.*verify/i),
-    })
-    await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
-  }
-  state.messages.push(gmailMessage('independent', 800, decline, { sent: true, parent: proven }))
+  related.payload.parts[1]!.mimeType = 'text/calendar; method=REQUEST'
+  state.messages.push(related)
+  expect(await read()).toMatchObject({
+    responseStatus: null,
+    sentResponseStatus: null,
+    canRespond: false,
+  })
+  await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+  state.messages.push(gmailMessage('independent', 800, decline, { sent: true, parent }))
   expect(await read()).toMatchObject({ sentResponseStatus: 'declined', canRespond: true })
   expect(await respond('declined')).toMatchObject({ outcome: 'unchanged' })
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)

@@ -88,6 +88,8 @@ type ParsedInvitation = {
     description: string | null
     explicitFields: ExplicitFields
     attendees: string[]
+    /** Canonical embedded exception material, including each original slot. */
+    exceptionsKey: string
   } | null
   /** Never crosses the capability seam. Also supplies matching data for join-only mail. */
   request: {
@@ -580,6 +582,7 @@ export function parseMailInvitation(
       description: material.description,
       explicitFields: material.explicitFields,
       attendees: material.attendees,
+      exceptionsKey: JSON.stringify(exceptions),
     }
     // Keep an unstamped REQUEST in revision selection, but neither authorize
     // an RSVP nor derive cancellations from that malformed delivery.

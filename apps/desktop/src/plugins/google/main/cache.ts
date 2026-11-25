@@ -34,7 +34,7 @@ const SIDECARS = ['-wal', '-shm', '-journal']
 
 export interface GoogleCache {
   /**
-   * Wipe if the stored row shape is from an older release. Call before first use.
+   * Wipe if the stored rows are incompatible with this release. Call before first use.
    * Accounts are kept apart by living in **different files**, not by a
    * wipe here.
    */
@@ -82,15 +82,14 @@ export interface GoogleCache {
 }
 
 /**
- * The shape of the rows, not the shape of the tables.
+ * The shape and meaning of the rows, not the shape of the tables.
  *
- * `threads` and `agenda` hold whole objects as JSON, so a change to
- * `MailThreadSummary` or `CalendarEvent` is invisible to SQLite and invisible
- * on read: the row parses fine and is simply wrong. **Bump this whenever a
- * cached type changes**, or when `cacheKey` changes (old keys would otherwise
- * sit on disk unread forever).
+ * `threads` and `agenda` hold whole objects as JSON, so changes to their
+ * shape or derived fields (such as invitation badges) are invisible on read.
+ * Bump this when a cached type, classification or `cacheKey` changes. Clear
+ * history cursors too: unchanged threads otherwise keep their old classification.
  */
-const SHAPE_VERSION = '6'
+const SHAPE_VERSION = '7'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
@@ -173,10 +172,7 @@ export function openGoogleCache(path: string): GoogleCache {
             { value?: string } | undefined
         )?.value
 
-      // Rows are stored as whole objects, so a release that changes
-      // `MailThreadSummary` would serve yesterday's JSON into today's UI and
-      // break at the render, far from the change that caused it. Wiping is
-      // free: this is a cache.
+      // Only derived Google data lives here. Readers will rebuild it from Google.
       if (read('shape') === SHAPE_VERSION) return
 
       database().exec(
