@@ -570,7 +570,8 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
     const settledA = await post(A, '/turn/end', '&job=abc12345&pending=2')
     expect(settledA.status).toBe(200)
 
-    host.setDisplayed(A)
+    // Background work for A remains activation-bound even while B owns the display.
+    host.setDisplayed(B)
     await expect(
       call(A, 'agent.message', { session: 'abc12345', text: 'message A' }),
     ).resolves.toEqual({ ok: true })
