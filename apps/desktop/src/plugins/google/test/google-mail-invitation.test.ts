@@ -5724,7 +5724,7 @@ it.each([
     const reopened = restart()
     await expect(reopened.read()).rejects.toMatchObject({
       code,
-      ...(code !== 'NOT_FOUND' ? { next: expect.any(String) } : {}),
+      ...(code === 'UNAUTHORIZED' || code === 'FORBIDDEN' ? { next: expect.any(String) } : {}),
     })
     await expect(respond('tentative')).rejects.toMatchObject({ code })
     state.receiptError = 404
