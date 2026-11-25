@@ -61,12 +61,8 @@ function fullMessageMatches(
 }
 
 /** The unmasked full-message contract also applies to a Sent message read by ID. */
-export function validateFullMessage(
-  message: RawMessage,
-  id: string,
-  threadId: string | null,
-): ThreadMessage {
-  if (!fullMessageMatches(message, id, threadId))
+export function validateFullMessage(message: RawMessage, id: string): ThreadMessage {
+  if (!fullMessageMatches(message, id, null))
     throw new CalendarScanError('Gmail returned an invalid full message response')
   createMimeWalk(undefined, 'full')(message.payload, () => {})
   return message

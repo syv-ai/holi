@@ -12,6 +12,7 @@ import {
   type RsvpStatus,
 } from './calendar'
 import type { parseMailInvitation } from './mail-invitation'
+import type { CalendarLocator } from './mail-invitation-store'
 import {
   conferenceUrlIn,
   googleEventUrl,
@@ -38,10 +39,11 @@ type InvitationCalendarCopy = {
   cancelled: boolean
   unavailableReason: string | null
   reply: ((answer: InviteAnswer, gate: GoogleDispatchGate) => Promise<void>) | null
-  upcomingLinks: (() => Promise<InvitationLinks | null>) | null
+  upcomingLinks:
+    ((suppressSlot: (slot: string) => boolean) => Promise<InvitationLinks | null>) | null
 }
 
-type InvitationLinks = Pick<
+export type InvitationLinks = Pick<
   InvitationCalendarCopy,
   'conferenceUrl' | 'conferenceLinkSource' | 'htmlLink'
 >
@@ -151,6 +153,12 @@ function strongEventEtag(value: string | undefined): string | null {
   return value?.endsWith('"') && /^"[\x21\x23-\x7e\x80-\xff]*"$/.test(value) ? value : null
 }
 
+/** Call after validating the provider's event times. */
+function occurrenceSlot(event: RawEvent): string | null {
+  const original = event.originalStartTime
+  return original ? (original.date ?? new Date(instant(original.dateTime!)).toISOString()) : null
+}
+
 function sameOccurrence(event: RawEvent, recurrenceId: string): boolean {
   const original = event.originalStartTime
   if (!original) return false
@@ -164,6 +172,7 @@ async function exactCopies(
   uid: string,
   recurrenceId: string | null,
   floating: boolean,
+  observe: (event: RawEvent) => void,
 ): Promise<RawEvent[]> {
   const events = await invitationPages<RawEvent>(api, url, 'calendar#events', {
     iCalUID: uid,
@@ -184,6 +193,7 @@ async function exactCopies(
   const roots = events.filter((event) => !event.recurringEventId && !event.originalStartTime)
   if (new Set(events.map(({ id }) => id)).size !== events.length)
     throw new Error('Calendar returned duplicate event rows')
+  for (const event of events) if (event.iCalUID === uid) observe(event)
   // Any row for a floating series could occupy this wall-clock slot. An
   // empty UID collection is still meaningful; never query instances in a guessed zone.
   if (floating) return events
@@ -212,6 +222,7 @@ async function exactCopies(
     )
     if (new Set(instances.map(({ id }) => id)).size !== instances.length)
       throw new Error('Calendar returned duplicate instance rows')
+    const verified: RawEvent[] = []
     for (const event of instances) {
       if (
         !usableInvitationEvent(event) ||
@@ -225,7 +236,10 @@ async function exactCopies(
       if (listed && (listed.etag !== event.etag || calendarProof(listed) !== calendarProof(event)))
         throw new Error('Calendar returned conflicting instance rows')
       matching.set(event.id, event)
+      // Only a UID-verified parent can establish UID when the instance omits it.
+      if (event.iCalUID === uid || series.iCalUID === uid) verified.push(event)
     }
+    for (const event of verified) observe(event)
   }
   // A cancelled series suppresses every occurrence even if Google no longer
   // returns its instances. Never use the series itself as a write target.
@@ -310,9 +324,10 @@ export async function findInvitationCalendarCopy(
   api: GoogleApi,
   invitation: InvitationTarget,
   mailbox: string,
+  remember: (locator: Omit<CalendarLocator, 'accountSub'>) => void,
 ): Promise<CalendarLookup> {
   try {
-    return await lookupInvitationCalendarCopy(api, invitation, mailbox)
+    return await lookupInvitationCalendarCopy(api, invitation, mailbox, remember)
   } catch (error) {
     // Neither a 404 nor incomplete/malformed results prove there is no copy.
     if (propagateCalendarRefusal(error)) throw error
@@ -329,8 +344,43 @@ async function lookupInvitationCalendarCopy(
   api: GoogleApi,
   invitation: InvitationTarget,
   mailbox: string,
+  remember: (locator: Omit<CalendarLocator, 'accountSub'>) => void,
 ): Promise<CalendarLookup> {
   const { uid, recurrenceId } = invitation.details.identity
+  const organizer = invitation.details.organizer?.email
+  const observeCopy =
+    (base: string, calendarId?: string, owned = false) =>
+    (event: RawEvent) => {
+      // The collection has verified the resource and its UID. Bind organizer,
+      // mailbox and original scope independently of the REQUEST's RSVP fields.
+      if (!organizer || event.organizer?.email?.toLowerCase() !== organizer) return
+      // The authenticated primary collection itself binds the resource to the
+      // mailbox. Elsewhere, require the provider's self marker, not just an
+      // attendee address on a shared calendar's copy.
+      if (base !== PRIMARY_EVENTS) {
+        const self = uniqueSelfAttendee(event)
+        const selfEmail = self?.email?.toLowerCase()
+        const mailboxCopy = selfEmail === mailbox && !self?.resource
+        const ownedCopy =
+          owned &&
+          ((selfEmail === calendarId && !self?.resource) ||
+            (event.organizer?.self === true && (organizer === mailbox || organizer === calendarId)))
+        if (!mailboxCopy && !ownedCopy) return
+      }
+      const instance = event.recurringEventId !== undefined
+      const series = !instance && Boolean(event.recurrence?.length)
+      // A floating slot cannot be identified by Calendar's absolute time.
+      // A verified series master still proves itself, including for a slot lookup.
+      const originalSlot = occurrenceSlot(event)
+      if (instance && recurrenceId !== null && !sameOccurrence(event, recurrenceId)) return
+      remember({
+        uid,
+        organizer,
+        recurrenceId: originalSlot,
+        series,
+        target: calendarCopyTarget(calendarResponseUrl(base, event), mailbox),
+      })
+    }
   const series = recurrenceId === null && invitation.details.recurring
   const basis = invitation.request.recurrenceTimeBasis
   const floating =
@@ -339,7 +389,14 @@ async function lookupInvitationCalendarCopy(
     kind: 'blocked',
     reason: 'Calendar cannot verify a floating recurrence',
   } as const
-  const primary = await exactCopies(api, PRIMARY_EVENTS, uid, recurrenceId, floating)
+  const primary = await exactCopies(
+    api,
+    PRIMARY_EVENTS,
+    uid,
+    recurrenceId,
+    floating,
+    observeCopy(PRIMARY_EVENTS),
+  )
   if (floating && primary.length) return unmatchable
   const ambiguous = {
     kind: 'blocked',
@@ -375,7 +432,15 @@ async function lookupInvitationCalendarCopy(
     seen.add(calendar.id)
     if (calendar.primary || calendar.deleted || calendar.accessRole === 'freeBusyReader') continue
     const url = `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`
-    const events = await exactCopies(api, url, uid, recurrenceId, floating)
+    const ownedCalendar = calendar.accessRole === 'owner' ? calendar.id.toLowerCase() : undefined
+    const events = await exactCopies(
+      api,
+      url,
+      uid,
+      recurrenceId,
+      floating,
+      observeCopy(url, calendar.id.toLowerCase(), calendar.accessRole === 'owner'),
+    )
     if (floating && events.length) return unmatchable
     if (events.length > 1 || (events.length && match)) return ambiguous
     if (events[0]) {
@@ -386,7 +451,7 @@ async function lookupInvitationCalendarCopy(
         invitation,
         mailbox,
         calendar.accessRole === 'owner' || calendar.accessRole === 'writer',
-        calendar.accessRole === 'owner' ? calendar.id.toLowerCase() : undefined,
+        ownedCalendar,
         calendar.accessRole === 'owner',
       )
     }
@@ -408,6 +473,14 @@ function mailboxAttendee(event: RawEvent, mailbox: string) {
     event.attendees?.filter(({ email }) => email?.toLowerCase() === mailbox).length === 1
     ? self
     : undefined
+}
+
+function calendarResponseUrl(base: string, event: RawEvent): string {
+  return `${base}/${encodeURIComponent(event.id ?? '')}?sendUpdates=all`
+}
+
+function calendarCopyTarget(url: string, mailbox: string): string {
+  return JSON.stringify([url, mailbox])
 }
 
 function invitationCopy(
@@ -529,11 +602,11 @@ function invitationCopy(
         : !etag || !writable
           ? 'This Calendar copy cannot be edited'
           : null
-  const url = `${base}/${encodeURIComponent(event.id ?? '')}?sendUpdates=all`
+  const url = calendarResponseUrl(base, event)
   const proof = calendarProof(event, requiresRoster)
   return {
     kind: 'verified',
-    target: JSON.stringify([url, mailbox]),
+    target: calendarCopyTarget(url, mailbox),
     etag,
     proof,
     matchesProof: (stored) => stored === proof || matchesCalendarProof(event, stored),
@@ -551,7 +624,8 @@ function invitationCopy(
     unavailableReason: reason,
     upcomingLinks:
       recurrenceId === null && details.recurring && !cancelled
-        ? () => upcomingInvitationLinks(api, base, event, details.identity.uid, organizer)
+        ? (suppressSlot) =>
+            upcomingInvitationLinks(api, base, event, details.identity.uid, organizer, suppressSlot)
         : null,
     reply:
       !joinOnly && reason === null && etag
@@ -573,6 +647,7 @@ async function upcomingInvitationLinks(
   master: RawEvent,
   uid: string,
   organizer: string,
+  suppressSlot: (slot: string) => boolean,
 ): Promise<InvitationLinks | null> {
   const now = Date.now()
   const timeMin = new Date(now).toISOString()
@@ -607,11 +682,14 @@ async function upcomingInvitationLinks(
           (instance.end?.dateTime !== undefined && instant(instance.end.dateTime) <= now)
         )
           return null
-        const { url, source } = mailConference(instance)
-        return {
-          conferenceUrl: url,
-          conferenceLinkSource: source,
-          htmlLink: googleEventUrl(instance.htmlLink),
+        const slot = occurrenceSlot(instance)!
+        if (!suppressSlot(slot)) {
+          const { url, source } = mailConference(instance)
+          return {
+            conferenceUrl: url,
+            conferenceLinkSource: source,
+            htmlLink: googleEventUrl(instance.htmlLink),
+          }
         }
       }
       pageToken = page.nextPageToken
