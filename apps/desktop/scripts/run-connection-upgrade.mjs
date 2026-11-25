@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { createServer } from 'node:http'
 import { createReadStream } from 'node:fs'
@@ -17,6 +18,7 @@ import { observeFirstTargetConnections } from './upgrade-first-target.mjs'
 import { cleanupUpgradeFixture } from './upgrade-cleanup.mjs'
 import { createUpgradeInstaller, installerStatePath } from './upgrade-installer.mjs'
 import { waitForBeforePanel } from './upgrade-before-panel.mjs'
+import { observeUpgradeUiRequests, captureUpgradeUiRequests } from './upgrade-ui-requests.mjs'
 
 const exec = promisify(execFile)
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -44,6 +46,8 @@ let upgradeNotBeforeMicros
 let providers
 let feed
 const launchKeys = []
+const fixtureRemote = `fixture-upgrade-565/${randomUUID()}`
+let uiDiagnosticsActive = false
 
 async function command(bin, args, options = {}) {
   const { cleanup = false, ...rest } = options
@@ -451,13 +455,15 @@ async function main() {
     let release;
     const seeded = new Promise(resolve => { release = resolve; });
     globalThis.__holi565 = { seeded: false };
+    // Install before production registers IPC, with the seed identity already known.
+    globalThis.__holi565.uiRequests = (${observeUpgradeUiRequests.toString()})(require('electron').ipcMain, ${JSON.stringify(fixtureRemote)});
     fs.readFile = async function(file, ...args) {
       if (String(file) === ${JSON.stringify(join(profile, 'github-auth.enc'))}) await seeded;
       return original.call(this, file, ...args);
     };
     app.once('ready', async () => {
       try {
-        globalThis.__holi565.receipt = await require(${JSON.stringify(join(bundle, 'producer.cjs'))}).seedConnections(${JSON.stringify(profile)}, ${JSON.stringify(vaultRoot)});
+        globalThis.__holi565.receipt = await require(${JSON.stringify(join(bundle, 'producer.cjs'))}).seedConnections(${JSON.stringify(profile)}, ${JSON.stringify(vaultRoot)}, ${JSON.stringify(fixtureRemote)});
         globalThis.__holi565.seeded = true;
       } catch (error) { globalThis.__holi565.failed = { type: error.name, code: /^[A-Z_]+$/.test(error.code || '') ? error.code : null }; }
       finally { fs.readFile = original; release(); }
@@ -465,8 +471,15 @@ async function main() {
     return true;
   })()`,
   )
+  uiDiagnosticsActive = true
   await inspector.resume()
   const seeded = await observeBeforeUpgrade()
+  await captureUpgradeUiRequests({
+    execute: (expression) => evaluate(expression),
+    receipt,
+    persist: () => checkpoint(receipt.phase),
+  })
+  uiDiagnosticsActive = false
   // A normal DOM click invokes the renderer's install atom, tRPC mutation and
   // main's guarded shutdown. No installer/download method is replaced.
   upgradeNotBeforeMicros = Date.now() * 1000
@@ -634,6 +647,14 @@ async function main() {
 try {
   await main()
 } catch (error) {
+  // Snapshot before cleanup drains/closes the inspector, including the 120s panel timeout.
+  if (uiDiagnosticsActive && inspector && evidence) {
+    await captureUpgradeUiRequests({
+      execute: (expression) => inspector.evaluate(expression),
+      receipt,
+      persist: () => checkpoint(receipt.phase),
+    }).catch(() => {})
+  }
   if (evidence) {
     receipt.error = {
       type: error.name,

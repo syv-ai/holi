@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { app, safeStorage } from 'electron'
 import { TokenStore } from '../src/main/github/token-store'
@@ -28,13 +27,16 @@ export interface ConnectionFixtureReceipt {
 export async function seedConnections(
   userData: string,
   vaultRoot: string,
+  remote: string,
 ): Promise<ConnectionFixtureReceipt> {
   if (!app.isReady()) throw new Error('Fixture requires a ready Electron app')
   if (!safeStorage.isEncryptionAvailable()) {
     throw new Error('Fixture requires native safeStorage encryption; no credentials were written')
   }
 
-  const remote = `fixture-upgrade-565/${randomUUID()}`
+  if (!/^fixture-upgrade-565\/[0-9a-f-]{36}$/.test(remote)) {
+    throw new Error('Invalid synthetic fixture remote')
+  }
   const clonePath = join(vaultRoot, ...remote.split('/'))
   await mkdir(userData, { recursive: true })
   await mkdir(vaultRoot, { recursive: true })
