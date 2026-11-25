@@ -112,6 +112,8 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
     'directory-to-file',
     'mode-true',
     'mode-false',
+    'new-exec-mode-false',
+    'nested-ignores',
     'invalid-path',
     'corrupt-blob',
     'race-ignore',
@@ -163,6 +165,18 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
     if (name === 'mode-true' || name === 'mode-false') {
       await git(root, 'config', 'core.filemode', name === 'mode-true' ? 'true' : 'false')
       await chmod(join(root, 'run.sh'), 0o755)
+    }
+    if (name === 'new-exec-mode-false') {
+      await git(root, 'config', 'core.filemode', 'false')
+      await put(root, 'new-exec.sh', '#!/bin/sh\nexit 0\n')
+      await chmod(join(root, 'new-exec.sh'), 0o755)
+    }
+    if (name === 'nested-ignores') {
+      await put(root, 'outer/.gitignore', 'cache/\n*.skip\n')
+      await put(root, 'outer/keep.md', 'nested kept')
+      await put(root, 'outer/ignored.skip', 'ignored leaf')
+      await put(root, 'outer/cache/.gitattributes', '* filter=forbidden\n')
+      await symlink('../keep.md', join(root, 'outer/cache/.gitignore'))
     }
     if (name === 'invalid-path') await put(root, 'bad\\name.md', 'unsupported name')
     if (name === 'corrupt-blob') {
@@ -218,6 +232,8 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
       'directory-to-file',
       'mode-true',
       'mode-false',
+      'new-exec-mode-false',
+      'nested-ignores',
     ].includes(name)
     let expectedTree = null
     let expectedEntries = null
@@ -242,6 +258,16 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
         if (name === 'mode-true' || name === 'mode-false') {
           await git(oracle, 'config', 'core.filemode', name === 'mode-true' ? 'true' : 'false')
           await chmod(join(oracle, 'run.sh'), 0o755)
+        }
+        if (name === 'new-exec-mode-false') {
+          await git(oracle, 'config', 'core.filemode', 'false')
+          await put(oracle, 'new-exec.sh', '#!/bin/sh\nexit 0\n')
+          await chmod(join(oracle, 'new-exec.sh'), 0o755)
+        }
+        if (name === 'nested-ignores') {
+          await put(oracle, 'outer/.gitignore', 'cache/\n*.skip\n')
+          await put(oracle, 'outer/keep.md', 'nested kept')
+          await put(oracle, 'outer/ignored.skip', 'ignored leaf')
         }
         await git(oracle, 'add', '-A')
         if (protectedCase)
@@ -330,9 +356,12 @@ export async function verifyWorkingCopyTreeResults(results, manifest) {
       assert.match(path, /^\.git\/objects\/[0-9a-f]{2}\/[0-9a-f]{38}$/)
       assert.ok(!value.link && !value.directory)
       const oid = path.replace('.git/objects/', '').replace('/', '')
-      const decoded = inflateSync(await readFile(join(item.root, path)), {
+      const compressed = await readFile(join(item.root, path))
+      const { buffer: decoded, engine } = inflateSync(compressed, {
         maxOutputLength: 64 * 1024 * 1024 + 128,
+        info: true,
       })
+      assert.equal(engine.bytesWritten, compressed.length, 'Trailing loose-object data')
       const end = decoded.indexOf(0)
       assert.ok(end > 0)
       const header = decoded
@@ -360,6 +389,7 @@ export async function verifyWorkingCopyTreeResults(results, manifest) {
       tree: result.tree,
       repositoryUnchanged: !item.mutation,
       onlyDeclaredConcurrentEdits: Boolean(item.mutation),
+      declaredConcurrentEdits: Object.keys(injected),
       rawEntriesVerified: !item.refusal,
     })
   }

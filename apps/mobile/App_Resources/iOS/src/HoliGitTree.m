@@ -18,10 +18,44 @@ static BOOL HNGTreeDecision(NSString *path, NSInteger (^policy)(NSString *), BOO
   *include = value == 1;
   return YES;
 }
-// Metadata only. Excluded subtrees are pruned before opening or enumerating them.
-static BOOL HNGTreeInventory(int fd, NSString *prefix, NSMutableDictionary *records, NSInteger (^policy)(NSString *), NSUInteger *visits, NSUInteger depth, NSError **error) {
+@interface HNGTreeCapture : NSObject
+@property(nonatomic, assign) git_repository *repository;
+@property(nonatomic, strong) HoliGitSnapshot *snapshot;
+@property(nonatomic, strong) NSSet *trackedDirectories;
+@property(nonatomic, strong) NSMutableDictionary *cache;
+@property(nonatomic, copy) NSInteger (^policy)(NSString *);
+@property(nonatomic, assign) NSUInteger total;
+@property(nonatomic, assign) NSUInteger visits;
+@property(nonatomic, assign) BOOL verifying;
+@end
+@implementation HNGTreeCapture
+@end
+static NSData *HNGTreeRead(int rootFD, NSString *path, NSDictionary *identity, NSUInteger *total, NSError **error);
+// Each scan owns its open directory description; dup would share the caller's offset.
+static BOOL HNGTreeInventory(int fd, NSString *prefix, NSMutableDictionary *records, HNGTreeCapture *capture, NSUInteger depth, NSError **error) {
   if (depth > 64) return HNGTreeFail(error, @"Working tree exceeds depth limit");
-  int copy = dup(fd);
+  struct stat directoryBefore, directoryAfter;
+  if (fstat(fd, &directoryBefore)) return HNGTreeFail(error, @"Cannot inspect inventory root");
+  if (!prefix.length) records[@"."] = HNGTreeFileIdentity(directoryBefore);
+  NSString *ignorePath = prefix.length ? [prefix stringByAppendingString:@"/.gitignore"] : @".gitignore";
+  BOOL include = NO;
+  if (!HNGTreeDecision(ignorePath, capture.policy, &include, error)) return NO;
+  BOOL includeIgnore = include;
+  struct stat ignoreStat;
+  int ignoreResult = include ? fstatat(fd, ".gitignore", &ignoreStat, AT_SYMLINK_NOFOLLOW) : -1;
+  if (include && ignoreResult < 0 && errno != ENOENT) return HNGTreeFail(error, @"Cannot inspect ignore rules");
+  NSDictionary *ignoreIdentity = ignoreResult == 0 ? HNGTreeFileIdentity(ignoreStat) : nil;
+  if (include && ignoreResult == 0 && !capture.verifying) {
+    NSUInteger total = capture.total;
+    NSData *bytes = HNGTreeRead(fd, @".gitignore", HNGTreeFileIdentity(ignoreStat), &total, error);
+    if (!bytes) return NO;
+    capture.total = total;
+    capture.cache[ignorePath] = bytes;
+    NSString *target = [capture.snapshot.path stringByAppendingPathComponent:ignorePath];
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:target.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error] || ![bytes writeToFile:target options:0 error:error]) return NO;
+    git_attr_cache_flush(capture.repository);
+  }
+  int copy = openat(fd, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   DIR *dir = copy >= 0 ? fdopendir(copy) : NULL;
   if (!dir) { if (copy >= 0) close(copy); return HNGTreeFail(error, @"Cannot enumerate working tree"); }
   BOOL ok = YES;
@@ -30,25 +64,35 @@ static BOOL HNGTreeInventory(int fd, NSString *prefix, NSMutableDictionary *reco
     struct dirent *entry = readdir(dir);
     if (!entry) { if (errno) ok = HNGTreeFail(error, @"Cannot enumerate working tree"); break; }
     if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") || !strcmp(entry->d_name, ".git")) continue;
-    if (++*visits > 10000) { ok = HNGTreeFail(error, @"Working tree exceeds entry limit"); break; }
+    if (++capture.visits > 10000) { ok = HNGTreeFail(error, @"Working tree exceeds entry limit"); break; }
     NSString *part = [NSString stringWithUTF8String:entry->d_name];
     if (!part) { ok = HNGTreeFail(error, @"Invalid working-tree filename"); break; }
     NSString *path = prefix.length ? [prefix stringByAppendingFormat:@"/%@", part] : part;
-    BOOL include = NO;
-    if (!HNGTreeDecision(path, policy, &include, error)) { ok = NO; break; }
+    if (!HNGTreeDecision(path, capture.policy, &include, error)) { ok = NO; break; }
     if (!include) continue;
     struct stat before, opened, after;
     if (fstatat(fd, entry->d_name, &before, AT_SYMLINK_NOFOLLOW)) { ok = HNGTreeFail(error, @"Cannot inspect working-tree entry"); break; }
-    records[path] = HNGTreeFileIdentity(before);
     if (S_ISDIR(before.st_mode)) {
+      int ignored = 0;
+      NSString *privateDirectory = [capture.snapshot.path stringByAppendingPathComponent:path];
+      if (![[NSFileManager defaultManager] createDirectoryAtPath:privateDirectory withIntermediateDirectories:YES attributes:nil error:error]) { ok = NO; break; }
+      NSString *directoryQuery = [path stringByAppendingString:@"/"];
+      if (git_ignore_path_is_ignored(&ignored, capture.repository, directoryQuery.UTF8String) < 0) { ok = HNGTreeFail(error, @"Cannot evaluate directory ignore rules"); break; }
+      if (ignored && ![capture.trackedDirectories containsObject:path]) continue;
+      records[path] = HNGTreeFileIdentity(before);
       int child = openat(fd, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
       ok = child >= 0 && !fstat(child, &opened) && [HNGTreeFileIdentity(before) isEqualToDictionary:HNGTreeFileIdentity(opened)];
-      if (ok) ok = HNGTreeInventory(child, path, records, policy, visits, depth + 1, error);
+      if (ok) ok = HNGTreeInventory(child, path, records, capture, depth + 1, error);
       if (child >= 0) close(child);
       if (ok) ok = !fstatat(fd, entry->d_name, &after, AT_SYMLINK_NOFOLLOW) && [HNGTreeFileIdentity(before) isEqualToDictionary:HNGTreeFileIdentity(after)];
       if (!ok) { HNGTreeFail(error, @"Working-tree directory changed during enumeration"); break; }
-    }
+    } else records[path] = HNGTreeFileIdentity(before);
   }
+  if (ok && includeIgnore) {
+    int final = fstatat(fd, ".gitignore", &ignoreStat, AT_SYMLINK_NOFOLLOW);
+    if ((final < 0 && errno != ENOENT) || ((final == 0) != (ignoreIdentity != nil)) || (final == 0 && ![ignoreIdentity isEqualToDictionary:HNGTreeFileIdentity(ignoreStat)])) ok = HNGTreeFail(error, @"Ignore rules changed during traversal");
+  }
+  if (ok && (fstat(fd, &directoryAfter) || ![HNGTreeFileIdentity(directoryBefore) isEqualToDictionary:HNGTreeFileIdentity(directoryAfter)])) ok = HNGTreeFail(error, @"Directory changed during inventory");
   closedir(dir);
   return ok;
 }
@@ -142,6 +186,10 @@ static BOOL HNGTreeVerifyPlan(git_repository *repo, const git_oid *oid, NSString
   }
   git_tree_free(tree);
   return ok ? YES : HNGTreeFail(error, @"Prepared tree differs from captured bytes and modes");
+}
+static BOOL HNGTreeRootMatches(NSString *root, int fd, NSError **error) {
+  struct stat pinned, current;
+  return !fstat(fd, &pinned) && !lstat(root.fileSystemRepresentation, &current) && S_ISDIR(current.st_mode) && pinned.st_dev == current.st_dev && pinned.st_ino == current.st_ino ? YES : HNGTreeFail(error, @"Working-copy root was replaced");
 }
 static NSSet<NSString *> *HNGLooseObjects(NSString *snapshot) {
   NSString *objects = [snapshot stringByAppendingPathComponent:@".git/objects"];
@@ -281,8 +329,13 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
     if (rc < 0 || !HNGTreeObjectValid(repo, git_commit_id(commit), GIT_OBJECT_COMMIT, error)) break;
     NSUInteger visits = 0;
     if (!HNGTreeParentPaths(repo, tree, @"", trackedPaths, policy, &visits, 0, error)) break;
-    NSMutableDictionary *trackedSpellings = [NSMutableDictionary dictionary];
+    NSMutableSet *allTrackedSpellings = [trackedPaths mutableCopy];
     for (NSString *path in trackedPaths) {
+      NSString *parent = path.stringByDeletingLastPathComponent;
+      while (parent.length) { [allTrackedSpellings addObject:parent]; parent = parent.stringByDeletingLastPathComponent; }
+    }
+    NSMutableDictionary *trackedSpellings = [NSMutableDictionary dictionary];
+    for (NSString *path in allTrackedSpellings) {
       NSString *key = path.precomposedStringWithCanonicalMapping.lowercaseString;
       if (trackedSpellings[key] && ![trackedSpellings[key] isEqualToString:path]) { valid = HNGTreeFail(error, @"Ambiguous tracked filename spelling"); break; }
       trackedSpellings[key] = path;
@@ -304,34 +357,31 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
     if (!metadata) { HNGTreeFail(error, @"Existing metadata lock or unreadable metadata"); break; }
     rootFD = open(root.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (rootFD < 0) { HNGTreeFail(error, @"Cannot open working tree"); break; }
-    NSMutableDictionary *inventory = [NSMutableDictionary dictionary];
-    visits = 0;
-    if (!HNGTreeInventory(rootFD, @"", inventory, policy, &visits, 0, error)) break;
-    NSMutableDictionary *cache = [NSMutableDictionary dictionary];
-    NSUInteger total = 0;
-    // Load ignore rules once. These exact bytes also become their prepared blobs.
-    for (NSString *path in inventory) {
-      if ([path.lastPathComponent isEqualToString:@".gitattributes"]) { valid = HNGTreeFail(error, @"Attributes are unsupported"); break; }
-      if (![path.lastPathComponent isEqualToString:@".gitignore"]) continue;
-      NSData *bytes = HNGTreeRead(rootFD, path, inventory[path], &total, error);
-      if (!bytes) { valid = NO; break; }
-      cache[path] = bytes;
-      NSString *target = [snapshot.path stringByAppendingPathComponent:path];
-      if (![[NSFileManager defaultManager] createDirectoryAtPath:target.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error] || ![bytes writeToFile:target options:0 error:error]) { valid = NO; break; }
+    NSMutableSet *trackedDirectories = [NSMutableSet set];
+    for (NSString *path in trackedPaths) {
+      NSString *parent = path.stringByDeletingLastPathComponent;
+      while (parent.length) { [trackedDirectories addObject:parent]; parent = parent.stringByDeletingLastPathComponent; }
     }
-    if (!valid) break;
+    HNGTreeCapture *capture = [HNGTreeCapture new];
+    capture.repository = repo; capture.snapshot = snapshot; capture.trackedDirectories = trackedDirectories;
+    capture.cache = [NSMutableDictionary dictionary]; capture.policy = policy;
     rc = git_repository_set_workdir(repo, snapshot.path.fileSystemRepresentation, 0);
-    if (rc == 0) rc = git_index_new(&prepared);
+    if (rc < 0) { HNGError(error, rc); break; }
+    NSMutableDictionary *inventory = [NSMutableDictionary dictionary];
+    if (!HNGTreeInventory(rootFD, @"", inventory, capture, 0, error)) break;
+    NSMutableDictionary *cache = capture.cache;
+    NSUInteger total = capture.total;
+    rc = git_index_new(&prepared);
     if (rc < 0) { HNGError(error, rc); break; }
     NSMutableSet *foldedNames = [NSMutableSet set];
     NSMutableDictionary *plan = [NSMutableDictionary dictionary];
     for (NSString *path in [[inventory allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
       NSDictionary *identity = inventory[path];
       mode_t mode = [identity[@"mode"] unsignedIntValue];
-      if (S_ISDIR(mode)) continue;
       NSString *folded = path.precomposedStringWithCanonicalMapping.lowercaseString;
       if ([foldedNames containsObject:folded]) { valid = HNGTreeFail(error, @"Case-ambiguous working tree"); break; }
       [foldedNames addObject:folded];
+      if (S_ISDIR(mode)) continue;
       const git_index_entry *tracked = git_index_get_bypath(original, path.UTF8String, 0);
       if (tracked && strcmp(tracked->path, path.UTF8String)) { valid = HNGTreeFail(error, @"Case-only staged rename is unsupported"); break; }
       BOOL inHead = [trackedPaths containsObject:path];
@@ -340,12 +390,15 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
         if (git_ignore_path_is_ignored(&ignored, repo, path.UTF8String) < 0) { valid = HNGTreeFail(error, @"Cannot evaluate ignore rules"); break; }
         if (ignored) continue;
       }
-      NSData *bytes = cache[path];
+      if ([path.lastPathComponent.lowercaseString isEqualToString:@".gitattributes"]) { valid = HNGTreeFail(error, @"Attributes are unsupported"); break; }
+      NSString *cachePath = [path.lastPathComponent.lowercaseString isEqualToString:@".gitignore"] ? [path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@".gitignore"] : path;
+      NSData *bytes = cache[cachePath];
       if (!bytes) bytes = HNGTreeRead(rootFD, path, identity, &total, error);
       if (!bytes) { valid = NO; break; }
       git_index_entry entry = {0};
       entry.path = path.UTF8String;
       entry.mode = mode & S_IXUSR ? GIT_FILEMODE_BLOB_EXECUTABLE : GIT_FILEMODE_BLOB;
+      if (!filemode) entry.mode = GIT_FILEMODE_BLOB;
       if (!filemode && tracked) entry.mode = tracked->mode;
       else if (!filemode && inHead) {
         git_tree_entry *old = NULL;
@@ -366,13 +419,13 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
     NSMutableSet *seen = [NSMutableSet set];
     if (rc < 0 || !HNGTreeVerifyPlan(repo, &treeOID, @"", plan, seen, 0, error) || seen.count != plan.count) { HNGTreeFail(error, @"Prepared tree is incomplete or corrupt"); break; }
     NSMutableDictionary *current = [NSMutableDictionary dictionary];
-    visits = 0;
-    if (!HNGTreeInventory(rootFD, @"", current, policy, &visits, 0, error) || ![inventory isEqualToDictionary:current]) { HNGTreeFail(error, @"Working tree changed during preparation"); break; }
+    capture.visits = 0; capture.verifying = YES;
+    if (!HNGTreeInventory(rootFD, @"", current, capture, 0, error) || ![inventory isEqualToDictionary:current]) { HNGTreeFail(error, @"Working tree changed during preparation"); break; }
     HoliGitSnapshot *verification = [[HoliGitSnapshot alloc] initWithRoot:root error:error];
     BOOL unchangedMetadata = verification && [metadata isEqualToDictionary:HNGTreeMetadata(verification.path)];
     BOOL closed = [verification closeWithError:error];
     if (!unchangedMetadata || !closed) { HNGTreeFail(error, @"Repository changed during preparation"); break; }
-    if (!HNGInstallTreeObjects(snapshot.path, objectsBefore, rootFD, repo, error)) break;
+    if (!HNGTreeRootMatches(root, rootFD, error) || !HNGInstallTreeObjects(snapshot.path, objectsBefore, rootFD, repo, error)) break;
     HoliGitSnapshot *destination = nil;
     git_repository *destinationRepo = [self openSafeRepository:root snapshot:&destination error:error];
     [seen removeAllObjects];
@@ -380,8 +433,9 @@ static BOOL HNGInstallTreeObjects(NSString *snapshot, NSSet *before, int rootFD,
     git_repository_free(destinationRepo);
     closed = [destination closeWithError:error];
     if (!installed || !closed) { HNGTreeFail(error, @"Destination tree verification failed"); break; }
-    [current removeAllObjects]; visits = 0;
-    if (!HNGTreeInventory(rootFD, @"", current, policy, &visits, 0, error) || ![inventory isEqualToDictionary:current]) { HNGTreeFail(error, @"Working tree changed during object installation"); break; }
+    [current removeAllObjects]; capture.visits = 0;
+    if (!HNGTreeInventory(rootFD, @"", current, capture, 0, error) || ![inventory isEqualToDictionary:current]) { HNGTreeFail(error, @"Working tree changed during object installation"); break; }
+    if (!HNGTreeRootMatches(root, rootFD, error)) break;
     result = @{@"treeOID":HNGTreeOID(&treeOID), @"parentOID":HNGTreeOID(git_commit_id(commit)), @"branch":branch, @"unchanged":@(git_oid_equal(&treeOID, git_tree_id(tree)))};
   } while (0);
   if (rootFD >= 0) close(rootFD);

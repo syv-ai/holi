@@ -1,7 +1,9 @@
 import { describe, it } from 'vitest'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
+import { deflateSync } from 'node:zlib'
 import { join } from 'node:path'
 import {
   createWorkingCopyTreeFixture,
@@ -33,6 +35,19 @@ describe('working-copy tree fixture', () => {
           ['.env', 'TOKEN.LOCAL.bin', 'ignored-private.bin', 'gone.md'].includes(entry.path),
         ),
       )
+      const newExecutable = fixture.cases.find((item) => item.name === 'new-exec-mode-false')
+      assert.ok(
+        newExecutable.expectedEntries.some(
+          (entry) => entry.path === 'new-exec.sh' && entry.mode === '100644',
+        ),
+      )
+      const nested = fixture.cases.find((item) => item.name === 'nested-ignores')
+      assert.ok(nested.expectedEntries.some((entry) => entry.path === 'outer/keep.md'))
+      assert.ok(
+        !nested.expectedEntries.some(
+          (entry) => entry.path.includes('/cache/') || entry.path.endsWith('.skip'),
+        ),
+      )
       const noop = fixture.cases.find((item) => item.name === 'noop')
       const one = { cases: [noop] }
       const result = {
@@ -52,6 +67,15 @@ describe('working-copy tree fixture', () => {
       await assert.rejects(verifyWorkingCopyTreeResults([], one))
       await assert.rejects(verifyWorkingCopyTreeResults([{ ...result, root: mixed.root }], one))
       await assert.rejects(verifyWorkingCopyTreeResults([{ ...result, runId: 'stale' }], one))
+      const raw = Buffer.from('blob 9\0synthetic')
+      const oid = createHash('sha1').update(raw).digest('hex')
+      const bucket = join(noop.root, '.git/objects', oid.slice(0, 2))
+      await mkdir(bucket, { recursive: true })
+      const object = join(bucket, oid.slice(2))
+      await writeFile(object, Buffer.concat([deflateSync(raw), Buffer.from('trailing data')]))
+      await assert.rejects(verifyWorkingCopyTreeResults([result], one))
+      await rm(object)
+      await verifyWorkingCopyTreeResults([result], one)
       await writeFile(join(noop.root, 'note.md'), 'unexpected mutation')
       await assert.rejects(verifyWorkingCopyTreeResults([result], one))
     } finally {

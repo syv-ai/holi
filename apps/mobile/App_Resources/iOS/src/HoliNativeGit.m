@@ -357,7 +357,7 @@ int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
   }
   return fd;
 }
-BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, int rootFD, NSArray<NSString *> *paths, NSError **error) {
+static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, int rootFD, NSArray<NSString *> *paths, NSError **error) {
   for (NSString *path in paths) {
     if ([path.lastPathComponent isEqualToString:@".gitattributes"]) { if (error) *error = HNGPathError(EINVAL, @"Attributes are unsupported in read-only status"); return NO; }
     if (![path.lastPathComponent isEqualToString:@".gitignore"]) continue;
