@@ -233,6 +233,44 @@ test('a successful retained-reader write replaces its invalidated initial search
   expect(result.current.threads.map((thread) => thread.id)).toEqual(['search-match'])
 })
 
+test('a retained-reader write preserves an explicit refresh of an already-ready search', async () => {
+  const { result } = await mount()
+  await act(async () => {
+    result.current.openThread(summary('existing'))
+  })
+  const ready = {
+    threads: [summary('existing')],
+    nextPageToken: null,
+    syncedAt: '2026-11-25T00:00:00Z',
+  }
+  search.mockResolvedValue(ready)
+  await act(async () => {
+    result.current.search('subject:manual')
+  })
+  expect(result.current.list.kind).toBe('ready')
+  const pending = deferred<typeof ready>()
+  search.mockReturnValueOnce(pending.promise).mockResolvedValue({
+    ...ready,
+    threads: [{ ...summary('existing'), starred: true }, summary('manual-arrival')],
+  })
+  await act(async () => {
+    result.current.refresh()
+  })
+  annotations.mockResolvedValue({ existing: 'yellow-star' })
+  await act(async () => {
+    expect(await result.current.setStarred('existing', true)).toBe(true)
+  })
+  expect(search).toHaveBeenCalledTimes(3)
+  await act(async () => {
+    pending.resolve(ready)
+  })
+  expect(search).toHaveBeenCalledTimes(4)
+  expect(result.current.list.kind).toBe('ready')
+  expect(result.current.threads.map((thread) => thread.id)).toEqual(['existing', 'manual-arrival'])
+  expect(result.current.openId).toBe('existing')
+  expect(result.current.submitted).toBe('subject:manual')
+})
+
 test('a write invalidates a stalled poll without releasing its single-flight slot', async () => {
   const { result } = await mount()
   const pending = deferred<ReturnType<typeof page>>()

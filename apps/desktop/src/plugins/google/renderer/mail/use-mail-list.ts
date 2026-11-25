@@ -42,7 +42,7 @@ export function useMailList({
       request: 0,
       countsRequest: 0,
       categoryRequest: 0,
-      pendingRead: null as number | null,
+      pendingRead: null as { replaceOnInvalidation: boolean } | null,
       more: false,
       writes: 0,
       reconcile: false,
@@ -138,7 +138,10 @@ export function useMailList({
       owner.categoryRequest++
       const at = ++owner.request
       const revision = owner.revision
-      owner.pendingRead = at
+      const pendingRead = {
+        replaceOnInvalidation: kind === 'initial' || kind === 'manual' || previous.kind !== 'ready',
+      }
+      owner.pendingRead = pendingRead
       owner.more = append
       setLoadingMore(append)
       if (!append && kind !== 'poll') setListState({ owner, value: { kind: 'loading' } })
@@ -199,7 +202,7 @@ export function useMailList({
               : { kind: 'error', message: messageOf(cause, 'Could not load your mail.') },
           })
       } finally {
-        if (active() && owner.pendingRead === at) {
+        if (active() && owner.pendingRead === pendingRead) {
           owner.pendingRead = null
           owner.more = false
           setLoadingMore(false)
@@ -238,7 +241,7 @@ export function useMailList({
   }, [owner, visible, account, loadCounts])
 
   const invalidateRead = () => {
-    if (owner.pendingRead !== null && owner.list.kind !== 'ready') owner.reconcile = true
+    if (owner.pendingRead?.replaceOnInvalidation) owner.reconcile = true
     return ++owner.revision
   }
 
