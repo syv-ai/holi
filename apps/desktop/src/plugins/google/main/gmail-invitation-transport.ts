@@ -480,7 +480,8 @@ export function createSentCalendarLookup(
     scan.evidenceRead()
     const page = await api
       .get<unknown>(`${GMAIL_BASE}/messages`, {
-        labelIds: 'SENT',
+        // Ownership is account-wide; neither folder nor label limits it.
+        includeSpamTrash: 'true',
         q: `rfc822msgid:${rfcId.slice(1, -1)}`,
         maxResults: '10',
       })
@@ -528,8 +529,7 @@ export function createSentCalendarLookup(
         !snapshot ||
         snapshot === 'unavailable' ||
         (threadId !== null && snapshot.message.threadId !== threadId) ||
-        !snapshot.header.claims.has(rfcId) ||
-        !snapshot.message.labelIds?.includes('SENT')
+        !snapshot.header.claims.has(rfcId)
       )
         incomplete = true
       else found.push(snapshot)

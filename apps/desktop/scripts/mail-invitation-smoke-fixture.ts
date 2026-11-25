@@ -69,6 +69,8 @@ const occurrenceEnd = '2026-11-25T17:05:00Z'
 const primary = `${calendar}/calendars/primary/events`
 const sharedCalendar = 'fixture-shared@example.test'
 const sentThreadId = 'thread-sent-workshop'
+const trashedReplyId = 'fixture-trashed-reply'
+const trashedThreadId = 'thread-trashed-workshop'
 const wire = (text: string) => Buffer.from(text).toString('base64url')
 const header = (name: string, value: string) => ({ name, value })
 const mailId = (invite: Invite) =>
@@ -284,6 +286,8 @@ export function createInvitationTransport() {
     [occurrenceId, { invite: occurrence, version: 1, attendee: { ...originalAttendee } }],
   ])
   let sent: SentReply | undefined
+  let collideNextSend = false
+  let trashedReply: ReturnType<typeof message> | undefined
   let refuseNextSend = false
   let missNextAttachmentCollection = false
   let losePatchAcknowledgement = false
@@ -307,6 +311,8 @@ export function createInvitationTransport() {
   let sentReceiptMisses = 0
   let sentReceiptReads = 0
   let sentIdSearches = 0
+  let trashedReplyIndexHits = 0
+  let trashedReplyReads = 0
   let attachmentCopyReads = 0
   let pendingReceiptIndex = false
   const calendarReadbackVersions = new Set<number>()
@@ -508,19 +514,33 @@ export function createInvitationTransport() {
                 : invites
           return Response.json({ threads: matches.map(({ id }) => ({ id })) })
         }
+        const collider = mailbox === mailboxA ? trashedReply : undefined
         if (resource === `${api}/messages`) {
-          assert.equal(query.get('labelIds'), 'SENT')
           assert.equal(query.get('maxResults'), '10')
           const q = query.get('q')
           assert.match(q ?? '', /^rfc822msgid:[a-f0-9-]{36}@holi\.invalid$/)
           sentIdSearches++
-          const reply =
-            mailbox === mailboxA && sent && q === `rfc822msgid:${sent.rfcId.slice(1, -1)}`
-              ? sent
-              : null
-          return Response.json({
-            messages: reply ? [{ id: reply.id, threadId: sentThreadId }] : [],
-          })
+          const includeSpamTrash = query.get('includeSpamTrash') === 'true'
+          const requiredLabels = query.getAll('labelIds')
+          const owned = [
+            ...invites.flatMap((invite) =>
+              invite === series
+                ? [message(invite, mailbox), message(occurrence, mailbox)]
+                : [message(invite, mailbox)],
+            ),
+            ...(reply ? [reply] : []),
+            ...(collider ? [collider] : []),
+          ].filter(
+            ({ labelIds, payload }) =>
+              requiredLabels.every((label) => labelIds.includes(label)) &&
+              (includeSpamTrash || (!labelIds.includes('SPAM') && !labelIds.includes('TRASH'))) &&
+              payload.headers.some(
+                ({ name, value }) =>
+                  name === 'Message-ID' && q === `rfc822msgid:${value.slice(1, -1)}`,
+              ),
+          )
+          if (owned.some(({ id }) => id === collider?.id)) trashedReplyIndexHits++
+          return Response.json({ messages: owned.map(({ id, threadId }) => ({ id, threadId })) })
         }
         const format = query.get('format')
         if (reply && resource === `${api}/messages/${reply.id}`) {
@@ -534,6 +554,13 @@ export function createInvitationTransport() {
           }
           sentReceiptReads++
           return Response.json(reply)
+        }
+        if (resource === `${api}/messages/${trashedReplyId}`) {
+          assert.equal(format, 'full')
+          assert(!query.has('fields'))
+          if (!collider) return notFound()
+          trashedReplyReads++
+          return Response.json(collider)
         }
         const threadResource = (id: string, messages: ReturnType<typeof message>[]) => {
           assert(format === 'full' || format === 'metadata')
@@ -561,6 +588,8 @@ export function createInvitationTransport() {
         }
         if (reply && resource === `${api}/threads/${reply.threadId}`)
           return threadResource(reply.threadId, [reply])
+        if (resource === `${api}/threads/${trashedThreadId}`)
+          return collider ? threadResource(collider.threadId, [collider]) : notFound()
         for (const invite of invites) {
           const incoming = message(invite, mailbox)
           if (resource === `${api}/threads/${invite.id}`)
@@ -687,6 +716,15 @@ export function createInvitationTransport() {
         }
         assert(!sent, 'the fixture should receive exactly one accepted Gmail REPLY')
         sent = { id: 'fixture-sent-reply', ...reply }
+        if (collideNextSend) {
+          collideNextSend = false
+          trashedReply = {
+            ...message(attachment, mailbox, sent),
+            id: trashedReplyId,
+            threadId: trashedThreadId,
+            labelIds: ['SENT', 'TRASH'],
+          }
+        }
         pendingReceiptIndex = true
         writes.push({ ...evidence, status: 200, messageId: sent.id })
         await heldSentAcknowledgement
@@ -711,6 +749,12 @@ export function createInvitationTransport() {
     },
     refuseNextSend: () => {
       refuseNextSend = true
+    },
+    collideNextSendInTrash: () => {
+      collideNextSend = true
+    },
+    removeTrashedReply: () => {
+      trashedReply = undefined
     },
     setCalendarCopyOfAttachment(responseStatus: InviteAnswer | 'needsAction') {
       targets.set(attachmentEventId, {
@@ -744,6 +788,8 @@ export function createInvitationTransport() {
       sentReceiptMisses,
       sentReceiptReads,
       sentIdSearches,
+      trashedReplyIndexHits,
+      trashedReplyReads,
       attachmentCopyReads,
       tokenRefreshes,
       calendarReadbacks: calendarReadbackVersions.size,
