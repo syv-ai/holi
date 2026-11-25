@@ -70,7 +70,19 @@ const google: Record<string, (params: unknown) => unknown> = {
   removeAccount: (p) => removeAccountMock(p),
   client: () => ({ id: 'holi.apps.googleusercontent.com', source: 'shipped' }),
   setClient: (p) => setClientMock(p),
-  search: (p) => searchMock(p),
+  search: async (p) => {
+    const answer = await searchMock(p)
+    const request = (p as { uiList?: { loadedIds: string[]; refresh?: boolean } }).uiList
+    if (!request) return answer
+    return {
+      ...answer,
+      uiList: {
+        ...answer.uiList,
+        mode: request.refresh ? 'coverage' : 'page',
+        revalidatedIds: request.refresh ? request.loadedIds : [],
+      },
+    }
+  },
   thread: (p) => threadMock(p),
   drafts: () => draftsMock(),
   saveDraft: (p) => saveDraftMock(p),
@@ -147,7 +159,17 @@ function summary(overrides: Record<string, unknown> = {}) {
 }
 
 function page(threads: unknown[], nextPageToken: string | null = null) {
-  return { threads, nextPageToken, syncedAt: new Date().toISOString() }
+  return {
+    threads,
+    nextPageToken,
+    syncedAt: new Date().toISOString(),
+    uiList: {
+      mode: 'page',
+      cursor: { version: 1, owner: accountSub, key: 'inbox', historyId: '100' },
+      removedIds: [],
+      revalidatedIds: [],
+    },
+  }
 }
 
 const thread = {

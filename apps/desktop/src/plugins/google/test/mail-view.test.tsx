@@ -62,7 +62,19 @@ const google: Record<string, (params: unknown) => unknown> = {
     ],
     current: mailAccountSub,
   }),
-  search: (p) => threadMock(p),
+  search: async (p) => {
+    const answer = await threadMock(p)
+    const request = (p as { uiList?: { loadedIds: string[]; refresh?: boolean } }).uiList
+    if (!request) return answer
+    return {
+      ...answer,
+      uiList: {
+        ...answer.uiList,
+        mode: request.refresh ? 'coverage' : 'page',
+        revalidatedIds: request.refresh ? request.loadedIds : [],
+      },
+    }
+  },
   thread: (p) => readMock(p),
   mailCounts: () => countsMock(),
   contacts: () => contactsMock(),
@@ -168,8 +180,18 @@ function summary(overrides: Record<string, unknown> = {}) {
 }
 
 /** Gmail answers a page at a time; `nextPageToken` is null at the end. */
-function page(threads: unknown[], nextPageToken: string | null = null) {
-  return { threads, nextPageToken, syncedAt: new Date().toISOString() }
+function page(threads: unknown[], nextPageToken: string | null = null, removedIds: string[] = []) {
+  return {
+    threads,
+    nextPageToken,
+    syncedAt: new Date().toISOString(),
+    uiList: {
+      mode: removedIds.length ? 'coverage' : 'page',
+      cursor: { version: 1, owner: mailAccountSub, key: 'inbox', historyId: '100' },
+      removedIds,
+      revalidatedIds: removedIds,
+    },
+  }
 }
 
 /** One thread in the list, one message in it: every case opens the same row. */
@@ -1730,8 +1752,7 @@ test('Escape clears a selection', async () => {
 })
 
 test('forgets a selected thread that is no longer in the list', async () => {
-  // The list is replaced wholesale by every refresh and optimistic write, so an
-  // id can outlive the row it names.
+  // An explicit departure removes a row, unlike an omitted delta summary.
   threeThreads()
   const user = userEvent.setup()
   render(<MailView />)
@@ -1742,7 +1763,7 @@ test('forgets a selected thread that is no longer in the list', async () => {
   expect(await screen.findByText('2 selected')).toBeInTheDocument()
 
   // t1 goes away underneath the selection.
-  threadMock.mockResolvedValue(page([summary({ id: 't2', subject: 'Two' })]))
+  threadMock.mockResolvedValue(page([summary({ id: 't2', subject: 'Two' })], null, ['t1', 't3']))
   await user.click(screen.getByRole('button', { name: 'Clear selection' }))
   await user.click(await screen.findByRole('button', { name: 'Refresh mail' }))
   await waitFor(() => expect(screen.queryByRole('button', { name: /One/ })).toBeNull())
@@ -1962,7 +1983,7 @@ test('compose sits on the toolbar row, in line with refresh', async () => {
  * something else has replaced the list would discard the other change, so the
  * recovery is to re-read.
  */
-test('a failed write does not roll back a refresh that landed while it was in flight', async () => {
+test('a failed write settles before a queued refresh reconciles the list', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ unread: true })]))
   // Never settles until we say so, so "in flight" is a real moment.
@@ -1973,14 +1994,14 @@ test('a failed write does not roll back a refresh that landed while it was in fl
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await waitFor(() => expect(setReadMock).toHaveBeenCalled())
 
-  // A refresh lands with different mail entirely.
+  // A manual refresh waits for the pending optimistic write to settle.
   threadMock.mockResolvedValue(page([{ ...summary(), id: 't9', subject: 'Newer thing' }]))
   await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
-  await screen.findByRole('button', { name: /Newer thing/ })
+  expect(screen.queryByRole('button', { name: /Newer thing/ })).toBeNull()
 
   refuse(new Error('this Google permission was not granted'))
 
-  // The stale snapshot must not come back.
+  // The queued refresh reconciles after the failed optimistic write rolls back.
   expect(await screen.findByText(/Reconnect Google in settings/)).toBeInTheDocument()
   await waitFor(() =>
     expect(screen.getByRole('button', { name: /Newer thing/ })).toBeInTheDocument(),
