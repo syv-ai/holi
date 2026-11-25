@@ -42,7 +42,7 @@ export interface StoredGoogleAuth {
 /** Every connected account, keyed by `sub`. */
 export type GoogleAccounts = Record<string, StoredGoogleAuth>
 
-/** Bump when the shape changes; an unrecognised value reads as disconnected. */
+/** Bump when the shape changes; an unrecognised value is unavailable. */
 const VERSION = 1
 
 interface Envelope {
@@ -87,7 +87,8 @@ export class GoogleTokenStore {
         throw new Error('the Google token store has an unsupported or invalid envelope')
       const plain = this.#storage.decryptString(Buffer.from(envelope.data, 'base64'))
       const accounts: unknown = JSON.parse(plain)
-      if (accounts === null || typeof accounts !== 'object') return {}
+      if (accounts === null || typeof accounts !== 'object' || Array.isArray(accounts))
+        throw new Error('the Google token store payload is not an account record')
 
       // Filter rather than reject wholesale: one malformed entry should not
       // disconnect an account that is perfectly readable beside it.
@@ -97,7 +98,7 @@ export class GoogleTokenStore {
       }
       return valid
     } catch (error) {
-      throw new Error('the Google token store could not be read, decrypted, or parsed', { cause: error })
+      throw new Error('the Google token store could not be read, decrypted, or parsed')
     }
   }
 

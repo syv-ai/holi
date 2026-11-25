@@ -92,7 +92,7 @@ describe('an unreadable file is unavailable, not disconnected', () => {
     await expect(new GoogleTokenStore(file, storage).read()).rejects.toThrow()
   })
 
-  it('reads as disconnected when the keychain can no longer decrypt', async () => {
+  it('rejects when the keychain can no longer decrypt without exposing its error', async () => {
     const store = new GoogleTokenStore(file, storage)
     await store.write({ 'sub-1': AUTH })
 
@@ -104,6 +104,32 @@ describe('an unreadable file is unavailable, not disconnected', () => {
     })
     await expect(rekeyed.read()).rejects.toThrow()
     expect(await new GoogleTokenStore(file, storage).read()).toEqual({ 'sub-1': AUTH })
+  })
+
+  it.each(['null', '7', '"payload"', '[]'])('rejects a non-record payload: %s', async (payload) => {
+    await writeFile(file, JSON.stringify({ v: 1, data: Buffer.from(payload).toString('base64') }))
+    const store = new GoogleTokenStore(file, storage)
+
+    await expect(store.read()).rejects.toThrow()
+    expect(await readFile(file, 'utf8')).toContain(Buffer.from(payload).toString('base64'))
+  })
+
+  it('does not expose decrypted secrets through an error or its cause', async () => {
+    const secret = 'synthetic-private-marker'
+    await writeFile(
+      file,
+      JSON.stringify({ v: 1, data: Buffer.from(`{ "secret": "${secret}"`).toString('base64') }),
+    )
+
+    try {
+      await new GoogleTokenStore(file, storage).read()
+      throw new Error('expected read to reject')
+    } catch (error) {
+      expect(JSON.stringify(error, Object.getOwnPropertyNames(error as object))).not.toContain(
+        secret,
+      )
+      expect(String(error)).not.toContain(secret)
+    }
   })
 
   it('drops only the malformed entry, keeping a readable one beside it', async () => {
