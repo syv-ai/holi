@@ -305,6 +305,14 @@ afterEach(() => {
   delete window.holi
 })
 
+test('reports a missing vault without requesting mail', async () => {
+  getDefaultStore().set(activeRemoteAtom, null)
+  render(<MailView />)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(/vault/i)
+  expect(threadMock).not.toHaveBeenCalled()
+})
+
 test('shows the subject, which is the whole point of a thread list', async () => {
   // The header-request side of this is covered in google-gmail.test.ts.
   threadMock.mockResolvedValue(

@@ -189,7 +189,7 @@ export function MailShell({
         ? catchUpState.error
         : null
 
-  if (account === undefined)
+  if (remote !== null && account === undefined)
     return <MailAccountPending readError={readError} onRetry={refresh} className={className} />
 
   return (

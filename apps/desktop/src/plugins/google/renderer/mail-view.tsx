@@ -176,7 +176,9 @@ type ListState =
 
 export function MailView() {
   const { account, currentSub, readError, refresh } = useGoogleAccount()
-  if (account === undefined) return <MailAccountPending readError={readError} onRetry={refresh} />
+  const remote = useAtomValue(activeRemoteAtom)
+  if (remote !== null && account === undefined)
+    return <MailAccountPending readError={readError} onRetry={refresh} />
   return <MailViewAccount key={currentSub ?? 'disconnected'} accountSub={currentSub} />
 }
 
