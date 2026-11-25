@@ -1,11 +1,10 @@
-import type { CredentialStore } from './github-credentials'
+import { KeychainError, type CredentialStore, type KeychainOperation } from './github-credentials'
 
 type DiagnosticCredentialSlot = 'primary' | 'unrelated'
 type CredentialMetadata = { accessible: boolean; synchronizable: boolean }
 
-function nativeError(error: NSError | null, operation: string): Error {
-  const status = error?.code ?? -1
-  return new Error(`iOS Keychain ${operation} failed (OSStatus ${status})`)
+function nativeError(error: NSError | null, operation: KeychainOperation): KeychainError {
+  return new KeychainError(operation, error?.code ?? -1)
 }
 
 function makeStore(native: HoliNativeCredentials): CredentialStore & {

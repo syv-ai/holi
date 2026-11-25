@@ -1,5 +1,5 @@
 import { knownFolders, path } from '@nativescript/core'
-import { createGitHubCredentials } from './github-credentials'
+import { createGitHubCredentials, KeychainError } from './github-credentials'
 import { createNativeCredentialStore } from './native-credentials.ios'
 import type { DeviceAuthHttp } from './device-auth'
 
@@ -114,25 +114,20 @@ export async function runCredentialCheck(runId: string, phase: string): Promise<
     }
     return `Credential diagnostic ${phase} passed`
   } catch (error) {
-    const keychain =
-      error instanceof Error
-        ? /^iOS Keychain (read|write|remove|metadata) failed \(OSStatus (-?\d+)\)$/.exec(
-            error.message,
-          )
-        : null
+    const keychain = KeychainError.diagnostic(error)
     const selector =
       error instanceof TypeError
         ? /\.(read|writeError|remove|metadata) is not a function/.exec(error.message)?.[1]
         : undefined
     report({
       outcome: 'failed',
-      error: keychain
-        ? { kind: 'keychain', operation: keychain[1], status: Number(keychain[2]) }
-        : error instanceof TypeError
+      error:
+        keychain ??
+        (error instanceof TypeError
           ? { kind: 'interop', selector: selector ?? 'unknown' }
-          : { kind: 'diagnostic' },
+          : { kind: 'diagnostic' }),
       tokenRecorded: false,
     })
-    throw error
+    throw new Error('Native credential phase failed')
   }
 }

@@ -175,10 +175,28 @@ test.skipIf(process.platform === 'win32')(
   },
 )
 
-test('retains bounded native Keychain status without arbitrary error details', () => {
-  const error = { kind: 'keychain', operation: 'read', status: -34018, message: 'private-token' }
-  const receipt = summarizeCredentialReport({ ...report, outcome: 'failed', error })
-  assert.deepEqual(receipt.nativeError, { kind: 'keychain', operation: 'read', status: -34018 })
-  assert.ok(!JSON.stringify(receipt).includes('private-token'))
-  assert.throws(() => validateCredentialReport({ ...report, outcome: 'failed', error }, context))
+test('retains only allowlisted operations and bounded native Keychain status in failure receipts', () => {
+  const failed = { ...report, outcome: 'failed' }
+  for (const [operation, status] of [
+    ['write', -34018],
+    ['remove', -25308],
+  ]) {
+    const error = { kind: 'keychain', operation, status, message: 'private-token' }
+    const receipt = summarizeCredentialReport({ ...failed, error })
+    assert.deepEqual(receipt.nativeError, { kind: 'keychain', operation, status })
+    assert.ok(!JSON.stringify(receipt).includes('private-token'))
+    assert.throws(() => validateCredentialReport({ ...failed, error }, context))
+  }
+  for (const [operation, status] of [
+    ['private-token', -34018],
+    ['write', 'private-token'],
+    ['remove', 2147483648],
+  ]) {
+    const receipt = summarizeCredentialReport({
+      ...failed,
+      error: { kind: 'keychain', operation, status },
+    })
+    assert.equal(receipt.nativeError, undefined)
+    assert.ok(!JSON.stringify(receipt).includes('private-token'))
+  }
 })
