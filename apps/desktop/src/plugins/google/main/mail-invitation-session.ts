@@ -36,6 +36,7 @@ import {
 import type {
   createMailInvitationStore,
   InvitationAttempt,
+  ParentAnchor,
   SentEvidence,
 } from './mail-invitation-store'
 import {
@@ -121,10 +122,7 @@ async function latestByScope(messages: Mail[], mailbox: string) {
       if (mail.sent && part.method === 'REPLY' && !part.alternatives.length) continue
       const source = await part.read()
       const parsed = parseCalendarMail(mail.messageId, source, part.method)
-      const candidate =
-        parsed && (!mail.sent || parsed.value.method || parsed.published)
-          ? { ...parsed, mail }
-          : null
+      const candidate = parsed && (!mail.sent || parsed.value.method) ? { ...parsed, mail } : null
       if (candidate) {
         hasCandidate = true
         candidates.push(candidate)
@@ -142,12 +140,15 @@ async function latestByScope(messages: Mail[], mailbox: string) {
 }
 
 async function sentAnswer(mail: Mail, revision: Revision, { mailbox, organizer }: SentAddress) {
+  const addresses = mail.sentAddresses
   if (
     !mail.sent ||
     !mail.rfcId ||
-    mail.from !== mailbox ||
-    mail.to.length !== 1 ||
-    mail.to[0] !== organizer ||
+    !addresses ||
+    addresses.from.length !== 1 ||
+    addresses.from[0] !== mailbox ||
+    addresses.to.length !== 1 ||
+    addresses.to[0] !== organizer ||
     mail.parts.some((part) => part.method === null)
   )
     return []
@@ -260,6 +261,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     scan: Scan,
     copies: Map<string, CalendarCopy>,
     lineages: Map<string, Corroborates>,
+    parentAnchors: ParentAnchor[],
   ) {
     const pending: InvitationAttempt[] = []
     const confirmations = new Map<string, Confirmation>()
@@ -289,7 +291,9 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           const matching =
             copy?.kind === 'verified' &&
             copy.target === delivery.target &&
-            (delivery.proof ? copy.proof === delivery.proof : sameRevision(copy.revision, revision))
+            (delivery.proof
+              ? copy.matchesProof(delivery.proof)
+              : sameRevision(copy.revision, revision))
           const observed = matching
             ? copy.responseStatus === answer
             : delivery.proof &&
@@ -340,31 +344,17 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       }
       if (confirmed !== attempt) {
         target.assertBinding()
-        await store.update((journal) => {
-          const index = journal.attempts.findIndex((entry) => entry.id === id)
-          if (index < 0) return journal
-          return {
-            ...journal,
-            attempts: journal.attempts.flatMap((entry, prior) => {
-              if (prior === index) return confirmed
-              // Keep ambiguous, pending and superseded revisions. Only a
-              // newer corroborated answer can replace a same-lineage receipt.
-              if (
-                prior < index &&
-                relevant &&
-                entry.accountSub === target.accountSub &&
-                entry.state === 'confirmed' &&
-                corroborates?.(entry)
-              )
-                return []
-              return entry
-            }),
-          }
-        })
+        // Only a newer corroborated answer can replace a same-lineage receipt.
+        const journal = await store.confirmAttempt(
+          confirmed,
+          (entry) =>
+            relevant && entry.accountSub === target.accountSub && corroborates?.(entry) === true,
+        )
+        parentAnchors = journal.parentAnchors
       }
       if (relevant && !confirmations.has(key)) confirmations.set(key, { attempt: confirmed, mail })
     }
-    return { pending, confirmations }
+    return { pending, confirmations, parentAnchors }
   }
 
   const read = async (
@@ -400,7 +390,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     for (const entry of scopes) {
       const { details, request } = entry.selected.value
       const joinOnly =
-        entry.selected.published || entry.selected.mail.sent || details.organizer?.email === email
+        entry.selected.joinOnly || entry.selected.mail.sent || details.organizer?.email === email
       if (!entry.reason && request && details.organizer) {
         const copy = await findInvitationCalendarCopy(api, { details, request, joinOnly }, email)
         copies.set(scopeKey(details.identity), copy)
@@ -421,13 +411,14 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               (entry.parents.has(delivery.parent) || !visibleParents.has(delivery.parent))),
       )
     }
-    const { pending, confirmations } = await reconcile(
+    const { pending, confirmations, parentAnchors } = await reconcile(
       target,
       relevant,
       messages,
       scan,
       copies,
       lineages,
+      journal.parentAnchors,
     )
     const cards: Resolved[] = []
     const displayedPending = new Set<string>()
@@ -436,9 +427,9 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
       const { details, request } = selected.value
       const identity = details.identity
       const organizer = details.organizer?.email
-      const joinOnly = selected.published || selected.mail.sent || organizer === email
+      const joinOnly = selected.joinOnly || selected.mail.sent || organizer === email
       const calendar = copies.get(scopeKey(identity))
-      // Organizer/Sent/PUBLISH mail does not get any link without a verified
+      // Join-only mail does not get any link without a verified
       // owned/self Calendar copy. An incoming REQUEST never falls into this path.
       if (joinOnly && calendar?.kind !== 'verified') continue
       const invitation: MailInvitation = {
@@ -506,12 +497,23 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           calendar.kind === 'verified' &&
           delivery?.channel === 'calendar' &&
           delivery.target === calendar.target &&
-          delivery.proof === calendar.proof
+          delivery.proof !== undefined &&
+          calendar.matchesProof(delivery.proof)
         const responseParents = new Set(parents)
         const receipt = confirmation?.mail
-        // A verified receipt can prove the old REQUEST's parent even after
-        // equivalent redelivery replaced that REQUEST. Consider all Sent mail
-        // on that lineage, not just the receipt itself.
+        // A compacted receipt still proves its parent, but only on this
+        // mailbox's response lineage and never against contradictory visible mail.
+        for (const anchor of parentAnchors) {
+          if (
+            anchor.accountSub === accountSub &&
+            anchor.mailbox === email &&
+            anchor.organizer === organizer &&
+            !visibleParents.has(anchor.parent) &&
+            onLineage(entry, anchor.revision, email)
+          )
+            responseParents.add(anchor.parent)
+        }
+        // A verified latest receipt from an older journal can also prove its parent.
         if (delivery?.channel === 'gmail' && receipt) responseParents.add(delivery.parent)
         const sentMail = receipt
           ? [...messages.filter(({ messageId }) => messageId !== receipt.messageId), receipt]
@@ -735,10 +737,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         }
         dispatching.add(id)
         try {
-          await store.update((journal) => ({
-            ...journal,
-            attempts: [...journal.attempts, attempt],
-          }))
+          await store.addAttempt(attempt)
           const validate = async () => {
             // Runs after the write token has been obtained. Recheck the channel,
             // exact Calendar target/ETag or proven absence, and the prior answer.

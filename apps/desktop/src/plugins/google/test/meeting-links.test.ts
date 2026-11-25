@@ -57,12 +57,20 @@ test('Google Calendar actions require an event path and one event ID', () => {
     'https://calendar.google.com/calendar/event?eid=abc-42',
   )
   expect(googleEventUrl('https://calendar.google.com/event?eid=event')).not.toBeNull()
+  const legacy = 'https://www.google.com/calendar/event?eid=abc-42'
+  expect(googleEventUrl(legacy)).toBe(legacy)
   for (const url of [
     'https://calendar.google.com.fake.test/calendar/event?eid=abc',
     'https://calendar.google.com:8443/calendar/event?eid=abc',
     'https://calendar.google.com/calendar/r?eid=abc',
     'https://calendar.google.com/calendar/event?eid=abc&eid=other',
     'https://calendar.google.com/calendar/event?eid=',
+    'https://www.google.com/search?eid=abc',
+    'https://www.google.com/url?eid=abc&q=https://example.net',
+    'https://www.google.com/calendar/eventedit?eid=abc',
+    `${legacy}&continue=https://example.net`,
+    'https://guest@www.google.com/calendar/event?eid=abc',
+    'http://www.google.com/calendar/event?eid=abc',
   ])
     expect(googleEventUrl(url)).toBeNull()
 })

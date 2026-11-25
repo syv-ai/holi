@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { jsonFileStore } from '../../../main/plugin-api'
+import { CapabilityError, jsonFileStore } from '../../../main/plugin-api'
 import type { InviteAnswer } from './calendar'
 import type { MailInvitationIdentity } from './mail-invitation'
 
@@ -35,7 +35,17 @@ export type InvitationAttempt = {
   delivery: Delivery
 }
 
-type Journal = { version: 1; attempts: InvitationAttempt[] }
+/** Correlation proven by a confirmed Gmail REPLY, independent of the latest answer. */
+export type ParentAnchor = {
+  accountSub: string
+  revision: Revision
+  parent: string
+  organizer: string
+  mailbox: string
+}
+
+type Journal = { version: 1; attempts: InvitationAttempt[]; parentAnchors: ParentAnchor[] }
+const MAX_PARENT_ANCHORS = 4096
 
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -80,6 +90,31 @@ function validSentEvidence(value: unknown): boolean {
   )
 }
 
+function validRevision(value: unknown): value is Revision {
+  return (
+    record(value) &&
+    text(value.uid) &&
+    typeof value.sequence === 'number' &&
+    Number.isSafeInteger(value.sequence) &&
+    value.sequence >= 0 &&
+    nullableText(value.recurrenceId) &&
+    nullableText(value.dtstamp) &&
+    text(value.materialKey) &&
+    validMailboxResponse(value.mailboxResponse)
+  )
+}
+
+function isParentAnchor(value: unknown): value is ParentAnchor {
+  return (
+    record(value) &&
+    text(value.accountSub) &&
+    validRevision(value.revision) &&
+    text(value.parent) &&
+    text(value.organizer) &&
+    text(value.mailbox)
+  )
+}
+
 function isAttempt(value: unknown): value is InvitationAttempt {
   if (!record(value)) return false
   const { id, accountSub, threadId, revision, answer, state, delivery } = value
@@ -87,15 +122,7 @@ function isAttempt(value: unknown): value is InvitationAttempt {
     !text(id) ||
     !text(accountSub) ||
     !text(threadId) ||
-    !record(revision) ||
-    !text(revision.uid) ||
-    typeof revision.sequence !== 'number' ||
-    !Number.isSafeInteger(revision.sequence) ||
-    revision.sequence < 0 ||
-    !nullableText(revision.recurrenceId) ||
-    !nullableText(revision.dtstamp) ||
-    !text(revision.materialKey) ||
-    !validMailboxResponse(revision.mailboxResponse) ||
+    !validRevision(revision) ||
     (answer !== 'accepted' && answer !== 'tentative' && answer !== 'declined') ||
     (state !== 'prepared' &&
       state !== 'unresolved' &&
@@ -130,16 +157,42 @@ function isAttempt(value: unknown): value is InvitationAttempt {
 }
 
 function verifyJournal(raw: unknown): Journal {
+  const parentAnchors = record(raw) && raw.parentAnchors !== undefined ? raw.parentAnchors : []
   if (
     !record(raw) ||
     raw.version !== 1 ||
     !Array.isArray(raw.attempts) ||
     !raw.attempts.every(isAttempt) ||
-    new Set(raw.attempts.map(({ id }) => id)).size !== raw.attempts.length
+    new Set(raw.attempts.map(({ id }) => id)).size !== raw.attempts.length ||
+    !Array.isArray(parentAnchors) ||
+    parentAnchors.length > MAX_PARENT_ANCHORS ||
+    !parentAnchors.every(isParentAnchor)
   ) {
     throw new Error('The mail invitation response journal is invalid; no response can be sent')
   }
-  return { version: 1, attempts: raw.attempts }
+  return { version: 1, attempts: raw.attempts, parentAnchors }
+}
+
+function anchorFor({ accountSub, revision, delivery }: InvitationAttempt): ParentAnchor[] {
+  if (delivery.channel !== 'gmail') return []
+  const { parent, organizer, mailbox } = delivery
+  return [{ accountSub, revision, parent, organizer, mailbox }]
+}
+
+function anchorKey({ accountSub, revision, parent, organizer, mailbox }: ParentAnchor): string {
+  const { uid, recurrenceId, sequence, dtstamp, materialKey, mailboxResponse } = revision
+  return JSON.stringify([
+    accountSub,
+    mailbox,
+    organizer,
+    uid,
+    recurrenceId,
+    sequence,
+    dtstamp,
+    materialKey,
+    parent,
+    mailboxResponse === undefined ? [] : [mailboxResponse?.responseStatus, mailboxResponse?.rsvp],
+  ])
 }
 
 /** An unreadable journal is not an empty journal: losing an attempt can send
@@ -147,12 +200,52 @@ function verifyJournal(raw: unknown): Journal {
 export function createMailInvitationStore(userData: string) {
   const store = jsonFileStore<Journal>(
     join(userData, 'google-mail-invitations.json'),
-    (raw, source) => (source === null ? { version: 1, attempts: [] } : verifyJournal(raw)),
+    (raw, source) =>
+      source === null ? { version: 1, attempts: [], parentAnchors: [] } : verifyJournal(raw),
     { mode: 0o600 },
   )
+  const update = (change: (journal: Journal) => Journal) =>
+    store.update((journal) => verifyJournal(change(journal)))
   return {
     read: store.read,
-    update: (change: (journal: Journal) => Journal) =>
-      store.update((journal) => verifyJournal(change(journal))),
+    update,
+    addAttempt: (attempt: InvitationAttempt) =>
+      update((journal) => {
+        const attempts = [...journal.attempts, attempt]
+        // Reserve space even for an uncertain Gmail write: its later confirmation
+        // must not evict an older parent or become impossible to record.
+        const keys = new Set(
+          [...journal.parentAnchors, ...attempts.flatMap(anchorFor)].map(anchorKey),
+        )
+        if (keys.size > MAX_PARENT_ANCHORS)
+          throw new CapabilityError(
+            'FORBIDDEN',
+            'The invitation response journal cannot retain more reply evidence',
+          )
+        return { ...journal, attempts }
+      }),
+    confirmAttempt: (
+      confirmed: InvitationAttempt,
+      replaces: (prior: InvitationAttempt) => boolean,
+    ) =>
+      update((journal) => {
+        const index = journal.attempts.findIndex(({ id }) => id === confirmed.id)
+        if (index < 0) return journal
+        const anchors = new Map(journal.parentAnchors.map((anchor) => [anchorKey(anchor), anchor]))
+        const retain = (attempt: InvitationAttempt) => {
+          for (const anchor of anchorFor(attempt)) anchors.set(anchorKey(anchor), anchor)
+        }
+        retain(confirmed)
+        const attempts = journal.attempts.flatMap((entry, prior) => {
+          if (prior === index) return confirmed
+          if (prior < index && entry.state === 'confirmed' && replaces(entry)) {
+            // Also migrate older confirmed Gmail receipts before dropping them.
+            retain(entry)
+            return []
+          }
+          return entry
+        })
+        return { ...journal, attempts, parentAnchors: [...anchors.values()] }
+      }),
   }
 }

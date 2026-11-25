@@ -262,6 +262,7 @@ describe('listThreads', () => {
     let oversized = false
     let outsideFirstPage = false
     let metadataStatus = 200
+    let malformedMetadata: object | null | undefined
     const healthy = {
       id: 'healthy',
       messages: [
@@ -317,6 +318,7 @@ describe('listThreads', () => {
               { error: { status: 'PERMISSION_DENIED' } },
               { status: metadataStatus },
             )
+          if (malformedMetadata !== undefined) return Response.json(malformedMetadata)
           const message = {
             id: 'm-other',
             internalDate: '2000',
@@ -363,6 +365,14 @@ describe('listThreads', () => {
         ...partial,
         nextPageToken: 'next-page',
       })
+      for (const response of [{}, null, { id: 'oversized', messages: [] }, healthy]) {
+        malformedMetadata = response
+        expect(await data.threads(options, { refresh: true })).toMatchObject({
+          ...partial,
+          nextPageToken: 'next-page',
+        })
+      }
+      malformedMetadata = undefined
       metadataStatus = 403
       await expect(data.threads(options, { refresh: true })).rejects.toMatchObject({ status: 403 })
       metadataStatus = 200
@@ -370,12 +380,21 @@ describe('listThreads', () => {
       const recovered = await data.threads(options, { refresh: true })
       expect(recovered).toMatchObject({ threads: partial.threads, nextPageToken: 'next-page' })
       expect(recovered).not.toHaveProperty('unreadableThreadIds')
-      expect(await data.threads({ ...options, pageToken: recovered.nextPageToken! })).toMatchObject(
-        {
-          threads: [{ id: 'oversized', subject: 'Other thread' }],
-          nextPageToken: null,
-        },
-      )
+      const continuation = { ...options, pageToken: recovered.nextPageToken! }
+      expect(await data.threads(continuation)).toMatchObject({
+        threads: [{ id: 'oversized', subject: 'Other thread' }],
+        nextPageToken: null,
+      })
+
+      oversized = true
+      expect(await data.threads(continuation)).toMatchObject({
+        threads: [],
+        unreadableThreadIds: ['oversized'],
+      })
+      metadataStatus = 404
+      const removed = await data.threads(options, { refresh: true })
+      expect(removed).toMatchObject({ threads: partial.threads, nextPageToken: 'next-page' })
+      expect(removed).not.toHaveProperty('unreadableThreadIds')
     } finally {
       cache.close()
     }
@@ -1116,9 +1135,23 @@ describe('listThreads', () => {
   it('asks Gmail for the label names once, not once per thread', async () => {
     // The N+1 this whole area keeps inviting: a per-thread lookup would be 25
     // extra requests to render 25 chips.
+    const ids = ['t1', 't2', 't3']
+    const threads = Object.fromEntries(
+      ids.map((id) => [
+        id,
+        {
+          id,
+          messages: filed.messages.map((message) => ({
+            ...message,
+            id: `${id}-${message.id}`,
+            threadId: id,
+          })),
+        },
+      ]),
+    )
     const { api, seen } = gmail(
-      [{ id: 't1' }, { id: 't2' }, { id: 't3' }],
-      { t1: filed, t2: filed, t3: filed },
+      ids.map((id) => ({ id })),
+      threads,
       USER_LABELS,
     )
 

@@ -76,14 +76,14 @@ type Cancellation = {
 }
 
 type ParsedInvitation = {
-  /** Validated independently of actionability (including non-answerable CANCELs). */
-  method: 'REQUEST' | 'CANCEL' | null
+  /** EXPORT is a methodless calendar; it and PUBLISH are join-only. */
+  method: 'REQUEST' | 'CANCEL' | 'PUBLISH' | 'EXPORT' | null
   /** Scope of the representative event. Use cancellations for cancellation evidence. */
   recurrenceRange: Cancellation['recurrenceRange']
   /** One entry per validated cancellation scope; the caller must verify the organizer. */
   cancellations: Cancellation[]
   details: MailInvitationDetails
-  /** Never crosses the capability seam. Only present for a usable REQUEST. */
+  /** Never crosses the capability seam. Also supplies matching data for join-only mail. */
   request: {
     attendees: string[]
     /** Organizer-supplied evidence, not a confirmation of the mailbox's answer. */
@@ -99,7 +99,7 @@ type ParsedInvitation = {
     calendarRecurrenceZoneMatches: (zone: string | null) => boolean
     /** Blocks only an email REPLY; Calendar may still answer the invitation. */
     replyUnavailableReason: string | null
-    /** Throws if an email REPLY cannot represent the occurrence. */
+    /** Throws for join-only mail or when an email REPLY cannot represent the occurrence. */
     reply: (email: string, answer: InviteAnswer) => string
   } | null
 }
@@ -400,7 +400,7 @@ function recurrenceLines(entry: ICAL.Component): string[] {
 }
 
 function materialKey(
-  method: 'REQUEST' | 'CANCEL',
+  method: NonNullable<ParsedInvitation['method']>,
   identity: MailInvitationIdentity,
   material: ReturnType<typeof eventMaterial>['material'],
   exceptions: string[] = [],
@@ -460,19 +460,15 @@ export function parseMailInvitation(
     const { calendar, resolveTimes } = openCalendarPart(source)
     const payload = single(calendar, 'method')
     const parsed = payload?.type === 'text' ? methodOf(payload.getFirstValue()) : undefined
-    // PUBLISH and REPLY are not invitations. A damaged calendar MIME part with
-    // no usable method is still something the reader should explain.
-    if (
-      parsed !== 'REQUEST' &&
-      parsed !== 'CANCEL' &&
-      hint !== 'REQUEST' &&
-      hint !== 'CANCEL' &&
-      (parsed || hint)
-    )
-      return null
-    if ((parsed !== 'REQUEST' && parsed !== 'CANCEL') || (hint && hint !== parsed))
+    const known = (name: string | undefined): name is 'REQUEST' | 'CANCEL' | 'PUBLISH' =>
+      name === 'REQUEST' || name === 'CANCEL' || name === 'PUBLISH'
+    // Only the absence of both declarations is a methodless export. A bad
+    // declaration cannot be treated as an export, and a REPLY is not a card.
+    if (!payload && mimeMethod === undefined) method = 'EXPORT'
+    else if (known(parsed) && (mimeMethod === undefined || hint === parsed)) method = parsed
+    else if (known(parsed) || known(hint) || (!parsed && !hint))
       return unavailable('Calendar invitation has a missing or inconsistent method')
-    method = parsed
+    else return null
     const times = resolveTimes()
     const events = calendar.getAllSubcomponents('vevent')
     const parts = events.map((entry) => {
@@ -483,7 +479,7 @@ export function parseMailInvitation(
         ...eventMaterial(
           entry,
           times,
-          method === 'REQUEST' && events.length > 1 && identity.recurrenceId === null,
+          method !== 'CANCEL' && events.length > 1 && identity.recurrenceId === null,
         ),
       }
     })
@@ -491,7 +487,7 @@ export function parseMailInvitation(
     const representative = master ?? parts[0]
     if (
       !representative ||
-      (method === 'REQUEST' && parts.length > 1 && !master) ||
+      (method !== 'CANCEL' && parts.length > 1 && !master) ||
       parts.some(({ identity }) => identity.uid !== representative.identity.uid) ||
       new Set(parts.map(({ identity }) => identity.recurrenceId)).size !== parts.length
     )
@@ -576,6 +572,7 @@ export function parseMailInvitation(
     if (!start || !end || end < start || !recurrenceTimeBasis)
       return unavailable('Invitation has no usable start or end time')
     if (recurrenceRange) return unavailable('This invitation changes multiple occurrences')
+    const replyUnavailableReason = method === 'REQUEST' ? null : 'This calendar mail is join-only'
     const replyTimes = times.replyTimes([
       representative.entry.getFirstProperty('dtstart'),
       representative.entry.getFirstProperty('recurrence-id'),
@@ -593,9 +590,11 @@ export function parseMailInvitation(
         recurrenceKind: identity.recurrenceId ? timeKind(identity.recurrenceId) : null,
         recurrenceTimeBasis,
         calendarRecurrenceZoneMatches: times.checkRecurrenceZones(recurrenceTimeBasis, events),
-        replyUnavailableReason: replyTimes.unavailableReason,
-        reply: (attendee, answer) =>
-          buildReply(identity, replyTimes, organizer.email, attendee, answer),
+        replyUnavailableReason: replyUnavailableReason ?? replyTimes.unavailableReason,
+        reply: (attendee, answer) => {
+          if (replyUnavailableReason) throw new CalendarPartError(replyUnavailableReason)
+          return buildReply(identity, replyTimes, organizer.email, attendee, answer)
+        },
       },
     }
   } catch (error) {
