@@ -1809,56 +1809,141 @@ export async function fetchAttachment(
  * already opened it.
  */
 export async function fetchThreadIcs(api: GoogleApi, threadId: string): Promise<string | null> {
-  const payloads = await fetchThreadCalendarPayloads(api, threadId)
-  return payloads[0]?.calendarText ?? null
+  const thread = await fullCalendarThread(api, threadId)
+  for (const message of thread.messages ?? []) {
+    const part = calendarPartOf(message.payload)
+    if (part === undefined) continue
+    const source = await readCalendarPart(api, message.id, part)
+    if (source !== null) return source
+  }
+  return null
 }
 
-/** Calendar payloads in a Gmail thread, scoped to the authenticated account. */
+function fullCalendarThread(api: GoogleApi, threadId: string): Promise<RawThread> {
+  return api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, { format: 'full' })
+}
+
+async function readCalendarPart(api: GoogleApi, messageId: string | undefined, part: RawPart) {
+  if (part.body?.data !== undefined) return decodeBody(part.body.data)
+  if (!part.body?.attachmentId || !messageId) return null
+  const fetched = await fetchAttachment(api, messageId, part.body.attachmentId, {
+    filename: part.filename ?? 'invite.ics',
+    mimeType: part.mimeType ?? 'text/calendar',
+  })
+  return Buffer.from(fetched.data, 'base64').toString('utf8')
+}
+
+/** Only valid RFC Message-IDs can travel into an outgoing header. */
+function messageIds(header: string | null): string[] {
+  return header?.match(/<[^<>\s@]+@[^<>\s@]+>/g) ?? []
+}
+
+type CalendarMail = {
+  messageId: string
+  timestamp: number
+  sent: boolean
+  from: string
+  to: string[]
+  replyHeaders: Pick<OutgoingMail, 'subject' | 'inReplyTo' | 'references'>
+  parts: { method: string | undefined; read: () => Promise<string> }[]
+}
+
+/** Newest first. Attachment bodies are lazy: an older missing attachment must
+ * not hide a newer invitation, and Calendar RSVP does not need sent payloads. */
 export async function fetchThreadCalendarPayloads(
   api: GoogleApi,
   threadId: string,
-): Promise<Array<{ messageId: string; date: string; sent: boolean; calendarText: string }>> {
-  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
-    format: 'full',
-  })
-  const result: Array<{ messageId: string; date: string; sent: boolean; calendarText: string }> = []
+): Promise<CalendarMail[]> {
+  const thread = await fullCalendarThread(api, threadId)
+  const messages: CalendarMail[] = []
   for (const message of thread.messages ?? []) {
-    if (!message.id) continue
-    const date = message.internalDate ? new Date(Number(message.internalDate)).toISOString() : ''
-    const sent = message.labelIds?.includes('SENT') ?? false
-    for (const part of calendarPartsOf(message.payload)) {
-      let text: string | null = null
-      if (part.body?.data !== undefined) text = Buffer.from(part.body.data, 'base64url').toString('utf8')
-      else if (part.body?.attachmentId) {
-        const fetched = await fetchAttachment(api, message.id, part.body.attachmentId, {
-          filename: part.filename ?? 'invite.ics', mimeType: part.mimeType ?? 'text/calendar',
-        })
-        text = Buffer.from(fetched.data, 'base64').toString('utf8')
-      }
-      if (text !== null) result.push({ messageId: message.id, date, sent, calendarText: text })
-    }
+    const id = message.id
+    if (!id || message.labelIds?.includes('DRAFT')) continue
+    const parts = calendarPartsOf(message.payload)
+    if (parts.length === 0) continue
+    const inReplyTo = messageIds(headerOf(message.payload, 'Message-ID'))[0]
+    const references = messageIds(
+      headerOf(message.payload, 'References') ?? headerOf(message.payload, 'In-Reply-To'),
+    )
+    if (inReplyTo && !references.includes(inReplyTo)) references.push(inReplyTo)
+    const subject = (headerOf(message.payload, 'Subject') ?? '').replace(/[\r\n]+/g, ' ').trim()
+    messages.push({
+      messageId: id,
+      timestamp: Number(message.internalDate) || 0,
+      sent: message.labelIds?.includes('SENT') ?? false,
+      from: parseAddress(headerOf(message.payload, 'From')).email,
+      to: parseAddresses(headerOf(message.payload, 'To')).map(({ email }) => email),
+      replyHeaders: {
+        subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+        inReplyTo,
+        references,
+      },
+      parts: parts.map((part) => ({
+        method: parseHeaderParameters(
+          headerOf(part, 'Content-Type') ?? part.mimeType ?? '',
+        )?.parameters.get('method'),
+        read: async () => (await readCalendarPart(api, id, part)) ?? '',
+      })),
+    })
   }
-  return result
+  // Gmail's thread order is chronological; reverse first to break internalDate ties.
+  return messages.reverse().sort((a, b) => b.timestamp - a.timestamp)
 }
 
-/**
- * The calendar part anywhere in a MIME tree.
- *
- * Both tests, not one: Outlook sends `text/calendar` but also `application/ics`
- * and occasionally `application/octet-stream` with an `.ics` name, so matching
- * on the type alone misses real invites and matching on the name alone misses
- * the inline part, which has no filename.
- */
-function calendarPartsOf(part: RawPart | undefined): RawPart[] {
-  if (part === undefined) return []
+/** Send a calendar reply to only the organizer, in the thread being answered. */
+export async function sendCalendarReply(
+  api: GoogleApi,
+  threadId: string,
+  headers: CalendarMail['replyHeaders'],
+  from: string,
+  organizer: string,
+  calendarText: string,
+  validate: () => Promise<void>,
+): Promise<{ id: string | null }> {
+  // The caller supplies the verified mailbox, not a From header from the invitation.
+  if (/[\r\n]/.test(from)) throw new Error('Invalid calendar reply sender')
+  const message = buildRfc822({
+    ...headers,
+    to: [organizer],
+    body: 'This message contains a calendar response.',
+    attachments: [
+      {
+        filename: 'invite.ics',
+        mimeType: 'text/calendar; method=REPLY; charset=UTF-8',
+        disposition: 'inline',
+        data: Buffer.from(calendarText, 'utf8').toString('base64'),
+      },
+    ],
+  })
+  const sent = await api.postJson<{ id?: string }>(
+    `${BASE}/messages/send`,
+    {
+      raw: toBase64Url(`From: ${from}\r\n${message}`),
+      threadId,
+    },
+    validate,
+  )
+  return { id: sent?.id ?? null }
+}
+
+function isCalendarPart(part: RawPart): boolean {
   const type = part.mimeType?.toLowerCase() ?? ''
   const name = part.filename?.toLowerCase() ?? ''
-  const own = type.startsWith('text/calendar') || type === 'application/ics' || name.endsWith('.ics')
-  return [...(own ? [part] : []), ...(part.parts ?? []).flatMap(calendarPartsOf)]
+  return type.startsWith('text/calendar') || type === 'application/ics' || name.endsWith('.ics')
+}
+
+function calendarPartsOf(part: RawPart | undefined): RawPart[] {
+  if (!part || part.mimeType?.toLowerCase() === 'message/rfc822') return []
+  return [...(isCalendarPart(part) ? [part] : []), ...(part.parts ?? []).flatMap(calendarPartsOf)]
 }
 
 function calendarPartOf(part: RawPart | undefined): RawPart | undefined {
-  return calendarPartsOf(part)[0]
+  if (!part || isCalendarPart(part)) return part
+  for (const child of part.parts ?? []) {
+    const found = calendarPartOf(child)
+    if (found) return found
+  }
+  return undefined
 }
 
 /** Gmail omits `threadId` on a loose draft; `null` is "belongs to no thread". */

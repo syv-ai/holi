@@ -40,11 +40,22 @@ export class GoogleApiError extends Error {
   }
 }
 
+/** The request left Holi, but Google did not give a definitive verdict. */
+export class GoogleWriteUncertainError extends Error {
+  constructor(cause: unknown) {
+    super('Google did not confirm the write', { cause })
+    this.name = 'GoogleWriteUncertainError'
+  }
+}
+
 export interface GoogleApiDeps {
   /** `GoogleSession.getAccessToken` — refreshes and single-flights on its own. */
   accessToken: () => Promise<string>
   fetch?: typeof globalThis.fetch
   beforeRequest?: () => void
+  /** Check an account-bound client after token refresh, immediately before dispatch.
+   * For this client, distinguish an indeterminate dispatch from a refusal. */
+  validateRequest?: () => Promise<void>
 }
 
 /** A hung request must not stall a panel with no error and nothing to cancel. */
@@ -86,6 +97,7 @@ export class GoogleApi {
       )
     }
 
+    if (this.#deps.validateRequest) await this.#deps.validateRequest()
     const res = await (this.#deps.fetch ?? globalThis.fetch)(full, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -107,6 +119,7 @@ export class GoogleApi {
     url: string,
     body?: unknown,
     validate?: () => Promise<void>,
+    ifMatch?: string,
   ): Promise<Response> {
     let token: string
     try {
@@ -122,22 +135,34 @@ export class GoogleApi {
     }
 
     this.#deps.beforeRequest?.()
-    await validate?.()
-    const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+    if (validate) await validate()
+    if (this.#deps.validateRequest) await this.#deps.validateRequest()
+    let res: Response
+    try {
+      res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(ifMatch === undefined ? {} : { 'If-Match': ifMatch }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+    } catch (error) {
+      // Do not reclassify a refusal from validation or token minting: no write left Holi.
+      if (this.#deps.validateRequest) throw new GoogleWriteUncertainError(error)
+      throw error
+    }
 
-    // A 403 here is most often `insufficientPermissions` (a grant older than
-    // GOOGLE_SCOPES), which `classify` maps to `scope` so the UI can offer the
-    // reconnect that fixes it. See `GoogleSession.missingScopes`.
-    if (!res.ok) throw await classify(res)
+    if (!res.ok) {
+      const error = await classify(res)
+      if (this.#deps.validateRequest && (error.status === 408 || error.status >= 500)) {
+        throw new GoogleWriteUncertainError(error)
+      }
+      throw error
+    }
     return res
   }
 
@@ -163,8 +188,12 @@ export class GoogleApi {
    * every field the caller did not think to send comes back blank. Moving an
    * event must not be able to erase its description.
    */
-  async patch(url: string, body: unknown): Promise<void> {
-    const res = await this.#write('PATCH', url, body)
+  async patch(
+    url: string,
+    body: unknown,
+    options?: { validate?: () => Promise<void>; ifMatch?: string },
+  ): Promise<void> {
+    const res = await this.#write('PATCH', url, body, options?.validate, options?.ifMatch)
     await res.text().catch(() => '')
   }
 
@@ -184,8 +213,8 @@ export class GoogleApi {
    * failure, because a send Google *accepted*, reported as failed, is a second
    * email to a real person once the caller retries.
    */
-  async postJson<T>(url: string, body: unknown): Promise<T | null> {
-    const res = await this.#write('POST', url, body)
+  async postJson<T>(url: string, body: unknown, validate?: () => Promise<void>): Promise<T | null> {
+    const res = await this.#write('POST', url, body, validate)
     // The catch is the design, not defensiveness: past this line Google has
     // already done the thing.
     return await res.json().catch(() => null)
@@ -239,6 +268,7 @@ export class GoogleApi {
     params: GoogleParams,
     items: (page: { items?: T[]; nextPageToken?: string }) => T[],
     cap = 10,
+    requireComplete = false,
   ): Promise<T[]> {
     const all: T[] = []
     let pageToken: string | undefined
@@ -248,9 +278,11 @@ export class GoogleApi {
         pageToken,
       })
       all.push(...items(page))
-      if (page.nextPageToken === undefined) break
       pageToken = page.nextPageToken
+      if (pageToken === undefined) break
     }
+    if (requireComplete && pageToken !== undefined)
+      throw new Error('Google returned too many pages')
     return all
   }
 }
