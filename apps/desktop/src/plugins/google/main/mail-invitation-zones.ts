@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { TZDate } from '@date-fns/tz'
+import { TZDate, tzOffset } from '@date-fns/tz'
 import ICAL from 'ical.js'
 
 // Both incoming parts and Sent evidence are untrusted. Bound work before calling
@@ -13,6 +13,8 @@ const MAX_ZONES = 8
 const MAX_OBSERVANCES = 24
 const MAX_ZONE_YEARS = 12
 const MAX_TRANSITION_WORK = 1024
+const MAX_COMPARISON_WORK = 16_384
+const COMPARISON_LOOKAHEAD_YEARS = 8
 
 export class CalendarPartError extends Error {}
 
@@ -45,6 +47,15 @@ type RecurrenceTimeBasis = {
 export type CalendarTimes = {
   resolveTime: (time: ICAL.Time, property: ICAL.Property | null) => string
   recurrenceTimeBasis: (time: ICAL.Time, property: ICAL.Property | null) => RecurrenceTimeBasis
+  recurrenceZoneKeys: (entry: ICAL.Component) => [string, string][]
+  checkRecurrenceZones: (
+    basis: RecurrenceTimeBasis,
+    entries: ICAL.Component[],
+  ) => (zone: string | null) => boolean
+  replyTimes: (properties: (ICAL.Property | null)[]) => {
+    properties: ReturnType<ICAL.Property['toJSON']>[]
+    definitions: string[]
+  }
 }
 
 // Validate wire values before ical.js can coerce a partial integer or normalize
@@ -145,6 +156,7 @@ function unfoldBounded(source: string): string[] {
 type ZoneInput = {
   id: string
   observances: { kind: 'STANDARD' | 'DAYLIGHT'; fields: Map<string, string[]> }[]
+  wire: string[]
 }
 
 function inspectCalendar(lines: string[]) {
@@ -180,7 +192,7 @@ function inspectCalendar(lines: string[]) {
         if (kind === 'VTIMEZONE') {
           if (parent !== 'VCALENDAR' || zone) unsupportedZone()
           if (zones.size >= MAX_ZONES) tooLarge()
-          zone = { id: '', observances: [] }
+          zone = { id: '', observances: [], wire: [] }
         } else if (zone) {
           if (parent !== 'VTIMEZONE' || (kind !== 'STANDARD' && kind !== 'DAYLIGHT'))
             unsupportedZone()
@@ -188,20 +200,19 @@ function inspectCalendar(lines: string[]) {
           zone.observances.push({ kind, fields: new Map() })
         }
         stack.push(kind)
-        if (!zone) body.push(line)
-      } else {
-        if (stack.pop() !== kind) malformed()
-        if (!zone) body.push(line)
-        if (kind === 'VTIMEZONE') {
-          if (!zone?.id || !zone.observances.length || zones.has(zone.id)) unsupportedZone()
-          zones.set(zone.id, zone)
-          zone = undefined
-        }
+      } else if (stack.pop() !== kind) malformed()
+      const destination = zone?.wire ?? body
+      destination.push(line)
+      if (name === 'END' && kind === 'VTIMEZONE') {
+        if (!zone?.id || !zone.observances.length || zones.has(zone.id)) unsupportedZone()
+        zones.set(zone.id, zone)
+        zone = undefined
       }
       continue
     }
     if (!parent) malformed()
     if (zone) {
+      zone.wire.push(line)
       if (
         name.startsWith('X-') ||
         name === 'COMMENT' ||
@@ -394,7 +405,109 @@ function annualRule(value: string, anchor: number): AnnualRule {
 type Transition = { wall: number; kind: 'STANDARD' | 'DAYLIGHT'; from: Offset; to: Offset }
 const instantOf = ({ wall, from }: Transition) => wall - from.ms
 
-type FiniteZones = Map<string, { transitions: Transition[]; rulesKey: string }>
+type Observance = {
+  kind: Transition['kind']
+  anchor: number
+  from: Offset
+  to: Offset
+  dates: number[]
+  rule: AnnualRule | null
+}
+
+type FiniteZones = Map<
+  string,
+  { transitions: Transition[]; rulesKey: string; observances: Observance[]; wire: string[] }
+>
+
+function readObservance({ kind, fields }: ZoneInput['observances'][number]): Observance {
+  const anchor = civilTime(fields.get('DTSTART')?.[0] ?? '', 'local')
+  const from = zoneOffset(fields.get('TZOFFSETFROM')?.[0])
+  const to = zoneOffset(fields.get('TZOFFSETTO')?.[0])
+  if (anchor === null) unsupportedZone()
+  const dates = (fields.get('RDATE') ?? []).map((value) => {
+    const date = civilTime(value, 'local')
+    if (date === null) unsupportedZone()
+    return date
+  })
+  const rawRule = fields.get('RRULE')?.[0]
+  const rule = rawRule === undefined ? null : annualRule(rawRule, anchor)
+  if (rule && rule.until < anchor - from.ms) unsupportedZone()
+  return { kind, anchor, from, to, dates, rule }
+}
+
+function zoneTransitions(
+  observances: Observance[],
+  first: number,
+  last: number,
+  charge: () => void,
+): Transition[] {
+  const lower = Date.UTC(first, 0, 1)
+  const upper = Date.UTC(last + 1, 0, 1)
+  const transitions = new Map<number, Transition>()
+  let prior: Transition | undefined
+  let next: Transition | undefined
+  for (const { kind, anchor, from, to, dates, rule } of observances) {
+    const add = (wall: number) => {
+      const transition = { wall, kind, from, to }
+      const instant = instantOf(transition)
+      if (instant < lower) {
+        if (!prior || instant > instantOf(prior)) prior = transition
+        else if (
+          instant === instantOf(prior) &&
+          (prior.to.ms !== to.ms || prior.from.ms !== from.ms || prior.kind !== kind)
+        )
+          unsupportedZone()
+      } else if (instant < upper) {
+        const existing = transitions.get(instant)
+        if (
+          existing &&
+          (existing.to.ms !== to.ms || existing.from.ms !== from.ms || existing.kind !== kind)
+        )
+          unsupportedZone()
+        transitions.set(instant, transition)
+      } else if (!next || instant < instantOf(next)) {
+        next = transition
+      }
+    }
+    charge()
+    add(anchor)
+    for (const date of dates) {
+      charge()
+      add(date)
+    }
+    if (rule) {
+      const anchorYear = new Date(anchor).getUTCFullYear()
+      // Jump straight to the window or to the year of a historical UNTIL. A
+      // neighbouring year covers UTC/local rollover and the prior season.
+      const untilYear = Number.isFinite(rule.until)
+        ? new Date(rule.until + from.ms).getUTCFullYear()
+        : last + 1
+      const start = Math.max(anchorYear, Math.min(first, untilYear) - 2)
+      for (let year = start; year <= Math.min(last + 1, untilYear); year++) {
+        charge()
+        const occurrence = rule.on(year)
+        if (occurrence >= anchor && occurrence - from.ms <= rule.until) add(occurrence)
+      }
+    }
+  }
+  const known = [...transitions.values()].sort((a, b) => instantOf(a) - instantOf(b))
+  if (prior) known.unshift(prior)
+  let offset = (known[0] ?? next)?.from
+  if (!offset) unsupportedZone()
+  // Before its first known change, ICAL defaults to zero; VTIMEZONE instead
+  // specifies TZOFFSETFROM. Seed the bounded definition with that offset.
+  known.unshift({
+    kind: 'STANDARD',
+    wall: Math.min(lower, known[0]?.wall ?? lower) - 2 * DAY_MS,
+    from: offset,
+    to: offset,
+  })
+  for (const change of known) {
+    if (change.from.ms !== offset.ms) unsupportedZone()
+    offset = change.to
+  }
+  return known
+}
 
 function materializeZones(scope: ReturnType<typeof inspectCalendar>): FiniteZones {
   const zones: FiniteZones = new Map()
@@ -403,101 +516,27 @@ function materializeZones(scope: ReturnType<typeof inspectCalendar>): FiniteZone
   // Cover the prior season, up to a year of DURATION, and year crossings.
   const first = scope.firstYear - 1
   const last = scope.lastYear + 2
-  const lower = Date.UTC(first, 0, 1)
-  const upper = Date.UTC(last + 1, 0, 1)
   let work = 0
-  for (const { id, observances } of scope.zones.values()) {
-    const transitions = new Map<number, Transition>()
-    const rules: string[] = []
-    let prior: Transition | undefined
-    let next: Transition | undefined
-    for (const { kind, fields } of observances) {
-      const anchor = civilTime(fields.get('DTSTART')?.[0] ?? '', 'local')
-      const from = zoneOffset(fields.get('TZOFFSETFROM')?.[0])
-      const to = zoneOffset(fields.get('TZOFFSETTO')?.[0])
-      if (anchor === null) unsupportedZone()
-      const add = (wall: number) => {
-        const transition = { wall, kind, from, to }
-        const instant = instantOf(transition)
-        if (instant < lower) {
-          if (!prior || instant > instantOf(prior)) prior = transition
-          else if (
-            instant === instantOf(prior) &&
-            (prior.to.ms !== to.ms || prior.from.ms !== from.ms || prior.kind !== kind)
-          )
-            unsupportedZone()
-        } else if (instant < upper) {
-          const existing = transitions.get(instant)
-          if (
-            existing &&
-            (existing.to.ms !== to.ms || existing.from.ms !== from.ms || existing.kind !== kind)
-          )
-            unsupportedZone()
-          transitions.set(instant, transition)
-        } else if (!next || instant < instantOf(next)) {
-          next = transition
-        }
-      }
-      const charge = () => {
-        if (++work > MAX_TRANSITION_WORK) tooLarge()
-      }
-      charge()
-      add(anchor)
-      const dates = new Set<number>()
-      for (const value of fields.get('RDATE') ?? []) {
-        charge()
-        const date = civilTime(value, 'local')
-        if (date === null) unsupportedZone()
-        add(date)
-        dates.add(date)
-      }
-      const rawRule = fields.get('RRULE')?.[0]
-      const rule = rawRule === undefined ? null : annualRule(rawRule, anchor)
-      rules.push(
-        JSON.stringify([
-          kind,
-          anchor,
-          from.ms,
-          to.ms,
-          [...dates].sort((a, b) => a - b),
-          rule && [rule.pattern, Number.isFinite(rule.until) ? rule.until : null],
-        ]),
-      )
-      if (rule) {
-        if (rule.until < anchor - from.ms) unsupportedZone()
-        const anchorYear = new Date(anchor).getUTCFullYear()
-        // Jump straight to the window or to the year of a historical UNTIL. A
-        // neighbouring year covers UTC/local rollover and the prior season.
-        const untilYear = Number.isFinite(rule.until)
-          ? new Date(rule.until + from.ms).getUTCFullYear()
-          : last + 1
-        const start = Math.max(anchorYear, Math.min(first, untilYear) - 2)
-        for (let year = start; year <= Math.min(last + 1, untilYear); year++) {
-          charge()
-          const occurrence = rule.on(year)
-          if (occurrence >= anchor && occurrence - from.ms <= rule.until) add(occurrence)
-        }
-      }
-    }
-    const known = [...transitions.values()].sort((a, b) => instantOf(a) - instantOf(b))
-    if (prior) known.unshift(prior)
-    let offset = (known[0] ?? next)?.from
-    if (!offset) unsupportedZone()
-    // Before its first known change, ICAL defaults to zero; VTIMEZONE instead
-    // specifies TZOFFSETFROM. Seed the bounded definition with that offset.
-    known.unshift({
-      kind: 'STANDARD',
-      wall: Math.min(lower, known[0]?.wall ?? lower) - 2 * DAY_MS,
-      from: offset,
-      to: offset,
+  for (const { id, observances: input, wire } of scope.zones.values()) {
+    const observances = input.map(readObservance)
+    const transitions = zoneTransitions(observances, first, last, () => {
+      if (++work > MAX_TRANSITION_WORK) tooLarge()
     })
-    for (const change of known) {
-      if (change.from.ms !== offset.ms) unsupportedZone()
-      offset = change.to
-    }
+    const rules = observances.map(({ kind, anchor, from, to, dates, rule }) =>
+      JSON.stringify([
+        kind,
+        anchor,
+        from.ms,
+        to.ms,
+        [...new Set(dates)].sort((a, b) => a - b),
+        rule && [rule.pattern, Number.isFinite(rule.until) ? rule.until : null],
+      ]),
+    )
     zones.set(id, {
-      transitions: known,
+      transitions,
       rulesKey: createHash('sha256').update(JSON.stringify(rules.sort())).digest('hex'),
+      observances,
+      wire,
     })
   }
   return zones
@@ -527,8 +566,114 @@ function installZones(calendar: ICAL.Component, zones: FiniteZones) {
   }
 }
 
+type Years = { first: number; last: number }
+
+function rememberYear(refs: Map<string, Years>, id: string, year: number) {
+  const previous = refs.get(id)
+  refs.set(id, {
+    first: Math.min(year, previous?.first ?? year),
+    last: Math.max(year, previous?.last ?? year),
+  })
+}
+
+function recurrenceReferences(entry: ICAL.Component): Map<string, Years> {
+  const refs = new Map<string, Years>()
+  for (const name of ['rdate', 'exdate', 'recurrence-id']) {
+    for (const property of entry.getAllProperties(name)) {
+      const tzid = property.getParameter('tzid')
+      if (tzid === undefined) continue
+      if (typeof tzid !== 'string' || !tzid) malformed()
+      // These civil dates (including PERIOD endpoints) were checked on the wire.
+      // Do not hydrate the properties or expand any event recurrence rules.
+      const values: unknown[] = property.toJSON().slice(3)
+      for (const value of values.flat()) {
+        if (typeof value !== 'string') malformed()
+        if (value.startsWith('P') || value.startsWith('+P')) continue
+        const year = Number(value.slice(0, 4))
+        if (!Number.isInteger(year) || year < 1000) malformed()
+        rememberYear(refs, tzid, year)
+      }
+    }
+  }
+  return refs
+}
+
+function equivalentObservances(
+  observances: Observance[],
+  name: string,
+  { first, last }: Years,
+  charge: () => void,
+): boolean {
+  // Compare from the first referenced civil year through eight full years
+  // beyond the latest reference, anchor, explicit change or rule expiry. The
+  // tail checks the continuing annual pattern, not future tzdb or civil law.
+  // Refuse definitions with a later regime that cannot fit this bounded check.
+  let latest = Date.UTC(last, 0, 1)
+  for (const { anchor, dates, rule, from } of observances) {
+    latest = Math.max(latest, anchor - from.ms)
+    for (const date of dates) latest = Math.max(latest, date - from.ms)
+    if (rule && Number.isFinite(rule.until)) latest = Math.max(latest, rule.until)
+  }
+  const lastRegime = new Date(latest).getUTCFullYear()
+  const through = lastRegime + COMPARISON_LOOKAHEAD_YEARS
+  if (lastRegime - first + 1 > MAX_ZONE_YEARS || through >= 9999) return false
+
+  const transitions = zoneTransitions(observances, first - 1, through, charge)
+  const lower = Date.UTC(first, 0, 1) - DAY_MS
+  const upper = Date.UTC(through + 1, 0, 1)
+  const agrees = (at: number, offset: number) => {
+    charge()
+    return tzOffset(name, new Date(at)) * 60_000 === offset
+  }
+  // Check both sides of every advertised transition at wire precision. Also
+  // scan daily for missing IANA seasons. Intl has no transition iterator; a
+  // paired IANA change entirely between daily probes is outside this policy.
+  let sample = lower
+  let offset = transitions[0]!.from.ms
+  for (const transition of transitions) {
+    const at = instantOf(transition)
+    if (at >= upper) break
+    if (at >= lower && transition.from.ms !== transition.to.ms) {
+      if (!agrees(at - 1000, offset) || !agrees(at, transition.to.ms)) return false
+    }
+    while (sample < at) {
+      if (!agrees(sample, offset)) return false
+      sample += DAY_MS
+    }
+    offset = transition.to.ms
+  }
+  while (sample < upper) {
+    if (!agrees(sample, offset)) return false
+    sample += DAY_MS
+  }
+  return true
+}
+
 function resolvedTimes(zones: FiniteZones): CalendarTimes {
-  const namedZones = new Map<string, string>()
+  const namedZones = new Map<string, string | null>()
+  const refsByEvent = new WeakMap<ICAL.Component, Map<string, Years>>()
+  function references(entry: ICAL.Component) {
+    let refs = refsByEvent.get(entry)
+    if (!refs) {
+      refs = recurrenceReferences(entry)
+      refsByEvent.set(entry, refs)
+    }
+    return refs
+  }
+  function knownZone(id: string | null): string | null {
+    if (!id || !/^[a-z][a-z\d_+./-]*$/i.test(id)) return null
+    const cached = namedZones.get(id)
+    if (cached !== undefined) return cached
+    let zone: string | null = null
+    try {
+      zone = new Intl.DateTimeFormat('en', { timeZone: id }).resolvedOptions().timeZone
+    } catch {
+      // Not a zone recognized by this runtime.
+    }
+    namedZones.set(id, zone)
+    return zone
+  }
+
   function recurrenceTimeBasis(
     time: ICAL.Time,
     property: ICAL.Property | null,
@@ -556,21 +701,82 @@ function resolvedTimes(zones: FiniteZones): CalendarTimes {
     if (custom) return { kind: 'custom', zone: tzid, wallStart, customKey: custom.rulesKey }
     // An embedded definition takes precedence even when it uses an IANA name.
     // Without one, only trust names that Intl can canonicalize.
-    let zone = namedZones.get(tzid)
-    if (!zone) {
-      if (!/^[a-z][a-z\d_+./-]*$/i.test(tzid)) unsupportedZone()
-      try {
-        zone = new Intl.DateTimeFormat('en', { timeZone: tzid }).resolvedOptions().timeZone
-      } catch {
-        unsupportedZone()
-      }
-      namedZones.set(tzid, zone)
-    }
+    const zone = knownZone(tzid)
+    if (!zone) unsupportedZone()
     return { kind: zone === 'UTC' ? 'utc' : 'iana', zone, wallStart, customKey: null }
   }
 
   return {
     recurrenceTimeBasis,
+    recurrenceZoneKeys(entry) {
+      return [...references(entry).keys()].sort().flatMap((id) => {
+        const definition = zones.get(id)
+        return definition ? [[id, definition.rulesKey]] : []
+      })
+    },
+    checkRecurrenceZones(basis, entries) {
+      const refs = new Map<string, Years>()
+      for (const entry of entries) {
+        for (const [id, { first, last }] of references(entry)) {
+          rememberYear(refs, id, first)
+          rememberYear(refs, id, last)
+        }
+      }
+      if (basis.kind === 'custom' && basis.zone)
+        rememberYear(refs, basis.zone, Number(basis.wallStart.slice(0, 4)))
+      let verified: boolean | undefined
+      return (zone) => {
+        const actual = knownZone(zone)
+        if (basis.kind === 'floating') return false
+        if (
+          basis.kind === 'date'
+            ? zone !== null && !actual
+            : !actual || actual !== knownZone(basis.zone)
+        )
+          return false
+        if (verified !== undefined) return verified
+        let work = 0
+        try {
+          verified = [...refs].every(([id, years]) => {
+            const name = knownZone(id)
+            const definition = zones.get(id)
+            return (
+              name !== null &&
+              (!definition ||
+                equivalentObservances(definition.observances, name, years, () => {
+                  if (++work > MAX_COMPARISON_WORK) tooLarge()
+                }))
+            )
+          })
+        } catch (error) {
+          if (!(error instanceof CalendarPartError)) throw error
+          verified = false
+        }
+        return verified
+      }
+    },
+    replyTimes(fields) {
+      const definitions = new Map<string, string[]>()
+      const properties = fields.flatMap((property) => {
+        if (!property) return []
+        const [name, , type, value] = property.toJSON()
+        const id = property.getParameter('tzid')
+        if (typeof id === 'string') {
+          const definition = zones.get(id)
+          if (definition) definitions.set(id, definition.wire)
+        }
+        // Keep the original value and its TZID, not the hydrated ICAL.Time or
+        // arbitrary parameters from the organizer. Never serialize our finite
+        // conversion table in place of the original supported definition.
+        return [[name, id === undefined ? {} : { tzid: id }, type, value]]
+      })
+      return {
+        properties,
+        definitions: [...definitions.values()].map((lines) =>
+          lines.map(ICAL.helpers.foldline).join('\r\n'),
+        ),
+      }
+    },
     resolveTime(time, property) {
       const basis = recurrenceTimeBasis(time, property)
       switch (basis.kind) {
