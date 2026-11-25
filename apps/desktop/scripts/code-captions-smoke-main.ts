@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, readFile, writeFile, copyFile, realpath } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, copyFile, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
-import { app, BrowserWindow, clipboard, ipcMain, protocol } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, protocol, nativeImage } from 'electron'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -19,6 +19,8 @@ import {
   readMarkdownCodeCaptions,
   readMarkdownTableCaptions,
   writeMarkdownTableCaption,
+  commentsPathFor,
+  type CommentAnchor,
 } from '@holi/shared'
 import { init } from '@embedpdf/pdfium'
 import { PdfiumNative } from '@embedpdf/engines/pdfium'
@@ -50,6 +52,8 @@ const tablesOnly = scope === 'tables-only'
 assert(root && evidence, 'runner must provide isolated roots')
 if (!tablesOnly) assert(typst, 'full caption acceptance requires Typst')
 const remote = 'fixture/captions'
+const fixtureLogin = 'holi-caption-fixture'
+const fixtureAvatarUrl = `https://github.com/${fixtureLogin}.png?size=64`
 const vault = join(root, 'vault')
 const path = 'notes/Code-caption.md'
 const note = join(vault, path)
@@ -278,6 +282,44 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
     win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 2 })
     win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 2 })
     await sleep(100)
+  }
+  async function selectTableCells() {
+    const points = await js<{ x: number; y: number }[]>(
+      `return Array.from(document.querySelectorAll('[data-pane="primary"] th')).slice(0,2).map(cell=>{const r=cell.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})`,
+    )
+    const [start, end] = points
+    assert(start && end && points.length === 2, 'fixture exposes two selectable header cells')
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      ...start,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    })
+    try {
+      for (let step = 1; step <= 6; step++) {
+        await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
+          x: start.x + ((end.x - start.x) * step) / 6,
+          y: start.y,
+          button: 'left',
+          buttons: 1,
+        })
+        await sleep(40)
+      }
+    } finally {
+      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        ...end,
+        button: 'left',
+        buttons: 0,
+        clickCount: 1,
+      })
+    }
+    await wait(
+      `(()=>{const cells=Array.from(document.querySelectorAll('[data-pane="primary"] th.selectedCell'));return cells.length===2&&cells.every(cell=>{const style=getComputedStyle(cell,'::after');return style.content!=='none'&&style.backgroundColor!=='rgba(0, 0, 0, 0)'&&style.backgroundColor!=='transparent'})})()`,
+      'two native-selected cells visibly highlighted',
+    )
   }
   async function resizeTableColumn() {
     const start = await js<{ x: number; y: number; width: number }>(
@@ -531,6 +573,7 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
     js,
     wait,
     capture,
+    selectTableCells,
     resizeTableColumn,
     scrollTable,
     convertAndInspectPdf,
@@ -749,17 +792,34 @@ async function verifyTableCaption(driver: ReturnType<typeof createEditorDriver>)
   await wait(`document.querySelector('[aria-label="Add row below"]')`, 'table row toolbar')
   await click('[aria-label="Add row below"]')
   await click('[aria-label="Add column right"]')
+  await click('[data-pane="primary"] table tr:nth-child(2) td:nth-child(2) p')
+  await insertText('Inserted cell')
+  const expandedBody =
+    '| Name | | Value |\n| --- | --- | --- |\n| | Inserted cell | |\n| Alpha | | 1 |'
+  const grid = `(()=>{const table=document.querySelector('[data-pane="primary"] table');return {rows:Array.from(table.rows,row=>Array.from(row.cells,cell=>cell.textContent)),header:Array.from(table.rows[0].cells,cell=>cell.tagName)}})()`
+  const expectedGrid = {
+    rows: [
+      ['Name', '', 'Value'],
+      ['', 'Inserted cell', ''],
+      ['Alpha', '', '1'],
+    ],
+    header: ['TH', 'TH', 'TH'],
+  }
+  await wait(
+    `document.querySelector('[data-pane="primary"] table tr:nth-child(2) td:nth-child(2)')?.textContent === 'Inserted cell'`,
+    'new row and column accept native cell content',
+  )
+  assert.deepEqual(await js(`return ${grid}`), expectedGrid)
   await js('await window.captionFixture.flush(); return true')
-  const expanded = await js<any>('return window.captionFixture.state()')
-  const expandedTable = expanded.json.content.find((node: any) => node.type === 'documentFigure')
-    .content[0]
-  assert.equal(expandedTable.content.length, 3)
-  assert.equal(expandedTable.content[0].content.length, 3)
+  const expanded = await readFile(note, 'utf8')
+  assert(expanded.startsWith(head))
+  assertTableCaption(expanded, 'Native table caption', expandedBody)
   await click('[aria-label="Edit caption"]')
   await insertText('Revised ')
   await js('await window.captionFixture.flush(); return true')
   const revised = await readFile(note, 'utf8')
-  assert(revised.includes('Revised Native table caption'))
+  assert(revised.startsWith(head))
+  assertTableCaption(revised, 'Revised Native table caption', expandedBody)
   await js(
     `await window.captionFixture.replace(${JSON.stringify(revised.replace('Revised', 'External'))}); return true`,
   )
@@ -767,6 +827,21 @@ async function verifyTableCaption(driver: ReturnType<typeof createEditorDriver>)
     `document.querySelector('figcaption')?.textContent.includes('External Native table caption')`,
     'external table caption reload',
   )
+  const external = await readFile(note, 'utf8')
+  assert(external.startsWith(head))
+  assertTableCaption(external, 'External Native table caption', expandedBody)
+  await js('await window.captionFixture.reopen(); return true')
+  await wait(
+    `document.querySelector('figcaption')?.textContent === 'External Native table caption'`,
+    'expanded external table reopened',
+  )
+  assert.deepEqual(await js(`return ${grid}`), expectedGrid)
+  assertTableCaption(
+    (await js<{ markdown: string }>('return window.captionFixture.state()')).markdown,
+    'External Native table caption',
+    expandedBody,
+  )
+  await writeFile(join(evidence, 'table-expanded-saved.md.txt'), external)
   await js(`window.captionFixture.select('paragraph'); return true`)
   await wait(
     `document.querySelector('[aria-label="Remove caption"]')`,
@@ -775,7 +850,18 @@ async function verifyTableCaption(driver: ReturnType<typeof createEditorDriver>)
   await click('[aria-label="Remove caption"]')
   await js('await window.captionFixture.flush(); return true')
   const removed = await readFile(note, 'utf8')
-  assert(!removed.includes('holi:figure') && removed.includes('Alpha'))
+  assert(removed.startsWith(head))
+  assert(!removed.includes('holi:figure') && !removed.includes('Native table caption'))
+  assertTableCells(removed.slice(removed.indexOf('|')), expandedBody)
+  await js('await window.captionFixture.reopen(); return true')
+  await wait(
+    `document.querySelector('[data-pane="primary"] table') && !document.querySelector('[data-pane="primary"] figcaption')`,
+    'complete bare table reopened after caption removal',
+  )
+  assert.deepEqual(await js(`return ${grid}`), expectedGrid)
+  const bare = (await js<{ markdown: string }>('return window.captionFixture.state()')).markdown
+  assertTableCells(bare.slice(bare.indexOf('|')), expandedBody)
+  await writeFile(join(evidence, 'table-caption-removed.md.txt'), removed)
   mark('native-table-row-column-caption-edit-external-reload-and-remove')
   const framed = (caption: string) =>
     `<!-- holi:figure -->\n\n${table}\n\n<!-- holi:caption -->\n\n${caption}\n\n<!-- /holi:figure -->`
@@ -810,9 +896,7 @@ async function verifyTableCaption(driver: ReturnType<typeof createEditorDriver>)
   await verifyTableLayouts(driver)
 }
 
-function assertTableCaption(markdown: string, caption: string, body: string, count = 1) {
-  const frames = readMarkdownTableCaptions(markdown)
-  assert.equal(frames.length, count, 'each table retains its own portable caption envelope')
+function assertTableCells(body: string, expected: string) {
   const rows = (value: string) =>
     value
       .trim()
@@ -820,9 +904,15 @@ function assertTableCaption(markdown: string, caption: string, body: string, cou
       .map((row, index) =>
         row.split('|').map((cell) => (index === 1 ? cell.trim().replace(/-+/g, '-') : cell.trim())),
       )
+  assert.deepEqual(rows(body), rows(expected))
+}
+
+function assertTableCaption(markdown: string, caption: string, body: string, count = 1) {
+  const frames = readMarkdownTableCaptions(markdown)
+  assert.equal(frames.length, count, 'each table retains its own portable caption envelope')
   for (const frame of frames) {
     assert.equal(markdown.slice(frame.caption.from, frame.caption.to), caption)
-    assert.deepEqual(rows(markdown.slice(frame.body.from, frame.body.to)), rows(body))
+    assertTableCells(markdown.slice(frame.body.from, frame.body.to), body)
   }
 }
 
@@ -968,19 +1058,77 @@ async function verifyTableViews({
   const primary = await readFile(note, 'utf8')
   const otherBefore = await readFile(join(vault, 'notes/Clipboard.md'), 'utf8')
   assertTableCaption(primary, caption, table)
+  const sidecar = join(vault, commentsPathFor(path))
+  await assert.rejects(readFile(sidecar), { code: 'ENOENT' })
   await js(`window.captionFixture.select('documentCaption', 'primary', true); return true`)
-  const anchor = await js<{
-    anchor: { quote: string }
-    lines: { startLine: number; endLine: number }
-  }>('return await window.captionFixture.anchor()')
-  assert(anchor.anchor.quote.includes('portable'))
-  assert(
-    primary
-      .split('\n')
-      .slice(anchor.lines.startLine - 1, anchor.lines.endLine)
-      .join('\n')
-      .includes(caption),
+  press('m', ['meta', 'alt'])
+  await wait(
+    `document.querySelector('[data-comment-draft] textarea[aria-label="Comment"]')`,
+    'production comment draft for table caption',
   )
+  assert(
+    (
+      await js<string>(`return document.querySelector('[data-comment-draft]').textContent`)
+    ).includes(caption),
+  )
+  await click('[data-comment-draft] textarea[aria-label="Comment"]')
+  const commentBody = 'Native table anchor comment.'
+  await insertText(commentBody)
+  press('Enter', ['meta'])
+  await wait(
+    `document.querySelector('[data-comments-panel] [data-comment]')?.textContent.includes(${JSON.stringify(commentBody)}) && !document.querySelector('[data-comment-draft]')`,
+    'production comment persisted and listed',
+  )
+  const persisted = JSON.parse(await readFile(sidecar, 'utf8')) as {
+    threads: Record<
+      string,
+      { anchor: CommentAnchor; comments: Record<string, { body: string; author: string }> }
+    >
+  }
+  const found = Object.entries(persisted.threads).find(([, thread]) =>
+    Object.values(thread.comments).some((comment) => comment.body === commentBody),
+  )
+  assert(found, 'submitted native comment has a persisted thread')
+  const [threadId, thread] = found
+  const captionOffset = primary.indexOf(caption)
+  assert(captionOffset >= 0)
+  assert.equal(thread.anchor.quote, caption)
+  assert.equal(thread.anchor.line, primary.slice(0, captionOffset).split('\n').length)
+  assert(
+    thread.anchor.prefix.length > 0 &&
+      primary.slice(0, captionOffset).endsWith(thread.anchor.prefix),
+  )
+  assert(
+    thread.anchor.suffix.length > 0 &&
+      primary.slice(captionOffset + caption.length).startsWith(thread.anchor.suffix),
+  )
+  assert(
+    Object.values(thread.comments).some(
+      (comment) => comment.body === commentBody && comment.author === fixtureLogin,
+    ),
+  )
+  assert.equal(await readFile(note, 'utf8'), primary, 'comment creation leaves note bytes intact')
+  await js('await window.captionFixture.reopen(); return true')
+  const highlight = `[data-pane="primary"] figcaption [data-comment-thread="${threadId}"]`
+  await wait(
+    `Array.from(document.querySelectorAll(${JSON.stringify(highlight)})).map(e=>e.textContent).join('') === 'Table portable caption.'`,
+    'persisted anchor visibly placed on reopened table caption',
+  )
+  await click(highlight)
+  await wait(
+    `document.querySelector('[data-comments-panel] [data-thread="${threadId}"] [aria-label="Show the passage"]:not([disabled])') && document.querySelector('[data-comments-panel] [data-thread="${threadId}"]')?.textContent.includes(${JSON.stringify(commentBody)})`,
+    'reopened caption highlight opens its persisted comment thread',
+  )
+  await capture('table-caption-comment.png')
+  await copyFile(sidecar, join(evidence, 'table-comment-proof.json'))
+  await click('[aria-label="Close comments"]')
+  await rm(sidecar)
+  await js('window.captionFixture.reload(); return true')
+  await wait(
+    `!document.querySelector('[data-pane="primary"] [data-comment-thread]')`,
+    'owned comment fixture removed and original document context restored',
+  )
+  await js(`window.captionFixture.select('documentCaption', 'primary', true); return true`)
   press('f', ['meta'])
   await wait(`document.querySelector('input[aria-label="Find"]')`, 'table caption find field')
   await click('input[aria-label="Find"]')
@@ -1102,6 +1250,7 @@ async function verifyTableLayouts(driver: ReturnType<typeof createEditorDriver>)
     `| ${columns.map((_, index) => `Value ${index}`).join(' | ')} |`,
   ].join('\n')
   const caption = 'Layout **portable** caption.'
+  const editedTable = table.replace('Column 0', 'Changed header').replace('Column 1', '')
   let originalStyle: 'banded' | 'lines' | undefined
   try {
     for (const style of ['banded', 'lines'] as const) {
@@ -1116,14 +1265,21 @@ async function verifyTableLayouts(driver: ReturnType<typeof createEditorDriver>)
         `document.querySelector('[data-pane="primary"] [data-table-style]')?.dataset.tableStyle === ${JSON.stringify(style)} && document.querySelector('[data-pane="primary"] figcaption strong')?.textContent === 'portable'`,
         `${style} captioned table mounted`,
       )
-      await js(`window.captionFixture.select('paragraph', 'primary', true); return true`)
+      await driver.selectTableCells()
+      await capture(`table-caption-${style}-selection.png`)
+      driver.press('Backspace')
+      await wait(
+        `(()=>{const cells=document.querySelectorAll('[data-pane="primary"] th');return cells[0]?.textContent===''&&cells[1]?.textContent===''&&cells[2]?.textContent==='Column 2'})()`,
+        'native cell-selection deletion clears only selected headers',
+      )
+      await driver.click('[data-pane="primary"] th:first-child p')
       await insertText('Changed header')
       await resizeTableColumn()
       await scrollTable()
       await js('await window.captionFixture.flush(); return true')
       const saved = await readFile(note, 'utf8')
       assert(saved.startsWith(head))
-      assertTableCaption(saved, caption, table.replace('Column 0', 'Changed header'))
+      assertTableCaption(saved, caption, editedTable)
       const geometry = await js<{ tableBottom: number; captionTop: number; align: string }>(
         `const table=document.querySelector('[data-pane="primary"] table'),caption=document.querySelector('[data-pane="primary"] figcaption'); return {tableBottom:table.getBoundingClientRect().bottom,captionTop:caption.getBoundingClientRect().top,align:getComputedStyle(caption).textAlign}`,
       )
@@ -1141,7 +1297,7 @@ async function verifyTableLayouts(driver: ReturnType<typeof createEditorDriver>)
       assertTableCaption(
         (await js<{ markdown: string }>('return window.captionFixture.state()')).markdown,
         caption,
-        table.replace('Column 0', 'Changed header'),
+        editedTable,
       )
       mark(`native-table-${style}-selection-resize-scroll-and-reopen`)
     }
@@ -1700,12 +1856,22 @@ async function run() {
     name: 'Caption fixture',
     lastOpenedAt: new Date().toISOString(),
   })
+  const tokenStore = new TokenStore(join(roots.profile, 'github-auth.enc'), {
+    isEncryptionAvailable: () => true,
+    encryptString: (s) => Buffer.from(s),
+    decryptString: (b) => b.toString(),
+  })
+  // The identity provider is fixture input; comment creation/storage stay real.
+  await tokenStore.write({
+    token: 'native-caption-fixture-not-a-real-token',
+    accountId: 705,
+    login: fixtureLogin,
+    name: 'Native caption fixture',
+    avatarUrl: fixtureAvatarUrl,
+    scopes: [],
+  })
   const session = await GitHubSession.load({
-    store: new TokenStore(join(roots.profile, 'github-auth.enc'), {
-      isEncryptionAvailable: () => true,
-      encryptString: (s) => Buffer.from(s),
-      decryptString: (b) => b.toString(),
-    }),
+    store: tokenStore,
     fetch: async () => {
       throw new Error('No GitHub access in caption acceptance')
     },
@@ -1835,7 +2001,14 @@ async function run() {
       denied.push(next)
     }
   })
+  const avatarData = nativeImage
+    .createFromBitmap(Buffer.from([0, 0, 0, 255]), { width: 1, height: 1 })
+    .toDataURL()
   win.webContents.session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, done) => {
+    if (details.url === fixtureAvatarUrl) {
+      done({ redirectURL: avatarData })
+      return
+    }
     const allowed =
       details.url.startsWith(pathToFileURL(root).href + '/') ||
       fixtureImageUrls.has(details.url) ||
@@ -1855,7 +2028,15 @@ async function run() {
       event,
       op: {
         path: string
-        input: { remote: string; path: string; text: string; name: string; paramsJson: string }
+        input: {
+          remote: string
+          path: string
+          text: string
+          name: string
+          paramsJson: string
+          body: string
+          anchor: CommentAnchor
+        }
       },
     ) => {
       try {
@@ -1875,6 +2056,9 @@ async function run() {
             break
           case 'comments.list':
             data = await caller.comments.list(op.input)
+            break
+          case 'comments.add':
+            data = await caller.comments.add(op.input)
             break
           case 'history.list':
             historyReads++

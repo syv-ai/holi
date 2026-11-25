@@ -177,7 +177,7 @@ try {
   })
   await writeFile(
     join(root, 'renderer.html'),
-    '<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; script-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src data: holi-vault:; font-src &#39;self&#39;; connect-src &#39;none&#39;"><title>Holi code captions native acceptance</title><link rel="stylesheet" href="renderer/renderer.css"></head><body><div id="root"></div><script type="module" src="renderer/renderer.js"></script></body></html>',
+    '<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; script-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src data: holi-vault: https://github.com/holi-caption-fixture.png; font-src &#39;self&#39;; connect-src &#39;none&#39;"><title>Holi code captions native acceptance</title><link rel="stylesheet" href="renderer/renderer.css"></head><body><div id="root"></div><script type="module" src="renderer/renderer.js"></script></body></html>',
   )
   await writeFile(
     join(root, 'preload.cjs'),
@@ -313,6 +313,10 @@ try {
         'table-caption-light.png',
         'table-caption-dark.png',
         'table-caption-saved.json',
+        'table-expanded-saved.md.txt',
+        'table-caption-removed.md.txt',
+        'table-comment-proof.json',
+        'table-caption-comment.png',
         'table-caption-actions.png',
         'table-caption-formatted-light.png',
         'table-caption-formatted-dark.png',
@@ -324,6 +328,8 @@ try {
         'table-markdown-saved.md.txt',
         'table-caption-banded.png',
         'table-caption-lines.png',
+        'table-caption-banded-selection.png',
+        'table-caption-lines-selection.png',
       ]
     : [
         'native-ui.pdf',
