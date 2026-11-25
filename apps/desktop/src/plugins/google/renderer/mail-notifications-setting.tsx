@@ -128,6 +128,7 @@ export function MailNotificationsSetting(): React.JSX.Element {
             type="button"
             variant="ghost"
             size="xs"
+            aria-label="Retry desktop mail notifications"
             disabled={pending}
             onClick={() => void retryRead()}
           >
@@ -142,6 +143,7 @@ export function MailNotificationsSetting(): React.JSX.Element {
             type="button"
             variant="text"
             size="sm"
+            aria-label="Retry desktop mail notifications"
             disabled={pending}
             onClick={() => void (retry === null ? retryRead() : save(retry))}
           >
