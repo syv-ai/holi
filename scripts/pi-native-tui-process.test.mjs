@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startOwnedPty } from './pi-native-tui-process.mjs'
@@ -29,6 +29,15 @@ async function fixture(context, command, args, options = {}) {
     }
   })
   return { handle, stateDirectory: root }
+}
+async function withGroupProbePolicy(root, policy) {
+  const pythonPath = join(root, 'python-path')
+  await mkdir(pythonPath)
+  await writeFile(
+    join(pythonPath, 'sitecustomize.py'),
+    `import errno, os\n_original = os.killpg\ndef _probe(group, sig):\n    if sig == 0:\n        count = int(os.environ.get('HOLI_PROBE_COUNT', '0'))\n        os.environ['HOLI_PROBE_COUNT'] = str(count + 1)\n        if ${policy === 'persistent' ? 'True' : 'count == 0'}:\n            raise PermissionError(errno.EPERM, 'injected probe denial')\n    return _original(group, sig)\nos.killpg = _probe\n`,
+  )
+  return { PYTHONPATH: pythonPath }
 }
 function assertGone(receipt) {
   for (const pid of [receipt.supervisorPid, receipt.anchorPid, receipt.nativePid].filter(Boolean))
@@ -72,6 +81,50 @@ test(
     assertGone(receipt)
   },
 )
+
+test('transient permission denial still verifies group drainage', posix, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-pty-eperm-'))
+  const env = await withGroupProbePolicy(root, 'transient')
+  const { handle } = await fixture(t, '/bin/sh', ['-c', 'exit 0'], { env })
+  t.after(() => rm(root, { recursive: true }))
+  await handle.waitForExit()
+  const receipt = await handle.close()
+  assert.equal(receipt.drained, true)
+  assertGone(receipt)
+  assert.throws(() => process.kill(-receipt.anchorPid, 0), { code: 'ESRCH' })
+})
+
+test('persistent permission denial rejects unverified cleanup', posix, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-pty-eperm-'))
+  const env = {
+    PATH: process.env.PATH ?? '',
+    HOME: root,
+    TERM: 'xterm-256color',
+    ...(await withGroupProbePolicy(root, 'persistent')),
+  }
+  const handle = await startOwnedPty({
+    command: '/bin/sh',
+    args: ['-c', 'exit 0'],
+    cwd: root,
+    env,
+    stateDirectory: root,
+    timeoutMs: 5000,
+  })
+  try {
+    await handle.waitForExit()
+    await assert.rejects(handle.close(), /drain|group|cleanup/i)
+    const receipt = JSON.parse(await readFile(join(root, 'owned-pty.json'), 'utf8'))
+    assert.equal(receipt.drained, false)
+    assert.ok(Number.isSafeInteger(receipt.anchorPid) && receipt.anchorPid > 1)
+    assertGone(receipt)
+    // This independent probe can verify absence; the supervisor's denied probe cannot.
+    assert.throws(() => process.kill(-receipt.anchorPid, 0), { code: 'ESRCH' })
+    await rm(root, { recursive: true })
+  } catch (error) {
+    t.diagnostic(`Retained owned PTY state: ${root}`)
+    throw error
+  }
+})
 
 test(
   'deadline is sticky and TERM-resistant native child and descendant are drained',

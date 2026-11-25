@@ -788,10 +788,22 @@ function applyPropState(
 }
 
 /**
- * Highlights `code` into the renderer's line shape. Built on `codeToHast` so
- * consumer transformers run and their line classes land in `line.state`,
- * making prop state and `[!code ++]` notation one feature, not two code
- * paths. Safe in a server component: the result is plain JSON.
+ * Builds plain source lines and applies the same prop-driven state as highlighted
+ * lines.
+ */
+export function plainLinesWithState(
+  source: string,
+  startLine: number,
+  options: CodeBlockHighlightOptions,
+): CodeBlockLine[] {
+  const lines = toPlainLines(source, startLine)
+  applyPropState(lines, options)
+  return lines
+}
+
+/**
+ * Highlights source into the renderer's line shape. Shiki's theme, token spans,
+ * transformer classes and prop-driven state are resolved before React renders.
  */
 export async function highlightCode(
   code: string,
@@ -801,7 +813,7 @@ export async function highlightCode(
   const startLine = options.startLine ?? 1
   const language = resolveCodeBlockLanguage(options.language)
 
-  if (!language) return toPlainLines(source, startLine)
+  if (!language) return plainLinesWithState(source, startLine, options)
 
   const themes = options.themes ?? DEFAULT_CODE_BLOCK_THEMES
   const signature = JSON.stringify([
@@ -839,11 +851,11 @@ export async function highlightCode(
   } catch {
     /* A missing grammar, an unloadable theme or a transformer throwing must not
        take the surface down. Plain text is always readable. */
-    return toPlainLines(source, startLine)
+    return plainLinesWithState(source, startLine, options)
   }
 
   const codeElement = findCodeElement(root)
-  if (!codeElement) return toPlainLines(source, startLine)
+  if (!codeElement) return plainLinesWithState(source, startLine, options)
 
   const lines: CodeBlockLine[] = []
   for (const child of codeElement.children ?? []) {
@@ -858,7 +870,7 @@ export async function highlightCode(
     })
   }
 
-  if (!lines.length) return toPlainLines(source, startLine)
+  if (!lines.length) return plainLinesWithState(source, startLine, options)
 
   applyPropState(lines, options)
   return reuseUnchangedLines(signature, lines)

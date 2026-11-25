@@ -253,20 +253,23 @@ def _signal_group(*, anchor: int, sig: int) -> None:
 
 
 def _group_exists(*, anchor: int) -> bool:
-    """Probe absence after the last signal; permission errors remain failures.
+    """Probe absence after the last signal; denied probes remain unconfirmed.
 
     Args:
         anchor:
             Previously owned session group ID.
 
     Returns:
-        Whether the group is still present.
+        Whether group absence remains unconfirmed.
     """
     try:
         os.killpg(anchor, 0)
         return True
     except ProcessLookupError:
         return False
+    except PermissionError:
+        # EPERM is not evidence that the owned group has disappeared.
+        return True
 
 
 if __name__ == "__main__":

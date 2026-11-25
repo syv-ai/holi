@@ -24,9 +24,9 @@ import {
   highlightCode,
   markdownCodeProps,
   markdownFences,
+  plainLinesWithState,
   resolveCodeBlockLanguage,
   stripNotationComments,
-  toPlainLines,
 } from "@/components/ui/code-block/code-block-highlight"
 import type {
   CodeBlockDiffSpec,
@@ -779,8 +779,23 @@ function CodeBlock({
   const deferredSource = useDeferredValue(source)
 
   const plainLines = useMemo(
-    () => toPlainLines(deferredSource, startLine),
-    [deferredSource, startLine]
+    () =>
+      plainLinesWithState(deferredSource, startLine, {
+        highlightedLines,
+        highlightedWords,
+        focusedLines,
+        diff,
+        lineLevels,
+      }),
+    [
+      deferredSource,
+      startLine,
+      highlightedLines,
+      highlightedWords,
+      focusedLines,
+      diff,
+      lineLevels,
+    ]
   )
 
   /* The result is tagged with the exact inputs that produced it. Without the
