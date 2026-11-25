@@ -25,6 +25,8 @@ export async function checkCompatibility(): Promise<string> {
   const startedAt = Date.now()
   const environment = NSProcessInfo.processInfo.environment
   if (environment.objectForKey('HOLI_CREDENTIAL_DIAGNOSTIC') === '1') {
+    if (HoliNativeCredentials.diagnosticsAvailable() !== true)
+      throw new Error('Credential diagnostics require a Simulator acceptance build')
     return runCredentialCheck(
       environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? '',
       environment.objectForKey('HOLI_CREDENTIAL_PHASE') ?? '',

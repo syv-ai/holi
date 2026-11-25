@@ -5,8 +5,10 @@ import { dirname, join, relative, resolve, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { runCommand } from './host-checks.mjs'
-import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
-import { createCredentialLog } from './credential-log.mjs'
+import { bootSimulator } from './simulator-boot.mjs'
+import { buildCredentialApp } from './credential-build.mjs'
+import { ownCredentialSimulator } from './credential-device.mjs'
+import { credentialFailure } from './credential-log.mjs'
 import {
   validateCredentialReport,
   summarizeCredentialReport,
@@ -25,299 +27,230 @@ const phases = [
   'delete-unrelated',
 ]
 
-export async function runCredentialSimulator() {
+async function runCredentialSimulator() {
   assert.equal(process.platform, 'darwin', 'Credential simulator check requires macOS and Xcode')
   const runId = randomUUID()
-  const artifacts = process.env.HOLI_CREDENTIAL_ARTIFACTS
-    ? resolve(process.env.HOLI_CREDENTIAL_ARTIFACTS)
-    : await mkdtemp('/tmp/holi770-credentials-')
+  const requestedArtifacts = process.env.HOLI_CREDENTIAL_ARTIFACTS
   const repository = await realpath(
     await runCommand('git', ['rev-parse', '--show-toplevel'], { cwd }),
   )
-  const artifactParent = await realpath(dirname(artifacts))
-  const relativeParent = relative(repository, artifactParent)
-  assert.ok(
-    relativeParent === '..' || relativeParent.startsWith('../') || isAbsolute(relativeParent),
-    'Evidence must be outside the checkout',
-  )
-  await mkdir(artifacts, { recursive: false }).catch((error) => {
-    if (error.code !== 'EEXIST' || process.env.HOLI_CREDENTIAL_ARTIFACTS) throw error
-  })
+  let artifacts
+  if (requestedArtifacts) {
+    artifacts = resolve(requestedArtifacts)
+    const relativeParent = relative(repository, await realpath(dirname(artifacts)))
+    assert.ok(
+      relativeParent === '..' || relativeParent.startsWith('../') || isAbsolute(relativeParent),
+      'Evidence must be outside the checkout',
+    )
+    await mkdir(artifacts, { mode: 0o700 })
+  } else artifacts = await mkdtemp('/tmp/holi770-credentials-')
+  const receipt = (name, value) =>
+    writeFile(join(artifacts, `${name}.json`), JSON.stringify(value, null, 2), { mode: 0o600 })
   const controller = new AbortController()
+  const signal = controller.signal
   const interrupt = () => controller.abort()
-  process.once('SIGINT', interrupt)
-  process.once('SIGTERM', interrupt)
+  process.on('SIGINT', interrupt)
+  process.on('SIGTERM', interrupt)
   const command = (exe, args, options = {}) =>
-    runCommand(exe, args, { cwd, signal: controller.signal, outputLimit: 64 * 1024, ...options })
+    runCommand(exe, args, { cwd, signal, outputLimit: 64 * 1024, ...options })
   const cleanupCommand = (exe, args, options = {}) =>
     runCommand(exe, args, { cwd, outputLimit: 64 * 1024, ...options })
   const simctl = (...args) => command('xcrun', ['simctl', ...args])
   const pids = []
-  const cleanupFailures = []
-  const signedBuild = join(artifacts, 'simulator-build')
-  const signedDerived = join(artifacts, 'simulator-derived')
-  let simulator
-  let active
-  let build
+  const reports = []
+  const buildReceipts = []
+  let device
+  let fixture
+  let buildMayBeRunning = false
   let provenance
   let completed = false
-  let simulatorRemoved = false
   let stage = 'setup'
   let failure
-  const reports = []
   try {
     const sourceHead = await command('git', ['rev-parse', 'HEAD'])
+    assert.match(sourceHead, /^[0-9a-f]{40}$/)
     assert.equal(
       await command('git', ['status', '--porcelain']),
       '',
       'Source checkout must be clean',
     )
     const xcode = await command('xcodebuild', ['-version'])
+    assert.match(xcode, /^Xcode \d{1,3}(?:\.\d{1,3}){0,2}\nBuild version [A-Za-z0-9]{1,20}$/)
+    stage = 'select-runtime'
     const runtimes = JSON.parse(await simctl('list', 'runtimes', '--json')).runtimes
     const deviceType =
       process.env.HOLI_IOS_DEVICE_TYPE ?? 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro'
-    const supports = (item) =>
-      item.supportedDeviceTypes.some((device) => device.identifier === deviceType)
+    assert.match(deviceType, /^com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]{1,80}$/)
     const requested = process.env.HOLI_IOS_RUNTIME
-    const runtime = requested
-      ? runtimes.find((item) => item.identifier === requested && item.isAvailable && supports(item))
-      : runtimes
-          .filter(
-            (item) =>
-              item.isAvailable &&
-              supports(item) &&
-              item.platform === 'iOS' &&
-              Number(item.version.split('.')[0]) >= 26,
-          )
-          .sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }))[0]
-    assert.ok(
-      runtime && Number(runtime.version.split('.')[0]) >= 26,
-      'No compatible available iOS 26+ runtime',
-    )
-    await command('ruby', ['-e', "require 'xcodeproj'"])
-    await writeFile(
-      join(artifacts, 'toolchain.json'),
-      JSON.stringify({ xcode, runtime, runId }, null, 2),
-    )
-    await rm(join(cwd, 'platforms/ios/build'), { recursive: true, force: true })
-    stage = 'build'
-    const buildLog = createCredentialLog(join(artifacts, 'build.log'))
-    try {
-      await command('pnpm', ['run', 'build:ios'], {
-        timeout: 600_000,
-        onOutput: (data) => buildLog.write(data),
-        env: { ...process.env, CI: '1', ELECTRON_SKIP_BINARY_DOWNLOAD: '1' },
-      })
-      stage = 'simulator-signing'
-      await command(
-        'xcodebuild',
-        [
-          '-project',
-          'platforms/ios/mobile.xcodeproj',
-          '-scheme',
-          'mobile',
-          '-configuration',
-          'Debug',
-          '-sdk',
-          'iphonesimulator',
-          '-destination',
-          'generic/platform=iOS Simulator',
-          '-derivedDataPath',
-          signedDerived,
-          `CONFIGURATION_BUILD_DIR=${signedBuild}`,
-          'CODE_SIGNING_ALLOWED=YES',
-          'CODE_SIGNING_REQUIRED=YES',
-          'CODE_SIGN_IDENTITY=-',
-          'CODE_SIGN_STYLE=Manual',
-          'DEVELOPMENT_TEAM=',
-          'PROVISIONING_PROFILE=',
-          'PROVISIONING_PROFILE_SPECIFIER=',
-        ],
-        {
-          timeout: 600_000,
-          onOutput: (data) => buildLog.write(data),
-          env: { ...process.env, CI: '1' },
-        },
+    const runtime = runtimes
+      .filter(
+        (item) =>
+          item.isAvailable === true &&
+          item.platform === 'iOS' &&
+          typeof item.identifier === 'string' &&
+          /^com\.apple\.CoreSimulator\.SimRuntime\.iOS-\d{1,3}(?:-\d{1,3}){1,2}$/.test(
+            item.identifier,
+          ) &&
+          (!requested || requested === item.identifier) &&
+          typeof item.version === 'string' &&
+          /^\d{1,3}(?:\.\d{1,3}){1,2}$/.test(item.version) &&
+          Number(item.version.split('.')[0]) >= 26 &&
+          item.supportedDeviceTypes.some((type) => type.identifier === deviceType),
       )
-    } finally {
-      await writeFile(join(artifacts, 'build-log.json'), JSON.stringify(buildLog.close(), null, 2))
-    }
+      .sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }))[0]
+    assert.ok(runtime, 'No compatible available iOS 26+ runtime')
+    const toolchain = { xcode, runtime: runtime.identifier, osVersion: runtime.version, deviceType }
+    await receipt('toolchain', { runId, ...toolchain })
+
+    stage = 'build'
+    const buildRoot = `/tmp/holi770-build-${runId}`
+    await mkdir(buildRoot, { mode: 0o700 })
+    fixture = buildRoot
+    const app = await buildCredentialApp({
+      root: fixture,
+      sourceHead,
+      command,
+      receipts: buildReceipts,
+      signal,
+    })
     stage = 'verify-build'
-    const app = join(signedBuild, 'mobile.app')
-    const plist = async (key) =>
+    const plist = (key) =>
       command('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, join(app, 'Info.plist')])
     assert.equal(await plist('MinimumOSVersion'), '26.0')
     assert.equal(await plist('CFBundleIdentifier'), bundleId)
     assert.equal(await plist('DTPlatformName'), 'iphonesimulator')
-    build = await plist('CFBundleVersion')
-    const binaryHash = createHash('sha256')
-      .update(await readFile(join(app, await plist('CFBundleExecutable'))))
-      .digest('hex')
-    assert.equal(await command('git', ['rev-parse', 'HEAD']), sourceHead)
-    assert.equal(
-      await command('git', ['status', '--porcelain']),
-      '',
-      'Source checkout must be clean',
-    )
-    const bundleHash = createHash('sha256')
-      .update(await readFile(join(app, 'app/bundle.mjs')))
-      .digest('hex')
+    assert.equal(await plist('CFBundleExecutable'), 'mobile')
+    const build = await plist('CFBundleVersion')
+    assert.match(build, /^\d{1,10}(?:\.\d{1,10}){0,2}$/)
+    const hash = async (file) =>
+      createHash('sha256')
+        .update(await readFile(join(app, file)))
+        .digest('hex')
     provenance = {
       sourceHead,
       signing: 'xcode-simulator-adhoc',
       provisioning: false,
-      binaryHash,
-      bundleHash,
+      binaryHash: await hash('mobile'),
+      bundleHash: await hash('app/bundle.mjs'),
       bundleId,
       build,
-      xcode,
-      runtime: runtime.identifier,
+      ...toolchain,
     }
-    await writeFile(join(artifacts, 'provenance.json'), JSON.stringify(provenance, null, 2))
-    simulator = await simctl('create', `holi-770-${runId}`, deviceType, runtime.identifier)
-    assert.match(simulator, /^[A-F0-9-]{36}$/)
-    await writeFile(join(artifacts, 'simulator-id.txt'), simulator)
-    await bootSimulator({
-      simulator,
-      artifacts,
-      runId,
+    await receipt('provenance', provenance)
+    stage = 'create-simulator'
+    device = ownCredentialSimulator({
+      name: `holi-770-${runId}`,
+      runtime: runtime.identifier,
+      deviceType,
       command,
-      signal: controller.signal,
-      metadata: { xcode, runtime: runtime.identifier, deviceType },
+      cleanupCommand,
     })
+    const simulator = await device.create()
+    await writeFile(join(artifacts, 'simulator-id.txt'), simulator)
+    stage = 'boot-simulator'
+    await bootSimulator({ simulator, artifacts, runId, command, signal, metadata: toolchain })
+    stage = 'install'
     await simctl('install', simulator, app)
     const container = await simctl('get_app_container', simulator, bundleId, 'data')
     const reportPath = join(container, 'Documents', `credential-diagnostic-${runId}.json`)
-    let previousPid
-    const drain = async (info) => {
-      if (!info) return
+    const launchEnv = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith('SIMCTL_CHILD_')),
+    )
+    const drain = async (pid) => {
+      if (!pid) return
       await simctl('terminate', simulator, bundleId)
       for (let i = 0; i < 100; i++) {
         try {
-          process.kill(info.pid, 0)
+          process.kill(pid, 0)
         } catch (error) {
           if (error.code === 'ESRCH') return
           throw error
         }
-        await sleep(50)
+        await sleep(50, undefined, { signal })
       }
-      throw new Error(`Owned app process ${info.pid} did not exit`)
+      throw new Error('Owned app process did not exit')
     }
+    let previousPid
     for (const phase of phases) {
       stage = phase
-      await drain(active)
+      await drain(previousPid)
       await rm(reportPath, { force: true })
       const launchedAt = Date.now()
       const output = await command('xcrun', ['simctl', 'launch', simulator, bundleId], {
         env: {
-          ...process.env,
+          ...launchEnv,
           SIMCTL_CHILD_HOLI_CREDENTIAL_DIAGNOSTIC: '1',
           SIMCTL_CHILD_HOLI_COMPAT_RUN_ID: runId,
           SIMCTL_CHILD_HOLI_CREDENTIAL_PHASE: phase,
         },
       })
       const pid = Number(output.match(/: (\d+)$/)?.[1])
-      assert.ok(
-        Number.isSafeInteger(pid) && pid > 0 && pid !== previousPid,
-        `No fresh process PID for ${phase}`,
-      )
+      assert.ok(Number.isSafeInteger(pid) && pid > 0 && pid !== previousPid, 'No fresh process PID')
       previousPid = pid
-      active = { phase, pid, launchedAt }
-      pids.push(active)
-      const report = await waitForCredentialReport(reportPath, { signal: controller.signal })
-      await writeFile(
-        join(artifacts, `native-receipt-${phase}.json`),
-        JSON.stringify(summarizeCredentialReport(report), null, 2),
-      )
-      try {
-        validateCredentialReport(report, { runId, phase, build, pid, launchedAt, now: Date.now() })
-      } catch (error) {
-        failure = { stage: phase, reason: error.message }
-        throw error
-      }
-      reports.push(report)
-      await writeFile(join(artifacts, `report-${phase}.json`), JSON.stringify(report, null, 2))
+      pids.push({ phase, pid, launchedAt })
+      const report = await waitForCredentialReport(reportPath, { signal })
+      await receipt(`native-receipt-${phase}`, summarizeCredentialReport(report))
+      const observed = validateCredentialReport(report, {
+        runId,
+        phase,
+        build,
+        pid,
+        launchedAt,
+        now: Date.now(),
+      })
+      reports.push(observed)
+      await receipt(`report-${phase}`, observed)
     }
+    signal.throwIfAborted()
     completed = true
   } catch (error) {
-    failure ??= {
-      stage,
-      reason: 'Credential acceptance did not complete',
-      filesystemError: ['ENOENT', 'EACCES', 'EPERM'].includes(error.code) ? error.code : null,
-      timedOut: error.timedOut === true,
-      exitCode: Number.isSafeInteger(error.exitCode) ? error.exitCode : null,
-    }
-    await writeFile(join(artifacts, 'failure.json'), JSON.stringify(failure, null, 2))
+    buildMayBeRunning = error.processGroupUndrained === true
+    failure = { stage, ...credentialFailure(error, signal) }
     throw error
   } finally {
-    // Cleanup must remain possible after an interrupt.
-    if (active && simulator) {
-      try {
-        await cleanupCommand('xcrun', ['simctl', 'terminate', simulator, bundleId], {
-          cwd,
-          outputLimit: 64 * 1024,
-          timeout: 15_000,
-        })
-      } catch (error) {
-        if (!/Exit 3/.test(error.message)) cleanupFailures.push(String(error))
+    // Simulator shutdown drains its installed app too. Reconcile ownership first;
+    // a failed create or launch may have changed the device before replying.
+    let simulatorCleanup
+    let buildCleanup = 'not-created'
+    try {
+      simulatorCleanup = await device?.cleanup()
+    } finally {
+      if (fixture) {
+        if (buildMayBeRunning) buildCleanup = 'drain-unconfirmed'
+        else {
+          try {
+            await rm(fixture, { recursive: true, force: true })
+            buildCleanup = 'removed'
+          } catch {
+            buildCleanup = 'remove-failed'
+          }
+        }
       }
-    }
-    if (simulator) {
-      try {
-        cleanupFailures.push(
-          ...(await cleanupSimulator({ simulator, artifacts, command: cleanupCommand })),
-        )
-        const devices = JSON.parse(
-          await cleanupCommand('xcrun', ['simctl', 'list', 'devices', '--json']),
-        ).devices
-        simulatorRemoved = !Object.values(devices)
-          .flat()
-          .some((device) => device.udid === simulator)
-        if (!simulatorRemoved) cleanupFailures.push('Owned simulator still exists')
-      } catch (error) {
-        cleanupFailures.push(String(error))
-      }
-    }
-    for (const ownedBuild of [signedBuild, signedDerived]) {
-      try {
-        await rm(ownedBuild, { recursive: true, force: true })
-      } catch {
-        cleanupFailures.push('Owned simulator build cleanup failed')
-      }
-    }
-    process.removeListener('SIGINT', interrupt)
-    process.removeListener('SIGTERM', interrupt)
-    await writeFile(
-      join(artifacts, 'evidence.json'),
-      JSON.stringify(
-        {
-          source: 'diagnostic-keychain-namespace',
-          status:
-            completed && simulatorRemoved && !cleanupFailures.length
-              ? 'passed'
-              : 'incomplete-proof',
-          provenance,
-          failure,
-          reports,
-          runId,
-          phases: pids,
-          finalOwnedCleanup: { simulator, simulatorRemoved, failures: cleanupFailures },
-        },
-        null,
-        2,
-      ),
-    )
-    if (cleanupFailures.length) {
-      console.error(`Owned simulator cleanup uncertain: ${cleanupFailures.join('; ')}`)
-      process.exitCode = 1
+      process.removeListener('SIGINT', interrupt)
+      process.removeListener('SIGTERM', interrupt)
+      const passed =
+        completed &&
+        !signal.aborted &&
+        simulatorCleanup?.simulatorRemoved &&
+        buildCleanup === 'removed'
+      await receipt('evidence', {
+        source: 'diagnostic-keychain-namespace',
+        status: passed ? 'passed' : 'incomplete-proof',
+        provenance,
+        failure,
+        reports,
+        runId,
+        phases: pids,
+        buildCommands: buildReceipts,
+        finalOwnedCleanup: { simulator: simulatorCleanup, build: buildCleanup },
+      })
+      if (!passed) process.exitCode = 1
     }
   }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
   runCredentialSimulator().catch(() => {
-    console.error(
-      'Credential acceptance failed; inspect the bounded artifact receipts and build log',
-    )
+    console.error('Credential acceptance failed; inspect the structured evidence receipts')
     process.exitCode = 1
   })

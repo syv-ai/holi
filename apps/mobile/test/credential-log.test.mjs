@@ -1,22 +1,31 @@
 import { test } from 'vitest'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { createCredentialLog } from '../scripts/credential-log.mjs'
+import { recordCredentialCommand } from '../scripts/credential-log.mjs'
+import { runCommand } from '../scripts/host-checks.mjs'
 
-test('caps durable output and reports observed and omitted bytes', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'holi770-log-test-'))
-  try {
-    const path = join(dir, 'build.log')
-    const log = createCredentialLog(path, 4)
-    log.write(Buffer.from('abc'))
-    log.write(Buffer.from('def'))
-    log.write(Buffer.from('ghi'))
-    assert.deepEqual(log.close(), { limit: 4, observedBytes: 9, retainedBytes: 4, truncated: true })
-    assert.equal(readFileSync(path, 'utf8'), 'abcd')
-    assert.throws(() => createCredentialLog(path, 4))
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+test('publishes build and cleanup status without stdout, stderr or exception messages', async () => {
+  const receipts = []
+  const secret = 'synthetic-private-tool-output'
+  await recordCredentialCommand(receipts, 'unsigned-build', () =>
+    runCommand(process.execPath, ['-e', 'console.log(process.argv[1])', secret]),
+  )
+  await assert.rejects(
+    recordCredentialCommand(receipts, 'delete', () =>
+      runCommand(process.execPath, [
+        '-e',
+        'console.error(process.argv[1]); process.exit(7)',
+        secret,
+      ]),
+    ),
+    (error) => error.exitCode === 7,
+  )
+  assert.deepEqual(
+    receipts.map(({ stage, status, exitCode }) => ({ stage, status, exitCode })),
+    [
+      { stage: 'unsigned-build', status: 'ok', exitCode: 0 },
+      { stage: 'delete', status: 'failed', exitCode: 7 },
+    ],
+  )
+  assert.ok(receipts.every(({ durationMs }) => Number.isSafeInteger(durationMs) && durationMs >= 0))
+  assert.ok(!JSON.stringify(receipts).includes(secret))
 })
