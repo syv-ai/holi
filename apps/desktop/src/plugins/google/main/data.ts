@@ -45,6 +45,7 @@ import {
   type MailPage,
 } from './gmail'
 import type { MailPart, OutgoingMail } from './mime'
+import type { MailListContext } from './mail-list-types'
 import {
   DEFAULT_MAIL_MARKER_PREFERENCES,
   normalizeMailMarkerPreferences,
@@ -70,7 +71,10 @@ export interface GoogleData {
   /** The last agenda for this exact question, or `null`. Never a request. */
   cachedAgenda(window: AgendaWindow, overrides: CalendarOverrides): CalendarEvent[] | null
   /** Ordinary lists use a delta; CLI reads can request an independent fresh page. */
-  threads(options: ListThreadsOptions, context?: { freshPage?: boolean }): Promise<MailPage>
+  threads(
+    options: ListThreadsOptions,
+    context?: { freshPage?: boolean; uiList?: MailListContext },
+  ): Promise<MailPage>
   /**
    * The address book, fetched **once per connected account**.
    *
