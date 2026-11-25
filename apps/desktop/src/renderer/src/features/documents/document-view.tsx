@@ -1055,6 +1055,75 @@ function DocumentEditor({
                 )}
               />
               <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
+                {editor ? (
+                  <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
+                    <EditorContent
+                      editor={editor}
+                      onKeyDown={(event) => {
+                        const mod = event.metaKey || event.ctrlKey
+                        if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
+                          event.preventDefault()
+                          openLinkEditor()
+                        }
+                      }}
+                      className={cn(
+                        RICH_TEXT_PROSE,
+                        'mx-auto w-full px-4 py-8 sm:px-16 sm:py-12',
+                        fullWidth ? 'max-w-none' : 'max-w-3xl',
+                        smallText && 'text-sm/6',
+                        locked && 'opacity-60',
+                      )}
+                    />
+                  </div>
+                ) : (
+                  <DocumentSkeleton />
+                )}
+                {editor ? (
+                  <>
+                    <DocumentFormatBubble
+                      editor={editor}
+                      linkOpen={linkOpen}
+                      onLinkOpenChange={setLinkOpen}
+                      onQuickCommand={
+                        canAsk
+                          ? (instruction, passage) => void quickCommand(instruction, passage)
+                          : null
+                      }
+                      onAddToBatch={canAsk ? addToBatch : null}
+                      onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
+                      onComment={commentable ? () => void commentOnSelection() : null}
+                    />
+                    <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
+                    <RichTextTableBubble
+                      editor={editor}
+                      onDeleteTable={() => setDeleteTableOpen(true)}
+                    />
+                    <RichTextBlockGutter
+                      editor={editor}
+                      editable={editable}
+                      scrollerRef={pageRef}
+                      onDeleteTable={() => setDeleteTableOpen(true)}
+                      headingLink={holiLinks?.heading ?? null}
+                    />
+                  </>
+                ) : null}
+                {promptOpen
+                  ? createPortal(
+                      <AgentPrompt
+                        initial={promptInitial}
+                        onSubmit={(request) => void sendPrompt(request)}
+                        onCancel={closePrompt}
+                      />,
+                      promptBox,
+                    )
+                  : null}
+              </div>
+            </div>
+            {rewriteQueue.length > 0 ? (
+              <aside
+                aria-label="Rewrite batch overview"
+                className="hidden min-h-0 w-80 shrink-0 overflow-y-auto border-l border-border p-4 @5xl/document:block"
+              >
                 {rewriteQueue.length > 0 ? (
                   <section
                     aria-label="Queued rewrite requests"
@@ -1124,70 +1193,8 @@ function DocumentEditor({
                     </div>
                   </section>
                 ) : null}
-                {editor ? (
-                  <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
-                    <EditorContent
-                      editor={editor}
-                      onKeyDown={(event) => {
-                        const mod = event.metaKey || event.ctrlKey
-                        if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
-                          event.preventDefault()
-                          openLinkEditor()
-                        }
-                      }}
-                      className={cn(
-                        RICH_TEXT_PROSE,
-                        'mx-auto w-full px-4 py-8 sm:px-16 sm:py-12',
-                        fullWidth ? 'max-w-none' : 'max-w-3xl',
-                        smallText && 'text-sm/6',
-                        locked && 'opacity-60',
-                      )}
-                    />
-                  </div>
-                ) : (
-                  <DocumentSkeleton />
-                )}
-                {editor ? (
-                  <>
-                    <DocumentFormatBubble
-                      editor={editor}
-                      linkOpen={linkOpen}
-                      onLinkOpenChange={setLinkOpen}
-                      onQuickCommand={
-                        canAsk
-                          ? (instruction, passage) => void quickCommand(instruction, passage)
-                          : null
-                      }
-                      onAddToBatch={canAsk ? addToBatch : null}
-                      onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
-                      onComment={commentable ? () => void commentOnSelection() : null}
-                    />
-                    <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
-                    <RichTextTableBubble
-                      editor={editor}
-                      onDeleteTable={() => setDeleteTableOpen(true)}
-                    />
-                    <RichTextBlockGutter
-                      editor={editor}
-                      editable={editable}
-                      scrollerRef={pageRef}
-                      onDeleteTable={() => setDeleteTableOpen(true)}
-                      headingLink={holiLinks?.heading ?? null}
-                    />
-                  </>
-                ) : null}
-                {promptOpen
-                  ? createPortal(
-                      <AgentPrompt
-                        initial={promptInitial}
-                        onSubmit={(request) => void sendPrompt(request)}
-                        onCancel={closePrompt}
-                      />,
-                      promptBox,
-                    )
-                  : null}
-              </div>
-            </div>
+              </aside>
+            ) : null}
             {propertiesLayout === 'sidebar' ? (
               <TaskProperties
                 path={path}
