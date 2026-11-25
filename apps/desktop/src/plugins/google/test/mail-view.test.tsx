@@ -568,6 +568,8 @@ const invite: Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations'
   canRespond: true,
   responsePending: false,
   responseStatus: 'needsAction',
+  recordedResponseStatus: null,
+  sentResponseStatus: null,
   unavailableReason: null,
 }
 
@@ -768,12 +770,12 @@ test('shows Delegated as a recorded response, not as an RSVP action', async () =
 
 test('distinguishes a recorded Calendar answer from a different verified Sent reply', async () => {
   withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
-  const conflicting = {
+  const conflicting: typeof invite = {
     ...invite,
-    responseStatus: null,
+    responseStatus: 'tentative',
     recordedResponseStatus: 'tentative',
     sentResponseStatus: 'accepted',
-  } as const
+  }
   invitationMock.mockResolvedValue(invitations(conflicting))
   const user = userEvent.setup()
   await openThread()

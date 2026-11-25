@@ -52,6 +52,10 @@ type MailInvitation = Invitation['details'] & {
   kind: 'invitation' | 'meeting'
   scope: 'single' | 'series' | 'occurrence'
   responseStatus: NonNullable<Revision['mailboxResponse']>['responseStatus'] | null
+  /** The verified Calendar copy's current self response, not a mail or journal fallback. */
+  recordedResponseStatus: MailInvitation['responseStatus']
+  /** The latest corroborated Gmail reply, unless superseded by a Calendar response. */
+  sentResponseStatus: InviteAnswer | null
   canRespond: boolean
   /** A write has not yet been corroborated by Calendar or a sent REPLY. */
   responsePending: boolean
@@ -436,13 +440,15 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         scope:
           identity.recurrenceId !== null ? 'occurrence' : details.recurring ? 'series' : 'single',
         responseStatus: null,
+        recordedResponseStatus: calendar?.kind === 'verified' ? calendar.responseStatus : null,
+        sentResponseStatus: null,
         canRespond: false,
         responsePending: false,
       }
       let reply: Reply | null = null
       let recorded: InviteAnswer | null = null
       let priorSent: SentEvidence | null = null
-      let disagreement = false
+      let responseUnverified = false
       if (entry.reason) invitation.unavailableReason = entry.reason
       if (calendar?.kind === 'blocked') {
         invitation.unavailableReason = calendar.reason
@@ -486,7 +492,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           : undefined
         const confirmation = confirmations.get(scopeKey(identity))
         const delivery = confirmation?.attempt.delivery
-        const calendarObserved = calendar.kind === 'verified' ? calendar.responseStatus : null
+        const calendarObserved = invitation.recordedResponseStatus
         const sameTarget =
           calendar.kind === 'verified' &&
           delivery?.channel === 'calendar' &&
@@ -515,6 +521,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
               sent.evidence.answer === earlier.answer &&
               sent.evidence.messageIds.every((id) => earlier.messageIds.includes(id))))
         const sentStatus = superseded ? null : (sent.evidence?.answer ?? null)
+        invitation.sentResponseStatus = sentStatus
         const calendarStatus = isAnswer(calendarObserved) ? calendarObserved : null
         const historical = confirmation?.attempt.answer ?? null
         const historicalCalendar =
@@ -539,19 +546,21 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           }
         }
         recorded = calendar.kind === 'verified' ? calendarStatus : sentStatus
-        disagreement = Boolean(
+        const sentUnverified =
           (!superseded && sent.answers.size > 1) ||
-          (calendarStatus &&
-            (sentStatus ?? historicalCalendar) &&
-            calendarStatus !== (sentStatus ?? historicalCalendar)) ||
           (delivery?.channel === 'gmail' &&
-            (!confirmation?.mail || (sentStatus && sentStatus !== historical))),
-        )
-        if (disagreement) {
-          invitation.unavailableReason =
-            calendarStatus && (sentStatus ?? historicalCalendar)
-              ? `Calendar records ${calendarStatus}, but the other confirmed response is ${sentStatus ?? historicalCalendar}.`
-              : 'Gmail could not verify the latest sent response'
+            (!confirmation?.mail || (sentStatus !== null && sentStatus !== historical)))
+        const otherAnswer = sentStatus ?? historicalCalendar
+        const answersDiffer =
+          calendarStatus !== null && otherAnswer !== null && calendarStatus !== otherAnswer
+        // Two verified answers can differ without making the current write target ambiguous.
+        // Only a writable Calendar copy and actual Sent evidence allow resolving that difference.
+        const canResolveDifference = reply?.channel === 'calendar' && sentStatus !== null
+        responseUnverified = sentUnverified || (answersDiffer && !canResolveDifference)
+        if (responseUnverified) {
+          invitation.unavailableReason ??= sentUnverified
+            ? 'Gmail could not verify the latest sent response'
+            : `Calendar records ${calendarStatus}, but the other confirmed response is ${otherAnswer}.`
           invitation.responseStatus = null
         } else {
           invitation.responseStatus =
@@ -588,7 +597,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             : 'The response could not be confirmed. Check its status before sending again.'
         }
       }
-      invitation.canRespond = reply !== null && !disagreement && !invitation.responsePending
+      invitation.canRespond = reply !== null && !responseUnverified && !invitation.responsePending
       cards.push({ invitation, reply, response: entry.response, recorded, priorSent })
     }
     target.assertBinding()
@@ -792,7 +801,14 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           answer,
           invitation: confirmed,
           refreshPending:
-            confirmed === null || confirmed.responsePending || confirmed.responseStatus !== answer,
+            confirmed === null ||
+            confirmed.responsePending ||
+            confirmed.responseStatus !== answer ||
+            // A new conflicting Sent answer can surface during Calendar readback.
+            // Re-read before offering another response; never replay this one.
+            (channel === 'calendar' &&
+              confirmed.sentResponseStatus !== null &&
+              confirmed.sentResponseStatus !== answer),
         }
       } catch (error) {
         if (error instanceof CalendarScanError)

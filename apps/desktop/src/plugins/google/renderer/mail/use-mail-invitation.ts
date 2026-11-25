@@ -9,16 +9,14 @@ type ReadInput = Parameters<typeof googleCap.mailInvitation>[1]
 type ReadResult = Awaited<ReturnType<typeof googleCap.mailInvitation>>
 type ReadInvitation = ReadResult['invitations'][number]
 export type InvitationAnswer = Parameters<typeof googleCap.respondToMailInvitation>[1]['answer']
-export type Invitation = ReadInvitation & {
-  recordedResponseStatus?: ReadInvitation['responseStatus']
-  sentResponseStatus?: InvitationAnswer | null
-}
+export type Invitation = ReadInvitation
 
 export function invitationResponse(invitation: Invitation) {
   const { recordedResponseStatus: recorded, responseStatus, sentResponseStatus: sent } = invitation
   // Only a substantive Calendar answer conflicts with a verified Gmail reply.
   // The unqualified summary alone does not prove a reply appeared in Sent.
   if (
+    !invitation.responsePending &&
     recorded &&
     recorded !== 'needsAction' &&
     recorded !== 'delegated' &&
