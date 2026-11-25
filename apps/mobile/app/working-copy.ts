@@ -32,7 +32,7 @@ export type WorkingCopyRefusal = { code: string; message: string }
 /** Semantic native transport seam: implementations own safe preparation and durable identity checks. */
 export interface ManagedWorkingCopyNative extends NativeWorkingCopy {
   /** Runs recoverMoves directly while the caller holds the canonical-root lock. */
-  recover(root: string): Promise<void>
+  recover(root: string, expected?: { remote: string; branch: string; nativeId?: string }): Promise<void>
   prepare(
     root: string,
     remote: string,
@@ -118,7 +118,8 @@ export function createManagedWorkingCopy(
   let canonical: Promise<string> | undefined
   let acquiredNativeId: string | undefined
   const rootPath = () => (canonical ??= native.canonicalRoot(root))
-  const recover = async (canonicalRoot: string) => native.recover(canonicalRoot)
+  const recover = async (canonicalRoot: string) =>
+    native.recover(canonicalRoot, { remote, branch, nativeId: acquiredNativeId })
   const assertIdentity = (identity: ManagedWorkingCopyIdentity) => {
     if (
       !identity ||
