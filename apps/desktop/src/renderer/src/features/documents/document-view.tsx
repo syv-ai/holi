@@ -1134,7 +1134,7 @@ function DocumentEditor({
                         const href = anchor?.getAttribute('href')
                         if (!href || event.button !== 0) return
                         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-                        const resolved = resolveMarkdownHref(href, path, docs)
+                        const resolved = resolveMarkdownHref(href, path, snapshot)
                         if (!resolved) return
                         event.preventDefault()
                         event.stopPropagation()

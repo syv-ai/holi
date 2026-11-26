@@ -262,6 +262,41 @@ test('relative markdown links open the vault note and request its heading', asyn
   expect(store.get(pendingHeadingAtom)).toEqual({ path: target, heading: 'next-steps' })
 })
 
+test('relative markdown links include local and claimed Markdown files', async () => {
+  const source = 'notes/source.local.md'
+  const targets = ['notes/other.local.md', 'tasks/task.target.md', 'tasks/task.broken.md']
+  files.set(
+    source,
+    '# Part\n\n[Here](#part) [Local](other.local.md) [Task](../tasks/task.target.md) [Broken](../tasks/task.broken.md)',
+  )
+  for (const target of targets) files.set(target, '# Target\n')
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    files: [{ path: source }, { path: targets[0] }],
+    claimed: {
+      tasks: {
+        items: [{ path: targets[1] }],
+        broken: [{ path: targets[2], error: 'Invalid task metadata' }],
+      },
+    },
+  } as never)
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path={source} onOpen={onOpen} />
+    </Provider>,
+  )
+  const editor = ((await editorBox(source)) as WithEditor).editor
+  act(() => editor.commands.setTextSelection(editor.state.doc.content.size - 1))
+  fireEvent.click(screen.getByRole('link', { name: 'Here' }))
+  expect(onOpen).toHaveBeenLastCalledWith(source)
+  await waitFor(() => expect(editor.state.selection.$from.parent.textContent).toBe('Part'))
+  for (const [index, name] of ['Local', 'Task', 'Broken'].entries()) {
+    fireEvent.click(screen.getByRole('link', { name }))
+    expect(onOpen).toHaveBeenLastCalledWith(targets[index])
+  }
+})
+
 test('relative markdown links resolve encoded source and target paths and headings', async () => {
   const source = 'notes/folder #1/source%.md'
   const target = 'notes/folder #1/next? one%.md'
@@ -289,7 +324,7 @@ test('relative markdown links resolve encoded source and target paths and headin
 test('relative markdown links open anchors and plain notes without retaining stale headings', async () => {
   const source = 'notes/source.md'
   const target = 'notes/target.md'
-  files.set(source, '[Here](#part) [Target](target.md)')
+  files.set(source, '# Part\n\n[Here](#part) [Target](target.md)')
   files.set(target, '# Target\n')
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
@@ -298,17 +333,18 @@ test('relative markdown links open anchors and plain notes without retaining sta
       { path: target, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
     ],
   } as never)
-  store.set(pendingHeadingAtom, { path: source, heading: 'stale' })
   const onOpen = vi.fn()
   render(
     <Provider store={store}>
       <DocumentView path={source} onOpen={onOpen} />
     </Provider>,
   )
-  await editorBox(source)
+  const editor = ((await editorBox(source)) as WithEditor).editor
+  act(() => editor.commands.setTextSelection(editor.state.doc.content.size - 1))
   fireEvent.click(screen.getByRole('link', { name: 'Here' }))
   expect(onOpen).toHaveBeenLastCalledWith(source)
-  expect(store.get(pendingHeadingAtom)).toBeNull()
+  await waitFor(() => expect(editor.state.selection.$from.parent.textContent).toBe('Part'))
+  act(() => store.set(pendingHeadingAtom, { path: 'other.md', heading: 'stale' }))
   fireEvent.click(screen.getByRole('link', { name: 'Target' }))
   expect(onOpen).toHaveBeenLastCalledWith(target)
   expect(store.get(pendingHeadingAtom)).toBeNull()

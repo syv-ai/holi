@@ -1,3 +1,5 @@
+import type { VaultSnapshot } from '@holi/shared'
+
 import { parentOf } from '@/lib/tree-paths'
 
 import { documentTitle } from './markdown'
@@ -27,7 +29,7 @@ export function resolveLink(
 export function resolveMarkdownHref(
   href: string,
   from: string,
-  docs: readonly { path: string }[],
+  snapshot: Pick<VaultSnapshot, 'docs' | 'files' | 'claimed'>,
 ): { path: string; heading?: string } | null {
   const target = href.trim()
   if (
@@ -46,6 +48,11 @@ export function resolveMarkdownHref(
   }
 
   if (url.origin !== 'https://holi.invalid' || url.search) return null
+  const notes = [
+    ...snapshot.docs,
+    ...snapshot.files,
+    ...Object.values(snapshot.claimed).flatMap(({ items, broken }) => [...items, ...broken]),
+  ]
   if (target.startsWith('#')) {
     let heading: string
     try {
@@ -53,7 +60,7 @@ export function resolveMarkdownHref(
     } catch {
       return null
     }
-    return docs.some((doc) => doc.path === from) ? { path: from, heading } : null
+    return notes.some((doc) => doc.path === from) ? { path: from, heading } : null
   }
 
   let segments: string[]
@@ -81,6 +88,6 @@ export function resolveMarkdownHref(
   }
   const candidate = stack.join('/')
   if (!candidate.toLowerCase().endsWith('.md')) return null
-  const found = docs.find((doc) => doc.path === candidate)
+  const found = notes.find((doc) => doc.path === candidate)
   return found ? { path: found.path, ...(heading === undefined ? {} : { heading }) } : null
 }
