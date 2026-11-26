@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
   report: '',
-  failMetadata: true,
 }))
 
 vi.mock('@nativescript/core', () => ({
@@ -23,8 +22,7 @@ vi.mock('@nativescript/core', () => ({
 }))
 vi.mock('../app/note-metadata', () => ({
   createNoteMetadata: () => {
-    if (state.failMetadata) throw new Error('controlled storage failure')
-    return { recent: () => {}, visible: () => ({ recents: [] }), remove: () => {} }
+    throw new Error('controlled storage failure')
   },
 }))
 vi.mock('../app/note-metadata-settings.ios', () => ({ noteMetadataSettings: {} }))
@@ -46,23 +44,22 @@ import { checkCompatibility } from '../app/runtime.ios'
 afterEach(() => {
   vi.unstubAllGlobals()
   state.report = ''
-  state.failMetadata = true
 })
 
 it('persists observed native availability alongside a later compatibility failure', async () => {
   vi.stubGlobal('NSProcessInfo', {
     processInfo: {
       environment: {
-        objectForKey: (key: string) => (key === 'HOLI_COMPAT_RUN_ID' ? 'manual' : null),
+        objectForKey: (key: string) =>
+          key === 'HOLI_COMPAT_RUN_ID' ? '79700000-0000-4000-8000-000000000001' : null,
       },
     },
   })
   const availabilityReason = vi.fn(() => 'available')
   vi.stubGlobal('HoliFoundationModels', { availabilityReason })
 
-  const result = await checkCompatibility()
+  await checkCompatibility()
   const report = JSON.parse(state.report)
-  expect(result).toContain('Compatibility failed')
   expect(report.foundationModels).toBe('available')
   expect(report.failure).toEqual({
     phase: 'note-metadata',
@@ -79,7 +76,7 @@ it('does not query model availability during recovery and persists missing or ma
           key === 'HOLI_STORAGE_PHASE'
             ? 'recovery'
             : key === 'HOLI_COMPAT_RUN_ID'
-              ? 'manual'
+              ? '79700000-0000-4000-8000-000000000001'
               : null,
       },
     },
@@ -88,22 +85,30 @@ it('does not query model availability during recovery and persists missing or ma
   vi.stubGlobal('HoliFoundationModels', { availabilityReason })
   await checkCompatibility()
   expect(availabilityReason).not.toHaveBeenCalled()
+  expect(JSON.parse(state.report)).toMatchObject({
+    phase: 'recovery',
+    failure: { phase: 'note-metadata', operation: 'persist/reconstruct/remove' },
+  })
 
   for (const integration of [undefined, { availabilityReason: () => 'not-a-reason' }]) {
     if (integration) vi.stubGlobal('HoliFoundationModels', integration)
     else Reflect.deleteProperty(globalThis, 'HoliFoundationModels')
-    // Normal phase calls the native diagnostic, then the controlled metadata failure persists the catch result.
+    // Normal launch must reach native integration validation before the later storage failure.
     vi.stubGlobal('NSProcessInfo', {
       processInfo: {
         environment: {
-          objectForKey: (key: string) => (key === 'HOLI_COMPAT_RUN_ID' ? 'manual' : null),
+          objectForKey: (key: string) =>
+            key === 'HOLI_COMPAT_RUN_ID' ? '79700000-0000-4000-8000-000000000001' : null,
         },
       },
     })
-    const result = await checkCompatibility()
+    await checkCompatibility()
     const report = JSON.parse(state.report)
-    expect(result).toContain('Compatibility failed')
     expect(report.error).toBeTruthy()
+    expect(report.failure).toEqual({
+      phase: 'foundation-models-availability',
+      operation: 'foundationModelsAvailability',
+    })
     expect(report.foundationModels).toBeUndefined()
   }
 })
