@@ -36,7 +36,7 @@ export function validateArchiveEvidence({
   assert.match(buildVersion, /\bminos\s+26\.0\b/)
   assert.ok(bundleFiles.includes('app/package.json'), 'Missing bundled application metadata')
   assert.ok(
-    bundleFiles.some((name) => /^app\/(?:bundle|application)\.js$/.test(name)),
+    bundleFiles.some((name) => /^app\/(?:bundle|application)\.m?js$/.test(name)),
     'Missing bundled application code',
   )
   assert.ok(bundleFiles.includes('app/shared-bundle-graph.json'), 'Missing shared bundle evidence')

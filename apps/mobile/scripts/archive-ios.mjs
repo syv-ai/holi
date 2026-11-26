@@ -76,7 +76,16 @@ const settings = settingsReport.find((entry) => entry.target === scheme)?.buildS
 if (!settings) throw new Error('Missing application target build settings')
 await writeFile(join(output, 'build-settings.json'), JSON.stringify(settingsReport, null, 2))
 run('xcodebuild', [...args, '-archivePath', archive, 'archive'])
-const archiveInfo = plist(join(archive, 'Info.plist'))
+// The archive root contains a plist Date, which plutil cannot convert to JSON.
+const archiveInfo = {
+  ApplicationProperties: JSON.parse(
+    run(
+      'plutil',
+      ['-extract', 'ApplicationProperties', 'json', '-o', '-', join(archive, 'Info.plist')],
+      true,
+    ),
+  ),
+}
 const applicationPath = archiveInfo.ApplicationProperties?.ApplicationPath
 if (!/^Applications\/[^/]+\.app$/.test(applicationPath ?? ''))
   throw new Error('Invalid archive application path')

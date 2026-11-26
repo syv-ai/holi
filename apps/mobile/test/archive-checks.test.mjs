@@ -23,7 +23,7 @@ function deviceArchive() {
     buildVersion: 'platform IOS\n minos 26.0\n sdk 26.2\n',
     signed: false,
     gitSha: 'a'.repeat(40),
-    bundleFiles: ['app/package.json', 'app/bundle.js', 'app/shared-bundle-graph.json'],
+    bundleFiles: ['app/package.json', 'app/bundle.mjs', 'app/shared-bundle-graph.json'],
   }
 }
 
@@ -56,7 +56,7 @@ test('rejects Debug builds and inconsistent deployment metadata', () => {
 })
 
 test('rejects archives without executable app code or shared-graph evidence', () => {
-  for (const missing of ['app/bundle.js', 'app/shared-bundle-graph.json']) {
+  for (const missing of ['app/bundle.mjs', 'app/shared-bundle-graph.json']) {
     const evidence = deviceArchive()
     evidence.bundleFiles = evidence.bundleFiles.filter((name) => name !== missing)
     expect(() => validateArchiveEvidence(evidence)).toThrow()

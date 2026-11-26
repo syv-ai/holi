@@ -5,7 +5,7 @@
   "main": "app/app.ts",
   "scripts": {
     "build:ios": "node scripts/build-libgit2-ios.mjs && ns build ios --emulator --no-hmr --env.production --force --timeout 600",
-    "archive:ios": "HOLI_IOS_SDK=iphoneos node scripts/build-libgit2-ios.mjs && node scripts/archive-ios.mjs",
+    "archive:ios": "HOLI_IOS_SDK=iphoneos node scripts/build-libgit2-ios.mjs && node --import tsx scripts/archive-ios.mjs",
     "test:ios": "node --import tsx scripts/ios-simulator.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
