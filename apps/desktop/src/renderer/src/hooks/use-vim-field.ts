@@ -17,7 +17,11 @@ import {
 import { supportsNativeFieldSelection, type NativeField } from '@/lib/native-field-edit'
 
 /** Controlled native field binding. State is local to the focused field and never changes its value. */
-export function useVimField(identity?: string | number, controlledValue?: string) {
+export function useVimField(
+  identity?: string | number,
+  controlledValue?: string,
+  options: { allowEscapePropagation?: boolean } = {},
+) {
   const enabled = useAtomValue(vimCodeEditingAtom)
   const store = useStore()
   const state = useRef(createNativeFieldVimState())
@@ -123,6 +127,7 @@ export function useVimField(identity?: string | number, controlledValue?: string
           nativeEvent.stopImmediatePropagation()
         return
       }
+      if (nativeEvent.key === 'Escape' && options.allowEscapePropagation) return
       if (nativeEvent.defaultPrevented) return
       const handleHostHint = store.get(hostHintKeyAtom)
       if (handleHostHint?.(nativeEvent)) {
@@ -163,7 +168,7 @@ export function useVimField(identity?: string | number, controlledValue?: string
       window.removeEventListener('compositionend', onCompositionEnd, true)
       window.removeEventListener('input', onInput, true)
     }
-  }, [enabled, onKeyDown, store])
+  }, [enabled, onKeyDown, options.allowEscapePropagation, store])
   return {
     vimFieldProps: enabled ? { onKeyDown, onBlur, onFocus } : {},
     vimFieldMode: enabled && focused ? mode : null,

@@ -193,7 +193,9 @@ export function CommandMenu({
   onOpenScratchpad?: () => void
 }) {
   const [query, setQuery] = useState('')
-  const { vimFieldProps, vimFieldMode } = useVimField('command-menu', query)
+  const { vimFieldProps, vimFieldMode } = useVimField('command-menu', query, {
+    allowEscapePropagation: true,
+  })
   const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const remote = useAtomValue(activeRemoteAtom)

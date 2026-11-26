@@ -110,6 +110,20 @@ test('untyped, it offers the newest documents, places and live actions', () => {
   expect(options.some((o) => o?.includes('Toggle terminal'))).toBe(false)
 })
 
+test('Vim mode clears the query with Escape, then closes the command menu', async () => {
+  search.mockResolvedValue([])
+  const { onOpen, onOpenChange } = setup({ vim: true })
+  const input = screen.getByRole('combobox')
+  await userEvent.type(input, 'road')
+  await userEvent.keyboard('{Escape}')
+  expect(input).toHaveValue('')
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  expect(onOpenChange).not.toHaveBeenCalled()
+  await userEvent.keyboard('{Escape}')
+  expect(onOpenChange).toHaveBeenCalledWith(false)
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
 test('Vim mode has an explicit keyboard-close action without opening a document', async () => {
   search.mockResolvedValue([])
   const { onOpen, onOpenChange } = setup({ vim: true })
@@ -142,8 +156,8 @@ test('Escape clears a query before closing the command menu', async () => {
   expect(onOpenChange).toHaveBeenCalledWith(false)
 })
 
-test('Escape closes an initially empty command menu', async () => {
-  const { onOpenChange } = setup()
+test.each([false, true])('Escape closes an initially empty command menu (Vim: %s)', async (vim) => {
+  const { onOpenChange } = setup({ vim })
   await userEvent.click(screen.getByRole('combobox'))
   await userEvent.keyboard('{Escape}')
   expect(onOpenChange).toHaveBeenCalledWith(false)
