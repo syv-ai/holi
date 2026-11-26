@@ -980,7 +980,7 @@ export function createMailInvitationReconciler(
         // alone doesn't confirm cancellation or remove the read-only Retry.
         cancelled:
           verifiedCopy?.cancelled ??
-          ((details.cancelled && !occurrenceRevisionBlocked) ||
+          ((details.cancelled && !entry.reason) ||
             entry.cancelledBy !== undefined ||
             (calendar?.kind === 'blocked' && calendar.cancelled === true)),
         unavailableReason: verifiedCopy
