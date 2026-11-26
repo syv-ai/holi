@@ -20,6 +20,7 @@ import { AGENT_MARKER, DocumentMarkdown } from './markdown'
 import { MultiCursor } from './multi-cursor'
 import { WikiLink } from './wiki-link'
 import { MermaidCodeBlock } from './rich-text/mermaid-code-block'
+import { FootnoteDefinition, FootnoteList, FootnoteReference } from './footnotes'
 import { DocumentCaption, DocumentFigure, renderImageMarkdown } from './rich-text/document-figure'
 
 /** An image at its natural size up to the column's width, never scaled up.
@@ -208,6 +209,9 @@ export function createDocumentExtensions({
       (extension) => extension.name !== 'textAlign',
     ),
     MermaidCodeBlock,
+    FootnoteReference,
+    FootnoteDefinition,
+    FootnoteList,
     DocumentCaption,
     DocumentFigure,
     WikiLink.configure({ onOpen: onOpenLink }),
