@@ -67,6 +67,8 @@ export type InvitationLinks = Pick<
 export type InvitationNavigation =
   | { kind: 'default' }
   | { kind: 'withheld' }
+  /** Calendar read access alone cannot vouch for links from the mail. */
+  | { kind: 'calendar'; links: InvitationLinks }
   /** Use the occurrence's links with a master page fallback, never the master’s room. */
   | { kind: 'series'; links?: InvitationLinks }
 
@@ -115,6 +117,7 @@ type NavigationProof = {
   uid: string
   organizer: string
   classify: (event: RawEvent) => CancellationClassification
+  legacyJoinOnly?: boolean
 }
 
 const CALENDAR_PAGE_LIMIT = 10
@@ -333,6 +336,7 @@ type QueryAssociation = { uid: string; mailbox: string } & (
 )
 
 type ObserveEvent = (event: RawEvent, association?: QueryAssociation) => Promise<void>
+type CancellationObservation = 'association-only' | 'legacy-association-only'
 
 function observeUidQuery(
   uid: string,
@@ -359,19 +363,21 @@ async function exactCopies(
   floating: boolean,
   context: {
     organizer: string | undefined
-    bindsParent: (event: RawEvent) => boolean
+    bindsResponseParent: (event: RawEvent) => boolean
+    bindsLegacyParent: ((event: RawEvent) => boolean) | null
     navigationOnly: boolean
     mailbox: string
     primary: boolean
     includeHiddenInvitations: boolean
     classifyCancellation: (event: RawEvent) => CancellationClassification
-    observeCancellation: (event: RawEvent, proof?: 'association-only') => void
+    observeCancellation: (event: RawEvent, proof?: CancellationObservation) => void
   },
   observe: ObserveEvent,
   access: CalendarAccess,
 ) {
   let verifiedParent: RawEvent | undefined
-  const result = (events: RawEvent[]) => ({ events, verifiedParent })
+  let verifiedResponseParentId: string | undefined
+  const result = (events: RawEvent[]) => ({ events, verifiedParent, verifiedResponseParentId })
   const { uid, recurrenceId, sequence } = identity
   let sawCancellation = false
   const observeCandidate = (event: RawEvent) => {
@@ -454,19 +460,23 @@ async function exactCopies(
   )
   for (const series of activeRoots) {
     if (!series.id || !series.recurrence?.length) continue
-    const boundParent =
+    const coherentParent =
       series.iCalUID === uid &&
-      context.bindsParent(series) &&
       coherentEventTimes(series) &&
       (series.start?.date !== undefined) === date(recurrenceId) &&
       recurrenceSet(series.recurrence) !== null
-    // The hint can prove a Calendar parent for navigation, not a received revision.
+    const responseParent = coherentParent && context.bindsResponseParent(series)
+    const legacyParent = coherentParent && context.bindsLegacyParent?.(series)
+    const responseParentVerified = responseParent && (series.sequence ?? 0) === sequence
+    // Read access can prove a legacy parent for navigation, not a response locator.
     const parentVerified =
-      boundParent && (context.navigationOnly || (series.sequence ?? 0) === sequence)
+      responseParentVerified ||
+      (legacyParent && (context.navigationOnly || (series.sequence ?? 0) === sequence))
     // Unmodified instances do not appear in events.list. Query for the original
     // start (not timeMin or the displayed start, which miss moved occurrences).
     const parentId = series.id
     if (parentVerified) verifiedParent = series
+    if (responseParentVerified) verifiedResponseParentId = parentId
     const instances = await invitationPages<RawEvent>(
       api,
       `${url}/${encodeURIComponent(parentId)}/instances`,
@@ -481,8 +491,15 @@ async function exactCopies(
           // The row must match this exact original-slot request. Its parent
           // still has to be independently verified before it can affect Join.
           const original = event.originalStartTime
-          if (boundParent && validTime(original) && sameOccurrence(event, recurrenceId))
-            context.observeCancellation(event, 'association-only')
+          if (
+            (responseParent || legacyParent) &&
+            validTime(original) &&
+            sameOccurrence(event, recurrenceId)
+          )
+            context.observeCancellation(
+              event,
+              responseParent ? 'association-only' : 'legacy-association-only',
+            )
         }
         // A fully identified child proves possible existence independently of
         // the queried parent. Record the row's own scope before validating the
@@ -501,8 +518,8 @@ async function exactCopies(
         if (event.iCalUID === uid && organizer !== undefined) await observe(event)
         else if (
           (event.iCalUID === undefined || event.iCalUID === uid) &&
-          ((parentVerified && mailboxAttendee(event, context.mailbox)) ||
-            (boundParent &&
+          ((responseParentVerified && mailboxAttendee(event, context.mailbox)) ||
+            (responseParent &&
               context.primary &&
               event.attendees === undefined &&
               event.status === 'cancelled'))
@@ -652,8 +669,12 @@ export function createInvitationCalendarDiscovery(api: CalendarReadApi, mailbox:
   // Current-read negative evidence only. Keep the newest bound tombstone per
   // original slot, and keep sparse uncertainty separate: no revision order
   // can be inferred for a row that cannot prove its own cancellation.
-  const occurrenceCancellations = new Map<string, RawEvent>()
-  const uncertainOccurrences = new Set<string>()
+  const cancellationEvidence = () => ({
+    full: new Map<string, RawEvent>(),
+    sparse: new Set<string>(),
+  })
+  const responseCancellations = cancellationEvidence()
+  const legacyCancellations = cancellationEvidence()
   const occurrenceKey = (
     base: string,
     parentId: string,
@@ -661,7 +682,11 @@ export function createInvitationCalendarDiscovery(api: CalendarReadApi, mailbox:
     organizer: string | undefined,
     slot: string,
   ) => JSON.stringify([key(base), parentId, uid, organizer, slot])
-  function observeOccurrenceCancellation(base: string, row: RawEvent, proof?: 'association-only') {
+  function observeOccurrenceCancellation(
+    base: string,
+    row: RawEvent,
+    proof?: CancellationObservation,
+  ) {
     if (
       !row.recurringEventId ||
       !validCancellation(row) ||
@@ -671,18 +696,23 @@ export function createInvitationCalendarDiscovery(api: CalendarReadApi, mailbox:
     const { iCalUID: uid, sequence, attendees } = row
     const organizer = row.organizer?.email?.toLowerCase()
     const slot = occurrenceKey(base, row.recurringEventId, uid, organizer, occurrenceSlot(row)!)
-    if (
-      uid === undefined ||
-      organizer === undefined ||
-      attendees === undefined ||
-      sequence === undefined
-    ) {
-      if (attendees === undefined || mailboxAttendee(row, mailbox)) uncertainOccurrences.add(slot)
-    } else if (proof !== 'association-only' && provesCancellationActor(row, mailbox)) {
-      // Fully identified tombstones remain comparable to the selected slot's
-      // revision, so a verified newer occurrence can supersede an older one.
-      const prior = occurrenceCancellations.get(slot)
-      if (!prior || sequence > prior.sequence!) occurrenceCancellations.set(slot, row)
+    const sparse = uid === undefined || organizer === undefined || sequence === undefined
+    const keepNewest = (full: Map<string, RawEvent>) => {
+      // A verified newer live occurrence can supersede an older full tombstone.
+      const prior = full.get(slot)
+      if (!prior || sequence! > prior.sequence!) full.set(slot, row)
+    }
+    // A legacy read compares Calendar's own resources, not a received iTIP actor.
+    // Even then, a sparse row can only withhold a verified parent's original slot.
+    if (sparse) legacyCancellations.sparse.add(slot)
+    else if (!proof) keepNewest(legacyCancellations.full)
+
+    if (proof === 'legacy-association-only' || row.organizer?.self === true) return
+    if (sparse || attendees === undefined) {
+      if (attendees === undefined || mailboxAttendee(row, mailbox))
+        responseCancellations.sparse.add(slot)
+    } else if (!proof && provesCancellationActor(row, mailbox)) {
+      keepNewest(responseCancellations.full)
     }
   }
   function access(base: string): CalendarAccess {
@@ -717,21 +747,22 @@ export function createInvitationCalendarDiscovery(api: CalendarReadApi, mailbox:
       base: string,
       parentId: string,
       slot: string,
-      { uid, organizer, classify }: NavigationProof,
+      { uid, organizer, classify, legacyJoinOnly }: NavigationProof,
       bindsSparseChild: boolean,
     ) {
+      const evidence = legacyJoinOnly ? legacyCancellations : responseCancellations
       // Only the verified master associates sparse rows with this invitation,
       // and only for navigation. Do not infer UID, organizer, self or revision
       // for the child resource, even if the expanded view still shows it live.
       if (bindsSparseChild) {
         for (const childUid of [uid, undefined]) {
           for (const address of [organizer, undefined]) {
-            if (uncertainOccurrences.has(occurrenceKey(base, parentId, childUid, address, slot)))
+            if (evidence.sparse.has(occurrenceKey(base, parentId, childUid, address, slot)))
               return true
           }
         }
       }
-      const event = occurrenceCancellations.get(occurrenceKey(base, parentId, uid, organizer, slot))
+      const event = evidence.full.get(occurrenceKey(base, parentId, uid, organizer, slot))
       if (!event) return false
       const cancellation = classify(event)
       return cancellation === 'current' || cancellation === 'unverified'
@@ -870,42 +901,39 @@ async function lookupInvitationCalendarCopy(
   discovery: CalendarDiscovery,
 ): Promise<CalendarLookup | LegacyMeeting> {
   const navigationOnly = 'navigationOnly' in invitation
+  const { legacyJoinOnly } = invitation
   const { identity } = invitation.details
   const { uid, recurrenceId } = identity
   const organizer = invitation.details.organizer?.email
   const classify = (event: RawEvent) =>
     navigationOnly
-      ? classifyHintCancellation(event, identity)
-      : classifyCancellation(event, invitation, mailbox)
+      ? classifyLegacyCancellation(event, identity, organizer)
+      : legacyJoinOnly
+        ? classifyLegacyCancellation(event, identity, organizer, identity.sequence)
+        : classifyCancellation(event, invitation, mailbox)
   const lookupContext = (base: string, ownedCalendar?: () => string | undefined) => ({
     organizer,
     mailbox,
     primary: base === PRIMARY_EVENTS,
     classifyCancellation: classify,
-    observeCancellation: (event: RawEvent, proof?: 'association-only') =>
+    observeCancellation: (event: RawEvent, proof?: CancellationObservation) =>
       discovery.observeOccurrenceCancellation(base, event, proof),
-    includeHiddenInvitations: !invitation.legacyJoinOnly,
+    includeHiddenInvitations: !legacyJoinOnly,
     navigationOnly,
-    bindsParent: (event: RawEvent) =>
-      navigationOnly
-        ? Boolean(
-            calendarOrganizer(event) &&
-            invitationMembership(
-              event,
-              invitation,
-              mailbox,
-              discovery.access(base).role === 'owner',
-              ownedCalendar?.(),
-            ).allowed,
-          )
-        : Boolean(
-            organizer &&
-            event.organizer?.email?.toLowerCase() === organizer &&
-            (mailboxAttendee(event, mailbox) ||
-              (invitation.joinOnly &&
-                event.organizer?.self &&
-                (organizer === mailbox || organizer === ownedCalendar?.()))),
-          ),
+    bindsLegacyParent: legacyJoinOnly
+      ? (event: RawEvent) =>
+          readableRole(discovery.access(base).role) && Boolean(legacyOrganizer(event, organizer))
+      : null,
+    bindsResponseParent: (event: RawEvent) =>
+      !navigationOnly &&
+      Boolean(
+        organizer &&
+        event.organizer?.email?.toLowerCase() === organizer &&
+        (mailboxAttendee(event, mailbox) ||
+          (invitation.joinOnly &&
+            event.organizer?.self &&
+            (organizer === mailbox || organizer === ownedCalendar?.()))),
+      ),
   })
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
@@ -985,7 +1013,6 @@ async function lookupInvitationCalendarCopy(
     kind: 'blocked',
     reason: 'More than one Calendar event matches this invitation',
   } as const
-  const { legacyJoinOnly } = invitation
   const overrides = legacyJoinOnly ? await readCalendarOverrides() : null
   const enabled = (calendar: CalendarListEntry) => {
     if (overrides === null) return true
@@ -1014,17 +1041,39 @@ async function lookupInvitationCalendarCopy(
     return candidates
   }
   function selectCopy(
-    { events, verifiedParent }: Awaited<ReturnType<typeof exactCopies>>,
+    { events, verifiedParent, verifiedResponseParentId }: Awaited<ReturnType<typeof exactCopies>>,
     base: string,
     access: CalendarAccess,
     observe: ObserveEvent,
-    calendarId?: string,
+    calendar?: CalendarListEntry,
   ): CalendarLookup | LegacyMeeting | undefined {
+    const calendarId = base === PRIMARY_EVENTS ? undefined : calendar?.id.toLowerCase()
+    const canRead = () =>
+      readableRole(access.role) &&
+      (!legacyJoinOnly || (calendar && enabled({ ...calendar, accessRole: access.role })) === true)
+    if (legacyJoinOnly && !canRead()) return undefined
     // Classify negative evidence independently of the preference for a live
     // resource. An older or unrelated tombstone conveys no current status.
+    const live = events.filter(({ status }) => status !== 'cancelled')
+    const boundChild =
+      legacyJoinOnly &&
+      verifiedParent?.id &&
+      live.length === 1 &&
+      live[0]?.recurringEventId === verifiedParent.id
+        ? live[0]
+        : undefined
     let unverified = false
     for (const event of events) {
-      const cancellation = classify(event)
+      if (boundChild && event.recurringEventId && event.recurringEventId !== verifiedParent?.id)
+        continue
+      const cancellation = boundChild
+        ? classifyLegacyCancellation(
+            event,
+            identity,
+            organizer ?? calendarOrganizer(boundChild),
+            boundChild.sequence ?? 0,
+          )
+        : classify(event)
       if (cancellation === 'current')
         return {
           kind: 'blocked',
@@ -1041,13 +1090,21 @@ async function lookupInvitationCalendarCopy(
     if (active.length > 1) return ambiguous
     if (active[0])
       return navigationOnly
-        ? legacyMeeting(api, base, active[0], invitation, mailbox, access, discovery, {
-            calendarId,
+        ? legacyMeeting(
+            api,
+            base,
+            active[0],
+            invitation,
+            access,
+            canRead,
+            discovery,
             verifiedParent,
-          })
+          )
         : invitationCopy(api, base, active[0], invitation, mailbox, access, observe, discovery, {
             calendarId,
-            verifiedParentId: verifiedParent?.id,
+            canRead,
+            verifiedParent,
+            verifiedResponseParentId,
           })
     if (candidates.length)
       return { kind: 'blocked', reason: 'Calendar could not verify a current invitation copy' }
@@ -1072,7 +1129,7 @@ async function lookupInvitationCalendarCopy(
       observePrimary,
       access,
     )
-    const found = selectCopy(primary, PRIMARY_EVENTS, access, observePrimary)
+    const found = selectCopy(primary, PRIMARY_EVENTS, access, observePrimary, declaredPrimary)
     if (found) return found
   }
 
@@ -1098,7 +1155,7 @@ async function lookupInvitationCalendarCopy(
       observe,
       access,
     )
-    const found = selectCopy(copies, url, access, observe, calendarId)
+    const found = selectCopy(copies, url, access, observe, calendar)
     if (found && match) {
       if ([match, found].some((copy) => copy.kind === 'blocked' && copy.navigationUnverified))
         return { ...ambiguous, navigationUnverified: true }
@@ -1168,7 +1225,6 @@ function validCancellation(event: RawEvent): boolean {
   return (
     event.status === 'cancelled' &&
     usableInvitationEvent(event) &&
-    event.organizer?.self !== true &&
     (!event.recurrence?.length ||
       (event.recurringEventId === undefined && recurrenceSet(event.recurrence) !== null)) &&
     validCancellationTimes(event)
@@ -1188,6 +1244,7 @@ function provesCancellationActor(event: RawEvent, mailbox: string): boolean {
 function boundCancellation(event: RawEvent, { details }: InvitationRevision, mailbox: string) {
   return (
     validCancellation(event) &&
+    event.organizer?.self !== true &&
     event.iCalUID === details.identity.uid &&
     Boolean(details.organizer?.email) &&
     event.organizer?.email?.toLowerCase() === details.organizer?.email &&
@@ -1247,19 +1304,62 @@ function calendarOrganizer(event: RawEvent) {
     : undefined
 }
 
-function classifyHintCancellation(
+function legacyOrganizer(event: RawEvent, expected?: string) {
+  const actual = calendarOrganizer(event)
+  return expected === undefined || actual === expected ? actual : undefined
+}
+
+function legacySlotIsSuppressed(
+  discovery: CalendarDiscovery,
+  base: string,
+  parentId: string,
+  slot: string,
+  live: RawEvent,
+  uid: string,
+  organizer: string,
+): boolean {
+  return discovery.suppressesOccurrence(
+    base,
+    parentId,
+    slot,
+    {
+      uid,
+      organizer,
+      legacyJoinOnly: true,
+      // Compare Calendar revisions, never the stamp in a UID-only export.
+      classify: (row) => ((row.sequence ?? 0) < (live.sequence ?? 0) ? 'older' : 'unverified'),
+    },
+    true,
+  )
+}
+
+function classifyLegacyCancellation(
   event: RawEvent,
   { uid, recurrenceId }: Parsed['details']['identity'],
+  organizer?: string,
+  sequence?: number,
 ): CancellationClassification {
   const { recurrenceId: slot, occurrenceUnverified } = eventLocatorScope(event)
-  // A UID hint has no received organizer or revision against which to confirm
-  // a cancellation. An applicable row can only withhold navigation.
-  return event.status !== 'cancelled' ||
+  const address = calendarOrganizer(event)
+  if (
+    event.status !== 'cancelled' ||
     (event.iCalUID !== undefined && event.iCalUID !== uid) ||
+    (organizer !== undefined && address !== undefined && address !== organizer) ||
     (recurrenceId === null
       ? slot !== null || occurrenceUnverified
       : slot !== null && distinctSlots(slot, recurrenceId))
-    ? 'irrelevant'
+  )
+    return 'irrelevant'
+  // Legacy mail cannot establish an attendee cancellation. A full tombstone
+  // can age out, but any applicable newer or sparse row only withholds links.
+  return sequence !== undefined &&
+    event.sequence !== undefined &&
+    event.sequence < sequence &&
+    event.iCalUID === uid &&
+    organizer !== undefined &&
+    address === organizer &&
+    validCancellation(event)
+    ? 'older'
     : 'unverified'
 }
 
@@ -1268,22 +1368,19 @@ function legacyMeeting(
   base: string,
   event: RawEvent,
   hint: LegacyMeetingHint,
-  mailbox: string,
   access: CalendarAccess,
+  canNavigate: () => boolean,
   discovery: CalendarDiscovery,
-  { calendarId, verifiedParent }: { calendarId?: string; verifiedParent?: RawEvent },
+  verifiedParent?: RawEvent,
 ): LegacyMeeting | CalendarRefusal {
   const { uid, recurrenceId } = hint.details.identity
-  const organizer = calendarOrganizer(event)
-  const membership = (row: RawEvent) =>
-    invitationMembership(row, hint, mailbox, access.role === 'owner', calendarId)
+  const organizer = legacyOrganizer(event, hint.details.organizer?.email)
   const recurring = recurrenceId === null && Boolean(event.recurrence?.length)
   const parentId = verifiedParent?.id
   if (
     event.iCalUID !== uid ||
     !organizer ||
     !coherentEventTimes(event) ||
-    !membership(event).allowed ||
     (recurring && recurrenceSet(event.recurrence!) === null) ||
     (recurrenceId === null && hint.details.recurring && !recurring) ||
     (recurrenceId !== null &&
@@ -1294,22 +1391,9 @@ function legacyMeeting(
   )
     return { kind: 'blocked', reason: 'Calendar could not verify this meeting' }
 
-  const canNavigate = () => access.role === 'owner'
   const observe = async () => {} // A navigation hint must not register durable response locators.
   const suppressed = (master: string, slot: string, live: RawEvent) =>
-    discovery.suppressesOccurrence(
-      base,
-      master,
-      slot,
-      {
-        uid,
-        organizer,
-        // The collector has already bound full tombstones to the mailbox.
-        // Compare to the verified Calendar row, never to an export's stamp.
-        classify: (row) => ((row.sequence ?? 0) < (live.sequence ?? 0) ? 'older' : 'unverified'),
-      },
-      true,
-    )
+    legacySlotIsSuppressed(discovery, base, master, slot, live, uid, organizer)
   const name = event.organizer?.displayName
   const links = invitationEventLinks(event)
   return {
@@ -1322,6 +1406,7 @@ function legacyMeeting(
     allDay: event.start?.date !== undefined,
     location: event.location,
     ...links,
+    htmlLink: isAgendaEventVisible(event) ? links.htmlLink : null,
     onCalendar: (locator) => discovery.onCalendar(locator, base),
     canNavigate,
     navigation: async () => {
@@ -1336,16 +1421,9 @@ function legacyMeeting(
           true,
           observe,
           access,
-          (instance, slot) => {
-            const { allowed, organizes } = membership(instance)
-            return (
-              !hint.embeddedSlots.some((embedded) => !distinctSlots(embedded, slot)) &&
-              !suppressed(event.id!, slot, instance) &&
-              (instance.attendeesOmitted === undefined || instance.attendeesOmitted === false) &&
-              allowed &&
-              (Boolean(mailboxAttendee(instance, mailbox)) || organizes)
-            )
-          },
+          (instance, slot) =>
+            !hint.embeddedSlots.some((embedded) => !distinctSlots(embedded, slot)) &&
+            !suppressed(event.id!, slot, instance),
         )
         return upcoming ? { kind: 'series', links: upcoming } : { kind: 'withheld' }
       }
@@ -1405,11 +1483,21 @@ function invitationCopy(
   access: CalendarAccess,
   observe: ObserveEvent,
   discovery: CalendarDiscovery,
-  { calendarId, verifiedParentId }: { calendarId?: string; verifiedParentId?: string },
+  {
+    calendarId,
+    canRead,
+    verifiedParent,
+    verifiedResponseParentId,
+  }: {
+    calendarId?: string
+    canRead: () => boolean
+    verifiedParent?: RawEvent
+    verifiedResponseParentId?: string
+  },
 ): CalendarLookup {
-  const { details, joinOnly } = invitation
+  const { details, joinOnly, legacyJoinOnly } = invitation
   const ownedCalendar = () => (access.role === 'owner' ? calendarId : undefined)
-  const canNavigate = () => readableRole(access.role) && (!joinOnly || access.role === 'owner')
+  const canNavigate = () => canRead() && (legacyJoinOnly || !joinOnly || access.role === 'owner')
   const { attendee, allowed, organizes, organizerConflict } = invitationMembership(
     event,
     invitation,
@@ -1428,7 +1516,8 @@ function invitationCopy(
     }
   if (!organizer || organizer !== details.organizer?.email)
     return blocked('The Calendar organizer does not match this invitation')
-  if (!allowed) return blocked('This account cannot verify its place on this Calendar event')
+  if (!legacyJoinOnly && !allowed)
+    return blocked('This account cannot verify its place on this Calendar event')
   if (organizerConflict) return blocked('You organize this event')
   const links = invitationEventLinks(event)
   const requiresRoster = rosterChanged(invitation)
@@ -1447,6 +1536,9 @@ function invitationCopy(
         : null
   const url = calendarResponseUrl(base, event)
   const proof = calendarProof(event, requiresRoster)
+  // Preserve previously authorized existence observations. Newly readable
+  // legacy copies do not add response locators through deferred navigation.
+  const observeNavigation = legacyJoinOnly && !allowed ? async () => {} : observe
   return {
     kind: 'verified',
     target: calendarCopyTarget(url, mailbox),
@@ -1461,10 +1553,10 @@ function invitationCopy(
     location: event.location,
     ...links,
     // Never fall back from an eligible legacy instance to a declined master.
-    htmlLink: invitation.legacyJoinOnly && !isAgendaEventVisible(event) ? null : links.htmlLink,
+    htmlLink: legacyJoinOnly && !isAgendaEventVisible(event) ? null : links.htmlLink,
     responseStatus,
     get canEdit() {
-      return writableRole(access.role)
+      return !legacyJoinOnly && writableRole(access.role)
     },
     get canNavigate() {
       return canNavigate()
@@ -1482,14 +1574,31 @@ function invitationCopy(
           event,
           uid,
           organizer,
-          invitation.legacyJoinOnly,
-          observeUidQuery(uid, observe, { mailbox, primary, parentId: event.id }),
+          legacyJoinOnly,
+          observeUidQuery(uid, observeNavigation, { mailbox, primary, parentId: event.id }),
           access,
           (instance, original, links) => {
             const slot = selectSlot(original)
             if (slot === false) return false
             const revision = slot ?? invitation
             const address = revision.details.organizer?.email
+            if (legacyJoinOnly)
+              return (
+                address === organizer &&
+                !legacySlotIsSuppressed(
+                  discovery,
+                  base,
+                  event.id!,
+                  original,
+                  instance,
+                  uid,
+                  organizer,
+                ) &&
+                !calendarRevisionMismatch(instance, revision, links, {
+                  expanded: slot === null,
+                  navigationOnly: true,
+                })
+              )
             const membership = invitationMembership(
               instance,
               revision,
@@ -1525,29 +1634,42 @@ function invitationCopy(
           },
         )
         if (upcoming) return { kind: 'series', links: upcoming }
-        return invitation.legacyJoinOnly ? { kind: 'withheld' } : { kind: 'series' }
+        return legacyJoinOnly ? { kind: 'withheld' } : { kind: 'series' }
       }
+      if (!legacyJoinOnly) return { kind: 'default' }
       if (
-        invitation.legacyJoinOnly &&
-        !(await legacyMeetingIsCurrent(
-          api,
+        recurrenceId &&
+        verifiedParent?.id &&
+        event.recurringEventId === verifiedParent.id &&
+        legacySlotIsSuppressed(
+          discovery,
           base,
+          verifiedParent.id,
+          recurrenceId,
           event,
           uid,
-          recurrenceId,
-          observeUidQuery(uid, observe, {
-            mailbox,
-            primary,
-            parentId:
-              primary || event.recurringEventId === verifiedParentId
-                ? event.recurringEventId
-                : undefined,
-          }),
-          access,
-        ))
+          organizer,
+        )
       )
         return { kind: 'withheld' }
-      return { kind: 'default' }
+      const current = await legacyMeetingIsCurrent(
+        api,
+        base,
+        event,
+        uid,
+        recurrenceId,
+        observeUidQuery(uid, observeNavigation, {
+          mailbox,
+          primary,
+          parentId:
+            primary || event.recurringEventId === verifiedResponseParentId
+              ? event.recurringEventId
+              : undefined,
+        }),
+        access,
+      )
+      if (!current) return { kind: 'withheld' }
+      return allowed && access.role === 'owner' ? { kind: 'default' } : { kind: 'calendar', links }
     },
     get reply() {
       return !joinOnly && this.canEdit && reason === null && etag && attendee

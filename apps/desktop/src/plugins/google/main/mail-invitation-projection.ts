@@ -60,9 +60,9 @@ export function projectMailInvitation({
   response: ResponsePresentation
   navigation: InvitationNavigation
 }): MailInvitation {
-  const usesUpcomingLinks = navigation.kind === 'series'
-  const upcoming = usesUpcomingLinks ? navigation.links : undefined
-  const htmlLink = upcoming?.htmlLink ?? calendar?.htmlLink
+  const calendarLinksOnly = navigation.kind === 'series' || navigation.kind === 'calendar'
+  const verifiedLinks = calendarLinksOnly ? navigation.links : undefined
+  const htmlLink = verifiedLinks?.htmlLink ?? calendar?.htmlLink
   return {
     ...details,
     title: calendar?.title?.trim() || details.title,
@@ -78,18 +78,18 @@ export function projectMailInvitation({
           htmlLinkSource: null,
         }
       : {
-          conferenceUrl: usesUpcomingLinks
-            ? (upcoming?.conferenceUrl ?? null)
+          conferenceUrl: calendarLinksOnly
+            ? (verifiedLinks?.conferenceUrl ?? null)
             : (calendar?.conferenceUrl ?? details.conferenceUrl),
-          conferenceLinkSource: usesUpcomingLinks
-            ? (upcoming?.conferenceLinkSource ?? null)
+          conferenceLinkSource: calendarLinksOnly
+            ? (verifiedLinks?.conferenceLinkSource ?? null)
             : calendar?.conferenceUrl
               ? calendar.conferenceLinkSource
               : details.conferenceLinkSource,
-          htmlLink: htmlLink ?? (usesUpcomingLinks ? null : details.htmlLink),
+          htmlLink: htmlLink ?? (calendarLinksOnly ? null : details.htmlLink),
           htmlLinkSource: htmlLink
             ? ('calendar' as const)
-            : usesUpcomingLinks
+            : calendarLinksOnly
               ? null
               : details.htmlLinkSource,
         }),
