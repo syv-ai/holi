@@ -73,7 +73,13 @@ export function useMailInvitation({
   accountRevision,
   expectedAccountSub,
   threadId,
-}: ReadInput & { remote: string; remoteRevision: number; accountRevision: number }) {
+  isCurrentGeneration,
+}: ReadInput & {
+  remote: string
+  remoteRevision: number
+  accountRevision: number
+  isCurrentGeneration: () => boolean
+}) {
   const store = useStore()
   const owner = useRef<object | null>(null)
   const currentCards = useRef<InvitationCardState[]>([])
@@ -102,10 +108,11 @@ export function useMailInvitation({
   const ownsReader = useCallback(
     () =>
       owner.current !== null &&
+      isCurrentGeneration() &&
       store.get(activeRemoteAtom) === remote &&
       store.get(activeRemoteRevisionValueAtom) === remoteRevision &&
       store.get(googleAccountRevisionAtom) === accountRevision,
-    [store, remote, remoteRevision, accountRevision],
+    [store, remote, remoteRevision, accountRevision, isCurrentGeneration],
   )
 
   const begin = useCallback(() => {

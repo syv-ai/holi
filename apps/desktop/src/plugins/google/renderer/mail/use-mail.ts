@@ -18,6 +18,7 @@ import { explainWriteFailure, messageOf } from '../google-errors'
 import type { MailAddress, ThreadMessage } from '../mail-types'
 import type { MailFolder } from './data'
 import { useMailList } from './use-mail-list'
+import { useMailThread } from './use-mail-thread'
 
 /** Gmail's own shapes, as the capabilities return them. */
 type SearchPage = Awaited<ReturnType<typeof googleCap.search>>
@@ -36,7 +37,7 @@ export type DraftsState =
   | { kind: 'ready'; drafts: DraftSummary[] }
   | { kind: 'error'; message: string }
 
-export type ReaderState =
+type ReaderState =
   | { kind: 'idle' }
   | { kind: 'loading'; id: string }
   | { kind: 'ready'; thread: Thread }
@@ -84,9 +85,17 @@ export function useMail(account: string | null) {
   const [contacts, setContacts] = useState<MailAddress[]>([])
   const [sendAs, setSendAs] = useState<string[]>([])
   const [writeError, setWriteError] = useState<string | null>(null)
-  const [reader, setReader] = useState<ReaderState>({ kind: 'idle' })
+  const threadReader = useMailThread()
+  const openId = threadReader.id
+  const reader: ReaderState =
+    openId === null
+      ? { kind: 'idle' }
+      : threadReader.thread !== null
+        ? { kind: 'ready', thread: threadReader.thread }
+        : threadReader.error !== null
+          ? { kind: 'error', id: openId, message: threadReader.error }
+          : { kind: 'loading', id: openId }
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
-  const threadGeneration = useRef(0)
   /** Bumped by everything that replaces the list, so a refused write knows
    *  whether its snapshot is still a valid undo. */
   const listGeneration = useRef(0)
@@ -115,6 +124,7 @@ export function useMail(account: string | null) {
     !showsDrafts,
     listGeneration,
     setWriteError,
+    threadReader.watchNotFound,
   )
 
   useEffect(() => {
@@ -213,12 +223,8 @@ export function useMail(account: string | null) {
       (threads) => threads.map((t) => (t.id === id ? { ...t, starred } : t)),
     )
 
-  const openId =
-    reader.kind === 'idle' ? null : reader.kind === 'ready' ? reader.thread.id : reader.id
-
   const closeThread = () => {
-    threadGeneration.current++
-    setReader({ kind: 'idle' })
+    threadReader.closeThread()
     setOpenSummary(null)
   }
 
@@ -254,31 +260,12 @@ export function useMail(account: string | null) {
     })
   }
 
-  const fetchThread = (id: string) => {
-    const generation = ++threadGeneration.current
-    setReader({ kind: 'loading', id })
-    void call((r) => googleCap.thread(r, { id }))
-      .then((thread) => {
-        if (threadGeneration.current === generation) setReader({ kind: 'ready', thread })
-      })
-      .catch((err: unknown) => {
-        if (threadGeneration.current === generation) {
-          setReader({ kind: 'error', id, message: messageOf(err, 'Could not load this thread.') })
-        }
-      })
-  }
-
   /** Open a thread, keeping its row: flags such as the unsubscribe link come
    *  from the list and are not refetched. */
   const openThread = (thread: ThreadSummary) => {
     setOpenSummary(thread)
-    fetchThread(thread.id)
+    threadReader.fetchThread(thread.id)
     if (thread.unread) void setRead(thread.id, true)
-  }
-
-  /** Re-read the open thread, after a send or a failed load. */
-  const reloadThread = () => {
-    if (openId !== null) fetchThread(openId)
   }
 
   const threads = useMemo(() => (list.kind === 'ready' ? list.threads : []), [list])
@@ -347,10 +334,13 @@ export function useMail(account: string | null) {
     reader,
     openId,
     openRow,
-    threadGeneration: threadGeneration.current,
+    threadGeneration: threadReader.generation,
+    isCurrentThreadGeneration: threadReader.isCurrentGeneration,
+    threadRefreshing: threadReader.refreshing,
+    threadError: threadReader.error,
     openThread,
     closeThread,
-    reloadThread,
+    reloadThread: threadReader.retry,
     load,
     refresh: () => {
       refresh()

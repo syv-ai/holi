@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useAtomValue, useStore } from 'jotai'
+import { activeRemoteRevisionValueAtom } from '@/plugin-api'
+import { googleAccountRevisionAtom } from '../account'
 import { googleCap } from '../google-cap'
 import { codeOf, explainWriteFailure, isDisconnected, messageOf } from '../google-errors'
 
@@ -24,33 +27,52 @@ export function useMailList(
   enabled: boolean,
   generation: RefObject<number>,
   onPageError: (message: string) => void,
+  watchNotFound: () => (ids: readonly string[]) => void,
 ) {
   const [list, setList] = useState<ListState>({ kind: 'loading' })
   const [working, setWorking] = useState<'more' | 'retry' | null>(null)
   const request = useRef(0)
   const paging = useRef(false)
+  const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
+  const accountRevision = useAtomValue(googleAccountRevisionAtom)
+  const store = useStore()
+  const scopeIsCurrent = useCallback(
+    () =>
+      store.get(activeRemoteRevisionValueAtom) === remoteRevision &&
+      store.get(googleAccountRevisionAtom) === accountRevision,
+    [store, remoteRevision, accountRevision],
+  )
 
   const load = useCallback(() => {
+    if (!scopeIsCurrent()) return
     const at = ++request.current
     paging.current = false
     setWorking(null)
     if (!enabled) return
     generation.current++
     setList({ kind: 'loading' })
+    const reportNotFound = watchNotFound()
     void call((remote) => googleCap.search(remote, params)).then(
       (page) => {
-        if (request.current !== at) return
+        if (request.current !== at || !scopeIsCurrent()) return
+        if (page.notFoundThreadIds) reportNotFound(page.notFoundThreadIds)
         setList({ ...page, kind: 'ready' })
       },
       (error: unknown) => {
-        if (request.current === at) setList(failure(error))
+        if (request.current === at && scopeIsCurrent()) setList(failure(error))
       },
     )
-  }, [call, params, enabled, generation])
+  }, [call, params, enabled, generation, scopeIsCurrent, watchNotFound])
+  useLayoutEffect(
+    () => () => {
+      request.current++
+    },
+    [load],
+  )
   useEffect(load, [load])
 
   const paginate = (mode: 'more' | 'retry') => {
-    if (!enabled || list.kind !== 'ready' || paging.current) return
+    if (!enabled || list.kind !== 'ready' || paging.current || !scopeIsCurrent()) return
     const retry = mode === 'retry'
     if (retry ? !list.unreadableThreadIds?.length : list.nextPageToken === null) return
     const at = request.current
@@ -59,9 +81,11 @@ export function useMailList(
     const options = retry
       ? { ...params, refresh: true }
       : { ...params, pageToken: list.nextPageToken! }
+    const reportNotFound = watchNotFound()
     void call((remote) => googleCap.search(remote, options))
       .then((page) => {
-        if (request.current !== at) return
+        if (request.current !== at || !scopeIsCurrent()) return
+        if (page.notFoundThreadIds) reportNotFound(page.notFoundThreadIds)
         generation.current++
         setList((previous) => {
           if (previous.kind !== 'ready') return previous
@@ -82,7 +106,7 @@ export function useMailList(
         })
       })
       .catch((error: unknown) => {
-        if (request.current !== at) return
+        if (request.current !== at || !scopeIsCurrent()) return
         if (retry || isDisconnected(error) || codeOf(error) === 'FORBIDDEN') setList(failure(error))
         else onPageError(explainWriteFailure(error))
       })

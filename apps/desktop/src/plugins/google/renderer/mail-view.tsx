@@ -18,15 +18,7 @@
  *
  * **The chrome is one row.** No "Mail" heading: the tab already says so.
  */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 /**
  * `SquarePen` writes something new; `FilePen` continues something half-written.
  * `FilePen` is used for every draft marker (the row chip, the reader's continue
@@ -62,7 +54,6 @@ import { toast } from 'sonner'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   activeRemoteAtom,
-  activeRemoteRevisionValueAtom,
   cn,
   matchHotkey,
   openSettingsSectionAtom,
@@ -110,10 +101,11 @@ import { listStamp, messageStamp } from './mail-stamp'
 import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from './mail-types'
 import { MailPartialAlert } from './mail/mail-partial-alert'
 import { useMailList } from './mail/use-mail-list'
+import { useMailThread } from './mail/use-mail-thread'
 import { googleCap } from './google-cap'
-import { explainWriteFailure, messageOf } from './google-errors'
+import { explainWriteFailure } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
-import { googleAccountRevisionAtom, useGoogleAccount } from './account'
+import { useGoogleAccount } from './account'
 import { useMailMarkers } from './use-mail-markers'
 import { useMailMarkerActions } from './use-mail-marker-actions'
 import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
@@ -157,12 +149,14 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   const [contacts, setContacts] = useState<MailAddress[]>([])
   /** Why the last triage action did not stick. Cleared on the next attempt. */
   const [writeError, setWriteError] = useState<string | null>(null)
-  const [open, setOpen] = useState<Thread | null>(null)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const threadReader = useMailThread()
+  const {
+    id: openId,
+    thread: open,
+    error: threadError,
+    refreshing: threadRefreshing,
+  } = threadReader
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
-  const [threadError, setThreadError] = useState<string | null>(null)
-  const [threadRefreshing, setThreadRefreshing] = useState(false)
-  const threadGeneration = useRef(0)
   /**
    * Where the list is pointed: a tab, Sent, or Drafts. One union so that
    * impossible places like "Drafts, filtered to Promotions" cannot be expressed.
@@ -205,8 +199,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   /** The Gmail draft the composer is continuing, if any. */
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
-  const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
-  const accountRevision = useAtomValue(googleAccountRevisionAtom)
   const remoteRef = useRef(remote)
   remoteRef.current = remote
   /** Offered only in a vault that runs tasks. */
@@ -243,6 +235,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     !showDrafts,
     listGeneration,
     setWriteError,
+    threadReader.watchNotFound,
   )
 
   const markers = useMailMarkers({
@@ -280,10 +273,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   /** Summarize shows only while a plugin provides an agent. */
   const agent = useAgentService()
   const store = useStore()
-  const readerContextIsCurrent = () =>
-    store.get(activeRemoteAtom) === remote &&
-    store.get(activeRemoteRevisionValueAtom) === remoteRevision &&
-    store.get(googleAccountRevisionAtom) === accountRevision
   /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
    *  opens with no vault at all. See `useGlobalPanelLayout`. */
   const layout = useGlobalPanelLayout('mail')
@@ -321,13 +310,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       composeGate.invalidate()
     },
     [composeGate],
-  )
-
-  useLayoutEffect(
-    () => () => {
-      threadGeneration.current++
-    },
-    [],
   )
 
   /** The footer's numbers. One request, and a failure leaves the footer
@@ -513,10 +495,10 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       composing === null ||
       composing.kind === 'new' ||
       composing.threadId !== open.id ||
-      !readerContextIsCurrent()
+      !threadReader.actorIsCurrent()
     )
       return
-    void fetchThread(open.id, 'refresh')
+    threadReader.fetchThread(open.id, 'refresh')
     load()
   }
 
@@ -530,30 +512,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     })
   }
 
-  /** Open, retry, and post-send refresh all read without marking the thread read.
-   * A refresh keeps the scroller and composer mounted, but withdraws the invitation
-   * until the updated thread tells us what to read for this generation. */
-  const fetchThread = (id: string, mode: 'open' | 'refresh' = 'open') => {
-    const generation = ++threadGeneration.current
-    if (mode === 'open') setOpen(null)
-    setThreadRefreshing(mode === 'refresh')
-    setThreadError(null)
-    const finish = (thread: Thread | null, error: string | null) => {
-      if (threadGeneration.current !== generation) return
-      setThreadRefreshing(false)
-      if (!readerContextIsCurrent()) {
-        setThreadError('The mail connection changed while loading this thread.')
-        return
-      }
-      if (thread !== null) setOpen(thread)
-      else setThreadError(error)
-    }
-    void call((r) => googleCap.thread(r, { id })).then(
-      (found) => finish(found, null),
-      (error: unknown) => finish(null, messageOf(error, 'Could not load this thread.')),
-    )
-  }
-
   /**
    * Open a thread.
    *
@@ -565,9 +523,8 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       composerRef.current = null
       // A find bar left open would count matches in the previous thread.
       setFindOpen(false)
-      setOpenId(thread.id)
       setOpenSummary(thread)
-      fetchThread(thread.id)
+      threadReader.fetchThread(thread.id)
       // Only when there is something to change: the API is rate limited.
       if (thread.unread) void setRead(thread.id, true)
     }, true)
@@ -654,12 +611,8 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       if (!left) return false
     }
     if (openId === id) {
-      threadGeneration.current++
-      setOpen(null)
-      setOpenId(null)
+      threadReader.closeThread()
       setOpenSummary(null)
-      setThreadRefreshing(false)
-      setThreadError(null)
     }
     return write(mutate, (threads) => threads.filter((t) => t.id !== id))
   }
@@ -817,12 +770,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       </AlertTitle>
       <AlertDescription>
         <p className="break-words">{threadError}</p>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={() => fetchThread(openId, open === null ? 'open' : 'refresh')}
-        >
+        <Button type="button" variant="outline" size="xs" onClick={threadReader.retry}>
           Retry
         </Button>
       </AlertDescription>
@@ -1238,7 +1186,8 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                     <MailInvitation
                       thread={open}
                       hasInvite={openRow?.hasInvite === true}
-                      generation={threadGeneration.current}
+                      generation={threadReader.generation}
+                      isCurrentGeneration={threadReader.isCurrentGeneration}
                     />
                   ))
                 )}
