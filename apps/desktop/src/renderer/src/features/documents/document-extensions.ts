@@ -205,9 +205,15 @@ export function createDocumentExtensions({
   promptContainer?: HTMLElement | null
 }) {
   return [
-    ...createRichTextExtensions({ placeholder }).filter(
-      (extension) => extension.name !== 'textAlign',
-    ),
+    ...createRichTextExtensions({ placeholder })
+      .filter((extension) => extension.name !== 'textAlign')
+      // Endnotes already contain editable content. Focusing a
+      // reference must not append body content after the footnotes.
+      .map((extension) =>
+        extension.name === 'starterKit'
+          ? extension.configure({ trailingNode: { notAfter: ['footnoteList'] } })
+          : extension,
+      ),
     MermaidCodeBlock,
     FootnoteReference,
     FootnoteDefinition,
