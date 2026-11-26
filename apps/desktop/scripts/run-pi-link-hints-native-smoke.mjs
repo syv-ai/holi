@@ -386,7 +386,7 @@ try {
       for (const character of label) await key(character)
       assert.equal((await proof()).opened.length, before)
       await cancel()
-      await handle.write('\u0003')
+      await handle.write('\u007f')
       cases.push({ action: 'live-native-output-invalidates', status: 'pass' })
       await evaluate(`document.querySelector('.xterm-helper-textarea').focus()`)
       const writesBefore = (await proof()).writes.length
@@ -401,7 +401,6 @@ try {
         'native Ctrl+C input preserved',
       )
       await inputQueue
-      await handle.write('\u0003')
       await cancel()
       cases.push({ action: 'plain-f-passthrough', status: 'pass' })
       await snapshot('native-input')
