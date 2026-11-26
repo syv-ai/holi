@@ -1,5 +1,6 @@
 #import "HoliGitIntegrationJournal.h"
 #import <sys/stat.h>
+#import "HoliManagedIdentity.h"
 #import <sys/file.h>
 #import <fcntl.h>
 #import <unistd.h>
@@ -17,6 +18,12 @@ static BOOL HGIString(id s) { return [s isKindOfClass:NSString.class] && [s leng
 static BOOL HGIUUID(id s) { return HGIString(s) && [s length] == 36 && [[NSUUID alloc] initWithUUIDString:s] != nil; }
 static BOOL HGIName(NSString *s) { return HGIString(s) && ![s isEqual:@"."] && ![s isEqual:@".."] && [s rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"] invertedSet]].location == NSNotFound; }
 static BOOL HGISame(struct stat a, struct stat b) { return a.st_dev == b.st_dev && a.st_ino == b.st_ino && (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT); }
+static int HGINoFollowPath(NSString *path) {
+  if (![path isAbsolutePath]) return -1;
+  int fd=open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC); if(fd<0)return -1;
+  for(NSString *part in [path pathComponents]) { if([part isEqual:@"/"])continue; int next=openat(fd,part.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC); int saved=errno; close(fd); if(next<0){errno=saved;return -1;} fd=next; }
+  return fd;
+}
 static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; size_t n=data.length; while(n){ssize_t k=write(fd,p,n); if(k<0&&errno==EINTR)continue; if(k<=0)return NO; p+=k;n-=k;} return fsync(fd)==0; }
 
 @interface HoliGitIntegrationJournal ()
@@ -37,13 +44,18 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
   while(ok){ssize_t n=read(fd,buf,sizeof(buf));if(n<0&&errno==EINTR)continue;if(n<0){ok=NO;break;}if(!n)break;if(d.length+(NSUInteger)n>65536){ok=NO;break;}[d appendBytes:buf length:n];}
   ok=ok&&fstat(fd,&b)==0&&HGISame(a,b)&&d.length==(NSUInteger)a.st_size; close(fd);
   NSDictionary *m=ok?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;
-  if(![m isKindOfClass:NSDictionary.class]||![m[@"version"] isEqual:@1]||!HGIUUID(m[@"uuid"])||![m[@"uuid"] isEqual:_uuid]||!HGIString(m[@"root"])||!HGIString(m[@"remote"])||!HGIString(m[@"branch"])||!HGIString(m[@"gitDev"])||!HGIString(m[@"gitIno"])||![m[@"artifacts"] isKindOfClass:NSArray.class]||![m[@"plan"] isKindOfClass:NSDictionary.class])return HGIFail(error,EINVAL,@"Invalid journal manifest");
+  if(![m isKindOfClass:NSDictionary.class]||![m[@"version"] isEqual:@1]||!HGIUUID(m[@"uuid"])||![m[@"uuid"] isEqual:_uuid]||!HGIString(m[@"root"])||!HGIString(m[@"remote"])||!HGIString(m[@"branch"])||!HGIString(m[@"rootDev"])||!HGIString(m[@"rootIno"])||!HGIString(m[@"gitDev"])||!HGIString(m[@"gitIno"])||!HGIUUID(m[@"nativeId"])||![m[@"artifacts"] isKindOfClass:NSArray.class]||![m[@"plan"] isKindOfClass:NSDictionary.class])return HGIFail(error,EINVAL,@"Invalid journal manifest");
   for(id record in m[@"artifacts"])if(![record isKindOfClass:NSDictionary.class]||!HGIName(record[@"name"])||![record[@"dev"] isKindOfClass:NSString.class]||![record[@"ino"] isKindOfClass:NSString.class]||![record[@"size"] isKindOfClass:NSNumber.class]||![record[@"sha256"] isKindOfClass:NSString.class])return HGIFail(error,EINVAL,@"Invalid artifact ownership");
-  _manifest=m; return YES;
+  _manifest=m;
+  NSString *root=m[@"root"], *expected=[[[root stringByAppendingPathComponent:@".git"] stringByAppendingPathComponent:@"holi-integration"] stringByAppendingPathComponent:[@"txn-" stringByAppendingString:_uuid]];
+  char canonical[PATH_MAX]; if(!realpath(root.fileSystemRepresentation,canonical)||![expected isEqual:_transactionPath])return HGIFail(error,EPERM,@"Journal path is not bound to its root");
+  int rfd=HGINoFollowPath(root), gfd=rfd>=0?openat(rfd,".git",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC):-1; struct stat rs,gs;
+  BOOL bound=rfd>=0&&gfd>=0&&fstat(rfd,&rs)==0&&fstat(gfd,&gs)==0&&rs.st_dev==[m[@"rootDev"] unsignedLongLongValue]&&rs.st_ino==[m[@"rootIno"] unsignedLongLongValue]&&gs.st_dev==[m[@"gitDev"] unsignedLongLongValue]&&gs.st_ino==[m[@"gitIno"] unsignedLongLongValue];
+  NSDictionary *identity=bound?[[HoliManagedIdentity new] readIdentityAtRoot:root error:nil]:nil; bound=bound&&[identity[@"remote"] isEqual:m[@"remote"]]&&[identity[@"branch"] isEqual:m[@"branch"]]&&[identity[@"nativeId"] isEqual:m[@"nativeId"]]; if(gfd>=0)close(gfd);if(rfd>=0)close(rfd); if(!bound)return HGIFail(error,EPERM,@"Managed checkout identity changed"); return YES;
 }
 - (instancetype)initPath:(NSString *)path error:(NSError **)error {
   if(!HGIString(path)||![path isAbsolutePath]||![path isEqual:path.stringByStandardizingPath]){HGIFail(error,EINVAL,@"Invalid transaction path");return nil;}
-  int dir=open(path.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC); if(dir<0){HGIFail(error,errno,@"Cannot open transaction");return nil;}
+  int dir=HGINoFollowPath(path); if(dir<0){HGIFail(error,errno,@"Cannot open transaction");return nil;}
   struct stat ds; if(fstat(dir,&ds)||ds.st_nlink<1){close(dir);HGIFail(error,EINVAL,@"Invalid transaction directory");return nil;}
   int lease=openat(dir,"lease",O_RDWR|O_NOFOLLOW|O_CLOEXEC); struct stat ls;
   if(lease<0||fstat(lease,&ls)||!S_ISREG(ls.st_mode)||ls.st_nlink!=1||flock(lease,LOCK_EX|LOCK_NB)){if(lease>=0)close(lease);close(dir);HGIFail(error,EBUSY,@"Journal lease unavailable");return nil;}
@@ -51,17 +63,17 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
 }
 - (instancetype)init { self=[super init]; if(self){_directoryFD=-1;_leaseFD=-1;}return self; }
 - (instancetype)createAtRoot:(NSString *)root remote:(NSString *)remote branch:(NSString *)branch nativeId:(NSString *)nativeId plan:(NSData *)plan error:(NSError **)error {
-  char resolved[PATH_MAX]; if(!HGIString(root)||!realpath(root.fileSystemRepresentation,resolved)||!HGIString(remote)||!HGIString(branch)|| (nativeId&&!HGIUUID(nativeId))||plan.length>32768){HGIFail(error,EINVAL,@"Invalid integration identity or plan");return nil;}
+  char resolved[PATH_MAX]; if(!HGIString(root)||!realpath(root.fileSystemRepresentation,resolved)||!HGIString(remote)||!HGIString(branch)|| (!HGIUUID(nativeId))||plan.length>32768){HGIFail(error,EINVAL,@"Invalid integration identity or plan");return nil;}
   NSDictionary *p=[NSJSONSerialization JSONObjectWithData:plan options:0 error:error]; if(![p isKindOfClass:NSDictionary.class]){HGIFail(error,EINVAL,@"Plan must be a JSON object");return nil;}
   NSString *r=[NSString stringWithUTF8String:resolved],*git=[r stringByAppendingPathComponent:@".git"]; struct stat rs,gs;
-  if(stat(r.fileSystemRepresentation,&rs)||lstat(git.fileSystemRepresentation,&gs)||!S_ISDIR(gs.st_mode)){HGIFail(error,errno?:EINVAL,@"Invalid root or git directory");return nil;}
-  NSString *base=[git stringByAppendingPathComponent:@"holi-integration"]; if(mkdir(base.fileSystemRepresentation,0700)&&errno!=EEXIST){HGIFail(error,errno,@"Cannot create journal directory");return nil;}
+  int rfd=HGINoFollowPath(r),gfd=rfd>=0?openat(rfd,".git",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC):-1; if(rfd<0||gfd<0||fstat(rfd,&rs)||fstat(gfd,&gs)||!S_ISDIR(gs.st_mode)){HGIFail(error,errno?:EINVAL,@"Invalid root or git directory");return nil;}
+  NSString *base=[git stringByAppendingPathComponent:@"holi-integration"]; close(rfd); close(gfd); if(mkdir(base.fileSystemRepresentation,0700)&&errno!=EEXIST){HGIFail(error,errno,@"Cannot create journal directory");return nil;}
   int bfd=open(base.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC); if(bfd<0){HGIFail(error,errno,@"Unsafe journal directory");return nil;}
   NSString *uuid=NSUUID.UUID.UUIDString.lowercaseString,*name=[@"txn-" stringByAppendingString:uuid],*path=[base stringByAppendingPathComponent:name];
   if(mkdirat(bfd,name.fileSystemRepresentation,0700)){close(bfd);HGIFail(error,errno,@"Cannot reserve transaction");return nil;}
   int d=openat(bfd,name.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC); close(bfd); if(d<0){HGIFail(error,errno,@"Cannot open transaction");return nil;}
   int l=openat(d,"lease",O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600); if(l<0||flock(l,LOCK_EX|LOCK_NB)){if(l>=0)close(l);close(d);HGIFail(error,errno,@"Cannot own transaction lease");return nil;}
-  NSMutableDictionary *m=[@{@"version":@1,@"uuid":uuid,@"root":r,@"gitDev":[NSString stringWithFormat:@"%llu",(unsigned long long)gs.st_dev],@"gitIno":[NSString stringWithFormat:@"%llu",(unsigned long long)gs.st_ino],@"remote":remote,@"branch":branch,@"artifacts":@[],@"plan":p} mutableCopy]; if(nativeId)m[@"nativeId"]=nativeId;
+  NSMutableDictionary *m=[@{@"version":@1,@"uuid":uuid,@"root":r,@"rootDev":[NSString stringWithFormat:@"%llu",(unsigned long long)rs.st_dev],@"rootIno":[NSString stringWithFormat:@"%llu",(unsigned long long)rs.st_ino],@"gitDev":[NSString stringWithFormat:@"%llu",(unsigned long long)gs.st_dev],@"gitIno":[NSString stringWithFormat:@"%llu",(unsigned long long)gs.st_ino],@"remote":remote,@"branch":branch,@"artifacts":@[],@"plan":p} mutableCopy]; m[@"nativeId"]=nativeId;
   NSData *bytes=[NSJSONSerialization dataWithJSONObject:m options:NSJSONWritingSortedKeys error:error]; int f=openat(d,"manifest.json",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600); BOOL ok=f>=0&&HGIWriteAll(f,bytes); if(f>=0)close(f); ok=ok&&fsync(d)==0;
   close(l);close(d); if(!ok){HGIFail(error,errno?:EIO,@"Cannot durably create manifest");return nil;} return [self initPath:path error:error];
 }
