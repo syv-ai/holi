@@ -160,12 +160,24 @@ function gmail(
 }
 
 /** The UI search capability with real Google data and cache for one connected vault. */
-async function searchMail(api: GoogleApi, params = {}): Promise<MailPage> {
+function mailSearch(api: GoogleApi) {
   const remote = 'owner/inbox'
   const data = createGoogleData({ api: () => api, cache })
+  const session = { accountSub: 'account', getAccessToken: async () => 'at' }
+  let linked = true
   const capabilities = googleCapabilities({
-    accounts: {} as GoogleCapabilityDeps['accounts'],
+    accounts: {
+      bindingFor: async () =>
+        linked
+          ? {
+              session,
+              revision: 'link',
+              isCurrent: () => linked,
+            }
+          : null,
+    } as unknown as GoogleCapabilityDeps['accounts'],
     dataFor: async (caller) => (caller === remote ? data : null),
+    dataForSession: () => data,
     settings: {
       read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
       write: async () => {},
@@ -173,24 +185,53 @@ async function searchMail(api: GoogleApi, params = {}): Promise<MailPage> {
   })
   const registry = createCapabilityRegistry()
   registry.register(GOOGLE_NAMESPACES, capabilities)
-  try {
-    const { value } = await registry.run(
-      'google.search',
-      'ui',
-      {
-        remote,
-        root: remote,
-        bundle: null,
-        snapshot: async () => emptyVaultSnapshot(),
-        claims: async () => [],
-        core: noCoreServices(),
-      },
-      params,
-    )
-    return value as MailPage
-  } finally {
-    disposeGoogleCapabilities(capabilities)
+  return {
+    unlink: () => {
+      linked = false
+    },
+    close: () => disposeGoogleCapabilities(capabilities),
+    async search(params = {}, door: 'ui' | 'cli' | 'app' = 'ui'): Promise<MailPage> {
+      const { value } = await registry.run(
+        'google.search',
+        door,
+        {
+          remote,
+          root: remote,
+          bundle: null,
+          snapshot: async () => emptyVaultSnapshot(),
+          claims: async () => [],
+          core: noCoreServices(),
+        },
+        params,
+        door === 'app'
+          ? async (_ctx, grant) => {
+              if (grant !== 'mail')
+                throw new Error('Only this vault app’s mail access was approved')
+            }
+          : undefined,
+      )
+      return value as MailPage
+    },
   }
+}
+
+async function searchMail(api: GoogleApi, params = {}): Promise<MailPage> {
+  const mail = mailSearch(api)
+  try {
+    return await mail.search(params)
+  } finally {
+    mail.close()
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
 }
 
 /** Drive the request's native signal deterministically, without waiting for a timer. */
@@ -529,23 +570,6 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toHaveLength(2)
     expect(page.threads.map((t) => t.subject)).toContain('One (updated)')
     expect(page.threads.map((t) => t.subject)).toContain('Two')
-  })
-
-  it('falls back to a full fetch when Google has expired the history id', async () => {
-    const first = gmail({ list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'One') } })
-    await syncThreads(first.api, cache, {})
-
-    const second = gmail({
-      history: 404,
-      list: [{ id: 't1' }, { id: 't2' }],
-      threads: { t1: rawThread('t1', 'One'), t2: rawThread('t2', 'Two') },
-    })
-
-    // Gmail keeps roughly a week of history. A 404 here means "resync", not
-    // "something went wrong" — it must never surface as a failure.
-    const page = await syncThreads(second.api, cache, {})
-
-    expect(page.threads.map((t) => t.subject)).toEqual(['One', 'Two'])
   })
 
   it('stores the new history id after a sync', async () => {
@@ -1095,23 +1119,246 @@ describe('syncThreads', () => {
     },
   )
 
-  it('does not move past a mailbox-wide batch deletion too large to verify', async () => {
-    const healthy = rawThread('healthy', 'Kept')
-    await searchMail(gmail({ list: [{ id: 'healthy' }], threads: { healthy } }).api)
-    const deletion = {
-      id: '5005',
-      messagesDeleted: Array.from({ length: 1_000 }, (_, i) => ({
-        message: { id: `message-${i}`, threadId: `thread-${i}` },
-      })),
+  it.each(['threads', 'history pages', 'changes', 'membership', 'expired'] as const)(
+    'requests an explicit snapshot for %s and resumes deltas from its new baseline',
+    async (limit) => {
+      const healthy = rawThread('healthy', 'Kept')
+      await searchMail(gmail({ list: [{ id: 'healthy' }], threads: { healthy } }).api)
+      const deletion = {
+        messagesDeleted: Array.from({ length: limit === 'threads' ? 501 : 10_001 }, (_, i) => ({
+          message: { id: `message-${i}`, threadId: limit === 'threads' ? `thread-${i}` : 'older' },
+        })),
+      }
+      const profile = '7000'
+      let newMessage = false
+      let snapshot = false
+      let historyPages = 0
+      let membershipPages = 0
+      let checkUnchanged = false
+      const { api } = gmail(
+        {
+          listPages: { '': { threads: [{ id: 'healthy' }], nextPageToken: 'new-token' } },
+          threads: { healthy },
+        },
+        {},
+        (url) => {
+          if (url.pathname.endsWith('/profile')) {
+            snapshot = true
+            return Promise.resolve(Response.json({ historyId: newMessage ? '7001' : profile }))
+          }
+          if (url.pathname.endsWith('/history')) {
+            const since = url.searchParams.get('startHistoryId')
+            if (since === profile)
+              return Promise.resolve(
+                Response.json({
+                  historyId: '7001',
+                  history: [
+                    {
+                      labelsAdded: [
+                        {
+                          message: { id: 'healthy-m1', threadId: 'healthy' },
+                          labelIds: ['UNREAD'],
+                        },
+                      ],
+                    },
+                  ],
+                }),
+              )
+            if (since !== '5000') return Promise.resolve(Response.json({}, { status: 400 }))
+            if (checkUnchanged) return Promise.resolve(Response.json({ historyId: '5000' }))
+            if (limit === 'expired') return Promise.resolve(Response.json({}, { status: 404 }))
+            if (++historyPages > 21) throw new Error('History traversal did not stop')
+            return Promise.resolve(
+              Response.json({
+                historyId: '6999',
+                ...(limit === 'history pages' ? { nextPageToken: `history-${historyPages}` } : {}),
+                history:
+                  limit === 'membership'
+                    ? [{ messagesAdded: [{ message: { id: 'other-m1', threadId: 'other' } }] }]
+                    : limit === 'history pages'
+                      ? []
+                      : [deletion],
+              }),
+            )
+          }
+          if (
+            url.pathname.endsWith('/threads') &&
+            !url.searchParams.get('q')?.includes('filename:ics')
+          ) {
+            // A change during the replacement list must still be visible to the next delta.
+            if (snapshot) newMessage = true
+            else if (limit === 'membership') {
+              if (++membershipPages > 21) throw new Error('Membership traversal did not stop')
+              return Promise.resolve(
+                Response.json({
+                  threads: [{ id: 'healthy' }],
+                  nextPageToken: `page-${membershipPages}`,
+                }),
+              )
+            }
+          }
+        },
+      )
+      const mail = mailSearch(api)
+      try {
+        expect(await mail.search()).toMatchObject({ historyRecoveryRequired: true })
+        checkUnchanged = true
+        expect(await mail.search()).toMatchObject({ threads: [{ id: 'healthy' }] })
+        expect(await mail.search({ refresh: true, expectedAccountSub: 'account' })).toMatchObject({
+          threads: [{ id: 'healthy', unread: false }],
+          nextPageToken: 'new-token',
+        })
+        const delta = await mail.search()
+        expect(delta).toMatchObject({ threads: [{ id: 'healthy', unread: true }] })
+        expect(delta).not.toHaveProperty('notFoundThreadIds')
+      } finally {
+        mail.close()
+      }
+    },
+  )
+
+  it('coalesces an old delta and retains the continuation failure through a queued reset', async () => {
+    const healthy = rawThread('healthy', 'Healthy mail')
+    const seeded = await searchMail(
+      gmail({
+        listPages: { '': { threads: [{ id: 'healthy' }], nextPageToken: 'old-token' } },
+        threads: { healthy },
+      }).api,
+    )
+    const entered = deferred<void>()
+    const held = deferred<Response>()
+    let oldHistoryReads = 0
+    let readable = false
+    const { api } = gmail(
+      {
+        listPages: {
+          '': { threads: [{ id: 'healthy' }], nextPageToken: 'new-token' },
+          'old-token': { threads: [{ id: 'older' }] },
+        },
+        profile: { historyId: '8000' },
+        threads: { healthy },
+      },
+      {},
+      (url) => {
+        if (
+          url.pathname.endsWith('/history') &&
+          url.searchParams.get('startHistoryId') === '5000'
+        ) {
+          oldHistoryReads++
+          entered.resolve()
+          return held.promise
+        }
+        if (url.pathname.endsWith('/history')) {
+          return Promise.resolve(
+            url.searchParams.get('startHistoryId') === '8000'
+              ? Response.json({ historyId: '8001' })
+              : Response.json({}, { status: 400 }),
+          )
+        }
+        if (url.pathname.endsWith('/threads/older'))
+          return Promise.resolve(Response.json({}, { status: readable ? 404 : 503 }))
+      },
+    )
+    const mail = mailSearch(api)
+    const delta = mail.search()
+    const same = mail.search()
+    try {
+      await Promise.race([entered.promise, delta, same])
+      const continuation = mail.search({ pageToken: seeded.nextPageToken })
+      const reset = mail.search({ refresh: true, expectedAccountSub: 'account' })
+      held.resolve(Response.json({ historyId: '5001' }))
+      expect(await delta).toEqual(await same)
+      expect(oldHistoryReads).toBe(1)
+      expect(await continuation).toMatchObject({ unreadableThreadIds: ['older'] })
+      const partial = await reset
+      expect(partial).toMatchObject({
+        threads: [{ id: 'healthy' }],
+        nextPageToken: 'new-token',
+        unreadableThreadIds: ['older'],
+      })
+      expect(partial).not.toHaveProperty('notFoundThreadIds')
+      expect(await mail.search()).toMatchObject({ historyRecoveryRequired: true })
+      readable = true
+      expect(await mail.search({ refresh: true })).toMatchObject({ notFoundThreadIds: ['older'] })
+      expect(await mail.search()).toMatchObject({ threads: [{ id: 'healthy' }] })
+    } finally {
+      held.resolve(Response.json({ historyId: '5001' }))
+      mail.close()
     }
-    const { api } = gmail({ list: [{ id: 'healthy' }], threads: { healthy } }, {}, (url) => {
-      if (!url.pathname.endsWith('/history')) return
-      const history = url.searchParams.get('startHistoryId') === '5000' ? [deletion] : []
-      return Promise.resolve(Response.json({ historyId: '5005', history }))
-    })
-    await expect(searchMail(api)).rejects.toThrow()
-    await expect(searchMail(api)).rejects.toThrow()
   })
+
+  it('does not publish old evidence or advance the baseline after an unlink', async () => {
+    const original = rawThread('older', 'Same account thread')
+    await searchMail(gmail({ list: [{ id: 'older' }], threads: { older: original } }).api)
+    const entered = deferred<void>()
+    const held = deferred<Response>()
+    const { api } = gmail(
+      {
+        profile: { historyId: '9000' },
+        history: {
+          historyId: '5001',
+          history: [{ messagesDeleted: [{ message: { id: 'gone', threadId: 'older' } }] }],
+        },
+      },
+      {},
+      (url) => {
+        if (url.pathname.endsWith('/threads/older')) {
+          entered.resolve()
+          return held.promise
+        }
+      },
+    )
+    const old = mailSearch(api)
+    const delta = old.search()
+    let reset: Promise<MailPage> | undefined
+    try {
+      await Promise.race([entered.promise, delta])
+      reset = old.search({ refresh: true, expectedAccountSub: 'account' })
+      old.unlink()
+      held.resolve(Response.json({}, { status: 404 }))
+      await Promise.all([
+        expect(delta).rejects.toMatchObject({ code: 'FORBIDDEN' }),
+        expect(reset).rejects.toMatchObject({ code: 'FORBIDDEN' }),
+      ])
+      const newLink = gmail({}, {}, (url) => {
+        if (url.pathname.endsWith('/history'))
+          return Promise.resolve(
+            url.searchParams.get('startHistoryId') === '5000'
+              ? Response.json({ historyId: '5000' })
+              : Response.json({}, { status: 400 }),
+          )
+      })
+      expect(await searchMail(newLink.api)).toMatchObject({
+        threads: [{ id: 'older', subject: 'Same account thread' }],
+      })
+    } finally {
+      held.resolve(Response.json({}, { status: 404 }))
+      await Promise.allSettled([delta, reset])
+      old.close()
+    }
+  })
+
+  it.each(['cli', 'app'] as const)(
+    'keeps an independent %s page from rebasing an expired UI list',
+    async (door) => {
+      await searchMail(gmail({}).api)
+      const { api } = gmail({
+        history: 404,
+        list: [{ id: 'new' }],
+        threads: { new: rawThread('new', 'Independent page') },
+        profile: { historyId: '9000' },
+      })
+      const mail = mailSearch(api)
+      try {
+        expect(await mail.search({ refresh: true }, door)).toMatchObject({
+          threads: [{ id: 'new' }],
+        })
+        expect(await mail.search()).toMatchObject({ historyRecoveryRequired: true })
+      } finally {
+        mail.close()
+      }
+    },
+  )
 
   it('does not deliver a late off-page 404 from a retired account to its replacement', async () => {
     let entered!: (event: 'probe') => void
@@ -1145,12 +1392,14 @@ describe('syncThreads', () => {
     }).api
     const replacement = createGoogleData({ api: () => replacementApi, cache: replacementCache })
     const pending = old.threads({})
+    let queued: Promise<MailPage> | undefined
     try {
       expect(await Promise.race([started, pending])).toBe('probe')
+      queued = old.threads({}, { refresh: true })
       old.forget()
       expect((await replacement.threads({})).threads.map(({ id }) => id)).toEqual(['shared'])
       release(Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 }))
-      await expect(pending).rejects.toThrow()
+      await Promise.all([expect(pending).rejects.toThrow(), expect(queued).rejects.toThrow()])
       const current = await replacement.threads({})
       expect(current.threads.map(({ subject }) => subject)).toEqual([
         'Mail in the replacement account',
@@ -1158,7 +1407,7 @@ describe('syncThreads', () => {
       expect(current).not.toHaveProperty('notFoundThreadIds')
     } finally {
       release(Response.json({}, { status: 404 }))
-      await pending.catch(() => {})
+      await Promise.allSettled([pending, queued])
       replacementCache.close()
     }
   })
@@ -1269,7 +1518,7 @@ describe('syncThreads', () => {
       threads: { t1: rawThread('t1', 'Remaining message') },
       profile: { historyId: '6001' },
     })
-    const recovered = await syncThreads(fresh.api, cache)
+    const recovered = await syncThreads(fresh.api, cache, {}, undefined, { refresh: true })
     expect(recovered.threads.map(({ subject }) => subject)).toEqual(['Remaining message'])
     expect(recovered).not.toHaveProperty('unreadableThreadIds')
   })

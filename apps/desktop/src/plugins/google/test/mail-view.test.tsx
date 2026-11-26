@@ -1249,6 +1249,64 @@ test('ignores a thread refusal after the reader has switched to another thread',
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
+test('ignores a recovery read for a previously selected thread', async () => {
+  const first = summary()
+  const other = summary({ id: 't2', subject: 'Lunch plans' })
+  let discontinuous = false
+  let exact = false
+  const held = deferred<never>()
+  threadMock.mockImplementation(async ({ refresh, expectedAccountSub }: SearchParams) => {
+    if (!discontinuous) return page([first, other])
+    if (!refresh) return { ...page([]), historyRecoveryRequired: true }
+    if (expectedAccountSub !== mailAccountSub) throw new Error('Account changed')
+    return page([first, other])
+  })
+  readMock.mockImplementation(
+    async ({ id, expectedAccountSub }: Parameters<typeof googleCap.thread>[1]) => {
+      if (expectedAccountSub !== undefined) {
+        if (id !== first.id || expectedAccountSub !== mailAccountSub)
+          throw new Error('Wrong recovery resource')
+        exact = true
+        return held.promise
+      }
+      return {
+        id,
+        subject: id === first.id ? first.subject : other.subject,
+        webUrl: 'https://mail.google.com/x',
+        messages: [],
+      }
+    },
+  )
+  const user = userEvent.setup()
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('heading', { name: first.subject })
+  discontinuous = true
+  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+  await user.click(await screen.findByRole('button', { name: 'Try again' }))
+  await waitFor(() => expect(exact).toBe(true))
+  await user.click(await screen.findByRole('button', { name: /Lunch plans/ }))
+  await screen.findByRole('heading', { name: other.subject })
+  await act(async () =>
+    held.reject(Object.assign(new Error('Thread not found'), { data: { code: 'NOT_FOUND' } })),
+  )
+  expect(screen.getByRole('heading', { name: other.subject })).toBeVisible()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(saveDraftMock).not.toHaveBeenCalled()
+  expect(sendMock).not.toHaveBeenCalled()
+  expect(respondMock).not.toHaveBeenCalled()
+})
+
 test('loads more mail without retaining an overlapping thread Gmail no longer has', async () => {
   threadMock.mockImplementation(
     async ({ pageToken, refresh }: SearchParams): Promise<SearchPage> => {

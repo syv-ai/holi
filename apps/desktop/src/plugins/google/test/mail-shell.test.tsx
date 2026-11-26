@@ -6,7 +6,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { atom, getDefaultStore } from 'jotai'
+import { atom, createStore, getDefaultStore, Provider } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
 import { MailView } from '../renderer/mail-view'
@@ -74,7 +74,23 @@ const google: Record<string, (params: unknown, remote: string) => unknown> = {
   client: () => ({ id: 'holi.apps.googleusercontent.com', source: 'shipped' }),
   setClient: (p) => setClientMock(p),
   search: (p) => searchMock(p),
-  thread: (p) => threadMock(p),
+  thread: async (p) => {
+    const { expectedAccountSub } = p as Parameters<typeof googleCap.thread>[1]
+    const binding = accountBinding
+    const assertBinding = () => {
+      if (
+        expectedAccountSub !== undefined &&
+        (expectedAccountSub !== accountSub || binding !== accountBinding)
+      )
+        throw Object.assign(new Error('Google account changed'), { data: { code: 'FORBIDDEN' } })
+    }
+    assertBinding()
+    try {
+      return await threadMock(p)
+    } finally {
+      assertBinding()
+    }
+  },
   drafts: () => draftsMock(),
   saveDraft: (p) => saveDraftMock(p),
   draftBody: (p) => draftBodyMock(p),
@@ -800,6 +816,192 @@ test.each(
       expect(screen.getByRole('alert')).toHaveTextContent(/thread is no longer available/i)
       expectWithdrawn()
     }
+  },
+)
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
+test.each([
+  {
+    Driver: MailShell,
+    name: 'MailShell',
+    Reader: MailView,
+    reply: 'Reply',
+    control: 'Try again',
+    verdict: 404,
+  },
+  {
+    Driver: MailView,
+    name: 'MailView',
+    Reader: MailShell,
+    reply: 'Reply all',
+    control: 'Refresh mail',
+    verdict: 200,
+  },
+  {
+    Driver: MailShell,
+    name: 'MailShell',
+    Reader: MailView,
+    reply: 'Reply',
+    control: 'Refresh mail',
+    verdict: 503,
+  },
+  {
+    Driver: MailView,
+    name: 'MailView',
+    Reader: MailShell,
+    reply: 'Reply all',
+    control: 'Try again',
+    verdict: 200,
+  },
+])(
+  '$name $control recovers history while the other reader checks the continuation thread ($verdict)',
+  async ({ Driver, Reader, reply, control, verdict }) => {
+    const selected = summary({ hasInvite: true, unread: false })
+    const healthy = summary({ id: 'healthy', subject: 'Healthy mail', snippet: '', unread: false })
+    const newMail = summary({ id: 'recent', subject: 'New first page', snippet: '', unread: false })
+    const tail = summary({ id: 'tail', subject: 'New continuation', snippet: '', unread: false })
+    const opened = {
+      ...thread,
+      messages: [
+        {
+          ...thread.messages[1]!,
+          html: null,
+          body: 'Received workshop agenda',
+          hasCalendarPayload: true,
+        },
+      ],
+    }
+    const oldJoin = deferred<void>()
+    const snapshot = deferred<SearchPage>()
+    const exact = deferred<typeof opened>()
+    let refused = false
+    let resets = 0
+    let exactReads = 0
+    searchMock.mockImplementation(
+      async ({ pageToken, refresh, expectedAccountSub }: SearchParams) => {
+        if (pageToken === 'old' && !refused) return page([selected])
+        if (pageToken === 'new' && resets > 0) return page([tail])
+        if (pageToken !== undefined) throw new Error('Stale page token')
+        if (!refused && !refresh) return page([healthy], 'old')
+        if (!refresh) return { ...page([]), historyRecoveryRequired: true }
+        if (expectedAccountSub !== accountSub) throw new Error('Reset is not bound to the account')
+        resets++
+        if (verdict === 503 && resets === 1) throw new Error('Snapshot temporarily unavailable')
+        return snapshot.promise
+      },
+    )
+    threadMock.mockImplementation(
+      async ({ id, expectedAccountSub }: Parameters<typeof googleCap.thread>[1]) => {
+        if (id !== selected.id) throw new Error('Unexpected thread')
+        if (!refused) return opened
+        if (expectedAccountSub !== accountSub) throw new Error('Exact read is not account bound')
+        if (++exactReads === 1) return exact.promise
+        return opened
+      },
+    )
+    invitationMock.mockResolvedValue(
+      invitations({
+        ...invitation,
+        responseStatus: 'accepted',
+        recordedResponseStatus: 'accepted',
+      }),
+    )
+    validateBinding.mockReturnValueOnce(oldJoin.promise)
+    const user = userEvent.setup()
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/vault')
+    render(
+      <Provider store={store}>
+        <section aria-label="List that refreshes">
+          <Driver />
+        </section>
+        <section aria-label="Other reader">
+          <Reader />
+        </section>
+      </Provider>,
+    )
+    const driver = within(screen.getByRole('region', { name: 'List that refreshes' }))
+    const reader = within(screen.getByRole('region', { name: 'Other reader' }))
+    await user.click(await reader.findByRole('button', { name: 'Load more' }))
+    await user.click(await reader.findByText(selected.subject))
+    await user.click(await reader.findByRole('button', { name: 'Join meeting' }))
+    await reader.findByText('Checking invitation link…')
+    await user.click(reader.getByRole('button', { name: reply }))
+    const editor = await reader.findByRole('textbox', { name: 'Message' })
+    await user.type(editor, 'Keep this unsent reply')
+
+    refused = true
+    await user.click(driver.getByRole('button', { name: 'Refresh mail' }))
+    await driver.findByRole('button', { name: 'Try again' })
+    expect(resets).toBe(0)
+    expect(reader.queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+    await user.click(driver.getByRole('button', { name: control }))
+    if (verdict === 503) {
+      await driver.findByText('Snapshot temporarily unavailable')
+      // Recovery intent survives a failed snapshot; this click must not replay the gap.
+      await user.click(driver.getByRole('button', { name: 'Try again' }))
+    }
+    const expectedResets = verdict === 503 ? 2 : 1
+    fireEvent.click(driver.getByRole('button', { name: 'Refresh mail' }))
+    expect(resets).toBe(expectedResets)
+    await user.click(editor)
+    await act(async () => {
+      oldJoin.resolve()
+      snapshot.resolve(page([newMail, healthy], 'new'))
+    })
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(await driver.findByText(newMail.subject)).toBeVisible()
+    expect(reader.getByRole('status', { name: 'Refreshing the thread' })).toBeVisible()
+    await act(async () => {
+      if (verdict === 200) {
+        invitationMock.mockResolvedValue(
+          invitations({
+            ...invitation,
+            title: 'Rechecked workshop',
+            conferenceUrl: 'https://meet.google.com/xyz-wxyz-klm',
+          }),
+        )
+        exact.resolve(opened)
+      } else {
+        exact.reject(
+          Object.assign(new Error('Thread temporarily unavailable'), {
+            data: { code: verdict === 404 ? 'NOT_FOUND' : 'SERVICE_UNAVAILABLE' },
+          }),
+        )
+      }
+    })
+    expect(reader.getByText('Received workshop agenda')).toBeVisible()
+    expect(reader.getByRole('textbox', { name: 'Message' })).toBe(editor)
+    expect(editor).toHaveTextContent('Keep this unsent reply')
+    expect(editor).toHaveFocus()
+    if (verdict === 200) {
+      expect(await reader.findByText('Rechecked workshop')).toBeVisible()
+      await user.click(reader.getByRole('button', { name: 'Join meeting' }))
+      expect(openExternal).toHaveBeenCalledExactlyOnceWith('https://meet.google.com/xyz-wxyz-klm')
+    } else {
+      const alert = await reader.findByRole('alert')
+      expect(alert).toHaveTextContent(
+        verdict === 404 ? /thread is no longer available/i : /temporarily unavailable/i,
+      )
+      expect(reader.queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+      if (verdict === 503) {
+        expect(alert).not.toHaveTextContent(/no longer available/i)
+        await user.click(within(alert).getByRole('button', { name: 'Retry' }))
+        expect(await reader.findByRole('button', { name: 'Join meeting' })).toBeEnabled()
+      }
+    }
+    expect(respondMock).not.toHaveBeenCalled()
+    await user.click(driver.getByRole('button', { name: 'Load more' }))
+    expect(await driver.findByText(tail.subject)).toBeVisible()
   },
 )
 

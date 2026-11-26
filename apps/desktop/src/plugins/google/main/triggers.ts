@@ -85,7 +85,7 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
 
   async function mail(data: GoogleData, query: string): Promise<void> {
     if (!(await current(data))) return
-    const page = await data.threads({ query, limit: THREADS })
+    const page = await data.threads({ query, limit: THREADS }, { freshPage: true })
     if (!(await current(data))) return
     const before = seen.get(query)
     const after = new Map<string, string>()

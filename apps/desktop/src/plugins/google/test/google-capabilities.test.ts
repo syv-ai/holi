@@ -86,6 +86,14 @@ function rig({
   const registry = createCapabilityRegistry()
   const capabilities = googleCapabilities({
     accounts: {
+      bindingFor: async (remote: string) =>
+        googleData === null
+          ? null
+          : {
+              session: { accountSub: 'sub-1', getAccessToken: async () => 'token' },
+              revision: remote,
+              isCurrent: () => true,
+            },
       sessionFor: async () =>
         googleData === null ? null : { accountSub: 'sub-1', getAccessToken: async () => 'token' },
       ...accounts,
@@ -122,6 +130,73 @@ function rig({
     dispose: () => disposeGoogleCapabilities(capabilities),
   }
 }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
+it.each([200, 404])(
+  'does not disclose a bound thread HTTP %i after the vault link changes',
+  async (status) => {
+    let revision = 0
+    const session = { accountSub: 'sub-1', getAccessToken: async () => 'token' }
+    const { call, dispose } = rig({
+      accounts: {
+        bindingFor: (async (remote) => {
+          if (remote !== 'owner/repo') return null
+          const at = revision
+          return { session, revision: `link-${at}`, isCurrent: () => revision === at }
+        }) as GoogleAccountsManager['bindingFor'],
+      },
+    })
+    const requests = deferred<URL>()
+    const held = deferred<Response>()
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (new Headers(init?.headers).get('Authorization') !== 'Bearer token')
+        throw new Error('Expected the bound session token')
+      requests.resolve(new URL(String(input)))
+      return held.promise
+    })
+    const params = { id: 'invitation', expectedAccountSub: 'sub-1' }
+    const pending = call('thread', params)
+    try {
+      const url = await Promise.race([requests.promise, pending])
+      expect(url).toMatchObject({
+        pathname: '/gmail/v1/users/me/threads/invitation',
+        search: '?format=full',
+      })
+      revision++ // Unlink/relink to the same account retires the old vault link, not the session.
+      held.resolve(
+        status === 404
+          ? Response.json({ error: { status: 'NOT_FOUND' } }, { status })
+          : Response.json({
+              id: 'invitation',
+              messages: [
+                {
+                  id: 'message',
+                  threadId: 'invitation',
+                  payload: { mimeType: 'text/plain', headers: [], body: { size: 0 } },
+                },
+              ],
+            }),
+      )
+      await expect(pending).rejects.toMatchObject({ code: 'FORBIDDEN' })
+      fetch.mockResolvedValue(Response.json({}, { status: 404 }))
+      await expect(call('thread', params)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    } finally {
+      held.resolve(Response.json({}, { status: 404 }))
+      await pending.catch(() => {})
+      fetch.mockRestore()
+      dispose()
+    }
+  },
+)
 
 it('lists --full in the generated usage for google read', () => {
   const read = googleCapabilities({

@@ -1,9 +1,9 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { useAtomValue, useStore } from 'jotai'
 import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/plugin-api'
-import { googleAccountRevisionAtom, useGoogleAccount } from '../account'
+import { googleAccountRevisionAtom, mailContinuityAtom, useGoogleAccount } from '../account'
 import { googleCap } from '../google-cap'
-import { messageOf } from '../google-errors'
+import { codeOf, messageOf } from '../google-errors'
 
 type Thread = Awaited<ReturnType<typeof googleCap.thread>>
 
@@ -13,15 +13,30 @@ interface Reader {
   refreshing: boolean
   failure: { kind: 'missing' } | { kind: 'read'; message: string } | null
   generation: number
+  epoch: object | undefined
+  recovery: boolean
 }
 
-const idle: Reader = { id: null, thread: null, refreshing: false, failure: null, generation: 0 }
+const idle: Reader = {
+  id: null,
+  thread: null,
+  refreshing: false,
+  failure: null,
+  generation: 0,
+  epoch: undefined,
+  recovery: false,
+}
 
 /** One selection and generation own the thread read and its invitation lifetime.
  * A refresh keeps the body (and the composer beside it) mounted. */
 export function useMailThread() {
   const [reader, setReader] = useState(idle)
-  const selection = useRef<{ id: string; readAt: number } | null>(null)
+  const selection = useRef<{
+    id: string
+    readAt: number
+    remoteRevision: number
+    account: string | null
+  } | null>(null)
   const generation = useRef(0)
   const remote = useAtomValue(activeRemoteAtom)
   const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
@@ -33,6 +48,7 @@ export function useMailThread() {
     verifiedAccount.current = verified ? currentSub : null
   }, [verified, currentSub])
   const store = useStore()
+  const continuity = useAtomValue(mailContinuityAtom)
   const actorIsCurrent = () =>
     store.get(activeRemoteAtom) === remote &&
     store.get(activeRemoteRevisionValueAtom) === remoteRevision &&
@@ -46,53 +62,90 @@ export function useMailThread() {
     [],
   )
 
-  const fetchThread = (id: string, mode: 'open' | 'refresh' = 'open') => {
+  const fetchThread = (id: string, mode: 'open' | 'refresh' | 'recover' = 'open') => {
     if (!actorIsCurrent()) return
+    const current = store.get(mailContinuityAtom)
+    const epoch = current?.epoch
+    const recover =
+      mode === 'recover' ||
+      (mode === 'open' && current?.lost === true && !current.pending) ||
+      (mode === 'refresh' && (reader.recovery || epoch !== reader.epoch))
+    if (recover && current?.pending) return
+    const account = verifiedAccount.current
+    const opening = selection.current
+    if (
+      mode !== 'open' &&
+      opening &&
+      (opening.id !== id ||
+        opening.remoteRevision !== remoteRevision ||
+        (account !== null && opening.account !== null && opening.account !== account))
+    )
+      return
     const at = ++generation.current
     const selected =
-      mode === 'refresh' && selection.current?.id === id ? selection.current : { id, readAt: at }
+      mode !== 'open' && opening ? opening : { id, readAt: at, remoteRevision, account }
     selection.current = selected
     setReader((previous) => ({
       id,
-      thread: mode === 'refresh' && previous.id === id ? previous.thread : null,
-      refreshing: mode === 'refresh',
+      thread: mode !== 'open' && previous.id === id ? previous.thread : null,
+      refreshing: mode !== 'open',
       failure:
-        mode === 'refresh' && previous.id === id && previous.failure?.kind === 'missing'
+        mode !== 'open' && previous.id === id && previous.failure?.kind === 'missing'
           ? previous.failure
           : null,
       generation: at,
+      // Only a completed exact read can verify a selection across a reset.
+      epoch: recover || current?.pending || current?.lost ? previous.epoch : epoch,
+      recovery: recover,
     }))
-    const fail = (message: string) => {
-      if (generation.current !== at) return
+    const ownsRead = () =>
+      generation.current === at &&
+      actorIsCurrent() &&
+      store.get(mailContinuityAtom)?.epoch === epoch
+    const fail = (error: unknown) => {
+      if (!ownsRead()) return
       setReader((previous) => ({
         ...previous,
+        epoch: recover ? epoch : previous.epoch,
         refreshing: false,
         failure:
-          previous.failure?.kind === 'missing' ? previous.failure : { kind: 'read', message },
+          (recover && codeOf(error) === 'NOT_FOUND') || previous.failure?.kind === 'missing'
+            ? { kind: 'missing' }
+            : { kind: 'read', message: messageOf(error, 'Could not load this thread.') },
       }))
     }
     void (
-      remote === null
-        ? Promise.reject(new Error('No vault is open.'))
-        : googleCap.thread(remote, { id })
-    ).then(
-      (thread) => {
-        if (generation.current !== at) return
-        if (!actorIsCurrent()) {
-          fail('The mail connection changed while loading this thread.')
-          return
-        }
-        selected.readAt = at
-        setReader({ id, thread, refreshing: false, failure: null, generation: at })
-      },
-      (error: unknown) =>
-        fail(
-          actorIsCurrent()
-            ? messageOf(error, 'Could not load this thread.')
-            : 'The mail connection changed while loading this thread.',
-        ),
-    )
+      remote === null || (recover && account === null)
+        ? Promise.reject(new Error('Could not verify the Google account for this thread.'))
+        : googleCap.thread(remote, recover ? { id, expectedAccountSub: account! } : { id })
+    ).then((thread) => {
+      if (!ownsRead()) return
+      selected.readAt = at
+      setReader({
+        id,
+        thread,
+        refreshing: false,
+        failure: null,
+        generation: at,
+        epoch: recover || (!current?.lost && !current?.pending) ? epoch : undefined,
+        recovery: false,
+      })
+    }, fail)
   }
+
+  const revalidate = useEffectEvent((epoch: object | undefined) => {
+    const selected = selection.current
+    if (
+      selected !== null &&
+      reader.epoch !== epoch &&
+      store.get(mailContinuityAtom)?.epoch === epoch
+    )
+      fetchThread(selected.id, 'recover')
+  })
+  useEffect(() => {
+    if (verified && !continuity?.pending && !continuity?.lost) revalidate(continuity?.epoch)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Effect Events are non-reactive; this rule predates React 19.2.
+  }, [continuity, verified])
 
   const closeThread = () => {
     selection.current = null
@@ -107,6 +160,7 @@ export function useMailThread() {
     const account = verifiedAccount.current
     const selected = selection.current
     const at = generation.current
+    const epoch = store.get(mailContinuityAtom)?.epoch
     return (ids: readonly string[]) => {
       if (
         account === null ||
@@ -114,29 +168,43 @@ export function useMailThread() {
         selected === null ||
         selection.current !== selected ||
         selected.readAt > at ||
+        store.get(mailContinuityAtom)?.epoch !== epoch ||
         !ids.includes(selected.id)
       )
         return
       const missingGeneration = ++generation.current
+      const pending = store.get(mailContinuityAtom)?.pending
       setReader((previous) => ({
         ...previous,
         refreshing: false,
         failure: { kind: 'missing' },
+        epoch: pending ? previous.epoch : epoch,
         generation: missingGeneration,
       }))
     }
-  }, [])
+  }, [store])
 
   const { failure, ...view } = reader
   const at = reader.generation
-  const isCurrentGeneration = useCallback(() => generation.current === at, [at])
-  const error = reader.refreshing
+  const epoch = reader.epoch
+  const isCurrentGeneration = useCallback(() => {
+    const current = store.get(mailContinuityAtom)
+    return generation.current === at && current?.epoch === epoch && !current?.pending
+  }, [at, epoch, store])
+  const needsVerification = reader.id !== null && continuity?.epoch !== epoch
+  const refreshing =
+    reader.refreshing ||
+    (needsVerification && Boolean(continuity?.pending || (verified && !continuity?.lost)))
+  const error = refreshing
     ? null
-    : failure?.kind === 'missing'
-      ? 'This thread is no longer available in Gmail.'
-      : (failure?.message ?? null)
+    : needsVerification
+      ? 'Gmail history could not be checked. Retry to check this thread directly.'
+      : failure?.kind === 'missing'
+        ? 'This thread is no longer available in Gmail.'
+        : (failure?.message ?? null)
   return {
     ...view,
+    refreshing,
     error,
     isCurrentGeneration,
     actorIsCurrent,
@@ -144,7 +212,7 @@ export function useMailThread() {
     closeThread,
     watchNotFound,
     retry: () => {
-      if (reader.id !== null && isCurrentGeneration()) fetchThread(reader.id, 'refresh')
+      if (reader.id !== null && generation.current === at) fetchThread(reader.id, 'refresh')
     },
   }
 }

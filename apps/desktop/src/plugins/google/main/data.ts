@@ -50,7 +50,7 @@ import {
   normalizeMailMarkerPreferences,
   type MailMarkerPreferences,
 } from '../shared/mail-markers'
-import { cacheKey, syncThreads } from './mail-sync'
+import { cacheKey, syncThreads, type MailListRead } from './mail-sync'
 import { listContacts } from './people'
 import { threadHasStarredMessage } from './gmail'
 import {
@@ -70,10 +70,7 @@ export interface GoogleData {
   /** The last agenda for this exact question, or `null`. Never a request. */
   cachedAgenda(window: AgendaWindow, overrides: CalendarOverrides): CalendarEvent[] | null
   /** Ordinary lists use a delta; CLI reads can request an independent fresh page. */
-  threads(
-    options: ListThreadsOptions,
-    context?: { freshPage?: boolean; refresh?: boolean },
-  ): Promise<MailPage>
+  threads(options: ListThreadsOptions, context?: MailListRead): Promise<MailPage>
   /**
    * The address book, fetched **once per connected account**.
    *
@@ -188,6 +185,7 @@ export function createGoogleData({
    * same rule as `aliases`.
    */
   let forwarded: { messageId: string; bytes: Promise<MailPart[]> } | null = null
+  const mailReads = new Map<string, { signature: string; pending: Promise<MailPage> }>()
   let retired = false
   const assertActive = () => {
     if (retired) throw new Error('that Google account is no longer connected')
@@ -296,29 +294,66 @@ export function createGoogleData({
     },
 
     async threads(options, context) {
-      assertActive()
-      let knownAddresses: string[] | undefined
-      try {
-        knownAddresses = await (aliases ??= listSendAs(api()).catch((error: unknown) => {
-          aliases = null
-          throw error
-        }))
-      } catch {
-        // Without account-authenticated addresses, classifying a message as neither would be false certainty.
+      const assertCurrent = () => {
+        assertActive()
+        context?.assertCurrent?.()
       }
-      const result = await syncThreads(api(), cache, options, knownAddresses, context)
-      assertActive()
-      if (options.needsReply !== true) return result
-      return {
-        ...result,
-        threads: result.threads.filter(
-          (thread) =>
-            thread.needsReply &&
-            (thread.addressedAs === 'to' ||
-              thread.addressedAs === 'unknown' ||
-              (options.includeCc === true && thread.addressedAs === 'cc')) &&
-            (options.includeAutomated === true || !thread.automated),
-        ),
+      assertCurrent()
+      const read = async () => {
+        assertCurrent()
+        let knownAddresses: string[] | undefined
+        try {
+          knownAddresses = await (aliases ??= listSendAs(api()).catch((error: unknown) => {
+            aliases = null
+            throw error
+          }))
+        } catch {
+          // Without account-authenticated addresses, classifying a message as neither would be false certainty.
+        }
+        assertCurrent()
+        const result = await syncThreads(api(), cache, options, knownAddresses, {
+          ...context,
+          assertCurrent,
+        })
+        if (options.needsReply !== true) return result
+        return {
+          ...result,
+          threads: result.threads.filter(
+            (thread) =>
+              thread.needsReply &&
+              (thread.addressedAs === 'to' ||
+                thread.addressedAs === 'unknown' ||
+                (options.includeCc === true && thread.addressedAs === 'cc')) &&
+              (options.includeAutomated === true || !thread.automated),
+          ),
+        }
+      }
+      // One queue per pending-list key, not per snapshot identity or page
+      // token. Coalesce only at its tail: a reset is an ordering barrier.
+      const key = cacheKey(options)
+      const signature = JSON.stringify([
+        context?.bindingRevision,
+        !!context?.freshPage,
+        !!context?.refresh,
+        options.pageToken,
+        options.needsReply,
+        options.includeCc,
+        options.includeAutomated,
+      ])
+      const previous = mailReads.get(key)
+      const sharesCache = !context?.freshPage && !options.needsReply
+      let pending: Promise<MailPage>
+      if (!sharesCache) pending = read()
+      else if (previous?.signature === signature) pending = previous.pending
+      else {
+        pending = previous ? previous.pending.then(read, read) : read()
+        mailReads.set(key, { signature, pending })
+      }
+      try {
+        return await pending
+      } finally {
+        if (sharesCache && mailReads.get(key)?.pending === pending) mailReads.delete(key)
+        assertCurrent()
       }
     },
 
@@ -492,6 +527,7 @@ export function createGoogleData({
 
     forget() {
       retired = true
+      mailReads.clear()
       addressBook = null
       aliases = null
       cache.retire()
