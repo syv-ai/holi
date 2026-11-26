@@ -562,6 +562,17 @@ export function CommandMenu({
           placeholder="Search documents, or type > for actions…"
           aria-label="Search documents and actions"
           {...vimFieldProps}
+          onKeyDown={(event) => {
+            vimFieldProps.onKeyDown?.(event)
+            if (event.key !== 'Escape') return
+            if (query !== '') {
+              event.preventDefault()
+              event.stopPropagation()
+              setQuery('')
+            } else {
+              handleOpenChange(false)
+            }
+          }}
         />
         <div className="px-2">
           <VimFieldMode mode={vimFieldMode} />

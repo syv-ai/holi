@@ -128,9 +128,22 @@ test('Vim mode has an explicit keyboard-close action without opening a document'
   expect(onOpen).not.toHaveBeenCalled()
 })
 
-test('Vim-off keeps Escape dismissal without an added close control', async () => {
+test('Escape clears a query before closing the command menu', async () => {
   const { onOpenChange } = setup()
-  expect(screen.queryByRole('button', { name: 'Close command menu' })).not.toBeInTheDocument()
+  const input = screen.getByRole('combobox')
+  await userEvent.type(input, 'road')
+
+  await userEvent.keyboard('{Escape}')
+  expect(input).toHaveValue('')
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  expect(onOpenChange).not.toHaveBeenCalled()
+
+  await userEvent.keyboard('{Escape}')
+  expect(onOpenChange).toHaveBeenCalledWith(false)
+})
+
+test('Escape closes an initially empty command menu', async () => {
+  const { onOpenChange } = setup()
   await userEvent.click(screen.getByRole('combobox'))
   await userEvent.keyboard('{Escape}')
   expect(onOpenChange).toHaveBeenCalledWith(false)
