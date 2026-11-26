@@ -3,7 +3,13 @@ import { test } from 'vitest'
 import { foundationModelsAvailability } from '../app/foundation-models.ios'
 
 test('foundation model availability preserves native available and unavailable reasons', () => {
-  for (const reason of ['available', 'device-not-eligible', 'apple-intelligence-not-enabled']) {
+  for (const reason of [
+    'available',
+    'device-not-eligible',
+    'apple-intelligence-not-enabled',
+    'model-not-ready',
+    'unknown',
+  ]) {
     Object.defineProperty(globalThis, 'HoliFoundationModels', {
       configurable: true,
       value: { availabilityReason: () => reason },
