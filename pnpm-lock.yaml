@@ -483,6 +483,9 @@ importers:
       '@eslint/js':
         specifier: 9.39.5
         version: 9.39.5
+      '@lezer/markdown':
+        specifier: ^1.7.1
+        version: 1.7.1
       '@nativescript/ios':
         specifier: 9.1.1
         version: 9.1.1
@@ -492,6 +495,9 @@ importers:
       '@nativescript/webpack':
         specifier: 5.0.41
         version: 5.0.41(esbuild@0.28.1)(lightningcss@1.32.0)(type-fest@4.41.0)
+      entities:
+        specifier: ^6.0.1
+        version: 6.0.1
       eslint:
         specifier: 9.39.5
         version: 9.39.5(jiti@2.7.0)
