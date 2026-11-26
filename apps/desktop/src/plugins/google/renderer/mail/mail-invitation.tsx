@@ -161,7 +161,10 @@ function InvitationDetails(scope: Parameters<typeof useMailInvitation>[0]) {
           card={card}
           clock={clock}
           action={typeof busy === 'object' && busy?.key === card.key ? busy.action : null}
-          blocked={busy !== null || readError !== null}
+          responseBlocked={
+            busy === 'reading' || busy?.action === 'responding' || readError !== null
+          }
+          linkBlocked={busy !== null || readError !== null}
           open={(url) => void openLink(card, url)}
           respond={(answer) => void respond(card, answer)}
         />
@@ -197,18 +200,21 @@ function InvitationCard({
   card,
   clock,
   action,
-  blocked,
+  responseBlocked,
+  linkBlocked,
   open,
   respond,
 }: {
   card: InvitationCardState
   clock: TimeFormat
   action: 'responding' | 'opening' | null
-  blocked: boolean
+  responseBlocked: boolean
+  linkBlocked: boolean
   open: (url: string) => void
   respond: (answer: InvitationAnswer) => void
 }) {
-  const { invitation, error, refreshPending } = card
+  const { invitation, error, refreshPending, responseFresh } = card
+  const stale = error !== null || !responseFresh
   const headingId = useId()
   const isInvitation = invitation.kind === 'invitation'
   const canRespond = isInvitation && invitation.canRespond && !invitation.cancelled
@@ -279,18 +285,14 @@ function InvitationCard({
               type="button"
               variant="outline"
               size="sm"
-              disabled={blocked || refreshPending || error !== null || current === answer}
+              disabled={responseBlocked || stale || refreshPending || current === answer}
               onClick={() => respond(answer)}
             >
               {label}
             </Button>
           ))}
         {!invitation.cancelled && (
-          <InvitationLink
-            invitation={invitation}
-            blocked={blocked || error !== null || !card.responseFresh}
-            open={open}
-          />
+          <InvitationLink invitation={invitation} blocked={linkBlocked || stale} open={open} />
         )}
       </div>
       {action === 'opening' && (
