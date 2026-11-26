@@ -253,7 +253,10 @@ async function rig(agendaCache?: GoogleCache) {
     // These fixture calendars have fixed UTC offsets over the dates under test.
     calendarDateOffsets: new Map<string, string>(),
     exactCalendarError: null as number | 'non-json' | null,
-    exactCalendarRows: new Map<string, Map<string, SparseCancellation>>(),
+    exactCalendarRows: new Map<
+      string,
+      Map<string, SparseCancellation & Partial<ReturnType<typeof event>>>
+    >(),
     afterExactCalendarMiss: () => {},
     afterSecondaryUidRead: () => {},
     omitAfterPatch: false,
@@ -3284,6 +3287,77 @@ it('uses only verified upcoming links for a series export by the organizer', asy
   })
   await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
+it('skips a sparse DATE tombstone for a verified organizer’s series export without granting RSVP', async () => {
+  const { state, list, read, respond } = await rig()
+  const source = seriesWithException()
+    .replace('METHOD:REQUEST\r\n', '')
+    .replace(organizer, person)
+    .replace(`ATTENDEE:mailto:${person}`, `ATTENDEE:mailto:${guest}`)
+    .replace(
+      'DTSTART:20240718T150000Z\r\nDTEND:20240718T160000Z',
+      'DTSTART;VALUE=DATE:20240718\r\nDTEND;VALUE=DATE:20240719',
+    )
+  state.messages = [gmailMessage('export', 200, source, { sent: true })]
+  const owned = { organizer: { email: person, self: true }, attendees: [] }
+  const master = { ...event({ id: 'series', series: true, allDay: true }), ...owned }
+  const occurrence = (id: string, start: string, end: string, room: string) => ({
+    ...upcomingInstance(id, start, room),
+    ...owned,
+    originalStartTime: { date: start },
+    start: { date: start },
+    end: { date: end },
+  })
+  const stale = occurrence(
+    'old',
+    '2099-07-09',
+    '2099-07-10',
+    'https://meet.google.com/xyz-abcd-efg',
+  )
+  const later = occurrence(
+    'later',
+    '2099-07-16',
+    '2099-07-17',
+    'https://meet.google.com/klm-nopq-rst',
+  )
+  const tombstone = {
+    id: stale.id,
+    status: 'cancelled',
+    recurringEventId: master.id,
+    originalStartTime: stale.originalStartTime,
+  }
+  state.events.set('primary', [master])
+  state.instances.set('primary', [later, stale])
+  state.primaryPages = [
+    {
+      kind: 'calendar#events',
+      items: [
+        { ...tombstone, id: 'other-parent-child', recurringEventId: 'other-parent' },
+        { ...tombstone, id: 'other-organizer-child', organizer: { email: organizer } },
+        master,
+      ],
+    },
+  ]
+  expect(await read()).toMatchObject({ conferenceUrl: stale.hangoutLink, htmlLink: stale.htmlLink })
+
+  state.primaryPages = [{ kind: 'calendar#events', items: [tombstone, master] }]
+  expect(await read()).toMatchObject({
+    scope: 'series',
+    kind: 'meeting',
+    cancelled: false,
+    canRespond: false,
+    responseTargetKey: null,
+    conferenceUrl: later.hangoutLink,
+    htmlLink: later.htmlLink,
+  })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  // An organizer address alone, without Calendar's own organizer marker,
+  // does not verify a master or allow the sparse row to establish ownership.
+  master.organizer = { email: person, self: false }
+  expect((await list()).invitations).toEqual([])
 })
 
 it('returns independent series and original occurrence cards and updates only the selected occurrence', async () => {
@@ -7591,6 +7665,89 @@ it('uses a known occurrence resource’s sparse cancellation only to restrict se
     { calendar: 'primary', eventId: master.id, sendUpdates: 'all', status: 'accepted' },
   ])
   expect(state.sendAttempts).toBe(0)
+})
+
+it('compares a full known-resource tombstone for series Join without requiring a visible occurrence card', async () => {
+  const { state, list, read, respond } = await rig()
+  const master = event({ id: 'series', series: true })
+  const room = 'https://meet.google.com/xyz-abcd-efg'
+  const stale = {
+    ...upcomingInstance('moved', '2099-07-11', room),
+    originalStartTime: { dateTime: '2099-07-09T15:00:00Z' },
+  }
+  const later = upcomingInstance('later', '2099-07-16', 'https://meet.google.com/klm-nopq-rst')
+  const series = gmailMessage('series', 400, seriesWithException())
+  state.messages = [
+    series,
+    gmailMessage('old-occurrence', 200, movedRequest('20240701T090000Z', room)),
+  ]
+  state.events.set('primary', [master])
+  state.instances.set('primary', [stale])
+  // Learn the exact ID from a public read, without dispatching a child RSVP.
+  expect(await read(thread, 'occurrence')).toMatchObject({ canRespond: true, conferenceUrl: room })
+
+  // Only events.get sees the cancellation. The original REQUEST and exact
+  // instance are omitted, but the expanded view still offers the stale room.
+  state.messages = [series]
+  state.instances.clear()
+  const tombstone = {
+    ...stale,
+    recurringEventId: master.id,
+    status: 'cancelled' as const,
+    sequence: 4,
+  }
+  state.exactCalendarRows.set('primary', new Map([[stale.id, tombstone]]))
+  state.expandedPages = [
+    { kind: 'calendar#events', items: [stale], nextPageToken: '1' },
+    { kind: 'calendar#events', items: [later] },
+  ]
+  const safeLinks = { conferenceUrl: later.hangoutLink, htmlLink: later.htmlLink }
+  expect((await list()).invitations).toMatchObject([
+    { scope: 'series', ...safeLinks, cancelled: false, canRespond: true },
+  ])
+  expect(await read(thread, 'series')).toMatchObject(safeLinks)
+  expect(await respond('accepted')).toMatchObject({
+    outcome: 'sent',
+    channel: 'calendar',
+    refreshPending: false,
+    invitation: {
+      ...safeLinks,
+      scope: 'series',
+      cancelled: false,
+      responseStatus: 'accepted',
+      recordedResponseStatus: 'accepted',
+      responsePending: false,
+    },
+  })
+  expect(state.calendarUpdateRequests).toEqual([
+    { calendar: 'primary', eventId: master.id, sendUpdates: 'all', status: 'accepted' },
+  ])
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.sendAttempts).toBe(0)
+
+  const reinstated = { ...stale, sequence: 5 }
+  state.messages.push(
+    gmailMessage(
+      'reinstated',
+      500,
+      movedRequest('20240702T090000Z', room).replace('SEQUENCE:3', 'SEQUENCE:5'),
+    ),
+  )
+  state.instances.set('primary', [reinstated])
+  state.expandedPages[0] = { kind: 'calendar#events', items: [reinstated], nextPageToken: '1' }
+  // The exact read still reports sequence 4. Only the verified new REQUEST
+  // and current occurrence can restore the slot; the old tombstone can't win.
+  expect(await read(thread, 'series')).toMatchObject({
+    recordedResponseStatus: 'accepted',
+    conferenceUrl: reinstated.hangoutLink,
+    htmlLink: reinstated.htmlLink,
+  })
+  expect(await read(thread, 'occurrence')).toMatchObject({
+    cancelled: false,
+    canRespond: true,
+    conferenceUrl: reinstated.hangoutLink,
+    htmlLink: reinstated.htmlLink,
+  })
 })
 
 it('includes hidden expanded invitations for REQUEST but not publications or exports', async () => {
