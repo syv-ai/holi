@@ -1,4 +1,5 @@
 import { GFM, parser } from '@lezer/markdown'
+import { decodeHTMLStrict } from 'entities/decode'
 
 const markdownParser = parser.configure(GFM)
 
@@ -12,6 +13,23 @@ function resolvePath(directory: string[], path: string): string[] | null {
     } else result.push(part)
   }
   return result
+}
+
+function destinationParts(raw: string): { pathname: string; suffix: string } {
+  let pathname = ''
+  let cursor = 0
+  const tokens =
+    /\\([!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~])|&(?:#[0-9]{1,7}|#x[0-9a-f]{1,6}|[a-z][a-z0-9]{1,31});|[?#]/gi
+  for (const token of raw.matchAll(tokens)) {
+    pathname += raw.slice(cursor, token.index)
+    const decoded = token[1] ?? decodeHTMLStrict(token[0])
+    const separator = decoded.search(/[?#]/)
+    if (separator >= 0)
+      return { pathname: pathname + decoded.slice(0, separator), suffix: raw.slice(token.index) }
+    pathname += decoded
+    cursor = token.index + token[0].length
+  }
+  return { pathname: pathname + raw.slice(cursor), suffix: '' }
 }
 
 /** Preserve relative inline destinations when a document or its target moves. */
@@ -41,17 +59,13 @@ export function rewriteMarkdownMoveLinks(
       const raw = text.slice(from, to)
       const angle = raw.startsWith('<') && raw.endsWith('>')
       const destination = angle ? raw.slice(1, -1) : raw
-      if (!destination || /^(?:[a-z][a-z\d+.-]*:|\/|#|\?)/i.test(destination)) return
-      const cut = destination.search(/[?#]/)
-      const pathname = cut < 0 ? destination : destination.slice(0, cut)
-      const suffix = cut < 0 ? '' : destination.slice(cut)
-      // Encoded separators and entities cannot safely identify a vault path here.
-      if (/%(?:2f|5c)/i.test(pathname) || /&(?:#\d+|#x[\da-f]+|[a-z]+);/i.test(pathname)) return
+      const { pathname, suffix } = destinationParts(destination)
+      if (!pathname || /^(?:[a-z][a-z\d+.-]*:|\/)/i.test(pathname)) return
+      // Encoded separators are ambiguous across URL and filesystem path adapters.
+      if (/%(?:2f|5c)/i.test(pathname)) return
       let decoded: string
       try {
-        decoded = decodeURIComponent(
-          pathname.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~])/g, '$1'),
-        )
+        decoded = decodeURIComponent(pathname)
       } catch {
         return
       }

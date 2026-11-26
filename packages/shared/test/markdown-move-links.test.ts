@@ -37,6 +37,14 @@ describe('Markdown move targets', () => {
     )
   })
 
+  it('decodes Markdown entities without changing suffix spelling or encoded delimiters', () => {
+    const source =
+      '[amp](a&amp;b.md?x=1&amp;y=2) [hash](a&#35;part) [encoded](a%23b.md) [escaped](a\\&amp;b.md)'
+    expect(rewriteMarkdownMoveLinks(source, 'old/note.md', 'old/note.md', 'new/note.md')).toBe(
+      '[amp](../old/a%26b.md?x=1&amp;y=2) [hash](../old/a&#35;part) [encoded](../old/a%23b.md) [escaped](../old/a%26amp%3Bb.md)',
+    )
+  })
+
   it('leaves non-inline and unresolved paths untouched', () => {
     const source =
       '[ref][target]\n\n[target]: peer.md\n\n<a href="peer.md">html</a>\n[bad](%ZZ.md) [escape](../../../outside.md) [separator](a%2Fb.md)'
