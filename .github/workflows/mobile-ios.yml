@@ -163,4 +163,5 @@ jobs:
         with:
           name: mobile-ios-unsigned-archive
           path: apps/mobile/.artifacts/ios
+          include-hidden-files: true
           if-no-files-found: warn
