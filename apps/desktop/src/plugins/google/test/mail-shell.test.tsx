@@ -830,6 +830,111 @@ function deferred<T>() {
 }
 
 test.each([
+  { Reader: MailShell, name: 'MailShell', control: 'Try again', reply: 'Reply all' },
+  { Reader: MailView, name: 'MailView', control: 'Refresh mail', reply: 'Reply' },
+])(
+  '$name keeps healthy rows and honors exact absence when a history scan cannot finish',
+  async ({ Reader, control, reply }) => {
+    const selected = summary({ hasInvite: true, unread: false, snippet: 'Workshop invitation' })
+    const healthy = summary({ id: 'healthy', subject: 'Unrelated inbox mail', unread: false })
+    const recent = summary({ id: 'recent', subject: 'Mail from the new snapshot', unread: false })
+    const inFlight = deferred<SearchPage>()
+    const join = deferred<void>()
+    const exact = deferred<typeof thread>()
+    let scan = false
+    searchMock.mockImplementation(
+      async ({ pageToken, refresh, expectedAccountSub }: SearchParams) => {
+        if (refresh && pageToken === undefined && expectedAccountSub === 'a')
+          return page([recent, healthy])
+        if (pageToken === 'older' && !scan) return page([selected])
+        if (pageToken === undefined && !refresh)
+          return scan ? inFlight.promise : page([healthy], 'older')
+        throw new Error('Unexpected Gmail page request')
+      },
+    )
+    threadMock.mockImplementation(
+      async ({ id, expectedAccountSub }: Parameters<typeof googleCap.thread>[1]) => {
+        if (id !== selected.id) throw new Error('Unexpected thread')
+        if (scan) {
+          if (expectedAccountSub !== 'a') throw new Error('Exact read is not account bound')
+          return exact.promise
+        }
+        return {
+          ...thread,
+          messages: [
+            {
+              ...thread.messages[1]!,
+              body: 'Workshop agenda',
+              html: null,
+              hasCalendarPayload: true,
+            },
+          ],
+        }
+      },
+    )
+    invitationMock.mockResolvedValue(invitations(invitation))
+    validateBinding.mockReturnValueOnce(join.promise)
+
+    const user = userEvent.setup()
+    render(<Reader />)
+    await user.click(await screen.findByRole('button', { name: 'Load more' }))
+    await user.click(await screen.findByText(selected.snippet))
+    await user.click(await screen.findByRole('button', { name: 'Join meeting' }))
+    await screen.findByText('Checking invitation link…')
+    await user.click(screen.getByRole('button', { name: reply }))
+    const editor = await screen.findByRole('textbox', { name: 'Message' })
+    await user.type(editor, 'Keep this reply')
+
+    scan = true
+    await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+    await user.click(editor)
+    await act(async () => {
+      inFlight.resolve({
+        ...page([]),
+        syncedAt: '',
+        historyRecoveryRequired: true,
+        notFoundThreadIds: [selected.id],
+        unreadableThreadIds: [healthy.id],
+      })
+    })
+    const expectMissing = () => {
+      const readerAlert = screen
+        .getAllByRole('alert')
+        .find((alert) => within(alert).queryByRole('button', { name: 'Retry' }))
+      expect(readerAlert).toHaveTextContent(/no longer available/i)
+      expect(
+        screen.queryByRole('button', { name: /^(Join meeting|Accept|Maybe|Decline)$/ }),
+      ).not.toBeInTheDocument()
+    }
+    expectMissing()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
+    expect(screen.getByText(healthy.subject)).toBeVisible()
+    expect(screen.queryByText(selected.snippet)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^(Nothing in|No messages matching)/)).not.toBeInTheDocument()
+    expect(
+      screen.getAllByText('Workshop agenda').find((node) => !editor.contains(node)),
+    ).toBeVisible()
+    expect(editor).toHaveFocus()
+    await act(async () => join.resolve())
+    expect(openExternal).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: control }))
+    expect(await screen.findByText(recent.subject)).toBeVisible()
+    expect(screen.getByText(healthy.subject)).toBeVisible()
+    expect(await screen.findByRole('status', { name: 'Refreshing the thread' })).toBeVisible()
+    await act(async () => {
+      exact.reject(
+        Object.assign(new Error('Gmail unavailable'), { data: { code: 'SERVICE_UNAVAILABLE' } }),
+      )
+    })
+    expectMissing()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(editor)
+    expect(editor).toHaveTextContent('Keep this reply')
+    expect(respondMock).not.toHaveBeenCalled()
+  },
+)
+
+test.each([
   {
     Driver: MailShell,
     name: 'MailShell',

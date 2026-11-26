@@ -17,10 +17,19 @@ type Page = Awaited<ReturnType<typeof googleCap.search>>
 type Search = NonNullable<Parameters<typeof googleCap.search>[1]>
 type Call = <T>(work: (remote: string) => Promise<T>) => Promise<T>
 
-type Ready = Page & { kind: 'ready' }
+type Ready = Page & { kind: 'ready'; source: object; recoveryError?: string }
 
 type ListState =
-  Ready | { kind: 'loading' } | { kind: 'disconnected' } | { kind: 'error'; message: string }
+  | Ready
+  | { kind: 'loading'; held?: Ready }
+  | { kind: 'disconnected' }
+  | { kind: 'error'; message: string }
+
+/** Only rows already displayed for this actor and query may survive a failed scan. */
+function heldPage(list: ListState, source: object): Ready | undefined {
+  const page = list.kind === 'ready' ? list : list.kind === 'loading' ? list.held : undefined
+  return page?.source === source ? page : undefined
+}
 
 function failure(error: unknown): ListState {
   return isDisconnected(error)
@@ -94,7 +103,7 @@ export function useMailList(
       setWorking(more ? 'more' : retry ? 'retry' : null)
       if (!more && !retry) {
         generation.current++
-        setList({ kind: 'loading' })
+        setList((previous) => ({ kind: 'loading', held: heldPage(previous, source) }))
       }
       const before = store.get(mailContinuityAtom)?.epoch
       if (force) {
@@ -113,23 +122,36 @@ export function useMailList(
         .then((page) => {
           published = !page.historyRecoveryRequired
           if (!inScope()) return
+          // Exact absence can be known even when the history scan cannot publish a list.
+          if (page.notFoundThreadIds) reportNotFound(page.notFoundThreadIds)
           if (page.historyRecoveryRequired) {
             recovery.current = source
+            if (more || retry) generation.current++
             // A delta response from before a reset cannot retire that newer epoch.
             if (store.get(mailContinuityAtom)?.epoch === before)
               store.set(mailContinuityAtom, 'lost')
-            setList({
-              kind: 'error',
-              message: 'Gmail history could not be checked. Try again to reload this mail list.',
+            const missing = new Set(page.notFoundThreadIds)
+            const message =
+              'Gmail history could not be checked. Try again to reload this mail list.'
+            setList((previous) => {
+              const held = heldPage(previous, source)
+              return held === undefined
+                ? { kind: 'error', message }
+                : {
+                    ...held,
+                    threads: held.threads.filter(({ id }) => !missing.has(id)),
+                    nextPageToken: null,
+                    unreadableThreadIds: undefined,
+                    recoveryError: message,
+                  }
             })
             return
           }
-          if (page.notFoundThreadIds) reportNotFound(page.notFoundThreadIds)
           if (force && !page.unreadableThreadIds?.length) recovery.current = null
           if (more || retry) generation.current++
           setList((previous) => {
-            if (!more) return { ...page, kind: 'ready' }
-            if (previous.kind !== 'ready') return previous
+            if (!more) return { ...page, kind: 'ready', source }
+            if (previous.kind !== 'ready' || previous.source !== source) return previous
             const replaced = new Set([
               ...page.threads.map(({ id }) => id),
               ...(page.unreadableThreadIds ?? []),
@@ -138,6 +160,7 @@ export function useMailList(
             return {
               ...page,
               kind: 'ready',
+              source,
               threads: [...previous.threads.filter(({ id }) => !replaced.has(id)), ...page.threads],
             }
           })

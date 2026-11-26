@@ -511,6 +511,7 @@ export function MailList({
         />
       )
     if (
+      list.recoveryError === undefined &&
       list.threads.length === 0 &&
       !list.unreadableThreadIds?.length &&
       list.nextPageToken === null
@@ -550,11 +551,12 @@ export function MailList({
       )
     return (
       <>
-        {!!list.unreadableThreadIds?.length && (
+        {(list.recoveryError !== undefined || !!list.unreadableThreadIds?.length) && (
           <MailPartialAlert
             busy={mail.listWorking !== null}
             retrying={mail.listWorking === 'retry'}
-            onRetry={mail.retryPartial}
+            recoveryError={list.recoveryError}
+            onRetry={list.recoveryError === undefined ? mail.retryPartial : mail.refreshList}
           />
         )}
         <div role="list" aria-label={title}>

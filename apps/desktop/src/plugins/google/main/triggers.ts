@@ -103,6 +103,13 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
         from: t.from.email,
       })
     }
+    // Unreadable metadata does not prove that a thread left the query. Carry
+    // only its last known version, never overriding a readable version here.
+    const missing = new Set(page.notFoundThreadIds)
+    for (const id of page.unreadableThreadIds ?? []) {
+      const version = before?.get(id)
+      if (version !== undefined && !after.has(id) && !missing.has(id)) after.set(id, version)
+    }
     seen.set(query, after)
   }
 

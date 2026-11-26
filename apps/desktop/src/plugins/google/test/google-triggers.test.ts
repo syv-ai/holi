@@ -57,6 +57,59 @@ function rig() {
 afterEach(() => vi.useRealTimers())
 
 describe('account-scoped trigger baselines', () => {
+  it('carries an unreadable thread through a partial poll without treating its recovery as new mail', async () => {
+    vi.useFakeTimers()
+    const r = rig()
+    const existing = thread('existing')
+    const arrival = thread('arrival')
+    const newer = { ...existing, messageCount: 2, date: '2026-11-13T12:01:00Z' }
+    const threads = vi.fn<GoogleData['threads']>()
+    const data = { threads } as unknown as GoogleData
+    const stop = startGoogleTriggers(r.ctx, {
+      data: async () => data,
+      overrides: async () => ({}),
+      pollMs: 100,
+    })
+    const setPage = (rows: MailThreadSummary[], unreadableThreadIds?: string[]) => {
+      threads.mockResolvedValue({
+        threads: rows,
+        nextPageToken: null,
+        syncedAt: '2026-11-13T12:02:00Z',
+        unreadableThreadIds,
+      })
+    }
+    try {
+      setPage([existing])
+      r.announce()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(r.emitted).toEqual([])
+
+      setPage([arrival], [existing.id])
+      await vi.advanceTimersByTimeAsync(100)
+      expect(r.emitted).toEqual([expect.objectContaining({ id: arrival.id, source: 'mail' })])
+
+      setPage([existing, arrival])
+      await vi.advanceTimersByTimeAsync(100)
+      expect(r.emitted).toHaveLength(1)
+
+      setPage([newer, arrival])
+      await vi.advanceTimersByTimeAsync(200)
+      expect(r.emitted.slice(1)).toEqual([
+        expect.objectContaining({ id: existing.id, source: 'mail', version: `2:${newer.date}` }),
+      ])
+
+      // Complete snapshots still let a thread leave and re-enter a query.
+      setPage([newer])
+      await vi.advanceTimersByTimeAsync(100)
+      setPage([newer, arrival])
+      await vi.advanceTimersByTimeAsync(100)
+      expect(r.emitted.slice(2)).toEqual([
+        expect.objectContaining({ id: arrival.id, source: 'mail' }),
+      ])
+    } finally {
+      stop()
+    }
+  })
   it('starts a fresh baseline when a vault switches accounts, rather than treating B mail as new A mail', async () => {
     vi.useFakeTimers()
     const r = rig()
