@@ -1,7 +1,7 @@
 import { atom } from 'jotai'
 import { capClient as productionCapClient } from '../../src/renderer/src/lib/cap-client'
 
-export const activeRemoteAtom = atom<string | null>('bench')
+export { activeRemoteAtom } from '../../src/renderer/src/plugin-api/index'
 export const vimCodeEditingAtom = atom(false)
 export const closeSurfaceTabsAtom = atom(null, () => {})
 export const openSurfaceAtom = atom(null, () => {})
