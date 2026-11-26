@@ -240,6 +240,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Check broker observer input and activity contract
+        shell: pwsh
+        run: ./.github/scripts/test-broker-startup-observer.ps1
+
       - name: Stage native Windows launch and caller evidence
         id: native-proof
         shell: pwsh
