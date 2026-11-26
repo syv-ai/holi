@@ -20,18 +20,10 @@ export async function runNativeDocumentContext({ output = resolve('codex-documen
   const marker1 = `HOLI_DOC_${randomUUID()}`, marker2 = `HOLI_DOC_${randomUUID()}`
   await writeFile(join(project, 'document.md'), marker1)
   const provenance = { binary: resolve(binary), version: versionResult.stdout.trim(), argv: null, environment: { HOME: home, CODEX_HOME: codexHome }, config: join(codexHome, 'config.toml') }
-  const proof = { schema, provenance, prompt: 'Reply only with the synthetic receipt.', instructions: [], consent: { normalNativeFlow: false }, cleanup: { verified: false } }
   try {
-    // Deliberately no fabricated trust or consent. Interactive execution requires operator approval.
-    const child = spawnSync(binary, ['--cd', project], { cwd: project, env: { PATH: process.env.PATH, HOME: home, CODEX_HOME: codexHome, HOLI_CODEX_PROOF: output }, stdio: 'inherit' })
-    provenance.argv = [binary, '--cd', project]
-    if (child.error) throw child.error
-    proof.note = 'Interactive consent and Responses capture must be recorded by the native fixture operator; no model request is made by this static runner.'
-    await writeFile(output, JSON.stringify(proof, null, 2))
+    throw new Error('Native Responses capture and consent recording are not implemented; refusing to launch Codex without the loopback capture fixture.')
   } finally {
     await rm(root, { recursive: true, force: true })
-    proof.cleanup.verified = true
   }
-  return proof
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) runNativeDocumentContext().catch((e) => { console.error(e.message); process.exitCode = 1 })
