@@ -198,6 +198,8 @@ async function rig() {
     // CalendarList can report a readable subscription while events.list sees
     // a later ACL downgrade. An exact get with this role still masks the event.
     freeBusyEventCollections: new Set<string>(),
+    eventRoleOverrides: new Map<string, 'reader' | 'writer'>(),
+    instanceRoleOverrides: new Map<string, 'reader'>(),
     instances: new Map<
       string,
       (Omit<ReturnType<typeof event>, 'iCalUID' | 'organizer'> & {
@@ -206,6 +208,7 @@ async function rig() {
       })[]
     >(),
     primaryCalendarId: person,
+    primaryCalendarRole: 'owner' as 'owner' | 'writer' | 'reader',
     secondaryCalendars: [] as {
       id: string
       selected: boolean
@@ -249,6 +252,7 @@ async function rig() {
     instanceReads: 0,
     refreshOnQuery: false,
     refreshOnPrimaryCopy: false,
+    refreshOnInstanceCopy: false,
     onRefresh: async () => {},
     onRevoke: async () => {},
     // Exact Gmail resources and index entries can differ from threads.get.
@@ -378,17 +382,29 @@ async function rig() {
       calendarId === state.primaryCalendarId ? 'primary' : calendarId
     const eventAccessRole = (id: string) => {
       if (state.freeBusyEventCollections.has(id)) return 'freeBusyReader'
-      if (id === 'primary') return state.primaryMissing ? undefined : 'owner'
-      return secondaryCalendars.find(
-        (calendar) => calendar.id === id && !('deleted' in calendar && calendar.deleted),
-      )?.accessRole
+      if (id === 'primary' && state.primaryMissing) return undefined
+      return (
+        state.eventRoleOverrides.get(id) ??
+        (id === 'primary'
+          ? state.primaryCalendarRole
+          : secondaryCalendars.find(
+              (calendar) => calendar.id === id && !('deleted' in calendar && calendar.deleted),
+            )?.accessRole)
+      )
     }
     const calendarListPath = /\/users\/me\/calendarList(?:\/([^/]+))?$/.exec(url.pathname)
     if (calendarListPath) {
       const calendars = [
         ...(state.primaryMissing
           ? []
-          : [{ id: state.primaryCalendarId, primary: true, selected: true, accessRole: 'owner' }]),
+          : [
+              {
+                id: state.primaryCalendarId,
+                primary: true,
+                selected: true,
+                accessRole: state.primaryCalendarRole,
+              },
+            ]),
         ...secondaryCalendars,
       ].map((calendar) => ({ kind: 'calendar#calendarListEntry', ...calendar }))
       if (calendarListPath[1]) {
@@ -442,18 +458,20 @@ async function rig() {
       const original = url.searchParams.get('originalStart')
       if (state.instanceContinuationUnavailable && url.searchParams.has('pageToken'))
         return json({}, 503)
+      const items = instances.filter(
+        (item) =>
+          item.recurringEventId === seriesId &&
+          (item.status !== 'cancelled' || url.searchParams.get('showDeleted') === 'true') &&
+          (item.originalStartTime?.date !== undefined
+            ? item.originalStartTime.date === original
+            : Date.parse(item.originalStartTime?.dateTime ?? '') === Date.parse(original ?? '')),
+      )
+      if (items.length && state.refreshOnInstanceCopy) now = 3_600_000
       return json({
         kind: 'calendar#events',
-        accessRole,
+        accessRole: state.instanceRoleOverrides.get(id) ?? accessRole,
         nextPageToken: state.instanceContinuationUnavailable ? 'next' : undefined,
-        items: instances.filter(
-          (item) =>
-            item.recurringEventId === seriesId &&
-            (item.status !== 'cancelled' || url.searchParams.get('showDeleted') === 'true') &&
-            (item.originalStartTime?.date !== undefined
-              ? item.originalStartTime.date === original
-              : Date.parse(item.originalStartTime?.dateTime ?? '') === Date.parse(original ?? '')),
-        ),
+        items,
       })
     }
     const calendar = /\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/.exec(url.pathname)
@@ -470,6 +488,8 @@ async function rig() {
       const events = state.events.get(id) ?? []
       if (init.method === 'PATCH') {
         state.calendarPatchAttempts++
+        if (accessRole === 'reader' || state.instanceRoleOverrides.has(id))
+          return json({ error: { errors: [{ reason: 'forbidden' }] } }, 403)
         if (state.patchMode === 'not-found') return json({}, 404)
         if (state.patchMode === 'response-lost') throw new TypeError('Calendar connection lost')
         const currentEvent = [...events, ...(state.instances.get(id) ?? [])].find(
@@ -1998,8 +2018,8 @@ it('joins an embedded exception only when Calendar verifies its original slot an
   expect(state.sendAttempts).toBe(0)
 })
 
-it('orders embedded and separately mailed evidence together for series Join', async () => {
-  const { state, read } = await rig()
+it('orders embedded and separately mailed evidence for Join and occurrence responses', async () => {
+  const { state, read, respond } = await rig()
   const embeddedRoom = 'https://meet.google.com/qrs-tuvw-xyz'
   const separateRoom = 'https://meet.google.com/xyz-abcd-efg'
   const stamp = '20240702T090000Z'
@@ -2012,26 +2032,105 @@ it('orders embedded and separately mailed evidence together for series Join', as
   state.events.set('primary', [event({ id: 'series', series: true })])
   state.instances.set('primary', [providerRow, later])
   const join = () => read(thread, 'series')
+  const occurrence = () => read(thread, 'occurrence')
   const separatelyMailed = (revision: string) =>
     gmailMessage('separate', 400, movedRequest(revision, separateRoom))
+  const withheld = {
+    identity: { messageId: 'separate' },
+    canRespond: false,
+    responseTargetKey: null,
+    responseStatus: null,
+    sentResponseStatus: null,
+    recordedResponseStatus: null,
+    conferenceUrl: null,
+    htmlLink: null,
+  }
 
   // Arrival and a matching row cannot override a newer embedded revision.
   state.messages = [series, separatelyMailed('20240701T090000Z')]
-  expect(await join()).toMatchObject({ conferenceUrl: later.hangoutLink })
+  expect(await join()).toMatchObject({ conferenceUrl: later.hangoutLink, canRespond: true })
+  expect(await occurrence()).toMatchObject(withheld)
+  await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   providerRow.hangoutLink = embeddedRoom
   expect(await join()).toMatchObject({ conferenceUrl: embeddedRoom })
 
+  state.events.clear()
+  state.instances.clear()
+  const oldSent = gmailMessage(
+    'sent-to-old-occurrence',
+    500,
+    movedRequest('20240704T090000Z', separateRoom)
+      .replace('METHOD:REQUEST', 'METHOD:REPLY')
+      .replace('ATTENDEE:', 'ATTENDEE;PARTSTAT=ACCEPTED:'),
+    { sent: true, parent: '<separate@example.net>' },
+  )
+  state.messages.push(oldSent)
+  expect(await occurrence()).toMatchObject(withheld)
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+
+  state.events.set('primary', [event({ id: 'series', series: true })])
+  state.instances.set('primary', [providerRow, later])
   // Neither of two different versions with the same revision fields proves the slot.
   state.messages = [series, separatelyMailed(stamp)]
   expect(await join()).toMatchObject({ conferenceUrl: later.hangoutLink })
+  expect(await occurrence()).toMatchObject(withheld)
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
 
-  state.messages = [series, separatelyMailed('20240703T090000Z')]
+  state.messages = [
+    series,
+    gmailMessage('new-occurrence', 600, movedRequest('20240703T090000Z', separateRoom)),
+    oldSent,
+  ]
   expect(await join()).toMatchObject({ conferenceUrl: later.hangoutLink })
-  providerRow.hangoutLink = separateRoom
+  providerRow.description = providerRow.hangoutLink = separateRoom
   expect(await join()).toMatchObject({
     conferenceUrl: separateRoom,
     htmlLink: providerRow.htmlLink,
   })
+  expect(await occurrence()).toMatchObject({ canRespond: true, htmlLink: providerRow.htmlLink })
+  state.events.clear()
+  state.instances.clear()
+  expect(await occurrence()).toMatchObject({
+    identity: { messageId: 'new-occurrence' },
+    canRespond: true,
+    sentResponseStatus: null,
+  })
+  expect(await respond('accepted')).toMatchObject({ channel: 'gmail', outcome: 'sent' })
+  expect(state.sentMime).toHaveLength(1)
+  expect(state.sentMime[0]).toContain('In-Reply-To: <new-occurrence@example.net>')
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it('rejects a Gmail reply when an embedded slot revision arrives before dispatch', async () => {
+  const { state, read, respond } = await rig()
+  state.messages = [
+    gmailMessage(
+      'old-occurrence',
+      200,
+      movedRequest('20240701T090000Z', 'https://meet.google.com/xyz-abcd-efg'),
+    ),
+  ]
+  expect(await read()).toMatchObject({ scope: 'occurrence', canRespond: true })
+  state.refreshOnQuery = true
+  state.onRefresh = async () => {
+    state.messages.push(
+      gmailMessage(
+        'new-series',
+        400,
+        seriesWithException(
+          movedRequest('20240702T090000Z', 'https://meet.google.com/qrs-tuvw-xyz'),
+        ),
+      ),
+    )
+  }
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+  expect(await read(thread, 'occurrence')).toMatchObject({
+    canRespond: false,
+    responseTargetKey: null,
+  })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
 it('does not order conflicting MIME alternatives as independent embedded revisions', async () => {
@@ -2095,7 +2194,7 @@ it('does not order conflicting MIME alternatives as independent embedded revisio
 })
 
 it('requires a verified live embedded revision to reinstate a slot covered by an embedded cancellation', async () => {
-  const { state, read } = await rig()
+  const { state, read, list } = await rig()
   const room = 'https://meet.google.com/qrs-tuvw-xyz'
   const cancelled = invite('REQUEST', 'STATUS:CANCELLED', 3, '20240702T090000Z').replace(
     'END:VEVENT',
@@ -2128,6 +2227,7 @@ it('requires a verified live embedded revision to reinstate a slot covered by an
     conferenceUrl: room,
     htmlLink: instance.htmlLink,
   })
+  expect((await list()).invitations.map(({ scope }) => scope)).toEqual(['series'])
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
@@ -2466,11 +2566,17 @@ it('skips individually unverifiable series occurrences, but cannot use a malform
     { ...page, items: [next], nextPageToken: 'bad token' },
     { ...page, items: [next], nextPageToken: '1' },
     { kind: 'calendar#calendarList', items: [next] },
-    { ...page, accessRole: 'freeBusyReader', items: [next] },
   ]) {
     state.expandedPages = [{ ...page, items: [missingEnd], nextPageToken: '1' }, malformed]
     expect(await read()).toMatchObject(noJoin)
   }
+  state.expandedPages = [{ ...page, accessRole: 'freeBusyReader', items: [] }]
+  expect(await read()).toMatchObject({
+    conferenceUrl: null,
+    htmlLink: null,
+    canRespond: false,
+    responseTargetKey: null,
+  })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
@@ -4533,6 +4639,103 @@ it('retains an active primary copy with the exact UID and no organizer address',
   })
   expect(state.sendAttempts).toBe(1)
   expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it.each(['primary', 'secondary@example.com'])(
+  'keeps a Calendar copy readable without RSVP when Events reports reader on %s',
+  async (calendar) => {
+    const { state, read, respond } = await rig()
+    const copy = event()
+    if (calendar === 'primary') state.primaryCalendarRole = 'writer'
+    else state.secondaryCalendars = [{ id: calendar, selected: true, accessRole: 'writer' }]
+    state.events.set(calendar, [copy])
+    state.eventRoleOverrides.set(calendar, 'reader')
+    const readOnly = {
+      htmlLink: copy.htmlLink,
+      responseStatus: 'declined',
+      recordedResponseStatus: 'declined',
+      canRespond: false,
+      responseTargetKey: null,
+    }
+    expect(await read()).toMatchObject(readOnly)
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    // CalendarList's reader observation also cannot be upgraded by a writer page.
+    if (calendar === 'primary') state.primaryCalendarRole = 'reader'
+    else state.secondaryCalendars[0]!.accessRole = 'reader'
+    state.eventRoleOverrides.set(calendar, 'writer')
+    expect(await read()).toMatchObject(readOnly)
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+
+    if (calendar === 'primary') state.primaryCalendarRole = 'writer'
+    else state.secondaryCalendars[0]!.accessRole = 'writer'
+    state.eventRoleOverrides.clear()
+    expect(await read()).toMatchObject({ canRespond: true })
+    expect(await respond('accepted')).toMatchObject({ channel: 'calendar', outcome: 'sent' })
+    expect(state.calendarUpdateRequests).toMatchObject([{ calendar, status: 'accepted' }])
+    expect(state.sendAttempts).toBe(0)
+  },
+)
+
+it('keeps verified series Join but not its RSVP actions when expansion reports reader', async () => {
+  const { state, read } = await rig()
+  state.messages = [gmailMessage('update', 200, seriesWithException())]
+  const master = event({ id: 'series', series: true })
+  const next = upcomingInstance('next', '2099-07-09', 'https://meet.google.com/xyz-abcd-efg')
+  state.events.set('primary', [master])
+  state.instances.set('primary', [next])
+  state.expandedPages = [{ kind: 'calendar#events', accessRole: 'reader', items: [next] }]
+  expect(await read()).toMatchObject({
+    htmlLink: next.htmlLink,
+    conferenceUrl: next.hangoutLink,
+    recordedResponseStatus: 'declined',
+    canRespond: false,
+    responseTargetKey: null,
+  })
+})
+
+it('uses the strictest UID and instance page role at final Calendar preflight', async () => {
+  const { state, read, respond } = await rig()
+  state.messages = [
+    gmailMessage(
+      'update',
+      200,
+      invite().replace('END:VEVENT', 'RECURRENCE-ID:20240711T150000Z\r\nEND:VEVENT'),
+    ),
+  ]
+  const master = event({ id: 'series', series: true })
+  const instance = event({ id: 'moved', occurrence: true })
+  state.events.set('primary', [master])
+  state.instances.set('primary', [instance])
+  expect(await read()).toMatchObject({ canRespond: true })
+
+  // A refresh happens after the initial response lookup and before dispatch.
+  state.refreshOnInstanceCopy = true
+  state.onRefresh = async () => {
+    state.instanceRoleOverrides.set('primary', 'reader')
+  }
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+  const readOnly = {
+    scope: 'occurrence',
+    htmlLink: instance.htmlLink,
+    canRespond: false,
+    responseTargetKey: null,
+    recordedResponseStatus: 'declined',
+  }
+  expect(await read()).toMatchObject(readOnly)
+
+  // A later owner page (even the exact original-slot instance page) cannot
+  // undo the downgrade seen earlier in this same read.
+  state.instanceRoleOverrides.clear()
+  state.primaryPages = [
+    { kind: 'calendar#events', accessRole: 'reader', items: [master], nextPageToken: '1' },
+    { kind: 'calendar#events', accessRole: 'owner' },
+  ]
+  expect(await read()).toMatchObject(readOnly)
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
 it('requires current event read access before an empty secondary UID page permits Gmail', async () => {

@@ -56,12 +56,14 @@ function canWrite(card: InvitationFacts): card is InvitationFacts & { reply: Rep
 }
 
 /** Resolve navigation only on the way out, never during write preflight. */
-async function displayCard(card: InvitationFacts): Promise<MailInvitation> {
-  const { source, responseFacts, navigation } = card
+function displayCard(
+  card: InvitationFacts,
+  navigation: Awaited<ReturnType<InvitationFacts['navigation']>>,
+): MailInvitation {
   return projectMailInvitation({
-    ...source,
-    navigation: await navigation(),
-    response: { ...responseFacts, canRespond: canWrite(card) },
+    ...card.source,
+    navigation: navigation(),
+    response: { ...card.responseFacts, canRespond: canWrite(card) },
   })
 }
 
@@ -94,12 +96,18 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
     async read(target: Target) {
       try {
         const result = await readFacts(readTarget(target), createCalendarScan())
-        const invitations = []
+        const resolved = []
         for (const card of result.cards) {
-          invitations.push(await displayCard(card))
+          const navigation = await card.navigation()
           target.assertBinding()
+          resolved.push({ card, navigation })
         }
-        return { invitations, recoveryReason: result.recoveryReason }
+        // A navigation page can restrict access for other cards on that same
+        // calendar. Project only after collecting all observations in this read.
+        return {
+          invitations: resolved.map(({ card, navigation }) => displayCard(card, navigation)),
+          recoveryReason: result.recoveryReason,
+        }
       } catch (error) {
         target.assertBinding()
         if (error instanceof CalendarScanError)
@@ -151,13 +159,22 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             refreshPending: card.responseFacts.pending || card.responseFacts.status !== answer,
           }
         }
+        const showUnchanged = async (
+          card: InvitationFacts,
+          result: Omit<RespondResult, 'invitation'>,
+        ) => {
+          const navigation = await card.navigation()
+          target.assertBinding()
+          if (!unchanged(card)) throw conflict()
+          return { ...result, invitation: displayCard(card, navigation) }
+        }
         const recorded = unchanged(current)
         if (
           (recorded || canWrite(current)) &&
           responseFacts.targetKey !== expectedResponseTargetKey
         )
           throw conflict()
-        if (recorded) return { ...recorded, invitation: await displayCard(current) }
+        if (recorded) return await showUnchanged(current, recorded)
         if (!canWrite(current))
           throw new CapabilityError(
             'FORBIDDEN',
@@ -312,7 +329,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             // Preflight refused before dispatch, or Google definitively refused.
             await store.changeAttempt(id, () => null)
             if (error instanceof AlreadyRecorded)
-              return { ...error.result, invitation: await displayCard(error.card) }
+              return await showUnchanged(error.card, error.result)
             if (
               error instanceof GoogleApiError &&
               (error.status === 412 || (channel === 'calendar' && error.status === 404))
@@ -327,9 +344,9 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
         try {
           const refreshed = await selected()
           if (refreshed && sameInvitation(refreshed.source.details.identity, identity)) {
-            const card = await displayCard(refreshed)
+            const navigation = await refreshed.navigation()
             target.assertBinding()
-            confirmed = card
+            confirmed = displayCard(refreshed, navigation)
           }
         } catch {
           // Google already accepted the write. A failed readback (including

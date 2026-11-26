@@ -105,7 +105,7 @@ export type InvitationFacts = {
   absentTargets: Set<string>
   /** Recheck durable revision evidence atomically with reservation. */
   blocksReservation: (journal: Journal) => boolean
-  navigation: () => Promise<InvitationNavigation>
+  navigation: () => Promise<() => InvitationNavigation>
 }
 type ReadResult = { cards: InvitationFacts[]; recoveryReason: string | null }
 type CalendarCopy = Awaited<ReturnType<typeof findInvitationCalendarCopy>>
@@ -539,7 +539,7 @@ export function createMailInvitationReconciler(
     target: InvitationReadTarget,
     scopes: Scope[],
     invitationFor: (scope: Scope) => InvitationTarget | null,
-    readCalendars: ReturnType<typeof createInvitationCalendarDiscovery>,
+    discovery: ReturnType<typeof createInvitationCalendarDiscovery>,
   ) {
     const { api, accountSub, email } = target
     const copies = new Map<string, CalendarCopy>()
@@ -554,7 +554,7 @@ export function createMailInvitationReconciler(
         (locator) =>
           store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
         target.readCalendarOverrides,
-        readCalendars,
+        discovery,
       )
       copies.set(scopeKey(invitation.details.identity), copy)
     }
@@ -618,12 +618,12 @@ export function createMailInvitationReconciler(
       const revision = revisionFor(entry)
       return revision && { ...revision, legacyJoinOnly: entry.selected.joinOnly }
     }
-    const readCalendars = createInvitationCalendarDiscovery(api)
+    const discovery = createInvitationCalendarDiscovery(api)
     const { copies, journal: durable } = await collectCalendarCopies(
       target,
       scopes,
       invitationFor,
-      readCalendars,
+      discovery,
     )
     // Use the same locator for dispatch exclusion, Sent evidence, and readback,
     // even when a known outcome could not be written to the journal.
@@ -1005,7 +1005,7 @@ export function createMailInvitationReconciler(
           }
         : null
       const absentTargets = new Set<string>()
-      let noopChannel: Channel | null = null
+      let exactNoopTarget: string | null = null
       let recorded: InviteAnswer | null = null
       let priorSent: SentEvidence | null = null
       let responseUnverified = false
@@ -1194,10 +1194,11 @@ export function createMailInvitationReconciler(
         if (
           exactConfirmed &&
           delivery?.channel === 'calendar' &&
+          discovery.canEditTarget(delivery.target, email) &&
           !responseUnverified &&
           responseFacts.status === historical
         ) {
-          noopChannel = 'calendar'
+          exactNoopTarget = delivery.target
           responseFacts.targetKey = responseTargetKey('calendar', delivery.target)
         }
         if (reply?.channel === 'gmail')
@@ -1219,7 +1220,7 @@ export function createMailInvitationReconciler(
         !supersedes(entry, attempt.revision, email)
       if (!joinOnly && request && latestJournal.attempts.some(blockedByConfirmation)) {
         reply = null
-        noopChannel = null
+        exactNoopTarget = null
         recorded = null
         responseFacts.targetKey = null
         // Even an answer linked to this older revision is not the current
@@ -1245,7 +1246,7 @@ export function createMailInvitationReconciler(
         return !settled
       })
       if (scopePending.length) {
-        noopChannel = null
+        exactNoopTarget = null
         for (const attempt of scopePending) displayedPending.add(attempt.id)
         responseFacts.pending = true
         responseFacts.status = null
@@ -1264,6 +1265,11 @@ export function createMailInvitationReconciler(
                 : 'The response could not be confirmed. Check its status before sending again.'
         }
       }
+      // Navigation is lazy and can add stricter role evidence from the
+      // same calendar. It cannot introduce a response target or no-op.
+      const readOnlyCopy = () =>
+        !joinOnly && verifiedCopy && !verifiedCopy.canEdit ? verifiedCopy : null
+      const exactMayNoop = () => exactNoopTarget && discovery.canEditTarget(exactNoopTarget, email)
       cards.push({
         source: {
           details,
@@ -1271,10 +1277,25 @@ export function createMailInvitationReconciler(
           joinOnly,
           calendar: verifiedCopy,
         },
-        responseFacts,
+        get responseFacts() {
+          const readOnly = readOnlyCopy()
+          return readOnly
+            ? {
+                ...responseFacts,
+                targetKey: null,
+                unavailableReason: responseFacts.unavailableReason ?? readOnly.unavailableReason,
+              }
+            : exactNoopTarget && !exactMayNoop()
+              ? { ...responseFacts, targetKey: null }
+              : responseFacts
+        },
         responseUnverified,
-        reply,
-        noopChannel,
+        get reply() {
+          return readOnlyCopy() ? null : reply
+        },
+        get noopChannel() {
+          return exactMayNoop() ? 'calendar' : null
+        },
         response: entry.response,
         calendarMaterial: invitationFor(entry)?.evidence,
         visibleMaterialSources: visibleMaterialSources(entry, target),
@@ -1286,15 +1307,16 @@ export function createMailInvitationReconciler(
           (reply?.channel === 'calendar' &&
             hasUnseenPredecessor(entry, durableMaterialSources(journal, target))),
         navigation: async () => {
-          if (navigationWithheld) return { kind: 'withheld' }
-          if (!verifiedCopy) return { kind: 'default' }
-          return verifiedCopy.navigation((slot) => {
+          if (navigationWithheld) return () => ({ kind: 'withheld' })
+          if (!verifiedCopy) return () => ({ kind: 'default' })
+          const navigation = await verifiedCopy.navigation((slot) => {
             const occurrence = selectSeriesSlot(selected, slot)
             if (!occurrence) return occurrence
             return hasUnseenPredecessor(occurrence, latestSources)
               ? false
               : (revisionFor(occurrence) ?? false)
           })
+          return () => (verifiedCopy.canNavigate ? navigation : { kind: 'withheld' })
         },
       })
     }

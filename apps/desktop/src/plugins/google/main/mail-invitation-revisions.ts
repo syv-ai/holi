@@ -11,8 +11,9 @@ type Parsed = NonNullable<ReturnType<typeof parseCalendarMail>>
 type EmbeddedOccurrence = Parsed['value']['embeddedOccurrences'][number]
 export type Candidate = Parsed & {
   mail: Mail
-  /** Set only in series navigation selection, never in the card scopes. */
+  /** Evidence from a master, never an independent response parent. */
   embedded?: EmbeddedOccurrence
+  embeddedCancellation?: true
 }
 type RevisionSelection = {
   scopes: Incoming[]
@@ -90,6 +91,9 @@ function expandCancellations(candidate: Candidate, mailbox: string): Candidate[]
       .filter(({ eventCancelled, attendees }) => eventCancelled || attendees.includes(mailbox))
       .map(({ identity, organizer, recurrenceRange }): Candidate => ({
         ...candidate,
+        ...(value.method === 'REQUEST' && !sameGroup(identity, value.details.identity)
+          ? { embeddedCancellation: true }
+          : {}),
         value: {
           ...value,
           method: 'CANCEL',
@@ -337,7 +341,7 @@ export function selectInvitationRevisions(
       if (cancel.value.details.organizer?.email !== organizer || !covers(cancellation, revision))
         continue
       const order = revisionOrder(cancellation, revision)
-      const embedded = series && embeddedIn(series, cancellation)
+      const embedded = series && (cancel.embeddedCancellation || embeddedIn(series, cancellation))
       if (!embedded && (order === null || order === 0)) return { conflict: true }
       if (embedded || order === 1)
         return verifyCancellation(cancel) ? { cancelledBy: cancel } : { conflict: true }
@@ -346,89 +350,146 @@ export function selectInvitationRevisions(
     return { barrier }
   }
   const slots = scoped.map((group) => ({
+    group,
     entry: selectScope(group, eligible, mailbox, owners, equivalent, coveringCancellation),
     organizers: new Set(group.map(({ value }) => value.details.organizer?.email)),
   }))
   const bySlot = new Map(slots.map((slot) => [scopeKey(identityOf(slot.entry.selected)), slot]))
-  const embeddedBySeries = new Map<Candidate, Candidate[]>()
+  const embeddedBySeries = new Map<string, Candidate[]>()
+  function embeddedFor(slot: Revision, organizer: string, method: Candidate['value']['method']) {
+    const master = scopeKey({ ...slot, recurrenceId: null })
+    const key = JSON.stringify([master, organizer, method])
+    let embedded = embeddedBySeries.get(key)
+    if (!embedded) {
+      // A later master does not erase material already described for this slot.
+      embedded = (groups.get(master) ?? [])
+        .filter(
+          ({ value }) =>
+            value.method === method &&
+            !value.details.cancelled &&
+            value.details.organizer?.email === organizer,
+        )
+        .flatMap(embeddedCandidates)
+      embeddedBySeries.set(key, embedded)
+    }
+    return embedded
+  }
+
+  function resolveSlot(
+    slot: Revision & { recurrenceId: string },
+    organizer: string,
+    embedded: Candidate[],
+  ) {
+    // A floating or mismatched original slot cannot be assigned an instant
+    // or DATE. Do not treat it as absent evidence.
+    if (
+      embedded.some(
+        (candidate) =>
+          slotKind(identityOf(candidate).recurrenceId!) !== slotKind(slot.recurrenceId),
+      )
+    )
+      return false
+    const key = scopeKey(slot)
+    const atSlot = embedded.filter((candidate) => sameGroup(identityOf(candidate), slot))
+    const separate = bySlot.get(key)
+    let occurrence = separate?.organizers.has(organizer) ? separate.entry : undefined
+    if (atSlot.length) {
+      const combined = [...(groups.get(key) ?? []), ...atSlot].sort(deliveryOrder)
+      const requests = combined.some(({ value }) => value.method === 'REQUEST')
+      const group = matchingOrganizerCancellations(
+        requests ? combined.filter(({ joinOnly }) => !joinOnly) : combined,
+      )
+      occurrence = selectScope(group, group, mailbox, owners, equivalent, coveringCancellation)
+    }
+    // MIME alternatives aren't independent deliveries, and a live range
+    // exception cannot describe later rows exactly. Only newer exact evidence
+    // can resolve the ambiguity, no matter which delivery rendered first.
+    const newerThan = (candidate: Candidate) =>
+      occurrence && revisionOrder(identityOf(occurrence.selected), identityOf(candidate)) === 1
+    if (
+      embedded.some((candidate) => {
+        const coversSlot =
+          candidate.value.recurrenceRange === 'THISANDFUTURE' && covers(identityOf(candidate), slot)
+        return (
+          (coversSlot && !newerThan(candidate)) ||
+          (candidate.embedded &&
+            disputedEmbedded.has(candidate.embedded) &&
+            (coversSlot || sameGroup(identityOf(candidate), slot)) &&
+            (!newerThan(candidate) || occurrence?.selected.mail === candidate.mail))
+        )
+      })
+    )
+      return false
+    return { occurrence, hasEmbeddedAtSlot: atSlot.length > 0 }
+  }
+
   return {
-    scopes: slots.map(({ entry }) => entry),
+    scopes: slots.flatMap(({ entry, group }) => {
+      const { selected } = entry
+      const revision = identityOf(selected)
+      const { method, details } = selected.value
+      const organizer = details.organizer?.email
+      const recurrenceId = revision.recurrenceId
+      if (recurrenceId === null) return [entry]
+      const direct = group.filter((candidate) => !candidate.embeddedCancellation)
+      if (!direct.length) return [] // No card for a slot described only in a master.
+      const displayed = selected.embeddedCancellation
+        ? selectScope(direct, eligible, mailbox, owners, equivalent, coveringCancellation).selected
+        : selected
+      if (!organizer) return [entry]
+      const requestExceptions = embeddedFor(revision, organizer, 'REQUEST')
+      const embedded = selected.joinOnly
+        ? [...requestExceptions, ...embeddedFor(revision, organizer, method)]
+        : requestExceptions
+      const resolved = resolveSlot({ ...revision, recurrenceId }, organizer, embedded)
+      const canonical = resolved === false ? undefined : resolved.occurrence
+      if (resolved === false || !canonical || canonical.reason)
+        return [
+          {
+            ...blocked(
+              displayed,
+              canonical?.reason ?? 'This occurrence has conflicting invitation revisions',
+            ),
+            cancelledBy: canonical?.cancelledBy,
+          },
+        ]
+      if (canonical.selected.embeddedCancellation)
+        return [
+          {
+            ...blocked(displayed, 'This invitation was cancelled'),
+            cancelledBy: canonical.selected,
+          },
+        ]
+      if (canonical.selected.embedded)
+        return [blocked(displayed, 'This occurrence was updated in the series invitation')]
+      // Only a top-level occurrence can be actionable. Earlier embedded
+      // material still constrains its Calendar match and Sent lineage.
+      return [canonical]
+    }),
     selectSeriesSlot(series: Candidate, recurrenceId: string) {
       const revision = identityOf(series)
       const organizer = series.value.details.organizer?.email
       const slot = { ...revision, recurrenceId }
-      const key = scopeKey(slot)
       if (!organizer) return false
-      let embedded = embeddedBySeries.get(series)
-      if (!embedded) {
-        // A later master does not turn an already described slot into an
-        // unknown slot. Keep prior scoped material for revision comparison.
-        embedded = (groups.get(scopeKey(revision)) ?? [])
-          .filter(
-            ({ value }) =>
-              value.method === series.value.method &&
-              !value.details.cancelled &&
-              value.details.organizer?.email === organizer,
-          )
-          .flatMap(embeddedCandidates)
-        embeddedBySeries.set(series, embedded)
-      }
-      // A floating or mismatched original slot cannot be assigned an instant
-      // or DATE in the provider's expansion. Do not treat it as absent evidence.
-      if (
-        embedded.some(
-          (candidate) => slotKind(identityOf(candidate).recurrenceId!) !== slotKind(recurrenceId),
-        )
+      const resolved = resolveSlot(
+        slot,
+        organizer,
+        embeddedFor(revision, organizer, series.value.method),
       )
-        return false
-      const atSlot = embedded.filter((candidate) => sameGroup(identityOf(candidate), slot))
-      const separate = bySlot.get(key)
-      let occurrence = separate?.organizers.has(organizer) ? separate.entry : undefined
-      if (atSlot.length) {
-        const combined = [...(groups.get(key) ?? []), ...atSlot].sort(deliveryOrder)
-        const requests = combined.some(({ value }) => value.method === 'REQUEST')
-        const group = matchingOrganizerCancellations(
-          requests ? combined.filter(({ joinOnly }) => !joinOnly) : combined,
-        )
-        occurrence = selectScope(group, group, mailbox, owners, equivalent, coveringCancellation)
-      }
-      // Alternative branches are not independent deliveries. Keep their
-      // revisions as possible predecessors but never choose one as proof of
-      // this slot. Only a newer exact revision from another message can
-      // resolve the dispute, regardless of which branch was rendered.
-      if (
-        embedded.some(
-          (candidate) =>
-            candidate.embedded &&
-            disputedEmbedded.has(candidate.embedded) &&
-            (sameGroup(identityOf(candidate), slot) ||
-              (candidate.value.recurrenceRange === 'THISANDFUTURE' &&
-                covers(identityOf(candidate), slot))) &&
-            (!occurrence ||
-              occurrence.selected.mail === candidate.mail ||
-              revisionOrder(identityOf(occurrence.selected), identityOf(candidate)) !== 1),
-        )
-      )
-        return false
-      // A live range exception cannot describe future rows exactly. Only a
-      // strictly newer, verified exact revision can resolve that uncertainty.
-      if (
-        embedded.some(
-          (candidate) =>
-            candidate.value.recurrenceRange === 'THISANDFUTURE' &&
-            covers(identityOf(candidate), slot) &&
-            (!occurrence ||
-              revisionOrder(identityOf(occurrence.selected), identityOf(candidate)) !== 1),
-        )
-      )
-        return false
+      if (resolved === false) return false
+      const { occurrence, hasEmbeddedAtSlot } = resolved
       if (occurrence) {
         const { value, embedded } = occurrence.selected
         if (value.details.organizer?.email !== organizer) return false
         const cancellation =
           occurrence.cancelledBy ??
           (!occurrence.reason && value.details.cancelled ? occurrence.selected : null)
-        if (cancellation && (atSlot.length || suppresses(series, identityOf(cancellation))))
+        if (
+          cancellation &&
+          (hasEmbeddedAtSlot ||
+            cancellation.embeddedCancellation ||
+            suppresses(series, identityOf(cancellation)))
+        )
           return false
         if (!cancellation) {
           // Ambiguous or incomplete evidence is not the same as an unknown
@@ -462,7 +523,11 @@ function selectScope(
   const newest = stamps[0] ?? null
   const unknownOrder = history.filter((candidate) => identityOf(candidate).dtstamp === null)
   const latest = history.filter((candidate) => identityOf(candidate).dtstamp === newest)
-  const selected = latest[0]!
+  // A separate delivery can represent an equivalent embedded revision, but
+  // only after the conflict checks below establish that the material agrees.
+  const selected =
+    latest.find(({ embedded, embeddedCancellation }) => !embedded && !embeddedCancellation) ??
+    latest[0]!
   const response = responseOf(selected, mailbox)
   const organizer = selected.value.details.organizer?.email
   if (group.some((candidate) => candidate.value.details.organizer?.email !== organizer))
