@@ -9,18 +9,23 @@ import * as React from 'react'
 import { cn } from '@/lib/cn'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 
+const PopoverModalContext = React.createContext(false)
+
 function Popover({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  const { open, defaultOpen, onOpenChange, ...rest } = props
+  const { open, defaultOpen, onOpenChange, modal = false, ...rest } = props
   const overlay = useActivityOpen(open, defaultOpen, onOpenChange)
   return (
-    <OverlayActivityContext value={overlay.valid}>
-      <PopoverPrimitive.Root
-        data-slot="popover"
-        {...rest}
-        open={overlay.open}
-        onOpenChange={overlay.onOpenChange}
-      />
-    </OverlayActivityContext>
+    <PopoverModalContext value={modal}>
+      <OverlayActivityContext value={overlay.valid}>
+        <PopoverPrimitive.Root
+          data-slot="popover"
+          {...rest}
+          modal={modal}
+          open={overlay.open}
+          onOpenChange={overlay.onOpenChange}
+        />
+      </OverlayActivityContext>
+    </PopoverModalContext>
   )
 }
 
@@ -41,11 +46,10 @@ function PopoverContent({
   variant?: 'default' | 'flush'
   /** A viewport-constrained event-card surface; default preserves the existing popover size. */
   size?: 'default' | 'calendar'
-  /** Marks an open popover as modal for shell shortcut suppression. */
-  modal?: boolean
 }) {
   const openAutoFocus = useOverlayAutoFocus(props.onOpenAutoFocus)
   const closeAutoFocus = useOverlayAutoFocus(props.onCloseAutoFocus)
+  const modal = React.useContext(PopoverModalContext)
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content

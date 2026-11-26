@@ -8,6 +8,7 @@ import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { localDate } from '@holi/shared'
 import { activeRemoteAtom } from '@/plugin-api'
+import { ShellShortcutHost } from '@/test/shell-shortcut-host'
 import { CalendarView } from '../renderer/calendar/calendar-view'
 import { clockLabel, type TimeFormat } from '../renderer/calendar/calendar-format'
 import { GOOGLE_INFO } from '../info'
@@ -1132,13 +1133,31 @@ describe('the calendar view', () => {
     })
   })
 
+  test('numbered tab navigation works while a calendar event card is open', async () => {
+    const selectTab = vi.fn()
+    render(
+      <ShellShortcutHost
+        tabIds={['first', 'calendar', 'last']}
+        activeTabId="calendar"
+        app="calendar"
+        selectTab={selectTab}
+      >
+        <CalendarView />
+      </ShellShortcutHost>,
+    )
+    const eventButton = (await screen.findAllByText('Focus block'))[0]!.closest('button')!
+    await userEvent.setup().click(eventButton)
+    const card = await screen.findByRole('dialog', { name: 'Focus block' })
+    fireEvent.keyDown(card, { key: '1', metaKey: true })
+    expect(selectTab).toHaveBeenCalledWith('first')
+  })
+
   test('an edit draft survives parking and account changes clear it', async () => {
     const user = userEvent.setup()
     const view = render(<CalendarView />)
     await screen.findAllByText('Focus block')
     await user.click(screen.getAllByText('Focus block')[0]!)
     const details = await screen.findByRole('dialog', { name: 'Focus block' })
-    expect(details).toHaveAttribute('data-modal', 'false')
     await user.click(within(details).getByRole('button', { name: 'Edit' }))
     const title = await screen.findByRole('textbox', { name: 'Title' })
     await user.clear(title)
