@@ -15,6 +15,7 @@ async function fixture(context, command, args, options = {}) {
     env: { PATH: process.env.PATH ?? '', HOME: root, TERM: 'xterm-256color', ...options.env },
     stateDirectory: root,
     timeoutMs: options.timeoutMs ?? 5000,
+    terminalSize: options.terminalSize,
     maxOutputBytes: options.maxOutputBytes ?? 262144,
   })
   context.after(async () => {
@@ -55,6 +56,15 @@ test(
     assert.deepEqual(await handle.close(), receipt)
   },
 )
+
+test('native applications observe the requested PTY dimensions', posix, async (t) => {
+  const { handle } = await fixture(t, '/bin/sh', ['-c', 'stty size'], {
+    terminalSize: { rows: 40, columns: 120 },
+  })
+  assert.equal((await handle.waitForExit()).code, 0)
+  assert.equal(handle.output.toString().trim(), '40 120')
+  assertGone(await handle.close())
+})
 
 test(
   'forwards real raw PTY input through a separate acknowledged control channel',
