@@ -2188,7 +2188,7 @@ it('fails the read when a Join observation cannot be retained', async () => {
   state.navigationFetch = async () => {
     await writeFile(join(userData, 'google-mail-invitations.json'), '{')
   }
-  await expect(list()).rejects.toThrow()
+  await expect(list()).rejects.toMatchObject({ code: 'EVIDENCE_STORE_FAILURE' })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
