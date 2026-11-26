@@ -5,7 +5,6 @@ import {
   calendarTargetIsMailbox,
   findInvitationCalendarCopy,
   invitationMaterialEvidence,
-  relevantCalendarTargets,
   createInvitationCalendarDiscovery,
   createInvitationCalendarResourceLookup,
   type InvitationTarget,
@@ -38,7 +37,6 @@ import {
   type Candidate,
 } from './mail-invitation-revisions'
 import {
-  knownCalendarLocators,
   materialSourceKey,
   materialSourceForAttempt,
   type CalendarMaterialSource,
@@ -644,19 +642,21 @@ export function createMailInvitationReconciler(
     // even when a known outcome could not be written to the journal.
     const journal = { ...durable, attempts: durable.attempts.map(withGmailOutcome) }
     const resources = createInvitationCalendarResourceLookup(api, email, discovery)
-    const known = knownCalendarLocators(journal)
-    const knownOccurrences = known.filter(
-      ({ recurrenceId, occurrenceUnverified }) => recurrenceId !== null || occurrenceUnverified,
-    )
     async function observeCalendarAbsence(details: Candidate['value']['details']) {
       const absent = new Set<string>()
-      let contradicted = journal.calendarLocatorOverflow
+      const evidence = store.lookupCalendarEvidence(journal, target, details)
+      let contradicted = evidence.incomplete
       // Keep observing the bounded exact resources even after one prevents
       // Gmail fallback: another may supply negative evidence for series Join.
-      for (const locator of relevantCalendarTargets(known, target, details)) {
+      for (const locator of evidence.targets) {
         if ((await resources(locator)).kind === 'gone') absent.add(locator)
         else contradicted = true
       }
+      // A footprint (or another exact target) may have arrived during the
+      // provider reads. It cannot be discharged by an earlier resource miss.
+      const current = store.lookupCalendarEvidence(journal, target, details)
+      contradicted ||=
+        current.incomplete || [...current.targets].some((locator) => !absent.has(locator))
       return { absent, contradicted }
     }
     function matchingCalendarCopy(attempt: InvitationAttempt) {
@@ -1391,9 +1391,11 @@ export function createMailInvitationReconciler(
             // A child can disappear from the collection and from the thread
             // before its known resource loses its relevance to series Join.
             // Read only this series' possible children on the selected calendar.
-            for (const locator of relevantCalendarTargets(knownOccurrences, target, details)) {
+            const evidence = store.lookupCalendarEvidence(journal, target, details, true)
+            for (const locator of evidence.targets) {
               if (discovery.sameCalendar(locator, verifiedCopy.target)) await resources(locator)
             }
+            if (evidence.incomplete) return () => ({ kind: 'withheld' })
           }
           const navigation = await verifiedCopy.navigation((slot) => {
             const occurrence = selectSeriesSlot(selected, slot)
@@ -1449,12 +1451,16 @@ export function createMailInvitationReconciler(
           },
           navigation: async () => {
             if (details.recurring || meeting.recurring) {
-              for (const locator of relevantCalendarTargets(knownOccurrences, target, {
-                ...details,
-                organizer: meeting.organizer,
-              })) {
+              const evidence = store.lookupCalendarEvidence(
+                journal,
+                target,
+                { ...details, organizer: meeting.organizer },
+                true,
+              )
+              for (const locator of evidence.targets) {
                 if (meeting.onCalendar(locator)) await resources(locator)
               }
+              if (evidence.incomplete) return () => ({ kind: 'withheld' })
             }
             const navigation = await meeting.navigation()
             return () => (meeting.canNavigate() ? navigation : { kind: 'withheld' })

@@ -21,7 +21,15 @@ import {
   type RsvpStatus,
 } from './calendar'
 import type { CalendarRevisionFields, parseMailInvitation } from './mail-invitation'
-import type { CalendarLocator, CalendarMaterialEvidence } from './mail-invitation-store'
+import type { CalendarMaterialEvidence } from './mail-invitation-store'
+import { calendarDate as date, calendarInstant as instant } from './mail-invitation-zones'
+import {
+  CALENDAR_RESOURCE_BUDGET,
+  calendarLocatorMayMatchScope,
+  calendarTargetParts,
+  distinctSlots,
+  type CalendarLocator,
+} from './mail-invitation-calendar-evidence'
 import {
   conferenceUrlIn,
   googleEventUrl,
@@ -204,25 +212,6 @@ async function invitationPages<T>(
   throw new InvalidCalendarCollection('Calendar returned too many pages')
 }
 
-function instant(value: string): number {
-  // Do not let Date.parse roll over invalid dates or truncate precision that
-  // could distinguish two revisions or invert an interval.
-  const rfc3339 =
-    /^(\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3}0*)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i.exec(
-      value,
-    )
-  return rfc3339 && value === rfc3339[0] && date(rfc3339[1]) ? Date.parse(value) : NaN
-}
-
-function date(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
-    Number.isFinite(Date.parse(value)) &&
-    new Date(value).toISOString().slice(0, 10) === value
-  )
-}
-
 function validTime(value: RawEvent['start']): boolean {
   return Boolean(
     value &&
@@ -268,15 +257,6 @@ function sameOccurrence(event: RawEvent, recurrenceId: string): boolean {
   return original.dateTime !== undefined && instant(original.dateTime) === instant(recurrenceId)
 }
 
-// Only comparable original slots can rule out a relationship. In particular,
-// an absolute provider slot says nothing about a floating mail slot's zone.
-function distinctSlots(a: string, b: string): boolean {
-  if (date(a) && date(b)) return a !== b
-  const first = instant(a)
-  const second = instant(b)
-  return Number.isFinite(first) && Number.isFinite(second) && first !== second
-}
-
 type CalendarScope = Pick<CalendarLocator, 'recurrenceId' | 'occurrenceUnverified'>
 
 function eventLocatorScope(event: RawEvent): CalendarScope {
@@ -286,41 +266,6 @@ function eventLocatorScope(event: RawEvent): CalendarScope {
     recurrenceId,
     ...(instance && recurrenceId === null ? { occurrenceUnverified: true } : {}),
   }
-}
-
-/** Existence only: an exact slot can rule out a different comparable slot.
- * A root cannot rule out an occurrence (even without rules, e.g. a cancelled
- * master), and an exception alone cannot establish absence of a root. This
- * also applies to legacy locators that described a root as non-recurring. */
-function calendarLocatorMayMatchScope(
-  copy: CalendarScope,
-  { recurrenceId }: Pick<Parsed['details']['identity'], 'recurrenceId'>,
-): boolean {
-  return (
-    copy.occurrenceUnverified === true ||
-    copy.recurrenceId === null ||
-    recurrenceId === null ||
-    !distinctSlots(copy.recurrenceId, recurrenceId)
-  )
-}
-
-export function relevantCalendarTargets(
-  locators: CalendarLocator[],
-  target: { accountSub: string; email: string },
-  details: Parsed['details'],
-): Set<string> {
-  const { uid } = details.identity
-  return new Set(
-    locators.flatMap((copy) =>
-      copy.accountSub === target.accountSub &&
-      copy.uid === uid &&
-      (copy.organizer === undefined || copy.organizer === details.organizer?.email) &&
-      calendarLocatorMayMatchScope(copy, details.identity) &&
-      (calendarTargetMailbox(copy.target) ?? target.email) === target.email
-        ? [copy.target]
-        : [],
-    ),
-  )
 }
 
 class UnverifiedCalendarCancellation extends Error {}
@@ -991,10 +936,9 @@ async function lookupInvitationCalendarCopy(
       // different occurrence. Filter by scope when using the locator instead.
       await remember({
         uid,
-        // For a sparse secondary child this is the scope of the negative
-        // association, not a claim about the organizer in the event payload.
-        organizer:
-          observedOrganizer ?? (associated && base !== PRIMARY_EVENTS ? organizer : undefined),
+        // A verified parent can associate a sparse child with a UID, but
+        // does not establish the child's organizer.
+        organizer: observedOrganizer,
         ...eventLocatorScope(event),
         series,
         target: calendarCopyTarget(calendarResponseUrl(base, event), mailbox),
@@ -2268,26 +2212,6 @@ function safeCalendarId(id: unknown): id is string {
   )
 }
 
-function calendarTargetParts(target: string): [string, string] | null {
-  try {
-    const binding: unknown = JSON.parse(target)
-    if (
-      Array.isArray(binding) &&
-      binding.length === 2 &&
-      typeof binding[0] === 'string' &&
-      typeof binding[1] === 'string'
-    )
-      return [binding[0], binding[1]]
-  } catch {
-    // Not a locator. No request may be made with this value.
-  }
-  return null
-}
-
-function calendarTargetMailbox(target: string): string | null {
-  return calendarTargetParts(target)?.[1] ?? null
-}
-
 function calendarTargetResource(target: string, mailbox: string) {
   const binding = calendarTargetParts(target)
   if (!binding || binding[1] !== mailbox) return null
@@ -2390,7 +2314,7 @@ export function createInvitationCalendarResourceLookup(
     let snapshot = snapshots.get(url)
     if (!snapshot) {
       // Historical targets share a bounded budget within this snapshot.
-      if (snapshots.size >= 32) return Promise.resolve({ kind: 'unknown' })
+      if (snapshots.size >= CALENDAR_RESOURCE_BUDGET) return Promise.resolve({ kind: 'unknown' })
       snapshot = read(resource)
       snapshots.set(url, snapshot)
     }

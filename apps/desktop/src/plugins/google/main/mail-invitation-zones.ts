@@ -2,6 +2,25 @@ import { createHash } from 'node:crypto'
 import ICAL from 'ical.js'
 import { canonicalIanaZone } from '../shared/time-zones'
 
+export function calendarInstant(value: string): number {
+  // Do not let Date.parse roll over invalid dates or truncate precision that
+  // could distinguish two revisions or invert an interval.
+  const rfc3339 =
+    /^(\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3}0*)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i.exec(
+      value,
+    )
+  return rfc3339 && value === rfc3339[0] && calendarDate(rfc3339[1]) ? Date.parse(value) : NaN
+}
+
+export function calendarDate(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString().slice(0, 10) === value
+  )
+}
+
 // Both incoming parts and Sent evidence are untrusted. Bound work before calling
 // ical.js, including folding, nested components, and the separate timezone work.
 const MAX_BYTES = 256 * 1024
