@@ -117,7 +117,7 @@ export function useVimField(
     previous.current = { identity, value: controlledValue ?? previous.current.value }
   }, [controlledValue, identity, reset])
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled && !options.allowEscapePropagation) return
     const onWindowKeyDown = (nativeEvent: globalThis.KeyboardEvent) => {
       const field = fieldRef.current
       if (!field || nativeEvent.target !== field || document.activeElement !== field) return
@@ -170,7 +170,11 @@ export function useVimField(
     }
   }, [enabled, onKeyDown, options.allowEscapePropagation, store])
   return {
-    vimFieldProps: enabled ? { onKeyDown, onBlur, onFocus } : {},
+    vimFieldProps: enabled
+      ? { onKeyDown, onBlur, onFocus }
+      : options.allowEscapePropagation
+        ? { onBlur, onFocus }
+        : {},
     vimFieldMode: enabled && focused ? mode : null,
   }
 }
