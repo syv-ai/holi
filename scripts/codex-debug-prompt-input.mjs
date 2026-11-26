@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, writeFile, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startOwnedPty } from './pi-native-tui-process.mjs'
 import { createContextModel } from './codex-context-model.mjs'
@@ -54,6 +54,7 @@ async function captureNativeOutput(args) {
 export function validateDebugPromptInputEvidence(value) {
   if (value?.schema !== 'holi.codex-debug-prompt-input.v1') return false
   if (value.outcome === 'incomplete-proof') return value.status === 'incomplete'
+  if (value.error || value.cleanupError) return false
   const n = value.native
   if (
     value.outcome !== 'demonstrated-unsupported-path' ||
@@ -68,7 +69,7 @@ export function validateDebugPromptInputEvidence(value) {
     n.cleanup?.rootRemoved !== true ||
     n.cleanup?.drained !== true ||
     !n.receipts?.length ||
-    !n.receipts.every((r) => r.drained) ||
+    !n.receipts.every((r) => r.drained && !r.error && !r.failure) ||
     n.configUnchanged !== true ||
     n.sentinelsUnexecuted !== true ||
     !['hook', 'mcp', 'plugin'].every((kind) =>
@@ -83,6 +84,7 @@ export function validateDebugPromptInputEvidence(value) {
       ),
     ) ||
     n.modelRequests !== 0 ||
+    n.modelFailures?.length ||
     !Array.isArray(n.observations) ||
     n.observations.length !== 2
   )
@@ -346,8 +348,12 @@ export async function runDebugPromptInputCandidate() {
       }
     }
     if (root && n.cleanup.drained && !report.cleanupError) {
-      await rm(root, { recursive: true, force: true })
-      n.cleanup.rootRemoved = !existsSync(root)
+      try {
+        await rm(root, { recursive: true, force: true })
+        n.cleanup.rootRemoved = !existsSync(root)
+      } catch (error) {
+        report.cleanupError = String(error)
+      }
     }
     if (!report.error && !report.cleanupError) {
       const complete = {
@@ -365,13 +371,17 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const output = process.env.HOLI_CODEX_DEBUG_EVIDENCE
   if (
     !output ||
-    existsSync(output) ||
-    resolve(output) === resolve(repository) ||
-    resolve(output).startsWith(resolve(repository) + '/')
+    existsSync(output)
   )
     throw Error('Set HOLI_CODEX_DEBUG_EVIDENCE to a new file outside the checkout')
+  const canonicalRepository = await realpath(repository)
+  const outputPath = resolve(output)
+  const outputParent = await realpath(dirname(outputPath))
+  const canonicalOutput = join(outputParent, basename(outputPath))
+  if (canonicalOutput === canonicalRepository || canonicalOutput.startsWith(canonicalRepository + '/'))
+    throw Error('Set HOLI_CODEX_DEBUG_EVIDENCE to a new file outside the checkout')
   const report = await runDebugPromptInputCandidate()
-  await writeFile(output, JSON.stringify(report, null, 2), { flag: 'wx', mode: 0o600 })
+  await writeFile(canonicalOutput, JSON.stringify(report, null, 2), { flag: 'wx', mode: 0o600 })
   console.log(
     JSON.stringify({
       output,
