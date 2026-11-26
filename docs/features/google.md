@@ -22,7 +22,16 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
   warning are `text-destructive` and wrap rather than truncate. A new vault is never
   mapped automatically.
 - **Scope drift:** an old grant keeps working and 403s only the newly added calls. `missingScopes()` compares stored scopes in Google's vocabulary (`email` returns as `.../userinfo.email`) and settings offers **Reconnect**.
-- **Mail cache:** one `node:sqlite` file per account, `userData/google-cache-<sub>.db`, last 500 threads, reconciled by `history.list` deltas. The key carries every filter that narrows a list; the history cursor is per key; archive and trash arrive as label changes and land in a _left_ bucket. Bump `SHAPE_VERSION` when a cached type changes. A removed or dead account deletes the file and its sidecars.
+- **Mail cache:** one `node:sqlite` file per account,
+  `userData/google-cache-<sub>.db`, last 500 threads, reconciled by `history.list`
+  deltas. The key carries every filter that narrows a list; the history cursor is
+  per key; archive and trash arrive as label changes and land in a _left_ bucket.
+  When history exceeds its work budget or has expired, **Try again** and
+  **Refresh mail** fetch a fresh snapshot for that list. Open readers withdraw
+  invitation actions and verify their selected thread directly, including selections
+  from **Load more**. Omission from a snapshot is not deletion proof. CLI, vault-app
+  and background reads do not rebaseline UI lists. Bump `SHAPE_VERSION` when a cached
+  type changes. A removed or dead account deletes the file and its sidecars.
 - **Thread triage writes** paint first and revert on refusal; main calls Google first
   and updates the cache only on success. Archive and trash, of one thread or a
   selection, raise one toast ("Thread moved to Trash", "2 threads archived") that stays
@@ -133,4 +142,7 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 
 - The `google` plugin, on by default (nothing shows until an account is connected on this machine): `apps/desktop/src/plugins/google/`.
 - `main/`: `index.ts` (activation: the accounts manager, each account's cache, the capabilities), `untrusted.ts` (what the CLI door fences), `passthrough.ts` (`holi google api`'s rule table and its answer's fence), auth (`loopback-flow`, `pkce`, `credentials`, `session`, `accounts`, `vault-accounts`, `token-store`, `electron`, loaded only at activation), data (`gmail`, `mail-sync`, `cache`, `data`, `calendar`, `invite`, `people`, `mime`), `capabilities` (every door) and `seed.ts` with `vault/shipped/.claude/hooks/google-send-gate.mjs` and `skills/gmail-calendar/`, plus the gate's hook entries and ask rules.
+- `main/invite.ts` provides the legacy meeting-hint wrapper. `main/mail-invitation.ts`
+  and `main/mail-invitation-*.ts` own calendar MIME discovery, provider reconciliation,
+  response authorization, and durable RSVP recovery.
 - `renderer/`: the `mail` surface, the Mail and Calendar sidebar app registrations and their nav items (shown once an account is connected, `account.ts`, whose atoms follow the open vault and a refresh nonce), the Connections settings section, the compose dialog (opened as the plugin dialog), `mail-html.ts` and `mail-frame.ts`. Making a task from a thread or event types only the `tasks.create` slice it calls (`tasks.ts`) and shows only while `useHasCapability('tasks.create')`; Summarize hands the agent a prompt through the agent service (`useAgentService`), and shows only while there is one.
