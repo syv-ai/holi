@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "scripts/browser-placement-bench-main.ts",
+    "scripts/browser-placement-fixture/**/*.ts",
+    "scripts/browser-placement-fixture/**/*.tsx"
+  ]
+}
