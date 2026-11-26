@@ -1,3 +1,7 @@
+import { mkdtemp, mkdir, writeFile, rm, access } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { archiveIos } from '../scripts/archive-ios.mjs'
 import { expect, test } from 'vitest'
 import { validateArchiveEvidence } from '../scripts/archive-checks.mjs'
 
@@ -70,4 +74,22 @@ test('rejects paths outside the application products and mismatched bundle ident
   const otherApp = deviceArchive()
   otherApp.appInfo.CFBundleIdentifier = 'another.app'
   expect(() => validateArchiveEvidence(otherApp)).toThrow()
+})
+
+test('failed archive commands cannot leave prior success artifacts advertised', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-801-failure-'))
+  try {
+    const output = join(root, '.artifacts/ios')
+    await mkdir(join(output, 'Holi.xcarchive'), { recursive: true })
+    await writeFile(join(output, 'receipt.json'), '{"gitSha":"old"}')
+    await writeFile(join(output, 'Holi.xcarchive.tar.gz'), 'old archive')
+    await mkdir(join(root, 'scripts'))
+    // A real child process models a native dependency build that fails before Xcode.
+    await writeFile(join(root, 'scripts/build-libgit2-ios.mjs'), 'process.exit(7)')
+    await expect(archiveIos(root)).rejects.toThrow(/exited 7/)
+    for (const file of ['receipt.json', 'Holi.xcarchive', 'Holi.xcarchive.tar.gz'])
+      await expect(access(join(output, file))).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

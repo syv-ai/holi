@@ -162,6 +162,9 @@ jobs:
         if: always()
         with:
           name: mobile-ios-unsigned-archive
-          path: apps/mobile/.artifacts/ios
+          path: |
+            apps/mobile/.artifacts/ios/Holi.xcarchive.tar.gz
+            apps/mobile/.artifacts/ios/receipt.json
+            apps/mobile/.artifacts/ios/build-settings.json
           include-hidden-files: true
           if-no-files-found: warn
