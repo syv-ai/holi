@@ -46,6 +46,7 @@ const report = {
   nativeFilenameSpellings: true,
   runId,
   platform: 'ios',
+  foundationModels: 'available',
   osVersion: '26.2',
   startedAt: 110,
   finishedAt: 120,
