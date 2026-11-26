@@ -535,34 +535,6 @@ export function createMailInvitationReconciler(
     )
   }
 
-  async function collectCalendarCopies(
-    target: InvitationReadTarget,
-    scopes: Scope[],
-    invitationFor: (scope: Scope) => InvitationTarget | null,
-    discovery: ReturnType<typeof createInvitationCalendarDiscovery>,
-  ) {
-    const { api, accountSub, email } = target
-    const copies = new Map<string, CalendarCopy>()
-    target.assertBinding()
-    for (const entry of scopes) {
-      const invitation = invitationFor(entry)
-      if (!invitation) continue
-      const copy = await findInvitationCalendarCopy(
-        api,
-        invitation,
-        email,
-        (locator) =>
-          store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
-        target.readCalendarOverrides,
-        discovery,
-      )
-      copies.set(scopeKey(invitation.details.identity), copy)
-    }
-    const journal = await store.read()
-    target.assertBinding()
-    return { copies, journal }
-  }
-
   const readFacts = async (
     target: InvitationReadTarget,
     scan: Scan,
@@ -619,12 +591,27 @@ export function createMailInvitationReconciler(
       return revision && { ...revision, legacyJoinOnly: entry.selected.joinOnly }
     }
     const discovery = createInvitationCalendarDiscovery(api)
-    const { copies, journal: durable } = await collectCalendarCopies(
-      target,
-      scopes,
-      invitationFor,
-      discovery,
-    )
+    const copies = new Map<string, CalendarCopy>()
+    const observeCopy = async (entry: Scope) => {
+      const invitation = invitationFor(entry)
+      if (!invitation) return
+      const key = scopeKey(invitation.details.identity)
+      if (copies.has(key)) return
+      const copy = await findInvitationCalendarCopy(
+        api,
+        invitation,
+        email,
+        (locator) =>
+          store.rememberCalendarLocator({ accountSub, ...locator }, target.assertBinding),
+        target.readCalendarOverrides,
+        discovery,
+      )
+      copies.set(key, copy)
+    }
+    target.assertBinding()
+    for (const entry of scopes) await observeCopy(entry)
+    const durable = await store.read()
+    target.assertBinding()
     // Use the same locator for dispatch exclusion, Sent evidence, and readback,
     // even when a known outcome could not be written to the journal.
     const journal = { ...durable, attempts: durable.attempts.map(withGmailOutcome) }
@@ -1321,12 +1308,30 @@ export function createMailInvitationReconciler(
         navigation: async () => {
           if (navigationWithheld) return () => ({ kind: 'withheld' })
           if (!verifiedCopy) return () => ({ kind: 'default' })
+          // A selected series readback still needs the direct slots' negative
+          // proof before picking a link. Do not add sibling lookups to write preflight.
+          if (selection && identity.recurrenceId === null && details.recurring) {
+            for (const sibling of incoming) {
+              const slot = sibling.selected.value.details
+              if (
+                slot.identity.uid === identity.uid &&
+                slot.identity.recurrenceId !== null &&
+                slot.organizer?.email === organizer
+              )
+                await observeCopy(sibling)
+            }
+          }
           const navigation = await verifiedCopy.navigation((slot) => {
             const occurrence = selectSeriesSlot(selected, slot)
-            if (!occurrence) return occurrence
-            return hasUnseenPredecessor(occurrence, latestSources)
-              ? false
-              : (revisionFor(occurrence) ?? false)
+            if (occurrence === false) return false
+            if (occurrence && hasUnseenPredecessor(occurrence, latestSources)) return false
+            const revision = occurrence ? revisionFor(occurrence) : null
+            if (occurrence && !revision) return false
+            const copy = copies.get(scopeKey({ ...identity, recurrenceId: slot }))
+            return {
+              revision,
+              cancellation: copy?.kind === 'blocked' ? copy.occurrenceCancellation : undefined,
+            }
           })
           return () => (verifiedCopy.canNavigate ? navigation : { kind: 'withheld' })
         },

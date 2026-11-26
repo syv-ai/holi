@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto'
 import { canonicalIanaZone } from '../shared/time-zones'
-import { GoogleApiError, type GoogleApi, type GoogleParams } from './api'
+import {
+  GoogleApiError,
+  GoogleResourceDecodeError,
+  GoogleResourceTimeoutError,
+  type GoogleApi,
+  type GoogleParams,
+} from './api'
 import {
   asRsvp,
   BASE,
@@ -46,10 +52,21 @@ type InvitationCalendarCopy = {
   canNavigate: boolean
   unavailableReason: string | null
   reply: { url: string; etag: string; attendee: NonNullable<RawEvent['attendees']>[number] } | null
-  navigation: (
-    selectSlot: (slot: string) => InvitationRevision | false | null,
-  ) => Promise<InvitationNavigation>
+  navigation: (selectSlot: SelectNavigationSlot) => Promise<InvitationNavigation>
 }
+
+/** Negative evidence from a verified occurrence lookup in this mailbox read. */
+type OccurrenceCancellation = {
+  base: string
+  parentId: string
+  uid: string
+  organizer: string
+  slot: string
+  sequence: number
+}
+type SelectNavigationSlot = (
+  slot: string,
+) => false | { revision: InvitationRevision | null; cancellation?: OccurrenceCancellation }
 
 export type InvitationLinks = Pick<
   InvitationCalendarCopy,
@@ -65,7 +82,13 @@ export type InvitationNavigation =
 type CalendarLookup =
   | InvitationCalendarCopy
   | { kind: 'absent' }
-  | { kind: 'blocked'; reason: string; cancelled?: true; navigationUnverified?: true }
+  | {
+      kind: 'blocked'
+      reason: string
+      cancelled?: true
+      navigationUnverified?: true
+      occurrenceCancellation?: OccurrenceCancellation
+    }
 
 type Parsed = NonNullable<ReturnType<typeof parseMailInvitation>>
 type RevisionMaterial = {
@@ -1043,6 +1066,14 @@ function invitationCopy(
       reason: cancellationReason,
       cancelled: true,
       navigationUnverified: true,
+      occurrenceCancellation: {
+        base,
+        parentId: event.recurringEventId!,
+        uid,
+        organizer,
+        slot: recurrenceId,
+        sequence: event.sequence!,
+      },
     }
   const links = invitationEventLinks(event)
   const requiresRoster = rosterChanged(invitation)
@@ -1372,7 +1403,7 @@ async function upcomingInvitationLinks(
   master: RawEvent,
   invitation: InvitationTarget,
   observe: (event: RawEvent) => Promise<void>,
-  selectSlot: (slot: string) => InvitationRevision | false | null,
+  selectSlot: SelectNavigationSlot,
   access: CalendarAccess,
   bindsMailbox: (event: RawEvent, revision: InvitationRevision) => boolean,
 ): Promise<InvitationLinks | null> {
@@ -1417,17 +1448,31 @@ async function upcomingInvitationLinks(
         (instance.start?.date !== undefined) === (master.start?.date !== undefined) &&
         includesEnd(instance)
       ) {
-        const slot = selectSlot(occurrenceSlot(instance)!)
+        const original = occurrenceSlot(instance)!
+        const slot = selectSlot(original)
         if (slot !== false) {
-          const revision = slot ?? invitation
+          const revision = slot.revision ?? invitation
+          const cancellation = slot.cancellation
+          // The master verifies the parent of this slot. Neither a known
+          // locator nor the expanded query itself can corroborate a cancellation.
+          // A higher provider sequence alone is not a reinstating REQUEST.
+          const cancelled =
+            cancellation?.base === base &&
+            cancellation.parentId === master.id &&
+            cancellation.uid === uid &&
+            cancellation.organizer === organizer &&
+            cancellation.slot === original &&
+            (slot.revision === null ||
+              slot.revision.details.identity.sequence <= cancellation.sequence)
           const links = invitationEventLinks(instance)
           // The verified master establishes a baseline, not the actual date,
           // room or event page of each provider-expanded instance. A mailed
           // slot revision instead supplies exact occurrence material.
           if (
+            !cancelled &&
             bindsMailbox(instance, revision) &&
             !calendarRevisionMismatch(instance, revision, links, {
-              expanded: slot === null,
+              expanded: slot.revision === null,
               navigationOnly: true,
             }) &&
             (links.conferenceUrl || links.htmlLink)
@@ -1650,6 +1695,8 @@ function requireLocalNavigationFailure(error: unknown): void {
   if (error instanceof CalendarObservationError) throw error.cause
   if (
     error instanceof InvalidCalendarCollection ||
+    error instanceof GoogleResourceTimeoutError ||
+    error instanceof GoogleResourceDecodeError ||
     (error instanceof GoogleApiError && !propagateCalendarRefusal(error))
   )
     return

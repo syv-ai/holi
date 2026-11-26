@@ -242,7 +242,11 @@ function isCancellation({ value, joinOnly }: Candidate): boolean {
 
 function matchingOrganizerCancellations(group: Candidate[]): Candidate[] {
   const isCancellationDelivery = (candidate: Candidate) =>
-    candidate.value.method === 'CANCEL' || isCancellation(candidate)
+    candidate.value.method === 'CANCEL' ||
+    isCancellation(candidate) ||
+    candidate.value.unusableCancellations.some(({ identity }) =>
+      sameGroup(identity, identityOf(candidate)),
+    )
   const requests = group.filter((candidate) => !isCancellationDelivery(candidate))
   if (!requests.length) return group
   const organizers = new Set(requests.map(({ value }) => value.details.organizer?.email))
@@ -335,6 +339,15 @@ export function selectInvitationRevisions(
       (identityOf(candidate).recurrenceId === null ||
         candidate.value.recurrenceRange === 'THISANDFUTURE'),
   )
+  const unusableCancellations = [
+    ...new Set(
+      eligible.flatMap(({ value, joinOnly }) => (joinOnly ? [] : value.unusableCancellations)),
+    ),
+  ].filter(
+    ({ identity, recurrenceRange, eventCancelled, attendees }) =>
+      (eventCancelled || attendees.includes(mailbox)) &&
+      (identity.recurrenceId === null || recurrenceRange === 'THISANDFUTURE'),
+  )
   const embeddedIn = (series: Candidate, identity: Revision) =>
     series.value.cancellations.some((item) => item.identity === identity)
   const suppresses = (series: Candidate, cancellation: Revision) =>
@@ -355,6 +368,10 @@ export function selectInvitationRevisions(
     series?: Candidate,
   ) => {
     let barrier: Revision | undefined
+    const unusable = unusableCancellations.filter(
+      (cancel) => cancel.organizer?.email === organizer && covers(cancel.identity, revision, true),
+    )
+    const unresolved = unusable.filter(({ identity }) => revisionOrder(identity, revision) !== -1)
     for (const cancel of cancellations) {
       const cancellation = identityOf(cancel)
       if (cancel.value.details.organizer?.email !== organizer || !covers(cancellation, revision))
@@ -362,9 +379,17 @@ export function selectInvitationRevisions(
       const order = revisionOrder(cancellation, revision)
       const embedded = series && (cancel.embeddedCancellation || embeddedIn(series, cancellation))
       if (!embedded && (order === null || order === 0)) return { conflict: true }
-      if (embedded || order === 1)
+      if (embedded || order === 1) {
+        if (unresolved.some(({ identity }) => revisionOrder(cancellation, identity) !== 1)) continue
         return verifyCancellation(cancel) ? { cancelledBy: cancel } : { conflict: true }
+      }
       if (!barrier || revisionOrder(cancellation, barrier) !== -1) barrier = cancellation
+    }
+    // An unusable interval cannot confirm cancellation. It can withhold a
+    // slot, and on reinstatement it still breaks continuity with older replies.
+    if (unresolved.length) return { conflict: true }
+    for (const { identity } of unusable) {
+      if (!barrier || revisionOrder(identity, barrier) !== -1) barrier = identity
     }
     return { barrier }
   }
@@ -559,6 +584,17 @@ function selectScope(
   )
     return blocked(selected, 'This conversation contains conflicting invitation revisions')
 
+  if (
+    selected.value.unusableCancellations.some(({ identity }) =>
+      sameGroup(identity, identityOf(selected)),
+    )
+  )
+    return blocked(
+      selected,
+      selected.value.details.unavailableReason ??
+        'This invitation has an unusable cancellation revision',
+    )
+
   // Compare series/range cancellation with each covered occurrence, not
   // arrival order. An older cancellation is still a barrier for Sent evidence.
   const { conflict, cancelledBy, barrier } = coveringCancellation(identityOf(selected), organizer)
@@ -606,14 +642,14 @@ function selectScope(
   return { selected, history, provenParents, possibleParents, response, barrier }
 }
 
-function covers(cancel: Revision, selected: Revision): boolean {
+function covers(cancel: Revision, selected: Revision, possible = false): boolean {
   const first = cancel.recurrenceId
   const slot = selected.recurrenceId
   if (cancel.uid !== selected.uid || !slot || first === slot) return false // Exact cancellation was handled by scope selection.
   if (!first) return true
   // Parser-normalized dates, UTC instants and floating clocks sort within
   // their own value kind. Never convert between kinds to infer coverage.
-  return slotKind(first) === slotKind(slot) && slot > first
+  return slotKind(first) === slotKind(slot) ? slot > first : possible
 }
 
 function slotKind(id: string) {

@@ -48,6 +48,15 @@ export class GoogleResourceTimeoutError extends Error {
   }
 }
 
+/** A successful resource GET returned invalid JSON, not an auth or HTTP refusal.
+ * Keep the SyntaxError contract for existing readers of malformed bodies. */
+export class GoogleResourceDecodeError extends SyntaxError {
+  constructor(cause: SyntaxError) {
+    super(cause.message, { cause })
+    this.name = 'GoogleResourceDecodeError'
+  }
+}
+
 /** The request left Holi, but Google did not give a definitive verdict. */
 export class GoogleWriteUncertainError extends Error {
   constructor(cause: unknown) {
@@ -123,6 +132,7 @@ export class GoogleApi {
       ) {
         throw new GoogleResourceTimeoutError(error)
       }
+      if (readingBody && error instanceof SyntaxError) throw new GoogleResourceDecodeError(error)
       throw error
     }
     const res = await (this.#deps.fetch ?? globalThis.fetch)(full, {
