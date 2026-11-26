@@ -29,8 +29,13 @@ export function observeCompilerArtifacts(
   fileSystem: FileSystem = realFileSystem,
 ): CompilerArtifactObservation {
   const result: CompilerArtifactObservation = {
-    files: {}, entriesRead: 0, limitReached: false, metadataErrors: 0,
-    oversized: 0, capped: 0, scanFailed: false,
+    files: {},
+    entriesRead: 0,
+    limitReached: false,
+    metadataErrors: 0,
+    oversized: 0,
+    capped: 0,
+    scanFailed: false,
   }
   let handle: ReturnType<FileSystem['openDirectory']> | undefined
   try {
@@ -44,19 +49,31 @@ export function observeCompilerArtifacts(
       try {
         const metadata = fileSystem.stat(join(directory, entry.name))
         if (!metadata.isFile()) continue
-        if (metadata.size > 16 * 1024 * 1024) { result.oversized++; continue }
+        if (metadata.size > 16 * 1024 * 1024) {
+          result.oversized++
+          continue
+        }
         const total = result.files[extension] ?? { count: 0, bytes: 0 }
-        if (total.count === 16) { result.capped++; continue }
+        if (total.count === 16) {
+          result.capped++
+          continue
+        }
         total.count++
         total.bytes += metadata.size
         result.files[extension] = total
-      } catch { result.metadataErrors++ }
+      } catch {
+        result.metadataErrors++
+      }
     }
     result.limitReached = result.entriesRead === 64
   } catch {
     result.scanFailed = true
   } finally {
-    try { handle?.close() } catch { result.scanFailed = true }
+    try {
+      handle?.close()
+    } catch {
+      result.scanFailed = true
+    }
   }
   return result
 }

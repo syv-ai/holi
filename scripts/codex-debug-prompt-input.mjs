@@ -369,16 +369,16 @@ export async function runDebugPromptInputCandidate() {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const output = process.env.HOLI_CODEX_DEBUG_EVIDENCE
-  if (
-    !output ||
-    existsSync(output)
-  )
+  if (!output || existsSync(output))
     throw Error('Set HOLI_CODEX_DEBUG_EVIDENCE to a new file outside the checkout')
   const canonicalRepository = await realpath(repository)
   const outputPath = resolve(output)
   const outputParent = await realpath(dirname(outputPath))
   const canonicalOutput = join(outputParent, basename(outputPath))
-  if (canonicalOutput === canonicalRepository || canonicalOutput.startsWith(canonicalRepository + '/'))
+  if (
+    canonicalOutput === canonicalRepository ||
+    canonicalOutput.startsWith(canonicalRepository + '/')
+  )
     throw Error('Set HOLI_CODEX_DEBUG_EVIDENCE to a new file outside the checkout')
   const report = await runDebugPromptInputCandidate()
   await writeFile(canonicalOutput, JSON.stringify(report, null, 2), { flag: 'wx', mode: 0o600 })

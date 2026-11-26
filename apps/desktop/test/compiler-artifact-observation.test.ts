@@ -12,15 +12,17 @@ describe('observeCompilerArtifacts', () => {
         await writeFile(join(directory, `${String(index).padStart(2, '0')}.cs`), 'x')
       }
       await writeFile(join(directory, 'huge.dll'), Buffer.alloc(16 * 1024 * 1024 + 1))
-      for (let index = 0; index < 50; index++) {
-        await writeFile(join(directory, `other-${index}.txt`), '')
-      }
       const result = observeCompilerArtifacts(directory)
       expect(result.files.cs).toEqual({ count: 16, bytes: 16 })
       expect(result.capped).toBe(1)
       expect(result.oversized).toBe(1)
-      expect(result.entriesRead).toBe(64)
-      expect(result.limitReached).toBe(true)
+      expect(result.limitReached).toBe(false)
+      for (let index = 0; index < 50; index++) {
+        await writeFile(join(directory, `other-${index}.txt`), '')
+      }
+      const truncated = observeCompilerArtifacts(directory)
+      expect(truncated.entriesRead).toBe(64)
+      expect(truncated.limitReached).toBe(true)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -30,10 +32,14 @@ describe('observeCompilerArtifacts', () => {
     let closed = false
     const result = observeCompilerArtifacts('ignored', {
       openDirectory: () => ({
-        read: () => closed ? null : (closed = true, { name: 'private.cs' }),
-        close: () => { throw new Error('close failed') },
+        read: () => (closed ? null : ((closed = true), { name: 'private.cs' })),
+        close: () => {
+          throw new Error('close failed')
+        },
       }),
-      stat: () => { throw new Error('disappeared') },
+      stat: () => {
+        throw new Error('disappeared')
+      },
     })
     expect(result.metadataErrors).toBe(1)
     expect(result.scanFailed).toBe(true)
