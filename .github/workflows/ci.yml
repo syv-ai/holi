@@ -255,29 +255,40 @@ jobs:
           $observer = Start-ThreadJob -ArgumentList $run, $trace -ScriptBlock {
             param($runDir, $tracePath)
             $identityPath = Join-Path $runDir 'broker-root.json'
-            $deadline = [DateTime]::UtcNow.AddSeconds(45)
-            while ([DateTime]::UtcNow -lt $deadline -and -not (Test-Path -LiteralPath $identityPath)) { Start-Sleep -Milliseconds 250 }
+            $flagPath = Join-Path $runDir 'broker-startup-ended'
+            $jobDeadline = [DateTime]::UtcNow.AddMinutes(20)
+            while ([DateTime]::UtcNow -lt $jobDeadline -and -not (Test-Path -LiteralPath $identityPath) -and -not (Test-Path -LiteralPath $flagPath)) { Start-Sleep -Milliseconds 250 }
             if (-not (Test-Path -LiteralPath $identityPath)) { '{"status":"identity-unavailable"}' | Set-Content -LiteralPath $tracePath; return }
             try {
               $identity = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
-              if ($identity.pid -isnot [long] -and $identity.pid -isnot [int] -or $identity.pid -le 0 -or $identity.creationTicks -le 0) { throw 'invalid identity' }
-              $root = Get-CimInstance Win32_Process -Filter "ProcessId=$($identity.pid)" -Property ProcessId,ParentProcessId,CreationDate,UserModeTime,KernelModeTime,ReadTransferCount,WriteTransferCount,WorkingSetSize -OperationTimeoutSec 5
-              if (-not $root -or [long]$root.ProcessId -ne [long]$identity.pid) { throw 'root unavailable' }
-              if ($root.CreationDate -isnot [DateTime]) { throw 'root creation time unavailable' }
-              $creation = $root.CreationDate.ToUniversalTime().Ticks
-              if ([Math]::Abs($creation - [long]$identity.creationTicks) -gt 10000) { throw 'stale identity' }
+              $pid = [long]$identity.pid; $ticks = [long]$identity.creationTicks
+              if ($pid -le 0 -or $ticks -le 0) { throw 'invalid identity' }
+              $deadline = $ticks + 450000000
               for ($sample = 0; $sample -lt 10; $sample++) {
-                $children = [System.Collections.Generic.List[object]]::new()
-                $capped = $false
-                foreach ($child in (Get-CimInstance Win32_Process -Filter "ParentProcessId=$($identity.pid)" -Property ProcessId,ParentProcessId,CreationDate,UserModeTime,KernelModeTime,ReadTransferCount,WriteTransferCount,WorkingSetSize -OperationTimeoutSec 5)) {
-                  if ($children.Count -ge 8) { $capped = $true; break }
-                  $children.Add(@{ pid=[long]$child.ProcessId; user=[long]$child.UserModeTime; kernel=[long]$child.KernelModeTime; read=[long]$child.ReadTransferCount; write=[long]$child.WriteTransferCount; workingSet=[long]$child.WorkingSetSize })
+                $now = [DateTime]::UtcNow.Ticks
+                if ($now -ge $deadline -or (Test-Path -LiteralPath $flagPath)) { break }
+                $root = Get-CimInstance Win32_Process -Filter "ProcessId=$pid" -Property ProcessId,CreationDate,UserModeTime,KernelModeTime,ReadTransferCount,WriteTransferCount,WorkingSetSize -OperationTimeoutSec 1
+                $rootDate = if ($root -and $root.CreationDate -is [DateTime]) { $root.CreationDate.ToUniversalTime().Ticks } else { 0L }
+                if (-not $root -or [long]($rootDate / 10) -ne [long]($ticks / 10)) { break }
+                $childRows = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$pid" -Property ProcessId,ParentProcessId,CreationDate,UserModeTime,KernelModeTime,ReadTransferCount,WriteTransferCount,WorkingSetSize -OperationTimeoutSec 1 | Select-Object -First 9)
+                $capped = $childRows.Count -gt 8; $children = @()
+                foreach ($child in ($childRows | Select-Object -First 8)) {
+                  if ([long]$child.ParentProcessId -ne $pid -or $child.CreationDate -isnot [DateTime]) { continue }
+                  $ct = $child.CreationDate.ToUniversalTime().Ticks
+                  if ($ct -lt $ticks -or $ct -gt [DateTime]::UtcNow.Ticks) { continue }
+                  $check = Get-CimInstance Win32_Process -Filter "ProcessId=$([long]$child.ProcessId)" -Property ProcessId,ParentProcessId,CreationDate -OperationTimeoutSec 1
+                  if (-not $check -or [long]$check.ParentProcessId -ne $pid -or $check.CreationDate.ToUniversalTime().Ticks -ne $ct) { continue }
+                  $children += @{ pid=[long]$child.ProcessId; parentPid=$pid; creationTicks=[long]$ct; user=$child.UserModeTime; kernel=$child.KernelModeTime; read=$child.ReadTransferCount; write=$child.WriteTransferCount; workingSet=$child.WorkingSetSize }
                 }
-                $record = @{ sample=$sample; rootPid=[long]$identity.pid; children=@($children); capped=$capped }
-                Add-Content -LiteralPath $tracePath -Value ($record | ConvertTo-Json -Compress -Depth 3)
-                Start-Sleep -Seconds 5
+                $after = Get-CimInstance Win32_Process -Filter "ProcessId=$pid" -Property ProcessId,CreationDate -OperationTimeoutSec 1
+                if (-not $after -or [long]($after.CreationDate.ToUniversalTime().Ticks / 10) -ne [long]($ticks / 10)) { break }
+                $observed = [DateTime]::UtcNow.Ticks
+                if ($observed -gt $deadline) { break }
+                @{ sample=$sample; observedUtcTicks=$observed; observedOffsetTicks=($observed-$ticks); rootPid=$pid; root=$root; children=@($children); capped=$capped } | ConvertTo-Json -Compress -Depth 4 | Add-Content -LiteralPath $tracePath
+                $remaining = [Math]::Min(5, [Math]::Max(0, ($deadline-[DateTime]::UtcNow.Ticks)/10000000))
+                if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int]($remaining*1000)) }
               }
-            } catch { Add-Content -LiteralPath $tracePath -Value '{"status":"observer-unavailable"}' }
+            } catch { '{"status":"observer-unavailable"}' | Add-Content -LiteralPath $tracePath }
           }
           try {
             $env:HOLI_WINDOWS_OWNED_PROCESS_PROOFS = Join-Path $proofs 'native'
@@ -291,7 +302,9 @@ jobs:
             if ($observer) {
               Stop-Job -Job $observer -ErrorAction SilentlyContinue
               Wait-Job -Job $observer -Timeout 3 -ErrorAction SilentlyContinue | Out-Null
+              $observerState = (Get-Job -Id $observer.Id).State
               Receive-Job -Job $observer -ErrorAction SilentlyContinue | Out-Null
+              if ($observerState -notin @('Stopped', 'Completed', 'Failed')) { Write-Host 'BROKER_OBSERVER_CLEANUP unavailable' }
               Remove-Job -Job $observer -Force -ErrorAction SilentlyContinue
             }
             if (Test-Path -LiteralPath $trace) { Get-Content -LiteralPath $trace -ErrorAction SilentlyContinue | Select-Object -First 12 | ForEach-Object { Write-Host "BROKER_SAMPLE $_" } }
