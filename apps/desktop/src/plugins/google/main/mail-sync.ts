@@ -18,12 +18,13 @@ import { GoogleApiError, type GoogleApi } from './api'
 import type { GoogleCache } from './cache'
 import {
   applyLabelDelta,
+  describeThreadList,
+  fetchThreadMetadata,
   fetchThreadPage,
-  fetchThreadSummaries,
   listThreads,
   listThreadIds,
-  mailboxLabel,
   PATCHABLE_LABELS,
+  summarizeThreadMetadata,
   threadMetadataFailures,
   type ListThreadsOptions,
   type MailPage,
@@ -154,8 +155,8 @@ async function syncList(
     assertCurrent()
     return cache.updateMailList(() => recordReads(cache, pendingKey, page, outcomes))
   }
-  const query = Boolean(options.query?.trim())
-  const baselineKey = query ? null : cache.latestMailListKey(pendingKey)
+  const { mailboxLabel, excludes } = describeThreadList(options)
+  const baselineKey = mailboxLabel === null ? null : cache.latestMailListKey(pendingKey)
   const fresh = () =>
     fullSync(
       api,
@@ -165,19 +166,15 @@ async function syncList(
       pendingKey,
       knownAddresses,
       assertCurrent,
-      !query,
+      mailboxLabel !== null,
       baselineKey,
     )
-  if (context?.refresh || query || baselineKey === null) return fresh()
+  if (context?.refresh || mailboxLabel === null || baselineKey === null) return fresh()
   const cached = cache.readThreads(baselineKey)
   // The cursor belongs to the list, not to the send-as result. Reclassify its
   // rows when identities change, without skipping any mailbox history.
   const since = cache.historyId(baselineKey)
   if (cached === null || since === null) throw new HistoryRecoveryRequired()
-
-  // The mailbox this list is of, as Gmail labels it: the scope of the delta,
-  // and the label whose removal means a thread has left.
-  const label = mailboxLabel(options.mailbox)
 
   const history: RawHistoryRecord[] = []
   let historyId: string | undefined
@@ -216,43 +213,54 @@ async function syncList(
     throw error
   }
 
-  const { changed, deleted, left, patches } = readHistory(history, label)
+  const { changed, deleted, left, patches } = readHistory(history, mailboxLabel)
   const cachedIds = new Set(cached.map((thread) => thread.id))
-  // History's label changes describe individual messages, while Gmail's list
-  // membership is decided across the whole conversation. Confirm departures
-  // with the active query before removing a cached row. A deletion alone is
-  // not an arrival for an uncached thread, and doesn't need a query scan.
   const departures = new Set([...left, ...[...deleted].filter((id) => cachedIds.has(id))])
-  const candidatesToConfirm = new Set([
-    ...departures,
-    ...[...changed].filter((id) => !cachedIds.has(id)),
-  ])
-  if (new Set([...candidatesToConfirm, ...changed, ...deleted]).size > MAX_DELTA_READS)
-    throw new HistoryRecoveryRequired()
+  const candidates = new Set([...departures, ...[...changed].filter((id) => !cachedIds.has(id))])
 
-  const admitted = await findQueryMatches(api, options, candidatesToConfirm, assertCurrent)
-  const departed = new Set([...departures].filter((id) => !admitted.has(id)))
+  // Exact deletion probes include uncached Load more threads, even if they
+  // cannot possibly match the list. A deleted message isn't a deleted thread.
+  const reads = new Set([...candidates, ...changed, ...deleted])
+  if (baselineKey !== key) for (const id of cachedIds) reads.add(id)
+  if (reads.size > MAX_DELTA_READS) throw new HistoryRecoveryRequired()
+  const metadata = await fetchThreadMetadata(api, reads, new Set([...candidates, ...deleted]))
+  assertCurrent()
 
-  // The account's messagesDeleted history is the worklist, not the cached
-  // first page: a thread open from Load more may not be in any cached list.
-  // Losing one message isn't proof of absence. Probe that exact resource
-  // without admitting it to the list or relying on query omission as evidence.
-  const reads = new Set([...changed].filter((id) => !candidatesToConfirm.has(id)))
-  for (const id of admitted) reads.add(id)
-  if (baselineKey !== key) {
-    for (const id of cachedIds) if (!departed.has(id)) reads.add(id)
-  }
-  const probes = [...deleted].filter((id) => !reads.has(id))
-  if (reads.size + probes.length > MAX_DELTA_READS) throw new HistoryRecoveryRequired()
-  const { threads: refreshed, outcomes } = await fetchThreadSummaries(
-    api,
-    [...reads],
-    knownAddresses,
-    probes,
+  // Use authoritative whole-thread labels to rule out clear nonmembers before
+  // paging. Possible matches still need Gmail's query; unreadable resources
+  // stay pending, and a real 404 needs no list check to prove absence.
+  const unresolved = new Set(
+    metadata.flatMap((thread) =>
+      candidates.has(thread.id) && thread.kind === 'readable' && !excludes(thread)
+        ? [thread.id]
+        : [],
+    ),
   )
+  const admitted = await findQueryMatches(api, options, unresolved, assertCurrent)
+  if (admitted === null) {
+    assertCurrent()
+    // Don't rebaseline or lose exact probe evidence just because membership
+    // ran out of pages. No successful read completes pending work in this delta.
+    return cache.updateMailList(() => ({
+      ...recordReads(
+        cache,
+        pendingKey,
+        { threads: [], nextPageToken: null, syncedAt: '' },
+        metadata.filter(({ kind }) => kind !== 'readable'),
+      ),
+      historyRecoveryRequired: true,
+    }))
+  }
+  const departed = new Set([...departures].filter((id) => !admitted.has(id)))
+  const rows = metadata.filter(({ id }) =>
+    candidates.has(id)
+      ? admitted.has(id)
+      : changed.has(id) || (baselineKey !== key && cachedIds.has(id)),
+  )
+  const refreshed = await summarizeThreadMetadata(api, rows, knownAddresses)
   const retain = new Set<string>()
-  for (const { id, kind } of outcomes) {
-    // Even a thread listed by the query can disappear before its metadata read.
+  for (const { id, kind } of metadata) {
+    // Exact absence overrides any previous list or cached row.
     if (kind === 'not-found') departed.add(id)
     // Keep the previous summary of an unreadable off-page probe in storage only.
     if (kind === 'unreadable' && departed.has(id)) retain.add(id)
@@ -264,7 +272,7 @@ async function syncList(
       cache,
       pendingKey,
       { threads, nextPageToken: null, syncedAt: new Date().toISOString() },
-      outcomes,
+      metadata,
     )
     // A partial result cannot leave a cursor that would skip unresolved work.
     cache.writeThreads(key, [...threads, ...cached.filter(({ id }) => retain.has(id))])
@@ -338,10 +346,10 @@ async function fullSync(
     .unreadableThreads(pendingKey)
     .filter((id) => !onPage.has(id))
     .slice(0, 25)
-  const probe = await fetchThreadSummaries(api, [], undefined, probeIds)
+  const probes = await fetchThreadMetadata(api, probeIds, new Set(probeIds))
   assertCurrent()
   return cache.updateMailList(() => {
-    const result = recordReads(cache, pendingKey, page, [...outcomes, ...probe.outcomes])
+    const result = recordReads(cache, pendingKey, page, [...outcomes, ...probes])
     if (!establishBaseline) return result
     const pending = new Set(result.unreadableThreadIds)
     // This is the new snapshot's baseline, not proof we replayed skipped
@@ -368,7 +376,7 @@ async function findQueryMatches(
   let pageToken: string | undefined
 
   for (let pages = 0; ; pages++) {
-    if (pages === MAX_MEMBERSHIP_PAGES) throw new HistoryRecoveryRequired()
+    if (pages === MAX_MEMBERSHIP_PAGES) return null
     const page = await listThreadIds(api, { ...options, pageToken })
     assertCurrent()
     for (const id of page.ids) {
@@ -472,9 +480,9 @@ function readHistory(records: RawHistoryRecord[], leftWhenRemoved: string): Chan
  *
  * **"Left the mailbox" and "left this list" are not the same thing.**
  * `LEFT_WHEN_ADDED` and the mailbox label handle a thread leaving the *place*;
- * this handles a thread falling out of the *filter*, because the filter is a
- * Gmail query and Gmail is not asked again on the delta path. E.g. opening a
- * thread marks it read, and without this "unread only" would keep the row.
+ * this handles a cached row falling out of the *filter* without a membership
+ * scan. E.g. opening a thread marks it read, and without this "unread only"
+ * would keep the row.
  *
  * Local, and free: the summary already carries both flags. It is deliberately
  * only the filters this module can evaluate: an explicit user query is Gmail's
@@ -526,7 +534,7 @@ function patch(
  *
  * **Every option that narrows the list, or the key is a lie.** The query, the
  * category and the unread filter all become part of the Gmail query
- * (`composeQuery`), so all of them belong here; a missing one serves one
+ * (`describeThreadList`), so all of them belong here; a missing one serves one
  * list's answer under another list's key.
  *
  * `pageToken` is deliberately absent: only first-page rows are cached, and
