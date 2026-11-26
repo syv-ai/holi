@@ -558,6 +558,10 @@ describe('owned Job broker host', () => {
     void stderr.catch(() => {})
     const finished = join(cwd, 'native-finished')
     const innerEof = join(cwd, 'native-output-ended')
+    const artifactSnapshots: Array<{
+      offsetMs: number
+      observation: ReturnType<typeof observeCompilerArtifacts>
+    }> = []
     inspectFixture = () => {
       // CodeDOM may emit temporary source/binary files in this fixture-owned cwd.
       // Report only bounded aggregate evidence, never filenames or file contents.
@@ -567,6 +571,18 @@ describe('owned Job broker host', () => {
       const failure = readJoinMarker(cwd, 'native-join-failure', 64)
       return {
         compilerArtifacts,
+        artifactSnapshots,
+        artifactGrowth:
+          artifactSnapshots.length < 2
+            ? 'insufficient-snapshots'
+            : artifactSnapshots.some((snapshot) =>
+                  Object.entries(snapshot.observation.files).some(([extension, value]) => {
+                    const initial = artifactSnapshots[0]?.observation.files[extension]
+                    return !initial || value.count > initial.count || value.bytes > initial.bytes
+                  }),
+                )
+              ? 'observed-growth'
+              : 'no-observed-growth',
         nativeFailure:
           failure !== undefined && /^[a-z-]{1,32},\d{1,10}$/.test(failure) ? failure : undefined,
         nativeStatus: Object.fromEntries(
@@ -604,9 +620,26 @@ describe('owned Job broker host', () => {
     try {
       // Cold Add-Type in the Windows fixture is startup, not part of the join proof.
       const startupStarted = enter('terminal')
-      const seen = await (native
-        ? withinJoinPhase(startup, startupStarted, 45_000, 'fixture startup')
-        : startup)
+      let snapshotTimer: ReturnType<typeof setInterval> | undefined
+      if (native) {
+        const sample = () => {
+          if (artifactSnapshots.length >= 10) return
+          artifactSnapshots.push({
+            offsetMs: elapsed() - phaseMs.terminal,
+            observation: observeCompilerArtifacts(cwd),
+          })
+        }
+        sample()
+        snapshotTimer = setInterval(sample, 5_000)
+      }
+      let seen: boolean
+      try {
+        seen = await (native
+          ? withinJoinPhase(startup, startupStarted, 45_000, 'fixture startup')
+          : startup)
+      } finally {
+        if (snapshotTimer) clearInterval(snapshotTimer)
+      }
       expect(seen).toBe(true)
       enter('inner-eof')
       await expect.poll(() => existsSync(innerEof)).toBe(true)
