@@ -254,74 +254,74 @@ after diagram`
 const describeTypst = describe.skipIf((await resolveTypstBin()) === null)
 
 describeTypst('renderPdf (integration — needs typst; first run fetches cmarker)', () => {
-  it('keeps table reference URIs contextual, ordered, and identical to ordinary Markdown', async () => {
-    const typst = await resolveTypstBin()
-    if (typst === null) return
-    const root = await work()
-    const templateDir = join(root, '.holi/document-templates/plain')
-    await mkdir(join(templateDir, 'assets'), { recursive: true })
-    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+  const table = (link: string) =>
+    writeMarkdownCaptionEnvelope(`| A |\n| --- |\n| ${link} |`, 'Edge caption.')
+  const scenarios = [
+    {
+      name: 'escaped-code',
+      source: `${table('[code]')}\n\n\`\`\`markdown\n[code]: <https://example.com/hidden\\>a>\n\`\`\`\n`,
+      uris: [],
+    },
+    {
+      name: 'duplicate-order',
+      source: `${String.raw`[ref]: <https://example.com/first\>a>`}\n\n${table('[ref]')}\n\n[ref]: https://example.com/second\n`,
+      uris: ['https://example.com/first>a'],
+    },
+    {
+      name: 'reverse-duplicate-order',
+      source: `[ref]: https://example.com/second\n\n${table('[ref]')}\n\n[ref]: <https://example.com/first\\>a>\n`,
+      uris: ['https://example.com/second'],
+    },
+    {
+      name: 'html-definition',
+      source: `${table('[html]')}\n\n<div>\n[html]: <https://example.com/html\\>a>\n</div>\n`,
+      uris: [],
+    },
+    {
+      name: 'html-comment-definition',
+      source: `${table('[comment]')}\n\n<!--\n[comment]: <https://example.com/comment\\>a>\n-->\n`,
+      uris: [],
+    },
+    {
+      name: 'indented-code-definition',
+      source: `${table('[code]')}\n\n    [code]: <https://example.com/code\\>a>\n`,
+      uris: [],
+    },
+    {
+      name: 'quoted-definition',
+      source: `${table('[ref]')}\n\n> [ref]: <https://example.com/quoted\\>a>\n`,
+      uris: ['https://example.com/quoted>a'],
+    },
+    {
+      name: 'list-definition',
+      source: `${table('[ref]')}\n\n- [ref]: <https://example.com/list\\>a>\n`,
+      uris: ['https://example.com/list>a'],
+    },
+    {
+      name: 'paired-backslashes',
+      source: `${table('[ref]')}\n\n${String.raw`[ref]: <https://example.com/a\\>b>`}\n`,
+    },
+    {
+      name: 'ordinary-paired-backslashes',
+      source: `| A |\n| --- |\n| [ref] |\n\n${String.raw`[ref]: <https://example.com/a\\>b>`}\n`,
+    },
+    {
+      name: 'ordinary-table-parity',
+      source: `| A |\n| --- |\n| [ref] |\n\n[ref]: <https://example.com/quoted\\>a>\n`,
+      uris: ['https://example.com/quoted>a'],
+    },
+  ]
+  const pairedScenarios = scenarios.filter(({ name }) => name.includes('paired-backslashes'))
 
-    const table = (link: string) =>
-      writeMarkdownCaptionEnvelope(`| A |\n| --- |\n| ${link} |`, 'Edge caption.')
-    const scenarios = [
-      {
-        name: 'escaped-code',
-        source: `${table('[code]')}\n\n\`\`\`markdown\n[code]: <https://example.com/hidden\\>a>\n\`\`\`\n`,
-        uris: [],
-      },
-      {
-        name: 'duplicate-order',
-        source: `${String.raw`[ref]: <https://example.com/first\>a>`}\n\n${table('[ref]')}\n\n[ref]: https://example.com/second\n`,
-        uris: ['https://example.com/first>a'],
-      },
-      {
-        name: 'reverse-duplicate-order',
-        source: `[ref]: https://example.com/second\n\n${table('[ref]')}\n\n[ref]: <https://example.com/first\\>a>\n`,
-        uris: ['https://example.com/second'],
-      },
-      {
-        name: 'html-definition',
-        source: `${table('[html]')}\n\n<div>\n[html]: <https://example.com/html\\>a>\n</div>\n`,
-        uris: [],
-      },
-      {
-        name: 'html-comment-definition',
-        source: `${table('[comment]')}\n\n<!--\n[comment]: <https://example.com/comment\\>a>\n-->\n`,
-        uris: [],
-      },
-      {
-        name: 'indented-code-definition',
-        source: `${table('[code]')}\n\n    [code]: <https://example.com/code\\>a>\n`,
-        uris: [],
-      },
-      {
-        name: 'quoted-definition',
-        source: `${table('[ref]')}\n\n> [ref]: <https://example.com/quoted\\>a>\n`,
-        uris: ['https://example.com/quoted>a'],
-      },
-      {
-        name: 'list-definition',
-        source: `${table('[ref]')}\n\n- [ref]: <https://example.com/list\\>a>\n`,
-        uris: ['https://example.com/list>a'],
-      },
-      {
-        name: 'paired-backslashes',
-        source: `${table('[ref]')}\n\n${String.raw`[ref]: <https://example.com/a\\>b>`}\n`,
-      },
-      {
-        name: 'ordinary-paired-backslashes',
-        source: `| A |\n| --- |\n| [ref] |\n\n${String.raw`[ref]: <https://example.com/a\\>b>`}\n`,
-      },
-      {
-        name: 'ordinary-table-parity',
-        source: `| A |\n| --- |\n| [ref] |\n\n[ref]: <https://example.com/quoted\\>a>\n`,
-        uris: ['https://example.com/quoted>a'],
-      },
-    ]
-
-    const pairedResults: string[] = []
-    for (const scenario of scenarios) {
+  it.each(scenarios.filter(({ name }) => !name.includes('paired-backslashes')))(
+    'renders table reference URI scenario: $name',
+    async (scenario) => {
+      const typst = await resolveTypstBin()
+      if (typst === null) return
+      const root = await work()
+      const templateDir = join(root, '.holi/document-templates/plain')
+      await mkdir(join(templateDir, 'assets'), { recursive: true })
+      await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
       const notePath = join(root, `${scenario.name}.md`)
       const outPath = join(root, `${scenario.name}.pdf`)
       await writeFile(notePath, scenario.source)
@@ -337,28 +337,56 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
       expect(await readFile(notePath, 'utf8'), scenario.name).toBe(scenario.source)
       const pdf = (await readFile(outPath)).toString('latin1')
       const uris = [...pdf.matchAll(/\/URI\s*\((.*?)\)/g)].map((match) => match[1])
-      if (!scenario.name.includes('paired-backslashes')) {
-        expect(uris, scenario.name).toEqual(scenario.uris)
-      }
+      expect(uris, scenario.name).toEqual(scenario.uris)
       const pages = await readPdfPages(outPath)
       const text = pages.flatMap((page) => page.runs.map((run) => run.text)).join(' ')
-      if (scenario.name.includes('paired-backslashes')) {
-        pairedResults.push(
-          JSON.stringify({
-            uris,
-            text: text
-              .replace(/Edge\s+caption\./g, '')
-              .replace(/\s+/g, ' ')
-              .trim(),
-          }),
-        )
-      }
       if (!scenario.name.startsWith('ordinary-')) {
         expect(text.replace(/\s+/g, ' ').match(/Edge caption\./g), scenario.name).toHaveLength(1)
       }
+    },
+  )
+
+  it('keeps paired-backslash ordinary and captioned renders equivalent', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(join(templateDir, 'assets'), { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const results: string[] = []
+    for (const scenario of pairedScenarios) {
+      const notePath = join(root, `${scenario.name}.md`)
+      const outPath = join(root, `${scenario.name}.pdf`)
+      await writeFile(notePath, scenario.source)
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      expect(await readFile(notePath, 'utf8')).toBe(scenario.source)
+      const pdf = (await readFile(outPath)).toString('latin1')
+      const uris = [...pdf.matchAll(/\/URI\s*\((.*?)\)/g)].map((match) => match[1])
+      const pages = await readPdfPages(outPath)
+      const text = pages.flatMap((page) => page.runs.map((run) => run.text)).join(' ')
+      expect(text.replace(/\s+/g, ' ').match(/Edge caption\./g) ?? []).toHaveLength(
+        scenario.name === 'paired-backslashes' ? 1 : 0,
+      )
+      results.push(
+        JSON.stringify({
+          uris,
+          text: text
+            .replace(/Edge\s+caption\./g, '')
+            .replace(/\s+/g, ' ')
+            .trim(),
+        }),
+      )
     }
-    expect(pairedResults).toHaveLength(2)
-    expect(pairedResults[0]).toBe(pairedResults[1])
+    expect(results).toHaveLength(2)
+    expect(results[0]).toBe(results[1])
   })
 
   it('renders a real markdown note through the Plain template to a %PDF', async () => {
