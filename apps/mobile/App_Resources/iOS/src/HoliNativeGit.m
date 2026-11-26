@@ -852,8 +852,9 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   git_reference *headRef=NULL, *targetRef=NULL;
   git_commit *headCommit=NULL, *targetCommit=NULL;
   git_tree *oldTree=NULL, *newTree=NULL;
-  int rc=git_repository_head(&headRef,repo);
-  if (rc==0 && git_reference_type(headRef)!=GIT_REFERENCE_SYMBOLIC) rc=GIT_EINVALIDSPEC;
+  int rc = git_repository_state(repo) == GIT_REPOSITORY_STATE_NONE ? 0 : GIT_EINVALIDSPEC;
+  if (rc == 0) rc = git_repository_head(&headRef, repo);
+  if (rc == 0 && git_reference_type(headRef) != GIT_REFERENCE_SYMBOLIC) rc = GIT_EINVALIDSPEC;
   NSString *expectedHead=[@"refs/heads/" stringByAppendingString:branch];
   if(rc==0 && ![expectedHead isEqual:[NSString stringWithUTF8String:git_reference_symbolic_target(headRef) ?: ""]]) rc=GIT_EINVALIDSPEC;
   NSString *targetName=[@"refs/remotes/origin/" stringByAppendingString:branch];
