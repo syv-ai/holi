@@ -29,13 +29,21 @@ export async function runNativeDocumentContext({ binary = process.env.CODEX_BIN,
   await access('/usr/bin/sandbox-exec')
   binary = await realpath(binary)
   await access(binary)
+  const executable = await readFile(binary)
+  if (
+    !['cffaedfe', 'feedfacf', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca'].includes(
+      executable.subarray(0, 4).toString('hex'),
+    )
+  ) {
+    throw Error('CODEX_BIN must name the native Mach-O executable, not a JavaScript launcher')
+  }
   output = resolve(output)
   // Never overwrite a previous proof or its failure diagnostics.
   await mkdir(output, { recursive: false, mode: 0o700 })
   const proof = {
     schema,
     status: 'incomplete',
-    provenance: { binary, binaryHash: hash(await readFile(binary)), launches: [] },
+    provenance: { binary, binaryHash: hash(executable), launches: [] },
     consent: {},
     cleanup: { receipts: [], serverClosed: false, rootRemoved: false },
   }

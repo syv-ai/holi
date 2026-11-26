@@ -20,6 +20,12 @@ export function validateDocumentContextProof(proof) {
     if (!condition) errors.push(message)
   }
   fail(proof?.schema === schema, 'unsupported proof schema')
+  fail(!proof?.error, 'native producer recorded an error')
+  fail(!proof?.transcripts?.some((entry) => entry.failure), 'native process recorded a failure')
+  fail(
+    !proof?.cleanup?.receipts?.some((entry) => entry.error || entry.failure),
+    'native cleanup receipt recorded a failure',
+  )
   const expected = proof?.expected
   const initial = proof?.initial
   const resumed = proof?.resumed

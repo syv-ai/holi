@@ -111,6 +111,15 @@ test('rejects instruction replacement, profile loss and changed prompts', () => 
 test('rejects unobserved consent, cleanup failure and a different resumed session', () => {
   for (const mutate of [
     (p) => {
+      p.error = 'Model capture failed'
+    },
+    (p) => {
+      p.transcripts = [{ failure: 'Native producer lost' }]
+    },
+    (p) => {
+      p.cleanup.receipts[0].error = 'Drain observation failed'
+    },
+    (p) => {
       p.consent.transcript = ''
     },
     (p) => {
