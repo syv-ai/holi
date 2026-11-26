@@ -9,12 +9,15 @@
 import { atom, createStore } from 'jotai'
 import { flushAllBuffers, registerBuffer } from '@/lib/buffer-registry'
 import { toast } from 'sonner'
-import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { advanceNavigationEpochAtom } from '@/state/navigation'
+import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { VaultSnapshot } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
-import { openDocumentRequestAtom, pendingHeadingAtom } from '@/state/open-document'
+import {
+  openDocumentAtom,
+  openDocumentRequestAtom,
+  pendingHeadingAtom,
+} from '@/state/open-document'
 import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
 import { documentRunsAtom } from '@/state/document-runs'
 import type { RendererPlugin } from '@/plugin-api'
@@ -121,24 +124,39 @@ describe('vaults', () => {
     expect(store.get(pendingHeadingAtom)).toBeNull()
   })
 
-  it('restores the selected vault when local navigation supersedes a directory open', async () => {
-    const { opens } = controlledOpens(2)
-    const store = createStore()
-    store.set(activeRemoteAtom, 'syv-ai/alpha')
-    store.set(openedRemoteAtom, 'syv-ai/alpha')
-    store.set(snapshotAtom, snapshot('alpha.md'))
-    unsubscribe = subscribeToVault(store)
-    holi!.pushOpen({ remote: 'syv-ai/beta', path: 'folder', kind: 'directory' })
-    await opens[0]!.entered.promise
-    store.set(advanceNavigationEpochAtom)
-    opens[0]!.response.resolve(snapshot('beta.md'))
-    await opens[1]!.entered.promise
-    opens[1]!.response.resolve(snapshot('alpha.md'))
-    await vi.waitFor(() => expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha'))
-    expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
-    expect(store.get(snapshotAtom)).toEqual(snapshot('alpha.md'))
-    expect(store.get(revealInFilesRequestAtom)).toBeNull()
-  })
+  it.each(['tab', 'document'] as const)(
+    'restores the selected vault when local %s navigation supersedes a directory open',
+    async (navigation) => {
+      const { opens, physicalRemote } = controlledOpens(2)
+      const store = createStore()
+      store.set(activeRemoteAtom, 'syv-ai/alpha')
+      store.set(openedRemoteAtom, 'syv-ai/alpha')
+      store.set(snapshotAtom, snapshot('alpha.md'))
+      store.set(openTabAtom, { kind: 'doc', path: 'alpha.md' })
+      unsubscribe = subscribeToVault(store)
+      holi!.pushOpen({ remote: 'syv-ai/beta', path: 'folder', kind: 'directory' })
+      await opens[0]!.entered.promise
+      if (navigation === 'tab') store.set(openTabAtom, { kind: 'settings' })
+      else store.set(openDocumentAtom, 'alpha.md', 'current-heading')
+      const workspace = JSON.stringify(store.get(shellWorkspaceAtom))
+      opens[0]!.response.resolve(snapshot('beta.md'))
+      expect(await opens[1]!.entered.promise).toBe('syv-ai/alpha')
+      opens[1]!.response.resolve(snapshot('alpha.md'))
+      await vi.waitFor(() => expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha'))
+      expect(physicalRemote()).toBe('syv-ai/alpha')
+      expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
+      expect(store.get(snapshotAtom)).toEqual(snapshot('alpha.md'))
+      expect(JSON.stringify(store.get(shellWorkspaceAtom))).toBe(workspace)
+      expect(store.get(revealInFilesRequestAtom)).toBeNull()
+      if (navigation === 'document') {
+        expect(store.get(openDocumentRequestAtom)).toMatchObject({ path: 'alpha.md' })
+        expect(store.get(pendingHeadingAtom)).toEqual({
+          path: 'alpha.md',
+          heading: 'current-heading',
+        })
+      }
+    },
+  )
 
   it('a newer same-vault directory intent supersedes a delayed other-vault file', async () => {
     const { opens } = controlledOpens(2)
