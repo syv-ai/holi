@@ -16,6 +16,40 @@ const clean = (text) => text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trim()
 const messageText = (item) =>
   Array.isArray(item.content) ? item.content.map((part) => part.text ?? '').join('') : item.content
 
+// Serialized into the existing owned PTY; its descendants retain the same supervisor.
+async function captureNativeOutput(args) {
+  const { spawn } = await import('node:child_process')
+  const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+  const limit = 524288
+  let stdout = Buffer.alloc(0)
+  let stderr = Buffer.alloc(0)
+  let overflow = false
+  for (const [stream, kind] of [
+    [child.stdout, 'stdout'],
+    [child.stderr, 'stderr'],
+  ]) {
+    stream.on('data', (bytes) => {
+      const previous = kind === 'stdout' ? stdout : stderr
+      if (previous.length + bytes.length > limit) {
+        overflow = true
+        child.kill('SIGKILL')
+        return
+      }
+      if (kind === 'stdout') stdout = Buffer.concat([stdout, bytes])
+      else stderr = Buffer.concat([stderr, bytes])
+    })
+  }
+  const exitCode = await new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', resolve)
+  })
+  if (overflow) throw Error('Native output exceeded 524288 bytes')
+  if (exitCode !== 0) throw Error('Native command failed: ' + stderr.toString().slice(-4000))
+  process.stdout.write(
+    JSON.stringify({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }),
+  )
+}
+
 /** Accept a candidate limitation only after complete native observations and cleanup. */
 export function validateDebugPromptInputEvidence(value) {
   if (value?.schema !== 'holi.codex-debug-prompt-input.v1') return false
@@ -254,7 +288,7 @@ export async function runDebugPromptInputCandidate() {
       [0, [installed.bin, 'debug', 'prompt-input', prompt]],
       [1, [installed.bin, '--profile', 'fixture', 'debug', 'prompt-input', prompt]],
     ]) {
-      const wrapper = `import{spawn}from'node:child_process';const c=spawn(process.execPath,${JSON.stringify(args)},{stdio:['ignore','pipe','pipe']});const limit=524288;let out=Buffer.alloc(0),err=Buffer.alloc(0),overflow=false;for(const [s,k]of [[c.stdout,'out'],[c.stderr,'err']])s.on('data',b=>{const v=k==='out'?out:err;if(v.length+b.length>limit){overflow=true;c.kill('SIGKILL');return}if(k==='out')out=Buffer.concat([out,b]);else err=Buffer.concat([err,b])});const code=await new Promise((r,j)=>{c.once('error',j);c.once('close',r)});if(overflow)throw Error('native output exceeded 524288 bytes');if(code!==0)throw Error('native command failed: '+err.toString().slice(-4000));process.stdout.write(JSON.stringify({stdout:out.toString(),stderr:err.toString(),exitCode:code}))`
+      const wrapper = `await (${captureNativeOutput.toString()})(${JSON.stringify(args)})`
       const result = JSON.parse(
         await command(['--input-type=module', '-e', wrapper], `debug-${index}`),
       )
