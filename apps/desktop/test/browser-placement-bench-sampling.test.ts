@@ -5,6 +5,7 @@ import { selectScenario } from '../scripts/browser-placement-bench-scenarios.mjs
 const condition = { focused: true, visible: true, minimized: false }
 const snapshot = (count: number, state = condition) => ({
   condition: state,
+  visibilityEpoch: 0,
   stats: {
     callbacks: count,
     hostRects: count,
@@ -49,8 +50,8 @@ describe('browser placement benchmark sampling', () => {
     const short = createTrialSampling({ condition })
     expect(short.finish(snapshot(4)).counters.totals.callbacks).toBe(4)
     const resource = createTrialSampling({ condition, counters: false })
-    resource.observe({ condition })
-    expect(resource.finish({ condition }).counters).toBeNull()
+    resource.observe({ condition, visibilityEpoch: 0 })
+    expect(resource.finish({ condition, visibilityEpoch: 0 }).counters).toBeNull()
     expect(() => selectScenario('not-a-scenario')).toThrow()
   })
 })

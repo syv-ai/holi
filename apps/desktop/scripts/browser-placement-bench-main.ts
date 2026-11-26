@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import type { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -10,8 +11,9 @@ import {
   assertPlacementCounters,
   pageProcessIds,
 } from './browser-placement-bench-analysis.mjs'
-import { scenarioNames } from './browser-placement-bench-scenarios.mjs'
-import { boundsFrameAligned } from './browser-placement-bounds.mjs'
+import { selectScenarios } from './browser-placement-bench-scenarios.mjs'
+import { createTrialSampling } from './browser-placement-bench-sampling.mjs'
+import { assertPlacementBounds } from './browser-placement-bench-bounds'
 import { BROWSER_NAMESPACES, browserCapabilities } from '../src/plugins/browser/main/capabilities'
 import { createPages } from '../src/plugins/browser/main/pages'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
@@ -24,6 +26,14 @@ const warmup = Number(process.env.HOLI_BENCH_WARMUP ?? 2)
 const repetitions = Number(process.env.HOLI_BENCH_REPETITIONS ?? 1)
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 const metrics: unknown[] = []
+const trials: {
+  scenario: string
+  trial: string
+  valid: boolean
+  reason: string | null
+  counters: unknown
+  durationMs: number
+}[] = []
 const placementMessages = { count: 0 }
 const placementHistory: {
   at: number
@@ -44,6 +54,11 @@ const placementTransitionsByScenario: Record<
 
 async function run(): Promise<void> {
   assert(root && evidence)
+  assert.equal(
+    process.env.HOLI_BENCH_FOCUS,
+    'foreground',
+    'explicit foreground declaration required',
+  )
   for (const name of ['app-data', 'profile', 'session', 'vault'])
     mkdirSync(join(root, name), { recursive: true })
   app.setName('Holi Browser Placement Benchmark')
@@ -73,6 +88,8 @@ async function run(): Promise<void> {
     }
   }
   const hostSession = session.defaultSession
+  hostSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  hostSession.setPermissionCheckHandler(() => false)
   hostSession.webRequest.onBeforeRequest((details, callback) => {
     const isRendererAsset =
       details.url.startsWith('file:') &&
@@ -82,6 +99,8 @@ async function run(): Promise<void> {
     callback({ cancel: !isRendererAsset && !allowed(details.url) })
   })
   const browserSession = session.fromPartition('persist:holi-browser')
+  browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  browserSession.setPermissionCheckHandler(() => false)
   browserSession.webRequest.onBeforeRequest((details, callback) =>
     callback({ cancel: !allowed(details.url) }),
   )
@@ -102,7 +121,7 @@ async function run(): Promise<void> {
   const win = new BrowserWindow({
     width: 1200,
     height: 850,
-    show: true,
+    show: false,
     webPreferences: {
       preload: process.env.HOLI_BENCH_PRELOAD,
       sandbox: true,
@@ -116,6 +135,15 @@ async function run(): Promise<void> {
     if (!target.startsWith('file:')) event.preventDefault()
   })
   await win.loadFile(join(process.env.HOLI_BENCH_RENDERER!, 'index.html'))
+  win.showInactive()
+  await win.webContents.executeJavaScript(
+    `window.__placementVisibilityEpoch = 0; document.addEventListener('visibilitychange', () => { window.__placementVisibilityEpoch++ })`,
+  )
+  let activeSampler: ReturnType<typeof createTrialSampling> | null = null
+  const conditionEvents = ['focus', 'blur', 'show', 'hide', 'minimize', 'restore'] as const
+  const conditionChanged = () => activeSampler?.transition({ type: 'window-condition' })
+  const conditionEmitter: EventEmitter = win
+  for (const event of conditionEvents) conditionEmitter.on(event, conditionChanged)
   assert.equal(app.getPath('userData'), join(root, 'profile'))
   const registry = createCapabilityRegistry()
   const pages = createPages({
@@ -137,7 +165,13 @@ async function run(): Promise<void> {
   )
   let live = true
   ipcMain.on('qa:plugin', (event, namespace, message) => {
-    if (event.sender !== win.webContents || namespace !== 'browser' || !live) return
+    if (
+      event.sender !== win.webContents ||
+      event.senderFrame !== win.webContents.mainFrame ||
+      namespace !== 'browser' ||
+      !live
+    )
+      return
     if (message?.name === 'place' && message.remote === 'bench') {
       placementMessages.count++
       const payload = message.payload
@@ -148,6 +182,7 @@ async function run(): Promise<void> {
   })
   ipcMain.handle('qa:trpc', async (event, op) => {
     assert.equal(event.sender, win.webContents)
+    assert.equal(event.senderFrame, win.webContents.mainFrame)
     assert.equal(op.path, 'cap.run')
     const { remote, name, paramsJson } = op.input
     assert.equal(remote, 'bench')
@@ -218,88 +253,7 @@ async function run(): Promise<void> {
     allPageIds.add(view.webContents.id)
     allPagePids.add(view.webContents.getOSProcessId())
   }
-  const scenarios = [
-    {
-      name: 'stationary-one-pane',
-      expectedViews: 1,
-      configure:
-        'window.bench.reset();window.bench.setVisible(true);window.bench.setOverlay(false)',
-    },
-    {
-      name: 'stationary-two-pane',
-      expectedViews: 2,
-      configure: 'window.bench.reset();window.bench.setTwoPane(true)',
-    },
-    {
-      name: 'hidden-control',
-      expectedViews: 0,
-      configure: 'window.bench.reset();window.bench.setVisible(false)',
-    },
-    {
-      name: 'native-resize',
-      expectedViews: 1,
-      configure: 'window.bench.reset();window.bench.startWorkload("native-resize")',
-    },
-    {
-      name: 'ancestor-scroll',
-      expectedViews: 1,
-      configure: 'window.bench.reset();window.bench.startWorkload("ancestor-scroll")',
-    },
-    {
-      name: 'split-resize',
-      expectedViews: 2,
-      configure:
-        'window.bench.reset();window.bench.setTwoPane(true);window.bench.startWorkload("split-resize")',
-    },
-    {
-      name: 'transform-animation',
-      expectedViews: 1,
-      configure:
-        'window.bench.reset();window.bench.setTransform(true);window.bench.setAnimate(true)',
-    },
-    {
-      name: 'portal-overlap-entry-movement-exit',
-      expectedViews: 0,
-      prepareViews: 1,
-      prepare: 'window.bench.reset()',
-      configure: 'window.bench.setOverlap(true);window.bench.setOverlay(true)',
-    },
-    {
-      name: 'portal-nonoverlap',
-      expectedViews: 1,
-      prepareViews: 1,
-      prepare: 'window.bench.reset()',
-      configure: 'window.bench.setOverlay(true);window.bench.setOverlap(false)',
-    },
-    {
-      name: 'imperative-web-animation',
-      expectedViews: 1,
-      prepareViews: 1,
-      prepare: 'window.bench.reset()',
-      configure: 'window.bench.setImperative(true)',
-      finish: 'window.bench.setImperative(false)',
-    },
-    {
-      name: 'hide-return',
-      expectedViews: 1,
-      prepareViews: 0,
-      prepare: 'window.bench.reset();window.bench.setVisible(false)',
-      configure: 'window.bench.setVisible(true)',
-    },
-  ].filter(
-    (item) => !process.env.HOLI_BENCH_SCENARIO || item.name === process.env.HOLI_BENCH_SCENARIO,
-  )
-  assert.deepEqual(
-    scenarios.map(({ name }) => name),
-    scenarioNames.filter(
-      (name) => !process.env.HOLI_BENCH_SCENARIO || name === process.env.HOLI_BENCH_SCENARIO,
-    ),
-  )
-  assert(
-    scenarios.length > 0,
-    `unknown or empty scenario filter: ${process.env.HOLI_BENCH_SCENARIO}`,
-  )
-  const focusByScenario = new Map<string, boolean>()
+  const scenarios = selectScenarios(process.env.HOLI_BENCH_SCENARIO)
   const sample = async (trial: string, phase: string) => {
     const logicalCpuCount = cpus().length
     const sampledAt = performance.now()
@@ -338,18 +292,8 @@ async function run(): Promise<void> {
       tasks.push({ role: 'host-renderer', unavailable: true })
     }
     const shellDiagnostics = await win.webContents.executeJavaScript(
-      `({ hostPid:${win.webContents.getOSProcessId()}, focused:${win.isFocused()}, minimized:${win.isMinimized()}, visibilityState:document.visibilityState, stats: window.__placementBenchStats ?? null, hosts: [...document.querySelectorAll('[data-browser-tab] > div:last-child')].map((el) => { const r = el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height } }), overlays: [...document.body.children].filter((el) => el.matches('[role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper], [data-slot$="-overlay"]')).map((el) => { const r=el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height } }) })`,
+      `({ hostPid:${win.webContents.getOSProcessId()}, focused:${win.isFocused()}, minimized:${win.isMinimized()}, visibilityState:document.visibilityState, visibilityEpoch:window.__placementVisibilityEpoch, stats: window.__placementBenchStats ?? null, hosts: [...document.querySelectorAll('[data-browser-tab] > div:last-child')].map((el) => { const r = el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height } }), overlays: [...document.body.children].filter((el) => el.matches('[role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper], [data-slot$="-overlay"]')).map((el) => { const r=el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height } }) })`,
     )
-    assert.equal(shellDiagnostics.minimized, false, `${phase}: benchmark window became minimized`)
-    assert.equal(
-      shellDiagnostics.visibilityState,
-      'visible',
-      `${phase}: host document became hidden`,
-    )
-    const priorFocus = focusByScenario.get(phase)
-    if (priorFocus !== undefined && priorFocus !== shellDiagnostics.focused)
-      throw new Error(`${phase}: window focus changed during measurement`)
-    focusByScenario.set(phase, shellDiagnostics.focused)
     for (const view of win.contentView.children as WebContentsView[]) {
       if (view.webContents.isDestroyed()) continue
       try {
@@ -409,6 +353,15 @@ async function run(): Promise<void> {
       placementMessages: placementMessages.count,
       viewCount: win.contentView.children.length,
     })
+    return {
+      condition: {
+        focused: win.isFocused(),
+        visible: win.isVisible() && shellDiagnostics.visibilityState === 'visible',
+        minimized: win.isMinimized(),
+      },
+      stats: shellDiagnostics.stats,
+      visibilityEpoch: shellDiagnostics.visibilityEpoch,
+    }
   }
   for (let repetition = 0; repetition < repetitions; repetition++) {
     for (const scenario of scenarios) {
@@ -480,85 +433,13 @@ async function run(): Promise<void> {
         if (boundsDiagnostic.length !== nativeDiagnostic.length)
           throw new Error(`${scenario.name}: renderer/native bounds count mismatch`)
       }
-      const assertCurrentBounds = async (label: string): Promise<void> => {
-        const attempts: unknown[] = []
-        const diagnosticStartedAt = performance.now()
-        for (let frame = 1; frame <= 3; frame++) {
-          const observedAt = performance.now()
-          const rendererRects = (await win.webContents.executeJavaScript(
-            "new Promise(resolve => requestAnimationFrame(() => resolve([...document.querySelectorAll('[data-browser-tab] > div:last-child')].map((el) => { const r = el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height } }).filter((r) => r.width >= 1 && r.height >= 1))))",
-          )) as { x: number; y: number; width: number; height: number }[]
-          const nativeRects = (win.contentView.children as WebContentsView[]).map((view) =>
-            view.getBounds(),
-          )
-          assert.equal(
-            nativeRects.length,
-            scenario.expectedViews,
-            `${label}: native view attachment`,
-          )
-          if (scenario.expectedViews === 0) return
-          assert.equal(
-            rendererRects.length,
-            nativeRects.length,
-            `${label}: renderer/native bounds count`,
-          )
-          const zoom = win.webContents.getZoomFactor()
-          const expected = rendererRects.map((rect) => ({
-            x: Math.round(rect.x * zoom),
-            y: Math.round(rect.y * zoom),
-            width: Math.round(rect.width * zoom),
-            height: Math.round(rect.height * zoom),
-          }))
-          const productionRects = placementHistory.flatMap((message) =>
-            message.rect === null
-              ? []
-              : [
-                  {
-                    x: Math.round(message.rect.x * zoom),
-                    y: Math.round(message.rect.y * zoom),
-                    width: Math.round(message.rect.width * zoom),
-                    height: Math.round(message.rect.height * zoom),
-                  },
-                ],
-          )
-          const aligned = boundsFrameAligned(expected, nativeRects, productionRects)
-          const matchingProductionPlacementMessages = placementHistory.filter(
-            (message) =>
-              message.rect !== null &&
-              expected.some((rect) =>
-                ['x', 'y', 'width', 'height'].every(
-                  (key) =>
-                    Math.round(message.rect![key as keyof typeof rect] * zoom) ===
-                    rect[key as keyof typeof rect],
-                ),
-              ),
-          )
-          const diagnosticSample = {
-            label,
-            hostFrame: frame,
-            observedAt,
-            expected,
-            native: nativeRects,
-            aligned,
-            matchingProductionPlacementMessages,
-          }
-          attempts.push(diagnosticSample)
-          boundsDiagnosticHistory.push(diagnosticSample)
-          if (aligned) {
-            boundsDiagnosticHistory.push({
-              label,
-              alignedAt: performance.now(),
-              hostFramesToAlignment: frame,
-              latencyMs: performance.now() - diagnosticStartedAt,
-            })
-            return
-          }
-        }
-        throw new Error(
-          `${label}: renderer/native bounds failed to align within 3 host frames: ${JSON.stringify(attempts)}`,
-        )
-      }
-      await assertCurrentBounds(scenario.name)
+      await assertPlacementBounds({
+        win,
+        expectedViews: scenario.expectedViews,
+        placementHistory,
+        boundsDiagnosticHistory,
+        label: scenario.name,
+      })
       if (scenario.name === 'ancestor-scroll' || scenario.name === 'split-resize') {
         await win.webContents.executeJavaScript(`window.bench.startWorkload('${scenario.name}')`)
       }
@@ -570,7 +451,13 @@ async function run(): Promise<void> {
       ) {
         for (let sample = 0; sample < 20; sample++) {
           await pause(50)
-          await assertCurrentBounds(`${scenario.name} motion sample ${sample + 1}`)
+          await assertPlacementBounds({
+            win,
+            expectedViews: scenario.expectedViews,
+            placementHistory,
+            boundsDiagnosticHistory,
+            label: `${scenario.name} motion sample ${sample + 1}`,
+          })
         }
       }
       const transitions = (placementTransitionsByScenario[scenario.name] ??= {
@@ -597,11 +484,42 @@ async function run(): Promise<void> {
       await win.webContents.executeJavaScript(
         `if (window.__placementBenchStats) { window.__placementBenchStats.callbacks = 0; window.__placementBenchStats.hostRects = 0; window.__placementBenchStats.coverageScans = 0; window.__placementBenchStats.overlayRects = 0 }`,
       )
+      const trial = `rep-${repetition + 1}`
+      const sampler = createTrialSampling({
+        condition: { focused: true, visible: true, minimized: false },
+        counters: process.env.HOLI_BENCH_COUNTS === '1',
+      })
+      activeSampler = sampler
+      const initial = await win.webContents.executeJavaScript(`(() => {
+        const stats = window.__placementBenchStats;
+        if (stats) for (const key of ['callbacks','hostRects','coverageScans','overlayRects']) stats[key] = 0;
+        return {stats: stats ? {...stats} : null, visibilityEpoch: window.__placementVisibilityEpoch, visible: document.visibilityState === 'visible'};
+      })()`)
+      sampler.observe({
+        condition: {
+          focused: win.isFocused(),
+          visible: win.isVisible() && initial.visible,
+          minimized: win.isMinimized(),
+        },
+        stats: initial.stats,
+        visibilityEpoch: initial.visibilityEpoch,
+      })
       const start = performance.now()
-      while (performance.now() - start < seconds * 1000) {
-        await sample(`rep-${repetition + 1}`, scenario.name)
-        await pause(1000)
+      const deadline = start + seconds * 1000
+      while (performance.now() < deadline) {
+        const snapshot = await sample(trial, scenario.name)
+        sampler.observe(snapshot)
+        await pause(Math.min(1000, Math.max(0, deadline - performance.now())))
       }
+      const terminal = await sample(trial, scenario.name)
+      const result = sampler.finish(terminal)
+      activeSampler = null
+      trials.push({
+        scenario: scenario.name,
+        trial,
+        ...result,
+        durationMs: performance.now() - start,
+      })
       await win.webContents.executeJavaScript('window.bench.stopWorkload()')
       if (resizeTimer) clearInterval(resizeTimer)
       placementMessagesByScenario[scenario.name] =
@@ -667,7 +585,7 @@ async function run(): Promise<void> {
     measurementConditions: {
       backgroundThrottling: false,
       focusAndVisibility:
-        'sampled each observation; invalid focus/visibility transitions reject trial',
+        'explicit foreground condition; Electron condition events and monotonic renderer visibility epoch latch transitions through terminal capture',
       occlusion:
         'native window occlusion by unrelated windows is not controlled; do not focus or stop other applications',
     },
@@ -698,6 +616,7 @@ async function run(): Promise<void> {
       placementIpcHistory: placementHistory,
     },
     observations: metrics,
+    trials,
     placementMessages: Object.values(placementMessagesByScenario).reduce(
       (sum, count) => sum + count,
       0,
@@ -708,6 +627,8 @@ async function run(): Promise<void> {
     energy: null,
   }
   writeFileSync(join(evidence, 'baseline.json'), JSON.stringify(result, null, 2))
+  activeSampler = null
+  for (const event of conditionEvents) conditionEmitter.removeListener(event, conditionChanged)
   live = false
   ipcMain.removeHandler('qa:trpc')
   ipcMain.removeAllListeners('qa:plugin')

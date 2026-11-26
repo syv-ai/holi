@@ -10,17 +10,21 @@ export function validateTrials(baseline, scenarios, repetitions, countsOnly) {
   )
   const found = new Map()
   for (const trial of baseline.trials) {
-    if (!selected.has(trial.scenario)) continue
+    if (!selected.has(trial.scenario)) throw new Error('unexpected scenario receipt')
     const key = `${trial.scenario}\0${trial.trial}`
-    if (!expected.has(key)) continue
+    if (!expected.has(key)) throw new Error('unexpected trial receipt')
     if (found.has(key)) throw new Error(`duplicate trial receipt: ${trial.scenario}/${trial.trial}`)
-    if (!trial.valid)
+    if (trial.valid !== true)
       throw new Error(
         `invalid trial receipt: ${trial.scenario}/${trial.trial}: ${trial.reason ?? 'unknown reason'}`,
       )
     if (
       countsOnly &&
-      (!trial.counters || counters.some((name) => !Number.isFinite(trial.counters.totals?.[name])))
+      (!trial.counters ||
+        counters.some(
+          (name) =>
+            !Number.isSafeInteger(trial.counters.totals?.[name]) || trial.counters.totals[name] < 0,
+        ))
     )
       throw new Error(`missing terminal counter totals: ${trial.scenario}/${trial.trial}`)
     if (!countsOnly && trial.counters !== null)

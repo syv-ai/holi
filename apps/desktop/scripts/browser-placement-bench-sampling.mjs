@@ -1,14 +1,19 @@
 const counterNames = ['callbacks', 'hostRects', 'coverageScans', 'overlayRects']
 
 export function createTrialSampling({ condition, counters = true }) {
-  if (!condition || typeof condition !== 'object')
+  if (
+    !condition ||
+    condition.focused !== true ||
+    condition.visible !== true ||
+    condition.minimized !== false
+  )
     throw new TypeError('foreground condition is required')
+  condition = { ...condition }
   let previous = null
   let invalidReason = null
   let totals = Object.fromEntries(counterNames.map((name) => [name, 0]))
   let observations = 0
   let finished = false
-  const transitions = []
 
   function observe(snapshot) {
     if (finished) throw new Error('trial sampling already finished')
@@ -29,13 +34,25 @@ export function createTrialSampling({ condition, counters = true }) {
         previous.minimized !== state?.minimized)
     )
       invalidReason ??= 'foreground condition changed during trial'
+    const epoch = snapshot?.visibilityEpoch
+    if (!Number.isSafeInteger(epoch) || epoch < 0)
+      invalidReason ??= 'missing document visibility epoch'
+    else if (previous && epoch !== previous.visibilityEpoch)
+      invalidReason ??= 'document visibility changed during trial'
     const stats = counters ? snapshot?.stats : null
     if (
       counters &&
       (!stats || counterNames.some((name) => !Number.isInteger(stats[name]) || stats[name] < 0))
     )
       invalidReason ??= 'invalid placement counter snapshot'
-    else if (counters && previous) {
+    else if (counters && !previous) totals = { ...stats }
+    else if (
+      counters &&
+      previous?.stats &&
+      counterNames.every(
+        (name) => Number.isInteger(previous.stats[name]) && previous.stats[name] >= 0,
+      )
+    ) {
       for (const name of counterNames) {
         const delta = stats[name] - previous.stats[name]
         if (delta < 0) invalidReason ??= `placement counter ${name} reset during trial`
@@ -44,6 +61,7 @@ export function createTrialSampling({ condition, counters = true }) {
     }
     observations++
     previous = {
+      visibilityEpoch: epoch,
       focused: state?.focused,
       visible: state?.visible,
       minimized: state?.minimized,
@@ -55,11 +73,6 @@ export function createTrialSampling({ condition, counters = true }) {
     if (finished) throw new Error('trial sampling already finished')
     observe(snapshot)
     finished = true
-    // First and terminal snapshots both contribute their absolute counters; subsequent
-    // snapshots contribute deltas. This captures a short final interval exactly once.
-    if (counters && observations === 1 && previous?.stats) {
-      for (const name of counterNames) totals[name] = previous.stats[name]
-    }
     const valid = invalidReason === null && observations >= 2
     return {
       valid,
@@ -80,7 +93,6 @@ export function createTrialSampling({ condition, counters = true }) {
     finish,
     transition(event) {
       if (!finished) {
-        transitions.push(event)
         invalidReason ??= 'foreground condition changed during trial'
       }
     },

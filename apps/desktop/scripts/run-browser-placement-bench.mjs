@@ -5,7 +5,6 @@ import { mkdtemp, mkdir, rm, writeFile, readFile, statfs } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createHash } from 'node:crypto'
 import { installCancellationHandlers } from './browser-placement-bench-lifecycle.mjs'
 import { createOwnedProcesses } from './owned-processes.mjs'
 import {
@@ -14,49 +13,17 @@ import {
   median,
   assertPlacementCounters,
 } from './browser-placement-bench-analysis.mjs'
-import { scenarioNames } from './browser-placement-bench-scenarios.mjs'
-import { selectScenario } from './browser-placement-bench-scenarios.mjs'
+import { scenarioNames, benchmarkTimeoutMs } from './browser-placement-bench-scenarios.mjs'
+import { parseBenchmarkOptions } from './browser-placement-bench-config.mjs'
 import { validateTrials, terminalCounters } from './browser-placement-bench-results.mjs'
-const EXPECTED_SOURCE_HASH = '4fa1cc0a0ee188d981910085e881488ddcc19592105d00c1b492a831058b5726'
-import { build } from 'vite'
-import react from '@vitejs/plugin-react'
-import { externalizeDepsPlugin } from 'electron-vite'
+import { prepareBenchmarkRuntime } from './browser-placement-bench-build.mjs'
 
-assert(
-  process.platform !== 'win32',
-  'Windows is unsupported until owned process-tree drainage is verified; refusing before build or spawn',
-)
+const { out, seconds, warmup, repetitions, countsOnly, variant, scenario, focus } =
+  parseBenchmarkOptions(process.argv.slice(2))
 const cancellation = installCancellationHandlers()
 const { cancelled } = cancellation
 const ownedProcesses = createOwnedProcesses()
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const args = process.argv.slice(2)
-const option = (name, fallback) => {
-  const index = args.indexOf(name)
-  return index < 0 ? fallback : args[index + 1]
-}
-assert(
-  args.includes('--focus') && option('--focus') === 'foreground',
-  '--focus foreground is required',
-)
-const outArg = option('--out', join(tmpdir(), `holi-547-evidence-${Date.now()}-${process.pid}`))
-const out = resolve(outArg)
-const seconds = Number(option('--seconds', '60'))
-const warmup = Number(option('--warmup', '20'))
-const repetitions = Number(option('--repetitions', '3'))
-const countsOnly = args.includes('--counts')
-const variant = option('--variant', 'baseline')
-const scenario = option('--scenario', '')
-if (scenario) selectScenario(scenario)
-assert(!scenario || scenarioNames.includes(scenario), `unsupported scenario: ${scenario}`)
-const selectedScenarioCount = scenario ? 1 : scenarioNames.length
-assert(variant === 'baseline', '--variant supports baseline only; hybrid is rejected')
-assert(Number.isFinite(seconds) && seconds >= 1 && seconds <= 3600, '--seconds must be 1..3600')
-assert(Number.isFinite(warmup) && warmup >= 0 && warmup <= 600, '--warmup must be 0..600')
-assert(
-  Number.isInteger(repetitions) && repetitions >= 1 && repetitions <= 20,
-  '--repetitions must be 1..20',
-)
 await mkdir(out, { recursive: false })
 if (process.platform === 'darwin') {
   const concurrent = spawnSync('pgrep', ['-fl', 'holi-547-placement-runtime-'], {
@@ -77,115 +44,17 @@ let output = ''
 let closed
 let root
 let sourceHash
-const sourcePath = join(desktop, 'src/plugins/browser/renderer/browser-surface.tsx')
-const expectedHash = EXPECTED_SOURCE_HASH
-const fixture = join(desktop, 'scripts/browser-placement-fixture')
 let renderer
-const reactPlugin = react()
-const tailwind = (
-  await import(
-    pathToFileURL(createRequire(join(desktop, 'package.json')).resolve('@tailwindcss/vite'))
-  )
-).default
 let instrumentMatches = 0
 try {
-  root = await mkdtemp(join(tmpdir(), 'holi-547-placement-runtime-'))
-  renderer = join(root, 'renderer')
-  const source = await readFile(sourcePath, 'utf8')
-  sourceHash = createHash('sha256').update(source).digest('hex')
-  assert.equal(
-    sourceHash,
-    expectedHash,
-    'BrowserSurface placement source changed; review instrumentation before updating hash',
-  )
-  const instrumentationPlugin = {
-    name: 'placement-benchmark-instrumentation',
-    enforce: 'pre',
-    transform(code, id) {
-      if (id.split('?')[0] !== sourcePath) return null
-      if (!countsOnly) return null
-      assert.equal(
-        createHash('sha256').update(source).digest('hex'),
-        expectedHash,
-        'instrumentation source hash mismatch',
-      )
-      const needle =
-        '      frame = requestAnimationFrame(tick)\n      const el = host.current\n      if (el === null) return\n      const r = el.getBoundingClientRect()'
-      assert.equal(
-        code.split(needle).length - 1,
-        1,
-        'expected one usePlacement callback geometry seam',
-      )
-      instrumentMatches++
-      const overlayNeedle =
-        '    if (!el.matches(OVERLAY)) continue\n    const r = el.getBoundingClientRect()'
-      assert.equal(
-        code.split(overlayNeedle).length - 1,
-        1,
-        'expected one targeted overlay rect seam',
-      )
-      return code
-        .replace(
-          needle,
-          `      window.__placementBenchStats ??= { callbacks: 0, hostRects: 0, coverageScans: 0, overlayRects: 0 }\n      window.__placementBenchStats.callbacks++\n      ${variant === 'baseline' ? 'frame = requestAnimationFrame(tick)\n      ' : ''}const el = host.current\n      if (el === null) return\n      window.__placementBenchStats.hostRects++\n      const r = el.getBoundingClientRect()`,
-        )
-        .replace(
-          overlayNeedle,
-          '    if (!el.matches(OVERLAY)) continue\n    window.__placementBenchStats.overlayRects++\n    const r = el.getBoundingClientRect()',
-        )
-        .replace(
-          'function overlaid(box: Box): boolean {\n  for (const el of document.body.children) {',
-          'function overlaid(box: Box): boolean {\n  window.__placementBenchStats.coverageScans++\n  for (const el of document.body.children) {',
-        )
-    },
-  }
   if (cancellation.interrupted)
     throw new Error(`benchmark cancelled by ${cancellation.interrupted}`)
-  await build({
-    configFile: false,
-    base: './',
-    root: fixture,
-    resolve: {
-      alias: [
-        { find: '@/plugin-api', replacement: join(fixture, 'api.ts') },
-        { find: '@', replacement: join(desktop, 'src/renderer/src') },
-      ],
-      dedupe: ['react', 'react-dom', 'jotai'],
-    },
-    esbuild: { jsx: 'automatic' },
-    plugins: [reactPlugin, tailwind(), instrumentationPlugin],
-    build: { outDir: renderer, emptyOutDir: true, minify: false },
-  })
-  const mainSource = join(desktop, 'scripts/browser-placement-bench-main.ts')
-  await build({
-    configFile: false,
-    root: desktop,
-    plugins: [externalizeDepsPlugin({ exclude: ['@holi/shared'] })],
-    build: {
-      ssr: true,
-      target: 'node24',
-      outDir: root,
-      emptyOutDir: false,
-      rollupOptions: {
-        input: mainSource,
-        external: ['electron'],
-        output: {
-          format: 'cjs',
-          entryFileNames: 'main.cjs',
-          banner: `module.paths.unshift(${JSON.stringify(join(desktop, 'node_modules'))});`,
-        },
-      },
-    },
-  })
-  assert.equal(
-    instrumentMatches,
-    countsOnly ? 1 : 0,
-    'instrumentation match count differs from requested run mode',
-  )
-  await writeFile(
-    join(root, 'package.json'),
-    JSON.stringify({ name: 'holi-browser-placement-bench', main: 'main.cjs' }),
-  )
+  root = await mkdtemp(join(tmpdir(), 'holi-547-placement-runtime-'))
+  ;({ sourceHash, renderer, instrumentMatches } = await prepareBenchmarkRuntime({
+    desktop,
+    root,
+    countsOnly,
+  }))
   const evidenceMeta = {
     startedAt: new Date().toISOString(),
     gitHead: await (
@@ -196,6 +65,7 @@ try {
     sourceHash,
     variant,
     scenario: scenario || null,
+    declaredFocus: focus,
     seconds,
     warmup,
     repetitions,
@@ -230,6 +100,7 @@ try {
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
       .join(delimiter),
+    HOLI_BENCH_FOCUS: focus,
     HOLI_BENCH_ROOT: root,
     HOLI_BENCH_EVIDENCE: out,
     HOLI_BENCH_RENDERER: renderer,
@@ -263,7 +134,7 @@ try {
       new Promise((_, reject) => {
         timeout = setTimeout(
           () => reject(new Error('Electron placement benchmark timed out')),
-          (seconds + warmup + 15) * repetitions * selectedScenarioCount * 1000 + 120000,
+          benchmarkTimeoutMs({ seconds, warmup, repetitions, scenario }),
         )
       }),
     ])
@@ -333,13 +204,9 @@ try {
           item.appMetrics.reduce((sum, process) => sum + (process.memory?.workingSetSize ?? 0), 0) /
           1024,
       )
-      const counterDeltasByTrial = {}
-      if (countsOnly) {
-        for (const trial of [...new Set(observations.map((item) => item.trial))]) {
-          const terminal = terminalCounters(validatedTrials, name, repetitions)
-          counterDeltasByTrial[trial] = terminal[trial]
-        }
-      }
+      const counterDeltasByTrial = countsOnly
+        ? terminalCounters(validatedTrials, name, repetitions)
+        : null
       return [
         name,
         {
