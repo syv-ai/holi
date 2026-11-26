@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { validateDebugPromptInputEvidence } from './codex-debug-prompt-input.mjs'
+import {
+  runOwnedCommand,
+  validateDebugPromptInputEvidence,
+} from './codex-debug-prompt-input.mjs'
 
 const message = (role, text) => ({
   type: 'message',
@@ -62,6 +65,22 @@ function completeEvidence() {
     observation.stdout = JSON.stringify(observation.input)
   return evidence
 }
+
+test('captures output drained after process exit before returning owned command output', async () => {
+  let output = ''
+  const child = {
+    output: { toString: () => output },
+    waitForExit: async () => ({ code: 0 }),
+    close: async () => {
+      await new Promise((resolve) => setImmediate(resolve))
+      output = 'native output after exit'
+      return { drained: true }
+    },
+    failure: undefined,
+  }
+
+  assert.equal(await runOwnedCommand(child, 'fixture'), 'native output after exit')
+})
 
 test('accepts complete base and profile native observations as demonstrated limitation', () => {
   assert.equal(validateDebugPromptInputEvidence(completeEvidence()), true)
