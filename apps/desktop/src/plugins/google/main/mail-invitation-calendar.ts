@@ -42,6 +42,8 @@ type InvitationCalendarCopy = {
   htmlLink: string | null
   responseStatus: RsvpStatus | null
   cancelled: boolean
+  canEdit: boolean
+  canNavigate: boolean
   unavailableReason: string | null
   reply: { url: string; etag: string; attendee: NonNullable<RawEvent['attendees']>[number] } | null
   navigation: (
@@ -86,10 +88,22 @@ type CollectionPage<T> = { items?: T[]; nextPageToken?: string; accessRole?: unk
 
 class InvalidCalendarCollection extends Error {}
 
+type ReadableCalendarRole = 'reader' | 'writer' | 'owner'
+type CalendarRole = ReadableCalendarRole | 'unreadable'
+type CalendarAccess = {
+  readonly role: CalendarRole | undefined
+  constrain: (role: CalendarRole) => void
+}
+
+function writableRole(role: CalendarAccess['role']): boolean {
+  return role === 'writer' || role === 'owner'
+}
+
 async function invitationPageItems<T>(
   page: CollectionPage<T>,
   kind: CollectionKind,
   observe?: (item: T) => Promise<void>,
+  access?: CalendarAccess,
 ): Promise<T[]> {
   if (
     !page ||
@@ -106,8 +120,12 @@ async function invitationPageItems<T>(
   if (observe) for (const item of items) if (isCollectionRow(item)) await observe(item)
   // An omitted role supplies no permission evidence. An explicit role on the
   // Events page can show that access was lost since CalendarList was read.
-  if (kind === 'calendar#events' && 'accessRole' in page && !readableRole(page.accessRole))
-    throw new InvalidCalendarCollection('Calendar page does not establish event read access')
+  if (kind === 'calendar#events' && 'accessRole' in page) {
+    const role = readableRole(page.accessRole) ? page.accessRole : 'unreadable'
+    access?.constrain(role)
+    if (role === 'unreadable')
+      throw new InvalidCalendarCollection('Calendar page does not establish event read access')
+  }
   return items
 }
 
@@ -128,13 +146,14 @@ async function invitationPages<T>(
   kind: CollectionKind,
   params: GoogleParams,
   observe?: (item: T) => Promise<void>,
+  access?: CalendarAccess,
 ): Promise<T[]> {
   const all: T[] = []
   const seen = new Set<string>()
   let pageToken: string | undefined
   for (let index = 0; index < CALENDAR_PAGE_LIMIT; index++) {
     const page = await api.get<CollectionPage<T>>(url, { ...params, pageToken })
-    const items = await invitationPageItems(page, kind, observe)
+    const items = await invitationPageItems(page, kind, observe, access)
     if (!items.every(isCollectionRow))
       throw new InvalidCalendarCollection('Invalid Calendar collection row')
     all.push(...items)
@@ -310,6 +329,7 @@ async function exactCopies(
     includeHiddenInvitations: boolean
   },
   observe: ObserveEvent,
+  access: CalendarAccess,
 ): Promise<RawEvent[]> {
   const { uid, recurrenceId, sequence } = identity
   const events = await invitationPages<RawEvent>(
@@ -325,6 +345,7 @@ async function exactCopies(
       showHiddenInvitations: context.includeHiddenInvitations ? 'true' : undefined,
     },
     observeUidQuery(uid, observe, context),
+    access,
   )
   if (
     events.some(
@@ -398,6 +419,7 @@ async function exactCopies(
             parentId,
           })
       },
+      access,
     )
     if (new Set(instances.map(({ id }) => id)).size !== instances.length)
       throw new Error('Calendar returned duplicate instance rows')
@@ -524,20 +546,54 @@ function usableInvitationEvent(event: RawEvent): boolean {
 
 class CalendarObservationError extends Error {}
 
-/** One bounded CalendarList snapshot per reconciliation, never across reads
- * or dispatch preflight. Visibility settings do not grant access to resources. */
+/** CalendarList and Events pages constrain access only within this read. A
+ * later page (including navigation) cannot restore permissions in the same snapshot. */
 export function createInvitationCalendarDiscovery(api: CalendarReadApi) {
   let snapshot: Promise<CalendarListEntry[]> | undefined
-  return () =>
-    (snapshot ??= invitationPages<CalendarListEntry>(
-      api,
-      `${BASE}/users/me/calendarList`,
-      'calendar#calendarList',
-      { minAccessRole: 'reader', showDeleted: 'false', showHidden: 'true' },
-    ))
+  const roles = new Map<string, CalendarRole>()
+  const order: CalendarRole[] = ['unreadable', 'reader', 'writer', 'owner']
+  function access(base: string): CalendarAccess {
+    return {
+      get role() {
+        return roles.get(base)
+      },
+      constrain(role) {
+        const previous = roles.get(base)
+        if (previous === undefined || order.indexOf(role) < order.indexOf(previous))
+          roles.set(base, role)
+      },
+    }
+  }
+  return {
+    access,
+    canEditTarget(target: string, mailbox: string) {
+      const resource = calendarTargetResource(target, mailbox)
+      return resource !== null && writableRole(roles.get(calendarEventsUrl(resource.id)))
+    },
+    calendars() {
+      return (snapshot ??= invitationPages<CalendarListEntry>(
+        api,
+        `${BASE}/users/me/calendarList`,
+        'calendar#calendarList',
+        { minAccessRole: 'reader', showDeleted: 'false', showHidden: 'true' },
+      ))
+    },
+  }
 }
 
-type ReadCalendars = ReturnType<typeof createInvitationCalendarDiscovery>
+type CalendarDiscovery = ReturnType<typeof createInvitationCalendarDiscovery>
+
+function calendarEventsUrl(id: string): string {
+  return `${BASE}/calendars/${encodeURIComponent(id)}/events`
+}
+
+function constrainCalendarEntry(access: CalendarAccess, calendar: CalendarListEntry) {
+  access.constrain(
+    calendar.deleted !== true && readableRole(calendar.accessRole)
+      ? calendar.accessRole
+      : 'unreadable',
+  )
+}
 
 function validCalendar(calendar: CalendarListEntry): boolean {
   return (
@@ -551,7 +607,7 @@ function validCalendar(calendar: CalendarListEntry): boolean {
   )
 }
 
-function readableRole(accessRole: unknown): boolean {
+function readableRole(accessRole: unknown): accessRole is ReadableCalendarRole {
   return accessRole === 'owner' || accessRole === 'writer' || accessRole === 'reader'
 }
 
@@ -577,7 +633,7 @@ export async function findInvitationCalendarCopy(
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
   readCalendarOverrides: () => Promise<CalendarOverrides>,
-  readCalendars: ReadCalendars,
+  discovery: CalendarDiscovery,
 ): Promise<CalendarLookup> {
   try {
     return await lookupInvitationCalendarCopy(
@@ -592,7 +648,7 @@ export async function findInvitationCalendarCopy(
         }
       },
       readCalendarOverrides,
-      readCalendars,
+      discovery,
     )
   } catch (error) {
     if (error instanceof CalendarObservationError) throw error.cause
@@ -619,12 +675,12 @@ async function lookupInvitationCalendarCopy(
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
   readCalendarOverrides: () => Promise<CalendarOverrides>,
-  readCalendars: ReadCalendars,
+  discovery: CalendarDiscovery,
 ): Promise<CalendarLookup> {
   const { identity } = invitation.details
   const { uid, recurrenceId } = identity
   const organizer = invitation.details.organizer?.email
-  const lookupContext = (primary: boolean, ownedCalendar?: string) => ({
+  const lookupContext = (primary: boolean, ownedCalendar?: () => string | undefined) => ({
     organizer,
     mailbox,
     primary,
@@ -634,7 +690,7 @@ async function lookupInvitationCalendarCopy(
         mailboxAttendee(event, mailbox) ||
         (invitation.joinOnly &&
           event.organizer?.self &&
-          (organizer === mailbox || organizer === ownedCalendar)),
+          (organizer === mailbox || organizer === ownedCalendar?.())),
       ),
   })
   const observeCopy =
@@ -740,11 +796,16 @@ async function lookupInvitationCalendarCopy(
     if (candidates.length !== events.length) sawIneligibleCopy = true
     return candidates
   }
-  const declaredPrimary = legacyJoinOnly ? primaryCalendar(await readCalendars()) : undefined
+  const calendars = await discovery.calendars()
+  const declaredPrimary = primaryCalendar(calendars)
+  // The primary alias binds the mailbox, not a permission level.
+  // Apply CalendarList evidence even when the primary query finds the copy.
   if (
     !legacyJoinOnly ||
     (declaredPrimary && readableCalendar(declaredPrimary) && enabled(declaredPrimary))
   ) {
+    const access = discovery.access(PRIMARY_EVENTS)
+    if (declaredPrimary) constrainCalendarEntry(access, declaredPrimary)
     const observePrimary = observeCopy(PRIMARY_EVENTS)
     const primary = await exactCopies(
       api,
@@ -753,7 +814,10 @@ async function lookupInvitationCalendarCopy(
       floating,
       lookupContext(true),
       observePrimary,
+      access,
     )
+    if (!readableRole(access.role))
+      throw new InvalidCalendarCollection('Calendar could not verify primary event read access')
     const candidates = navigationCandidates(primary)
     if (floating && candidates.length) return unmatchable
     if (candidates.length > 1) return ambiguous
@@ -764,12 +828,11 @@ async function lookupInvitationCalendarCopy(
         candidates[0],
         invitation,
         mailbox,
-        true,
+        access,
         observePrimary,
       )
   }
 
-  const calendars = await readCalendars()
   let match: CalendarLookup | undefined
   const seen = new Set<string>()
   for (const calendar of calendars) {
@@ -777,8 +840,11 @@ async function lookupInvitationCalendarCopy(
       throw new Error('Invalid Calendar list entry')
     seen.add(calendar.id)
     if (calendar.primary || !readableCalendar(calendar) || !enabled(calendar)) continue
-    const url = `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`
-    const ownedCalendar = calendar.accessRole === 'owner' ? calendar.id.toLowerCase() : undefined
+    const url = calendarEventsUrl(calendar.id)
+    const access = discovery.access(url)
+    constrainCalendarEntry(access, calendar)
+    const calendarId = calendar.id.toLowerCase()
+    const ownedCalendar = () => (access.role === 'owner' ? calendarId : undefined)
     const observe = observeCopy(url, calendar.id.toLowerCase(), calendar.accessRole === 'owner')
     const events = await exactCopies(
       api,
@@ -787,7 +853,10 @@ async function lookupInvitationCalendarCopy(
       floating,
       lookupContext(false, ownedCalendar),
       observe,
+      access,
     )
+    if (!readableRole(access.role))
+      throw new InvalidCalendarCollection('Calendar could not verify event read access')
     const candidates = navigationCandidates(events)
     if (floating && candidates.length) return unmatchable
     if (candidates.length > 1 || (candidates.length && match)) return ambiguous
@@ -798,10 +867,9 @@ async function lookupInvitationCalendarCopy(
         candidates[0],
         invitation,
         mailbox,
-        calendar.accessRole === 'owner' || calendar.accessRole === 'writer',
+        access,
         observe,
-        ownedCalendar,
-        calendar.accessRole === 'owner',
+        calendarId,
       )
     }
   }
@@ -886,18 +954,19 @@ function invitationCopy(
   event: RawEvent,
   invitation: InvitationTarget,
   mailbox: string,
-  writable: boolean,
+  access: CalendarAccess,
   observe: ObserveEvent,
-  ownedCalendar?: string,
-  owned = base === PRIMARY_EVENTS,
+  calendarId?: string,
 ): CalendarLookup {
   const { details, joinOnly } = invitation
+  const ownedCalendar = () => (access.role === 'owner' ? calendarId : undefined)
+  const canNavigate = () => readableRole(access.role) && (!joinOnly || access.role === 'owner')
   const { attendee, allowed, organizerConflict } = invitationMembership(
     event,
     invitation,
     mailbox,
-    owned,
-    ownedCalendar,
+    access.role === 'owner',
+    ownedCalendar(),
   )
   const organizer = event.organizer?.email?.toLowerCase()
   const { uid, recurrenceId } = details.identity
@@ -937,7 +1006,7 @@ function invitationCopy(
       ? null
       : responseStatus === null
         ? 'Calendar could not verify your response on this event'
-        : !etag || !writable
+        : !etag
           ? 'This Calendar copy cannot be edited'
           : null
   const url = calendarResponseUrl(base, event)
@@ -959,8 +1028,17 @@ function invitationCopy(
     htmlLink: invitation.legacyJoinOnly && !isAgendaEventVisible(event) ? null : links.htmlLink,
     responseStatus,
     cancelled,
-    unavailableReason: reason,
+    get canEdit() {
+      return writableRole(access.role)
+    },
+    get canNavigate() {
+      return canNavigate()
+    },
+    get unavailableReason() {
+      return reason ?? (!joinOnly && !this.canEdit ? 'This Calendar copy cannot be edited' : null)
+    },
     navigation: async (selectSlot) => {
+      if (!canNavigate()) return { kind: 'withheld' }
       if (cancelled) return { kind: 'default' }
       const primary = base === PRIMARY_EVENTS
       if (recurrenceId === null && details.recurring) {
@@ -971,8 +1049,15 @@ function invitationCopy(
           invitation,
           observeUidQuery(uid, observe, { mailbox, primary, parentId: event.id }),
           selectSlot,
+          access,
           (row, revision) => {
-            const membership = invitationMembership(row, revision, mailbox, owned, ownedCalendar)
+            const membership = invitationMembership(
+              row,
+              revision,
+              mailbox,
+              access.role === 'owner',
+              ownedCalendar(),
+            )
             return (
               (row.attendeesOmitted === undefined || row.attendeesOmitted === false) &&
               membership.allowed &&
@@ -998,12 +1083,17 @@ function invitationCopy(
             observe,
             primary ? { mailbox, primary, parentId: event.recurringEventId } : undefined,
           ),
+          access,
         ))
       )
         return { kind: 'withheld' }
       return { kind: 'default' }
     },
-    reply: !joinOnly && reason === null && etag && attendee ? { url, etag, attendee } : null,
+    get reply() {
+      return !joinOnly && this.canEdit && reason === null && etag && attendee
+        ? { url, etag, attendee }
+        : null
+    },
   }
 }
 
@@ -1123,12 +1213,22 @@ async function legacyMeetingIsCurrent(
   uid: string,
   recurrenceId: string | null,
   observe: (event: RawEvent) => Promise<void>,
+  access: CalendarAccess,
 ): Promise<boolean> {
   const { timeMin, includesEnd } = navigationWindow(true)
   if (event.end?.dateTime !== undefined) return includesEnd(event)
   try {
     if (recurrenceId !== null)
-      return await currentDateOccurrence(api, base, event, uid, recurrenceId, timeMin, observe)
+      return await currentDateOccurrence(
+        api,
+        base,
+        event,
+        uid,
+        recurrenceId,
+        timeMin,
+        observe,
+        access,
+      )
     const rows = await invitationPages<RawEvent>(
       api,
       base,
@@ -1140,6 +1240,7 @@ async function legacyMeetingIsCurrent(
         timeMin,
       },
       observe,
+      access,
     )
     return (
       rows.length === 1 &&
@@ -1168,6 +1269,7 @@ async function currentDateOccurrence(
   recurrenceId: string,
   timeMin: string,
   observe: (event: RawEvent) => Promise<void>,
+  access: CalendarAccess,
 ): Promise<boolean> {
   const end = selected.end?.date
   if (!end) return false
@@ -1188,6 +1290,7 @@ async function currentDateOccurrence(
       timeMax: new Date(latestEnd).toISOString(),
     },
     observe,
+    access,
   )
   const matches = rows.filter(({ id }) => id === selected.id)
   const [row] = matches
@@ -1214,6 +1317,7 @@ async function upcomingInvitationLinks(
   invitation: InvitationTarget,
   observe: (event: RawEvent) => Promise<void>,
   selectSlot: (slot: string) => InvitationRevision | false | null,
+  access: CalendarAccess,
   bindsMailbox: (event: RawEvent, revision: InvitationRevision) => boolean,
 ): Promise<InvitationLinks | null> {
   const { details, legacyJoinOnly } = invitation
@@ -1233,7 +1337,7 @@ async function upcomingInvitationLinks(
         maxResults: '1',
         pageToken,
       })
-      const items = await invitationPageItems(page, 'calendar#events', observe)
+      const items = await invitationPageItems(page, 'calendar#events', observe, access)
       pageToken = invitationPageToken(page)
       if (
         items.length > 1 ||
