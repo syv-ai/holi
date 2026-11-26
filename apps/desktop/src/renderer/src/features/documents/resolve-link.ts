@@ -20,3 +20,67 @@ export function resolveLink(
   const folder = parentOf(from)
   return named.find((doc) => parentOf(doc.path) === folder)?.path ?? named[0]?.path ?? null
 }
+
+/** Resolve a rendered markdown link only when it names an existing vault note.
+ * URL parsing supplies browser-compatible escaping; decoded segments are then
+ * normalized as vault-relative paths, without ever granting URL-origin meaning. */
+export function resolveMarkdownHref(
+  href: string,
+  from: string,
+  docs: readonly { path: string }[],
+): { path: string; heading?: string } | null {
+  const target = href.trim()
+  if (
+    /^[a-z][a-z\d+.-]*:/i.test(target) ||
+    target.startsWith('//') ||
+    target.includes('\\') ||
+    /[\u0000-\u001f\u007f]/.test(target)
+  )
+    return null
+  let url: URL
+  try {
+    const base = `https://holi.invalid/${from.split('/').map(encodeURIComponent).join('/')}`
+    url = new URL(target, base)
+  } catch {
+    return null
+  }
+
+  if (url.origin !== 'https://holi.invalid' || url.search) return null
+  if (target.startsWith('#')) {
+    let heading: string
+    try {
+      heading = decodeURIComponent(url.hash.slice(1))
+    } catch {
+      return null
+    }
+    return docs.some((doc) => doc.path === from) ? { path: from, heading } : null
+  }
+
+  let segments: string[]
+  let heading: string | undefined
+  try {
+    segments = url.pathname
+      .split('/')
+      .filter(Boolean)
+      .map((part) => decodeURIComponent(part))
+    heading = url.hash ? decodeURIComponent(url.hash.slice(1)) : undefined
+  } catch {
+    return null
+  }
+
+  const stack: string[] = []
+  for (const segment of segments) {
+    if (segment === '.' || segment === '') continue
+    if (segment === '..') {
+      if (!stack.length) return null
+      stack.pop()
+    } else {
+      if (segment.includes('/') || segment.includes('\\') || segment.includes('\0')) return null
+      stack.push(segment)
+    }
+  }
+  const candidate = stack.join('/')
+  if (!candidate.toLowerCase().endsWith('.md')) return null
+  const found = docs.find((doc) => doc.path === candidate)
+  return found ? { path: found.path, ...(heading === undefined ? {} : { heading }) } : null
+}

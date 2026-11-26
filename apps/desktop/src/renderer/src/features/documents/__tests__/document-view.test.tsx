@@ -239,6 +239,104 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+test('relative markdown links open the vault note and request its heading', async () => {
+  const target = 'materials/note.md'
+  files.set(target, '# Next Steps\n')
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    docs: [
+      { path: 'notes/source.md', kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+      { path: target, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+    ],
+  } as never)
+  files.set('notes/source.md', '[Related note](../materials/note.md#next-steps)')
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path="notes/source.md" onOpen={onOpen} />
+    </Provider>,
+  )
+  await editorBox('notes/source.md')
+  fireEvent.click(screen.getByRole('link', { name: 'Related note' }))
+  expect(onOpen).toHaveBeenCalledWith(target)
+  expect(store.get(pendingHeadingAtom)).toEqual({ path: target, heading: 'next-steps' })
+})
+
+test('relative markdown links resolve encoded source and target paths and headings', async () => {
+  const source = 'notes/folder #1/source%.md'
+  const target = 'notes/folder #1/next? one%.md'
+  files.set(source, '[Next](./next%3F%20one%25.md#A%20Heading%25)')
+  files.set(target, '# A Heading%\n')
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    docs: [
+      { path: source, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+      { path: target, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+    ],
+  } as never)
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path={source} onOpen={onOpen} />
+    </Provider>,
+  )
+  await editorBox(source)
+  fireEvent.click(screen.getByRole('link', { name: 'Next' }))
+  expect(onOpen).toHaveBeenCalledWith(target)
+  expect(store.get(pendingHeadingAtom)).toEqual({ path: target, heading: 'A Heading%' })
+})
+
+test('relative markdown links open anchors and plain notes without retaining stale headings', async () => {
+  const source = 'notes/source.md'
+  const target = 'notes/target.md'
+  files.set(source, '[Here](#part) [Target](target.md)')
+  files.set(target, '# Target\n')
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    docs: [
+      { path: source, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+      { path: target, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+    ],
+  } as never)
+  store.set(pendingHeadingAtom, { path: source, heading: 'stale' })
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path={source} onOpen={onOpen} />
+    </Provider>,
+  )
+  await editorBox(source)
+  fireEvent.click(screen.getByRole('link', { name: 'Here' }))
+  expect(onOpen).toHaveBeenLastCalledWith(source)
+  expect(store.get(pendingHeadingAtom)).toBeNull()
+  fireEvent.click(screen.getByRole('link', { name: 'Target' }))
+  expect(onOpen).toHaveBeenLastCalledWith(target)
+  expect(store.get(pendingHeadingAtom)).toBeNull()
+})
+
+test('relative markdown links leave malformed, external, modified and missing links alone', async () => {
+  const source = 'notes/source.md'
+  files.set(
+    source,
+    '[Bad](%E0%A4%A.md) [Web](https://holi.invalid/notes/source.md) [Scheme](mailto:a@b.test) [Missing](missing.md) [Existing](source.md)',
+  )
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    docs: [{ path: source, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' }],
+  } as never)
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path={source} onOpen={onOpen} />
+    </Provider>,
+  )
+  await editorBox(source)
+  for (const name of ['Bad', 'Web', 'Scheme', 'Missing'])
+    fireEvent.click(screen.getByRole('link', { name }))
+  fireEvent.click(screen.getByRole('link', { name: 'Existing' }), { ctrlKey: true })
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
 test('ordinary notes do not show Done', async () => {
   open('# Plan\n')
   await editorBox()

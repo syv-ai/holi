@@ -67,6 +67,7 @@ import { TaskProperties, useHasTaskProperties } from '@/features/planning/task-p
 import { useSettingsWrite } from '@/features/settings/use-vault-settings'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
+import { pendingHeadingAtom } from '@/state/open-document'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
 import {
   documentRunsAtom,
@@ -92,7 +93,7 @@ import { DocumentComments } from './document-comments'
 import { createDocumentExtensions } from './document-extensions'
 import { headingAtCaret } from './document-headings'
 import { DocumentFindBar } from './document-find-bar'
-import { resolveLink } from './resolve-link'
+import { resolveLink, resolveMarkdownHref } from './resolve-link'
 import { mdxUpgradeMove } from './upgrade-mdx'
 import { DocumentSkeleton } from './document-skeleton'
 import { useDocumentAgentPrompt } from './use-document-agent-prompt'
@@ -1128,6 +1129,23 @@ function DocumentEditor({
                   <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
                     <EditorContent
                       editor={editor}
+                      onClickCapture={(event) => {
+                        const anchor = (event.target as Element).closest('a')
+                        const href = anchor?.getAttribute('href')
+                        if (!href || event.button !== 0) return
+                        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+                        const resolved = resolveMarkdownHref(href, path, docs)
+                        if (!resolved) return
+                        event.preventDefault()
+                        event.stopPropagation()
+                        store.set(
+                          pendingHeadingAtom,
+                          resolved.heading === undefined
+                            ? null
+                            : { path: resolved.path, heading: resolved.heading },
+                        )
+                        onOpen(resolved.path)
+                      }}
                       onKeyDown={(event) => {
                         const mod = event.metaKey || event.ctrlKey
                         if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
