@@ -47,7 +47,6 @@ type InvitationCalendarCopy = {
   conferenceLinkSource: 'calendar' | 'provider' | null
   htmlLink: string | null
   responseStatus: RsvpStatus | null
-  cancelled: boolean
   canEdit: boolean
   canNavigate: boolean
   unavailableReason: string | null
@@ -55,18 +54,7 @@ type InvitationCalendarCopy = {
   navigation: (selectSlot: SelectNavigationSlot) => Promise<InvitationNavigation>
 }
 
-/** Negative evidence from a verified occurrence lookup in this mailbox read. */
-type OccurrenceCancellation = {
-  base: string
-  parentId: string
-  uid: string
-  organizer: string
-  slot: string
-  sequence: number
-}
-type SelectNavigationSlot = (
-  slot: string,
-) => false | { revision: InvitationRevision | null; cancellation?: OccurrenceCancellation }
+type SelectNavigationSlot = (slot: string) => false | InvitationRevision | null
 
 export type InvitationLinks = Pick<
   InvitationCalendarCopy,
@@ -87,7 +75,6 @@ type CalendarLookup =
       reason: string
       cancelled?: true
       navigationUnverified?: true
-      occurrenceCancellation?: OccurrenceCancellation
     }
 
 type Parsed = NonNullable<ReturnType<typeof parseMailInvitation>>
@@ -307,7 +294,7 @@ export function relevantCalendarTargets(
   )
 }
 
-class PossibleSeriesCancellation extends Error {}
+class UnverifiedCalendarCancellation extends Error {}
 
 function isUidlessCancellation(event: RawEvent): boolean {
   return event.iCalUID === undefined && event.status === 'cancelled'
@@ -350,6 +337,8 @@ async function exactCopies(
     mailbox: string
     primary: boolean
     includeHiddenInvitations: boolean
+    classifyCancellation: (event: RawEvent) => CancellationClassification
+    observeCancellations: (events: RawEvent[]) => void
   },
   observe: ObserveEvent,
   access: CalendarAccess,
@@ -357,6 +346,26 @@ async function exactCopies(
   let verifiedParentId: string | undefined
   const result = (events: RawEvent[]) => ({ events, verifiedParentId })
   const { uid, recurrenceId, sequence } = identity
+  let sawCancellation = false
+  const observeCandidate = (event: RawEvent) => {
+    if (sawCancellation) return
+    const classification = context.classifyCancellation(event)
+    sawCancellation = classification === 'current' || classification === 'unverified'
+  }
+  const invalid = (message: string): never => {
+    if (sawCancellation) throw new UnverifiedCalendarCancellation()
+    throw new InvalidCalendarCollection(message)
+  }
+  const incomplete = (error: unknown): never => {
+    if (
+      sawCancellation &&
+      !(error instanceof CalendarObservationError) &&
+      !propagateCalendarRefusal(error)
+    )
+      throw new UnverifiedCalendarCancellation()
+    throw error
+  }
+  const observeListed = observeUidQuery(uid, observe, context)
   const events = await invitationPages<RawEvent>(
     api,
     url,
@@ -369,25 +378,32 @@ async function exactCopies(
       // RSVP needs those copies; legacy navigation keeps the provider default.
       showHiddenInvitations: context.includeHiddenInvitations ? 'true' : undefined,
     },
-    observeUidQuery(uid, observe, context),
+    async (event) => {
+      await observeListed(event)
+      observeCandidate(event)
+    },
     access,
-  )
+  ).catch(incomplete)
   if (
     events.some(
       (event) =>
         !usableInvitationEvent(event) || (event.iCalUID !== uid && !isUidlessCancellation(event)),
     )
-  ) {
-    throw new Error('Invalid Calendar events for this invitation')
-  }
+  )
+    invalid('Invalid Calendar events for this invitation')
+  const listedIds = new Set(events.map(({ id }) => id))
+  if (listedIds.size !== events.length) invalid('Calendar returned duplicate event rows')
+  if (!readableRole(access.role)) invalid('Calendar could not verify event read access')
+  // Do not discard exception tombstones when preferring a master for RSVP.
+  // Only validated collection rows qualify here; observation above also keeps
+  // sparse, malformed or wrong-parent rows, but as possible locators only.
+  context.observeCancellations(events)
   // The unexpanded list contains the series master and sometimes exception
   // rows. No recurrence ID means the master, not any expanded occurrence.
   const possible = events.filter((event) =>
     calendarLocatorMayMatchScope(eventLocatorScope(event), identity),
   )
   const roots = possible.filter((event) => !event.recurringEventId && !event.originalStartTime)
-  const listedIds = new Set(events.map(({ id }) => id))
-  if (listedIds.size !== events.length) throw new Error('Calendar returned duplicate event rows')
   // Any row for a floating series could occupy this wall-clock slot. An
   // empty UID collection is still meaningful; never query instances in a guessed zone.
   if (floating) return result(possible)
@@ -398,9 +414,11 @@ async function exactCopies(
     return copies
   }
   if (recurrenceId === null) return result(requireScope(roots))
-  const cancelledRoots = roots.filter((root) => root.status === 'cancelled')
+  const cancelledRoots = roots.filter(
+    (root) => root.status === 'cancelled' && context.classifyCancellation(root) !== 'irrelevant',
+  )
   const activeRoots = roots.filter((root) => root.status !== 'cancelled')
-  if (activeRoots.length > 1) throw new Error('Calendar returned ambiguous series rows')
+  if (activeRoots.length > 1) invalid('Calendar returned ambiguous series rows')
   const verifiedInstances = new Set<string | undefined>()
   const matching = new Map(
     possible
@@ -431,6 +449,7 @@ async function exactCopies(
         showDeleted: 'true',
       },
       async (event) => {
+        if (event.recurringEventId === parentId) observeCandidate(event)
         // A fully identified child proves possible existence independently of
         // the queried parent. Record the row's own scope before validating the
         // collection; a wrong parent still makes this read inconclusive.
@@ -459,24 +478,30 @@ async function exactCopies(
           })
       },
       access,
-    )
+    ).catch(incomplete)
     if (new Set(instances.map(({ id }) => id)).size !== instances.length)
-      throw new Error('Calendar returned duplicate instance rows')
+      invalid('Calendar returned duplicate instance rows')
+    if (
+      instances.some(
+        (event) =>
+          !usableInvitationEvent(event) ||
+          (event.iCalUID !== undefined && event.iCalUID !== uid) ||
+          event.recurringEventId !== series.id ||
+          !sameOccurrence(event, recurrenceId),
+      )
+    ) {
+      // Wrong-parent rows were observed as locators but cannot prove a
+      // cancellation (or a live instance) of this parent.
+      invalid('Invalid Calendar instance for this invitation')
+    }
+    context.observeCancellations(instances)
     for (const event of instances) {
-      if (
-        !usableInvitationEvent(event) ||
-        (event.iCalUID !== undefined && event.iCalUID !== uid) ||
-        event.recurringEventId !== series.id ||
-        !sameOccurrence(event, recurrenceId)
-      ) {
-        throw new Error('Invalid Calendar instance for this invitation')
-      }
       const listed = matching.get(event.id)
       if (
         listedIds.has(event.id) &&
         (!listed || listed.etag !== event.etag || calendarProof(listed) !== calendarProof(event))
       )
-        throw new Error('Calendar returned conflicting instance rows')
+        invalid('Calendar returned conflicting instance rows')
       matching.set(event.id, event)
       if (verifiedParent) verifiedInstances.add(event.id)
     }
@@ -490,20 +515,14 @@ async function exactCopies(
   const cancelledParents = cancelledRoots.filter((root) =>
     matches.some((instance) => instance.recurringEventId === root.id),
   )
-  if (cancelledParents.length) return result(cancelledParents)
+  if (cancelledParents.length) return result([...cancelledParents, ...matches])
   if (
     cancelledRoots.length &&
     (matches.length !== 1 ||
       !verifiedInstances.has(matches[0]!.id) ||
-      cancelledRoots.some(
-        (root) =>
-          root.iCalUID !== uid ||
-          root.organizer?.email?.toLowerCase() !== context.organizer ||
-          root.sequence === undefined ||
-          root.sequence >= sequence,
-      ))
+      cancelledRoots.some((root) => context.classifyCancellation(root) !== 'older'))
   )
-    throw new PossibleSeriesCancellation()
+    throw new UnverifiedCalendarCancellation()
   return result(matches)
 }
 
@@ -587,12 +606,22 @@ class CalendarObservationError extends Error {}
 
 /** CalendarList (including exact rechecks) and Events pages constrain access
  * within this read. Later evidence cannot restore permissions in the same snapshot. */
-export function createInvitationCalendarDiscovery(api: CalendarReadApi) {
+export function createInvitationCalendarDiscovery(api: CalendarReadApi, mailbox: string) {
   let snapshot: Promise<CalendarListEntry[]> | undefined
   const roles = new Map<string, CalendarRole>()
   const order: CalendarRole[] = ['unreadable', 'reader', 'writer', 'owner']
   let primaryBase: string | undefined
   const key = (base: string) => (base === primaryBase ? PRIMARY_EVENTS : base)
+  // Current-read negative evidence only. Keep the newest bound tombstone per
+  // original slot, never a persisted locator or a query association.
+  const occurrenceCancellations = new Map<string, RawEvent>()
+  const occurrenceKey = (
+    base: string,
+    parentId: string,
+    uid: string,
+    organizer: string,
+    slot: string,
+  ) => JSON.stringify([key(base), parentId, uid, organizer, slot])
   function access(base: string): CalendarAccess {
     return {
       get role() {
@@ -620,6 +649,33 @@ export function createInvitationCalendarDiscovery(api: CalendarReadApi) {
   return {
     access,
     observeEntry,
+    observeOccurrenceCancellations(base: string, rows: RawEvent[], invitation: InvitationRevision) {
+      const { uid } = invitation.details.identity
+      const organizer = invitation.details.organizer?.email
+      if (!organizer) return
+      for (const event of rows) {
+        if (!event.recurringEventId || !boundCancellation(event, invitation, mailbox)) continue
+        const slot = occurrenceSlot(event)!
+        const id = occurrenceKey(base, event.recurringEventId, uid, organizer, slot)
+        const prior = occurrenceCancellations.get(id)
+        if (!prior || event.sequence! > prior.sequence!) occurrenceCancellations.set(id, event)
+      }
+    },
+    suppressesOccurrence(
+      base: string,
+      parentId: string,
+      slot: string,
+      revision: InvitationRevision,
+    ) {
+      const { identity, organizer } = revision.details
+      if (!organizer) return false
+      const event = occurrenceCancellations.get(
+        occurrenceKey(base, parentId, identity.uid, organizer.email, slot),
+      )
+      if (!event) return false
+      const cancellation = classifyCancellation(event, revision, mailbox, slot)
+      return cancellation === 'current' || cancellation === 'unverified'
+    },
     canEditTarget(target: string, mailbox: string) {
       const resource = calendarTargetResource(target, mailbox)
       return resource !== null && writableRole(access(calendarEventsUrl(resource.id)).role)
@@ -706,12 +762,7 @@ export async function findInvitationCalendarCopy(
     )
   } catch (error) {
     if (error instanceof CalendarObservationError) throw error.cause
-    if (error instanceof PossibleSeriesCancellation)
-      return {
-        kind: 'blocked',
-        reason: 'Calendar could not distinguish this occurrence from a cancelled series',
-        navigationUnverified: true,
-      }
+    if (error instanceof UnverifiedCalendarCancellation) return unverifiedCancellation()
     // Neither a 404 nor incomplete/malformed results prove there is no copy.
     if (propagateCalendarRefusal(error)) throw error
     if (error instanceof GoogleApiError && error.status === 403)
@@ -734,10 +785,13 @@ async function lookupInvitationCalendarCopy(
   const { identity } = invitation.details
   const { uid, recurrenceId } = identity
   const organizer = invitation.details.organizer?.email
-  const lookupContext = (primary: boolean, ownedCalendar?: () => string | undefined) => ({
+  const lookupContext = (base: string, ownedCalendar?: () => string | undefined) => ({
     organizer,
     mailbox,
-    primary,
+    primary: base === PRIMARY_EVENTS,
+    classifyCancellation: (event: RawEvent) => classifyCancellation(event, invitation, mailbox),
+    observeCancellations: (events: RawEvent[]) =>
+      discovery.observeOccurrenceCancellations(base, events, invitation),
     includeHiddenInvitations: !invitation.legacyJoinOnly,
     bindsParent: (event: RawEvent) =>
       Boolean(
@@ -850,6 +904,40 @@ async function lookupInvitationCalendarCopy(
     if (candidates.length !== events.length) sawIneligibleCopy = true
     return candidates
   }
+  function selectCopy(
+    events: RawEvent[],
+    base: string,
+    access: CalendarAccess,
+    observe: ObserveEvent,
+    { calendarId, verifiedParentId }: { calendarId?: string; verifiedParentId?: string } = {},
+  ): CalendarLookup | undefined {
+    // Classify negative evidence independently of the preference for a live
+    // resource. An older or unrelated tombstone conveys no current status.
+    let unverified = false
+    for (const event of events) {
+      const cancellation = classifyCancellation(event, invitation, mailbox)
+      if (cancellation === 'current')
+        return {
+          kind: 'blocked',
+          reason: 'This Calendar event was cancelled',
+          cancelled: true,
+          navigationUnverified: true,
+        }
+      if (cancellation === 'unverified') unverified = true
+    }
+    if (unverified) return unverifiedCancellation()
+    const candidates = navigationCandidates(events)
+    const active = candidates.filter(({ status }) => status !== 'cancelled')
+    if (floating && active.length) return unmatchable
+    if (active.length > 1) return ambiguous
+    if (active[0])
+      return invitationCopy(api, base, active[0], invitation, mailbox, access, observe, discovery, {
+        calendarId,
+        verifiedParentId,
+      })
+    if (candidates.length)
+      return { kind: 'blocked', reason: 'Calendar could not verify a current invitation copy' }
+  }
   const calendars = await discovery.calendars()
   const declaredPrimary = primaryCalendar(calendars)
   // The primary alias binds the mailbox, not a permission level.
@@ -866,25 +954,12 @@ async function lookupInvitationCalendarCopy(
       PRIMARY_EVENTS,
       identity,
       floating,
-      lookupContext(true),
+      lookupContext(PRIMARY_EVENTS),
       observePrimary,
       access,
     )
-    if (!readableRole(access.role))
-      throw new InvalidCalendarCollection('Calendar could not verify primary event read access')
-    const candidates = navigationCandidates(primary)
-    if (floating && candidates.length) return unmatchable
-    if (candidates.length > 1) return ambiguous
-    if (candidates[0])
-      return invitationCopy(
-        api,
-        PRIMARY_EVENTS,
-        candidates[0],
-        invitation,
-        mailbox,
-        access,
-        observePrimary,
-      )
+    const found = selectCopy(primary, PRIMARY_EVENTS, access, observePrimary)
+    if (found) return found
   }
 
   let match: CalendarLookup | undefined
@@ -905,21 +980,17 @@ async function lookupInvitationCalendarCopy(
       url,
       identity,
       floating,
-      lookupContext(false, ownedCalendar),
+      lookupContext(url, ownedCalendar),
       observe,
       access,
     )
-    if (!readableRole(access.role))
-      throw new InvalidCalendarCollection('Calendar could not verify event read access')
-    const candidates = navigationCandidates(events)
-    if (floating && candidates.length) return unmatchable
-    if (candidates.length > 1 || (candidates.length && match)) return ambiguous
-    if (candidates[0]) {
-      match = invitationCopy(api, url, candidates[0], invitation, mailbox, access, observe, {
-        calendarId,
-        verifiedParentId,
-      })
+    const found = selectCopy(events, url, access, observe, { calendarId, verifiedParentId })
+    if (found && match) {
+      if ([match, found].some((copy) => copy.kind === 'blocked' && copy.navigationUnverified))
+        return { ...ambiguous, navigationUnverified: true }
+      return ambiguous
     }
+    if (found) match = found
   }
   return (
     match ??
@@ -956,6 +1027,85 @@ function mailboxAttendee(event: RawEvent, mailbox: string) {
     ).length === 1
     ? self
     : undefined
+}
+
+type CancellationClassification = 'irrelevant' | 'unverified' | 'older' | 'current'
+
+function unverifiedCancellation(): CalendarLookup {
+  return {
+    kind: 'blocked',
+    reason: 'Calendar could not verify the cancellation of this invitation',
+    navigationUnverified: true,
+  }
+}
+
+/** Query associations, calendar IDs and shared visibility do not establish
+ * whose cancellation this is. A tombstone may omit start/end and recurrence
+ * rules, but anything supplied must be consistent with its own scope. */
+function boundCancellation(event: RawEvent, { details }: InvitationRevision, mailbox: string) {
+  return (
+    event.status === 'cancelled' &&
+    usableInvitationEvent(event) &&
+    event.iCalUID === details.identity.uid &&
+    Boolean(details.organizer?.email) &&
+    event.organizer?.email?.toLowerCase() === details.organizer?.email &&
+    event.organizer?.self !== true &&
+    mailbox !== details.organizer?.email &&
+    Boolean(mailboxAttendee(event, mailbox)) &&
+    (event.attendeesOmitted === undefined || event.attendeesOmitted === false) &&
+    event.sequence !== undefined &&
+    (!event.recurrence?.length ||
+      (event.recurringEventId === undefined && recurrenceSet(event.recurrence) !== null)) &&
+    ((event.start === undefined &&
+      event.end === undefined &&
+      (event.endTimeUnspecified === undefined || event.endTimeUnspecified === false)) ||
+      coherentEventTimes(event))
+  )
+}
+
+function classifyCancellation(
+  event: RawEvent,
+  invitation: InvitationRevision,
+  mailbox: string,
+  expandedSlot?: string,
+): CancellationClassification {
+  const { details } = invitation
+  const { uid, recurrenceId, sequence } = details.identity
+  const expectedSlot = expandedSlot ?? recurrenceId
+  const { recurrenceId: actualSlot, occurrenceUnverified } = eventLocatorScope(event)
+  const isOccurrence = actualSlot !== null || occurrenceUnverified === true
+  const organizer = event.organizer?.email
+  const self = uniqueSelfAttendee(event)?.email
+  if (
+    event.status !== 'cancelled' ||
+    (event.iCalUID !== undefined && event.iCalUID !== uid) ||
+    (typeof organizer === 'string' &&
+      organizer.trim() &&
+      organizer.toLowerCase() !== details.organizer?.email) ||
+    (typeof self === 'string' && self.trim() && self.toLowerCase() !== mailbox) ||
+    (expectedSlot === null && isOccurrence) ||
+    (expectedSlot !== null && actualSlot !== null && distinctSlots(actualSlot, expectedSlot))
+  )
+    return 'irrelevant'
+  if (
+    !boundCancellation(event, invitation, mailbox) ||
+    (isOccurrence && (expectedSlot === null || !sameOccurrence(event, expectedSlot)))
+  )
+    return 'unverified'
+  // Roots also cover their occurrences. A missing RRULE on a deleted root
+  // cannot distinguish a standalone tombstone from a cancelled series.
+  if (expectedSlot === null && !details.recurring && event.recurrence?.length) return 'irrelevant'
+  if (event.sequence! < sequence) return 'older'
+  // Calendar's `updated` is not an iTIP stamp. A strictly newer cancellation
+  // need not match obsolete live material. At the same sequence, compare
+  // only like scopes; master details do not describe a child's material.
+  if (
+    event.sequence === sequence &&
+    (isOccurrence ? recurrenceId !== null : recurrenceId === null) &&
+    calendarRevisionMismatch(event, invitation, invitationEventLinks(event))
+  )
+    return 'unverified'
+  return 'current'
 }
 
 function calendarResponseUrl(base: string, event: RawEvent): string {
@@ -1004,6 +1154,7 @@ function invitationCopy(
   mailbox: string,
   access: CalendarAccess,
   observe: ObserveEvent,
+  discovery: CalendarDiscovery,
   { calendarId, verifiedParentId }: { calendarId?: string; verifiedParentId?: string } = {},
 ): CalendarLookup {
   const { details, joinOnly } = invitation
@@ -1017,31 +1168,8 @@ function invitationCopy(
     ownedCalendar(),
   )
   const organizer = event.organizer?.email?.toLowerCase()
-  const { uid, recurrenceId, sequence } = details.identity
+  const { uid, recurrenceId } = details.identity
   const blocked = (reason: string): CalendarLookup => ({ kind: 'blocked', reason })
-  const cancelled = event.status === 'cancelled'
-  const cancellationReason = 'This Calendar event was cancelled'
-  const newerOccurrenceCancellation =
-    cancelled &&
-    recurrenceId !== null &&
-    event.recurringEventId !== undefined &&
-    event.sequence !== undefined &&
-    event.sequence > sequence
-  // A UID-less tombstone can block, but cannot supply a verified copy or links.
-  if (
-    cancelled &&
-    (isUidlessCancellation(event) ||
-      joinOnly ||
-      !attendee ||
-      organizer !== details.organizer?.email ||
-      (recurrenceId !== null && !event.recurringEventId))
-  ) {
-    if (event.sequence !== undefined && event.sequence < sequence)
-      return blocked('Calendar has not received this revision of the invitation yet')
-    if (newerOccurrenceCancellation)
-      return blocked('Calendar could not verify the cancellation of this occurrence')
-    return { kind: 'blocked', reason: cancellationReason, cancelled: true }
-  }
   if (event.iCalUID !== uid)
     return {
       kind: 'blocked',
@@ -1052,29 +1180,6 @@ function invitationCopy(
     return blocked('The Calendar organizer does not match this invitation')
   if (!allowed) return blocked('This account cannot verify its place on this Calendar event')
   if (organizerConflict) return blocked('You organize this event')
-  // A newer cancellation of this exact occurrence is negative evidence, not
-  // a newer live copy. Its times or links need not match the obsolete REQUEST.
-  // Calendar's `updated` is not the organizer's iTIP revision timestamp.
-  if (
-    newerOccurrenceCancellation &&
-    sameOccurrence(event, recurrenceId) &&
-    (event.attendeesOmitted === undefined || event.attendeesOmitted === false) &&
-    coherentEventTimes(event)
-  )
-    return {
-      kind: 'blocked',
-      reason: cancellationReason,
-      cancelled: true,
-      navigationUnverified: true,
-      occurrenceCancellation: {
-        base,
-        parentId: event.recurringEventId!,
-        uid,
-        organizer,
-        slot: recurrenceId,
-        sequence: event.sequence!,
-      },
-    }
   const links = invitationEventLinks(event)
   const requiresRoster = rosterChanged(invitation)
   const mismatch = calendarRevisionMismatch(event, invitation, links, { requiresRoster })
@@ -1082,16 +1187,14 @@ function invitationCopy(
   const etag = strongEventEtag(event.etag)
   // Only an explicit needsAction is a reset. An omitted status cannot
   // corroborate a dispatch or make that response safe to send again.
-  const responseStatus = joinOnly || cancelled ? null : asRsvp(attendee?.responseStatus)
-  const reason = cancelled
-    ? cancellationReason
-    : joinOnly
-      ? null
-      : responseStatus === null
-        ? 'Calendar could not verify your response on this event'
-        : !etag
-          ? 'This Calendar copy cannot be edited'
-          : null
+  const responseStatus = joinOnly ? null : asRsvp(attendee?.responseStatus)
+  const reason = joinOnly
+    ? null
+    : responseStatus === null
+      ? 'Calendar could not verify your response on this event'
+      : !etag
+        ? 'This Calendar copy cannot be edited'
+        : null
   const url = calendarResponseUrl(base, event)
   const proof = calendarProof(event, requiresRoster)
   return {
@@ -1110,7 +1213,6 @@ function invitationCopy(
     // Never fall back from an eligible legacy instance to a declined master.
     htmlLink: invitation.legacyJoinOnly && !isAgendaEventVisible(event) ? null : links.htmlLink,
     responseStatus,
-    cancelled,
     get canEdit() {
       return writableRole(access.role)
     },
@@ -1122,7 +1224,6 @@ function invitationCopy(
     },
     navigation: async (selectSlot) => {
       if (!canNavigate()) return { kind: 'withheld' }
-      if (cancelled) return { kind: 'default' }
       const primary = base === PRIMARY_EVENTS
       if (recurrenceId === null && details.recurring) {
         const upcoming = await upcomingInvitationLinks(
@@ -1133,6 +1234,7 @@ function invitationCopy(
           observeUidQuery(uid, observe, { mailbox, primary, parentId: event.id }),
           selectSlot,
           access,
+          discovery,
           (row, revision) => {
             const membership = invitationMembership(
               row,
@@ -1211,17 +1313,24 @@ function calendarRevisionMismatch(
     return (event.sequence ?? 0) > sequence
       ? 'Calendar has a newer revision of this event'
       : 'Calendar has not received this revision of the invitation yet'
-  if (!expanded && recurrenceId === null && Boolean(event.recurrence?.length) !== details.recurring)
+  const recurrenceKnown = !cancelled || Boolean(event.recurrence?.length)
+  if (
+    !expanded &&
+    recurrenceKnown &&
+    recurrenceId === null &&
+    Boolean(event.recurrence?.length) !== details.recurring
+  )
     return 'The Calendar recurrence scope does not match this invitation'
   if (
     !expanded &&
     recurrenceId === null &&
     details.recurring &&
+    (!cancelled || event.start !== undefined) &&
     !sameRecurrenceStart(fields, event.start)
   )
     return 'The Calendar time zone does not match this series invitation'
   const { explicitFields } = material
-  if (!expanded && explicitFields.recurrence) {
+  if (!expanded && recurrenceKnown && explicitFields.recurrence) {
     const expected = recurrenceSet(fields.recurrence)
     const actual = recurrenceSet(event.recurrence ?? [])
     if (expected === null || actual === null || expected !== actual)
@@ -1405,11 +1514,13 @@ async function upcomingInvitationLinks(
   observe: (event: RawEvent) => Promise<void>,
   selectSlot: SelectNavigationSlot,
   access: CalendarAccess,
+  discovery: CalendarDiscovery,
   bindsMailbox: (event: RawEvent, revision: InvitationRevision) => boolean,
 ): Promise<InvitationLinks | null> {
   const { details, legacyJoinOnly } = invitation
   const { uid } = details.identity
   const organizer = details.organizer?.email
+  if (!organizer || !master.id) return null
   const { timeMin, includesEnd } = navigationWindow(legacyJoinOnly)
   let pageToken: string | undefined
   const seen = new Set<string>()
@@ -1421,6 +1532,7 @@ async function upcomingInvitationLinks(
         orderBy: 'startTime',
         timeMin,
         showDeleted: 'false',
+        showHiddenInvitations: legacyJoinOnly ? undefined : 'true',
         maxResults: '1',
         pageToken,
       })
@@ -1451,28 +1563,16 @@ async function upcomingInvitationLinks(
         const original = occurrenceSlot(instance)!
         const slot = selectSlot(original)
         if (slot !== false) {
-          const revision = slot.revision ?? invitation
-          const cancellation = slot.cancellation
-          // The master verifies the parent of this slot. Neither a known
-          // locator nor the expanded query itself can corroborate a cancellation.
-          // A higher provider sequence alone is not a reinstating REQUEST.
-          const cancelled =
-            cancellation?.base === base &&
-            cancellation.parentId === master.id &&
-            cancellation.uid === uid &&
-            cancellation.organizer === organizer &&
-            cancellation.slot === original &&
-            (slot.revision === null ||
-              slot.revision.details.identity.sequence <= cancellation.sequence)
+          const revision = slot ?? invitation
           const links = invitationEventLinks(instance)
           // The verified master establishes a baseline, not the actual date,
           // room or event page of each provider-expanded instance. A mailed
           // slot revision instead supplies exact occurrence material.
           if (
-            !cancelled &&
+            !discovery.suppressesOccurrence(base, master.id, original, revision) &&
             bindsMailbox(instance, revision) &&
             !calendarRevisionMismatch(instance, revision, links, {
-              expanded: slot.revision === null,
+              expanded: slot === null,
               navigationOnly: true,
             }) &&
             (links.conferenceUrl || links.htmlLink)
