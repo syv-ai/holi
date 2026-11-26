@@ -6,3 +6,7 @@ module HoliNativeGit {
   header "HoliNativeGit.h"
   export *
 }
+module HoliFoundationModels {
+  header "HoliFoundationModels.h"
+  export *
+}

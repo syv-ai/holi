@@ -11,6 +11,7 @@ import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
 import { runWorkingCopyCheck } from './working-copy-check.ios'
+import { foundationModelsAvailability } from './foundation-models.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -52,6 +53,7 @@ export async function checkCompatibility(): Promise<string> {
   let rawNames: unknown
   let prefixNamespace: Record<string, unknown>
   let git: Awaited<ReturnType<typeof runGitCompatibilityCheck>> | undefined
+  let foundationModels: string | undefined
   let workingCopy:
     | (Awaited<ReturnType<typeof runWorkingCopyCheck>> & {
         cases?: Awaited<ReturnType<typeof runWorkingCopyCheck>>[]
@@ -62,6 +64,11 @@ export async function checkCompatibility(): Promise<string> {
       throw new Error('Invalid compatibility run identity')
     if (!['normal', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(launchPhase))
       throw new Error('Invalid storage phase')
+    if (launchPhase === 'normal') {
+      phase = 'foundation-models-availability'
+      operation = 'foundationModelsAvailability'
+      foundationModels = foundationModelsAvailability()
+    }
     phase = 'note-metadata'
     operation = 'persist/reconstruct/remove'
     const metadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
@@ -315,6 +322,6 @@ export async function checkCompatibility(): Promise<string> {
       ...(git ? { git } : {}),
     }
   }
-  persist({ rawNames, workingCopy, ...evidence })
+  persist({ rawNames, workingCopy, ...(foundationModels ? { foundationModels } : {}), ...evidence })
   return status
 }
