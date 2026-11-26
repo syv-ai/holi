@@ -266,6 +266,43 @@ function threadGets(seen: string[]): string[] {
   return seen.filter((u) => /\/threads\/[^/?]+/.test(new URL(u).pathname))
 }
 
+/** Gmail lists ids only, with an opaque continuation tied to a query. */
+function mailboxPage(url: URL, query: string, matches: { id: string }[]) {
+  const params = url.searchParams
+  if (params.get('q') !== query || params.get('maxResults') !== '25')
+    throw new Error('Unexpected mailbox query or page size')
+  const token = params.get('pageToken')
+  const offset = token === null ? 0 : Number(token.match(/^after-(\d+)$/)?.[1])
+  if (!Number.isInteger(offset) || offset % 25 || offset >= matches.length)
+    throw new Error('Invalid mailbox page token')
+  const next = offset + 25
+  return Response.json({
+    threads: matches.slice(offset, next).map(({ id }) => ({ id })),
+    ...(next < matches.length ? { nextPageToken: `after-${next}` } : {}),
+  })
+}
+
+function largeInbox(labels = ['INBOX']) {
+  return Array.from({ length: 525 }, (_, i) => rawThread(`inbox-${i}`, `Inbox ${i}`, labels))
+}
+
+function pagedMailbox(query: string, matches: ReturnType<typeof rawThread>[], routes: Routes = {}) {
+  return gmail(
+    {
+      ...routes,
+      threads: { ...Object.fromEntries(matches.map((t) => [t.id, t])), ...routes.threads },
+    },
+    {},
+    (url) => {
+      if (
+        url.pathname.endsWith('/threads') &&
+        !url.searchParams.get('q')?.startsWith('has:attachment ')
+      )
+        return Promise.resolve(mailboxPage(url, query, matches))
+    },
+  )
+}
+
 describe('syncThreads', () => {
   it('does a full fetch when nothing is cached', async () => {
     const { api, seen } = gmail({
@@ -466,9 +503,135 @@ describe('syncThreads', () => {
 
     expect(page.threads.map((thread) => thread.id)).toEqual(['cached'])
     expect(page.threads[0]!.replied).toBe(true)
-    expect(threadGets(second.seen)).toHaveLength(1)
+    expect(threadGets(second.seen).length).toBeLessThanOrEqual(2)
     const historyUrl = second.seen.find((url) => new URL(url).pathname.endsWith('/history'))!
     expect(new URL(historyUrl).searchParams.has('labelId')).toBe(false)
+  })
+
+  it.each(['new Sent-only conversation', 'Sent reply to an off-page inbox conversation'])(
+    'refreshes a large default Inbox after a %s',
+    async (kind) => {
+      const mailbox = largeInbox()
+      const mixed = kind !== 'new Sent-only conversation'
+      const target = mixed ? mailbox[30]! : rawThread('sent-only', 'New outgoing mail', ['SENT'])
+      const sent = message('outgoing', target.id, [['From', 'Me <me@example.com>']], ['SENT'])
+      const first = pagedMailbox('in:inbox', mailbox)
+      const seed = await searchMail(first.api)
+      const firstPageIds = mailbox.slice(0, 25).map(({ id }) => id)
+      expect(seed.threads.map(({ id }) => id)).toEqual(firstPageIds)
+      expect(seed.nextPageToken).not.toBeNull()
+
+      const delta = pagedMailbox('in:inbox', mailbox, {
+        threads: {
+          [target.id]: { id: target.id, messages: mixed ? [...target.messages, sent] : [sent] },
+        },
+        history: {
+          historyId: '5001',
+          history: [
+            {
+              messagesAdded: [
+                { message: { id: sent.id, threadId: sent.threadId, labelIds: ['SENT'] } },
+              ],
+            },
+          ],
+        },
+      })
+      const page = await searchMail(delta.api)
+      expect(page).not.toHaveProperty('historyRecoveryRequired')
+      expect(page).not.toHaveProperty('unreadableThreadIds')
+      expect(page).not.toHaveProperty('notFoundThreadIds')
+      expect(page.threads.filter(({ id }) => id !== target.id).map(({ id }) => id)).toEqual(
+        firstPageIds,
+      )
+      if (mixed) {
+        expect(page.threads.find(({ id }) => id === target.id)).toMatchObject({ replied: true })
+      } else {
+        expect(page.threads.some(({ id }) => id === target.id)).toBe(false)
+      }
+      const mailboxReads = delta.seen.filter(
+        (request) => new URL(request).searchParams.get('q') === 'in:inbox',
+      )
+      expect(mailboxReads.length).toBeLessThanOrEqual(mixed ? 2 : 0)
+      expect(threadGets(delta.seen).length).toBeLessThanOrEqual(1)
+      expect(delta.seen.length).toBeLessThanOrEqual(mixed ? 8 : 4)
+      expect(delta.seen.some((request) => new URL(request).pathname.endsWith('/profile'))).toBe(
+        false,
+      )
+
+      const next = gmail({}, {}, (url) => {
+        if (!url.pathname.endsWith('/history'))
+          throw new Error('Expected a delta from the new cursor')
+        return Promise.resolve(
+          url.searchParams.get('startHistoryId') === '5001'
+            ? Response.json({ historyId: '5001' })
+            : Response.json({}, { status: 400 }),
+        )
+      })
+      const unchanged = await searchMail(next.api)
+      expect(unchanged.threads).toEqual(page.threads)
+      expect(unchanged).not.toHaveProperty('historyRecoveryRequired')
+    },
+  )
+
+  it('rules out structural tab nonmembers but retries incomplete whole-thread metadata', async () => {
+    const mailbox = largeInbox(['INBOX', 'CATEGORY_UPDATES'])
+    const query = 'in:inbox category:updates'
+    const options = { category: 'updates' }
+    const first = await searchMail(pagedMailbox(query, mailbox).api, options)
+    const otherTab = rawThread('other-tab', 'Promotional mail', ['INBOX', 'CATEGORY_PROMOTIONS'])
+    const trashed = rawThread('trashed', 'Trashed update', ['INBOX', 'CATEGORY_UPDATES', 'TRASH'])
+    const sent = rawThread('unverified', 'Sent only', ['SENT'])
+    const partial = {
+      id: sent.id,
+      messages: [sent.messages[0], { id: 'unverified-m2', threadId: sent.id, payload: {} }],
+    }
+    const delta = pagedMailbox(query, mailbox, {
+      threads: { [otherTab.id]: otherTab, [trashed.id]: trashed, [sent.id]: partial },
+      history: {
+        historyId: '5001',
+        history: [
+          {
+            messagesAdded: [otherTab, trashed, sent].map(({ id, messages }) => ({
+              message: { id: messages[0]!.id, threadId: id },
+            })),
+          },
+        ],
+      },
+    })
+    const page = await searchMail(delta.api, options)
+    expect(page.threads).toEqual(first.threads)
+    expect(page.unreadableThreadIds).toEqual([sent.id])
+    expect(page).not.toHaveProperty('historyRecoveryRequired')
+    expect(page).not.toHaveProperty('notFoundThreadIds')
+    expect(delta.seen.some((request) => new URL(request).searchParams.get('q') === query)).toBe(
+      false,
+    )
+
+    const retry = { ...options, refresh: true, expectedAccountSub: 'account' }
+    const stillPending = pagedMailbox(query, mailbox, {
+      threads: { [sent.id]: partial },
+      profile: { historyId: '5001' },
+    })
+    expect(await searchMail(stillPending.api, retry)).toMatchObject({
+      unreadableThreadIds: [sent.id],
+    })
+    const readable = pagedMailbox(query, mailbox, { threads: { [sent.id]: sent } })
+    const recovered = await searchMail(readable.api, retry)
+    expect(recovered.threads).toEqual(first.threads)
+    expect(recovered).not.toHaveProperty('unreadableThreadIds')
+    expect(recovered).not.toHaveProperty('notFoundThreadIds')
+  })
+
+  it('leaves disjunctive search membership to Gmail even with an Inbox option', async () => {
+    const query = 'in:inbox OR in:sent'
+    const sent = rawThread('sent-only', 'Sent only', ['SENT'])
+    const provider = pagedMailbox(query, [sent], { history: 404 })
+    const options = { query, mailbox: 'inbox' }
+    for (let i = 0; i < 2; i++) {
+      const page = await searchMail(provider.api, options)
+      expect(page.threads.map(({ id }) => id)).toEqual([sent.id])
+      expect(page).not.toHaveProperty('historyRecoveryRequired')
+    }
   })
 
   it('applies arrivals and replies found on later history pages', async () => {
@@ -501,6 +664,7 @@ describe('syncThreads', () => {
       threads: {
         arrival: rawThread('arrival', 'New arrival'),
         cached: replied,
+        elsewhere: rawThread('elsewhere', 'Another sent message', ['SENT']),
       },
     })
 
@@ -815,13 +979,17 @@ describe('syncThreads', () => {
     for (const [id, event] of [
       [
         'trashed-sent',
-        { labelsAdded: [{ message: { id: 'm1', threadId: 'trashed-sent' }, labelIds: ['TRASH'] }] },
+        {
+          labelsAdded: [
+            { message: { id: 'trashed-sent-m1', threadId: 'trashed-sent' }, labelIds: ['TRASH'] },
+          ],
+        },
       ],
       [
         'archived-sent',
         {
           labelsRemoved: [
-            { message: { id: 'm2', threadId: 'archived-sent' }, labelIds: ['INBOX'] },
+            { message: { id: 'archived-sent-m1', threadId: 'archived-sent' }, labelIds: ['INBOX'] },
           ],
         },
       ],
@@ -836,14 +1004,19 @@ describe('syncThreads', () => {
       const second = gmail({
         list: [],
         history: { historyId: '5006', history: [event] },
-        threads: { [id]: rawThread(id, 'Unrelated sent-only', ['SENT']) },
+        threads: {
+          [id]: rawThread(
+            id,
+            'Unrelated sent-only',
+            id === 'trashed-sent' ? ['SENT', 'TRASH'] : ['SENT'],
+          ),
+        },
       })
       const page = await syncThreads(second.api, cache, options)
 
       expect(page.threads.map((thread) => thread.id)).not.toContain(id)
-      expect(threadGets(second.seen)).not.toEqual(
-        expect.arrayContaining([expect.stringContaining(`/threads/${id}`)]),
-      )
+      expect(page).not.toHaveProperty('notFoundThreadIds')
+      expect(page).not.toHaveProperty('unreadableThreadIds')
     }
   })
 
@@ -872,7 +1045,7 @@ describe('syncThreads', () => {
       threads: {
         unrelated: rawThread('unrelated', 'Unrelated'),
         'older-arrival': rawThread('older-arrival', 'Older matching result'),
-        nonmatch: rawThread('nonmatch', 'Not in query'),
+        nonmatch: rawThread('nonmatch', 'Not in query', ['SENT']),
       },
     })
 
@@ -886,33 +1059,8 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toEqual(
       expect.arrayContaining([expect.stringContaining('/threads/older-arrival')]),
     )
-    expect(threadGets(second.seen)).toHaveLength(1)
+    expect(threadGets(second.seen).length).toBeLessThanOrEqual(2)
     expect(threadGets(second.seen).some((url) => url.includes('unrelated'))).toBe(false)
-  })
-
-  it('does not admit an uncached message that the active mailbox list does not return', async () => {
-    const options = {}
-    const first = gmail({ list: [{ id: 'old' }], threads: { old: rawThread('old', 'Old') } })
-    await syncThreads(first.api, cache, options)
-
-    const second = gmail({
-      list: [{ id: 'other-match' }],
-      history: {
-        historyId: '5005',
-        history: [{ messagesAdded: [{ message: { id: 'new-message', threadId: 'not-a-match' } }] }],
-      },
-      threads: {
-        'other-match': rawThread('other-match', 'Other matching result'),
-        'not-a-match': rawThread('not-a-match', 'Does not match'),
-      },
-    })
-    const page = await syncThreads(second.api, cache, options)
-
-    expect(page.threads.map((thread) => thread.id)).not.toContain('not-a-match')
-    expect(page).not.toHaveProperty('notFoundThreadIds')
-    expect(threadGets(second.seen)).not.toEqual(
-      expect.arrayContaining([expect.stringContaining('/threads/not-a-match')]),
-    )
   })
 
   it.each([404, 200, 503])(
@@ -946,8 +1094,12 @@ describe('syncThreads', () => {
             },
           ],
         },
-        threads: { healthy, invitation: { id: 'invitation', messages: [sentReply] } },
-        missingThreads: status === 404 ? ['invitation', 'unrelated'] : ['unrelated'],
+        threads: {
+          healthy,
+          invitation: { id: 'invitation', messages: [sentReply] },
+          unrelated: rawThread('unrelated', 'Already archived', ['SENT']),
+        },
+        ...(status === 404 ? { missingThreads: ['invitation'] } : {}),
         ...(status === 503 ? { failedThreads: ['invitation'] } : {}),
       })
       const page = await searchMail(delta.api)
@@ -969,7 +1121,7 @@ describe('syncThreads', () => {
             'next-page': { threads: [{ id: 'older' }] },
           },
           threads: { healthy, older: rawThread('older', 'Older mail') },
-          missingThreads: ['invitation', 'unrelated'],
+          missingThreads: ['invitation'],
           profile: { historyId: '5006' },
         })
         const recovered = await searchMail(retry.api, { refresh: true })
@@ -1135,10 +1287,12 @@ describe('syncThreads', () => {
       let historyPages = 0
       let membershipPages = 0
       let checkUnchanged = false
+      const other = rawThread('other', 'Matching older thread')
+      const mailbox = [...largeInbox(), other]
       const { api } = gmail(
         {
           listPages: { '': { threads: [{ id: 'healthy' }], nextPageToken: 'new-token' } },
-          threads: { healthy },
+          threads: { healthy, other },
         },
         {},
         (url) => {
@@ -1146,6 +1300,10 @@ describe('syncThreads', () => {
             snapshot = true
             return Promise.resolve(Response.json({ historyId: newMessage ? '7001' : profile }))
           }
+          if (url.pathname.endsWith('/threads/off-page-gone'))
+            return Promise.resolve(Response.json({}, { status: 404 }))
+          if (url.pathname.endsWith('/threads/off-page-failed'))
+            return Promise.resolve(Response.json({}, { status: snapshot ? 404 : 503 }))
           if (url.pathname.endsWith('/history')) {
             const since = url.searchParams.get('startHistoryId')
             if (since === profile)
@@ -1174,7 +1332,14 @@ describe('syncThreads', () => {
                 ...(limit === 'history pages' ? { nextPageToken: `history-${historyPages}` } : {}),
                 history:
                   limit === 'membership'
-                    ? [{ messagesAdded: [{ message: { id: 'other-m1', threadId: 'other' } }] }]
+                    ? [
+                        {
+                          messagesAdded: [{ message: { id: 'other-m1', threadId: 'other' } }],
+                          messagesDeleted: ['off-page-gone', 'off-page-failed'].map((threadId) => ({
+                            message: { id: `${threadId}-m1`, threadId },
+                          })),
+                        },
+                      ]
                     : limit === 'history pages'
                       ? []
                       : [deletion],
@@ -1188,26 +1353,31 @@ describe('syncThreads', () => {
             // A change during the replacement list must still be visible to the next delta.
             if (snapshot) newMessage = true
             else if (limit === 'membership') {
-              if (++membershipPages > 21) throw new Error('Membership traversal did not stop')
-              return Promise.resolve(
-                Response.json({
-                  threads: [{ id: 'healthy' }],
-                  nextPageToken: `page-${membershipPages}`,
-                }),
-              )
+              if (++membershipPages > 20) throw new Error('Membership traversal did not stop')
+              return Promise.resolve(mailboxPage(url, 'in:inbox', mailbox))
             }
           }
         },
       )
       const mail = mailSearch(api)
       try {
-        expect(await mail.search()).toMatchObject({ historyRecoveryRequired: true })
+        const blocked = await mail.search()
+        expect(blocked).toMatchObject({ historyRecoveryRequired: true })
+        if (limit === 'membership') {
+          expect(blocked.notFoundThreadIds).toEqual(['off-page-gone'])
+          expect(blocked.unreadableThreadIds).toEqual(['off-page-failed'])
+        }
         checkUnchanged = true
         expect(await mail.search()).toMatchObject({ threads: [{ id: 'healthy' }] })
-        expect(await mail.search({ refresh: true, expectedAccountSub: 'account' })).toMatchObject({
+        const replacement = await mail.search({ refresh: true, expectedAccountSub: 'account' })
+        expect(replacement).toMatchObject({
           threads: [{ id: 'healthy', unread: false }],
           nextPageToken: 'new-token',
         })
+        if (limit === 'membership') {
+          expect(replacement.notFoundThreadIds).toEqual(['off-page-failed'])
+          expect(replacement).not.toHaveProperty('unreadableThreadIds')
+        }
         const delta = await mail.search()
         expect(delta).toMatchObject({ threads: [{ id: 'healthy', unread: true }] })
         expect(delta).not.toHaveProperty('notFoundThreadIds')
@@ -1821,7 +1991,7 @@ describe('syncThreads', () => {
     it('keeps an inbox thread when a SENT-only reply is trashed', async () => {
       await cachedInbox()
       const thread = rawThread('t2', 'Two')
-      thread.messages.push(message('t2-reply', 't2', [], ['SENT']))
+      thread.messages.push(message('t2-reply', 't2', [], ['SENT', 'TRASH']))
 
       const second = gmail({
         list: [{ id: 't2' }],
@@ -2072,8 +2242,6 @@ describe('syncThreads', () => {
     })
 
     it('drops a sent thread that was trashed', async () => {
-      // The departure that IS real for Sent, and the one `LEFT_WHEN_ADDED`
-      // already covered.
       const first = gmail({
         list: [{ id: 't9' }],
         threads: { t9: rawThread('t9', 'Something sent', ['SENT']) },
@@ -2081,6 +2249,7 @@ describe('syncThreads', () => {
       await syncThreads(first.api, cache, { mailbox: 'sent' })
 
       const second = gmail({
+        threads: { t9: rawThread('t9', 'Something sent', ['SENT', 'TRASH']) },
         history: {
           historyId: '5002',
           history: [

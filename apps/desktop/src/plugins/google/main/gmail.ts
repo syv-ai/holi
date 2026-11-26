@@ -19,7 +19,12 @@
  * HTML sanitizer remains in the renderer, where a DOM is available.
  */
 import { Parser } from 'htmlparser2'
-import { GoogleApiError, GoogleResourceTimeoutError, type GoogleApi } from './api'
+import {
+  GoogleApiError,
+  GoogleResourceDecodeError,
+  GoogleResourceTimeoutError,
+  type GoogleApi,
+} from './api'
 import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
 import {
@@ -40,6 +45,7 @@ import {
 import {
   fetchFullThread,
   GMAIL_BASE as BASE,
+  isGmailMessageId,
   threadMessages,
   type RawMessage,
   type RawThread,
@@ -322,8 +328,7 @@ export interface ListThreadsOptions {
    * A **query term**, like `category` and `unread`, rather than a second
    * listing path. It is the base term, so an explicit query replaces it
    * entirely: a search escapes the mailbox exactly as it escapes the tabs.
-   * `mail-sync` also reads it (via `mailboxLabel`) to decide which label's
-   * movement means a thread has left this list.
+   * Mail sync also uses the mailbox label to identify possible departures.
    */
   mailbox?: MailboxName
   /** Filter each fetched page to incoming threads without a later real reply. */
@@ -337,12 +342,6 @@ export interface ListThreadsOptions {
 /** The mailboxes the list can be of. Not every Gmail label: only the two that
  *  are places the user navigates to. */
 export type MailboxName = 'inbox' | 'sent'
-
-/** Gmail's own label for a mailbox, which is what `history.list` is scoped by
- *  and what a departure is measured against. */
-export function mailboxLabel(mailbox: MailboxName | undefined): string {
-  return mailbox === 'sent' ? 'SENT' : 'INBOX'
-}
 
 export interface MailPage {
   /** No list was published: the caller must explicitly request a new baseline. */
@@ -456,7 +455,7 @@ export async function listThreadIds(
   const page = await api.get<{ threads?: { id?: string }[]; nextPageToken?: string }>(
     `${BASE}/threads`,
     {
-      q: composeQuery(options),
+      q: describeThreadList(options).q,
       maxResults: String(options.limit ?? 25),
       pageToken: options.pageToken,
     },
@@ -487,10 +486,19 @@ export async function fetchThreadPage(
   knownAddresses?: string[],
 ) {
   const { ids, nextPageToken } = await listThreadIds(api, options)
-  const { threads, outcomes } = await fetchThreadSummaries(api, ids, knownAddresses)
+  const [metadata, names] = await Promise.all([
+    fetchThreadMetadata(api, ids),
+    ids.length ? fetchLabelNames(api) : new Map<string, string>(),
+  ])
+  const threads = await projectThreadRows(
+    api,
+    metadata.filter((row) => row.kind === 'readable'),
+    names,
+    knownAddresses,
+  )
   return {
     page: { threads, nextPageToken, syncedAt: new Date().toISOString() },
-    outcomes,
+    outcomes: metadata.map(({ id, kind }) => ({ id, kind })),
   }
 }
 
@@ -525,83 +533,94 @@ function verifyThreadMetadata(thread: RawThread, id: string): RawMessage[] {
   return messages
 }
 
-/**
- * Summaries for a known set of thread IDs, in the order given. Both the rows
- * and the off-page probes share one metadata pool, but only rows need labels
- * or invitation evidence. A readable probe cannot add a row to a page.
- */
-export async function fetchThreadSummaries(
-  api: GoogleApi,
-  ids: string[],
-  knownAddresses?: string[],
-  probeIds: readonly string[] = [],
-): Promise<{
-  threads: MailThreadSummary[]
-  outcomes: ThreadMetadataOutcome[]
-}> {
-  if (ids.length === 0 && probeIds.length === 0) return { threads: [], outcomes: [] }
+type ReadableThreadMetadata = { id: string; kind: 'readable'; messages: RawMessage[] }
+type ThreadMetadata = ReadableThreadMetadata | { id: string; kind: 'not-found' | 'unreadable' }
 
-  // ONCE per call, not once per thread: resolving a chip must not cost a
-  // request. It runs concurrently with the threads for the same reason.
-  const [names, results] = await Promise.all([
-    ids.length ? fetchLabelNames(api) : new Map<string, string>(),
-    mapPooled([...ids, ...probeIds], 5, async (id) => {
-      try {
-        const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(id)}`, {
-          format: 'metadata',
-          // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
-          // Comma-joined, Gmail reads the whole string as one header name, matches
-          // nothing, and returns 200 with no headers.
-          metadataHeaders: [
-            'Subject',
-            'From',
-            'Date',
-            'Message-ID',
-            'To',
-            'Cc',
-            'Reply-To',
-            'List-Unsubscribe',
-            'Auto-Submitted',
-            'List-Id',
-            'Content-Type',
-          ],
-        })
-        const messages = verifyThreadMetadata(thread, id)
-        return { kind: 'readable', id, messages } as const
-      } catch (error) {
-        if (error instanceof GoogleApiError && error.status === 404)
-          return { kind: 'not-found', id } as const
-        // A transient refusal of this metadata resource is not absence. Let
-        // auth, scope and account quota errors fail the page instead.
-        if (
-          error instanceof CalendarScanError ||
-          error instanceof SyntaxError ||
-          error instanceof GoogleResourceTimeoutError ||
-          (error instanceof GoogleApiError &&
-            error.code === 'unknown' &&
-            (error.status === 408 || error.status >= 500))
-        )
-          return { kind: 'unreadable', id } as const
-        throw error
-      }
-    }),
-  ])
-  const threads = results.slice(0, ids.length).filter((result) => result.kind === 'readable')
+/** Exact reads for rows and probes share one pool. Membership checks require
+ * an explicit label array on every message, unlike a previously listed row. */
+export function fetchThreadMetadata(
+  api: GoogleApi,
+  ids: Iterable<string>,
+  requireLabelsFor?: ReadonlySet<string>,
+): Promise<ThreadMetadata[]> {
+  return mapPooled([...ids], 5, async (id) => {
+    if (!isGmailMessageId(id)) return { kind: 'unreadable', id } as const
+    try {
+      const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(id)}`, {
+        format: 'metadata',
+        // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
+        // Comma-joined, Gmail reads the whole string as one header name, matches
+        // nothing, and returns 200 with no headers.
+        metadataHeaders: [
+          'Subject',
+          'From',
+          'Date',
+          'Message-ID',
+          'To',
+          'Cc',
+          'Reply-To',
+          'List-Unsubscribe',
+          'Auto-Submitted',
+          'List-Id',
+          'Content-Type',
+        ],
+      })
+      const messages = verifyThreadMetadata(thread, id)
+      if (
+        requireLabelsFor?.has(id) &&
+        messages.some(({ labelIds }) => labelIds === undefined || labelIds.some((id) => id === ''))
+      )
+        return { kind: 'unreadable', id } as const
+      return { kind: 'readable', id, messages } as const
+    } catch (error) {
+      if (error instanceof GoogleApiError && error.status === 404)
+        return { kind: 'not-found', id } as const
+      // A transient refusal of this metadata resource is not absence. Let
+      // auth, scope and account quota errors fail the page instead.
+      if (
+        error instanceof CalendarScanError ||
+        error instanceof GoogleResourceDecodeError ||
+        error instanceof GoogleResourceTimeoutError ||
+        (error instanceof GoogleApiError &&
+          error.code === 'unknown' &&
+          (error.status === 408 || error.status >= 500))
+      )
+        return { kind: 'unreadable', id } as const
+      throw error
+    }
+  })
+}
+
+/** Only admitted rows need label names or invitation evidence. Reuse the
+ * exact reads that were already made to check membership. */
+export async function summarizeThreadMetadata(
+  api: GoogleApi,
+  rows: ThreadMetadata[],
+  knownAddresses?: string[],
+): Promise<MailThreadSummary[]> {
+  const readable = rows.filter((row) => row.kind === 'readable')
+  if (readable.length === 0) return []
+  return projectThreadRows(api, readable, await fetchLabelNames(api), knownAddresses)
+}
+
+async function projectThreadRows(
+  api: GoogleApi,
+  threads: ReadableThreadMetadata[],
+  names: Map<string, string>,
+  knownAddresses?: string[],
+): Promise<MailThreadSummary[]> {
   const summaries = threads.map((thread) => summarize(thread, names, knownAddresses))
 
   // Metadata omits MIME children. Inspect only multipart MIME structure and
   // headers of the latest incoming; never request body bytes.
   const { invitationIds, unknownIds } = await fetchLatestIncomingInvitations(api, threads)
   const invites = await fetchInviteIds(api, summaries)
-  return {
-    outcomes: results.map(({ id, kind }) => ({ id, kind })),
-    threads: summaries.map((summary) => ({
-      ...summary,
-      automated: summary.automated || invitationIds.has(summary.id),
-      automationUnknown: unknownIds.has(summary.id),
-      hasInvite: invitationIds.has(summary.id) || invites.has(summary.id),
-    })),
-  }
+  return summaries.map((summary) => ({
+    ...summary,
+    automated: summary.automated || invitationIds.has(summary.id),
+    automationUnknown: unknownIds.has(summary.id),
+    hasInvite: invitationIds.has(summary.id) || invites.has(summary.id),
+  }))
 }
 
 /**
@@ -725,17 +744,40 @@ async function fetchInviteIds(
   return new Set(summaries.map((s) => s.id).filter((id) => ids.has(id)))
 }
 
-/** The user's own query, the mailbox, the category tab and the unread filter,
- *  in Gmail's one grammar. */
-function composeQuery(options: ListThreadsOptions): string {
-  // The mailbox is the BASE term, so an explicit query replaces it rather than
-  // ANDing with it: searching from inside Sent searches the mailbox, the same
-  // way searching from inside a category tab leaves the tab.
-  const base = options.mailbox === 'sent' ? 'in:sent' : 'in:inbox'
-  const parts = [options.query !== undefined && options.query !== '' ? options.query : base]
-  if (options.category !== undefined) parts.push(categoryQuery(options.category))
-  if (options.unread === true) parts.push('is:unread')
-  return parts.join(' ')
+/** Build the actual Gmail query and the negative evidence available for a
+ * structural list. An explicit query replaces the mailbox, and may change
+ * how any appended term binds. Leave that grammar entirely to Gmail. */
+export function describeThreadList(options: ListThreadsOptions) {
+  const explicit = options.query !== undefined && options.query !== ''
+  const home = options.mailbox === 'sent' ? 'SENT' : 'INBOX'
+  const parts = [explicit ? options.query : `in:${home.toLowerCase()}`]
+  const requiredLabels: string[] = [home]
+  if (options.category !== undefined) {
+    parts.push(categoryQuery(options.category))
+    const categoryLabel = Object.keys(CATEGORY_BY_LABEL).find(
+      (id) => CATEGORY_BY_LABEL[id] === options.category,
+    )
+    if (categoryLabel !== undefined) requiredLabels.push(categoryLabel)
+  }
+  if (options.unread === true) {
+    parts.push('is:unread')
+    requiredLabels.push('UNREAD')
+  }
+  return {
+    q: parts.join(' '),
+    mailboxLabel: explicit ? null : home,
+    excludes({ messages }: ReadableThreadMetadata): boolean {
+      if (explicit || messages.some(({ labelIds }) => labelIds === undefined)) return false
+      // A history entry is about one message, not its whole conversation.
+      // Use the union only for negative proof; Gmail decides positive matches.
+      const labels = new Set(messages.flatMap(({ labelIds }) => labelIds ?? []))
+      return (
+        requiredLabels.some((id) => !labels.has(id)) ||
+        // threads.list doesn't opt into Spam or Trash for structural lists.
+        messages.every(({ labelIds }) => labelIds!.includes('SPAM') || labelIds!.includes('TRASH'))
+      )
+    },
+  }
 }
 
 /**
