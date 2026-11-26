@@ -543,15 +543,27 @@ async function run() {
       await capture('03-mail-view-before-dark')
       mark('mail-view-attachment-without-calendar-copy-shows-invitation')
 
+      const expectUnverifiedAttachmentResponse = async () => {
+        assert.doesNotMatch(await readCard(), /No response yet|Response:|Calendar:|Gmail Sent:/)
+        for (const action of ['Accept', 'Maybe', 'Decline', 'Open email link'])
+          assert(
+            await js(`(${target(action, card)})?.disabled === true`),
+            `${action} must be disabled`,
+          )
+      }
+      const responseCalls = () =>
+        rig.calls.filter(({ name }) => name === 'google.respondToMailInvitation').length
+      const beforeRefusal = transport.writes.length
       transport.refuseNextSend()
       await pause(700)
       await click('Accept', card)
       await until('invitation refusal with Retry', () =>
         js(
-          `!!document.querySelector(${literal(`${card} [role="alert"]`)}) && !!(${target('Retry', card)})`,
+          `!!document.querySelector(${literal(`${card} [role="alert"]`)}) && (${target('Retry', card)})?.disabled === false`,
         ),
       )
-      await expectStatus('No response yet')
+      await expectUnverifiedAttachmentResponse()
+      assert.equal(transport.writes.length, beforeRefusal + 1)
       assert.equal(transport.writes.at(-1)?.status, 403)
       assert(
         rig.calls.some(
@@ -563,6 +575,7 @@ async function run() {
       assert.equal(transport.snapshot().sentReceiptReads, 0)
       await capture('04-mail-view-refusal-dark')
       const refusedWrites = transport.writes.length
+      const callsBeforeRefusalRetry = responseCalls()
       const attachmentReadsBeforeRetry = transport.snapshot().attachmentReads
       await pause(700)
       await click('Retry', card)
@@ -572,16 +585,20 @@ async function run() {
       await expectStatus('No response yet')
       assert(transport.snapshot().attachmentReads > attachmentReadsBeforeRetry)
       assert.equal(transport.writes.length, refusedWrites)
-      mark('gmail-refusal-retains-old-response-and-retry-does-not-send')
+      assert.equal(responseCalls(), callsBeforeRefusalRetry)
+      mark('gmail-refusal-hides-stale-response-and-read-only-retry-restores-it')
       await pause(700)
       const beforeSent = transport.snapshot()
       transport.collideNextSendInTrash()
       const releaseSent = transport.holdSentAcknowledgement()
       try {
         await click('Accept', card)
+        await until('Gmail send reached the provider with acknowledgement held', () => {
+          const write = transport.writes[refusedWrites]
+          return write?.method === 'POST' && write.status === 200 && Boolean(write.messageId)
+        })
         await expectStatus('Sending your response…')
-        await expectStatus('No response yet')
-        assert(!(await readCard()).includes('Response: Accepted'))
+        await expectUnverifiedAttachmentResponse()
       } finally {
         releaseSent()
       }
@@ -602,8 +619,6 @@ async function run() {
       assert(afterSent.trashedReplyReads > beforeSent.trashedReplyReads)
       mark('out-of-thread-trashed-id-claim-keeps-an-acknowledged-gmail-reply-pending')
 
-      const responseCalls = () =>
-        rig.calls.filter(({ name }) => name === 'google.respondToMailInvitation').length
       const callsBeforeRetry = responseCalls()
       transport.removeTrashedReply()
       await click('Retry', card)

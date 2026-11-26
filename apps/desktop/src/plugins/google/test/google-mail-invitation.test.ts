@@ -7360,6 +7360,102 @@ it('keeps series RSVP on the master while unexpanded exceptions suppress stale J
   })
 })
 
+it.each(['timed primary', 'all-day secondary'] as const)(
+  'keeps a sparse %s tombstone out of series Join without blocking master RSVP',
+  async (scenario) => {
+    const { state, list, read, respond } = await rig()
+    const allDay = scenario === 'all-day secondary'
+    const calendar = allDay ? 'secondary@example.com' : 'primary'
+    const master = event({ id: 'series', series: true, allDay })
+    const room = 'https://meet.google.com/abc-defg-hij'
+    const occurrence = (
+      id: string,
+      original: string,
+      day: string,
+      endDay: string,
+      link: string,
+    ) => ({
+      ...upcomingInstance(id, day, link),
+      originalStartTime: allDay ? { date: original } : { dateTime: `${original}T15:00:00Z` },
+      start: allDay ? { date: day } : { dateTime: `${day}T15:00:00Z` },
+      end: allDay ? { date: endDay } : { dateTime: `${day}T16:00:00Z` },
+    })
+    const stale = occurrence('moved', '2099-07-09', '2099-07-11', '2099-07-12', room)
+    const later = occurrence(
+      'later',
+      '2099-07-16',
+      '2099-07-16',
+      '2099-07-17',
+      'https://meet.google.com/klm-nopq-rst',
+    )
+    const tombstone = {
+      id: stale.id,
+      status: 'cancelled',
+      recurringEventId: master.id,
+      originalStartTime: allDay
+        ? { date: '2099-07-09' }
+        : { dateTime: '2099-07-09T11:00:00-04:00', timeZone: 'America/New_York' },
+    }
+    const source = seriesWithException()
+    state.messages = [
+      gmailMessage(
+        'series',
+        400,
+        allDay
+          ? source.replace(
+              'DTSTART:20240718T150000Z\r\nDTEND:20240718T160000Z',
+              'DTSTART;VALUE=DATE:20240718\r\nDTEND;VALUE=DATE:20240719',
+            )
+          : source,
+      ),
+    ]
+    state.events.set(calendar, [master])
+    if (allDay)
+      state.secondaryCalendars.push({ id: calendar, selected: true, accessRole: 'writer' })
+    const uidCollection = (items: unknown[]) => {
+      if (allDay) state.secondaryUidItems.set(calendar, items)
+      else state.primaryPages = [{ kind: 'calendar#events', items }]
+    }
+    state.instances.set(calendar, [stale])
+    // The query's UID is not proof that a sparse row from another parent
+    // belongs to this series, even at the same original slot.
+    uidCollection([master, { ...tombstone, id: 'other-child', recurringEventId: 'other-parent' }])
+    expect(await read()).toMatchObject({ conferenceUrl: room, htmlLink: stale.htmlLink })
+
+    uidCollection([tombstone, master])
+    expect((await list()).invitations).toMatchObject([
+      {
+        scope: 'series',
+        cancelled: false,
+        canRespond: true,
+        conferenceUrl: null,
+        htmlLink: master.htmlLink,
+      },
+    ])
+
+    uidCollection([master, tombstone])
+    state.instances.set(calendar, [later, stale])
+    const next = { conferenceUrl: later.hangoutLink, htmlLink: later.htmlLink }
+    expect(await read()).toMatchObject({ ...next, cancelled: false, canRespond: true })
+    expect(await respond('accepted')).toMatchObject({
+      channel: 'calendar',
+      outcome: 'sent',
+      refreshPending: false,
+      invitation: {
+        ...next,
+        scope: 'series',
+        cancelled: false,
+        recordedResponseStatus: 'accepted',
+      },
+    })
+    expect(state.calendarUpdateRequests).toEqual([
+      { calendar, eventId: master.id, sendUpdates: 'all', status: 'accepted' },
+    ])
+    expect(state.calendarPatchAttempts).toBe(1)
+    expect(state.sendAttempts).toBe(0)
+  },
+)
+
 it('includes hidden expanded invitations for REQUEST but not publications or exports', async () => {
   const { state, read } = await rig()
   const master = event({ id: 'series', series: true })
