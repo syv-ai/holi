@@ -617,6 +617,27 @@ export function createMailInvitationReconciler(
     const journal = { ...durable, attempts: durable.attempts.map(withGmailOutcome) }
     const resources = createInvitationCalendarResourceLookup(api, email, discovery)
     const known = knownCalendarLocators(journal)
+    async function observeCalendarAbsence(details: Candidate['value']['details']) {
+      const absent = new Set<string>()
+      let contradicted = journal.calendarLocatorOverflow
+      // Keep observing the bounded exact resources even after one prevents
+      // Gmail fallback: another may supply negative evidence for series Join.
+      for (const locator of relevantCalendarTargets(known, target, details)) {
+        if ((await resources(locator)).kind === 'gone') absent.add(locator)
+        else contradicted = true
+      }
+      return { absent, contradicted }
+    }
+    function matchingCalendarCopy(attempt: InvitationAttempt) {
+      const { delivery, revision } = attempt
+      const copy = copies.get(scopeKey(revision))
+      return delivery.channel === 'calendar' &&
+        copy?.kind === 'verified' &&
+        copy.target === delivery.target &&
+        (delivery.proof ? copy.matchesProof(delivery.proof) : sameRevision(copy.revision, revision))
+        ? copy
+        : null
+    }
     const relevant = journal.attempts.filter(
       (attempt) =>
         attempt.accountSub === accountSub &&
@@ -802,15 +823,9 @@ export function createMailInvitationReconciler(
         let confirmed = attempt
         if (delivery.channel === 'calendar') {
           if (attempt.state !== 'confirmed') {
-            const copy = copies.get(key)
-            const matching =
-              copy?.kind === 'verified' &&
-              copy.target === delivery.target &&
-              (delivery.proof
-                ? copy.matchesProof(delivery.proof)
-                : sameRevision(copy.revision, revision))
+            const matching = matchingCalendarCopy(attempt)
             const observed = matching
-              ? copy.responseStatus === answer
+              ? matching.responseStatus === answer
               : await exactCalendarAnswer(resources, delivery, answer)
             if (!observed) {
               pending.push(attempt)
@@ -819,7 +834,7 @@ export function createMailInvitationReconciler(
             confirmed = {
               ...attempt,
               state: 'confirmed',
-              delivery: matching ? { ...delivery, proof: copy.proof } : delivery,
+              delivery: matching ? { ...delivery, proof: matching.proof } : delivery,
             }
           }
         } else if (
@@ -991,7 +1006,7 @@ export function createMailInvitationReconciler(
             patch: verifiedCopy.reply,
           }
         : null
-      const absentTargets = new Set<string>()
+      let absentTargets = new Set<string>()
       let exactNoopTarget: string | null = null
       let recorded: InviteAnswer | null = null
       let priorSent: SentEvidence | null = null
@@ -1071,18 +1086,13 @@ export function createMailInvitationReconciler(
         const historical = confirmation?.attempt.answer ?? null
         const historicalCalendar =
           delivery?.channel === 'calendar' && !sameTarget ? historical : null
-        let absenceContradicted = journal.calendarLocatorOverflow
+        let absenceContradicted = false
         let exactConfirmed = false
         if (calendar.kind === 'absent') {
-          // A complete list can still disagree with an exact resource read.
           // Any known target for this scope must be gone before Gmail can write.
-          for (const locator of relevantCalendarTargets(known, target, details)) {
-            if ((await resources(locator)).kind !== 'gone') {
-              absenceContradicted = true
-              break
-            }
-            absentTargets.add(locator)
-          }
+          const absence = await observeCalendarAbsence(details)
+          absenceContradicted = absence.contradicted
+          absentTargets = absence.absent
           if (absenceContradicted && delivery?.channel === 'calendar' && historical) {
             // Only a confirmation on the selected lineage reaches here. The
             // exact resource must still distinguish the current material;
@@ -1311,14 +1321,39 @@ export function createMailInvitationReconciler(
           // A selected series readback still needs the direct slots' negative
           // proof before picking a link. Do not add sibling lookups to write preflight.
           if (selection && identity.recurrenceId === null && details.recurring) {
-            for (const sibling of incoming) {
+            const siblings = incoming.filter((sibling) => {
               const slot = sibling.selected.value.details
-              if (
+              return (
                 slot.identity.uid === identity.uid &&
                 slot.identity.recurrenceId !== null &&
                 slot.organizer?.email === organizer
               )
-                await observeCopy(sibling)
+            })
+            for (const sibling of siblings) await observeCopy(sibling)
+            for (const sibling of siblings) {
+              const slot = sibling.selected.value.details
+              // An unconfirmed response may require an exact resource read.
+              // Observe it without reconciling that sibling's write.
+              for (const attempt of journal.attempts) {
+                if (
+                  attempt.delivery.channel === 'calendar' &&
+                  attempt.delivery.proof &&
+                  attempt.state !== 'prepared' &&
+                  attempt.state !== 'confirmed' &&
+                  !dispatching.has(attempt.id) &&
+                  bindsConfirmation(attempt, target, slot) &&
+                  !matchingCalendarCopy(attempt)
+                )
+                  await resources(attempt.delivery.target)
+              }
+            }
+            for (const sibling of siblings) {
+              const slot = sibling.selected.value.details
+              if (
+                copies.get(scopeKey(slot.identity))?.kind === 'absent' &&
+                !invitationFor(sibling)?.joinOnly
+              )
+                await observeCalendarAbsence(slot)
             }
           }
           const navigation = await verifiedCopy.navigation((slot) => {

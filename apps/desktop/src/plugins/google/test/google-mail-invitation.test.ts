@@ -183,6 +183,12 @@ function account(sub: string): StoredGoogleAuth {
 }
 
 const tempDirs: string[] = []
+type SparseCancellation = {
+  id: string
+  status: 'cancelled'
+  recurringEventId: string
+  originalStartTime: NonNullable<ReturnType<typeof event>['originalStartTime']>
+}
 
 /** Models the account-scoped Google resources the UI sees. Writes update the
  * provider state (or fail) and the next UI read has to recover that state. */
@@ -204,6 +210,7 @@ async function rig(agendaCache?: GoogleCache) {
     eventRoleOverrides: new Map<string, 'reader' | 'writer'>(),
     instanceRoleOverrides: new Map<string, 'reader'>(),
     rawInstancePage: null as unknown,
+    sparseInstanceRows: new Map<string, SparseCancellation[]>(),
     instances: new Map<
       string,
       (Omit<ReturnType<typeof event>, 'iCalUID' | 'organizer'> & {
@@ -246,6 +253,7 @@ async function rig(agendaCache?: GoogleCache) {
     // These fixture calendars have fixed UTC offsets over the dates under test.
     calendarDateOffsets: new Map<string, string>(),
     exactCalendarError: null as number | 'non-json' | null,
+    exactCalendarRows: new Map<string, Map<string, SparseCancellation>>(),
     afterExactCalendarMiss: () => {},
     afterSecondaryUidRead: () => {},
     omitAfterPatch: false,
@@ -461,7 +469,10 @@ async function rig(agendaCache?: GoogleCache) {
       if (accessRole === undefined) return json({}, 404)
       if (accessRole === 'freeBusyReader')
         return json({ kind: 'calendar#events', accessRole, items: [] })
-      const instances = state.instances.get(id) ?? []
+      const instances = [
+        ...(state.instances.get(id) ?? []),
+        ...(state.sparseInstanceRows.get(id) ?? []),
+      ]
       const seriesId = decodeURIComponent(instancePath[2]!)
       const original = url.searchParams.get('originalStart')
       if (state.instanceContinuationUnavailable && url.searchParams.has('pageToken'))
@@ -540,9 +551,10 @@ async function rig(agendaCache?: GoogleCache) {
         if (state.exactCalendarError === 'non-json')
           return new Response('<html>invalid event</html>')
         if (state.exactCalendarError) return json({}, state.exactCalendarError)
-        const original = [...events, ...(state.instances.get(id) ?? [])].find(
-          (event) => event.id === calendar[2],
-        )
+        const exact = state.exactCalendarRows.get(id)?.get(calendar[2])
+        const original =
+          exact ??
+          [...events, ...(state.instances.get(id) ?? [])].find((event) => event.id === calendar[2])
         if (original) return json(original)
         state.afterExactCalendarMiss()
         return json({}, 404)
@@ -7455,6 +7467,131 @@ it.each(['timed primary', 'all-day secondary'] as const)(
     expect(state.sendAttempts).toBe(0)
   },
 )
+
+it('skips an original slot with a sparse instances tombstone in both the series card and RSVP readback', async () => {
+  const { state, list, read, respond } = await rig()
+  const master = event({ id: 'series', series: true })
+  const room = 'https://meet.google.com/xyz-abcd-efg'
+  const stale = {
+    ...upcomingInstance('moved', '2099-07-11', room),
+    originalStartTime: { dateTime: '2099-07-09T15:00:00Z' },
+  }
+  const later = upcomingInstance('later', '2099-07-16', 'https://meet.google.com/klm-nopq-rst')
+  const tombstone: SparseCancellation = {
+    id: stale.id,
+    status: 'cancelled',
+    recurringEventId: master.id,
+    originalStartTime: { dateTime: '2099-07-09T11:00:00-04:00' },
+  }
+  state.messages = [
+    gmailMessage('series', 400, seriesWithException()),
+    gmailMessage('old-occurrence', 200, movedRequest('20240701T090000Z', room)),
+  ]
+  // Unexpanded events.list exposes only the master; events.instances alone
+  // exposes the tombstone. The expanded view still advertises the old room.
+  state.events.set('primary', [master])
+  state.sparseInstanceRows.set('primary', [tombstone])
+  state.expandedPages = [
+    { kind: 'calendar#events', items: [stale], nextPageToken: '1' },
+    { kind: 'calendar#events', items: [later] },
+  ]
+  // Even an exact query must not associate a row from a different parent.
+  state.rawInstancePage = {
+    kind: 'calendar#events',
+    items: [{ ...tombstone, recurringEventId: 'other-parent' }],
+  }
+  expect(await read(thread, 'series')).toMatchObject({
+    conferenceUrl: room,
+    htmlLink: stale.htmlLink,
+  })
+  state.rawInstancePage = null
+
+  const safeLinks = { conferenceUrl: later.hangoutLink, htmlLink: later.htmlLink }
+  expect((await list()).invitations).toMatchObject([
+    { scope: 'series', ...safeLinks, cancelled: false, canRespond: true },
+    {
+      scope: 'occurrence',
+      identity: { messageId: 'old-occurrence', recurrenceId: '2099-07-09T15:00:00.000Z' },
+      cancelled: false,
+      canRespond: false,
+      responseStatus: null,
+      recordedResponseStatus: null,
+      responseTargetKey: null,
+      conferenceUrl: null,
+      htmlLink: null,
+    },
+  ])
+  expect(await read(thread, 'series')).toMatchObject({ ...safeLinks, canRespond: true })
+  expect(await respond('accepted')).toMatchObject({
+    outcome: 'sent',
+    channel: 'calendar',
+    refreshPending: false,
+    invitation: {
+      ...safeLinks,
+      scope: 'series',
+      responseStatus: 'accepted',
+      recordedResponseStatus: 'accepted',
+      responsePending: false,
+    },
+  })
+  expect(state.calendarUpdateRequests).toEqual([
+    { calendar: 'primary', eventId: master.id, sendUpdates: 'all', status: 'accepted' },
+  ])
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.sendAttempts).toBe(0)
+})
+
+it('uses a known occurrence resource’s sparse cancellation only to restrict series Join', async () => {
+  const { state, read, respond } = await rig()
+  const master = event({ id: 'series', series: true })
+  const room = 'https://meet.google.com/xyz-abcd-efg'
+  const stale = {
+    ...upcomingInstance('moved', '2099-07-11', room),
+    originalStartTime: { dateTime: '2099-07-09T15:00:00Z' },
+  }
+  state.events.set('primary', [master])
+  state.instances.set('primary', [stale])
+  state.messages = [
+    gmailMessage('series', 400, seriesWithException()),
+    gmailMessage('old-occurrence', 200, movedRequest('20240701T090000Z', room)),
+  ]
+  expect(await read(thread, 'occurrence')).toMatchObject({ canRespond: true, conferenceUrl: room })
+  state.patchMode = 'response-lost'
+  expect(await respond('accepted')).toMatchObject({ outcome: 'uncertain', refreshPending: true })
+
+  // Only events.get sees the tombstone while checking the unresolved child
+  // response. Neither unexpanded events.list nor events.instances expose it.
+  state.patchMode = 'ok'
+  state.instances.clear()
+  state.primaryPages = [{ kind: 'calendar#events', items: [master] }]
+  state.exactCalendarRows.set(
+    'primary',
+    new Map([
+      [
+        stale.id,
+        {
+          id: stale.id,
+          status: 'cancelled',
+          recurringEventId: master.id,
+          originalStartTime: stale.originalStartTime,
+        },
+      ],
+    ]),
+  )
+  state.expandedPages = [{ kind: 'calendar#events', items: [stale] }]
+  const safeLinks = { conferenceUrl: null, htmlLink: master.htmlLink }
+  expect(await read(thread, 'series')).toMatchObject({ ...safeLinks, canRespond: true })
+  expect(await respond('accepted')).toMatchObject({
+    outcome: 'sent',
+    channel: 'calendar',
+    refreshPending: false,
+    invitation: { ...safeLinks, responseStatus: 'accepted', responsePending: false },
+  })
+  expect(state.calendarUpdateRequests).toEqual([
+    { calendar: 'primary', eventId: master.id, sendUpdates: 'all', status: 'accepted' },
+  ])
+  expect(state.sendAttempts).toBe(0)
+})
 
 it('includes hidden expanded invitations for REQUEST but not publications or exports', async () => {
   const { state, read } = await rig()
