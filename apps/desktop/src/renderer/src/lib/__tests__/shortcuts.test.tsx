@@ -209,6 +209,24 @@ describe('the dispatcher', () => {
     modal.remove()
   })
 
+  test('an explicitly non-modal dialog leaves shell shortcuts available', () => {
+    const search = vi.fn()
+    render(
+      <Provider store={createStore()}>
+        <Host handlers={{ 'tab.new': search }} />
+      </Provider>,
+    )
+    const popover = document.createElement('div')
+    popover.setAttribute('role', 'dialog')
+    popover.setAttribute('data-state', 'open')
+    popover.setAttribute('data-modal', 'false')
+    document.body.append(popover)
+    expect(dialogOpen()).toBe(false)
+    fireEvent.keyDown(document.body, { key: 't', metaKey: true })
+    expect(search).toHaveBeenCalledOnce()
+    popover.remove()
+  })
+
   test('a handler unmounted is no longer run', () => {
     const search = vi.fn()
     const view = render(
