@@ -26,8 +26,26 @@ export async function runAppHintInteractions(
       const state = await evaluate(
         `({focused:document.hasFocus(),visibility:document.visibilityState,active:document.activeElement?.tagName,frame:document.querySelector('iframe')?.outerHTML,vim:window.fixtureVimEnabled,hints:Array.from(document.querySelectorAll('[data-hint-target]')).map(el=>el.getAttribute('data-hint-target'))})`,
       )
+      const shadowDiagnostics = await Promise.all(
+        ['open', 'closed', 'nested'].map(async (mode) => {
+          const frame = contents.mainFrame.framesInSubtree.find((candidate) =>
+            candidate.url.startsWith('holi-app://'),
+          )
+          if (!frame) return { mode, readError: 'owned guest frame not found' }
+          try {
+            return {
+              mode,
+              ...(await frame.executeJavaScript(
+                `(()=>{const input=document.querySelector('#shadow-${mode}')?._fixtureInput;const root=input?.getRootNode();return {value:input?.value,isConnected:input?.isConnected,ownedRootActiveElement:root?.activeElement?.tagName,ownedRootActiveElementIsInput:root?.activeElement===input,documentFocused:document.hasFocus(),documentActiveElement:document.activeElement?.tagName}})()`,
+              )),
+            }
+          } catch (readError) {
+            return { mode, readError: String(readError) }
+          }
+        }),
+      )
       throw new Error(
-        `${label}: ${JSON.stringify({ windowFocused: BrowserWindow.fromWebContents(contents)?.isFocused(), state })}`,
+        `${label}: ${JSON.stringify({ windowFocused: BrowserWindow.fromWebContents(contents)?.isFocused(), state, shadowDiagnostics })}`,
         { cause },
       )
     }
@@ -254,29 +272,53 @@ export async function runAppHintInteractions(
   mark('production-app-frame-native-f-hint-label-keys-activate-repeatedly-through-host-layer')
   await holdView(1_000)
 
-  for (const editor of ['open', 'closed', 'nested']) {
-    await focusGuest()
-    await evaluate(
-      `document.querySelector('iframe')?.contentWindow?.postMessage({kind:'fixture-focus-shadow-${editor}'},'*')`,
+  const nativeInputObservations: Array<{
+    key: string
+    type: string
+    modifiers: string[]
+  }> = []
+  const observeNativeInput = (_event: Electron.Event, input: Electron.Input): void => {
+    if (nativeInputObservations.length < 64 && ['keyDown', 'keyUp'].includes(input.type)) {
+      nativeInputObservations.push({
+        key: input.key,
+        type: input.type,
+        modifiers: [...input.modifiers],
+      })
+    }
+  }
+  contents.on('before-input-event', observeNativeInput)
+  try {
+    for (const editor of ['open', 'closed', 'nested']) {
+      await focusGuest()
+      await evaluate(
+        `document.querySelector('iframe')?.contentWindow?.postMessage({kind:'fixture-focus-shadow-${editor}'},'*')`,
+      )
+      await waitFor(
+        `document.activeElement===document.querySelector('iframe')&&window.fixtureShadowFocused==='${editor}'`,
+        `${editor} shadow editor did not receive native focus`,
+      )
+      await typeGuestKey('f')
+      await waitFor(
+        `window.fixtureShadowInput==='${editor}:f'`,
+        `${editor} shadow editor did not receive native f typing`,
+      )
+      await typeGuestKey('x')
+      await waitFor(
+        `window.fixtureShadowInput==='${editor}:fx'`,
+        `${editor} shadow editor did not receive continued native typing`,
+      )
+      assert.equal(
+        await evaluate(`!!document.querySelector('[data-host-hints] [data-hint-target]')`),
+        false,
+      )
+    }
+  } catch (cause) {
+    throw new Error(
+      `Shadow editor native typing failed: ${JSON.stringify({ nativeInputObservations })}`,
+      { cause },
     )
-    await waitFor(
-      `document.activeElement===document.querySelector('iframe')&&window.fixtureShadowFocused==='${editor}'`,
-      `${editor} shadow editor did not receive native focus`,
-    )
-    await typeGuestKey('f')
-    await waitFor(
-      `window.fixtureShadowInput==='${editor}:f'`,
-      `${editor} shadow editor did not receive native f typing`,
-    )
-    await typeGuestKey('x')
-    await waitFor(
-      `window.fixtureShadowInput==='${editor}:fx'`,
-      `${editor} shadow editor did not receive continued native typing`,
-    )
-    assert.equal(
-      await evaluate(`!!document.querySelector('[data-host-hints] [data-hint-target]')`),
-      false,
-    )
+  } finally {
+    contents.off('before-input-event', observeNativeInput)
   }
   mark('production-app-frame-open-closed-and-nested-shadow-editors-preserve-native-f')
 
