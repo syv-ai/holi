@@ -50,6 +50,7 @@ export interface ManagedWorkingCopyNative extends NativeWorkingCopy {
     identity: ManagedWorkingCopyIdentity,
     credential: string,
   ): Promise<void | WorkingCopyRefusal>
+  integrate(root: string, identity: ManagedWorkingCopyIdentity): Promise<void | WorkingCopyRefusal>
   publish(
     root: string,
     identity: ManagedWorkingCopyIdentity,
@@ -141,7 +142,7 @@ export function createManagedWorkingCopy(
       throw new Error('Working copy identity does not match vault')
     acquiredNativeId ??= identity.nativeId
   }
-  const operate = async (action: 'fetch' | 'publish') => {
+  const operate = async (action: 'fetch' | 'publish' | 'integrate') => {
     const root = await rootPath()
     return withVaultLock(root, async () => {
       await recover(root)
@@ -171,6 +172,11 @@ export function createManagedWorkingCopy(
       })
     },
     fetch: () => operate('fetch'),
+    integrate: () => operate('integrate'),
+    fetchAndIntegrate: async () => {
+      await operate('fetch')
+      await operate('integrate')
+    },
     publish: () => operate('publish'),
   }
 }

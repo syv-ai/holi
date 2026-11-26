@@ -42,6 +42,9 @@ describe('managed working copy transport', () => {
       fetch: async (_root, _identity, credential) => {
         calls.push({ method: 'fetch', credential })
       },
+      integrate: async () => {
+        calls.push({ method: 'integrate' })
+      },
       publish: async (_root, _identity, credential) => {
         calls.push({ method: 'publish', credential })
       },

@@ -290,6 +290,12 @@ export function createManagedWorkingCopyIOS(
       if (binding.remote !== remote) throw new TransportFailure('rejected', 'Fetch remote mismatch')
       run('fetch', path, binding.branch, token)
     },
+    async integrate() {
+      throw new TransportFailure(
+        'unsupported',
+        'Fast-forward integration is not available in this native Git build',
+      )
+    },
     async publish(path, binding, token) {
       if (binding.remote !== remote)
         throw new TransportFailure('rejected', 'Publication remote mismatch')
