@@ -161,6 +161,10 @@ invoke('smoke:other-document', async (operation: unknown) => {
   }
 })
 
+invoke('smoke:public-guest-policy', async () => {
+  assert(adversaries)
+  return adversaries.policy(compiler)
+})
 invoke('smoke:guest-healthy', () => {
   assert(adversaries)
   adversaries.assertHealthy()

@@ -463,6 +463,55 @@ test('tree rows activate by Enter and Space without consuming nested controls', 
   expect(onOpen).not.toHaveBeenCalledWith('')
 })
 
+test('background refresh preserves the usable tree while genuine folder changes still appear', async () => {
+  const { store } = mount()
+  const folder = await screen.findByRole('treeitem', { name: 'kunder' })
+  await userEvent.click(folder)
+  const note = await screen.findByRole('treeitem', { name: 'brief.md' })
+  await userEvent.click(note)
+  await waitFor(() => expect(note).toHaveFocus())
+
+  let admit!: () => void
+  const admitted = new Promise<void>((resolve) => {
+    admit = resolve
+  })
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const list = subscriptionList.getMockImplementation()!
+  subscriptionList.mockImplementationOnce(async (input) => {
+    admit()
+    await pending
+    return list(input)
+  })
+  const snapshot = store.get(snapshotAtom)!
+  act(() =>
+    store.set(snapshotAtom, {
+      ...snapshot,
+      docs: [...snapshot.docs],
+      dirs: [...snapshot.dirs],
+    }),
+  )
+  await admitted
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  expect(folder).toHaveAttribute('aria-expanded', 'true')
+  expect(note).toHaveFocus()
+  expect(note).toHaveAttribute('aria-selected', 'true')
+  await act(async () => {
+    release()
+    await pending
+  })
+
+  act(() => store.set(snapshotAtom, { ...snapshot, dirs: [...snapshot.dirs, 'new-folder'] }))
+  expect(await screen.findByRole('treeitem', { name: 'new-folder' })).toBeInTheDocument()
+  expect(folder).toHaveAttribute('aria-expanded', 'true')
+  act(() => store.set(snapshotAtom, { ...snapshot, dirs: [...snapshot.dirs] }))
+  await waitFor(() =>
+    expect(screen.queryByRole('treeitem', { name: 'new-folder' })).not.toBeInTheDocument(),
+  )
+})
+
 test('an older list response cannot erase a completed subscription refresh', async () => {
   const { store } = mount()
   let resolveOld!: (scopes: typeof subscriptionScopes.values) => void

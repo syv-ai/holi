@@ -22,10 +22,11 @@ export async function createGuestProbes() {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
   })
+  const publicBase = `https://cdn.jsdelivr.net/gh/syv-ai/holi@${process.env.HOLI_MDX_SMOKE_FIXTURE_SHA}/apps/desktop/scripts/fixtures/mdx-external`
   const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   let next: Mode | null = null
   let prepared: ((contents: WebContents) => void) | null = null
-  let policy: Record<string, unknown> | null = null
+  let policy: { results: Record<string, unknown>; evidence: Record<string, unknown> } | null = null
   let executionChecks = 0
   let probeFailure: Error | null = null
   const storage: Array<{ cookie: string; local: number; session: number }> = []
@@ -117,7 +118,88 @@ export async function createGuestProbes() {
               Promise.resolve(promise).then(finish, () => finish('denied'));
             });
             const results = {};
+            const evidence = {};
+            // Observe the guest's unmodified production CSP. An error/failed handshake
+            // is never proof of precontact denial, and Node counters cannot see Chromium.
+            const policyDenied = (name, url, directive, operation) => new Promise(resolve => {
+              let cleanup = () => {};
+              const finish = value => {
+                clearTimeout(timer);
+                removeEventListener('securitypolicyviolation', violation);
+                cleanup();
+                resolve(value);
+              };
+              const violation = event => {
+                if (event.disposition !== 'enforce' || event.effectiveDirective !== directive) return;
+                try {
+                  const target = new URL(url);
+                  // Chromium can report blocked blob workers as the scheme alone.
+                  const blobWorker = directive === 'worker-src' && target.protocol === 'blob:' &&
+                    ['blob', 'blob:'].includes(event.blockedURI);
+                  if (!blobWorker) {
+                    const blocked = new URL(event.blockedURI);
+                    // Cross-origin CSP reports may deliberately strip path information.
+                    if (blocked.origin !== target.origin ||
+                        (blocked.href !== target.href && blocked.href !== target.origin + '/')) return;
+                  }
+                  evidence[name] = { destination: url, blockedURI: event.blockedURI,
+                    directive: event.effectiveDirective, disposition: event.disposition,
+                    policy: event.originalPolicy };
+                  finish(true);
+                } catch {}
+              };
+              const timer = setTimeout(() => finish(false), 1500);
+              addEventListener('securitypolicyviolation', violation);
+              try { cleanup = operation() || cleanup; } catch { /* no policy evidence yet */ }
+            });
             results.loopback = await denied(${JSON.stringify(endpoint + '/canary')});
+            // Consent authorizes main's typed transport, never guest networking.
+            const publicBase = ${JSON.stringify(publicBase)};
+            const probe = async (name, path, directive, operation) => {
+              const url = publicBase + path;
+              results[name] = await policyDenied(name, url, directive, () => operation(url));
+            };
+            await probe('publicFetch', '/nested.css', 'connect-src', url => { void fetch(url).catch(() => {}); });
+            await probe('publicImport', '/entry.js', 'script-src-elem', url => { void import(url).catch(() => {}); });
+            await probe('publicXhr', '/tiny.png', 'connect-src', url => {
+              const xhr = new XMLHttpRequest(); xhr.open('GET', url); xhr.send();
+              return () => xhr.abort();
+            });
+            await probe('publicCss', '/nested.css', 'style-src-elem', url => {
+              const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = url;
+              document.head.append(link); return () => link.remove();
+            });
+            await probe('publicImage', '/tiny.png', 'img-src', url => {
+              const image = new Image(); image.src = url; return () => { image.src = ''; };
+            });
+            await probe('publicFont', '/tiny.woff2', 'font-src', url => {
+              void new FontFace('public-probe', 'url("' + url + '")').load().catch(() => {});
+            });
+            await probe('publicAudio', '/tiny.wav', 'media-src', url => {
+              const audio = document.createElement('audio'); audio.src = url; audio.load();
+              return () => { audio.removeAttribute('src'); audio.load(); };
+            });
+            const socketUrl = publicBase.replace('https:', 'wss:');
+            results.publicSocket = await policyDenied('publicSocket', socketUrl, 'connect-src', () => {
+              const socket = new WebSocket(socketUrl);
+              socket.onerror = () => {}; return () => socket.close();
+            });
+            // A classic cross-origin constructor can fail its same-origin check before
+            // reaching CSP. Use a same-origin blob loader for the public import instead.
+            const workerImport = publicBase + '/entry.js';
+            const publicWorkerUrl = URL.createObjectURL(new Blob([
+              'importScripts(' + JSON.stringify(workerImport) + ');',
+            ], { type: 'text/javascript' }));
+            try {
+              results.publicWorker = await policyDenied('publicWorker', publicWorkerUrl, 'worker-src', () => {
+                const worker = new Worker(publicWorkerUrl); worker.onerror = () => {};
+                return () => worker.terminate();
+              });
+              if (evidence.publicWorker) evidence.publicWorker.importDestination = workerImport;
+            } finally {
+              URL.revokeObjectURL(publicWorkerUrl);
+            }
+            results.publicPopup = window.open(publicBase + '/tiny.png') === null;
             results.external = await denied('https://outside.invalid/canary');
             results.dynamicImport = await bounded(import(${JSON.stringify(endpoint + '/module.js')})
               .then(() => false, () => true));
@@ -201,7 +283,7 @@ export async function createGuestProbes() {
             location.href = '${origin}/not-an-asset';
             await new Promise(resolve => setTimeout(resolve, 100));
             results.navigation = location.href === '${origin}/guest.html';
-            return results;
+            return { results, evidence };
           })()`)
           await contents.executeJavaScript('window.__release507()')
         })
@@ -223,7 +305,12 @@ export async function createGuestProbes() {
       assert.deepEqual(output, [])
       if (probeFailure) throw probeFailure
       assert(policy, 'The actual guest policy probe did not complete')
-      for (const [name, value] of Object.entries(policy)) assert.equal(value, true, name)
+      for (const [name, value] of Object.entries(policy.results)) assert.equal(value, true, name)
+      assert.equal(
+        Object.keys(policy.evidence).length,
+        9,
+        'Missing approved-host enforcing CSP evidence',
+      )
       assert.equal(traffic, 0, 'A denied guest request reached the loopback server')
       assert(executionChecks > 0, 'The actual compiler output was not observed')
       await compiler.compile(owner, '# A fresh guest has empty storage\n')
