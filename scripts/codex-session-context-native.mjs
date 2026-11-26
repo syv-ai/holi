@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { startOwnedPty } from './pi-native-tui-process.mjs'
 import { createContextModel } from './codex-context-model.mjs'
 import { runRestrictedContext } from './codex-context-restricted.mjs'
+import { installPinnedCodex } from './codex-native-install.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url))
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -18,15 +19,9 @@ const clean = (text) =>
 /** Exercise native consent and capture initial-session context without personal configuration. */
 export async function runNativeInitialFixture() {
   const evidence = {
-    scenario: 'profileAwareDebugPromptInput',
+    scenario: 'initialTUI',
     status: 'incomplete',
-    classification: 'incomplete-proof',
-    resolver: {
-      candidate: 'codex debug prompt-input',
-      requiredOutput: 'structured effective developer instruction text',
-      status: 'not-observed',
-      note: 'Do not infer effective instructions from rendered prompts or reconstruct config merging.',
-    },
+    classification: 'setup-unavailable',
     consent: [],
     trustChanges: [],
     hooks: [],
@@ -90,35 +85,8 @@ export async function runNativeInitialFixture() {
       })
       return child
     }
-    const install = await own(
-      'npm',
-      [
-        'install',
-        '--prefix',
-        join(root, 'install'),
-        '--ignore-scripts',
-        '--no-audit',
-        '--no-fund',
-        '@openai/codex@0.169.0',
-      ],
-      'install',
-      {
-        npm_config_userconfig: join(root, 'user-npmrc'),
-        npm_config_globalconfig: join(root, 'global-npmrc'),
-        npm_config_cache: join(root, 'cache'),
-      },
-      90000,
-    )
-    if ((await install.waitForExit()).code !== 0)
-      throw Error(`Pinned installation failed: ${clean(install.output.toString()).slice(-4000)}`)
-    await install.close()
-    const pkg = JSON.parse(
-      await readFile(join(root, 'install/node_modules/@openai/codex/package.json'), 'utf8'),
-    )
-    if (pkg.name !== '@openai/codex' || pkg.version !== '0.169.0')
-      throw Error('Package identity mismatch')
-    evidence.package = { name: pkg.name, version: pkg.version }
-    const bin = join(root, 'install/node_modules/@openai/codex/bin/codex.js')
+    const { bin, package: pkg } = await installPinnedCodex({ root, own })
+    evidence.package = pkg
     model = await createContextModel()
     evidence.requests = model.requests
     const policy = join(root, 'loopback.sb')
