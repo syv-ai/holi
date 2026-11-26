@@ -676,6 +676,133 @@ test.each(
   },
 )
 
+test.each(
+  [
+    { name: 'MailShell', Reader: MailShell, reply: 'Reply all' },
+    { name: 'MailView', Reader: MailView, reply: 'Reply' },
+  ].flatMap((surface) =>
+    (['cached delta refresh', 'off-page retry'] as const).map((path) => ({ ...surface, path })),
+  ),
+)(
+  '$name withdraws a missing invitation after $path without losing the open reply',
+  async ({ Reader, reply, path }) => {
+    const offPage = path === 'off-page retry'
+    const original = summary({ hasInvite: true, unread: false })
+    const healthy = summary({ id: 't2', subject: 'Healthy inbox thread', snippet: '' })
+    const older = summary({ id: 't3', subject: 'Older inbox thread', snippet: '' })
+    const arrival = summary({ id: 't4', subject: 'New inbox arrival', snippet: '' })
+    const searchHit = summary({ id: 't5', subject: 'Filed workshop notes', snippet: '' })
+    const otherMissing = summary({ id: 't6', subject: 'Unrelated removed thread', snippet: '' })
+    const first = offPage
+      ? page([healthy, original, otherMissing], 'page-2')
+      : page([original, healthy])
+    threadMock.mockResolvedValue({
+      ...thread,
+      messages: [
+        { ...thread.messages[1]!, html: null, body: 'Workshop agenda', hasCalendarPayload: true },
+      ],
+    })
+    invitationMock.mockResolvedValue(
+      invitations({
+        ...invitation,
+        responseStatus: 'accepted',
+        recordedResponseStatus: 'accepted',
+      }),
+    )
+    let finishJoin!: () => void
+    validateBinding.mockReturnValue(new Promise<void>((resolve) => (finishJoin = resolve)))
+    let finishPage!: (result: SearchPage) => void
+    const next = new Promise<SearchPage>((resolve) => (finishPage = resolve))
+    let deltaReady = false
+    searchMock.mockImplementation(async ({ pageToken, refresh, query }: SearchParams) => {
+      if (offPage && pageToken === 'page-2' && !refresh) {
+        // A shifted continuation overlaps the open row, but only the other thread is gone.
+        return {
+          ...page([older]),
+          unreadableThreadIds: [original.id],
+          notFoundThreadIds: [otherMissing.id],
+        }
+      }
+      if (offPage && pageToken === 'fresh-page-2' && !refresh) return page([older])
+      if (!offPage && query === 'subject:workshop' && pageToken === undefined && !refresh)
+        return page([searchHit])
+      if (pageToken === undefined && !query) {
+        if (offPage && refresh) return next
+        if (!refresh) return deltaReady ? next : first
+      }
+      throw new Error('Unexpected Gmail page request')
+    })
+
+    const user = userEvent.setup()
+    render(<Reader />)
+    await user.click(await screen.findByText(original.subject))
+    expect(await screen.findByText('Response: Accepted')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Maybe' })).toBeEnabled()
+    const join = screen.getByRole('button', { name: 'Join meeting' })
+    expect(join).toBeEnabled()
+    await user.click(join)
+    await screen.findByText('Checking invitation link…')
+    await user.click(screen.getByRole('button', { name: reply }))
+    const editor = await screen.findByRole('textbox', { name: 'Message' })
+    await user.type(editor, 'My unsent reply')
+
+    if (offPage) {
+      await user.click(screen.getByRole('button', { name: 'Load more' }))
+      const partial = await screen.findByRole('alert')
+      expect(partial).toHaveTextContent(/threads couldn’t be loaded/i)
+      expect(screen.getByText('Response: Accepted')).toBeVisible()
+      await user.click(within(partial).getByRole('button', { name: 'Retry' }))
+    } else {
+      deltaReady = true
+      await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+      // Return to the draft while the list refresh is in flight.
+      await user.click(editor)
+      expect(editor).toHaveFocus()
+    }
+
+    threadMock.mockRejectedValue(
+      Object.assign(new Error('Gmail thread not found'), { data: { code: 'NOT_FOUND' } }),
+    )
+    await act(async () =>
+      finishPage({
+        ...(offPage ? page([arrival, healthy], 'fresh-page-2') : page([healthy])),
+        notFoundThreadIds: [original.id],
+      }),
+    )
+    const unavailable = await screen.findByRole('alert')
+    expect(unavailable).toHaveTextContent(/thread is no longer available/i)
+    expect(screen.getByText(healthy.subject)).toBeVisible()
+    expect(screen.queryByText(original.snippet)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: original.subject })).toBeVisible()
+    expect(editor).toBeVisible()
+    expect(
+      screen.getAllByText('Workshop agenda').find((node) => !editor.contains(node)),
+    ).toBeVisible()
+    expect(editor).toHaveTextContent('My unsent reply')
+    if (!offPage) expect(editor).toHaveFocus()
+    const expectWithdrawn = () => {
+      expect(screen.queryByText('Response: Accepted')).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /^(Join meeting|Accept|Maybe|Decline)$/ }),
+      ).not.toBeInTheDocument()
+    }
+    expectWithdrawn()
+    await act(async () => finishJoin())
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(respondMock).not.toHaveBeenCalled()
+
+    if (!offPage) {
+      // A different query has its own first page, not proof that the open thread recovered.
+      const searchButton = screen.queryByRole('button', { name: 'Search mail' })
+      if (searchButton !== null) await user.click(searchButton)
+      await user.type(screen.getByLabelText('Search mail'), 'subject:workshop{Enter}')
+      expect(await screen.findByText(searchHit.subject)).toBeVisible()
+      expect(screen.getByRole('alert')).toHaveTextContent(/thread is no longer available/i)
+      expectWithdrawn()
+    }
+  },
+)
+
 test.each([
   { name: 'MailShell', Reader: MailShell, hasInvite: true },
   { name: 'MailView', Reader: MailView, hasInvite: false },
