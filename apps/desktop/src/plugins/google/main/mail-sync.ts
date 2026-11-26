@@ -32,6 +32,7 @@ import {
   type MailThreadSummary,
   type ThreadMetadataOutcome,
 } from './gmail'
+import { isGmailMessageId } from './gmail-thread'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
@@ -167,41 +168,32 @@ export async function syncThreads(
   // History's label changes describe individual messages, while Gmail's list
   // membership is decided across the whole conversation. Confirm every
   // departure with the active query before removing a cached thread.
-  for (const id of left) if (cachedIds.has(id)) changed.add(id)
-  const candidates = new Set([...changed, ...left, ...deleted])
-  const candidatesToConfirm = [...candidates].filter(
-    (id) => !cachedIds.has(id) || left.has(id) || deleted.has(id),
-  )
-  const confirmedIds = new Set(candidatesToConfirm)
-  const queryMatches = await findQueryMatches(api, options, knownAddresses, confirmedIds)
-  // Query membership is established by threads.list, even when the follow-up
-  // metadata read is unreadable. Only a definitive 404 overrides admission.
-  const admitted = new Set(queryMatches.outcomes.map(({ id }) => id))
-  for (const id of changed) {
-    if (!cachedIds.has(id) && !admitted.has(id)) changed.delete(id)
-  }
-  // A message-level archive/trash event is only a thread departure if Gmail's
-  // current list query no longer returns the conversation.
-  const gone = new Set(
-    [...new Set([...left, ...deleted])].filter((id) => cachedIds.has(id) && !admitted.has(id)),
-  )
-  for (const id of new Set([...left, ...deleted])) {
-    if (admitted.has(id)) changed.add(id)
-  }
+  const departures = new Set([...left, ...deleted])
+  const candidatesToConfirm = new Set([
+    ...departures,
+    ...[...changed].filter((id) => !cachedIds.has(id)),
+  ])
+  const admitted = await findQueryMatches(api, options, candidatesToConfirm)
+  const departed = new Set([...departures].filter((id) => !admitted.has(id)))
 
-  // Only the threads that actually moved, and never one we already know has
-  // gone. Two changed threads cost two requests, not 25.
-  const refetched = await fetchThreadSummaries(
+  // Losing one message can remove a thread from the query without removing
+  // the thread itself. Probe omitted deletions for known rows only: history
+  // covers the whole mailbox, but the cache bounds this extra work.
+  const probes = [...deleted].filter((id) => cachedIds.has(id) && !admitted.has(id))
+  const { threads: refreshed, outcomes } = await fetchThreadSummaries(
     api,
-    [...changed].filter((id) => !gone.has(id) && !confirmedIds.has(id)),
+    [...[...changed].filter((id) => !candidatesToConfirm.has(id)), ...admitted],
     knownAddresses,
+    probes,
   )
-  const refreshed = [...refetched.threads, ...queryMatches.threads]
-  const outcomes = [...queryMatches.outcomes, ...refetched.outcomes]
-  // A deletion can race any changed-row read, not just messagesDeleted. Only
-  // the provider's 404 proves the entire conversation was removed.
-  for (const { id, kind } of outcomes) if (kind === 'not-found') gone.add(id)
-  const threads = merge(cached, refreshed, gone, patches, options)
+  const retain = new Set<string>()
+  for (const { id, kind } of outcomes) {
+    // Even a thread listed by the query can disappear before its metadata read.
+    if (kind === 'not-found') departed.add(id)
+    // Keep the previous summary of an unreadable off-page probe in storage only.
+    if (kind === 'unreadable' && departed.has(id)) retain.add(id)
+  }
+  const threads = merge(cached, refreshed, departed, patches, options)
   const result = recordReads(
     cache,
     pendingKey,
@@ -211,7 +203,7 @@ export async function syncThreads(
   // Retain known metadata in the cache, but never serve it as a fresh row
   // while its read is unresolved. The next refresh must retry rather than delta.
   if (result.unreadableThreadIds) cache.setHistoryId(key, null)
-  cache.writeThreads(key, threads)
+  cache.writeThreads(key, [...threads, ...cached.filter(({ id }) => retain.has(id))])
   if (!result.unreadableThreadIds && historyId !== undefined) cache.setHistoryId(key, historyId)
   return result
 }
@@ -269,7 +261,7 @@ async function fullSync(
     .unreadableThreads(pendingKey)
     .filter((id) => !onPage.has(id))
     .slice(0, 25)
-  const probe = await fetchThreadSummaries(api, probeIds, knownAddresses)
+  const probe = await fetchThreadSummaries(api, [], undefined, probeIds)
   const result = recordReads(cache, pendingKey, page, [...outcomes, ...probe.outcomes])
   // A partial list has no usable cursor: a delta could have nothing to say
   // about the skipped threads. The next read must try the whole page again.
@@ -289,11 +281,10 @@ async function fullSync(
 async function findQueryMatches(
   api: GoogleApi,
   options: ListThreadsOptions,
-  knownAddresses: string[] | undefined,
   candidates: Set<string>,
 ) {
-  if (!candidates.size) return { threads: [], outcomes: [] }
   const matches = new Set<string>()
+  if (!candidates.size) return matches
   let pageToken: string | undefined
 
   do {
@@ -305,7 +296,7 @@ async function findQueryMatches(
     pageToken = page.nextPageToken
   } while (true)
 
-  return fetchThreadSummaries(api, [...matches], knownAddresses)
+  return matches
 }
 
 /** The mailbox's current cursor. A failure costs the *next* refresh its delta,
@@ -322,13 +313,9 @@ async function currentHistoryId(api: GoogleApi): Promise<string | null> {
 interface Changes {
   /** Threads to refetch. */
   changed: Set<string>
-  /** Permanently gone from the mailbox. */
+  /** Threads with at least one permanently deleted message. */
   deleted: Set<string>
-  /**
-   * Still in the mailbox, but no longer in the inbox: archived, trashed or
-   * marked spam. Distinct from `deleted` because `threads.get` still answers
-   * for these, so they would otherwise come back as "new mail".
-   */
+  /** Threads with message-level departures: archive, trash or spam. */
   left: Set<string>
   /** threadId → the label ids now on it, as far as history says. */
   patches: Map<string, { added: Set<string>; removed: Set<string> }>
@@ -367,10 +354,8 @@ function readHistory(records: RawHistoryRecord[], leftWhenRemoved: string): Chan
     }
     for (const entry of record.messagesDeleted ?? []) {
       const threadId = entry.message?.threadId
-      if (threadId !== undefined) {
-        deleted.add(threadId)
-        changed.add(threadId)
-      }
+      // Message and thread IDs have the same Gmail resource ID grammar.
+      if (isGmailMessageId(threadId)) deleted.add(threadId)
     }
     for (const [entries, side] of [
       [record.labelsAdded ?? [], 'added'],
@@ -436,23 +421,19 @@ function stillMatches(thread: MailThreadSummary, options: ListThreadsOptions): b
 function merge(
   cached: MailThreadSummary[],
   refetched: MailThreadSummary[],
-  gone: Set<string>,
+  departed: Set<string>,
   patches: Changes['patches'],
   options: ListThreadsOptions,
 ): MailThreadSummary[] {
   const replacements = new Map(refetched.map((thread) => [thread.id, thread]))
 
   const kept = cached
-    .filter((thread) => !gone.has(thread.id))
+    .filter((thread) => !departed.has(thread.id))
     .map((thread) => replacements.get(thread.id) ?? patch(thread, patches.get(thread.id)))
 
-  // A thread whose first message just arrived is not in the cached list at all.
-  //
-  // **`gone` is filtered here too, not only above.** The cache may already have
-  // dropped an archived thread (this app's own write), so it would fail the "is
-  // it cached?" test and arrive through this branch as new mail.
+  // Admitted arrivals need not have a cached row yet.
   const added = refetched.filter(
-    (thread) => !gone.has(thread.id) && !cached.some((c) => c.id === thread.id),
+    (thread) => !departed.has(thread.id) && !cached.some((c) => c.id === thread.id),
   )
 
   // AFTER the patches and the replacements, never before: what decides is the
