@@ -4848,8 +4848,12 @@ it('keeps the connected mailbox’s Sent answer when another guest changes PARTS
         .replace('PARTSTAT=DELEGATED', 'PARTSTAT=DECLINED'),
     ),
   )
-  expect(await read()).toMatchObject({ responseStatus: 'accepted', canRespond: true })
-  expect(await respond('accepted')).toMatchObject({ outcome: 'unchanged' })
+  expect(await read()).toMatchObject({
+    responseStatus: 'accepted',
+    targetResponseStatus: 'accepted',
+    canRespond: true,
+  })
+  expect(await respond('accepted')).toMatchObject({ outcome: 'unchanged', channel: 'gmail' })
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
@@ -5691,6 +5695,7 @@ it.each(['primary', 'secondary@example.com'])(
       recordedResponseStatus: 'declined',
       canRespond: false,
       responseTargetKey: null,
+      targetResponseStatus: null,
     }
     expect(await read()).toMatchObject(readOnly)
     await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
@@ -6251,10 +6256,10 @@ it('uses a fresh Calendar reset but remembers the confirmed answer when that cop
 
   state.events.clear()
   const reopened = restart()
-  expect(await reopened.read()).toMatchObject({ responseStatus: 'accepted', canRespond: true })
-  expect(await reopened.respond('accepted')).toMatchObject({
-    channel: 'gmail',
-    outcome: 'unchanged',
+  expect(await reopened.read()).toMatchObject({
+    responseStatus: 'accepted',
+    targetResponseStatus: null,
+    canRespond: true,
   })
 
   copy.attendees[0]!.responseStatus = 'needsAction'
@@ -6357,8 +6362,13 @@ it('does not settle a Calendar response while the matching copy still reports th
     invitation: { responsePending: true, canRespond: false },
   })
   const reopened = restart()
-  expect(await reopened.read()).toMatchObject({ responsePending: true, canRespond: false })
+  expect(await reopened.read()).toMatchObject({
+    responsePending: true,
+    canRespond: false,
+    targetResponseStatus: null,
+  })
   await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  await expect(reopened.respond('declined')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   state.calendarReadback = null
   expect(await reopened.read()).toMatchObject({
     responseStatus: 'accepted',
@@ -8853,23 +8863,43 @@ it('does not dispatch Calendar if final preflight finds the requested answer on 
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
-it('uses a newer correlated Sent answer once a confirmed Calendar copy disappears', async () => {
+it('records an existing Sent answer on the unanswered Calendar target before using newer Sent evidence', async () => {
   const { state, read, respond, restart } = await rig()
-  const copy = event()
+  const copy = { ...event({ id: 'matching-invitation' }), etag: '"calendar-copy-v3"' }
+  state.primaryCalendarRole = 'writer'
   copy.attendees[0]!.responseStatus = 'needsAction'
+  const self = { ...copy.attendees[0]! }
+  const other = { ...copy.attendees[1]! }
   state.events.set('primary', [copy])
-  const older = acceptedReply('<update@example.net>')
-  state.messages.push(older)
+  state.messages.push(acceptedReply('<update@example.net>'))
   expect(await read()).toMatchObject({
     canRespond: true,
     responseStatus: 'accepted',
     recordedResponseStatus: 'needsAction',
     sentResponseStatus: 'accepted',
+    targetResponseStatus: 'needsAction',
   })
-  expect(await respond('tentative')).toMatchObject({ channel: 'calendar', refreshPending: false })
+  expect(await respond('accepted')).toMatchObject({
+    outcome: 'sent',
+    channel: 'calendar',
+    refreshPending: false,
+    invitation: {
+      canRespond: true,
+      responsePending: false,
+      responseStatus: 'accepted',
+      recordedResponseStatus: 'accepted',
+      targetResponseStatus: 'accepted',
+    },
+  })
+  expect(copy.attendees).toEqual([{ ...self, responseStatus: 'accepted' }, other])
+  expect(await respond('accepted')).toMatchObject({ outcome: 'unchanged', channel: 'calendar' })
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.calendarUpdateRequests).toEqual([
+    { calendar: 'primary', eventId: copy.id, sendUpdates: 'all', status: 'accepted' },
+  ])
   state.events.clear()
   const reopened = restart()
-  expect(await reopened.read()).toMatchObject({ canRespond: true, responseStatus: 'tentative' })
+  expect(await reopened.read()).toMatchObject({ canRespond: true, responseStatus: 'accepted' })
   state.messages.push(
     gmailMessage(
       'newer-sent',

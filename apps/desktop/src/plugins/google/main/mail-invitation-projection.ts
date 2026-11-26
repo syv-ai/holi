@@ -26,6 +26,8 @@ type MailInvitation = Details & {
   bindingRevision: string
   /** Echoed on an action; only main resolves a provider resource. */
   responseTargetKey: string | null
+  /** The response on the current writable target, independent of the displayed answer. */
+  targetResponseStatus: RsvpStatus | null
   kind: 'invitation' | 'meeting'
   scope: 'single' | 'series' | 'occurrence'
   responseStatus: ResponsePresentation['status']
@@ -43,6 +45,7 @@ type ResponsePresentation = {
   status: RsvpStatus | 'delegated' | null
   sentStatus: InviteAnswer | null
   recordedCalendarStatus: RsvpStatus | null
+  targetResponseStatus: MailInvitation['targetResponseStatus']
   targetKey: string | null
   canRespond: boolean
   pending: boolean
@@ -104,6 +107,7 @@ export function projectMailInvitation({
     cancelled: response.cancelled,
     unavailableReason: response.unavailableReason,
     responseTargetKey: response.targetKey,
+    targetResponseStatus: response.targetResponseStatus,
     responseStatus: response.status,
     recordedResponseStatus: response.recordedCalendarStatus,
     sentResponseStatus: response.sentStatus,

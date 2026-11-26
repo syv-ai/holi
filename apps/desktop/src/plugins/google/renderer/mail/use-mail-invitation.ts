@@ -195,7 +195,7 @@ export function useMailInvitation({
       invitation.kind !== 'invitation' ||
       !invitation.canRespond ||
       invitation.cancelled ||
-      invitationResponse(card).current === answer ||
+      invitation.targetResponseStatus === answer ||
       !currentCards.current.includes(card) ||
       state.readError !== null ||
       !card.responseFresh ||

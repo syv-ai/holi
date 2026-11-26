@@ -556,6 +556,7 @@ const invitation: Invitation = {
   htmlLinkSource: null,
   cancelled: false,
   responseStatus: 'needsAction',
+  targetResponseStatus: null,
   recordedResponseStatus: null,
   sentResponseStatus: null,
   canRespond: true,
@@ -587,6 +588,7 @@ test.each(
     const accepted = {
       ...invitation,
       responseStatus: 'accepted',
+      targetResponseStatus: 'accepted',
       recordedResponseStatus: 'accepted',
     } as const
     threadMock.mockResolvedValue(initial)
@@ -668,6 +670,7 @@ test.each(
         invitations({
           ...accepted,
           responseStatus: 'tentative',
+          targetResponseStatus: 'tentative',
           recordedResponseStatus: 'tentative',
         }),
       )
@@ -722,6 +725,7 @@ test.each(
       invitations({
         ...invitation,
         responseStatus: 'accepted',
+        targetResponseStatus: 'accepted',
         recordedResponseStatus: 'accepted',
       }),
     )
@@ -1017,6 +1021,7 @@ test.each([
       invitations({
         ...invitation,
         responseStatus: 'accepted',
+        targetResponseStatus: 'accepted',
         recordedResponseStatus: 'accepted',
       }),
     )
@@ -1130,6 +1135,7 @@ test.each([
       invitations({
         ...invitation,
         responseStatus: 'accepted',
+        targetResponseStatus: 'accepted',
         recordedResponseStatus: 'accepted',
       }),
     )
@@ -1214,6 +1220,7 @@ test.each([
     const current = {
       ...invitation,
       responseStatus: 'tentative',
+      targetResponseStatus: 'tentative',
       recordedResponseStatus: 'tentative',
       conferenceUrl: 'https://meet.google.com/xyz-abcd-efg',
     } as const
@@ -1281,7 +1288,12 @@ test.each([
         outcome: 'sent',
         channel: 'calendar',
         answer,
-        invitation: { ...invitation, responseStatus: answer },
+        invitation: {
+          ...invitation,
+          responseStatus: answer,
+          targetResponseStatus: answer,
+          recordedResponseStatus: answer,
+        },
         refreshPending: false,
       }),
     )
@@ -1302,15 +1314,18 @@ const workshopSeries: Invitation = {
   title: 'Budget workshop series',
   responseTargetKey: 'd'.repeat(64),
   recordedResponseStatus: 'needsAction',
+  targetResponseStatus: 'needsAction',
 }
 const workshopOccurrence: Invitation = {
   ...invitation,
   responseStatus: 'accepted',
+  targetResponseStatus: 'accepted',
   recordedResponseStatus: 'accepted',
 }
 const acceptedWorkshopSeries: Invitation = {
   ...workshopSeries,
   responseStatus: 'accepted',
+  targetResponseStatus: 'accepted',
   recordedResponseStatus: 'accepted',
   conferenceUrl: 'https://meet.google.com/klm-nopq-rst',
 }
@@ -1319,6 +1334,7 @@ const cancelledWorkshopOccurrence: Invitation = {
   cancelled: true,
   canRespond: false,
   responseStatus: null,
+  targetResponseStatus: null,
   recordedResponseStatus: null,
   responseTargetKey: null,
   conferenceUrl: null,
@@ -1487,12 +1503,18 @@ test('shows a filename-less inline invitation in the mail shell', async () => {
 
 test('shows Calendar acceptance and the Gmail verification warning from response readback', async () => {
   searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  const initial = { ...invitation, recordedResponseStatus: 'needsAction' } as const
+  const initial = {
+    ...invitation,
+    recordedResponseStatus: 'needsAction',
+    targetResponseStatus: 'needsAction',
+  } as const
   const unavailableReason = 'Gmail could not verify the latest sent response'
   const recorded = { ...initial, recordedResponseStatus: 'accepted' } as const
   invitationMock
     .mockResolvedValueOnce(invitations(initial))
-    .mockResolvedValue(invitations({ ...recorded, responseStatus: 'accepted' }))
+    .mockResolvedValue(
+      invitations({ ...recorded, responseStatus: 'accepted', targetResponseStatus: 'accepted' }),
+    )
   respondMock.mockResolvedValueOnce({
     outcome: 'sent',
     channel: 'calendar',
@@ -1501,6 +1523,7 @@ test('shows Calendar acceptance and the Gmail verification warning from response
     invitation: {
       ...recorded,
       responseStatus: null,
+      targetResponseStatus: null,
       sentResponseStatus: null,
       canRespond: false,
       unavailableReason,
@@ -1530,6 +1553,7 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
   const previous = {
     ...invitation,
     responseStatus: 'accepted',
+    targetResponseStatus: 'accepted',
     sentResponseStatus: 'accepted',
   } as const
   invitationMock.mockResolvedValueOnce(invitations(previous)).mockResolvedValueOnce(
@@ -1537,6 +1561,7 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
       ...invitation,
       recordedResponseStatus: 'declined',
       responseStatus: null,
+      targetResponseStatus: null,
       sentResponseStatus: null,
       canRespond: false,
       responsePending: true,
@@ -1551,6 +1576,7 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
       conferenceUrl: newConference,
       recordedResponseStatus: 'declined',
       responseStatus: 'declined',
+      targetResponseStatus: 'declined',
       sentResponseStatus: 'declined',
     }),
   )
@@ -1604,12 +1630,24 @@ test('keeps Google acceptance separate from a different response recorded after 
   searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
   invitationMock.mockResolvedValueOnce(invitations(invitation))
   invitationMock.mockRejectedValueOnce(new Error('Refresh unavailable'))
-  invitationMock.mockResolvedValue(invitations({ ...invitation, responseStatus: 'tentative' }))
+  invitationMock.mockResolvedValue(
+    invitations({
+      ...invitation,
+      responseStatus: 'tentative',
+      targetResponseStatus: 'tentative',
+      sentResponseStatus: 'tentative',
+    }),
+  )
   respondMock.mockResolvedValue({
     outcome: 'sent',
     channel: 'gmail',
     answer: 'accepted',
-    invitation: { ...invitation, responseStatus: 'declined' },
+    invitation: {
+      ...invitation,
+      responseStatus: 'declined',
+      targetResponseStatus: 'declined',
+      sentResponseStatus: 'declined',
+    },
     refreshPending: true,
   })
   const user = userEvent.setup()
@@ -1648,6 +1686,8 @@ test('a response from a previous account opening cannot change the visible invit
           bindingRevision: `shell-binding-${accountBinding}`,
           title: 'Budget workshop',
           responseStatus: 'accepted',
+          targetResponseStatus: 'accepted',
+          recordedResponseStatus: 'accepted',
         }),
   )
   let finish!: (result: Response) => void
@@ -1673,7 +1713,12 @@ test('a response from a previous account opening cannot change the visible invit
       channel: 'calendar',
       answer: 'declined',
       refreshPending: false,
-      invitation: { ...invitation, responseStatus: 'declined' },
+      invitation: {
+        ...invitation,
+        responseStatus: 'declined',
+        targetResponseStatus: 'declined',
+        recordedResponseStatus: 'declined',
+      },
     }),
   )
   expect(screen.getByText('Response: Accepted')).toBeInTheDocument()

@@ -78,6 +78,7 @@ type Reply = { key: string } & (
       channel: 'calendar'
       target: string
       proof: string
+      responseStatus: RsvpStatus | null
       patch: NonNullable<VerifiedCopy['reply']>
     }
   | {
@@ -85,6 +86,7 @@ type Reply = { key: string } & (
       target: string
       headers: NonNullable<Mail['replyHeaders']>
       organizer: string
+      responseStatus: InviteAnswer | null
       body: (email: string, answer: InviteAnswer) => string
     }
 )
@@ -94,11 +96,10 @@ export type InvitationFacts = {
   responseUnverified: boolean
   /** A candidate from this snapshot, not authorization to write. */
   reply: Reply | null
-  noopChannel: Channel | null
+  exactNoopAnswer: InviteAnswer | null
   response: Revision['mailboxResponse']
   calendarMaterial: InvitationAttempt['calendarMaterial']
   visibleMaterialSources: CalendarMaterialSource[]
-  recorded: InviteAnswer | null
   priorSent: SentEvidence | null
   absentTargets: Set<string>
   /** Recheck durable revision evidence atomically with reservation. */
@@ -1034,12 +1035,12 @@ export function createMailInvitationReconciler(
             target: verifiedCopy.target,
             proof: verifiedCopy.proof,
             key: JSON.stringify([verifiedCopy.target, verifiedCopy.etag, verifiedCopy.proof]),
+            responseStatus: verifiedCopy.responseStatus,
             patch: verifiedCopy.reply,
           }
         : null
       let absentTargets = new Set<string>()
-      let exactNoopTarget: string | null = null
-      let recorded: InviteAnswer | null = null
+      let exactNoop: { target: string; answer: InviteAnswer } | null = null
       let priorSent: SentEvidence | null = null
       let responseUnverified = false
       let conflictingAnswerReason: string | null = null
@@ -1155,6 +1156,7 @@ export function createMailInvitationReconciler(
               body: request.reply,
               key: target,
               target,
+              responseStatus: null,
             }
           }
         }
@@ -1182,7 +1184,6 @@ export function createMailInvitationReconciler(
         const calendarStatus = isAnswer(responseFacts.recordedCalendarStatus)
           ? responseFacts.recordedCalendarStatus
           : null
-        recorded = calendarStatus ?? (calendar.kind === 'absent' ? responseFacts.sentStatus : null)
         gmailUnverified =
           sent.orderUnverified || (!superseded && sent.answers.size > 1) || receiptUnsettled
         if (!gmailUnverified && sentStatus !== null) currentSent = sent.evidence
@@ -1223,16 +1224,18 @@ export function createMailInvitationReconciler(
         // answer; it is not the selected collection copy or a writable target.
         if (
           exactConfirmed &&
+          historical !== null &&
           delivery?.channel === 'calendar' &&
           discovery.canEditTarget(delivery.target, email) &&
-          !responseUnverified &&
-          responseFacts.status === historical
+          !responseUnverified
         ) {
-          exactNoopTarget = delivery.target
+          exactNoop = { target: delivery.target, answer: historical }
           responseFacts.targetKey = responseTargetKey('calendar', delivery.target)
         }
-        if (reply?.channel === 'gmail')
+        if (reply?.channel === 'gmail') {
+          reply.responseStatus = gmailUnverified ? null : responseFacts.sentStatus
           responseFacts.targetKey = responseTargetKey('gmail', reply.target)
+        }
         if (reply)
           reply.key = JSON.stringify([
             reply.key,
@@ -1250,8 +1253,7 @@ export function createMailInvitationReconciler(
         !supersedes(entry, attempt.revision, email)
       if (!joinOnly && request && latestJournal.attempts.some(blockedByConfirmation)) {
         reply = null
-        exactNoopTarget = null
-        recorded = null
+        exactNoop = null
         responseFacts.targetKey = null
         // Even an answer linked to this older revision is not the current
         // response. An independently verified Calendar answer remains only
@@ -1276,7 +1278,7 @@ export function createMailInvitationReconciler(
         return !settled
       })
       if (scopePending.length) {
-        exactNoopTarget = null
+        exactNoop = null
         for (const attempt of scopePending) displayedPending.add(attempt.id)
         responseFacts.pending = true
         responseFacts.status = null
@@ -1307,7 +1309,8 @@ export function createMailInvitationReconciler(
         }
         return null
       }
-      const exactMayNoop = () => exactNoopTarget && discovery.canEditTarget(exactNoopTarget, email)
+      const eligibleExactNoop = () =>
+        exactNoop && discovery.canEditTarget(exactNoop.target, email) ? exactNoop : null
       cards.push({
         source: {
           details,
@@ -1325,7 +1328,7 @@ export function createMailInvitationReconciler(
               unavailableReason:
                 responseFacts.unavailableReason ?? conflictingAnswerReason ?? refusal,
             }
-          return exactNoopTarget && !exactMayNoop()
+          return exactNoop && !eligibleExactNoop()
             ? { ...responseFacts, targetKey: null }
             : responseFacts
         },
@@ -1333,13 +1336,12 @@ export function createMailInvitationReconciler(
         get reply() {
           return roleRefusal() ? null : reply
         },
-        get noopChannel() {
-          return exactMayNoop() ? 'calendar' : null
+        get exactNoopAnswer() {
+          return eligibleExactNoop()?.answer ?? null
         },
         response: entry.response,
         calendarMaterial: invitationFor(entry)?.evidence,
         visibleMaterialSources: visibleMaterialSources(entry, target),
-        recorded,
         priorSent,
         absentTargets,
         blocksReservation: (journal) =>
