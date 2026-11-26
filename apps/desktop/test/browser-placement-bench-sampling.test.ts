@@ -37,6 +37,16 @@ describe('browser placement benchmark sampling', () => {
     expect(recovered.finish(snapshot(2)).valid).toBe(false)
   })
 
+  it('rejects blur transitions and visibility epochs even after foreground recovery', () => {
+    const blurred = createTrialSampling({ condition })
+    blurred.observe(snapshot(0))
+    blurred.transition('blur')
+    expect(blurred.finish(snapshot(1)).valid).toBe(false)
+    const hidden = createTrialSampling({ condition })
+    hidden.observe({ ...snapshot(0), visibilityEpoch: 0 })
+    expect(hidden.finish({ ...snapshot(1), visibilityEpoch: 2 }).valid).toBe(false)
+  })
+
   it('rejects invalid counters and keeps successive trials independent', () => {
     const invalid = createTrialSampling({ condition })
     invalid.observe({ condition, stats: { callbacks: -1 } })
@@ -48,7 +58,10 @@ describe('browser placement benchmark sampling', () => {
     next.observe(snapshot(0))
     expect(next.finish(snapshot(1)).counters.totals.callbacks).toBe(1)
     const short = createTrialSampling({ condition })
-    expect(short.finish(snapshot(4)).counters.totals.callbacks).toBe(4)
+    const shortResult = short.finish(snapshot(4))
+    expect(shortResult.counters.totals.callbacks).toBe(4)
+    expect(shortResult.counters.terminal.callbacks).toBe(4)
+    expect(() => short.finish(snapshot(5))).toThrow()
     const resource = createTrialSampling({ condition, counters: false })
     resource.observe({ condition, visibilityEpoch: 0 })
     expect(resource.finish({ condition, visibilityEpoch: 0 }).counters).toBeNull()
