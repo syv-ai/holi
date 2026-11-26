@@ -84,7 +84,11 @@ try {
   await command('ruby', ['-e', "require 'xcodeproj'"])
   await writeFile(
     join(artifacts, 'toolchain.json'),
-    JSON.stringify({ xcode, runtime, runId }, null, 2),
+    JSON.stringify(
+      { xcode, runtime, runId, commit: (await command('git', ['rev-parse', 'HEAD'])).trim() },
+      null,
+      2,
+    ),
   )
 
   // Force a fresh unsigned build. Never touch desktop/out or use Electron.
@@ -539,6 +543,17 @@ try {
       await readFile(join(wrongRootPrivate, wrongRootName), 'utf8'),
       JSON.stringify(wrongRootJournal),
     )
+    const relativeRoot = join(documents, `holi-move-relative-${runId}-${caseInfo.ordinal}`)
+    assert.equal(moveReport.moveRestart.relativeMoveRoot, relativeRoot)
+    assert.equal(await realpath(relativeRoot), relativeRoot)
+    assert.equal(await readFile(join(relativeRoot, 'new/note.md'), 'utf8'), moveBytes.relativeMoved)
+    assert.equal(
+      await readFile(join(relativeRoot, 'ref.md'), 'utf8'),
+      moveBytes.relativeMovedBacklink,
+    )
+    assert.equal(await readFile(join(relativeRoot, 'old/asset.bin'), 'utf8'), moveBytes.asset)
+    await assert.rejects(readFile(join(relativeRoot, 'old/note.md')), { code: 'ENOENT' })
+    assert.deepEqual(await readdir(stagingDirectory(library, relativeRoot)), [])
     const expectedSource = caseInfo.phase === 'journal-before' ? moveBytes.source : null
     const expectedDestination = caseInfo.phase === 'journal-before' ? null : moveBytes.moved
     const expectedBackA = caseInfo.phase === 'journal-before' ? moveBytes.backA : moveBytes.movedA
@@ -598,6 +613,10 @@ try {
           expectedDestination,
           expectedBackA,
           expectedBackB,
+          relativeRoot,
+          relativeMove: moveBytes.relativeMoved,
+          relativeBacklink: moveBytes.relativeMovedBacklink,
+          unchangedAsset: moveBytes.asset,
           malformedRoot,
           conflictRoot,
         },
