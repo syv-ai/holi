@@ -411,8 +411,16 @@ for (const [name, mutate] of [
 
 test('host rejects absent, incomplete or nonportable shared graph evidence', () => {
   const graph = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     resources: [
+      '@lezer/common',
+      '@lezer/highlight',
+      '@lezer/markdown',
+      'entities/decode',
+      'entities/decode-codepoint',
+      'entities/decode-data-html',
+      'entities/decode-data-xml',
+      'markdown-move-links.ts',
       'mobile-path-safety.ts',
       'path-safety.ts',
       'vault-format.ts',
@@ -420,6 +428,26 @@ test('host rejects absent, incomplete or nonportable shared graph evidence', () 
       'wiki-links.ts',
     ],
     edges: [
+      { from: 'markdown-move-links.ts', request: 'entities/decode', to: 'entities/decode' },
+      {
+        from: 'entities/decode',
+        request: './decode-codepoint.js',
+        to: 'entities/decode-codepoint',
+      },
+      {
+        from: 'entities/decode',
+        request: './generated/decode-data-html.js',
+        to: 'entities/decode-data-html',
+      },
+      {
+        from: 'entities/decode',
+        request: './generated/decode-data-xml.js',
+        to: 'entities/decode-data-xml',
+      },
+      { from: 'markdown-move-links.ts', request: '@lezer/markdown', to: '@lezer/markdown' },
+      { from: '@lezer/markdown', request: '@lezer/common', to: '@lezer/common' },
+      { from: '@lezer/markdown', request: '@lezer/highlight', to: '@lezer/highlight' },
+      { from: '@lezer/highlight', request: '@lezer/common', to: '@lezer/common' },
       { from: 'mobile-path-safety.ts', request: './path-safety', to: 'path-safety.ts' },
       { from: 'vault-format.ts', request: './path-safety', to: 'path-safety.ts' },
       { from: 'vault-format.ts', request: './vault-format.v1.json', to: 'vault-format.v1.json' },
@@ -427,7 +455,7 @@ test('host rejects absent, incomplete or nonportable shared graph evidence', () 
   }
   validateSharedGraph(graph)
   for (const patch of [
-    { schemaVersion: 2 },
+    { schemaVersion: 1 },
     { resources: [] },
     { edges: [] },
     { resources: [...graph.resources, 'path-safety-node.ts'] },
@@ -537,7 +565,7 @@ test('native move checkpoint states reject interchangeable pre/post evidence', (
       ]),
     )
   const journal = {
-    schema: 2,
+    schema: 3,
     root,
     operationId,
     from: 'from.md',
