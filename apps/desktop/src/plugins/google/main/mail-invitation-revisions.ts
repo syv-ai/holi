@@ -223,14 +223,19 @@ export function representationOf(candidate: Candidate, mailbox: string): string 
   ])
 }
 
+function isCancellation({ value, joinOnly }: Candidate): boolean {
+  // Organizer admission and attendee-removal expansion precede selection.
+  // The parser sets cancelled for a REQUEST only with validated STATUS:CANCELLED.
+  return !joinOnly && value.details.cancelled
+}
+
 function matchingOrganizerCancellations(group: Candidate[]): Candidate[] {
-  const requests = group.filter(({ value }) => value.method !== 'CANCEL')
+  const requests = group.filter((candidate) => !isCancellation(candidate))
   if (!requests.length) return group
   const organizers = new Set(requests.map(({ value }) => value.details.organizer?.email))
   return group.filter(
-    ({ value }) =>
-      value.method !== 'CANCEL' ||
-      (value.details.organizer !== null && organizers.has(value.details.organizer.email)),
+    (candidate) =>
+      !isCancellation(candidate) || organizers.has(candidate.value.details.organizer?.email),
   )
 }
 
@@ -310,11 +315,11 @@ export function selectInvitationRevisions(
   const scoped = [...groups.values()].map(matchingOrganizerCancellations)
   const eligible = scoped.flat()
   const cancellations = eligible.filter(
-    ({ value, joinOnly }) =>
-      !joinOnly &&
-      value.method === 'CANCEL' &&
-      value.details.organizer &&
-      (value.details.identity.recurrenceId === null || value.recurrenceRange === 'THISANDFUTURE'),
+    (candidate) =>
+      isCancellation(candidate) &&
+      candidate.value.details.organizer &&
+      (identityOf(candidate).recurrenceId === null ||
+        candidate.value.recurrenceRange === 'THISANDFUTURE'),
   )
   const embeddedIn = (series: Candidate, identity: Revision) =>
     series.value.cancellations.some((item) => item.identity === identity)
