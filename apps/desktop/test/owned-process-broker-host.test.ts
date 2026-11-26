@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync, renameSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -628,7 +628,22 @@ describe('owned Job broker host', () => {
     try {
       // Cold Add-Type in the Windows fixture is startup, not part of the join proof.
       const startupStarted = enter('terminal')
-      const startupEndPath = join(cwd, 'broker-startup-ended')
+      const observerRun = native ? process.env.HOLI_WINDOWS_AGENT_RUN_DIR : undefined
+      const startupEndPath = observerRun ? join(observerRun, 'broker-startup-ended') : undefined
+      if (observerRun) {
+        try {
+          const window = join(observerRun, 'broker-startup-window.json')
+          writeFileSync(
+            window + '.tmp',
+            JSON.stringify({
+              deadlineUnixMs: Date.now() + Math.max(0, 45_000 - (elapsed() - startupStarted)),
+            }),
+          )
+          renameSync(window + '.tmp', window)
+        } catch {
+          // Diagnostics do not establish or extend the startup barrier.
+        }
+      }
       let snapshotTimer: ReturnType<typeof setInterval> | undefined
       if (native) {
         const sample = () => {
@@ -649,7 +664,7 @@ describe('owned Job broker host', () => {
       } finally {
         if (snapshotTimer) clearInterval(snapshotTimer)
         try {
-          writeFileSync(startupEndPath, '')
+          if (startupEndPath) writeFileSync(startupEndPath, '')
         } catch {
           // The observer flag is diagnostic and must not replace the startup outcome.
         }
