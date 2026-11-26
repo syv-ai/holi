@@ -153,6 +153,7 @@ jobs:
         run: pnpm --filter @holi/mobile... install --frozen-lockfile
       - name: Native build tools
         run: |
+          gem install --user-install xcodeproj -v 1.28.1 --no-document
           cmake --version
           xcrun --sdk iphoneos --show-sdk-path
       - name: Build and verify unsigned device archive
