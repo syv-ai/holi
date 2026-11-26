@@ -1,40 +1,119 @@
-import test from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { validateDocumentContextProof } from './codex-document-context.mjs'
 
-const valid = () => {
-  const prompt = 'synthetic prompt'
+function fixture() {
+  const message = (role, value) => ({
+    type: 'message',
+    role,
+    content: [{ type: 'input_text', text: value }],
+  })
+  const common = [
+    message('developer', 'profile instructions'),
+    message('user', 'project instructions'),
+  ]
+  const request = (input) => ({ instructions: 'model instructions', input })
   return {
-    schema: 'holi.codex-document-context.v1', prompt,
-    instructions: ['base instruction', 'profile instruction', 'project instruction', 'model instruction'],
-    provenance: { binary: '/owned/codex', argv: [], environment: {}, config: {} },
-    initial: { conversationId: 'same', marker: 'new-document', messages: [
-      { role: 'developer', content: 'base instruction profile instruction project instruction model instruction new-document' },
-      { role: 'user', content: prompt },
-    ] },
-    resumed: { conversationId: 'same', marker: 'changed-document', messages: [
-      { role: 'developer', content: 'base instruction profile instruction project instruction model instruction changed-document' },
-      { role: 'user', content: prompt },
-    ] },
-    consent: { normalNativeFlow: true }, cleanup: { verified: true },
+    schema: 'holi.codex-document-context.v1',
+    expected: {
+      developer: 'profile instructions',
+      excluded: 'base instructions',
+      model: 'model instructions',
+      project: 'project instructions',
+    },
+    prompt: 'unchanged user prompt',
+    baseline: { request: request([...common, message('user', 'unchanged user prompt')]) },
+    initial: {
+      conversationId: '12345678-1234-1234-1234-123456789abc',
+      marker: 'document.md initial',
+      request: request([
+        ...common,
+        message('developer', 'document.md initial'),
+        message('user', 'unchanged user prompt'),
+      ]),
+    },
+    resumed: {
+      conversationId: '12345678-1234-1234-1234-123456789abc',
+      marker: 'document.md resumed',
+      request: request([
+        ...common,
+        message('developer', 'document.md initial'),
+        message('user', 'unchanged user prompt'),
+        message('assistant', 'done'),
+        message('developer', 'document.md resumed'),
+        message('user', 'unchanged user prompt'),
+      ]),
+    },
+    consent: {
+      before: 'synthetic config',
+      after: 'trusted_hash = "sha256:abc"',
+      hook: '/owned/hook',
+      transcript: 'Trusted /owned/hook',
+    },
+    containment: { loopback: true, external: 'EPERM' },
+    sourcesUnchanged: true,
+    provenance: {
+      version: 'codex-cli 0.169.0',
+      binaryHash: 'a'.repeat(64),
+      launches: [{}],
+      config: { profile: 'synthetic config' },
+    },
+    cleanup: { rootRemoved: true, serverClosed: true, receipts: [{ drained: true }] },
   }
 }
 
-test('accepts role-correct fresh document delivery with preserved instructions and cleanup evidence', () => {
-  assert.equal(validateDocumentContextProof(valid()).valid, true)
+test('accepts role-correct native startup/resume observations with preserved instructions', () => {
+  assert.deepEqual(validateDocumentContextProof(fixture()), { valid: true, errors: [] })
 })
 
-test('rejects marker-only user context and missing instruction preservation', () => {
-  const proof = valid()
-  proof.initial.messages[0].role = 'user'
-  proof.resumed.messages[0].content = 'changed-document'
-  assert.equal(validateDocumentContextProof(proof).valid, false)
+test('rejects user-role context and stale resumed history', () => {
+  const userRole = fixture()
+  userRole.initial.request.input[2].role = 'user'
+  assert.equal(validateDocumentContextProof(userRole).valid, false)
+  const historical = fixture()
+  const context = historical.resumed.request.input.splice(5, 1)[0]
+  historical.resumed.request.input.unshift(context)
+  assert.equal(validateDocumentContextProof(historical).valid, false)
 })
 
-test('rejects history-only resume, absent consent, and unverified cleanup', () => {
-  const proof = valid()
-  proof.resumed.marker = proof.initial.marker
-  proof.consent.normalNativeFlow = false
-  proof.cleanup.verified = false
-  assert.equal(validateDocumentContextProof(proof).valid, false)
+test('rejects instruction replacement, profile loss and changed prompts', () => {
+  for (const mutate of [
+    (p) => {
+      p.initial.request.instructions = ''
+    },
+    (p) => {
+      p.initial.request.input[0].content[0].text = 'base instructions'
+    },
+    (p) => {
+      p.initial.request.input[1].content[0].text = ''
+    },
+    (p) => {
+      p.resumed.request.input.at(-1).content[0].text += ' modified'
+    },
+  ]) {
+    const proof = fixture()
+    mutate(proof)
+    assert.equal(validateDocumentContextProof(proof).valid, false)
+  }
+})
+
+test('rejects unobserved consent, cleanup failure and a different resumed session', () => {
+  for (const mutate of [
+    (p) => {
+      p.consent.transcript = ''
+    },
+    (p) => {
+      p.cleanup.receipts[0].drained = false
+    },
+    (p) => {
+      p.cleanup.serverClosed = false
+    },
+    (p) => {
+      p.resumed.conversationId = '87654321-1234-1234-1234-123456789abc'
+    },
+  ]) {
+    const proof = fixture()
+    mutate(proof)
+    assert.equal(validateDocumentContextProof(proof).valid, false)
+  }
 })
