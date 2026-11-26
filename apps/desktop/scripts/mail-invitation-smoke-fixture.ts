@@ -39,7 +39,7 @@ export const other = {
   location: 'East Annex',
   uid: 'second-mailbox@example.test',
 }
-type Invite = typeof inline & { scope?: 'series' | 'occurrence' }
+type Invite = typeof inline & { scope?: 'series' | 'occurrence'; method?: 'PUBLISH' }
 
 export const series: Invite = {
   ...inline,
@@ -53,6 +53,13 @@ export const occurrence: Invite = {
   ...series,
   title: 'Harbor planning moved occurrence',
   scope: 'occurrence',
+  join: 'https://meet.google.com/xyz-abcd-efg',
+}
+export const publication: Invite = {
+  ...series,
+  id: 'threadpublication',
+  subject: 'Operations mail: published planning series',
+  method: 'PUBLISH',
 }
 
 const gmail = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -121,7 +128,7 @@ function invitationSource(invite: Invite, mailbox: Mailbox) {
     'BEGIN:VCALENDAR',
     'PRODID:-//Holi//Offline Invitation Fixture//EN',
     'VERSION:2.0',
-    'METHOD:REQUEST',
+    `METHOD:${invite.method ?? 'REQUEST'}`,
     ...(zoned ? zoneDefinition : []),
     'BEGIN:VEVENT',
     `UID:${invite.uid}`,
@@ -155,7 +162,7 @@ type SentReply = ReturnType<typeof readReply> & { id: string }
 function message(invite: Invite, mailbox: Mailbox, sent?: SentReply) {
   const body = sent?.source ?? invitationSource(invite, mailbox)
   const attachmentId = !sent && invite.attached ? 'calendar-attachment' : undefined
-  const method = sent ? 'REPLY' : 'REQUEST'
+  const method = sent ? 'REPLY' : (invite.method ?? 'REQUEST')
   const text = sent
     ? 'This message contains a calendar response.'
     : 'Details are in the calendar invitation.'
@@ -312,6 +319,9 @@ export function createInvitationTransport() {
   let pendingReceiptIndex = false
   const calendarReadbackVersions = new Set<number>()
   const requestCounts: Record<string, number> = {}
+  // Hidden invitations are filtered before events.list pagination, for both
+  // expanded and unexpanded reads. Exact event/instance resources are unaffected.
+  const hiddenInvitationIds = new Set([eventId, occurrenceId, `${seriesId}-2`, `${seriesId}-3`])
   const event = (id: string) => {
     const { invite, version, attendee } = targets.get(id)!
     // Calendar serializes instants and separately names the series expansion zone.
@@ -362,8 +372,10 @@ export function createInvitationTransport() {
       }
       const key = `${mailbox.sub} ${summary}`
       requestCounts[key] = (requestCounts[key] ?? 0) + 1
-      const invites = mailbox === mailboxA ? [inline, attachment, series] : [other]
+      const invites = mailbox === mailboxA ? [inline, attachment, series, publication] : [other]
       const query = url.searchParams
+      const visibleInvitation = ({ id }: { id: string }) =>
+        query.get('showHiddenInvitations') === 'true' || !hiddenInvitationIds.has(id)
       if (method === 'GET') {
         if (resource === `${people}/people/me/connections`)
           return Response.json({ connections: [] })
@@ -425,7 +437,7 @@ export function createInvitationTransport() {
                   end: { ...master.end, dateTime: shift(end) },
                 }
               })
-              .filter((item) => Date.parse(item.end.dateTime) > from)
+              .filter((item) => visibleInvitation(item) && Date.parse(item.end.dateTime) > from)
             const offset = Number(query.get('pageToken') ?? '0')
             assert(Number.isInteger(offset) && offset >= 0)
             return Response.json({
@@ -439,11 +451,8 @@ export function createInvitationTransport() {
           assert.equal(query.get('showDeleted'), 'true')
           // The inline invitation is hidden on a visible primary calendar.
           // Without opt-in, events.list returns no such row (events.get still can).
-          if (
-            mailbox === mailboxA &&
-            uid === inline.uid &&
-            query.get('showHiddenInvitations') === 'true'
-          ) {
+          if (mailbox === mailboxA && uid === inline.uid) {
+            if (!visibleInvitation({ id: eventId })) return eventItems()
             const version = targets.get(eventId)!.version
             if (version > 1) calendarReadbackVersions.add(version)
             if (heldCalendarRead && heldCalendarRead.skip-- === 0) {

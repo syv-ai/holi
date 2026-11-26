@@ -590,7 +590,7 @@ export function createMailInvitationReconciler(
       const revision = revisionFor(entry)
       return revision && { ...revision, legacyJoinOnly: entry.selected.joinOnly }
     }
-    const discovery = createInvitationCalendarDiscovery(api)
+    const discovery = createInvitationCalendarDiscovery(api, email)
     const copies = new Map<string, CalendarCopy>()
     const observeCopy = async (entry: Scope) => {
       const invitation = invitationFor(entry)
@@ -948,7 +948,7 @@ export function createMailInvitationReconciler(
       const joinOnly = selected.joinOnly || selected.mail.sent || organizer === email
       const copy = copies.get(scopeKey(identity))
       const calendar: CalendarCopy | undefined =
-        copy?.kind === 'verified' && !copy.cancelled && hasUnseenPredecessor(entry, latestSources)
+        copy?.kind === 'verified' && hasUnseenPredecessor(entry, latestSources)
           ? {
               kind: 'blocked',
               reason: 'Calendar verification is out of date; reload this invitation',
@@ -966,7 +966,7 @@ export function createMailInvitationReconciler(
         // A disputed CANCEL can be the displayed rendition, but arrival order
         // alone doesn't confirm cancellation or remove the read-only Retry.
         cancelled:
-          verifiedCopy?.cancelled ??
+          !verifiedCopy &&
           ((details.cancelled && !entry.reason) ||
             entry.cancelledBy !== undefined ||
             (calendar?.kind === 'blocked' && calendar.cancelled === true)),
@@ -1325,13 +1325,7 @@ export function createMailInvitationReconciler(
             const occurrence = selectSeriesSlot(selected, slot)
             if (occurrence === false) return false
             if (occurrence && hasUnseenPredecessor(occurrence, latestSources)) return false
-            const revision = occurrence ? revisionFor(occurrence) : null
-            if (occurrence && !revision) return false
-            const copy = copies.get(scopeKey({ ...identity, recurrenceId: slot }))
-            return {
-              revision,
-              cancellation: copy?.kind === 'blocked' ? copy.occurrenceCancellation : undefined,
-            }
+            return occurrence ? (revisionFor(occurrence) ?? false) : null
           })
           return () => (verifiedCopy.canNavigate ? navigation : { kind: 'withheld' })
         },

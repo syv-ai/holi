@@ -5390,14 +5390,16 @@ it('retains sparse primary cancellations until every possible exact copy is gone
       items: [{ id: first.id, iCalUID: uid, status: 'cancelled', organizer: {} }],
     },
   ]
-  expect(await read()).toMatchObject({ cancelled: true, canRespond: false })
-  state.primaryPages = [{ kind: 'calendar#events', items: [{ ...second, iCalUID: undefined }] }]
-  expect(await read()).toMatchObject({
-    cancelled: true,
+  const unverified = {
+    cancelled: false,
     canRespond: false,
+    conferenceUrl: null,
     htmlLink: null,
     responseTargetKey: null,
-  })
+  }
+  expect(await read()).toMatchObject(unverified)
+  state.primaryPages = [{ kind: 'calendar#events', items: [{ ...second, iCalUID: undefined }] }]
+  expect(await read()).toMatchObject(unverified)
 
   // The complete collection now omits both rows, but exact GET still sees them.
   state.primaryPages = [{ kind: 'calendar#events' }]
@@ -5453,7 +5455,7 @@ it.each([
       htmlLink: null,
       conferenceUrl: null,
     }
-    expect(await read()).toMatchObject({ ...blocked, cancelled: status === 'cancelled' })
+    expect(await read()).toMatchObject({ ...blocked, cancelled: false })
     if (status === 'confirmed') {
       // Even a fresh organizer and self attendee do not turn the query's
       // parent binding into payload UID proof.
@@ -7222,6 +7224,176 @@ it('withholds an exact occurrence cancelled by newer Calendar evidence, but not 
   })
   await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
+it.each(['single', 'series'] as const)(
+  'withholds a %s REQUEST after a newer bound root cancellation, but not an older tombstone',
+  async (scope) => {
+    const { state, read, respond } = await rig()
+    const room = 'https://meet.google.com/abc-defg-hij'
+    const page = 'https://calendar.google.com/calendar/event?eid=mailed'
+    const request = (sequence: number) =>
+      invite('REQUEST', '', sequence).replace(
+        'END:VEVENT',
+        `${scope === 'series' ? 'RRULE:FREQ=WEEKLY\r\n' : ''}URL:${page}\r\nEND:VEVENT`,
+      )
+    state.messages = [gmailMessage('update', 200, request(3))]
+    const root = {
+      ...event(),
+      status: 'cancelled',
+      sequence: 4,
+      updated: '2024-06-01T09:00:00Z',
+      hangoutLink: room,
+    }
+    root.attendees[0]!.responseStatus = 'accepted'
+    // A deleted master need not retain RRULE or its original interval.
+    const { start: _start, end: _end, ...tombstone } = root
+    state.primaryPages = [{ kind: 'calendar#events', items: [tombstone] }]
+    const blocked = {
+      scope,
+      canRespond: false,
+      responseTargetKey: null,
+      responseStatus: null,
+      recordedResponseStatus: null,
+      sentResponseStatus: null,
+    }
+    expect(await read()).toMatchObject({
+      ...blocked,
+      cancelled: true,
+      conferenceUrl: null,
+      htmlLink: null,
+    })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    state.primaryPages = [
+      {
+        kind: 'calendar#events',
+        items: [{ ...tombstone, sequence: 3, summary: 'Different meeting details' }],
+      },
+    ]
+    expect(await read()).toMatchObject({
+      ...blocked,
+      cancelled: false,
+      conferenceUrl: null,
+      htmlLink: null,
+    })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    state.primaryPages = [
+      { kind: 'calendar#events', items: [{ ...tombstone, organizer: { email: guest } }] },
+    ]
+    expect(await read()).toMatchObject({
+      ...blocked,
+      cancelled: false,
+      conferenceUrl: room,
+      htmlLink: page,
+    })
+
+    state.primaryPages = [
+      { kind: 'calendar#events', items: [{ ...tombstone, updated: '2024-07-19T09:00:00Z' }] },
+    ]
+    state.messages.push(gmailMessage('reinstated', 300, request(5)))
+    expect(await read()).toMatchObject({
+      ...blocked,
+      cancelled: false,
+      conferenceUrl: room,
+      htmlLink: page,
+    })
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+  },
+)
+
+it('keeps series RSVP on the master while unexpanded exceptions suppress stale Join links', async () => {
+  const { state, list, read, respond } = await rig()
+  state.messages = [gmailMessage('series', 400, seriesWithException())]
+  const master = event({ id: 'series', series: true })
+  const stale = upcomingInstance('first', '2099-07-09', 'https://meet.google.com/xyz-abcd-efg')
+  const later = upcomingInstance('later', '2099-07-16', 'https://meet.google.com/klm-nopq-rst')
+  const tombstone = { ...stale, status: 'cancelled', sequence: 4 }
+  state.events.set('primary', [tombstone, master])
+  state.instances.set('primary', [stale])
+  expect((await list()).invitations).toMatchObject([
+    {
+      scope: 'series',
+      cancelled: false,
+      canRespond: true,
+      conferenceUrl: null,
+      htmlLink: master.htmlLink,
+    },
+  ])
+
+  // Only actual mailbox evidence may suppress a live link. A secondary
+  // calendar may name the mailbox as a guest without holding its self copy.
+  const secondary = 'secondary@example.com'
+  const unproven = { ...tombstone, attendees: [{ ...tombstone.attendees[0]!, self: false }] }
+  state.secondaryCalendars.push({ id: secondary, selected: true, accessRole: 'writer' })
+  state.events.delete('primary')
+  state.events.set(secondary, [master, unproven])
+  state.instances.set(secondary, [later, stale])
+  expect(await read()).toMatchObject({ conferenceUrl: stale.hangoutLink, htmlLink: stale.htmlLink })
+  state.events.set(secondary, [master, tombstone])
+  expect(await read()).toMatchObject({ conferenceUrl: later.hangoutLink, htmlLink: later.htmlLink })
+  expect(await respond('accepted')).toMatchObject({
+    channel: 'calendar',
+    outcome: 'sent',
+    refreshPending: false,
+    invitation: {
+      scope: 'series',
+      recordedResponseStatus: 'accepted',
+      conferenceUrl: later.hangoutLink,
+      htmlLink: later.htmlLink,
+    },
+  })
+  expect(state.calendarUpdateRequests).toEqual([
+    { calendar: secondary, eventId: master.id, sendUpdates: 'all', status: 'accepted' },
+  ])
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.sendAttempts).toBe(0)
+
+  // An older exception isn't a substitute for proof of the live revision.
+  tombstone.sequence = 2
+  expect(await read()).toMatchObject({
+    recordedResponseStatus: 'accepted',
+    conferenceUrl: stale.hangoutLink,
+    htmlLink: stale.htmlLink,
+  })
+})
+
+it('includes hidden expanded invitations for REQUEST but not publications or exports', async () => {
+  const { state, read } = await rig()
+  const master = event({ id: 'series', series: true })
+  const child = upcomingInstance(
+    'hidden-child',
+    '2099-07-09',
+    'https://meet.google.com/xyz-abcd-efg',
+  )
+  master.attendees[0]!.responseStatus = 'accepted'
+  child.attendees[0]!.responseStatus = 'accepted'
+  state.events.set('primary', [master])
+  state.instances.set('primary', [child])
+  state.hiddenInvitationIds.add(child.id)
+  state.messages = [gmailMessage('request', 200, seriesWithException())]
+  expect(await read()).toMatchObject({
+    scope: 'series',
+    kind: 'invitation',
+    canRespond: true,
+    recordedResponseStatus: 'accepted',
+    conferenceUrl: child.hangoutLink,
+    htmlLink: child.htmlLink,
+  })
+  for (const method of ['METHOD:PUBLISH\r\n', '']) {
+    state.messages = [
+      gmailMessage('legacy', 300, seriesWithException().replace('METHOD:REQUEST\r\n', method)),
+    ]
+    expect(await read()).toMatchObject({
+      scope: 'series',
+      kind: 'meeting',
+      canRespond: false,
+      conferenceUrl: null,
+      htmlLink: null,
+    })
+  }
 })
 
 it('requires a verified different parent before disregarding a possible Calendar series cancellation', async () => {

@@ -35,6 +35,7 @@ import {
   occurrenceId,
   organizer,
   other,
+  publication,
   remote,
   series,
 } from './mail-invitation-smoke-fixture'
@@ -369,7 +370,7 @@ async function run() {
     ipcMain.handle(`${ipc}-external`, (event, url: string) => {
       if (!trusted(event)) return
       // Assert the meeting target without moving focus or using a real browser.
-      if (![inline.join, attachment.join].includes(url))
+      if (![inline.join, attachment.join, occurrence.join].includes(url))
         errors.push(`Unexpected external link: ${url}`)
       external.push(url)
     })
@@ -642,18 +643,40 @@ async function run() {
     await expectStatus('Response: Accepted')
     await capture('06-mail-view-narrow-dark')
     window.setContentSize(1280, 920)
-    await open('surface', series)
     const scopedCards = `${card} article`
     const matchesCard = (title: string) =>
       `[...document.querySelectorAll(${literal(scopedCards)})].find(e => e.querySelector('h4')?.textContent === ${literal(title)})`
     const containsCard = (title: string, text: string) =>
       js<boolean>(`!!(${matchesCard(title)})?.innerText.includes(${literal(text)})`)
-    await until(
-      'series and occurrence are rendered separately',
-      async () =>
-        (await containsCard(series.title, 'Whole series')) &&
-        (await containsCard(occurrence.title, 'This occurrence')),
-    )
+    // Keep the fixture's navigation window between the visible first meeting
+    // and the hidden moved meeting, independent of the machine's clock.
+    const realNow = Date.now
+    Date.now = () => Date.parse('2026-11-25T16:00:00Z')
+    try {
+      await open('surface', publication)
+      await until('the published series renders as a verified meeting', () =>
+        containsCard(series.title, 'Whole series'),
+      )
+      assert(!/Join meeting|Open in Google Calendar|Open email link/.test(await readCard()))
+      await open('surface', series)
+      await until(
+        'series and occurrence are rendered separately',
+        async () =>
+          (await containsCard(series.title, 'Whole series')) &&
+          (await containsCard(occurrence.title, 'This occurrence')),
+      )
+      await clickElement(
+        'Join meeting',
+        `[...(${matchesCard(series.title)}).querySelectorAll('button')].find(e => e.innerText === 'Join meeting')`,
+      )
+      await until(
+        'the REQUEST series opens the hidden moved meeting',
+        () => external.at(-1) === occurrence.join,
+      )
+      mark('only-request-series-navigation-includes-hidden-invitations')
+    } finally {
+      Date.now = realNow
+    }
     const priorScopedWrites = transport.writes.length
     await clickElement(
       'Accept',
@@ -808,7 +831,7 @@ async function run() {
     const trustedClicks = await js<string[]>('window.fixtureClicks')
     for (const label of ['Accept', 'Maybe', 'Decline', 'Retry', mailboxB.email])
       assert(trustedClicks.includes(label), `Missing trusted click: ${label}`)
-    assert.deepEqual(external, [inline.join, attachment.join])
+    assert.deepEqual(external, [inline.join, attachment.join, occurrence.join])
     assert.deepEqual(denied, [])
     assert.deepEqual(errors, [])
     assert.deepEqual(transport.rejected, [])
