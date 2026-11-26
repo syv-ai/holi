@@ -157,11 +157,14 @@ type ZoneInput = {
 // Read the parameter section, never the property value. RFC 6868 encodes
 // parameter quotes as ^'; only literal double quotes delimit a parameter.
 // Backslash escapes in property values (e.g. a TEXT list) are ICAL's job.
+const INTERVAL_PROPERTIES = new Set(['DTSTART', 'DTEND', 'DURATION'])
+
 function contentLine(line: string, inEvent: boolean) {
   const property = /^([a-z\d-]+)/i.exec(line)
   if (!property) malformed()
   const name = property[0].toUpperCase()
   const parameters = new Map<string, string[]>()
+  let ambiguousValue = false
   const param = /;([a-z\d-]+)=("[^"]*"(?:,"[^"]*")*|[^":;]*)(?=[:;])/iy
   let position = property[0].length
   while (line[position] === ';') {
@@ -172,12 +175,11 @@ function contentLine(line: string, inEvent: boolean) {
     const raw = match[2]!
     // VALUE is always a single type token, on standard and extension
     // properties alike. ICAL would otherwise silently select the last one.
-    if (
-      key === 'VALUE' &&
-      !(inEvent && name === 'STATUS') &&
-      (parameters.has(key) || !/^(?:[a-z\d-]+|"[a-z\d-]+")$/i.test(raw))
-    )
-      throw new CalendarPartError('Calendar invitation has an ambiguous VALUE parameter')
+    if (key === 'VALUE' && (parameters.has(key) || !/^(?:[a-z\d-]+|"[a-z\d-]+")$/i.test(raw))) {
+      if (!(inEvent && (name === 'STATUS' || INTERVAL_PROPERTIES.has(name))))
+        throw new CalendarPartError('Calendar invitation has an ambiguous VALUE parameter')
+      ambiguousValue = true
+    }
     // ICAL only consumes separately quoted lists for these address parameters.
     // Reject mixed/unsupported quoting rather than letting ICAL see a different
     // parameter boundary than the wire guard.
@@ -195,6 +197,7 @@ function contentLine(line: string, inEvent: boolean) {
   if (line[position] !== ':') malformed()
   return {
     name,
+    ambiguousValue,
     parameters,
     params: line.slice(property[0].length, position).toUpperCase(),
     value: line.slice(position + 1),
@@ -202,10 +205,30 @@ function contentLine(line: string, inEvent: boolean) {
   }
 }
 
+function usableDuration(value: string): boolean {
+  const parts = DURATION.exec(value)
+  if (
+    !parts ||
+    !parts.slice(1).some(Boolean) ||
+    parts.slice(1).some((part) => part && part.length > 3) ||
+    value.endsWith('T')
+  )
+    return false
+  const [, w = '0', d = '0', h = '0', m = '0', s = '0'] = parts
+  if (+w * 7 + +d + +h / 24 + +m / 1440 + +s / 86400 > 366) tooLarge()
+  return true
+}
+
+type IntervalWire = {
+  fields: { name: string; line: string }[]
+  invalid: boolean
+}
+
 function inspectCalendar(lines: string[]) {
   const body: string[] = []
   const zones = new Map<string, ZoneInput>()
   const stack: string[] = []
+  const intervals: IntervalWire[] = []
   let zone: ZoneInput | undefined
   let observances = 0
   let components = 0
@@ -214,7 +237,10 @@ function inspectCalendar(lines: string[]) {
 
   for (const line of lines) {
     const parent = stack.at(-1)
-    const { name, params, parameters, value, valueStart } = contentLine(line, parent === 'VEVENT')
+    const { name, params, parameters, value, valueStart, ambiguousValue } = contentLine(
+      line,
+      parent === 'VEVENT',
+    )
     if (name === 'BEGIN' || name === 'END') {
       if (params || !/^[a-z\d-]+$/i.test(value)) malformed()
       const kind = value.toUpperCase()
@@ -236,6 +262,7 @@ function inspectCalendar(lines: string[]) {
           if (++observances > MAX_OBSERVANCES) tooLarge()
           zone.observances.push({ kind, fields: new Map() })
         }
+        if (kind === 'VEVENT') intervals.push({ fields: [], invalid: false })
         stack.push(kind)
       } else if (stack.pop() !== kind) malformed()
       const destination = zone?.wire ?? body
@@ -279,7 +306,7 @@ function inspectCalendar(lines: string[]) {
     }
     if (parent === 'VEVENT') {
       const statusType = name === 'STATUS' ? parameters.get('VALUE') : undefined
-      if (statusType && (statusType.length !== 1 || statusType[0] !== 'TEXT')) {
+      if (statusType && (ambiguousValue || statusType.length !== 1 || statusType[0] !== 'TEXT')) {
         // Keep an explicit invalid STATUS for event-level validation. Do not
         // let ICAL coerce its value or throw away the surrounding revision.
         body.push('STATUS:')
@@ -301,42 +328,43 @@ function inspectCalendar(lines: string[]) {
         body.push(line.slice(0, valueStart) + eventRule(value))
         continue
       }
-      if (
-        ['ORGANIZER', 'ATTENDEE', 'DTSTART', 'DTEND', 'RECURRENCE-ID', 'RDATE', 'EXDATE'].includes(
-          name,
-        )
-      ) {
-        const valueType = parameters.get('VALUE')?.[0] ?? 'DATE-TIME'
-        const zones = parameters.get('TZID') ?? []
-        const repeated = (key: string) => (parameters.get(key)?.length ?? 0) > 1
-        if (name === 'ATTENDEE') {
-          if (repeated('PARTSTAT') || repeated('RSVP')) malformed()
-        } else if (name === 'RDATE' || name === 'EXDATE') {
-          validateRecurrenceDates(name, valueType, zones, value)
-        } else if (name !== 'ORGANIZER') {
-          if (
-            !/^(DATE|DATE-TIME)$/.test(valueType) ||
-            zones.length > 1 ||
-            repeated('RANGE') ||
-            civilTime(value, valueType === 'DATE' ? 'date' : 'timed') === null
-          )
-            malformed()
+      const valueType = parameters.get('VALUE')?.[0]
+      const tzids = parameters.get('TZID') ?? []
+      const repeated = (key: string) => (parameters.get(key)?.length ?? 0) > 1
+      if (name === 'ATTENDEE') {
+        if (repeated('PARTSTAT') || repeated('RSVP')) malformed()
+      } else if (name === 'RDATE' || name === 'EXDATE') {
+        validateRecurrenceDates(name, valueType ?? 'DATE-TIME', tzids, value)
+      } else if (INTERVAL_PROPERTIES.has(name) || name === 'RECURRENCE-ID') {
+        const validDate = () =>
+          /^(DATE|DATE-TIME)$/.test(valueType ?? 'DATE-TIME') &&
+          tzids.length <= 1 &&
+          !repeated('RANGE') &&
+          civilTime(value, valueType === 'DATE' ? 'date' : 'timed') !== null
+        if (name === 'RECURRENCE-ID') {
+          if (!validDate()) malformed() // Never relax validation of the original slot.
+        } else {
+          const interval = intervals.at(-1)!
+          interval.fields.push({ name, line })
+          // Do not pass an unsupported value to ICAL (which can normalize it
+          // or throw), but retain its presence and raw material for this VEVENT.
+          const valid =
+            !ambiguousValue &&
+            (name === 'DURATION'
+              ? (valueType === undefined || valueType === 'DURATION') &&
+                !tzids.length &&
+                usableDuration(value)
+              : validDate())
+          if (!valid) {
+            interval.invalid = true
+            continue
+          }
+        }
+        if (name !== 'DURATION') {
           const year = Number(value.slice(0, 4))
           firstYear = Math.min(firstYear, year)
           lastYear = Math.max(lastYear, year)
         }
-      }
-      if (name === 'DURATION') {
-        const parts = DURATION.exec(value)
-        if (
-          !parts ||
-          !parts.slice(1).some(Boolean) ||
-          parts.slice(1).some((part) => part && part.length > 3) ||
-          value.endsWith('T')
-        )
-          malformed()
-        const [, w = '0', d = '0', h = '0', m = '0', s = '0'] = parts
-        if (+w * 7 + +d + +h / 24 + +m / 1440 + +s / 86400 > 366) tooLarge()
       }
     }
     body.push(line)
@@ -345,6 +373,7 @@ function inspectCalendar(lines: string[]) {
   return {
     body,
     zones,
+    intervals,
     firstYear: Number.isFinite(firstYear) ? firstYear : 2000,
     lastYear: Number.isFinite(lastYear) ? lastYear : 2000,
   }
@@ -897,6 +926,7 @@ export function openCalendarPart(source: string) {
   const calendar = new ICAL.Component(ICAL.parse(scope.body.join('\r\n')))
   return {
     calendar,
+    intervals: scope.intervals,
     resolveTimes(): CalendarTimes {
       const zones = materializeZones(scope)
       installZones(calendar, zones)

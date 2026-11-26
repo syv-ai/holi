@@ -246,8 +246,59 @@ function eventStatus(
     : 'INVALID'
 }
 
-function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasExceptions: boolean) {
-  const { resolveTime } = times
+type IntervalWire = ReturnType<typeof openCalendarPart>['intervals'][number]
+
+function eventInterval(
+  entry: ICAL.Component,
+  { resolveTime, recurrenceTimeBasis: timeBasis }: CalendarTimes,
+  recurrence: ICAL.Property | null,
+) {
+  const startProperty = single(entry, 'dtstart')
+  const endProperty = single(entry, 'dtend')
+  const duration = single(entry, 'duration')
+  if ((endProperty && duration) || (duration && (!startProperty || duration.type !== 'duration')))
+    malformed()
+  const startTime = eventTime(startProperty)
+  const endTime = eventTime(endProperty)
+  if (endTime && (!startTime || startTime.isDate !== endTime.isDate)) malformed()
+  const start = startTime ? resolveTime(startTime, startProperty) : null
+  const recurrenceTimeBasis = startTime ? timeBasis(startTime, startProperty) : null
+  let end = endTime ? resolveTime(endTime, endProperty) : start
+  if (start && end && timeKind(start) !== timeKind(end)) malformed()
+  if (startTime && !endTime && (duration || startTime.isDate)) {
+    const next = startTime.clone()
+    const length = duration?.getFirstValue() ?? ICAL.Duration.fromSeconds(86400)
+    if (
+      !(length instanceof ICAL.Duration) ||
+      length.isNegative ||
+      (next.isDate && (length.hours || length.minutes || length.seconds))
+    )
+      malformed()
+    // Calendar days are nominal (a DST change can move the offset). Add
+    // sub-day units to the instant when known, or to the wall clock otherwise.
+    next.day += length.weeks * 7 + length.days
+    const seconds = length.hours * 3600 + length.minutes * 60 + length.seconds
+    if (!next.isDate && start && timeKind(start) === 'floating') {
+      next.second += seconds
+      end = resolveTime(next, startProperty)
+    } else {
+      end = resolveTime(next, startProperty)
+      if (!next.isDate) end = new Date(Date.parse(end) + seconds * 1000).toISOString()
+    }
+  }
+  if (recurrence && startTime && startTime.isDate !== (recurrence.type === 'date')) malformed()
+  // A timed event without an explicit end may end at its start. A CANCEL
+  // can omit DTSTART too, but supplied interval fields must be coherent.
+  const valid = !(endProperty || duration) || (start !== null && end !== null && end > start)
+  return { start, end, recurrenceTimeBasis, allDay: startTime?.isDate ?? false, valid }
+}
+
+function eventMaterial(
+  entry: ICAL.Component,
+  times: CalendarTimes,
+  wire: IntervalWire,
+  hasExceptions: boolean,
+) {
   const status = eventStatus(entry)
   const summary = single(entry, 'summary')
   const locationProperty = single(entry, 'location')
@@ -280,39 +331,19 @@ function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasException
   const name = text(organizerProperty?.getParameter('cn'))
   const organizer = email ? { email, ...(name ? { name } : {}) } : null
   const { attendees, attendeeStates } = attendeeEvidence(entry)
-  const startProperty = single(entry, 'dtstart')
-  const endProperty = single(entry, 'dtend')
-  const duration = single(entry, 'duration')
-  if ((endProperty && duration) || (duration && duration.type !== 'duration')) malformed()
-  const startTime = eventTime(startProperty)
-  const endTime = eventTime(endProperty)
-  if (endTime && (!startTime || startTime.isDate !== endTime.isDate)) malformed()
-  const start = startTime ? resolveTime(startTime, startProperty) : null
-  const recurrenceTimeBasis = startTime ? times.recurrenceTimeBasis(startTime, startProperty) : null
-  let end = endTime ? resolveTime(endTime, endProperty) : start
-  if (start && end && timeKind(start) !== timeKind(end)) malformed()
-  if (startTime && !endTime && (duration || startTime.isDate)) {
-    const next = startTime.clone()
-    const length = duration?.getFirstValue() ?? ICAL.Duration.fromSeconds(86400)
-    if (
-      !(length instanceof ICAL.Duration) ||
-      (next.isDate && (length.hours || length.minutes || length.seconds))
-    )
-      malformed()
-    // Calendar days are nominal (a DST change can move the offset). Add
-    // sub-day units to the instant when known, or to the wall clock otherwise.
-    next.day += length.weeks * 7 + length.days
-    const seconds = length.hours * 3600 + length.minutes * 60 + length.seconds
-    if (!next.isDate && start && timeKind(start) === 'floating') {
-      next.second += seconds
-      end = resolveTime(next, startProperty)
-    } else {
-      end = resolveTime(next, startProperty)
-      if (!next.isDate) end = new Date(Date.parse(end) + seconds * 1000).toISOString()
+  const recurrence = single(entry, 'recurrence-id')
+  let interval: ReturnType<typeof eventInterval> | null = null
+  if (!wire.invalid) {
+    try {
+      interval = eventInterval(entry, times, recurrence)
+    } catch (error) {
+      if (!(error instanceof CalendarPartError)) throw error
     }
   }
-  const recurrence = single(entry, 'recurrence-id')
-  if (recurrence && startTime && startTime.isDate !== (recurrence.type === 'date')) malformed()
+  const invalidInterval = interval?.valid !== true
+  const start = interval?.start ?? null
+  const end = interval?.end ?? null
+  const recurrenceTimeBasis = interval?.recurrenceTimeBasis ?? null
   const rangeParam = recurrence?.getParameter('range')
   const range = typeof rangeParam === 'string' ? rangeParam.toUpperCase() : undefined
   if (rangeParam !== undefined && range !== 'THISANDFUTURE') malformed()
@@ -330,14 +361,14 @@ function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasException
     organizer,
     start,
     end,
-    allDay: startTime?.isDate ?? false,
+    allDay: interval?.allDay ?? false,
     floating: start !== null && timeKind(start) === 'floating',
     recurring: hasExceptions || recurrence !== null || rules.length > 0,
   }
   const explicitFields: ExplicitFields = {
     title: summary !== null,
-    start: startProperty !== null,
-    end: endProperty !== null || duration !== null,
+    start: wire.fields.some(({ name }) => name === 'DTSTART'),
+    end: wire.fields.some(({ name }) => name === 'DTEND' || name === 'DURATION'),
     location: locationProperty !== null,
     conferenceUrl: conferenceProperties.length > 0 || conferenceUrl !== null,
     htmlLink: urlProperty !== null,
@@ -352,6 +383,15 @@ function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasException
       attendees,
       description: description ?? null,
       status,
+      // Distinguish invalid wire material from valid absence and from another
+      // malformed rendition. Never hash a normalized substitute for it.
+      ...(invalidInterval
+        ? {
+            invalidInterval: createHash('sha256')
+              .update(JSON.stringify(wire.fields.map(({ line }) => line)))
+              .digest('hex'),
+          }
+        : {}),
       recurrenceRange,
       rules,
       ...(referencedZoneKeys.length ? { referencedZoneKeys } : {}),
@@ -362,9 +402,7 @@ function eventMaterial(entry: ICAL.Component, times: CalendarTimes, hasException
     },
     recurrenceTimeBasis,
     attendeeStates,
-    // RFC 5545 requires a later explicit end and a positive explicit
-    // duration. A timed event with neither property can end at its start.
-    invalidExplicitInterval: explicitFields.end && (!start || !end || end <= start),
+    invalidInterval,
   }
 }
 
@@ -509,7 +547,7 @@ export function parseMailInvitation(
   }
 
   try {
-    const { calendar, resolveTimes } = openCalendarPart(source)
+    const { calendar, intervals, resolveTimes } = openCalendarPart(source)
     const payload = single(calendar, 'method')
     const parsed = payload?.type === 'text' ? methodOf(payload.getFirstValue()) : undefined
     const known = (name: string | undefined): name is 'REQUEST' | 'CANCEL' | 'PUBLISH' =>
@@ -523,7 +561,8 @@ export function parseMailInvitation(
     else return null
     const times = resolveTimes()
     const events = calendar.getAllSubcomponents('vevent')
-    const parts = events.map((entry) => {
+    if (events.length !== intervals.length) malformed()
+    const parts = events.map((entry, index) => {
       const identity = identityOf(messageId, entry, times.resolveTime)
       return {
         entry,
@@ -531,6 +570,7 @@ export function parseMailInvitation(
         ...eventMaterial(
           entry,
           times,
+          intervals[index]!,
           method !== 'CANCEL' && events.length > 1 && identity.recurrenceId === null,
         ),
       }
@@ -549,30 +589,61 @@ export function parseMailInvitation(
     const { organizer, start, end } = material.details
     const siblings = parts.filter((part) => part !== representative)
     const cancellations: Cancellation[] = []
+    const intervalReason = 'Invitation has no usable start or end time'
+    const eventMethod = method
+    const retainOccurrence = (
+      part: (typeof parts)[number],
+      fields: CalendarRevisionFields | null,
+    ) => {
+      const { description, status, explicitFields, attendees, recurrenceRange } = part.material
+      embeddedOccurrences.push({
+        details: {
+          ...part.material.details,
+          identity: {
+            ...part.identity,
+            materialKey: materialKey(eventMethod, part.identity, part.material),
+          },
+          cancelled: false,
+          unavailableReason: fields
+            ? null
+            : part.invalidInterval
+              ? intervalReason
+              : 'Calendar cannot verify this embedded occurrence',
+        },
+        revisionMaterial: { description, status, explicitFields, attendees, exceptionsKey: '[]' },
+        fields,
+        recurrenceRange,
+      })
+    }
     if (method === 'CANCEL') {
+      if (!organizer) malformed()
       // A CANCEL may name several occurrences with no master and no DTSTART.
       // Prove every scope before reporting any cancellation evidence.
-      for (const part of parts) {
+      const scopes = parts.map((part): Cancellation => {
         const sender = part.material.details.organizer
-        if (!sender || sender.email !== organizer?.email) malformed()
+        if (!sender || sender.email !== organizer.email) malformed()
         if (!part.identity.dtstamp || !part.entry.hasProperty('sequence')) malformed()
-        const { status } = part.material
+        const { status, attendees } = part.material
         const eventCancelled = status === 'CANCELLED'
-        const { attendees } = part.material
         // Only an absent STATUS can describe removal of the named attendees.
         if (!eventCancelled && (status || !attendees.length)) malformed()
-        part.identity.materialKey = materialKey(method, part.identity, part.material)
-        cancellations.push({
+        part.identity.materialKey = materialKey('CANCEL', part.identity, part.material)
+        return {
           identity: part.identity,
           organizer: sender,
           recurrenceRange: part.material.recurrenceRange,
           eventCancelled,
           attendees,
-        })
-      }
+        }
+      })
       recurrenceRange = material.recurrenceRange
-      Object.assign(details, material.details, { identity, cancelled: true })
-      return unavailable('This invitation was cancelled', cancellations)
+      Object.assign(details, material.details, { identity })
+      if (parts.some((part) => part.invalidInterval)) {
+        for (const part of siblings) retainOccurrence(part, null)
+        return unavailable(intervalReason)
+      }
+      details.cancelled = true
+      return unavailable('This invitation was cancelled', scopes)
     }
 
     const unstampedRequest =
@@ -586,13 +657,17 @@ export function parseMailInvitation(
       )
         malformed()
       const occurrence = part.identity.recurrenceId!
-      if (part.material.status !== 'CANCELLED') {
-        const { details, status, description, explicitFields, attendees, rules, recurrenceRange } =
-          part.material
+      if (
+        part.material.status !== 'CANCELLED' ||
+        part.invalidInterval ||
+        representative.invalidInterval
+      ) {
+        const { details, status, attendees, rules, recurrenceRange } = part.material
         const kind = timeKind(occurrence)
         const basis = part.recurrenceTimeBasis
         const complete =
           ownOrganizer &&
+          !representative.invalidInterval &&
           start &&
           kind === timeKind(start) &&
           kind !== 'floating' &&
@@ -600,23 +675,13 @@ export function parseMailInvitation(
           details.start &&
           details.end &&
           timeKind(details.start) === kind &&
-          !part.invalidExplicitInterval &&
           !recurrenceRange &&
           !rules.length &&
           (status === null || status === 'CONFIRMED' || status === 'TENTATIVE') &&
           (method !== 'REQUEST' || part.identity.dtstamp !== null)
-        embeddedOccurrences.push({
-          details: {
-            ...details,
-            identity: {
-              ...part.identity,
-              materialKey: materialKey(method, part.identity, part.material),
-            },
-            cancelled: false,
-            unavailableReason: complete ? null : 'Calendar cannot verify this embedded occurrence',
-          },
-          revisionMaterial: { description, status, explicitFields, attendees, exceptionsKey: '[]' },
-          fields: complete
+        retainOccurrence(
+          part,
+          complete
             ? {
                 attendees,
                 attendeeStates: part.attendeeStates,
@@ -626,8 +691,7 @@ export function parseMailInvitation(
                 calendarRecurrenceZoneMatches: times.checkRecurrenceZones(basis, [part.entry]),
               }
             : null,
-          recurrenceRange,
-        })
+        )
         continue
       }
       if (unstampedRequest) continue
@@ -679,7 +743,9 @@ export function parseMailInvitation(
       embeddedOccurrences.length = 0
       return unavailable('Invitation has an invalid event status')
     }
+    if (representative.invalidInterval) return unavailable(intervalReason)
     if (material.status === 'CANCELLED') {
+      if (siblings.some((part) => part.invalidInterval)) return unavailable(intervalReason)
       // Revision selection can use this valid status for coverage once it
       // authenticates the organizer. It is not a reply parent.
       details.cancelled = true
@@ -692,9 +758,9 @@ export function parseMailInvitation(
       !start ||
       !end ||
       !recurrenceTimeBasis ||
-      parts.some((part) => part.invalidExplicitInterval)
+      siblings.some((part) => part.invalidInterval && part.material.status !== 'CANCELLED')
     )
-      return unavailable('Invitation has no usable start or end time')
+      return unavailable(intervalReason)
     if (recurrenceRange) return unavailable('This invitation changes multiple occurrences')
     const replyUnavailableReason = method === 'REQUEST' ? null : 'This calendar mail is join-only'
     const replyTimes = times.replyTimes([
@@ -773,7 +839,8 @@ export function invitationReplyStatus(
   mimeMethod?: string,
 ): InviteAnswer | 'unresolved' | null {
   try {
-    const { calendar: reply, resolveTimes } = openCalendarPart(source)
+    const { calendar: reply, intervals, resolveTimes } = openCalendarPart(source)
+    if (intervals.some((interval) => interval.invalid)) return 'unresolved'
     const method = single(reply, 'method')
     if (method && method.type !== 'text') return 'unresolved'
     const declared = methodOf(method?.getFirstValue())

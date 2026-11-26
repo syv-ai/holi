@@ -678,6 +678,33 @@ it('preserves organizer and revision evidence for cancellations that omit DTSTAR
   }
 })
 
+it.each([
+  'DTSTART:20260720T150000Z\r\nDTEND:20260720T160000Z\r\nDURATION:PT1H',
+  'DTSTART;VALUE=DATE:20260720\r\nDTEND:20260721T160000Z',
+  'DTSTART;TZID=Unknown/Zone:20260720T150000',
+  'DTSTART:20260720T150000Z\r\nDTEND;TZID=UTC:20260720T160000Z',
+])('retains a cancellation without endorsing incoherent interval fields (%j)', (times) => {
+  const fields = 'STATUS:CANCELLED\r\nRECURRENCE-ID:20260720T150000Z'
+  const parse = (fields: string) =>
+    parseMailInvitation('part', calendar(fields, { method: 'CANCEL' }), 'CANCEL')
+  const valid = parse(fields)
+  const invalid = parse(`${fields}\r\n${times}`)
+  expect(valid).toMatchObject({
+    details: { cancelled: true },
+    cancellations: [{ eventCancelled: true }],
+  })
+  expect(invalid).toMatchObject({
+    request: null,
+    cancellations: [],
+    details: {
+      cancelled: false,
+      organizer: { email: organizer },
+      identity: { recurrenceId: '2026-07-20T15:00:00.000Z', materialKey: expect.any(String) },
+    },
+  })
+  expect(invalid?.details.identity.materialKey).not.toBe(valid?.details.identity.materialKey)
+})
+
 it('keeps attendee removals restricted to explicitly named mailboxes', () => {
   const remove = (email: string) =>
     calendar('', { method: 'CANCEL' }).replace(

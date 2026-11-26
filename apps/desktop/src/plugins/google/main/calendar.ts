@@ -156,21 +156,13 @@ export interface CalendarChoice {
  *  rule applies. See `resolveCalendars`. */
 export type CalendarOverrides = Record<string, boolean>
 
-/**
- * The calendars an agenda should draw from.
- *
- * **`selected` is honoured**: it is the checkbox state in the user's own
- * Google Calendar UI, so Holi starts from the set they already curated rather
- * than every calendar they have ever been added to.
- * @public exported for its test
- */
-export async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]> {
+async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]> {
   const items = await api.getAll<CalendarListEntry>(
     `${BASE}/users/me/calendarList`,
-    { minAccessRole: 'reader', showDeleted: 'false' },
+    { minAccessRole: 'reader', showDeleted: 'false', showHidden: 'true' },
     (page) => page.items ?? [],
   )
-  return items.filter((c) => c.deleted !== true && c.selected !== false)
+  return items.filter((c) => c.deleted !== true)
 }
 
 /** Yours to answer for, rather than a colleague's you happen to watch. Google
@@ -181,14 +173,24 @@ function isMine(calendar: CalendarListEntry): boolean {
   return calendar.primary === true || calendar.accessRole === 'owner'
 }
 
-/** Use the declared calendar ID, not the `primary` resource alias. */
-export function calendarIsEnabled(calendar: CalendarListEntry, overrides: CalendarOverrides) {
+/** Mail publications/exports require provider visibility even if enabled in Holi. */
+export function calendarIsEnabledForLegacyMail(
+  calendar: CalendarListEntry,
+  overrides: CalendarOverrides,
+): boolean {
+  return providerCalendarVisible(calendar) && agendaCalendarEnabled(calendar, overrides)
+}
+
+function providerCalendarVisible(calendar: CalendarListEntry): boolean {
+  return calendar.hidden !== true && calendar.selected !== false
+}
+
+function agendaCalendarEnabled(calendar: CalendarListEntry, overrides: CalendarOverrides): boolean {
+  // Overrides bind to the declared ID, never the `primary` resource alias.
   return (
-    calendar.hidden !== true &&
-    calendar.selected !== false &&
     calendar.deleted !== true &&
     calendar.accessRole !== 'freeBusyReader' &&
-    (overrides[calendar.id] ?? isMine(calendar))
+    (overrides[calendar.id] ?? (providerCalendarVisible(calendar) && isMine(calendar)))
   )
 }
 
@@ -214,7 +216,7 @@ export async function resolveCalendars(
     name: calendar.summaryOverride ?? calendar.summary,
     mine: isMine(calendar),
     color: calendar.backgroundColor ?? null,
-    enabled: calendarIsEnabled(calendar, overrides),
+    enabled: agendaCalendarEnabled(calendar, overrides),
     primary: calendar.primary === true,
   }))
 }

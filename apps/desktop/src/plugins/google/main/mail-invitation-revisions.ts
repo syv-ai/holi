@@ -54,7 +54,12 @@ export const scopeKey = ({ uid, recurrenceId }: Revision) => JSON.stringify([uid
 function sameMaterial(a: Candidate, b: Candidate): boolean {
   const first = identityOf(a)
   const second = identityOf(b)
-  if (a.value.method === 'CANCEL' && b.value.method === 'CANCEL')
+  if (
+    isCancellation(a) &&
+    a.value.method === 'CANCEL' &&
+    isCancellation(b) &&
+    b.value.method === 'CANCEL'
+  )
     return (
       a.value.details.organizer?.email === b.value.details.organizer?.email &&
       a.value.recurrenceRange === b.value.recurrenceRange
@@ -84,7 +89,13 @@ function blocked(selected: Candidate, reason: string): Incoming {
  * scope. An embedded exception never replaces the containing REQUEST. */
 function expandCancellations(candidate: Candidate, mailbox: string): Candidate[] {
   const { value } = candidate
-  if (candidate.joinOnly || !value.cancellations.length) return [candidate]
+  if (candidate.joinOnly) return [candidate]
+  // A multi-scope CANCEL with an invalid interval cannot cancel any slot.
+  // Keep its identifiable siblings as read-only revisions rather than reviving
+  // an older REQUEST for one of those scopes.
+  if (value.method === 'CANCEL' && value.embeddedOccurrences.length)
+    return [candidate, ...embeddedCandidates(candidate)]
+  if (!value.cancellations.length) return [candidate]
   return [
     ...(value.method === 'CANCEL' ? [] : [candidate]),
     ...value.cancellations
@@ -230,12 +241,15 @@ function isCancellation({ value, joinOnly }: Candidate): boolean {
 }
 
 function matchingOrganizerCancellations(group: Candidate[]): Candidate[] {
-  const requests = group.filter((candidate) => !isCancellation(candidate))
+  const isCancellationDelivery = (candidate: Candidate) =>
+    candidate.value.method === 'CANCEL' || isCancellation(candidate)
+  const requests = group.filter((candidate) => !isCancellationDelivery(candidate))
   if (!requests.length) return group
   const organizers = new Set(requests.map(({ value }) => value.details.organizer?.email))
   return group.filter(
     (candidate) =>
-      !isCancellation(candidate) || organizers.has(candidate.value.details.organizer?.email),
+      !isCancellationDelivery(candidate) ||
+      organizers.has(candidate.value.details.organizer?.email),
   )
 }
 
@@ -436,7 +450,9 @@ export function selectInvitationRevisions(
       const organizer = details.organizer?.email
       const recurrenceId = revision.recurrenceId
       if (recurrenceId === null) return [entry]
-      const direct = group.filter((candidate) => !candidate.embeddedCancellation)
+      const direct = group.filter(
+        (candidate) => !candidate.embeddedCancellation && !candidate.embedded,
+      )
       if (!direct.length) return [] // No card for a slot described only in a master.
       const displayed = selected.embeddedCancellation
         ? selectScope(direct, eligible, mailbox, owners, equivalent, coveringCancellation).selected

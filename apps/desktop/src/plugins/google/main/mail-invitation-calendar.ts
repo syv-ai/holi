@@ -4,7 +4,7 @@ import { GoogleApiError, type GoogleApi, type GoogleParams } from './api'
 import {
   asRsvp,
   BASE,
-  calendarIsEnabled,
+  calendarIsEnabledForLegacyMail,
   isAgendaEventVisible,
   PRIMARY_EVENTS,
   structuredConference,
@@ -408,16 +408,29 @@ async function exactCopies(
         showDeleted: 'true',
       },
       async (event) => {
+        // A fully identified child proves possible existence independently of
+        // the queried parent. Record the row's own scope before validating the
+        // collection; a wrong parent still makes this read inconclusive.
+        const address = event.organizer?.email
+        const organizer =
+          typeof address === 'string' && address.trim() ? address.toLowerCase() : undefined
+        if (
+          event.iCalUID === uid &&
+          organizer !== undefined &&
+          organizer === context.organizer &&
+          mailboxAttendee(event, context.mailbox)
+        )
+          return observe(event)
         if (event.recurringEventId !== parentId) return
-        if (event.iCalUID === uid) await observe(event)
+        if (event.iCalUID === uid && organizer !== undefined) await observe(event)
         else if (
-          series.iCalUID === uid &&
-          event.iCalUID === undefined &&
-          (context.primary || verifiedParent)
+          verifiedParent &&
+          (event.iCalUID === undefined || event.iCalUID === uid) &&
+          mailboxAttendee(event, context.mailbox)
         )
           await observe(event, {
             kind: 'parent',
-            uid: series.iCalUID,
+            uid,
             mailbox: context.mailbox,
             parentId,
           })
@@ -797,7 +810,7 @@ async function lookupInvitationCalendarCopy(
       (calendar.hidden !== undefined && typeof calendar.hidden !== 'boolean')
     )
       throw new InvalidCalendarCollection('Invalid Calendar visibility')
-    return calendarIsEnabled(calendar, overrides)
+    return calendarIsEnabledForLegacyMail(calendar, overrides)
   }
   let sawIneligibleCopy = false
   const navigationCandidates = (events: RawEvent[]) => {
@@ -981,9 +994,16 @@ function invitationCopy(
     ownedCalendar(),
   )
   const organizer = event.organizer?.email?.toLowerCase()
-  const { uid, recurrenceId } = details.identity
+  const { uid, recurrenceId, sequence } = details.identity
   const blocked = (reason: string): CalendarLookup => ({ kind: 'blocked', reason })
   const cancelled = event.status === 'cancelled'
+  const cancellationReason = 'This Calendar event was cancelled'
+  const newerOccurrenceCancellation =
+    cancelled &&
+    recurrenceId !== null &&
+    event.recurringEventId !== undefined &&
+    event.sequence !== undefined &&
+    event.sequence > sequence
   // A UID-less tombstone can block, but cannot supply a verified copy or links.
   if (
     cancelled &&
@@ -992,8 +1012,13 @@ function invitationCopy(
       !attendee ||
       organizer !== details.organizer?.email ||
       (recurrenceId !== null && !event.recurringEventId))
-  )
-    return { kind: 'blocked', reason: 'This Calendar event was cancelled', cancelled: true }
+  ) {
+    if (event.sequence !== undefined && event.sequence < sequence)
+      return blocked('Calendar has not received this revision of the invitation yet')
+    if (newerOccurrenceCancellation)
+      return blocked('Calendar could not verify the cancellation of this occurrence')
+    return { kind: 'blocked', reason: cancellationReason, cancelled: true }
+  }
   if (event.iCalUID !== uid)
     return {
       kind: 'blocked',
@@ -1004,6 +1029,21 @@ function invitationCopy(
     return blocked('The Calendar organizer does not match this invitation')
   if (!allowed) return blocked('This account cannot verify its place on this Calendar event')
   if (organizerConflict) return blocked('You organize this event')
+  // A newer cancellation of this exact occurrence is negative evidence, not
+  // a newer live copy. Its times or links need not match the obsolete REQUEST.
+  // Calendar's `updated` is not the organizer's iTIP revision timestamp.
+  if (
+    newerOccurrenceCancellation &&
+    sameOccurrence(event, recurrenceId) &&
+    (event.attendeesOmitted === undefined || event.attendeesOmitted === false) &&
+    coherentEventTimes(event)
+  )
+    return {
+      kind: 'blocked',
+      reason: cancellationReason,
+      cancelled: true,
+      navigationUnverified: true,
+    }
   const links = invitationEventLinks(event)
   const requiresRoster = rosterChanged(invitation)
   const mismatch = calendarRevisionMismatch(event, invitation, links, { requiresRoster })
@@ -1013,7 +1053,7 @@ function invitationCopy(
   // corroborate a dispatch or make that response safe to send again.
   const responseStatus = joinOnly || cancelled ? null : asRsvp(attendee?.responseStatus)
   const reason = cancelled
-    ? 'This Calendar event was cancelled'
+    ? cancellationReason
     : joinOnly
       ? null
       : responseStatus === null
