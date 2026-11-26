@@ -28,13 +28,21 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
 
 @interface HoliGitIntegrationJournal ()
 @property(nonatomic) int directoryFD;
+@property(nonatomic) int parentFD;
 @property(nonatomic) int leaseFD;
+@property(nonatomic) struct stat directoryIdentity;
+@property(nonatomic) struct stat leaseIdentity;
 @property(nonatomic) NSString *transactionPath;
 @property(nonatomic) NSString *uuid;
 @property(nonatomic) NSDictionary *manifest;
 @end
 @implementation HoliGitIntegrationJournal
-- (void)close { if (_leaseFD >= 0) { flock(_leaseFD, LOCK_UN); close(_leaseFD); _leaseFD=-1; } if (_directoryFD>=0) { close(_directoryFD); _directoryFD=-1; } }
+- (void)close { if (_leaseFD >= 0) { flock(_leaseFD, LOCK_UN); close(_leaseFD); _leaseFD=-1; } if (_directoryFD>=0) { close(_directoryFD); _directoryFD=-1; } if (_parentFD>=0) { close(_parentFD); _parentFD=-1; } }
+- (BOOL)validateNames:(NSError **)error {
+  struct stat held, named, lease, namedLease;
+  BOOL ok=_directoryFD>=0&&_parentFD>=0&&_leaseFD>=0&&fstat(_directoryFD,&held)==0&&fstatat(_parentFD,_transactionPath.lastPathComponent.fileSystemRepresentation,&named,AT_SYMLINK_NOFOLLOW)==0&&HGISame(held,named)&&HGISame(held,_directoryIdentity)&&fstat(_leaseFD,&lease)==0&&fstatat(_directoryFD,"lease",&namedLease,AT_SYMLINK_NOFOLLOW)==0&&HGISame(lease,namedLease)&&HGISame(lease,_leaseIdentity)&&S_ISREG(namedLease.st_mode)&&namedLease.st_nlink==1;
+  return ok?YES:HGIFail(error,EPERM,@"Journal namespace changed; evidence retained");
+}
 - (void)dealloc { [self close]; }
 - (BOOL)loadManifest:(NSError **)error {
   int fd=openat(_directoryFD,"manifest.json",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
@@ -55,31 +63,32 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
 }
 - (instancetype)initPath:(NSString *)path error:(NSError **)error {
   if(!HGIString(path)||![path isAbsolutePath]||![path isEqual:path.stringByStandardizingPath]){HGIFail(error,EINVAL,@"Invalid transaction path");return nil;}
-  int dir=HGINoFollowPath(path); if(dir<0){HGIFail(error,errno,@"Cannot open transaction");return nil;}
-  struct stat ds; if(fstat(dir,&ds)||ds.st_nlink<1){close(dir);HGIFail(error,EINVAL,@"Invalid transaction directory");return nil;}
+  int parent=HGINoFollowPath(path.stringByDeletingLastPathComponent); int dir=HGINoFollowPath(path); if(dir<0||parent<0){if(dir>=0)close(dir);if(parent>=0)close(parent);HGIFail(error,errno,@"Cannot open transaction");return nil;}
+  struct stat ds,named; if(fstat(dir,&ds)||ds.st_nlink<1||fstatat(parent,path.lastPathComponent.fileSystemRepresentation,&named,AT_SYMLINK_NOFOLLOW)||!HGISame(ds,named)){close(parent);close(dir);HGIFail(error,EINVAL,@"Invalid transaction directory");return nil;}
   int lease=openat(dir,"lease",O_RDWR|O_NOFOLLOW|O_CLOEXEC); struct stat ls;
-  if(lease<0||fstat(lease,&ls)||!S_ISREG(ls.st_mode)||ls.st_nlink!=1||flock(lease,LOCK_EX|LOCK_NB)){if(lease>=0)close(lease);close(dir);HGIFail(error,EBUSY,@"Journal lease unavailable");return nil;}
-  self=[super init]; if(self){_directoryFD=dir;_leaseFD=lease;_transactionPath=path;_uuid=[path.lastPathComponent hasPrefix:@"txn-"]?[path.lastPathComponent substringFromIndex:4]:@""; if(![self loadManifest:error]){[self close];return nil;}} else {close(dir);close(lease);} return self;
+  if(lease<0||fstat(lease,&ls)||!S_ISREG(ls.st_mode)||ls.st_nlink!=1||flock(lease,LOCK_EX|LOCK_NB)){if(lease>=0)close(lease);close(parent);close(dir);HGIFail(error,EBUSY,@"Journal lease unavailable");return nil;}
+  self=[super init]; if(self){_directoryFD=dir;_parentFD=parent;_leaseFD=lease;_directoryIdentity=ds;_leaseIdentity=ls;_transactionPath=path;_uuid=[path.lastPathComponent hasPrefix:@"txn-"]?[path.lastPathComponent substringFromIndex:4]:@""; if(![self loadManifest:error]){[self close];return nil;}} else {close(parent);close(dir);close(lease);} return self;
 }
-- (instancetype)init { self=[super init]; if(self){_directoryFD=-1;_leaseFD=-1;}return self; }
+- (instancetype)init { self=[super init]; if(self){_directoryFD=-1;_parentFD=-1;_leaseFD=-1;}return self; }
 - (instancetype)createAtRoot:(NSString *)root remote:(NSString *)remote branch:(NSString *)branch nativeId:(NSString *)nativeId plan:(NSData *)plan error:(NSError **)error {
   char resolved[PATH_MAX]; if(!HGIString(root)||!realpath(root.fileSystemRepresentation,resolved)||!HGIString(remote)||!HGIString(branch)|| (!HGIUUID(nativeId))||plan.length>32768){HGIFail(error,EINVAL,@"Invalid integration identity or plan");return nil;}
   NSDictionary *p=[NSJSONSerialization JSONObjectWithData:plan options:0 error:error]; if(![p isKindOfClass:NSDictionary.class]){HGIFail(error,EINVAL,@"Plan must be a JSON object");return nil;}
   NSString *r=[NSString stringWithUTF8String:resolved],*git=[r stringByAppendingPathComponent:@".git"]; struct stat rs,gs;
   int rfd=HGINoFollowPath(r),gfd=rfd>=0?openat(rfd,".git",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC):-1; if(rfd<0||gfd<0||fstat(rfd,&rs)||fstat(gfd,&gs)||!S_ISDIR(gs.st_mode)){HGIFail(error,errno?:EINVAL,@"Invalid root or git directory");return nil;}
-  NSString *base=[git stringByAppendingPathComponent:@"holi-integration"]; close(rfd); close(gfd); if(mkdir(base.fileSystemRepresentation,0700)&&errno!=EEXIST){HGIFail(error,errno,@"Cannot create journal directory");return nil;}
+  NSString *base=[git stringByAppendingPathComponent:@"holi-integration"];  BOOL madeBase=mkdir(base.fileSystemRepresentation,0700)==0; if(!madeBase&&errno!=EEXIST){int saved=errno;close(rfd);close(gfd);HGIFail(error,saved,@"Cannot create journal directory");return nil;} if(madeBase&&fsync(gfd)){int saved=errno;close(rfd);close(gfd);HGIFail(error,saved,@"Cannot persist journal directory");return nil;} close(rfd); close(gfd);
   int bfd=open(base.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC); if(bfd<0){HGIFail(error,errno,@"Unsafe journal directory");return nil;}
   NSString *uuid=NSUUID.UUID.UUIDString.lowercaseString,*name=[@"txn-" stringByAppendingString:uuid],*path=[base stringByAppendingPathComponent:name];
   if(mkdirat(bfd,name.fileSystemRepresentation,0700)){close(bfd);HGIFail(error,errno,@"Cannot reserve transaction");return nil;}
-  int d=openat(bfd,name.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC); close(bfd); if(d<0){HGIFail(error,errno,@"Cannot open transaction");return nil;}
+  if(fsync(bfd)){close(bfd);HGIFail(error,errno,@"Cannot persist transaction reservation");return nil;} int d=openat(bfd,name.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC); if(d<0){HGIFail(error,errno,@"Cannot open transaction");return nil;}
   int l=openat(d,"lease",O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600); if(l<0||flock(l,LOCK_EX|LOCK_NB)){if(l>=0)close(l);close(d);HGIFail(error,errno,@"Cannot own transaction lease");return nil;}
   NSMutableDictionary *m=[@{@"version":@1,@"uuid":uuid,@"root":r,@"rootDev":[NSString stringWithFormat:@"%llu",(unsigned long long)rs.st_dev],@"rootIno":[NSString stringWithFormat:@"%llu",(unsigned long long)rs.st_ino],@"gitDev":[NSString stringWithFormat:@"%llu",(unsigned long long)gs.st_dev],@"gitIno":[NSString stringWithFormat:@"%llu",(unsigned long long)gs.st_ino],@"remote":remote,@"branch":branch,@"artifacts":@[],@"plan":p} mutableCopy]; m[@"nativeId"]=nativeId;
   NSData *bytes=[NSJSONSerialization dataWithJSONObject:m options:NSJSONWritingSortedKeys error:error]; int f=openat(d,"manifest.json",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600); BOOL ok=f>=0&&HGIWriteAll(f,bytes); if(f>=0)close(f); ok=ok&&fsync(d)==0;
-  close(l);close(d); if(!ok){HGIFail(error,errno?:EIO,@"Cannot durably create manifest");return nil;} return [self initPath:path error:error];
+  if(ok)ok=fsync(bfd)==0; close(l);close(d);close(bfd); if(!ok){HGIFail(error,errno?:EIO,@"Cannot durably create manifest");return nil;} return [self initPath:path error:error];
 }
 - (instancetype)openAtPath:(NSString *)path error:(NSError **)error { return [self initPath:path error:error]; }
-- (NSDictionary *)readState:(NSError **)error { return [self loadManifest:error]?_manifest:nil; }
+- (NSDictionary *)readState:(NSError **)error { return [self validateNames:error]&&[self loadManifest:error]?_manifest:nil; }
 - (BOOL)publish:(NSDictionary *)manifest error:(NSError **)error {
+  if(![self validateNames:error]||![self loadManifest:error])return NO;
   NSData *bytes=[NSJSONSerialization dataWithJSONObject:manifest options:NSJSONWritingSortedKeys error:error];
   if(!bytes||bytes.length>65536)return HGIFail(error,EFBIG,@"Journal state exceeds bound");
   NSString *tmp=[@".journal-" stringByAppendingString:NSUUID.UUID.UUIDString.lowercaseString];
@@ -95,6 +104,7 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
   return [self publish:state error:error];
 }
 - (BOOL)writeArtifact:(NSData *)data named:(NSString *)name error:(NSError **)error {
+  if(![self validateNames:error]||![self loadManifest:error])return NO;
   if(!HGIName(name)||[name isEqual:@"manifest.json"]||[name isEqual:@"lease"]||[[_manifest[@"artifacts"] valueForKey:@"name"] containsObject:name]||data.length>16*1024*1024)return HGIFail(error,EINVAL,@"Invalid artifact");
   int f=openat(_directoryFD,name.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600); if(f<0)return HGIFail(error,errno,@"Artifact already exists or is unsafe");
   struct stat created; BOOL ok=fstat(f,&created)==0&&S_ISREG(created.st_mode)&&created.st_nlink==1&&HGIWriteAll(f,data); int saved=errno; if(close(f)&&ok){ok=NO;saved=errno;}
@@ -102,12 +112,14 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
   unsigned char digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(data.bytes,(CC_LONG)data.length,digest); NSMutableString *hex=[NSMutableString string]; for(NSUInteger i=0;i<sizeof(digest);i++) [hex appendFormat:@"%02x",digest[i]]; NSMutableDictionary *m=[_manifest mutableCopy]; m[@"artifacts"]=[_manifest[@"artifacts"] arrayByAddingObject:@{@"name":name,@"dev":[NSString stringWithFormat:@"%llu",(unsigned long long)created.st_dev],@"ino":[NSString stringWithFormat:@"%llu",(unsigned long long)created.st_ino],@"size":@(data.length),@"sha256":hex}]; return [self publish:m error:error];
 }
 - (BOOL)cleanupRecordedArtifacts:(NSError **)error {
+  if(![self validateNames:error]||![self loadManifest:error])return NO;
   for(NSDictionary *record in _manifest[@"artifacts"]){struct stat s; NSString *name=record[@"name"]; NSData *bytes=[self readArtifactNamed:name error:error]; if(!bytes||fstatat(_directoryFD,name.fileSystemRepresentation,&s,AT_SYMLINK_NOFOLLOW)||!S_ISREG(s.st_mode)||s.st_nlink!=1||s.st_dev!=[record[@"dev"] unsignedLongLongValue]||s.st_ino!=[record[@"ino"] unsignedLongLongValue]||s.st_size!=[record[@"size"] unsignedLongLongValue])return HGIFail(error,EPERM,@"Recorded artifact changed; evidence retained");}
   for(NSDictionary *record in _manifest[@"artifacts"])if(unlinkat(_directoryFD,[record[@"name"] fileSystemRepresentation],0))return HGIFail(error,errno,@"Artifact cleanup incomplete");
   if(fsync(_directoryFD))return HGIFail(error,errno,@"Artifact cleanup not durable");
   NSMutableDictionary *m=[_manifest mutableCopy];m[@"artifacts"]=@[];return [self publish:m error:error];
 }
 - (NSData *)readArtifactNamed:(NSString *)name error:(NSError **)error {
+  if(![self validateNames:error]||![self loadManifest:error])return nil;
   NSDictionary *record=nil; for(NSDictionary *candidate in _manifest[@"artifacts"]) if([candidate[@"name"] isEqual:name]) { record=candidate; break; }
   if(!record||!HGIName(name)) { HGIFail(error,ENOENT,@"Artifact is not recorded"); return nil; }
   int fd=openat(_directoryFD,name.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK); struct stat before,after;
@@ -120,7 +132,7 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
   if(![self cleanupRecordedArtifacts:error]) return NO;
   if(unlinkat(_directoryFD,"manifest.json",0)||unlinkat(_directoryFD,"lease",0)||fsync(_directoryFD)) return HGIFail(error,errno,@"Cannot remove completed journal files");
   [self close];
-  if(unlinkat(AT_FDCWD,_transactionPath.fileSystemRepresentation,AT_REMOVEDIR)) return HGIFail(error,errno,@"Cannot remove completed transaction");
+  /* Keep the empty transaction directory: removing it by a path could target a replacement inode. */
   return YES;
 }
 @end
