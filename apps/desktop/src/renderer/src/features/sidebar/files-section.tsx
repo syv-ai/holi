@@ -329,13 +329,14 @@ export function FilesSection({
       files.dirs,
       (folder, has) => {
         const doc = folderDocumentAt(folderClaims, folder, has)
-        if (doc !== null && doc.folder.surface !== 'app') browsable.add(folder)
+        if (doc !== null && (doc.folder.surface !== 'app' || folder === files.revealedDirectory))
+          browsable.add(folder)
         return doc !== null
       },
       order,
     )
     return { data, browsable }
-  }, [files.paths, files.dirs, folderClaims, order])
+  }, [files.paths, files.dirs, files.revealedDirectory, folderClaims, order])
 
   const folderOf = (item: ItemInstance<TreeItemData>) =>
     item.getId() === ROOT_ID ? '' : item.getId()

@@ -28,6 +28,7 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 // eslint-disable-next-line no-restricted-imports
 import { tasksRenderer } from '../../../../../plugins/tasks/renderer'
 import { FilesSection } from '../files-section'
+import { revealInFilesAtom } from '@/state/reveal-in-files'
 import { activateHostHint, discoverHostHintTargets } from '@/lib/host-hints'
 import { installHintLayout } from '@/test/host-hint-layout'
 
@@ -1289,4 +1290,108 @@ test('a newly hidden folder does not rename or steal selection when revealed lat
     'aria-selected',
     'false',
   )
+})
+
+test('folder menus copy shareable Holi links but exclude machine-local folders', async () => {
+  const user = userEvent.setup()
+  const copied = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
+  try {
+    const { store } = mount()
+    act(() =>
+      store.set(snapshotAtom, {
+        ...store.get(snapshotAtom),
+        dirs: ['kunder', 'private.local.folder'],
+      }),
+    )
+    fireEvent.contextMenu(await screen.findByText('kunder'))
+    await user.click(await screen.findByRole('menuitem', { name: 'Copy Holi link' }))
+    await waitFor(() =>
+      expect(copied).toHaveBeenCalledWith(
+        'https://syv-ai.github.io/holi/#vault=mara/notes&path=kunder',
+      ),
+    )
+    fireEvent.contextMenu(await screen.findByText('private.local.folder'))
+    await screen.findByRole('menuitem', { name: 'New document' })
+    expect(screen.queryByRole('menuitem', { name: 'Copy Holi link' })).toBeNull()
+  } finally {
+    copied.mockRestore()
+  }
+})
+
+test('directory reveals expand and select nested folders again without opening documents', async () => {
+  const { store, onOpen } = mount()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom),
+      dirs: ['kunder', 'kunder/nested'],
+      docs: [
+        { path: 'kunder/nested/child.md', title: 'child', updatedAt: '2026-10-23T10:00:00Z' },
+      ] as never,
+    }),
+  )
+  act(() =>
+    store.set(revealInFilesAtom, { remote: 'mara/notes', path: 'kunder/nested', directory: true }),
+  )
+  const row = await screen.findByRole('treeitem', { name: 'nested' })
+  await waitFor(() => expect(row).toHaveAttribute('aria-expanded', 'true'))
+  expect(row).toHaveAttribute('aria-selected', 'true')
+  expect(await screen.findByText('child')).toBeInTheDocument()
+  fireEvent.click(screen.getByText('nested'))
+  await waitFor(() => expect(row).toHaveAttribute('aria-expanded', 'false'))
+  act(() =>
+    store.set(revealInFilesAtom, { remote: 'mara/notes', path: 'kunder/nested', directory: true }),
+  )
+  await waitFor(() => expect(row).toHaveAttribute('aria-expanded', 'true'))
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
+test('a hidden directory reveal leaves unrelated hidden content and preferences alone', async () => {
+  const { store, onOpen } = mount()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom),
+      dirs: ['kunder', 'kunder/.private', '.other'],
+      docs: [
+        { path: 'kunder/.private/inside.md', title: 'inside', updatedAt: '2026-10-23T10:00:00Z' },
+        { path: 'kunder/.private/.hidden.md', title: '.hidden', updatedAt: '2026-10-23T10:00:00Z' },
+      ] as never,
+    }),
+  )
+  expect(screen.queryByText('.private')).toBeNull()
+  act(() =>
+    store.set(revealInFilesAtom, {
+      remote: 'mara/notes',
+      path: 'kunder/.private',
+      directory: true,
+    }),
+  )
+  const row = await screen.findByRole('treeitem', { name: '.private' })
+  await waitFor(() => expect(row).toHaveAttribute('aria-expanded', 'true'))
+  expect(row).toHaveAttribute('aria-selected', 'true')
+  expect(await screen.findByText('inside')).toBeInTheDocument()
+  expect(screen.queryByText('.other')).toBeNull()
+  expect(screen.queryByText('.hidden')).toBeNull()
+  expect(store.get(showHiddenByVaultAtom)['mara/notes']).not.toBe(true)
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
+test('an app directory link browses its files rather than launching its surface', async () => {
+  const { store, onOpen } = mount()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom),
+      dirs: ['demo.app'],
+      docs: [
+        { path: 'demo.app/index.html', title: 'index', updatedAt: '2026-10-23T10:00:00Z' },
+      ] as never,
+    }),
+  )
+  act(() =>
+    store.set(revealInFilesAtom, { remote: 'mara/notes', path: 'demo.app', directory: true }),
+  )
+  const row = await screen.findByRole('treeitem', { name: 'demo.app' })
+  await waitFor(() => expect(row).toHaveAttribute('aria-expanded', 'true'))
+  expect(row).toHaveAttribute('aria-selected', 'true')
+  expect(await screen.findByRole('treeitem', { name: 'index.html' })).toBeVisible()
+  expect(onOpen).not.toHaveBeenCalled()
 })
