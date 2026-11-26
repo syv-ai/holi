@@ -580,7 +580,11 @@ describe('owned Job broker host', () => {
           artifactSnapshots.length < 2 ||
           artifactSnapshots.some(
             (snapshot) =>
-              snapshot.observation.coverage !== 'complete' || snapshot.observation.error,
+              snapshot.observation.scanFailed ||
+              snapshot.observation.limitReached ||
+              snapshot.observation.metadataErrors > 0 ||
+              snapshot.observation.oversized > 0 ||
+              snapshot.observation.capped > 0,
           )
             ? 'indeterminate-coverage'
             : artifactSnapshots.some((snapshot) =>
@@ -636,7 +640,8 @@ describe('owned Job broker host', () => {
           writeFileSync(
             window + '.tmp',
             JSON.stringify({
-              deadlineUnixMs: Date.now() + Math.max(0, 45_000 - (elapsed() - startupStarted)),
+              deadlineUnixMs:
+                Date.now() + Math.max(0, 45_000 - (performance.now() - startupStarted)),
             }),
           )
           renameSync(window + '.tmp', window)

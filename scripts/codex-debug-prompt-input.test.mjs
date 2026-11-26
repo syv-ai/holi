@@ -196,3 +196,29 @@ test('rejects native output beyond its capture bound', () => {
   evidence.native.observations[0].stdout = 'x'.repeat(524289)
   assert.equal(validateDebugPromptInputEvidence(evidence), false)
 })
+
+test('rejects malformed nested native observations without throwing', () => {
+  for (const mutate of [
+    (e) => {
+      e.native.integrationControls[0] = null
+    },
+    (e) => {
+      e.native.observations[0] = null
+    },
+    (e) => {
+      e.native.observations[0].input[0].content = [null]
+    },
+    (e) => {
+      e.native.observations[0].input[0].content = [{ text: {} }]
+    },
+    (e) => {
+      e.native.modelFailures = {}
+    },
+  ]) {
+    const evidence = completeEvidence()
+    mutate(evidence)
+    const observation = evidence.native.observations[0]
+    if (observation) observation.stdout = JSON.stringify(observation.input)
+    assert.equal(validateDebugPromptInputEvidence(evidence), false)
+  }
+})

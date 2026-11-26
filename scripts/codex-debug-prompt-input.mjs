@@ -83,6 +83,7 @@ export function validateDebugPromptInputEvidence(value) {
     n.configUnchanged !== true ||
     n.sentinelsUnexecuted !== true ||
     !Array.isArray(n.integrationControls) ||
+    !n.integrationControls.every((control) => control && typeof control === 'object') ||
     !['hook', 'mcp', 'plugin'].every((kind) =>
       n.integrationControls.some(
         (control) =>
@@ -95,20 +96,35 @@ export function validateDebugPromptInputEvidence(value) {
       ),
     ) ||
     n.modelRequests !== 0 ||
-    n.modelFailures?.length ||
+    (n.modelFailures !== undefined &&
+      (!Array.isArray(n.modelFailures) || n.modelFailures.length)) ||
     !Array.isArray(n.observations) ||
     n.observations.length !== 2
   )
     return false
   for (const [index, observation] of n.observations.entries()) {
     if (
+      !observation ||
+      typeof observation !== 'object' ||
+      Array.isArray(observation) ||
       observation.exitCode !== 0 ||
       typeof observation.stdout !== 'string' ||
       Buffer.byteLength(observation.stdout) > 524288 ||
       typeof observation.stderr !== 'string' ||
       Buffer.byteLength(observation.stderr) > 524288 ||
       !Array.isArray(observation.input) ||
-      observation.input.some((item) => !item || typeof item !== 'object' || Array.isArray(item)) ||
+      observation.input.some(
+        (item) =>
+          !item ||
+          typeof item !== 'object' ||
+          Array.isArray(item) ||
+          (['developer', 'user'].includes(item.role) &&
+            typeof item.content !== 'string' &&
+            (!Array.isArray(item.content) ||
+              !item.content.every(
+                (part) => part && typeof part === 'object' && typeof part.text === 'string',
+              ))),
+      ) ||
       !Array.isArray(observation.argv) ||
       !observation.argv.includes('prompt-input') ||
       !observation.cwd ||
