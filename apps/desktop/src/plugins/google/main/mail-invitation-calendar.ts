@@ -339,16 +339,13 @@ async function exactCopies(
     includeHiddenInvitations: boolean
     classifyCancellation: (event: RawEvent) => CancellationClassification
     observeCancellations: (events: RawEvent[]) => void
+    observeUncertainOccurrence: (event: RawEvent) => void
   },
   observe: ObserveEvent,
   access: CalendarAccess,
 ) {
   let verifiedParentId: string | undefined
-  const result = (events: RawEvent[], occurrenceTombstones: RawEvent[] = []) => ({
-    events,
-    verifiedParentId,
-    occurrenceTombstones,
-  })
+  const result = (events: RawEvent[]) => ({ events, verifiedParentId })
   const { uid, recurrenceId, sequence } = identity
   let sawCancellation = false
   const observeCandidate = (event: RawEvent) => {
@@ -402,6 +399,7 @@ async function exactCopies(
   // Only validated collection rows qualify here. Observation above retains
   // possible locators without using the query itself as cancellation proof.
   context.observeCancellations(events)
+  for (const event of events) context.observeUncertainOccurrence(event)
   // The unexpanded list contains the series master and sometimes exception
   // rows. No recurrence ID means the master, not any expanded occurrence.
   const possible = events.filter((event) =>
@@ -417,13 +415,7 @@ async function exactCopies(
       throw new Error('Calendar returned events but could not verify this recurrence scope')
     return copies
   }
-  if (recurrenceId === null)
-    return result(
-      requireScope(roots),
-      events.filter(
-        (event) => event.status === 'cancelled' && event.recurringEventId !== undefined,
-      ),
-    )
+  if (recurrenceId === null) return result(requireScope(roots))
   const cancelledRoots = roots.filter(
     (root) => root.status === 'cancelled' && context.classifyCancellation(root) !== 'irrelevant',
   )
@@ -437,15 +429,15 @@ async function exactCopies(
   )
   for (const series of activeRoots) {
     if (!series.id || !series.recurrence?.length) continue
-    const verifiedParent =
+    const boundParent =
       series.iCalUID === uid &&
       Boolean(context.organizer) &&
       series.organizer?.email?.toLowerCase() === context.organizer &&
       context.bindsParent(series) &&
-      (series.sequence ?? 0) === sequence &&
       coherentEventTimes(series) &&
       (series.start?.date !== undefined) === date(recurrenceId) &&
       recurrenceSet(series.recurrence) !== null
+    const verifiedParent = boundParent && (series.sequence ?? 0) === sequence
     // Unmodified instances do not appear in events.list. Query for the original
     // start (not timeMin or the displayed start, which miss moved occurrences).
     const parentId = series.id
@@ -459,7 +451,14 @@ async function exactCopies(
         showDeleted: 'true',
       },
       async (event) => {
-        if (event.recurringEventId === parentId) observeCandidate(event)
+        if (event.recurringEventId === parentId) {
+          observeCandidate(event)
+          // The row must match this exact original-slot request. Its parent
+          // still has to be independently verified before it can affect Join.
+          const original = event.originalStartTime
+          if (boundParent && validTime(original) && sameOccurrence(event, recurrenceId))
+            context.observeUncertainOccurrence(event)
+        }
         // A fully identified child proves possible existence independently of
         // the queried parent. Record the row's own scope before validating the
         // collection; a wrong parent still makes this read inconclusive.
@@ -476,9 +475,12 @@ async function exactCopies(
         if (event.recurringEventId !== parentId) return
         if (event.iCalUID === uid && organizer !== undefined) await observe(event)
         else if (
-          verifiedParent &&
           (event.iCalUID === undefined || event.iCalUID === uid) &&
-          mailboxAttendee(event, context.mailbox)
+          ((verifiedParent && mailboxAttendee(event, context.mailbox)) ||
+            (boundParent &&
+              context.primary &&
+              event.attendees === undefined &&
+              event.status === 'cancelled'))
         )
           await observe(event, {
             kind: 'parent',
@@ -623,15 +625,44 @@ export function createInvitationCalendarDiscovery(api: CalendarReadApi, mailbox:
   let primaryBase: string | undefined
   const key = (base: string) => (base === primaryBase ? PRIMARY_EVENTS : base)
   // Current-read negative evidence only. Keep the newest bound tombstone per
-  // original slot, never a persisted locator or a query association.
+  // original slot, and keep sparse uncertainty separate: no revision order
+  // can be inferred for a row that cannot prove its own cancellation.
   const occurrenceCancellations = new Map<string, RawEvent>()
+  const uncertainOccurrences = new Set<string>()
   const occurrenceKey = (
     base: string,
     parentId: string,
-    uid: string,
-    organizer: string,
+    uid: string | undefined,
+    organizer: string | undefined,
     slot: string,
   ) => JSON.stringify([key(base), parentId, uid, organizer, slot])
+  function observeUncertainOccurrence(base: string, row: RawEvent) {
+    if (
+      row.status !== 'cancelled' ||
+      !row.recurringEventId ||
+      !usableInvitationEvent(row) ||
+      (row.iCalUID !== undefined && typeof row.iCalUID !== 'string') ||
+      row.organizer?.self === true ||
+      (row.attendees !== undefined && !mailboxAttendee(row, mailbox)) ||
+      row.recurrence?.length ||
+      !validCancellationTimes(row)
+    )
+      return
+    const { iCalUID: uid, sequence, attendees } = row
+    const organizer = row.organizer?.email?.toLowerCase()
+    // Fully identified tombstones retain their revision comparison, so that
+    // a verified newer occurrence can supersede a known older cancellation.
+    if (
+      uid !== undefined &&
+      organizer !== undefined &&
+      attendees !== undefined &&
+      sequence !== undefined
+    )
+      return
+    uncertainOccurrences.add(
+      occurrenceKey(base, row.recurringEventId, uid, organizer, occurrenceSlot(row)!),
+    )
+  }
   function access(base: string): CalendarAccess {
     return {
       get role() {
@@ -659,6 +690,7 @@ export function createInvitationCalendarDiscovery(api: CalendarReadApi, mailbox:
   return {
     access,
     observeEntry,
+    observeUncertainOccurrence,
     observeOccurrenceCancellations(base: string, rows: RawEvent[], invitation: InvitationRevision) {
       const { uid } = invitation.details.identity
       const organizer = invitation.details.organizer?.email
@@ -673,14 +705,25 @@ export function createInvitationCalendarDiscovery(api: CalendarReadApi, mailbox:
     },
     suppressesOccurrence(
       base: string,
-      parentId: string,
+      master: RawEvent,
       slot: string,
       revision: InvitationRevision,
     ) {
       const { identity, organizer } = revision.details
-      if (!organizer) return false
+      if (!organizer || !master.id) return false
+      // Only the verified master associates sparse rows with this invitation,
+      // and only for navigation. Do not infer UID, organizer, self or revision
+      // for the child resource, even if the expanded view still shows it live.
+      if (mailboxAttendee(master, mailbox)) {
+        for (const uid of [identity.uid, undefined]) {
+          for (const address of [organizer.email, undefined]) {
+            if (uncertainOccurrences.has(occurrenceKey(base, master.id, uid, address, slot)))
+              return true
+          }
+        }
+      }
       const event = occurrenceCancellations.get(
-        occurrenceKey(base, parentId, identity.uid, organizer.email, slot),
+        occurrenceKey(base, master.id, identity.uid, organizer.email, slot),
       )
       if (!event) return false
       const cancellation = classifyCancellation(event, revision, mailbox, slot)
@@ -802,6 +845,8 @@ async function lookupInvitationCalendarCopy(
     classifyCancellation: (event: RawEvent) => classifyCancellation(event, invitation, mailbox),
     observeCancellations: (events: RawEvent[]) =>
       discovery.observeOccurrenceCancellations(base, events, invitation),
+    observeUncertainOccurrence: (event: RawEvent) =>
+      discovery.observeUncertainOccurrence(base, event),
     includeHiddenInvitations: !invitation.legacyJoinOnly,
     bindsParent: (event: RawEvent) =>
       Boolean(
@@ -915,7 +960,7 @@ async function lookupInvitationCalendarCopy(
     return candidates
   }
   function selectCopy(
-    { events, verifiedParentId, occurrenceTombstones }: Awaited<ReturnType<typeof exactCopies>>,
+    { events, verifiedParentId }: Awaited<ReturnType<typeof exactCopies>>,
     base: string,
     access: CalendarAccess,
     observe: ObserveEvent,
@@ -944,7 +989,6 @@ async function lookupInvitationCalendarCopy(
       return invitationCopy(api, base, active[0], invitation, mailbox, access, observe, discovery, {
         calendarId,
         verifiedParentId,
-        occurrenceTombstones,
       })
     if (candidates.length)
       return { kind: 'blocked', reason: 'Calendar could not verify a current invitation copy' }
@@ -1163,39 +1207,6 @@ function invitationMembership(
   }
 }
 
-/** Rows from the verified master's own unexpanded collection. Google only
- * guarantees id, recurringEventId and originalStartTime on cancelled children.
- * The parent scopes the uncertainty for navigation only; it cannot fill in
- * identity fields, prove a cancellation revision or grant response authority. */
-function uncertainOccurrenceSlots(rows: RawEvent[], master: RawEvent, mailbox: string) {
-  const slots = new Set<string>()
-  if (!mailboxAttendee(master, mailbox)) return slots
-  for (const row of rows) {
-    const address = row.organizer?.email?.toLowerCase()
-    if (
-      row.recurringEventId !== master.id ||
-      (row.originalStartTime?.date !== undefined) !== (master.start?.date !== undefined) ||
-      (row.iCalUID !== undefined && row.iCalUID !== master.iCalUID) ||
-      (address !== undefined && address !== master.organizer?.email?.toLowerCase()) ||
-      row.organizer?.self === true ||
-      (row.attendees !== undefined && !mailboxAttendee(row, mailbox)) ||
-      row.recurrence?.length ||
-      !validCancellationTimes(row)
-    )
-      continue
-    // Fully bound cancellations use the existing revision comparison. In
-    // particular, an older tombstone must not become uncertain on this path.
-    if (
-      row.iCalUID === undefined ||
-      address === undefined ||
-      row.attendees === undefined ||
-      row.sequence === undefined
-    )
-      slots.add(occurrenceSlot(row)!)
-  }
-  return slots
-}
-
 function invitationCopy(
   api: CalendarReadApi,
   base: string,
@@ -1205,11 +1216,7 @@ function invitationCopy(
   access: CalendarAccess,
   observe: ObserveEvent,
   discovery: CalendarDiscovery,
-  {
-    calendarId,
-    verifiedParentId,
-    occurrenceTombstones,
-  }: { calendarId?: string; verifiedParentId?: string; occurrenceTombstones: RawEvent[] },
+  { calendarId, verifiedParentId }: { calendarId?: string; verifiedParentId?: string },
 ): CalendarLookup {
   const { details, joinOnly } = invitation
   const ownedCalendar = () => (access.role === 'owner' ? calendarId : undefined)
@@ -1280,14 +1287,13 @@ function invitationCopy(
       if (!canNavigate()) return { kind: 'withheld' }
       const primary = base === PRIMARY_EVENTS
       if (recurrenceId === null && details.recurring) {
-        const uncertainSlots = uncertainOccurrenceSlots(occurrenceTombstones, event, mailbox)
         const upcoming = await upcomingInvitationLinks(
           api,
           base,
           event,
           invitation,
           observeUidQuery(uid, observe, { mailbox, primary, parentId: event.id }),
-          (slot) => (uncertainSlots.has(slot) ? false : selectSlot(slot)),
+          selectSlot,
           access,
           discovery,
           (row, revision) => {
@@ -1624,7 +1630,7 @@ async function upcomingInvitationLinks(
           // room or event page of each provider-expanded instance. A mailed
           // slot revision instead supplies exact occurrence material.
           if (
-            !discovery.suppressesOccurrence(base, master.id, original, revision) &&
+            !discovery.suppressesOccurrence(base, master, original, revision) &&
             bindsMailbox(instance, revision) &&
             !calendarRevisionMismatch(instance, revision, links, {
               expanded: slot === null,
@@ -1972,14 +1978,16 @@ function calendarTargetResource(target: string, mailbox: string) {
   if (!binding || binding[1] !== mailbox) return null
   const [url] = binding
   const match =
-    /^(https:\/\/www\.googleapis\.com\/calendar\/v3\/calendars\/([^/?#]+)\/events\/[\w-]+)\?sendUpdates=all$/.exec(
+    /^(https:\/\/www\.googleapis\.com\/calendar\/v3\/calendars\/([^/?#]+)\/events\/([\w-]+))\?sendUpdates=all$/.exec(
       url,
     )
   if (!match || match[0] !== url) return null
   try {
     const segment = match[2]!
     const id = decodeURIComponent(segment)
-    return safeCalendarId(id) && encodeURIComponent(id) === segment ? { url: match[1]!, id } : null
+    return safeCalendarId(id) && encodeURIComponent(id) === segment
+      ? { url: match[1]!, id, eventId: match[3]! }
+      : null
   } catch {
     return null
   }
@@ -2028,9 +2036,13 @@ export function createInvitationCalendarResourceLookup(
   async function read({
     url,
     id,
+    eventId,
   }: NonNullable<ReturnType<typeof calendarTargetResource>>): Promise<CalendarResource> {
     try {
       const event = await api.get<RawEvent>(url)
+      // A known locator is still only existence evidence. An exact payload
+      // may contribute fresh uncertainty, but only for its own resource.
+      if (event?.id === eventId) discovery.observeUncertainOccurrence(calendarEventsUrl(id), event)
       return {
         kind: 'present',
         confirms: (proof, answer, revision) =>
