@@ -55,8 +55,12 @@ export function useRitualActions(dryRun: boolean, onDone?: () => void): RitualAc
 
   return {
     create: (input) => createVault(input),
-    // A joined vault activates itself and unmounts the ritual through the gate.
-    join: async (remote) => void (await addVault(remote)),
+    // A joined vault activates itself. On first run the gate then unmounts the
+    // ritual; over the shell nothing does, so it is dismissed here.
+    join: async (remote) => {
+      await addVault(remote)
+      onDone?.()
+    },
     saveAnswers: async (remote, answers) => {
       // The vault already holds the seed's defaults, so a failed write is not
       // fatal: say so and carry on.

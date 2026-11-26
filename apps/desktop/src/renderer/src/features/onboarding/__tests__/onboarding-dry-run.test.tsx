@@ -10,6 +10,7 @@
  * and takes `addEventListener` with it.
  */
 import { Provider, createStore } from 'jotai'
+import { emptyVaultSnapshot } from '@holi/shared'
 import { render, screen, waitFor, within } from '@/test/render'
 import { activeRemoteAtom } from '../../../state/vaults'
 import { installedPluginsAtom } from '../../../state/plugins'
@@ -30,6 +31,8 @@ beforeEach(() => {
       paths.push(op.path)
       inputs.push(op)
       if (op.path === 'github.orgs') return { ok: true, data: { orgs: [] } }
+      if (op.path === 'vaults.list') return { ok: true, data: [] }
+      if (op.path === 'vaults.add') return { ok: true, data: emptyVaultSnapshot() }
       if (op.path === 'github.repos') {
         return {
           ok: true,
@@ -191,4 +194,26 @@ test('joining in a dry run clones nothing', async () => {
   await userEvent.click(await screen.findByRole('button', { name: /ada\/team/ }))
   await waitFor(() => expect(onDismiss).toHaveBeenCalled())
   expect(paths).not.toContain('vaults.add')
+})
+
+/** Over the shell no gate unmounts the ritual, so a join that lands closes it. */
+test('a real join from the shell closes the picker once the vault is added', async () => {
+  const onDismiss = vi.fn()
+  render(<OnboardingRitual mode="add-vault" onDismiss={onDismiss} />)
+  await userEvent.click(screen.getByRole('button', { name: /join vaults in your accounts/i }))
+  await userEvent.click(await screen.findByRole('button', { name: /ada\/team/ }))
+  await waitFor(() => expect(onDismiss).toHaveBeenCalled())
+  expect(paths).toContain('vaults.add')
+})
+
+test('a join that fails keeps the picker open with the reason', async () => {
+  const onDismiss = vi.fn()
+  const answer = window.holi.trpc
+  window.holi.trpc = async (op) =>
+    op.path === 'vaults.add' ? { ok: false, message: 'Repository not found.' } : answer(op)
+  render(<OnboardingRitual mode="add-vault" onDismiss={onDismiss} />)
+  await userEvent.click(screen.getByRole('button', { name: /join vaults in your accounts/i }))
+  await userEvent.click(await screen.findByRole('button', { name: /ada\/team/ }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Repository not found.')
+  expect(onDismiss).not.toHaveBeenCalled()
 })
