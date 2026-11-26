@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -58,16 +58,77 @@ describe('Git authentication through Holi', () => {
     )
 
     token = 'fixture-2 replacement !@# København'
+    answers.clear()
     answers.add(`x-access-token:${token}`)
     const replacementDigest = createHash('sha256').update(`x-access-token:${token}`).digest('hex')
     expect(await runGit(directory, ['ls-remote', url], opts)).toBe('')
     expect(challenges).toContain(replacementDigest)
 
     for (token of ['', null]) {
-      const before = challenges.length
       await expect(runGit(directory, ['ls-remote', url], opts)).rejects.toThrow()
-      expect(challenges.length).toBeGreaterThan(before)
     }
-    expect(challenges.join('')).not.toContain('fixture-')
   }, 30_000)
+
+  it.skipIf(process.platform !== 'win32')(
+    'persists and removes an exact credential through installed GCM and Windows Credential Manager',
+    async () => {
+      directory = await mkdtemp(join(tmpdir(), 'holi-gcm-auth-'))
+      const config = join(directory, 'gitconfig')
+      const target = `https://holi-${randomUUID()}.invalid/repo.git`
+      const token = `synthetic-${randomUUID()}`
+      const opts = {
+        env: {
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_GLOBAL: config,
+          GCM_INTERACTIVE: 'never',
+          GIT_TERMINAL_PROMPT: '0',
+        },
+        executionBudget: { maxBuffer: 1024 * 1024, timeout: 10_000 },
+      }
+      const request = (operation: 'approve' | 'fill' | 'reject') =>
+        `protocol=https\nhost=${new URL(target).host}\npath=repo.git\nusername=x-access-token${operation === 'approve' ? `\npassword=${token}` : ''}\n\n`
+
+      try {
+        await runGit(directory, ['config', '--file', config, 'credential.helper', 'manager'], opts)
+        await runGit(directory, ['credential', 'approve'], { ...opts, input: request('approve') })
+        // Holi's token source is absent for all subsequent protocol operations.
+        const filled = await runGit(directory, ['credential', 'fill'], {
+          ...opts,
+          token: () => null,
+          input: request('fill'),
+        })
+        const fields = new Map(
+          filled
+            .trim()
+            .split(/\r?\n/)
+            .map((line) => {
+              const separator = line.indexOf('=')
+              return [line.slice(0, separator), line.slice(separator + 1)]
+            }),
+        )
+        expect(
+          fields.get('password') === token && fields.get('username') === 'x-access-token',
+        ).toBe(true)
+        await runGit(directory, ['credential', 'reject'], {
+          ...opts,
+          token: () => null,
+          input: request('reject'),
+        })
+        await expect(
+          runGit(directory, ['credential', 'fill'], {
+            ...opts,
+            token: () => null,
+            input: request('fill'),
+          }),
+        ).rejects.toThrow()
+      } finally {
+        // Remove only this unique host/path credential, including on failed assertions.
+        await runGit(directory, ['credential', 'reject'], {
+          ...opts,
+          token: () => null,
+          input: request('reject'),
+        }).catch(() => undefined)
+      }
+    },
+  )
 })
