@@ -509,6 +509,32 @@ test('pending-command observation skips completed commands and drains started di
   assert.equal(await result, 'launched')
 })
 
+test('pending-command settlement aborts and drains owned diagnostic processes', async () => {
+  let finishCommand
+  let observationStarted
+  const started = new Promise((resolve) => {
+    observationStarted = resolve
+  })
+  const command = new Promise((resolve) => {
+    finishCommand = resolve
+  })
+  const result = whileCommandPending(
+    command,
+    (signal) => {
+      observationStarted()
+      return runCommand(
+        process.execPath,
+        ['-e', 'process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000)'],
+        { signal },
+      )
+    },
+    1,
+  )
+  await started
+  finishCommand('original result')
+  assert.equal(await result, 'original result')
+})
+
 test('pending-command observation preserves command failure when diagnostics fail', async () => {
   const failure = new Error('launch failed')
   let rejectCommand

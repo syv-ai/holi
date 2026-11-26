@@ -146,7 +146,7 @@ try {
     .digest('hex')
   await whileCommandPending(
     simctl('keychain', simulator, 'add-root-cert', gitFixture.cert),
-    async () => {
+    async (signal) => {
       const observation = {
         runId,
         simulator,
@@ -159,9 +159,11 @@ try {
         ['trustd', ['spawn', simulator, 'launchctl', 'print', 'system/com.apple.trustd']],
       ]) {
         try {
+          if (signal.aborted) break
           observation.probes[name] = await command('xcrun', ['simctl', ...args], {
             timeout: 8_000,
             outputLimit: 4_000,
+            signal,
           })
         } catch (error) {
           observation.probes[name] = { error: String(error).slice(0, 500) }
@@ -173,6 +175,7 @@ try {
       )
     },
     5_000,
+    { signal: controller.signal },
   )
   await simctl('status_bar', simulator, 'override', '--time', '9:41')
   await simctl('install', simulator, app)
