@@ -43,7 +43,7 @@ type Lease = {
   fingerprint: string
   watcher: FSWatcher
   highGeneration: number
-  controller: AbortController | null
+  controller: (AbortController & { emitArtifacts: boolean }) | null
   contextChanged: boolean
   closed: boolean
   resourceOwner: MdxResourceOwner
@@ -217,7 +217,7 @@ export function createMdxDiagnostics(options: {
     if (input.generation < lease.highGeneration || !current(lease)) fail('MDX compile cancelled')
     lease.highGeneration = input.generation
     const offers = retireSource(lease)
-    const controller = new AbortController()
+    const controller = Object.assign(new AbortController(), { emitArtifacts })
     lease.controller = controller
     const running = () =>
       current(lease) &&
@@ -582,7 +582,7 @@ export function createMdxDiagnostics(options: {
         if (
           lease.identity.remote === canonicalRemote &&
           (sameOrDescendant(lease.path.toLowerCase(), normalized) ||
-            lease.controller !== null ||
+            lease.controller?.emitArtifacts === true ||
             lease.publication?.graph.modules.some((module) =>
               sameOrDescendant(module.path.toLowerCase(), normalized),
             ))

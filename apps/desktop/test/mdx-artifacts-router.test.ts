@@ -282,3 +282,29 @@ it('does not publish superseded in-flight work even when a generation number is 
     resume.resolve()
   }
 })
+
+it('preserves diagnostics-only inspection while an unrelated path is saved', async () => {
+  const entered = gate()
+  const resume = gate()
+  const rig = await resourceRig(false, {
+    holdInspection: async (signal) => {
+      entered.resolve()
+      await resume.promise
+      signal.throwIfAborted()
+    },
+  })
+  const owner = await rig.acquire()
+  const pending = rig.mdx.compile({ ...owner, generation: 1, source: '# Unchanged source' })
+  const completed = expect(pending).resolves.toEqual([])
+  try {
+    await entered.promise
+    await rig.caller.files.write({
+      remote: REMOTE,
+      path: 'unrelated.js',
+      bytes: new TextEncoder().encode('export const x = 1'),
+    })
+  } finally {
+    resume.resolve()
+  }
+  await completed
+})
