@@ -60,7 +60,8 @@ async function captureNativeOutput(args) {
 
 /** Accept a candidate limitation only after complete native observations and cleanup. */
 export function validateDebugPromptInputEvidence(value) {
-  if (value?.schema !== 'holi.codex-debug-prompt-input.v1') return false
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (value.schema !== 'holi.codex-debug-prompt-input.v1') return false
   if (value.outcome === 'incomplete-proof') return value.status === 'incomplete'
   if (value.error || value.cleanupError) return false
   const n = value.native
@@ -76,12 +77,14 @@ export function validateDebugPromptInputEvidence(value) {
     !['EPERM', 'EACCES'].includes(n.containment.external) ||
     n.cleanup?.rootRemoved !== true ||
     n.cleanup?.drained !== true ||
-    !n.receipts?.length ||
-    !n.receipts.every((r) => r.drained && !r.error && !r.failure) ||
+    !Array.isArray(n.receipts) ||
+    !n.receipts.length ||
+    !n.receipts.every((r) => r && typeof r === 'object' && r.drained && !r.error && !r.failure) ||
     n.configUnchanged !== true ||
     n.sentinelsUnexecuted !== true ||
+    !Array.isArray(n.integrationControls) ||
     !['hook', 'mcp', 'plugin'].every((kind) =>
-      n.integrationControls?.some(
+      n.integrationControls.some(
         (control) =>
           control.kind === kind &&
           typeof control.declaration === 'string' &&
@@ -105,7 +108,9 @@ export function validateDebugPromptInputEvidence(value) {
       typeof observation.stderr !== 'string' ||
       Buffer.byteLength(observation.stderr) > 524288 ||
       !Array.isArray(observation.input) ||
-      !observation.argv?.includes('prompt-input') ||
+      observation.input.some((item) => !item || typeof item !== 'object' || Array.isArray(item)) ||
+      !Array.isArray(observation.argv) ||
+      !observation.argv.includes('prompt-input') ||
       !observation.cwd ||
       !observation.env?.CODEX_HOME
     )

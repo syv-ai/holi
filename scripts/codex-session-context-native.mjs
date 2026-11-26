@@ -425,8 +425,13 @@ export async function runNativeInitialFixture() {
       }
     }
     if (root && evidence.drainage && !evidence.cleanupError) {
-      await rm(root, { recursive: true, force: true })
-      evidence.rootRemoved = !existsSync(root)
+      try {
+        await rm(root, { recursive: true, force: true })
+        evidence.rootRemoved = !existsSync(root)
+      } catch (error) {
+        evidence.cleanupError = String(error)
+        evidence.rootRemoved = false
+      }
     }
     if (!root) evidence.rootRemoved = true
     if (!evidence.drainage || !evidence.rootRemoved || handles.some((child) => child.failure)) {

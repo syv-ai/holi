@@ -263,8 +263,9 @@ jobs:
               if ($identity.pid -isnot [long] -and $identity.pid -isnot [int] -or $identity.pid -le 0 -or $identity.creationTicks -le 0) { throw 'invalid identity' }
               $root = Get-CimInstance Win32_Process -Filter "ProcessId=$($identity.pid)" -Property ProcessId,ParentProcessId,CreationDate,UserModeTime,KernelModeTime,ReadTransferCount,WriteTransferCount,WorkingSetSize -OperationTimeoutSec 5
               if (-not $root -or [long]$root.ProcessId -ne [long]$identity.pid) { throw 'root unavailable' }
-              $creation = [Management.ManagementDateTimeConverter]::ToDateTime($root.CreationDate).ToUniversalTime().Ticks
-              if ([Math]::Abs($creation - [long]$identity.creationTicks) -gt 10000000) { throw 'stale identity' }
+              if ($root.CreationDate -isnot [DateTime]) { throw 'root creation time unavailable' }
+              $creation = $root.CreationDate.ToUniversalTime().Ticks
+              if ([Math]::Abs($creation - [long]$identity.creationTicks) -gt 10000) { throw 'stale identity' }
               for ($sample = 0; $sample -lt 10; $sample++) {
                 $children = [System.Collections.Generic.List[object]]::new()
                 $capped = $false

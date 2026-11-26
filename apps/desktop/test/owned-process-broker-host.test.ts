@@ -577,8 +577,12 @@ describe('owned Job broker host', () => {
         compilerArtifacts,
         artifactSnapshots,
         artifactGrowth:
-          artifactSnapshots.length < 2
-            ? 'insufficient-snapshots'
+          artifactSnapshots.length < 2 ||
+          artifactSnapshots.some(
+            (snapshot) =>
+              snapshot.observation.coverage !== 'complete' || snapshot.observation.error,
+          )
+            ? 'indeterminate-coverage'
             : artifactSnapshots.some((snapshot) =>
                   Object.entries(snapshot.observation.files).some(([extension, value]) => {
                     const initial = artifactSnapshots[0]?.observation.files[extension]
