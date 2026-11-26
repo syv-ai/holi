@@ -1,9 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  runOwnedCommand,
-  validateDebugPromptInputEvidence,
-} from './codex-debug-prompt-input.mjs'
+import { runOwnedCommand, validateDebugPromptInputEvidence } from './codex-debug-prompt-input.mjs'
 
 const message = (role, text) => ({
   type: 'message',
@@ -69,7 +66,9 @@ function completeEvidence() {
 test('captures output drained after process exit before returning owned command output', async () => {
   let output = ''
   const child = {
-    output: { toString: () => output },
+    get output() {
+      return Buffer.from(output)
+    },
     waitForExit: async () => ({ code: 0 }),
     close: async () => {
       await new Promise((resolve) => setImmediate(resolve))

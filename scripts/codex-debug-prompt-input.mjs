@@ -16,7 +16,6 @@ const clean = (text) => text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trim()
 const messageText = (item) =>
   Array.isArray(item.content) ? item.content.map((part) => part.text ?? '').join('') : item.content
 
-// Serialized into the existing owned PTY; its descendants retain the same supervisor.
 export async function runOwnedCommand(child, label) {
   const exit = await child.waitForExit()
   await child.close()
@@ -25,6 +24,7 @@ export async function runOwnedCommand(child, label) {
   return output
 }
 
+// Serialized into the existing owned PTY; its descendants retain the same supervisor.
 async function captureNativeOutput(args) {
   const { spawn } = await import('node:child_process')
   const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
