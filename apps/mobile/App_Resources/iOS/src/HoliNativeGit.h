@@ -9,6 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
                                   error:(NSError *_Nullable __autoreleasing *)error;
 - (NSString *)embeddedVersion;
 - (nullable NSDictionary<NSString *, id> *)managedIdentity:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;
+- (nullable NSDictionary<NSString *, id> *)integrationPlan:(NSString *)root identity:(NSString *)identity error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSDictionary<NSString *, id> *)committedEntries:(NSString *)root history:(BOOL)history error:(NSError *_Nullable __autoreleasing *)error;
 - (BOOL)materializeManaged:(NSString *)root plan:(NSDictionary *)plan error:(NSError *_Nullable __autoreleasing *)error;
 - (nullable NSString *)canonicalRoot:(NSString *)root error:(NSError *_Nullable __autoreleasing *)error;

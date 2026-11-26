@@ -841,6 +841,44 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   if (repo) *identity = record;
   return repo;
 }
+- (NSDictionary<NSString *, id> *)integrationPlan:(NSString *)root identity:(NSString *)identity error:(NSError **)error {
+  NSDictionary *record = nil;
+  HoliGitSnapshot *snapshot = nil;
+  git_repository *repo = [self openManagedRepository:root identity:&record snapshot:&snapshot error:error];
+  if (!repo) return nil;
+  // The identity argument is the caller's expected remote; branch names are kept whole.
+  if (![record[@"remote"] isEqual:identity]) { if (error) *error=HNGPathError(EINVAL,@"Managed identity changed"); git_repository_free(repo); [snapshot closeWithError:nil]; return nil; }
+  NSString *branch = record[@"branch"];
+  git_reference *headRef=NULL, *targetRef=NULL;
+  git_commit *headCommit=NULL, *targetCommit=NULL;
+  git_tree *oldTree=NULL, *newTree=NULL;
+  int rc=git_repository_head(&headRef,repo);
+  if (rc==0 && git_reference_type(headRef)!=GIT_REFERENCE_SYMBOLIC) rc=GIT_EINVALIDSPEC;
+  NSString *expectedHead=[@"refs/heads/" stringByAppendingString:branch];
+  if(rc==0 && ![expectedHead isEqual:[NSString stringWithUTF8String:git_reference_symbolic_target(headRef) ?: ""]]) rc=GIT_EINVALIDSPEC;
+  NSString *targetName=[@"refs/remotes/origin/" stringByAppendingString:branch];
+  if(rc==0) rc=git_reference_lookup(&targetRef,repo,targetName.UTF8String);
+  if(rc==0) rc=git_commit_lookup(&headCommit,repo,git_reference_target(headRef));
+  if(rc==0) rc=git_commit_lookup(&targetCommit,repo,git_reference_target(targetRef));
+  NSString *outcome=nil;
+  if(rc==0) {
+    const git_oid *h=git_commit_id(headCommit), *t=git_commit_id(targetCommit);
+    if(git_oid_equal(h,t)) outcome=@"noop";
+    else if(git_graph_descendant_of(repo,h,t)==1) outcome=@"already-contained";
+    else if(git_graph_descendant_of(repo,t,h)==1) outcome=@"fast-forward";
+    else rc=GIT_EINVALIDSPEC;
+  }
+  if(rc==0) rc=git_commit_tree(&oldTree,headCommit);
+  if(rc==0) rc=git_commit_tree(&newTree,targetCommit);
+  NSMutableDictionary *oldEntries=[NSMutableDictionary dictionary], *newEntries=[NSMutableDictionary dictionary];
+  if(rc==0) rc=git_tree_walk(oldTree,GIT_TREEWALK_PRE,^(const char *rootPath,const git_tree_entry *entry){ if(git_tree_entry_type(entry)==GIT_OBJECT_TREE)return 0; NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,git_tree_entry_name(entry)]; if([p containsString:@".."]||[p hasPrefix:@"/"])return GIT_EINVALIDSPEC; oldEntries[p]=@{@"oid":[NSString stringWithUTF8String:git_oid_tostr_s(git_tree_entry_id(entry))],@"mode":@(git_tree_entry_filemode(entry))}; return 0;});
+  if(rc==0) rc=git_tree_walk(newTree,GIT_TREEWALK_PRE,^(const char *rootPath,const git_tree_entry *entry){ if(git_tree_entry_type(entry)==GIT_OBJECT_TREE)return 0; NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,git_tree_entry_name(entry)]; if([p containsString:@".."]||[p hasPrefix:@"/"])return GIT_EINVALIDSPEC; newEntries[p]=@{@"oid":[NSString stringWithUTF8String:git_oid_tostr_s(git_tree_entry_id(entry))],@"mode":@(git_tree_entry_filemode(entry))}; return 0;});
+  NSDictionary *result=nil;
+  if(rc==0) result=@{@"identity":record,@"outcome":outcome,@"headOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(headCommit))],@"targetOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(targetCommit))],@"oldEntries":oldEntries, @"newEntries":newEntries,@"requiredPaths":({ NSMutableSet *paths=[NSMutableSet setWithArray:oldEntries.allKeys]; [paths addObjectsFromArray:newEntries.allKeys]; [paths.allObjects sortedArrayUsingSelector:@selector(compare:)]; })};
+  else if(error) HNGError(error,rc);
+  git_tree_free(oldTree); git_tree_free(newTree); git_commit_free(headCommit); git_commit_free(targetCommit); git_reference_free(headRef); git_reference_free(targetRef); git_repository_free(repo); [snapshot closeWithError:result?error:nil];
+  return result;
+}
 - (NSDictionary<NSString *, id> *)managedIdentity:(NSString *)root error:(NSError **)error {
   NSDictionary *record = nil;
   HoliGitSnapshot *snapshot = nil;
