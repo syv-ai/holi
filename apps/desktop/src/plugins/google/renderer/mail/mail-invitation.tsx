@@ -39,16 +39,32 @@ export function MailInvitation({
   thread,
   hasInvite,
   generation,
+  isCurrentGeneration,
 }: {
   thread: { id: string; messages: ThreadMessage[] }
   hasInvite: boolean
   generation: number
+  isCurrentGeneration: () => boolean
 }) {
   if (!hasInvite && !thread.messages.some((message) => message.hasCalendarPayload)) return null
-  return <InvitationScope threadId={thread.id} generation={generation} />
+  return (
+    <InvitationScope
+      threadId={thread.id}
+      generation={generation}
+      isCurrentGeneration={isCurrentGeneration}
+    />
+  )
 }
 
-function InvitationScope({ threadId, generation }: { threadId: string; generation: number }) {
+function InvitationScope({
+  threadId,
+  generation,
+  isCurrentGeneration,
+}: {
+  threadId: string
+  generation: number
+  isCurrentGeneration: () => boolean
+}) {
   const remote = useAtomValue(activeRemoteAtom)
   const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const accountRevision = useAtomValue(googleAccountRevisionAtom)
@@ -99,6 +115,7 @@ function InvitationScope({ threadId, generation }: { threadId: string; generatio
       accountRevision={accountRevision}
       expectedAccountSub={currentSub}
       threadId={threadId}
+      isCurrentGeneration={isCurrentGeneration}
     />
   )
 }
