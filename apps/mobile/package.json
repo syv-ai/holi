@@ -17,9 +17,11 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
+    "@lezer/markdown": "^1.7.1",
     "@nativescript/ios": "9.1.1",
     "@nativescript/types": "9.1.4",
     "@nativescript/webpack": "5.0.41",
+    "entities": "^6.0.1",
     "eslint": "9.39.5",
     "globals": "17.4.0",
     "nativescript": "9.1.2",
