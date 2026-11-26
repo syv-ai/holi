@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, rm, writeFile, readFile, statfs, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, readFile, statfs } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -16,6 +16,7 @@ import {
 } from './browser-placement-bench-analysis.mjs'
 import { scenarioNames } from './browser-placement-bench-scenarios.mjs'
 import { selectScenario } from './browser-placement-bench-scenarios.mjs'
+import { validateTrials, terminalCounters } from './browser-placement-bench-results.mjs'
 const EXPECTED_SOURCE_HASH = '4fa1cc0a0ee188d981910085e881488ddcc19592105d00c1b492a831058b5726'
 import { build } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -279,6 +280,8 @@ try {
   assert.equal(baseline.source, sourceHash)
   assert.equal(baseline.variant, variant)
   assert(baseline.observations.length > 0, 'no native observations collected')
+  const selectedScenarios = scenario ? [scenario] : scenarioNames
+  const validatedTrials = validateTrials(baseline, selectedScenarios, repetitions, countsOnly)
   const byScenario = Object.fromEntries(
     baseline.scenarios.map(({ name }) => {
       const observations = baseline.observations.filter((item) => item.phase === name)
@@ -333,15 +336,8 @@ try {
       const counterDeltasByTrial = {}
       if (countsOnly) {
         for (const trial of [...new Set(observations.map((item) => item.trial))]) {
-          const sameTrial = baseline.observations.filter((item) => item.trial === trial)
-          const group = sameTrial.filter((item) => item.phase === name)
-          const after = group.at(-1)?.shellDiagnostics?.stats
-          counterDeltasByTrial[trial] = Object.fromEntries(
-            ['callbacks', 'hostRects', 'coverageScans', 'overlayRects'].map((counter) => [
-              counter,
-              after?.[counter] ?? 0,
-            ]),
-          )
+          const terminal = terminalCounters(validatedTrials, name, repetitions)
+          counterDeltasByTrial[trial] = terminal[trial]
         }
       }
       return [
@@ -386,36 +382,38 @@ try {
   await writeFile(join(out, 'failure.txt'), `${error instanceof Error ? error.stack : error}\n`)
   throw error
 } finally {
-  if (child?.pid) {
+  let drainageError
+  try {
+    await ownedProcesses.stopAll()
+    if (ownedProcesses.size !== 0) throw new Error('owned benchmark processes remain')
+  } catch (error) {
+    drainageError = error
+  }
+  if (!drainageError && root) {
     try {
-      const owned = [...ownedProcesses.remainingPids].includes(child.pid)
-      if (owned) await ownedProcesses.stopAll()
-      if ([...ownedProcesses.remainingPids].includes(child.pid))
-        throw new Error(`owned benchmark processes remain; runtime retained at ${root}`)
+      await rm(root, { recursive: true, force: true })
     } catch (error) {
-      cancellation.dispose()
-      throw new Error(`${error.message}; runtime retained at ${root}`)
+      drainageError = error
     }
   }
-  if (root && !child?.pid) await rm(root, { recursive: true, force: true })
-  await writeFile(
-    join(out, 'cleanup.json'),
-    JSON.stringify(
-      {
-        runtimeRemoved: Boolean(root)
-          ? !(await stat(root).then(
-              () => true,
-              () => false,
-            ))
-          : true,
-        runtimeRoot: root,
-        launcherPid: child?.pid ?? null,
-        processGroupDrained: true,
-        completedAt: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  )
-  cancellation.dispose()
+  try {
+    await writeFile(
+      join(out, 'cleanup.json'),
+      JSON.stringify(
+        {
+          runtimeRemoved: Boolean(root) && !drainageError,
+          runtimeRoot: root,
+          launcherPid: child?.pid ?? null,
+          processGroupDrained: !drainageError,
+          completedAt: new Date().toISOString(),
+          failure: drainageError?.message ?? null,
+        },
+        null,
+        2,
+      ),
+    )
+  } finally {
+    cancellation.dispose()
+  }
+  if (drainageError) throw new Error(`${drainageError.message}; runtime retained at ${root}`)
 }
