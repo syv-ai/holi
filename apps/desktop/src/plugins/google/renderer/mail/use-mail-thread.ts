@@ -13,6 +13,7 @@ interface Reader {
   refreshing: boolean
   failure: { kind: 'missing' } | { kind: 'read'; message: string } | null
   generation: number
+  accountRevision: number | null
   epoch: object | undefined
   recovery: boolean
 }
@@ -23,6 +24,7 @@ const idle: Reader = {
   refreshing: false,
   failure: null,
   generation: 0,
+  accountRevision: null,
   epoch: undefined,
   recovery: false,
 }
@@ -69,7 +71,8 @@ export function useMailThread() {
     const recover =
       mode === 'recover' ||
       (mode === 'open' && current?.lost === true && !current.pending) ||
-      (mode === 'refresh' && (reader.recovery || epoch !== reader.epoch))
+      (mode === 'refresh' &&
+        (reader.recovery || epoch !== reader.epoch || reader.accountRevision !== accountRevision))
     if (recover && current?.pending) return
     const account = verifiedAccount.current
     const opening = selection.current
@@ -84,16 +87,22 @@ export function useMailThread() {
     const at = ++generation.current
     const selected =
       mode !== 'open' && opening ? opening : { id, readAt: at, remoteRevision, account }
+    selected.account ??= account
     selection.current = selected
     setReader((previous) => ({
       id,
       thread: mode !== 'open' && previous.id === id ? previous.thread : null,
       refreshing: mode !== 'open',
       failure:
-        mode !== 'open' && previous.id === id && previous.failure?.kind === 'missing'
+        mode !== 'open' &&
+        previous.id === id &&
+        previous.accountRevision === accountRevision &&
+        previous.failure?.kind === 'missing'
           ? previous.failure
           : null,
       generation: at,
+      accountRevision:
+        mode === 'open' ? (account === null ? null : accountRevision) : previous.accountRevision,
       // Only a completed exact read can verify a selection across a reset.
       epoch: recover || current?.pending || current?.lost ? previous.epoch : epoch,
       recovery: recover,
@@ -107,6 +116,7 @@ export function useMailThread() {
       setReader((previous) => ({
         ...previous,
         epoch: recover ? epoch : previous.epoch,
+        accountRevision: account === null ? previous.accountRevision : accountRevision,
         refreshing: false,
         failure:
           (recover && codeOf(error) === 'NOT_FOUND') || previous.failure?.kind === 'missing'
@@ -127,6 +137,7 @@ export function useMailThread() {
         refreshing: false,
         failure: null,
         generation: at,
+        accountRevision: account === null ? null : accountRevision,
         epoch: recover || (!current?.lost && !current?.pending) ? epoch : undefined,
         recovery: false,
       })
@@ -137,7 +148,7 @@ export function useMailThread() {
     const selected = selection.current
     if (
       selected !== null &&
-      reader.epoch !== epoch &&
+      (reader.epoch !== epoch || reader.accountRevision !== accountRevision) &&
       store.get(mailContinuityAtom)?.epoch === epoch
     )
       fetchThread(selected.id, 'recover')
@@ -145,7 +156,7 @@ export function useMailThread() {
   useEffect(() => {
     if (verified && !continuity?.pending && !continuity?.lost) revalidate(continuity?.epoch)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Effect Events are non-reactive; this rule predates React 19.2.
-  }, [continuity, verified])
+  }, [accountRevision, continuity, verified])
 
   const closeThread = () => {
     selection.current = null
@@ -160,11 +171,13 @@ export function useMailThread() {
     const account = verifiedAccount.current
     const selected = selection.current
     const at = generation.current
+    const accountRevision = store.get(googleAccountRevisionAtom)
     const epoch = store.get(mailContinuityAtom)?.epoch
     return (ids: readonly string[]) => {
       if (
         account === null ||
         verifiedAccount.current !== account ||
+        store.get(googleAccountRevisionAtom) !== accountRevision ||
         selected === null ||
         selection.current !== selected ||
         selected.readAt > at ||
@@ -184,24 +197,35 @@ export function useMailThread() {
     }
   }, [store])
 
-  const { failure, ...view } = reader
+  const { failure, accountRevision: readRevision, ...view } = reader
   const at = reader.generation
   const epoch = reader.epoch
   const isCurrentGeneration = useCallback(() => {
     const current = store.get(mailContinuityAtom)
-    return generation.current === at && current?.epoch === epoch && !current?.pending
-  }, [at, epoch, store])
-  const needsVerification = reader.id !== null && continuity?.epoch !== epoch
+    return (
+      generation.current === at &&
+      readRevision === store.get(googleAccountRevisionAtom) &&
+      current?.epoch === epoch &&
+      !current?.pending
+    )
+  }, [at, epoch, readRevision, store])
+  const accountChanged = reader.id !== null && readRevision !== accountRevision
+  const needsVerification = reader.id !== null && (continuity?.epoch !== epoch || accountChanged)
+  // An account refresh retires the previous proof, but while the connection
+  // is unverified the invitation must still be able to offer its account Retry.
+  const checkingAccount = accountChanged && !verified && reader.thread !== null
   const refreshing =
-    reader.refreshing ||
-    (needsVerification && Boolean(continuity?.pending || (verified && !continuity?.lost)))
-  const error = refreshing
-    ? null
-    : needsVerification
-      ? 'Gmail history could not be checked. Retry to check this thread directly.'
-      : failure?.kind === 'missing'
-        ? 'This thread is no longer available in Gmail.'
-        : (failure?.message ?? null)
+    !checkingAccount &&
+    (reader.refreshing ||
+      (needsVerification && Boolean(continuity?.pending || (verified && !continuity?.lost))))
+  const error =
+    refreshing || checkingAccount
+      ? null
+      : needsVerification
+        ? 'Gmail history could not be checked. Retry to check this thread directly.'
+        : failure?.kind === 'missing'
+          ? 'This thread is no longer available in Gmail.'
+          : (failure?.message ?? null)
   return {
     ...view,
     refreshing,

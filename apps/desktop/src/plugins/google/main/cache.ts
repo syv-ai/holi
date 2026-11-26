@@ -39,8 +39,8 @@ export interface GoogleCache {
    * wipe here.
    */
   ensureShape(): void
-  /** Whether any recipient-identity variant of this list has been seeded. */
-  hasMailList(key: string): boolean
+  /** The most recently committed variant of this list, which owns its cursor. */
+  latestMailListKey(key: string): string | null
   /** Commit rows, pending metadata reads and cursor together. No IO inside. */
   updateMailList<T>(write: () => T): T
   readThreads(key: string): MailThreadSummary[] | null
@@ -185,14 +185,15 @@ export function openGoogleCache(path: string): GoogleCache {
       database().prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('shape', SHAPE_VERSION)
     },
 
-    hasMailList(key) {
-      return (
-        database()
-          .prepare(
-            "SELECT 1 FROM answered WHERE kind = 'threads' AND (key = ? OR instr(key, ?) = 1) LIMIT 1",
-          )
-          .get(key, `${key}|identity:`) !== undefined
-      )
+    latestMailListKey(key) {
+      // writeThreads marks the answer with INSERT OR REPLACE, ranking the
+      // variant's rowid by commit order without comparing Gmail history IDs.
+      const row = database()
+        .prepare(
+          "SELECT key FROM answered WHERE kind = 'threads' AND (key = ? OR instr(key, ?) = 1) ORDER BY rowid DESC LIMIT 1",
+        )
+        .get(key, `${key}|identity:`) as { key: string } | undefined
+      return row?.key ?? null
     },
 
     updateMailList(write) {
