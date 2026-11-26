@@ -504,7 +504,7 @@ export function MailList({
           title="Couldn’t load your mail"
           description={list.message}
           action={
-            <Button variant="outline" size="xs" onClick={mail.load}>
+            <Button variant="outline" size="xs" onClick={mail.refreshList}>
               Try again
             </Button>
           }

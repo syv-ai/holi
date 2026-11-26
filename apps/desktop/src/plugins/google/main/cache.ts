@@ -39,6 +39,10 @@ export interface GoogleCache {
    * wipe here.
    */
   ensureShape(): void
+  /** Whether any recipient-identity variant of this list has been seeded. */
+  hasMailList(key: string): boolean
+  /** Commit rows, pending metadata reads and cursor together. No IO inside. */
+  updateMailList<T>(write: () => T): T
   readThreads(key: string): MailThreadSummary[] | null
   writeThreads(key: string, threads: MailThreadSummary[]): void
   /** Unresolved provider reads, separate from rows and the delta cursor. */
@@ -179,6 +183,29 @@ export function openGoogleCache(path: string): GoogleCache {
         'DELETE FROM threads; DELETE FROM agenda; DELETE FROM answered; DELETE FROM meta;',
       )
       database().prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('shape', SHAPE_VERSION)
+    },
+
+    hasMailList(key) {
+      return (
+        database()
+          .prepare(
+            "SELECT 1 FROM answered WHERE kind = 'threads' AND (key = ? OR instr(key, ?) = 1) LIMIT 1",
+          )
+          .get(key, `${key}|identity:`) !== undefined
+      )
+    },
+
+    updateMailList(write) {
+      const db = database()
+      db.exec('BEGIN')
+      try {
+        const result = write()
+        db.exec('COMMIT')
+        return result
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
     },
 
     readThreads(key) {

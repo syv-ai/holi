@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react'
 import { useAtomValue, useStore } from 'jotai'
 import { activeRemoteRevisionValueAtom } from '@/plugin-api'
-import { googleAccountRevisionAtom } from '../account'
+import { googleAccountRevisionAtom, mailContinuityAtom, useGoogleAccount } from '../account'
 import { googleCap } from '../google-cap'
 import { codeOf, explainWriteFailure, isDisconnected, messageOf } from '../google-errors'
 
@@ -43,86 +51,139 @@ export function useMailList(
     [store, remoteRevision, accountRevision],
   )
 
-  const load = useCallback(() => {
-    if (!scopeIsCurrent()) return
-    const at = ++request.current
-    paging.current = false
-    setWorking(null)
-    if (!enabled) return
-    generation.current++
-    setList({ kind: 'loading' })
-    const reportNotFound = watchNotFound()
-    void call((remote) => googleCap.search(remote, params)).then(
-      (page) => {
-        if (request.current !== at || !scopeIsCurrent()) return
-        if (page.notFoundThreadIds) reportNotFound(page.notFoundThreadIds)
-        setList({ ...page, kind: 'ready' })
-      },
-      (error: unknown) => {
-        if (request.current === at && scopeIsCurrent()) setList(failure(error))
-      },
-    )
-  }, [call, params, enabled, generation, scopeIsCurrent, watchNotFound])
+  const { currentSub, loading, readError } = useGoogleAccount()
+  const account = !loading && !readError ? currentSub : null
+  const source = useMemo(
+    () => ({ call, params, enabled, scopeIsCurrent, currentSub }),
+    [call, params, enabled, scopeIsCurrent, currentSub],
+  )
+  const recovery = useRef<object | null>(null)
+  const resetting = useRef<object | null>(null)
+  const verifiedAccount = useRef(account)
+  const liveSource = useRef<object | null>(source)
+  useLayoutEffect(() => {
+    verifiedAccount.current = account
+    liveSource.current = source
+    return () => {
+      liveSource.current = null
+    }
+  }, [source, account])
+
+  const read = useCallback(
+    (mode: 'load' | 'refresh' | 'retry' | 'more', token?: string) => {
+      if (
+        !enabled ||
+        liveSource.current !== source ||
+        !scopeIsCurrent() ||
+        resetting.current === source
+      )
+        return
+      const more = mode === 'more'
+      const retry = mode === 'retry'
+      const force = retry || (mode === 'refresh' && recovery.current === source)
+      if (!force && !more && recovery.current === source) return
+      const account = verifiedAccount.current
+      if (force && account === null) {
+        setList({ kind: 'error', message: 'Could not verify your Google account. Try again.' })
+        return
+      }
+      const at = ++request.current
+      const inScope = () =>
+        request.current === at && liveSource.current === source && scopeIsCurrent()
+      paging.current = more || retry
+      setWorking(more ? 'more' : retry ? 'retry' : null)
+      if (!more && !retry) {
+        generation.current++
+        setList({ kind: 'loading' })
+      }
+      const before = store.get(mailContinuityAtom)?.epoch
+      if (force) {
+        recovery.current = source
+        resetting.current = source
+      }
+      const settle = force ? store.set(mailContinuityAtom, 'reset') : undefined
+      let published = false
+      const reportNotFound = watchNotFound()
+      const options = force
+        ? { ...params, refresh: true, expectedAccountSub: account! }
+        : more
+          ? { ...params, pageToken: token }
+          : params
+      void call((remote) => googleCap.search(remote, options))
+        .then((page) => {
+          published = !page.historyRecoveryRequired
+          if (!inScope()) return
+          if (page.historyRecoveryRequired) {
+            recovery.current = source
+            // A delta response from before a reset cannot retire that newer epoch.
+            if (store.get(mailContinuityAtom)?.epoch === before)
+              store.set(mailContinuityAtom, 'lost')
+            setList({
+              kind: 'error',
+              message: 'Gmail history could not be checked. Try again to reload this mail list.',
+            })
+            return
+          }
+          if (page.notFoundThreadIds) reportNotFound(page.notFoundThreadIds)
+          if (force && !page.unreadableThreadIds?.length) recovery.current = null
+          if (more || retry) generation.current++
+          setList((previous) => {
+            if (!more) return { ...page, kind: 'ready' }
+            if (previous.kind !== 'ready') return previous
+            const replaced = new Set([
+              ...page.threads.map(({ id }) => id),
+              ...(page.unreadableThreadIds ?? []),
+              ...(page.notFoundThreadIds ?? []),
+            ])
+            return {
+              ...page,
+              kind: 'ready',
+              threads: [...previous.threads.filter(({ id }) => !replaced.has(id)), ...page.threads],
+            }
+          })
+        })
+        .catch((error: unknown) => {
+          if (!inScope()) return
+          if (!more || isDisconnected(error) || codeOf(error) === 'FORBIDDEN')
+            setList(failure(error))
+          else onPageError(explainWriteFailure(error))
+        })
+        .finally(() => {
+          if (resetting.current === source && force) resetting.current = null
+          // The snapshot can change continuity even if its list unmounted or
+          // changed its query while the request was in flight.
+          settle?.(published)
+          if (!inScope()) return
+          paging.current = false
+          setWorking(null)
+        })
+    },
+    [enabled, source, scopeIsCurrent, generation, store, watchNotFound, params, call, onPageError],
+  )
+
+  const load = useCallback(() => read('load'), [read])
   useLayoutEffect(
     () => () => {
       request.current++
+      paging.current = false
     },
     [load],
   )
   useEffect(load, [load])
 
-  const paginate = (mode: 'more' | 'retry') => {
-    if (!enabled || list.kind !== 'ready' || paging.current || !scopeIsCurrent()) return
-    const retry = mode === 'retry'
-    if (retry ? !list.unreadableThreadIds?.length : list.nextPageToken === null) return
-    const at = request.current
-    paging.current = true
-    setWorking(mode)
-    const options = retry
-      ? { ...params, refresh: true }
-      : { ...params, pageToken: list.nextPageToken! }
-    const reportNotFound = watchNotFound()
-    void call((remote) => googleCap.search(remote, options))
-      .then((page) => {
-        if (request.current !== at || !scopeIsCurrent()) return
-        if (page.notFoundThreadIds) reportNotFound(page.notFoundThreadIds)
-        generation.current++
-        setList((previous) => {
-          if (previous.kind !== 'ready') return previous
-          // Keep the current rows while the retry runs, then replace them
-          // together with the cursor. Newly arrived mail may have moved every
-          // page boundary, so old rows cannot be paired with a fresh token.
-          if (retry) return { ...page, kind: 'ready' }
-          const replaced = new Set([
-            ...page.threads.map(({ id }) => id),
-            ...(page.unreadableThreadIds ?? []),
-            ...(page.notFoundThreadIds ?? []),
-          ])
-          return {
-            ...page,
-            kind: 'ready',
-            threads: [...previous.threads.filter(({ id }) => !replaced.has(id)), ...page.threads],
-          }
-        })
-      })
-      .catch((error: unknown) => {
-        if (request.current !== at || !scopeIsCurrent()) return
-        if (retry || isDisconnected(error) || codeOf(error) === 'FORBIDDEN') setList(failure(error))
-        else onPageError(explainWriteFailure(error))
-      })
-      .finally(() => {
-        if (request.current !== at) return
-        paging.current = false
-        setWorking(null)
-      })
-  }
-
   return {
     list,
     setList,
     load,
-    loadMore: () => paginate('more'),
-    retryPartial: () => paginate('retry'),
+    refresh: () => read('refresh'),
+    loadMore: () => {
+      if (!paging.current && list.kind === 'ready' && list.nextPageToken !== null)
+        read('more', list.nextPageToken)
+    },
+    retryPartial: () => {
+      if (!paging.current && list.kind === 'ready' && list.unreadableThreadIds?.length)
+        read('retry')
+    },
     working,
   }
 }

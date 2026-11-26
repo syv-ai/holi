@@ -345,6 +345,8 @@ export function mailboxLabel(mailbox: MailboxName | undefined): string {
 }
 
 export interface MailPage {
+  /** No list was published: the caller must explicitly request a new baseline. */
+  historyRecoveryRequired?: true
   threads: MailThreadSummary[]
   /** Unresolved metadata failures, including known failures outside this page on cached reads. */
   unreadableThreadIds?: string[]

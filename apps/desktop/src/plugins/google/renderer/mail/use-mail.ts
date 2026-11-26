@@ -118,7 +118,15 @@ export function useMail(account: string | null) {
     }
   }, [searching, submitted, unreadOnly, folder, category])
 
-  const { list, setList, load, loadMore, retryPartial, working } = useMailList(
+  const {
+    list,
+    setList,
+    load,
+    refresh: refreshList,
+    loadMore,
+    retryPartial,
+    working,
+  } = useMailList(
     call,
     params,
     !showsDrafts,
@@ -175,7 +183,7 @@ export function useMail(account: string | null) {
 
   const refresh = () => {
     if (showsDrafts) setDraftsGeneration((n) => n + 1)
-    else load()
+    else refreshList()
     loadCounts()
     if (categoryCounts !== null) loadCategoryCounts()
   }
@@ -342,6 +350,7 @@ export function useMail(account: string | null) {
     closeThread,
     reloadThread: threadReader.retry,
     load,
+    refreshList,
     refresh: () => {
       refresh()
       markers.invalidate()

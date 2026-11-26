@@ -229,7 +229,15 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     () => ({ query: submitted, category: filter, unread: unreadFilter, mailbox }),
     [submitted, filter, unreadFilter, mailbox],
   )
-  const { list, setList, load, loadMore, retryPartial, working } = useMailList(
+  const {
+    list,
+    setList,
+    load,
+    refresh: refreshList,
+    loadMore,
+    retryPartial,
+    working,
+  } = useMailList(
     call,
     params,
     !showDrafts,
@@ -869,7 +877,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
               }}
               onRefresh={() => {
                 markers.invalidate()
-                load()
+                refreshList()
                 loadCounts()
                 // Only if already loaded: refresh must not be what first spends
                 // five requests on a dropdown.
@@ -918,7 +926,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                 role="alert"
                 title="Couldn’t load your mail"
                 description={list.message}
-                action={{ label: 'Try again', onClick: load }}
+                action={{ label: 'Try again', onClick: refreshList }}
               />
             )}
             {/* Names the filter: an empty tab and an empty mailbox otherwise
