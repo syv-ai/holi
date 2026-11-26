@@ -616,7 +616,9 @@ test.each(
     expect(await screen.findByText('Healthy continuation')).toBeVisible()
     expect(screen.queryByText(original.snippet)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: original.subject })).toBeVisible()
-    expect(screen.getByText('Workshop agenda')).toBeVisible()
+    expect(
+      screen.getAllByText('Workshop agenda').find((node) => !editor.contains(node)),
+    ).toBeVisible()
     expect(editor).toHaveTextContent('My unsent reply')
     expect(editor).toHaveFocus()
 
