@@ -85,6 +85,30 @@ test('accepts complete base and profile native observations as demonstrated limi
   assert.equal(validateDebugPromptInputEvidence(completeEvidence()), true)
 })
 
+test('rejects malformed report collections instead of throwing', () => {
+  for (const evidence of [
+    null,
+    { ...completeEvidence(), native: { ...completeEvidence().native, receipts: null } },
+    {
+      ...completeEvidence(),
+      native: { ...completeEvidence().native, integrationControls: {} },
+    },
+    {
+      ...completeEvidence(),
+      native: {
+        ...completeEvidence().native,
+        observations: [
+          { ...completeEvidence().native.observations[0], input: [null] },
+          completeEvidence().native.observations[1],
+        ],
+      },
+    },
+  ]) {
+    assert.doesNotThrow(() => validateDebugPromptInputEvidence(evidence))
+    assert.equal(validateDebugPromptInputEvidence(evidence), false)
+  }
+})
+
 test('accepts an incomplete report only when its status is incomplete', () => {
   const evidence = {
     schema: 'holi.codex-debug-prompt-input.v1',
