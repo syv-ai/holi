@@ -98,6 +98,23 @@ describe('Markdown move targets', () => {
     )
   })
 
+  it('relocates bare destinations containing noninitial angle characters', () => {
+    expect(
+      rewriteMarkdownMoveLinks(
+        '[greater](a>b.png) [less](a<b.png)',
+        'old/note.md',
+        'old/note.md',
+        'new/note.md',
+      ),
+    ).toBe('[greater](../old/a%3Eb.png) [less](../old/a%3Cb.png)')
+    expect(
+      rewriteMarkdownMoveLinks('[note](../old/a>b.md)', 'notes/ref.md', 'old/a>b.md', 'new/a>b.md'),
+    ).toBe('[note](../new/a%3Eb.md)')
+    expect(
+      rewriteMarkdownMoveLinks('[note](../old/a<b.md)', 'notes/ref.md', 'old/a<b.md', 'new/a<b.md'),
+    ).toBe('[note](../new/a%3Cb.md)')
+  })
+
   it('leaves non-inline and unresolved paths untouched', () => {
     const source =
       '[ref][target]\n\n[target]: peer.md\n\n<a href="peer.md">html</a>\n[bad](%ZZ.md) [escape](../../../outside.md) [separator](a%2Fb.md)'

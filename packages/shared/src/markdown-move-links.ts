@@ -58,6 +58,7 @@ function parseableSource(text: string): string {
 function validDestination(raw: string): boolean {
   const angle = raw.startsWith('<') && raw.endsWith('>')
   const value = angle ? raw.slice(1, -1) : raw
+  if (!angle && value.startsWith('<')) return false
   let depth = 0
   for (let index = 0; index < value.length; index++) {
     const character = value[index]!
@@ -68,7 +69,8 @@ function validDestination(raw: string): boolean {
       index++
       continue
     }
-    if (character === '<' || character === '>' || /[\r\n]/.test(character)) return false
+    if ((angle && (character === '<' || character === '>')) || /[\r\n]/.test(character))
+      return false
     if (!angle) {
       if (/[\x00-\x20\x7f]/.test(character)) return false
       if (character === '(') depth++
