@@ -26,7 +26,7 @@ import {
   type GoogleCapabilityDeps,
 } from '../main/capabilities'
 import { createGoogleData } from '../main/data'
-import type { MailPage } from '../main/gmail'
+import { readThread, type MailPage } from '../main/gmail'
 import { cacheKey, syncThreads } from '../main/mail-sync'
 
 let dir: string
@@ -915,9 +915,9 @@ describe('syncThreads', () => {
           history: [
             {
               id: '5005',
-              messagesDeleted: [
-                { message: { id: 'invitation-m1', threadId: 'invitation' } },
-                { message: { id: 'unrelated-m1', threadId: 'unrelated' } },
+              messagesDeleted: [{ message: { id: 'invitation-m1', threadId: 'invitation' } }],
+              labelsRemoved: [
+                { message: { id: 'unrelated-m1', threadId: 'unrelated' }, labelIds: ['INBOX'] },
               ],
             },
           ],
@@ -970,6 +970,198 @@ describe('syncThreads', () => {
       expect(next).not.toHaveProperty('unreadableThreadIds')
     },
   )
+
+  it.each(['404', 'surviving reply', '503', 'timeout'])(
+    'checks a deletion from Load more without caching the continuation (%s)',
+    async (verdict) => {
+      const healthy = rawThread('healthy', 'Other mail')
+      const id = 'invitation'
+      const inviteMessage = message(
+        'invite-message',
+        id,
+        [
+          ['Subject', 'Meeting'],
+          ['Content-Type', 'text/calendar; method=REQUEST'],
+        ],
+        ['INBOX'],
+      )
+      const calendarPart = {
+        ...inviteMessage,
+        payload: { ...inviteMessage.payload, mimeType: 'text/calendar' },
+      }
+      const sent = message('sent-reply', id, [['Subject', 'Re: Meeting']], ['SENT'])
+      const sentReply = { ...sent, payload: { ...sent.payload, mimeType: 'text/plain' } }
+      const messages = verdict === 'surviving reply' ? [calendarPart, sentReply] : [calendarPart]
+      const metadata = { id, messages }
+      const initial = gmail(
+        {
+          listPages: {
+            '': { threads: [{ id: 'healthy' }], nextPageToken: 'next' },
+            next: { threads: [{ id: 'invitation' }] },
+          },
+          threads: { healthy, invitation: metadata },
+        },
+        {},
+        (url) => {
+          if (url.pathname.endsWith(`/threads/${id}`) && url.searchParams.get('format') === 'full')
+            return Promise.resolve(
+              Response.json({
+                id,
+                messages: messages.map((m) => ({
+                  ...m,
+                  payload: { ...m.payload, body: { size: 0 } },
+                })),
+              }),
+            )
+        },
+      )
+      const first = await searchMail(initial.api)
+      expect(first).toMatchObject({ threads: [{ id: 'healthy' }], nextPageToken: 'next' })
+      const continuation = await searchMail(initial.api, { pageToken: first.nextPageToken })
+      expect(continuation).toMatchObject({
+        threads: [{ id: 'invitation', hasInvite: true }],
+        nextPageToken: null,
+      })
+      const opened = await readThread(initial.api, continuation.threads[0]!.id)
+      expect(opened.id).toBe(id)
+      expect(opened.messages.find((item) => item.id === inviteMessage.id)?.hasCalendarPayload).toBe(
+        true,
+      )
+      // An unchanged first-page delta must not contain the continuation row.
+      expect((await searchMail(initial.api)).threads.map((row) => row.id)).toEqual(['healthy'])
+
+      const deadlines = verdict === 'timeout' ? captureDeadlines() : undefined
+      const delta = gmail(
+        {
+          list: [{ id: 'healthy' }],
+          threads: { healthy, invitation: { id, messages: [sentReply] } },
+          history: {
+            historyId: '5005',
+            history: [
+              {
+                id: '5005',
+                messagesDeleted: [{ message: { id: inviteMessage.id, threadId: id } }],
+              },
+            ],
+          },
+          missingThreads: verdict === '404' ? [id] : [],
+          failedThreads: verdict === '503' ? [id] : [],
+        },
+        {},
+        (url, signal) => {
+          if (
+            !deadlines ||
+            !url.pathname.endsWith(`/threads/${id}`) ||
+            url.searchParams.get('format') !== 'metadata'
+          )
+            return
+          const response = beforeHeaders(signal)
+          deadlines.expire(signal)
+          return response
+        },
+      )
+      const page = await searchMail(delta.api).finally(() => deadlines?.restore())
+      const failed = verdict === '503' || verdict === 'timeout'
+      expect(page.threads.map((row) => row.id)).toEqual(['healthy'])
+      expect(page.notFoundThreadIds).toEqual(verdict === '404' ? [id] : undefined)
+      expect(page.unreadableThreadIds).toEqual(failed ? [id] : undefined)
+
+      if (failed) {
+        // The failed resource is still off-page on Retry, and not in the new history window.
+        const retry = gmail({
+          list: [{ id: 'healthy' }],
+          threads: { healthy },
+          missingThreads: [id],
+          profile: { historyId: '5006' },
+        })
+        const recovered = await searchMail(retry.api, { refresh: true })
+        expect(recovered).toMatchObject({ threads: [{ id: 'healthy' }], notFoundThreadIds: [id] })
+        expect(recovered).not.toHaveProperty('unreadableThreadIds')
+      }
+
+      const unchanged = gmail({}, {}, (url) => {
+        if (!url.pathname.endsWith('/history')) return
+        const since = failed ? '5006' : '5005'
+        return Promise.resolve(
+          url.searchParams.get('startHistoryId') === since
+            ? Response.json({ historyId: since })
+            : Response.json({}, { status: 400 }),
+        )
+      })
+      const next = await searchMail(unchanged.api)
+      expect(next.threads.map((row) => row.id)).toEqual(['healthy'])
+      expect(next).not.toHaveProperty('notFoundThreadIds')
+      expect(next).not.toHaveProperty('unreadableThreadIds')
+    },
+  )
+
+  it('does not move past a mailbox-wide batch deletion too large to verify', async () => {
+    const healthy = rawThread('healthy', 'Kept')
+    await searchMail(gmail({ list: [{ id: 'healthy' }], threads: { healthy } }).api)
+    const deletion = {
+      id: '5005',
+      messagesDeleted: Array.from({ length: 1_000 }, (_, i) => ({
+        message: { id: `message-${i}`, threadId: `thread-${i}` },
+      })),
+    }
+    const { api } = gmail({ list: [{ id: 'healthy' }], threads: { healthy } }, {}, (url) => {
+      if (!url.pathname.endsWith('/history')) return
+      const history = url.searchParams.get('startHistoryId') === '5000' ? [deletion] : []
+      return Promise.resolve(Response.json({ historyId: '5005', history }))
+    })
+    await expect(searchMail(api)).rejects.toThrow()
+    await expect(searchMail(api)).rejects.toThrow()
+  })
+
+  it('does not deliver a late off-page 404 from a retired account to its replacement', async () => {
+    let entered!: (event: 'probe') => void
+    let release!: (response: Response) => void
+    const started = new Promise<'probe'>((resolve) => (entered = resolve))
+    const response = new Promise<Response>((resolve) => (release = resolve))
+    const oldApi = gmail(
+      {
+        history: {
+          historyId: '5005',
+          history: [
+            { id: '5005', messagesDeleted: [{ message: { id: 'm1', threadId: 'shared' } }] },
+          ],
+        },
+      },
+      {},
+      (url) => {
+        if (url.pathname.endsWith('/threads/shared')) {
+          entered('probe')
+          return response
+        }
+      },
+    ).api
+    await searchMail(gmail({}).api)
+    const old = createGoogleData({ api: () => oldApi, cache })
+
+    const replacementCache = openGoogleCache(join(dir, 'replacement.db'))
+    const replacementApi = gmail({
+      list: [{ id: 'shared' }],
+      threads: { shared: rawThread('shared', 'Mail in the replacement account') },
+    }).api
+    const replacement = createGoogleData({ api: () => replacementApi, cache: replacementCache })
+    const pending = old.threads({})
+    try {
+      expect(await Promise.race([started, pending])).toBe('probe')
+      old.forget()
+      expect((await replacement.threads({})).threads.map(({ id }) => id)).toEqual(['shared'])
+      release(Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 }))
+      await expect(pending).rejects.toThrow()
+      const current = await replacement.threads({})
+      expect(current.threads.map(({ subject }) => subject)).toEqual([
+        'Mail in the replacement account',
+      ])
+      expect(current).not.toHaveProperty('notFoundThreadIds')
+    } finally {
+      release(Response.json({}, { status: 404 }))
+      await pending.catch(() => {})
+      replacementCache.close()
+    }
+  })
 
   it('evicts a changed thread after a metadata 404, including from another cached list', async () => {
     const list = [{ id: 'deleted' }, { id: 'healthy' }]

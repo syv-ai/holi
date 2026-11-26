@@ -36,6 +36,12 @@ import { isGmailMessageId } from './gmail-thread'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
+// History is mailbox-wide, including threads never returned to a Holi reader.
+// Bound both its traversal and the work it can fan out into on one sync.
+const MAX_HISTORY_PAGES = 20
+const MAX_HISTORY_CHANGES = 10_000
+const MAX_DELTA_READS = 500
+
 /**
  * Which labels a cached summary can be repatched from, rather than refetched.
  *
@@ -140,20 +146,32 @@ export async function syncThreads(
   const history: RawHistoryRecord[] = []
   let historyId: string | undefined
   let pageToken: string | undefined
+  let remainingChanges = MAX_HISTORY_CHANGES
   try {
-    do {
+    for (let pages = 0; ; pages++) {
+      if (pages === MAX_HISTORY_PAGES) throw historyBudgetExceeded()
       const page = await api.get<RawHistoryPage>(`${BASE}/history`, {
         startHistoryId: since,
         pageToken,
+        maxResults: '100',
         // Gmail's labelId filter omits cross-label updates to existing threads:
         // a SENT-only reply to an inbox thread is precisely such an update. Read
-        // mailbox history unfiltered, then restrict refetches to cached threads
-        // (plus explicit arrivals into this mailbox) below.
+        // mailbox history unfiltered, then resolve query rows and deletion probes below.
       })
-      history.push(...(page.history ?? []))
+      for (const record of page.history ?? []) {
+        remainingChanges -=
+          1 +
+          (record.messagesAdded?.length ?? 0) +
+          (record.messagesDeleted?.length ?? 0) +
+          (record.labelsAdded?.length ?? 0) +
+          (record.labelsRemoved?.length ?? 0)
+        if (remainingChanges < 0) throw historyBudgetExceeded()
+        history.push(record)
+      }
       historyId = page.historyId ?? historyId
       pageToken = page.nextPageToken
-    } while (pageToken !== undefined)
+      if (pageToken === undefined) break
+    }
   } catch (error) {
     // Gmail keeps roughly a week. Older than that is a resync, not a failure,
     // and must never reach the user as one.
@@ -166,20 +184,25 @@ export async function syncThreads(
   const { changed, deleted, left, patches } = readHistory(history, label)
   const cachedIds = new Set(cached.map((thread) => thread.id))
   // History's label changes describe individual messages, while Gmail's list
-  // membership is decided across the whole conversation. Confirm every
-  // departure with the active query before removing a cached thread.
-  const departures = new Set([...left, ...deleted])
+  // membership is decided across the whole conversation. Confirm departures
+  // with the active query before removing a cached row. A deletion alone is
+  // not an arrival for an uncached thread, and doesn't need a query scan.
+  const departures = new Set([...left, ...[...deleted].filter((id) => cachedIds.has(id))])
   const candidatesToConfirm = new Set([
     ...departures,
     ...[...changed].filter((id) => !cachedIds.has(id)),
   ])
+  if (new Set([...candidatesToConfirm, ...changed, ...deleted]).size > MAX_DELTA_READS)
+    throw historyBudgetExceeded()
+
   const admitted = await findQueryMatches(api, options, candidatesToConfirm)
   const departed = new Set([...departures].filter((id) => !admitted.has(id)))
 
-  // Losing one message can remove a thread from the query without removing
-  // the thread itself. Probe omitted deletions for known rows only: history
-  // covers the whole mailbox, but the cache bounds this extra work.
-  const probes = [...deleted].filter((id) => cachedIds.has(id) && !admitted.has(id))
+  // The account's messagesDeleted history is the worklist, not the cached
+  // first page: a thread open from Load more may not be in any cached list.
+  // Losing one message isn't proof of absence. Probe that exact resource
+  // without admitting it to the list or relying on query omission as evidence.
+  const probes = [...deleted].filter((id) => !admitted.has(id))
   const { threads: refreshed, outcomes } = await fetchThreadSummaries(
     api,
     [...[...changed].filter((id) => !candidatesToConfirm.has(id)), ...admitted],
@@ -206,6 +229,12 @@ export async function syncThreads(
   cache.writeThreads(key, [...threads, ...cached.filter(({ id }) => retain.has(id))])
   if (!result.unreadableThreadIds && historyId !== undefined) cache.setHistoryId(key, historyId)
   return result
+}
+
+function historyBudgetExceeded(): Error {
+  // Don't truncate history and commit its mailbox-wide cursor, or fall back
+  // to a fresh page that can't report the unprocessed deletion evidence.
+  return new Error('Too many Gmail changes to check in one refresh; mail history was not advanced')
 }
 
 function recordReads(
