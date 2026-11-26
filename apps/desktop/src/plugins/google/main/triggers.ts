@@ -6,8 +6,9 @@
  * **It polls only while an approved schedule listens**, and only for what it
  * listens for: the agent says so at every check (`interest`), and with
  * nothing listening there is no timer and no request. Every few minutes then:
- * the agenda (one request per calendar), and each query through the mail
- * cache's `history.list` delta, one request when nothing is new.
+ * the agenda (one request per calendar), and a fresh first page of up to
+ * 25 mail threads per query. It compares observed thread versions without
+ * rebasing the mail readers' history cursors.
  *
  * **Mail is what changed while Holi watched.** A query's first look is the
  * baseline, so a restart does not fire on the mail already there; what

@@ -9,6 +9,9 @@
     "scripts/agent-inbox-542-smoke-main.ts",
     "scripts/agent-inbox-542-smoke-renderer.tsx",
     "scripts/folder-subscriptions-native-smoke.tsx",
-    "scripts/folder-subscriptions-native-smoke-main.ts"
+    "scripts/folder-subscriptions-native-smoke-main.ts",
+    "scripts/mail-invitation-smoke-main.ts",
+    "scripts/mail-invitation-smoke-renderer.tsx",
+    "scripts/mail-invitation-smoke-fixture.ts"
   ]
 }
