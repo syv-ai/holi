@@ -17,6 +17,14 @@ const messageText = (item) =>
   Array.isArray(item.content) ? item.content.map((part) => part.text ?? '').join('') : item.content
 
 // Serialized into the existing owned PTY; its descendants retain the same supervisor.
+export async function runOwnedCommand(child, label) {
+  const exit = await child.waitForExit()
+  await child.close()
+  const output = clean(child.output.toString())
+  if (exit.code !== 0 || child.failure) throw Error(`${label} failed: ${output.slice(-4000)}`)
+  return output
+}
+
 async function captureNativeOutput(args) {
   const { spawn } = await import('node:child_process')
   const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -198,11 +206,7 @@ export async function runDebugPromptInputCandidate() {
         ['-f', policy, '--', process.execPath, ...args],
         label,
       )
-      const exit = await child.waitForExit()
-      const output = clean(child.output.toString())
-      await child.close()
-      if (exit.code !== 0 || child.failure) throw Error(`${label} failed: ${output.slice(-4000)}`)
-      return output
+      return runOwnedCommand(child, label)
     }
     n.containment = JSON.parse(
       await command(
