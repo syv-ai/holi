@@ -72,11 +72,15 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
       cli: {
         dispatch: async ({ params }) => {
           const session = (params as { session?: string }).session ?? ''
-          cliJobs.push(session)
-          return { value: session, text: session }
+          const label = (params as { label?: string }).label ?? ''
+          cliJobs.push(`${session}|${label}`)
+          return { value: `${session}|${label}`, text: `${session}|${label}` }
         },
         commands: () => [
-          { name: 'fixture.who', cli: { args: [], summary: 'calling job', job: 'session' } },
+          {
+            name: 'fixture.who',
+            cli: { args: ['label'], summary: 'calling job', job: 'session' },
+          },
         ],
         rootFor: async () => root,
         machine: {
@@ -129,13 +133,16 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
             { CLAUDE_JOB_DIR: jobDir },
           ),
         ).toMatchObject({ stdout: 'Opus · 42% context', stderr: '' })
-        expect(await shell([cli, 'fixture', 'who'], '', { CLAUDE_JOB_DIR: jobDir })).toMatchObject({
-          stdout: 'abcd1234\n',
+        const label = `Ada's café "vault" ${index}`
+        expect(
+          await shell([cli, 'fixture', 'who', label], '', { CLAUDE_JOB_DIR: jobDir }),
+        ).toMatchObject({
+          stdout: `abcd1234|${label}\n`,
           stderr: '',
         })
       }
       expect(jobs).toEqual(['abcd1234', 'abcd1234'])
-      expect(cliJobs).toEqual(['abcd1234', 'abcd1234'])
+      expect(cliJobs).toEqual([`abcd1234|Ada's café "vault" 0`, `abcd1234|Ada's café "vault" 1`])
       await vi.waitFor(() => expect(statuses).toEqual(['abcd1234', 'abcd1234']))
     } finally {
       await server.stop()
