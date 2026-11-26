@@ -130,10 +130,22 @@ describe('document footnotes', () => {
   })
 
   it('uses the first matching definition without discarding duplicate definitions on load or setContent', () => {
-    const source = 'See[^A].\n\n[^a]: First definition.\n\n[^A]: Duplicate definition.'
+    const source =
+      'See[^A] and[^Æ].\n\n[^a]: First definition.\n\n[^A]: Duplicate definition.\n\n[^æ]: Unicode note.'
     const editor = open('Old content.')
     editor.commands.setContent(source, { contentType: 'markdown' })
-    expect(editor.view.dom.querySelectorAll('ol > li')).toHaveLength(2)
+    expect(editor.view.dom.querySelectorAll('ol > li')).toHaveLength(3)
+    const exported = new DOMParser().parseFromString(editor.getHTML(), 'text/html')
+    const exportedNotes = Array.from(exported.querySelectorAll('li'))
+    const exportedReferences = exported.querySelectorAll<HTMLAnchorElement>('sup a')
+    expect(
+      Array.from(
+        exportedReferences,
+        (anchor) =>
+          exportedNotes.find((note) => note.id === decodeURIComponent(anchor.hash.slice(1)))
+            ?.textContent,
+      ),
+    ).toEqual(['First definition.', 'Unicode note.'])
     fireEvent.click(references(editor)[0]!)
     expect(
       editor.view.dom.querySelector('ol > li')!.contains(document.getSelection()!.anchorNode),

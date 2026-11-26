@@ -231,10 +231,11 @@ export const FootnoteReference = Node.create({
   },
   renderHTML({ node, HTMLAttributes }) {
     const label = String(node.attrs.label)
+    const id = `footnote-${encodeURIComponent(normalizedLabel(label))}`
     return [
       'sup',
       mergeAttributes(HTMLAttributes, { 'data-footnote-reference': label, class: 'text-xs' }),
-      ['a', { href: `#footnote-${encodeURIComponent(label)}` }, label],
+      ['a', { href: `#${encodeURIComponent(id)}` }, label],
     ]
   },
   addNodeView() {
@@ -300,7 +301,7 @@ export const FootnoteDefinition = Node.create({
       'li',
       mergeAttributes(HTMLAttributes, {
         'data-footnote-definition': label,
-        id: `footnote-${encodeURIComponent(label)}`,
+        id: `footnote-${encodeURIComponent(normalizedLabel(label))}`,
       }),
       0,
     ]
