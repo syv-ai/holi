@@ -18,9 +18,15 @@ const clean = (text) =>
 /** Exercise native consent and capture initial-session context without personal configuration. */
 export async function runNativeInitialFixture() {
   const evidence = {
-    scenario: 'initialTUI',
+    scenario: 'profileAwareDebugPromptInput',
     status: 'incomplete',
-    classification: 'setup-unavailable',
+    classification: 'incomplete-proof',
+    resolver: {
+      candidate: 'codex debug prompt-input',
+      requiredOutput: 'structured effective developer instruction text',
+      status: 'not-observed',
+      note: 'Do not infer effective instructions from rendered prompts or reconstruct config merging.',
+    },
     consent: [],
     trustChanges: [],
     hooks: [],
