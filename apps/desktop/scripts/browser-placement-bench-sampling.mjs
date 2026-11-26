@@ -7,8 +7,11 @@ export function createTrialSampling({ condition }) {
   let invalidReason = null
   let totals = Object.fromEntries(counterNames.map((name) => [name, 0]))
   let observations = 0
+  let finished = false
+  const transitions = []
 
   function observe(snapshot) {
+    if (finished) throw new Error('trial sampling already finished')
     const state = snapshot?.condition
     if (
       !state ||
@@ -44,12 +47,14 @@ export function createTrialSampling({ condition }) {
       focused: state?.focused,
       visible: state?.visible,
       minimized: state?.minimized,
-      stats: counters,
+      stats: counters ? { ...counters } : null,
     }
   }
 
   function finish(snapshot) {
+    if (finished) throw new Error('trial sampling already finished')
     observe(snapshot)
+    finished = true
     // First and terminal snapshots both contribute their absolute counters; subsequent
     // snapshots contribute deltas. This captures a short final interval exactly once.
     if (observations === 1 && previous?.stats) {
@@ -68,5 +73,14 @@ export function createTrialSampling({ condition }) {
       },
     }
   }
-  return { observe, finish }
+  return {
+    observe,
+    finish,
+    transition(event) {
+      if (!finished) {
+        transitions.push(event)
+        invalidReason ??= 'foreground condition changed during trial'
+      }
+    },
+  }
 }

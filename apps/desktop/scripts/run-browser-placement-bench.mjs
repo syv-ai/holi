@@ -15,6 +15,7 @@ import {
   assertPlacementCounters,
 } from './browser-placement-bench-analysis.mjs'
 import { scenarioNames } from './browser-placement-bench-scenarios.mjs'
+import { selectScenario } from './browser-placement-bench-scenarios.mjs'
 const EXPECTED_SOURCE_HASH = '4fa1cc0a0ee188d981910085e881488ddcc19592105d00c1b492a831058b5726'
 import { build } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -33,6 +34,10 @@ const option = (name, fallback) => {
   const index = args.indexOf(name)
   return index < 0 ? fallback : args[index + 1]
 }
+assert(
+  args.includes('--focus') && option('--focus') === 'foreground',
+  '--focus foreground is required',
+)
 const outArg = option('--out', join(tmpdir(), `holi-547-evidence-${Date.now()}-${process.pid}`))
 const out = resolve(outArg)
 const seconds = Number(option('--seconds', '60'))
@@ -41,6 +46,7 @@ const repetitions = Number(option('--repetitions', '3'))
 const countsOnly = args.includes('--counts')
 const variant = option('--variant', 'baseline')
 const scenario = option('--scenario', '')
+if (scenario) selectScenario(scenario)
 assert(!scenario || scenarioNames.includes(scenario), `unsupported scenario: ${scenario}`)
 const selectedScenarioCount = scenario ? 1 : scenarioNames.length
 assert(variant === 'baseline', '--variant supports baseline only; hybrid is rejected')
@@ -384,12 +390,14 @@ try {
     try {
       const owned = [...ownedProcesses.remainingPids].includes(child.pid)
       if (owned) await ownedProcesses.stopAll()
+      if ([...ownedProcesses.remainingPids].includes(child.pid))
+        throw new Error(`owned benchmark processes remain; runtime retained at ${root}`)
     } catch (error) {
       cancellation.dispose()
       throw new Error(`${error.message}; runtime retained at ${root}`)
     }
   }
-  if (root) await rm(root, { recursive: true, force: true })
+  if (root && !child?.pid) await rm(root, { recursive: true, force: true })
   await writeFile(
     join(out, 'cleanup.json'),
     JSON.stringify(
