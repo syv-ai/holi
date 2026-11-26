@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   cp,
   lstat,
@@ -141,7 +141,39 @@ try {
     signal: controller.signal,
     metadata: { xcode, runtime: runtime.identifier, deviceType },
   })
-  await simctl('keychain', simulator, 'add-root-cert', gitFixture.cert)
+  const certificateSha256 = createHash('sha256')
+    .update(await readFile(gitFixture.cert))
+    .digest('hex')
+  await whileCommandPending(
+    simctl('keychain', simulator, 'add-root-cert', gitFixture.cert),
+    async () => {
+      const observation = {
+        runId,
+        simulator,
+        certificateSha256,
+        observedAt: Date.now(),
+        probes: {},
+      }
+      for (const [name, args] of [
+        ['securityd', ['spawn', simulator, 'launchctl', 'print', 'system/com.apple.securityd']],
+        ['trustd', ['spawn', simulator, 'launchctl', 'print', 'system/com.apple.trustd']],
+      ]) {
+        try {
+          observation.probes[name] = await command('xcrun', ['simctl', ...args], {
+            timeout: 8_000,
+            outputLimit: 4_000,
+          })
+        } catch (error) {
+          observation.probes[name] = { error: String(error).slice(0, 500) }
+        }
+      }
+      await writeFile(
+        join(artifacts, 'pending-certificate-install-observation.json'),
+        JSON.stringify(observation, null, 2),
+      )
+    },
+    5_000,
+  )
   await simctl('status_bar', simulator, 'override', '--time', '9:41')
   await simctl('install', simulator, app)
   const container = await simctl('get_app_container', simulator, bundleId, 'data')
