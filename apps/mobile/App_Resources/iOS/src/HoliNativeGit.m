@@ -188,6 +188,44 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
   }
   return 0;
 }
+static int HNGValidateIntegrationIndex(git_repository *repo, NSString *branch, NSDictionary *oldEntries) {
+  if (git_repository_state(repo) != GIT_REPOSITORY_STATE_NONE) return GIT_EINVALIDSPEC;
+  git_reference *head = NULL;
+  git_index *index = NULL;
+  int rc = git_repository_head(&head, repo);
+  NSString *expected = [@"refs/heads/" stringByAppendingString:branch];
+  if (rc == 0 && ![expected isEqual:[NSString stringWithUTF8String:git_reference_name(head) ?: ""]]) rc = GIT_EMODIFIED;
+  if (rc == 0) rc = git_repository_index(&index, repo);
+  if (rc == 0 && (git_index_version(index) != 2 || git_index_has_conflicts(index) || git_index_entrycount(index) != oldEntries.count)) rc = GIT_EINVALIDSPEC;
+  NSMutableSet *seen = [NSMutableSet set];
+  for (size_t i = 0; rc == 0 && i < git_index_entrycount(index); i++) {
+    const git_index_entry *entry = git_index_get_byindex(index, i);
+    if (!entry || !entry->path || (entry->flags & (GIT_INDEX_ENTRY_VALID | GIT_INDEX_ENTRY_EXTENDED)) || entry->flags_extended || git_index_entry_stage(entry) != 0 || (entry->mode != GIT_FILEMODE_BLOB && entry->mode != GIT_FILEMODE_BLOB_EXECUTABLE)) { rc = GIT_EINVALIDSPEC; break; }
+    NSString *path = [NSString stringWithUTF8String:entry->path];
+    NSDictionary *expectedEntry = path ? oldEntries[path] : nil;
+    if (!path || strcmp(path.UTF8String, entry->path) || [seen containsObject:path] || ![expectedEntry[@"oid"] isEqual:[NSString stringWithUTF8String:git_oid_tostr_s(&entry->id)]] || [expectedEntry[@"mode"] unsignedIntValue] != entry->mode) rc = GIT_EMODIFIED;
+    if (path) [seen addObject:path];
+  }
+  git_index_free(index); git_reference_free(head);
+  return rc;
+}
+static NSDictionary *HNGIntegrationMetadataImages(git_repository *repo, NSString *branch, NSError **error) {
+  NSString *base = [NSString stringWithUTF8String:git_repository_path(repo)];
+  NSMutableDictionary *images = [NSMutableDictionary dictionary];
+  for (NSString *name in @[@"index", @"HEAD", @"config", @"packed-refs", [@"refs/heads/" stringByAppendingString:branch], [@"refs/remotes/origin/" stringByAppendingString:branch]]) {
+    NSString *path = [base stringByAppendingPathComponent:name];
+    struct stat st;
+    if (lstat(path.fileSystemRepresentation, &st)) {
+      if (errno == ENOENT) { images[name] = NSNull.null; continue; }
+      if (error) *error = HNGPathError(errno, @"Cannot capture integration metadata"); return nil;
+    }
+    if (!S_ISREG(st.st_mode) || st.st_nlink != 1) { if (error) *error = HNGPathError(EINVAL, @"Unsupported integration metadata"); return nil; }
+    NSData *data = [NSData dataWithContentsOfFile:path options:0 error:error];
+    if (!data) return nil;
+    images[name] = [data base64EncodedStringWithOptions:0];
+  }
+  return images;
+}
 @implementation HoliNativeGit {
   NSString *_configuredOwner;
   NSString *_configuredRepositoryName;
@@ -904,28 +942,13 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   if(rc==0) rc=git_tree_walk(oldTree,GIT_TREEWALK_PRE,HNGIntegrationEntry,&oldPlan);
   if(rc==0) rc=git_tree_walk(newTree,GIT_TREEWALK_PRE,HNGIntegrationEntry,&newPlan);
   NSDictionary *oldEntries = oldPlan.entries, *newEntries = newPlan.entries;
-  git_index *index = NULL;
-  if (rc == 0) rc = git_repository_index(&index, repo);
-  if (rc == 0 && (git_index_version(index) != 2 || git_index_has_conflicts(index))) rc = GIT_EINVALIDSPEC;
-  if (rc == 0) {
-    NSMutableDictionary *indexEntries = [NSMutableDictionary dictionary];
-    for (size_t i = 0; i < git_index_entrycount(index); i++) {
-      const git_index_entry *entry = git_index_get_byindex(index, i);
-      if (!entry || !entry->path || (entry->flags & (GIT_INDEX_ENTRY_VALID | GIT_INDEX_ENTRY_EXTENDED)) || entry->flags_extended != 0 || (entry->mode != GIT_FILEMODE_BLOB && entry->mode != GIT_FILEMODE_BLOB_EXECUTABLE)) { rc = GIT_EINVALIDSPEC; break; }
-      NSString *path = [NSString stringWithUTF8String:entry->path];
-      if (!path || strcmp(path.UTF8String, entry->path) || git_index_entry_stage(entry) != 0 || indexEntries[path]) { rc = GIT_EINVALIDSPEC; break; }
-      indexEntries[path] = @{ @"oid": [NSString stringWithUTF8String:git_oid_tostr_s(&entry->id)], @"mode": @(entry->mode) };
-    }
-    if (rc == 0 && indexEntries.count != oldEntries.count) rc = GIT_EINVALIDSPEC;
-    if (rc == 0) for (NSString *path in oldEntries) {
-      NSDictionary *indexed = indexEntries[path];
-      if (!indexed || ![indexed[@"oid"] isEqual:oldEntries[path][@"oid"]] || ![indexed[@"mode"] isEqual:oldEntries[path][@"mode"]]) { rc = GIT_EINVALIDSPEC; break; }
-    }
-  }
+  if (rc == 0) rc = HNGValidateIntegrationIndex(repo, branch, oldEntries);
+  NSDictionary *metadataImages = rc == 0 ? HNGIntegrationMetadataImages(repo, branch, error) : nil;
+  if (rc == 0 && !metadataImages) rc = GIT_EINVALIDSPEC;
   NSDictionary *result=nil;
-  if(rc==0) result=@{@"rootGuard":rootGuard,@"identity":record,@"outcome":outcome,@"headOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(headCommit))],@"targetOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(targetCommit))],@"oldEntries":oldEntries, @"newEntries":newEntries,@"requiredPaths":({ NSMutableSet *paths=[NSMutableSet setWithArray:oldEntries.allKeys]; [paths addObjectsFromArray:newEntries.allKeys]; [paths.allObjects sortedArrayUsingSelector:@selector(compare:)]; })};
+  if(rc==0) result=@{@"metadataImages":metadataImages,@"rootGuard":rootGuard,@"identity":record,@"outcome":outcome,@"headOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(headCommit))],@"targetOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(targetCommit))],@"oldEntries":oldEntries, @"newEntries":newEntries,@"requiredPaths":({ NSMutableSet *paths=[NSMutableSet setWithArray:oldEntries.allKeys]; [paths addObjectsFromArray:newEntries.allKeys]; [paths.allObjects sortedArrayUsingSelector:@selector(compare:)]; })};
   else if(error) HNGError(error,rc);
-  git_index_free(index); git_tree_free(oldTree); git_tree_free(newTree); git_commit_free(headCommit); git_commit_free(targetCommit); git_reference_free(headRef); git_reference_free(targetRef); git_repository_free(repo);
+  git_tree_free(oldTree); git_tree_free(newTree); git_commit_free(headCommit); git_commit_free(targetCommit); git_reference_free(headRef); git_reference_free(targetRef); git_repository_free(repo);
   BOOL closed = [snapshot closeWithError:result ? error : nil];
   if (result && (!closed || ![rootGuard isEqual:[self integrationRootGuard:root error:error]])) return nil;
   return result;
@@ -952,6 +975,9 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   if (rc == 0) rc = git_reference_name_to_id(&currentHead, repo, localRef.UTF8String);
   if (rc == 0) rc = git_reference_name_to_id(&currentTarget, repo, trackingRef.UTF8String);
   if (rc == 0 && (!git_oid_equal(&currentHead, &expectedHead) || !git_oid_equal(&currentTarget, &expectedTarget))) rc = GIT_EMODIFIED;
+  if (rc == 0) rc = HNGValidateIntegrationIndex(repo, record[@"branch"], fresh[@"oldEntries"]);
+  NSDictionary *actualMetadata = rc == 0 ? HNGIntegrationMetadataImages(repo, record[@"branch"], error) : nil;
+  if (rc == 0 && (!actualMetadata || ![actualMetadata isEqual:fresh[@"metadataImages"]])) rc = GIT_EMODIFIED;
   NSMutableArray *cleanliness = [NSMutableArray array];
   NSDictionary *oldEntries = fresh[@"oldEntries"], *newEntries = fresh[@"newEntries"];
   NSUInteger ordinal = 0;
