@@ -219,6 +219,9 @@ jobs:
       - name: Exercise the generated Windows helper
         run: pnpm --filter @holi/desktop exec vitest run test/git-askpass.test.ts
 
+      - name: Exercise real Git authentication and Windows credential persistence
+        run: pnpm --filter @holi/desktop exec vitest run test/git-auth-integration.test.ts --project node
+
   windows-agent-launch:
     name: Windows agent launch and cleanup
     runs-on: windows-2025
