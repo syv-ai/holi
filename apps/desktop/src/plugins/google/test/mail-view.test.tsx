@@ -581,6 +581,7 @@ const invite: Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations'
   canRespond: true,
   responsePending: false,
   responseStatus: 'needsAction',
+  targetResponseStatus: null,
   recordedResponseStatus: null,
   sentResponseStatus: null,
   unavailableReason: null,
@@ -633,7 +634,12 @@ test('does not open a link from a reader whose Google account was relinked', asy
 
 test('a same-account relink blocks the old card link and Retry only rereads it', async () => {
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
-  const accepted = { ...invite, responseStatus: 'accepted' } as const
+  const accepted = {
+    ...invite,
+    responseStatus: 'accepted',
+    targetResponseStatus: 'accepted',
+    recordedResponseStatus: 'accepted',
+  } as const
   invitationMock.mockResolvedValue(invitations(accepted))
   const user = userEvent.setup()
   render(<MailView />)
@@ -758,7 +764,11 @@ test.each(['conference', 'event'] as const)(
 test('shows RSVP controls for an inline invitation without a filename or list badge', async () => {
   withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
   invitationMock.mockResolvedValue(
-    invitations({ ...invite, recordedResponseStatus: 'needsAction' }),
+    invitations({
+      ...invite,
+      recordedResponseStatus: 'needsAction',
+      targetResponseStatus: 'needsAction',
+    }),
   )
 
   await openThread()
@@ -784,11 +794,58 @@ test('shows Delegated as a recorded response, not as an RSVP action', async () =
   }
 })
 
+test('can accept on Calendar when only Gmail Sent already records acceptance', async () => {
+  withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
+  invitationMock.mockResolvedValue(
+    invitations({
+      ...invite,
+      responseStatus: 'accepted',
+      sentResponseStatus: 'accepted',
+      recordedResponseStatus: 'needsAction',
+      targetResponseStatus: 'needsAction',
+    }),
+  )
+  respondMock.mockResolvedValueOnce({
+    outcome: 'sent',
+    channel: 'calendar',
+    answer: 'accepted',
+    refreshPending: false,
+    invitation: {
+      ...invite,
+      responseStatus: 'accepted',
+      recordedResponseStatus: 'accepted',
+      targetResponseStatus: 'accepted',
+    },
+  })
+  const user = userEvent.setup()
+  await openThread()
+
+  const card = within(await screen.findByRole('article', { name: invite.title }))
+  expect(card.getByText('Response: Accepted')).toBeVisible()
+  const accept = card.getByRole('button', { name: 'Accept' })
+  expect(accept).toBeEnabled()
+  await user.click(accept)
+
+  expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
+    threadId: 't1',
+    expectedAccountSub: 'mail-view-account',
+    expectedBindingRevision: invite.bindingRevision,
+    expectedResponseTargetKey: invite.responseTargetKey,
+    identity: invite.identity,
+    answer: 'accepted',
+  })
+  await waitFor(() => expect(card.getByRole('status')).toHaveTextContent(/Google accepted/i))
+  expect(card.getByText('Response: Accepted')).toBeVisible()
+  expect(accept).toBeDisabled()
+  expect(card.getByRole('button', { name: 'Maybe' })).toBeEnabled()
+})
+
 test('distinguishes a recorded Calendar answer from a different verified Sent reply', async () => {
   withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
   const conflicting: typeof invite = {
     ...invite,
     responseStatus: 'tentative',
+    targetResponseStatus: 'tentative',
     recordedResponseStatus: 'tentative',
     sentResponseStatus: 'accepted',
   }
@@ -810,12 +867,18 @@ test('distinguishes a recorded Calendar answer from a different verified Sent re
 
 test('shows Calendar acceptance and the Gmail verification warning from response readback', async () => {
   withMessage({ body: 'Please join the sprint review.', html: null }, { hasCalendarPayload: true })
-  const initial = { ...invite, recordedResponseStatus: 'needsAction' } as const
+  const initial = {
+    ...invite,
+    recordedResponseStatus: 'needsAction',
+    targetResponseStatus: 'needsAction',
+  } as const
   const unavailableReason = 'Gmail could not verify the latest sent response'
   const recorded = { ...initial, recordedResponseStatus: 'accepted' } as const
   invitationMock
     .mockResolvedValueOnce(invitations(initial))
-    .mockResolvedValue(invitations({ ...recorded, responseStatus: 'accepted' }))
+    .mockResolvedValue(
+      invitations({ ...recorded, responseStatus: 'accepted', targetResponseStatus: 'accepted' }),
+    )
   respondMock.mockResolvedValueOnce({
     outcome: 'sent',
     channel: 'calendar',
@@ -824,6 +887,7 @@ test('shows Calendar acceptance and the Gmail verification warning from response
     invitation: {
       ...recorded,
       responseStatus: null,
+      targetResponseStatus: null,
       sentResponseStatus: null,
       canRespond: false,
       unavailableReason,
@@ -852,6 +916,7 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
   const previous = {
     ...invite,
     responseStatus: 'accepted',
+    targetResponseStatus: 'accepted',
     sentResponseStatus: 'accepted',
   } as const
   invitationMock.mockResolvedValueOnce(invitations(previous)).mockResolvedValueOnce(
@@ -859,6 +924,7 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
       ...invite,
       recordedResponseStatus: 'declined',
       responseStatus: null,
+      targetResponseStatus: null,
       sentResponseStatus: null,
       canRespond: false,
       responsePending: true,
@@ -870,6 +936,7 @@ test('Retry shows the Calendar answer without settling a contested Gmail send', 
       ...invite,
       recordedResponseStatus: 'declined',
       responseStatus: 'declined',
+      targetResponseStatus: 'declined',
       sentResponseStatus: 'declined',
     }),
   )
@@ -918,6 +985,7 @@ test('keeps a same-account meeting card join-only, with a strict Calendar fallba
       kind: 'meeting',
       canRespond: false,
       responseStatus: null,
+      targetResponseStatus: null,
       conferenceUrl: 'https://notzoom.us/j/123',
       conferenceLinkSource: 'calendar',
     }),
@@ -949,13 +1017,18 @@ test('keeps an uncertain occurrence response separate from the series and refres
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
   invitationMock.mockResolvedValueOnce(invitations(series, occurrence))
   invitationMock.mockResolvedValue(
-    invitations(series, { ...occurrence, responseStatus: 'declined' }),
+    invitations(series, {
+      ...occurrence,
+      responseStatus: 'declined',
+      targetResponseStatus: 'declined',
+      recordedResponseStatus: 'declined',
+    }),
   )
   respondMock.mockResolvedValueOnce({
     outcome: 'uncertain',
     channel: 'calendar',
     answer: 'declined',
-    invitation: { ...occurrence, responsePending: true },
+    invitation: null,
     refreshPending: true,
   })
   const user = userEvent.setup()
@@ -1030,6 +1103,7 @@ test('blocks the old Join link after an uncertain write until Retry reads the ca
       cancelled: true,
       canRespond: false,
       responseStatus: null,
+      targetResponseStatus: null,
       unavailableReason: 'This invitation was cancelled',
     }),
   )
@@ -1070,11 +1144,20 @@ test('retries invitation read failures and reconciles uncertainty without resend
     invitations({
       ...invite,
       canRespond: false,
+      responseStatus: null,
+      targetResponseStatus: null,
       responsePending: true,
       unavailableReason: 'The response could not be confirmed',
     }),
   )
-  invitationMock.mockResolvedValue(invitations({ ...invite, responseStatus: 'tentative' }))
+  invitationMock.mockResolvedValue(
+    invitations({
+      ...invite,
+      responseStatus: 'tentative',
+      targetResponseStatus: 'tentative',
+      sentResponseStatus: 'tentative',
+    }),
+  )
   respondMock.mockResolvedValue({
     outcome: 'uncertain',
     channel: 'gmail',
@@ -1171,7 +1254,13 @@ test('ignores an earlier invitation read after opening another thread and reopen
   let finish!: (value: ReturnType<typeof invitations>) => void
   invitationMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
   invitationMock.mockResolvedValue(
-    invitations({ ...invite, title: 'New revision', responseStatus: 'accepted' }),
+    invitations({
+      ...invite,
+      title: 'New revision',
+      responseStatus: 'accepted',
+      targetResponseStatus: 'accepted',
+      recordedResponseStatus: 'accepted',
+    }),
   )
   readMock.mockImplementation(async ({ id }: { id: string }) => ({
     id,
@@ -2924,6 +3013,7 @@ test('a normal reply replaces the open invitation with a fresh cancellation with
     cancelled: true,
     canRespond: false,
     responseStatus: null,
+    targetResponseStatus: null,
     responseTargetKey: null,
     unavailableReason: 'This invitation was cancelled',
   }
@@ -2947,7 +3037,12 @@ test('a normal reply replaces the open invitation with a fresh cancellation with
     if (latestRead?.id !== threadId) throw new Error('Thread not found')
     return latestRead.messages.some((message) => message.id === cancellation.id)
       ? invitations(cancelled)
-      : invitations({ ...invite, responseStatus: 'accepted' })
+      : invitations({
+          ...invite,
+          responseStatus: 'accepted',
+          targetResponseStatus: 'accepted',
+          recordedResponseStatus: 'accepted',
+        })
   })
 
   const user = userEvent.setup()

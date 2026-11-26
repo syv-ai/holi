@@ -58,10 +58,15 @@ function displayCard(
   card: InvitationFacts,
   navigation: Awaited<ReturnType<InvitationFacts['navigation']>>,
 ): MailInvitation {
+  const canRespond = canWrite(card)
   return projectMailInvitation({
     ...card.source,
     navigation: navigation(),
-    response: { ...card.responseFacts, canRespond: canWrite(card) },
+    response: {
+      ...card.responseFacts,
+      canRespond,
+      targetResponseStatus: canRespond ? card.reply.responseStatus : null,
+    },
   })
 }
 
@@ -122,6 +127,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
                   status: null,
                   sentStatus: null,
                   recordedCalendarStatus: null,
+                  targetResponseStatus: null,
                   targetKey: null,
                   pending: false,
                   canRespond: false,
@@ -164,17 +170,13 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           responseFacts,
         } = current
         const unchanged = (card: InvitationFacts): Omit<RespondResult, 'invitation'> | null => {
-          const channel = card.reply?.channel ?? card.noopChannel
-          if (
-            !channel ||
-            (card.recorded !== answer &&
-              !(
-                (canWrite(card) || card.noopChannel !== null) &&
-                card.recorded === null &&
-                card.responseFacts.status === answer
-              ))
-          )
-            return null
+          const channel =
+            canWrite(card) && card.reply.responseStatus === answer
+              ? card.reply.channel
+              : card.exactNoopAnswer === answer
+                ? 'calendar'
+                : null
+          if (!channel) return null
           return {
             outcome: 'unchanged',
             channel,
@@ -265,8 +267,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             const recorded = unchanged(newest)
             if (
               recorded &&
-              (newest.recorded === answer ||
-                newest.noopChannel !== null ||
+              (recorded.channel === 'calendar' ||
                 (newest.reply && sameWriteTarget(newest.reply, reply)))
             )
               throw new AlreadyRecorded(recorded, newest)

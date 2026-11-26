@@ -285,7 +285,12 @@ function InvitationCard({
               type="button"
               variant="outline"
               size="sm"
-              disabled={responseBlocked || stale || refreshPending || current === answer}
+              disabled={
+                responseBlocked ||
+                stale ||
+                refreshPending ||
+                invitation.targetResponseStatus === answer
+              }
               onClick={() => respond(answer)}
             >
               {label}
