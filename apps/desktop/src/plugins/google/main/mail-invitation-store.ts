@@ -6,6 +6,7 @@ import type { MailInvitationIdentity } from './mail-invitation'
 import {
   calendarLocatorKey,
   calendarLocatorMatches,
+  CalendarEvidenceStoreError,
   CALENDAR_RESOURCE_BUDGET,
   createCalendarEvidence,
   MAX_CALENDAR_LOCATORS,
@@ -506,10 +507,13 @@ export function createMailInvitationStore(userData: string) {
         }),
       })),
     async rememberCalendarLocator(locator: CalendarLocator, assertBinding: () => void) {
-      // A Calendar scan reads the journal before observing provider rows. With
-      // the immutable legacy keys loaded, binding and commit don't yield.
       assertBinding()
-      if (legacyKeys === undefined) initLegacy(await store.read())
+      // Provider reads (including deferred Join) can outlive the journal
+      // snapshot. Validate the current journal even when legacy keys are loaded.
+      const journal = await store.read().catch((cause) => {
+        throw new CalendarEvidenceStoreError(cause)
+      })
+      initLegacy(journal)
       assertBinding()
       retainLocator(locator)
     },

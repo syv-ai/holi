@@ -88,7 +88,7 @@ export function calendarLocatorMatches(copy: CalendarLocator, scope: Scope): boo
 export const MAX_CALENDAR_LOCATORS = 4096
 export const CALENDAR_RESOURCE_BUDGET = 32
 
-class CalendarEvidenceStoreError extends Error {
+export class CalendarEvidenceStoreError extends Error {
   readonly code = 'EVIDENCE_STORE_FAILURE'
 
   constructor(cause: unknown) {
