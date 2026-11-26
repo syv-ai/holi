@@ -79,13 +79,8 @@ const rfcId = (invite: Invite) => `<${mailId(invite)}@example.test>`
 const token = (mailbox: Mailbox) => `offline-only-${mailbox.sub}`
 export { token as fixtureToken }
 
-type Collections = {
-  'calendar#events': RawEvent
-  'calendar#calendarList': CalendarListEntry
-}
-
-function calendarItems<K extends keyof Collections>(kind: K, items?: Collections[K][]) {
-  return Response.json(items === undefined ? { kind } : { kind, items })
+function eventItems(items?: RawEvent[], accessRole = 'owner') {
+  return Response.json({ kind: 'calendar#events', accessRole, items })
 }
 
 function googleError(code: number, status: string, reason: string, message: string) {
@@ -392,7 +387,8 @@ export function createInvitationTransport() {
               summary: 'Shared Calendar',
               accessRole: 'reader',
             })
-          if (resource === calendarList) return calendarItems('calendar#calendarList', calendars)
+          if (resource === calendarList)
+            return Response.json({ kind: 'calendar#calendarList', items: calendars })
           const id = decodeURIComponent(resource.slice(calendarList.length + 1))
           const entry = calendars.find((row) => (id === 'primary' ? row.primary : row.id === id))
           return entry ? Response.json(entry) : notFound()
@@ -434,14 +430,20 @@ export function createInvitationTransport() {
             assert(Number.isInteger(offset) && offset >= 0)
             return Response.json({
               kind: 'calendar#events',
+              accessRole: 'owner',
               items: upcoming.slice(offset, offset + 1),
               nextPageToken: offset + 1 < upcoming.length ? String(offset + 1) : undefined,
             })
           }
           assert.equal(query.get('singleEvents'), 'false')
           assert.equal(query.get('showDeleted'), 'true')
-          const matched = mailbox === mailboxA && uid === inline.uid
-          if (matched) {
+          // The inline invitation is hidden on a visible primary calendar.
+          // Without opt-in, events.list returns no such row (events.get still can).
+          if (
+            mailbox === mailboxA &&
+            uid === inline.uid &&
+            query.get('showHiddenInvitations') === 'true'
+          ) {
             const version = targets.get(eventId)!.version
             if (version > 1) calendarReadbackVersions.add(version)
             if (heldCalendarRead && heldCalendarRead.skip-- === 0) {
@@ -450,29 +452,29 @@ export function createInvitationTransport() {
               pending.entered()
               await pending.released
             }
-            return calendarItems('calendar#events', [event(eventId)])
+            return eventItems([event(eventId)])
           }
-          if (mailbox === mailboxA && uid === series.uid)
-            return calendarItems('calendar#events', [event(seriesId)])
+          if (mailbox === mailboxA && uid === series.uid) return eventItems([event(seriesId)])
           if (mailbox === mailboxA && uid === attachment.uid && missNextAttachmentCollection) {
             missNextAttachmentCollection = false
             return notFound()
           }
           if (mailbox === mailboxA && uid === attachment.uid && targets.has(attachmentEventId)) {
             attachmentCopyReads++
-            return calendarItems('calendar#events', [event(attachmentEventId)])
+            return eventItems([event(attachmentEventId)])
           }
-          return calendarItems('calendar#events')
+          return eventItems()
         }
         if (resource === `${calendar}/calendars/${encodeURIComponent(sharedCalendar)}/events`) {
           if (mailbox !== mailboxA) return notFound()
-          return calendarItems('calendar#events', [])
+          return eventItems([], 'reader')
         }
         if (resource === `${primary}/${seriesId}/instances`) {
           if (mailbox !== mailboxA) return notFound()
+          assert(!query.has('showHiddenInvitations'))
           assert.equal(query.get('showDeleted'), 'true')
           assert.equal(Date.parse(query.get('originalStart') ?? ''), Date.parse(occurrenceSlot))
-          return calendarItems('calendar#events', [event(occurrenceId)])
+          return eventItems([event(occurrenceId)])
         }
         // A collection denial isn't an empty list; a missing exact event isn't
         // a collection response at all. Keep both distinct from typed empties.
@@ -480,8 +482,10 @@ export function createInvitationTransport() {
           return notFound()
         if (resource.startsWith(`${primary}/`)) {
           const id = resource.slice(primary.length + 1)
-          if (!id.includes('/'))
+          if (!id.includes('/')) {
+            assert(!query.has('showHiddenInvitations'))
             return mailbox === mailboxA && targets.has(id) ? Response.json(event(id)) : notFound()
+          }
         }
         const api = resource.startsWith(`${gmail}/`) ? gmail : googleGmail
         if (resource === `${api}/settings/sendAs`)
