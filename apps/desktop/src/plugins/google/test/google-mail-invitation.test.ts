@@ -194,6 +194,10 @@ async function rig() {
     attachmentErrors: new Map<string, number>(),
     calendarUidQueries: [] as string[],
     events: new Map<string, ReturnType<typeof event>[]>(),
+    hiddenInvitationIds: new Set<string>(),
+    // CalendarList can report a readable subscription while events.list sees
+    // a later ACL downgrade. An exact get with this role still masks the event.
+    freeBusyEventCollections: new Set<string>(),
     instances: new Map<
       string,
       (Omit<ReturnType<typeof event>, 'iCalUID' | 'organizer'> & {
@@ -372,15 +376,13 @@ async function rig() {
     ]
     const calendarKey = (calendarId: string) =>
       calendarId === state.primaryCalendarId ? 'primary' : calendarId
-    const canReadEvents = (id: string) =>
-      id === 'primary'
-        ? !state.primaryMissing
-        : secondaryCalendars.some(
-            (calendar) =>
-              calendar.id === id &&
-              !('deleted' in calendar && calendar.deleted) &&
-              calendar.accessRole !== 'freeBusyReader',
-          )
+    const eventAccessRole = (id: string) => {
+      if (state.freeBusyEventCollections.has(id)) return 'freeBusyReader'
+      if (id === 'primary') return state.primaryMissing ? undefined : 'owner'
+      return secondaryCalendars.find(
+        (calendar) => calendar.id === id && !('deleted' in calendar && calendar.deleted),
+      )?.accessRole
+    }
     const calendarListPath = /\/users\/me\/calendarList(?:\/([^/]+))?$/.exec(url.pathname)
     if (calendarListPath) {
       const calendars = [
@@ -394,7 +396,11 @@ async function rig() {
         const entry = calendars.find((row) =>
           id === 'primary' ? 'primary' in row && row.primary : row.id === id,
         )
-        return entry ? json(entry) : json({}, 404)
+        if (!entry) return json({}, 404)
+        return json({
+          ...entry,
+          accessRole: eventAccessRole(calendarKey(entry.id)) ?? entry.accessRole,
+        })
       }
       if (state.refreshOnQuery) now = 3_600_000
       const showHidden = url.searchParams.get('showHidden') === 'true'
@@ -427,7 +433,10 @@ async function rig() {
         )
       const calendarId = decodeURIComponent(instancePath[1]!)
       const id = calendarKey(calendarId)
-      if (!canReadEvents(id)) return json({}, 404)
+      const accessRole = eventAccessRole(id)
+      if (accessRole === undefined) return json({}, 404)
+      if (accessRole === 'freeBusyReader')
+        return json({ kind: 'calendar#events', accessRole, items: [] })
       const instances = state.instances.get(id) ?? []
       const seriesId = decodeURIComponent(instancePath[2]!)
       const original = url.searchParams.get('originalStart')
@@ -435,6 +444,7 @@ async function rig() {
         return json({}, 503)
       return json({
         kind: 'calendar#events',
+        accessRole,
         nextPageToken: state.instanceContinuationUnavailable ? 'next' : undefined,
         items: instances.filter(
           (item) =>
@@ -451,7 +461,12 @@ async function rig() {
       const calendarId = decodeURIComponent(calendar[1]!)
       const id = calendarKey(calendarId)
       if (state.calendarUnavailable) throw new TypeError('Calendar offline')
-      if (!canReadEvents(id)) return json({}, 404)
+      const accessRole = eventAccessRole(id)
+      if (accessRole === undefined) return json({}, 404)
+      if (accessRole === 'freeBusyReader')
+        return calendar[2]
+          ? json({}, 404)
+          : json({ kind: 'calendar#events', accessRole, items: [] })
       const events = state.events.get(id) ?? []
       if (init.method === 'PATCH') {
         state.calendarPatchAttempts++
@@ -520,9 +535,12 @@ async function rig() {
       const withinTimeBounds = (row: Pick<ReturnType<typeof event>, 'start' | 'end'>) =>
         (!url.searchParams.has('timeMin') || calendarInstant(row.end) > min) &&
         (!url.searchParams.has('timeMax') || calendarInstant(row.start) < max)
+      const visibleInvitation = (row: { id: string }) =>
+        url.searchParams.get('showHiddenInvitations') === 'true' ||
+        !state.hiddenInvitationIds.has(row.id)
       if (url.searchParams.get('singleEvents') === 'true') {
         if (state.expandedEmptyFirstPage && !url.searchParams.has('pageToken'))
-          return json({ kind: 'calendar#events', nextPageToken: '0' })
+          return json({ kind: 'calendar#events', accessRole, nextPageToken: '0' })
         const limit = Number(url.searchParams.get('maxResults') ?? '250')
         const offset = Number(url.searchParams.get('pageToken') ?? '0')
         if (state.expandedPages)
@@ -532,11 +550,15 @@ async function rig() {
         const upcoming = (state.instances.get(id) ?? [])
           .filter(
             (event) =>
-              event.iCalUID === queryUid && event.status !== 'cancelled' && withinTimeBounds(event),
+              event.iCalUID === queryUid &&
+              event.status !== 'cancelled' &&
+              visibleInvitation(event) &&
+              withinTimeBounds(event),
           )
           .sort((a, b) => calendarInstant(a.start) - calendarInstant(b.start))
         return json({
           kind: 'calendar#events',
+          accessRole,
           items: upcoming.slice(offset, offset + limit),
           nextPageToken: offset + limit < upcoming.length ? String(offset + limit) : undefined,
         })
@@ -550,7 +572,7 @@ async function rig() {
       const secondaryUidItems = queryUid !== null && state.secondaryUidItems.get(id)
       if (secondaryUidItems) {
         state.afterSecondaryUidRead()
-        return json({ kind: 'calendar#events', items: secondaryUidItems })
+        return json({ kind: 'calendar#events', accessRole, items: secondaryUidItems })
       }
       const items = (
         state.calendarPatchAttempts && state.calendarReadback ? [state.calendarReadback] : events
@@ -558,6 +580,7 @@ async function rig() {
         (e) =>
           e.iCalUID === queryUid &&
           (e.status !== 'cancelled' || url.searchParams.get('showDeleted') === 'true') &&
+          visibleInvitation(e) &&
           withinTimeBounds(e),
       )
       if (state.replaceOnQuery) {
@@ -565,7 +588,7 @@ async function rig() {
         state.messages.push(gmailMessage('newer', 400, invite('REQUEST', '', 4)))
       }
       if (id === 'primary' && items.length && state.refreshOnPrimaryCopy) now = 3_600_000
-      return json({ kind: 'calendar#events', items })
+      return json({ kind: 'calendar#events', accessRole, items })
     }
     if (url.pathname.endsWith('/messages/send') && init.method === 'POST') {
       state.sendAttempts++
@@ -800,6 +823,48 @@ it('patches only the attendee on the primary copy of a past invitation and confi
   expect(primary.attendees).toEqual(event().attendees)
   expect(state.sendAttempts).toBe(0)
 })
+
+it.each(['verified', 'unverifiable'] as const)(
+  'does not fall back to Gmail for an unseen hidden %s invitation copy',
+  async (verification) => {
+    const { state, read, respond } = await rig()
+    const calendar = 'secondary@example.com'
+    const copy = {
+      ...event({ id: 'hidden-invitation' }),
+      sequence: verification === 'verified' ? 3 : 2,
+    }
+    state.secondaryCalendars = [{ id: calendar, selected: false, accessRole: 'writer' }]
+    state.events.set(calendar, [copy])
+    state.hiddenInvitationIds.add(copy.id)
+
+    if (verification === 'verified') {
+      expect(await read()).toMatchObject({
+        htmlLink: copy.htmlLink,
+        responseStatus: 'declined',
+        canRespond: true,
+      })
+      expect(await respond('accepted')).toMatchObject({
+        channel: 'calendar',
+        outcome: 'sent',
+        refreshPending: false,
+        invitation: { responseStatus: 'accepted' },
+      })
+      expect(state.calendarUpdateRequests).toEqual([
+        { calendar, eventId: copy.id, sendUpdates: 'all', status: 'accepted' },
+      ])
+    } else {
+      expect(await read()).toMatchObject({
+        canRespond: false,
+        responseStatus: null,
+        responseTargetKey: null,
+        htmlLink: null,
+      })
+      await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+      expect(state.calendarPatchAttempts).toBe(0)
+    }
+    expect(state.sendAttempts).toBe(0)
+  },
+)
 
 it('does not answer a partial, incoherent, or unconditionally writable Calendar copy', async () => {
   const { state, read, respond } = await rig()
@@ -2401,6 +2466,7 @@ it('skips individually unverifiable series occurrences, but cannot use a malform
     { ...page, items: [next], nextPageToken: 'bad token' },
     { ...page, items: [next], nextPageToken: '1' },
     { kind: 'calendar#calendarList', items: [next] },
+    { ...page, accessRole: 'freeBusyReader', items: [next] },
   ]) {
     state.expandedPages = [{ ...page, items: [missingEnd], nextPageToken: '1' }, malformed]
     expect(await read()).toMatchObject(noJoin)
@@ -2784,6 +2850,8 @@ it('follows documented empty Calendar pages but never treats malformed or partia
     { items: [] },
     { ...empty, items: null },
     { ...empty, items: [{}] },
+    { ...empty, accessRole: 'unrecognized' },
+    { ...empty, accessRole: null },
     { ...empty, nextPageToken: '1' },
     { ...empty, nextPageToken: 1 },
   ]) {
@@ -2794,16 +2862,22 @@ it('follows documented empty Calendar pages but never treats malformed or partia
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
-it.each(['writable', 'RSVP-ineligible'])(
-  'retains a %s Calendar copy from a valid first page when the next page fails',
-  async (eligibility) => {
+it.each([
+  ['writable', 'transport failure'],
+  ['RSVP-ineligible', 'transport failure'],
+  ['writable', 'read-access downgrade'],
+] as const)(
+  'retains a %s Calendar copy from a valid first page after a later %s',
+  async (eligibility, failure) => {
     const { state, read, restart } = await rig()
-    const page = { kind: 'calendar#events' }
+    const page = { kind: 'calendar#events', accessRole: 'owner' }
     const copy = event()
     if (eligibility === 'RSVP-ineligible') copy.attendees = []
     state.events.set('primary', [copy])
     state.primaryPages = [{ ...page, items: [copy], nextPageToken: '1' }]
-    state.primaryPageErrors.set(1, 503)
+    if (failure === 'read-access downgrade')
+      state.primaryPages.push({ ...page, accessRole: 'freeBusyReader', items: [] })
+    else state.primaryPageErrors.set(1, 503)
     expect(await read()).toMatchObject({ responseStatus: null, canRespond: false })
 
     // A later query omits the row, but its exact resource is still there.
@@ -4457,6 +4531,30 @@ it('retains an active primary copy with the exact UID and no organizer address',
     outcome: 'sent',
     refreshPending: false,
   })
+  expect(state.sendAttempts).toBe(1)
+  expect(state.calendarPatchAttempts).toBe(0)
+})
+
+it('requires current event read access before an empty secondary UID page permits Gmail', async () => {
+  const { state, read, respond } = await rig()
+  const calendar = 'secondary@example.com'
+  state.secondaryCalendars = [{ id: calendar, selected: true, accessRole: 'reader' }]
+  state.events.set(calendar, [event()])
+  // CalendarList still advertises reader; events.list can now only give free/busy.
+  state.freeBusyEventCollections.add(calendar)
+  expect(await read()).toMatchObject({
+    canRespond: false,
+    responseStatus: null,
+    responseTargetKey: null,
+    htmlLink: null,
+  })
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+
+  state.events.delete(calendar)
+  state.freeBusyEventCollections.delete(calendar)
+  expect(await read()).toMatchObject({ canRespond: true, responseStatus: 'needsAction' })
+  expect(await respond('accepted')).toMatchObject({ outcome: 'sent', channel: 'gmail' })
   expect(state.sendAttempts).toBe(1)
   expect(state.calendarPatchAttempts).toBe(0)
 })

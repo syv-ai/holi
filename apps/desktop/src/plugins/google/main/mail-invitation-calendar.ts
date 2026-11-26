@@ -82,7 +82,7 @@ export type InvitationTarget = InvitationRevision & { legacyJoinOnly: boolean }
 const CALENDAR_PAGE_LIMIT = 10
 
 type CollectionKind = 'calendar#events' | 'calendar#calendarList'
-type CollectionPage<T> = { items?: T[]; nextPageToken?: string }
+type CollectionPage<T> = { items?: T[]; nextPageToken?: string; accessRole?: unknown }
 
 class InvalidCalendarCollection extends Error {}
 
@@ -104,6 +104,10 @@ async function invitationPageItems<T>(
   // Independently identified resources remain existence evidence even if a
   // sibling, page token, or later request prevents using the collection.
   if (observe) for (const item of items) if (isCollectionRow(item)) await observe(item)
+  // An omitted role supplies no permission evidence. An explicit role on the
+  // Events page can show that access was lost since CalendarList was read.
+  if (kind === 'calendar#events' && 'accessRole' in page && !readableRole(page.accessRole))
+    throw new InvalidCalendarCollection('Calendar page does not establish event read access')
   return items
 }
 
@@ -303,6 +307,7 @@ async function exactCopies(
     bindsParent: (event: RawEvent) => boolean
     mailbox: string
     primary: boolean
+    includeHiddenInvitations: boolean
   },
   observe: ObserveEvent,
 ): Promise<RawEvent[]> {
@@ -311,7 +316,14 @@ async function exactCopies(
     api,
     url,
     'calendar#events',
-    { iCalUID: uid, singleEvents: 'false', showDeleted: 'true' },
+    {
+      iCalUID: uid,
+      singleEvents: 'false',
+      showDeleted: 'true',
+      // events.list hides invitations by default, even on a visible calendar.
+      // RSVP needs those copies; legacy navigation keeps the provider default.
+      showHiddenInvitations: context.includeHiddenInvitations ? 'true' : undefined,
+    },
     observeUidQuery(uid, observe, context),
   )
   if (
@@ -539,11 +551,12 @@ function validCalendar(calendar: CalendarListEntry): boolean {
   )
 }
 
+function readableRole(accessRole: unknown): boolean {
+  return accessRole === 'owner' || accessRole === 'writer' || accessRole === 'reader'
+}
+
 function readableCalendar({ deleted, accessRole }: CalendarListEntry): boolean {
-  return (
-    deleted !== true &&
-    (accessRole === 'owner' || accessRole === 'writer' || accessRole === 'reader')
-  )
+  return deleted !== true && readableRole(accessRole)
 }
 
 function primaryCalendar(calendars: CalendarListEntry[]): CalendarListEntry | undefined {
@@ -611,8 +624,11 @@ async function lookupInvitationCalendarCopy(
   const { identity } = invitation.details
   const { uid, recurrenceId } = identity
   const organizer = invitation.details.organizer?.email
-  const parentContext = (ownedCalendar?: string) => ({
+  const lookupContext = (primary: boolean, ownedCalendar?: string) => ({
     organizer,
+    mailbox,
+    primary,
+    includeHiddenInvitations: !invitation.legacyJoinOnly,
     bindsParent: (event: RawEvent) =>
       Boolean(
         mailboxAttendee(event, mailbox) ||
@@ -735,7 +751,7 @@ async function lookupInvitationCalendarCopy(
       PRIMARY_EVENTS,
       identity,
       floating,
-      { ...parentContext(), mailbox, primary: true },
+      lookupContext(true),
       observePrimary,
     )
     const candidates = navigationCandidates(primary)
@@ -769,7 +785,7 @@ async function lookupInvitationCalendarCopy(
       url,
       identity,
       floating,
-      { ...parentContext(ownedCalendar), mailbox, primary: false },
+      lookupContext(false, ownedCalendar),
       observe,
     )
     const candidates = navigationCandidates(events)
