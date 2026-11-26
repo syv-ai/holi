@@ -19,6 +19,12 @@ declare class HoliNativeGit extends NSObject {
     identity: string,
     error: interop.Pointer | interop.Reference<NSError>,
   ): NSDictionary<string, NSObject> | null
+  prepareIntegrationPlanAuthorizedPathsError(
+    root: string,
+    plan: NSDictionary<string, NSObject>,
+    authorizedPaths: NSArray<string>,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): NSDictionary<string, NSObject> | null
   committedEntriesHistoryError(
     root: string,
     history: boolean,

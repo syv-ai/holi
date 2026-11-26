@@ -150,6 +150,10 @@ BOOL HGIPreflightIntegrationFiles(int rootFD, int transactionFD, NSArray<NSDicti
     }
     id current = HGICurrent(rootFD, change, changes, error);
     if (!current) return NO;
+    if ([change[@"old"] isEqual:change[@"new"]]) {
+      if (![current isEqual:change[@"old"]]) return HGIFail(error, EBUSY, @"Tracked working content changed");
+      continue;
+    }
     id displaced = HGIState(transactionFD, change[@"oldSlot"], error);
     if (!displaced || (displaced != NSNull.null && ![displaced isEqual:change[@"old"]])) return HGIFail(error, EBUSY, @"Displaced integration image changed");
     BOOL expected = [current isEqual:change[@"old"]] || [current isEqual:change[@"new"]] || (current == NSNull.null && displaced != NSNull.null);
