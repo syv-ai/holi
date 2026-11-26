@@ -145,6 +145,7 @@ it.each(['ignore', 'inherit'] as const)(
       const childScript = `
         const fs = require('fs');
         process.on('SIGTERM', () => fs.writeFileSync('term', 'resisted'));
+        fs.writeFileSync('output', 'old writer');
         fs.writeFileSync(${JSON.stringify(childId)}, String(process.pid));
         setInterval(() => {
           if (fs.existsSync(${JSON.stringify(release)})) process.exit(0);
