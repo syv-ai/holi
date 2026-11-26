@@ -889,10 +889,28 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   if(rc==0) rc=git_tree_walk(oldTree,GIT_TREEWALK_PRE,HNGIntegrationEntry,&oldPlan);
   if(rc==0) rc=git_tree_walk(newTree,GIT_TREEWALK_PRE,HNGIntegrationEntry,&newPlan);
   NSDictionary *oldEntries = oldPlan.entries, *newEntries = newPlan.entries;
+  git_index *index = NULL;
+  if (rc == 0) rc = git_repository_index(&index, repo);
+  if (rc == 0 && (git_index_version(index) != 2 || git_index_has_conflicts(index))) rc = GIT_EINVALIDSPEC;
+  if (rc == 0) {
+    NSMutableDictionary *indexEntries = [NSMutableDictionary dictionary];
+    for (size_t i = 0; i < git_index_entrycount(index); i++) {
+      const git_index_entry *entry = git_index_get_byindex(index, i);
+      if (!entry || !entry->path || (entry->flags & (GIT_INDEX_ENTRY_VALID | GIT_INDEX_ENTRY_EXTENDED)) || entry->flags_extended != 0 || (entry->mode != GIT_FILEMODE_BLOB && entry->mode != GIT_FILEMODE_BLOB_EXECUTABLE)) { rc = GIT_EINVALIDSPEC; break; }
+      NSString *path = [NSString stringWithUTF8String:entry->path];
+      if (!path || strcmp(path.UTF8String, entry->path) || git_index_entry_stage(entry) != 0 || indexEntries[path]) { rc = GIT_EINVALIDSPEC; break; }
+      indexEntries[path] = @{ @"oid": [NSString stringWithUTF8String:git_oid_tostr_s(&entry->id)], @"mode": @(entry->mode) };
+    }
+    if (rc == 0 && indexEntries.count != oldEntries.count) rc = GIT_EINVALIDSPEC;
+    if (rc == 0) for (NSString *path in oldEntries) {
+      NSDictionary *indexed = indexEntries[path];
+      if (!indexed || ![indexed[@"oid"] isEqual:oldEntries[path][@"oid"]] || ![indexed[@"mode"] isEqual:oldEntries[path][@"mode"]]) { rc = GIT_EINVALIDSPEC; break; }
+    }
+  }
   NSDictionary *result=nil;
   if(rc==0) result=@{@"identity":record,@"outcome":outcome,@"headOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(headCommit))],@"targetOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(targetCommit))],@"oldEntries":oldEntries, @"newEntries":newEntries,@"requiredPaths":({ NSMutableSet *paths=[NSMutableSet setWithArray:oldEntries.allKeys]; [paths addObjectsFromArray:newEntries.allKeys]; [paths.allObjects sortedArrayUsingSelector:@selector(compare:)]; })};
   else if(error) HNGError(error,rc);
-  git_tree_free(oldTree); git_tree_free(newTree); git_commit_free(headCommit); git_commit_free(targetCommit); git_reference_free(headRef); git_reference_free(targetRef); git_repository_free(repo); [snapshot closeWithError:result?error:nil];
+  git_index_free(index); git_tree_free(oldTree); git_tree_free(newTree); git_commit_free(headCommit); git_commit_free(targetCommit); git_reference_free(headRef); git_reference_free(targetRef); git_repository_free(repo); [snapshot closeWithError:result?error:nil];
   return result;
 }
 - (NSDictionary<NSString *, id> *)managedIdentity:(NSString *)root error:(NSError **)error {
