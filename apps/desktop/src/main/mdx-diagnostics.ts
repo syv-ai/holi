@@ -120,7 +120,6 @@ export function createMdxDiagnostics(options: {
     options.authorize(lease.identity, lease.identity.remote)
   const abortCompile = (lease: Lease) => {
     lease.publication = null
-    lease.graphCurrent = null
     lease.controller?.abort()
     lease.controller = null
   }
