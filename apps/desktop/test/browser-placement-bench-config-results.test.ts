@@ -9,7 +9,7 @@ const receipt = (n: number) => {
   const sampling = createTrialSampling({ condition })
   sampling.observe({ condition, visibilityEpoch: 0, stats: stats(2) })
   const result = sampling.finish({ condition, visibilityEpoch: 0, stats: stats(n) })
-  return { scenario: 'short', trial: 'rep-1', ...result }
+  return { scenario: 'stationary-one-pane', trial: 'rep-1', ...result }
 }
 
 describe('browser placement benchmark configuration and receipts', () => {
@@ -26,7 +26,7 @@ describe('browser placement benchmark configuration and receipts', () => {
           '--repetitions',
           '1',
           '--scenario',
-          'short',
+          'stationary-one-pane',
         ],
         'darwin',
       ),
@@ -36,7 +36,7 @@ describe('browser placement benchmark configuration and receipts', () => {
       seconds: 5,
       warmup: 0,
       repetitions: 1,
-      scenario: 'short',
+      scenario: 'stationary-one-pane',
     })
     expect(() => parseBenchmarkOptions([], 'darwin')).toThrow()
     expect(() => parseBenchmarkOptions(['--focus', 'foreground'], 'win32')).toThrow()
@@ -50,12 +50,13 @@ describe('browser placement benchmark configuration and receipts', () => {
 
   it('requires complete unique valid receipts and reports terminal rather than periodic counters', () => {
     const valid = receipt(5)
-    valid.counters!.totals.callbacks = 5
-    const trials = validateTrials({ trials: [valid] }, ['short'], 1, true)
-    expect(terminalCounters(trials, 'short', 1)['rep-1'].callbacks).toBe(5)
+    const trials = validateTrials({ trials: [valid] }, ['stationary-one-pane'], 1, true)
+    expect(terminalCounters(trials, 'stationary-one-pane', 1)['rep-1'].callbacks).toBe(5)
     for (const list of [[], [valid, valid], [{ ...valid, valid: false }]])
-      expect(() => validateTrials({ trials: list }, ['short'], 1, true)).toThrow()
+      expect(() => validateTrials({ trials: list }, ['stationary-one-pane'], 1, true)).toThrow()
     const malformed = { ...valid, counters: { totals: { ...stats(5), callbacks: -1 } } }
-    expect(() => validateTrials({ trials: [malformed] }, ['short'], 1, true)).toThrow()
+    expect(() =>
+      validateTrials({ trials: [malformed] }, ['stationary-one-pane'], 1, true),
+    ).toThrow()
   })
 })

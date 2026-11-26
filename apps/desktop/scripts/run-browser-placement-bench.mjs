@@ -1,18 +1,13 @@
 import assert from 'node:assert/strict'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, rm, writeFile, readFile, statfs } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { installCancellationHandlers } from './browser-placement-bench-lifecycle.mjs'
 import { createOwnedProcesses } from './owned-processes.mjs'
-import {
-  cpuFor,
-  dispersion,
-  median,
-  assertPlacementCounters,
-} from './browser-placement-bench-analysis.mjs'
+import { cpuFor, dispersion, median } from './browser-placement-bench-analysis.mjs'
 import { scenarioNames, benchmarkTimeoutMs } from './browser-placement-bench-scenarios.mjs'
 import { parseBenchmarkOptions } from './browser-placement-bench-config.mjs'
 import { validateTrials, terminalCounters } from './browser-placement-bench-results.mjs'
