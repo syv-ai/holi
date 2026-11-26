@@ -617,6 +617,9 @@ export function createMailInvitationReconciler(
     const journal = { ...durable, attempts: durable.attempts.map(withGmailOutcome) }
     const resources = createInvitationCalendarResourceLookup(api, email, discovery)
     const known = knownCalendarLocators(journal)
+    const knownOccurrences = known.filter(
+      ({ recurrenceId, occurrenceUnverified }) => recurrenceId !== null || occurrenceUnverified,
+    )
     async function observeCalendarAbsence(details: Candidate['value']['details']) {
       const absent = new Set<string>()
       let contradicted = journal.calendarLocatorOverflow
@@ -1354,6 +1357,14 @@ export function createMailInvitationReconciler(
                 !invitationFor(sibling)?.joinOnly
               )
                 await observeCalendarAbsence(slot)
+            }
+          }
+          if (identity.recurrenceId === null && details.recurring && verifiedCopy.canNavigate) {
+            // A child can disappear from the collection and from the thread
+            // before its known resource loses its relevance to series Join.
+            // Read only this series' possible children on the selected calendar.
+            for (const locator of relevantCalendarTargets(knownOccurrences, target, details)) {
+              if (discovery.sameCalendar(locator, verifiedCopy.target)) await resources(locator)
             }
           }
           const navigation = await verifiedCopy.navigation((slot) => {
