@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GoogleApi } from '../main/api'
+import { GoogleApi, type GoogleApiDeps } from '../main/api'
 import { openGoogleCache, type GoogleCache } from '../main/cache'
 import { cacheKey, syncThreads } from '../main/mail-sync'
 
@@ -76,17 +76,23 @@ interface Routes {
 }
 
 /** A fake Gmail covering list, get, history, labels and profile. */
-function gmail(routes: Routes) {
+function gmail(
+  routes: Routes,
+  deps: Partial<Omit<GoogleApiDeps, 'fetch'>> = {},
+  override?: (url: URL, signal: AbortSignal) => Promise<Response> | undefined,
+) {
   const seen: string[] = []
-  const fetchImpl = vi.fn(async (url: string) => {
-    seen.push(url)
-    const path = new URL(url).pathname
-    const ok = (body: unknown) => ({
-      ok: true,
-      status: 200,
-      json: async () => body,
-      text: async () => JSON.stringify(body),
-    })
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input))
+    seen.push(url.href)
+    if (init?.method && init.method !== 'GET') throw new Error('Mail sync must only read')
+    const signal = init?.signal
+    if (!signal) throw new Error('Expected an abortable Google request')
+    signal.throwIfAborted()
+    const response = override?.(url, signal)
+    if (response !== undefined) return response
+    const path = url.pathname
+    const ok = (body: unknown) => Response.json(body)
 
     if (path.endsWith('/labels')) return ok({ labels: [] })
     if (path.endsWith('/profile')) return ok(routes.profile ?? { historyId: '5000' })
@@ -96,7 +102,7 @@ function gmail(routes: Routes) {
       if (typeof historyPage === 'number') {
         // Gmail answers 404 when `startHistoryId` is older than it keeps —
         // roughly a week. A NORMAL outcome, not an error.
-        return { ok: false, status: historyPage, text: async () => '{}', json: async () => ({}) }
+        return Response.json({}, { status: historyPage })
       }
       return ok(historyPage ?? { historyId: '5000' })
     }
@@ -120,16 +126,38 @@ function gmail(routes: Routes) {
       return ok(probe)
     }
     const threadId = path.split('/').pop()!
-    if (routes.missingThreads?.includes(threadId)) {
-      return { ok: false, status: 404, text: async () => '{}', json: async () => ({}) }
-    }
-    if (routes.failedThreads?.includes(threadId)) {
-      return { ok: false, status: 503, text: async () => '{}', json: async () => ({}) }
-    }
+    if (routes.missingThreads?.includes(threadId)) return Response.json({}, { status: 404 })
+    if (routes.failedThreads?.includes(threadId)) return Response.json({}, { status: 503 })
     return ok(routes.threads?.[threadId] ?? {})
-  }) as unknown as typeof globalThis.fetch
+  }
 
-  return { api: new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }), seen }
+  return { api: new GoogleApi({ accessToken: async () => 'at', ...deps, fetch }), seen }
+}
+
+/** Drive the request's native signal deterministically, without waiting for a timer. */
+function captureDeadlines() {
+  const requests = new WeakMap<AbortSignal, AbortController>()
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
+    const controller = new AbortController()
+    requests.set(controller.signal, controller)
+    return controller.signal
+  })
+  return {
+    expire(signal: AbortSignal) {
+      const request = requests.get(signal)
+      if (!request) throw new Error('Expected the request deadline signal')
+      request.abort(new DOMException('The operation timed out', 'TimeoutError'))
+    },
+    restore: () => timeout.mockRestore(),
+  }
+}
+
+/** A fetch waiting for headers rejects with the abort reason, not a response. */
+function beforeHeaders(signal: AbortSignal): Promise<Response> {
+  return new Promise((_, reject) => {
+    if (signal.aborted) reject(signal.reason)
+    else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+  })
 }
 
 /** How many `threads.get` calls were made — the cost this whole module exists
@@ -150,6 +178,28 @@ describe('syncThreads', () => {
     expect(page.threads.map((t) => t.subject)).toEqual(['One', 'Two'])
     expect(threadGets(seen)).toHaveLength(2)
   })
+
+  it.each([{}, { freshPage: true }, { refresh: true }])(
+    'reports current first-page metadata 404s without mistaking a 503 for absence (%j)',
+    async (context) => {
+      const { api } = gmail({
+        listPages: {
+          '': {
+            threads: [{ id: 'gone' }, { id: 'unreadable' }, { id: 'healthy' }],
+            nextPageToken: 'page-2',
+          },
+        },
+        missingThreads: ['gone'],
+        failedThreads: ['unreadable'],
+        threads: { healthy: rawThread('healthy', 'Still here') },
+      })
+      const page = await syncThreads(api, cache, {}, undefined, context)
+      expect(page.threads.map(({ id }) => id)).toEqual(['healthy'])
+      expect(page.nextPageToken).toBe('page-2')
+      expect(page.notFoundThreadIds).toEqual(['gone'])
+      expect(page.unreadableThreadIds).toEqual(['unreadable'])
+    },
+  )
 
   it('fetches each needs-reply page fresh without sharing the ordinary list cache', async () => {
     const cold = gmail({ listPages: { '': { threads: [], nextPageToken: 'cold-next' } } })
@@ -776,6 +826,7 @@ describe('syncThreads', () => {
     const page = await syncThreads(second.api, cache, options)
 
     expect(page.threads.map((thread) => thread.id)).not.toContain('not-a-match')
+    expect(page).not.toHaveProperty('notFoundThreadIds')
     expect(threadGets(second.seen)).not.toEqual(
       expect.arrayContaining([expect.stringContaining('/threads/not-a-match')]),
     )
@@ -829,14 +880,17 @@ describe('syncThreads', () => {
     })
     const updated = await syncThreads(delta.api, cache)
     expect(updated.threads.map(({ id }) => id)).toEqual(['healthy'])
+    expect(updated.notFoundThreadIds).toEqual(['deleted'])
+    expect(updated.nextPageToken).toBeNull()
     expect(updated).not.toHaveProperty('unreadableThreadIds')
 
     const unchanged = gmail({ history: { historyId: '6000' } })
     for (const options of [{}, unread]) {
-      expect(
-        (await syncThreads(unchanged.api, cache, options)).threads.map(({ id }) => id),
-      ).toEqual(['healthy'])
+      const page = await syncThreads(unchanged.api, cache, options)
+      expect(page.threads.map(({ id }) => id)).toEqual(['healthy'])
+      expect(page).not.toHaveProperty('notFoundThreadIds')
     }
+    expect(unchanged.seen[0]).toContain('startHistoryId=6000')
   })
 
   it.each([404, 503])(
@@ -896,10 +950,10 @@ describe('syncThreads', () => {
       failedThreads: ['t1'],
     })
 
-    expect(await syncThreads(second.api, cache)).toMatchObject({
-      threads: [],
-      unreadableThreadIds: ['t1'],
-    })
+    const partial = await syncThreads(second.api, cache)
+    expect(partial).toMatchObject({ threads: [], unreadableThreadIds: ['t1'] })
+    expect(partial).not.toHaveProperty('notFoundThreadIds')
+    expect(cache.readThreads(cacheKey({}))?.map(({ id }) => id)).toEqual(['t1'])
     const fresh = gmail({
       list: [{ id: 't1' }],
       threads: { t1: rawThread('t1', 'Remaining message') },
@@ -908,6 +962,161 @@ describe('syncThreads', () => {
     const recovered = await syncThreads(fresh.api, cache)
     expect(recovered.threads.map(({ subject }) => subject)).toEqual(['Remaining message'])
     expect(recovered).not.toHaveProperty('unreadableThreadIds')
+  })
+
+  it.each(['headers', 'body'] as const)(
+    'isolates a metadata endpoint timeout at %s and restores the row on read-only retry',
+    async (stage) => {
+      const deadlines = captureDeadlines()
+      try {
+        let stalled = false
+        const { api } = gmail(
+          {
+            listPages: {
+              '': { threads: [{ id: 'slow' }, { id: 'healthy' }], nextPageToken: 'page-2' },
+            },
+            threads: { slow: rawThread('slow', 'Slow'), healthy: rawThread('healthy', 'Healthy') },
+          },
+          {},
+          (url, signal) => {
+            if (!stalled || !url.pathname.endsWith('/threads/slow')) return
+            if (stage === 'headers') {
+              const response = beforeHeaders(signal)
+              deadlines.expire(signal)
+              return response
+            }
+            const body = new ReadableStream(
+              {
+                start(stream) {
+                  signal.addEventListener(
+                    'abort',
+                    () => stream.error(new DOMException('Body read aborted', 'AbortError')),
+                    { once: true },
+                  )
+                },
+                pull() {
+                  deadlines.expire(signal)
+                },
+              },
+              { highWaterMark: 0 },
+            )
+            return Promise.resolve(new Response(body, { status: 200 }))
+          },
+        )
+        expect((await syncThreads(api, cache)).threads.map(({ id }) => id)).toEqual([
+          'slow',
+          'healthy',
+        ])
+        stalled = true
+        const partial = await syncThreads(api, cache, {}, undefined, { refresh: true })
+        expect(partial.threads.map(({ id }) => id)).toEqual(['healthy'])
+        expect(partial.nextPageToken).toBe('page-2')
+        expect(partial.unreadableThreadIds).toEqual(['slow'])
+        expect(partial).not.toHaveProperty('notFoundThreadIds')
+        expect(cache.readThreads(cacheKey({}))?.map(({ id }) => id)).toContain('slow')
+
+        stalled = false
+        const recovered = await syncThreads(api, cache, {}, undefined, { refresh: true })
+        expect(recovered.threads.map(({ id }) => id)).toEqual(['slow', 'healthy'])
+        expect(recovered.nextPageToken).toBe('page-2')
+        expect(recovered).not.toHaveProperty('unreadableThreadIds')
+        expect(recovered).not.toHaveProperty('notFoundThreadIds')
+      } finally {
+        deadlines.restore()
+      }
+    },
+  )
+
+  it('rejects the page when OAuth token acquisition times out after the list request', async () => {
+    let listed = false
+    const { api } = gmail(
+      { list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'One') } },
+      {
+        accessToken: async () => {
+          if (listed) throw new DOMException('OAuth refresh timed out', 'TimeoutError')
+          return 'at'
+        },
+      },
+      (url) => {
+        if (url.pathname.endsWith('/threads')) listed = true
+        return undefined
+      },
+    )
+    await expect(syncThreads(api, cache)).rejects.toMatchObject({ code: 'reconnect' })
+  })
+
+  it('rejects the page when the caller aborts a metadata fetch', async () => {
+    const caller = new AbortController()
+    const cancelled = new DOMException('The caller ended the read', 'AbortError')
+    const { api } = gmail(
+      {
+        list: [{ id: 'aborted' }, { id: 'healthy' }],
+        threads: { healthy: rawThread('healthy', 'Healthy') },
+      },
+      {},
+      (url, deadline) => {
+        if (!url.pathname.endsWith('/threads/aborted')) return
+        const response = beforeHeaders(AbortSignal.any([caller.signal, deadline]))
+        caller.abort(cancelled)
+        return response
+      },
+    )
+    await expect(syncThreads(api, cache)).rejects.toBe(cancelled)
+  })
+
+  it.each(['binding', 'shared scan'] as const)(
+    'keeps %s failures global when a resource deadline expires',
+    async (failure) => {
+      const deadlines = captureDeadlines()
+      try {
+        const stopped = new Error('The account binding changed')
+        let active = true
+        const { api } = gmail(
+          { list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'One') } },
+          {
+            assertRequest: () => {
+              if (!active) throw stopped
+            },
+          },
+          (url, signal) => {
+            const applies =
+              failure === 'binding'
+                ? url.pathname.endsWith('/threads/t1')
+                : url.searchParams.get('q')?.includes('filename:ics')
+            if (!applies) return
+            const response = beforeHeaders(signal)
+            if (failure === 'binding') active = false
+            deadlines.expire(signal)
+            return response
+          },
+        )
+        const page = syncThreads(api, cache)
+        if (failure === 'binding') await expect(page).rejects.toBe(stopped)
+        else await expect(page).rejects.toMatchObject({ cause: { name: 'TimeoutError' } })
+      } finally {
+        deadlines.restore()
+      }
+    },
+  )
+
+  it.each([
+    [401, 'reconnect', 'authError'],
+    [403, 'scope', 'insufficientPermissions'],
+    [403, 'rate-limit', 'userRateLimitExceeded'],
+    [429, 'rate-limit', 'rateLimitExceeded'],
+  ])('rejects the whole page for a metadata HTTP %i (%s)', async (status, code, reason) => {
+    const { api } = gmail(
+      {
+        list: [{ id: 'refused' }, { id: 'healthy' }],
+        threads: { healthy: rawThread('healthy', 'Healthy') },
+      },
+      {},
+      (url) => {
+        if (!url.pathname.endsWith('/threads/refused')) return
+        return Promise.resolve(Response.json({ error: { errors: [{ reason }] } }, { status }))
+      },
+    )
+    await expect(syncThreads(api, cache)).rejects.toMatchObject({ status, code })
   })
 
   it('refreshes an explicit query instead of using mailbox history', async () => {

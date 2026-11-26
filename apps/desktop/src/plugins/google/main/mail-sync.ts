@@ -26,6 +26,7 @@ import {
   listThreadIds,
   mailboxLabel,
   PATCHABLE_LABELS,
+  threadMetadataFailures,
   type ListThreadsOptions,
   type MailPage,
   type MailThreadSummary,
@@ -173,7 +174,9 @@ export async function syncThreads(
   )
   const confirmedIds = new Set(candidatesToConfirm)
   const queryMatches = await findQueryMatches(api, options, knownAddresses, confirmedIds)
-  const admitted = new Set(queryMatches.threads.map((thread) => thread.id))
+  // Query membership is established by threads.list, even when the follow-up
+  // metadata read is unreadable. Only a definitive 404 overrides admission.
+  const admitted = new Set(queryMatches.outcomes.map(({ id }) => id))
   for (const id of changed) {
     if (!cachedIds.has(id) && !admitted.has(id)) changed.delete(id)
   }
@@ -198,49 +201,45 @@ export async function syncThreads(
   // A deletion can race any changed-row read, not just messagesDeleted. Only
   // the provider's 404 proves the entire conversation was removed.
   for (const { id, kind } of outcomes) if (kind === 'not-found') gone.add(id)
-  const unreadableThreadIds = [
-    ...queryMatches.unreadableThreadIds,
-    ...refetched.unreadableThreadIds,
-  ]
-  // Do not serve an old summary for a thread whose current metadata is unreadable.
-  for (const id of unreadableThreadIds) gone.add(id)
   const threads = merge(cached, refreshed, gone, patches, options)
-  if (unreadableThreadIds.length) cache.setHistoryId(key, null)
-  cache.writeThreads(key, threads)
-  if (!unreadableThreadIds.length && historyId !== undefined) cache.setHistoryId(key, historyId)
-
-  return recordReads(
+  const result = recordReads(
     cache,
     pendingKey,
-    { threads, unreadableThreadIds, nextPageToken: null, syncedAt: new Date().toISOString() },
+    { threads, nextPageToken: null, syncedAt: new Date().toISOString() },
     outcomes,
   )
+  // Retain known metadata in the cache, but never serve it as a fresh row
+  // while its read is unresolved. The next refresh must retry rather than delta.
+  if (result.unreadableThreadIds) cache.setHistoryId(key, null)
+  cache.writeThreads(key, threads)
+  if (!result.unreadableThreadIds && historyId !== undefined) cache.setHistoryId(key, historyId)
+  return result
 }
 
 function recordReads(
   cache: GoogleCache,
   key: string,
-  page: MailPage,
+  snapshot: Pick<MailPage, 'threads' | 'nextPageToken' | 'syncedAt'>,
   outcomes: ThreadMetadataOutcome[],
 ): MailPage {
-  const { unreadableThreadIds: _, ...snapshot } = page
   // A 404 from threads.get invalidates every cached list for this account,
-  // unlike a query departure. The cache stores summaries, not reader bodies
-  // or vault annotations.
-  for (const { id, kind } of outcomes) if (kind === 'not-found') cache.dropThread(id)
-  const failed = outcomes.filter(({ kind }) => kind === 'unreadable').map(({ id }) => id)
+  // unlike a query departure. Return that evidence with this read; don't
+  // depend on the cache or the visible rows to reconstruct it later.
+  const { notFoundThreadIds, unreadableThreadIds } = threadMetadataFailures(outcomes)
+  for (const id of notFoundThreadIds ?? []) cache.dropThread(id)
   // A failed read stays pending but moves to the end so repeated failures
   // cannot starve the rest of the bounded off-page probe queue.
   const pending = cache.updateUnreadableThreads(
     key,
     outcomes.map(({ id }) => id),
-    failed,
+    unreadableThreadIds ?? [],
   )
-  if (!pending.length) return snapshot
+  const page = { ...snapshot, ...(notFoundThreadIds ? { notFoundThreadIds } : {}) }
+  if (!pending.length) return page
   const unreadable = new Set(pending)
   return {
-    ...snapshot,
-    threads: snapshot.threads.filter(({ id }) => !unreadable.has(id)),
+    ...page,
+    threads: page.threads.filter(({ id }) => !unreadable.has(id)),
     unreadableThreadIds: pending,
   }
 }
@@ -276,7 +275,13 @@ async function fullSync(
   // about the skipped threads. The next read must try the whole page again.
   const historyId = result.unreadableThreadIds ? null : await cursor
   if (historyId === null) cache.setHistoryId(key, null)
-  cache.writeThreads(key, result.threads)
+  const pending = new Set(result.unreadableThreadIds)
+  // Keep last-known rows in storage only. The returned rows and token still
+  // belong to the same fresh page, not to the pending off-page probes.
+  const retained = pending.size
+    ? (cache.readThreads(key) ?? []).filter(({ id }) => pending.has(id))
+    : []
+  cache.writeThreads(key, [...result.threads, ...retained])
   if (historyId !== null) cache.setHistoryId(key, historyId)
   return result
 }
@@ -287,7 +292,7 @@ async function findQueryMatches(
   knownAddresses: string[] | undefined,
   candidates: Set<string>,
 ) {
-  if (!candidates.size) return { threads: [], unreadableThreadIds: [], outcomes: [] }
+  if (!candidates.size) return { threads: [], outcomes: [] }
   const matches = new Set<string>()
   let pageToken: string | undefined
 
