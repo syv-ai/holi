@@ -47,7 +47,11 @@ try {
             break
         } catch { Start-Sleep -Milliseconds 250 }
     }
-    if ($null -eq $identity -or $null -eq $window) { Write-Status 'identity-unavailable'; return }
+    if ($null -eq $identity -or $null -eq $window) {
+        if (Test-Path -LiteralPath $endedPath) { Write-Status 'startup-ended-before-first-sample' }
+        else { Write-Status 'identity-unavailable' }
+        return
+    }
     $rootId = 0L
     $creationTicks = 0L
     $deadlineMs = 0L

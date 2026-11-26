@@ -263,7 +263,7 @@ function decodeJoinBootstrap(args: string[]) {
   return { bootstrap, script: gunzipSync(Buffer.from(payloads[0], 'base64')).toString('utf8') }
 }
 
-function windowsJoinFixture(cwd: string) {
+function windowsJoinFixture(cwd: string, runDir?: string) {
   const adapter = windowsJoinAdapter(cwd)
   const { bootstrap, script } = decodeJoinBootstrap(adapter.args)
   if (
@@ -279,9 +279,8 @@ function windowsJoinFixture(cwd: string) {
     `${joinPhaseMarker('compile-start')}${compileWithEmptyInput}${joinPhaseMarker('compile-done')}`,
   )
   const encoded = gzipSync(Buffer.from(marked)).toString('base64')
-  const runDir = process.env.HOLI_WINDOWS_AGENT_RUN_DIR
   const identity = runDir
-    ? `try { $p = [Diagnostics.Process]::GetCurrentProcess(); $c = $p.StartTime.ToUniversalTime().Ticks; $tmp = '${runDir.replaceAll("'", "''")}\\broker-root.json.tmp'; $dst = '${runDir.replaceAll("'", "''")}\\broker-root.json'; [IO.File]::WriteAllText($tmp, (@{ pid = [int]$PID; creationTicks = [long]$c; startupTimestamp = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress)); [IO.File]::Move($tmp, $dst) } catch {};`
+    ? `try { $p = [Diagnostics.Process]::GetCurrentProcess(); $c = $p.StartTime.ToUniversalTime().Ticks; $tmp = '${runDir.replaceAll("'", "''")}\\broker-root.json.tmp'; $dst = '${runDir.replaceAll("'", "''")}\\broker-root.json'; [IO.File]::WriteAllText($tmp, ('{"pid":' + $PID.ToString([Globalization.CultureInfo]::InvariantCulture) + ',"creationTicks":' + $c.ToString([Globalization.CultureInfo]::InvariantCulture) + '}')); $p.Dispose(); [IO.File]::Move($tmp, $dst) } catch {};`
     : ''
   adapter.args[adapter.args.length - 1] =
     identity + joinPhaseMarker('powershell-start') + bootstrap.replace(joinPayload, encoded)
@@ -486,7 +485,10 @@ describe('owned Job broker host', () => {
     })
     const cwd = await directory
     if (reported) return // Preparation timed out; do not spawn during teardown.
-    const native = process.platform === 'win32' ? windowsJoinFixture(cwd) : undefined
+    const native =
+      process.platform === 'win32'
+        ? windowsJoinFixture(cwd, process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
+        : undefined
     enter('spawn')
     const { child } = native
       ? host(native, true)
