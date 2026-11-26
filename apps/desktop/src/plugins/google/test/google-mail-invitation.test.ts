@@ -9,13 +9,42 @@ import { noCoreServices } from '../../../main/capabilities/services'
 import { createGoogleAccounts } from '../main/accounts'
 import { GoogleApi } from '../main/api'
 import { openGoogleCache, type GoogleCache } from '../main/cache'
-import { googleCapabilities, GOOGLE_NAMESPACES } from '../main/capabilities'
+import {
+  disposeGoogleCapabilities,
+  googleCapabilities,
+  GOOGLE_NAMESPACES,
+} from '../main/capabilities'
 import { createClientStore } from '../main/credentials'
 import { createGoogleData } from '../main/data'
 import { createMailInvitationSession } from '../main/mail-invitation-session'
 import { createMailInvitationStore } from '../main/mail-invitation-store'
 import { createVaultAccounts } from '../main/vault-accounts'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../main/token-store'
+
+// Exercise a concurrent observation while the real journal has written its
+// pending file but has not atomically published the reservation.
+let onReservationPublication: (() => Promise<void>) | undefined
+vi.mock('node:fs/promises', async (load) => {
+  const fs = await load<typeof import('node:fs/promises')>()
+  return {
+    ...fs,
+    async chmod(...args: Parameters<typeof fs.chmod>) {
+      await fs.chmod(...args)
+      if (
+        !onReservationPublication ||
+        !String(args[0]).endsWith('google-mail-invitations.json.tmp')
+      )
+        return
+      const pending: { attempts: { state: string }[] } = JSON.parse(
+        await fs.readFile(args[0], 'utf8'),
+      )
+      if (!pending.attempts.some(({ state }) => state === 'unresolved')) return
+      const observe = onReservationPublication
+      onReservationPublication = undefined
+      await observe()
+    },
+  }
+})
 
 const person = 'me@example.com'
 const organizer = 'organizer@example.net'
@@ -69,6 +98,7 @@ function gmailMessage(
   options: {
     sent?: boolean
     from?: string
+    to?: string
     attached?: boolean
     method?: string
     contentTypes?: string[]
@@ -89,7 +119,7 @@ function gmailMessage(
       mimeType: 'multipart/mixed',
       headers: [
         { name: 'From', value: options.from ?? (options.sent ? person : organizer) },
-        { name: 'To', value: options.sent ? organizer : person },
+        { name: 'To', value: options.to ?? (options.sent ? organizer : person) },
         { name: 'Subject', value: options.sent ? 'Re: Design sync' : 'Design sync' },
         { name: 'Message-ID', value: options.rfcId ?? `<${id}@example.net>` },
         {
@@ -183,6 +213,7 @@ function account(sub: string): StoredGoogleAuth {
 }
 
 const tempDirs: string[] = []
+const closeFixtures: (() => void)[] = []
 type SparseCancellation = {
   id: string
   status: 'cancelled'
@@ -192,12 +223,21 @@ type SparseCancellation = {
 
 /** Models the account-scoped Google resources the UI sees. Writes update the
  * provider state (or fail) and the next UI read has to recover that state. */
-async function rig(agendaCache?: GoogleCache) {
-  const userData = await mkdtemp(join(tmpdir(), 'holi-invitation-'))
-  tempDirs.push(userData)
+async function rig(agendaCache?: GoogleCache, secondMailbox?: { userData: string; email: string }) {
+  const userData = secondMailbox?.userData ?? (await mkdtemp(join(tmpdir(), 'holi-invitation-')))
+  if (!secondMailbox) tempDirs.push(userData)
+  const sub = secondMailbox ? 'other' : 'receiver'
+  const mailbox = secondMailbox?.email ?? person
+  const vault = secondMailbox ? 'owner/second' : remote
+  const request = { ...thread, expectedAccountSub: sub }
   let now = 0
   const state = {
-    messages: [gmailMessage('update', 200, invite(), { method: 'REQUEST' })],
+    messages: [
+      gmailMessage('update', 200, invite().replaceAll(person, mailbox), {
+        method: 'REQUEST',
+        to: mailbox,
+      }),
+    ],
     fullThreadOverride: undefined as unknown,
     attachments: new Map<string, string | Buffer>(),
     attachmentErrors: new Map<string, number>(),
@@ -218,7 +258,7 @@ async function rig(agendaCache?: GoogleCache) {
         organizer?: ReturnType<typeof event>['organizer']
       })[]
     >(),
-    primaryCalendarId: person,
+    primaryCalendarId: mailbox,
     primaryCalendarRole: 'owner' as 'owner' | 'writer' | 'reader',
     secondaryCalendars: [] as {
       id: string
@@ -295,9 +335,7 @@ async function rig(agendaCache?: GoogleCache) {
       await state.onRevoke()
       return json({})
     }
-    return (
-      (await state.onRefresh()) ?? json({ access_token: 'refreshed-receiver', expires_in: 3600 })
-    )
+    return (await state.onRefresh()) ?? json({ access_token: `refreshed-${sub}`, expires_in: 3600 })
   }
   const storage = {
     isEncryptionAvailable: () => true,
@@ -307,7 +345,10 @@ async function rig(agendaCache?: GoogleCache) {
   const store = new GoogleTokenStore(join(userData, 'tokens.enc'), storage)
   const clients = createClientStore(join(userData, 'client.enc'), storage)
   await clients.write({ id: 'original.apps.googleusercontent.com' })
-  await store.write({ receiver: account('receiver'), other: account('other') })
+  await store.write({
+    receiver: account('receiver'),
+    other: { ...account('other'), email: secondMailbox?.email ?? person },
+  })
   const vaults = createVaultAccounts(join(userData, 'vault-links.json'))
   const accounts = await createGoogleAccounts({
     vaults,
@@ -322,12 +363,12 @@ async function rig(agendaCache?: GoogleCache) {
       throw new Error('Consent is not part of this fixture')
     },
   })
-  await accounts.link(remote, 'receiver')
+  await accounts.link(vault, sub)
 
   vi.stubGlobal('fetch', async (input: string, init: RequestInit = {}) => {
     const url = new URL(input)
     const token = new Headers(init.headers).get('Authorization')
-    if (token !== 'Bearer token-receiver' && token !== 'Bearer refreshed-receiver') {
+    if (token !== `Bearer token-${sub}` && token !== `Bearer refreshed-${sub}`) {
       throw new Error('The transport received credentials for a different mailbox')
     }
     if (url.pathname.endsWith('/threads/thread') && url.searchParams.get('format') === 'full') {
@@ -678,7 +719,7 @@ async function rig(agendaCache?: GoogleCache) {
         ) ||
         !raw.includes('Subject: Re: Design sync') ||
         !raw.includes(`To: ${organizer}\r\n`) ||
-        !raw.includes(`From: ${person}\r\n`)
+        !raw.includes(`From: ${mailbox}\r\n`)
       ) {
         return json({ error: 'Cannot file the calendar reply in this conversation' }, 400)
       }
@@ -695,6 +736,7 @@ async function rig(agendaCache?: GoogleCache) {
         Buffer.from(part[1]!, 'base64'),
         {
           sent: true,
+          from: mailbox,
           method: 'REPLY',
           rfcId,
           parent,
@@ -720,7 +762,7 @@ async function rig(agendaCache?: GoogleCache) {
       ? createGoogleData({
           api: () =>
             new GoogleApi({
-              accessToken: async () => (await accounts.sessionFor(remote))!.getAccessToken(),
+              accessToken: async () => (await accounts.sessionFor(vault))!.getAccessToken(),
             }),
           cache: agendaCache,
         })
@@ -740,6 +782,8 @@ async function rig(agendaCache?: GoogleCache) {
         },
       },
     })
+    const close = () => disposeGoogleCapabilities(caps)
+    closeFixtures.push(close)
     const registry = createCapabilityRegistry()
     registry.register(GOOGLE_NAMESPACES, caps)
     const call = async (name: string, params: unknown, door: Door = 'ui') =>
@@ -748,7 +792,7 @@ async function rig(agendaCache?: GoogleCache) {
           `google.${name}`,
           door,
           {
-            remote,
+            remote: vault,
             root: '/vault',
             bundle: null,
             claims: async () => [],
@@ -762,11 +806,12 @@ async function rig(agendaCache?: GoogleCache) {
     type Read = Awaited<ReturnType<Session['read']>>
     type Respond = Awaited<ReturnType<Session['respond']>>
     let current: Read['invitations'][number] | null = null
-    const list = async (params = thread) => (await call('mailInvitation', params)) as Read
+    const list = async (params = request) => (await call('mailInvitation', params)) as Read
     return {
+      close,
       call,
       list,
-      async read(params = thread, scope?: Read['invitations'][number]['scope']) {
+      async read(params = request, scope?: Read['invitations'][number]['scope']) {
         const { invitations } = await list(params)
         current =
           (scope ? invitations.find((card) => card.scope === scope) : invitations[0]) ?? null
@@ -774,7 +819,7 @@ async function rig(agendaCache?: GoogleCache) {
       },
       async respond(answer: string, override?: Record<string, unknown>) {
         const result = (await call('respondToMailInvitation', {
-          ...thread,
+          ...request,
           identity: { ...current?.identity, ...override },
           expectedBindingRevision: current?.bindingRevision,
           expectedResponseTargetKey: current?.responseTargetKey ?? null,
@@ -789,6 +834,8 @@ async function rig(agendaCache?: GoogleCache) {
 }
 
 afterEach(async () => {
+  onReservationPublication = undefined
+  for (const close of closeFixtures.splice(0)) close()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -5407,6 +5454,198 @@ it('remembers the identity of an RSVP-ineligible Calendar copy until exact delet
   })
   expect(state.sendAttempts).toBe(1)
   expect(state.calendarPatchAttempts).toBe(0)
+})
+
+function calendarLocator(id: string, eventUid: string) {
+  return {
+    accountSub: 'receiver',
+    uid: eventUid,
+    recurrenceId: null as string | null,
+    organizer,
+    target: JSON.stringify([
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${id}?sendUpdates=all`,
+      person,
+    ]),
+  }
+}
+
+async function seedCalendarLocators(userData: string, count: number) {
+  const store = createMailInvitationStore(userData)
+  closeFixtures.push(store.close)
+  for (let i = 0; i < count; i++)
+    await store.rememberCalendarLocator(calendarLocator(`old-${i}`, `unrelated-${i}`), () => {})
+  return store
+}
+
+function requestFor(eventUid: string, mailbox = person) {
+  return gmailMessage(
+    'update',
+    200,
+    invite()
+      .replace('conference-series-1234567890-long-\r\n folded-uid', eventUid)
+      .replaceAll(person, mailbox),
+    { to: mailbox },
+  )
+}
+
+it('isolates Calendar locator exhaustion by invitation and authenticated mailbox across restart', async () => {
+  const a = await rig()
+  const store = await seedCalendarLocators(a.userData, 4095)
+  const original = event({ id: 'last-retained' })
+  a.state.events.set('primary', [original])
+  expect(await a.read()).toMatchObject({ canRespond: true })
+  a.state.events.clear()
+  expect(await a.read()).toMatchObject({ canRespond: true, responseTargetKey: expect.any(String) })
+  expect(a.state.originalGets).toContain(original.id)
+
+  // Repeated observations didn't take another slot. The first distinct copy
+  // beyond the budget is observed by the real invitation capability.
+  const excess = event({ id: 'not-retained' })
+  a.state.events.set('primary', [excess])
+  expect(await a.read()).toMatchObject({ canRespond: true })
+  a.state.events.clear()
+  a.state.originalGets.length = 0
+  store.close()
+  a.close()
+  const reopened = a.restart()
+  expect(await reopened.read()).toMatchObject({ canRespond: false, responseTargetKey: null })
+  await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(a.state.originalGets).toContain(original.id)
+  expect(a.state.sendAttempts + a.state.calendarPatchAttempts).toBe(0)
+
+  a.state.messages = [requestFor('fresh-in-same-mailbox')]
+  expect(await reopened.read()).toMatchObject({ canRespond: true })
+  expect(await reopened.respond('accepted')).toMatchObject({
+    channel: 'gmail',
+    outcome: 'sent',
+    refreshPending: false,
+  })
+  expect(a.state.sentMime).toHaveLength(1)
+
+  const address = 'other@example.com'
+  const b = await rig(undefined, { userData: a.userData, email: address })
+  const secondUid = 'fresh-in-second-mailbox'
+  const secondCopy = { ...event({ id: 'second-mailbox-copy' }), iCalUID: secondUid }
+  secondCopy.attendees[0]!.email = address
+  b.state.messages = [requestFor(secondUid, address)]
+  b.state.events.set('primary', [secondCopy])
+  expect(await b.read()).toMatchObject({ canRespond: true, htmlLinkSource: 'calendar' })
+  b.state.events.clear()
+  expect(await b.read()).toMatchObject({ canRespond: true })
+  expect(b.state.originalGets).toContain(secondCopy.id)
+  expect(await b.respond('accepted')).toMatchObject({
+    channel: 'gmail',
+    outcome: 'sent',
+    refreshPending: false,
+  })
+  expect(b.state.sentMime).toHaveLength(1)
+
+  const matchingInstant = '2024-07-11T15:00:00.000Z'
+  const lookup = async (
+    eventUid: string,
+    recurrenceId: string | null,
+    host: string,
+    accountSub = 'receiver',
+    email = person,
+  ) =>
+    store.lookupCalendarEvidence(
+      await store.read(),
+      { accountSub, email },
+      {
+        identity: { uid: eventUid, recurrenceId },
+        organizer: { email: host },
+      },
+    )
+  await store.rememberCalendarLocator(
+    {
+      ...calendarLocator('unretained-slot', 'exact-slot'),
+      recurrenceId: '2024-07-11T11:00:00-04:00',
+    },
+    () => {},
+  )
+  expect(await lookup('exact-slot', matchingInstant, organizer)).toEqual({
+    incomplete: true,
+    targets: new Set(),
+  })
+  expect((await lookup('exact-slot', '2024-07-18T15:00:00Z', organizer)).incomplete).toBe(false)
+  expect((await lookup('exact-slot', matchingInstant, guest)).incomplete).toBe(false)
+  expect((await lookup('exact-slot', matchingInstant, organizer, 'other')).incomplete).toBe(false)
+  expect(
+    (await lookup('exact-slot', matchingInstant, organizer, 'receiver', address)).incomplete,
+  ).toBe(false)
+  expect((await lookup('exact-slot', null, organizer)).incomplete).toBe(true)
+  expect((await lookup('exact-slot', '2024-07-18', organizer)).incomplete).toBe(true)
+  expect((await lookup('exact-slot', '2024-07-18T15:00:00', organizer)).incomplete).toBe(true)
+
+  await store.rememberCalendarLocator(
+    {
+      ...calendarLocator('unretained-date', 'unknown-organizer'),
+      organizer: undefined,
+      recurrenceId: '2024-07-11',
+    },
+    () => {},
+  )
+  expect((await lookup('unknown-organizer', '2024-07-11', guest)).incomplete).toBe(true)
+  expect((await lookup('unknown-organizer', '2024-07-18', guest)).incomplete).toBe(false)
+  await store.rememberCalendarLocator(
+    {
+      ...calendarLocator('unverified-slot', 'unknown-organizer'),
+      organizer: undefined,
+      occurrenceUnverified: true,
+    },
+    () => {},
+  )
+  expect((await lookup('unknown-organizer', '2024-07-18', guest)).incomplete).toBe(true)
+})
+
+it('refuses a late matching Calendar footprint but not evidence for another scope', async () => {
+  const { userData, state, read, respond } = await rig()
+  const store = await seedCalendarLocators(userData, 4096)
+  expect(await read()).toMatchObject({ canRespond: true })
+  onReservationPublication = () =>
+    store.rememberCalendarLocator(calendarLocator('late-copy', uid), () => {})
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+  expect(await read()).toMatchObject({ canRespond: false })
+
+  state.messages = [requestFor('another-invitation')]
+  expect(await read()).toMatchObject({ canRespond: true })
+  onReservationPublication = () =>
+    store.rememberCalendarLocator(calendarLocator('other-copy', 'third-invitation'), () => {})
+  expect(await respond('accepted')).toMatchObject({
+    channel: 'gmail',
+    outcome: 'sent',
+    refreshPending: false,
+  })
+  expect(state.sentMime).toHaveLength(1)
+  state.messages = [requestFor('third-invitation')]
+  expect(await read()).toMatchObject({ canRespond: false })
+})
+
+it('does not infer Calendar absence when the observation store cannot write', async () => {
+  const { userData, state, read } = await rig()
+  await mkdir(join(userData, 'google-mail-invitation-calendar.db'))
+  state.events.set('primary', [event()])
+  await expect(read()).rejects.toMatchObject({ code: 'EVIDENCE_STORE_FAILURE' })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
+})
+
+it('keeps unattributed legacy Calendar overflow fail-closed after exact misses', async () => {
+  const { userData, state, read, respond } = await rig()
+  await writeFile(
+    join(userData, 'google-mail-invitations.json'),
+    JSON.stringify({
+      version: 2,
+      materialHistory: [],
+      attempts: [],
+      calendarLocators: [calendarLocator('legacy-calendar-copy', uid)],
+      calendarLocatorOverflow: true,
+    }),
+  )
+  expect(await read()).toMatchObject({ canRespond: false })
+  expect(state.originalGets).toContain('legacy-calendar-copy')
+  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
 it('retains an active primary copy with the exact UID and no organizer address', async () => {

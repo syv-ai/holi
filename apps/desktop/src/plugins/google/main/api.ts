@@ -69,6 +69,8 @@ export class GoogleWriteUncertainError extends Error {
 export type GoogleDispatchGate = {
   validate: () => Promise<void>
   reserveDispatch: () => Promise<void>
+  /** Synchronous check after reservation and immediately before the request. */
+  assertDispatch?: () => void
 }
 
 export interface GoogleApiDeps {
@@ -165,6 +167,7 @@ export class GoogleApi {
     validate?: () => Promise<void>,
     ifMatch?: string,
     reserveDispatch?: () => Promise<void>,
+    assertDispatch?: () => void,
   ): Promise<Response> {
     let token: string
     try {
@@ -193,6 +196,7 @@ export class GoogleApi {
     }
     if (reserveDispatch) await reserveDispatch()
     this.#deps.assertRequest?.()
+    assertDispatch?.()
     let res: Response
     try {
       res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
@@ -254,6 +258,7 @@ export class GoogleApi {
       options?.validate,
       options?.ifMatch,
       options?.reserveDispatch,
+      options?.assertDispatch,
     )
     await res.text().catch(() => '')
   }
@@ -282,6 +287,7 @@ export class GoogleApi {
       gate?.validate,
       undefined,
       gate?.reserveDispatch,
+      gate?.assertDispatch,
     )
     // The catch is the design, not defensiveness: past this line Google has
     // already done the thing.

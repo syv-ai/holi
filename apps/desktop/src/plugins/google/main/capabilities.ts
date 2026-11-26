@@ -625,10 +625,21 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       assertBinding,
     }
   }
-  const mailInvitations = () => {
-    if (!deps.mailInvitations)
+  let invitationWork = 0
+  const withMailInvitations = async <T>(
+    work: (session: NonNullable<GoogleCapabilityDeps['mailInvitations']>) => Promise<T>,
+  ) => {
+    const session = deps.mailInvitations
+    if (!session)
       throw new CapabilityError('UNAVAILABLE', 'mail invitation responses are unavailable')
-    return deps.mailInvitations
+    invitationWork++
+    try {
+      return await work(session)
+    } finally {
+      // Disposing a vault cannot retire an in-flight write's journal or the
+      // shared session of another vault. Release the handle when this lease drains.
+      if (--invitationWork === 0 && disposed) session.closeStore()
+    }
   }
 
   const dataOf = async (remote: string): Promise<GoogleData> => {
@@ -958,7 +969,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: (ctx, input) =>
         google(async () => {
           const target = await invitationTarget(ctx, input)
-          const invitation = await mailInvitations().read(target)
+          const invitation = await withMailInvitations((session) => session.read(target))
           target.assertBinding()
           return invitation
         }),
@@ -982,11 +993,8 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: (ctx, { identity, answer, expectedResponseTargetKey, ...target }) =>
         google(async () => {
           const bound = await invitationTarget(ctx, target)
-          const result = await mailInvitations().respond(
-            bound,
-            identity,
-            answer,
-            expectedResponseTargetKey,
+          const result = await withMailInvitations((session) =>
+            session.respond(bound, identity, answer, expectedResponseTargetKey),
           )
           try {
             bound.assertBinding()
@@ -1678,6 +1686,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     connectGeneration += 1
     connectFlow?.cancel()
     connectFlow = null
+    if (invitationWork === 0) deps.mailInvitations?.closeStore()
   })
   return capabilities
 }

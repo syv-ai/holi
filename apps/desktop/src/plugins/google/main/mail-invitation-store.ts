@@ -3,6 +3,14 @@ import { CapabilityError, jsonFileStore } from '../../../main/plugin-api'
 import type { InviteAnswer } from './calendar'
 import type { CalendarReplyReceipt } from './gmail-invitation-transport'
 import type { MailInvitationIdentity } from './mail-invitation'
+import {
+  calendarLocatorKey,
+  calendarLocatorMatches,
+  CALENDAR_RESOURCE_BUDGET,
+  createCalendarEvidence,
+  MAX_CALENDAR_LOCATORS,
+  type CalendarLocator,
+} from './mail-invitation-calendar-evidence'
 
 type Revision = Omit<MailInvitationIdentity, 'messageId'> & {
   /** Absent on journals written before mailbox response was separate from event material. */
@@ -90,17 +98,6 @@ export type ParentAnchor = {
   reply?: { rfcId: string; messageId: string; threadId?: string | null; answer?: InviteAnswer }
 }
 
-/** Existence evidence only, retained independently of confirmation and ETags. */
-export type CalendarLocator = Pick<Revision, 'uid' | 'recurrenceId'> & {
-  accountSub: string
-  target: string
-  /** Not recorded by older Calendar attempts. */
-  organizer?: string
-  series?: boolean
-  /** The event identified an occurrence but its original slot was unverifiable. */
-  occurrenceUnverified?: true
-}
-
 type Journal = {
   version: 2
   materialHistory: CalendarMaterialSource[]
@@ -111,7 +108,6 @@ type Journal = {
 }
 const MAX_MATERIAL_HISTORY = 4096
 const MAX_PARENT_ANCHORS = 4096
-const MAX_CALENDAR_LOCATORS = 4096
 
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -390,30 +386,6 @@ function calendarLocatorFor({
   return { accountSub, uid, recurrenceId, target, organizer, series }
 }
 
-function calendarLocatorKey(locator: CalendarLocator): string {
-  const { accountSub, uid, recurrenceId, target, organizer, series, occurrenceUnverified } = locator
-  return JSON.stringify([
-    accountSub,
-    organizer,
-    uid,
-    recurrenceId,
-    series,
-    target,
-    occurrenceUnverified,
-  ])
-}
-
-/** Legacy attempts can contribute locators before they have been compacted. */
-export function knownCalendarLocators({ attempts, calendarLocators }: Journal): CalendarLocator[] {
-  return [
-    ...calendarLocators,
-    ...attempts.flatMap((attempt) => {
-      const locator = attempt.state !== 'prepared' && calendarLocatorFor(attempt)
-      return locator ? [locator] : []
-    }),
-  ]
-}
-
 function anchorFor({ accountSub, revision, delivery, answer }: InvitationAttempt): ParentAnchor[] {
   if (delivery.channel !== 'gmail') return []
   const { parent, organizer, mailbox, receipt, rfcId } = delivery
@@ -462,42 +434,84 @@ export function createMailInvitationStore(userData: string) {
         : verifyJournal(raw),
     { mode: 0o600 },
   )
-  const update = (change: (journal: Journal) => Journal) =>
-    store.update((journal) => verifyJournal(change(journal)))
+  const evidence = createCalendarEvidence(join(userData, 'google-mail-invitation-calendar.db'))
+  // Older versions retained these exact locators in the journal. New writes
+  // leave them intact; count their distinct keys against the same account cap.
+  let legacyKeys: Map<string, Set<string>> | undefined
+  const initLegacy = (journal: Journal) => {
+    if (legacyKeys === undefined) {
+      legacyKeys = new Map()
+      for (const locator of journal.calendarLocators) {
+        const keys = legacyKeys.get(locator.accountSub) ?? new Set<string>()
+        keys.add(calendarLocatorKey(locator))
+        legacyKeys.set(locator.accountSub, keys)
+      }
+    }
+    return journal
+  }
+  const update = (change: (journal: Journal) => Journal, publishOwned?: () => boolean) =>
+    store.update((journal) => verifyJournal(change(initLegacy(journal))), undefined, publishOwned)
+  function retainLocator(locator: CalendarLocator, keepInJournalIfFull = false) {
+    if (!isCalendarLocator(locator)) throw new Error('Invalid Calendar invitation locator')
+    return evidence.remember(locator, legacyKeys?.get(locator.accountSub), keepInJournalIfFull)
+  }
   return {
-    read: store.read,
+    read: async () => initLegacy(await store.read()),
     update,
+    close: evidence.close,
+    lookupCalendarEvidence(
+      journal: Journal,
+      target: { accountSub: string; email: string },
+      details: {
+        identity: Pick<Revision, 'uid' | 'recurrenceId'>
+        organizer?: { email: string } | null
+      },
+      occurrencesOnly = false,
+    ) {
+      const { uid, recurrenceId } = details.identity
+      const scope = { ...target, uid, recurrenceId, organizer: details.organizer?.email }
+      const targets = new Set<string>()
+      // A v2 overflow bit has no trustworthy attribution. Keep it as global
+      // uncertainty, but never create it for a new observation.
+      let incomplete = !occurrencesOnly && journal.calendarLocatorOverflow
+      const include = (copy: CalendarLocator) => {
+        if (
+          (occurrencesOnly && copy.recurrenceId === null && !copy.occurrenceUnverified) ||
+          !calendarLocatorMatches(copy, scope) ||
+          targets.has(copy.target)
+        )
+          return
+        if (targets.size < CALENDAR_RESOURCE_BUDGET) targets.add(copy.target)
+        else incomplete = true
+      }
+      for (const copy of journal.calendarLocators) include(copy)
+      for (const attempt of journal.attempts) {
+        const copy = attempt.state !== 'prepared' && calendarLocatorFor(attempt)
+        if (copy) include(copy)
+      }
+      const indexedIncomplete = evidence.lookup(scope, targets, occurrencesOnly)
+      return { targets, incomplete: incomplete || indexedIncomplete }
+    },
     changeAttempt: (id: string, change: (attempt: InvitationAttempt) => InvitationAttempt | null) =>
       update((journal) => ({
         ...journal,
-        attempts: journal.attempts.flatMap(
-          (attempt) => (attempt.id === id ? change(attempt) : attempt) ?? [],
-        ),
+        attempts: journal.attempts.flatMap((attempt) => {
+          if (attempt.id !== id) return attempt
+          const changed = change(attempt)
+          if (!changed && attempt.state !== 'prepared') {
+            const locator = calendarLocatorFor(attempt)
+            if (locator) retainLocator(locator)
+          }
+          return changed ?? []
+        }),
       })),
     async rememberCalendarLocator(locator: CalendarLocator, assertBinding: () => void) {
+      // A Calendar scan reads the journal before observing provider rows. With
+      // the immutable legacy keys loaded, binding and commit don't yield.
       assertBinding()
-      const key = calendarLocatorKey(locator)
-      const alreadyRetained = (journal: Journal) =>
-        journal.calendarLocatorOverflow ||
-        journal.calendarLocators.some((entry) => calendarLocatorKey(entry) === key)
-      if (!alreadyRetained(await store.read()))
-        await store.update(
-          (journal) => {
-            if (alreadyRetained(journal)) return journal
-            // A full registry is not absence. Do not silently forget a copy.
-            return verifyJournal(
-              journal.calendarLocators.length >= MAX_CALENDAR_LOCATORS
-                ? { ...journal, calendarLocatorOverflow: true }
-                : { ...journal, calendarLocators: [...journal.calendarLocators, locator] },
-            )
-          },
-          undefined,
-          () => {
-            assertBinding()
-            return true
-          },
-        )
+      if (legacyKeys === undefined) initLegacy(await store.read())
       assertBinding()
+      retainLocator(locator)
     },
     addAttempt: (attempt: InvitationAttempt) =>
       update((journal) => {
@@ -533,9 +547,8 @@ export function createMailInvitationStore(userData: string) {
         const materials = new Map(
           journal.materialHistory.map((source) => [materialSourceKey(source), source]),
         )
-        const locators = new Map(
-          journal.calendarLocators.map((entry) => [calendarLocatorKey(entry), entry]),
-        )
+        const confirmedLocator = calendarLocatorFor(confirmed)
+        const confirmedLocatorKey = confirmedLocator && calendarLocatorKey(confirmedLocator)
         const retain = (attempt: InvitationAttempt) => {
           if (provesAnchor(attempt))
             for (const anchor of anchorFor(attempt)) anchors.set(anchorKey(anchor), anchor)
@@ -548,11 +561,14 @@ export function createMailInvitationStore(userData: string) {
             const key = materialSourceKey(source)
             if (!materials.has(key) && materials.size >= MAX_MATERIAL_HISTORY) return entry
             const locator = calendarLocatorFor(entry)
-            if (locator) {
-              const key = calendarLocatorKey(locator)
-              if (!locators.has(key) && locators.size >= MAX_CALENDAR_LOCATORS) return entry
-              locators.set(key, locator)
-            }
+            // The replacement may already retain the same exact locator.
+            // Otherwise commit it first, or leave the old entry at capacity.
+            if (
+              locator &&
+              calendarLocatorKey(locator) !== confirmedLocatorKey &&
+              !retainLocator(locator, true)
+            )
+              return entry
             materials.set(key, source)
             retain(entry)
             return []
@@ -565,7 +581,6 @@ export function createMailInvitationStore(userData: string) {
           attempts,
           materialHistory: [...materials.values()],
           parentAnchors: [...anchors.values()],
-          calendarLocators: [...locators.values()],
         }
       }),
   }

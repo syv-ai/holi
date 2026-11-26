@@ -7,7 +7,6 @@ import {
   type GoogleDispatchGate,
 } from './api'
 import type { InviteAnswer } from './calendar'
-import { relevantCalendarTargets } from './mail-invitation-calendar'
 import { CalendarScanError } from './gmail-mime'
 import { createCalendarScan, sendCalendarReply } from './gmail-invitation-transport'
 import type { MailInvitationIdentity } from './mail-invitation'
@@ -19,7 +18,6 @@ import {
 } from './mail-invitation-reconciliation'
 import { sameInvitation, scopeKey } from './mail-invitation-revisions'
 import {
-  knownCalendarLocators,
   materialSourceForAttempt,
   retainMaterialSources,
   type createMailInvitationStore,
@@ -93,6 +91,7 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
   const { readFacts, recordGmailOutcome } = createMailInvitationReconciler(store, dispatching)
 
   return {
+    closeStore: store.close,
     async read(target: Target) {
       try {
         const result = await readFacts(readTarget(target), createCalendarScan())
@@ -282,34 +281,55 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
             blocksReservation = newest.blocksReservation
             visibleMaterialSources = [...visibleMaterialSources, ...newest.visibleMaterialSources]
           }
-          const reserveDispatch = async () => {
-            await store.update((journal) => {
-              if (
-                !journal.attempts.some((entry) => entry.id === id && entry.state === 'prepared') ||
-                blocksReservation(journal)
-              )
-                throw conflict()
-              // A concurrent reader can discover another copy after preflight.
-              if (
-                channel === 'gmail' &&
-                (journal.calendarLocatorOverflow ||
-                  [
-                    ...relevantCalendarTargets(knownCalendarLocators(journal), target, details),
-                  ].some((locator) => !absentTargets.has(locator)))
-              )
-                throw conflict()
-              return retainMaterialSources(
-                {
-                  ...journal,
-                  attempts: journal.attempts.map((entry) =>
-                    entry.id === id ? { ...entry, state: 'unresolved' } : entry,
-                  ),
-                },
-                [...visibleMaterialSources, materialSourceForAttempt(attempt, email)],
-              )
-            })
+          type Journal = Awaited<ReturnType<typeof store.read>>
+          let reserved: Journal | undefined
+          const assertCalendarAbsence = (journal: Journal) => {
+            if (channel !== 'gmail') return
+            const evidence = store.lookupCalendarEvidence(journal, target, details)
+            if (
+              evidence.incomplete ||
+              [...evidence.targets].some((locator) => !absentTargets.has(locator))
+            )
+              throw conflict()
           }
-          const gate: GoogleDispatchGate = { validate, reserveDispatch }
+          const reserveDispatch = async () => {
+            await store.update(
+              (journal) => {
+                if (
+                  !journal.attempts.some(
+                    (entry) => entry.id === id && entry.state === 'prepared',
+                  ) ||
+                  blocksReservation(journal)
+                )
+                  throw conflict()
+                assertCalendarAbsence(journal)
+                reserved = retainMaterialSources(
+                  {
+                    ...journal,
+                    attempts: journal.attempts.map((entry) =>
+                      entry.id === id ? { ...entry, state: 'unresolved' } : entry,
+                    ),
+                  },
+                  [...visibleMaterialSources, materialSourceForAttempt(attempt, email)],
+                )
+                return reserved
+              },
+              () => {
+                target.assertBinding()
+                // SQLite observations can commit while the JSON temporary file
+                // is being written. Check again at the synchronous rename seam.
+                assertCalendarAbsence(reserved!)
+                return true
+              },
+            )
+          }
+          const gate: GoogleDispatchGate = {
+            validate,
+            reserveDispatch,
+            // Catch observations during JSON cleanup as well. New Calendar
+            // attempts observe their targets in the index before reserving.
+            assertDispatch: () => assertCalendarAbsence(reserved!),
+          }
           try {
             if (channel === 'calendar') {
               const { url, attendee, etag } = reply.patch
