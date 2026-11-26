@@ -58,7 +58,7 @@ const onFlushCancelled = pushChannel<{ id: string }>('vault:flush-cancel')
  * in another one, keeping `activeRemoteAtom` truthful (a main-side switch could
  * not). Main holds them until `openReady`. `focus: false` (`holi docs
  * screenshot`) opens it without moving the caret into it. */
-const onOpen = pushChannel<{ remote: string; path: string; heading?: string; focus?: boolean }>(
+const onOpen = pushChannel<{ remote: string; path: string; heading?: string; kind?: 'directory'; focus?: boolean }>(
   'vault:open',
 )
 const onNavigate = pushChannel<{

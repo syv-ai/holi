@@ -561,8 +561,8 @@ export function FilesSection({
   // tree does not have yet keeps the request waiting.
   useRequest(
     revealInFilesRequestAtom,
-    ({ path }) => {
-      if (data[path] === undefined) return false
+    ({ path, directory }) => {
+      if (data[path] === undefined || (directory && !data[path]?.folder)) return false
       land([path])
     },
     { catchUp: true },
