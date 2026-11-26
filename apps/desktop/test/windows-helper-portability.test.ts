@@ -105,6 +105,58 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
     try {
       await writeVaultEnv(root, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
       const cli = await installHoliCli(userData)
+      const argument = `Ada's café "vault" with spaces`
+      const cliCallers = [
+        {
+          name: 'cmd.exe',
+          run: () =>
+            execAsync('cmd.exe', ['/d', '/s', '/c', `""${cli}" fixture who "${argument}""`], {
+              cwd: root,
+              env: { ...shellEnv, HOLI_BIN: cli },
+              timeout: 10_000,
+              windowsHide: true,
+            }),
+        },
+        {
+          name: 'powershell.exe',
+          run: () =>
+            execAsync(
+              'powershell.exe',
+              [
+                '-NoLogo',
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                '& $env:HOLI_BIN fixture who $args[0]',
+                argument,
+              ],
+              {
+                cwd: root,
+                env: { ...shellEnv, HOLI_BIN: cli },
+                timeout: 10_000,
+                windowsHide: true,
+              },
+            ),
+        },
+        {
+          name: 'Node process.env.HOLI_BIN',
+          run: () =>
+            execAsync(
+              process.execPath,
+              [
+                '-e',
+                'const { spawnSync } = require("node:child_process"); const r = spawnSync(process.env.HOLI_BIN, ["fixture", "who", process.argv[1]], { encoding: "utf8" }); process.stdout.write(r.stdout ?? ""); process.stderr.write(r.stderr ?? ""); process.exitCode = r.status ?? 1',
+                argument,
+              ],
+              {
+                cwd: root,
+                env: { ...shellEnv, HOLI_BIN: cli },
+                timeout: 10_000,
+                windowsHide: true,
+              },
+            ),
+        },
+      ]
       await writeFile(
         join(userData, 'cli-endpoint.json'),
         JSON.stringify({ host: '127.0.0.1', port: server.port(), token: machineToken }, null, 2) +
@@ -141,8 +193,21 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
           stderr: '',
         })
       }
+      for (const caller of cliCallers) {
+        const result = await caller.run()
+        expect(result, `${caller.name} must invoke the installed Holi executable`).toMatchObject({
+          stdout: `|${argument}\n`,
+          stderr: '',
+        })
+      }
       expect(jobs).toEqual(['abcd1234', 'abcd1234'])
-      expect(cliJobs).toEqual([`abcd1234|Ada's café "vault" 0`, `abcd1234|Ada's café "vault" 1`])
+      expect(cliJobs).toEqual([
+        `abcd1234|Ada's café "vault" 0`,
+        `abcd1234|Ada's café "vault" 1`,
+        `|${argument}`,
+        `|${argument}`,
+        `|${argument}`,
+      ])
       await vi.waitFor(() => expect(statuses).toEqual(['abcd1234', 'abcd1234']))
     } finally {
       await server.stop()
