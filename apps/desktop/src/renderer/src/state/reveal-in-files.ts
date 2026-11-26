@@ -8,12 +8,16 @@
 import { atom } from 'jotai'
 import { raise, requestAtom } from './request'
 
-export const revealInFilesRequestAtom = requestAtom<{ path: string; directory?: boolean }>()
+export const revealInFilesRequestAtom = requestAtom<{
+  path: string
+  directory?: boolean
+  remote?: string | null
+}>()
 
 /** Reveal `path` (vault-relative) in the files tree. */
 export const revealInFilesAtom = atom(
   null,
-  (get, set, request: string | { path: string; directory?: boolean }) => {
+  (get, set, request: string | { path: string; directory?: boolean; remote?: string | null }) => {
     raise(
       get,
       set,
