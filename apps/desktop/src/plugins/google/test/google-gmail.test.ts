@@ -379,10 +379,9 @@ describe('listThreads', () => {
       }
       malformedMetadata = undefined
       metadataStatus = 503
-      expect(await data.threads(options, { refresh: true })).toMatchObject({
-        ...partial,
-        nextPageToken: 'next-page',
-      })
+      const transient = await data.threads(options, { refresh: true })
+      expect(transient).toMatchObject({ ...partial, nextPageToken: 'next-page' })
+      expect(transient).not.toHaveProperty('notFoundThreadIds')
       metadataStatus = 403
       await expect(data.threads(options, { refresh: true })).rejects.toMatchObject({
         code: 'scope',
@@ -408,8 +407,13 @@ describe('listThreads', () => {
       })
       metadataStatus = 404
       const removed = await data.threads(options, { refresh: true })
-      expect(removed).toMatchObject({ threads: partial.threads, nextPageToken: 'next-page' })
+      expect(removed).toMatchObject({
+        threads: partial.threads,
+        nextPageToken: 'next-page',
+        notFoundThreadIds: ['oversized'],
+      })
       expect(removed).not.toHaveProperty('unreadableThreadIds')
+      expect(await data.threads(options, { refresh: true })).not.toHaveProperty('notFoundThreadIds')
     } finally {
       cache.close()
     }

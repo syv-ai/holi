@@ -40,6 +40,14 @@ export class GoogleApiError extends Error {
   }
 }
 
+/** A resource GET exceeded its own deadline, after acquiring a token. */
+export class GoogleResourceTimeoutError extends Error {
+  constructor(cause: unknown) {
+    super('Google did not finish the read in time', { cause })
+    this.name = 'GoogleResourceTimeoutError'
+  }
+}
+
 /** The request left Holi, but Google did not give a definitive verdict. */
 export class GoogleWriteUncertainError extends Error {
   constructor(cause: unknown) {
@@ -103,10 +111,24 @@ export class GoogleApi {
     }
 
     this.#deps.assertRequest?.()
+    const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    const readFailed = (error: unknown, readingBody = false): never => {
+      this.#deps.assertRequest?.()
+      // Fetch rejects with the deadline's reason; aborting an already-started
+      // body can instead reject with AbortError. Neither is an HTTP response.
+      if (
+        deadline.aborted &&
+        (error === deadline.reason ||
+          (readingBody && error instanceof DOMException && error.name === 'AbortError'))
+      ) {
+        throw new GoogleResourceTimeoutError(error)
+      }
+      throw error
+    }
     const res = await (this.#deps.fetch ?? globalThis.fetch)(full, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+      signal: deadline,
+    }).catch((error: unknown) => readFailed(error))
 
     this.#deps.assertRequest?.()
     if (!res.ok) {
@@ -114,7 +136,7 @@ export class GoogleApi {
       this.#deps.assertRequest?.()
       throw error
     }
-    const data = (await res.json()) as T
+    const data = (await res.json().catch((error: unknown) => readFailed(error, true))) as T
     this.#deps.assertRequest?.()
     return data
   }

@@ -19,7 +19,7 @@
  * HTML sanitizer remains in the renderer, where a DOM is available.
  */
 import { Parser } from 'htmlparser2'
-import { GoogleApiError, type GoogleApi } from './api'
+import { GoogleApiError, GoogleResourceTimeoutError, type GoogleApi } from './api'
 import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
 import {
@@ -348,7 +348,7 @@ export interface MailPage {
   threads: MailThreadSummary[]
   /** Unresolved metadata failures, including known failures outside this page on cached reads. */
   unreadableThreadIds?: string[]
-  /** Thread metadata 404s on a continuation, which may invalidate previously loaded rows. */
+  /** Thread metadata 404s observed during this read, including off-page retries. */
   notFoundThreadIds?: string[]
   /** `null` when there is nothing more to load. */
   nextPageToken: string | null
@@ -475,7 +475,8 @@ export async function listThreads(
   options: ListThreadsOptions = {},
   knownAddresses?: string[],
 ): Promise<MailPage> {
-  return (await fetchThreadPage(api, options, knownAddresses)).page
+  const { page, outcomes } = await fetchThreadPage(api, options, knownAddresses)
+  return { ...page, ...threadMetadataFailures(outcomes) }
 }
 
 export async function fetchThreadPage(
@@ -484,31 +485,33 @@ export async function fetchThreadPage(
   knownAddresses?: string[],
 ) {
   const { ids, nextPageToken } = await listThreadIds(api, options)
-  const { threads, unreadableThreadIds, outcomes } = await fetchThreadSummaries(
-    api,
-    ids,
-    knownAddresses,
-  )
-  // A continuation can overlap earlier pages. Report definitive absence so
-  // the caller can evict a previously visible row instead of just skipping it.
-  const notFoundThreadIds =
-    options.pageToken === undefined
-      ? []
-      : outcomes.flatMap(({ id, kind }) => (kind === 'not-found' ? [id] : []))
-  const page: MailPage = {
-    threads,
-    ...(unreadableThreadIds.length ? { unreadableThreadIds } : {}),
-    ...(notFoundThreadIds.length ? { notFoundThreadIds } : {}),
-    nextPageToken,
-    syncedAt: new Date().toISOString(),
+  const { threads, outcomes } = await fetchThreadSummaries(api, ids, knownAddresses)
+  return {
+    page: { threads, nextPageToken, syncedAt: new Date().toISOString() },
+    outcomes,
   }
-  return { page, outcomes }
 }
 
 /** Per requested ID; only an actual HTTP 404 proves absence. */
 export type ThreadMetadataOutcome = {
   id: string
   kind: 'readable' | 'not-found' | 'unreadable'
+}
+
+/** Keep evidence from metadata reads separate from the list's visible rows. */
+export function threadMetadataFailures(
+  outcomes: readonly ThreadMetadataOutcome[],
+): Pick<MailPage, 'notFoundThreadIds' | 'unreadableThreadIds'> {
+  const notFound = new Set<string>()
+  const unreadable = new Set<string>()
+  for (const { id, kind } of outcomes) {
+    if (kind === 'not-found') notFound.add(id)
+    if (kind === 'unreadable') unreadable.add(id)
+  }
+  return {
+    ...(notFound.size ? { notFoundThreadIds: [...notFound] } : {}),
+    ...(unreadable.size ? { unreadableThreadIds: [...unreadable] } : {}),
+  }
 }
 
 // This applies to the unmasked threads.get metadata response, not a partial
@@ -533,10 +536,9 @@ export async function fetchThreadSummaries(
   knownAddresses?: string[],
 ): Promise<{
   threads: MailThreadSummary[]
-  unreadableThreadIds: string[]
   outcomes: ThreadMetadataOutcome[]
 }> {
-  if (ids.length === 0) return { threads: [], unreadableThreadIds: [], outcomes: [] }
+  if (ids.length === 0) return { threads: [], outcomes: [] }
 
   // ONCE per call, not once per thread: resolving a chip must not cost a
   // request. It runs concurrently with the threads for the same reason.
@@ -573,6 +575,7 @@ export async function fetchThreadSummaries(
         if (
           error instanceof CalendarScanError ||
           error instanceof SyntaxError ||
+          error instanceof GoogleResourceTimeoutError ||
           (error instanceof GoogleApiError &&
             error.code === 'unknown' &&
             (error.status === 408 || error.status >= 500))
@@ -591,9 +594,6 @@ export async function fetchThreadSummaries(
   const invites = await fetchInviteIds(api, summaries)
   return {
     outcomes: results.map(({ id, kind }) => ({ id, kind })),
-    unreadableThreadIds: results.flatMap((result) =>
-      result.kind === 'unreadable' ? [result.id] : [],
-    ),
     threads: summaries.map((summary) => ({
       ...summary,
       automated: summary.automated || invitationIds.has(summary.id),
