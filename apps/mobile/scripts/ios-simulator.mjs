@@ -216,39 +216,60 @@ try {
         ...(moveCase ? { SIMCTL_CHILD_HOLI_MOVE_CASE: String(moveCase.ordinal) } : {}),
       },
     })
-    const output = await whileCommandPending(
-      launchCommand,
-      async () => {
-        if (phase !== 'normal') return
+    const output = await whileCommandPending(launchCommand, async () => {
+      if (phase !== 'normal' || appPids.length !== 0) return
+      try {
+        const listing = await command('ps', ['-axo', 'pid=,comm='], { timeout: 5_000 })
+        const matchingProcesses = listing
+          .split('\n')
+          .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
+          .filter((match) => match && match[2] === installedBinary)
+          .map((match) => Number(match[1]))
+        let reportExists = false
         try {
-          const listing = await command('ps', ['-axo', 'pid=,comm='], { timeout: 5_000 })
-          const matchingProcesses = listing
-            .split('\n')
-            .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
-            .filter((match) => match && match[2] === installedBinary)
-            .map((match) => Number(match[1]))
-          let reportExists = false
-          try {
-            await lstat(reportPath)
-            reportExists = true
-          } catch (error) {
-            if (error.code !== 'ENOENT') throw error
-          }
-          await writeFile(
-            join(artifacts, 'pending-launch-observation.json'),
-            JSON.stringify({
-              runId, simulator, phase, observedAt: Date.now(), capturedAppPid: null,
-              matchingInstalledBinaryProcesses: matchingProcesses, reportExists,
-            }, null, 2),
-          )
+          await lstat(reportPath)
+          reportExists = true
         } catch (error) {
-          await writeFile(
-            join(artifacts, 'pending-launch-observation-error.json'),
-            JSON.stringify({ runId, phase, error: String(error) }),
-          ).catch(() => {})
+          if (error.code !== 'ENOENT') throw error
         }
-      },
-    )
+        let reportIdentity = null
+        if (reportExists) {
+          try {
+            const report = await readBoundedJson(reportPath)
+            reportIdentity = {
+              runId: report.runId,
+              phase: report.phase,
+              pid: report.pid,
+              matchesRun: report.runId === runId,
+            }
+          } catch (error) {
+            reportIdentity = { error: String(error) }
+          }
+        }
+        await writeFile(
+          join(artifacts, 'pending-launch-observation.json'),
+          JSON.stringify(
+            {
+              runId,
+              simulator,
+              phase,
+              observedAt: Date.now(),
+              capturedAppPid: null,
+              matchingInstalledBinaryProcesses: matchingProcesses,
+              reportExists,
+              reportIdentity,
+            },
+            null,
+            2,
+          ),
+        )
+      } catch (error) {
+        await writeFile(
+          join(artifacts, 'pending-launch-observation-error.json'),
+          JSON.stringify({ runId, phase, error: String(error) }),
+        ).catch(() => {})
+      }
+    })
     const pid = Number(output.match(/: (\d+)$/)?.[1])
     assert.ok(Number.isSafeInteger(pid) && pid > 0, `No app PID: ${output}`)
     assert.notEqual(pid, previous?.pid, 'Simulator reused the previous app PID')

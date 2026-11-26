@@ -388,7 +388,9 @@ export function validateSharedGraph(graph) {
 export async function whileCommandPending(command, observe, delay = 60_000) {
   let observation
   const timer = setTimeout(() => {
-    observation = Promise.resolve().then(observe).catch(() => {})
+    observation = Promise.resolve()
+      .then(observe)
+      .catch(() => {})
   }, delay)
   try {
     return await command

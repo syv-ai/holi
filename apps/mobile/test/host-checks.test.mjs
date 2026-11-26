@@ -467,22 +467,41 @@ test('host rejects absent, incomplete or nonportable shared graph evidence', () 
 
 test('pending-command observation skips completed commands and drains started diagnostics', async () => {
   let observed = false
-  assert.equal(await whileCommandPending(Promise.resolve('done'), () => { observed = true }, 20), 'done')
+  assert.equal(
+    await whileCommandPending(
+      Promise.resolve('done'),
+      () => {
+        observed = true
+      },
+      20,
+    ),
+    'done',
+  )
   assert.equal(observed, false)
 
   let finishCommand
   let finishObservation
-  const command = new Promise((resolve) => { finishCommand = resolve })
-  const drained = new Promise((resolve) => { finishObservation = resolve })
+  const command = new Promise((resolve) => {
+    finishCommand = resolve
+  })
+  const drained = new Promise((resolve) => {
+    finishObservation = resolve
+  })
   let started
-  const result = whileCommandPending(command, () => {
-    started = true
-    return drained
-  }, 1)
+  const result = whileCommandPending(
+    command,
+    () => {
+      started = true
+      return drained
+    },
+    1,
+  )
   while (!started) await new Promise((resolve) => setTimeout(resolve, 1))
   finishCommand('launched')
   let settled = false
-  result.then(() => { settled = true })
+  result.then(() => {
+    settled = true
+  })
   await Promise.resolve()
   assert.equal(settled, false)
   finishObservation()
@@ -493,11 +512,17 @@ test('pending-command observation preserves command failure when diagnostics fai
   const failure = new Error('launch failed')
   let rejectCommand
   let started
-  const command = new Promise((_, reject) => { rejectCommand = reject })
-  const result = whileCommandPending(command, async () => {
-    started = true
-    throw new Error('diagnostic failed')
-  }, 1)
+  const command = new Promise((_, reject) => {
+    rejectCommand = reject
+  })
+  const result = whileCommandPending(
+    command,
+    async () => {
+      started = true
+      throw new Error('diagnostic failed')
+    },
+    1,
+  )
   while (!started) await new Promise((resolve) => setTimeout(resolve, 1))
   rejectCommand(failure)
   await assert.rejects(result, (error) => error === failure)
