@@ -174,8 +174,17 @@ export function createManagedWorkingCopy(
     fetch: () => operate('fetch'),
     integrate: () => operate('integrate'),
     fetchAndIntegrate: async () => {
-      await operate('fetch')
-      await operate('integrate')
+      const root = await rootPath()
+      return withVaultLock(root, async () => {
+        await recover(root)
+        const identity = await native.reopen(root)
+        assertIdentity(identity)
+        const fetched = await native.fetch(root, identity, credential)
+        if (fetched) throw Object.assign(new Error(fetched.message), { refusal: fetched })
+        const integrated = await native.integrate(root, identity, credential)
+        if (integrated)
+          throw Object.assign(new Error(integrated.message), { refusal: integrated })
+      })
     },
     publish: () => operate('publish'),
   }
