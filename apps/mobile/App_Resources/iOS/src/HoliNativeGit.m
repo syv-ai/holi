@@ -1,6 +1,7 @@
 #import "HoliNativeGit.h"
 #import "HoliGitSnapshot.h"
 #import "HoliManagedIdentity.h"
+#import "HoliGitIntegrationFiles.h"
 #import <git2.h>
 #import <git2/sys/repository.h>
 #import <sys/stat.h>
@@ -133,6 +134,20 @@ typedef struct {
   NSUInteger entries;
   CFAbsoluteTime deadline;
 } HNGTreePlan;
+typedef struct { NSMutableDictionary *entries; NSUInteger count; CFAbsoluteTime deadline; } HNGIntegrationEntries;
+static int HNGIntegrationEntry(const char *prefix, const git_tree_entry *entry, void *payload) {
+  HNGIntegrationEntries *plan = payload;
+  if (++plan->count > 100000 || CFAbsoluteTimeGetCurrent() > plan->deadline) return GIT_EUSER;
+  if (git_tree_entry_type(entry) == GIT_OBJECT_TREE) return 0;
+  git_filemode_t mode = git_tree_entry_filemode(entry);
+  if (mode != GIT_FILEMODE_BLOB && mode != GIT_FILEMODE_BLOB_EXECUTABLE) return GIT_EINVALIDSPEC;
+  NSString *directory = prefix ? [NSString stringWithUTF8String:prefix] : nil;
+  NSString *name = [NSString stringWithUTF8String:git_tree_entry_name(entry)];
+  if (!directory || !name || [name containsString:@".."] || [name containsString:@"/"]) return GIT_EINVALIDSPEC;
+  NSString *path = [directory stringByAppendingString:name];
+  plan->entries[path] = @{ @"oid": [NSString stringWithUTF8String:git_oid_tostr_s(git_tree_entry_id(entry))], @"mode": @(mode) };
+  return 0;
+}
 static int HNGPlanEntry(const char *prefix, const git_tree_entry *entry, void *payload) {
   HNGTreePlan *plan = payload;
   if (++plan->entries > 100000 || CFAbsoluteTimeGetCurrent() > plan->deadline) return GIT_EUSER;
@@ -172,6 +187,44 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
     if (rc != 1) return rc < 0 ? rc : GIT_ENONFASTFORWARD;
   }
   return 0;
+}
+static int HNGValidateIntegrationIndex(git_repository *repo, NSString *branch, NSDictionary *oldEntries) {
+  if (git_repository_state(repo) != GIT_REPOSITORY_STATE_NONE) return GIT_EINVALIDSPEC;
+  git_reference *head = NULL;
+  git_index *index = NULL;
+  int rc = git_repository_head(&head, repo);
+  NSString *expected = [@"refs/heads/" stringByAppendingString:branch];
+  if (rc == 0 && ![expected isEqual:[NSString stringWithUTF8String:git_reference_name(head) ?: ""]]) rc = GIT_EMODIFIED;
+  if (rc == 0) rc = git_repository_index(&index, repo);
+  if (rc == 0 && (git_index_version(index) != 2 || git_index_has_conflicts(index) || git_index_entrycount(index) != oldEntries.count)) rc = GIT_EINVALIDSPEC;
+  NSMutableSet *seen = [NSMutableSet set];
+  for (size_t i = 0; rc == 0 && i < git_index_entrycount(index); i++) {
+    const git_index_entry *entry = git_index_get_byindex(index, i);
+    if (!entry || !entry->path || (entry->flags & (GIT_INDEX_ENTRY_VALID | GIT_INDEX_ENTRY_EXTENDED)) || entry->flags_extended || git_index_entry_stage(entry) != 0 || (entry->mode != GIT_FILEMODE_BLOB && entry->mode != GIT_FILEMODE_BLOB_EXECUTABLE)) { rc = GIT_EINVALIDSPEC; break; }
+    NSString *path = [NSString stringWithUTF8String:entry->path];
+    NSDictionary *expectedEntry = path ? oldEntries[path] : nil;
+    if (!path || strcmp(path.UTF8String, entry->path) || [seen containsObject:path] || ![expectedEntry[@"oid"] isEqual:[NSString stringWithUTF8String:git_oid_tostr_s(&entry->id)]] || [expectedEntry[@"mode"] unsignedIntValue] != entry->mode) rc = GIT_EMODIFIED;
+    if (path) [seen addObject:path];
+  }
+  git_index_free(index); git_reference_free(head);
+  return rc;
+}
+static NSDictionary *HNGIntegrationMetadataImages(git_repository *repo, NSString *branch, NSError **error) {
+  NSString *base = [NSString stringWithUTF8String:git_repository_path(repo)];
+  NSMutableDictionary *images = [NSMutableDictionary dictionary];
+  for (NSString *name in @[@"index", @"HEAD", @"config", @"packed-refs", [@"refs/heads/" stringByAppendingString:branch], [@"refs/remotes/origin/" stringByAppendingString:branch]]) {
+    NSString *path = [base stringByAppendingPathComponent:name];
+    struct stat st;
+    if (lstat(path.fileSystemRepresentation, &st)) {
+      if (errno == ENOENT) { images[name] = NSNull.null; continue; }
+      if (error) *error = HNGPathError(errno, @"Cannot capture integration metadata"); return nil;
+    }
+    if (!S_ISREG(st.st_mode) || st.st_nlink != 1) { if (error) *error = HNGPathError(EINVAL, @"Unsupported integration metadata"); return nil; }
+    NSData *data = [NSData dataWithContentsOfFile:path options:0 error:error];
+    if (!data) return nil;
+    images[name] = [data base64EncodedStringWithOptions:0];
+  }
+  return images;
 }
 @implementation HoliNativeGit {
   NSString *_configuredOwner;
@@ -840,6 +893,168 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   git_repository *repo = [self openSelectedRepository:root remote:endpoint branch:branch snapshot:snapshot error:error];
   if (repo) *identity = record;
   return repo;
+}
+- (NSDictionary *)integrationRootGuard:(NSString *)root error:(NSError **)error {
+  NSString *canonical = [self canonicalRoot:root error:error];
+  if (!canonical || ![canonical isEqual:root]) return nil;
+  int fd = open(root.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  int git = fd >= 0 ? openat(fd, ".git", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1;
+  struct stat rs, gs;
+  BOOL valid = fd >= 0 && git >= 0 && fstat(fd, &rs) == 0 && fstat(git, &gs) == 0;
+  if (git >= 0) close(git);
+  if (fd >= 0) close(fd);
+  if (!valid) { if (error) *error = HNGPathError(EINVAL, @"Integration root is unavailable"); return nil; }
+  return @{ @"root":root, @"rootDev":@((unsigned long long)rs.st_dev), @"rootIno":@((unsigned long long)rs.st_ino), @"gitDev":@((unsigned long long)gs.st_dev), @"gitIno":@((unsigned long long)gs.st_ino) };
+}
+- (NSDictionary<NSString *, id> *)integrationPlan:(NSString *)root identity:(NSString *)identity error:(NSError **)error {
+  NSDictionary *record = nil;
+  HoliGitSnapshot *snapshot = nil;
+  git_repository *repo = [self openManagedRepository:root identity:&record snapshot:&snapshot error:error];
+  if (!repo) return nil;
+  NSDictionary *rootGuard = [self integrationRootGuard:root error:error];
+  if (!rootGuard) { git_repository_free(repo); [snapshot closeWithError:nil]; return nil; }
+  // The identity argument is the caller's expected remote; branch names are kept whole.
+  if (![record[@"remote"] isEqual:identity]) { if (error) *error=HNGPathError(EINVAL,@"Managed identity changed"); git_repository_free(repo); [snapshot closeWithError:nil]; return nil; }
+  NSString *branch = record[@"branch"];
+  git_reference *headRef=NULL, *targetRef=NULL;
+  git_commit *headCommit=NULL, *targetCommit=NULL;
+  git_tree *oldTree=NULL, *newTree=NULL;
+  int rc = git_repository_state(repo) == GIT_REPOSITORY_STATE_NONE ? 0 : GIT_EINVALIDSPEC;
+  if (rc == 0) rc = git_repository_head(&headRef, repo);
+  NSString *expectedHead=[@"refs/heads/" stringByAppendingString:branch];
+  if(rc==0 && ![expectedHead isEqual:[NSString stringWithUTF8String:git_reference_name(headRef) ?: ""]]) rc=GIT_EINVALIDSPEC;
+  NSString *targetName=[@"refs/remotes/origin/" stringByAppendingString:branch];
+  if(rc==0) rc=git_reference_lookup(&targetRef,repo,targetName.UTF8String);
+  if(rc==0) rc=git_commit_lookup(&headCommit,repo,git_reference_target(headRef));
+  if(rc==0) rc=git_commit_lookup(&targetCommit,repo,git_reference_target(targetRef));
+  NSString *outcome=nil;
+  if(rc==0) {
+    const git_oid *h=git_commit_id(headCommit), *t=git_commit_id(targetCommit);
+    if(git_oid_equal(h,t)) outcome=@"noop";
+    else if(git_graph_descendant_of(repo,h,t)==1) outcome=@"already-contained";
+    else if(git_graph_descendant_of(repo,t,h)==1) outcome=@"fast-forward";
+    else rc=GIT_EINVALIDSPEC;
+  }
+  if(rc==0) rc=git_commit_tree(&oldTree,headCommit);
+  if(rc==0) rc=git_commit_tree(&newTree,targetCommit);
+  HNGIntegrationEntries oldPlan = { [NSMutableDictionary dictionary], 0, CFAbsoluteTimeGetCurrent() + 5.0 };
+  HNGIntegrationEntries newPlan = { [NSMutableDictionary dictionary], 0, CFAbsoluteTimeGetCurrent() + 5.0 };
+  if(rc==0) rc=git_tree_walk(oldTree,GIT_TREEWALK_PRE,HNGIntegrationEntry,&oldPlan);
+  if(rc==0) rc=git_tree_walk(newTree,GIT_TREEWALK_PRE,HNGIntegrationEntry,&newPlan);
+  NSDictionary *oldEntries = oldPlan.entries, *newEntries = newPlan.entries;
+  if (rc == 0) rc = HNGValidateIntegrationIndex(repo, branch, oldEntries);
+  NSDictionary *metadataImages = rc == 0 ? HNGIntegrationMetadataImages(repo, branch, error) : nil;
+  if (rc == 0 && !metadataImages) rc = GIT_EINVALIDSPEC;
+  NSDictionary *result=nil;
+  if(rc==0) result=@{@"metadataImages":metadataImages,@"rootGuard":rootGuard,@"identity":record,@"outcome":outcome,@"headOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(headCommit))],@"targetOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(targetCommit))],@"oldEntries":oldEntries, @"newEntries":newEntries,@"requiredPaths":({ NSMutableSet *paths=[NSMutableSet setWithArray:oldEntries.allKeys]; [paths addObjectsFromArray:newEntries.allKeys]; [paths.allObjects sortedArrayUsingSelector:@selector(compare:)]; })};
+  else if(error) HNGError(error,rc);
+  git_tree_free(oldTree); git_tree_free(newTree); git_commit_free(headCommit); git_commit_free(targetCommit); git_reference_free(headRef); git_reference_free(targetRef); git_repository_free(repo);
+  BOOL closed = [snapshot closeWithError:result ? error : nil];
+  if (result && (!closed || ![rootGuard isEqual:[self integrationRootGuard:root error:error]])) return nil;
+  return result;
+}
+- (NSDictionary *)prepareIntegration:(NSString *)root plan:(NSDictionary *)plan authorizedPaths:(NSArray<NSString *> *)authorizedPaths error:(NSError **)error {
+  NSString *remote = [plan[@"identity"] isKindOfClass:NSDictionary.class] ? plan[@"identity"][@"remote"] : nil;
+  if (![remote isKindOfClass:NSString.class] || ![authorizedPaths isKindOfClass:NSArray.class]) { if (error) *error = HNGPathError(EINVAL, @"Invalid integration authorization"); return nil; }
+  NSDictionary *fresh = [self integrationPlan:root identity:remote error:error];
+  if (!fresh) return nil;
+  NSSet *authorized = [NSSet setWithArray:authorizedPaths];
+  if (![fresh isEqual:plan] || authorized.count != authorizedPaths.count || ![authorized isEqual:[NSSet setWithArray:fresh[@"requiredPaths"]]]) { if (error) *error = HNGPathError(EINVAL, @"Integration plan or authorization changed"); return nil; }
+  NSDictionary *record = nil;
+  HoliGitSnapshot *snapshot = nil;
+  git_repository *repo = [self openManagedRepository:root identity:&record snapshot:&snapshot error:error];
+  if (!repo) return nil;
+  int rc = 0;
+  git_index *index = NULL;
+  git_commit *target = NULL;
+  git_tree *tree = NULL;
+  git_oid expectedHead, expectedTarget, currentHead, currentTarget;
+  NSString *localRef = [@"refs/heads/" stringByAppendingString:record[@"branch"]];
+  NSString *trackingRef = [@"refs/remotes/origin/" stringByAppendingString:record[@"branch"]];
+  if (![record isEqual:fresh[@"identity"]] || git_oid_fromstr(&expectedHead, [fresh[@"headOid"] UTF8String]) || git_oid_fromstr(&expectedTarget, [fresh[@"targetOid"] UTF8String])) rc = GIT_EMODIFIED;
+  if (rc == 0) rc = git_reference_name_to_id(&currentHead, repo, localRef.UTF8String);
+  if (rc == 0) rc = git_reference_name_to_id(&currentTarget, repo, trackingRef.UTF8String);
+  if (rc == 0 && (!git_oid_equal(&currentHead, &expectedHead) || !git_oid_equal(&currentTarget, &expectedTarget))) rc = GIT_EMODIFIED;
+  if (rc == 0) rc = HNGValidateIntegrationIndex(repo, record[@"branch"], fresh[@"oldEntries"]);
+  NSDictionary *actualMetadata = rc == 0 ? HNGIntegrationMetadataImages(repo, record[@"branch"], error) : nil;
+  if (rc == 0 && (!actualMetadata || ![actualMetadata isEqual:fresh[@"metadataImages"]])) rc = GIT_EMODIFIED;
+  NSMutableArray *cleanliness = [NSMutableArray array];
+  NSDictionary *oldEntries = fresh[@"oldEntries"], *newEntries = fresh[@"newEntries"];
+  NSUInteger ordinal = 0;
+  for (NSString *path in [[oldEntries allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+    NSString *name = [NSString stringWithFormat:@"verify-%lu", (unsigned long)ordinal++];
+    [cleanliness addObject:@{@"path":path,@"old":oldEntries[path],@"new":oldEntries[path],@"oldSlot":[name stringByAppendingString:@"-old"],@"newArtifact":[name stringByAppendingString:@"-new"]}];
+  }
+  int rootFD = rc == 0 ? open(root.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1;
+  if (rc == 0 && (rootFD < 0 || !HGIPreflightIntegrationFiles(rootFD, rootFD, cleanliness, error))) rc = GIT_EMODIFIED;
+  if (rootFD >= 0) close(rootFD);
+  NSMutableDictionary *guards = [NSMutableDictionary dictionary];
+  NSString *gitPath = [NSString stringWithUTF8String:git_repository_path(repo)];
+  char privateRoot[PATH_MAX], metadataRoot[PATH_MAX];
+  if (!realpath(snapshot.path.fileSystemRepresentation, privateRoot) || !realpath(gitPath.fileSystemRepresentation, metadataRoot)) rc = GIT_EINVALIDSPEC;
+  NSString *privatePath = rc == 0 ? [NSString stringWithUTF8String:privateRoot] : nil;
+  NSString *metadataPath = rc == 0 ? [NSString stringWithUTF8String:metadataRoot] : nil;
+  if (rc == 0 && ![metadataPath isEqual:privatePath] && ![metadataPath hasPrefix:[privatePath stringByAppendingString:@"/"]]) rc = GIT_EINVALIDSPEC;
+  for (NSString *name in @[@"index", @"HEAD", @"config", @"packed-refs", localRef, trackingRef]) {
+    if (rc != 0) break;
+    NSString *path = [gitPath stringByAppendingPathComponent:name];
+    struct stat st;
+    if (lstat(path.fileSystemRepresentation, &st)) {
+      if (errno == ENOENT) { guards[name] = NSNull.null; continue; }
+      rc = GIT_ERROR; break;
+    }
+    if (!S_ISREG(st.st_mode) || st.st_nlink != 1) { rc = GIT_EINVALIDSPEC; break; }
+    NSData *bytes = [NSData dataWithContentsOfFile:path options:0 error:error];
+    if (!bytes) { rc = GIT_ERROR; break; }
+    guards[name] = bytes;
+  }
+  NSMutableArray *changes = [NSMutableArray array];
+  NSMutableDictionary *images = [NSMutableDictionary dictionary];
+  NSUInteger totalBytes = 0;
+  BOOL advances = [fresh[@"outcome"] isEqual:@"fast-forward"];
+  if (advances) for (NSString *path in fresh[@"requiredPaths"]) {
+    if (rc != 0) break;
+    id old = oldEntries[path] ?: NSNull.null, new = newEntries[path] ?: NSNull.null;
+    if ([old isEqual:new]) continue;
+    NSString *image = [NSString stringWithFormat:@"new-%lu", (unsigned long)changes.count];
+    NSString *slot = [NSString stringWithFormat:@"old-%lu", (unsigned long)changes.count];
+    if (new != NSNull.null) {
+      git_oid oid; git_blob *blob = NULL;
+      rc = git_oid_fromstr(&oid, [new[@"oid"] UTF8String]);
+      if (rc == 0) rc = git_blob_lookup(&blob, repo, &oid);
+      if (rc == 0) {
+        git_object_size_t length = git_blob_rawsize(blob);
+        if (length > 16 * 1024 * 1024 || totalBytes + length > 128 * 1024 * 1024) rc = GIT_EUSER;
+        else { images[image] = [NSData dataWithBytes:git_blob_rawcontent(blob) length:(NSUInteger)length]; totalBytes += (NSUInteger)length; }
+      }
+      git_blob_free(blob);
+    }
+    if (rc == 0) [changes addObject:@{@"path":path,@"old":old,@"new":new,@"oldSlot":slot,@"newArtifact":image}];
+  }
+  NSData *newIndex = guards[@"index"] == NSNull.null ? nil : guards[@"index"];
+  if (rc == 0 && advances) rc = git_repository_index(&index, repo);
+  if (rc == 0 && advances) rc = git_commit_lookup(&target, repo, &expectedTarget);
+  if (rc == 0 && advances) rc = git_commit_tree(&tree, target);
+  if (rc == 0 && advances) rc = git_index_read_tree(index, tree);
+  if (rc == 0 && advances) {
+    const char *indexName = git_index_path(index);
+    NSString *indexPath = indexName ? [NSString stringWithUTF8String:indexName] : nil;
+    char resolvedParent[PATH_MAX];
+    if (!indexPath || ![indexPath.lastPathComponent isEqual:@"index"] || !realpath(indexPath.stringByDeletingLastPathComponent.fileSystemRepresentation, resolvedParent) || ![[NSString stringWithUTF8String:resolvedParent] isEqual:metadataPath]) rc = GIT_EINVALIDSPEC;
+  }
+  if (rc == 0 && advances) rc = git_index_write(index);
+  if (rc == 0 && advances) {
+    NSString *path = [NSString stringWithUTF8String:git_index_path(index)];
+    newIndex = [NSData dataWithContentsOfFile:path options:0 error:error];
+    if (!newIndex) rc = GIT_ERROR;
+  }
+  NSDictionary *result = nil;
+  if (rc == 0) result = @{@"plan":fresh,@"changes":changes,@"images":images,@"guardImages":guards,@"newIndex":newIndex ?: NSNull.null};
+  else if (error && !*error) HNGError(error, rc);
+  git_tree_free(tree); git_commit_free(target); git_index_free(index); git_repository_free(repo);
+  BOOL closed = [snapshot closeWithError:result ? error : nil];
+  if (result && (!closed || ![fresh[@"rootGuard"] isEqual:[self integrationRootGuard:root error:error]])) return nil;
+  return result;
 }
 - (NSDictionary<NSString *, id> *)managedIdentity:(NSString *)root error:(NSError **)error {
   NSDictionary *record = nil;
