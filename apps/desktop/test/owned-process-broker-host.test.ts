@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -558,10 +558,30 @@ describe('owned Job broker host', () => {
     const finished = join(cwd, 'native-finished')
     const innerEof = join(cwd, 'native-output-ended')
     inspectFixture = () => {
+      // CodeDOM may emit temporary source/binary files in this fixture-owned cwd.
+      // Report only bounded aggregate evidence, never filenames or file contents.
+      const compilerArtifacts: Record<string, { count: number; bytes: number }> = {}
+      try {
+        for (const name of readdirSync(cwd).slice(0, 64)) {
+          const extension = /\.(cs|dll|pdb|rsp)$/i.exec(name)?.[1]?.toLowerCase()
+          if (!extension) continue
+          const stat = statSync(join(cwd, name))
+          if (!stat.isFile() || stat.size > 16 * 1024 * 1024) continue
+          const total = compilerArtifacts[extension] ?? { count: 0, bytes: 0 }
+          if (total.count < 16) {
+            total.count++
+            total.bytes += stat.size
+            compilerArtifacts[extension] = total
+          }
+        }
+      } catch {
+        // A partial fixture directory must not obscure the original failure.
+      }
       const counts = readJoinMarker(cwd, 'native-handles-closed', 19)
       const events = readJoinMarker(cwd, 'native-join-events', 512) ?? ''
       const failure = readJoinMarker(cwd, 'native-join-failure', 64)
       return {
+        compilerArtifacts,
         nativeFailure:
           failure !== undefined && /^[a-z-]{1,32},\d{1,10}$/.test(failure) ? failure : undefined,
         nativeStatus: Object.fromEntries(
