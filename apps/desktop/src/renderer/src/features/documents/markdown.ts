@@ -367,7 +367,12 @@ export const DocumentMarkdown = Markdown.extend({
     }
     manager.parse = parseDocument
     if (typeof initial !== 'string') return
-    if (initialType === 'markdown') {
+    if (
+      initialType === 'markdown' &&
+      (readMarkdownCaptionEnvelopes(initial).length ||
+        standaloneImageBlocks(initial, []).length ||
+        Object.keys(sourceMarkdown.lexer(initial).links).length)
+    ) {
       this.editor.options.content = parseDocument(initial)
       this.editor.options.contentType = 'json'
     }
