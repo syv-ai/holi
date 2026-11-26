@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -281,7 +281,7 @@ function windowsJoinFixture(cwd: string) {
   const encoded = gzipSync(Buffer.from(marked)).toString('base64')
   const runDir = process.env.HOLI_WINDOWS_AGENT_RUN_DIR
   const identity = runDir
-    ? `try { $p = Get-Process -Id $PID -ErrorAction Stop; $c = [Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().Ticks; [IO.File]::WriteAllText('${runDir.replaceAll("'", "''")}\\broker-root.json', (@{ pid = [int]$PID; creationTicks = [long]$c } | ConvertTo-Json -Compress)) } catch {};`
+    ? `try { $p = [Diagnostics.Process]::GetCurrentProcess(); $c = $p.StartTime.ToUniversalTime().Ticks; $tmp = '${runDir.replaceAll("'", "''")}\\broker-root.json.tmp'; $dst = '${runDir.replaceAll("'", "''")}\\broker-root.json'; [IO.File]::WriteAllText($tmp, (@{ pid = [int]$PID; creationTicks = [long]$c; startupTimestamp = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress)); [IO.File]::Move($tmp, $dst) } catch {};`
     : ''
   adapter.args[adapter.args.length - 1] =
     identity + joinPhaseMarker('powershell-start') + bootstrap.replace(joinPayload, encoded)
@@ -628,6 +628,7 @@ describe('owned Job broker host', () => {
     try {
       // Cold Add-Type in the Windows fixture is startup, not part of the join proof.
       const startupStarted = enter('terminal')
+      const startupEndPath = join(cwd, 'broker-startup-ended')
       let snapshotTimer: ReturnType<typeof setInterval> | undefined
       if (native) {
         const sample = () => {
@@ -647,6 +648,11 @@ describe('owned Job broker host', () => {
           : startup)
       } finally {
         if (snapshotTimer) clearInterval(snapshotTimer)
+        try {
+          writeFileSync(startupEndPath, '')
+        } catch {
+          // The observer flag is diagnostic and must not replace the startup outcome.
+        }
       }
       expect(seen).toBe(true)
       enter('inner-eof')
