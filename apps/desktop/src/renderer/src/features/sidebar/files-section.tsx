@@ -580,7 +580,7 @@ export function FilesSection({
         store.get(vaultNavigationKeyAtom) === landing.navigation &&
         tree.getFocusedItem()?.getId() === path
       )
-        tree.updateDomFocus()
+        item.getElement()?.focus({ preventScroll: true })
     })
     if (landing.name) item.startRenaming()
   }, [
