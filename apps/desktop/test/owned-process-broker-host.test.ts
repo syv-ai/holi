@@ -279,8 +279,12 @@ function windowsJoinFixture(cwd: string) {
     `${joinPhaseMarker('compile-start')}${compileWithEmptyInput}${joinPhaseMarker('compile-done')}`,
   )
   const encoded = gzipSync(Buffer.from(marked)).toString('base64')
+  const runDir = process.env.HOLI_WINDOWS_AGENT_RUN_DIR
+  const identity = runDir
+    ? `try { $p = Get-Process -Id $PID -ErrorAction Stop; $c = [Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().Ticks; [IO.File]::WriteAllText('${runDir.replaceAll("'", "''")}\\broker-root.json', (@{ pid = [int]$PID; creationTicks = [long]$c } | ConvertTo-Json -Compress)) } catch {};`
+    : ''
   adapter.args[adapter.args.length - 1] =
-    joinPhaseMarker('powershell-start') + bootstrap.replace(joinPayload, encoded)
+    identity + joinPhaseMarker('powershell-start') + bootstrap.replace(joinPayload, encoded)
   return adapter
 }
 
