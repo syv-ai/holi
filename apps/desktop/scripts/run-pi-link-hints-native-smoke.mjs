@@ -110,7 +110,7 @@ try {
     .join('')
   await writeFile(
     join(root, 'renderer/index.html'),
-    `<!doctype html><html><head><meta charset="UTF-8"><title>Pi link acceptance</title>${styles}</head><body><div id="root"></div><script type="module" src="./${entry.fileName}"></script></body></html>`,
+    `<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'"><title>Pi link acceptance</title>${styles}</head><body><div id="root"></div><script type="module" src="./${entry.fileName}"></script></body></html>`,
   )
   for (const [input, name] of [
     [fileURLToPath(new URL('./pi-link-hints-native-smoke-main.ts', import.meta.url)), 'main.cjs'],
@@ -131,7 +131,10 @@ try {
           output: {
             format: 'cjs',
             entryFileNames: name,
-            banner: `module.paths.unshift(${JSON.stringify(join(desktop, 'node_modules'))});`,
+            banner:
+              name === 'main.cjs'
+                ? `module.paths.unshift(${JSON.stringify(join(desktop, 'node_modules'))});`
+                : '',
           },
         },
       },
