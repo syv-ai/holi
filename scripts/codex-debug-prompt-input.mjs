@@ -37,6 +37,17 @@ export function validateDebugPromptInputEvidence(value) {
     !n.receipts.every((r) => r.drained) ||
     n.configUnchanged !== true ||
     n.sentinelsUnexecuted !== true ||
+    !['hook', 'mcp', 'plugin'].every((kind) =>
+      n.integrationControls?.some(
+        (control) =>
+          control.kind === kind &&
+          typeof control.declaration === 'string' &&
+          control.declaration.length > 0 &&
+          control.before === false &&
+          control.after === false &&
+          control.policy === (kind === 'hook' ? 'untrusted' : 'disabled'),
+      ),
+    ) ||
     n.modelRequests !== 0 ||
     !Array.isArray(n.observations) ||
     n.observations.length !== 2
@@ -45,12 +56,22 @@ export function validateDebugPromptInputEvidence(value) {
   for (const [index, observation] of n.observations.entries()) {
     if (
       observation.exitCode !== 0 ||
+      typeof observation.stdout !== 'string' ||
+      Buffer.byteLength(observation.stdout) > 524288 ||
+      typeof observation.stderr !== 'string' ||
+      Buffer.byteLength(observation.stderr) > 524288 ||
       !Array.isArray(observation.input) ||
       !observation.argv?.includes('prompt-input') ||
       !observation.cwd ||
       !observation.env?.CODEX_HOME
     )
       return false
+    try {
+      if (JSON.stringify(JSON.parse(observation.stdout)) !== JSON.stringify(observation.input))
+        return false
+    } catch {
+      return false
+    }
     const developers = observation.input
       .filter((item) => item.role === 'developer')
       .map(messageText)
@@ -172,12 +193,37 @@ export async function runDebugPromptInputCandidate() {
       ],
       [instructions, 'HOLI807_NATIVE_MODEL_INSTRUCTIONS'],
     ]
-    const sentinel = join(root, 'integration-executed')
-    const script = join(root, 'sentinel.mjs')
-    await writeFile(
-      script,
-      `import{writeFileSync}from'node:fs';writeFileSync(${JSON.stringify(sentinel)},'unexpected')`,
+    const controls = []
+    for (const kind of ['hook', 'mcp', 'plugin']) {
+      const sentinel = join(root, `${kind}-executed`)
+      const script = join(root, `${kind}-sentinel.mjs`)
+      const text = `import{writeFileSync}from'node:fs';writeFileSync(${JSON.stringify(sentinel)},'unexpected')`
+      files.push([script, text])
+      controls.push({
+        kind,
+        sentinel,
+        script,
+        before: existsSync(sentinel),
+        policy: kind === 'hook' ? 'untrusted' : 'disabled',
+      })
+    }
+    const script = controls[0].script
+    const plugin = join(env.CODEX_HOME, 'plugins/cache/fixture/sentinel/local')
+    await mkdir(join(plugin, '.codex-plugin'), { recursive: true })
+    const manifest = JSON.stringify({
+      name: 'sentinel',
+      description: 'Synthetic disabled integration control',
+    })
+    const pluginMcp = JSON.stringify({
+      mcpServers: { sentinel: { command: process.execPath, args: [controls[2].script] } },
+    })
+    files.push(
+      [join(plugin, '.codex-plugin/plugin.json'), manifest],
+      [join(plugin, '.mcp.json'), pluginMcp],
     )
+    const exclusions = `\n[mcp_servers.holi807]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(controls[1].script)}]\nenabled = false\n[plugins."sentinel@fixture"]\nenabled = false\n`
+    files[0][1] += exclusions
+    files[1][1] += exclusions
     const hooks = JSON.stringify({
       hooks: {
         SessionStart: [
@@ -193,36 +239,53 @@ export async function runDebugPromptInputCandidate() {
       },
     })
     files.push([join(env.CODEX_HOME, 'hooks.json'), hooks])
+    controls[0].declaration = hooks
+    controls[1].declaration = exclusions
+    controls[2].declaration = JSON.stringify({
+      manifest,
+      mcp: pluginMcp,
+      config: '[plugins."sentinel@fixture"] enabled = false',
+      root: plugin,
+    })
     for (const [path, text] of files) await writeFile(path, text, { mode: 0o600 })
+    n.integrationControls = controls
+    n.fixtureFiles = files.map(([path, text]) => ({ path, text }))
     for (const [index, args] of [
       [0, [installed.bin, 'debug', 'prompt-input', prompt]],
       [1, [installed.bin, '--profile', 'fixture', 'debug', 'prompt-input', prompt]],
     ]) {
-      const stdout = join(root, `stdout-${index}.json`),
-        stderr = join(root, `stderr-${index}.txt`)
-      const wrapper = `import{spawnSync}from'node:child_process';import{openSync}from'node:fs';const r=spawnSync(process.execPath,${JSON.stringify(args)},{stdio:['ignore',openSync(${JSON.stringify(stdout)},'w',0o600),openSync(${JSON.stringify(stderr)},'w',0o600)]});if(r.error)throw r.error;process.exit(r.status??1)`
-      await command(['--input-type=module', '-e', wrapper], `debug-${index}`)
-      const raw = await readFile(stdout, 'utf8')
+      const wrapper = `import{spawn}from'node:child_process';const c=spawn(process.execPath,${JSON.stringify(args)},{stdio:['ignore','pipe','pipe']});const limit=524288;let out=Buffer.alloc(0),err=Buffer.alloc(0),overflow=false;for(const [s,k]of [[c.stdout,'out'],[c.stderr,'err']])s.on('data',b=>{const v=k==='out'?out:err;if(v.length+b.length>limit){overflow=true;c.kill('SIGKILL');return}if(k==='out')out=Buffer.concat([out,b]);else err=Buffer.concat([err,b])});const code=await new Promise((r,j)=>{c.once('error',j);c.once('close',r)});if(overflow)throw Error('native output exceeded 524288 bytes');if(code!==0)throw Error('native command failed: '+err.toString().slice(-4000));process.stdout.write(JSON.stringify({stdout:out.toString(),stderr:err.toString(),exitCode:code}))`
+      const result = JSON.parse(
+        await command(['--input-type=module', '-e', wrapper], `debug-${index}`),
+      )
+      const raw = result.stdout
       n.observations.push({
         argv: args,
         cwd: join(root, 'vault'),
         env,
-        exitCode: 0,
+        exitCode: result.exitCode,
         stdout: raw,
-        stderr: await readFile(stderr, 'utf8'),
+        stderr: result.stderr,
         input: JSON.parse(raw),
       })
     }
     n.configUnchanged = (
       await Promise.all(files.map(async ([path, text]) => (await readFile(path, 'utf8')) === text))
     ).every(Boolean)
-    n.sentinelsUnexecuted = !existsSync(sentinel)
+    n.integrationControls = controls.map((control) => ({
+      ...control,
+      after: existsSync(control.sentinel),
+    }))
+    n.sentinelsUnexecuted = n.integrationControls.every(
+      (control) => !control.before && !control.after,
+    )
     n.modelRequests = model.requests.length
     n.modelFailures = model.failures
     if (model.failures.length) throw Error(model.failures.join('; '))
     n.limitation =
       'debug prompt-input returns Vec<ResponseItem>, not resolved developer_instructions. It constructs an ephemeral SessionSource::Exec session; selecting developer-role text from this generated model-input snapshot does not recover the original effective configuration or establish TUI/resume equivalence. No composition, initial-TUI or resume acceptance is claimed.'
     n.sourceContract = [
+      'https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/tests/suite/plugins.rs#L118-L243',
       'https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/cli/src/main.rs#L2125-L2232',
       'https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/prompt_debug.rs',
     ]
@@ -266,7 +329,12 @@ export async function runDebugPromptInputCandidate() {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const output = process.env.HOLI_CODEX_DEBUG_EVIDENCE
-  if (!output || resolve(output).startsWith(resolve(repository) + '/'))
+  if (
+    !output ||
+    existsSync(output) ||
+    resolve(output) === resolve(repository) ||
+    resolve(output).startsWith(resolve(repository) + '/')
+  )
     throw Error('Set HOLI_CODEX_DEBUG_EVIDENCE to a new file outside the checkout')
   const report = await runDebugPromptInputCandidate()
   await writeFile(output, JSON.stringify(report, null, 2), { flag: 'wx', mode: 0o600 })
