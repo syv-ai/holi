@@ -264,6 +264,7 @@ export function EventCard({
       {anchor && <PopoverAnchor virtualRef={virtualRef} />}
       {state && anchor && (
         <PopoverContent
+          modal={false}
           size="calendar"
           variant="flush"
           align="start"

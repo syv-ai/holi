@@ -1138,6 +1138,7 @@ describe('the calendar view', () => {
     await screen.findAllByText('Focus block')
     await user.click(screen.getAllByText('Focus block')[0]!)
     const details = await screen.findByRole('dialog', { name: 'Focus block' })
+    expect(details).toHaveAttribute('data-modal', 'false')
     await user.click(within(details).getByRole('button', { name: 'Edit' }))
     const title = await screen.findByRole('textbox', { name: 'Title' })
     await user.clear(title)
