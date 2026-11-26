@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, opendirSync, readFileSync, statSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -560,22 +560,53 @@ describe('owned Job broker host', () => {
     inspectFixture = () => {
       // CodeDOM may emit temporary source/binary files in this fixture-owned cwd.
       // Report only bounded aggregate evidence, never filenames or file contents.
-      const compilerArtifacts: Record<string, { count: number; bytes: number }> = {}
+      const compilerArtifacts = {
+        files: {} as Record<string, { count: number; bytes: number }>,
+        entriesRead: 0,
+        limitReached: false,
+        metadataErrors: 0,
+        oversized: 0,
+        capped: 0,
+        scanFailed: false,
+      }
+      let directory: ReturnType<typeof opendirSync> | undefined
       try {
-        for (const name of readdirSync(cwd).slice(0, 64)) {
-          const extension = /\.(cs|dll|pdb|rsp)$/i.exec(name)?.[1]?.toLowerCase()
+        directory = opendirSync(cwd, { bufferSize: 16 })
+        while (compilerArtifacts.entriesRead < 64) {
+          const entry = directory.readSync()
+          if (!entry) break
+          compilerArtifacts.entriesRead++
+          const extension = /\.(cs|dll|pdb|rsp)$/i.exec(entry.name)?.[1]?.toLowerCase()
           if (!extension) continue
-          const stat = statSync(join(cwd, name))
-          if (!stat.isFile() || stat.size > 16 * 1024 * 1024) continue
-          const total = compilerArtifacts[extension] ?? { count: 0, bytes: 0 }
-          if (total.count < 16) {
+          try {
+            const stat = statSync(join(cwd, entry.name))
+            if (!stat.isFile()) continue
+            if (stat.size > 16 * 1024 * 1024) {
+              compilerArtifacts.oversized++
+              continue
+            }
+            const total = compilerArtifacts.files[extension] ?? { count: 0, bytes: 0 }
+            if (total.count === 16) {
+              compilerArtifacts.capped++
+              continue
+            }
             total.count++
             total.bytes += stat.size
-            compilerArtifacts[extension] = total
+            compilerArtifacts.files[extension] = total
+          } catch {
+            compilerArtifacts.metadataErrors++
           }
         }
+        // Conservatively report the limit even if the directory has exactly 64 entries.
+        compilerArtifacts.limitReached = compilerArtifacts.entriesRead === 64
       } catch {
-        // A partial fixture directory must not obscure the original failure.
+        compilerArtifacts.scanFailed = true
+      } finally {
+        try {
+          directory?.closeSync()
+        } catch {
+          compilerArtifacts.scanFailed = true
+        }
       }
       const counts = readJoinMarker(cwd, 'native-handles-closed', 19)
       const events = readJoinMarker(cwd, 'native-join-events', 512) ?? ''
