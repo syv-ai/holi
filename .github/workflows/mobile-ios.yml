@@ -117,9 +117,17 @@ jobs:
           xcrun --sdk iphonesimulator --show-sdk-path
       - name: Build, install, launch and verify the actual native runtime
         run: pnpm --filter @holi/mobile test:ios
+      - name: Build and verify unsigned device archive
+        run: pnpm --filter @holi/mobile archive:ios
       - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: mobile-ios-compatibility
           path: /tmp/holi-265-ci
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: mobile-ios-unsigned-archive
+          path: apps/mobile/.artifacts/ios
           if-no-files-found: warn
