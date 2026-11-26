@@ -368,7 +368,8 @@ export const DocumentMarkdown = Markdown.extend({
       this.editor.options.contentType === 'markdown' &&
       (readMarkdownCaptionEnvelopes(initial).length ||
         standaloneImageBlocks(initial, []).length ||
-        Object.keys(sourceMarkdown.lexer(initial).links).length)
+        Object.keys(sourceMarkdown.lexer(initial).links).length ||
+        /^\\[\\^[^\\]\\n]+\\]:/m.test(initial))
     ) {
       this.editor.options.content = parseDocument(initial)
       this.editor.options.contentType = 'json'
