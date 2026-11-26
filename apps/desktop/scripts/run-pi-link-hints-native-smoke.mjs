@@ -316,7 +316,7 @@ try {
         await evaluate(`window.piHintFixture({path:${JSON.stringify(path)}})`)
         if (path === 'agents')
           await waitFor(
-            `document.querySelector('[data-agents-main="session"] [data-session-terminal]')`,
+            `!!document.querySelector('[data-agents-main="session"] [data-session-terminal]')`,
             'actual second caller',
           )
         for (const theme of ['light', 'dark']) {
