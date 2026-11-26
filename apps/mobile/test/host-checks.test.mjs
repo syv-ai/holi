@@ -477,6 +477,7 @@ test('pending-command observation skips completed commands and drains started di
     ),
     'done',
   )
+  await new Promise((resolve) => setTimeout(resolve, 40))
   assert.equal(observed, false)
 
   let finishCommand
@@ -502,7 +503,7 @@ test('pending-command observation skips completed commands and drains started di
   result.then(() => {
     settled = true
   })
-  await Promise.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(settled, false)
   finishObservation()
   assert.equal(await result, 'launched')
