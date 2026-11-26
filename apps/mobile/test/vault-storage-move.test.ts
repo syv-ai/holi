@@ -186,6 +186,42 @@ describe('durable note moves', () => {
     expect(await adapter.privateRead(canonical, name)).toEqual(journal)
   })
 
+  it('refuses a schema-3 journal that omits an inline-only incoming link', async () => {
+    const base = await root()
+    await mkdir(join(base, 'old'))
+    await mkdir(join(base, 'new'))
+    const adapter = createNodeFiles()
+    const canonical = await adapter.canonicalRoot(base)
+    const source = text('source bytes')
+    await writeFile(join(base, 'old/note.md'), source)
+    await writeFile(join(base, 'ref.md'), '[note](old/note.md#part)')
+    const operationId = randomUUID()
+    const name = `move-${operationId}.json`
+    const journal = text(
+      JSON.stringify({
+        schema: 3,
+        root: canonical,
+        operationId,
+        from: 'old/note.md',
+        to: 'new/note.md',
+        changes: [
+          { path: 'old/note.md', before: [...source], after: null },
+          { path: 'new/note.md', before: null, after: [...source] },
+        ],
+      }),
+    )
+    await adapter.privatePublish(canonical, name, journal, null)
+    const reopened = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/omitted-markdown',
+      root: base,
+    })
+    await expect(reopened.list()).rejects.toThrow('Move recovery omitted backlink')
+    expect(await readFile(join(base, 'old/note.md'))).toEqual(Buffer.from(source))
+    expect(await readFile(join(base, 'ref.md'), 'utf8')).toBe('[note](old/note.md#part)')
+    await expect(readFile(join(base, 'new/note.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await adapter.privateRead(canonical, name)).toEqual(journal)
+  })
+
   it('reconfirms private directory durability after removal sync fails', async () => {
     const base = await root()
     let failRemovalSync = true

@@ -45,6 +45,32 @@ describe('Markdown move targets', () => {
     )
   })
 
+  it('preserves escaped angle targets for outgoing and incoming links', () => {
+    expect(
+      rewriteMarkdownMoveLinks(
+        '[asset](<a\\>b.png>) [other](<a\\<b.png>)',
+        'old/note.md',
+        'old/note.md',
+        'new/note.md',
+      ),
+    ).toBe('[asset](<../old/a%3Eb.png>) [other](<../old/a%3Cb.png>)')
+    expect(
+      rewriteMarkdownMoveLinks(
+        '[note](<../old/a\\>b.md>)',
+        'notes/ref.md',
+        'old/a>b.md',
+        'new/a>b.md',
+      ),
+    ).toBe('[note](<../new/a%3Eb.md>)')
+  })
+
+  it('leaves malformed nesting untouched while relocating valid neighboring links', () => {
+    const source = '[bad](a(b "title") [ok](a(b).md "title") [escaped](a\\(b\\).md)'
+    expect(rewriteMarkdownMoveLinks(source, 'old/note.md', 'old/note.md', 'new/note.md')).toBe(
+      '[bad](a(b "title") [ok](../old/a%28b%29.md "title") [escaped](../old/a%28b%29.md)',
+    )
+  })
+
   it('leaves non-inline and unresolved paths untouched', () => {
     const source =
       '[ref][target]\n\n[target]: peer.md\n\n<a href="peer.md">html</a>\n[bad](%ZZ.md) [escape](../../../outside.md) [separator](a%2Fb.md)'

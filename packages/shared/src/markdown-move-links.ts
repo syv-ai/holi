@@ -32,6 +32,52 @@ function destinationParts(raw: string): { pathname: string; suffix: string } {
   return { pathname: pathname + raw.slice(cursor), suffix: '' }
 }
 
+// Lezer does not honor escaped angle delimiters. Mask only candidate URL contents
+// for parsing; edits still use original text and unchanged UTF-16 source offsets.
+function parseableSource(text: string): string {
+  let characters: string[] | undefined
+  let scanned = 0
+  for (const candidate of text.matchAll(/\]\([ \t\r\n]*</g)) {
+    if (candidate.index < scanned) continue
+    let index = candidate.index + candidate[0].length
+    while (index < text.length && text[index] !== '>' && !/[\r\n]/.test(text[index]!)) {
+      if (text[index] === '\\') {
+        if (text[index + 1] === '<' || text[index + 1] === '>') {
+          characters ??= text.split('')
+          characters[index] = 'a'
+          characters[index + 1] = 'a'
+        }
+        index += 2
+      } else index++
+    }
+    scanned = index
+  }
+  return characters?.join('') ?? text
+}
+
+function validDestination(raw: string): boolean {
+  const angle = raw.startsWith('<') && raw.endsWith('>')
+  const value = angle ? raw.slice(1, -1) : raw
+  let depth = 0
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!
+    if (
+      character === '\\' &&
+      /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/.test(value[index + 1] ?? '')
+    ) {
+      index++
+      continue
+    }
+    if (character === '<' || character === '>' || /[\r\n]/.test(character)) return false
+    if (!angle) {
+      if (/\s/.test(character)) return false
+      if (character === '(') depth++
+      if (character === ')' && --depth < 0) return false
+    }
+  }
+  return depth === 0
+}
+
 /** Preserve relative inline destinations when a document or its target moves. */
 export function rewriteMarkdownMoveLinks(
   text: string,
@@ -49,7 +95,7 @@ export function rewriteMarkdownMoveLinks(
   const documentMoved = documentPath === movedFrom
   const newDirectory = documentMoved ? movedTo.split('/').slice(0, -1) : oldDirectory
   const edits: Array<{ from: number; to: number; value: string }> = []
-  markdownParser.parse(text.slice(bodyStart)).iterate({
+  markdownParser.parse(parseableSource(text.slice(bodyStart))).iterate({
     enter(node) {
       if (node.name !== 'Link' && node.name !== 'Image') return
       const url = node.node.getChild('URL')
@@ -57,6 +103,7 @@ export function rewriteMarkdownMoveLinks(
       const from = bodyStart + url.from
       const to = bodyStart + url.to
       const raw = text.slice(from, to)
+      if (!validDestination(raw)) return
       const angle = raw.startsWith('<') && raw.endsWith('>')
       const destination = angle ? raw.slice(1, -1) : raw
       const { pathname, suffix } = destinationParts(destination)
