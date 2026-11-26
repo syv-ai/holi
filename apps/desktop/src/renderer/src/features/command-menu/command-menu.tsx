@@ -548,6 +548,12 @@ export function CommandMenu({
       title="Command menu"
       description="Go to a document, a view or an app, or run an action."
       className="sm:max-w-xl"
+      onEscapeKeyDown={(event) => {
+        if (query !== '') {
+          event.preventDefault()
+          setQuery('')
+        }
+      }}
     >
       <Command
         shouldFilter={false}
@@ -562,17 +568,6 @@ export function CommandMenu({
           placeholder="Search documents, or type > for actions…"
           aria-label="Search documents and actions"
           {...vimFieldProps}
-          onKeyDown={(event) => {
-            vimFieldProps.onKeyDown?.(event)
-            if (event.key !== 'Escape') return
-            if (query !== '') {
-              event.preventDefault()
-              event.stopPropagation()
-              setQuery('')
-            } else {
-              handleOpenChange(false)
-            }
-          }}
         />
         <div className="px-2">
           <VimFieldMode mode={vimFieldMode} />
