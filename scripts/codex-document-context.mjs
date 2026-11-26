@@ -39,12 +39,7 @@ export function validateDocumentContextProof(proof) {
         !JSON.stringify(request ?? {}).includes(expected.excluded),
       `${name} profile precedence missing`,
     )
-    fail(
-      typeof expected?.model === 'string' &&
-        typeof request?.instructions === 'string' &&
-        request.instructions.includes(expected.model),
-      `${name} model instructions missing`,
-    )
+    fail(contains(request, 'developer', expected?.model), `${name} model instructions missing`)
     fail(
       contains(request, 'user', expected?.project),
       `${name} native project instructions missing`,

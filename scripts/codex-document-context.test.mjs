@@ -12,7 +12,7 @@ function fixture() {
     message('developer', 'profile instructions'),
     message('user', 'project instructions'),
   ]
-  const request = (input) => ({ instructions: 'model instructions', input })
+  const request = (input) => ({ input: [message('developer', 'model instructions'), ...input] })
   return {
     schema: 'holi.codex-document-context.v1',
     expected: {
@@ -68,10 +68,15 @@ test('accepts role-correct native startup/resume observations with preserved ins
 
 test('rejects user-role context and stale resumed history', () => {
   const userRole = fixture()
-  userRole.initial.request.input[2].role = 'user'
+  userRole.initial.request.input.find(
+    (item) => item.content[0].text === 'document.md initial',
+  ).role = 'user'
   assert.equal(validateDocumentContextProof(userRole).valid, false)
   const historical = fixture()
-  const context = historical.resumed.request.input.splice(5, 1)[0]
+  const index = historical.resumed.request.input.findIndex(
+    (item) => item.content[0].text === 'document.md resumed',
+  )
+  const context = historical.resumed.request.input.splice(index, 1)[0]
   historical.resumed.request.input.unshift(context)
   assert.equal(validateDocumentContextProof(historical).valid, false)
 })
@@ -79,13 +84,19 @@ test('rejects user-role context and stale resumed history', () => {
 test('rejects instruction replacement, profile loss and changed prompts', () => {
   for (const mutate of [
     (p) => {
-      p.initial.request.instructions = ''
+      p.initial.request.input.find(
+        (item) => item.content[0].text === 'model instructions',
+      ).content[0].text = ''
     },
     (p) => {
-      p.initial.request.input[0].content[0].text = 'base instructions'
+      p.initial.request.input.find(
+        (item) => item.content[0].text === 'profile instructions',
+      ).content[0].text = 'base instructions'
     },
     (p) => {
-      p.initial.request.input[1].content[0].text = ''
+      p.initial.request.input.find(
+        (item) => item.content[0].text === 'project instructions',
+      ).content[0].text = ''
     },
     (p) => {
       p.resumed.request.input.at(-1).content[0].text += ' modified'
