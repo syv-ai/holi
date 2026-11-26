@@ -938,6 +938,57 @@ it.each(['all-day', 'zero-duration'] as const)(
   },
 )
 
+it.each(['timed invitation', 'all-day occurrence'] as const)(
+  'blocks both RSVP channels when the Calendar copy extends the implicit end of a %s',
+  async (kind) => {
+    const { state, read, respond, restart } = await rig()
+    const allDay = kind === 'all-day occurrence'
+    const times = allDay
+      ? 'DTSTART;VALUE=DATE:20240718\r\nRECURRENCE-ID;VALUE=DATE:20240711'
+      : 'DTSTART:20240718T150000Z'
+    state.messages = [gmailMessage('update', 200, invite('REQUEST', times))]
+    const copy = event({ allDay, occurrence: allDay })
+    if (allDay) copy.end = { date: '2024-07-20' }
+    state.events.set('primary', [copy])
+
+    const readOnly = {
+      identity: { ...identity, recurrenceId: allDay ? '2024-07-11' : null },
+      end: allDay ? '2024-07-19' : start,
+      canRespond: false,
+      recordedResponseStatus: null,
+      responseTargetKey: null,
+    }
+    expect(await read()).toMatchObject(readOnly)
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+
+    // A complete collection can omit the copy, but its exact resource is
+    // still present and must not turn the read-only card into a Gmail target.
+    state.primaryPages = [{ kind: 'calendar#events' }]
+    const reopened = restart()
+    expect(await reopened.read()).toMatchObject(readOnly)
+    await expect(reopened.respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(state.calendarPatchAttempts).toBe(0)
+    expect(state.sendAttempts).toBe(0)
+
+    if (allDay) {
+      copy.end = { date: '2024-07-19' }
+      state.primaryPages = null
+      expect(await reopened.read()).toMatchObject({ end: '2024-07-19', canRespond: true })
+      expect(await reopened.respond('accepted')).toMatchObject({
+        outcome: 'sent',
+        channel: 'calendar',
+        refreshPending: false,
+        invitation: { responseStatus: 'accepted' },
+      })
+      expect(state.calendarUpdateRequests).toEqual([
+        { calendar: 'primary', eventId: copy.id, sendUpdates: 'all', status: 'accepted' },
+      ])
+      expect(state.calendarPatchAttempts).toBe(1)
+      expect(state.sendAttempts).toBe(0)
+    }
+  },
+)
+
 it.each(['DTEND:20240718T150000Z', 'DURATION:PT0S'])(
   'does not authorize either RSVP channel for an explicit zero interval (%s)',
   async (interval) => {
