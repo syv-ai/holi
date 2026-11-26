@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { observeCompilerArtifacts } from '../src/main/compiler-artifact-observation'
+import { observeCompilerArtifacts } from './helpers/compiler-artifact-observation'
 
 describe('observeCompilerArtifacts', () => {
   it('bounds real directory observations and discloses truncation, oversize files, and per-extension caps', async () => {

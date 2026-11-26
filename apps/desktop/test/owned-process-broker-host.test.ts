@@ -9,7 +9,7 @@ import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import { observeCompilerArtifacts } from '../src/main/compiler-artifact-observation'
+import { observeCompilerArtifacts } from './helpers/compiler-artifact-observation'
 import { brokerHostPlan } from '../src/main/owned-process-broker-host'
 import { win32Adapter } from '../src/main/owned-process-win32'
 
