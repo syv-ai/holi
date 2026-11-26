@@ -10,6 +10,7 @@ import { atom, createStore } from 'jotai'
 import { flushAllBuffers, registerBuffer } from '@/lib/buffer-registry'
 import { toast } from 'sonner'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { advanceNavigationEpochAtom } from '@/state/navigation'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { VaultSnapshot } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
@@ -118,6 +119,25 @@ describe('vaults', () => {
     expect(store.get(activeRemoteAtom)).toBe('syv-ai/beta')
     expect(store.get(openDocumentRequestAtom)).toBeNull()
     expect(store.get(pendingHeadingAtom)).toBeNull()
+  })
+
+  it('restores the selected vault when local navigation supersedes a directory open', async () => {
+    const { opens } = controlledOpens(2)
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    store.set(openedRemoteAtom, 'syv-ai/alpha')
+    store.set(snapshotAtom, snapshot('alpha.md'))
+    unsubscribe = subscribeToVault(store)
+    holi!.pushOpen({ remote: 'syv-ai/beta', path: 'folder', kind: 'directory' })
+    await opens[0]!.entered.promise
+    store.set(advanceNavigationEpochAtom)
+    opens[0]!.response.resolve(snapshot('beta.md'))
+    await opens[1]!.entered.promise
+    opens[1]!.response.resolve(snapshot('alpha.md'))
+    await vi.waitFor(() => expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha'))
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
+    expect(store.get(snapshotAtom)).toEqual(snapshot('alpha.md'))
+    expect(store.get(revealInFilesRequestAtom)).toBeNull()
   })
 
   it('a newer same-vault directory intent supersedes a delayed other-vault file', async () => {

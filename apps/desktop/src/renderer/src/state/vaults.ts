@@ -242,10 +242,11 @@ export const openVaultAtom = atom(
   async (
     get,
     set,
-    target: string | { remote: string; documentIntentId?: number },
+    target: string | { remote: string; documentIntentId?: number; navigationEpoch?: number },
   ): Promise<boolean> => {
     const remote = typeof target === 'string' ? target : target.remote
     const documentIntentId = typeof target === 'string' ? undefined : target.documentIntentId
+    const navigationEpoch = typeof target === 'string' ? undefined : target.navigationEpoch
     const request = get(openRequestAtom) + 1
     set(openRequestAtom, request)
     const selectionRevision = get(activeRemoteRevisionAtom)
@@ -261,7 +262,8 @@ export const openVaultAtom = atom(
     if (
       get(openRequestAtom) !== request ||
       get(activeRemoteRevisionAtom) !== selectionRevision ||
-      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId)
+      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId) ||
+      (navigationEpoch !== undefined && get(navigationEpochAtom) !== navigationEpoch)
     )
       return false
 
@@ -271,9 +273,17 @@ export const openVaultAtom = atom(
     if (
       get(openRequestAtom) !== request ||
       get(activeRemoteRevisionAtom) !== selectionRevision ||
-      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId)
-    )
+      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId) ||
+      (navigationEpoch !== undefined && get(navigationEpochAtom) !== navigationEpoch)
+    ) {
+      if (navigationEpoch !== undefined)
+        await set(restoreSelectedVaultAtom, {
+          request,
+          revision: selectionRevision,
+          documentIntentId: documentIntentId ?? get(documentOpenIntentAtom),
+        })
       return false
+    }
 
     // Publish the cross-vault document-open selection only after main has opened
     // it. This lets VaultHost observe openedRemote alongside activeRemote and
@@ -390,6 +400,7 @@ export function subscribeToVault(
     const id = store.get(documentOpenIntentAtom) + 1
     store.set(documentOpenIntentAtom, id)
     store.set(advanceNavigationEpochAtom)
+    const arrivalNavigationEpoch = store.get(navigationEpochAtom)
 
     const revision = store.get(activeRemoteRevisionAtom)
     const reportError = (error: unknown) =>
@@ -402,7 +413,11 @@ export function subscribeToVault(
         .catch(reportError)
 
     if (targetRemote !== store.get(activeRemoteAtom)) {
-      const pending = store.set(openVaultAtom, { remote: targetRemote, documentIntentId: id })
+      const pending = store.set(openVaultAtom, {
+        remote: targetRemote,
+        documentIntentId: id,
+        ...(kind === 'directory' ? { navigationEpoch: arrivalNavigationEpoch } : {}),
+      })
       const request = store.get(openRequestAtom)
       void pending
         .then((landed) => {
