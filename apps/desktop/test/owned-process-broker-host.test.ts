@@ -642,8 +642,9 @@ describe('owned Job broker host', () => {
           writeFileSync(
             window + '.tmp',
             JSON.stringify({
-              deadlineUnixMs:
+              deadlineUnixMs: Math.floor(
                 Date.now() + Math.max(0, 45_000 - (performance.now() - startupStarted)),
+              ),
             }),
           )
           renameSync(window + '.tmp', window)
