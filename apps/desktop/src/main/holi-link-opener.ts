@@ -29,11 +29,14 @@ async function checkHoliLink(
   const kind =
     abs === null
       ? null
-      : await stat(abs).then((result) => {
-          if (result.isFile()) return 'file' as const
-          if (result.isDirectory()) return 'directory' as const
-          return null
-        }, () => null)
+      : await stat(abs).then(
+          (result) => {
+            if (result.isFile()) return 'file' as const
+            if (result.isDirectory()) return 'directory' as const
+            return null
+          },
+          () => null,
+        )
   if (kind === null) {
     return {
       ok: false,
@@ -55,7 +58,11 @@ export async function openHoliLink(
   url: string,
   deps: {
     vaults: () => Promise<readonly VaultEntry[]>
-    showPath: (remote: string, path: string, options: { heading?: string; kind?: 'directory' }) => void
+    showPath: (
+      remote: string,
+      path: string,
+      options: { heading?: string; kind?: 'directory' },
+    ) => void
   },
 ): Promise<{ ok: true } | { ok: false; message: string; detail: string }> {
   const result = await checkHoliLink(url, deps.vaults)

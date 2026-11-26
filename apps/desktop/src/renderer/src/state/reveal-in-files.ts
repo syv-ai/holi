@@ -12,12 +12,18 @@ export const revealInFilesRequestAtom = requestAtom<{
   path: string
   directory?: boolean
   remote?: string | null
+  navigation?: string
 }>()
 
 /** Reveal `path` (vault-relative) in the files tree. */
 export const revealInFilesAtom = atom(
   null,
-  (get, set, request: string | { path: string; directory?: boolean; remote?: string | null }) => {
+  (
+    get,
+    set,
+    request:
+      string | { path: string; directory?: boolean; remote?: string | null; navigation?: string },
+  ) => {
     raise(
       get,
       set,

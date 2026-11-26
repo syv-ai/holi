@@ -10,6 +10,7 @@ import {
   showHiddenByVaultAtom,
   showTasksByVaultAtom,
   snapshotAtom,
+  vaultNavigationKeyAtom,
 } from '@/state/vaults'
 
 /** `base`, then `base 2`, `base 3`… (`numberedPath`): the first name the
@@ -34,23 +35,33 @@ export function freeName(
 export function useFiles() {
   const snapshot = useAtomValue(snapshotAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const navigation = useAtomValue(vaultNavigationKeyAtom)
   const [hiddenByVault, setHiddenByVault] = useAtom(showHiddenByVaultAtom)
   const [tasksByVault, setTasksByVault] = useAtom(showTasksByVaultAtom)
-  const [revealed, setRevealed] = useState<{ remote: string; path: string } | null>(null)
+  const [revealed, setRevealed] = useState<{
+    remote: string
+    path: string
+    navigation: string
+  } | null>(null)
   const showHidden = remote !== null && hiddenByVault[remote] === true
-  const revealedDirectory = revealed?.remote === remote ? revealed.path : null
+  const revealedDirectory =
+    revealed?.remote === remote && revealed.navigation === navigation ? revealed.path : null
   const revealHidden = useCallback(
     (path: string) => {
       if (remote !== null)
         setRevealed((current) =>
-          current?.remote === remote && current.path === path ? current : { remote, path },
+          current?.remote === remote && current.path === path && current.navigation === navigation
+            ? current
+            : { remote, path, navigation },
         )
     },
-    [remote],
+    [remote, navigation],
   )
   useEffect(() => {
-    setRevealed((current) => (current?.remote === remote ? current : null))
-  }, [remote])
+    setRevealed((current) =>
+      current?.remote === remote && current.navigation === navigation ? current : null,
+    )
+  }, [remote, navigation])
   const visible = useCallback(
     (path: string) =>
       showHidden ||

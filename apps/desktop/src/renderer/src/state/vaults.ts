@@ -195,6 +195,11 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
 const openRequestAtom = atom(0)
 const documentOpenIntentAtom = atom(0)
 
+/** Ephemeral ownership of navigation, including a return to the same vault. */
+export const vaultNavigationKeyAtom = atom(
+  (get) => `${get(activeRemoteRevisionAtom)}:${get(documentOpenIntentAtom)}`,
+)
+
 // Return main to the unchanged renderer selection, never depart from it. No
 // buffers or tabs are touched: a failed departure flush must retain dirty text.
 // Consuming the expected request deduplicates recovery; a newer request,
@@ -398,7 +403,12 @@ export function subscribeToVault(
         .then((landed) => {
           if (landed && store.get(documentOpenIntentAtom) === id)
             kind === 'directory'
-              ? store.set(revealInFilesAtom, { path, directory: true, remote: targetRemote })
+              ? store.set(revealInFilesAtom, {
+                  path,
+                  directory: true,
+                  remote: targetRemote,
+                  navigation: store.get(vaultNavigationKeyAtom),
+                })
               : store.set(openDocumentAtom, path, heading)
         })
         .catch((error: unknown) => {
@@ -409,7 +419,12 @@ export function subscribeToVault(
         })
     } else {
       kind === 'directory'
-        ? store.set(revealInFilesAtom, { path, directory: true, remote: targetRemote })
+        ? store.set(revealInFilesAtom, {
+            path,
+            directory: true,
+            remote: targetRemote,
+            navigation: store.get(vaultNavigationKeyAtom),
+          })
         : store.set(openDocumentAtom, path, heading)
       // Main may be opening another vault, or the initial open may not yet
       // have landed. Recover now; stale completions never start another loop.

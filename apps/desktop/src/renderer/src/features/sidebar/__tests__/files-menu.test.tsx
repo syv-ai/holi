@@ -17,6 +17,9 @@ import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeSplit, openTab } from '@/state/shell-workspace'
 import {
   activeRemoteAtom,
+  openedRemoteAtom,
+  subscribeToVault,
+  vaultNavigationKeyAtom,
   showHiddenByVaultAtom,
   showTasksByVaultAtom,
   snapshotAtom,
@@ -28,6 +31,7 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 // eslint-disable-next-line no-restricted-imports
 import { tasksRenderer } from '../../../../../plugins/tasks/renderer'
 import { FilesSection } from '../files-section'
+import { installFakeHoli } from '@/test/fake-holi'
 import { revealInFilesAtom } from '@/state/reveal-in-files'
 import { activateHostHint, discoverHostHintTargets } from '@/lib/host-hints'
 import { installHintLayout } from '@/test/host-hint-layout'
@@ -1334,6 +1338,7 @@ test('directory reveals expand and select nested folders again without opening d
   )
   const row = await screen.findByRole('treeitem', { name: 'nested' })
   await waitFor(() => expect(row).toHaveAttribute('aria-expanded', 'true'))
+  await waitFor(() => expect(row).toHaveFocus())
   expect(row).toHaveAttribute('aria-selected', 'true')
   expect(await screen.findByText('child')).toBeInTheDocument()
   fireEvent.click(screen.getByText('nested'))
@@ -1367,6 +1372,7 @@ test('a hidden directory reveal leaves unrelated hidden content and preferences 
   )
   const row = await screen.findByRole('treeitem', { name: '.private' })
   await waitFor(() => expect(row).toHaveAttribute('aria-expanded', 'true'))
+  await waitFor(() => expect(row).toHaveFocus())
   expect(row).toHaveAttribute('aria-selected', 'true')
   expect(await screen.findByText('inside')).toBeInTheDocument()
   expect(screen.queryByText('.other')).toBeNull()
@@ -1391,7 +1397,78 @@ test('an app directory link browses its files rather than launching its surface'
   )
   const row = await screen.findByRole('treeitem', { name: 'demo.app' })
   await waitFor(() => expect(row).toHaveAttribute('aria-expanded', 'true'))
+  await waitFor(() => expect(row).toHaveFocus())
   expect(row).toHaveAttribute('aria-selected', 'true')
   expect(await screen.findByRole('treeitem', { name: 'index.html' })).toBeVisible()
   expect(onOpen).not.toHaveBeenCalled()
+})
+
+test('directory links can browse inside an app bundle ancestor', async () => {
+  const { store, onOpen } = mount()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom),
+      dirs: ['demo.app', 'demo.app/assets'],
+      docs: [
+        { path: 'demo.app/index.html', title: 'index', updatedAt: '2026-10-23T10:00:00Z' },
+        { path: 'demo.app/assets/readme.md', title: 'readme', updatedAt: '2026-10-23T10:00:00Z' },
+      ] as never,
+    }),
+  )
+  act(() =>
+    store.set(revealInFilesAtom, {
+      remote: 'mara/notes',
+      path: 'demo.app/assets',
+      directory: true,
+    }),
+  )
+  const row = await screen.findByRole('treeitem', { name: 'assets' })
+  await waitFor(() => expect(row).toHaveFocus())
+  expect(row).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('treeitem', { name: 'demo.app' })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  )
+  expect(await screen.findByText('readme')).toBeVisible()
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
+test('a pending directory reveal cannot return after leaving and revisiting its vault', async () => {
+  const { store } = mount()
+  act(() =>
+    store.set(revealInFilesAtom, {
+      remote: 'mara/notes',
+      path: 'later',
+      directory: true,
+      navigation: store.get(vaultNavigationKeyAtom),
+    }),
+  )
+  act(() => {
+    store.set(activeRemoteAtom, 'other/vault')
+    store.set(activeRemoteAtom, 'mara/notes')
+    store.set(snapshotAtom, { ...store.get(snapshotAtom), dirs: ['kunder', 'later'] })
+  })
+  const row = await screen.findByRole('treeitem', { name: 'later' })
+  expect(row).toHaveAttribute('aria-selected', 'false')
+  expect(row).toHaveAttribute('aria-expanded', 'false')
+  expect(row).not.toHaveFocus()
+})
+
+test('a newer file arrival retires a directory waiting for its snapshot', async () => {
+  const fake = installFakeHoli()
+  const { store } = mount()
+  store.set(openedRemoteAtom, 'mara/notes')
+  const off = subscribeToVault(store)
+  try {
+    act(() => fake.pushOpen({ remote: 'mara/notes', path: 'later', kind: 'directory' }))
+    act(() => fake.pushOpen({ remote: 'mara/notes', path: 'kunder/brief.md' }))
+    act(() => store.set(snapshotAtom, { ...store.get(snapshotAtom), dirs: ['kunder', 'later'] }))
+    const row = await screen.findByRole('treeitem', { name: 'later' })
+    expect(row).toHaveAttribute('aria-selected', 'false')
+    expect(row).toHaveAttribute('aria-expanded', 'false')
+    expect(row).not.toHaveFocus()
+  } finally {
+    off()
+    fake.restore()
+  }
 })
