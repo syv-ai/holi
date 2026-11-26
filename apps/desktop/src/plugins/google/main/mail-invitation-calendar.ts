@@ -1131,7 +1131,7 @@ function calendarRevisionMismatch(
   event: RawEvent,
   invitation: InvitationRevision,
   { conferenceUrl, htmlLink }: InvitationLinks,
-  { requiresRoster = rosterChanged(invitation), expanded = false } = {},
+  { requiresRoster = rosterChanged(invitation), expanded = false, navigationOnly = false } = {},
 ): string | null {
   const { details, fields, material, joinOnly } = invitation
   const { sequence, recurrenceId } = details.identity
@@ -1166,6 +1166,10 @@ function calendarRevisionMismatch(
   const timeMatches = (mail: string | null, calendar: string) =>
     mail !== null && (details.allDay ? mail === calendar : instant(mail) === instant(calendar))
   const observedRoster = requiresRoster ? calendarRoster(event) : undefined
+  // An omitted DTEND/DURATION still gives an active REQUEST an effective end.
+  // Series Join's separate link lookup keeps its existing material requirements.
+  const compareEnd =
+    !expanded && (joinOnly || explicitFields.end || (!cancelled && !navigationOnly))
   if (
     (explicitFields.title &&
       event.summary !== undefined &&
@@ -1174,10 +1178,7 @@ function calendarRevisionMismatch(
       (joinOnly || explicitFields.start) &&
       start !== undefined &&
       !timeMatches(details.start, start)) ||
-    (!expanded &&
-      (joinOnly || explicitFields.end) &&
-      end !== undefined &&
-      !timeMatches(details.end, end)) ||
+    (compareEnd && end !== undefined && !timeMatches(details.end, end)) ||
     (explicitFields.location &&
       event.location !== undefined &&
       words(event.location) !== words(details.location)) ||
@@ -1385,7 +1386,10 @@ async function upcomingInvitationLinks(
           // slot revision instead supplies exact occurrence material.
           if (
             bindsMailbox(instance, revision) &&
-            !calendarRevisionMismatch(instance, revision, links, { expanded: slot === null }) &&
+            !calendarRevisionMismatch(instance, revision, links, {
+              expanded: slot === null,
+              navigationOnly: true,
+            }) &&
             (links.conferenceUrl || links.htmlLink)
           )
             return links
