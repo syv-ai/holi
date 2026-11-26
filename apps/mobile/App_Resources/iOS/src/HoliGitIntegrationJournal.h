@@ -15,6 +15,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)replaceState:(NSDictionary *)state error:(NSError **)error;
 - (BOOL)writeArtifact:(NSData *)data named:(NSString *)name error:(NSError **)error;
 - (BOOL)cleanupRecordedArtifacts:(NSError **)error;
+- (nullable NSData *)readArtifactNamed:(NSString *)name error:(NSError **)error;
+- (BOOL)finalizeCompleted:(NSError **)error;
 - (void)close;
 @end
 

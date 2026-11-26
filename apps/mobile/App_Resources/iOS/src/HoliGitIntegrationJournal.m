@@ -6,6 +6,7 @@
 #import <errno.h>
 #import <string.h>
 #import <CoreFoundation/CoreFoundation.h>
+#import <CommonCrypto/CommonDigest.h>
 
 static NSString *const HGIError = @"HoliGitIntegrationJournal";
 static BOOL HGIFail(NSError **error, int code, NSString *message) {
@@ -37,7 +38,7 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
   ok=ok&&fstat(fd,&b)==0&&HGISame(a,b)&&d.length==(NSUInteger)a.st_size; close(fd);
   NSDictionary *m=ok?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;
   if(![m isKindOfClass:NSDictionary.class]||![m[@"version"] isEqual:@1]||!HGIUUID(m[@"uuid"])||![m[@"uuid"] isEqual:_uuid]||!HGIString(m[@"root"])||!HGIString(m[@"remote"])||!HGIString(m[@"branch"])||!HGIString(m[@"gitDev"])||!HGIString(m[@"gitIno"])||![m[@"artifacts"] isKindOfClass:NSArray.class]||![m[@"plan"] isKindOfClass:NSDictionary.class])return HGIFail(error,EINVAL,@"Invalid journal manifest");
-  for(id n in m[@"artifacts"])if(!HGIName(n))return HGIFail(error,EINVAL,@"Invalid artifact ownership");
+  for(id record in m[@"artifacts"])if(![record isKindOfClass:NSDictionary.class]||!HGIName(record[@"name"])||![record[@"dev"] isKindOfClass:NSString.class]||![record[@"ino"] isKindOfClass:NSString.class]||![record[@"size"] isKindOfClass:NSNumber.class]||![record[@"sha256"] isKindOfClass:NSString.class])return HGIFail(error,EINVAL,@"Invalid artifact ownership");
   _manifest=m; return YES;
 }
 - (instancetype)initPath:(NSString *)path error:(NSError **)error {
@@ -46,7 +47,7 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
   struct stat ds; if(fstat(dir,&ds)||ds.st_nlink<1){close(dir);HGIFail(error,EINVAL,@"Invalid transaction directory");return nil;}
   int lease=openat(dir,"lease",O_RDWR|O_NOFOLLOW|O_CLOEXEC); struct stat ls;
   if(lease<0||fstat(lease,&ls)||!S_ISREG(ls.st_mode)||ls.st_nlink!=1||flock(lease,LOCK_EX|LOCK_NB)){if(lease>=0)close(lease);close(dir);HGIFail(error,EBUSY,@"Journal lease unavailable");return nil;}
-  self=[super init]; if(self){_directoryFD=dir;_leaseFD=lease;_transactionPath=path;_uuid=path.lastPathComponent; if(![self loadManifest:error]){[self close];return nil;}} else {close(dir);close(lease);} return self;
+  self=[super init]; if(self){_directoryFD=dir;_leaseFD=lease;_transactionPath=path;_uuid=[path.lastPathComponent hasPrefix:@"txn-"]?[path.lastPathComponent substringFromIndex:4]:@""; if(![self loadManifest:error]){[self close];return nil;}} else {close(dir);close(lease);} return self;
 }
 - (instancetype)init { self=[super init]; if(self){_directoryFD=-1;_leaseFD=-1;}return self; }
 - (instancetype)createAtRoot:(NSString *)root remote:(NSString *)remote branch:(NSString *)branch nativeId:(NSString *)nativeId plan:(NSData *)plan error:(NSError **)error {
@@ -82,16 +83,32 @@ static BOOL HGIWriteAll(int fd, NSData *data) { const uint8_t *p=data.bytes; siz
   return [self publish:state error:error];
 }
 - (BOOL)writeArtifact:(NSData *)data named:(NSString *)name error:(NSError **)error {
-  if(!HGIName(name)||[name isEqual:@"manifest.json"]||[name isEqual:@"lease"]||[_manifest[@"artifacts"] containsObject:name]||data.length>16*1024*1024)return HGIFail(error,EINVAL,@"Invalid artifact");
+  if(!HGIName(name)||[name isEqual:@"manifest.json"]||[name isEqual:@"lease"]||[[_manifest[@"artifacts"] valueForKey:@"name"] containsObject:name]||data.length>16*1024*1024)return HGIFail(error,EINVAL,@"Invalid artifact");
   int f=openat(_directoryFD,name.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600); if(f<0)return HGIFail(error,errno,@"Artifact already exists or is unsafe");
   struct stat created; BOOL ok=fstat(f,&created)==0&&S_ISREG(created.st_mode)&&created.st_nlink==1&&HGIWriteAll(f,data); int saved=errno; if(close(f)&&ok){ok=NO;saved=errno;}
   if(!ok)return HGIFail(error,saved?:EIO,@"Artifact durability failed; evidence retained");
-  NSMutableDictionary *m=[_manifest mutableCopy]; m[@"artifacts"]=[_manifest[@"artifacts"] arrayByAddingObject:name]; return [self publish:m error:error];
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(data.bytes,(CC_LONG)data.length,digest); NSMutableString *hex=[NSMutableString string]; for(NSUInteger i=0;i<sizeof(digest);i++) [hex appendFormat:@"%02x",digest[i]]; NSMutableDictionary *m=[_manifest mutableCopy]; m[@"artifacts"]=[_manifest[@"artifacts"] arrayByAddingObject:@{@"name":name,@"dev":[NSString stringWithFormat:@"%llu",(unsigned long long)created.st_dev],@"ino":[NSString stringWithFormat:@"%llu",(unsigned long long)created.st_ino],@"size":@(data.length),@"sha256":hex}]; return [self publish:m error:error];
 }
 - (BOOL)cleanupRecordedArtifacts:(NSError **)error {
-  for(NSString *name in _manifest[@"artifacts"]){struct stat s;if(fstatat(_directoryFD,name.fileSystemRepresentation,&s,AT_SYMLINK_NOFOLLOW)||!S_ISREG(s.st_mode)||s.st_nlink!=1)return HGIFail(error,EPERM,@"Recorded artifact changed; evidence retained");}
-  for(NSString *name in _manifest[@"artifacts"])if(unlinkat(_directoryFD,name.fileSystemRepresentation,0))return HGIFail(error,errno,@"Artifact cleanup incomplete");
+  for(NSDictionary *record in _manifest[@"artifacts"]){struct stat s; NSString *name=record[@"name"]; NSData *bytes=[self readArtifactNamed:name error:error]; if(!bytes||fstatat(_directoryFD,name.fileSystemRepresentation,&s,AT_SYMLINK_NOFOLLOW)||!S_ISREG(s.st_mode)||s.st_nlink!=1||s.st_dev!=[record[@"dev"] unsignedLongLongValue]||s.st_ino!=[record[@"ino"] unsignedLongLongValue]||s.st_size!=[record[@"size"] unsignedLongLongValue])return HGIFail(error,EPERM,@"Recorded artifact changed; evidence retained");}
+  for(NSDictionary *record in _manifest[@"artifacts"])if(unlinkat(_directoryFD,[record[@"name"] fileSystemRepresentation],0))return HGIFail(error,errno,@"Artifact cleanup incomplete");
   if(fsync(_directoryFD))return HGIFail(error,errno,@"Artifact cleanup not durable");
   NSMutableDictionary *m=[_manifest mutableCopy];m[@"artifacts"]=@[];return [self publish:m error:error];
+}
+- (NSData *)readArtifactNamed:(NSString *)name error:(NSError **)error {
+  NSDictionary *record=nil; for(NSDictionary *candidate in _manifest[@"artifacts"]) if([candidate[@"name"] isEqual:name]) { record=candidate; break; }
+  if(!record||!HGIName(name)) { HGIFail(error,ENOENT,@"Artifact is not recorded"); return nil; }
+  int fd=openat(_directoryFD,name.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK); struct stat before,after;
+  if(fd<0||fstat(fd,&before)||!S_ISREG(before.st_mode)||before.st_nlink!=1||before.st_dev!=[record[@"dev"] unsignedLongLongValue]||before.st_ino!=[record[@"ino"] unsignedLongLongValue]||before.st_size!=[record[@"size"] unsignedLongLongValue]) { if(fd>=0)close(fd); HGIFail(error,EPERM,@"Artifact ownership changed"); return nil; }
+  NSMutableData *data=[NSMutableData dataWithCapacity:(NSUInteger)before.st_size]; uint8_t buf[4096]; ssize_t n; while((n=read(fd,buf,sizeof(buf)))>0)[data appendBytes:buf length:(NSUInteger)n]; BOOL ok=n==0&&fstat(fd,&after)==0&&HGISame(before,after)&&after.st_size==before.st_size; close(fd);
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(data.bytes,(CC_LONG)data.length,digest); NSMutableString *hex=[NSMutableString string]; for(NSUInteger i=0;i<sizeof(digest);i++)[hex appendFormat:@"%02x",digest[i]];
+  if(!ok||![hex isEqual:record[@"sha256"]]) { HGIFail(error,EPERM,@"Artifact content changed"); return nil; } return data;
+}
+- (BOOL)finalizeCompleted:(NSError **)error {
+  if(![self cleanupRecordedArtifacts:error]) return NO;
+  if(unlinkat(_directoryFD,"manifest.json",0)||unlinkat(_directoryFD,"lease",0)||fsync(_directoryFD)) return HGIFail(error,errno,@"Cannot remove completed journal files");
+  [self close];
+  if(unlinkat(AT_FDCWD,_transactionPath.fileSystemRepresentation,AT_REMOVEDIR)) return HGIFail(error,errno,@"Cannot remove completed transaction");
+  return YES;
 }
 @end
