@@ -3,7 +3,7 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import { parseHoliLink, type VaultEntry } from '@holi/shared'
 
 type HoliLinkCheckResult =
-  | { ok: true; remote: string; path: string; heading?: string }
+  | { ok: true; remote: string; path: string; kind: 'file' | 'directory'; heading?: string }
   | { ok: false; message: string; detail: string }
 
 /** Check an untrusted Holi link against the local registry and canonical disk paths. */
@@ -26,20 +26,28 @@ async function checkHoliLink(
     }
   }
   const abs = await exactPath(entry.path, path)
-  const isFile =
-    abs !== null &&
-    (await stat(abs).then(
-      (result) => result.isFile(),
-      () => false,
-    ))
-  if (!isFile) {
+  const kind =
+    abs === null
+      ? null
+      : await stat(abs).then((result) => {
+          if (result.isFile()) return 'file' as const
+          if (result.isDirectory()) return 'directory' as const
+          return null
+        }, () => null)
+  if (kind === null) {
     return {
       ok: false,
       message: `${path} is not in ${remote}.`,
       detail: 'It may have been moved or deleted, or it has not synced to this computer yet.',
     }
   }
-  return { ok: true, remote: entry.remote, path, ...(heading === undefined ? {} : { heading }) }
+  return {
+    ok: true,
+    remote: entry.remote,
+    path,
+    kind,
+    ...(kind === 'file' && heading !== undefined ? { heading } : {}),
+  }
 }
 
 /** Open a checked location through the window's shared vault:open route. */
@@ -47,12 +55,12 @@ export async function openHoliLink(
   url: string,
   deps: {
     vaults: () => Promise<readonly VaultEntry[]>
-    showPath: (remote: string, path: string, options: { heading?: string }) => void
+    showPath: (remote: string, path: string, options: { heading?: string; kind?: 'directory' }) => void
   },
 ): Promise<{ ok: true } | { ok: false; message: string; detail: string }> {
   const result = await checkHoliLink(url, deps.vaults)
   if (!result.ok) return result
-  const { remote, path, heading } = result
-  deps.showPath(remote, path, { heading })
+  const { remote, path, heading, kind } = result
+  deps.showPath(remote, path, { heading, ...(kind === 'directory' ? { kind } : {}) })
   return { ok: true }
 }

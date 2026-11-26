@@ -14,6 +14,7 @@ import { trpc } from '@/lib/trpc'
 // A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
 // reads the other's atoms until a store does.
 import { openDocumentAtom } from './open-document'
+import { revealInFilesAtom } from './reveal-in-files'
 // A cycle too (`document-runs` reads `activeRemoteAtom`), safe the same way.
 import { documentRunsAtom, documentUpgradesAtom, isRunLive } from './document-runs'
 import { settledRect } from '@/lib/settled-rect'
@@ -374,7 +375,7 @@ export function subscribeToVault(
   // `activeRemoteAtom` stays truthful; the path opens once the new vault's
   // snapshot is in (`openVaultAtom` sets it before this resolves). A link's
   // heading is where the document's view puts the caret.
-  const offReminder = window.holi.vault.onOpen(({ remote, path, heading }) => {
+  const offReminder = window.holi.vault.onOpen(({ remote, path, heading, kind }) => {
     const targetRemote = remote || store.get(activeRemoteAtom)
     if (!targetRemote) return
     const id = store.get(documentOpenIntentAtom) + 1
@@ -396,7 +397,9 @@ export function subscribeToVault(
       void pending
         .then((landed) => {
           if (landed && store.get(documentOpenIntentAtom) === id)
-            store.set(openDocumentAtom, path, heading)
+            kind === 'directory'
+        ? store.set(revealInFilesAtom, { path, directory: true })
+        : store.set(openDocumentAtom, path, heading)
         })
         .catch((error: unknown) => {
           reportError(error)
@@ -405,7 +408,9 @@ export function subscribeToVault(
           return restoreSelection(request)
         })
     } else {
-      store.set(openDocumentAtom, path, heading)
+      kind === 'directory'
+        ? store.set(revealInFilesAtom, { path, directory: true })
+        : store.set(openDocumentAtom, path, heading)
       // Main may be opening another vault, or the initial open may not yet
       // have landed. Recover now; stale completions never start another loop.
       if (store.get(openedRemoteAtom) !== targetRemote)
