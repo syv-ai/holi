@@ -6,10 +6,8 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
-import {
-  drainOwnedProcess,
-  installCancellationHandlers,
-} from './browser-placement-bench-lifecycle.mjs'
+import { installCancellationHandlers } from './browser-placement-bench-lifecycle.mjs'
+import { createOwnedProcesses } from './owned-processes.mjs'
 import {
   cpuFor,
   dispersion,
@@ -22,8 +20,13 @@ import { build } from 'vite'
 import react from '@vitejs/plugin-react'
 import { externalizeDepsPlugin } from 'electron-vite'
 
+assert(
+  process.platform !== 'win32',
+  'Windows is unsupported until owned process-tree drainage is verified; refusing before build or spawn',
+)
 const cancellation = installCancellationHandlers()
 const { cancelled } = cancellation
+const ownedProcesses = createOwnedProcesses()
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const option = (name, fallback) => {
@@ -38,9 +41,8 @@ const repetitions = Number(option('--repetitions', '3'))
 const countsOnly = args.includes('--counts')
 const variant = option('--variant', 'baseline')
 const scenario = option('--scenario', '')
-const selectedScenarioCount = scenario
-  ? Number(scenarioNames.includes(scenario))
-  : scenarioNames.length
+assert(!scenario || scenarioNames.includes(scenario), `unsupported scenario: ${scenario}`)
+const selectedScenarioCount = scenario ? 1 : scenarioNames.length
 assert(variant === 'baseline', '--variant supports baseline only; hybrid is rejected')
 assert(Number.isFinite(seconds) && seconds >= 1 && seconds <= 3600, '--seconds must be 1..3600')
 assert(Number.isFinite(warmup) && warmup >= 0 && warmup <= 600, '--warmup must be 0..600')
@@ -234,11 +236,8 @@ try {
     HOLI_BENCH_COUNTS: countsOnly ? '1' : '0',
   }
   delete env.ELECTRON_RUN_AS_NODE
-  child = spawn(electron, [root], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
-  })
+  const owned = ownedProcesses.start(electron, [root], { env })
+  child = owned.child
   child.stdout.on('data', (chunk) => {
     output += chunk
     process.stdout.write(chunk)
@@ -247,10 +246,7 @@ try {
     output += chunk
     process.stderr.write(chunk)
   })
-  closed = new Promise((resolve, reject) => {
-    child.once('error', reject)
-    child.once('close', resolve)
-  })
+  closed = owned.exited.then(({ code }) => code)
   let timeout
   let code
   try {
@@ -268,7 +264,11 @@ try {
     clearTimeout(timeout)
   }
   await writeFile(join(out, 'stdout.log'), output)
-  assert.equal(code, 0, `isolated Electron benchmark failed (exit ${code})`)
+  assert.equal(
+    code?.code ?? code,
+    0,
+    `isolated Electron benchmark failed (exit ${code?.code ?? code})`,
+  )
   const baseline = JSON.parse(await readFile(join(out, 'baseline.json'), 'utf8'))
   assert.equal(baseline.source, sourceHash)
   assert.equal(baseline.variant, variant)
@@ -359,7 +359,7 @@ try {
         schema: baseline.schema,
         variant,
         sourceHash,
-            trials: repetitions,
+        trials: repetitions,
         observations: baseline.observations.length,
         scenarios: byScenario,
         placementMessages: baseline.placementMessages,
@@ -382,7 +382,8 @@ try {
 } finally {
   if (child?.pid) {
     try {
-      await drainOwnedProcess(child, closed)
+      const owned = [...ownedProcesses.remainingPids].includes(child.pid)
+      if (owned) await ownedProcesses.stopAll()
     } catch (error) {
       cancellation.dispose()
       throw new Error(`${error.message}; runtime retained at ${root}`)
