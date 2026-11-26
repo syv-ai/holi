@@ -230,6 +230,11 @@ try {
       if (result) return result
       await delay(100)
     }
+    const diagnostic = await evaluate('window.piHintFixtureState?.()')
+    await writeFile(
+      join(evidence, 'failure-state.json'),
+      JSON.stringify({ label, diagnostic, proof: await proof() }, null, 2),
+    )
     throw new Error(`timeout: ${label}; ${await evaluate('document.body.innerText')}`)
   }
   const key = async (key, modifiers = 0) => {
@@ -249,6 +254,21 @@ try {
   const proof = () => evaluate(`window.holi.trpc({path:'fixture.proof'}).then(r=>r.data)`)
   const link = `document.querySelector('[data-hint-target="https://example.invalid/fixture"]')`
   const hints = async () => {
+    // The producer's recovery prefix precedes its final redraw. Request only once
+    // that native redraw has reached the renderer and its paint has settled.
+    let ready = false
+    for (let n = 0; n < 100; n++) {
+      const bytes = terminal.output.length
+      await delay(200)
+      if (terminal.output.length === bytes && (await proof()).offset === bytes) {
+        ready = true
+        break
+      }
+    }
+    assert(ready, 'native output did not settle at the renderer bridge')
+    await evaluate(
+      'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+    )
     await evaluate(`document.getElementById('host-focus').focus()`)
     await key('f')
     const label = await waitFor(`${link}?.getAttribute('data-hint-key')`, 'native link hint')

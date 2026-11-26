@@ -15,6 +15,7 @@ import {
   agentSessionsAtom,
   agentTerminalsAtom,
 } from '../src/plugins/agent/renderer/state/sessions'
+import { discoverHostHintTargets } from '../src/renderer/src/lib/host-hints'
 import '../src/renderer/src/index.css'
 
 const store = createStore()
@@ -38,6 +39,20 @@ type Controls = {
   vim?: boolean
   theme?: 'light' | 'dark'
 }
+;(window as unknown as { piHintFixtureState: () => unknown }).piHintFixtureState = () => ({
+  account: store.get(sessionAtom),
+  remote: store.get(activeRemoteAtom),
+  sessions: store.get(agentSessionsAtom),
+  terminals: store.get(agentTerminalsAtom),
+  vim: store.get(vimCodeEditingAtom),
+  focused: document.hasFocus(),
+  active: document.activeElement?.outerHTML,
+  targets: discoverHostHintTargets(document.querySelector('[data-pane]')!).map((target) => ({
+    label: target.label,
+    x: target.x,
+    y: target.y,
+  })),
+})
 function Fixture() {
   const [path, setPath] = useState<'surface' | 'agents'>('surface')
   const [visible, setVisible] = useState(true)
