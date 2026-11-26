@@ -133,6 +133,20 @@ typedef struct {
   NSUInteger entries;
   CFAbsoluteTime deadline;
 } HNGTreePlan;
+typedef struct { NSMutableDictionary *entries; NSUInteger count; CFAbsoluteTime deadline; } HNGIntegrationEntries;
+static int HNGIntegrationEntry(const char *prefix, const git_tree_entry *entry, void *payload) {
+  HNGIntegrationEntries *plan = payload;
+  if (++plan->count > 100000 || CFAbsoluteTimeGetCurrent() > plan->deadline) return GIT_EUSER;
+  if (git_tree_entry_type(entry) == GIT_OBJECT_TREE) return 0;
+  git_filemode_t mode = git_tree_entry_filemode(entry);
+  if (mode != GIT_FILEMODE_BLOB && mode != GIT_FILEMODE_BLOB_EXECUTABLE) return GIT_EINVALIDSPEC;
+  NSString *directory = prefix ? [NSString stringWithUTF8String:prefix] : nil;
+  NSString *name = [NSString stringWithUTF8String:git_tree_entry_name(entry)];
+  if (!directory || !name || [name containsString:@".."] || [name containsString:@"/"]) return GIT_EINVALIDSPEC;
+  NSString *path = [directory stringByAppendingString:name];
+  plan->entries[path] = @{ @"oid": [NSString stringWithUTF8String:git_oid_tostr_s(git_tree_entry_id(entry))], @"mode": @(mode) };
+  return 0;
+}
 static int HNGPlanEntry(const char *prefix, const git_tree_entry *entry, void *payload) {
   HNGTreePlan *plan = payload;
   if (++plan->entries > 100000 || CFAbsoluteTimeGetCurrent() > plan->deadline) return GIT_EUSER;
@@ -854,9 +868,8 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   git_tree *oldTree=NULL, *newTree=NULL;
   int rc = git_repository_state(repo) == GIT_REPOSITORY_STATE_NONE ? 0 : GIT_EINVALIDSPEC;
   if (rc == 0) rc = git_repository_head(&headRef, repo);
-  if (rc == 0 && git_reference_type(headRef) != GIT_REFERENCE_SYMBOLIC) rc = GIT_EINVALIDSPEC;
   NSString *expectedHead=[@"refs/heads/" stringByAppendingString:branch];
-  if(rc==0 && ![expectedHead isEqual:[NSString stringWithUTF8String:git_reference_symbolic_target(headRef) ?: ""]]) rc=GIT_EINVALIDSPEC;
+  if(rc==0 && ![expectedHead isEqual:[NSString stringWithUTF8String:git_reference_name(headRef) ?: ""]]) rc=GIT_EINVALIDSPEC;
   NSString *targetName=[@"refs/remotes/origin/" stringByAppendingString:branch];
   if(rc==0) rc=git_reference_lookup(&targetRef,repo,targetName.UTF8String);
   if(rc==0) rc=git_commit_lookup(&headCommit,repo,git_reference_target(headRef));
@@ -871,9 +884,11 @@ static BOOL HNGPrepareIgnores(git_repository *repo, HoliGitSnapshot *snapshot, i
   }
   if(rc==0) rc=git_commit_tree(&oldTree,headCommit);
   if(rc==0) rc=git_commit_tree(&newTree,targetCommit);
-  NSMutableDictionary *oldEntries=[NSMutableDictionary dictionary], *newEntries=[NSMutableDictionary dictionary];
-  if(rc==0) rc=git_tree_walk(oldTree,GIT_TREEWALK_PRE,^(const char *rootPath,const git_tree_entry *entry){ if(git_tree_entry_type(entry)==GIT_OBJECT_TREE)return 0; NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,git_tree_entry_name(entry)]; if([p containsString:@".."]||[p hasPrefix:@"/"])return GIT_EINVALIDSPEC; oldEntries[p]=@{@"oid":[NSString stringWithUTF8String:git_oid_tostr_s(git_tree_entry_id(entry))],@"mode":@(git_tree_entry_filemode(entry))}; return 0;});
-  if(rc==0) rc=git_tree_walk(newTree,GIT_TREEWALK_PRE,^(const char *rootPath,const git_tree_entry *entry){ if(git_tree_entry_type(entry)==GIT_OBJECT_TREE)return 0; NSString *p=[NSString stringWithFormat:@"%s%s",rootPath,git_tree_entry_name(entry)]; if([p containsString:@".."]||[p hasPrefix:@"/"])return GIT_EINVALIDSPEC; newEntries[p]=@{@"oid":[NSString stringWithUTF8String:git_oid_tostr_s(git_tree_entry_id(entry))],@"mode":@(git_tree_entry_filemode(entry))}; return 0;});
+  HNGIntegrationEntries oldPlan = { [NSMutableDictionary dictionary], 0, CFAbsoluteTimeGetCurrent() + 5.0 };
+  HNGIntegrationEntries newPlan = { [NSMutableDictionary dictionary], 0, CFAbsoluteTimeGetCurrent() + 5.0 };
+  if(rc==0) rc=git_tree_walk(oldTree,GIT_TREEWALK_PRE,HNGIntegrationEntry,&oldPlan);
+  if(rc==0) rc=git_tree_walk(newTree,GIT_TREEWALK_PRE,HNGIntegrationEntry,&newPlan);
+  NSDictionary *oldEntries = oldPlan.entries, *newEntries = newPlan.entries;
   NSDictionary *result=nil;
   if(rc==0) result=@{@"identity":record,@"outcome":outcome,@"headOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(headCommit))],@"targetOid":[NSString stringWithUTF8String:git_oid_tostr_s(git_commit_id(targetCommit))],@"oldEntries":oldEntries, @"newEntries":newEntries,@"requiredPaths":({ NSMutableSet *paths=[NSMutableSet setWithArray:oldEntries.allKeys]; [paths addObjectsFromArray:newEntries.allKeys]; [paths.allObjects sortedArrayUsingSelector:@selector(compare:)]; })};
   else if(error) HNGError(error,rc);
