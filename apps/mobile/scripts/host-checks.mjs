@@ -385,6 +385,19 @@ export function validateSharedGraph(graph) {
   assert.deepEqual(observed, allowed)
 }
 
+export async function whileCommandPending(command, observe, delay = 60_000) {
+  let observation
+  const timer = setTimeout(() => {
+    observation = Promise.resolve().then(observe).catch(() => {})
+  }, delay)
+  try {
+    return await command
+  } finally {
+    clearTimeout(timer)
+    if (observation) await observation
+  }
+}
+
 export function runCommand(
   command,
   args,
@@ -393,7 +406,6 @@ export function runCommand(
     log,
     signal,
     onOutput,
-    onSpawn,
     outputLimit = Infinity,
     killGrace = 2_000,
     ...options
@@ -405,7 +417,6 @@ export function runCommand(
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    onSpawn?.(child)
     let output = ''
     let stdout = ''
     let failure
