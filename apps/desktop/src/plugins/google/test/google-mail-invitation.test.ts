@@ -3289,76 +3289,85 @@ it('uses only verified upcoming links for a series export by the organizer', asy
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 })
 
-it('skips a sparse DATE tombstone for a verified organizer’s series export without granting RSVP', async () => {
-  const { state, list, read, respond } = await rig()
-  const source = seriesWithException()
-    .replace('METHOD:REQUEST\r\n', '')
-    .replace(organizer, person)
-    .replace(`ATTENDEE:mailto:${person}`, `ATTENDEE:mailto:${guest}`)
-    .replace(
-      'DTSTART:20240718T150000Z\r\nDTEND:20240718T160000Z',
-      'DTSTART;VALUE=DATE:20240718\r\nDTEND;VALUE=DATE:20240719',
+it.each(['organizer', 'UID hint'])(
+  'skips a sparse DATE tombstone for a series export identified by %s without granting RSVP',
+  async (proof) => {
+    const { state, list, read, respond } = await rig()
+    let source = seriesWithException()
+      .replace('METHOD:REQUEST\r\n', '')
+      .replace(organizer, person)
+      .replace(`ATTENDEE:mailto:${person}`, `ATTENDEE:mailto:${guest}`)
+      .replace(
+        'DTSTART:20240718T150000Z\r\nDTEND:20240718T160000Z',
+        'DTSTART;VALUE=DATE:20240718\r\nDTEND;VALUE=DATE:20240719',
+      )
+    if (proof === 'UID hint') source = source.replace(`ORGANIZER;CN=Host:mailto:${person}\r\n`, '')
+    state.messages = [gmailMessage('export', 200, source, { sent: true })]
+    const owned = { organizer: { email: person, self: true }, attendees: [] }
+    const master = { ...event({ id: 'series', series: true, allDay: true }), ...owned }
+    const occurrence = (id: string, start: string, end: string, room: string) => ({
+      ...upcomingInstance(id, start, room),
+      ...owned,
+      originalStartTime: { date: start },
+      start: { date: start },
+      end: { date: end },
+    })
+    const stale = occurrence(
+      'old',
+      '2099-07-09',
+      '2099-07-10',
+      'https://meet.google.com/xyz-abcd-efg',
     )
-  state.messages = [gmailMessage('export', 200, source, { sent: true })]
-  const owned = { organizer: { email: person, self: true }, attendees: [] }
-  const master = { ...event({ id: 'series', series: true, allDay: true }), ...owned }
-  const occurrence = (id: string, start: string, end: string, room: string) => ({
-    ...upcomingInstance(id, start, room),
-    ...owned,
-    originalStartTime: { date: start },
-    start: { date: start },
-    end: { date: end },
-  })
-  const stale = occurrence(
-    'old',
-    '2099-07-09',
-    '2099-07-10',
-    'https://meet.google.com/xyz-abcd-efg',
-  )
-  const later = occurrence(
-    'later',
-    '2099-07-16',
-    '2099-07-17',
-    'https://meet.google.com/klm-nopq-rst',
-  )
-  const tombstone = {
-    id: stale.id,
-    status: 'cancelled',
-    recurringEventId: master.id,
-    originalStartTime: stale.originalStartTime,
-  }
-  state.events.set('primary', [master])
-  state.instances.set('primary', [later, stale])
-  state.primaryPages = [
-    {
-      kind: 'calendar#events',
-      items: [
-        { ...tombstone, id: 'other-parent-child', recurringEventId: 'other-parent' },
-        { ...tombstone, id: 'other-organizer-child', organizer: { email: organizer } },
-        master,
-      ],
-    },
-  ]
-  expect(await read()).toMatchObject({ conferenceUrl: stale.hangoutLink, htmlLink: stale.htmlLink })
+    const later = occurrence(
+      'later',
+      '2099-07-16',
+      '2099-07-17',
+      'https://meet.google.com/klm-nopq-rst',
+    )
+    const tombstone = {
+      id: stale.id,
+      status: 'cancelled',
+      recurringEventId: master.id,
+      originalStartTime: stale.originalStartTime,
+    }
+    state.events.set('primary', [master])
+    state.instances.set('primary', [later, stale])
+    state.primaryPages = [
+      {
+        kind: 'calendar#events',
+        items: [
+          { ...tombstone, id: 'other-parent-child', recurringEventId: 'other-parent' },
+          { ...tombstone, id: 'other-organizer-child', organizer: { email: organizer } },
+          master,
+        ],
+      },
+    ]
+    expect(await read()).toMatchObject({
+      conferenceUrl: stale.hangoutLink,
+      htmlLink: stale.htmlLink,
+    })
 
-  state.primaryPages = [{ kind: 'calendar#events', items: [tombstone, master] }]
-  expect(await read()).toMatchObject({
-    scope: 'series',
-    kind: 'meeting',
-    cancelled: false,
-    canRespond: false,
-    responseTargetKey: null,
-    conferenceUrl: later.hangoutLink,
-    htmlLink: later.htmlLink,
-  })
-  await expect(respond('accepted')).rejects.toMatchObject({ code: 'FORBIDDEN' })
-  expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+    state.primaryPages = [{ kind: 'calendar#events', items: [tombstone, master] }]
+    expect(await read()).toMatchObject({
+      scope: 'series',
+      kind: 'meeting',
+      cancelled: false,
+      canRespond: false,
+      responseTargetKey: null,
+      conferenceUrl: later.hangoutLink,
+      htmlLink: later.htmlLink,
+    })
+    await expect(respond('accepted')).rejects.toMatchObject({
+      code: proof === 'UID hint' ? 'CONFLICT' : 'FORBIDDEN',
+    })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 
-  // An organizer address alone, without Calendar's own organizer marker,
-  // does not verify a master or allow the sparse row to establish ownership.
-  master.organizer = { email: person, self: false }
-  expect((await list()).invitations).toEqual([])
-})
+    // An organizer address alone, without Calendar's own organizer marker,
+    // does not verify a master or allow the sparse row to establish ownership.
+    master.organizer = { email: person, self: false }
+    expect((await list()).invitations).toEqual([])
+  },
+)
 
 it('returns independent series and original occurrence cards and updates only the selected occurrence', async () => {
   const { state, list, read, respond } = await rig()
@@ -4029,6 +4038,84 @@ it('allows a methodless export to open only a verified meeting, never to RSVP', 
     )
   }
   expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+})
+
+it.each(['EXPORT', 'PUBLISH'] as const)(
+  'uses an organizer-free %s as a read-only Calendar hint, not an RSVP revision',
+  async (method) => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2024-07-18T14:00:00Z'))
+    const { state, list, read, respond } = await rig()
+    const source = invite(method)
+      .replace('METHOD:EXPORT\r\n', '')
+      .replace(`ORGANIZER;CN=Host:mailto:${organizer}\r\n`, '')
+      .replace(`ATTENDEE:mailto:${person}\r\n`, '')
+      .replace('SUMMARY:Design sync\r\n', '')
+      .replace('LOCATION:Upstairs\r\n', '')
+    state.messages = [gmailMessage('legacy', 200, source, { from: guest })]
+    // Both the Calendar and the self guest would be writable for a genuine REQUEST.
+    // Use Calendar's actual details, not the room or stamp carried by the export.
+    const copy = {
+      ...event({ location: 'Conference room' }),
+      sequence: 5,
+      hangoutLink: 'https://meet.google.com/xyz-abcd-efg',
+    }
+    copy.attendees[0]!.responseStatus = 'accepted'
+    state.events.set('primary', [copy])
+    state.hiddenInvitationIds.add(copy.id)
+    expect((await list()).invitations).toEqual([])
+    state.hiddenInvitationIds.clear()
+    expect(await read()).toMatchObject({
+      kind: 'meeting',
+      identity: { messageId: 'legacy', uid, sequence: 3 },
+      title: copy.summary,
+      start,
+      end,
+      organizer: { email: organizer },
+      location: copy.location,
+      conferenceUrl: copy.hangoutLink,
+      htmlLink: copy.htmlLink,
+      canRespond: false,
+      responseTargetKey: null,
+      responseStatus: null,
+      recordedResponseStatus: null,
+      sentResponseStatus: null,
+    })
+    // In particular, this already-recorded answer is not an RSVP no-op.
+    await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+  },
+)
+
+it('does not use an organizer-free UID to resolve a malformed iTIP rendition', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2024-07-18T14:00:00Z'))
+  const { state, list } = await rig()
+  const request = invite().replace(`ORGANIZER;CN=Host:mailto:${organizer}\r\n`, '')
+  const exported = request.replace('METHOD:REQUEST\r\n', '')
+  const copy = { ...event(), hangoutLink: 'https://meet.google.com/abc-defg-hij' }
+  copy.attendees[0]!.responseStatus = 'needsAction'
+  state.events.set('primary', [copy])
+  const unsupported = request.replace('METHOD:REQUEST', 'METHOD:X-UNKNOWN')
+  const invalidInterval = exported.replace('DTEND:20240718T160000Z', 'DTEND:20240718T140000Z')
+  const cancel = request.replace('METHOD:REQUEST', 'METHOD:CANCEL')
+  const disputed = gmailMessage('disputed', 200, exported)
+  disputed.payload.mimeType = 'multipart/alternative'
+  disputed.payload.parts.push(gmailMessage('other', 200, request).payload.parts[1]!)
+  for (const mail of [
+    gmailMessage('request', 200, request, { method: 'REQUEST' }),
+    gmailMessage('mime-request', 200, exported, { method: 'REQUEST' }),
+    gmailMessage('cancel', 200, cancel),
+    gmailMessage('unsupported', 200, unsupported),
+    gmailMessage('invalid-interval', 200, invalidInterval),
+    disputed,
+  ]) {
+    state.messages = [mail]
+    expect((await list()).invitations).not.toContainEqual(
+      expect.objectContaining({ kind: 'meeting' }),
+    )
+  }
+  state.messages = [gmailMessage('request', 200, request), gmailMessage('legacy', 300, exported)]
+  expect((await list()).invitations).toEqual([])
+  expect(state.calendarUidQueries).toEqual([])
 })
 
 it('refuses to project an older actionable invitation when a newer full MIME tree is incomplete', async () => {

@@ -31,13 +31,7 @@ import {
 
 type CalendarReadApi = Pick<GoogleApi, 'get'>
 
-type InvitationCalendarCopy = {
-  kind: 'verified'
-  target: string
-  etag: string | null
-  proof: string
-  matchesProof: (proof: string) => boolean
-  revision: Parsed['details']['identity']
+type CalendarMeetingFacts = {
   title?: string
   start?: string
   end?: string
@@ -46,6 +40,15 @@ type InvitationCalendarCopy = {
   conferenceUrl: string | null
   conferenceLinkSource: 'calendar' | 'provider' | null
   htmlLink: string | null
+}
+
+type InvitationCalendarCopy = CalendarMeetingFacts & {
+  kind: 'verified'
+  target: string
+  etag: string | null
+  proof: string
+  matchesProof: (proof: string) => boolean
+  revision: Parsed['details']['identity']
   responseStatus: RsvpStatus | null
   canEdit: boolean
   canNavigate: boolean
@@ -90,6 +93,29 @@ export type InvitationRevision = RevisionMaterial & {
   unknownPredecessor: boolean
 }
 export type InvitationTarget = InvitationRevision & { legacyJoinOnly: boolean }
+type LegacyMeetingHint = {
+  navigationOnly: true
+  legacyJoinOnly: true
+  joinOnly: true
+  details: Parsed['details']
+  embeddedSlots: readonly string[]
+}
+type CalendarSubject = InvitationTarget | LegacyMeetingHint
+type LegacyMeeting = CalendarMeetingFacts & {
+  kind: 'meeting'
+  organizer: NonNullable<Parsed['details']['organizer']>
+  recurring: boolean
+  onCalendar: (locator: string) => boolean
+  canNavigate: () => boolean
+  navigation: () => Promise<InvitationNavigation>
+}
+type CalendarRefusal = Exclude<CalendarLookup, InvitationCalendarCopy>
+
+type NavigationProof = {
+  uid: string
+  organizer: string
+  classify: (event: RawEvent) => CancellationClassification
+}
 
 const CALENDAR_PAGE_LIMIT = 10
 
@@ -334,6 +360,7 @@ async function exactCopies(
   context: {
     organizer: string | undefined
     bindsParent: (event: RawEvent) => boolean
+    navigationOnly: boolean
     mailbox: string
     primary: boolean
     includeHiddenInvitations: boolean
@@ -343,8 +370,8 @@ async function exactCopies(
   observe: ObserveEvent,
   access: CalendarAccess,
 ) {
-  let verifiedParentId: string | undefined
-  const result = (events: RawEvent[]) => ({ events, verifiedParentId })
+  let verifiedParent: RawEvent | undefined
+  const result = (events: RawEvent[]) => ({ events, verifiedParent })
   const { uid, recurrenceId, sequence } = identity
   let sawCancellation = false
   const observeCandidate = (event: RawEvent) => {
@@ -429,17 +456,17 @@ async function exactCopies(
     if (!series.id || !series.recurrence?.length) continue
     const boundParent =
       series.iCalUID === uid &&
-      Boolean(context.organizer) &&
-      series.organizer?.email?.toLowerCase() === context.organizer &&
       context.bindsParent(series) &&
       coherentEventTimes(series) &&
       (series.start?.date !== undefined) === date(recurrenceId) &&
       recurrenceSet(series.recurrence) !== null
-    const verifiedParent = boundParent && (series.sequence ?? 0) === sequence
+    // The hint can prove a Calendar parent for navigation, not a received revision.
+    const parentVerified =
+      boundParent && (context.navigationOnly || (series.sequence ?? 0) === sequence)
     // Unmodified instances do not appear in events.list. Query for the original
     // start (not timeMin or the displayed start, which miss moved occurrences).
     const parentId = series.id
-    if (verifiedParent) verifiedParentId = parentId
+    if (parentVerified) verifiedParent = series
     const instances = await invitationPages<RawEvent>(
       api,
       `${url}/${encodeURIComponent(parentId)}/instances`,
@@ -474,7 +501,7 @@ async function exactCopies(
         if (event.iCalUID === uid && organizer !== undefined) await observe(event)
         else if (
           (event.iCalUID === undefined || event.iCalUID === uid) &&
-          ((verifiedParent && mailboxAttendee(event, context.mailbox)) ||
+          ((parentVerified && mailboxAttendee(event, context.mailbox)) ||
             (boundParent &&
               context.primary &&
               event.attendees === undefined &&
@@ -513,7 +540,7 @@ async function exactCopies(
       )
         invalid('Calendar returned conflicting instance rows')
       matching.set(event.id, event)
-      if (verifiedParent) verifiedInstances.add(event.id)
+      if (parentVerified) verifiedInstances.add(event.id)
     }
   }
   const matches = [...matching.values()]
@@ -690,28 +717,28 @@ export function createInvitationCalendarDiscovery(api: CalendarReadApi, mailbox:
       base: string,
       parentId: string,
       slot: string,
-      revision: InvitationRevision,
+      { uid, organizer, classify }: NavigationProof,
       bindsSparseChild: boolean,
     ) {
-      const { identity, organizer } = revision.details
-      if (!organizer) return false
       // Only the verified master associates sparse rows with this invitation,
       // and only for navigation. Do not infer UID, organizer, self or revision
       // for the child resource, even if the expanded view still shows it live.
       if (bindsSparseChild) {
-        for (const uid of [identity.uid, undefined]) {
-          for (const address of [organizer.email, undefined]) {
-            if (uncertainOccurrences.has(occurrenceKey(base, parentId, uid, address, slot)))
+        for (const childUid of [uid, undefined]) {
+          for (const address of [organizer, undefined]) {
+            if (uncertainOccurrences.has(occurrenceKey(base, parentId, childUid, address, slot)))
               return true
           }
         }
       }
-      const event = occurrenceCancellations.get(
-        occurrenceKey(base, parentId, identity.uid, organizer.email, slot),
-      )
+      const event = occurrenceCancellations.get(occurrenceKey(base, parentId, uid, organizer, slot))
       if (!event) return false
-      const cancellation = classifyCancellation(event, revision, mailbox, slot)
+      const cancellation = classify(event)
       return cancellation === 'current' || cancellation === 'unverified'
+    },
+    onCalendar(target: string, base: string) {
+      const resource = calendarTargetResource(target, mailbox)
+      return resource !== null && key(calendarEventsUrl(resource.id)) === key(base)
     },
     sameCalendar(first: string, second: string) {
       const a = calendarTargetResource(first, mailbox)
@@ -781,14 +808,30 @@ function primaryCalendar(calendars: CalendarListEntry[]): CalendarListEntry | un
 }
 
 /** RSVP lookup is independent of agenda visibility, dates and RSVP state. */
-export async function findInvitationCalendarCopy(
+export function findInvitationCalendarCopy(
+  api: CalendarReadApi,
+  invitation: LegacyMeetingHint,
+  mailbox: string,
+  remember: null,
+  readCalendarOverrides: () => Promise<CalendarOverrides>,
+  discovery: CalendarDiscovery,
+): Promise<LegacyMeeting | CalendarRefusal>
+export function findInvitationCalendarCopy(
   api: CalendarReadApi,
   invitation: InvitationTarget,
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
   readCalendarOverrides: () => Promise<CalendarOverrides>,
   discovery: CalendarDiscovery,
-): Promise<CalendarLookup> {
+): Promise<CalendarLookup>
+export async function findInvitationCalendarCopy(
+  api: CalendarReadApi,
+  invitation: CalendarSubject,
+  mailbox: string,
+  remember: ((locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>) | null,
+  readCalendarOverrides: () => Promise<CalendarOverrides>,
+  discovery: CalendarDiscovery,
+): Promise<CalendarLookup | LegacyMeeting> {
   try {
     return await lookupInvitationCalendarCopy(
       api,
@@ -796,7 +839,7 @@ export async function findInvitationCalendarCopy(
       mailbox,
       async (locator) => {
         try {
-          await remember(locator)
+          await remember?.(locator)
         } catch (cause) {
           throw new CalendarObservationError('Could not retain a Calendar locator', { cause })
         }
@@ -820,35 +863,54 @@ export async function findInvitationCalendarCopy(
 
 async function lookupInvitationCalendarCopy(
   api: CalendarReadApi,
-  invitation: InvitationTarget,
+  invitation: CalendarSubject,
   mailbox: string,
   remember: (locator: Omit<CalendarLocator, 'accountSub'>) => Promise<void>,
   readCalendarOverrides: () => Promise<CalendarOverrides>,
   discovery: CalendarDiscovery,
-): Promise<CalendarLookup> {
+): Promise<CalendarLookup | LegacyMeeting> {
+  const navigationOnly = 'navigationOnly' in invitation
   const { identity } = invitation.details
   const { uid, recurrenceId } = identity
   const organizer = invitation.details.organizer?.email
+  const classify = (event: RawEvent) =>
+    navigationOnly
+      ? classifyHintCancellation(event, identity)
+      : classifyCancellation(event, invitation, mailbox)
   const lookupContext = (base: string, ownedCalendar?: () => string | undefined) => ({
     organizer,
     mailbox,
     primary: base === PRIMARY_EVENTS,
-    classifyCancellation: (event: RawEvent) => classifyCancellation(event, invitation, mailbox),
+    classifyCancellation: classify,
     observeCancellation: (event: RawEvent, proof?: 'association-only') =>
       discovery.observeOccurrenceCancellation(base, event, proof),
     includeHiddenInvitations: !invitation.legacyJoinOnly,
+    navigationOnly,
     bindsParent: (event: RawEvent) =>
-      Boolean(
-        mailboxAttendee(event, mailbox) ||
-        (invitation.joinOnly &&
-          event.organizer?.self &&
-          (organizer === mailbox || organizer === ownedCalendar?.())),
-      ),
+      navigationOnly
+        ? Boolean(
+            calendarOrganizer(event) &&
+            invitationMembership(
+              event,
+              invitation,
+              mailbox,
+              discovery.access(base).role === 'owner',
+              ownedCalendar?.(),
+            ).allowed,
+          )
+        : Boolean(
+            organizer &&
+            event.organizer?.email?.toLowerCase() === organizer &&
+            (mailboxAttendee(event, mailbox) ||
+              (invitation.joinOnly &&
+                event.organizer?.self &&
+                (organizer === mailbox || organizer === ownedCalendar?.()))),
+          ),
   })
   const observeCopy =
     (base: string, calendarId?: string, owned = false) =>
     async (event: RawEvent, association?: QueryAssociation) => {
-      if (!hasEventResourceId(event)) return
+      if (navigationOnly || !hasEventResourceId(event)) return
       const observedAddress = event.organizer?.email
       const observedOrganizer =
         typeof observedAddress === 'string' && observedAddress.trim()
@@ -911,9 +973,10 @@ async function lookupInvitationCalendarCopy(
       })
     }
   const series = recurrenceId === null && invitation.details.recurring
-  const basis = invitation.fields.recurrenceTimeBasis
+  const fields = navigationOnly ? null : invitation.fields
   const floating =
-    invitation.fields.recurrenceKind === 'floating' || (series && basis?.kind === 'floating')
+    fields?.recurrenceKind === 'floating' ||
+    (series && fields?.recurrenceTimeBasis?.kind === 'floating')
   const unmatchable = {
     kind: 'blocked',
     reason: 'Calendar cannot verify a floating recurrence',
@@ -943,23 +1006,25 @@ async function lookupInvitationCalendarCopy(
         isAgendaEventVisible(event) ||
         // A master still binds expanded occurrences. Their self status
         // determines Join, not the status on the series template.
-        (series && event.status !== 'cancelled' && event.recurrence?.length),
+        ((series || (navigationOnly && recurrenceId === null)) &&
+          event.status !== 'cancelled' &&
+          event.recurrence?.length),
     )
     if (candidates.length !== events.length) sawIneligibleCopy = true
     return candidates
   }
   function selectCopy(
-    { events, verifiedParentId }: Awaited<ReturnType<typeof exactCopies>>,
+    { events, verifiedParent }: Awaited<ReturnType<typeof exactCopies>>,
     base: string,
     access: CalendarAccess,
     observe: ObserveEvent,
     calendarId?: string,
-  ): CalendarLookup | undefined {
+  ): CalendarLookup | LegacyMeeting | undefined {
     // Classify negative evidence independently of the preference for a live
     // resource. An older or unrelated tombstone conveys no current status.
     let unverified = false
     for (const event of events) {
-      const cancellation = classifyCancellation(event, invitation, mailbox)
+      const cancellation = classify(event)
       if (cancellation === 'current')
         return {
           kind: 'blocked',
@@ -975,10 +1040,15 @@ async function lookupInvitationCalendarCopy(
     if (floating && active.length) return unmatchable
     if (active.length > 1) return ambiguous
     if (active[0])
-      return invitationCopy(api, base, active[0], invitation, mailbox, access, observe, discovery, {
-        calendarId,
-        verifiedParentId,
-      })
+      return navigationOnly
+        ? legacyMeeting(api, base, active[0], invitation, mailbox, access, discovery, {
+            calendarId,
+            verifiedParent,
+          })
+        : invitationCopy(api, base, active[0], invitation, mailbox, access, observe, discovery, {
+            calendarId,
+            verifiedParentId: verifiedParent?.id,
+          })
     if (candidates.length)
       return { kind: 'blocked', reason: 'Calendar could not verify a current invitation copy' }
   }
@@ -1006,7 +1076,7 @@ async function lookupInvitationCalendarCopy(
     if (found) return found
   }
 
-  let match: CalendarLookup | undefined
+  let match: CalendarLookup | LegacyMeeting | undefined
   const seen = new Set<string>()
   for (const calendar of calendars) {
     if (!validCalendar(calendar) || seen.has(calendar.id))
@@ -1171,6 +1241,123 @@ function classifyCancellation(
   return 'current'
 }
 
+function calendarOrganizer(event: RawEvent) {
+  return typeof event.organizer?.email === 'string' && event.organizer.email.trim()
+    ? event.organizer.email.toLowerCase()
+    : undefined
+}
+
+function classifyHintCancellation(
+  event: RawEvent,
+  { uid, recurrenceId }: Parsed['details']['identity'],
+): CancellationClassification {
+  const { recurrenceId: slot, occurrenceUnverified } = eventLocatorScope(event)
+  // A UID hint has no received organizer or revision against which to confirm
+  // a cancellation. An applicable row can only withhold navigation.
+  return event.status !== 'cancelled' ||
+    (event.iCalUID !== undefined && event.iCalUID !== uid) ||
+    (recurrenceId === null
+      ? slot !== null || occurrenceUnverified
+      : slot !== null && distinctSlots(slot, recurrenceId))
+    ? 'irrelevant'
+    : 'unverified'
+}
+
+function legacyMeeting(
+  api: CalendarReadApi,
+  base: string,
+  event: RawEvent,
+  hint: LegacyMeetingHint,
+  mailbox: string,
+  access: CalendarAccess,
+  discovery: CalendarDiscovery,
+  { calendarId, verifiedParent }: { calendarId?: string; verifiedParent?: RawEvent },
+): LegacyMeeting | CalendarRefusal {
+  const { uid, recurrenceId } = hint.details.identity
+  const organizer = calendarOrganizer(event)
+  const membership = (row: RawEvent) =>
+    invitationMembership(row, hint, mailbox, access.role === 'owner', calendarId)
+  const recurring = recurrenceId === null && Boolean(event.recurrence?.length)
+  const parentId = verifiedParent?.id
+  if (
+    event.iCalUID !== uid ||
+    !organizer ||
+    !coherentEventTimes(event) ||
+    !membership(event).allowed ||
+    (recurring && recurrenceSet(event.recurrence!) === null) ||
+    (recurrenceId === null && hint.details.recurring && !recurring) ||
+    (recurrenceId !== null &&
+      (!verifiedParent ||
+        !parentId ||
+        event.recurringEventId !== parentId ||
+        calendarOrganizer(verifiedParent) !== organizer))
+  )
+    return { kind: 'blocked', reason: 'Calendar could not verify this meeting' }
+
+  const canNavigate = () => access.role === 'owner'
+  const observe = async () => {} // A navigation hint must not register durable response locators.
+  const suppressed = (master: string, slot: string, live: RawEvent) =>
+    discovery.suppressesOccurrence(
+      base,
+      master,
+      slot,
+      {
+        uid,
+        organizer,
+        // The collector has already bound full tombstones to the mailbox.
+        // Compare to the verified Calendar row, never to an export's stamp.
+        classify: (row) => ((row.sequence ?? 0) < (live.sequence ?? 0) ? 'older' : 'unverified'),
+      },
+      true,
+    )
+  const name = event.organizer?.displayName
+  const links = invitationEventLinks(event)
+  return {
+    kind: 'meeting',
+    organizer: { email: organizer, ...(typeof name === 'string' && name.trim() ? { name } : {}) },
+    recurring,
+    title: event.summary,
+    start: event.start?.date ?? event.start?.dateTime,
+    end: event.end?.date ?? event.end?.dateTime,
+    allDay: event.start?.date !== undefined,
+    location: event.location,
+    ...links,
+    onCalendar: (locator) => discovery.onCalendar(locator, base),
+    canNavigate,
+    navigation: async () => {
+      if (!canNavigate()) return { kind: 'withheld' }
+      if (recurring) {
+        const upcoming = await upcomingInvitationLinks(
+          api,
+          base,
+          event,
+          uid,
+          organizer,
+          true,
+          observe,
+          access,
+          (instance, slot) => {
+            const { allowed, organizes } = membership(instance)
+            return (
+              !hint.embeddedSlots.some((embedded) => !distinctSlots(embedded, slot)) &&
+              !suppressed(event.id!, slot, instance) &&
+              (instance.attendeesOmitted === undefined || instance.attendeesOmitted === false) &&
+              allowed &&
+              (Boolean(mailboxAttendee(instance, mailbox)) || organizes)
+            )
+          },
+        )
+        return upcoming ? { kind: 'series', links: upcoming } : { kind: 'withheld' }
+      }
+      if (parentId && recurrenceId && suppressed(parentId, recurrenceId, event))
+        return { kind: 'withheld' }
+      return (await legacyMeetingIsCurrent(api, base, event, uid, recurrenceId, observe, access))
+        ? { kind: 'default' }
+        : { kind: 'withheld' }
+    },
+  }
+}
+
 function calendarResponseUrl(base: string, event: RawEvent): string {
   return `${base}/${encodeURIComponent(event.id ?? '')}?sendUpdates=all`
 }
@@ -1181,7 +1368,7 @@ function calendarCopyTarget(url: string, mailbox: string): string {
 
 function invitationMembership(
   event: RawEvent,
-  { fields, joinOnly }: InvitationRevision,
+  { fields, joinOnly }: { fields?: CalendarRevisionFields; joinOnly: boolean },
   mailbox: string,
   owned: boolean,
   ownedCalendar?: string,
@@ -1195,7 +1382,7 @@ function invitationMembership(
     ? selfEmail && (selfEmail === mailbox || selfEmail === ownedCalendar)
       ? self
       : undefined
-    : fields.attendees.includes(mailbox)
+    : fields?.attendees.includes(mailbox)
       ? mailboxAttendee(event, mailbox)
       : undefined
   return {
@@ -1293,26 +1480,47 @@ function invitationCopy(
           api,
           base,
           event,
-          invitation,
+          uid,
+          organizer,
+          invitation.legacyJoinOnly,
           observeUidQuery(uid, observe, { mailbox, primary, parentId: event.id }),
-          selectSlot,
           access,
-          discovery,
-          Boolean(mailboxAttendee(event, mailbox) || (joinOnly && organizes)),
-          (row, revision) => {
+          (instance, original, links) => {
+            const slot = selectSlot(original)
+            if (slot === false) return false
+            const revision = slot ?? invitation
+            const address = revision.details.organizer?.email
             const membership = invitationMembership(
-              row,
+              instance,
               revision,
               mailbox,
               access.role === 'owner',
               ownedCalendar(),
             )
             return (
-              (row.attendeesOmitted === undefined || row.attendeesOmitted === false) &&
+              (!address ||
+                !discovery.suppressesOccurrence(
+                  base,
+                  event.id!,
+                  original,
+                  {
+                    uid: revision.details.identity.uid,
+                    organizer: address,
+                    classify: (row) => classifyCancellation(row, revision, mailbox, original),
+                  },
+                  Boolean(mailboxAttendee(event, mailbox) || (joinOnly && organizes)),
+                )) &&
+              (instance.attendeesOmitted === undefined || instance.attendeesOmitted === false) &&
               membership.allowed &&
               !membership.organizerConflict &&
-              (Boolean(mailboxAttendee(row, mailbox)) ||
-                (revision.joinOnly && membership.organizes))
+              (Boolean(mailboxAttendee(instance, mailbox)) ||
+                (revision.joinOnly && membership.organizes)) &&
+              // A master establishes a baseline, not the actual date or room.
+              // A mailed slot instead supplies exact occurrence material.
+              !calendarRevisionMismatch(instance, revision, links, {
+                expanded: slot === null,
+                navigationOnly: true,
+              })
             )
           },
         )
@@ -1574,18 +1782,14 @@ async function upcomingInvitationLinks(
   api: CalendarReadApi,
   base: string,
   master: RawEvent,
-  invitation: InvitationTarget,
+  uid: string,
+  organizer: string,
+  legacyJoinOnly: boolean,
   observe: (event: RawEvent) => Promise<void>,
-  selectSlot: SelectNavigationSlot,
   access: CalendarAccess,
-  discovery: CalendarDiscovery,
-  bindsSparseChild: boolean,
-  bindsMailbox: (event: RawEvent, revision: InvitationRevision) => boolean,
+  matchesSlot: (instance: RawEvent, original: string, links: InvitationLinks) => boolean,
 ): Promise<InvitationLinks | null> {
-  const { details, legacyJoinOnly } = invitation
-  const { uid } = details.identity
-  const organizer = details.organizer?.email
-  if (!organizer || !master.id) return null
+  if (!master.id) return null
   const { timeMin, includesEnd } = navigationWindow(legacyJoinOnly)
   let pageToken: string | undefined
   const seen = new Set<string>()
@@ -1626,30 +1830,9 @@ async function upcomingInvitationLinks(
         includesEnd(instance)
       ) {
         const original = occurrenceSlot(instance)!
-        const slot = selectSlot(original)
-        if (slot !== false) {
-          const revision = slot ?? invitation
-          const links = invitationEventLinks(instance)
-          // The verified master establishes a baseline, not the actual date,
-          // room or event page of each provider-expanded instance. A mailed
-          // slot revision instead supplies exact occurrence material.
-          if (
-            !discovery.suppressesOccurrence(
-              base,
-              master.id,
-              original,
-              revision,
-              bindsSparseChild,
-            ) &&
-            bindsMailbox(instance, revision) &&
-            !calendarRevisionMismatch(instance, revision, links, {
-              expanded: slot === null,
-              navigationOnly: true,
-            }) &&
-            (links.conferenceUrl || links.htmlLink)
-          )
-            return links
-        }
+        const links = invitationEventLinks(instance)
+        if ((links.conferenceUrl || links.htmlLink) && matchesSlot(instance, original, links))
+          return links
       }
       if (pageToken === undefined) return null
       seen.add(pageToken)

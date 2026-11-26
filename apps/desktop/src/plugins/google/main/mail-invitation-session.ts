@@ -102,10 +102,34 @@ export function createMailInvitationSession(store: ReturnType<typeof createMailI
           target.assertBinding()
           resolved.push({ card, navigation })
         }
+        const meetings = []
+        for (const meeting of result.meetings) {
+          const navigation = await meeting.navigation()
+          target.assertBinding()
+          meetings.push({ source: meeting.source, navigation })
+        }
         // A navigation page can restrict access for other cards on that same
         // calendar. Project only after collecting all observations in this read.
         return {
-          invitations: resolved.map(({ card, navigation }) => displayCard(card, navigation)),
+          invitations: [
+            ...resolved.map(({ card, navigation }) => displayCard(card, navigation)),
+            ...meetings.map(({ source, navigation }) =>
+              projectMailInvitation({
+                ...source,
+                navigation: navigation(),
+                response: {
+                  cancelled: false,
+                  unavailableReason: source.details.unavailableReason,
+                  status: null,
+                  sentStatus: null,
+                  recordedCalendarStatus: null,
+                  targetKey: null,
+                  pending: false,
+                  canRespond: false,
+                },
+              }),
+            ),
+          ],
           recoveryReason: result.recoveryReason,
         }
       } catch (error) {

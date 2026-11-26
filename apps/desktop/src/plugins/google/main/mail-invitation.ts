@@ -107,6 +107,8 @@ type EmbeddedOccurrence = {
 type ParsedInvitation = {
   /** EXPORT is a methodless calendar; it and PUBLISH are join-only. */
   method: 'REQUEST' | 'CANCEL' | 'PUBLISH' | 'EXPORT' | null
+  /** Organizer-free calendar export: identity for navigation, never an iTIP revision. */
+  navigationOnly?: true
   /** Scope of the representative event. Use cancellations for cancellation evidence. */
   recurrenceRange: Cancellation['recurrenceRange']
   /** One entry per validated cancellation scope; the caller must verify the organizer. */
@@ -651,6 +653,9 @@ export function parseMailInvitation(
       return unavailable('This invitation was cancelled', scopes)
     }
 
+    const organizerFree =
+      (method === 'EXPORT' || method === 'PUBLISH') &&
+      parts.every(({ entry }) => !entry.hasProperty('organizer'))
     const unstampedRequest =
       method === 'REQUEST' && parts.some(({ identity }) => identity.dtstamp === null)
     for (const part of siblings) {
@@ -700,6 +705,12 @@ export function parseMailInvitation(
         continue
       }
       if (unstampedRequest) continue
+      if (organizerFree) {
+        // A slot named by this export cannot verify a cancellation or a
+        // reinstatement. Retain the original slot so Join cannot use it blindly.
+        retainOccurrence(part, null)
+        continue
+      }
       if (
         !organizer ||
         !start ||
@@ -773,7 +784,8 @@ export function parseMailInvitation(
       details.cancelled = true
       return unavailable('This invitation was cancelled', cancellations)
     }
-    if (!organizer) return unavailable('Invitation has no usable organizer address')
+    if (!organizer && !organizerFree)
+      return unavailable('Invitation has no usable organizer address')
     // Retain the parsed identity and material so this REQUEST still takes
     // part in ordering and cannot revive an earlier writable revision.
     if (
@@ -784,6 +796,32 @@ export function parseMailInvitation(
     )
       return unavailable(intervalReason)
     if (recurrenceRange) return unavailable('This invitation changes multiple occurrences')
+    if (organizerFree) {
+      // The source hash distinguishes this delivery for MIME alternatives and
+      // reader identity. Neither it nor the provider row enters RSVP history.
+      if (
+        details.floating ||
+        parts.some(
+          ({ invalidInterval, identity: { recurrenceId } }) =>
+            invalidInterval ||
+            (recurrenceId !== null && timeKind(recurrenceId) !== timeKind(start)),
+        )
+      )
+        return unavailable('Calendar cannot verify this meeting time')
+      details.unavailableReason = 'This calendar mail is join-only'
+      return {
+        method,
+        navigationOnly: true,
+        recurrenceRange,
+        cancellations: [],
+        unusableCancellations: [],
+        embeddedOccurrences,
+        details,
+        revisionMaterial: null,
+        request: null,
+      }
+    }
+    if (!organizer) malformed()
     const replyUnavailableReason = method === 'REQUEST' ? null : 'This calendar mail is join-only'
     const replyTimes = times.replyTimes([
       representative.entry.getFirstProperty('dtstart'),

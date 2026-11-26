@@ -107,7 +107,11 @@ export type InvitationFacts = {
   blocksReservation: (journal: Journal) => boolean
   navigation: () => Promise<() => InvitationNavigation>
 }
-type ReadResult = { cards: InvitationFacts[]; recoveryReason: string | null }
+type ReadResult = {
+  cards: InvitationFacts[]
+  meetings: Pick<InvitationFacts, 'source' | 'navigation'>[]
+  recoveryReason: string | null
+}
 type CalendarCopy = Awaited<ReturnType<typeof findInvitationCalendarCopy>>
 type VerifiedCopy = Extract<CalendarCopy, { kind: 'verified' }>
 
@@ -151,6 +155,7 @@ function knownAlternativeGroups(parts: Alternative[]) {
 
 async function latestByScope({ messages, owners }: Thread, mailbox: string) {
   const candidates: Candidate[] = []
+  const revisionUids = new Set<string>()
   const disputedEmbedded = new Set<Candidate['value']['embeddedOccurrences'][number]>()
   const disputedSent = new Set<Mail>()
   let rejectedOrganizer = false
@@ -175,6 +180,7 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
         source === null ? null : parseCalendarMail(mail.messageId, source, part.method ?? undefined)
       const candidate = parsed && (!mail.sent || parsed.value.method) ? { ...parsed, mail } : null
       const organizer = candidate?.value.details.organizer?.email
+      if (candidate && !candidate.joinOnly) revisionUids.add(identityOf(candidate).uid)
       if (
         candidate &&
         !candidate.joinOnly &&
@@ -240,8 +246,29 @@ async function latestByScope({ messages, owners }: Thread, mailbox: string) {
     rejectedOrganizer = true
     return false
   })
+  // A UID hint supplies no organizer or revision to arbitrate any REQUEST
+  // or CANCEL on that UID (including rejected or ambiguous renditions). Do
+  // not let it replace an unresolved invitation or join a sibling series slot.
+  const navigationHints = new Map<string, Candidate>()
+  for (const candidate of admitted) {
+    if (!candidate.value.navigationOnly) continue
+    const identity = identityOf(candidate)
+    if (revisionUids.has('') || revisionUids.has(identity.uid)) continue
+    const key = scopeKey(identity)
+    const existing = navigationHints.get(key)
+    if (!existing || candidate.mail.timestamp > existing.mail.timestamp)
+      navigationHints.set(key, candidate)
+  }
+  const canonical = admitted.filter(({ value }) => !value.navigationOnly)
+  const revisions = selectInvitationRevisions(canonical, mailbox, owners, disputedEmbedded)
+  const canonicalScopes = new Set(
+    revisions.scopes.map(({ selected }) => scopeKey(identityOf(selected))),
+  )
   return {
-    ...selectInvitationRevisions(admitted, mailbox, owners, disputedEmbedded),
+    ...revisions,
+    navigationHints: [...navigationHints].flatMap(([key, candidate]) =>
+      canonicalScopes.has(key) ? [] : [candidate],
+    ),
     disputedSent,
     rejectedOrganizer,
   }
@@ -554,6 +581,7 @@ export function createMailInvitationReconciler(
     const {
       scopes: incoming,
       selectSeriesSlot,
+      navigationHints,
       disputedSent,
       rejectedOrganizer,
     } = await latestByScope(thread, email)
@@ -1377,9 +1405,67 @@ export function createMailInvitationReconciler(
         },
       })
     }
+    // Read-only hints do not enter revision selection, readback or dispatch
+    // preflight. Their card identity is from the mail, not from the Calendar row.
+    const meetings: ReadResult['meetings'] = []
+    if (!selection) {
+      for (const { value } of navigationHints) {
+        const { details, embeddedOccurrences } = value
+        const meeting = await findInvitationCalendarCopy(
+          api,
+          {
+            navigationOnly: true,
+            legacyJoinOnly: true,
+            joinOnly: true,
+            details,
+            embeddedSlots: embeddedOccurrences.flatMap(({ details: { identity } }) =>
+              identity.recurrenceId === null ? [] : [identity.recurrenceId],
+            ),
+          },
+          email,
+          null,
+          target.readCalendarOverrides,
+          discovery,
+        )
+        if (meeting.kind !== 'meeting') continue
+        meetings.push({
+          source: {
+            details: {
+              ...details,
+              title: 'Meeting invitation',
+              organizer: meeting.organizer, // Display only; not the mail's organizer.
+              start: null,
+              end: null,
+              recurring: meeting.recurring,
+              location: null,
+              conferenceUrl: null,
+              conferenceLinkSource: null,
+              htmlLink: null,
+              htmlLinkSource: null,
+            },
+            bindingRevision: target.bindingRevision,
+            joinOnly: true,
+            calendar: meeting,
+          },
+          navigation: async () => {
+            if (details.recurring || meeting.recurring) {
+              for (const locator of relevantCalendarTargets(knownOccurrences, target, {
+                ...details,
+                organizer: meeting.organizer,
+              })) {
+                if (meeting.onCalendar(locator)) await resources(locator)
+              }
+            }
+            const navigation = await meeting.navigation()
+            return () => (meeting.canNavigate() ? navigation : { kind: 'withheld' })
+          },
+        })
+      }
+    }
     target.assertBinding()
     return {
       cards,
+      meetings,
       recoveryReason: pending.some(({ id }) => !displayedPending.has(id))
         ? 'An earlier response could not be confirmed. Checking its status will not send another response.'
         : missingThread
