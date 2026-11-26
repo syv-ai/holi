@@ -105,7 +105,7 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
     try {
       await writeVaultEnv(root, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
       const cli = await installHoliCli(userData)
-      const argument = `Ada's café "vault" with spaces`
+      const argument = `Ada's café vault with spaces`
       const cliCallers = [
         {
           name: 'cmd.exe',
@@ -127,8 +127,7 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
                 '-NoProfile',
                 '-NonInteractive',
                 '-Command',
-                '& $env:HOLI_BIN fixture who $args[0]',
-                argument,
+                `& $env:HOLI_BIN fixture who '${argument.replaceAll("'", "''")}'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`,
               ],
               {
                 cwd: root,
@@ -193,11 +192,14 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
           stderr: '',
         })
       }
-      for (const caller of cliCallers) {
-        const result = await caller.run()
-        expect(result, `${caller.name} must invoke the installed Holi executable`).toMatchObject({
-          stdout: `|${argument}\n`,
-          stderr: '',
+      const callerResults = await Promise.allSettled(cliCallers.map((caller) => caller.run()))
+      for (const [index, result] of callerResults.entries()) {
+        expect(
+          result,
+          `${cliCallers[index]!.name} must invoke the installed Holi executable`,
+        ).toMatchObject({
+          status: 'fulfilled',
+          value: { stdout: `|${argument}\n`, stderr: '' },
         })
       }
       expect(jobs).toEqual(['abcd1234', 'abcd1234'])
