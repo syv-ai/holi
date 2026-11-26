@@ -565,7 +565,10 @@ export function FilesSection({
     revealInFilesRequestAtom,
     ({ path, directory, remote }) => {
       if (remote != null && remote !== files.remote) return false
-      if (data[path] === undefined || (directory && !data[path]?.isFolder)) return false
+      if (directory) files.revealHidden(path)
+      // Folder documents (notably app bundles) are document rows, but a
+      // directory reveal still browses their contents rather than opening them.
+      if (data[path] === undefined || (directory && !snapshot.dirs.includes(path))) return false
       land([path], { directory: directory === true })
     },
     { catchUp: true },

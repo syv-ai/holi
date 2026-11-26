@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import { isHiddenPath, numberedPath, TASKS_CLAIM } from '@holi/shared'
@@ -36,7 +36,29 @@ export function useFiles() {
   const remote = useAtomValue(activeRemoteAtom)
   const [hiddenByVault, setHiddenByVault] = useAtom(showHiddenByVaultAtom)
   const [tasksByVault, setTasksByVault] = useAtom(showTasksByVaultAtom)
+  const [revealedByVault, setRevealedByVault] = useState<Record<string, string[]>>({})
   const showHidden = remote !== null && hiddenByVault[remote] === true
+  const revealed = useMemo(
+    () => (remote !== null ? (revealedByVault[remote] ?? []) : []),
+    [remote, revealedByVault],
+  )
+
+  const revealHidden = useCallback(
+    (path: string) => {
+      if (remote !== null)
+        setRevealedByVault((current) => ({
+          ...current,
+          [remote]: [...new Set([...(current[remote] ?? []), path])],
+        }))
+    },
+    [remote],
+  )
+  useEffect(() => {
+    if (remote !== null)
+      setRevealedByVault((current) =>
+        current[remote]?.length ? { ...current, [remote]: [] } : current,
+      )
+  }, [remote])
   const showTasks = remote !== null && tasksByVault[remote] === true
 
   const docPaths = useMemo(
@@ -67,12 +89,32 @@ export function useFiles() {
   // Memoised: the tree rebuilds whenever these change identity, and a
   // rebuild re-renders this component.
   const paths = useMemo(
-    () => (showHidden ? docPaths : docPaths.filter((path) => !isHiddenPath(path))),
-    [docPaths, showHidden],
+    () =>
+      showHidden
+        ? docPaths
+        : docPaths.filter(
+            (path) =>
+              !isHiddenPath(path) ||
+              revealed.some(
+                (target) =>
+                  path === target || path.startsWith(`${target}/`) || target.startsWith(`${path}/`),
+              ),
+          ),
+    [docPaths, revealed, showHidden],
   )
   const dirs = useMemo(
-    () => (showHidden ? snapshot.dirs : snapshot.dirs.filter((dir) => !isHiddenPath(dir))),
-    [snapshot.dirs, showHidden],
+    () =>
+      showHidden
+        ? snapshot.dirs
+        : snapshot.dirs.filter(
+            (dir) =>
+              !isHiddenPath(dir) ||
+              revealed.some(
+                (target) =>
+                  dir === target || dir.startsWith(`${target}/`) || target.startsWith(`${dir}/`),
+              ),
+          ),
+    [snapshot.dirs, revealed, showHidden],
   )
 
   return {
@@ -83,6 +125,7 @@ export function useFiles() {
     dirs,
     taken: new Set([...allPaths, ...snapshot.dirs]),
     showHidden,
+    revealHidden,
     showTasks,
     toggleHidden: () =>
       remote !== null && setHiddenByVault({ ...hiddenByVault, [remote]: !showHidden }),
