@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { atom, createStore, Provider } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 
-import { render, screen, waitFor } from '@/test/render'
+import { fireEvent, render, screen, waitFor } from '@/test/render'
 import { installedPluginsAtom } from '@/state/plugins'
 import { useShortcutHandlers } from '@/hooks/use-shortcuts'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -141,6 +141,31 @@ test('Vim mode has an explicit keyboard-close action without opening a document'
   expect(onOpenChange).toHaveBeenCalledWith(false)
   expect(onOpen).not.toHaveBeenCalled()
 })
+
+test.each([false, true])(
+  'IME Escape preserves the command menu query before ordinary Escape handling (Vim: %s)',
+  (vim) => {
+    const { onOpenChange } = setup({ vim })
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: 'road' } })
+    fireEvent.compositionStart(input)
+
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    input.dispatchEvent(escape)
+    expect(escape.defaultPrevented).toBe(false)
+    expect(input).toHaveValue('road')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(input).toHaveValue('')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(onOpenChange).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  },
+)
 
 test('Escape clears a query before closing the command menu', async () => {
   const { onOpenChange } = setup()
