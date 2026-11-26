@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { Provider, createStore } from 'jotai'
@@ -125,6 +125,15 @@ createRoot(document.getElementById('root')!).render(<Fixture />)
 
 declare global {
   interface Window {
+    qaPlatform: {
+      onEvent(
+        callback: (event: {
+          name: keyof typeof browserEvents
+          remote: string
+          payload: unknown
+        }) => void,
+      ): void
+    }
     bench: {
       setVisible(value: boolean): void
       setTwoPane(value: boolean): void

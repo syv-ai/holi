@@ -372,14 +372,15 @@ async function run(): Promise<void> {
     const cpuCrossCheck = appMetrics.map((item) => {
       const prior = previousCpu.get(item.pid)
       const cumulative = item.cpu.cumulativeCPUUsage
-      previousCpu.set(item.pid, { cumulative, at: sampledAt })
+      if (cumulative !== undefined) previousCpu.set(item.pid, { cumulative, at: sampledAt })
       return {
         pid: item.pid,
-        cumulativeCpuSeconds: cumulative,
-        wallSecondsSincePrior: prior ? (sampledAt - prior.at) / 1000 : null,
-        deltaCpuSeconds: prior ? cumulative - prior.cumulative : null,
+        cumulativeCpuSeconds: cumulative ?? null,
+        wallSecondsSincePrior:
+          prior && cumulative !== undefined ? (sampledAt - prior.at) / 1000 : null,
+        deltaCpuSeconds: prior && cumulative !== undefined ? cumulative - prior.cumulative : null,
         deltaOneCorePercent:
-          prior && sampledAt > prior.at
+          prior && cumulative !== undefined && sampledAt > prior.at
             ? ((cumulative - prior.cumulative) / ((sampledAt - prior.at) / 1000)) * 100
             : null,
       }
