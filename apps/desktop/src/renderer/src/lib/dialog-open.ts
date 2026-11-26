@@ -2,7 +2,7 @@
 export function dialogOpen(): boolean {
   return (
     document.querySelector(
-      '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]',
+      '[role="alertdialog"][data-state="open"], [role="dialog"][data-state="open"]:not([data-modal="false"])',
     ) !== null
   )
 }
