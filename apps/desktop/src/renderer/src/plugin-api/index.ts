@@ -147,6 +147,7 @@ export type { AsyncHostHintAdapter } from '@/lib/host-hints'
 export { registerAsyncHostHintAdapter } from '@/lib/host-hints'
 export {
   /** @public Hint-adapter integration tests exercise the shared coordinator. */ activateHostHint,
+  /** @public Hint-adapter integration tests exercise the shared coordinator. */ captureHostHintAdapters,
   /** @public Hint-adapter integration tests exercise the shared coordinator. */ discoverHostHintTargets,
   /** @public Hint-adapter integration tests exercise the shared coordinator. */ hostHintsUnchanged,
   hostHintElementEligible,
