@@ -1,3 +1,4 @@
+import { navigationEpochAtom } from '@/state/navigation'
 import { useStore } from 'jotai'
 import { vaultNavigationKeyAtom } from '@/state/vaults'
 import { useRequest } from '@/hooks/use-request'
@@ -23,7 +24,9 @@ export function useShellRequests({
 }): void {
   const store = useStore()
   useRequest(settingsRequestAtom, () => openSettings())
-  useRequest(openDocumentRequestAtom, ({ path }) => openTabKey(path))
+  useRequest(openDocumentRequestAtom, ({ path, navigation }) => {
+    if (navigation === undefined || navigation === store.get(navigationEpochAtom)) openTabKey(path)
+  })
   useRequest(revealInFilesRequestAtom, ({ navigation }) => {
     if (navigation === undefined || navigation === store.get(vaultNavigationKeyAtom)) revealFiles()
   })

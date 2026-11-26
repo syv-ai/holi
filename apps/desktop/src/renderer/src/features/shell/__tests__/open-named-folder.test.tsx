@@ -24,6 +24,8 @@ import {
   vaultsAtom,
   vaultNavigationKeyAtom,
 } from '@/state/vaults'
+import { installFakeHoli } from '@/test/fake-holi'
+import { subscribeToVault } from '@/state/vaults'
 import { revealInFilesAtom } from '@/state/reveal-in-files'
 import type { Move } from '@/lib/tree-actions'
 
@@ -48,18 +50,35 @@ vi.mock('@/lib/trpc', () => {
     return { rewritten: [] }
   }
   const answer = (name: string): unknown =>
-    name === 'settings.read'
-      ? SETTINGS
-      : name === 'settings.pluginFailures'
-        ? {}
-        : name === 'github.collaborators'
-          ? { visibility: 'private', collaborators: [] }
-          : name === 'subscriptions.list'
-            ? []
-            : null
+    name === 'notes.read'
+      ? '# Earlier document\n'
+      : name === 'settings.read'
+        ? SETTINGS
+        : name === 'settings.pluginFailures'
+          ? {}
+          : name === 'github.collaborators'
+            ? { visibility: 'private', collaborators: [] }
+            : [
+                  'subscriptions.list',
+                  'logs.entries',
+                  'activity.entries',
+                  'terminal.list',
+                  'github.fileContributors',
+                  'history.list',
+                  'comments.list',
+                ].includes(name)
+              ? []
+              : null
   const procedure = (name: string) => ({
     query: name === 'vaults.snapshot' ? snapshot : async () => answer(name),
-    mutate: name === 'notes.move' ? move : async () => ({ ok: true }),
+    mutate:
+      name === 'notes.move'
+        ? move
+        : name === 'cap.run'
+          ? async () => {
+              throw new Error('Capability not installed')
+            }
+          : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
   })
   const router = (routerName: string) =>
@@ -244,4 +263,30 @@ test('an ordinary strip-tab click retires a directory awaiting its snapshot', as
   expect(row).toHaveAttribute('aria-selected', 'false')
   expect(row).not.toHaveFocus()
   expect(focusedTab(store.get(shellWorkspaceAtom))).toBe('holi:surface:preview')
+})
+
+test('a directory arrival supersedes an older queued file before shell delivery', async () => {
+  const fake = installFakeHoli()
+  const store = directoryShell()
+  const off = subscribeToVault(store)
+  const workspace = store.get(shellWorkspaceAtom)
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom),
+      docs: [{ path: 'earlier.md', title: 'Earlier', updatedAt: '2026-10-23T10:00:00Z' }] as never,
+    }),
+  )
+  try {
+    act(() => {
+      fake.pushOpen({ remote: 'mara/notes', path: 'earlier.md', heading: 'earlier' })
+      fake.pushOpen({ remote: 'mara/notes', path: 'kunder', kind: 'directory' })
+    })
+    const row = await screen.findByRole('treeitem', { name: 'kunder' })
+    await waitFor(() => expect(row).toHaveFocus())
+    expect(row).toHaveAttribute('aria-expanded', 'true')
+    expect(store.get(shellWorkspaceAtom)).toEqual(workspace)
+  } finally {
+    off()
+    fake.restore()
+  }
 })

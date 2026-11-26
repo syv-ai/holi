@@ -1,5 +1,5 @@
 import { atom, type createStore } from 'jotai'
-import { navigationEpochAtom } from './navigation'
+import { advanceNavigationEpochAtom, navigationEpochAtom } from './navigation'
 import { atomWithStorage } from 'jotai/utils'
 import { toast } from 'sonner'
 import { GITKEEP, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot } from '@holi/shared'
@@ -14,7 +14,7 @@ import { tabPath } from './tab-descriptor'
 import { trpc } from '@/lib/trpc'
 // A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
 // reads the other's atoms until a store does.
-import { openDocumentAtom } from './open-document'
+import { openDocumentAtom, pendingHeadingAtom } from './open-document'
 import { revealInFilesAtom } from './reveal-in-files'
 // A cycle too (`document-runs` reads `activeRemoteAtom`), safe the same way.
 import { documentRunsAtom, documentUpgradesAtom, isRunLive } from './document-runs'
@@ -44,6 +44,7 @@ export const activeRemoteAtom = atom(
     if (get(activeRemoteValueAtom) === remote) return
     set(activeRemoteValueAtom, remote)
     set(activeRemoteRevisionAtom, (revision) => revision + 1)
+    set(advanceNavigationEpochAtom)
     set(openedRemoteAtom, null)
     set(documentRunsAtom, {})
   },
@@ -385,8 +386,10 @@ export function subscribeToVault(
   const offReminder = window.holi.vault.onOpen(({ remote, path, heading, kind }) => {
     const targetRemote = remote || store.get(activeRemoteAtom)
     if (!targetRemote) return
+    if (kind === 'directory') store.set(pendingHeadingAtom, null)
     const id = store.get(documentOpenIntentAtom) + 1
     store.set(documentOpenIntentAtom, id)
+    store.set(advanceNavigationEpochAtom)
 
     const revision = store.get(activeRemoteRevisionAtom)
     const reportError = (error: unknown) =>
@@ -440,6 +443,7 @@ export function subscribeToVault(
     // arrival does. openVaultAtom owns request ordering and flush/recovery.
     const id = store.get(documentOpenIntentAtom) + 1
     store.set(documentOpenIntentAtom, id)
+    store.set(advanceNavigationEpochAtom)
     const revision = store.get(activeRemoteRevisionAtom)
     const navigate = async (): Promise<void> => {
       // A ready same-vault notification only needs to dispatch its event. Reopening

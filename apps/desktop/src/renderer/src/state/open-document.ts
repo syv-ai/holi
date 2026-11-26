@@ -10,10 +10,10 @@
  */
 import { atom } from 'jotai'
 import { raise, requestAtom } from './request'
-import { advanceNavigationEpochAtom } from './navigation'
+import { advanceNavigationEpochAtom, navigationEpochAtom } from './navigation'
 
 /** The last request: its path, numbered so the same path can be asked twice. */
-export const openDocumentRequestAtom = requestAtom<{ path: string }>()
+export const openDocumentRequestAtom = requestAtom<{ path: string; navigation?: number }>()
 
 /** The heading a document should open at: a link's anchor or words, until
  *  the document's view has landed on it. */
@@ -23,5 +23,5 @@ export const pendingHeadingAtom = atom<{ path: string; heading: string } | null>
 export const openDocumentAtom = atom(null, (get, set, path: string, heading?: string) => {
   set(advanceNavigationEpochAtom)
   set(pendingHeadingAtom, heading === undefined || heading === '' ? null : { path, heading })
-  raise(get, set, openDocumentRequestAtom, { path })
+  raise(get, set, openDocumentRequestAtom, { path, navigation: get(navigationEpochAtom) })
 })
