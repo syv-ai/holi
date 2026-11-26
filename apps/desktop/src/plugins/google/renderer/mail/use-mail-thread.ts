@@ -218,14 +218,18 @@ export function useMailThread() {
     !checkingAccount &&
     (reader.refreshing ||
       (needsVerification && Boolean(continuity?.pending || (verified && !continuity?.lost))))
+  // Losing list continuity does not undo exact absence for this account.
+  const missing = !accountChanged && failure?.kind === 'missing'
   const error =
     refreshing || checkingAccount
       ? null
-      : needsVerification
-        ? 'Gmail history could not be checked. Retry to check this thread directly.'
-        : failure?.kind === 'missing'
-          ? 'This thread is no longer available in Gmail.'
-          : (failure?.message ?? null)
+      : missing
+        ? 'This thread is no longer available in Gmail.'
+        : needsVerification
+          ? 'Gmail history could not be checked. Retry to check this thread directly.'
+          : failure?.kind === 'read'
+            ? failure.message
+            : null
   return {
     ...view,
     refreshing,

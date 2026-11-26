@@ -3558,15 +3558,27 @@ test('keeps account rows, messages, and annotations isolated across A-B-A switch
   await waitFor(() => expect(within(returnedARow).getByLabelText('Red star')).toBeInTheDocument())
   expect(screen.queryByText('Message from account-b')).toBeNull()
 
-  // An in-flight list search from A cannot overwrite B's rows.
+  // A list search from A cannot retire B's viewer, even with the same thread ID.
+  await user.click(returnedARow)
+  expect(await screen.findByText('Message from mail-view-account')).toBeVisible()
   delayNextSearch = true
   await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
   await waitFor(() => expect(finishLateSearch).toBeDefined())
   mailAccountSub = 'account-b'
   act(() => getDefaultStore().set(refreshGoogleAtom))
-  await screen.findByRole('button', { name: /Account B mail/ })
-  await act(async () => finishLateSearch?.(page([summary({ subject: 'Stale A search' })])))
-  expect(screen.queryByRole('button', { name: /Stale A search/ })).toBeNull()
+  await user.click(await screen.findByRole('button', { name: /Account B mail/ }))
+  expect(await screen.findByText('Message from account-b')).toBeVisible()
+  await act(async () =>
+    finishLateSearch?.({
+      ...page([]),
+      syncedAt: '',
+      historyRecoveryRequired: true,
+      notFoundThreadIds: ['t1'],
+    }),
+  )
+  expect(screen.getByRole('button', { name: /Account B mail/ })).toBeVisible()
+  expect(screen.getByText('Message from account-b')).toBeVisible()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 
   // A deferred read from the prior A mount must not leak into B.
   mailAccountSub = 'mail-view-account'

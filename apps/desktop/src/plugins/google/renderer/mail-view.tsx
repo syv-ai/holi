@@ -901,13 +901,16 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
             </div>
           )}
 
-          {!showDrafts && list.kind === 'ready' && !!list.unreadableThreadIds?.length && (
-            <MailPartialAlert
-              busy={working !== null}
-              retrying={working === 'retry'}
-              onRetry={retryPartial}
-            />
-          )}
+          {!showDrafts &&
+            list.kind === 'ready' &&
+            (list.recoveryError !== undefined || !!list.unreadableThreadIds?.length) && (
+              <MailPartialAlert
+                busy={working !== null}
+                retrying={working === 'retry'}
+                recoveryError={list.recoveryError}
+                onRetry={list.recoveryError === undefined ? retryPartial : refreshList}
+              />
+            )}
           <div className="min-h-0 flex-1 overflow-y-auto">
             {showDrafts && <DraftsList reloadKey={draftsGeneration} onOpen={continueDraft} />}
             {!showDrafts && list.kind === 'loading' && (
@@ -933,6 +936,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                 look identical. */}
             {!showDrafts &&
               list.kind === 'ready' &&
+              list.recoveryError === undefined &&
               list.threads.length === 0 &&
               !list.unreadableThreadIds?.length &&
               list.nextPageToken === null && (
