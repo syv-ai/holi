@@ -197,7 +197,51 @@ try {
     await drainProcess(previous)
     await rm(reportPath, { force: true })
     const launchedAt = Date.now()
-    const output = await command('xcrun', ['simctl', 'launch', simulator, bundleId], {
+    let observationTimer
+    let observation
+    const launchCommand = command('xcrun', ['simctl', 'launch', simulator, bundleId], {
+      onSpawn: (child) => {
+        if (phase !== 'normal') return
+        observation = new Promise((resolve) => {
+          observationTimer = setTimeout(async () => {
+            try {
+              const listing = await command('ps', ['-axo', 'pid=,comm='], { timeout: 5_000 })
+              const matchingProcesses = listing
+                .split('\n')
+                .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
+                .filter((match) => match && match[2] === installedBinary)
+                .map((match) => Number(match[1]))
+              let reportExists = false
+              try {
+                await lstat(reportPath)
+                reportExists = true
+              } catch (error) {
+                if (error.code !== 'ENOENT') throw error
+              }
+              await writeFile(
+                join(artifacts, 'pending-launch-observation.json'),
+                JSON.stringify({
+                  runId,
+                  simulator,
+                  phase,
+                  observedAt: Date.now(),
+                  launchCommandPid: child.pid,
+                  capturedAppPid: null,
+                  matchingInstalledBinaryProcesses: matchingProcesses,
+                  reportExists,
+                }, null, 2),
+              )
+            } catch (error) {
+              await writeFile(
+                join(artifacts, 'pending-launch-observation-error.json'),
+                JSON.stringify({ runId, phase, error: String(error) }),
+              )
+            } finally {
+              resolve()
+            }
+          }, 60_000)
+        })
+      },
       env: {
         ...process.env,
         SIMCTL_CHILD_HOLI_COMPAT_RUN_ID: runId,
@@ -215,6 +259,13 @@ try {
         ...(moveCase ? { SIMCTL_CHILD_HOLI_MOVE_CASE: String(moveCase.ordinal) } : {}),
       },
     })
+    let output
+    try {
+      output = await launchCommand
+    } finally {
+      clearTimeout(observationTimer)
+      await observation
+    }
     const pid = Number(output.match(/: (\d+)$/)?.[1])
     assert.ok(Number.isSafeInteger(pid) && pid > 0, `No app PID: ${output}`)
     assert.notEqual(pid, previous?.pid, 'Simulator reused the previous app PID')
