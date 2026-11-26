@@ -10,6 +10,7 @@
  */
 import { atom } from 'jotai'
 import { raise, requestAtom } from './request'
+import { advanceNavigationEpochAtom } from './navigation'
 
 /** The last request: its path, numbered so the same path can be asked twice. */
 export const openDocumentRequestAtom = requestAtom<{ path: string }>()
@@ -20,6 +21,7 @@ export const pendingHeadingAtom = atom<{ path: string; heading: string } | null>
 
 /** Open `path` (vault-relative) in the shell, at `heading` when given. */
 export const openDocumentAtom = atom(null, (get, set, path: string, heading?: string) => {
+  set(advanceNavigationEpochAtom)
   set(pendingHeadingAtom, heading === undefined || heading === '' ? null : { path, heading })
   raise(get, set, openDocumentRequestAtom, { path })
 })

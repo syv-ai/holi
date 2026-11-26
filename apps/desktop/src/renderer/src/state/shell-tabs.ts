@@ -18,11 +18,13 @@ import {
   openInSplit,
   openTab,
   trackRecent,
+  focusedTab,
   type ShellWorkspace,
 } from './shell-workspace'
 import { openingBeside } from './alt-open'
 import { tabKey, type TabDescriptor } from './tab-descriptor'
 import { activeRemoteAtom } from './vaults'
+import { advanceNavigationEpochAtom } from './navigation'
 
 import { readWorkspaces, writeWorkspace } from './workspace-storage'
 
@@ -50,6 +52,9 @@ export const updateWorkspaceAtom = atom(
     const next = trackRecent(typeof update === 'function' ? update(current) : update)
     if (next === current) return
     set(workspacesAtom, (all) => ({ ...all, [remote]: next }))
+    if (remote === get(activeRemoteAtom) && focusedTab(current) !== focusedTab(next)) {
+      set(advanceNavigationEpochAtom)
+    }
     // Synchronous and explicitly remote-addressed: no delayed save can land in
     // the vault selected after this update (including an A→B→A switch).
     writeWorkspace(remote, next)

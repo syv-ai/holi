@@ -1,4 +1,5 @@
 import { atom, type createStore } from 'jotai'
+import { navigationEpochAtom } from './navigation'
 import { atomWithStorage } from 'jotai/utils'
 import { toast } from 'sonner'
 import { GITKEEP, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot } from '@holi/shared'
@@ -197,7 +198,8 @@ const documentOpenIntentAtom = atom(0)
 
 /** Ephemeral ownership of navigation, including a return to the same vault. */
 export const vaultNavigationKeyAtom = atom(
-  (get) => `${get(activeRemoteRevisionAtom)}:${get(documentOpenIntentAtom)}`,
+  (get) =>
+    `${get(activeRemoteRevisionAtom)}:${get(documentOpenIntentAtom)}:${get(navigationEpochAtom)}`,
 )
 
 // Return main to the unchanged renderer selection, never depart from it. No
