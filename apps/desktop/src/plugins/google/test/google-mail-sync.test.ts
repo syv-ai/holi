@@ -14,8 +14,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { emptyVaultSnapshot } from '@holi/shared'
+import { createCapabilityRegistry } from '../../../main/capabilities/registry'
+import { noCoreServices } from '../../../main/capabilities/services'
 import { GoogleApi, type GoogleApiDeps } from '../main/api'
 import { openGoogleCache, type GoogleCache } from '../main/cache'
+import {
+  disposeGoogleCapabilities,
+  googleCapabilities,
+  GOOGLE_NAMESPACES,
+  type GoogleCapabilityDeps,
+} from '../main/capabilities'
+import { createGoogleData } from '../main/data'
+import type { MailPage } from '../main/gmail'
 import { cacheKey, syncThreads } from '../main/mail-sync'
 
 let dir: string
@@ -94,6 +105,13 @@ function gmail(
     const path = url.pathname
     const ok = (body: unknown) => Response.json(body)
 
+    // Mail access can work on a grant that cannot list send-as aliases.
+    if (path.endsWith('/settings/sendAs')) {
+      return Response.json(
+        { error: { errors: [{ reason: 'insufficientPermissions' }] } },
+        { status: 403 },
+      )
+    }
     if (path.endsWith('/labels')) return ok({ labels: [] })
     if (path.endsWith('/profile')) return ok(routes.profile ?? { historyId: '5000' })
     if (path.endsWith('/history')) {
@@ -125,13 +143,54 @@ function gmail(
       if (!probe) throw new Error('No message for MIME structure probe')
       return ok(probe)
     }
-    const threadId = path.split('/').pop()!
-    if (routes.missingThreads?.includes(threadId)) return Response.json({}, { status: 404 })
-    if (routes.failedThreads?.includes(threadId)) return Response.json({}, { status: 503 })
+    const metadata = /\/threads\/([^/]+)$/.exec(path)
+    if (!metadata || url.searchParams.get('format') !== 'metadata')
+      throw new Error(`Unexpected Gmail read: ${url}`)
+    const threadId = metadata[1]!
+    if (routes.missingThreads?.includes(threadId)) {
+      return Response.json({ error: { code: 404, status: 'NOT_FOUND' } }, { status: 404 })
+    }
+    if (routes.failedThreads?.includes(threadId)) {
+      return Response.json({ error: { code: 503, status: 'UNAVAILABLE' } }, { status: 503 })
+    }
     return ok(routes.threads?.[threadId] ?? {})
   }
 
   return { api: new GoogleApi({ accessToken: async () => 'at', ...deps, fetch }), seen }
+}
+
+/** The UI search capability with real Google data and cache for one connected vault. */
+async function searchMail(api: GoogleApi, params = {}): Promise<MailPage> {
+  const remote = 'owner/inbox'
+  const data = createGoogleData({ api: () => api, cache })
+  const capabilities = googleCapabilities({
+    accounts: {} as GoogleCapabilityDeps['accounts'],
+    dataFor: async (caller) => (caller === remote ? data : null),
+    settings: {
+      read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
+      write: async () => {},
+    },
+  })
+  const registry = createCapabilityRegistry()
+  registry.register(GOOGLE_NAMESPACES, capabilities)
+  try {
+    const { value } = await registry.run(
+      'google.search',
+      'ui',
+      {
+        remote,
+        root: remote,
+        bundle: null,
+        snapshot: async () => emptyVaultSnapshot(),
+        claims: async () => [],
+        core: noCoreServices(),
+      },
+      params,
+    )
+    return value as MailPage
+  } finally {
+    disposeGoogleCapabilities(capabilities)
+  }
 }
 
 /** Drive the request's native signal deterministically, without waiting for a timer. */
@@ -832,26 +891,85 @@ describe('syncThreads', () => {
     )
   })
 
-  it('drops a thread history reports as deleted', async () => {
-    const first = gmail({
-      list: [{ id: 't1' }, { id: 't2' }],
-      threads: { t1: rawThread('t1', 'One'), t2: rawThread('t2', 'Two') },
-    })
-    await syncThreads(first.api, cache, {})
+  it.each([404, 200, 503])(
+    'reconciles a cached deletion candidate omitted by Gmail’s list (metadata %i)',
+    async (status) => {
+      const invitation = rawThread('invitation', 'Meeting', ['INBOX', 'UNREAD'])
+      const sentReply = message('sent-reply', 'invitation', [['Subject', 'Re: Meeting']], ['SENT'])
+      // In the 200 control, only the inbox message was deleted; its Sent reply survives.
+      if (status === 200) invitation.messages.push(sentReply)
+      const healthy = rawThread('healthy', 'Other mail', ['INBOX', 'UNREAD'])
+      const first = gmail({
+        list: [{ id: 'invitation' }, { id: 'healthy' }],
+        threads: { invitation, healthy },
+      })
+      const unread = { unread: true }
+      await searchMail(first.api, unread)
+      const initial = await searchMail(first.api)
+      expect(initial.threads.map(({ id }) => id)).toEqual(['invitation', 'healthy'])
 
-    const second = gmail({
-      list: [{ id: 't2' }],
-      history: {
-        historyId: '5005',
-        history: [{ messagesDeleted: [{ message: { id: 't2-m1', threadId: 't2' } }] }],
-      },
-      missingThreads: ['t2'],
-    })
-    const page = await syncThreads(second.api, cache, {})
+      const delta = gmail({
+        list: [{ id: 'healthy' }],
+        history: {
+          historyId: '5005',
+          history: [
+            {
+              id: '5005',
+              messagesDeleted: [
+                { message: { id: 'invitation-m1', threadId: 'invitation' } },
+                { message: { id: 'unrelated-m1', threadId: 'unrelated' } },
+              ],
+            },
+          ],
+        },
+        threads: { healthy, invitation: { id: 'invitation', messages: [sentReply] } },
+        missingThreads: status === 404 ? ['invitation', 'unrelated'] : ['unrelated'],
+        ...(status === 503 ? { failedThreads: ['invitation'] } : {}),
+      })
+      const page = await searchMail(delta.api)
+      expect(page.threads.map(({ id }) => id)).toEqual(['healthy'])
+      expect(page.notFoundThreadIds).toEqual(status === 404 ? ['invitation'] : undefined)
+      expect(page.unreadableThreadIds).toEqual(status === 503 ? ['invitation'] : undefined)
+      expect(cache.readThreads(cacheKey({}))?.map(({ id }) => id)).toEqual(
+        status === 503 ? ['healthy', 'invitation'] : ['healthy'],
+      )
+      expect(cache.readThreads(cacheKey(unread))?.map(({ id }) => id)).toEqual(
+        status === 404 ? ['healthy'] : ['invitation', 'healthy'],
+      )
+      expect(cache.historyId(cacheKey({}))).toBe(status === 503 ? null : '5005')
 
-    expect(threadGets(second.seen)).toHaveLength(1)
-    expect(page.threads.map((t) => t.id)).toEqual(['t1'])
-  })
+      if (status === 503) {
+        const retry = gmail({
+          listPages: {
+            '': { threads: [{ id: 'healthy' }], nextPageToken: 'next-page' },
+            'next-page': { threads: [{ id: 'older' }] },
+          },
+          threads: { healthy, older: rawThread('older', 'Older mail') },
+          missingThreads: ['invitation', 'unrelated'],
+          profile: { historyId: '5006' },
+        })
+        const recovered = await searchMail(retry.api, { refresh: true })
+        expect(recovered).toMatchObject({
+          threads: [{ id: 'healthy' }],
+          nextPageToken: 'next-page',
+          notFoundThreadIds: ['invitation'],
+        })
+        expect(recovered).not.toHaveProperty('unreadableThreadIds')
+        expect(cache.readThreads(cacheKey(unread))?.map(({ id }) => id)).toEqual(['healthy'])
+        expect(cache.historyId(cacheKey({}))).toBe('5006')
+        expect(await searchMail(retry.api, { pageToken: recovered.nextPageToken })).toMatchObject({
+          threads: [{ id: 'older' }],
+          nextPageToken: null,
+        })
+      }
+
+      const unchanged = gmail({ history: { historyId: status === 503 ? '5006' : '5005' } })
+      const next = await searchMail(unchanged.api)
+      expect(next.threads.map(({ id }) => id)).toEqual(['healthy'])
+      expect(next).not.toHaveProperty('notFoundThreadIds')
+      expect(next).not.toHaveProperty('unreadableThreadIds')
+    },
+  )
 
   it('evicts a changed thread after a metadata 404, including from another cached list', async () => {
     const list = [{ id: 'deleted' }, { id: 'healthy' }]

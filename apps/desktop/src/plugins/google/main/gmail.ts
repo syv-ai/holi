@@ -524,27 +524,26 @@ function verifyThreadMetadata(thread: RawThread, id: string): RawMessage[] {
 }
 
 /**
- * Summaries for a known set of thread ids, in the order given.
- *
- * The N+1 in one place: `listThreads` uses it for a whole page, and
- * `mail-sync` uses it for the two threads a delta says actually changed. The
- * label lookup is one request either way.
+ * Summaries for a known set of thread IDs, in the order given. Both the rows
+ * and the off-page probes share one metadata pool, but only rows need labels
+ * or invitation evidence. A readable probe cannot add a row to a page.
  */
 export async function fetchThreadSummaries(
   api: GoogleApi,
   ids: string[],
   knownAddresses?: string[],
+  probeIds: readonly string[] = [],
 ): Promise<{
   threads: MailThreadSummary[]
   outcomes: ThreadMetadataOutcome[]
 }> {
-  if (ids.length === 0) return { threads: [], outcomes: [] }
+  if (ids.length === 0 && probeIds.length === 0) return { threads: [], outcomes: [] }
 
   // ONCE per call, not once per thread: resolving a chip must not cost a
   // request. It runs concurrently with the threads for the same reason.
   const [names, results] = await Promise.all([
-    fetchLabelNames(api),
-    mapPooled(ids, 5, async (id) => {
+    ids.length ? fetchLabelNames(api) : new Map<string, string>(),
+    mapPooled([...ids, ...probeIds], 5, async (id) => {
       try {
         const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(id)}`, {
           format: 'metadata',
@@ -585,7 +584,7 @@ export async function fetchThreadSummaries(
       }
     }),
   ])
-  const threads = results.filter((result) => result.kind === 'readable')
+  const threads = results.slice(0, ids.length).filter((result) => result.kind === 'readable')
   const summaries = threads.map((thread) => summarize(thread, names, knownAddresses))
 
   // Metadata omits MIME children. Inspect only multipart MIME structure and
