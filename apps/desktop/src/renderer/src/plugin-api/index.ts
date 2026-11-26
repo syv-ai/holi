@@ -141,6 +141,7 @@ export { useVimField } from '@/hooks/use-vim-field'
 /** @public Mode presentation for native fields attached through the plugin seam. */
 export { VimFieldMode } from '@/composites/vim-field-mode'
 export { matchHotkey } from '@/lib/hotkey'
+export { createTerminalHintAdapter } from '@/lib/terminal-hints'
 export { requestHostHints } from '@/lib/host-hints'
 export type { AsyncHostHintAdapter } from '@/lib/host-hints'
 export { registerAsyncHostHintAdapter } from '@/lib/host-hints'
