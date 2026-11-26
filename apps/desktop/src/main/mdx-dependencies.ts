@@ -3,6 +3,9 @@ import { constants, realpathSync, statSync } from 'node:fs'
 import { join, posix, dirname } from 'node:path'
 import { exactPath } from '@holi/shared/path-safety-node'
 import {
+  MAX_MDX_ARTIFACT_BYTES,
+  MAX_MDX_ARTIFACT_GRAPH_BYTES,
+  type MdxArtifactModule,
   isAgentSurfacePath,
   isLocalOnlyPath,
   isMachineStatePath,
@@ -35,7 +38,7 @@ function relativeUrl(specifier: string): boolean {
   return /^(?:\.\.?\/|\/(?!\/))/.test(specifier)
 }
 
-export async function inspectMdxDependencies(options: {
+export interface MdxDependencyOptions {
   root: string
   path: string
   source: string
@@ -59,8 +62,32 @@ export async function inspectMdxDependencies(options: {
     source: string,
     signal: AbortSignal,
     format: 'mdx' | 'jsx' | 'js',
+    options?: { emitArtifact?: boolean },
   ): Promise<MdxInspectResult>
-}): Promise<MdxDiagnostic[]> {
+}
+
+export interface MdxCompiledDependencies {
+  diagnostics: MdxDiagnostic[]
+  modules: MdxArtifactModule[]
+  current(): boolean
+}
+
+export async function inspectMdxDependencies(
+  options: MdxDependencyOptions,
+): Promise<MdxDiagnostic[]> {
+  return (await inspectGraph(options, false)).diagnostics
+}
+
+export function compileMdxDependencies(
+  options: Omit<MdxDependencyOptions, 'external'>,
+): Promise<MdxCompiledDependencies> {
+  return inspectGraph({ ...options, external: undefined }, true)
+}
+
+async function inspectGraph(
+  options: MdxDependencyOptions,
+  emitArtifacts: boolean,
+): Promise<MdxCompiledDependencies> {
   const controller = new AbortController()
   const timer = setTimeout(
     () => controller.abort(new Error('MDX dependency inspection timed out')),
@@ -94,6 +121,8 @@ export async function inspectMdxDependencies(options: {
       provenance.set(url, node)
       return node
     }
+    const modules: MdxArtifactModule[] = []
+    let artifactBytes = 0
     let remoteAttempts = 0
     let readBudget = TOTAL_LIMIT - Buffer.byteLength(options.source)
     let total = 0,
@@ -202,13 +231,31 @@ export async function inspectMdxDependencies(options: {
         const result =
           format === 'css'
             ? inspectMdxCssResources(source)
-            : await options.inspect(options.owner, source, signal, format)
+            : await options.inspect(options.owner, source, signal, format, {
+                emitArtifact: emitArtifacts,
+              })
         await check()
         const diagnostics = [...result.diagnostics]
+        const imports: MdxArtifactModule['imports'] = Object.create(null)
+        if (emitArtifacts && diagnostics.length === 0) {
+          const artifact = 'artifact' in result ? result.artifact : undefined
+          if (typeof artifact !== 'string') {
+            diagnostics.push(failure('Compiled module is unavailable', 1))
+          } else {
+            artifactBytes += Buffer.byteLength(artifact, 'utf8')
+            if (artifactBytes > MAX_MDX_ARTIFACT_BYTES)
+              diagnostics.push(failure('Compiled module graph exceeds its size limit', 1))
+            else modules.push({ path: safe, code: artifact, imports })
+          }
+        }
         for (const dep of result.dependencies) {
           await check()
           const line = dep.line ?? 1,
             spec = dep.specifier
+          if (emitArtifacts && (spec === 'react' || spec === 'react/jsx-runtime')) {
+            imports[spec] = { runtime: spec }
+            continue
+          }
           const resourcePath = spec.split(/[?#]/, 1)[0] ?? ''
           const kind: MdxExternalResourceKind =
             'kind' in dep && (dep.kind === 'css' || dep.kind === 'asset')
@@ -219,6 +266,16 @@ export async function inspectMdxDependencies(options: {
                   ? 'asset'
                   : 'module'
           const absolute = /^https:\/\//i.test(spec)
+          if (emitArtifacts && (absolute || kind !== 'module')) {
+            diagnostics.push(
+              failure(
+                'Only local ECMAScript modules are available for compilation',
+                line,
+                dep.column,
+              ),
+            )
+            continue
+          }
           if (remote || absolute) {
             // Validate the raw spelling before consulting either canonical graph cache.
             const destination =
@@ -355,6 +412,7 @@ export async function inspectMdxDependencies(options: {
             )
             continue
           }
+          if (emitArtifacts) imports[spec] = { path: child }
           if (active.has(child)) {
             diagnostics.push(failure(`Dependency cycle involving ${child}`, line, dep.column))
             continue
@@ -478,7 +536,17 @@ export async function inspectMdxDependencies(options: {
       }
     }
     if (remoteAttempts > 0) options.external?.retainSnapshot(localTreeCurrent)
-    return result
+    if (
+      emitArtifacts &&
+      Buffer.byteLength(JSON.stringify(modules), 'utf8') > MAX_MDX_ARTIFACT_GRAPH_BYTES
+    )
+      result.push(failure('Compiled module graph exceeds its transport limit', 1))
+    if (emitArtifacts && !localTreeCurrent()) throw new Error('MDX dependency graph changed')
+    return {
+      diagnostics: result,
+      modules: result.length === 0 ? modules : [],
+      current: localTreeCurrent,
+    }
   } finally {
     clearTimeout(timer)
     options.signal.removeEventListener('abort', abort)

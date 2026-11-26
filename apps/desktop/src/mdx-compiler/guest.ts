@@ -2,7 +2,10 @@ import { compile } from '@mdx-js/mdx'
 import { Parser, tokenizer, tokTypes } from 'acorn'
 import jsx from 'acorn-jsx'
 import { analyze } from 'eslint-scope'
+import { buildJsx } from 'estree-util-build-jsx'
+import { toJs } from 'estree-util-to-js'
 import {
+  MAX_MDX_ARTIFACT_BYTES,
   MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH,
   MAX_MDX_INSPECTION_DEPENDENCIES,
   MAX_MDX_INSPECTION_DIAGNOSTICS,
@@ -172,7 +175,10 @@ root.__holiMdxReceive = (encoded) => {
         diagnostics.push({ message: unsupportedImportAttributes, ...position })
       } else if (source.value.length > MAX_MDX_SPECIFIER_LENGTH) {
         diagnostics.push({ message: 'Module specifier exceeds the length limit.', ...position })
-      } else if (/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(source.value)) {
+      } else if (
+        /^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(source.value) ||
+        (request.emitArtifact && ['react', 'react/jsx-runtime'].includes(source.value))
+      ) {
         // Keep one extra edge so main rejects an over-limit graph rather than using a partial one.
         if (dependencies.length <= MAX_MDX_INSPECTION_DEPENDENCIES)
           dependencies.push({ specifier: source.value, ...position })
@@ -229,6 +235,44 @@ root.__holiMdxReceive = (encoded) => {
       })
     }
   }
+  const emittedResult = (code: string): Result => {
+    if (diagnostics.length > 0) return { id: request.id, diagnostics, dependencies }
+    try {
+      if (new TextEncoder().encode(code).byteLength > MAX_MDX_ARTIFACT_BYTES)
+        throw new Error('Artifact size limit')
+      const output = Parser.parse(code, {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+        locations: true,
+        ranges: true,
+      })
+      // Validate the actual ESM too: lowering JSX can introduce runtime imports.
+      const original = [...dependencies]
+      dependencies.length = 0
+      inspectDeclarations(output.body, code)
+      inspectProgram(output as unknown as Program)
+      const unique = new Map([...original, ...dependencies].map((edge) => [edge.specifier, edge]))
+      dependencies.splice(
+        0,
+        dependencies.length,
+        ...[...unique.values()].slice(0, MAX_MDX_INSPECTION_DEPENDENCIES + 1),
+      )
+      return {
+        id: request.id,
+        diagnostics,
+        dependencies,
+        ...(diagnostics.length === 0 ? { artifact: code } : {}),
+      }
+    } catch {
+      return {
+        id: request.id,
+        dependencies: [],
+        diagnostics: [
+          { message: 'Cannot emit a bounded browser-compatible module.', line: 1, column: 1 },
+        ],
+      }
+    }
+  }
   if (request.format === 'js' || request.format === 'jsx') {
     try {
       const JavaScriptParser = Parser.extend(jsx())
@@ -240,11 +284,17 @@ root.__holiMdxReceive = (encoded) => {
       })
       inspectDeclarations(tree.body, request.source)
       inspectProgram(tree as unknown as Program)
-      root.__holiMdxResult = {
-        id: request.id,
-        diagnostics,
-        dependencies,
-        ...(request.emitArtifact && diagnostics.length === 0 ? { artifact: request.source } : {}),
+      if (request.emitArtifact && diagnostics.length === 0) {
+        buildJsx(tree as unknown as Parameters<typeof buildJsx>[0], {
+          runtime: 'automatic',
+          development: false,
+          importSource: 'react',
+        })
+        root.__holiMdxResult = emittedResult(
+          toJs(tree as unknown as Parameters<typeof toJs>[0]).value,
+        )
+      } else {
+        root.__holiMdxResult = { id: request.id, diagnostics, dependencies }
       }
     } catch (error) {
       const candidate = error as ParserError
@@ -308,12 +358,9 @@ root.__holiMdxReceive = (encoded) => {
     (compiled) => {
       // The compiler runs in its isolated offline guest. Return generated code as
       // inert data; callers must not evaluate it in this process.
-      root.__holiMdxResult = {
-        id: request.id,
-        diagnostics,
-        dependencies,
-        ...(request.emitArtifact && diagnostics.length === 0 ? { artifact: String(compiled) } : {}),
-      }
+      root.__holiMdxResult = request.emitArtifact
+        ? emittedResult(String(compiled))
+        : { id: request.id, diagnostics, dependencies }
     },
     (error: unknown) => {
       const candidate = (error ?? {}) as ParserError
@@ -324,7 +371,10 @@ root.__holiMdxReceive = (encoded) => {
         dependencies: [],
         diagnostics: [
           {
-            message: typeof candidate.message === 'string' ? candidate.message : 'Invalid MDX',
+            message:
+              !request.emitArtifact && typeof candidate.message === 'string'
+                ? candidate.message
+                : 'Invalid MDX',
             line:
               typeof start?.line === 'number'
                 ? start.line

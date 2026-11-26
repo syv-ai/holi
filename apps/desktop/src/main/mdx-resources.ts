@@ -18,7 +18,7 @@ const MAX_SOURCE_BYTES = 256 * 1024
 // The guest may send one extra dependency to signal overflow without returning a partial graph.
 const MAX_ARTIFACT_BYTES = MAX_MDX_ARTIFACT_BYTES
 const MAX_RESULT_BYTES =
-  MAX_ARTIFACT_BYTES +
+  6 * MAX_ARTIFACT_BYTES +
   128 +
   (MAX_MDX_INSPECTION_DEPENDENCIES + 1) * (128 + 6 * MAX_MDX_SPECIFIER_LENGTH) +
   MAX_MDX_INSPECTION_DIAGNOSTICS * (128 + 6 * MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH)
@@ -78,6 +78,8 @@ interface Request {
   cancelRun(): void
 }
 
+class MdxCompilerError extends Error {}
+
 /** Compile MDX in a fresh, offline, sandboxed renderer; never evaluate its output. */
 export function createMdxResources(assetDirectory: string): MdxResources {
   let closed = false
@@ -92,7 +94,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
   const guests = new Set<BrowserWindow>()
 
   function makeError(message: string): Error {
-    return new Error(message.slice(0, MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH))
+    return new MdxCompilerError(message.slice(0, MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH))
   }
 
   function settle(request: Request, error?: Error, result?: MdxInspectResult): void {
@@ -266,8 +268,26 @@ export function createMdxResources(assetDirectory: string): MdxResources {
     if (request) await assertCurrent(request)
   }
 
-  function cleanDiagnostics(value: unknown): MdxDiagnostic[] {
+  function cleanDiagnostics(value: unknown, strict = false): MdxDiagnostic[] {
     if (!Array.isArray(value)) throw makeError('MDX compiler returned an invalid result')
+    if (
+      strict &&
+      (value.length > MAX_MDX_INSPECTION_DIAGNOSTICS ||
+        value.some(
+          (item) =>
+            item === null ||
+            typeof item !== 'object' ||
+            typeof item.message !== 'string' ||
+            item.message.length > MAX_MDX_DIAGNOSTIC_MESSAGE_LENGTH ||
+            !Number.isSafeInteger(item.line) ||
+            item.line < 1 ||
+            item.line > 1_000_000 ||
+            !Number.isSafeInteger(item.column) ||
+            item.column < 1 ||
+            item.column > 1_000_000,
+        ))
+    )
+      throw makeError('MDX compiler returned invalid diagnostics')
     return value.slice(0, MAX_MDX_INSPECTION_DIAGNOSTICS).flatMap((item): MdxDiagnostic[] => {
       if (
         item === null ||
@@ -423,20 +443,25 @@ export function createMdxResources(assetDirectory: string): MdxResources {
               envelope.dependencies.length > MAX_MDX_INSPECTION_DEPENDENCIES
             )
               throw makeError('MDX compiler dependency limit or invalid result')
-            const diagnostics = cleanDiagnostics(envelope.diagnostics)
+            const diagnostics = cleanDiagnostics(envelope.diagnostics, request.emitArtifact)
             if (
-              (request.emitArtifact && diagnostics.length === 0 && typeof envelope.artifact !== 'string') ||
+              (request.emitArtifact &&
+                diagnostics.length === 0 &&
+                typeof envelope.artifact !== 'string') ||
               (request.emitArtifact && diagnostics.length > 0 && envelope.artifact !== undefined) ||
               (!request.emitArtifact && envelope.artifact !== undefined)
-            ) throw makeError('Invalid MDX compiler artifact response')
+            )
+              throw makeError('Invalid MDX compiler artifact response')
             const dependencies = envelope.dependencies.map((item): MdxDependency => {
               if (!item || typeof item !== 'object') throw makeError('Invalid MDX dependency')
               const value = item as MdxDependency
               if (
                 typeof value.specifier !== 'string' ||
                 value.specifier.length > MAX_MDX_SPECIFIER_LENGTH ||
-                !(request.emitArtifact && ['react', 'react/jsx-runtime'].includes(value.specifier)) &&
-                !/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(value.specifier) ||
+                (!(
+                  request.emitArtifact && ['react', 'react/jsx-runtime'].includes(value.specifier)
+                ) &&
+                  !/^(?:\.\.?\/|\/(?!\/)|https:\/\/)/i.test(value.specifier)) ||
                 !Number.isSafeInteger(value.line) ||
                 value.line < 1 ||
                 !Number.isSafeInteger(value.column) ||
@@ -467,7 +492,9 @@ export function createMdxResources(assetDirectory: string): MdxResources {
       }
     } catch (error) {
       await finish(
-        error instanceof Error ? makeError(error.message) : makeError('MDX compiler unavailable'),
+        error instanceof MdxCompilerError || (!request.emitArtifact && error instanceof Error)
+          ? makeError(error.message)
+          : makeError('MDX compiler unavailable'),
       )
     }
   }
@@ -501,7 +528,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
         .catch((error: unknown) => {
           settle(
             request,
-            error instanceof Error
+            error instanceof MdxCompilerError || (!request.emitArtifact && error instanceof Error)
               ? makeError(error.message)
               : makeError('MDX compiler unavailable'),
           )
@@ -538,6 +565,7 @@ export function createMdxResources(assetDirectory: string): MdxResources {
     source: string,
     signal?: AbortSignal,
     format: 'mdx' | 'jsx' | 'js' = 'mdx',
+    options: { emitArtifact?: boolean } = {},
   ): Promise<MdxInspectResult> {
     if (closed) return Promise.reject(makeError('MDX compiler is unavailable'))
     if (!owners.has(owner)) return Promise.reject(makeError('MDX resource owner unavailable'))
