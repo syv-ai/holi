@@ -680,6 +680,8 @@ export function parseMailInvitation(
       return unavailable('Invitation has an invalid event status')
     }
     if (material.status === 'CANCELLED') {
+      // Revision selection can use this valid status for coverage once it
+      // authenticates the organizer. It is not a reply parent.
       details.cancelled = true
       return unavailable('This invitation was cancelled', cancellations)
     }

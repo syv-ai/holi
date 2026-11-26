@@ -330,7 +330,9 @@ async function exactCopies(
   },
   observe: ObserveEvent,
   access: CalendarAccess,
-): Promise<RawEvent[]> {
+) {
+  let verifiedParentId: string | undefined
+  const result = (events: RawEvent[]) => ({ events, verifiedParentId })
   const { uid, recurrenceId, sequence } = identity
   const events = await invitationPages<RawEvent>(
     api,
@@ -365,14 +367,14 @@ async function exactCopies(
   if (listedIds.size !== events.length) throw new Error('Calendar returned duplicate event rows')
   // Any row for a floating series could occupy this wall-clock slot. An
   // empty UID collection is still meaningful; never query instances in a guessed zone.
-  if (floating) return possible
+  if (floating) return result(possible)
   const requireScope = (copies: RawEvent[]) => {
     // Even rows ruled out as locators don't make a nonempty list proof of absence.
     if (events.length && !copies.length)
       throw new Error('Calendar returned events but could not verify this recurrence scope')
     return copies
   }
-  if (recurrenceId === null) return requireScope(roots)
+  if (recurrenceId === null) return result(requireScope(roots))
   const cancelledRoots = roots.filter((root) => root.status === 'cancelled')
   const activeRoots = roots.filter((root) => root.status !== 'cancelled')
   if (activeRoots.length > 1) throw new Error('Calendar returned ambiguous series rows')
@@ -396,6 +398,7 @@ async function exactCopies(
     // Unmodified instances do not appear in events.list. Query for the original
     // start (not timeMin or the displayed start, which miss moved occurrences).
     const parentId = series.id
+    if (verifiedParent) verifiedParentId = parentId
     const instances = await invitationPages<RawEvent>(
       api,
       `${url}/${encodeURIComponent(parentId)}/instances`,
@@ -447,11 +450,11 @@ async function exactCopies(
   // rules. A different recurringEventId on a listed row is not evidence that
   // the cancellation is unrelated. Only a corroborated current parent and
   // older, distinct tombstones can disambiguate it for RSVP or navigation.
-  if (!matches.length) return requireScope(cancelledRoots)
+  if (!matches.length) return result(requireScope(cancelledRoots))
   const cancelledParents = cancelledRoots.filter((root) =>
     matches.some((instance) => instance.recurringEventId === root.id),
   )
-  if (cancelledParents.length) return cancelledParents
+  if (cancelledParents.length) return result(cancelledParents)
   if (
     cancelledRoots.length &&
     (matches.length !== 1 ||
@@ -465,7 +468,7 @@ async function exactCopies(
       ))
   )
     throw new PossibleSeriesCancellation()
-  return matches
+  return result(matches)
 }
 
 function hasEventResourceId(event: RawEvent): boolean {
@@ -546,29 +549,44 @@ function usableInvitationEvent(event: RawEvent): boolean {
 
 class CalendarObservationError extends Error {}
 
-/** CalendarList and Events pages constrain access only within this read. A
- * later page (including navigation) cannot restore permissions in the same snapshot. */
+/** CalendarList (including exact rechecks) and Events pages constrain access
+ * within this read. Later evidence cannot restore permissions in the same snapshot. */
 export function createInvitationCalendarDiscovery(api: CalendarReadApi) {
   let snapshot: Promise<CalendarListEntry[]> | undefined
   const roles = new Map<string, CalendarRole>()
   const order: CalendarRole[] = ['unreadable', 'reader', 'writer', 'owner']
+  let primaryBase: string | undefined
+  const key = (base: string) => (base === primaryBase ? PRIMARY_EVENTS : base)
   function access(base: string): CalendarAccess {
     return {
       get role() {
-        return roles.get(base)
+        return roles.get(key(base))
       },
       constrain(role) {
-        const previous = roles.get(base)
+        const previous = this.role
         if (previous === undefined || order.indexOf(role) < order.indexOf(previous))
-          roles.set(base, role)
+          roles.set(key(base), role)
       },
     }
   }
+  function observeEntry(calendar: CalendarListEntry): CalendarAccess | null {
+    const base = calendarEventsUrl(calendar.id)
+    if (calendar.primary) {
+      if (primaryBase && primaryBase !== base) return null
+      const previous = roles.get(base)
+      primaryBase = base
+      if (previous !== undefined) access(PRIMARY_EVENTS).constrain(previous)
+    }
+    const observation = access(base)
+    constrainCalendarEntry(observation, calendar)
+    return observation
+  }
   return {
     access,
+    observeEntry,
     canEditTarget(target: string, mailbox: string) {
       const resource = calendarTargetResource(target, mailbox)
-      return resource !== null && writableRole(roles.get(calendarEventsUrl(resource.id)))
+      return resource !== null && writableRole(access(calendarEventsUrl(resource.id)).role)
     },
     calendars() {
       return (snapshot ??= invitationPages<CalendarListEntry>(
@@ -800,14 +818,14 @@ async function lookupInvitationCalendarCopy(
   const declaredPrimary = primaryCalendar(calendars)
   // The primary alias binds the mailbox, not a permission level.
   // Apply CalendarList evidence even when the primary query finds the copy.
+  if (declaredPrimary) discovery.observeEntry(declaredPrimary)
   if (
     !legacyJoinOnly ||
     (declaredPrimary && readableCalendar(declaredPrimary) && enabled(declaredPrimary))
   ) {
     const access = discovery.access(PRIMARY_EVENTS)
-    if (declaredPrimary) constrainCalendarEntry(access, declaredPrimary)
     const observePrimary = observeCopy(PRIMARY_EVENTS)
-    const primary = await exactCopies(
+    const { events: primary } = await exactCopies(
       api,
       PRIMARY_EVENTS,
       identity,
@@ -842,11 +860,11 @@ async function lookupInvitationCalendarCopy(
     if (calendar.primary || !readableCalendar(calendar) || !enabled(calendar)) continue
     const url = calendarEventsUrl(calendar.id)
     const access = discovery.access(url)
-    constrainCalendarEntry(access, calendar)
+    discovery.observeEntry(calendar)
     const calendarId = calendar.id.toLowerCase()
     const ownedCalendar = () => (access.role === 'owner' ? calendarId : undefined)
     const observe = observeCopy(url, calendar.id.toLowerCase(), calendar.accessRole === 'owner')
-    const events = await exactCopies(
+    const { events, verifiedParentId } = await exactCopies(
       api,
       url,
       identity,
@@ -861,16 +879,10 @@ async function lookupInvitationCalendarCopy(
     if (floating && candidates.length) return unmatchable
     if (candidates.length > 1 || (candidates.length && match)) return ambiguous
     if (candidates[0]) {
-      match = invitationCopy(
-        api,
-        url,
-        candidates[0],
-        invitation,
-        mailbox,
-        access,
-        observe,
+      match = invitationCopy(api, url, candidates[0], invitation, mailbox, access, observe, {
         calendarId,
-      )
+        verifiedParentId,
+      })
     }
   }
   return (
@@ -956,7 +968,7 @@ function invitationCopy(
   mailbox: string,
   access: CalendarAccess,
   observe: ObserveEvent,
-  calendarId?: string,
+  { calendarId, verifiedParentId }: { calendarId?: string; verifiedParentId?: string } = {},
 ): CalendarLookup {
   const { details, joinOnly } = invitation
   const ownedCalendar = () => (access.role === 'owner' ? calendarId : undefined)
@@ -1078,11 +1090,14 @@ function invitationCopy(
           event,
           uid,
           recurrenceId,
-          observeUidQuery(
-            uid,
-            observe,
-            primary ? { mailbox, primary, parentId: event.recurringEventId } : undefined,
-          ),
+          observeUidQuery(uid, observe, {
+            mailbox,
+            primary,
+            parentId:
+              primary || event.recurringEventId === verifiedParentId
+                ? event.recurringEventId
+                : undefined,
+          }),
           access,
         ))
       )
@@ -1738,7 +1753,11 @@ type CalendarResource =
 /** Exact resources can corroborate earlier writes. A 404 proves absence
  * only with current read access to the containing calendar. Neither fact
  * authorizes a Calendar PATCH. */
-export function createInvitationCalendarResourceLookup(api: CalendarReadApi, mailbox: string) {
+export function createInvitationCalendarResourceLookup(
+  api: CalendarReadApi,
+  mailbox: string,
+  discovery: CalendarDiscovery,
+) {
   const snapshots = new Map<string, Promise<CalendarResource>>()
   async function hasReadAccess(id: string): Promise<boolean> {
     try {
@@ -1747,13 +1766,14 @@ export function createInvitationCalendarResourceLookup(api: CalendarReadApi, mai
       const entry = await api.get<CalendarListEntry>(
         `${BASE}/users/me/calendarList/${encodeURIComponent(id)}`,
       )
-      return (
-        isCollectionRow(entry) &&
-        entry.kind === 'calendar#calendarListEntry' &&
-        validCalendar(entry) &&
-        readableCalendar(entry) &&
-        (id === 'primary' ? entry.primary === true : entry.id === id)
+      if (
+        !isCollectionRow(entry) ||
+        entry.kind !== 'calendar#calendarListEntry' ||
+        !validCalendar(entry) ||
+        (id === 'primary' ? entry.primary !== true : entry.id !== id)
       )
+        return false
+      return readableRole(discovery.observeEntry(entry)?.role)
     } catch (error) {
       if (propagateCalendarRefusal(error)) throw error
       return false

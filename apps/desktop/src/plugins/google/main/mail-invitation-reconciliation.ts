@@ -628,7 +628,7 @@ export function createMailInvitationReconciler(
     // Use the same locator for dispatch exclusion, Sent evidence, and readback,
     // even when a known outcome could not be written to the journal.
     const journal = { ...durable, attempts: durable.attempts.map(withGmailOutcome) }
-    const resources = createInvitationCalendarResourceLookup(api, email)
+    const resources = createInvitationCalendarResourceLookup(api, email, discovery)
     const known = knownCalendarLocators(journal)
     const relevant = journal.attempts.filter(
       (attempt) =>
@@ -1009,6 +1009,7 @@ export function createMailInvitationReconciler(
       let recorded: InviteAnswer | null = null
       let priorSent: SentEvidence | null = null
       let responseUnverified = false
+      let conflictingAnswerReason: string | null = null
       let gmailUnverified = false
       let currentSent: SentEvidence | null = null
       if (
@@ -1160,6 +1161,8 @@ export function createMailInvitationReconciler(
         const otherAnswer = sentStatus ?? historicalCalendar
         const answersDiffer =
           calendarStatus !== null && otherAnswer !== null && calendarStatus !== otherAnswer
+        if (answersDiffer)
+          conflictingAnswerReason = `Calendar records ${calendarStatus}, but the other confirmed response is ${otherAnswer}.`
         // Two verified answers can differ without making the current write target ambiguous.
         // Only a writable Calendar copy and actual Sent evidence allow resolving that difference.
         const canResolveDifference = reply?.channel === 'calendar' && sentStatus !== null
@@ -1171,8 +1174,7 @@ export function createMailInvitationReconciler(
           (absenceContradicted && !exactConfirmed && sentStatus === null)
         if (responseUnverified) {
           if (gmailUnverified) responseFacts.unavailableReason = sentVerificationReason
-          else if (answersDiffer)
-            responseFacts.unavailableReason ??= `Calendar records ${calendarStatus}, but the other confirmed response is ${otherAnswer}.`
+          else responseFacts.unavailableReason ??= conflictingAnswerReason
           responseFacts.status = null
         } else {
           responseFacts.status =
@@ -1265,10 +1267,18 @@ export function createMailInvitationReconciler(
                 : 'The response could not be confirmed. Check its status before sending again.'
         }
       }
-      // Navigation is lazy and can add stricter role evidence from the
-      // same calendar. It cannot introduce a response target or no-op.
-      const readOnlyCopy = () =>
-        !joinOnly && verifiedCopy && !verifiedCopy.canEdit ? verifiedCopy : null
+      // Exact rechecks for another card and lazy navigation can both restrict
+      // this card's authority. Neither can introduce a response target or no-op.
+      const roleRefusal = () => {
+        if (!joinOnly && verifiedCopy && !verifiedCopy.canEdit)
+          return verifiedCopy.unavailableReason
+        if (reply?.channel === 'gmail') {
+          for (const target of absentTargets)
+            if (!discovery.canEditTarget(target, email))
+              return 'This Calendar copy cannot be edited'
+        }
+        return null
+      }
       const exactMayNoop = () => exactNoopTarget && discovery.canEditTarget(exactNoopTarget, email)
       cards.push({
         source: {
@@ -1278,20 +1288,22 @@ export function createMailInvitationReconciler(
           calendar: verifiedCopy,
         },
         get responseFacts() {
-          const readOnly = readOnlyCopy()
-          return readOnly
-            ? {
-                ...responseFacts,
-                targetKey: null,
-                unavailableReason: responseFacts.unavailableReason ?? readOnly.unavailableReason,
-              }
-            : exactNoopTarget && !exactMayNoop()
-              ? { ...responseFacts, targetKey: null }
-              : responseFacts
+          const refusal = roleRefusal()
+          if (refusal)
+            return {
+              ...responseFacts,
+              status: conflictingAnswerReason ? null : responseFacts.status,
+              targetKey: null,
+              unavailableReason:
+                responseFacts.unavailableReason ?? conflictingAnswerReason ?? refusal,
+            }
+          return exactNoopTarget && !exactMayNoop()
+            ? { ...responseFacts, targetKey: null }
+            : responseFacts
         },
         responseUnverified,
         get reply() {
-          return readOnlyCopy() ? null : reply
+          return roleRefusal() ? null : reply
         },
         get noopChannel() {
           return exactMayNoop() ? 'calendar' : null
