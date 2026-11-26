@@ -70,12 +70,32 @@ function validDestination(raw: string): boolean {
     }
     if (character === '<' || character === '>' || /[\r\n]/.test(character)) return false
     if (!angle) {
-      if (/\s/.test(character)) return false
+      if (/[\x00-\x20\x7f]/.test(character)) return false
       if (character === '(') depth++
       if (character === ')' && --depth < 0) return false
     }
   }
   return depth === 0
+}
+
+function validTitle(raw: string): boolean {
+  const opening = raw[0]
+  const closing = opening === '(' ? ')' : opening
+  if (!opening || !['(', '"', "'"].includes(opening) || raw.at(-1) !== closing) return false
+  const value = raw.slice(1, -1)
+  if (/\n[ \t]*\n/.test(value.replace(/\r\n?/g, '\n'))) return false
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!
+    if (
+      character === '\\' &&
+      /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/.test(value[index + 1] ?? '')
+    ) {
+      index++
+      continue
+    }
+    if (character === closing || (opening === '(' && character === '(')) return false
+  }
+  return true
 }
 
 /** Preserve relative inline destinations when a document or its target moves. */
@@ -100,6 +120,8 @@ export function rewriteMarkdownMoveLinks(
       if (node.name !== 'Link' && node.name !== 'Image') return
       const url = node.node.getChild('URL')
       if (!url) return
+      const title = node.node.getChild('LinkTitle')
+      if (title && !validTitle(text.slice(bodyStart + title.from, bodyStart + title.to))) return
       const from = bodyStart + url.from
       const to = bodyStart + url.to
       const raw = text.slice(from, to)

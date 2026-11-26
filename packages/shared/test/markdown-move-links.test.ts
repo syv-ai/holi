@@ -71,6 +71,33 @@ describe('Markdown move targets', () => {
     )
   })
 
+  it('relocates valid Unicode whitespace filenames in outgoing and incoming links', () => {
+    expect(
+      rewriteMarkdownMoveLinks(
+        '[asset](a\u00a0b.png)',
+        'old/note.md',
+        'old/note.md',
+        'new/note.md',
+      ),
+    ).toBe('[asset](../old/a%C2%A0b.png)')
+    expect(
+      rewriteMarkdownMoveLinks(
+        '[note](../old/a\u00a0b.md)',
+        'notes/ref.md',
+        'old/a\u00a0b.md',
+        'new/a\u00a0b.md',
+      ),
+    ).toBe('[note](../new/a%C2%A0b.md)')
+  })
+
+  it('leaves malformed titles untouched while relocating valid title variants', () => {
+    const source =
+      '[bad](a.png (ti(tle)) [escaped](asset.png (ti\\(tle)) [quoted](asset.png "ti(tle")'
+    expect(rewriteMarkdownMoveLinks(source, 'old/note.md', 'old/note.md', 'new/note.md')).toBe(
+      '[bad](a.png (ti(tle)) [escaped](../old/asset.png (ti\\(tle)) [quoted](../old/asset.png "ti(tle")',
+    )
+  })
+
   it('leaves non-inline and unresolved paths untouched', () => {
     const source =
       '[ref][target]\n\n[target]: peer.md\n\n<a href="peer.md">html</a>\n[bad](%ZZ.md) [escape](../../../outside.md) [separator](a%2Fb.md)'
