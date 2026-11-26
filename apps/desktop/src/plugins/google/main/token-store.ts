@@ -13,6 +13,7 @@
  *     all read as "no accounts". "Connect again" is a recovery a user can
  *     perform; a bricked app is not.
  */
+import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -118,22 +119,22 @@ export class GoogleTokenStore {
   // token deletion or a keychain reset is not evidence of remote retirement.
   async readRevocationFences(): Promise<Set<string>> {
     try {
-      return new Set(await readdir(`${this.#file}.revocations`))
+      const markers = await readdir(`${this.#file}.revocations`)
+      // Older markers named only the subject digest. They still fence consent.
+      return new Set(markers.map((name) => name.split('.', 1)[0]!))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set()
       throw error
     }
   }
 
-  async setRevocationFence(subjectDigest: string, fenced: boolean): Promise<void> {
+  /** Record the attempt before dispatch; the returned release owns only this marker. */
+  async beginRevocation(subjectDigest: string): Promise<() => Promise<void>> {
     const directory = `${this.#file}.revocations`
-    const marker = join(directory, subjectDigest)
-    if (fenced) {
-      await mkdir(directory, { recursive: true, mode: 0o700 })
-      await writeFile(marker, '', { mode: 0o600 })
-    } else {
-      await rm(marker, { force: true })
-    }
+    const marker = join(directory, `${subjectDigest}.${randomUUID()}`)
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    await writeFile(marker, '', { mode: 0o600, flag: 'wx' })
+    return () => rm(marker, { force: true })
   }
 
   async clear(): Promise<void> {

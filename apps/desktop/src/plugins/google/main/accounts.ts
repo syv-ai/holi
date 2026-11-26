@@ -668,10 +668,10 @@ export async function createGoogleAccounts(
     try {
       // Record the potential project-wide effect before sending anything, so
       // even quitting mid-request cannot make a later consent look safe.
-      await deps.store.setRevocationFence(subjectDigest, true)
+      const releaseFence = await deps.store.beginRevocation(subjectDigest)
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), REVOKE_TIMEOUT_MS)
-      let confirmed = false
+      let settled = false
       try {
         const response = await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
           method: 'POST',
@@ -679,15 +679,25 @@ export async function createGoogleAccounts(
           body: new URLSearchParams({ token: refreshToken }).toString(),
           signal: controller.signal,
         })
-        confirmed = response.ok && !controller.signal.aborted
+        settled = response.status === 200
+        if (response.status === 400 && !controller.signal.aborted) {
+          // Google's invalid-token refusal did not revoke the project grant.
+          // An unrecognized error or unreadable response is not that refusal.
+          const body: unknown = await response.json()
+          settled =
+            body !== null &&
+            typeof body === 'object' &&
+            'error' in body &&
+            body.error === 'invalid_token'
+        }
       } catch {
         // Aborting ends the wait here, not the operation at Google.
       } finally {
         clearTimeout(timer)
       }
-      if (confirmed) {
+      if (settled && !controller.signal.aborted) {
         try {
-          await deps.store.setRevocationFence(subjectDigest, false)
+          await releaseFence()
           return
         } catch {
           // If the marker could not be cleared, keep the same fence on disk
