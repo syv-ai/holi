@@ -189,6 +189,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     keys: ['⌘1', '⌘2', '⌘3', '⌘4', '⌘5', '⌘6', '⌘7', '⌘8', '⌘9'],
     display: '⌘1–9',
     whileTyping: true,
+    capture: true,
     listOnly: true,
   },
   {
