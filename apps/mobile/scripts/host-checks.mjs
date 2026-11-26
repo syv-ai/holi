@@ -393,6 +393,7 @@ export function runCommand(
     log,
     signal,
     onOutput,
+    onSpawn,
     outputLimit = Infinity,
     killGrace = 2_000,
     ...options
@@ -404,6 +405,7 @@ export function runCommand(
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    onSpawn?.(child)
     let output = ''
     let stdout = ''
     let failure
