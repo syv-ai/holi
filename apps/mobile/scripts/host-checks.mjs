@@ -310,7 +310,7 @@ export function validateMoveCheckpointState(state, { caseInfo, operationId, file
     after: after === null ? null : [...new TextEncoder().encode(state.images[after])],
   }))
   assert.deepEqual(journal, {
-    schema: 2,
+    schema: 3,
     root: state.root,
     operationId,
     from: 'from.md',
@@ -346,35 +346,45 @@ export function validateMoveCheckpoint(marker, context) {
 
 export function validateSharedGraph(graph) {
   const resources = [
+    '@lezer/common',
+    '@lezer/highlight',
+    '@lezer/markdown',
+    'entities/decode',
+    'entities/decode-codepoint',
+    'entities/decode-data-html',
+    'entities/decode-data-xml',
+    'markdown-move-links.ts',
     'mobile-path-safety.ts',
     'path-safety.ts',
     'vault-format.ts',
     'vault-format.v1.json',
     'wiki-links.ts',
   ]
-  assert.equal(graph.schemaVersion, 1)
+  const allowed = new Set([
+    'vault-format.ts|./path-safety|path-safety.ts',
+    'vault-format.ts|./vault-format.v1.json|vault-format.v1.json',
+    'mobile-path-safety.ts|./path-safety|path-safety.ts',
+    'markdown-move-links.ts|@lezer/markdown|@lezer/markdown',
+    'markdown-move-links.ts|entities/decode|entities/decode',
+    'entities/decode|./decode-codepoint.js|entities/decode-codepoint',
+    'entities/decode|./generated/decode-data-html.js|entities/decode-data-html',
+    'entities/decode|./generated/decode-data-xml.js|entities/decode-data-xml',
+    '@lezer/markdown|@lezer/common|@lezer/common',
+    '@lezer/markdown|@lezer/highlight|@lezer/highlight',
+    '@lezer/highlight|@lezer/common|@lezer/common',
+  ])
+  assert.equal(graph.schemaVersion, 2)
   assert.deepEqual(graph.resources, resources)
-  assert.ok(Array.isArray(graph.edges) && graph.edges.length > 0)
+  assert.ok(Array.isArray(graph.edges))
+  const observed = new Set()
   for (const edge of graph.edges) {
-    assert.ok(
-      (edge.from === 'vault-format.ts' &&
-        edge.request === './path-safety' &&
-        edge.to === 'path-safety.ts') ||
-        (edge.from === 'vault-format.ts' &&
-          edge.request === './vault-format.v1.json' &&
-          edge.to === 'vault-format.v1.json') ||
-        (edge.from === 'mobile-path-safety.ts' &&
-          edge.request === './path-safety' &&
-          edge.to === 'path-safety.ts'),
-      `Unexpected shared dependency: ${JSON.stringify(edge)}`,
-    )
+    const identity = `${edge.from}|${edge.request}|${edge.to}`
+    assert.ok(allowed.has(identity), `Unexpected shared dependency: ${JSON.stringify(edge)}`)
+    observed.add(identity)
   }
-  assert.ok(graph.edges.some((edge) => edge.to === 'path-safety.ts'))
-  assert.ok(graph.edges.some((edge) => edge.to === 'vault-format.v1.json'))
-  assert.ok(graph.edges.some((edge) => edge.from === 'mobile-path-safety.ts'))
+  assert.deepEqual(observed, allowed)
 }
 
-/** Kill the complete CLI/build process group on timeout or cancellation. */
 export function runCommand(
   command,
   args,
