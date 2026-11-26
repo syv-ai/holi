@@ -111,6 +111,8 @@ type ParsedInvitation = {
   recurrenceRange: Cancellation['recurrenceRange']
   /** One entry per validated cancellation scope; the caller must verify the organizer. */
   cancellations: Cancellation[]
+  /** Identified cancellation intent with unusable interval material. Negative evidence only. */
+  unusableCancellations: Cancellation[]
   /** Internal navigation evidence, never a card or a reply target. */
   embeddedOccurrences: EmbeddedOccurrence[]
   details: MailInvitationDetails
@@ -509,6 +511,7 @@ export function parseMailInvitation(
   let recurrenceRange: ParsedInvitation['recurrenceRange'] = null
   let revisionMaterial: ParsedInvitation['revisionMaterial'] = null
   const embeddedOccurrences: EmbeddedOccurrence[] = []
+  const unusableCancellations: Cancellation[] = []
   const details: MailInvitationDetails = {
     identity: {
       messageId,
@@ -539,6 +542,7 @@ export function parseMailInvitation(
       method,
       recurrenceRange,
       cancellations,
+      unusableCancellations,
       embeddedOccurrences,
       details,
       revisionMaterial,
@@ -639,6 +643,7 @@ export function parseMailInvitation(
       recurrenceRange = material.recurrenceRange
       Object.assign(details, material.details, { identity })
       if (parts.some((part) => part.invalidInterval)) {
+        unusableCancellations.push(...scopes)
         for (const part of siblings) retainOccurrence(part, null)
         return unavailable(intervalReason)
       }
@@ -743,9 +748,26 @@ export function parseMailInvitation(
       embeddedOccurrences.length = 0
       return unavailable('Invitation has an invalid event status')
     }
-    if (representative.invalidInterval) return unavailable(intervalReason)
+    const invalidCancelledSeries =
+      material.status === 'CANCELLED' && siblings.some((part) => part.invalidInterval)
+    if (method === 'REQUEST' && organizer) {
+      for (const part of parts) {
+        if (
+          part.material.status === 'CANCELLED' &&
+          (part.invalidInterval || representative.invalidInterval || invalidCancelledSeries)
+        ) {
+          unusableCancellations.push({
+            identity: part.identity,
+            organizer,
+            recurrenceRange: part.material.recurrenceRange,
+            eventCancelled: true,
+            attendees: part.material.attendees,
+          })
+        }
+      }
+    }
+    if (representative.invalidInterval || invalidCancelledSeries) return unavailable(intervalReason)
     if (material.status === 'CANCELLED') {
-      if (siblings.some((part) => part.invalidInterval)) return unavailable(intervalReason)
       // Revision selection can use this valid status for coverage once it
       // authenticates the organizer. It is not a reply parent.
       details.cancelled = true
@@ -771,6 +793,7 @@ export function parseMailInvitation(
       method,
       recurrenceRange,
       cancellations,
+      unusableCancellations,
       embeddedOccurrences,
       details,
       revisionMaterial,
