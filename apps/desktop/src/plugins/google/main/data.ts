@@ -18,7 +18,7 @@
  *   agenda would mean mirroring every event at every date to serve a 7-day
  *   view. `cachedAgenda` is what the panel paints while `agenda` is in flight.
  */
-import type { GoogleApi } from './api'
+import { GoogleApiError, type GoogleApi } from './api'
 import type { GoogleCache } from './cache'
 import {
   listAgenda,
@@ -307,8 +307,14 @@ export function createGoogleData({
             aliases = null
             throw error
           }))
-        } catch {
-          // Without account-authenticated addresses, classifying a message as neither would be false certainty.
+        } catch (error) {
+          if (
+            error instanceof GoogleApiError &&
+            (error.code === 'reconnect' || error.code === 'rate-limit')
+          )
+            throw error
+          // Send-as is optional for listing mail, even when its own scope is
+          // unavailable. Use unknown recipients, not a guessed identity.
         }
         assertCurrent()
         const result = await syncThreads(api(), cache, options, knownAddresses, {

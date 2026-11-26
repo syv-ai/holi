@@ -979,7 +979,8 @@ test.each([
         )
       }
     })
-    expect(reader.getByText('Received workshop agenda')).toBeVisible()
+    const message = reader.getByRole('button', { name: /^Collapse message 1 of 1/ })
+    expect(within(message.closest('article')!).getByText('Received workshop agenda')).toBeVisible()
     expect(reader.getByRole('textbox', { name: 'Message' })).toBe(editor)
     expect(editor).toHaveTextContent('Keep this unsent reply')
     expect(editor).toHaveFocus()
@@ -1006,18 +1007,20 @@ test.each([
 )
 
 test.each([
-  { name: 'MailShell', Reader: MailShell, hasInvite: true },
-  { name: 'MailView', Reader: MailView, hasInvite: false },
+  { name: 'MailShell', Reader: MailShell, reply: 'Reply all', hasInvite: true },
+  { name: 'MailView', Reader: MailView, reply: 'Reply', hasInvite: false },
 ])(
   '$name recovers an open invitation after a failed Google account read',
-  async ({ Reader, hasInvite }) => {
+  async ({ Reader, reply, hasInvite }) => {
     searchMock.mockResolvedValue(page([summary({ hasInvite })]))
-    threadMock.mockResolvedValue({
-      ...thread,
-      messages: [
-        { ...thread.messages[1], body: 'Workshop agenda', html: null, hasCalendarPayload: true },
-      ],
-    })
+    const received = {
+      ...thread.messages[1]!,
+      body: 'Workshop agenda',
+      html: null,
+      hasCalendarPayload: true,
+    }
+    const opened = { ...thread, messages: [received] }
+    threadMock.mockResolvedValue(opened)
     invitationMock.mockResolvedValue(
       invitations({
         ...invitation,
@@ -1032,6 +1035,11 @@ test.each([
     expect(await screen.findByText('Response: Accepted')).toBeVisible()
     expect(getInvitation().getByRole('button', { name: 'Decline' })).toBeEnabled()
     expect(getInvitation().getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: reply }))
+    const editor = await screen.findByRole('textbox', { name: 'Message' })
+    await user.type(editor, 'Keep the reply')
+    const message = screen.getByRole('button', { name: /^Collapse message 1 of 1/ })
+    const receivedArticle = within(message.closest('article')!)
 
     vi.useFakeTimers()
     try {
@@ -1044,8 +1052,10 @@ test.each([
       vi.useRealTimers()
     }
     const expectUnverified = () => {
-      expect(screen.getByText('Workshop agenda')).toBeVisible()
-      expect(getInvitation().queryByText('Response: Accepted')).not.toBeInTheDocument()
+      expect(receivedArticle.getByText('Workshop agenda')).toBeVisible()
+      expect(screen.getByRole('textbox', { name: 'Message' })).toBe(editor)
+      expect(editor).toHaveTextContent('Keep the reply')
+      expect(screen.queryByText('Response: Accepted')).not.toBeInTheDocument()
       for (const action of [
         'Accept',
         'Maybe',
@@ -1056,7 +1066,7 @@ test.each([
         'Connect',
         'Reconnect',
       ]) {
-        expect(getInvitation().queryByRole('button', { name: action })).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: action })).not.toBeInTheDocument()
       }
     }
     expect(getInvitation().getByRole('alert')).toHaveTextContent(
@@ -1068,20 +1078,33 @@ test.each([
 
     let finishAccounts!: (result: Awaited<ReturnType<typeof googleCap.allAccounts>>) => void
     readAccountsMock.mockImplementation(() => new Promise((resolve) => (finishAccounts = resolve)))
-    let finishInvitation!: (result: ReturnType<typeof invitations>) => void
-    invitationMock.mockImplementation(() => new Promise((resolve) => (finishInvitation = resolve)))
+    const exact = deferred<typeof opened>()
+    threadMock.mockImplementation(
+      async ({ id, expectedAccountSub }: Parameters<typeof googleCap.thread>[1]) => {
+        if (id !== opened.id || expectedAccountSub !== accountSub)
+          throw new Error('Expected an account-bound read of the open thread')
+        return exact.promise
+      },
+    )
+    const freshInvitation = deferred<ReturnType<typeof invitations>>()
+    invitationMock.mockReturnValue(freshInvitation.promise)
     await user.click(retry)
     expect(getInvitation().getByRole('status')).toHaveTextContent(/checking the Google connection/i)
     expect(getInvitation().getByRole('button', { name: 'Retry' })).toBeDisabled()
     expectUnverified()
+    await user.click(editor)
 
     await act(async () =>
       finishAccounts({ accounts: [{ sub: 'a', email: 'ada@syv.ai' }], current: 'a' }),
     )
-    expect(
-      getInvitation().getByRole('status', { name: 'Loading calendar invitation' }),
-    ).toBeVisible()
+    expect(await screen.findByRole('status', { name: 'Refreshing the thread' })).toBeVisible()
     expectUnverified()
+    await act(async () =>
+      exact.resolve({ ...opened, messages: [{ ...received, body: 'Current workshop agenda' }] }),
+    )
+    expect(await screen.findByRole('status', { name: 'Loading calendar invitation' })).toBeVisible()
+    expect(receivedArticle.getByText('Current workshop agenda')).toBeVisible()
+    expect(getInvitation().queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
 
     const current = {
       ...invitation,
@@ -1089,9 +1112,12 @@ test.each([
       recordedResponseStatus: 'tentative',
       conferenceUrl: 'https://meet.google.com/xyz-abcd-efg',
     } as const
-    await act(async () => finishInvitation(invitations(current)))
+    await act(async () => freshInvitation.resolve(invitations(current)))
     expect(getInvitation().queryByRole('alert')).not.toBeInTheDocument()
     expect(getInvitation().getByText('Response: Tentative')).toBeVisible()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(editor)
+    expect(editor).toHaveTextContent('Keep the reply')
+    expect(editor).toHaveFocus()
     expect(getInvitation().getByRole('button', { name: 'Accept' })).toBeEnabled()
     expect(getInvitation().getByRole('button', { name: 'Maybe' })).toBeDisabled()
     expect(connectMock).not.toHaveBeenCalled()

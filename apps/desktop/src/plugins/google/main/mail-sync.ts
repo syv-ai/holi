@@ -155,6 +155,7 @@ async function syncList(
     return cache.updateMailList(() => recordReads(cache, pendingKey, page, outcomes))
   }
   const query = Boolean(options.query?.trim())
+  const baselineKey = query ? null : cache.latestMailListKey(pendingKey)
   const fresh = () =>
     fullSync(
       api,
@@ -165,17 +166,14 @@ async function syncList(
       knownAddresses,
       assertCurrent,
       !query,
+      baselineKey,
     )
-  if (context?.refresh || query) return fresh()
-  const cached = cache.readThreads(key)
-  // The cursor THIS list was written at. Gmail's cursor is mailbox-wide, but
-  // each cached list was written at a different moment.
-  const since = cache.historyId(key)
-
-  if (cached === null || since === null) {
-    if (cache.hasMailList(pendingKey)) throw new HistoryRecoveryRequired()
-    return fresh()
-  }
+  if (context?.refresh || query || baselineKey === null) return fresh()
+  const cached = cache.readThreads(baselineKey)
+  // The cursor belongs to the list, not to the send-as result. Reclassify its
+  // rows when identities change, without skipping any mailbox history.
+  const since = cache.historyId(baselineKey)
+  if (cached === null || since === null) throw new HistoryRecoveryRequired()
 
   // The mailbox this list is of, as Gmail labels it: the scope of the delta,
   // and the label whose removal means a thread has left.
@@ -239,10 +237,16 @@ async function syncList(
   // first page: a thread open from Load more may not be in any cached list.
   // Losing one message isn't proof of absence. Probe that exact resource
   // without admitting it to the list or relying on query omission as evidence.
-  const probes = [...deleted].filter((id) => !admitted.has(id))
+  const reads = new Set([...changed].filter((id) => !candidatesToConfirm.has(id)))
+  for (const id of admitted) reads.add(id)
+  if (baselineKey !== key) {
+    for (const id of cachedIds) if (!departed.has(id)) reads.add(id)
+  }
+  const probes = [...deleted].filter((id) => !reads.has(id))
+  if (reads.size + probes.length > MAX_DELTA_READS) throw new HistoryRecoveryRequired()
   const { threads: refreshed, outcomes } = await fetchThreadSummaries(
     api,
-    [...[...changed].filter((id) => !candidatesToConfirm.has(id)), ...admitted],
+    [...reads],
     knownAddresses,
     probes,
   )
@@ -264,8 +268,7 @@ async function syncList(
     )
     // A partial result cannot leave a cursor that would skip unresolved work.
     cache.writeThreads(key, [...threads, ...cached.filter(({ id }) => retain.has(id))])
-    if (result.unreadableThreadIds) cache.setHistoryId(key, null)
-    else if (historyId !== undefined) cache.setHistoryId(key, historyId)
+    cache.setHistoryId(key, result.unreadableThreadIds ? null : (historyId ?? since))
     return result
   })
 }
@@ -316,6 +319,7 @@ async function fullSync(
   knownAddresses: string[] | undefined,
   assertCurrent: () => void,
   establishBaseline: boolean,
+  baselineKey: string | null,
 ): Promise<MailPage> {
   // Searches always fetch independently of history and don't own a baseline.
   const cursor = establishBaseline
@@ -343,9 +347,10 @@ async function fullSync(
     // This is the new snapshot's baseline, not proof we replayed skipped
     // history or that any thread omitted by the snapshot is gone.
     // Pending rows survive in storage only, not in the page that owns the token.
-    const retained = pending.size
-      ? (cache.readThreads(key) ?? []).filter(({ id }) => pending.has(id))
-      : []
+    const retained =
+      pending.size && baselineKey !== null
+        ? (cache.readThreads(baselineKey) ?? []).filter(({ id }) => pending.has(id))
+        : []
     cache.writeThreads(key, [...result.threads, ...retained])
     cache.setHistoryId(key, result.unreadableThreadIds ? null : (cursor ?? null))
     return result
