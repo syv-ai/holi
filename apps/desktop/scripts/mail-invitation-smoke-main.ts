@@ -309,6 +309,19 @@ async function run() {
   const checks: string[] = []
   const captures: { file: string; view: string; theme: string; width: number; card: string }[] = []
   const { transport } = rig
+  const start = async (phase: string, action: () => Promise<unknown>) => {
+    const timer = new AbortController()
+    try {
+      await Promise.race([
+        action(),
+        pause(12_000, undefined, { signal: timer.signal }).then(() => {
+          throw new Error(`${phase} timed out after 12 seconds`)
+        }),
+      ])
+    } finally {
+      timer.abort()
+    }
+  }
   let win: BrowserWindow | undefined
   const mark = (check: string) => {
     checks.push(check)
@@ -379,6 +392,7 @@ async function run() {
     contents.on('will-frame-navigate', (event) => {
       if (!['about:blank', 'about:srcdoc'].includes(event.url)) event.preventDefault()
     })
+    contents.on('preload-error', (_event, _path, error) => errors.push(`preload: ${String(error)}`))
     contents.on('console-message', ({ level, message }) => {
       if (level === 'error') errors.push(message)
     })
@@ -446,11 +460,17 @@ async function run() {
         card: await readCard(),
       })
     }
-    // Local WebContents controls the clock and language without a debug port.
+    // Emulation commands need a live renderer. Load a blank document first so
+    // the clock and locale are already set when the fixture imports its UI.
+    await start('invitation renderer bootstrap', () => window.loadURL('about:blank'))
     contents.debugger.attach('1.3')
-    await contents.debugger.sendCommand('Emulation.setTimezoneOverride', { timezoneId: 'UTC' })
-    await contents.debugger.sendCommand('Emulation.setLocaleOverride', { locale: 'en_US' })
-    await window.loadFile(html)
+    await start('invitation timezone override', () =>
+      contents.debugger.sendCommand('Emulation.setTimezoneOverride', { timezoneId: 'UTC' }),
+    )
+    await start('invitation locale override', () =>
+      contents.debugger.sendCommand('Emulation.setLocaleOverride', { locale: 'en_US' }),
+    )
+    await start('invitation renderer load', () => window.loadFile(html))
     window.focus()
     contents.focus()
     const badge = '[aria-label="Meeting invite"]'
