@@ -142,7 +142,7 @@ export function createManagedWorkingCopy(
       throw new Error('Working copy identity does not match vault')
     acquiredNativeId ??= identity.nativeId
   }
-  const operate = async (action: 'fetch' | 'publish' | 'integrate') => {
+  const operate = async (action: 'fetch' | 'publish') => {
     const root = await rootPath()
     return withVaultLock(root, async () => {
       await recover(root)
@@ -172,7 +172,6 @@ export function createManagedWorkingCopy(
       })
     },
     fetch: () => operate('fetch'),
-    integrate: () => operate('integrate'),
     fetchAndIntegrate: async () => {
       const root = await rootPath()
       return withVaultLock(root, async () => {
@@ -181,9 +180,8 @@ export function createManagedWorkingCopy(
         assertIdentity(identity)
         const fetched = await native.fetch(root, identity, credential)
         if (fetched) throw Object.assign(new Error(fetched.message), { refusal: fetched })
-        const integrated = await native.integrate(root, identity, credential)
-        if (integrated)
-          throw Object.assign(new Error(integrated.message), { refusal: integrated })
+        const integrated = await native.integrate(root, identity)
+        if (integrated) throw Object.assign(new Error(integrated.message), { refusal: integrated })
       })
     },
     publish: () => operate('publish'),
