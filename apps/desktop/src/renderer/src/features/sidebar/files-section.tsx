@@ -206,15 +206,16 @@ export function FilesSection({
    *  dropped rather than shown whenever they next appear. */
   const [landing, setLanding] = useState<{
     paths: string[]
+    directory?: boolean
     name: boolean
     remote: string | null
   } | null>(null)
   /** Every row the tree makes, moves or is asked to show lands here, the one
    *  place a row is brought into view. */
-  const land = (paths: string[], { name = false } = {}) => {
+  const land = (paths: string[], { name = false, directory = false } = {}) => {
     if (paths.length === 0 || !stillCurrent(files.remote)) return
     setArrived((current) => new Set([...current, ...paths]))
-    setLanding({ paths, name, remote: files.remote })
+    setLanding({ paths, name, directory, remote: files.remote })
   }
   const stillCurrent = useCallback(
     (remote: string | null) =>
@@ -550,6 +551,7 @@ export function FilesSection({
       if (!folder.isExpanded()) folder.expand()
     }
     const item = tree.getItemInstance(path)
+    if (landing.directory && item.isFolder() && !item.isExpanded()) item.expand()
     tree.setSelectedItems(shown)
     item.setFocused()
     void item.scrollTo({ block: 'nearest' })
@@ -561,9 +563,10 @@ export function FilesSection({
   // tree does not have yet keeps the request waiting.
   useRequest(
     revealInFilesRequestAtom,
-    ({ path, directory }) => {
-      if (data[path] === undefined || (directory && !data[path]?.folder)) return false
-      land([path])
+    ({ path, directory, remote }) => {
+      if (remote != null && remote !== files.remote) return false
+      if (data[path] === undefined || (directory && !data[path]?.isFolder)) return false
+      land([path], { directory: directory === true })
     },
     { catchUp: true },
   )

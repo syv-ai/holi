@@ -398,8 +398,8 @@ export function subscribeToVault(
         .then((landed) => {
           if (landed && store.get(documentOpenIntentAtom) === id)
             kind === 'directory'
-        ? store.set(revealInFilesAtom, { path, directory: true })
-        : store.set(openDocumentAtom, path, heading)
+              ? store.set(revealInFilesAtom, { path, directory: true, remote: targetRemote })
+              : store.set(openDocumentAtom, path, heading)
         })
         .catch((error: unknown) => {
           reportError(error)
@@ -409,7 +409,7 @@ export function subscribeToVault(
         })
     } else {
       kind === 'directory'
-        ? store.set(revealInFilesAtom, { path, directory: true })
+        ? store.set(revealInFilesAtom, { path, directory: true, remote: targetRemote })
         : store.set(openDocumentAtom, path, heading)
       // Main may be opening another vault, or the initial open may not yet
       // have landed. Recover now; stale completions never start another loop.
