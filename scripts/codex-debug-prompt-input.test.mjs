@@ -108,6 +108,19 @@ test('rejects observations that do not prove the requested roles and unchanged p
   }
 })
 
+test('rejects recorded command, cleanup, receipt and model failures despite positive observations', () => {
+  for (const mutate of [
+    (evidence) => (evidence.error = 'command failed'),
+    (evidence) => (evidence.cleanupError = 'cleanup failed'),
+    (evidence) => (evidence.native.receipts[0].error = 'receipt failed'),
+    (evidence) => (evidence.native.modelFailures = ['model failed']),
+  ]) {
+    const evidence = completeEvidence()
+    mutate(evidence)
+    assert.equal(validateDebugPromptInputEvidence(evidence), false)
+  }
+})
+
 test('rejects nonzero command results and evidence of model requests', () => {
   const nonzero = completeEvidence()
   nonzero.native.observations[0].exitCode = 1
