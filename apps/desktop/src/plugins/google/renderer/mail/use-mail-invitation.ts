@@ -27,10 +27,8 @@ export function invitationResponse({ invitation, responseFresh }: InvitationCard
     differingSent,
   }
 }
-type Receipt = Pick<
-  Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>,
-  'outcome' | 'answer'
->
+type ResponseResult = Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>
+type Receipt = Pick<ResponseResult, 'outcome' | 'answer'>
 
 // A new parent, binding, or material revision cannot inherit a local receipt.
 function cardKey({ bindingRevision, kind, scope, identity }: Invitation): string {
@@ -58,9 +56,11 @@ export interface InvitationCardState {
   refreshPending: boolean
 }
 
+type Operation = 'reading' | 'responding' | 'opening'
+
 interface InvitationState {
   cards: InvitationCardState[]
-  busy: 'reading' | { action: 'responding' | 'opening'; key: string } | null
+  busy: 'reading' | { action: Exclude<Operation, 'reading'>; key: string } | null
   readError: string | null
   recoveryReason: string | null
 }
@@ -83,7 +83,7 @@ export function useMailInvitation({
   const store = useStore()
   const owner = useRef<object | null>(null)
   const currentCards = useRef<InvitationCardState[]>([])
-  const flight = useRef(false)
+  const flight = useRef<{ operation: Operation } | null>(null)
   const [state, setState] = useState<InvitationState>({
     cards: [],
     busy: 'reading',
@@ -95,14 +95,14 @@ export function useMailInvitation({
     owner.current = {}
     return () => {
       owner.current = null
-      flight.current = false
+      flight.current = null
     }
   }, [])
 
   // Do not readmit an action until its result and disabled state have committed.
   useLayoutEffect(() => {
     currentCards.current = state.cards
-    if (state.busy === null) flight.current = false
+    if (state.busy === null) flight.current = null
   }, [state])
 
   const ownsReader = useCallback(
@@ -115,53 +115,75 @@ export function useMailInvitation({
     [store, remote, remoteRevision, accountRevision, isCurrentGeneration],
   )
 
-  const begin = useCallback(() => {
-    const lifetime = owner.current
-    if (!ownsReader() || flight.current) return null
-    flight.current = true
-    return () => owner.current === lifetime && ownsReader()
-  }, [ownsReader])
+  const begin = useCallback(
+    (operation: Operation) => {
+      const lifetime = owner.current
+      if (!ownsReader()) return null
+      // A response can supersede a pending link check, but not another read or write.
+      if (flight.current && !(operation === 'responding' && flight.current.operation === 'opening'))
+        return null
+      const epoch = { operation }
+      flight.current = epoch
+      return () => flight.current === epoch && owner.current === lifetime && ownsReader()
+    },
+    [ownsReader],
+  )
+
+  const readCards = useCallback(
+    async (request: () => boolean) => {
+      try {
+        const { invitations, recoveryReason } = await googleCap.mailInvitation(remote, {
+          threadId,
+          expectedAccountSub,
+        })
+        if (!request()) return
+        setState((previous) => {
+          // A read that could not reconstruct any cards is not evidence against
+          // a known receipt. Keep the displayed facts, with actions blocked.
+          if (
+            invitations.length === 0 &&
+            recoveryReason !== null &&
+            previous.cards.some((card) => card.receipt !== null)
+          )
+            return { ...previous, busy: null, readError: recoveryReason }
+          const receipts = new Map(previous.cards.map((card) => [card.key, card.receipt]))
+          return {
+            cards: invitations.map((invitation) => {
+              const key = cardKey(invitation)
+              const receipt = receipts.get(key)
+              return {
+                key,
+                invitation,
+                error: null,
+                receipt: receipt ?? null,
+                responseFresh: true,
+                refreshPending: invitation.responsePending,
+              }
+            }),
+            busy: null,
+            readError: null,
+            recoveryReason,
+          }
+        })
+      } catch (error) {
+        if (request()) {
+          setState((previous) => ({
+            ...previous,
+            busy: null,
+            readError: messageOf(error, 'Could not read the invitation.'),
+          }))
+        }
+      }
+    },
+    [remote, threadId, expectedAccountSub],
+  )
 
   const read = useCallback(async () => {
-    const request = begin()
+    const request = begin('reading')
     if (request === null) return
     setState((previous) => ({ ...previous, busy: 'reading', readError: null }))
-    try {
-      const { invitations, recoveryReason } = await googleCap.mailInvitation(remote, {
-        threadId,
-        expectedAccountSub,
-      })
-      if (!request()) return
-      setState((previous) => {
-        const receipts = new Map(previous.cards.map((card) => [card.key, card.receipt]))
-        return {
-          cards: invitations.map((invitation) => {
-            const key = cardKey(invitation)
-            const receipt = receipts.get(key)
-            return {
-              key,
-              invitation,
-              error: null,
-              receipt: receipt ?? null,
-              responseFresh: true,
-              refreshPending: invitation.responsePending,
-            }
-          }),
-          busy: null,
-          readError: null,
-          recoveryReason,
-        }
-      })
-    } catch (error) {
-      if (request()) {
-        setState((previous) => ({
-          ...previous,
-          busy: null,
-          readError: messageOf(error, 'Could not read the invitation.'),
-        }))
-      }
-    }
-  }, [begin, remote, threadId, expectedAccountSub])
+    await readCards(request)
+  }, [begin, readCards])
 
   useEffect(() => {
     void read()
@@ -175,14 +197,17 @@ export function useMailInvitation({
       invitation.cancelled ||
       invitationResponse(card).current === answer ||
       !currentCards.current.includes(card) ||
-      state.busy !== null ||
       state.readError !== null ||
+      !card.responseFresh ||
       card.refreshPending ||
       card.error !== null
     )
       return
-    const request = begin()
+    const request = begin('responding')
     if (request === null) return
+    // The single-card result cannot verify siblings of a series. Retire the
+    // old group now, including any link awaiting actor validation.
+    const reconcileGroup = invitation.scope === 'series' && currentCards.current.length > 1
     const updateCard = (
       busy: InvitationState['busy'],
       update: (current: InvitationCardState) => InvitationCardState,
@@ -192,9 +217,20 @@ export function useMailInvitation({
         busy,
         cards: previous.cards.map((current) => (current.key === key ? update(current) : current)),
       }))
-    updateCard({ action: 'responding', key }, (current) => ({ ...current, receipt: null }))
+    setState((previous) => ({
+      ...previous,
+      busy: { action: 'responding', key },
+      cards: previous.cards.map((current) =>
+        current.key === key
+          ? { ...current, receipt: null, responseFresh: false }
+          : reconcileGroup
+            ? { ...current, responseFresh: false }
+            : current,
+      ),
+    }))
+    let result: ResponseResult
     try {
-      const result = await googleCap.respondToMailInvitation(remote, {
+      result = await googleCap.respondToMailInvitation(remote, {
         threadId,
         expectedAccountSub,
         expectedBindingRevision: invitation.bindingRevision,
@@ -202,17 +238,6 @@ export function useMailInvitation({
         identity: invitation.identity,
         answer,
       })
-      if (!request()) return
-      const updated = result.invitation
-      const sameRevision = updated === null || cardKey(updated) === key
-      updateCard(null, (current) => ({
-        ...current,
-        invitation: sameRevision && updated !== null ? updated : current.invitation,
-        receipt: sameRevision ? { outcome: result.outcome, answer: result.answer } : null,
-        responseFresh: sameRevision && updated !== null,
-        refreshPending:
-          updated === null || !sameRevision || result.refreshPending || updated.responsePending,
-      }))
     } catch (error) {
       if (request()) {
         // A refused response also needs a read before another RSVP for this card.
@@ -224,7 +249,22 @@ export function useMailInvitation({
           ),
         }))
       }
+      return
     }
+    if (!request()) return
+    const updated = result.invitation
+    const sameRevision = updated === null || cardKey(updated) === key
+    const fresh =
+      updated !== null && sameRevision && (!reconcileGroup || result.outcome !== 'uncertain')
+    const refreshGroup = reconcileGroup && fresh
+    updateCard(refreshGroup ? 'reading' : null, (current) => ({
+      ...current,
+      invitation: fresh ? updated : current.invitation,
+      receipt: sameRevision ? { outcome: result.outcome, answer: result.answer } : null,
+      responseFresh: fresh,
+      refreshPending: !fresh || result.refreshPending || updated.responsePending,
+    }))
+    if (refreshGroup) await readCards(request)
   }
 
   const openLink = async (card: InvitationCardState, url: string) => {
@@ -236,7 +276,7 @@ export function useMailInvitation({
       !currentCards.current.includes(card)
     )
       return
-    const request = begin()
+    const request = begin('opening')
     if (request === null) return
     setState((previous) => ({ ...previous, busy: { action: 'opening', key: card.key } }))
     try {

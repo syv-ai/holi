@@ -27,7 +27,7 @@ const readAccountsMock = vi.fn<typeof googleCap.allAccounts>()
 const connectMock = vi.fn<typeof googleCap.connect>()
 const invitationMock = vi.fn<typeof googleCap.mailInvitation>()
 const respondMock = vi.fn<typeof googleCap.respondToMailInvitation>()
-const validateBinding = vi.fn()
+const validateBinding = vi.fn<() => ReturnType<typeof googleCap.validateMailInvitationBinding>>()
 const starMock = vi.fn()
 const mailMarkersMock = vi.fn()
 const setMailMarkerMock = vi.fn()
@@ -262,7 +262,7 @@ beforeEach(() => {
   accountBinding = 1
   toastMock.mockReset()
   openExternal.mockReset()
-  validateBinding.mockReset()
+  validateBinding.mockReset().mockResolvedValue(undefined)
   agentStopMock.mockReset().mockResolvedValue({ ok: true })
   agentStartMock.mockReset().mockResolvedValue({ ok: true })
   agentServiceMock.mockReset().mockReturnValue({
@@ -954,6 +954,173 @@ test.each([
     )
     expect(await region.findByText(`Response: ${confirmed}`)).toBeInTheDocument()
     expect(button).toBeDisabled()
+  },
+)
+
+const workshopSeries: Invitation = {
+  ...invitation,
+  scope: 'series',
+  identity: {
+    ...invitation.identity,
+    messageId: 'm1',
+    recurrenceId: null,
+    materialKey: 'whole-workshop-revision',
+  },
+  title: 'Budget workshop series',
+  responseTargetKey: 'd'.repeat(64),
+  recordedResponseStatus: 'needsAction',
+}
+const workshopOccurrence: Invitation = {
+  ...invitation,
+  responseStatus: 'accepted',
+  recordedResponseStatus: 'accepted',
+}
+const acceptedWorkshopSeries: Invitation = {
+  ...workshopSeries,
+  responseStatus: 'accepted',
+  recordedResponseStatus: 'accepted',
+  conferenceUrl: 'https://meet.google.com/klm-nopq-rst',
+}
+const cancelledWorkshopOccurrence: Invitation = {
+  ...workshopOccurrence,
+  cancelled: true,
+  canRespond: false,
+  responseStatus: null,
+  recordedResponseStatus: null,
+  responseTargetKey: null,
+  conferenceUrl: null,
+  conferenceLinkSource: null,
+  unavailableReason: 'This invitation was cancelled.',
+}
+
+const acceptedWorkshopResponse: Response = {
+  outcome: 'sent',
+  channel: 'calendar',
+  answer: 'accepted',
+  refreshPending: false,
+  invitation: acceptedWorkshopSeries,
+}
+
+const workshopThread = {
+  ...thread,
+  messages: thread.messages.map((message) => ({ ...message, hasCalendarPayload: true })),
+}
+
+test.each([
+  { name: 'MailShell', Reader: MailShell },
+  { name: 'MailView', Reader: MailView },
+])(
+  '$name retires a pending occurrence Join when the series response needs a fresh thread read',
+  async ({ Reader }) => {
+    searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+    threadMock.mockResolvedValue(workshopThread)
+    let finishJoin!: () => void
+    validateBinding.mockReturnValueOnce(new Promise<void>((resolve) => (finishJoin = resolve)))
+    let finishRead!: () => void
+    const reading = new Promise<void>((resolve) => (finishRead = resolve))
+    let accepted = false
+    invitationMock.mockImplementation(async () => {
+      if (!accepted) return invitations(workshopSeries, workshopOccurrence)
+      await reading
+      return invitations(acceptedWorkshopSeries, cancelledWorkshopOccurrence)
+    })
+    respondMock.mockImplementationOnce(async () => {
+      accepted = true
+      return acceptedWorkshopResponse
+    })
+
+    const user = userEvent.setup()
+    render(<Reader />)
+    await user.click(await screen.findByText('Q2 budget'))
+    const series = within(await screen.findByRole('article', { name: workshopSeries.title }))
+    const occurrence = within(screen.getByRole('article', { name: workshopOccurrence.title }))
+    expect(occurrence.getByText('Response: Accepted')).toBeVisible()
+    await user.click(occurrence.getByRole('button', { name: 'Join meeting' }))
+    expect(await occurrence.findByText('Checking invitation link…')).toBeVisible()
+    await user.click(series.getByRole('button', { name: 'Accept' }))
+
+    expect(await screen.findByText('Checking invitation status…')).toBeVisible()
+    expect(series.getByText('Response: Accepted')).toBeVisible()
+    expect(occurrence.queryByText('Response: Accepted')).not.toBeInTheDocument()
+    for (const name of ['Join meeting', 'Maybe', 'Decline']) {
+      expect(occurrence.getByRole('button', { name })).toBeDisabled()
+      expect(series.getByRole('button', { name })).toBeDisabled()
+    }
+    // The binding is still healthy; only the old invitation data was retired.
+    await act(async () => finishJoin())
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(screen.getByText('Checking invitation status…')).toBeVisible()
+
+    await act(async () => finishRead())
+    expect(await occurrence.findByText(/invitation was cancelled/i)).toBeVisible()
+    expect(occurrence.queryByText('Response: Accepted')).not.toBeInTheDocument()
+    expect(
+      occurrence.queryByRole('button', { name: /join meeting|accept|maybe|decline/i }),
+    ).toBeNull()
+    expect(series.getByRole('button', { name: 'Accept' })).toBeDisabled()
+    await user.click(series.getByRole('button', { name: 'Join meeting' }))
+    await waitFor(() =>
+      expect(openExternal).toHaveBeenCalledExactlyOnceWith(acceptedWorkshopSeries.conferenceUrl),
+    )
+    expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
+      threadId: 't1',
+      expectedAccountSub: 'a',
+      expectedBindingRevision: workshopSeries.bindingRevision,
+      expectedResponseTargetKey: workshopSeries.responseTargetKey,
+      identity: workshopSeries.identity,
+      answer: 'accepted',
+    })
+  },
+)
+
+test.each(['sent', 'uncertain'] as const)(
+  'keeps occurrence actions withdrawn after a failed read for a %s series response',
+  async (outcome) => {
+    searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+    threadMock.mockResolvedValue(workshopThread)
+    const readUnavailable = 'Calendar status is temporarily unavailable'
+    invitationMock.mockResolvedValueOnce(invitations(workshopSeries, workshopOccurrence))
+    if (outcome === 'sent') {
+      // A scan can fail with a recovery reason rather than a rejected capability call.
+      invitationMock.mockResolvedValueOnce({ invitations: [], recoveryReason: readUnavailable })
+    } else {
+      invitationMock.mockRejectedValueOnce(new Error(readUnavailable))
+    }
+    invitationMock.mockResolvedValue(
+      invitations(acceptedWorkshopSeries, cancelledWorkshopOccurrence),
+    )
+    respondMock.mockResolvedValueOnce(
+      outcome === 'sent'
+        ? acceptedWorkshopResponse
+        : { ...acceptedWorkshopResponse, outcome, invitation: null, refreshPending: true },
+    )
+    const user = userEvent.setup()
+    render(<MailShell />)
+    await user.click(await screen.findByText('Q2 budget'))
+    const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+    const series = within(await region.findByRole('article', { name: workshopSeries.title }))
+    const occurrence = within(region.getByRole('article', { name: workshopOccurrence.title }))
+    await user.click(series.getByRole('button', { name: 'Accept' }))
+    if (outcome === 'uncertain') {
+      expect(await series.findByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
+      expect(occurrence.queryByText('Response: Accepted')).not.toBeInTheDocument()
+      expect(occurrence.getByRole('button', { name: 'Join meeting' })).toBeDisabled()
+      // No single-card readback: the user can reconcile, but cannot replay the RSVP.
+      await user.click(region.getByRole('button', { name: 'Retry' }))
+    }
+    expect(await region.findByRole('alert')).toHaveTextContent(/temporarily unavailable/i)
+    if (outcome === 'sent') expect(series.getByText(/Google accepted your response/i)).toBeVisible()
+    expect(occurrence.getByRole('heading', { name: workshopOccurrence.title })).toBeVisible()
+    expect(occurrence.queryByText('Response: Accepted')).not.toBeInTheDocument()
+    expect(occurrence.getByRole('button', { name: 'Join meeting' })).toBeDisabled()
+    expect(occurrence.getByRole('button', { name: 'Decline' })).toBeDisabled()
+
+    await user.click(region.getByRole('button', { name: 'Retry' }))
+    expect(await occurrence.findByText(/invitation was cancelled/i)).toBeVisible()
+    expect(series.getByText('Response: Accepted')).toBeVisible()
+    expect(series.getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+    expect(respondMock).toHaveBeenCalledTimes(1)
+    expect(openExternal).not.toHaveBeenCalled()
   },
 )
 
