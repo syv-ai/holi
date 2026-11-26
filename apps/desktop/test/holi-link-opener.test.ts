@@ -14,7 +14,7 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'holi-link-'))
   roots.push(root)
   const vault = join(root, 'vault')
-  await mkdir(join(vault, 'notes'), { recursive: true })
+  await mkdir(join(vault, 'notes', 'folder'), { recursive: true })
   await writeFile(join(vault, 'notes', 'Topic.md'), '# Heading\n')
   const entry: VaultEntry = {
     remote: 'syv-ai/team-notes',
@@ -55,6 +55,21 @@ test('reports a missing file', async () => {
     openHoliLink('holi://open?vault=syv-ai/team-notes&path=missing.md', deps),
   ).resolves.toMatchObject({ ok: false, message: 'missing.md is not in syv-ai/team-notes.' })
   expect(showPath).not.toHaveBeenCalled()
+})
+
+test('opens a directory from legacy and HTTPS Holi links without forwarding headings', async () => {
+  const { deps, entry, showPath } = await fixture()
+  await expect(
+    openHoliLink('holi://open?vault=syv-ai/team-notes&path=notes/folder&heading=ignored', deps),
+  ).resolves.toEqual({ ok: true })
+  expect(showPath).toHaveBeenLastCalledWith(entry.remote, 'notes/folder', { kind: 'directory' })
+  await expect(
+    openHoliLink(
+      'https://syv-ai.github.io/holi/#vault=syv-ai/team-notes&path=notes%2Ffolder&heading=ignored',
+      deps,
+    ),
+  ).resolves.toEqual({ ok: true })
+  expect(showPath).toHaveBeenLastCalledWith(entry.remote, 'notes/folder', { kind: 'directory' })
 })
 
 test('opens the HTTPS sharing format through the same authoritative checks', async () => {
