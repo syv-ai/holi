@@ -1,3 +1,4 @@
+import { advanceNavigationEpochAtom } from '@/state/navigation'
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
 import { SCRATCHPAD_PATH, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -271,6 +272,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** Open a vault path, the board, or any tab key: as a tab, or in the
    *  active split's focused member (`openTab`). */
   function openTabKey(id: string) {
+    store.set(advanceNavigationEpochAtom)
     const key = keyFor(id)
     // A vault path, whatever tab it opens as (a deck is a surface tab).
     if (parseTabKey(id)?.kind === 'doc' || id.endsWith('.app')) {

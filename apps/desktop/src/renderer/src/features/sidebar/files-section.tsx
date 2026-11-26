@@ -529,7 +529,7 @@ export function FilesSection({
     if (landing === null) return
     if (
       landing.remote !== files.remote ||
-      landing.navigation !== navigation ||
+      (landing.directory === true && landing.navigation !== navigation) ||
       !stillCurrent(landing.remote)
     ) {
       setLanding(null)

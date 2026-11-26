@@ -52,7 +52,10 @@ export const updateWorkspaceAtom = atom(
     const next = trackRecent(typeof update === 'function' ? update(current) : update)
     if (next === current) return
     set(workspacesAtom, (all) => ({ ...all, [remote]: next }))
-    if (remote === get(activeRemoteAtom) && focusedTab(current) !== focusedTab(next)) {
+    if (
+      remote === get(activeRemoteAtom) &&
+      (current.active !== next.active || focusedTab(current) !== focusedTab(next))
+    ) {
       set(advanceNavigationEpochAtom)
     }
     // Synchronous and explicitly remote-addressed: no delayed save can land in
@@ -73,8 +76,9 @@ export const shellWorkspaceAtom = atom(
  *  active split. */
 export const openTabAtom = atom(
   null,
-  (_get, set, tab: TabDescriptor, options?: { beside?: boolean }) => {
+  (get, set, tab: TabDescriptor, options?: { beside?: boolean }) => {
     const key = tabKey(tab)
+    if (focusedTab(get(shellWorkspaceAtom)) === key) set(advanceNavigationEpochAtom)
     // Read once, outside the update: reading spends the ⌥.
     const beside = options?.beside === true || openingBeside()
     set(shellWorkspaceAtom, (ws) => (beside ? openInSplit(ws, key) : openTab(ws, key)))
