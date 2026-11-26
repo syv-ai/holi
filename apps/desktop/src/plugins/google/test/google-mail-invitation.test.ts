@@ -3362,9 +3362,8 @@ it.each(['organizer', 'UID hint'])(
     })
     expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
 
-    // An organizer address alone, without Calendar's own organizer marker,
-    // does not verify a master or allow the sparse row to establish ownership.
-    master.organizer = { email: person, self: false }
+    // A series without a usable Calendar organizer is not a verified parent.
+    master.organizer = { email: '', self: false }
     expect((await list()).invitations).toEqual([])
   },
 )
@@ -4082,6 +4081,181 @@ it.each(['EXPORT', 'PUBLISH'] as const)(
     })
     // In particular, this already-recorded answer is not an RSVP no-op.
     await expect(respond('accepted')).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+  },
+)
+
+it.each(
+  (['EXPORT', 'PUBLISH'] as const).flatMap((method) =>
+    (['reader', 'writer'] as const).flatMap((role) =>
+      [false, true].map((withOrganizer) => ({ method, role, withOrganizer })),
+    ),
+  ),
+)(
+  'reads a $method with source organizer=$withOrganizer on an explicitly enabled $role calendar',
+  async ({ method, role, withOrganizer }) => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2024-07-18T14:00:00Z'))
+    const { state, call, list, read, respond } = await rig()
+    const shared = 'team@example.net'
+    state.secondaryCalendars = [{ id: shared, selected: true, accessRole: role }]
+    let source = invite(method).replace('METHOD:EXPORT\r\n', '')
+    if (!withOrganizer)
+      source = source
+        .replace(`ORGANIZER;CN=Host:mailto:${organizer}\r\n`, '')
+        .replace('SUMMARY:Design sync', 'SUMMARY:Title from email')
+        .replace('abc-defg-hij', 'xyz-abcd-efg')
+    state.messages = [gmailMessage('legacy', 200, source, { from: guest, attached: true })]
+    state.attachments.set('legacy', source)
+    const copy = {
+      ...event({ id: 'shared', location: 'Upstairs' }),
+      attendees: [event().attendees[1]!], // Neither organizer nor guest is the connected mailbox.
+      hangoutLink: 'https://meet.google.com/abc-defg-hij',
+      htmlLink: 'https://calendar.google.com/calendar/event?eid=shared',
+    }
+    state.events.set(shared, [copy])
+    const enable = (enabled: boolean) => call('setCalendar', { id: shared, enabled })
+    expect((await list()).invitations).toEqual([])
+    await enable(true)
+    const meeting = await read()
+    expect(meeting).toMatchObject({
+      kind: 'meeting',
+      title: copy.summary,
+      organizer: { email: organizer },
+      start,
+      end,
+      location: copy.location,
+      conferenceUrl: copy.hangoutLink,
+      htmlLink: copy.htmlLink,
+      htmlLinkSource: 'calendar',
+      canRespond: false,
+      responseTargetKey: null,
+      responseStatus: null,
+      recordedResponseStatus: null,
+      sentResponseStatus: null,
+    })
+    await call('validateMailInvitationBinding', {
+      expectedAccountSub: thread.expectedAccountSub,
+      expectedBindingRevision: meeting!.bindingRevision,
+    })
+    const refusal = { code: withOrganizer ? 'FORBIDDEN' : 'CONFLICT' }
+    await expect(respond('accepted')).rejects.toMatchObject(refusal)
+    if (role === 'writer') {
+      // Even an independently writable guest copy holding this answer cannot
+      // turn the export into an RSVP no-op or a response target.
+      copy.attendees = [{ ...event().attendees[0]!, responseStatus: 'accepted' }]
+      expect(await read()).toMatchObject({ canRespond: false, responseTargetKey: null })
+      await expect(respond('accepted')).rejects.toMatchObject(refusal)
+    }
+    await enable(false)
+    expect((await list()).invitations).toEqual([])
+    expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
+  },
+)
+
+it('withholds a shared publication without an exact readable copy and never substitutes its email links', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2024-07-18T14:00:00Z'))
+  const { state, call, list, read } = await rig()
+  const shared = 'team@example.net'
+  state.secondaryCalendars = [{ id: shared, selected: true, accessRole: 'reader' }]
+  await call('setCalendar', { id: shared, enabled: true })
+  state.messages = [
+    gmailMessage(
+      'legacy',
+      200,
+      invite('PUBLISH').replace(
+        'END:VEVENT',
+        'URL:https://calendar.google.com/calendar/event?eid=email\r\nEND:VEVENT',
+      ),
+    ),
+  ]
+  const copy = { ...event({ id: 'shared' }), attendees: [], htmlLink: '' }
+  expect((await list()).invitations).toEqual([])
+  for (const lookalike of [
+    { ...copy, iCalUID: 'unrelated-event' },
+    { ...copy, organizer: { email: guest, self: false } },
+    { ...copy, sequence: 2 },
+    { ...copy, attendees: [event().attendees[0]!] }, // Actual self declined.
+  ]) {
+    state.events.set(shared, [lookalike])
+    expect((await list()).invitations).toEqual([])
+  }
+  state.events.set(shared, [copy])
+  state.freeBusyEventCollections.add(shared)
+  expect((await list()).invitations).toEqual([])
+  state.freeBusyEventCollections.clear()
+  // A linkless copy can supply facts, but an email link must never stand in
+  // for a Calendar event URL or verified conference room on a shared calendar.
+  expect(await read()).toMatchObject({
+    kind: 'meeting',
+    title: copy.summary,
+    conferenceUrl: null,
+    htmlLink: null,
+  })
+})
+
+it.each([false, true])(
+  'withholds the original slot of shared Calendar tombstones (source organizer=%s)',
+  async (withOrganizer) => {
+    const { state, call, read } = await rig()
+    const shared = 'team@example.net'
+    state.secondaryCalendars = [{ id: shared, selected: true, accessRole: 'reader' }]
+    await call('setCalendar', { id: shared, enabled: true })
+    const exportSource = (sequence: number) => {
+      const source = seriesWithException()
+        .replace('METHOD:REQUEST\r\n', '')
+        .replace('SEQUENCE:3', `SEQUENCE:${sequence}`)
+      return withOrganizer
+        ? source
+        : source.replace(`ORGANIZER;CN=Host:mailto:${organizer}\r\n`, '')
+    }
+    state.messages = [gmailMessage('legacy', 200, exportSource(3))]
+    const master = { ...event({ id: 'series', series: true }), attendees: [] }
+    const stale = {
+      ...upcomingInstance('moved', '2099-07-11', 'https://meet.google.com/xyz-abcd-efg'),
+      attendees: [],
+      originalStartTime: { dateTime: '2099-07-09T15:00:00Z' },
+    }
+    const later = {
+      ...upcomingInstance('next', '2099-07-16', 'https://meet.google.com/klm-nopq-rst'),
+      attendees: [],
+    }
+    const sparse = {
+      id: stale.id,
+      status: 'cancelled',
+      recurringEventId: master.id,
+      originalStartTime: { dateTime: '2099-07-09T11:00:00-04:00', timeZone: 'America/New_York' },
+    }
+    state.events.set(shared, [master])
+    state.instances.set(shared, [stale, later])
+    state.secondaryUidItems.set(shared, [master, { ...sparse, recurringEventId: 'other-series' }])
+    expect(await read()).toMatchObject({
+      conferenceUrl: stale.hangoutLink,
+      htmlLink: stale.htmlLink,
+    })
+    state.secondaryUidItems.set(shared, [master, sparse])
+    state.instances.set(shared, [stale])
+    expect(await read()).toMatchObject({ conferenceUrl: null, htmlLink: null })
+    state.instances.set(shared, [stale, later])
+    const nextLinks = { conferenceUrl: later.hangoutLink, htmlLink: later.htmlLink }
+    expect(await read()).toMatchObject({
+      ...nextLinks,
+      kind: 'meeting',
+      scope: 'series',
+      cancelled: false,
+      canRespond: false,
+      responseTargetKey: null,
+    })
+    // A fully identified cancellation does not need a mailbox attendee to
+    // withhold shared navigation, but an older one cannot defeat reinstatement.
+    const full = { ...stale, ...sparse, sequence: 3 }
+    state.secondaryUidItems.set(shared, [master, full])
+    expect(await read()).toMatchObject(nextLinks)
+    state.messages = [gmailMessage('new', 300, exportSource(4))]
+    master.sequence = stale.sequence = 4
+    expect(await read()).toMatchObject({
+      conferenceUrl: stale.hangoutLink,
+      htmlLink: stale.htmlLink,
+    })
     expect(state.calendarPatchAttempts + state.sendAttempts).toBe(0)
   },
 )
