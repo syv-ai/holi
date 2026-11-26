@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createOwnedProcesses } from '../scripts/owned-processes.mjs'
 
@@ -39,12 +38,9 @@ describe('browser placement benchmark process lifecycle', () => {
       ])
 
       try {
-        const leaderExited = new Promise<void>((resolve) =>
-          record.child.once('exit', () => resolve()),
-        )
         const ready = await waitFor(() => record.output.includes('{"ready":true'), 5000)
         expect(ready).toBe(true)
-        await leaderExited
+        await record.exited
         const readiness = record.output
           .split('\n')
           .map((line) => {

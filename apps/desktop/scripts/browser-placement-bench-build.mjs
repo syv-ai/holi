@@ -35,10 +35,7 @@ export async function prepareBenchmarkRuntime({ desktop, root, countsOnly }) {
     base: './',
     root: fixture,
     resolve: {
-      alias: [
-        { find: '@/plugin-api', replacement: join(fixture, 'api.ts') },
-        { find: '@', replacement: join(desktop, 'src/renderer/src') },
-      ],
+      alias: [{ find: '@', replacement: join(desktop, 'src/renderer/src') }],
       dedupe: ['react', 'react-dom', 'jotai'],
     },
     esbuild: { jsx: 'automatic' },
