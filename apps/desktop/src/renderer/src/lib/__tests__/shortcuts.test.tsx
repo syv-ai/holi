@@ -3,6 +3,7 @@ import { createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent } from '@/components/ui/popover'
 import { ShortcutsDialog } from '@/features/command-menu/shortcuts-dialog'
 import { hotkeyLabels, matchShortcutKey } from '@/lib/hotkey'
 import {
@@ -126,7 +127,7 @@ describe('resolveShortcut', () => {
   })
 
   test('⌘9 is the ninth key of one row', () => {
-    const match = resolveShortcut(ev({ metaKey: true, key: '9' }), ctx({ capture: true }))
+    const match = resolveShortcut(ev({ metaKey: true, key: '9' }), ctx())
     expect(match?.shortcut.id).toBe('tab.goto')
     expect(match?.index).toBe(8)
   })
@@ -163,21 +164,6 @@ describe('the dispatcher', () => {
     expect(openScratchpad).toHaveBeenCalledOnce()
   })
 
-  test('numbered tab navigation survives a widget stopping key propagation', () => {
-    const goto = vi.fn()
-    render(
-      <Provider store={createStore()}>
-        <Host handlers={{ 'tab.goto': goto }} />
-      </Provider>,
-    )
-    const calendarWidget = document.createElement('div')
-    document.body.append(calendarWidget)
-    calendarWidget.addEventListener('keydown', (event) => event.stopPropagation())
-    fireEvent.keyDown(calendarWidget, { key: '2', metaKey: true })
-    expect(goto).toHaveBeenCalledWith(1, expect.any(KeyboardEvent))
-    calendarWidget.remove()
-  })
-
   test('runs a live key on the page and not in a field', () => {
     const show = vi.fn()
     render(
@@ -209,22 +195,44 @@ describe('the dispatcher', () => {
     modal.remove()
   })
 
-  test('an explicitly non-modal dialog leaves shell shortcuts available', () => {
-    const search = vi.fn()
+  test.each([false, true])('popover modality %s controls numbered tab navigation', (modal) => {
+    const goto = vi.fn()
     render(
       <Provider store={createStore()}>
-        <Host handlers={{ 'tab.new': search }} />
+        <Host handlers={{ 'tab.goto': goto }} />
+        <Popover defaultOpen modal={modal}>
+          <PopoverContent aria-label="Fixture popover">
+            <Button>Keep editing</Button>
+          </PopoverContent>
+        </Popover>
       </Provider>,
     )
-    const popover = document.createElement('div')
-    popover.setAttribute('role', 'dialog')
-    popover.setAttribute('data-state', 'open')
-    popover.setAttribute('data-modal', 'false')
-    document.body.append(popover)
-    expect(dialogOpen()).toBe(false)
-    fireEvent.keyDown(document.body, { key: 't', metaKey: true })
-    expect(search).toHaveBeenCalledOnce()
-    popover.remove()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Keep editing' }), {
+      key: '1',
+      metaKey: true,
+    })
+    if (modal) expect(goto).not.toHaveBeenCalled()
+    else expect(goto).toHaveBeenCalledWith(0, expect.any(KeyboardEvent))
+  })
+
+  test('alert dialogs keep shell navigation blocked even when marked non-modal', () => {
+    const goto = vi.fn()
+    render(
+      <Provider store={createStore()}>
+        <Host handlers={{ 'tab.goto': goto }} />
+      </Provider>,
+    )
+    const alert = document.createElement('div')
+    alert.setAttribute('role', 'alertdialog')
+    alert.setAttribute('data-state', 'open')
+    alert.setAttribute('data-modal', 'false')
+    document.body.append(alert)
+    try {
+      fireEvent.keyDown(alert, { key: '1', metaKey: true })
+      expect(goto).not.toHaveBeenCalled()
+    } finally {
+      alert.remove()
+    }
   })
 
   test('a handler unmounted is no longer run', () => {

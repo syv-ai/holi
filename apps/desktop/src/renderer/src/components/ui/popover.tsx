@@ -39,7 +39,6 @@ function PopoverContent({
   sideOffset = 4,
   variant = 'default',
   size = 'default',
-  modal,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content> & {
   /** `flush` drops the padding and gap, for a list or menu that draws its own edges. */
