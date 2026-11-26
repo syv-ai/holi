@@ -36,13 +36,21 @@ describe('browser placement benchmark sampling', () => {
     expect(recovered.finish(snapshot(2)).valid).toBe(false)
   })
 
-  it('keeps successive trials independent and refuses unknown scenarios', () => {
+  it('rejects invalid counters and keeps successive trials independent', () => {
+    const invalid = createTrialSampling({ condition })
+    invalid.observe({ condition, stats: { callbacks: -1 } })
+    expect(invalid.finish(snapshot(0)).valid).toBe(false)
     const first = createTrialSampling({ condition })
     first.observe(snapshot(0))
     first.finish(snapshot(3))
     const next = createTrialSampling({ condition })
     next.observe(snapshot(0))
     expect(next.finish(snapshot(1)).counters.totals.callbacks).toBe(1)
+    const short = createTrialSampling({ condition })
+    expect(short.finish(snapshot(4)).counters.totals.callbacks).toBe(4)
+    const resource = createTrialSampling({ condition, counters: false })
+    resource.observe({ condition })
+    expect(resource.finish({ condition }).counters).toBeNull()
     expect(() => selectScenario('not-a-scenario')).toThrow()
   })
 })
