@@ -81,6 +81,7 @@ describe('Git authentication through Holi', () => {
           GIT_CONFIG_NOSYSTEM: '1',
           GIT_CONFIG_GLOBAL: config,
           GCM_INTERACTIVE: 'never',
+          GCM_CREDENTIAL_STORE: 'wincredman',
           GIT_TERMINAL_PROMPT: '0',
         },
         executionBudget: { maxBuffer: 1024 * 1024, timeout: 10_000 },
@@ -127,7 +128,7 @@ describe('Git authentication through Holi', () => {
           ...opts,
           token: () => null,
           input: request('reject'),
-        }).catch(() => undefined)
+        })
       }
     },
   )
