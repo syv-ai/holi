@@ -19,7 +19,9 @@ export async function archiveIos(root = resolve(import.meta.dirname, '..')) {
     })
     if (result.error) throw result.error
     if (result.status !== 0)
-      throw new Error(`${command} exited ${result.status}: ${result.stderr ?? ''}`)
+      throw new Error(
+        `${command} exited ${result.status}: ${result.stderr ?? ''}${result.stdout ?? ''}`,
+      )
     return result.stdout ?? ''
   }
   function plist(path) {
@@ -83,16 +85,19 @@ export async function archiveIos(root = resolve(import.meta.dirname, '..')) {
   if (!settings) throw new Error('Missing application target build settings')
   await writeFile(join(output, 'build-settings.json'), JSON.stringify(settingsReport, null, 2))
   run('xcodebuild', [...args, '-archivePath', archive, 'archive'])
-  // The archive root contains a plist Date, which plutil cannot convert to JSON.
-  const archiveInfo = {
-    ApplicationProperties: JSON.parse(
-      run(
-        'plutil',
-        ['-extract', 'ApplicationProperties', 'json', '-o', '-', join(archive, 'Info.plist')],
-        true,
-      ),
-    ),
-  }
+  const compressedArchive = join(output, 'Holi.xcarchive.tar.gz')
+  run('tar', ['-czf', compressedArchive, '-C', output, 'Holi.xcarchive'])
+  // Extract XML before JSON so the archive root's Date stays out of conversion.
+  const propertiesPath = join(output, 'application-properties.plist')
+  run('plutil', [
+    '-extract',
+    'ApplicationProperties',
+    'xml1',
+    '-o',
+    propertiesPath,
+    join(archive, 'Info.plist'),
+  ])
+  const archiveInfo = { ApplicationProperties: plist(propertiesPath) }
   const applicationPath = archiveInfo.ApplicationProperties?.ApplicationPath
   if (!/^Applications\/[^/]+\.app$/.test(applicationPath ?? ''))
     throw new Error('Invalid archive application path')
@@ -128,8 +133,6 @@ export async function archiveIos(root = resolve(import.meta.dirname, '..')) {
   }
   const executableBytes = await readFile(executable)
   if (!executableBytes.length) throw new Error('Empty archive executable')
-  const compressedArchive = join(output, 'Holi.xcarchive.tar.gz')
-  run('tar', ['-czf', compressedArchive, '-C', output, 'Holi.xcarchive'])
   const receipt = {
     archiveSha256: createHash('sha256')
       .update(await readFile(compressedArchive))

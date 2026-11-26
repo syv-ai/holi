@@ -166,5 +166,6 @@ jobs:
             apps/mobile/.artifacts/ios/Holi.xcarchive.tar.gz
             apps/mobile/.artifacts/ios/receipt.json
             apps/mobile/.artifacts/ios/build-settings.json
+            apps/mobile/.artifacts/ios/application-properties.plist
           include-hidden-files: true
           if-no-files-found: warn
