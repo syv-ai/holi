@@ -17,7 +17,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn, useNow, useTabDrag } from '@/plugin-api'
+import { activeVaultSettingsAtom, cn, useNow, useTabDrag } from '@/plugin-api'
 import { agentsViewAtom } from '../state/agents-view'
 import { agentSessionsAtom } from '../state/sessions'
 import {
@@ -209,6 +209,7 @@ function useOpenKeys(): ReadonlySet<string> {
 /** The sidebar's Sessions: the open ones, what needs you first, each with
  *  its ×. Closed ones are in History. */
 export function SessionList(): React.JSX.Element {
+  const historyEnabled = useAtomValue(activeVaultSettingsAtom)?.agentHistory === true
   const rows = useAtomValue(openSessionRowsAtom)
   const all = useAtomValue(sessionRowsAtom)
   const status = useAtomValue(sessionsStatusAtom)
@@ -255,10 +256,12 @@ export function SessionList(): React.JSX.Element {
               <MessageSquarePlusIcon aria-hidden="true" />
               New session
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setView({ kind: 'history' })}>
-              <HistoryIcon aria-hidden="true" />
-              History
-            </Button>
+            {historyEnabled ? (
+              <Button variant="ghost" size="sm" onClick={() => setView({ kind: 'history' })}>
+                <HistoryIcon aria-hidden="true" />
+                History
+              </Button>
+            ) : null}
           </EmptyContent>
         </Empty>
       ) : (

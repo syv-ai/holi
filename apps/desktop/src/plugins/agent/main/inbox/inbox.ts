@@ -31,9 +31,10 @@ export interface InboxDeps {
   /** Tell the renderer the inbox. */
   changed(view: InboxView): void
   now?: () => Date
+  enabled?: () => boolean | Promise<boolean>
 }
 
-export type RaiseResult = 'repeat' | 'banner' | 'inbox'
+export type RaiseResult = 'repeat' | 'banner' | 'inbox' | 'disabled'
 
 export interface Inbox {
   raise(notice: InboxNotice): Promise<RaiseResult>
@@ -49,18 +50,30 @@ export function createInbox(deps: InboxDeps): Inbox {
    *  show one banner sooner than the gap. */
   let lastBanner: number | null = null
 
+  const enabled = async (): Promise<boolean> => (await deps.enabled?.()) ?? true
+  const empty = (): InboxView => ({ entries: [], unread: 0 })
   const change = async (edit: (file: InboxFile) => InboxFile): Promise<InboxView> => {
-    const view = viewOf(await deps.store.update(edit))
-    deps.changed(view)
-    return view
+    if (!(await enabled())) return empty()
+    try {
+      const file = await deps.store.update(edit, enabled)
+      if (!(await enabled())) return empty()
+      const view = viewOf(file)
+      deps.changed(view)
+      return view
+    } catch (error) {
+      if (!(await enabled())) return empty()
+      throw error
+    }
   }
 
   return {
     async raise(notice) {
+      if (!(await enabled())) return 'disabled'
       const at = now()
       // Decided inside the queued update, against the file as it is then.
       const outcome: { entry: InboxEntry | null; banner: boolean } = { entry: null, banner: false }
       const file = await deps.store.read()
+      if (!(await enabled())) return 'disabled'
       if (admit(file, notice, at.getTime(), lastBanner).kind === 'repeat') return 'repeat'
       await change((current) => {
         const decision = admit(current, notice, at.getTime(), lastBanner)
@@ -70,6 +83,7 @@ export function createInbox(deps: InboxDeps): Inbox {
         return withEntry(current, outcome.entry)
       })
       const { entry, banner } = outcome
+      if (!(await enabled())) return 'disabled'
       if (entry === null) return 'repeat'
       if (!banner) return 'inbox'
       const shown = deps.notify({
@@ -81,7 +95,11 @@ export function createInbox(deps: InboxDeps): Inbox {
       lastBanner = at.getTime()
       return 'banner'
     },
-    view: async () => viewOf(await deps.store.read()),
+    view: async () => {
+      if (!(await enabled())) return empty()
+      const file = await deps.store.read()
+      return (await enabled()) ? viewOf(file) : empty()
+    },
     dismiss: (id) => change((file) => withoutEntry(file, id)),
     seen: () => change((file) => ({ ...file, seen: now().toISOString() })),
   }

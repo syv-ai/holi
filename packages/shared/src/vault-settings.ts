@@ -169,6 +169,9 @@ export const EDITOR_FONT_STACKS: Readonly<Record<EditorFont, string>> = Object.f
 
 /** What `app.yaml` and `app.local.yaml` answer: core's own settings. */
 export interface ResolvedAppSettings {
+  agentInbox: boolean
+  agentHistory: boolean
+  agentMemory: boolean
   dailyNotes: boolean
   colorScheme: ColorScheme
   windowGlass: WindowGlass
@@ -349,6 +352,9 @@ export type VaultSettingControl =
  *  with a row in the settings tab. A superset of what the ritual asks
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
+  | 'agentInbox'
+  | 'agentHistory'
+  | 'agentMemory'
   | 'dailyNotes'
   | 'hooks'
   | 'colorScheme'
@@ -481,6 +487,43 @@ export interface VaultSetting {
  * and the seed read only the `askedAtBirth` subset.
  */
 export const VAULT_SETTINGS: readonly VaultSetting[] = [
+  {
+    key: 'agentInbox',
+    label: 'Inbox',
+    explanation:
+      'Collect agent notices and mentions. Sessions and native permission prompts remain available when off.',
+    type: { kind: 'boolean' },
+    default: true,
+    target: 'committed',
+    askedAtBirth: false,
+    whereToChange: SETTINGS_FILE_HINT,
+    section: 'general',
+  },
+  {
+    key: 'agentHistory',
+    label: 'History',
+    explanation:
+      'Show conversation and run history. Recording, saving and vault sync continue when off.',
+    type: { kind: 'boolean' },
+    default: true,
+    target: 'committed',
+    askedAtBirth: false,
+    whereToChange: SETTINGS_FILE_HINT,
+    section: 'general',
+  },
+  {
+    key: 'agentMemory',
+    label: 'Memory',
+    explanation:
+      'Use automatic agent memory overviews, indexing and cleanup. Existing memory files are kept when off.',
+    type: { kind: 'boolean' },
+    default: true,
+    target: 'committed',
+    askedAtBirth: false,
+    whereToChange: SETTINGS_FILE_HINT,
+    section: 'general',
+  },
+
   {
     key: 'dailyNotes',
     label: 'Keep a daily note',

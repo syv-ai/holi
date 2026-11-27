@@ -1606,18 +1606,21 @@ export function createRouter(deps: RouterDeps) {
       .query(async ({ input }) => scanLinks(await rootFor(input.remote), safe(input.path))),
 
     // The vault's notes and the links between them, for the graph view. Hidden
-    // files only when the tree shows them; memory always, and never its
+    // files only when the tree shows them; memory when enabled, and never its
     // generated index, which links every memory and would only draw a hub.
     graph: t.procedure
       .input(fields({ remote: 'string', hidden: 'boolean' }))
-      .query(async ({ input }) =>
-        buildLinkGraph(
-          await rootFor(input.remote),
+      .query(async ({ input }) => {
+        const root = await rootFor(input.remote)
+        const memoryEnabled = (await readVaultSettings(root)).agentMemory
+        return buildLinkGraph(
+          root,
           (p) =>
             p !== MEMORY_INDEX &&
+            (memoryEnabled || !p.startsWith(`${MEMORY_DIR}/`)) &&
             (input.hidden || !isHiddenPath(p) || p.startsWith(`${MEMORY_DIR}/`)),
-        ),
-      ),
+        )
+      }),
 
     // Move the file AND rewrite every inbound [[link]] in one pass. The
     // move-half alone silently breaks links, so the two are one procedure. The

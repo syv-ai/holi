@@ -51,7 +51,7 @@ import {
   stepMember,
 } from '@/state/shell-workspace'
 import { openingBeside } from '@/state/alt-open'
-import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
+import { AGENTS_HOME_KEY, isAgentTab, parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
 import { shellTabForPathAtom } from '@/state/surfaces'
 import {
   activeRemoteAtom,
@@ -171,9 +171,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     showSidebar,
     onPanelResize,
   } = useSidebarFold(app)
-  /** The sidebar's tab. It no longer swaps the main area: a session opens
-   *  as a tab, and + on the Agents side opens the Agents home. */
-  const [section, setSection] = useAtom(appModeAtom)
+  /** Kept for plugins that still report their navigation preference. */
+  const setSection = useSetAtom(appModeAtom)
   const running = useAtomValue(runningPluginsAtom)
   const hasAgents = running.some((plugin) => plugin.agentsMode !== undefined)
   const newAgentSession = useSetAtom(newAgentSessionAtom)
@@ -228,10 +227,9 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     backFromSettings()
   }
 
-  /** + and ⌘T: a New tab, or on the Agents side a new session in the
-   *  default agent (the mode's `newSession`), else the Agents home. */
+  /** + and ⌘T follow the focused view, not a retired sidebar mode. */
   function openNewTab() {
-    if (section === 'agents' && hasAgents) {
+    if (isAgentTab(activeTab) && hasAgents) {
       if (newAgentSession()) return
       setWs((w) => openTabIn(w, AGENTS_HOME_KEY))
       return

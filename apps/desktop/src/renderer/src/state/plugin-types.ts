@@ -426,6 +426,8 @@ export interface ArcadeCastMember {
 
 /** @public */
 export interface AgentsMode {
+  /** Navigation shown before the vault's Files section. */
+  navigation?: ComponentType
   sidebar: ComponentType
   /** The mode's main view for one tab: `selection` is what the tab shows
    *  (null for the mode's home), so two tabs can show two sessions. */

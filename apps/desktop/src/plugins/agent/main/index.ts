@@ -53,6 +53,7 @@ import { mentionNotice } from './inbox/mentions'
 import { watchNeedsYou } from './inbox/needs-you'
 import { INBOX_FILE, parseInbox } from './inbox/rules'
 import { sweepAgentMemory, SWEEP_EVERY_MS } from './memory/sweep'
+import { reconcileMemoryOverviewHook } from './memory/overview-hook'
 import type { SessionSummary } from './claude/listing'
 import { createAgentProbeOwner } from './probe-owner'
 import { hasBackground } from './provider'
@@ -144,7 +145,32 @@ export const agentMain: MainPlugin = {
         throw new Error(`agent activation for ${ctx.remote} was cancelled`)
     }
     try {
+      let memorySync = Promise.resolve()
+      let memoryQueued = false
+      const syncMemory = (): Promise<void> => {
+        if (memoryQueued) return memorySync
+        memoryQueued = true
+        memorySync = memorySync
+          .then(async () => {
+            memoryQueued = false
+            if (ctx.activationSignal.aborted) return
+            const enabled = (await readVaultSettings(ctx.root)).agentMemory
+            if (ctx.activationSignal.aborted) return
+            await reconcileMemoryOverviewHook(
+              ctx.root,
+              enabled,
+              () => !ctx.activationSignal.aborted,
+            )
+          })
+          .catch((error: unknown) => console.error('[agent] memory overview:', error))
+        return memorySync
+      }
+      await syncMemory()
       assertActive()
+      const unmemory = ctx.onSnapshot(() => {
+        void syncMemory()
+      })
+      activationOwners.push(unmemory, () => memorySync)
       const providers = (): ReturnType<typeof harnesses.providers> => harnesses.providers()
       const claude = providers().find(hasBackground)!
       // `holi-signal`, the hook command a harness a person added reports
@@ -187,8 +213,14 @@ export const agentMain: MainPlugin = {
       let ownPast: SessionSummary[] = []
       let jobRows: SessionSummary[] = []
       const pushHistory = (): void => {
-        if (ctx.activationSignal.aborted) return
-        ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
+        void trackOwned(
+          (async () => {
+            if (ctx.activationSignal.aborted || !(await readVaultSettings(ctx.root)).agentHistory)
+              return
+            if (!ctx.activationSignal.aborted)
+              ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
+          })(),
+        ).catch((error: unknown) => console.error('[agent] history:', error))
       }
       const pushSessions = (): void => {
         if (ctx.activationSignal.aborted) return
@@ -326,6 +358,7 @@ export const agentMain: MainPlugin = {
       // vault's inbox, and a banner while Holi is out of sight.
       const inbox = createInbox({
         store: jsonFileStore(join(ctx.root, INBOX_FILE), parseInbox),
+        enabled: async () => (await readVaultSettings(ctx.root)).agentInbox,
         notify: (notice) => {
           if (!ctx.activationSignal.aborted) return ctx.notify(notice)
           return false
@@ -352,6 +385,7 @@ export const agentMain: MainPlugin = {
           captureFinalization: () => ctx.captureFinalization(),
           pi,
           defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
+          agentHistoryEnabled: async () => (await readVaultSettings(ctx.root)).agentHistory,
         }),
         ...inboxCapabilities({ inbox, liveRemote, trackMutation }),
         ...harnessCapabilities({
@@ -538,6 +572,7 @@ export const agentMain: MainPlugin = {
       // opened; the ones Holi runs end with it.
       return async () => {
         clearInterval(sweepTimer)
+        unmemory()
         unsignal()
         unreport()
         unmention()
@@ -549,6 +584,7 @@ export const agentMain: MainPlugin = {
           probes.stop,
           stopNeedsYou,
           () => sweeping,
+          () => memorySync,
           // Invalidation already revoked native PTY admission and started drain.
           // Join uncertain starts before waiting for fenced staging to finish.
           () => terminals.joinFailedStarts(),

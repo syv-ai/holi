@@ -26,6 +26,7 @@ import {
   type MemoryEntry,
 } from '@holi/shared'
 import { absPathFor, listFiles, writeAtomic } from '../vault-files'
+import { readVaultSettings } from '../settings'
 import type { StagedChanges } from './staged'
 import type { TransformResult } from './relink'
 
@@ -71,6 +72,8 @@ export async function memoryIndex(
   now = new Date(),
 ): Promise<TransformResult> {
   if (!touchesSharedMemory(staged)) return { changed: [], notes: [] }
+  const settings = await readVaultSettings(root)
+  if (!settings.agentMemory || !settings.hooks['memory-index']) return { changed: [], notes: [] }
   if (await hasUnstagedSharedMemory(root)) {
     return {
       changed: [],

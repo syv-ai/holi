@@ -5,6 +5,7 @@ import { sessionsWorthAsking } from '../lib/notices'
 import { receivePtyData } from '../lib/session-terminals'
 import {
   activeRemoteAtom,
+  activeVaultSettingsAtom,
   activeSurfaceIdAtom,
   closeSurfaceTabsAtom,
   surfaceTabIdsAtom,
@@ -241,7 +242,7 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
       store.set(agentSessionsAtom, payload as AgentSession[])
   },
   history: ({ remote, payload }, store) => {
-    if (remote === store.get(activeRemoteAtom))
+    if (remote === store.get(activeRemoteAtom) && store.get(activeVaultSettingsAtom)?.agentHistory)
       store.set(agentHistoryAtom, payload as AgentSession[])
   },
   terminals: ({ remote, payload }, store) => {
@@ -278,10 +279,28 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   // announced. Every event is a new list, so an unchanged one means none came.
   const sessionsAsked = store.get(agentSessionsAtom)
   const terminalsAsked = store.get(agentTerminalsAtom)
-  const historyAsked = store.get(agentHistoryAtom)
-  void agentCap.history(remote).then((list) => {
-    if (current() && store.get(agentHistoryAtom) === historyAsked) store.set(agentHistoryAtom, list)
-  })
+  let historyGeneration = 0
+  let historyEnabled: boolean | undefined
+  const refreshHistory = (): void => {
+    const next = store.get(activeVaultSettingsAtom)?.agentHistory === true
+    if (next === historyEnabled) return
+    historyEnabled = next
+    const request = ++historyGeneration
+    if (!next) {
+      store.set(agentHistoryAtom, [])
+      return
+    }
+    const asked = store.get(agentHistoryAtom)
+    void agentCap
+      .history(remote)
+      .then((list) => {
+        if (current() && request === historyGeneration && store.get(agentHistoryAtom) === asked)
+          store.set(agentHistoryAtom, list)
+      })
+      .catch((error: unknown) => console.error('[agent] history:', error))
+  }
+  const offHistory = store.sub(activeVaultSettingsAtom, refreshHistory)
+  refreshHistory()
   void agentCap.sessions(remote).then((list) => {
     if (current() && store.get(agentSessionsAtom) === sessionsAsked)
       store.set(agentSessionsAtom, list)
@@ -322,6 +341,7 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   return () => {
     disposed = true
     offGone()
+    offHistory()
     offSessions()
     offTabs()
     // Both lists and the turn record are per vault: left as they are, the

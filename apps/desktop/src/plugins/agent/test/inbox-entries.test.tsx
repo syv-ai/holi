@@ -17,6 +17,22 @@ import { agentSessionsAtom, type AgentSession } from '../renderer/state/sessions
 import { agentsViewAtom } from '../renderer/state/agents-view'
 import { inboxEvents } from '../renderer/state/inbox'
 
+// These workflows run with the public settings contract enabled. Dynamic
+// settings loading and disabled views are covered in optional-navigation.
+vi.mock('@/plugin-api', async (original) => {
+  const real = await original<typeof import('@/plugin-api')>()
+  const { atom } = await import('jotai')
+  const { resolveAppSettings } = await import('@holi/shared')
+  return {
+    ...real,
+    activeVaultSettingsAtom: atom({
+      ...resolveAppSettings(null, null),
+      plugins: { vault: {}, localOff: [] },
+      pluginValues: {},
+    }),
+  }
+})
+
 const agentCap = vi.hoisted(() => ({
   inboxSeen: vi.fn(),
   inboxDismiss: vi.fn(),

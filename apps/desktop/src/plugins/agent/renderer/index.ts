@@ -18,7 +18,7 @@ import { AGENT_SERVICE } from './service'
 import { SessionActions } from './session-actions'
 import { AgentsView } from './agents/agents-view'
 import { agentsViewOf } from './state/agents-view'
-import { AgentsSidebar } from './agents/agents-sidebar'
+import { AgentsNavigation, AgentsSidebar } from './agents/agents-sidebar'
 import { agentsStatusAtom } from './state/agents-status'
 import { showHistoryAtom } from './state/agents-view'
 import { inboxEvents, inboxVault } from './state/inbox'
@@ -90,6 +90,7 @@ export const agentRenderer: RendererPlugin = {
     },
   ],
   agentsMode: {
+    navigation: AgentsNavigation,
     sidebar: AgentsSidebar,
     main: AgentsView,
     keepsSelectionMounted: (selection) => {

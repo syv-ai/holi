@@ -851,15 +851,15 @@ it.each(['success', 'failure'] as const)(
           return [remote, configDir]
         }),
       ) as Record<typeof A | typeof B, string>
-      adapters.historyRename = {
-        source: aInboxPath,
+      adapters.writeGates.push({
+        fragment: aInboxPath,
         entered: () => {
           writeAdmitted = true
           writeEntered.resolve()
         },
         wait: releaseWrite.promise,
-        ...(outcome === 'failure' ? { error: new Error('held inbox rename failed') } : {}),
-      }
+        ...(outcome === 'failure' ? { error: new Error('held inbox write failed') } : {}),
+      })
       listingStatus[A] = 'waiting'
       listingStatus[B] = 'waiting'
       for (const remote of [A, B] as const) expect((await postStatusline(remote)).status).toBe(204)
@@ -955,9 +955,7 @@ it.each(['success', 'failure'] as const)(
         const stopFailure = await stoppingA
         expect(stopFailure).toBeInstanceOf(Error)
         expect(nestedErrors(stopFailure)).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ message: 'held inbox rename failed' }),
-          ]),
+          expect.arrayContaining([expect.objectContaining({ message: 'held inbox write failed' })]),
         )
         expectFailedDrain()
         await expect(host.stop(A)).rejects.toThrow('failed to stop')
@@ -969,7 +967,8 @@ it.each(['success', 'failure'] as const)(
       await host.stop(B)
     } finally {
       releaseWrite.resolve()
-      if (adapters.historyRename?.source === aInboxPath) adapters.historyRename = null
+      const pending = adapters.writeGates.findIndex((gate) => gate.fragment === aInboxPath)
+      if (pending >= 0) adapters.writeGates.splice(pending, 1)
     }
   },
 )

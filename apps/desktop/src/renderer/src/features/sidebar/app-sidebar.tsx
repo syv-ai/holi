@@ -1,6 +1,4 @@
-import { useAtom, useAtomValue } from 'jotai'
-import { useState } from 'react'
-
+import { useAtomValue } from 'jotai'
 import { Button } from '@/components/ui/button'
 import {
   Sidebar,
@@ -13,10 +11,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { cn } from '@/lib/cn'
 import { runningPluginsAtom } from '@/state/plugins'
-import { appModeAtom, type AppMode } from '@/state/app-mode'
 import { activeRemoteAtom } from '@/state/vaults'
 import { taskDueAttentionAtom } from '@/state/tasks'
 import type { Move } from '@/lib/tree-actions'
@@ -56,19 +51,15 @@ export function AppSidebar({
   onOpenApp: (id: string) => void
 }) {
   const apps = useSidebarApps()
-  const [section, setSection] = useAtom(appModeAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const appsOn = useAppsOn()
   const taskAttention = useAtomValue(taskDueAttentionAtom)
   const boardLabel = taskAttention?.due
     ? `Board, ${taskAttention.overdue} overdue, ${taskAttention.dueToday} due today, ${taskAttention.open} open tasks`
     : `Board${taskAttention?.open ? `, ${taskAttention.open} open tasks` : ''}`
-  /** Off until the first switch, so the sidebar's first paint is never held
-   *  back by a fade. */
-  const [switched, setSwitched] = useState(false)
   const { isMobile } = useSidebar()
   const running = useAtomValue(runningPluginsAtom)
-  const AgentsSidebar = running.find((plugin) => plugin.agentsMode)?.agentsMode?.sidebar
+  const agentsMode = running.find((plugin) => plugin.agentsMode)?.agentsMode
 
   if (collapsed) {
     // Same SidebarMenuButton as the expanded nav, so hover, active and the
@@ -181,52 +172,24 @@ export function AppSidebar({
         </SidebarHeader>
       ) : null}
 
-      {/* Two equal tabs: the body below switches with them. */}
       <SidebarContent className="overflow-hidden">
         <div className="flex flex-col gap-3 px-2 py-3">
           <VaultSwitcher onAddVault={onAddVault} />
-          <Tabs
-            value={section}
-            onValueChange={(value) => {
-              if (!value) return
-              setSection(value as AppMode)
-              setSwitched(true)
-            }}
-          >
-            <TabsList className="bg-foreground/5 grid w-full grid-cols-2">
-              <TabsTrigger value="documents">Vault</TabsTrigger>
-              <TabsTrigger value="agents">Agents</TabsTrigger>
-            </TabsList>
-          </Tabs>
         </div>
-
-        {/* A switch of tab or vault cross-fades the body instead of swapping it. */}
-        <div
-          key={`${section}:${remote}`}
-          className={cn('flex min-h-0 flex-1 flex-col', switched && 'motion-in-fade')}
-        >
-          {section === 'documents' ? (
-            // Space between the groups, not a rule, as in the Agents tab; the
-            // Files group's own inset makes up the rest.
-            <div className="flex min-h-0 flex-1 flex-col gap-2">
-              <DocumentsNav activeId={activeId} onOpenSearch={onOpenSearch} onOpen={onOpen} />
-              <FilesSection activeId={activeId} onOpen={onOpen} onMoved={onMoved} />
-              {/* What plugins say under the tree: a community plugin this
-                  vault uses that this machine cannot run yet. */}
-              {running.map(({ info, sidebarSection: Section }) =>
-                Section === undefined ? null : <Section key={info.id} />,
-              )}
-            </div>
-          ) : null}
-
-          {section === 'agents' ? (
-            // The agent plugin's own sidebar: Inbox, Automations, Holis, sessions.
-            AgentsSidebar ? (
+        <div key={remote} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col gap-2">
+            <DocumentsNav activeId={activeId} onOpenSearch={onOpenSearch} onOpen={onOpen} />
+            {agentsMode?.navigation ? <agentsMode.navigation /> : null}
+            <FilesSection activeId={activeId} onOpen={onOpen} onMoved={onMoved} />
+            {running.map(({ info, sidebarSection: Section }) =>
+              Section === undefined ? null : <Section key={info.id} />,
+            )}
+            {agentsMode?.sidebar ? (
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-                <AgentsSidebar />
+                <agentsMode.sidebar />
               </div>
-            ) : null
-          ) : null}
+            ) : null}
+          </div>
         </div>
       </SidebarContent>
 
