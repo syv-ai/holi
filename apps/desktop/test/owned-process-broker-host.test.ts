@@ -263,7 +263,7 @@ function decodeJoinBootstrap(args: string[]) {
   return { bootstrap, script: gunzipSync(Buffer.from(payloads[0], 'base64')).toString('utf8') }
 }
 
-function windowsJoinFixture(cwd: string, runDir?: string) {
+async function windowsJoinFixture(cwd: string, runDir?: string) {
   const adapter = windowsJoinAdapter(cwd)
   const { bootstrap, script } = decodeJoinBootstrap(adapter.args)
   if (
@@ -271,11 +271,58 @@ function windowsJoinFixture(cwd: string, runDir?: string) {
     !script.endsWith(`\n'@\n${joinCompile}exit [HoliOwnedProcess]::RunBroker()`)
   )
     throw new Error('Expected one Add-Type statement before the native broker entry')
-  // Invoke Add-Type directly: piping an empty array suppresses the pipeline
-  // command entirely, leaving compilation permanently between these markers.
+
+  const assemblyPath = join(cwd, 'holi-owned-process.dll')
+  const quotedAssemblyPath = assemblyPath.replaceAll("'", "''")
+  const compileScript = script.replace(
+    `${joinCompile}exit [HoliOwnedProcess]::RunBroker()`,
+    `${joinCompile.trimEnd()} -OutputAssembly '${quotedAssemblyPath}'; exit 0`,
+  )
+  const compilePayload = gzipSync(Buffer.from(compileScript)).toString('base64')
+  const compileCommand = bootstrap.replace(joinPayload, compilePayload)
+  const compiler = spawn(
+    adapter.file,
+    adapter.args.map((arg, index) => (index === adapter.args.length - 1 ? compileCommand : arg)),
+    {
+      cwd,
+      env: adapter.env,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  const bounded = (stream: Readable) =>
+    collect(stream).then((buffer) => buffer.subarray(0, 16 * 1024))
+  const stdout = bounded(compiler.stdout!)
+  const stderr = bounded(compiler.stderr!)
+  const closed = once(compiler, 'close')
+  let status: [number | null, NodeJS.Signals | null]
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    status = (await Promise.race([
+      closed,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('PowerShell compilation exceeded startup budget')),
+          45_000,
+        )
+      }),
+    ])) as [number | null, NodeJS.Signals | null]
+  } catch (error) {
+    compiler.kill()
+    await closed
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+  const [compileOut, compileErr] = await Promise.all([stdout, stderr])
+  if (status[0] !== 0) {
+    throw new Error(
+      `PowerShell compilation failed (${status[0]}): ${compileOut.toString()} ${compileErr.toString()}`,
+    )
+  }
   const marked = script.replace(
-    joinCompile,
-    `${joinPhaseMarker('compile-start')}${joinCompile}${joinPhaseMarker('compile-done')}`,
+    `${joinCompile}exit [HoliOwnedProcess]::RunBroker()`,
+    `Add-Type -Path '${quotedAssemblyPath}'; exit [HoliOwnedProcess]::RunBroker()`,
   )
   const encoded = gzipSync(Buffer.from(marked)).toString('base64')
   const identity = runDir
@@ -460,7 +507,7 @@ describe('owned Job broker host', () => {
     if (reported) return // Preparation timed out; do not spawn during teardown.
     const native =
       process.platform === 'win32'
-        ? windowsJoinFixture(cwd, process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
+        ? await windowsJoinFixture(cwd, process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
         : undefined
     enter('spawn')
     const { child } = native
