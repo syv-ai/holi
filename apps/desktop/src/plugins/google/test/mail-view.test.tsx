@@ -2683,7 +2683,7 @@ test('keeps account rows, messages, and annotations isolated across A-B-A switch
 
   phase = 'switch to B and show its reader'
   mailAccountSub = 'account-b'
-  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await act(async () => getDefaultStore().set(refreshGoogleAtom))
   const accountBRow = await screen.findByRole('button', { name: /Account B mail/ })
   expect(screen.queryByRole('button', { name: /Account A mail/ })).toBeNull()
   await waitFor(() =>
@@ -2695,7 +2695,7 @@ test('keeps account rows, messages, and annotations isolated across A-B-A switch
   // Returning to A remounts its reader/list state, even though Gmail reuses t1.
   phase = 'return to A and reset reader/list'
   mailAccountSub = 'mail-view-account'
-  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await act(async () => getDefaultStore().set(refreshGoogleAtom))
   const returnedARow = await screen.findByRole('button', { name: /Account A mail/ })
   await waitFor(() => expect(within(returnedARow).getByLabelText('Red star')).toBeInTheDocument())
   expect(screen.queryByText('Message from account-b')).toBeNull()
@@ -2707,7 +2707,7 @@ test('keeps account rows, messages, and annotations isolated across A-B-A switch
   await waitFor(() => expect(finishLateSearch).toBeDefined())
   phase = 'switch to B during deferred A list'
   mailAccountSub = 'account-b'
-  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await act(async () => getDefaultStore().set(refreshGoogleAtom))
   await screen.findByRole('button', { name: /Account B mail/ })
   phase = 'settle stale A list in B'
   await act(async () => finishLateSearch?.(page([summary({ subject: 'Stale A search' })])))
@@ -2716,12 +2716,12 @@ test('keeps account rows, messages, and annotations isolated across A-B-A switch
   // A deferred read from the prior A mount must not leak into B.
   phase = 'request A reader after remount'
   mailAccountSub = 'mail-view-account'
-  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await act(async () => getDefaultStore().set(refreshGoogleAtom))
   await user.click(await screen.findByRole('button', { name: /Account A mail/ }))
   await waitFor(() => expect(finishLateRead).toBeDefined())
   phase = 'switch to B before stale A reader settles'
   mailAccountSub = 'account-b'
-  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await act(async () => getDefaultStore().set(refreshGoogleAtom))
   await screen.findByRole('button', { name: /Account B mail/ })
   phase = 'settle stale A reader in B'
   await act(async () =>

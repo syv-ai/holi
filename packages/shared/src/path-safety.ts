@@ -248,7 +248,7 @@ export const MACHINE_STATE_DIR = '.holi/state'
  *  it, list it or learn its names: a bridge token there would let untrusted app
  *  code drive Holi as the agent does. Root-anchored, like the agent surface. */
 export function isMachineStatePath(path: string): boolean {
-  return path.startsWith(`${MACHINE_STATE_DIR}/`)
+  return path === MACHINE_STATE_DIR || path.startsWith(`${MACHINE_STATE_DIR}/`)
 }
 
 /**
