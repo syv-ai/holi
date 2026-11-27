@@ -263,7 +263,7 @@ function decodeJoinBootstrap(args: string[]) {
   return { bootstrap, script: gunzipSync(Buffer.from(payloads[0], 'base64')).toString('utf8') }
 }
 
-async function windowsJoinFixture(cwd: string, startedAt: number, runDir?: string) {
+async function windowsJoinFixture(cwd: string, startedAt: number) {
   const adapter = windowsJoinAdapter(cwd)
   const { bootstrap, script } = decodeJoinBootstrap(adapter.args)
   if (
@@ -272,11 +272,12 @@ async function windowsJoinFixture(cwd: string, startedAt: number, runDir?: strin
   )
     throw new Error('Expected one Add-Type statement before the native broker entry')
 
-  const assemblyPath = join(cwd, 'holi-owned-process.dll')
-  const quotedAssemblyPath = assemblyPath.replaceAll("'", "''")
+  const executablePath = join(cwd, 'holi-owned-process.exe')
+  const quotedExecutablePath = executablePath.replaceAll("'", "''")
+  const main = `\npublic static class HoliOwnedProcessFixture {\n  public static int Main() {\n    try { var runDir = Environment.GetEnvironmentVariable("HOLI_WINDOWS_AGENT_RUN_DIR"); if (!String.IsNullOrEmpty(runDir)) { var process = Diagnostics.Process.GetCurrentProcess(); var ticks = process.StartTime.ToUniversalTime().Ticks; var tmp = Path.Combine(runDir, "broker-root.json.tmp"); var dst = Path.Combine(runDir, "broker-root.json"); File.WriteAllText(tmp, "{\\\"pid\\\":" + process.Id.ToString(CultureInfo.InvariantCulture) + ",\\\"creationTicks\\\":" + ticks.ToString(CultureInfo.InvariantCulture) + "}"); File.Move(tmp, dst); process.Dispose(); } } catch {}\n    return HoliOwnedProcess.RunBroker();\n  }\n}\n`
   const compileScript = script.replace(
     `${joinCompile}exit [HoliOwnedProcess]::RunBroker()`,
-    `${joinCompile.slice(0, -1)} -OutputAssembly '${quotedAssemblyPath}'; exit 0`,
+    `$source += @'\n${main}\n'@\n${joinCompile.slice(0, -1)} -OutputAssembly '${quotedExecutablePath}' -OutputType ConsoleApplication; exit 0`,
   )
   const compilePayload = gzipSync(Buffer.from(compileScript)).toString('base64')
   const compileCommand = bootstrap.replace(joinPayload, compilePayload)
@@ -336,14 +337,9 @@ async function windowsJoinFixture(cwd: string, startedAt: number, runDir?: strin
       `PowerShell compilation failed (${status[0]}): ${compileOut.toString()} ${compileErr.toString()}`,
     )
   }
-  // The broker needs the prepared assembly, not another copy of its C# source.
-  const marked = `$ErrorActionPreference='Stop';Add-Type -Path '${quotedAssemblyPath}'; exit [HoliOwnedProcess]::RunBroker()`
-  const encoded = gzipSync(Buffer.from(marked)).toString('base64')
-  const identity = runDir
-    ? `try { $p = [Diagnostics.Process]::GetCurrentProcess(); $c = $p.StartTime.ToUniversalTime().Ticks; $tmp = '${runDir.replaceAll("'", "''")}\\broker-root.json.tmp'; $dst = '${runDir.replaceAll("'", "''")}\\broker-root.json'; [IO.File]::WriteAllText($tmp, ('{"pid":' + $PID.ToString([Globalization.CultureInfo]::InvariantCulture) + ',"creationTicks":' + $c.ToString([Globalization.CultureInfo]::InvariantCulture) + '}')); $p.Dispose(); [IO.File]::Move($tmp, $dst) } catch {};`
-    : ''
-  adapter.args[adapter.args.length - 1] =
-    identity + joinPhaseMarker('powershell-start') + bootstrap.replace(joinPayload, encoded)
+  // Launch the compiled fixture itself: no second PowerShell assembly-loading pipeline.
+  adapter.file = executablePath
+  adapter.args = []
   return adapter
 }
 
@@ -519,10 +515,7 @@ describe('owned Job broker host', () => {
     })
     const cwd = await directory
     if (reported) return // Preparation timed out; do not spawn during teardown.
-    const native =
-      process.platform === 'win32'
-        ? await windowsJoinFixture(cwd, started, process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
-        : undefined
+    const native = process.platform === 'win32' ? await windowsJoinFixture(cwd, started) : undefined
     enter('spawn')
     const { child } = native
       ? host(native, true)
