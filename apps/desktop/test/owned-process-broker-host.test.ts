@@ -336,10 +336,8 @@ async function windowsJoinFixture(cwd: string, startedAt: number, runDir?: strin
       `PowerShell compilation failed (${status[0]}): ${compileOut.toString()} ${compileErr.toString()}`,
     )
   }
-  const marked = script.replace(
-    `${joinCompile}exit [HoliOwnedProcess]::RunBroker()`,
-    `Add-Type -Path '${quotedAssemblyPath}'; exit [HoliOwnedProcess]::RunBroker()`,
-  )
+  // The broker needs the prepared assembly, not another copy of its C# source.
+  const marked = `$ErrorActionPreference='Stop';Add-Type -Path '${quotedAssemblyPath}'; exit [HoliOwnedProcess]::RunBroker()`
   const encoded = gzipSync(Buffer.from(marked)).toString('base64')
   const identity = runDir
     ? `try { $p = [Diagnostics.Process]::GetCurrentProcess(); $c = $p.StartTime.ToUniversalTime().Ticks; $tmp = '${runDir.replaceAll("'", "''")}\\broker-root.json.tmp'; $dst = '${runDir.replaceAll("'", "''")}\\broker-root.json'; [IO.File]::WriteAllText($tmp, ('{"pid":' + $PID.ToString([Globalization.CultureInfo]::InvariantCulture) + ',"creationTicks":' + $c.ToString([Globalization.CultureInfo]::InvariantCulture) + '}')); $p.Dispose(); [IO.File]::Move($tmp, $dst) } catch {};`
