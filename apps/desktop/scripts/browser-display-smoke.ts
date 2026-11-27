@@ -1732,6 +1732,7 @@ async function run(): Promise<void> {
           'vault-app-b.png',
           'app-frame-read-a.png',
           'app-frame-read-b.png',
+          'app-frame-b-after-a-teardown.png',
           'app-hints-light.png',
           'app-hints-dark.png',
         ],

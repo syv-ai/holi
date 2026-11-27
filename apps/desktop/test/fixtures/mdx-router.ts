@@ -240,10 +240,12 @@ export async function resourceRig(
   }
   const fixture = await rig({
     signedIn: auth(42, 'alice'),
-    inspect: async (_owner, source, signal, format) => {
+    inspect: async (_owner, source, signal, format, settings) => {
       const requestId = String(++id)
       guest.__holiMdxReceive(
-        Buffer.from(JSON.stringify({ id: requestId, source, format })).toString('base64'),
+        Buffer.from(
+          JSON.stringify({ id: requestId, source, format, emitArtifact: settings?.emitArtifact }),
+        ).toString('base64'),
       )
       for (;;) {
         signal?.throwIfAborted()

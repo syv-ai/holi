@@ -530,6 +530,45 @@ test('archiving a thread releases its pristine inline reply guard', async () => 
   )
 })
 
+test('a native mail notice focuses Inbox through the retained composer save guard', async () => {
+  const user = userEvent.setup()
+  const { store, show } = mountMailTabs()
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
+  await user.click(await screen.findByRole('menuitemradio', { name: 'Sent' }))
+  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ mailbox: 'sent' }))
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const composer = await screen.findByRole('region', { name: 'Compose mail' })
+  const subject = within(composer).getByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'unsaved notice draft')
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+
+  show(otherKey)
+  await screen.findByRole('textbox', { name: 'Other app state' })
+  act(() =>
+    googleRenderer.events!['open-mail']!(
+      { remote: 'syv-ai/vault', payload: { mailbox: 'inbox' } },
+      store,
+    ),
+  )
+
+  await waitFor(() => expect(focusedTab(store.get(shellWorkspaceAtom))).toBe(mailKey))
+  expect(await screen.findByRole('region', { name: 'Compose mail' })).toBe(composer)
+  await screen.findByText('Not saved')
+  expect(screen.getByRole('button', { name: 'Mailbox: Sent' })).toBeInTheDocument()
+  expect(subject).toHaveValue('unsaved notice draft')
+
+  saveDraftMock.mockResolvedValue({ id: 'draft-1' })
+  act(() =>
+    googleRenderer.events!['open-mail']!(
+      { remote: 'syv-ai/vault', payload: { mailbox: 'inbox' } },
+      store,
+    ),
+  )
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(screen.getByRole('button', { name: 'Mailbox: Inbox' })).toBeInTheDocument()
+})
+
 test('an open inline reply prevents switching accounts until its save succeeds and it closes', async () => {
   const user = userEvent.setup()
   mountMailTabs()

@@ -4,6 +4,29 @@ export interface MdxDiagnostic {
   column: number
 }
 
+/** A compiled module graph is inert data; consumers must not evaluate it in a privileged context. */
+export interface MdxArtifactGraph {
+  id: string
+  generation: number
+  entry: string
+  modules: MdxArtifactModule[]
+}
+
+export interface MdxArtifactModule {
+  path: string
+  code: string
+  /** Original module specifier to canonical vault path or explicit React runtime reference. */
+  imports: Record<string, { path: string } | { runtime: 'react' | 'react/jsx-runtime' }>
+}
+
+export interface MdxArtifactPublication {
+  id: string
+  generation: number
+}
+
+export const MAX_MDX_ARTIFACT_BYTES = 2 * 1024 * 1024
+export const MAX_MDX_ARTIFACT_GRAPH_BYTES = 4 * 1024 * 1024
+
 // The compiler transports raw specifiers; the broker also caps the canonical HTTPS URL.
 export const MAX_MDX_SPECIFIER_LENGTH = 4096
 

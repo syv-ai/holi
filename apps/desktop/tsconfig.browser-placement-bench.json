@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src",
+    "scripts/browser-placement-bench-main.ts",
+    "scripts/browser-placement-fixture/**/*.ts",
+    "scripts/browser-placement-fixture/**/*.tsx",
+    "src/renderer/src/vite-env.d.ts"
+  ],
+  "compilerOptions": { "allowJs": true, "checkJs": false }
+}

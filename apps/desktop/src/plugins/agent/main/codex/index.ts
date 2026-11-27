@@ -376,7 +376,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): JobsProvider {
           // no MCP servers, and a follow-up finds its thread there; a
           // `CODEX_HOME` the preset sets is the person's folder it copies.
           const preset = deps.env?.() ?? {}
-          const env = { ...buildAgentEnv(base), ...preset }
+          const env = buildAgentEnv({ ...base, ...preset })
           delete env[SESSION_ENV]
           // Nor any project's own: where it runs, the folder that holds it
           // and the vault are untrusted (`home.ts` says why).
