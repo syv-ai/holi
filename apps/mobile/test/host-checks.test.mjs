@@ -47,6 +47,7 @@ const report = {
   nativeFilenameSpellings: true,
   runId,
   platform: 'ios',
+  foundationModels: 'available',
   osVersion: '26.2',
   startedAt: 110,
   finishedAt: 120,
@@ -188,6 +189,21 @@ test('host accepts only fresh complete native evidence for every bundled case', 
   assert.ok(corpus.total > 0)
   assert.equal(corpus.failed, 0)
   validateReport(report, context)
+})
+
+test('host requires valid foundation model evidence but accepts SDK unavailability reasons', () => {
+  for (const evidence of [undefined, 'not-a-native-reason']) {
+    const candidate = { ...report, foundationModels: evidence }
+    if (evidence === undefined) delete candidate.foundationModels
+    assert.throws(() => validateReport(candidate, context))
+  }
+  for (const foundationModels of [
+    'device-not-eligible',
+    'apple-intelligence-not-enabled',
+    'model-not-ready',
+    'unknown',
+  ])
+    validateReport({ ...report, foundationModels }, context)
 })
 
 for (const [name, mutate] of [
