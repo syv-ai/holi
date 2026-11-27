@@ -78,7 +78,7 @@ export interface PluginHostDeps {
   /** Serve a path on the bridge. Returns the undo. */
   route(path: string, route: BridgeRoute, remote: string): () => void
   /** Where the `holi` command lives. */
-  binDir(): string
+  binDir(remote: string): string | Promise<string>
   /** The signed-in GitHub token, or null. */
   githubToken(): string | null
   /** Confine frames on `origin` to it (`window-guard.ts`). Returns the undo. */
@@ -493,6 +493,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
     }
     state.leases.add(lease)
+    let resolvedBinDir: string
     const eventBus = lease.events
     const valid = (): boolean =>
       lease.phase === 'active' && state.generation === activation && !controller.signal.aborted
@@ -627,7 +628,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(deps.route(path, route, remote))
       },
-      binDir: deps.binDir,
+      binDir: () => resolvedBinDir,
       githubToken: deps.githubToken,
       frameOrigin: (origin) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
@@ -893,6 +894,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         cancel: lease.cancel,
       }
     try {
+      resolvedBinDir = await deps.binDir(remote)
+      if (!valid() || lease.superseded || state.closed)
+        throw new Error(`${remote} plugin activation was cancelled`)
       const dispose = await plugin.activate(ctx)
       return {
         id,
