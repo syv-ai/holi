@@ -128,6 +128,13 @@ export interface GoogleSessionDeps {
 }
 
 export class GoogleSession {
+  #grantIdentity = {}
+
+  /** Main-only lifetime identity shared by vault views of this physical grant. */
+  get grantIdentity(): object {
+    return this.#grantIdentity
+  }
+
   #deps: GoogleSessionDeps
   #listeners = new Set<(account: GoogleAccount | null) => void>()
   /**
@@ -344,6 +351,10 @@ class ScopedGoogleSession extends GoogleSession {
     this.#isCurrent = isCurrent
     this.#dispose = dispose
     this.#client = client
+  }
+
+  override get grantIdentity(): object {
+    return this.#source.grantIdentity
   }
 
   get account(): GoogleAccount | null {

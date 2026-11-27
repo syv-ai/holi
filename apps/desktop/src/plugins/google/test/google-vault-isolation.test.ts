@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createGoogleAccounts } from '../main/accounts'
+import { accountApi } from '../main/account-api'
+import { createMailAttention } from '../main/mail-attention'
 import { googleConnectionId } from '../main/connection-id'
 import { createClientStore, type GoogleClient } from '../main/credentials'
 import { createVaultAccounts } from '../main/vault-accounts'
@@ -440,5 +442,92 @@ describe('vault issuing credentials', () => {
     await expect((await restarted.sessionFor('owner/a'))!.getAccessToken()).resolves.toBe(
       'after-restart',
     )
+  })
+})
+
+describe('vault-owned mail attention', () => {
+  it('updates both owners with one arrival banner and continues after the polling owner unlinks', async () => {
+    await tokenStore.write({ subject: grant })
+    await vaults.link('owner/one', grant.sub)
+    await vaults.link('owner/two', grant.sub)
+    const accounts = await manager()
+    let unread = 0
+    let cursor = '10'
+    let messageId: string | null = null
+    const requests: string[] = []
+    const fetch = async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      requests.push(url.pathname)
+      let body: unknown
+      if (url.pathname.endsWith('/labels/INBOX')) body = { threadsUnread: unread }
+      else if (url.pathname.endsWith('/profile')) body = { historyId: cursor }
+      else if (url.pathname.endsWith('/history'))
+        body = {
+          historyId: cursor,
+          history: messageId === null ? [] : [{ messagesAdded: [{ message: { id: messageId } }] }],
+        }
+      else body = { id: messageId, labelIds: ['INBOX', 'UNREAD'] }
+      return new Response(JSON.stringify(body))
+    }
+    vi.stubGlobal('fetch', fetch)
+    const attention = createMailAttention({
+      sessionFor: (remote) => accounts.sessionFor(remote),
+      grantFor: (session) => session.grantIdentity,
+      apiFor: (session) => accountApi(session.accountSub!, (sub) => accounts.sessionForSub(sub))(),
+      schedule: () => () => {},
+    })
+    const notices: string[] = []
+    const subscribe = (remote: string) =>
+      attention.subscribe({
+        remote,
+        notifications: async () => true,
+        changed: () => {},
+        notify: () => {
+          notices.push(remote)
+          return true
+        },
+      })
+    const one = await subscribe('owner/one')
+    const two = await subscribe('owner/two')
+    try {
+      await attention.refresh()
+      expect(notices).toEqual([])
+      const firstId = accounts.list('owner/one')[0]!.sub
+      const secondId = accounts.list('owner/two')[0]!.sub
+      expect(firstId).not.toBe(secondId)
+      unread = 1
+      cursor = '11'
+      messageId = 'arrival-one'
+      requests.length = 0
+      await attention.refresh()
+      expect(one.snapshot()).toMatchObject({
+        accountSub: firstId,
+        unreadThreads: 1,
+        status: 'fresh',
+      })
+      expect(two.snapshot()).toMatchObject({
+        accountSub: secondId,
+        unreadThreads: 1,
+        status: 'fresh',
+      })
+      expect(notices).toEqual(['owner/one'])
+      expect(requests.filter((path) => path.endsWith('/history'))).toHaveLength(1)
+
+      await accounts.unlinkVault('owner/one')
+      unread = 2
+      cursor = '12'
+      messageId = 'arrival-two'
+      await attention.refresh()
+      expect(one.snapshot()).toMatchObject({ accountSub: null, status: 'disconnected' })
+      expect(two.snapshot()).toMatchObject({
+        accountSub: secondId,
+        unreadThreads: 2,
+        status: 'fresh',
+      })
+      expect(notices).toEqual(['owner/one', 'owner/two'])
+    } finally {
+      await Promise.all([one.stop(), two.stop()])
+      vi.unstubAllGlobals()
+    }
   })
 })

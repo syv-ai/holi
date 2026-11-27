@@ -124,6 +124,7 @@ function rig() {
   const snapshots = new Map<string, MailAttentionSnapshot[]>()
   const preferences = new Map<string, boolean>()
   const attention = createMailAttention<Session>({
+    grantFor: (session) => session,
     sessionFor: async (remote) => sessions.get(remote) ?? null,
     apiFor: (session) => servers.get(session)!.api,
     schedule: () => () => {},
