@@ -385,6 +385,29 @@ export function validateSharedGraph(graph) {
   assert.deepEqual(observed, allowed)
 }
 
+export async function whileCommandPending(command, observe, delay = 60_000, { signal } = {}) {
+  let observation
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  if (signal?.aborted) abort()
+  const timer = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      observation = Promise.resolve()
+        .then(() => observe(controller.signal))
+        .catch(() => {})
+    }
+  }, delay)
+  try {
+    return await command
+  } finally {
+    clearTimeout(timer)
+    controller.abort()
+    signal?.removeEventListener('abort', abort)
+    if (observation) await observation
+  }
+}
+
 export function runCommand(
   command,
   args,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   cp,
   lstat,
@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import {
   runCommand,
+  whileCommandPending,
   validateReport,
   validateSharedGraph,
   validateCheckpoint,
@@ -140,7 +141,42 @@ try {
     signal: controller.signal,
     metadata: { xcode, runtime: runtime.identifier, deviceType },
   })
-  await simctl('keychain', simulator, 'add-root-cert', gitFixture.cert)
+  const certificateSha256 = createHash('sha256')
+    .update(await readFile(gitFixture.cert))
+    .digest('hex')
+  await whileCommandPending(
+    simctl('keychain', simulator, 'add-root-cert', gitFixture.cert),
+    async (signal) => {
+      const observation = {
+        runId,
+        simulator,
+        certificateSha256,
+        observedAt: Date.now(),
+        probes: {},
+      }
+      for (const [name, args] of [
+        ['securityd', ['spawn', simulator, 'launchctl', 'print', 'system/com.apple.securityd']],
+        ['trustd', ['spawn', simulator, 'launchctl', 'print', 'system/com.apple.trustd']],
+      ]) {
+        try {
+          if (signal.aborted) break
+          observation.probes[name] = await command('xcrun', ['simctl', ...args], {
+            timeout: 8_000,
+            outputLimit: 4_000,
+            signal,
+          })
+        } catch (error) {
+          observation.probes[name] = { error: String(error).slice(0, 500) }
+        }
+      }
+      await writeFile(
+        join(artifacts, 'pending-certificate-install-observation.json'),
+        JSON.stringify(observation, null, 2),
+      )
+    },
+    5_000,
+    { signal: controller.signal },
+  )
   await simctl('status_bar', simulator, 'override', '--time', '9:41')
   await simctl('install', simulator, app)
   const container = await simctl('get_app_container', simulator, bundleId, 'data')
@@ -197,7 +233,7 @@ try {
     await drainProcess(previous)
     await rm(reportPath, { force: true })
     const launchedAt = Date.now()
-    const output = await command('xcrun', ['simctl', 'launch', simulator, bundleId], {
+    const launchCommand = command('xcrun', ['simctl', 'launch', simulator, bundleId], {
       env: {
         ...process.env,
         SIMCTL_CHILD_HOLI_COMPAT_RUN_ID: runId,
@@ -214,6 +250,60 @@ try {
           : {}),
         ...(moveCase ? { SIMCTL_CHILD_HOLI_MOVE_CASE: String(moveCase.ordinal) } : {}),
       },
+    })
+    const output = await whileCommandPending(launchCommand, async () => {
+      if (phase !== 'normal' || appPids.length !== 0) return
+      try {
+        const listing = await command('ps', ['-axo', 'pid=,comm='], { timeout: 5_000 })
+        const matchingProcesses = listing
+          .split('\n')
+          .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
+          .filter((match) => match && match[2] === installedBinary)
+          .map((match) => Number(match[1]))
+        let reportExists = false
+        try {
+          await lstat(reportPath)
+          reportExists = true
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error
+        }
+        let reportIdentity = null
+        if (reportExists) {
+          try {
+            const report = await readBoundedJson(reportPath)
+            reportIdentity = {
+              runId: report.runId,
+              phase: report.phase,
+              pid: report.pid,
+              matchesRun: report.runId === runId,
+            }
+          } catch (error) {
+            reportIdentity = { error: String(error) }
+          }
+        }
+        await writeFile(
+          join(artifacts, 'pending-launch-observation.json'),
+          JSON.stringify(
+            {
+              runId,
+              simulator,
+              phase,
+              observedAt: Date.now(),
+              capturedAppPid: null,
+              matchingInstalledBinaryProcesses: matchingProcesses,
+              reportExists,
+              reportIdentity,
+            },
+            null,
+            2,
+          ),
+        )
+      } catch (error) {
+        await writeFile(
+          join(artifacts, 'pending-launch-observation-error.json'),
+          JSON.stringify({ runId, phase, error: String(error) }),
+        ).catch(() => {})
+      }
     })
     const pid = Number(output.match(/: (\d+)$/)?.[1])
     assert.ok(Number.isSafeInteger(pid) && pid > 0, `No app PID: ${output}`)
