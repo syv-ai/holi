@@ -1,7 +1,16 @@
 import { Provider, createStore } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import { act, cleanup, render, waitFor } from '@/test/render'
-import { activeRemoteAtom, openTabAtom } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  openTabAtom,
+  sessionAtom,
+  discoverHostHintTargets,
+  activateHostHint,
+  captureHostHintAdapters,
+} from '@/plugin-api'
+import { agentSessionsAtom, agentTerminalsAtom } from '../renderer/state/sessions'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { Terminal } from '@xterm/xterm'
 import { SessionTerminal } from '../renderer/session-terminal'
 import { receivePtyData } from '../renderer/lib/session-terminals'
@@ -46,7 +55,7 @@ vi.mock('@xterm/xterm', async (original) => {
           screen.className = 'xterm-screen'
           mount.append(screen, textarea)
           term.resize(98, 24)
-          vi.spyOn(screen, 'getBoundingClientRect').mockReturnValue({
+          const rect = {
             left: 10,
             top: 20,
             right: 794.5,
@@ -56,10 +65,19 @@ vi.mock('@xterm/xterm', async (original) => {
             x: 10,
             y: 20,
             toJSON: () => ({}),
-          } as DOMRect)
+          } as DOMRect
+          vi.spyOn(screen, 'getBoundingClientRect').mockReturnValue(rect)
+          vi.spyOn(mount, 'getBoundingClientRect').mockReturnValue(rect)
+          Object.defineProperty(document, 'elementFromPoint', {
+            configurable: true,
+            value: () => screen,
+          })
         }
         term.focus = () => textarea.focus()
-        term.loadAddon = () => {}
+        const loadAddon = term.loadAddon.bind(term)
+        term.loadAddon = (addon) => {
+          if (addon instanceof WebLinksAddon) loadAddon(addon)
+        }
         term.registerLinkProvider = (provider) => {
           fixture.linkProvider = provider
           return { dispose() {} }
@@ -78,6 +96,7 @@ afterEach(() => {
   fixture.openExternal.mockClear()
   fixture.linkProvider = null
   vi.unstubAllGlobals()
+  delete (document as Partial<Document>).elementFromPoint
 })
 
 test('native OSC 8 HTTP links activate through the external browser helper', async () => {
@@ -360,3 +379,74 @@ test('Pi fullscreen wheel routing sends accumulated native SGR events only in mo
   act(() => mount.dispatchEvent(disposed))
   expect(disposed.defaultPrevented).toBe(false)
 })
+
+test.each(['pi', 'claude', 'unknown'] as const)(
+  'only a proven Pi session exposes HTTP links, not native-looking prose (%s)',
+  async (provider) => {
+    vi.stubGlobal('holi', { plugin: { send: fixture.send }, openExternal: fixture.openExternal })
+    const store = createStore()
+    store.set(sessionAtom, { login: 'fixture-person' })
+    store.set(activeRemoteAtom, 'fixture/hints')
+    store.set(agentSessionsAtom, [
+      {
+        id: 'hint-session',
+        name: 'Fixture',
+        provider: provider === 'unknown' ? 'pi' : provider,
+        state: 'idle',
+      },
+    ])
+    store.set(agentTerminalsAtom, [{ id: 'hint-terminal', launchedFor: 'hint-session', title: '' }])
+    const ui = render(
+      <Provider store={store}>
+        <SessionTerminal
+          terminalId="hint-terminal"
+          sessionId={provider === 'unknown' ? undefined : 'hint-session'}
+          provider={provider === 'unknown' ? undefined : provider}
+          visible
+        />
+      </Provider>,
+    )
+    ui.container.dataset.pane = 'hint-pane'
+    await waitFor(() => expect(fixture.terminals).toHaveLength(1))
+    act(() =>
+      receivePtyData({
+        id: 'hint-terminal',
+        data: 'Approve tool? [y/n]\r\nhttps://example.test/pi-link',
+      }),
+    )
+    await waitFor(() =>
+      expect(fixture.terminals[0]!.buffer.active.getLine(1)?.translateToString(true)).toContain(
+        'https://example.test/pi-link',
+      ),
+    )
+    const discover = () => {
+      captureHostHintAdapters(ui.container)
+      return discoverHostHintTargets(ui.container).filter(
+        (target) => target.label === 'https://example.test/pi-link',
+      )
+    }
+    if (provider === 'pi') {
+      await waitFor(() => expect(discover()).toHaveLength(1))
+      const target = discover()[0]!
+      expect(activateHostHint(target)).toBe(true)
+      expect(fixture.openExternal).toHaveBeenCalledWith('https://example.test/pi-link')
+      act(() => receivePtyData({ id: 'hint-terminal', data: ' queued' }))
+      expect(activateHostHint(target)).toBe(false)
+      await waitFor(() => expect(discover()).toHaveLength(1))
+      const next = discover()[0]!
+      act(() => {
+        store.set(agentTerminalsAtom, [])
+        store.set(agentTerminalsAtom, [
+          { id: 'hint-terminal', launchedFor: 'hint-session', title: '' },
+        ])
+      })
+      expect(activateHostHint(next)).toBe(false)
+    } else {
+      expect(discover()).toHaveLength(0)
+      expect(fixture.openExternal).not.toHaveBeenCalled()
+    }
+    expect(
+      discoverHostHintTargets(ui.container).some((target) => target.label.includes('Approve tool')),
+    ).toBe(false)
+  },
+)
