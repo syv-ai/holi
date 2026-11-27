@@ -123,9 +123,16 @@ function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {
       settings.env !== null && typeof settings.env === 'object' && !Array.isArray(settings.env)
         ? (settings.env as Record<string, unknown>)
         : {}
-    const differs = Object.entries(env).some(([key, value]) => current[key] !== value)
+    const pathAliases =
+      process.platform === 'win32' && env.PATH !== undefined
+        ? Object.keys(current).filter((key) => key !== 'PATH' && key.toUpperCase() === 'PATH')
+        : []
+    const differs =
+      pathAliases.length > 0 || Object.entries(env).some(([key, value]) => current[key] !== value)
     if (differs) {
-      settings.env = { ...current, ...env }
+      const merged = { ...current, ...env }
+      for (const key of pathAliases) delete merged[key]
+      settings.env = merged
       changed = true
     }
   }

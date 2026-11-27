@@ -27,10 +27,8 @@ export interface PiProviderDeps {
 export function piCommand(deps: PiProviderDeps = {}) {
   return {
     bin: deps.resolveBin ?? (() => resolveBin('pi')),
-    env: (binDir: string | null | undefined): Record<string, string> => ({
-      ...buildPiEnv(process.env, { binDir }),
-      ...deps.env?.(),
-    }),
+    env: (binDir: string | null | undefined): Record<string, string> =>
+      buildPiEnv({ ...process.env, ...deps.env?.() }, { binDir }),
   }
 }
 

@@ -44,6 +44,7 @@ import { MailList } from './mail-list'
 import { MailReader } from './mail-reader'
 import { NavUser } from './nav-user'
 import { replyTarget, useMail, type DraftSummary } from './use-mail'
+import { consumeMailNavigationAtom, mailNavigationRequestAtom } from '../mail-navigation'
 
 /** The block's provider is only context here: its open state, keyboard
  *  shortcut and cookie belong to Holi's own sidebar, so this one never
@@ -269,6 +270,9 @@ function MailAccountShell({
   } | null>(null)
   const compositionOwner = useRef<object | null>(null)
   compositionOwner.current = composition?.identity ?? null
+  const mailNavigation = useAtomValue(mailNavigationRequestAtom)
+  const consumeMailNavigation = useSetAtom(consumeMailNavigationAtom)
+  const handledMailNavigation = useRef(0)
 
   const openConnections = () => openSettingsSection('connections')
   const thread = mail.reader.kind === 'ready' ? mail.reader.thread : null
@@ -298,6 +302,30 @@ function MailAccountShell({
         mail.reloadDrafts()
       }
     })
+
+  const navigateToInbox = useRef<() => void>(() => undefined)
+  navigateToInbox.current = () => {
+    void navigate(() => {
+      mail.setFolder('inbox')
+      mail.setCategory(null)
+      mail.setUnreadOnly(false)
+      mail.search('')
+      mail.closeThread()
+    })
+  }
+  useEffect(() => {
+    if (
+      mailNavigation === null ||
+      mailNavigation.remote !== remote ||
+      mailNavigation.mailbox !== 'inbox' ||
+      handledMailNavigation.current === mailNavigation.id
+    )
+      return
+    handledMailNavigation.current = mailNavigation.id
+    consumeMailNavigation(mailNavigation.id)
+    navigateToInbox.current()
+  }, [consumeMailNavigation, mailNavigation, remote])
+
   const beginComposition = (intent: ComposeIntent, draftId?: string) => {
     transition(() => {
       const session = composeGate.begin()
