@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { closeSync } from 'node:fs'
+import { closeSync, openSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -55,8 +55,10 @@ for await (const line of lines) {
   }
   if (line === 'close-output') {
     await new Promise((resolve) => process.stdout.write(tail, resolve))
-    // Node's process.stdout wrapper deliberately does not close fd 1 on destroy.
+    // End the pipe, then keep fd 1 occupied: libuv's internal close paths
+    // reject stdio descriptors if later native work reuses the vacant slot.
     closeSync(1)
+    openSync('/dev/null', 'w')
     outputClosed = true
     continue
   }

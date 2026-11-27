@@ -51,6 +51,7 @@ const preload = join(app.getAppPath(), 'preload.cjs')
 let win: BrowserWindow | null = null
 let recoveredWindows = 0
 let guestCreations = 0
+let artifactGuestProbes = 0
 let inspectedSources = 0
 let mdxDocumentReady = () => false
 let retireDocument = (_retireDocument: boolean) => {}
@@ -132,6 +133,8 @@ invoke('smoke:status', async () => ({
   vault,
   recoveredWindows,
   guestCreations,
+  artifactGuestProbes,
+  artifactSourceExecuted: '__holi_artifact_source_executed__' in globalThis,
   inspectedSources,
   network: observedNetwork.network,
   resourcePushes,
@@ -185,15 +188,27 @@ invoke('smoke:scenarios', () => {
 app.on('web-contents-created', (_event, contents: WebContents) => {
   if (contents.session !== session.defaultSession) {
     guestCreations += 1
+    contents.on('console-message', ({ message }) => {
+      if (message === 'HOLI_NATIVE_ARTIFACT_RESULT_INERT') artifactGuestProbes += 1
+    })
     contents.once('did-finish-load', () => {
       if (contents.getURL() !== 'https://mdx-compiler.invalid/guest.html') return
       void contents
         .executeJavaScript(
-          `(() => ({
+          `(() => {
+        const take = window.__holiMdxTakeResult;
+        window.__holiMdxTakeResult = () => {
+          const result = take();
+          if (globalThis.__holi_artifact_source_executed__ === true)
+            throw Error('Vault source executed in compiler guest');
+          if (result) console.info('HOLI_NATIVE_ARTIFACT_RESULT_INERT');
+          return result;
+        };
+        return ({
         globals: { process: typeof process, require: typeof require, holi: typeof holi, electron: typeof electron, bridge: typeof holiSmoke },
         storage: { hasCookies: document.cookie !== '', local: localStorage.length, session: sessionStorage.length },
         hasCredentialMarker: localStorage.getItem('holi-native-default-credential-507') !== null,
-      }))()`,
+      })})()`,
         )
         .then((result) => {
           guestProbes.push({

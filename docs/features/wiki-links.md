@@ -4,7 +4,7 @@ Notes link to each other with path-based `[[folder/note.md]]` links. They render
 
 ## How it works
 
-**Grammar.** `packages/shared/src/wiki-links.ts` is the only parser: `[[path]]` or `[[path|Label]]`, where the path is vault-relative and `/`-separated. `parseWikiLinks(text)` returns each match with `target`, `label` and exact `start`/`end` offsets. `wikiLinkRegex()` returns a fresh `RegExp` per call. `formatWikiLink`, `rewriteWikiLinks`, `rewriteWikiLinksMulti` and `wikiLinksToText` (for PDF export) are built on the same parser. There is one link grammar: a link to a task is a link to its `task.<name>.md` file.
+**Grammar.** `packages/shared/src/wiki-links.ts` is the only parser: `[[path]]` or `[[path|Label]]`, where the path is vault-relative and `/`-separated. `parseWikiLinks(text)` returns each match with `target`, `label` and exact `start`/`end` offsets. `wikiLinkRegex()` returns a fresh `RegExp` per call. `formatWikiLink`, `rewriteWikiLinks`, `rewriteWikiLinksMulti` and `wikiLinksToText` (for PDF export) are built on the same parser. Notes and tasks share this wiki-link grammar: a link to a task names its `task.<name>.md` file. Ordinary Markdown links also [navigate in the editor](editor.md#links-between-documents), but are not parsed here or included in wiki-link rewriting and backreferences.
 
 **Rendering.** The rich-text editor draws each `[[link]]` as an inline chip (`features/documents/wiki-link.ts`), written back exactly as typed, which opens its target when pressed. **Not built:** the status orb and title for a task target, the missing-file tint, the inline image for an image target and the hover preview card; the chip is a plain underlined link today ([not-built](../not-built.md)).
 
