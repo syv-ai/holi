@@ -22,7 +22,8 @@ export interface VaultAccountsStore {
   subFor(remote: string): Promise<string | null>
   /** Snapshot, for the settings UI and for `unlinkAccount`. */
   all(): Promise<VaultAccounts>
-  link(remote: string, sub: string): Promise<void>
+  /** Returns an owner-bound rollback for a consent cancelled after linking. */
+  link(remote: string, sub: string): Promise<() => Promise<void>>
   /** Forget this vault's choice. The account and its tokens are untouched: a
    *  vault unlinking must never cost another vault its connection. */
   unlinkVault(remote: string): Promise<void>
@@ -72,25 +73,53 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
       await expired.update((latest) => without(latest, drop))
     }
   }
+  const owners = new Map<string, symbol>()
+  const restore = (current: VaultAccounts, remote: string, previous: string | undefined) => {
+    const next = { ...current }
+    if (previous === undefined) delete next[remote]
+    else next[remote] = previous
+    return next
+  }
   return {
     all: store.read,
     async subFor(remote) {
       return (await store.read())[remote] ?? null
     },
-    link(remote, sub) {
-      return serial(async () => {
+    async link(remote, sub) {
+      const owner = Symbol('google-vault-link')
+      let previous: string | undefined
+      let previousExpired: string | undefined
+      await serial(async () => {
+        previous = (await store.read())[remote]
+        previousExpired = (await expired.read())[remote]
         await store.update((current) => ({ ...current, [remote]: sub }))
-        await clearExpired((key) => key === remote)
+        try {
+          await clearExpired((key) => key === remote)
+        } catch (error) {
+          await store.update((current) => restore(current, remote, previous))
+          throw error
+        }
+        owners.set(remote, owner)
       })
+      return () =>
+        serial(async () => {
+          if (owners.get(remote) !== owner) return
+          await store.update((current) => restore(current, remote, previous))
+          await expired.update((current) => restore(current, remote, previousExpired))
+          owners.delete(remote)
+        })
     },
     unlinkVault(remote) {
       return serial(async () => {
+        owners.delete(remote)
         await store.update((current) => without(current, (key) => key === remote))
         await clearExpired((key) => key === remote)
       })
     },
     unlinkAccount(sub) {
       return serial(async () => {
+        for (const [remote, value] of Object.entries(await store.read()))
+          if (value === sub) owners.delete(remote)
         await store.update((current) => without(current, (_, value) => value === sub))
         await clearExpired((_, value) => value === sub)
       })
@@ -99,6 +128,7 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
       return serial(async () => {
         const links = await store.read()
         const lost = Object.keys(links).filter((remote) => links[remote] === sub)
+        for (const remote of lost) owners.delete(remote)
         await expired.update((current) => ({
           ...current,
           ...Object.fromEntries(lost.map((remote) => [remote, sub])),
