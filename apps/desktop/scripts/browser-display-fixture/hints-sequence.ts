@@ -87,7 +87,7 @@
       `(() => { const target=document.querySelector(${JSON.stringify(selector)});target.tabIndex=-1;target.focus() })()`,
     )
     await captureFrame(page)
-    if (selector === '#search') await pageNativePress('Escape')
+    await pageNativePress('Escape')
     await pageNativePress('f')
   }
   const hostHintCount = () =>
@@ -887,8 +887,13 @@
   const themeEvidence: any[] = []
   const setActualTheme = async (theme: 'light' | 'dark') => {
     for (const wc of [page, win.webContents]) {
-      if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
-      await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+      const attachedHere = !wc.debugger.isAttached()
+      if (attachedHere) wc.debugger.attach('1.3')
+      try {
+        await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+      } finally {
+        if (attachedHere) wc.debugger.detach()
+      }
     }
     await ui(
       `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(theme)}`,
@@ -963,7 +968,16 @@
   hintMark('installed-kbd-light-dark-and-custom-theme-presentation-matches-page')
 
   if (process.env.HOLI_758_CHILD_HINTS === '1') {
+    const previousNonce = (
+      sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode')?.payload as
+        { nonce?: string } | undefined
+    )?.nonce
     await invoke('A', 'open', { tab: 'same', url: `${url}/758-root` })
+    await until(() => {
+      const state = sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode')
+        ?.payload as { nonce?: string; mode?: string } | undefined
+      return !!state?.nonce && state.nonce !== previousNonce
+    }, 'direct-child document Vim readiness')
     await until(() => page.getURL().endsWith('/758-root'), 'direct-child root navigation')
     const direct = () => page.mainFrame.frames.filter((frame) => frame.url.includes('/758-'))
     await until(() => direct().length === 3, 'three direct child documents')
@@ -1011,7 +1025,7 @@
       return snapshot.targets
         .map((target: any) => ({
           ...target,
-          key: shown.params.labels.find((label: any) => label.id === target.id)?.key,
+          key: shown.params.p.labels.find((label: any) => label.id === target.id)?.key,
         }))
         .filter((target: any) => target.key)
     }
