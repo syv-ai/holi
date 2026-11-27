@@ -274,13 +274,16 @@ async function windowsJoinFixture(cwd: string, startedAt: number) {
 
   const executablePath = join(cwd, 'holi-owned-process.exe')
   const quotedExecutablePath = executablePath.replaceAll("'", "''")
-  const main = `\npublic static class HoliOwnedProcessFixture {\n  public static int Main() {\n    try { var runDir = Environment.GetEnvironmentVariable("HOLI_WINDOWS_AGENT_RUN_DIR"); if (!String.IsNullOrEmpty(runDir)) { var process = Diagnostics.Process.GetCurrentProcess(); var ticks = process.StartTime.ToUniversalTime().Ticks; var tmp = Path.Combine(runDir, "broker-root.json.tmp"); var dst = Path.Combine(runDir, "broker-root.json"); File.WriteAllText(tmp, "{\\\"pid\\\":" + process.Id.ToString(CultureInfo.InvariantCulture) + ",\\\"creationTicks\\\":" + ticks.ToString(CultureInfo.InvariantCulture) + "}"); File.Move(tmp, dst); process.Dispose(); } } catch {}\n    return HoliOwnedProcess.RunBroker();\n  }\n}\n`
+  const main = `\npublic static class HoliOwnedProcessFixture {\n  public static int Main() {\n    try { var runDir = Environment.GetEnvironmentVariable("HOLI_WINDOWS_AGENT_RUN_DIR"); if (!String.IsNullOrEmpty(runDir)) { var process = System.Diagnostics.Process.GetCurrentProcess(); var ticks = process.StartTime.ToUniversalTime().Ticks; var tmp = Path.Combine(runDir, "broker-root.json.tmp"); var dst = Path.Combine(runDir, "broker-root.json"); File.WriteAllText(tmp, "{\\\"pid\\\":" + process.Id.ToString(CultureInfo.InvariantCulture) + ",\\\"creationTicks\\\":" + ticks.ToString(CultureInfo.InvariantCulture) + "}"); File.Move(tmp, dst); process.Dispose(); } } catch {}\n    return HoliOwnedProcess.RunBroker();\n  }\n}\n`
   const compileScript = script.replace(
     `${joinCompile}exit [HoliOwnedProcess]::RunBroker()`,
-    `$source += @'\n${main}\n'@\n${joinCompile.slice(0, -1)} -OutputAssembly '${quotedExecutablePath}' -OutputType ConsoleApplication; exit 0`,
+    `$source += @'\n${main}\n'@\n${joinCompile.slice(0, -1)} -OutputAssembly '${quotedExecutablePath}' -OutputType ConsoleApplication; ${joinPhaseMarker('compile-done')}exit 0`,
   )
   const compilePayload = gzipSync(Buffer.from(compileScript)).toString('base64')
-  const compileCommand = bootstrap.replace(joinPayload, compilePayload)
+  const compileCommand =
+    joinPhaseMarker('powershell-start') +
+    joinPhaseMarker('compile-start') +
+    bootstrap.replace(joinPayload, compilePayload)
   const compiler = spawn(
     adapter.file,
     adapter.args.map((arg, index) => (index === adapter.args.length - 1 ? compileCommand : arg)),
@@ -340,6 +343,8 @@ async function windowsJoinFixture(cwd: string, startedAt: number) {
   // Launch the compiled fixture itself: no second PowerShell assembly-loading pipeline.
   adapter.file = executablePath
   adapter.args = []
+  if (process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
+    adapter.env.HOLI_WINDOWS_AGENT_RUN_DIR = process.env.HOLI_WINDOWS_AGENT_RUN_DIR
   return adapter
 }
 
