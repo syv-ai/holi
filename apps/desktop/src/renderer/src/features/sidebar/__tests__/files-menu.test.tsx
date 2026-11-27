@@ -1307,6 +1307,7 @@ test('folder menus copy shareable Holi links but exclude machine-local folders',
         dirs: ['kunder', 'private.local.folder', '.holi', '.holi/state', 'holi-state'],
       }),
     )
+    act(() => store.set(showHiddenByVaultAtom, { 'mara/notes': true }))
     fireEvent.contextMenu(await screen.findByText('kunder'))
     await user.click(await screen.findByRole('menuitem', { name: 'Copy Holi link' }))
     await waitFor(() =>
@@ -1317,6 +1318,8 @@ test('folder menus copy shareable Holi links but exclude machine-local folders',
     fireEvent.contextMenu(await screen.findByText('private.local.folder'))
     await screen.findByRole('menuitem', { name: 'New document' })
     expect(screen.queryByRole('menuitem', { name: 'Copy Holi link' })).toBeNull()
+    await user.keyboard('{Escape}')
+    fireEvent.click(await screen.findByText('.holi'))
     fireEvent.contextMenu(await screen.findByText('state'))
     await screen.findByRole('menuitem', { name: 'New document' })
     expect(screen.queryByRole('menuitem', { name: 'Copy Holi link' })).toBeNull()
