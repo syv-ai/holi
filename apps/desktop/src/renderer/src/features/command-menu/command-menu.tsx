@@ -193,7 +193,9 @@ export function CommandMenu({
   onOpenScratchpad?: () => void
 }) {
   const [query, setQuery] = useState('')
-  const { vimFieldProps, vimFieldMode } = useVimField('command-menu', query)
+  const { vimFieldProps, vimFieldMode } = useVimField('command-menu', query, {
+    allowEscapePropagation: true,
+  })
   const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const remote = useAtomValue(activeRemoteAtom)
@@ -548,6 +550,12 @@ export function CommandMenu({
       title="Command menu"
       description="Go to a document, a view or an app, or run an action."
       className="sm:max-w-xl"
+      onEscapeKeyDown={(event) => {
+        if (query !== '') {
+          event.preventDefault()
+          setQuery('')
+        }
+      }}
     >
       <Command
         shouldFilter={false}
