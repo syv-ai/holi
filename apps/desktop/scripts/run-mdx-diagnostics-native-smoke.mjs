@@ -1,3 +1,4 @@
+import { runArtifactNativeAcceptance } from './mdx-artifacts-native-smoke.mjs'
 import { runLocalNativeAcceptance } from './mdx-local-native-smoke.mjs'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -23,6 +24,7 @@ import { createOwnedProcesses } from './owned-processes.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const buildOnly = process.argv[2] === '--build-only'
+const artifactsOnly = process.argv[2] === '--artifacts-only'
 const fixtureSha = process.env.HOLI_MDX_SMOKE_FIXTURE_SHA
 const recordVideo = process.env.HOLI_MDX_SMOKE_VIDEO === '1'
 if (!buildOnly) {
@@ -35,10 +37,10 @@ if (!buildOnly) {
     'Native fixture cleanup requires a POSIX process group',
   )
 }
-const evidenceArgument = process.argv[buildOnly ? 3 : 2]
+const evidenceArgument = process.argv[buildOnly || artifactsOnly ? 3 : 2]
 const evidence = evidenceArgument
   ? resolve(evidenceArgument)
-  : await mkdtemp(join(tmpdir(), 'holi-665-evidence-'))
+  : await mkdtemp(join(tmpdir(), artifactsOnly ? 'holi-783-evidence-' : 'holi-665-evidence-'))
 await mkdir(evidence, { recursive: true })
 assert.deepEqual(await readdir(evidence), [], 'Use a new or empty evidence directory')
 const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-665-mdx-native-')))
@@ -53,6 +55,7 @@ let cdp
 let logs = ''
 let outcome = 'failed'
 let nativeScenarios = null
+let artifactScenarios = null
 let runtime = null
 let positionedDiagnostics = null
 let renderer = null
@@ -314,6 +317,13 @@ async function runNative(electron, artifact) {
   await evaluate(`localStorage.setItem('holi-native-default-credential-507', 'synthetic-only')`)
   checks.push('isolated profile and vault', 'production renderer has no privileged globals')
 
+  if (artifactsOnly) {
+    artifactScenarios = await runArtifactNativeAcceptance(page, { vault, checks, ui })
+    renderer = await evaluate('({errors: window.__mdxSmoke.errors.slice(0, 10)})')
+    assert.deepEqual(renderer.errors, [], 'fixture renderer reported runtime errors')
+    outcome = 'passed'
+    return
+  }
   const local = await runLocalNativeAcceptance(page, {
     isolation,
     checks,
@@ -436,10 +446,14 @@ async function finalize() {
     join(evidence, 'result.json'),
     JSON.stringify(
       {
-        issue: 665,
+        issue: artifactsOnly ? 783 : 665,
+        scope: artifactsOnly
+          ? 'inert local artifacts; no preview execution or external data acceptance'
+          : 'diagnostics and external data',
         outcome,
         checks: { passed: checks.length, names: checks },
         nativeScenarios,
+        artifactScenarios,
         external: { ...external, fixtureSha: fixtureSha ?? null },
         nestedResources: { ...nestedResources, fixtureSha: fixtureSha ?? null },
         runtime,

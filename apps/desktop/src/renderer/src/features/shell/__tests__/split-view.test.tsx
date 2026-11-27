@@ -236,6 +236,9 @@ test('scratchpad actions wait for the active vault to finish opening', async () 
   await userEvent.type(screen.getByRole('combobox'), '>scratchpad')
   expect(screen.queryByRole('option', { name: /scratchpad/i })).not.toBeInTheDocument()
   await userEvent.keyboard('{Escape}')
+  expect(screen.getByRole('combobox')).toHaveValue('')
+  await userEvent.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
   // Once B's open completes, the palette action appears and opens the normal
   // document tab. Repeating the shortcut selects that same tab.
