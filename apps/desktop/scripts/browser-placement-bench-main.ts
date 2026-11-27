@@ -250,9 +250,9 @@ async function run(): Promise<void> {
   }
   const scenarios = selectScenarios(process.env.HOLI_BENCH_SCENARIO)
   const collect = createBenchmarkSampling({ win, allPageIds, allPagePids, placementMessages })
-  const sample = async (trial: string, phase: string) => {
+  const sample = async (trial: string, phase: string, record = true) => {
     const result = await collect(trial, phase)
-    metrics.push(result.observation)
+    if (record) metrics.push(result.observation)
     return result.snapshot
   }
   for (let repetition = 0; repetition < repetitions; repetition++) {
@@ -377,6 +377,11 @@ async function run(): Promise<void> {
         `if (window.__placementBenchStats) { window.__placementBenchStats.callbacks = 0; window.__placementBenchStats.hostRects = 0; window.__placementBenchStats.coverageScans = 0; window.__placementBenchStats.overlayRects = 0 }`,
       )
       const trial = `rep-${repetition + 1}`
+      const start = performance.now()
+      const deadline = start + seconds * 1000
+      // Electron's first app.getAppMetrics() CPU observation is a zero baseline. Prime it
+      // after trial setup so the first measured interval cannot include setup or warmup.
+      await sample(trial, scenario.name, false)
       const sampler = createTrialSampling({
         condition: { focused: true, visible: true, minimized: false },
         counters: process.env.HOLI_BENCH_COUNTS === '1',
@@ -396,12 +401,11 @@ async function run(): Promise<void> {
         stats: initial.stats,
         visibilityEpoch: initial.visibilityEpoch,
       })
-      const start = performance.now()
-      const deadline = start + seconds * 1000
       while (performance.now() < deadline) {
+        await pause(Math.min(1000, Math.max(0, deadline - performance.now())))
+        if (performance.now() >= deadline) break
         const snapshot = await sample(trial, scenario.name)
         sampler.observe(snapshot)
-        await pause(Math.min(1000, Math.max(0, deadline - performance.now())))
       }
       const terminal = await sample(trial, scenario.name)
       const result = sampler.finish(terminal)
