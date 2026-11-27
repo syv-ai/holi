@@ -10,6 +10,7 @@ import { atom, getDefaultStore } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
 import { mailCatchUpByVaultAtom } from '../renderer/mail/mail-catch-up'
+import { refreshGoogleAtom } from '../renderer/account'
 import { ConnectionsSection } from '../renderer/connections-section'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
@@ -53,10 +54,10 @@ vi.mock('@/plugin-api', async (importOriginal) => {
 const google: Record<string, (params: unknown) => unknown> = {
   status: () => ({
     account:
-      accountSub === ''
-        ? null
-        : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test', sub: accountSub },
+      accountSub === '' ? null : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test' },
+    currentSub: accountSub || null,
     missingScopes: [],
+    needsReconnect: false,
   }),
   allAccounts: () => ({
     accounts: [
@@ -251,31 +252,30 @@ test('retained mail saves before Settings changes the Google account and keeps t
   await user.type(editor, 'still here')
 
   saveDraftMock.mockRejectedValueOnce(new Error('offline'))
-  await user.click(await screen.findByRole('button', { name: 'Use in this vault' }))
+  await user.click(await screen.findByRole('button', { name: 'Disconnect this vault' }))
   expect(await screen.findByRole('alert')).toHaveTextContent(/draft.*not changed/i)
-  expect(useAccountMock).not.toHaveBeenCalled()
+  expect(disconnectVaultMock).not.toHaveBeenCalled()
+  expect(accountSub).toBe('a')
   expect(editor).toHaveValue('still here')
 
-  useAccountMock.mockImplementationOnce(
+  disconnectVaultMock.mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         finishLink = () => {
-          accountSub = 'b'
+          accountSub = ''
           resolve({ ok: true })
         }
       }),
   )
-  await user.click(screen.getByRole('button', { name: 'Use in this vault' }))
+  await user.click(screen.getByRole('button', { name: 'Disconnect this vault' }))
   await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2))
   expect(saveDraftMock.mock.calls.at(-1)![0]).toMatchObject({ mail: { subject: 'still here' } })
   await waitFor(() => expect(editor).toBeDisabled())
   finishLink()
-  await waitFor(() => expect(useAccountMock).toHaveBeenCalledTimes(1))
-  expect(accountSub).toBe('b')
-  expect(
-    await screen.findByRole('button', { name: 'Google account ada@home.test' }),
-  ).toBeInTheDocument()
+  await waitFor(() => expect(disconnectVaultMock).toHaveBeenCalledTimes(1))
+  expect(accountSub).toBe('')
   expect(saveDraftMock.mock.calls.at(-1)![0]).toMatchObject({ mail: { subject: 'still here' } })
+  expect(await screen.findByRole('button', { name: 'Connect' })).toBeInTheDocument()
 })
 
 test('lists the inbox from Gmail with its sender, subject, tab and labels', async () => {
@@ -542,15 +542,17 @@ test('a failed load offers Try again, a disconnected one Connections', async () 
   expect(await screen.findByText('Google isn’t connected')).toBeInTheDocument()
 })
 
-test('the account menu switches the vault to another connected account', async () => {
+test('the account menu exposes only the current identity and Connections navigation', async () => {
   const user = userEvent.setup()
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
 
   await user.click(await screen.findByRole('button', { name: 'Google account ada@syv.ai' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
 
-  expect(useAccountMock).toHaveBeenCalledWith({ sub: 'b' })
+  expect(screen.getByRole('menuitem', { name: /connections/i })).toBeInTheDocument()
+  expect(screen.queryByText('ada@home.test')).toBeNull()
+  expect(screen.getByText('ada@syv.ai')).toBeInTheDocument()
+  expect(useAccountMock).not.toHaveBeenCalled()
 })
 
 test('compose opens the existing composer inline in the reader', async () => {
@@ -564,7 +566,7 @@ test('compose opens the existing composer inline in the reader', async () => {
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
-test('a failed composition save blocks thread, folder, compose, and account navigation', async () => {
+test('a failed composition save blocks thread, folder, compose, and Connections navigation', async () => {
   const user = userEvent.setup()
   saveDraftMock.mockRejectedValue(new Error('offline'))
   render(<MailShell />)
@@ -587,8 +589,7 @@ test('a failed composition save blocks thread, folder, compose, and account navi
   expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved words')
 
   await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
-  expect(useAccountMock).not.toHaveBeenCalled()
+  await user.click(await screen.findByRole('menuitem', { name: /connections/i }))
   expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved words')
 })
 
@@ -1036,9 +1037,9 @@ test('catch-up admission survives Google account A-B-A while startup is pending'
   await user.click(screen.getByRole('button', { name: 'Catch me up' }))
   await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
 
-  for (const email of ['ada@home.test', 'ada@syv.ai']) {
-    await user.click(screen.getByRole('button', { name: /Google account/ }))
-    await user.click(await screen.findByRole('menuitem', { name: email }))
+  for (const sub of ['b', 'a']) {
+    accountSub = sub
+    getDefaultStore().set(refreshGoogleAtom)
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Starting catch-up' })).toBeDisabled(),
     )
@@ -1210,10 +1211,16 @@ test.each(['vault', 'account'] as const)(
       getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
       await screen.findByRole('button', { name: 'Confirming stop…' })
     } else {
-      for (const email of ['ada@home.test', 'ada@syv.ai']) {
-        await user.click(screen.getByRole('button', { name: /Google account/ }))
-        await user.click(await screen.findByRole('menuitem', { name: email }))
-        await screen.findByRole('button', { name: `Google account ${email}` })
+      for (const sub of ['b', 'a']) {
+        accountSub = sub
+        getDefaultStore().set(refreshGoogleAtom)
+        await waitFor(() =>
+          expect(
+            screen.getByRole('button', {
+              name: `Google account ${sub === 'a' ? 'ada@syv.ai' : 'ada@home.test'}`,
+            }),
+          ).toBeInTheDocument(),
+        )
       }
     }
     finish({ ok: true })

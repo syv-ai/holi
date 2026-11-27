@@ -11,7 +11,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GOOGLE_SCOPES, GoogleSession, type AccountRef } from '../main/session'
+import {
+  GOOGLE_SCOPES,
+  GoogleReconnectRequiredError,
+  GoogleSession,
+  type AccountRef,
+} from '../main/session'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../main/token-store'
 
 /** `safeStorage`'s shape, with encryption that is just a reversible marker. */
@@ -111,6 +116,60 @@ function refreshFetch(body: Record<string, unknown>, delayMs = 0) {
   })
   return fn as unknown as typeof globalThis.fetch & { mock: { calls: unknown[] } }
 }
+
+describe('vault-owned sessions', () => {
+  it('shares refresh authority but refuses tokens after its vault link changes', async () => {
+    let release!: () => void
+    let admitted!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      admitted = resolve
+    })
+    const endpoint = refreshFetch({ access_token: 'rotated', expires_in: 3600 })
+    const fetchImpl: typeof globalThis.fetch = async (...args) => {
+      admitted()
+      await gate
+      return endpoint(...args)
+    }
+    const source = await connected(auth({ expiresAt: NOW - 1 }), fetchImpl)
+    let ownsA = true
+    const a = source.scoped('connection-a', () => ownsA)
+    const b = source.scoped('connection-b', () => true)
+    expect(a.account).toEqual({ email: 'ada@syv.ai' })
+    expect(a.accountSub).toBe('connection-a')
+    expect(b.accountSub).toBe('connection-b')
+    const pendingA = a.getAccessToken()
+    const pendingB = b.getAccessToken()
+    await started
+    ownsA = false
+    const refused = expect(pendingA).rejects.toBeInstanceOf(GoogleReconnectRequiredError)
+    release()
+    await refused
+    await expect(pendingB).resolves.toBe('rotated')
+    expect(endpoint.mock.calls).toHaveLength(1)
+    expect(a.account).toBeNull()
+    expect(a.accountSub).toBeNull()
+  })
+
+  it('disconnects only through its owner without revoking a shared grant', async () => {
+    const source = await connected(auth())
+    let ownsA = true
+    const a = source.scoped(
+      'connection-a',
+      () => ownsA,
+      async () => {
+        ownsA = false
+      },
+    )
+    const b = source.scoped('connection-b', () => true)
+    await a.disconnect()
+    expect(a.account).toBeNull()
+    await expect(b.getAccessToken()).resolves.toBe('at-1')
+    expect(b.account).toEqual({ email: 'ada@syv.ai' })
+  })
+})
 
 describe('loading', () => {
   it('reads the keychain and reports the account without exposing tokens', async () => {

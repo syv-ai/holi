@@ -36,6 +36,7 @@ function rig() {
   const calls: { remote: string; url: string; method: string; body?: unknown }[] = []
   const accounts = {
     sessionFor: async (remote: string) => ({
+      accountSub: `account:${remote}`,
       getAccessToken: async () => `token:${remote}`,
     }),
   } as unknown as GoogleAccountsManager

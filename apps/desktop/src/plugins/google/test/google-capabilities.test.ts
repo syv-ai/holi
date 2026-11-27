@@ -87,7 +87,13 @@ function rig({
   const capabilities = googleCapabilities({
     accounts: {
       sessionFor: async () =>
-        googleData === null ? null : { accountSub: 'sub-1', getAccessToken: async () => 'token' },
+        googleData === null
+          ? null
+          : {
+              accountSub: 'sub-1',
+              account: { email: 'ada@syv.ai' },
+              getAccessToken: async () => 'token',
+            },
       ...accounts,
     } as GoogleAccountsManager,
     dataFor: async () => googleData,
@@ -729,10 +735,12 @@ describe('accounts per vault', () => {
     const links = new Map<string, string>([['syv/work', 'sub-2']])
     const calls: { name: string; arg: unknown }[] = []
     const accounts = {
-      list: () => [
-        { sub: 'sub-1', email: 'ada@syv.ai' },
-        { sub: 'sub-2', email: 'work@syv.ai' },
-      ],
+      list: (remote: string) => {
+        const sub = links.get(remote)
+        return sub === undefined
+          ? []
+          : [{ sub, email: sub === 'sub-1' ? 'ada@syv.ai' : 'work@syv.ai' }]
+      },
       sessionFor: async (r: string) => {
         const sub = links.get(r)
         return sub === undefined
@@ -751,10 +759,15 @@ describe('accounts per vault', () => {
         calls.push({ name: 'unlinkVault', arg: r })
         links.delete(r)
       },
-      removeAccount: async (sub: string) => {
-        calls.push({ name: 'removeAccount', arg: sub })
-        for (const [k, v] of links) if (v === sub) links.delete(k)
+      removeAccount: async (remote: string, id: string) => {
+        calls.push({ name: 'removeAccount', arg: { remote, id } })
+        if (links.get(remote) === id) links.delete(remote)
       },
+      cancelConnect: (remote: string) => {
+        calls.push({ name: 'cancelConnect', arg: remote })
+      },
+      legacyConnection: () => null,
+      client: async () => ({ id: 'id-1.apps.googleusercontent.com', source: 'shipped' as const }),
       overview: async (remote: string) => overviews(remote, links.get(remote)),
     }
     const r = rig({ accounts })
@@ -763,10 +776,7 @@ describe('accounts per vault', () => {
 
   it('lists every connected account and names the one this vault uses', async () => {
     expect(await accountsRig().call('allAccounts', undefined, 'syv/work')).toEqual({
-      accounts: [
-        { sub: 'sub-1', email: 'ada@syv.ai' },
-        { sub: 'sub-2', email: 'work@syv.ai' },
-      ],
+      accounts: [{ sub: 'sub-2', email: 'work@syv.ai' }],
       current: 'sub-2',
     })
   })
@@ -799,9 +809,13 @@ describe('accounts per vault', () => {
 
   it('reports no account for a vault that has never connected', async () => {
     const { call } = accountsRig()
-    expect(await call('allAccounts', undefined, 'ada-holm/notes')).toMatchObject({ current: null })
+    expect(await call('allAccounts', undefined, 'ada-holm/notes')).toEqual({
+      accounts: [],
+      current: null,
+    })
     expect(await call('status', undefined, 'ada-holm/notes')).toEqual({
       account: null,
+      currentSub: null,
       missingScopes: [],
       needsReconnect: false,
     })
@@ -1116,7 +1130,7 @@ describe('what other people wrote, at the CLI door', () => {
     try {
       const { call, cli } = rig({
         accounts: {
-          sessionFor: async () => ({ getAccessToken: async () => 'token' }),
+          sessionFor: async () => ({ accountSub: 'sub-1', getAccessToken: async () => 'token' }),
         } as unknown as Partial<GoogleAccountsManager>,
       })
       const ui = (await call('thread', { id: 't-read' })) as {

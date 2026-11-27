@@ -91,6 +91,9 @@ export interface GoogleClientStore {
   read(): Promise<GoogleClient | null>
   /** `null` goes back to the environment's or the shipped client. */
   write(client: GoogleClient | null): Promise<void>
+  readVault(remote: string): Promise<GoogleClient | null>
+  hasVault(remote: string): Promise<boolean>
+  writeVault(remote: string, client: GoogleClient | null): Promise<void>
 }
 
 /**
@@ -108,41 +111,111 @@ export interface GoogleClientStore {
  * read is no client**, which falls back to the next source.
  */
 export function createClientStore(path: string, storage: SafeStorageLike): GoogleClientStore {
+  let writes = Promise.resolve()
+  const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = writes.then(operation)
+    writes = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  async function payload(): Promise<StoredClients> {
+    const text = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (text === null) return { legacy: null, vaults: {} }
+    const envelope: unknown = JSON.parse(text)
+    if (!isEnvelope(envelope)) throw new Error('Unreadable Google client store')
+    const raw = JSON.parse(storage.decryptString(Buffer.from(envelope.data, 'base64')))
+    if (envelope.v === 1) return { legacy: parseClient(raw), vaults: {} }
+    if (envelope.v !== CLIENT_VERSION || raw === null || typeof raw !== 'object') {
+      throw new Error('Unreadable Google client store')
+    }
+    const value = raw as Record<string, unknown>
+    const vaults: Record<string, GoogleClient | null> = {}
+    if (value.vaults === null || typeof value.vaults !== 'object' || Array.isArray(value.vaults)) {
+      throw new Error('Unreadable Google client store')
+    }
+    for (const [remote, client] of Object.entries(value.vaults)) {
+      if (client === null) vaults[remote] = null
+      else {
+        const parsed = parseClient(client)
+        if (!parsed) throw new Error('Unreadable Google client store')
+        vaults[remote] = parsed
+      }
+    }
+    return { legacy: parseClient(value.legacy), vaults }
+  }
+
+  async function save(value: StoredClients): Promise<void> {
+    if (!storage.isEncryptionAvailable())
+      throw new EncryptionUnavailableError('your own Google client')
+    const envelope = {
+      v: CLIENT_VERSION,
+      data: storage.encryptString(JSON.stringify(value)).toString('base64'),
+    }
+    await mkdir(dirname(path), { recursive: true })
+    const tmp = `${path}.tmp`
+    await writeFile(tmp, JSON.stringify(envelope), { mode: 0o600 })
+    await rename(tmp, path)
+  }
+
   return {
     async read() {
-      const text = await readFile(path, 'utf8').catch(() => null)
-      if (text === null) return null
       try {
-        const envelope: unknown = JSON.parse(text)
-        if (!isEnvelope(envelope) || envelope.v !== CLIENT_VERSION) return null
-        return parseClient(JSON.parse(storage.decryptString(Buffer.from(envelope.data, 'base64'))))
+        return (await payload()).legacy
       } catch {
         return null
       }
     },
-    async write(client) {
-      if (client === null) {
-        await rm(path, { force: true })
-        return
+    write(client) {
+      return serialize(async () => {
+        if (client === null) {
+          const current = await payload()
+          current.legacy = null
+          if (Object.keys(current.vaults).length === 0) await rm(path, { force: true })
+          else await save(current)
+          return
+        }
+        const current = await payload()
+        current.legacy = client
+        await save(current)
+      })
+    },
+    async readVault(remote) {
+      try {
+        return (await payload()).vaults[remote] ?? null
+      } catch {
+        return null
       }
-      // Checked before anything touches the filesystem, as the tokens are.
-      if (!storage.isEncryptionAvailable()) {
-        throw new EncryptionUnavailableError('your own Google client')
+    },
+    async hasVault(remote) {
+      try {
+        return Object.hasOwn((await payload()).vaults, remote)
+      } catch {
+        return false
       }
-      const envelope = {
-        v: CLIENT_VERSION,
-        data: storage.encryptString(JSON.stringify(client)).toString('base64'),
-      }
-      await mkdir(dirname(path), { recursive: true })
-      const tmp = `${path}.tmp`
-      await writeFile(tmp, JSON.stringify(envelope), { mode: 0o600 })
-      await rename(tmp, path)
+    },
+    writeVault(remote, client) {
+      return serialize(async () => {
+        const current = await payload()
+        current.vaults[remote] = client
+        await save(current)
+      })
     },
   }
 }
 
-/** Bump when the stored client's shape changes; another value reads as none. */
-const CLIENT_VERSION = 1
+interface StoredClients {
+  legacy: GoogleClient | null
+  vaults: Record<string, GoogleClient | null>
+}
+
+/** Version 1 contained only the legacy client; version 2 adds vault ownership. */
+const CLIENT_VERSION = 2
 
 function isEnvelope(value: unknown): value is { v: number; data: string } {
   if (value === null || typeof value !== 'object') return false

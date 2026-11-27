@@ -144,6 +144,16 @@ export class GoogleSession {
     this.#deps = deps
   }
 
+  /** A vault-owned view over this physical session; refresh authority stays shared. */
+  scoped(
+    connectionId: string,
+    isCurrent: () => boolean,
+    dispose?: () => Promise<void>,
+    client?: () => GoogleClient,
+  ): GoogleSession {
+    return new ScopedGoogleSession(this, connectionId, isCurrent, dispose, client)
+  }
+
   /** This session's account, or `null` when its record is gone. */
   get account(): GoogleAccount | null {
     const auth = this.#current()
@@ -196,7 +206,7 @@ export class GoogleSession {
    * Single-flighted: concurrent callers share one in-flight refresh, so two
    * refreshes never race on a rotating refresh token.
    */
-  async getAccessToken(): Promise<string> {
+  async getAccessToken(client?: GoogleClient): Promise<string> {
     const auth = this.#current()
     if (auth === null) throw new GoogleReconnectRequiredError()
 
@@ -206,7 +216,7 @@ export class GoogleSession {
     // `??=` is the latch: the first caller starts the refresh, everyone else
     // awaits the same promise.
     const generation = this.#deps.account.generation()
-    this.#refreshing ??= this.#refresh(auth, generation).finally(() => {
+    this.#refreshing ??= this.#refresh(auth, generation, client).finally(() => {
       this.#refreshing = null
     })
     return this.#refreshing
@@ -236,9 +246,13 @@ export class GoogleSession {
     return () => this.#listeners.delete(cb)
   }
 
-  async #refresh(auth: StoredGoogleAuth, generation: number): Promise<string> {
+  async #refresh(
+    auth: StoredGoogleAuth,
+    generation: number,
+    selectedClient?: GoogleClient,
+  ): Promise<string> {
     let body: Record<string, unknown>
-    const client = auth.client ?? this.#client()
+    const client = selectedClient ?? auth.client ?? this.#client()
     try {
       body = await post(this.#fetch(), TOKEN_URL, {
         client_id: client.id,
@@ -299,5 +313,67 @@ export class GoogleSession {
 
   #client(): GoogleClient {
     return this.#deps.client?.() ?? resolveClient(null)
+  }
+}
+
+class ScopedGoogleSession extends GoogleSession {
+  #source: GoogleSession
+  #connectionId: string
+  #isCurrent: () => boolean
+  #dispose?: () => Promise<void>
+  #client?: () => GoogleClient
+
+  constructor(
+    source: GoogleSession,
+    connectionId: string,
+    isCurrent: () => boolean,
+    dispose?: () => Promise<void>,
+    client?: () => GoogleClient,
+  ) {
+    super({
+      account: {
+        read: () => null,
+        generation: () => 0,
+        write: async () => {},
+        remove: async () => {},
+        expire: async () => {},
+      },
+    })
+    this.#source = source
+    this.#connectionId = connectionId
+    this.#isCurrent = isCurrent
+    this.#dispose = dispose
+    this.#client = client
+  }
+
+  get account(): GoogleAccount | null {
+    return this.#valid() ? this.#source.account : null
+  }
+
+  get accountSub(): string | null {
+    return this.#valid() ? this.#connectionId : null
+  }
+
+  missingScopes(): string[] {
+    return this.#valid() ? this.#source.missingScopes() : []
+  }
+
+  async getAccessToken(): Promise<string> {
+    if (!this.#valid()) throw new GoogleReconnectRequiredError()
+    const token = await this.#source.getAccessToken(this.#client?.())
+    if (!this.#valid()) throw new GoogleReconnectRequiredError()
+    return token
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.#valid()) await this.#dispose?.()
+  }
+
+  onChange(cb: (account: GoogleAccount | null) => void): () => void {
+    return this.#source.onChange(() => cb(this.account))
+  }
+
+  #valid(): boolean {
+    return this.#isCurrent() && this.#source.account !== null
   }
 }
