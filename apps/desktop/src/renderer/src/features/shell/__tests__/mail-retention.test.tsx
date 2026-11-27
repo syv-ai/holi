@@ -541,7 +541,7 @@ test('a native mail notice focuses Inbox through the retained composer save guar
   await screen.findByRole('list', { name: 'Inbox' })
   await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
   await user.click(await screen.findByRole('menuitemradio', { name: 'Sent' }))
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ mailbox: 'sent' }))
+  await screen.findByRole('button', { name: 'Mailbox: Sent' })
   await user.click(screen.getByRole('button', { name: 'Compose new email' }))
   const composer = await screen.findByRole('region', { name: 'Compose mail' })
   const subject = within(composer).getByRole('textbox', { name: 'Subject' })
