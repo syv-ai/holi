@@ -103,16 +103,22 @@ export function buildAgentEnv(
    */
   delete env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
   env.CLAUDE_CODE_NO_FLICKER = '1'
-  // Reserved keys: strip any inherited value so a vault/user env can't spoof
-  // them. Holi sets none of these: where it is comes from the vault's
-  // `bridge.local.env`, which its commands read in preference to anything.
+  // Credentials never come from the inherited environment. The prepared
+  // executable carries its authority; only its path is exposed here.
   delete env.HOLI_BRIDGE_PORT
   delete env.HOLI_BRIDGE_TOKEN
-  delete env.HOLI_BIN
+  for (const key of Object.keys(env)) {
+    if (
+      key === 'HOLI_BIN' ||
+      ((opts.platform ?? process.platform) === 'win32' && key.toUpperCase() === 'HOLI_BIN')
+    )
+      delete env[key]
+  }
   // Reserved for the same reason: an inherited value would put the agent
   // back on the machine's `~/.claude`.
   delete env.CLAUDE_CONFIG_DIR
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
+  if (opts.binDir) env.HOLI_BIN = join(opts.binDir, 'holi')
   // `holi` is prepended, never appended: an earlier `holi` on the inherited
   // PATH would otherwise win under a name the gate trusts. What follows the
   // inherited PATH is what a Dock-launched Holi lacks and every hook needs:
@@ -134,6 +140,30 @@ export function buildAgentEnv(
     ]
       .filter((dir): dir is string => !!dir)
       .join(delimiterFor(platform)),
+    platform,
+  )
+}
+
+/** Bind commands to their activation after all inherited and preset variables.
+ * This is path authority only; provider permissions and state stay untouched. */
+export function bindAgentBinEnv(
+  base: Record<string, string>,
+  binDir: string | null | undefined,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  const env = { ...base }
+  for (const key of Object.keys(env)) {
+    if (key === 'HOLI_BIN' || (platform === 'win32' && key.toUpperCase() === 'HOLI_BIN'))
+      delete env[key]
+  }
+  // A fenced target has no CLI authority, even if its preset supplies one.
+  if (!binDir) return env
+  env.HOLI_BIN = join(binDir, 'holi')
+  return withPath(
+    env,
+    [binDir, toolPath(base, platform), nodeFallbackDir(binDir, platform)].join(
+      delimiterFor(platform),
+    ),
     platform,
   )
 }

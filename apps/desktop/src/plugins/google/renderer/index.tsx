@@ -5,17 +5,34 @@
  */
 import { Cable, CalendarDays, Mail } from 'lucide-react'
 import { PLUGINS_FILE, PLUGINS_LOCAL_FILE } from '@holi/shared'
-import { type RendererPlugin } from '@/plugin-api'
+import { openTabAtom, type RendererPlugin } from '@/plugin-api'
 import { GOOGLE_INFO } from '../info'
+import { MAIL_ATTENTION_EVENT, OPEN_MAIL_EVENT } from '../shared/types'
 import { googleConnectedAtom } from './account'
 import { ConnectionsSection } from './connections-section'
 import { MailView } from './mail-view'
 import { CalendarView } from './calendar/calendar-view'
 import { CalendarSettingsSection } from './calendar/calendar-settings-section'
 import { MailShell } from './mail/mail-shell'
+import { mailAttentionChanged, mailUnreadAtom, startMailAttention } from './mail-attention-state'
+import { requestMailNavigationAtom } from './mail-navigation'
 
 export const googleRenderer: RendererPlugin = {
   info: GOOGLE_INFO,
+  events: {
+    [MAIL_ATTENTION_EVENT]: mailAttentionChanged,
+    [OPEN_MAIL_EVENT]: ({ remote, payload }, store) => {
+      if (
+        typeof payload !== 'object' ||
+        payload === null ||
+        (payload as { mailbox?: unknown }).mailbox !== 'inbox'
+      )
+        return
+      store.set(requestMailNavigationAtom, { remote, mailbox: 'inbox' })
+      store.set(openTabAtom, { kind: 'app', id: 'mail' })
+    },
+  },
+  vault: (remote, store) => startMailAttention(remote, store),
   surfaces: [
     {
       kind: 'mail',
@@ -34,6 +51,7 @@ export const googleRenderer: RendererPlugin = {
       render: MailShell,
       keepMounted: true,
       visible: googleConnectedAtom,
+      unreadAtom: mailUnreadAtom,
     },
     {
       id: 'calendar',

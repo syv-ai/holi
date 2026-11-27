@@ -72,6 +72,12 @@ export async function checkCompatibility(): Promise<string> {
     if (!restoredMetadata.visible(['diagnostic.md']).recents.includes('diagnostic.md'))
       throw new Error('Note metadata reconstruction check failed')
     restoredMetadata.remove('diagnostic.md')
+    if (
+      createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
+        .visible(['diagnostic.md'])
+        .recents.includes('diagnostic.md')
+    )
+      throw new Error('Note metadata removal check failed')
     phase = 'format-corpus'
     operation = 'runVaultFormatCorpus'
     const corpus = runVaultFormatCorpus(nativeUtf8)
