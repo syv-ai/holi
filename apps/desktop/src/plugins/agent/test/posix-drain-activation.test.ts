@@ -62,7 +62,10 @@ posix.each(cells)(
       a.exit()
       if (immediateDrain)
         expect(await bounded(immediateDrain, 'synchronous drain via public exit')).toBe(true)
-      expect(await bounded(a.exited.promise, 'A root exit')).toBe(7)
+      expect(
+        await bounded(a.exited.promise, 'A root exit'),
+        JSON.stringify({ pid: a.pid, signal: a.child!.signalCode, stderr: a.errors }),
+      ).toBe(7)
       await bounded(a.drain.entered, 'A drain entered')
       await bounded(a.nativeClosed.promise, 'ignored stdio closes with descendant still alive')
       a.close.open()
@@ -193,7 +196,10 @@ posix.each(cells)(
         ({ remote, name }) => remote === f.B && name === 'turn-end',
       )
       b.exit()
-      expect(await bounded(b.exited.promise, 'B root exit')).toBe(code)
+      expect(
+        await bounded(b.exited.promise, 'B root exit'),
+        JSON.stringify({ pid: b.pid, signal: b.child!.signalCode, stderr: b.errors }),
+      ).toBe(code)
       await bounded(b.drain.entered, 'B drain on native exit')
       if (earlyPtyOutput) {
         await bounded(b.emittedClose.promise, 'B already-closed output edge')

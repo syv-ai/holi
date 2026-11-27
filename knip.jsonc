@@ -114,6 +114,8 @@
         "scripts/ios-simulator.mjs!",
         // build:ios invokes this standalone native-dependency build entry.
         "scripts/build-libgit2-ios.mjs!",
+        // archive:ios invokes this standalone unsigned device-build entry.
+        "scripts/archive-ios.mjs!",
         // GitHub's mobile device-auth session is a protocol entrypoint consumed by the native sign-in flow at runtime.
         "app/device-auth.ts!",
         "test/*.test.mjs",
