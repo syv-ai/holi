@@ -2,9 +2,14 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { GoogleApi } from '../main/api'
+import { GoogleApi, GoogleApiError } from '../main/api'
 import { openGoogleCache, type GoogleCache } from '../main/cache'
-import type { ListThreadsOptions, MailPage, MailThreadSummary } from '../main/gmail'
+import {
+  fetchThreadSummaries,
+  type ListThreadsOptions,
+  type MailPage,
+  type MailThreadSummary,
+} from '../main/gmail'
 import type { MailListRequest } from '../main/mail-list-types'
 import { syncThreads } from '../main/mail-sync'
 
@@ -157,6 +162,50 @@ async function loadPages(server: ReturnType<typeof gmail>, options: ListThreadsO
 }
 
 describe('loaded mail list synchronization with SQLite', () => {
+  it('does not report a label failure until outstanding thread reads have drained', async () => {
+    let release!: () => void
+    const metadataGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const api = new GoogleApi({
+      accessToken: async () => 'test-token',
+      fetch: async (input) => {
+        const url = new URL(String(input))
+        if (url.pathname.endsWith('/labels')) {
+          return new Response(JSON.stringify({ error: { message: 'unavailable' } }), {
+            status: 503,
+          })
+        }
+        if (url.pathname.includes('/threads/')) {
+          await metadataGate
+          return Response.json(rawThread(url.pathname.split('/').pop()!))
+        }
+        throw new Error(`unexpected Gmail request: ${url}`)
+      },
+    })
+    let settled = false
+    const outcome = fetchThreadSummaries(api, ['a', 'b', 'c', 'd', 'e', 'f'], undefined, {}).then(
+      () => {
+        settled = true
+        return undefined
+      },
+      (error: unknown) => {
+        settled = true
+        return error
+      },
+    )
+    try {
+      // Let the immediate label failure propagate while metadata stays held.
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+    } finally {
+      release()
+      await outcome
+    }
+    expect(await outcome).toBeInstanceOf(GoogleApiError)
+    expect(await outcome).toMatchObject({ status: 503 })
+  })
+
   it('reconciles later-page archive, read and category changes without hydrating unchanged rows or scanning the mailbox', async () => {
     const options = { unread: true, category: 'primary' as const }
     const server = gmail('in:inbox category:primary is:unread')
