@@ -3,6 +3,7 @@ import {
   B,
   adapters,
   deferred,
+  notifyWatchChange,
   harness,
   nestedErrors,
   rig,
@@ -888,33 +889,24 @@ it.each(['success', 'failure'] as const)(
       listingStatus[A] = 'waiting'
       listingStatus[B] = 'waiting'
       for (const remote of [A, B] as const) expect((await postStatusline(remote)).status).toBe(204)
-      // Force an actual capability read after the statusline, then keep
-      // delivering real watcher changes until its admitted inbox write begins.
+      // Drive the public fs.watch change event for each vault's sessions path;
+      // the production watcher still performs the refresh and inbox write.
       await call(A, 'agent.sessions')
       for (const remote of [A, B] as const) {
-        await mkdir(join(configDirs[remote], 'sessions'), { recursive: true })
+        const sessionsDir = join(configDirs[remote], 'sessions')
+        await mkdir(sessionsDir, { recursive: true })
+        const sessionPath = join(sessionsDir, 'needs-you-refresh.json')
+        await writeFile(sessionPath, '{}')
+        notifyWatchChange(sessionPath)
       }
-      let refreshAttempt = 0
-      await vi.waitFor(
-        async () => {
-          if (!writeAdmitted) {
-            const attempt = ++refreshAttempt
-            for (const remote of [A, B] as const) {
-              await writeFile(
-                join(configDirs[remote], 'sessions', `needs-you-refresh-${attempt}.json`),
-                '{}',
-              )
-            }
-          }
-          expect(writeAdmitted).toBe(true)
-        },
-        { interval: 200 },
-      )
+      await vi.waitFor(() => expect(writeAdmitted).toBe(true))
       await writeEntered.promise
       listingStatus[A] = 'idle'
       extraWaitingSession = true
       expect((await postStatusline(A)).status).toBe(204)
-      await writeFile(join(configDirs[A], 'sessions', 'queued-needs-you.json'), '{}')
+      const queuedSessionPath = join(configDirs[A], 'sessions', 'queued-needs-you.json')
+      await writeFile(queuedSessionPath, '{}')
+      notifyWatchChange(queuedSessionPath)
       await vi.waitFor(async () => {
         expect(await call(A, 'agent.sessions')).toEqual(
           expect.arrayContaining([
