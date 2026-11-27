@@ -219,11 +219,15 @@ Turning off a plugin whose renderer side says stopping it costs something (`leav
 agent's busy sessions) asks before the write; a hand edit stops it without asking. Dispatch refuses
 a capability whose plugin is off in the calling vault, as "no such method".
 
-Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commit hook and merge
-driver) reaches main through one loopback bridge (`src/main/bridge/`) with a token per vault,
-found by walking up to the vault's root and parsing `.holi/state/bridge.local.env`. The
-CLI's verbs are capabilities; the few callers that are not (the agent's turn and status-line hooks,
-which never answer anything a hook would print, and git's two) are routes their owner registers.
+Main serves the CLI and hooks through one loopback bridge (`src/main/bridge/`).
+Agent hooks and git's pre-commit hook and merge driver find their per-vault token by
+walking up to the vault's root and parsing `.holi/state/bridge.local.env`.
+Holi-launched unfenced agents receive a CLI executable bound to a fixed private
+endpoint descriptor outside the vault, independent of cwd. The person's global CLI
+uses the machine endpoint; neither CLI discovers credentials through
+`bridge.local.env`. The CLI's verbs are capabilities; the few callers that are not
+(the agent's turn and status-line hooks, which never answer anything a hook would
+print, and git's two) are routes their owner registers.
 
 ## 4. The vault
 

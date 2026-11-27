@@ -187,6 +187,8 @@ export async function runPiNativeTuiFixture({
   expectedVersion,
   artifactDirectory,
   timeout = 45000,
+  terminalSize,
+  observeTerminal,
 }) {
   if (!bin || !expectedVersion || !artifactDirectory || !Number.isFinite(timeout) || timeout <= 0)
     throw new Error(
@@ -258,6 +260,7 @@ export async function runPiNativeTuiFixture({
         env,
         stateDirectory: join(root, label),
         timeoutMs: budget,
+        terminalSize,
       })
       processes.push(handle)
       return handle
@@ -410,6 +413,8 @@ const external=await new Promise(resolve=>{const s=net.connect({host:'192.0.2.1'
       status: 'pass',
       submitted: fixture.requests.map(lastUser),
     })
+    // A consumer can inspect the live native PTY before its lifecycle proof resumes.
+    const consumer = observeTerminal ? await observeTerminal(tui) : undefined
     const cycleStart = tui.output.length
     await send('ctrl-p-cycle', '\u0010')
     await waitFor(
@@ -444,6 +449,7 @@ const external=await new Promise(resolve=>{const s=net.connect({host:'192.0.2.1'
           'https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.5.2.tgz',
       },
       scenario: 'native-interactive-pi-tui',
+      ...(consumer === undefined ? {} : { consumer }),
       source,
       actions,
       inputs,

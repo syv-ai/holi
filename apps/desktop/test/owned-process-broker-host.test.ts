@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync, renameSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,7 @@ import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import { describe, expect, it, onTestFinished } from 'vitest'
+import { observeCompilerArtifacts } from './helpers/compiler-artifact-observation'
 import { brokerHostPlan } from '../src/main/owned-process-broker-host'
 import { win32Adapter } from '../src/main/owned-process-win32'
 
@@ -262,7 +263,7 @@ function decodeJoinBootstrap(args: string[]) {
   return { bootstrap, script: gunzipSync(Buffer.from(payloads[0], 'base64')).toString('utf8') }
 }
 
-function windowsJoinFixture(cwd: string) {
+function windowsJoinFixture(cwd: string, runDir?: string) {
   const adapter = windowsJoinAdapter(cwd)
   const { bootstrap, script } = decodeJoinBootstrap(adapter.args)
   if (
@@ -278,8 +279,11 @@ function windowsJoinFixture(cwd: string) {
     `${joinPhaseMarker('compile-start')}${compileWithEmptyInput}${joinPhaseMarker('compile-done')}`,
   )
   const encoded = gzipSync(Buffer.from(marked)).toString('base64')
+  const identity = runDir
+    ? `try { $p = [Diagnostics.Process]::GetCurrentProcess(); $c = $p.StartTime.ToUniversalTime().Ticks; $tmp = '${runDir.replaceAll("'", "''")}\\broker-root.json.tmp'; $dst = '${runDir.replaceAll("'", "''")}\\broker-root.json'; [IO.File]::WriteAllText($tmp, ('{"pid":' + $PID.ToString([Globalization.CultureInfo]::InvariantCulture) + ',"creationTicks":' + $c.ToString([Globalization.CultureInfo]::InvariantCulture) + '}')); $p.Dispose(); [IO.File]::Move($tmp, $dst) } catch {};`
+    : ''
   adapter.args[adapter.args.length - 1] =
-    joinPhaseMarker('powershell-start') + bootstrap.replace(joinPayload, encoded)
+    identity + joinPhaseMarker('powershell-start') + bootstrap.replace(joinPayload, encoded)
   return adapter
 }
 
@@ -481,7 +485,10 @@ describe('owned Job broker host', () => {
     })
     const cwd = await directory
     if (reported) return // Preparation timed out; do not spawn during teardown.
-    const native = process.platform === 'win32' ? windowsJoinFixture(cwd) : undefined
+    const native =
+      process.platform === 'win32'
+        ? windowsJoinFixture(cwd, process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
+        : undefined
     enter('spawn')
     const { child } = native
       ? host(native, true)
@@ -557,11 +564,39 @@ describe('owned Job broker host', () => {
     void stderr.catch(() => {})
     const finished = join(cwd, 'native-finished')
     const innerEof = join(cwd, 'native-output-ended')
+    const artifactSnapshots: Array<{
+      offsetMs: number
+      observation: ReturnType<typeof observeCompilerArtifacts>
+    }> = []
     inspectFixture = () => {
+      // CodeDOM may emit temporary source/binary files in this fixture-owned cwd.
+      // Report only bounded aggregate evidence, never filenames or file contents.
+      const compilerArtifacts = observeCompilerArtifacts(cwd)
       const counts = readJoinMarker(cwd, 'native-handles-closed', 19)
       const events = readJoinMarker(cwd, 'native-join-events', 512) ?? ''
       const failure = readJoinMarker(cwd, 'native-join-failure', 64)
       return {
+        compilerArtifacts,
+        artifactSnapshots,
+        artifactGrowth:
+          artifactSnapshots.length < 2 ||
+          artifactSnapshots.some(
+            (snapshot) =>
+              snapshot.observation.scanFailed ||
+              snapshot.observation.limitReached ||
+              snapshot.observation.metadataErrors > 0 ||
+              snapshot.observation.oversized > 0 ||
+              snapshot.observation.capped > 0,
+          )
+            ? 'indeterminate-coverage'
+            : artifactSnapshots.some((snapshot) =>
+                  Object.entries(snapshot.observation.files).some(([extension, value]) => {
+                    const initial = artifactSnapshots[0]?.observation.files[extension]
+                    return !initial || value.count > initial.count || value.bytes > initial.bytes
+                  }),
+                )
+              ? 'observed-growth'
+              : 'no-observed-growth',
         nativeFailure:
           failure !== undefined && /^[a-z-]{1,32},\d{1,10}$/.test(failure) ? failure : undefined,
         nativeStatus: Object.fromEntries(
@@ -599,9 +634,49 @@ describe('owned Job broker host', () => {
     try {
       // Cold Add-Type in the Windows fixture is startup, not part of the join proof.
       const startupStarted = enter('terminal')
-      const seen = await (native
-        ? withinJoinPhase(startup, startupStarted, 45_000, 'fixture startup')
-        : startup)
+      const observerRun = native ? process.env.HOLI_WINDOWS_AGENT_RUN_DIR : undefined
+      const startupEndPath = observerRun ? join(observerRun, 'broker-startup-ended') : undefined
+      if (observerRun) {
+        try {
+          const window = join(observerRun, 'broker-startup-window.json')
+          writeFileSync(
+            window + '.tmp',
+            JSON.stringify({
+              deadlineUnixMs: Math.floor(
+                Date.now() + Math.max(0, 45_000 - (performance.now() - startupStarted)),
+              ),
+            }),
+          )
+          renameSync(window + '.tmp', window)
+        } catch {
+          // Diagnostics do not establish or extend the startup barrier.
+        }
+      }
+      let snapshotTimer: ReturnType<typeof setInterval> | undefined
+      if (native) {
+        const sample = () => {
+          if (artifactSnapshots.length >= 10) return
+          artifactSnapshots.push({
+            offsetMs: elapsed() - phaseMs.terminal,
+            observation: observeCompilerArtifacts(cwd),
+          })
+        }
+        sample()
+        snapshotTimer = setInterval(sample, 5_000)
+      }
+      let seen: boolean
+      try {
+        seen = await (native
+          ? withinJoinPhase(startup, startupStarted, 45_000, 'fixture startup')
+          : startup)
+      } finally {
+        if (snapshotTimer) clearInterval(snapshotTimer)
+        try {
+          if (startupEndPath) writeFileSync(startupEndPath, '')
+        } catch {
+          // The observer flag is diagnostic and must not replace the startup outcome.
+        }
+      }
       expect(seen).toBe(true)
       enter('inner-eof')
       await expect.poll(() => existsSync(innerEof)).toBe(true)
