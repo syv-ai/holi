@@ -11,6 +11,8 @@ import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
 import { runWorkingCopyCheck } from './working-copy-check.ios'
+import { runCredentialCheck } from './credential-check.ios'
+import { foundationModelsAvailability } from './foundation-models.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -22,7 +24,16 @@ function nativeUtf8(text: string): Uint8Array {
 /** The only iOS adapter: launch identity, native encoding and sandbox evidence. */
 export async function checkCompatibility(): Promise<string> {
   const startedAt = Date.now()
-  const runId = NSProcessInfo.processInfo.environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
+  const environment = NSProcessInfo.processInfo.environment
+  if (environment.objectForKey('HOLI_CREDENTIAL_DIAGNOSTIC') === '1') {
+    if (HoliNativeCredentials.diagnosticsAvailable() !== true)
+      throw new Error('Credential diagnostics require a Simulator acceptance build')
+    return runCredentialCheck(
+      environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? '',
+      environment.objectForKey('HOLI_CREDENTIAL_PHASE') ?? '',
+    )
+  }
+  const runId = environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
   const launchPhase =
     NSProcessInfo.processInfo.environment.objectForKey('HOLI_STORAGE_PHASE') ?? 'normal'
   const persist = (value: Record<string, unknown>) =>
@@ -52,6 +63,7 @@ export async function checkCompatibility(): Promise<string> {
   let rawNames: unknown
   let prefixNamespace: Record<string, unknown>
   let git: Awaited<ReturnType<typeof runGitCompatibilityCheck>> | undefined
+  let foundationModels: string | undefined
   let workingCopy:
     | (Awaited<ReturnType<typeof runWorkingCopyCheck>> & {
         cases?: Awaited<ReturnType<typeof runWorkingCopyCheck>>[]
@@ -62,6 +74,11 @@ export async function checkCompatibility(): Promise<string> {
       throw new Error('Invalid compatibility run identity')
     if (!['normal', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(launchPhase))
       throw new Error('Invalid storage phase')
+    if (launchPhase === 'normal') {
+      phase = 'foundation-models-availability'
+      operation = 'foundationModelsAvailability'
+      foundationModels = foundationModelsAvailability()
+    }
     phase = 'note-metadata'
     operation = 'persist/reconstruct/remove'
     const metadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
@@ -315,6 +332,6 @@ export async function checkCompatibility(): Promise<string> {
       ...(git ? { git } : {}),
     }
   }
-  persist({ rawNames, workingCopy, ...evidence })
+  persist({ rawNames, workingCopy, ...(foundationModels ? { foundationModels } : {}), ...evidence })
   return status
 }
