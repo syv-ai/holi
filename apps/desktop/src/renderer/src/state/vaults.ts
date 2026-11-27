@@ -194,6 +194,17 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
 const openRequestAtom = atom(0)
 const documentOpenIntentAtom = atom(0)
 
+/** The selected vault only after main has completed opening it (including plugin
+ * reconciliation). Null while unavailable; object identity changes on selection
+ * or reopening, so async plugin readers cannot reuse a previous activation.
+ * This is readiness, not authorization: main still checks every capability call.
+ */
+export const readyVaultAtom = atom((get) => {
+  const remote = get(activeRemoteAtom)
+  get(activeRemoteRevisionValueAtom)
+  return remote !== null && get(openedRemoteAtom) === remote ? { remote } : null
+})
+
 // Return main to the unchanged renderer selection, never depart from it. No
 // buffers or tabs are touched: a failed departure flush must retain dirty text.
 // Consuming the expected request deduplicates recovery; a newer request,

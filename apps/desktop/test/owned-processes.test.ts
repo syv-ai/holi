@@ -24,12 +24,16 @@ describe('owned process lifecycle', () => {
 
   it('rejects nonzero exits and preserves stdout and stderr', async () => {
     const processes = create()
-    await expect(
-      processes.run(process.execPath, [
+    const error = await processes
+      .run(process.execPath, [
         '-e',
         "process.stdout.write('stdout marker'); process.stderr.write('stderr marker'); process.exit(7)",
-      ]),
-    ).rejects.toThrow(/exited 7:.*stdout marker.*stderr marker/s)
+      ])
+      .catch((error) => error)
+    expect(error).toBeInstanceOf(Error)
+    expect(error).toMatchObject({ exitCode: 7 })
+    expect(error.message).toContain('stdout marker')
+    expect(error.message).toContain('stderr marker')
     expect(processes.size).toBe(0)
   })
 

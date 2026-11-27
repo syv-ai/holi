@@ -1,13 +1,16 @@
+import { vaultWorkflow } from '@/test/vault-workflow'
+import { emptyVaultSnapshot } from '@holi/shared'
 /**
  * The app-shell-4 mail view, rendered on its own against faked Google
  * capabilities: what it asks Gmail for, what it shows, and that HTML bodies
  * still go through the sandboxed frame.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { act, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { atom, getDefaultStore } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
+import { refreshGoogleAtom } from '../renderer/account'
 import { MailShell } from '../renderer/mail/mail-shell'
 import { mailCatchUpByVaultAtom } from '../renderer/mail/mail-catch-up'
 import { ConnectionsSection } from '../renderer/connections-section'
@@ -50,14 +53,10 @@ vi.mock('@/plugin-api', async (importOriginal) => {
   }
 })
 
+const openVaultMock = vi.fn()
+const statusMock = vi.fn()
 const google: Record<string, (params: unknown) => unknown> = {
-  status: () => ({
-    account:
-      accountSub === ''
-        ? null
-        : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test', sub: accountSub },
-    missingScopes: [],
-  }),
+  status: () => statusMock(),
   allAccounts: () => ({
     accounts: [
       { sub: 'a', email: 'ada@syv.ai' },
@@ -102,6 +101,7 @@ vi.mock('sonner', async (original) => ({
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    vaults: { open: { mutate: () => openVaultMock() } },
     cap: {
       run: {
         mutate: async ({
@@ -180,7 +180,17 @@ const thread = {
   ],
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  openVaultMock.mockReset().mockResolvedValue(emptyVaultSnapshot())
+  statusMock.mockReset()
+  statusMock.mockImplementation(() => ({
+    account:
+      accountSub === ''
+        ? null
+        : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test', sub: accountSub },
+    missingScopes: [],
+  }))
+
   searchMock.mockReset().mockResolvedValue(page([summary()]))
   threadMock.mockReset().mockResolvedValue(thread)
   draftsMock.mockReset().mockResolvedValue([])
@@ -226,6 +236,7 @@ beforeEach(() => {
   getDefaultStore().set(mailCatchUpByVaultAtom, new Map())
   getDefaultStore().set(sessionAtom, { login: 'ada' } as never)
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
   resetMailImagesForTests()
   resetMailFramesForTests()
   // @ts-expect-error: the preload bridge is not typed onto window in tests.
@@ -606,6 +617,13 @@ test('the shell close flush rejects an offline inline composition and leaves it 
   expect(closed).toBe(false)
   expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
   expect(within(region).getByRole('textbox', { name: 'Subject' })).toHaveValue('pending')
+
+  await expect(vaultWorkflow(getDefaultStore()).open('syv-ai/other-vault')).rejects.toThrow(
+    'offline',
+  )
+  expect(getDefaultStore().get(activeRemoteAtom)).toBe('syv-ai/vault')
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('pending')
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toBeEnabled()
 })
 
 test('Close restores the reader selection behind standalone Compose', async () => {
@@ -648,7 +666,7 @@ test('Close waits for the latest draft save, then removes the composer and resto
   expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
 })
 
-test('a late Close completion from an old vault cannot close a newer composition', async () => {
+test('vault departure waits for an in-flight Close save before composing in the next vault', async () => {
   const user = userEvent.setup()
   let finishSave: ((value: { id: string }) => void) | undefined
   saveDraftMock.mockImplementation(() => new Promise((resolve) => (finishSave = resolve)))
@@ -660,12 +678,27 @@ test('a late Close completion from an old vault cannot close a newer composition
   await user.click(within(oldRegion).getByRole('button', { name: 'Close' }))
   await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
 
-  getDefaultStore().set(activeRemoteAtom, 'syv-ai/other-vault')
+  let departed = false
+  let departure!: Promise<void>
+  await act(async () => {
+    departure = vaultWorkflow(getDefaultStore())
+      .open('syv-ai/other-vault')
+      .then(() => {
+        departed = true
+      })
+  })
+  expect(departed).toBe(false)
+  expect(getDefaultStore().get(activeRemoteAtom)).toBe('syv-ai/vault')
+  expect(within(oldRegion).getByRole('textbox', { name: 'Subject' })).toHaveValue('old draft')
+  await act(async () => {
+    finishSave?.({ id: 'd-old' })
+    await departure
+  })
+  expect(departed).toBe(true)
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
-  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  await user.click(await screen.findByRole('button', { name: 'Compose new email' }))
   const newRegion = await screen.findByRole('region', { name: 'Compose mail' })
   await user.type(within(newRegion).getByRole('textbox', { name: 'Subject' }), 'new draft')
-  finishSave?.({ id: 'd-old' })
 
   expect(await screen.findByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
   expect(within(newRegion).getByRole('textbox', { name: 'Subject' })).toHaveValue('new draft')
@@ -763,6 +796,8 @@ test('a deferred Continue draft is ignored after a vault switch', async () => {
   await user.click(await screen.findByRole('menuitem', { name: 'Continue your draft' }))
 
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/other-vault')
+
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/other-vault')
   finishDrafts?.([
     { draftId: 'd-late', threadId: 't1', date: '2026-08-04', to: [], subject: 'Late draft' },
   ])
@@ -941,6 +976,8 @@ test('catch-up uncertainty survives Mail remount and vault A-B-A for its origin'
   first.unmount()
 
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/other')
+
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/other')
   finish({
     ok: false,
     cleanupUnconfirmed: true,
@@ -952,6 +989,8 @@ test('catch-up uncertainty survives Mail remount and vault A-B-A for its origin'
   expect(screen.queryByRole('alert')).toBeNull()
 
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
   expect(await screen.findByRole('alert')).toHaveTextContent('Cleanup unconfirmed')
   expect(screen.getByRole('button', { name: 'Catch me up' })).toBeDisabled()
   await user.click(screen.getByRole('button', { name: 'Open surviving session' }))
@@ -1046,7 +1085,9 @@ test('catch-up admission survives Google account A-B-A while startup is pending'
   await user.click(screen.getByRole('button', { name: 'Starting catch-up' }))
   expect(agentStartMock).toHaveBeenCalledTimes(1)
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/other')
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/other')
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
   finish({ ok: false, message: 'stale startup result' })
   await waitFor(() => expect(screen.getByRole('button', { name: 'Catch me up' })).toBeEnabled())
   expect(screen.queryByRole('alert')).toBeNull()
@@ -1062,7 +1103,10 @@ test('catch-up ignores a stale A-B-A completion', async () => {
   await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
 
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/other')
+
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/other')
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
   finish({ ok: false, message: 'stale launch error' })
   await new Promise((resolve) => setTimeout(resolve, 0))
   expect(screen.queryByRole('alert')).toBeNull()
@@ -1204,10 +1248,12 @@ test.each(['vault', 'account'] as const)(
     expect(await screen.findByRole('button', { name: 'Confirming stop…' })).toBeDisabled()
     if (scope === 'vault') {
       getDefaultStore().set(activeRemoteAtom, 'syv-ai/other')
+      await vaultWorkflow(getDefaultStore()).open('syv-ai/other')
       await waitFor(() => expect(screen.getByRole('button', { name: 'Catch me up' })).toBeEnabled())
       await user.click(screen.getByRole('button', { name: 'Catch me up' }))
       await screen.findByRole('button', { name: 'Stop surviving session' })
       getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+      await vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
       await screen.findByRole('button', { name: 'Confirming stop…' })
     } else {
       for (const email of ['ada@home.test', 'ada@syv.ai']) {
@@ -1248,4 +1294,43 @@ test('an unknown native session id remains blocked without speculative stop or l
   expect(screen.queryByRole('button', { name: 'Open surviving session' })).toBeNull()
   expect(agentStopMock).not.toHaveBeenCalled()
   expect(agentStartMock).toHaveBeenCalledTimes(1)
+})
+
+test('mail waits for public vault opening before requesting mail or offering actions', async () => {
+  let finishOpen!: (snapshot: ReturnType<typeof emptyVaultSnapshot>) => void
+  openVaultMock.mockReturnValueOnce(new Promise((resolve) => (finishOpen = resolve)))
+  let opening!: Promise<boolean>
+  await act(async () => {
+    opening = vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
+  })
+  render(<MailShell />)
+  expect(screen.getByRole('status', { name: 'Loading Google account' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Compose new email' })).toBeNull()
+  expect(searchMock).not.toHaveBeenCalled()
+  expect(statusMock).not.toHaveBeenCalled()
+  await act(async () => {
+    finishOpen(emptyVaultSnapshot())
+    await opening
+  })
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Compose new email' }))
+  const subject = await screen.findByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'Account-backed draft')
+  expect(subject).toHaveValue('Account-backed draft')
+  expect(searchMock).toHaveBeenCalledTimes(1)
+})
+
+test('a failed known-account refresh retains the mounted editable draft', async () => {
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByRole('button', { name: 'Compose new email' }))
+  const subject = await screen.findByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'Keep this draft')
+  statusMock.mockClear().mockRejectedValue(new Error('offline'))
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await waitFor(() => expect(statusMock).toHaveBeenCalledTimes(3), { timeout: 3000 })
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toBe(subject)
+  await user.type(subject, ' and edit it')
+  expect(subject).toHaveValue('Keep this draft and edit it')
+  expect(screen.queryByRole('status', { name: 'Loading Google account' })).toBeNull()
 })

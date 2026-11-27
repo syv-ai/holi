@@ -1,3 +1,5 @@
+import { vaultWorkflow } from '@/test/vault-workflow'
+import { emptyVaultSnapshot } from '@holi/shared'
 /**
  * The composer.
  *
@@ -50,6 +52,7 @@ const google: Record<string, (params: unknown) => unknown> = {
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    vaults: { open: { mutate: async () => emptyVaultSnapshot() } },
     cap: {
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
@@ -87,12 +90,16 @@ const REPLY: ComposeIntent = {
   all: false,
 }
 
-function mount(props: Partial<React.ComponentProps<typeof MailComposer>> = {}, vimEnabled = false) {
+async function mount(
+  props: Partial<React.ComponentProps<typeof MailComposer>> = {},
+  vimEnabled = false,
+) {
   const onSent = vi.fn()
   const onDiscarded = vi.fn()
   const onClose = vi.fn()
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/vault')
+  await vaultWorkflow(store).open('syv-ai/vault')
   store.set(vimCodeEditingAtom, vimEnabled)
   const { unmount } = render(
     <Provider store={store}>
@@ -113,7 +120,7 @@ function mount(props: Partial<React.ComponentProps<typeof MailComposer>> = {}, v
 const subjectField = (): HTMLElement => screen.getByRole('textbox', { name: 'Subject' })
 const saveState = (): string => screen.getByTestId('save-state').textContent ?? ''
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
   saveDraft.mockResolvedValue({ id: 'd-1' })
   send.mockResolvedValue({ id: 'm-9' })
@@ -135,11 +142,11 @@ function setup() {
 
 describe('composer focus', () => {
   it('focuses the recipient for a new message and the real editor for a reply', async () => {
-    const { unmount } = mount({ intent: { kind: 'new' } })
+    const { unmount } = await mount({ intent: { kind: 'new' } })
     expect(screen.getByRole('textbox', { name: /to/i })).toHaveFocus()
     unmount()
 
-    mount()
+    await mount()
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus())
   })
 
@@ -153,7 +160,7 @@ describe('composer focus', () => {
     )
     const outside = document.createElement('button')
     document.body.append(outside)
-    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-7' })
     outside.focus()
 
     resolveDraft?.({
@@ -178,6 +185,7 @@ describe('composer focus', () => {
     const onClose = vi.fn()
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/vault')
+    await vaultWorkflow(store).open('syv-ai/vault')
     function Host() {
       const [open, setOpen] = useState(false)
       return (
@@ -212,7 +220,7 @@ describe('the pristine guard', () => {
   it('creates no draft when the composer is opened and closed untouched', async () => {
     // A reply composer opens pre-filled with a quote, so "has content" is not
     // the same question as "the user wrote something".
-    const { onClose } = mount()
+    const { onClose } = await mount()
 
     await vi.advanceTimersByTimeAsync(10_000)
 
@@ -223,7 +231,7 @@ describe('the pristine guard', () => {
 
   it('closes without asking when nothing was typed', async () => {
     const user = setup()
-    const { onClose } = mount()
+    const { onClose } = await mount()
 
     // Focus has to be inside the composer: Escape is handled on the section, so
     // an inline composer does not swallow the key for the reader around it.
@@ -238,7 +246,7 @@ describe('leaving the composer', () => {
   it('pristine leave creates no draft; dirty leave waits for the latest content', async () => {
     const user = setup()
     const handle = createRef<MailComposerHandle>()
-    mount({ ref: handle })
+    await mount({ ref: handle })
     expect(await handle.current!.prepareToLeave()).toBe(true)
     expect(saveDraft).not.toHaveBeenCalled()
 
@@ -261,7 +269,7 @@ describe('leaving the composer', () => {
           resolveSend = resolve
         }),
     )
-    mount({ ref: handle })
+    await mount({ ref: handle })
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
     await user.click(screen.getByRole('button', { name: 'Send' }))
@@ -281,7 +289,7 @@ describe('leaving the composer', () => {
   it('allows the parent close gate to prepare again after a successful save', async () => {
     const user = setup()
     const handle = createRef<MailComposerHandle>()
-    mount({ ref: handle })
+    await mount({ ref: handle })
     await user.type(subjectField(), ' latest')
 
     expect(await handle.current!.prepareToLeave()).toBe(true)
@@ -299,7 +307,7 @@ describe('leaving the composer', () => {
           resolveSave = resolve
         }),
     )
-    mount({ ref: handle })
+    await mount({ ref: handle })
     await user.type(subjectField(), ' latest')
     await vi.advanceTimersByTimeAsync(2000)
     expect(saveDraft).toHaveBeenCalledTimes(1)
@@ -315,7 +323,7 @@ describe('leaving the composer', () => {
     const user = setup()
     const handle = createRef<MailComposerHandle>()
     saveDraft.mockRejectedValueOnce(new Error('offline'))
-    mount({ intent: { kind: 'new' }, ref: handle })
+    await mount({ intent: { kind: 'new' }, ref: handle })
     const body = screen.getByRole('textbox', { name: 'Message' })
     await user.type(body, 'first body')
 
@@ -346,7 +354,7 @@ describe('leaving the composer', () => {
           rejectSend = reject
         }),
     )
-    mount({ intent: { kind: 'new' }, ref: handle })
+    await mount({ intent: { kind: 'new' }, ref: handle })
     const body = screen.getByRole('textbox', { name: 'Message' })
     await user.type(body, 'body')
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
@@ -368,7 +376,7 @@ describe('leaving the composer', () => {
     const user = setup()
     const handle = createRef<MailComposerHandle>()
     saveDraft.mockRejectedValue(new Error('offline'))
-    mount({ ref: handle })
+    await mount({ ref: handle })
     await user.type(subjectField(), ' latest')
 
     expect(await handle.current!.prepareToLeave()).toBe(false)
@@ -382,7 +390,7 @@ describe('leaving the composer', () => {
 describe('Bcc recipients', () => {
   it('autosaves and sends committed Bcc recipients in the payload', async () => {
     const user = setup()
-    mount({ intent: { kind: 'new' } })
+    await mount({ intent: { kind: 'new' } })
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
     await user.click(screen.getByRole('button', { name: 'Bcc' }))
     await user.type(screen.getByRole('textbox', { name: 'Bcc' }), 'hidden@example.com{Enter}')
@@ -400,7 +408,7 @@ describe('Bcc recipients', () => {
   it('keeps the Bcc reveal button disabled while a draft is loading', async () => {
     let resolveDraft!: (draft: unknown) => void
     draftQuery.mockImplementationOnce(() => new Promise((resolve) => (resolveDraft = resolve)))
-    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-7' })
 
     const reveal = screen.getByRole('button', { name: 'Bcc' })
     expect(reveal).toBeDisabled()
@@ -425,7 +433,7 @@ describe('Bcc recipients', () => {
     const user = setup()
     let resolveSend!: (value: { id: string }) => void
     send.mockImplementationOnce(() => new Promise((resolve) => (resolveSend = resolve)))
-    mount({ intent: { kind: 'new' } })
+    await mount({ intent: { kind: 'new' } })
     await user.type(subjectField(), 'Bcc send guard')
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
     await user.click(screen.getByRole('button', { name: 'Bcc' }))
@@ -443,7 +451,7 @@ describe('Bcc recipients', () => {
     const handle = createRef<MailComposerHandle>()
     let resolveSave!: (value: { id: string }) => void
     saveDraft.mockImplementationOnce(() => new Promise((resolve) => (resolveSave = resolve)))
-    mount({ intent: { kind: 'new' }, ref: handle })
+    await mount({ intent: { kind: 'new' }, ref: handle })
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
     await user.click(screen.getByRole('button', { name: 'Bcc' }))
     await user.type(screen.getByRole('textbox', { name: 'Bcc' }), 'hidden@example.com{Enter}')
@@ -472,7 +480,7 @@ describe('Bcc recipients', () => {
       html: null,
       foreign: false,
     })
-    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-7' })
     const bcc = await screen.findByRole('textbox', { name: 'Bcc' })
     await user.click(screen.getByRole('button', { name: 'Discard' }))
     await user.click(screen.getByRole('button', { name: 'Discard draft' }))
@@ -486,7 +494,7 @@ describe('Bcc recipients', () => {
 describe('autosave', () => {
   it('saves once after the idle wait, not on every keystroke', async () => {
     const user = setup()
-    mount()
+    await mount()
 
     await user.type(subjectField(), 'abc')
     expect(saveDraft).not.toHaveBeenCalled()
@@ -507,7 +515,7 @@ describe('autosave', () => {
           resolve = r
         }),
     )
-    mount()
+    await mount()
 
     await user.type(subjectField(), 'a')
     await vi.advanceTimersByTimeAsync(2000)
@@ -536,7 +544,7 @@ describe('autosave', () => {
           resolve = r
         }),
     )
-    mount()
+    await mount()
 
     await user.type(subjectField(), 'first')
     await vi.advanceTimersByTimeAsync(2000)
@@ -553,7 +561,7 @@ describe('autosave', () => {
 
   it('coalesces two edits inside the idle window into one save', async () => {
     const user = setup()
-    mount()
+    await mount()
 
     await user.type(subjectField(), 'a')
     await vi.advanceTimersByTimeAsync(1000)
@@ -565,7 +573,7 @@ describe('autosave', () => {
 
   it('reports Saved, and carries the thread so the cached chip can appear', async () => {
     const user = setup()
-    mount()
+    await mount()
 
     await user.type(subjectField(), 'a')
     await vi.advanceTimersByTimeAsync(2000)
@@ -593,7 +601,7 @@ describe('autosave', () => {
       text: 'half a reply',
       foreign: false,
     })
-    mount({ intent: { kind: 'new' }, draftId: 'd-4' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-4' })
     await waitFor(() => expect(subjectField()).toHaveValue('Re: Q2 budget'))
 
     await user.type(subjectField(), '!')
@@ -605,7 +613,7 @@ describe('autosave', () => {
   it('says Not saved and keeps the text when the save is refused', async () => {
     const user = setup()
     saveDraft.mockRejectedValue(new Error('offline'))
-    mount()
+    await mount()
 
     await user.type(subjectField(), 'hello')
     await vi.advanceTimersByTimeAsync(2000)
@@ -618,7 +626,7 @@ describe('autosave', () => {
     const user = setup()
     const handle = createRef<MailComposerHandle>()
     saveDraft.mockResolvedValueOnce({ id: null })
-    mount({ intent: { kind: 'new' }, ref: handle })
+    await mount({ intent: { kind: 'new' }, ref: handle })
     await user.type(subjectField(), 'draft')
 
     expect(await handle.current!.prepareToLeave()).toBe(false)
@@ -629,7 +637,7 @@ describe('autosave', () => {
   it('retries a refused save on the next edit', async () => {
     const user = setup()
     saveDraft.mockRejectedValueOnce(new Error('offline'))
-    mount()
+    await mount()
     await user.type(subjectField(), 'a')
     await vi.advanceTimersByTimeAsync(2000)
     await waitFor(() => expect(saveState()).toBe('Not saved'))
@@ -656,7 +664,7 @@ describe('operation-specific retries', () => {
       foreign: false,
     })
     discardDraft.mockRejectedValueOnce(new Error('offline'))
-    mount({ intent: { kind: 'new' }, draftId: 'd-1' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-1' })
     await waitFor(() => expect(subjectField()).toHaveValue('Draft'))
 
     await user.click(screen.getByRole('button', { name: 'Discard' }))
@@ -684,7 +692,7 @@ describe('operation-specific retries', () => {
       foreign: false,
     })
     discardDraft.mockRejectedValueOnce(new Error('offline'))
-    mount({ intent: { kind: 'new' }, draftId: 'd-1' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-1' })
     await waitFor(() => expect(subjectField()).toHaveValue('Draft'))
     await user.type(subjectField(), ' edited')
     await user.click(screen.getByRole('button', { name: 'Discard' }))
@@ -701,7 +709,7 @@ describe('operation-specific retries', () => {
   it('explicitly retries a send whose outcome is unknown', async () => {
     const user = setup()
     send.mockRejectedValueOnce(new Error('offline'))
-    mount()
+    await mount()
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
@@ -714,7 +722,7 @@ describe('operation-specific retries', () => {
   it('retries only the save when a send is blocked by save failure', async () => {
     const user = setup()
     saveDraft.mockRejectedValueOnce(new Error('offline'))
-    mount()
+    await mount()
     await user.type(subjectField(), ' latest')
     await user.click(screen.getByRole('button', { name: 'Send' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
@@ -729,7 +737,7 @@ describe('operation-specific retries', () => {
 
 describe('sending', () => {
   it('refuses to send with no recipients, and says why', async () => {
-    mount({ intent: { kind: 'new' } })
+    await mount({ intent: { kind: 'new' } })
 
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
     expect(screen.getByText('Add a recipient')).toBeInTheDocument()
@@ -737,7 +745,7 @@ describe('sending', () => {
 
   it('sends, and reports the result', async () => {
     const user = setup()
-    const { onSent } = mount()
+    const { onSent } = await mount()
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
@@ -749,7 +757,7 @@ describe('sending', () => {
     // A new message, not a reply: `composeFrom` prefixes a reply with `Re:`, so
     // a reply can never actually reach Send with an empty subject.
     const user = setup()
-    mount({ intent: { kind: 'new' } })
+    await mount({ intent: { kind: 'new' } })
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
@@ -763,7 +771,7 @@ describe('sending', () => {
 
   it('sends an empty body without complaint', async () => {
     const user = setup()
-    mount({ intent: { kind: 'new' }, sendAs: [] })
+    await mount({ intent: { kind: 'new' }, sendAs: [] })
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
     // A subject, so the empty-SUBJECT confirmation does not intercept the
     // empty BODY this test is about.
@@ -776,7 +784,7 @@ describe('sending', () => {
 
   it('forces a save before sending, so the newest text is what goes', async () => {
     const user = setup()
-    mount()
+    await mount()
     await user.type(subjectField(), 'x')
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
@@ -799,7 +807,7 @@ describe('sending', () => {
           resolve = r
         }),
     )
-    mount()
+    await mount()
 
     await user.type(subjectField(), 'a')
     await vi.advanceTimersByTimeAsync(2000)
@@ -821,7 +829,7 @@ describe('sending', () => {
     const user = setup()
     send.mockRejectedValue(Object.assign(new Error('nope'), { data: { code: 'FORBIDDEN' } }))
     const onReconnect = vi.fn()
-    const { onSent } = mount({ onReconnect })
+    const { onSent } = await mount({ onReconnect })
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
@@ -836,7 +844,7 @@ describe('sending', () => {
     send.mockRejectedValue(
       Object.assign(new Error('slow down'), { data: { code: 'TOO_MANY_REQUESTS' } }),
     )
-    mount()
+    await mount()
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
@@ -847,7 +855,7 @@ describe('sending', () => {
   it('offers an explicit retry for an unexplained send failure without retrying by itself', async () => {
     const user = setup()
     send.mockRejectedValueOnce(new Error('something went wrong'))
-    mount()
+    await mount()
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
@@ -875,7 +883,7 @@ describe('an existing draft with Bcc recipients', () => {
       foreign: false,
     })
     const user = setup()
-    mount({ intent: { kind: 'new' }, draftId: 'd-1' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-1' })
 
     await screen.findByRole('textbox', { name: 'Bcc' })
     expect(screen.getByText('hidden@example.com')).toBeInTheDocument()
@@ -910,7 +918,7 @@ describe('a draft written outside Holi', () => {
       html: '<p>Hello <strong>there</strong></p>',
       foreign: true,
     })
-    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-7' })
 
     await waitFor(() => expect(screen.getByTestId('foreign-notice')).toBeVisible())
     expect(subjectField()).toHaveValue('Written in Gmail')
@@ -930,7 +938,7 @@ describe('a draft written outside Holi', () => {
       html: null,
       foreign: false,
     })
-    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-7' })
 
     await waitFor(() => expect(subjectField()).toHaveValue('Written in Gmail'))
     await waitFor(() =>
@@ -952,7 +960,7 @@ describe('a draft written outside Holi', () => {
       html: '<p>Hello</p>',
       foreign: true,
     })
-    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-7' })
     await waitFor(() => expect(screen.getByTestId('foreign-notice')).toBeVisible())
 
     await vi.advanceTimersByTimeAsync(10_000)
@@ -978,7 +986,7 @@ describe('a draft written outside Holi', () => {
       text: 'a short poem about a turtle',
       foreign: true,
     })
-    mount({ intent: { kind: 'new' }, draftId: 'd-9' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-9' })
     await waitFor(() => expect(screen.getByTestId('foreign-notice')).toBeVisible())
 
     await user.type(subjectField(), '!')
@@ -1000,7 +1008,7 @@ describe('a draft written outside Holi', () => {
       html: '<p><strong>bold</strong></p>',
       foreign: false,
     })
-    mount({ intent: { kind: 'new' }, draftId: 'd-8' })
+    await mount({ intent: { kind: 'new' }, draftId: 'd-8' })
 
     await waitFor(() => expect(subjectField()).toHaveValue('Ours'))
     expect(screen.queryByTestId('foreign-notice')).toBeNull()
@@ -1010,7 +1018,7 @@ describe('a draft written outside Holi', () => {
 describe('discarding', () => {
   it('does not discard a pristine reply while send is in flight', async () => {
     const user = setup()
-    const { onDiscarded } = mount()
+    const { onDiscarded } = await mount()
     let resolveSend: ((value: { id: string }) => void) | undefined
     send.mockImplementationOnce(
       () =>
@@ -1031,7 +1039,7 @@ describe('discarding', () => {
   })
   it('asks before discarding a draft that exists', async () => {
     const user = setup()
-    const { onDiscarded } = mount()
+    const { onDiscarded } = await mount()
     await user.type(subjectField(), 'a')
     await vi.advanceTimersByTimeAsync(2000)
     await waitFor(() => expect(saveState()).toBe('Saved'))
@@ -1079,7 +1087,7 @@ describe('discarding', () => {
   it('stays open and says so when the discard is refused', async () => {
     const user = setup()
     discardDraft.mockRejectedValue(new Error('offline'))
-    const { onDiscarded } = mount()
+    const { onDiscarded } = await mount()
     await user.type(subjectField(), 'a')
     await vi.advanceTimersByTimeAsync(2000)
     await waitFor(() => expect(saveState()).toBe('Saved'))
@@ -1096,7 +1104,7 @@ describe('discarding', () => {
     // After a discard the unmount save would be a `create` for the message the
     // user just threw away.
     const user = setup()
-    const { onDiscarded, unmount } = mount()
+    const { onDiscarded, unmount } = await mount()
     await user.type(subjectField(), 'a')
     await vi.advanceTimersByTimeAsync(2000)
     await waitFor(() => expect(saveState()).toBe('Saved'))
@@ -1117,7 +1125,7 @@ describe('discarding', () => {
 
   it('Keep forces a save instead of losing the text', async () => {
     const user = setup()
-    mount()
+    await mount()
     await user.type(subjectField(), 'a')
 
     await user.click(screen.getByRole('button', { name: 'Discard' }))
@@ -1128,7 +1136,7 @@ describe('discarding', () => {
 
   it('refuses to close on Escape once something has been typed', async () => {
     const user = setup()
-    const { onClose } = mount()
+    const { onClose } = await mount()
     await user.type(subjectField(), 'a')
 
     await user.keyboard('{Escape}')
@@ -1140,7 +1148,7 @@ describe('discarding', () => {
 describe('the preview', () => {
   it('renders the markdown rather than describing it', async () => {
     const user = setup()
-    mount({}, true)
+    await mount({}, true)
     await user.click(screen.getByRole('textbox', { name: 'Message' }))
     expect(screen.getByTestId('vim-mode')).toBeInTheDocument()
 
@@ -1154,7 +1162,7 @@ describe('the preview', () => {
 describe('Vim in compose fields', () => {
   it('keeps subject commands out of compose actions and insert-mode keys editable', async () => {
     const user = setup()
-    const { onClose } = mount({ intent: { kind: 'new' } }, true)
+    const { onClose } = await mount({ intent: { kind: 'new' } }, true)
     const subject = subjectField()
     await user.click(subject)
 
@@ -1176,7 +1184,7 @@ describe('Vim in compose fields', () => {
 
   it('does not accept recipient chips or trigger compose actions in normal mode', async () => {
     const user = setup()
-    const { onClose } = mount(
+    const { onClose } = await mount(
       {
         intent: { kind: 'new' },
         suggestions: [{ name: 'Bo Berg', email: 'bo@example.com' }],
@@ -1199,7 +1207,7 @@ describe('Vim in compose fields', () => {
 describe('Vim in the message body', () => {
   it('reserves mode-row space when focus leaves so action buttons do not move', async () => {
     const user = setup()
-    mount({ intent: { kind: 'new' } }, true)
+    await mount({ intent: { kind: 'new' } }, true)
     const body = screen.getByRole('textbox', { name: 'Message' })
     await user.click(body)
     const slot = screen.getByTestId('vim-mode-slot')
@@ -1214,7 +1222,7 @@ describe('Vim in the message body', () => {
 
   it('restores mode disclosure after enabling Vim live and refocusing the body', async () => {
     const user = setup()
-    const { store } = mount({ intent: { kind: 'new' } })
+    const { store } = await mount({ intent: { kind: 'new' } })
     const body = screen.getByRole('textbox', { name: 'Message' })
     const editor = EditorView.findFromDOM(body)!
     await user.click(body)
@@ -1238,7 +1246,7 @@ describe('Vim in the message body', () => {
 
   it('edits through real keys and keeps the editor and undo history across preference changes', async () => {
     const user = setup()
-    const { store } = mount({ intent: { kind: 'new' } }, true)
+    const { store } = await mount({ intent: { kind: 'new' } }, true)
     const body = screen.getByRole('textbox', { name: 'Message' })
     const editor = EditorView.findFromDOM(body)!
     await user.click(body)
@@ -1263,7 +1271,7 @@ describe('Vim in the message body', () => {
 
   it('keeps normal-mode f out of the body while insert-mode f is text', async () => {
     const user = setup()
-    mount({ intent: { kind: 'new' } }, true)
+    await mount({ intent: { kind: 'new' } }, true)
     const body = screen.getByRole('textbox', { name: 'Message' })
     const editor = EditorView.findFromDOM(body)!
     await user.click(body)
@@ -1287,7 +1295,7 @@ describe('Vim in the message body', () => {
           resolveSend = resolve
         }),
     )
-    mount({ intent: { kind: 'new' } }, true)
+    await mount({ intent: { kind: 'new' } }, true)
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
     await user.type(subjectField(), 'Subject')
     const body = screen.getByRole('textbox', { name: 'Message' })
@@ -1305,7 +1313,7 @@ describe('Vim in the message body', () => {
 
   it('keeps Vim find motions available after an operator prefix', async () => {
     const user = setup()
-    mount({ intent: { kind: 'new' } }, true)
+    await mount({ intent: { kind: 'new' } }, true)
     const body = screen.getByRole('textbox', { name: 'Message' })
     const editor = EditorView.findFromDOM(body)!
     await user.click(body)
@@ -1317,7 +1325,7 @@ describe('Vim in the message body', () => {
 
   it('reports visual mode and uses the first Escape for Vim before close', async () => {
     const user = setup()
-    const { onClose } = mount({ intent: { kind: 'new' } }, true)
+    const { onClose } = await mount({ intent: { kind: 'new' } }, true)
     const body = screen.getByRole('textbox', { name: 'Message' })
     const editor = EditorView.findFromDOM(body)!
     await user.click(body)

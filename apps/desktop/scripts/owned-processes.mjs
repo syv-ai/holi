@@ -141,7 +141,10 @@ export function createOwnedProcesses({ spawn = nodeSpawn, signal, onChange = () 
       )
       const exit = await Promise.race(races)
       if (exit.code !== 0)
-        throw new Error(`${label} exited ${exit.code ?? exit.signal}: ${record.output}`)
+        throw Object.assign(
+          new Error(`${label} exited ${exit.code ?? exit.signal}: ${record.output}`),
+          { exitCode: exit.code },
+        )
       await stop(record, stopGraceMs, killGraceMs)
       return { ...exit, output: record.output }
     } catch (error) {

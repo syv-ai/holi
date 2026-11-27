@@ -2,16 +2,15 @@
  * The Google tokens, on disk, encrypted by the OS keychain.
  *
  * A deliberate sibling of `github/token-store.ts` rather than a generalization
- * of it: the two hold different shapes and version independently. The two
- * invariants *are* copied, because both are load-bearing and both are tested:
+ * of it: the two hold different shapes and version independently. This store
+ * has two tested constraints:
  *
  *   - **It never writes plaintext.** If the platform cannot encrypt, `write`
  *     throws rather than falling back. A refresh token in a readable file is a
  *     standing grant to someone's mail.
- *   - **A file it cannot read is a disconnect, not a crash.** Corrupt JSON, an
- *     envelope from a future version, a keychain re-keyed by an OS upgrade:
- *     all read as "no accounts". "Connect again" is a recovery a user can
- *     perform; a bricked app is not.
+ *   - **Only a missing file is a disconnect.** Corrupt data or unavailable
+ *     decryption must not look like an empty account store: a later write could
+ *     otherwise replace credentials that are still recoverable.
  */
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -43,7 +42,7 @@ export interface StoredGoogleAuth {
 /** Every connected account, keyed by `sub`. */
 export type GoogleAccounts = Record<string, StoredGoogleAuth>
 
-/** Bump when the shape changes; an unrecognised value reads as disconnected. */
+/** Bump when the shape changes; an unrecognised value is unavailable. */
 const VERSION = 1
 
 interface Envelope {
@@ -74,15 +73,22 @@ export class GoogleTokenStore {
   }
 
   async read(): Promise<GoogleAccounts> {
-    const text = await readFile(this.#file, 'utf8').catch(() => null)
-    if (text === null) return {}
+    let text: string
+    try {
+      text = await readFile(this.#file, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+      throw new Error('the Google token store could not be read, decrypted, or parsed')
+    }
 
     try {
       const envelope: unknown = JSON.parse(text)
-      if (!isEnvelope(envelope) || envelope.v !== VERSION) return {}
+      if (!isEnvelope(envelope) || envelope.v !== VERSION)
+        throw new Error('the Google token store has an unsupported or invalid envelope')
       const plain = this.#storage.decryptString(Buffer.from(envelope.data, 'base64'))
       const accounts: unknown = JSON.parse(plain)
-      if (accounts === null || typeof accounts !== 'object') return {}
+      if (accounts === null || typeof accounts !== 'object' || Array.isArray(accounts))
+        throw new Error('the Google token store payload is not an account record')
 
       // Filter rather than reject wholesale: one malformed entry should not
       // disconnect an account that is perfectly readable beside it.
@@ -92,7 +98,7 @@ export class GoogleTokenStore {
       }
       return valid
     } catch {
-      return {}
+      throw new Error('the Google token store could not be read, decrypted, or parsed')
     }
   }
 
@@ -107,8 +113,8 @@ export class GoogleTokenStore {
     }
 
     await mkdir(dirname(this.#file), { recursive: true })
-    // Write-then-rename: a crash mid-write must not leave a truncated file that
-    // reads as a disconnect on next launch.
+    // Write-then-rename keeps a crash from replacing the stored credentials
+    // with a truncated envelope.
     const tmp = `${this.#file}.tmp`
     await writeFile(tmp, JSON.stringify(envelope), { mode: 0o600 })
     await rename(tmp, this.#file)

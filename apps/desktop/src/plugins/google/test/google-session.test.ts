@@ -328,6 +328,28 @@ describe('getAccessToken', () => {
 })
 
 describe('a dead grant', () => {
+  it('preserves the stored connection after a structured non-grant 400 and retries successfully', async () => {
+    const replies = [
+      new Response('{"error":"invalid_client"}', { status: 400 }),
+      new Response('{"access_token":"at-2","expires_in":3600}', { status: 200 }),
+    ]
+    const fetchImpl = vi.fn(async () => replies.shift()!) as unknown as typeof globalThis.fetch
+    const session = await connected(auth({ expiresAt: NOW - 1 }), fetchImpl)
+
+    await expect(session.getAccessToken()).rejects.toThrow()
+    expect(session.account).toEqual({ email: 'ada@syv.ai' })
+    expect((await store.read())['sub-1']).toMatchObject({
+      refreshToken: 'rt-1',
+      accessToken: 'at-1',
+    })
+
+    await expect(session.getAccessToken()).resolves.toBe('at-2')
+    expect((await store.read())['sub-1']).toMatchObject({
+      refreshToken: 'rt-1',
+      accessToken: 'at-2',
+    })
+  })
+
   it('disconnects the account on a 400 (invalid_grant) and asks for a reconnect', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: false,

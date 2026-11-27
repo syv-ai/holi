@@ -1,3 +1,5 @@
+import { vaultWorkflow } from '@/test/vault-workflow'
+import { emptyVaultSnapshot } from '@holi/shared'
 /**
  * MailView: the list, the reader, triage, and the wiring around the sanitizer.
  *
@@ -47,14 +49,10 @@ const createTaskMock = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
 let mailAccountSub = 'mail-view-account'
+const openVaultMock = vi.fn()
+const statusMock = vi.fn()
 const google: Record<string, (params: unknown) => unknown> = {
-  status: () => ({
-    account: {
-      sub: mailAccountSub,
-      email: mailAccountSub === 'mail-view-account' ? 'ada@syv.ai' : 'ada@home.test',
-    },
-    missingScopes: [],
-  }),
+  status: () => statusMock(),
   allAccounts: () => ({
     accounts: [
       { sub: 'mail-view-account', email: 'ada@syv.ai' },
@@ -111,6 +109,7 @@ vi.mock('sonner', async (original) => ({
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    vaults: { open: { mutate: () => openVaultMock() } },
     settings: {
       read: {
         query: async () => ({
@@ -225,7 +224,17 @@ async function frameOf(article: HTMLElement): Promise<Document> {
   return frame!.contentDocument!
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  openVaultMock.mockReset().mockResolvedValue(emptyVaultSnapshot())
+  statusMock.mockReset()
+  statusMock.mockImplementation(() => ({
+    account: {
+      sub: mailAccountSub,
+      email: mailAccountSub === 'mail-view-account' ? 'ada@syv.ai' : 'ada@home.test',
+    },
+    missingScopes: [],
+  }))
+
   threadMock.mockReset()
   mailAccountSub = 'mail-view-account'
   // A default, because the real query ALWAYS returns a promise. A bare
@@ -280,6 +289,7 @@ beforeEach(() => {
   openedDialog.mockReset()
   // Every Google call names the vault it is for.
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  await vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
   // The remote-content choice outlives a component, so reset it or one test's
   // "Load images" satisfies the next test's assertion.
   resetMailImagesForTests()
@@ -293,6 +303,14 @@ afterEach(() => {
   vi.restoreAllMocks()
   // @ts-expect-error — as above.
   delete window.holi
+})
+
+test('reports a missing vault without requesting mail', async () => {
+  getDefaultStore().set(activeRemoteAtom, null)
+  render(<MailView />)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(/vault/i)
+  expect(threadMock).not.toHaveBeenCalled()
 })
 
 test('shows the subject, which is the whole point of a thread list', async () => {
@@ -2760,9 +2778,15 @@ test('invalidates markers across an A-B-A vault switch before accepting the late
   await screen.findByRole('button', { name: /Q2 budget/i })
   await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
 
-  act(() => getDefaultStore().set(activeRemoteAtom, 'other/vault'))
+  await act(async () => {
+    getDefaultStore().set(activeRemoteAtom, 'other/vault')
+    await vaultWorkflow(getDefaultStore()).open('other/vault')
+  })
   await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(2))
-  act(() => getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault'))
+  await act(async () => {
+    getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+    await vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
+  })
   await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(3))
 
   await act(async () => pending[2]!({ t1: 'red-star' }))
@@ -2916,4 +2940,45 @@ test('shows ordinary Gmail stars only after the annotation read and retries mark
   mailMarkersMock.mockResolvedValueOnce({})
   await user.click(screen.getByRole('button', { name: 'Retry marker' }))
   expect((await screen.findAllByLabelText('Starred')).length).toBeGreaterThan(0)
+})
+
+test('mail waits for public vault opening before requesting mail or offering actions', async () => {
+  let finishOpen!: (snapshot: ReturnType<typeof emptyVaultSnapshot>) => void
+  openVaultMock.mockReturnValueOnce(new Promise((resolve) => (finishOpen = resolve)))
+  let opening!: Promise<boolean>
+  await act(async () => {
+    opening = vaultWorkflow(getDefaultStore()).open('syv-ai/vault')
+  })
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  expect(screen.getByRole('status', { name: 'Loading Google account' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'New message' })).toBeNull()
+  expect(threadMock).not.toHaveBeenCalled()
+  expect(statusMock).not.toHaveBeenCalled()
+  await act(async () => {
+    finishOpen(emptyVaultSnapshot())
+    await opening
+  })
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'New message' }))
+  const subject = await screen.findByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'Account-backed draft')
+  expect(subject).toHaveValue('Account-backed draft')
+  expect(threadMock).toHaveBeenCalledTimes(1)
+})
+
+test('a failed known-account refresh retains the mounted editable draft', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: 'New message' }))
+  const subject = await screen.findByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'Keep this draft')
+  statusMock.mockClear().mockRejectedValue(new Error('offline'))
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await waitFor(() => expect(statusMock).toHaveBeenCalledTimes(3), { timeout: 3000 })
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toBe(subject)
+  await user.type(subject, ' and edit it')
+  expect(subject).toHaveValue('Keep this draft and edit it')
+  expect(screen.queryByRole('status', { name: 'Loading Google account' })).toBeNull()
 })

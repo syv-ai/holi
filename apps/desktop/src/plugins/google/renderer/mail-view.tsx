@@ -103,6 +103,7 @@ import { googleCap } from './google-cap'
 import { explainWriteFailure, isDisconnected } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
 import { useGoogleAccount } from './account'
+import { MailAccountPending } from './mail-account-pending'
 import { useMailMarkers } from './use-mail-markers'
 import { useMailMarkerActions } from './use-mail-marker-actions'
 import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
@@ -174,7 +175,10 @@ type ListState =
   | { kind: 'error'; message: string }
 
 export function MailView() {
-  const { currentSub } = useGoogleAccount()
+  const { account, currentSub, readError, refresh } = useGoogleAccount()
+  const remote = useAtomValue(activeRemoteAtom)
+  if (remote !== null && account === undefined)
+    return <MailAccountPending readError={readError} onRetry={refresh} />
   return <MailViewAccount key={currentSub ?? 'disconnected'} accountSub={currentSub} />
 }
 

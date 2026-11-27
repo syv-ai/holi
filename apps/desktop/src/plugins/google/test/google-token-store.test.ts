@@ -4,7 +4,7 @@
  * Both are the kind of property that stays true right up until a well-meaning
  * fallback is added, which is why they are pinned rather than assumed.
  */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -81,18 +81,28 @@ describe('it never writes plaintext', () => {
   })
 })
 
-describe('an unreadable file is a disconnect, not a crash', () => {
-  it('reads corrupt JSON as disconnected', async () => {
+describe('an unreadable file is unavailable, not disconnected', () => {
+  it('rejects filesystem read failures without exposing their details', async () => {
+    await mkdir(file)
+    const error = await new GoogleTokenStore(file, storage).read().catch((error: unknown) => error)
+
+    expect(error).toBeInstanceOf(Error)
+    expect(error).not.toHaveProperty('code')
+    expect(error).not.toHaveProperty('cause')
+    expect(JSON.stringify(error, Object.getOwnPropertyNames(error as object))).not.toContain(file)
+  })
+
+  it('rejects corrupt JSON without treating it as an empty store', async () => {
     await writeFile(file, 'not json at all')
-    expect(await new GoogleTokenStore(file, storage).read()).toEqual({})
+    await expect(new GoogleTokenStore(file, storage).read()).rejects.toThrow()
   })
 
-  it('reads an envelope from a future version as disconnected', async () => {
+  it('rejects an envelope from a future version', async () => {
     await writeFile(file, JSON.stringify({ v: 99, data: 'whatever' }))
-    expect(await new GoogleTokenStore(file, storage).read()).toEqual({})
+    await expect(new GoogleTokenStore(file, storage).read()).rejects.toThrow()
   })
 
-  it('reads as disconnected when the keychain can no longer decrypt', async () => {
+  it('rejects when the keychain can no longer decrypt without exposing its error', async () => {
     const store = new GoogleTokenStore(file, storage)
     await store.write({ 'sub-1': AUTH })
 
@@ -102,7 +112,29 @@ describe('an unreadable file is a disconnect, not a crash', () => {
         throw new Error('keychain re-keyed by an OS upgrade')
       },
     })
-    expect(await rekeyed.read()).toEqual({})
+    await expect(rekeyed.read()).rejects.toThrow()
+    expect(await new GoogleTokenStore(file, storage).read()).toEqual({ 'sub-1': AUTH })
+  })
+
+  it.each(['null', '7', '"payload"', '[]'])('rejects a non-record payload: %s', async (payload) => {
+    await writeFile(file, JSON.stringify({ v: 1, data: Buffer.from(payload).toString('base64') }))
+    const store = new GoogleTokenStore(file, storage)
+
+    await expect(store.read()).rejects.toThrow()
+    expect(await readFile(file, 'utf8')).toContain(Buffer.from(payload).toString('base64'))
+  })
+
+  it('does not expose decrypted secrets through an error or its cause', async () => {
+    const secret = 'synthetic-private-marker'
+    await writeFile(
+      file,
+      JSON.stringify({ v: 1, data: Buffer.from(`{ "secret": "${secret}"`).toString('base64') }),
+    )
+
+    const error = await new GoogleTokenStore(file, storage).read().catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(Error)
+    expect(JSON.stringify(error, Object.getOwnPropertyNames(error as object))).not.toContain(secret)
+    expect(String(error)).not.toContain(secret)
   })
 
   it('drops only the malformed entry, keeping a readable one beside it', async () => {

@@ -37,6 +37,7 @@ import { buildSummarizePrompt } from '../summarize-prompt'
 import { TASKS_CREATE, tasksCreateCap } from '../tasks-cap'
 import { googleCap } from '../google-cap'
 import { googleAccountRevisionAtom, useGoogleAccount } from '../account'
+import { MailAccountPending } from '../mail-account-pending'
 import { AppHeader, type ThreadCommands } from './mail-header'
 import { AppSidebar } from './mail-sidebar'
 import { MailList } from './mail-list'
@@ -56,7 +57,7 @@ export function MailShell({
   className?: string
   visible?: boolean
 }) {
-  const { currentSub } = useGoogleAccount()
+  const { account, currentSub, readError, refresh } = useGoogleAccount()
   const remote = useAtomValue(activeRemoteAtom)
   const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const store = useStore()
@@ -187,6 +188,9 @@ export function MailShell({
       : catchUpState?.kind === 'failed' && catchUpState.revision === remoteRevision
         ? catchUpState.error
         : null
+
+  if (remote !== null && account === undefined)
+    return <MailAccountPending readError={readError} onRetry={refresh} className={className} />
 
   return (
     <MailAccountShell

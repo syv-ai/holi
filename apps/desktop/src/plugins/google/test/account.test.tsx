@@ -8,12 +8,20 @@ import { StrictMode } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { act, render, waitFor } from '@/test/render'
 import { googleConnectedAtom, refreshGoogleAtom, useGoogleAccount } from '../renderer/account'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, readyVaultAtom } from '@/plugin-api'
+import { vaultWorkflow } from '@/test/vault-workflow'
+import { emptyVaultSnapshot } from '@holi/shared'
 
 const statusMock = vi.fn()
 const accountsMock = vi.fn()
+const openMock = vi.fn()
+const listMock = vi.fn()
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    vaults: {
+      open: { mutate: (...args: unknown[]) => openMock(...args) },
+      list: { query: () => listMock() },
+    },
     cap: {
       run: {
         mutate: async ({ name }: { name: string }) =>
@@ -42,8 +50,9 @@ function Probe() {
 }
 
 let remoteCounter = 0
-const renderProbe = (store = createStore(), remote = `syv-ai/vault-${remoteCounter++}`) => {
+const renderProbe = async (store = createStore(), remote = `syv-ai/vault-${remoteCounter++}`) => {
   store.set(activeRemoteAtom, remote)
+  if (store.get(readyVaultAtom)?.remote !== remote) await vaultWorkflow(store).open(remote)
   const view = render(
     <Provider store={store}>
       <Probe />
@@ -54,6 +63,8 @@ const renderProbe = (store = createStore(), remote = `syv-ai/vault-${remoteCount
 
 beforeEach(() => {
   accountsMock.mockReset().mockResolvedValue({ accounts: [], current: null })
+  openMock.mockReset().mockResolvedValue(emptyVaultSnapshot())
+  listMock.mockReset().mockResolvedValue([])
   statusMock.mockReset()
 })
 
@@ -64,7 +75,7 @@ afterEach(() => {
 test('starts unknown, then reports the connected account', async () => {
   statusMock.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
 
-  const { getByTestId } = renderProbe()
+  const { getByTestId } = await renderProbe()
 
   // Unknown is a third state on purpose: the shell hides the chips until the
   // answer is in, so a disconnected app never flashes them on launch.
@@ -76,7 +87,7 @@ test('a successful disconnected result is authoritative and does not retry', asy
   vi.useFakeTimers()
   statusMock.mockResolvedValue({ account: null, missingScopes: [] })
 
-  const { getByTestId } = renderProbe()
+  const { getByTestId } = await renderProbe()
 
   await act(async () => {
     await Promise.resolve()
@@ -92,7 +103,7 @@ test('recovers from a transient status failure and reveals the sidebar connectio
     .mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
 
   vi.useFakeTimers()
-  const { getByTestId, store } = renderProbe()
+  const { getByTestId, store } = await renderProbe()
 
   expect(getByTestId('account').textContent).toBe('unknown')
   expect(store.get(googleConnectedAtom)).toBe(false)
@@ -109,7 +120,7 @@ test('a persistent read failure stays unknown after bounded retries', async () =
   vi.useFakeTimers()
   statusMock.mockRejectedValue(new Error('Google is unavailable'))
 
-  const { getByTestId } = renderProbe()
+  const { getByTestId } = await renderProbe()
 
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1_250)
@@ -123,7 +134,7 @@ test('a persistent read failure stays unknown after bounded retries', async () =
 test('an exhausted read is an error and an explicit refresh starts a fresh sequence', async () => {
   vi.useFakeTimers()
   statusMock.mockRejectedValue(new Error('Google is unavailable'))
-  const { getByTestId, store } = renderProbe()
+  const { getByTestId, store } = await renderProbe()
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1_250)
     await Promise.resolve()
@@ -142,14 +153,14 @@ test('an exhausted read is an error and an explicit refresh starts a fresh seque
 test('remount after cancelling a retry starts a fresh request in the same store', async () => {
   vi.useFakeTimers()
   statusMock.mockRejectedValue(new Error('Google is unavailable'))
-  const { unmount, store } = renderProbe(createStore(), 'syv-ai/remount-test')
+  const { unmount, store } = await renderProbe(createStore(), 'syv-ai/remount-test')
   await act(async () => {
     await Promise.resolve()
   })
   expect(statusMock).toHaveBeenCalledTimes(1)
   unmount()
   statusMock.mockResolvedValue({ account: { email: 'remounted@syv.ai' }, missingScopes: [] })
-  const view = renderProbe(store, 'syv-ai/remount-test')
+  const view = await renderProbe(store, 'syv-ai/remount-test')
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1_250)
   })
@@ -166,7 +177,7 @@ test('late rejection after unmount cannot start retries', async () => {
         rejectOld = reject
       }),
   )
-  const { unmount } = renderProbe()
+  const { unmount } = await renderProbe()
   expect(statusMock).toHaveBeenCalledTimes(1)
   unmount()
   expect(statusMock).toHaveBeenCalledTimes(1)
@@ -181,6 +192,7 @@ test('Google account reads safely under React StrictMode', async () => {
   statusMock.mockResolvedValue({ account: { email: 'strict@syv.ai' }, missingScopes: [] })
   const store = createStore()
   store.set(activeRemoteAtom, 'strict/remount')
+  await vaultWorkflow(store).open('strict/remount')
   const view = render(
     <StrictMode>
       <Provider store={store}>
@@ -196,8 +208,8 @@ test('independent stores do not share a same-vault result', async () => {
   statusMock
     .mockResolvedValueOnce({ account: { email: 'first@syv.ai' }, missingScopes: [] })
     .mockResolvedValueOnce({ account: { email: 'second@syv.ai' }, missingScopes: [] })
-  const first = renderProbe(createStore(), 'same/remote')
-  const second = renderProbe(createStore(), 'same/remote')
+  const first = await renderProbe(createStore(), 'same/remote')
+  const second = await renderProbe(createStore(), 'same/remote')
   await waitFor(() =>
     expect(first.container.querySelector('[data-testid="account"]')?.textContent).toBe(
       'first@syv.ai',
@@ -228,8 +240,8 @@ test('unmounting one store does not cancel another same-remote request', async (
           resolveSecond = resolve
         }),
     )
-  const first = renderProbe(createStore(), 'same/remote')
-  const second = renderProbe(createStore(), 'same/remote')
+  const first = await renderProbe(createStore(), 'same/remote')
+  const second = await renderProbe(createStore(), 'same/remote')
   expect(statusMock).toHaveBeenCalledTimes(2)
   first.unmount()
   await act(async () => {
@@ -253,6 +265,7 @@ test('unmounting one of several same-store readers does not cancel the other', a
     .mockResolvedValue({ account: null, missingScopes: [] })
   const store = createStore()
   store.set(activeRemoteAtom, 'same/store')
+  await vaultWorkflow(store).open('same/store')
   const first = render(
     <Provider store={store}>
       <Probe />
@@ -279,9 +292,9 @@ test('asks once, however many components read it', async () => {
   const store = createStore()
 
   const remote = 'syv-ai/shared-vault'
-  const { getByTestId } = renderProbe(store, remote)
+  const { getByTestId } = await renderProbe(store, remote)
   await waitFor(() => expect(getByTestId('account').textContent).toBe('none'))
-  renderProbe(store, remote)
+  await renderProbe(store, remote)
 
   await waitFor(() => expect(statusMock).toHaveBeenCalledTimes(1))
 })
@@ -294,7 +307,7 @@ test('carries the scopes a stored grant is missing — connected is not the same
     missingScopes: ['https://www.googleapis.com/auth/gmail.modify'],
   })
 
-  const { getByTestId } = renderProbe()
+  const { getByTestId } = await renderProbe()
 
   await waitFor(() => expect(getByTestId('missing').textContent).toBe('1'))
   // Connected AND insufficient, at the same time.
@@ -308,7 +321,7 @@ test('retries an all-accounts failure without losing a connected account', async
     .mockResolvedValue({ accounts: [], current: null })
 
   vi.useFakeTimers()
-  const { getByTestId } = renderProbe()
+  const { getByTestId } = await renderProbe()
   expect(getByTestId('account').textContent).toBe('unknown')
   await act(async () => {
     await vi.advanceTimersByTimeAsync(250)
@@ -322,7 +335,7 @@ test('unmounting cancels a pending retry', async () => {
   vi.useFakeTimers()
   statusMock.mockRejectedValue(new Error('Google is not ready yet'))
 
-  const { unmount } = renderProbe()
+  const { unmount } = await renderProbe()
   await act(async () => {
     await Promise.resolve()
   })
@@ -337,9 +350,10 @@ test('a vault switch does not let a late prior answer overwrite the new vault', 
     .mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)))
     .mockResolvedValue({ account: { email: 'new@syv.ai' }, missingScopes: [] })
   const store = createStore()
-  const { getByTestId } = renderProbe(store)
+  const { getByTestId } = await renderProbe(store)
 
   store.set(activeRemoteAtom, 'other/vault')
+  await vaultWorkflow(store).open('other/vault')
   await waitFor(() => expect(getByTestId('account').textContent).toBe('new@syv.ai'))
   await act(async () => {
     resolveOld({ account: { email: 'old@syv.ai' }, missingScopes: [] })
@@ -353,6 +367,7 @@ test('the sidebar subscription preserves a connection without a React account re
   statusMock.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/sidebar-only')
+  await vaultWorkflow(store).open('syv-ai/sidebar-only')
   const unsubscribe = store.sub(googleConnectedAtom, () => undefined)
   await vi.waitFor(() => expect(store.get(googleConnectedAtom)).toBe(true))
 
@@ -371,7 +386,7 @@ test('the sidebar subscription preserves a connection without a React account re
 test('refresh failures preserve the last connected account', async () => {
   statusMock.mockResolvedValueOnce({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
   const store = createStore()
-  const { getByTestId } = renderProbe(store)
+  const { getByTestId } = await renderProbe(store)
   await waitFor(() => expect(getByTestId('account').textContent).toBe('ada@syv.ai'))
 
   vi.useFakeTimers()
@@ -393,7 +408,7 @@ test('an explicit refresh prevents an older in-flight answer from winning', asyn
     .mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)))
     .mockResolvedValue({ account: { email: 'refreshed@syv.ai' }, missingScopes: [] })
   const store = createStore()
-  const { getByTestId } = renderProbe(store)
+  const { getByTestId } = await renderProbe(store)
 
   store.set(refreshGoogleAtom)
   await waitFor(() => expect(getByTestId('account').textContent).toBe('refreshed@syv.ai'))
@@ -410,13 +425,14 @@ test('switching vaults cancels a scheduled retry', async () => {
     .mockRejectedValueOnce(new Error('Google is not ready yet'))
     .mockResolvedValue({ account: { email: 'new@syv.ai' }, missingScopes: [] })
   const store = createStore()
-  const { getByTestId } = renderProbe(store)
+  const { getByTestId } = await renderProbe(store)
   await act(async () => {
     await Promise.resolve()
   })
   expect(vi.getTimerCount()).toBe(1)
 
   store.set(activeRemoteAtom, 'other/vault')
+  await vaultWorkflow(store).open('other/vault')
   await act(async () => {
     await Promise.resolve()
   })
@@ -429,7 +445,7 @@ test('a refresh is visible to every reader: connecting lights the nav up', async
   statusMock.mockResolvedValue({ account: null, missingScopes: [] })
   const store = createStore()
 
-  const { getByTestId } = renderProbe(store)
+  const { getByTestId } = await renderProbe(store)
   await waitFor(() => expect(getByTestId('account').textContent).toBe('none'))
   expect(store.get(googleConnectedAtom)).toBe(false)
 
@@ -445,3 +461,92 @@ test('a refresh is visible to every reader: connecting lights the nav up', async
   await waitFor(() => expect(getByTestId('account').textContent).toBe('none'))
   expect(store.get(googleConnectedAtom)).toBe(false)
 })
+
+test('observes stored Google account when deferred vault opening completes after the startup retry budget', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  const remote = 'startup/vault'
+  listMock.mockResolvedValue([{ remote, name: 'vault', path: '/unused', lastOpenedAt: '' }])
+  await vaultWorkflow(store).loadRegistered()
+  let completeOpen!: () => void
+  let ready = false
+  openMock.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        completeOpen = () => {
+          ready = true
+          resolve(emptyVaultSnapshot())
+        }
+      }),
+  )
+  const read = (value: unknown) => {
+    if (!ready) return Promise.reject(new Error('BAD_REQUEST: method unavailable'))
+    return Promise.resolve(value)
+  }
+  statusMock.mockImplementation(() =>
+    read({ account: { email: 'stored@example.test' }, missingScopes: [] }),
+  )
+  accountsMock.mockImplementation(() =>
+    read({ accounts: [{ sub: 'stored', email: 'stored@example.test' }], current: 'stored' }),
+  )
+  const opening = vaultWorkflow(store).open(remote)
+  const view = render(
+    <Provider store={store}>
+      <Probe />
+    </Provider>,
+  )
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2_000)
+  })
+  expect(view.getByTestId('account').textContent).toBe('unknown')
+  expect(statusMock).not.toHaveBeenCalled()
+  expect(accountsMock).not.toHaveBeenCalled()
+  await act(async () => {
+    completeOpen()
+    await opening
+  })
+  expect(view.getByTestId('account').textContent).toBe('stored@example.test')
+})
+
+test.each(['switch back', 'reopen'] as const)(
+  'a stale account read cannot populate a new activation after %s',
+  async (transition) => {
+    let finishOld!: (value: unknown) => void
+    let finishNew!: (value: unknown) => void
+    statusMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve
+        }),
+    )
+    const store = createStore()
+    const remote = 'owner/a'
+    const view = await renderProbe(store, remote)
+    if (transition === 'switch back') {
+      statusMock.mockResolvedValueOnce({ account: null, missingScopes: [] })
+      act(() => store.set(activeRemoteAtom, 'owner/b'))
+      await act(async () => {
+        await vaultWorkflow(store).open('owner/b')
+      })
+      act(() => store.set(activeRemoteAtom, remote))
+    }
+    statusMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishNew = resolve
+        }),
+    )
+    await act(async () => {
+      await vaultWorkflow(store).open(remote)
+    })
+    await act(async () => {
+      finishOld({ account: { email: 'stale@example.test' }, missingScopes: [] })
+    })
+    expect(view.getByTestId('account').textContent).toBe('unknown')
+    expect(store.get(googleConnectedAtom)).toBe(false)
+    await act(async () => {
+      finishNew({ account: { email: 'current@example.test' }, missingScopes: [] })
+    })
+    expect(view.getByTestId('account').textContent).toBe('current@example.test')
+  },
+)

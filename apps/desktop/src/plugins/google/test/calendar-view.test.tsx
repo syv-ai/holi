@@ -1,3 +1,5 @@
+import { vaultWorkflow } from '@/test/vault-workflow'
+import { emptyVaultSnapshot } from '@holi/shared'
 /**
  * The calendar view (ReUI's event calendar over Google): what it asks Google
  * for, what it draws, and which writes it sends through which capability.
@@ -131,6 +133,7 @@ const google: Record<string, (params: Record<string, unknown>) => unknown> = {
 }
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    vaults: { open: { mutate: async () => emptyVaultSnapshot() } },
     cap: {
       names: { query: async () => namesMock() },
       run: {
@@ -144,7 +147,7 @@ vi.mock('@/lib/trpc', () => ({
   },
 }))
 
-beforeEach(() => {
+beforeEach(async () => {
   agendaMock.mockReset().mockResolvedValue([FOCUS, SYNC])
   scheduleMock
     .mockReset()
@@ -167,6 +170,7 @@ beforeEach(() => {
   meetingStateMock.mockReset().mockResolvedValue({ meetSupported: true, operation: null })
   checkMeetingMock.mockReset()
   getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/notes.git')
+  await vaultWorkflow(getDefaultStore()).open('git@github.com:syv-ai/notes.git')
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal: vi.fn() }
 })
@@ -1012,6 +1016,8 @@ describe('the calendar view', () => {
     expect(screen.getByRole('dialog', { name: 'New event' })).toBeInTheDocument()
 
     getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
+
+    await vaultWorkflow(getDefaultStore()).open('git@github.com:syv-ai/other.git')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(screen.getByRole('button', { name: 'New event' }))
     const currentCard = await screen.findByRole('dialog', { name: 'New event' })
@@ -1174,6 +1180,8 @@ describe('the calendar view', () => {
     expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Edited focus')
 
     getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
+
+    await vaultWorkflow(getDefaultStore()).open('git@github.com:syv-ai/other.git')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(screen.getByRole('button', { name: 'New event' }))
     expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('')
