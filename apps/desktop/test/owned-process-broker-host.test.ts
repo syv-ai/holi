@@ -271,12 +271,11 @@ function windowsJoinFixture(cwd: string, runDir?: string) {
     !script.endsWith(`\n'@\n${joinCompile}exit [HoliOwnedProcess]::RunBroker()`)
   )
     throw new Error('Expected one Add-Type statement before the native broker entry')
-  // Supply zero PowerShell pipeline objects; $source is still bound explicitly.
-  // This does not read or close Win32 stdin, which RunBroker uses for finish.
-  const compileWithEmptyInput = `@() | ${joinCompile}`
+  // Invoke Add-Type directly: piping an empty array suppresses the pipeline
+  // command entirely, leaving compilation permanently between these markers.
   const marked = script.replace(
     joinCompile,
-    `${joinPhaseMarker('compile-start')}${compileWithEmptyInput}${joinPhaseMarker('compile-done')}`,
+    `${joinPhaseMarker('compile-start')}${joinCompile}${joinPhaseMarker('compile-done')}`,
   )
   const encoded = gzipSync(Buffer.from(marked)).toString('base64')
   const identity = runDir
