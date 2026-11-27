@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { request } from 'node:http'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, beforeEach, expect, vi } from 'vitest'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
@@ -332,7 +332,9 @@ export function notifyWatchChange(path: string): void {
   for (const watcher of adapters.watchers) {
     const watchedPath = adapters.watchedPaths.get(watcher)
     if (watchedPath === undefined) continue
-    const relative = path.startsWith(`${watchedPath}/`) ? path.slice(watchedPath.length + 1) : null
+    const relative = path.startsWith(`${watchedPath}${sep}`)
+      ? path.slice(watchedPath.length + 1)
+      : null
     if (relative !== null) watcher.emit('change', 'change', relative)
   }
 }
