@@ -407,6 +407,8 @@ export interface SidebarApp {
   keepMounted?: boolean
   /** Listed only while true (an account it needs is connected). */
   visible?: Atom<boolean>
+  /** A current unread count for its sidebar badge; null hides it. */
+  unreadAtom?: Atom<number | null>
 }
 
 /**

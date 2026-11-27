@@ -602,7 +602,13 @@ describe('the Codex job command', () => {
     const state = await temp('holi-job-state-')
     const codex = codexProvider({
       resolveBin: () => '/usr/local/bin/codex',
-      base: { PATH: '/usr/bin', CODEX_HOME: person },
+      base: {
+        PATH: '/usr/bin',
+        CODEX_HOME: person,
+        HOLI_BIN: '/inherited/holi',
+        HOLI_AGENT_SESSION: 'inherited',
+      },
+      env: () => ({ HOLI_BIN: '/preset/holi', HOLI_AGENT_SESSION: 'preset' }),
     }) as JobsProvider
     const cmd = codex.capabilities.jobs.command({
       cwd: '/scratch/j1',
@@ -611,6 +617,7 @@ describe('the Codex job command', () => {
       state,
     })
     expect(cmd?.env.PATH?.split(':')).not.toContain('/holi/bin')
+    expect(cmd?.env.HOLI_BIN).toBeUndefined()
     expect(cmd?.env.HOLI_AGENT_SESSION).toBeUndefined()
     expect(cmd?.env.CODEX_HOME).toBe(join(state, 'codex-home'))
     const config = await readFile(join(state, 'codex-home/config.toml'), 'utf8')
