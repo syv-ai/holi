@@ -2,5 +2,6 @@ platforms/
 hooks/
 .nativescript/
 .native-deps/
+.artifacts/
 App_Resources/iOS/libgit2/
 webpack-stats.json

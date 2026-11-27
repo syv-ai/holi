@@ -417,7 +417,7 @@ export async function rig(
   const syncHolds = new Map<string, number>()
   const pause = (remote: string) => syncHolds.set(remote, 1)
   const resume = (remote: string) => syncHolds.set(remote, 0)
-  const machineToken = 'holi-573-repair3-machine-token'
+  const machineToken = 'cd'.repeat(32)
   const bridge = createBridgeServer({
     log: () => {},
     cli: {

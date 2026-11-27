@@ -303,8 +303,12 @@ export async function runNativeDocumentContext({ binary = process.env.CODEX_BIN,
       !proof.cleanup.error &&
       proof.cleanup.receipts.every((receipt) => receipt.drained)
     ) {
-      await rm(root, { recursive: true, force: true })
-      proof.cleanup.rootRemoved = !existsSync(root)
+      try {
+        await rm(root, { recursive: true, force: true })
+        proof.cleanup.rootRemoved = !existsSync(root)
+      } catch (error) {
+        proof.cleanup.error = String(error)
+      }
     }
     proof.validation = validateDocumentContextProof(proof)
     if (!proof.error && proof.validation.valid) proof.status = 'demonstrated'
