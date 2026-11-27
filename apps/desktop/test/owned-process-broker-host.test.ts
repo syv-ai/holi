@@ -263,7 +263,7 @@ function decodeJoinBootstrap(args: string[]) {
   return { bootstrap, script: gunzipSync(Buffer.from(payloads[0], 'base64')).toString('utf8') }
 }
 
-function windowsJoinFixture(cwd: string, runDir?: string) {
+async function windowsJoinFixture(cwd: string, startedAt: number) {
   const adapter = windowsJoinAdapter(cwd)
   const { bootstrap, script } = decodeJoinBootstrap(adapter.args)
   if (
@@ -271,19 +271,80 @@ function windowsJoinFixture(cwd: string, runDir?: string) {
     !script.endsWith(`\n'@\n${joinCompile}exit [HoliOwnedProcess]::RunBroker()`)
   )
     throw new Error('Expected one Add-Type statement before the native broker entry')
-  // Supply zero PowerShell pipeline objects; $source is still bound explicitly.
-  // This does not read or close Win32 stdin, which RunBroker uses for finish.
-  const compileWithEmptyInput = `@() | ${joinCompile}`
-  const marked = script.replace(
-    joinCompile,
-    `${joinPhaseMarker('compile-start')}${compileWithEmptyInput}${joinPhaseMarker('compile-done')}`,
+
+  const executablePath = join(cwd, 'holi-owned-process.exe')
+  const quotedExecutablePath = executablePath.replaceAll("'", "''")
+  const main = `\npublic static class HoliOwnedProcessFixture {\n  public static int Main() {\n    try { var runDir = Environment.GetEnvironmentVariable("HOLI_WINDOWS_AGENT_RUN_DIR"); if (!String.IsNullOrEmpty(runDir)) { var process = System.Diagnostics.Process.GetCurrentProcess(); var ticks = process.StartTime.ToUniversalTime().Ticks; var tmp = Path.Combine(runDir, "broker-root.json.tmp"); var dst = Path.Combine(runDir, "broker-root.json"); File.WriteAllText(tmp, "{\\\"pid\\\":" + process.Id.ToString(CultureInfo.InvariantCulture) + ",\\\"creationTicks\\\":" + ticks.ToString(CultureInfo.InvariantCulture) + "}"); File.Move(tmp, dst); process.Dispose(); } } catch {}\n    return HoliOwnedProcess.RunBroker();\n  }\n}\n`
+  const compileScript = script.replace(
+    `${joinCompile}exit [HoliOwnedProcess]::RunBroker()`,
+    `$source += @'\n${main}\n'@\n${joinCompile.slice(0, -1)} -OutputAssembly '${quotedExecutablePath}' -OutputType ConsoleApplication; ${joinPhaseMarker('compile-done')}exit 0`,
   )
-  const encoded = gzipSync(Buffer.from(marked)).toString('base64')
-  const identity = runDir
-    ? `try { $p = [Diagnostics.Process]::GetCurrentProcess(); $c = $p.StartTime.ToUniversalTime().Ticks; $tmp = '${runDir.replaceAll("'", "''")}\\broker-root.json.tmp'; $dst = '${runDir.replaceAll("'", "''")}\\broker-root.json'; [IO.File]::WriteAllText($tmp, ('{"pid":' + $PID.ToString([Globalization.CultureInfo]::InvariantCulture) + ',"creationTicks":' + $c.ToString([Globalization.CultureInfo]::InvariantCulture) + '}')); $p.Dispose(); [IO.File]::Move($tmp, $dst) } catch {};`
-    : ''
-  adapter.args[adapter.args.length - 1] =
-    identity + joinPhaseMarker('powershell-start') + bootstrap.replace(joinPayload, encoded)
+  const compilePayload = gzipSync(Buffer.from(compileScript)).toString('base64')
+  const compileCommand =
+    joinPhaseMarker('powershell-start') +
+    joinPhaseMarker('compile-start') +
+    bootstrap.replace(joinPayload, compilePayload)
+  const compiler = spawn(
+    adapter.file,
+    adapter.args.map((arg, index) => (index === adapter.args.length - 1 ? compileCommand : arg)),
+    {
+      cwd,
+      env: adapter.env,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  const bounded = async (stream: Readable) => {
+    const chunks: Buffer[] = []
+    let kept = 0
+    for await (const chunk of stream) {
+      const part = Buffer.from(chunk).subarray(0, Math.max(0, 16 * 1024 - kept))
+      if (part.length) chunks.push(part)
+      kept += part.length
+    }
+    return Buffer.concat(chunks)
+  }
+  const stdout = bounded(compiler.stdout!)
+  const stderr = bounded(compiler.stderr!)
+  const closed = once(compiler, 'close')
+  let status: [number | null, NodeJS.Signals | null]
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    status = (await Promise.race([
+      closed,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('PowerShell compilation exceeded startup budget')),
+          Math.max(0, startedAt + 45_000 - performance.now()),
+        )
+      }),
+    ])) as [number | null, NodeJS.Signals | null]
+  } catch (error) {
+    if (compiler.pid && compiler.exitCode === null && compiler.signalCode === null) {
+      const killer = spawn(
+        join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
+        ['/PID', String(compiler.pid), '/T', '/F'],
+        { stdio: 'ignore', windowsHide: true },
+      )
+      await once(killer, 'close')
+    }
+    await closed.catch(() => {})
+    await Promise.allSettled([stdout, stderr])
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+  const [compileOut, compileErr] = await Promise.all([stdout, stderr])
+  if (status[0] !== 0) {
+    throw new Error(
+      `PowerShell compilation failed (${status[0]}): ${compileOut.toString()} ${compileErr.toString()}`,
+    )
+  }
+  // Launch the compiled fixture itself: no second PowerShell assembly-loading pipeline.
+  adapter.file = executablePath
+  adapter.args = []
+  if (process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
+    adapter.env.HOLI_WINDOWS_AGENT_RUN_DIR = process.env.HOLI_WINDOWS_AGENT_RUN_DIR
   return adapter
 }
 
@@ -420,32 +481,6 @@ describe('owned Job broker host', () => {
     ).toEqual({ ...paths, TEMP: cwd, TMP: cwd })
   })
 
-  it('prepares an empty Windows compiler pipeline and join phase markers without spawning', () => {
-    const cwd = 'fixture-cwd'
-    const original = decodeJoinBootstrap(windowsJoinAdapter(cwd).args)
-    const fixture = windowsJoinFixture(cwd)
-    const { bootstrap, script } = decodeJoinBootstrap(brokerHostPlan(node, fixture).args)
-    const start = joinPhaseMarker('compile-start')
-    const done = joinPhaseMarker('compile-done')
-    const compileWithEmptyInput = `@() | ${joinCompile}`
-    const markedCompile = `${start}${compileWithEmptyInput}${done}`
-    // Compare as booleans so a regression does not print the command or generated source.
-    expect(
-      bootstrap.replace(joinPayload, '') ===
-        joinPhaseMarker('powershell-start') + original.bootstrap.replace(joinPayload, ''),
-    ).toBe(true)
-    expect(script.split(compileWithEmptyInput).length === 2).toBe(true)
-    expect(script.endsWith(`${markedCompile}exit [HoliOwnedProcess]::RunBroker()`)).toBe(true)
-    // The entire decoded script, including the C# here-string, must otherwise match.
-    expect(script.replace(markedCompile, joinCompile) === original.script).toBe(true)
-    expect(!script.includes('RunOriginalBroker')).toBe(true)
-    expect(script.split('public static int RunBroker()').length === 2).toBe(true)
-    expect(script.includes('foreach (byte expected in Encoding.UTF8.GetBytes("finish"))')).toBe(
-      true,
-    )
-    expect(script.includes('ReadFile(input, one, 1, out count, IntPtr.Zero)')).toBe(true)
-  })
-
   it(
     'waits past the terminal frame for physical exit without requiring parent EOF',
     // Windows headroom covers cold fixture startup plus the EOF, join and teardown phases.
@@ -485,10 +520,7 @@ describe('owned Job broker host', () => {
     })
     const cwd = await directory
     if (reported) return // Preparation timed out; do not spawn during teardown.
-    const native =
-      process.platform === 'win32'
-        ? windowsJoinFixture(cwd, process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
-        : undefined
+    const native = process.platform === 'win32' ? await windowsJoinFixture(cwd, started) : undefined
     enter('spawn')
     const { child } = native
       ? host(native, true)
@@ -667,7 +699,7 @@ describe('owned Job broker host', () => {
       let seen: boolean
       try {
         seen = await (native
-          ? withinJoinPhase(startup, startupStarted, 45_000, 'fixture startup')
+          ? withinJoinPhase(startup, started, 45_000, 'fixture startup')
           : startup)
       } finally {
         if (snapshotTimer) clearInterval(snapshotTimer)
