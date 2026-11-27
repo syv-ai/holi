@@ -263,7 +263,7 @@ function decodeJoinBootstrap(args: string[]) {
   return { bootstrap, script: gunzipSync(Buffer.from(payloads[0], 'base64')).toString('utf8') }
 }
 
-async function windowsJoinFixture(cwd: string, runDir?: string) {
+async function windowsJoinFixture(cwd: string, startedAt: number, runDir?: string) {
   const adapter = windowsJoinAdapter(cwd)
   const { bootstrap, script } = decodeJoinBootstrap(adapter.args)
   if (
@@ -276,7 +276,7 @@ async function windowsJoinFixture(cwd: string, runDir?: string) {
   const quotedAssemblyPath = assemblyPath.replaceAll("'", "''")
   const compileScript = script.replace(
     `${joinCompile}exit [HoliOwnedProcess]::RunBroker()`,
-    `${joinCompile.trimEnd()} -OutputAssembly '${quotedAssemblyPath}'; exit 0`,
+    `${joinCompile.slice(0, -1)} -OutputAssembly '${quotedAssemblyPath}'; exit 0`,
   )
   const compilePayload = gzipSync(Buffer.from(compileScript)).toString('base64')
   const compileCommand = bootstrap.replace(joinPayload, compilePayload)
@@ -290,8 +290,16 @@ async function windowsJoinFixture(cwd: string, runDir?: string) {
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   )
-  const bounded = (stream: Readable) =>
-    collect(stream).then((buffer) => buffer.subarray(0, 16 * 1024))
+  const bounded = async (stream: Readable) => {
+    const chunks: Buffer[] = []
+    let kept = 0
+    for await (const chunk of stream) {
+      const part = Buffer.from(chunk).subarray(0, Math.max(0, 16 * 1024 - kept))
+      if (part.length) chunks.push(part)
+      kept += part.length
+    }
+    return Buffer.concat(chunks)
+  }
   const stdout = bounded(compiler.stdout!)
   const stderr = bounded(compiler.stderr!)
   const closed = once(compiler, 'close')
@@ -303,13 +311,21 @@ async function windowsJoinFixture(cwd: string, runDir?: string) {
       new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new Error('PowerShell compilation exceeded startup budget')),
-          45_000,
+          Math.max(0, startedAt + 45_000 - performance.now()),
         )
       }),
     ])) as [number | null, NodeJS.Signals | null]
   } catch (error) {
-    compiler.kill()
-    await closed
+    if (compiler.pid && compiler.exitCode === null && compiler.signalCode === null) {
+      const killer = spawn(
+        join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
+        ['/PID', String(compiler.pid), '/T', '/F'],
+        { stdio: 'ignore', windowsHide: true },
+      )
+      await once(killer, 'close')
+    }
+    await closed.catch(() => {})
+    await Promise.allSettled([stdout, stderr])
     throw error
   } finally {
     clearTimeout(timer)
@@ -507,7 +523,7 @@ describe('owned Job broker host', () => {
     if (reported) return // Preparation timed out; do not spawn during teardown.
     const native =
       process.platform === 'win32'
-        ? await windowsJoinFixture(cwd, process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
+        ? await windowsJoinFixture(cwd, started, process.env.HOLI_WINDOWS_AGENT_RUN_DIR)
         : undefined
     enter('spawn')
     const { child } = native
@@ -687,7 +703,7 @@ describe('owned Job broker host', () => {
       let seen: boolean
       try {
         seen = await (native
-          ? withinJoinPhase(startup, startupStarted, 45_000, 'fixture startup')
+          ? withinJoinPhase(startup, started, 45_000, 'fixture startup')
           : startup)
       } finally {
         if (snapshotTimer) clearInterval(snapshotTimer)
