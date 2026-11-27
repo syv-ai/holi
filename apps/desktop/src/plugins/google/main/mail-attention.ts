@@ -121,7 +121,7 @@ export function createMailAttention<S extends MailAttentionSession>(
       return () => clearInterval(timer)
     })
   const subscribers = new Set<Subscriber<S>>()
-  const accounts = new Map<S, AccountState<S>>()
+  const accounts = new Map<string, AccountState<S>>()
   let refreshing: Promise<void> = Promise.resolve()
 
   const publicInterface: MailAttention = {
@@ -196,7 +196,7 @@ export function createMailAttention<S extends MailAttentionSession>(
   }
 
   function attach(subscriber: Subscriber<S>, session: S, sub: string): void {
-    let state = accounts.get(session)
+    let state = accounts.get(sub)
     if (state === undefined) {
       state = {
         session,
@@ -212,7 +212,7 @@ export function createMailAttention<S extends MailAttentionSession>(
         () => void pollAccount(state!).catch((error) => log(`poll ${sub}: ${String(error)}`)),
         deps.pollMs ?? POLL_MS,
       )
-      accounts.set(session, state)
+      accounts.set(sub, state)
     }
     subscriber.session = session
     subscriber.state = state
@@ -235,7 +235,7 @@ export function createMailAttention<S extends MailAttentionSession>(
     if (state.subscribers.size > 0 || state.retired) return
     state.retired = true
     state.stopTimer()
-    accounts.delete(state.session)
+    accounts.delete(state.sub)
     if (drain) await state.polling
   }
 
@@ -262,7 +262,9 @@ export function createMailAttention<S extends MailAttentionSession>(
   }
 
   async function runPoll(state: AccountState<S>): Promise<void> {
-    const api = deps.apiFor(state.session)
+    const authorized = [...state.subscribers].find(isLive)
+    if (authorized === undefined) return
+    const api = deps.apiFor(authorized.session!)
     const counts = fetchMailCounts(api)
     const history =
       state.cursor === null
@@ -350,7 +352,7 @@ export function createMailAttention<S extends MailAttentionSession>(
         await detach(subscriber, false)
         continue
       }
-      if (current === state.session) {
+      if (current !== null && current.accountSub === state.sub) {
         currentSubscribers.add(subscriber)
         continue
       }
