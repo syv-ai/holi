@@ -1281,8 +1281,8 @@ export function createRouter(deps: RouterDeps) {
       Promise.resolve(false),
     createResourceOwner: (isCurrent) => deps.mdxCompiler!.createOwner(isCurrent),
     retireResourceOwner: (owner) => deps.mdxCompiler!.retireOwner(owner),
-    inspect: (owner, source, signal, format) =>
-      deps.mdxCompiler!.inspect(owner, source, signal, format),
+    inspect: (owner, source, signal, format, settings) =>
+      deps.mdxCompiler!.inspect(owner, source, signal, format, settings),
   })
   function beginMdxTrustTransition(): () => void {
     mdxTrustTransition += 1
@@ -1406,6 +1406,36 @@ export function createRouter(deps: RouterDeps) {
         return { lease: value.lease, generation: value.generation as number, source: value.source }
       })
       .mutation(({ input }) => mdxDiagnostics.compile(input)),
+    compileModules: t.procedure
+      .input((raw: unknown) => {
+        const value = raw as { lease?: unknown; generation?: unknown; source?: unknown }
+        if (
+          typeof value?.lease !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(value.lease) ||
+          typeof value.source !== 'string' ||
+          value.source.length > 256 * 1024 ||
+          !Number.isSafeInteger(value.generation) ||
+          (value.generation as number) <= 0
+        )
+          throw new Error('invalid MDX module compilation')
+        return { lease: value.lease, generation: value.generation as number, source: value.source }
+      })
+      .mutation(({ input }) => mdxDiagnostics.compileModules(input)),
+    acquireArtifact: t.procedure
+      .input((raw: unknown) => {
+        const value = raw as { lease?: unknown; generation?: unknown; id?: unknown }
+        if (
+          typeof value?.lease !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(value.lease) ||
+          typeof value.id !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(value.id) ||
+          !Number.isSafeInteger(value.generation) ||
+          (value.generation as number) <= 0
+        )
+          throw new Error('invalid MDX artifact acquisition')
+        return { lease: value.lease, generation: value.generation as number, id: value.id }
+      })
+      .query(({ input }) => mdxDiagnostics.acquireArtifact(input)),
     releaseDiagnosticsLease: t.procedure
       .input(fields({ lease: 'string' }))
       .mutation(({ input }) => mdxDiagnostics.release(input)),

@@ -288,6 +288,12 @@ importers:
       eslint-scope:
         specifier: 9.1.2
         version: 9.1.2
+      estree-util-build-jsx:
+        specifier: ^3.0.1
+        version: 3.0.1
+      estree-util-to-js:
+        specifier: ^2.0.0
+        version: 2.0.0
       htmlparser2:
         specifier: ^10.1.0
         version: 10.1.0

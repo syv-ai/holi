@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import type { MdxResourceOwner } from './mdx-resources'
-import { inspectMdxDependencies } from './mdx-dependencies'
+import {
+  inspectMdxDependencies,
+  compileMdxDependencies,
+  type MdxDependencyOptions,
+} from './mdx-dependencies'
 import type { MdxConsentStore } from './mdx-consent'
 import { createMdxConsentCoordinator } from './mdx-consent-coordination'
 import { canonicalGitHubRemote } from './mdx-trust'
@@ -15,6 +19,9 @@ import {
   isSecretPath,
   vaultRelPath,
   type MdxDiagnostic,
+  type MdxArtifactGraph,
+  type MdxArtifactPublication,
+  MAX_MDX_ARTIFACT_GRAPH_BYTES,
   type MdxExternalResourceState,
 } from '@holi/shared'
 
@@ -36,18 +43,28 @@ type Lease = {
   fingerprint: string
   watcher: FSWatcher
   highGeneration: number
-  controller: AbortController | null
+  controller: (AbortController & { emitArtifacts: boolean }) | null
   contextChanged: boolean
   closed: boolean
   resourceOwner: MdxResourceOwner
   consent: ReturnType<ReturnType<typeof createMdxConsentCoordinator>['attach']>
   graphCurrent: (() => boolean) | null
+  publication: { graph: MdxArtifactGraph; current(): boolean } | null
 }
+
+type CompileInput = { lease: string; generation: number; source: string }
+type CompileResult = { diagnostics: MdxDiagnostic[]; artifact?: MdxArtifactPublication }
 
 export interface MdxDiagnostics {
   acquire(input: { remote: string; path: string; context: string }): Promise<{ lease: string }>
   cancel(input: { lease: string; generation: number }): { ok: true }
   compile(input: { lease: string; generation: number; source: string }): Promise<MdxDiagnostic[]>
+  compileModules(input: CompileInput): Promise<CompileResult>
+  acquireArtifact(input: {
+    lease: string
+    generation: number
+    id: string
+  }): Promise<MdxArtifactGraph>
   release(input: { lease: string }): { ok: true }
   externalResources(input: { lease: string }): Promise<MdxExternalResourceState>
   approveExternalResource(input: { lease: string; requestId: string }): Promise<{ ok: true }>
@@ -78,6 +95,7 @@ export function createMdxDiagnostics(options: {
     source: string,
     signal: AbortSignal,
     format: 'mdx' | 'jsx' | 'js',
+    options?: { emitArtifact?: boolean },
   ): Promise<import('./mdx-resources').MdxInspectResult>
 }): MdxDiagnostics {
   const leases = new Map<string, Lease>()
@@ -101,6 +119,7 @@ export function createMdxDiagnostics(options: {
     leases.get(lease.id) === lease &&
     options.authorize(lease.identity, lease.identity.remote)
   const abortCompile = (lease: Lease) => {
+    lease.publication = null
     lease.controller?.abort()
     lease.controller = null
   }
@@ -182,6 +201,149 @@ export function createMdxDiagnostics(options: {
       fingerprint: fingerprint(info),
     }
   }
+  async function compileSource(
+    input: CompileInput,
+    emitArtifacts: boolean,
+  ): Promise<CompileResult> {
+    const lease = leases.get(input.lease)
+    if (lease === undefined) throw new Error('MDX lease unavailable')
+    if (
+      !Number.isSafeInteger(input.generation) ||
+      input.generation <= 0 ||
+      typeof input.source !== 'string' ||
+      Buffer.byteLength(input.source, 'utf8') > MAX_SOURCE_BYTES
+    )
+      fail('MDX lease unavailable')
+    if (input.generation < lease.highGeneration || !current(lease)) fail('MDX compile cancelled')
+    lease.highGeneration = input.generation
+    const offers = retireSource(lease)
+    const controller = Object.assign(new AbortController(), { emitArtifacts })
+    lease.controller = controller
+    const running = () =>
+      current(lease) &&
+      lease.controller === controller &&
+      lease.highGeneration === input.generation &&
+      !controller.signal.aborted
+    const snapshot: { current: (() => boolean) | null } = { current: null }
+    const external = options.external
+    const scope = scopeFor(lease.root, lease.identity)
+    const state = await pathState(lease)
+    if (lease.contextChanged) fail('MDX context changed')
+    if (
+      lease.controller !== controller ||
+      input.generation !== lease.highGeneration ||
+      controller.signal.aborted
+    )
+      fail('MDX compile superseded')
+    if (!state || state.fingerprint !== lease.fingerprint || !current(lease)) {
+      drop(lease)
+      fail('MDX context changed')
+    }
+    try {
+      if (!current(lease) || lease.controller !== controller || controller.signal.aborted)
+        fail('MDX compile superseded')
+      const graphOptions: MdxDependencyOptions = {
+        root: lease.root,
+        path: lease.path,
+        source: input.source,
+        signal: controller.signal,
+        owner: lease.resourceOwner,
+        assertCurrent: async () => {
+          if (!running()) fail('MDX compile superseded')
+          if (!(await options.trusted(lease.identity)) || !running()) fail('MDX context changed')
+        },
+        external: external && {
+          async fetch(url, signal, localTreeCurrent, discoveryOrigins, kind = 'module') {
+            try {
+              const fetch = external.fetch ?? fetchMdxExternalResourceData
+              return await fetch({
+                url,
+                signal,
+                async assertAccess(origin, accessSignal) {
+                  const assertOwned = () => {
+                    if (
+                      !running() ||
+                      accessSignal.aborted ||
+                      !fileCurrent(lease) ||
+                      !localTreeCurrent()
+                    )
+                      throw new MdxExternalDataError('access-changed')
+                  }
+                  assertOwned()
+                  if (!(await options.trusted(lease.identity)))
+                    throw new MdxExternalDataError('access-changed')
+                  assertOwned()
+                  const allowed = await external.consent.allows({ ...scope, origin })
+                  assertOwned()
+                  if (allowed) discoveryOrigins.add(origin)
+                  return allowed
+                },
+                kind,
+              })
+            } catch (error) {
+              if (
+                running() &&
+                error instanceof MdxExternalDataError &&
+                error.code === 'consent-needed' &&
+                error.origin
+              ) {
+                offers.discover(error.origin, discoveryOrigins)
+              }
+              throw error
+            }
+          },
+          retainSnapshot(localTreeCurrent) {
+            snapshot.current = localTreeCurrent
+          },
+        },
+        inspect: (owner, source, signal, format, settings) =>
+          options.inspect(owner, source, signal, format, settings),
+      }
+      const compiled = emitArtifacts ? await compileMdxDependencies(graphOptions) : null
+      const diagnostics = compiled
+        ? compiled.diagnostics
+        : await inspectMdxDependencies(graphOptions)
+      if (
+        lease.controller !== controller ||
+        input.generation !== lease.highGeneration ||
+        controller.signal.aborted
+      )
+        fail('MDX compile superseded')
+      const after = await pathState(lease)
+      if (
+        lease.controller !== controller ||
+        input.generation !== lease.highGeneration ||
+        controller.signal.aborted
+      )
+        fail('MDX compile superseded')
+      if (!after || after.fingerprint !== lease.fingerprint || !current(lease)) {
+        drop(lease)
+        fail('MDX context changed')
+      }
+      if (snapshot.current && !snapshot.current()) fail('MDX context changed')
+      lease.graphCurrent = snapshot.current
+      offers.publish()
+      if (!running()) fail('MDX compile superseded')
+      if (compiled && diagnostics.length === 0) {
+        if (!compiled.current() || !fileCurrent(lease)) fail('MDX dependency graph changed')
+        const graph: MdxArtifactGraph = {
+          id: randomBytes(32).toString('hex'),
+          generation: input.generation,
+          entry: lease.path,
+          modules: compiled.modules,
+        }
+        if (Buffer.byteLength(JSON.stringify(graph), 'utf8') > MAX_MDX_ARTIFACT_GRAPH_BYTES)
+          fail('MDX artifact graph exceeds its transport limit')
+        lease.graphCurrent = compiled.current
+        lease.publication = { graph, current: compiled.current }
+        return { diagnostics, artifact: { id: graph.id, generation: graph.generation } }
+      }
+      return { diagnostics }
+    } finally {
+      if (lease.controller === controller) lease.controller = null
+    }
+  }
+
   return {
     async acquire(input) {
       const path = vaultRelPath(input.path)
@@ -270,6 +432,7 @@ export function createMdxDiagnostics(options: {
             abortCompile: () => abortCompile(lease),
           }),
           graphCurrent: null,
+          publication: null,
         }
         try {
           lease.resourceOwner = options.createResourceOwner(async () => {
@@ -339,123 +502,49 @@ export function createMdxDiagnostics(options: {
       return { ok: true }
     },
     async compile(input) {
+      return (await compileSource(input, false)).diagnostics
+    },
+    async compileModules(input) {
+      try {
+        return await compileSource(input, true)
+      } catch {
+        throw new Error('MDX module compilation unavailable')
+      }
+    },
+    async acquireArtifact(input) {
       const lease = leases.get(input.lease)
-      if (lease === undefined) throw new Error('MDX lease unavailable')
+      const published = lease?.publication
+      const valid = () =>
+        lease &&
+        published &&
+        current(lease) &&
+        lease.publication === published &&
+        lease.highGeneration === input.generation &&
+        published.graph.generation === input.generation &&
+        published.graph.id === input.id
       if (
         !Number.isSafeInteger(input.generation) ||
         input.generation <= 0 ||
-        typeof input.source !== 'string' ||
-        Buffer.byteLength(input.source, 'utf8') > MAX_SOURCE_BYTES
+        typeof input.id !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(input.id) ||
+        !valid()
       )
-        fail('MDX lease unavailable')
-      if (input.generation < lease.highGeneration || !current(lease)) fail('MDX compile cancelled')
-      lease.highGeneration = input.generation
-      const offers = retireSource(lease)
-      const controller = new AbortController()
-      lease.controller = controller
-      const running = () =>
-        current(lease) &&
-        lease.controller === controller &&
-        lease.highGeneration === input.generation &&
-        !controller.signal.aborted
-      const snapshot: { current: (() => boolean) | null } = { current: null }
-      const external = options.external
-      const scope = scopeFor(lease.root, lease.identity)
-      const state = await pathState(lease)
-      if (lease.contextChanged) fail('MDX context changed')
-      if (
-        lease.controller !== controller ||
-        input.generation !== lease.highGeneration ||
-        controller.signal.aborted
-      )
-        fail('MDX compile superseded')
-      if (!state || state.fingerprint !== lease.fingerprint || !current(lease)) {
-        drop(lease)
-        fail('MDX context changed')
-      }
+        throw new Error('MDX artifact unavailable')
       try {
-        if (!current(lease) || lease.controller !== controller || controller.signal.aborted)
-          fail('MDX compile superseded')
-        const diagnostics = await inspectMdxDependencies({
-          root: lease.root,
-          path: lease.path,
-          source: input.source,
-          signal: controller.signal,
-          owner: lease.resourceOwner,
-          assertCurrent: async () => {
-            if (!running()) fail('MDX compile superseded')
-            if (!(await options.trusted(lease.identity)) || !running()) fail('MDX context changed')
-          },
-          external: external && {
-            async fetch(url, signal, localTreeCurrent, discoveryOrigins, kind = 'module') {
-              try {
-                const fetch = external.fetch ?? fetchMdxExternalResourceData
-                return await fetch({
-                  url,
-                  signal,
-                  async assertAccess(origin, accessSignal) {
-                    const assertOwned = () => {
-                      if (
-                        !running() ||
-                        accessSignal.aborted ||
-                        !fileCurrent(lease) ||
-                        !localTreeCurrent()
-                      )
-                        throw new MdxExternalDataError('access-changed')
-                    }
-                    assertOwned()
-                    if (!(await options.trusted(lease.identity)))
-                      throw new MdxExternalDataError('access-changed')
-                    assertOwned()
-                    const allowed = await external.consent.allows({ ...scope, origin })
-                    assertOwned()
-                    if (allowed) discoveryOrigins.add(origin)
-                    return allowed
-                  },
-                  kind,
-                })
-              } catch (error) {
-                if (
-                  running() &&
-                  error instanceof MdxExternalDataError &&
-                  error.code === 'consent-needed' &&
-                  error.origin
-                ) {
-                  offers.discover(error.origin, discoveryOrigins)
-                }
-                throw error
-              }
-            },
-            retainSnapshot(localTreeCurrent) {
-              snapshot.current = localTreeCurrent
-            },
-          },
-          inspect: (owner, source, signal, format) =>
-            options.inspect(owner, source, signal, format),
-        })
+        const state = await pathState(lease!)
         if (
-          lease.controller !== controller ||
-          input.generation !== lease.highGeneration ||
-          controller.signal.aborted
-        )
-          fail('MDX compile superseded')
-        const after = await pathState(lease)
-        if (
-          lease.controller !== controller ||
-          input.generation !== lease.highGeneration ||
-          controller.signal.aborted
-        )
-          fail('MDX compile superseded')
-        if (!after || after.fingerprint !== lease.fingerprint || !current(lease)) {
-          drop(lease)
-          fail('MDX context changed')
+          !valid() ||
+          !state ||
+          state.fingerprint !== lease!.fingerprint ||
+          !fileCurrent(lease!) ||
+          !published!.current()
+        ) {
+          if (lease!.publication === published) lease!.publication = null
+          throw new Error('MDX artifact unavailable')
         }
-        if (snapshot.current && !snapshot.current()) fail('MDX context changed')
-        lease.graphCurrent = snapshot.current
-        offers.publish()
-        return diagnostics
-      } finally {
-        if (lease.controller === controller) lease.controller = null
+        return structuredClone(published!.graph)
+      } catch {
+        throw new Error('MDX artifact unavailable')
       }
     },
     release(input) {
@@ -492,7 +581,11 @@ export function createMdxDiagnostics(options: {
       for (const lease of [...leases.values()]) {
         if (
           lease.identity.remote === canonicalRemote &&
-          sameOrDescendant(lease.path.toLowerCase(), normalized)
+          (sameOrDescendant(lease.path.toLowerCase(), normalized) ||
+            lease.controller?.emitArtifacts === true ||
+            lease.publication?.graph.modules.some((module) =>
+              sameOrDescendant(module.path.toLowerCase(), normalized),
+            ))
         )
           drop(lease)
       }
