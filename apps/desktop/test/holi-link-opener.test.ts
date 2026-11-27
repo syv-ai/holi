@@ -49,6 +49,15 @@ test('reports a vault that is not registered', async () => {
   expect(showPath).not.toHaveBeenCalled()
 })
 
+test('refuses the machine-state directory itself without opening it', async () => {
+  const { vault, deps, showPath } = await fixture()
+  await mkdir(join(vault, '.holi', 'state'), { recursive: true })
+  await expect(
+    openHoliLink('holi://open?vault=syv-ai/team-notes&path=.holi/state', deps),
+  ).resolves.toMatchObject({ ok: false, message: 'This link cannot be opened.' })
+  expect(showPath).not.toHaveBeenCalled()
+})
+
 test('reports a missing file', async () => {
   const { deps, showPath } = await fixture()
   await expect(

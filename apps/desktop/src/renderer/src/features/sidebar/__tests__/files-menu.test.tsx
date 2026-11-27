@@ -1304,7 +1304,7 @@ test('folder menus copy shareable Holi links but exclude machine-local folders',
     act(() =>
       store.set(snapshotAtom, {
         ...store.get(snapshotAtom),
-        dirs: ['kunder', 'private.local.folder'],
+        dirs: ['kunder', 'private.local.folder', '.holi', '.holi/state', 'holi-state'],
       }),
     )
     fireEvent.contextMenu(await screen.findByText('kunder'))
@@ -1317,6 +1317,16 @@ test('folder menus copy shareable Holi links but exclude machine-local folders',
     fireEvent.contextMenu(await screen.findByText('private.local.folder'))
     await screen.findByRole('menuitem', { name: 'New document' })
     expect(screen.queryByRole('menuitem', { name: 'Copy Holi link' })).toBeNull()
+    fireEvent.contextMenu(await screen.findByText('state'))
+    await screen.findByRole('menuitem', { name: 'New document' })
+    expect(screen.queryByRole('menuitem', { name: 'Copy Holi link' })).toBeNull()
+    fireEvent.contextMenu(await screen.findByText('holi-state'))
+    await user.click(await screen.findByRole('menuitem', { name: 'Copy Holi link' }))
+    await waitFor(() =>
+      expect(copied).toHaveBeenLastCalledWith(
+        'https://syv-ai.github.io/holi/#vault=mara/notes&path=holi-state',
+      ),
+    )
   } finally {
     copied.mockRestore()
   }
