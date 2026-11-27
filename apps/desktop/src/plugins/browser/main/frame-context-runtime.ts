@@ -530,6 +530,111 @@ export function createFrameAddressingRuntime(
   function findSession(context: Context): string | undefined {
     return context.sessionId
   }
+  const assertDirectGeometry = (state: AddressState) => {
+    if (!isCurrentAddress(state.address!))
+      throw new Error('frame address lease is no longer current')
+    if (state.frame.parent !== contents.mainFrame || contents.getZoomFactor() !== 1)
+      throw new Error('direct frame geometry is unsupported')
+  }
+  async function projectDirectPoints(
+    address: FrameAddress,
+    points: ReadonlyArray<{ x: number; y: number }>,
+  ): Promise<Array<{ x: number; y: number } | null>> {
+    const state = states.get(address)
+    if (!state) throw new Error('unknown frame address lease')
+    if (points.some(({ x, y }) => !Number.isFinite(x) || !Number.isFinite(y)))
+      throw new Error('frame points must be finite')
+    return enqueue(async () => {
+      assertDirectGeometry(state)
+      const viewport = await evaluate<{ width: number; height: number; scale: number }>(
+        address,
+        '({width:innerWidth,height:innerHeight,scale:globalThis.visualViewport?.scale ?? 1})',
+      )
+      assertDirectGeometry(state)
+      if (viewport.scale !== 1) throw new Error('direct frame geometry is unsupported')
+      const world = await isolatedWorld(state.ownerContext, state.ownerContextSession, 'owner')
+      assertDirectGeometry(state)
+      const resolved = (await send(
+        'DOM.resolveNode',
+        {
+          backendNodeId: state.backendNodeId,
+          executionContextId: world.contextId,
+        },
+        state.ownerContextSession,
+      )) as { object?: { objectId?: string } }
+      const objectId = resolved.object?.objectId
+      if (!objectId) throw new Error('authenticated frame owner is unavailable')
+      try {
+        assertDirectGeometry(state)
+        const response = (await send(
+          'Runtime.callFunctionOn',
+          {
+            objectId,
+            functionDeclaration: `function(points, viewport) {
+            const owner = this;
+            const vv = window.visualViewport;
+            if (vv && vv.scale !== 1) return null;
+            const style = getComputedStyle(owner);
+            const rect = owner.getBoundingClientRect();
+            if (!owner.isConnected || rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility !== 'visible' || style.opacity === '0') return null;
+            for (let node = owner; node && node.nodeType === 1; node = node.parentElement) {
+              const s = getComputedStyle(node);
+              if (s.display === 'none' || s.visibility !== 'visible' || Number(s.opacity) === 0 || s.transform !== 'none' || s.translate !== 'none' || s.rotate !== 'none' || s.scale !== 'none' || s.perspective !== 'none' || (s.zoom && s.zoom !== '1' && s.zoom !== 'normal')) return null;
+            }
+            if (owner.getRootNode() !== document) return null;
+            const left = rect.left + owner.clientLeft, top = rect.top + owner.clientTop;
+            const width = owner.clientWidth, height = owner.clientHeight;
+            if (!(width > 0 && height > 0)) return null;
+            return points.map(({x,y}) => {
+              if (x < 0 || y < 0 || x >= viewport.width || y >= viewport.height) return null;
+              const px = Math.round(left + x), py = Math.round(top + y);
+              if (px < left || py < top || px >= left + width || py >= top + height) return null;
+              const hit = document.elementFromPoint(px, py);
+              if (hit !== owner) return null;
+              return {x:px, y:py};
+            });
+          }`,
+            arguments: [{ value: points }, { value: viewport }],
+            returnByValue: true,
+          },
+          state.ownerContextSession,
+        )) as { result?: { value?: Array<{ x: number; y: number } | null> | null } }
+        assertDirectGeometry(state)
+        if (!Array.isArray(response.result?.value))
+          throw new Error('direct frame geometry is unsupported')
+        return response.result.value
+      } finally {
+        await send('Runtime.releaseObject', { objectId }, state.ownerContextSession)
+        assertDirectGeometry(state)
+      }
+    })
+  }
+  async function clickDirect(
+    address: FrameAddress,
+    point: { x: number; y: number },
+    currentGuard: () => boolean,
+    expected?: { x: number; y: number },
+  ): Promise<boolean> {
+    const projected = await projectDirectPoints(address, [point])
+    if (!projected[0] || !currentGuard() || !isCurrentAddress(address)) return false
+    const { x, y } = projected[0]
+    if (expected && (x !== expected.x || y !== expected.y)) return false
+    // The caller must verify its target hit/nonce before invoking this method.
+    contents.focus()
+    if (!currentGuard() || !isCurrentAddress(address)) return false
+    contents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+    let released = false
+    try {
+      if (!currentGuard() || !isCurrentAddress(address)) return false
+      contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+      released = true
+      return true
+    } finally {
+      // Always release a dispatched button, including when the guard cancels.
+      if (!released)
+        contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+    }
+  }
   async function verifyOwner(address: FrameAddress, selector: string): Promise<boolean> {
     const state = states.get(address)
     if (!state) throw new Error('unknown frame address lease')
@@ -712,6 +817,8 @@ export function createFrameAddressingRuntime(
     resolve,
     evaluate,
     verifyOwner,
+    projectDirectPoints,
+    clickDirect,
     isCurrent: (address: FrameAddress) => isCurrentAddress(address),
     observeFocus,
     revoke,

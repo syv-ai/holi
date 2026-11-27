@@ -10,6 +10,8 @@
   // evaluate renderer/guest code and does not exist in the production app.
   let hintActivationGate: { wait: Promise<void>; entered(): void } | undefined
   const hintUiCalls: { name: string; params: any }[] = []
+  const hintSnapshots: any[] = []
+  const hintPresentations: { params: any; result: unknown }[] = []
   ipcMain.handle('qa:trpc', async (event, op) => {
     assert.equal(event.sender, win.webContents)
     assert.equal(op.path, 'cap.run')
@@ -39,6 +41,9 @@
         },
         paramsJson ? JSON.parse(paramsJson) : undefined,
       )
+      if (name === 'browser.hints-discover' && result.value) hintSnapshots.push(result.value)
+      if (name === 'browser.hints-present')
+        hintPresentations.push({ params: JSON.parse(paramsJson), result: result.value })
       return { ok: true, data: result.value }
     } catch (error) {
       return { ok: false, message: String(error) }
@@ -91,9 +96,7 @@
   const field = async (code: string) => inPage(view, code)
   const text = () => field(`document.querySelector('#text').value`)
   const captureFrame = async (wc: any) => {
-    if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
-    await wc.debugger.sendCommand('Page.enable')
-    await wc.debugger.sendCommand('Page.captureScreenshot', { fromSurface: true })
+    await wc.capturePage()
     await wc.executeJavaScript(
       `if(!window.__qaKeyListener){globalThis.qaKeys=[];window.addEventListener('keydown',e=>qaKeys.push({key:e.key,trusted:e.isTrusted}),true);window.__qaKeyListener=true}`,
     )

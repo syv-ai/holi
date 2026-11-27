@@ -34,8 +34,9 @@ const evidence = resolve(
 const fixture = join(desktop, 'scripts/browser-display-fixture')
 const appHintsOnly = process.env.HOLI_509_APP_HINTS_ONLY === '1'
 const appHintVideo = appHintsOnly && process.env.HOLI_509_RECORD_VIDEO === '1'
-const childVimAcceptance = process.env.HOLI_671_CHILD_VIM === '1'
-const hintsAcceptance = process.env.HOLI_524_HINTS === '1'
+const childHintsAcceptance = process.env.HOLI_758_CHILD_HINTS === '1'
+const childVimAcceptance = process.env.HOLI_671_CHILD_VIM === '1' || childHintsAcceptance
+const hintsAcceptance = process.env.HOLI_524_HINTS === '1' || childHintsAcceptance
 const toolbarAcceptance = !appHintsOnly && (process.env.HOLI_553_UI === '1' || hintsAcceptance)
 const recordingPath = join(evidence, 'interaction.mp4')
 await mkdir(evidence, { recursive: true })
@@ -256,6 +257,7 @@ try {
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
       .join(delimiter),
+    HOLI_671_CHILD_VIM: childVimAcceptance ? '1' : '0',
     HOLI_473_ROOT: root,
     HOLI_473_EVIDENCE: evidence,
     HOLI_473_RENDERER: join(fixtureRoot, 'index.html'),
