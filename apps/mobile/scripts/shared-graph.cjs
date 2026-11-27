@@ -1,8 +1,9 @@
-const { dirname, relative } = require('node:path')
+const { dirname, relative, join } = require('node:path')
 const { builtinModules } = require('node:module')
 
-// A deliberately closed graph: adding a shared dependency requires reviewing it here.
+// Every shared module and parser dependency is explicitly reviewed here.
 const expected = [
+  'markdown-move-links.ts',
   'mobile-path-safety.ts',
   'path-safety.ts',
   'vault-format.ts',
@@ -17,13 +18,41 @@ class SharedGraphPlugin {
       let evidence
       compilation.hooks.finishModules.tap('SharedGraph', (modules) => {
         const root = dirname(require.resolve('@holi/shared/vault-format'))
-        const shared = [...modules].filter((module) => module.resource?.startsWith(`${root}/`))
-        const resources = shared.map((module) => relative(root, module.resource)).sort()
-        if (JSON.stringify(resources) !== JSON.stringify(expected)) {
-          throw new Error(`Unexpected shared bundle graph: ${JSON.stringify(resources)}`)
+        const markdown = require.resolve('@lezer/markdown', { paths: [root] })
+        const reviewed = new Map(expected.map((name) => [join(root, name), name]))
+        for (const name of ['@lezer/markdown', '@lezer/common', '@lezer/highlight']) {
+          const entry = require.resolve(name, { paths: [dirname(markdown)] })
+          reviewed.set(join(dirname(entry), 'index.js'), name)
         }
+        const decoder = dirname(require.resolve('entities/decode', { paths: [root] }))
+        const decoderRoot = join(dirname(decoder), 'esm')
+        const decoderFiles = [
+          ['decode.js', 'entities/decode'],
+          ['decode-codepoint.js', 'entities/decode-codepoint'],
+          ['generated/decode-data-html.js', 'entities/decode-data-html'],
+          ['generated/decode-data-xml.js', 'entities/decode-data-xml'],
+        ]
+        for (const [file, label] of decoderFiles) reviewed.set(join(decoderRoot, file), label)
+        const bundled = [...modules].filter((module) => reviewed.has(module.resource))
+        const resources = bundled.map((module) => reviewed.get(module.resource)).sort()
+        const allowed = [
+          ...expected,
+          '@lezer/common',
+          '@lezer/highlight',
+          '@lezer/markdown',
+          ...decoderFiles.map(([, label]) => label),
+        ].sort()
+        if (JSON.stringify(resources) !== JSON.stringify(allowed))
+          throw new Error(`Unexpected shared bundle graph: ${JSON.stringify(resources)}`)
+        const unknownShared = [...modules].filter(
+          (module) => module.resource?.startsWith(`${root}/`) && !reviewed.has(module.resource),
+        )
+        if (unknownShared.length)
+          throw new Error(
+            `Unreviewed shared modules: ${unknownShared.map((module) => relative(root, module.resource)).join(', ')}`,
+          )
         const edges = []
-        for (const module of shared) {
+        for (const module of bundled) {
           for (const connection of compilation.moduleGraph.getOutgoingConnections(module)) {
             const request = connection.dependency?.request
             if (!request) continue
@@ -31,19 +60,13 @@ class SharedGraphPlugin {
             if (
               builtins.has(request.replace(/^node:/, '')) ||
               request.includes('electron') ||
-              !target ||
-              !expected.includes(relative(root, target))
-            ) {
+              !reviewed.has(target)
+            )
               throw new Error(`Non-portable shared dependency: ${request} -> ${target}`)
-            }
-            edges.push({
-              from: relative(root, module.resource),
-              request,
-              to: relative(root, target),
-            })
+            edges.push({ from: reviewed.get(module.resource), request, to: reviewed.get(target) })
           }
         }
-        evidence = { schemaVersion: 1, resources, edges }
+        evidence = { schemaVersion: 2, resources, edges }
       })
       compilation.hooks.processAssets.tap(
         {
@@ -61,5 +84,4 @@ class SharedGraphPlugin {
     })
   }
 }
-
 module.exports = SharedGraphPlugin

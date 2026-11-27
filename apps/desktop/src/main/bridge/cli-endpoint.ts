@@ -28,7 +28,11 @@ function assertPrivateOwnedFile(stat: Awaited<ReturnType<typeof lstat>>, path: s
 
 /** Atomically publish a fresh credential at `path`; throws without leaving a
  * temporary file if the path is unsafe or publication fails. */
-export async function publishCliEndpoint(path: string, port: number): Promise<CliEndpoint> {
+export async function publishCliEndpoint(
+  path: string,
+  port: number,
+  vaultToken?: string,
+): Promise<CliEndpoint> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('CLI endpoint port must be an integer from 1 to 65535')
   }
@@ -36,7 +40,9 @@ export async function publishCliEndpoint(path: string, port: number): Promise<Cl
     throw new Error('CLI endpoint path must be an absolute normalized path')
   }
 
-  const token = randomBytes(32).toString('hex')
+  if (vaultToken !== undefined && !/^[0-9a-f]{32}$/.test(vaultToken))
+    throw new Error('invalid vault CLI token')
+  const token = vaultToken ?? randomBytes(32).toString('hex')
   const descriptor = { host: '127.0.0.1' as const, port, token }
   const contents = `${JSON.stringify(descriptor, null, 2)}\n`
   const temporary = join(
