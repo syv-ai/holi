@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/cn'
-import { runningPluginsAtom } from '@/state/plugins'
+import { enabledPluginsAtom, runningPluginsAtom } from '@/state/plugins'
 import { appModeAtom, type AppMode } from '@/state/app-mode'
 import { activeRemoteAtom } from '@/state/vaults'
 import { taskDueAttentionAtom } from '@/state/tasks'
@@ -60,6 +60,7 @@ export function AppSidebar({
   const remote = useAtomValue(activeRemoteAtom)
   const appsOn = useAppsOn()
   const taskAttention = useAtomValue(taskDueAttentionAtom)
+  const tasksOn = useAtomValue(enabledPluginsAtom).has('tasks')
   const boardLabel = taskAttention?.due
     ? `Board, ${taskAttention.overdue} overdue, ${taskAttention.dueToday} due today, ${taskAttention.open} open tasks`
     : `Board${taskAttention?.open ? `, ${taskAttention.open} open tasks` : ''}`
@@ -91,25 +92,27 @@ export function AppSidebar({
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip={{ children: boardLabel, hidden: false }}
-                  isActive={activeId === BOARD_KEY}
-                  onClick={() => onOpen(BOARD_KEY)}
-                  aria-current={activeId === BOARD_KEY ? 'page' : undefined}
-                  aria-label={boardLabel}
-                  variant="fill"
-                  size="rail"
-                >
-                  <SquareKanbanIcon aria-hidden="true" />
-                  <span>Board</span>
-                </SidebarMenuButton>
-                {taskAttention?.due ? (
-                  <SidebarMenuBadge placement="rail" aria-hidden="true">
-                    {taskAttention.due}
-                  </SidebarMenuBadge>
-                ) : null}
-              </SidebarMenuItem>
+              {tasksOn ? (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip={{ children: boardLabel, hidden: false }}
+                    isActive={activeId === BOARD_KEY}
+                    onClick={() => onOpen(BOARD_KEY)}
+                    aria-current={activeId === BOARD_KEY ? 'page' : undefined}
+                    aria-label={boardLabel}
+                    variant="fill"
+                    size="rail"
+                  >
+                    <SquareKanbanIcon aria-hidden="true" />
+                    <span>Board</span>
+                  </SidebarMenuButton>
+                  {taskAttention?.due ? (
+                    <SidebarMenuBadge placement="rail" aria-hidden="true">
+                      {taskAttention.due}
+                    </SidebarMenuBadge>
+                  ) : null}
+                </SidebarMenuItem>
+              ) : null}
 
               {appsOn ? (
                 <SidebarMenuItem>

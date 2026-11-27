@@ -20,6 +20,7 @@ import { AGENT_MARKER, DocumentMarkdown } from './markdown'
 import { MultiCursor } from './multi-cursor'
 import { WikiLink } from './wiki-link'
 import { MermaidCodeBlock } from './rich-text/mermaid-code-block'
+import { FootnoteDefinition, FootnoteList, FootnoteReference } from './footnotes'
 import { DocumentCaption, DocumentFigure, renderImageMarkdown } from './rich-text/document-figure'
 
 /** An image at its natural size up to the column's width, never scaled up.
@@ -204,10 +205,19 @@ export function createDocumentExtensions({
   promptContainer?: HTMLElement | null
 }) {
   return [
-    ...createRichTextExtensions({ placeholder }).filter(
-      (extension) => extension.name !== 'textAlign',
-    ),
+    ...createRichTextExtensions({ placeholder })
+      .filter((extension) => extension.name !== 'textAlign')
+      // Endnotes already contain editable content. Focusing a
+      // reference must not append body content after the footnotes.
+      .map((extension) =>
+        extension.name === 'starterKit'
+          ? extension.configure({ trailingNode: { notAfter: ['footnoteList'] } })
+          : extension,
+      ),
     MermaidCodeBlock,
+    FootnoteReference,
+    FootnoteDefinition,
+    FootnoteList,
     DocumentCaption,
     DocumentFigure,
     WikiLink.configure({ onOpen: onOpenLink }),

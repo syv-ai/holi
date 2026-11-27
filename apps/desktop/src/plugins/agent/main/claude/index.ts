@@ -6,8 +6,16 @@
  * No `electron` import: the caller hands in the colour mode it reads from
  * `nativeTheme`, so this loads under plain Node in the tests.
  */
+import { dirname, join } from 'node:path'
+import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
 import type { BackgroundProvider } from '../provider'
-import { createClaudeCli, NOT_INSTALLED, resolveClaudeBin, terminalCommand } from './cli'
+import {
+  buildAgentEnv,
+  createClaudeCli,
+  NOT_INSTALLED,
+  resolveClaudeBin,
+  terminalCommand,
+} from './cli'
 import { resolveVaultAgentConfig, SIGN_IN_NOTICE, takeFirstSpawn } from './config-dir'
 import {
   isLive,
@@ -49,7 +57,15 @@ export function claudeProvider(deps: ClaudeProviderDeps): BackgroundProvider {
         remote,
         root,
         systemPrefersDark: deps.systemPrefersDark(),
-        env: { HOLI_BIN: deps.holiBin() },
+        env: {
+          HOLI_BIN: deps.holiBin(),
+          PATH: Object.entries(
+            buildAgentEnv(process.env, {
+              binDir: dirname(deps.holiBin()),
+              commandsDir: join(root, PLUGIN_COMMANDS_DIR),
+            }),
+          ).find(([key]) => key.toUpperCase() === 'PATH')![1],
+        },
       }),
     terminal: (target, opts = {}) =>
       terminalCommand(target, opts.attach, resolveBin, opts.fork, opts.login),

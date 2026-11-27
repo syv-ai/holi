@@ -8,6 +8,7 @@
  * normalised the first time it is edited here, never on open alone.
  */
 import { Markdown } from '@tiptap/markdown'
+import { installFootnoteMarkdown } from './footnotes'
 import { Lexer, Marked, Tokenizer, type TokensList } from 'marked'
 import {
   isPortableInlineCaption,
@@ -57,6 +58,7 @@ function referenceMarkdown(references?: () => TokensList['links']) {
       },
     ],
   })
+  installFootnoteMarkdown(instance)
   return instance
 }
 const sourceMarkdown = referenceMarkdown()
@@ -343,6 +345,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
 export const DocumentMarkdown = Markdown.extend({
   onBeforeCreate(event) {
     const initial = this.editor.options.content
+    const initialType = this.editor.options.contentType
     let references: TokensList['links'] = Object.create(null)
     // Each editor owns its lexer and the original document's first-wins
     // reference context, including definitions inside opaque envelopes.
@@ -365,7 +368,7 @@ export const DocumentMarkdown = Markdown.extend({
     manager.parse = parseDocument
     if (typeof initial !== 'string') return
     if (
-      this.editor.options.contentType === 'markdown' &&
+      initialType === 'markdown' &&
       (readMarkdownCaptionEnvelopes(initial).length ||
         standaloneImageBlocks(initial, []).length ||
         Object.keys(sourceMarkdown.lexer(initial).links).length)
