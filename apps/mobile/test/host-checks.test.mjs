@@ -7,6 +7,7 @@ import { runVaultFormatCorpus } from '@holi/shared/vault-format'
 import {
   moveCrashCases,
   runCommand,
+  whileCommandPending,
   validateMoveCheckpoint,
   moveCheckpointState,
   validateMoveCheckpointState,
@@ -462,6 +463,96 @@ test('host rejects absent, incomplete or nonportable shared graph evidence', () 
     { edges: [...graph.edges, { from: 'vault-format.ts', request: 'node:fs', to: 'polyfill.js' }] },
   ])
     assert.throws(() => validateSharedGraph({ ...graph, ...patch }))
+})
+
+test('pending-command observation skips completed commands and drains started diagnostics', async () => {
+  let observed = false
+  assert.equal(
+    await whileCommandPending(
+      Promise.resolve('done'),
+      () => {
+        observed = true
+      },
+      20,
+    ),
+    'done',
+  )
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(observed, false)
+
+  let finishCommand
+  let finishObservation
+  const command = new Promise((resolve) => {
+    finishCommand = resolve
+  })
+  const drained = new Promise((resolve) => {
+    finishObservation = resolve
+  })
+  let started
+  const result = whileCommandPending(
+    command,
+    () => {
+      started = true
+      return drained
+    },
+    1,
+  )
+  while (!started) await new Promise((resolve) => setTimeout(resolve, 1))
+  finishCommand('launched')
+  let settled = false
+  result.then(() => {
+    settled = true
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(settled, false)
+  finishObservation()
+  assert.equal(await result, 'launched')
+})
+
+test('pending-command settlement aborts and drains owned diagnostic processes', async () => {
+  let finishCommand
+  let observationStarted
+  const started = new Promise((resolve) => {
+    observationStarted = resolve
+  })
+  const command = new Promise((resolve) => {
+    finishCommand = resolve
+  })
+  const result = whileCommandPending(
+    command,
+    (signal) => {
+      observationStarted()
+      return runCommand(
+        process.execPath,
+        ['-e', 'process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000)'],
+        { signal },
+      )
+    },
+    1,
+  )
+  await started
+  finishCommand('original result')
+  assert.equal(await result, 'original result')
+})
+
+test('pending-command observation preserves command failure when diagnostics fail', async () => {
+  const failure = new Error('launch failed')
+  let rejectCommand
+  let started
+  const command = new Promise((_, reject) => {
+    rejectCommand = reject
+  })
+  const result = whileCommandPending(
+    command,
+    async () => {
+      started = true
+      throw new Error('diagnostic failed')
+    },
+    1,
+  )
+  while (!started) await new Promise((resolve) => setTimeout(resolve, 1))
+  rejectCommand(failure)
+  await assert.rejects(result, (error) => error === failure)
 })
 
 test('native move crash matrix covers every durable event and rejects forged checkpoint evidence', () => {
