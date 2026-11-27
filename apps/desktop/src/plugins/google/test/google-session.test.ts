@@ -161,6 +161,7 @@ describe('missingScopes', () => {
       'https://www.googleapis.com/auth/contacts.readonly',
       'https://www.googleapis.com/auth/contacts.other.readonly',
       'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/drive',
     ])
   })
 
@@ -219,6 +220,7 @@ describe('missingScopes', () => {
           'https://www.googleapis.com/auth/contacts.readonly',
           'https://www.googleapis.com/auth/contacts.other.readonly',
           'https://www.googleapis.com/auth/calendar.events',
+          'https://www.googleapis.com/auth/drive',
         ],
       }),
     )
@@ -238,6 +240,7 @@ describe('missingScopes', () => {
           'https://www.googleapis.com/auth/calendar.readonly',
           'https://www.googleapis.com/auth/contacts.readonly',
           'https://www.googleapis.com/auth/calendar.events',
+          'https://www.googleapis.com/auth/drive',
         ],
       }),
     )

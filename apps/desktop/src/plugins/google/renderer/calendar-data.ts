@@ -13,7 +13,7 @@ import { dayAfter, localDate } from '@holi/shared'
 import type { CalendarEvent as CalendarItem } from '@/components/ui/event-calendar/event-calendar-types'
 import type { CalendarChoice, CalendarEvent as GoogleEvent } from '../main/calendar'
 import { googleCap } from './google-cap'
-import { isDisconnected, messageOf } from './google-errors'
+import { codeOf, isDisconnected, messageOf } from './google-errors'
 
 export type { CalendarChoice, GoogleEvent }
 
@@ -22,6 +22,8 @@ export interface GoogleEventData {
   /** Google's id, unique per calendar only: the item's own id adds the
    *  calendar. */
   googleId: string
+  /** The vault/account generation that supplied this occurrence. */
+  sourceGeneration?: number
   calendarName: string
   htmlLink: string
   location: string | null
@@ -70,6 +72,7 @@ export function toCalendarItem(
   event: GoogleEvent,
   ownCalendarId: string | null,
   calendarColor?: string | null,
+  sourceGeneration?: number,
 ): GoogleCalendarItem {
   const editable =
     ownCalendarId !== null && event.calendarId === ownCalendarId && event.attendeeCount === 0
@@ -84,6 +87,7 @@ export function toCalendarItem(
     readOnly: !editable,
     data: {
       googleId: event.id,
+      sourceGeneration,
       calendarName: event.calendarName,
       htmlLink: event.htmlLink,
       location: event.location ?? null,
@@ -142,9 +146,10 @@ type CalendarStatus =
   | { kind: 'loading' }
   | { kind: 'ready' }
   | { kind: 'disconnected' }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; refreshConnection: boolean }
 
 export interface GoogleCalendarData {
+  sourceGeneration: number
   status: CalendarStatus
   /** A fetch is in flight; the last answer is still drawn. */
   loading: boolean
@@ -165,93 +170,130 @@ export interface GoogleCalendarData {
   remove: (googleId: string) => Promise<void>
 }
 
+const NO_EVENTS: GoogleEvent[] = []
+const NO_CALENDARS: CalendarChoice[] = []
+
 /** Google's calendar for the open vault's account, a visible range at a time. */
 export function useGoogleCalendar(
   remote: string | null,
-  accountIdentity: string | null = null,
+  expectedAccountSub: string | null,
+  accountReady = true,
 ): GoogleCalendarData {
-  const [status, setStatus] = useState<CalendarStatus>({ kind: 'loading' })
-  const [loading, setLoading] = useState(false)
-  const [events, setEvents] = useState<GoogleEvent[]>([])
-  const [calendars, setCalendars] = useState<CalendarChoice[]>([])
+  const [agenda, setAgenda] = useState<{
+    generation: number
+    events: GoogleEvent[]
+    status: CalendarStatus
+  } | null>(null)
+  const [loadingGeneration, setLoadingGeneration] = useState<number | null>(null)
+  const [choices, setChoices] = useState<{
+    generation: number
+    calendars: CalendarChoice[]
+  } | null>(null)
   const [window, setWindow] = useState<{ from: string; to: string } | null>(null)
   /** The newest load: an answer for a range already left arrives late and
    *  is dropped. */
   const latest = useRef(0)
   const latestLoad = useRef<() => void>(() => {})
-  const context = useRef({ remote, accountIdentity, generation: 0 })
-  if (context.current.remote !== remote || context.current.accountIdentity !== accountIdentity) {
-    context.current = { remote, accountIdentity, generation: context.current.generation + 1 }
+  const context = useRef({ remote, expectedAccountSub, accountReady, generation: 0 })
+  if (
+    context.current.remote !== remote ||
+    context.current.expectedAccountSub !== expectedAccountSub
+  ) {
+    context.current = {
+      remote,
+      expectedAccountSub,
+      accountReady,
+      generation: context.current.generation + 1,
+    }
+    latest.current += 1
+  }
+  if (context.current.accountReady !== accountReady) {
+    context.current.accountReady = accountReady
     latest.current += 1
   }
   const contextGeneration = context.current.generation
 
-  const loadCalendars = useCallback(() => {
-    if (remote === null) return
-    const generation = context.current.generation
-    // No error surface of its own: the events' error covers an outage.
-    void googleCap
-      .calendars(remote)
-      .then((choices) => {
-        if (context.current.generation === generation && context.current.remote === remote) {
-          setCalendars(choices)
-        }
-      })
-      .catch(() => {
-        if (context.current.generation === generation && context.current.remote === remote) {
-          setCalendars([])
-        }
-      })
-  }, [remote])
+  const ownsContext = useCallback(
+    () =>
+      expectedAccountSub !== null &&
+      accountReady &&
+      context.current.accountReady &&
+      context.current.generation === contextGeneration,
+    [expectedAccountSub, accountReady, contextGeneration],
+  )
 
-  const load = useCallback(() => {
-    if (context.current.generation !== contextGeneration || context.current.remote !== remote)
-      return
-    const asked = ++latest.current
-    const generation = contextGeneration
-    const current = (): boolean =>
-      asked === latest.current &&
-      context.current.generation === generation &&
-      context.current.remote === remote
-    if (remote === null) {
-      setStatus({ kind: 'disconnected' })
-      return
-    }
-    if (window === null) return
-    setLoading(true)
-    // The last answer for this exact window paints while the live one is in
-    // flight, and never stands in for it.
-    void googleCap
-      .agendaCached(remote, window)
-      .then((cached) => {
-        if (current() && cached !== null && cached.length > 0) {
-          setEvents((shown) => (shown.length === 0 ? cached : shown))
-          setStatus((s) => (s.kind === 'loading' ? { kind: 'ready' } : s))
-        }
-      })
-      .catch(() => {})
-    void googleCap.agenda(remote, window).then(
-      (fresh) => {
-        if (!current()) return
-        setEvents(fresh)
-        setStatus({ kind: 'ready' })
-        setLoading(false)
+  const loadCalendars = useCallback(() => {
+    if (remote === null || !ownsContext()) return
+    // No error surface of its own: the events' error covers an outage.
+    void googleCap.calendars(remote).then(
+      (calendars) => {
+        if (ownsContext()) setChoices({ generation: contextGeneration, calendars })
       },
-      (error: unknown) => {
-        if (!current()) return
-        setLoading(false)
-        setStatus(
-          isDisconnected(error)
-            ? { kind: 'disconnected' }
-            : { kind: 'error', message: messageOf(error, 'Could not load your calendar.') },
-        )
+      () => {
+        if (ownsContext()) setChoices({ generation: contextGeneration, calendars: [] })
       },
     )
-  }, [remote, window, contextGeneration])
+  }, [remote, contextGeneration, ownsContext])
+
+  const load = useCallback(() => {
+    if (remote === null || window === null || expectedAccountSub === null || !ownsContext()) return
+    const asked = ++latest.current
+    const generation = contextGeneration
+    const current = () => asked === latest.current && ownsContext()
+    const request = { ...window, expectedAccountSub }
+    const lostAuthority = (error: unknown) => codeOf(error) === 'FORBIDDEN' || isDisconnected(error)
+    let liveAnswered = false
+    let authorityLost = false
+    const reject = (error: unknown) => {
+      authorityLost = lostAuthority(error)
+      setLoadingGeneration(null)
+      setAgenda((shown) => ({
+        generation,
+        events: !authorityLost && shown?.generation === generation ? shown.events : [],
+        status: isDisconnected(error)
+          ? { kind: 'disconnected' }
+          : {
+              kind: 'error',
+              message: messageOf(error, 'Could not load your calendar.'),
+              refreshConnection: authorityLost,
+            },
+      }))
+    }
+    setLoadingGeneration(generation)
+    // Main binds both reads to the expected account and validates it before
+    // returning the rows. A local generation alone cannot prove their origin.
+    // Never let cache paint after live answers, including an empty response.
+    void googleCap.agendaCached(remote, request).then(
+      (cached) => {
+        if (current() && !liveAnswered && cached !== null && cached.length > 0) {
+          setAgenda((shown) =>
+            shown?.generation === generation && shown.events.length > 0
+              ? shown
+              : { generation, events: cached, status: { kind: 'ready' } },
+          )
+        }
+      },
+      (error: unknown) => {
+        if (current() && lostAuthority(error)) reject(error)
+      },
+    )
+    void googleCap.agenda(remote, request).then(
+      (events) => {
+        liveAnswered = true
+        if (!current() || authorityLost) return
+        setAgenda({ generation, events, status: { kind: 'ready' } })
+        setLoadingGeneration(null)
+      },
+      (error: unknown) => {
+        liveAnswered = true
+        if (current() && !authorityLost) reject(error)
+      },
+    )
+  }, [remote, window, expectedAccountSub, contextGeneration, ownsContext])
   latestLoad.current = load
 
   useEffect(load, [load])
-  useEffect(loadCalendars, [loadCalendars, contextGeneration])
+  useEffect(loadCalendars, [loadCalendars])
 
   const showRange = useCallback((range: { start: Date; end: Date }) => {
     const next = rangeWindow(range)
@@ -267,38 +309,51 @@ export function useGoogleCalendar(
 
   const setCalendarEnabled = useCallback(
     (id: string, enabled: boolean) => {
-      setCalendars((all) => all.map((c) => (c.id === id ? { ...c, enabled } : c)))
-      if (remote === null) return
+      if (remote === null || !ownsContext()) return
+      setChoices((shown) =>
+        shown?.generation === contextGeneration
+          ? {
+              ...shown,
+              calendars: shown.calendars.map((c) => (c.id === id ? { ...c, enabled } : c)),
+            }
+          : shown,
+      )
       void googleCap
         .setCalendar(remote, { id, enabled })
         .then(load)
         // Put the box back rather than leave it lying about what main holds.
         .catch(loadCalendars)
     },
-    [remote, load, loadCalendars],
+    [remote, contextGeneration, ownsContext, load, loadCalendars],
   )
 
   const patchLocal = useCallback(
     (key: string, times: Pick<EventTimes, 'start' | 'end' | 'allDay'>) => {
-      setEvents((all) =>
-        all.map((event) =>
-          itemId(event) === key
-            ? {
-                ...event,
-                allDay: times.allDay,
-                start: times.allDay ? localDate(times.start) : times.start.toISOString(),
-                end: times.allDay ? localDate(times.end) : times.end.toISOString(),
-              }
-            : event,
-        ),
+      if (!ownsContext()) return
+      setAgenda((shown) =>
+        shown?.generation === contextGeneration
+          ? {
+              ...shown,
+              events: shown.events.map((event) =>
+                itemId(event) === key
+                  ? {
+                      ...event,
+                      allDay: times.allDay,
+                      start: times.allDay ? localDate(times.start) : times.start.toISOString(),
+                      end: times.allDay ? localDate(times.end) : times.end.toISOString(),
+                    }
+                  : event,
+              ),
+            }
+          : shown,
       )
     },
-    [],
+    [contextGeneration, ownsContext],
   )
 
   const create = useCallback(
     async (times: EventTimes & { title: string; location: string }) => {
-      if (remote === null) throw new Error('No vault is open.')
+      if (remote === null || !ownsContext()) throw new Error('Google account changed.')
       const generation = context.current.generation
       await googleCap.schedule(remote, {
         ...eventParams(times),
@@ -309,12 +364,12 @@ export function useGoogleCalendar(
       if (context.current.generation === generation && context.current.remote === remote)
         latestLoad.current()
     },
-    [remote],
+    [remote, ownsContext],
   )
 
   const update = useCallback(
     async (googleId: string, times: EventTimes) => {
-      if (remote === null) throw new Error('No vault is open.')
+      if (remote === null || !ownsContext()) throw new Error('Google account changed.')
       const generation = context.current.generation
       await googleCap.reschedule(remote, {
         id: googleId,
@@ -324,25 +379,28 @@ export function useGoogleCalendar(
       if (context.current.generation === generation && context.current.remote === remote)
         latestLoad.current()
     },
-    [remote],
+    [remote, ownsContext],
   )
 
   const remove = useCallback(
     async (googleId: string) => {
-      if (remote === null) throw new Error('No vault is open.')
+      if (remote === null || !ownsContext()) throw new Error('Google account changed.')
       const generation = context.current.generation
       await googleCap.unschedule(remote, { id: googleId })
       if (context.current.generation === generation && context.current.remote === remote)
         latestLoad.current()
     },
-    [remote],
+    [remote, ownsContext],
   )
 
+  const shown = accountReady && agenda?.generation === contextGeneration ? agenda : null
   return {
-    status,
-    loading,
-    events,
-    calendars,
+    sourceGeneration: contextGeneration,
+    status: remote === null ? { kind: 'disconnected' } : (shown?.status ?? { kind: 'loading' }),
+    loading: !shown || loadingGeneration === contextGeneration,
+    events: shown?.events ?? NO_EVENTS,
+    calendars:
+      accountReady && choices?.generation === contextGeneration ? choices.calendars : NO_CALENDARS,
     showRange,
     reload,
     setCalendarEnabled,

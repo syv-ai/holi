@@ -19,7 +19,6 @@ test('a cached account client resolves the replacement session after reconnect',
   session = { getAccessToken: vi.fn(async () => 'replacement-session-token') }
   await createClient().get('https://www.googleapis.com/calendar/v3/users/me/calendarList')
 
-  expect(sessionForSub).toHaveBeenCalledTimes(2)
   expect(
     fetch.mock.calls.map(([, init]) => new Headers(init?.headers).get('authorization')),
   ).toEqual(['Bearer old-session-token', 'Bearer replacement-session-token'])

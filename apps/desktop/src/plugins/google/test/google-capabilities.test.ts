@@ -7,7 +7,7 @@
  * `buildRfc822` as something that looks like a header. No network: these are
  * about the seam, not about Gmail.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyVaultSnapshot } from '@holi/shared'
 import type { MailMarkerPreferences } from '../shared/mail-markers'
 import { resolveArgv } from '../../../main/bridge/cli'
@@ -26,11 +26,14 @@ import { GoogleApi } from '../main/api'
 import { openGoogleCache } from '../main/cache'
 import { createGoogleData } from '../main/data'
 import { createMailMarkerStore } from '../main/markers'
+import { createPermissionReceipts } from '../main/permission-receipts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fenceThread } from '../main/untrusted'
 import type { GoogleData } from '../main/data'
+import { GoogleSession } from '../main/session'
+import type { StoredGoogleAuth } from '../main/token-store'
 
 const MAIL = { to: ['bo@example.com'], subject: 'Q2 budget', body: 'Here it is.' }
 
@@ -53,6 +56,7 @@ interface RigOptions {
     ) => Promise<void>
   }
   dataForSession?: (session: { accountSub: string | null }) => GoogleData
+  permissionReceipts?: ReturnType<typeof createPermissionReceipts>
 }
 
 /** The capabilities over a fake data layer and accounts manager, recording
@@ -61,6 +65,7 @@ function rig({
   data = {},
   accounts = {},
   dataForSession,
+  permissionReceipts,
   settings = {
     read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
     write: async () => {},
@@ -92,6 +97,7 @@ function rig({
     } as GoogleAccountsManager,
     dataFor: async () => googleData,
     dataForSession: (session) => (dataForSession?.(session) ?? googleData) as GoogleData,
+    permissionReceipts,
     settings,
   })
   registry.register(GOOGLE_NAMESPACES, capabilities)
@@ -122,6 +128,474 @@ function rig({
     dispose: () => disposeGoogleCapabilities(capabilities),
   }
 }
+
+const ATTACHMENT_TARGET = { expectedAccountSub: 'sub-1', calendarId: 'primary', eventId: 'event1' }
+const CALENDAR_READ = 'https://www.googleapis.com/auth/calendar.readonly'
+const CALENDAR_WRITE = 'https://www.googleapis.com/auth/calendar.events'
+const DRIVE_FULL = 'https://www.googleapis.com/auth/drive'
+const DRIVE_READ = 'https://www.googleapis.com/auth/drive.readonly'
+let attachmentUserData: string
+
+function attachmentRig({
+  scopes,
+  onRefresh = () => scopes,
+  expired = false,
+  onRequest,
+  waitForAccount,
+}: {
+  scopes: string[]
+  onRefresh?: () => string[]
+  expired?: boolean
+  waitForAccount?: () => Promise<void>
+  onRequest?: (path: string, init: RequestInit, expireToken: () => void) => Response | undefined
+}) {
+  let now = expired ? 100_000 : 0
+  const remote = 'owner/vault'
+  let linked = true
+  let auth: StoredGoogleAuth | null = {
+    sub: ATTACHMENT_TARGET.expectedAccountSub,
+    email: 'organizer@example.com',
+    refreshToken: 'old-refresh',
+    accessToken: 'old-access',
+    expiresAt: 100_000,
+    scopes,
+  }
+  let generation = 0
+  const discard = async () => {
+    auth = null
+    generation += 1
+  }
+  const session = new GoogleSession({
+    account: {
+      read: () => auth,
+      generation: () => generation,
+      write: async (updated, expected) => {
+        if (generation === expected) auth = updated
+      },
+      remove: discard,
+      expire: async (expected) => {
+        if (generation === expected) await discard()
+      },
+    },
+    client: () => ({ id: 'synthetic-client' }),
+    now: () => now,
+    fetch: async () =>
+      Response.json({ access_token: 'refreshed', expires_in: 3600, scope: onRefresh().join(' ') }),
+  })
+  const requests: Array<{ path: string; method: string }> = []
+  vi.stubGlobal('fetch', async (input: URL | string, init: RequestInit) => {
+    const { pathname: path } = new URL(input)
+    const method = init.method ?? 'GET'
+    requests.push({ path, method })
+    const result = onRequest?.(path, init, () => {
+      now = 100_000
+    })
+    if (result) return result
+    if (method !== 'GET') return new Response(null, { status: 500 })
+    if (path === '/calendar/v3/users/me/calendarList/primary')
+      return Response.json({ accessRole: 'owner' })
+    if (path === '/calendar/v3/calendars/primary/events/event1')
+      return Response.json({
+        id: 'event1',
+        etag: '"v1"',
+        organizer: { self: true },
+        attachments: [{ fileUrl: 'https://example.com/agenda', title: 'Agenda' }],
+      })
+    if (path === '/drive/v3/files/selected') {
+      now = 100_000 // Expire the token after resolving the selection, before PATCH.
+      return Response.json({
+        id: 'selected',
+        name: 'Selected',
+        webViewLink: 'https://example.com/file',
+        mimeType: 'application/pdf',
+        capabilities: { canShare: true },
+        trashed: false,
+      })
+    }
+    throw new Error(`Unexpected request: ${path}`)
+  })
+  const holder = rig({
+    data: null,
+    permissionReceipts: createPermissionReceipts(attachmentUserData),
+    accounts: {
+      sessionFor: async (requestedRemote) => {
+        await waitForAccount?.()
+        return linked && requestedRemote === remote ? session : null
+      },
+    },
+  })
+  return {
+    ...holder,
+    invoke: (name: string, params: object = ATTACHMENT_TARGET, door: Door = 'ui') =>
+      holder.run(name, params, remote, door).then((result) => result.value),
+    unlink: () => {
+      linked = false
+    },
+    requests,
+  }
+}
+
+describe('event attachment capabilities', () => {
+  beforeEach(async () => {
+    attachmentUserData = await mkdtemp(join(tmpdir(), 'holi-attachment-capabilities-'))
+  })
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await rm(attachmentUserData, { recursive: true, force: true })
+  })
+
+  it('reads with Calendar access, but rejects readonly Drive, stale targets and non-UI doors', async () => {
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_READ],
+    })
+    await expect(invoke('eventAttachments')).resolves.toMatchObject({
+      attachments: [{ title: 'Agenda' }],
+    })
+    await expect(invoke('driveFiles')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(
+      invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }),
+    ).resolves.toMatchObject({ attachmentStatus: 'failed', reconnect: true, sharing: [] })
+    await expect(
+      invoke('eventAttachments', { ...ATTACHMENT_TARGET, expectedAccountSub: 'other' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(
+      invoke('driveFiles', { calendarId: 'primary', eventId: 'event1' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(
+      invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }, 'cli'),
+    ).rejects.toThrow()
+    for (const door of ['cli', 'app'] as const) {
+      await expect(
+        invoke('checkEventFileAccess', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }, door),
+      ).rejects.toThrow()
+    }
+    expect(
+      requests.every(({ path, method }) => path.startsWith('/calendar/v3/') && method === 'GET'),
+    ).toBe(true)
+  })
+
+  it.each(['remapped', 'narrower grant'] as const)(
+    'refuses a pending PATCH if refresh leaves authority %s',
+    async (change) => {
+      const full = [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL]
+      const rig = attachmentRig({
+        scopes: full,
+        onRefresh: () => {
+          if (change === 'remapped') {
+            rig.unlink()
+            return full
+          }
+          return [CALENDAR_READ, CALENDAR_WRITE, DRIVE_READ]
+        },
+      })
+      await expect(
+        rig.invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }),
+      ).resolves.toMatchObject({
+        attachmentStatus: 'failed',
+        sharing: [],
+        ...(change === 'narrower grant' ? { reconnect: true } : {}),
+      })
+      expect(rig.requests.filter(({ method }) => method !== 'GET')).toEqual([])
+    },
+  )
+
+  it('returns a known no-write result for a deleted event before looking up Drive files', async () => {
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      onRequest: (path) => {
+        if (path.endsWith('/events/deleted')) return new Response(null, { status: 404 })
+      },
+    })
+    await expect(
+      invoke('attachEventFiles', {
+        ...ATTACHMENT_TARGET,
+        eventId: 'deleted',
+        fileIds: ['selected'],
+      }),
+    ).resolves.toMatchObject({ attachmentStatus: 'failed', sharing: [] })
+    expect(
+      requests.every(({ path, method }) => path.startsWith('/calendar/') && method === 'GET'),
+    ).toBe(true)
+  })
+
+  it('refuses a stale event on the first page and rechecks editability before pagination', async () => {
+    let locked = false
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      onRequest: (path) => {
+        if (path.endsWith('/events/deleted') || path.endsWith('/calendarList/retired'))
+          return new Response(null, { status: 404 })
+        if (path.endsWith('/events/event1'))
+          return Response.json({ id: 'event1', etag: '"v1"', organizer: { self: true }, locked })
+        if (path === '/drive/v3/files') return Response.json({ files: [], nextPageToken: 'next' })
+      },
+    })
+    for (const stale of [{ eventId: 'deleted' }, { calendarId: 'retired' }]) {
+      await expect(invoke('driveFiles', { ...ATTACHMENT_TARGET, ...stale })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      })
+      expect(requests.filter(({ path }) => path.startsWith('/drive/'))).toEqual([])
+    }
+    await expect(invoke('driveFiles')).resolves.toEqual({ files: [], nextPageToken: 'next' })
+    requests.length = 0
+    locked = true
+    await expect(
+      invoke('driveFiles', { ...ATTACHMENT_TARGET, pageToken: 'next' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(requests.filter(({ path }) => path.startsWith('/drive/'))).toEqual([])
+  })
+
+  it('preserves confirmed guest access and reports reconnect if refresh narrows the grant mid-sharing', async () => {
+    const first = 'one@example.com'
+    const second = 'two@example.com'
+    const selected = 'narrow-refresh'
+    const metadata = {
+      id: selected,
+      name: 'Selected',
+      webViewLink: 'https://example.com/file',
+      mimeType: 'application/pdf',
+      capabilities: { canShare: true },
+    }
+    const attachment = { fileId: selected, fileUrl: metadata.webViewLink, title: metadata.name }
+    let attached = false
+    const grants: object[] = []
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      onRefresh: () => [CALENDAR_READ, CALENDAR_WRITE, DRIVE_READ],
+      onRequest: (path, init, expireToken) => {
+        if (path.endsWith('/events/event1')) {
+          if (init.method === 'PATCH') attached = true
+          return Response.json({
+            id: 'event1',
+            etag: attached ? '"v2"' : '"v1"',
+            organizer: { self: true },
+            attachments: attached ? [attachment] : [],
+            attendees: [{ email: first }, { email: second }],
+          })
+        }
+        if (path.endsWith(`/files/${selected}`)) return Response.json(metadata)
+        if (path.endsWith('/permissions')) {
+          if (init.method === 'POST') {
+            grants.push({ ...JSON.parse(String(init.body)), id: 'created' })
+            return Response.json({ id: 'created' })
+          }
+          if (grants.length > 0) expireToken()
+          return Response.json({ permissions: grants })
+        }
+      },
+    })
+    await expect(
+      invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: [selected] }),
+    ).resolves.toMatchObject({
+      attachmentStatus: 'attached',
+      attachments: [attachment],
+      sharingComplete: false,
+      reconnect: true,
+      sharing: [
+        { guest: first, status: 'granted' },
+        { guest: second, status: 'failed' },
+      ],
+    })
+    expect(requests.filter(({ method }) => method !== 'GET')).toEqual([
+      { path: '/calendar/v3/calendars/primary/events/event1', method: 'PATCH' },
+      { path: `/drive/v3/files/${selected}/permissions`, method: 'POST' },
+    ])
+  })
+
+  it('checks current attachments with Calendar-only consent and never sends a grant', async () => {
+    const attachment = {
+      fileId: 'selected',
+      fileUrl: 'https://example.com/file',
+      title: 'Selected',
+    }
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ],
+      onRequest: (path) => {
+        if (path.endsWith('/events/event1'))
+          return Response.json({
+            id: 'event1',
+            etag: '"v1"',
+            organizer: { self: true },
+            attachments: [attachment],
+            attendees: [{ email: 'guest@example.com' }],
+          })
+      },
+    })
+    await expect(
+      invoke('checkEventFileAccess', { ...ATTACHMENT_TARGET, fileIds: ['selected'] }),
+    ).resolves.toMatchObject({
+      attachments: [attachment],
+      attachmentStatus: 'attached',
+      sharingComplete: false,
+      reconnect: true,
+      sharing: [{ fileId: 'selected', guest: 'guest@example.com', status: 'failed' }],
+    })
+    expect(
+      requests.filter(({ path, method }) => method !== 'GET' || path.startsWith('/drive/')),
+    ).toEqual([])
+  })
+
+  it.each([false, true])(
+    'checks guest access on a read-only invitation only with a complete list (omitted: %s)',
+    async (attendeesOmitted) => {
+      const guest = 'invitee@example.com'
+      const organizer = 'host@example.com'
+      const attachment = {
+        fileId: 'selected',
+        fileUrl: 'https://drive.google.com/open?id=selected',
+        title: 'Selected',
+      }
+      const { invoke, requests } = attachmentRig({
+        scopes: [CALENDAR_READ, DRIVE_FULL],
+        onRequest: (path) => {
+          if (path.includes('/calendarList/')) return Response.json({ accessRole: 'reader' })
+          if (path.endsWith('/events/event1'))
+            return Response.json({
+              id: 'event1',
+              organizer: { email: organizer, self: false },
+              attachments: [attachment],
+              attendeesOmitted,
+              attendees: [
+                { email: organizer, organizer: true },
+                { email: 'room@example.com', resource: true },
+                { email: guest, self: true },
+              ],
+            })
+          if (path === '/drive/v3/files/selected/permissions')
+            return Response.json({
+              permissions: [{ type: 'user', emailAddress: guest, role: 'reader' }],
+            })
+        },
+      })
+      const result = await invoke('checkEventFileAccess', {
+        ...ATTACHMENT_TARGET,
+        fileIds: ['selected'],
+      })
+      expect(result).toMatchObject({
+        attachments: [attachment],
+        attachmentStatus: 'attached',
+        sharingComplete: !attendeesOmitted,
+        sharing: attendeesOmitted
+          ? []
+          : [{ fileId: 'selected', guest, status: 'already-accessible' }],
+      })
+      const driveRequests = requests.filter(({ path }) => path.startsWith('/drive/'))
+      if (attendeesOmitted) {
+        expect(result).not.toHaveProperty('guestsChecked')
+        expect(driveRequests).toEqual([])
+      } else {
+        expect(result).toHaveProperty('guestsChecked', [guest])
+        expect(driveRequests).toContainEqual({
+          path: '/drive/v3/files/selected/permissions',
+          method: 'GET',
+        })
+      }
+      expect(requests.filter(({ method }) => method !== 'GET')).toEqual([])
+    },
+  )
+
+  it('reports a Calendar removal that occurs while Drive refuses a guest grant', async () => {
+    const guest = 'guest@example.com'
+    const metadata = {
+      id: 'selected',
+      name: 'Selected',
+      webViewLink: 'https://example.com/file',
+      mimeType: 'application/pdf',
+      capabilities: { canShare: true },
+    }
+    const agenda = { fileUrl: 'https://example.com/agenda', title: 'Agenda' }
+    const attachment = { fileId: metadata.id, fileUrl: metadata.webViewLink, title: metadata.name }
+    let version = 1
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      onRequest: (path, init) => {
+        if (path.endsWith('/events/event1')) {
+          if (init.method === 'PATCH') version = 2
+          return Response.json({
+            id: 'event1',
+            etag: `"v${version}"`,
+            organizer: { self: true },
+            attachments: version === 2 ? [agenda, attachment] : [agenda],
+            attendees: [{ email: guest }],
+          })
+        }
+        if (path.endsWith('/files/selected')) return Response.json(metadata)
+        if (path.endsWith('/permissions')) {
+          if (init.method === 'GET') return Response.json({ permissions: [] })
+          if (init.method === 'POST') {
+            version = 3
+            return Response.json(
+              { error: { errors: [{ reason: 'insufficientPermissions' }] } },
+              { status: 403 },
+            )
+          }
+        }
+      },
+    })
+    await expect(
+      invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: [metadata.id] }),
+    ).resolves.toMatchObject({
+      attachments: [agenda],
+      attachmentStatus: 'unknown',
+      reconnect: true,
+      sharingComplete: false,
+      sharing: [{ fileId: metadata.id, guest, status: 'failed' }],
+    })
+    expect(requests.filter(({ method }) => method !== 'GET')).toEqual([
+      { path: '/calendar/v3/calendars/primary/events/event1', method: 'PATCH' },
+      { path: '/drive/v3/files/selected/permissions', method: 'POST' },
+    ])
+  })
+
+  it('expires a stalled account lookup without a write, even when the lookup later succeeds', async () => {
+    vi.useFakeTimers()
+    // Native AbortSignal timers are outside Vitest's clock. Adapt them to it.
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new DOMException('Expired', 'TimeoutError')), ms)
+      return controller.signal
+    })
+    let resume!: () => void
+    const stalled = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const { invoke, requests } = attachmentRig({
+      scopes: [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL],
+      waitForAccount: () => stalled,
+    })
+    try {
+      const update = invoke('attachEventFiles', { ...ATTACHMENT_TARGET, fileIds: ['selected'] })
+      await vi.advanceTimersByTimeAsync(30_000)
+      await expect(Promise.race([update, Promise.resolve('still waiting')])).resolves.toMatchObject(
+        {
+          attachmentStatus: 'failed',
+          sharing: [],
+        },
+      )
+      resume()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(requests).toEqual([])
+    } finally {
+      resume()
+      timeout.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not send a Drive search when the plugin stops during refresh', async () => {
+    const scopes = [CALENDAR_READ, CALENDAR_WRITE, DRIVE_FULL]
+    const rig = attachmentRig({
+      scopes,
+      expired: true,
+      onRefresh: () => {
+        rig.dispose()
+        return scopes
+      },
+    })
+    await expect(rig.invoke('driveFiles')).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+    expect(rig.requests).toEqual([])
+  })
+})
 
 it('lists --full in the generated usage for google read', () => {
   const read = googleCapabilities({

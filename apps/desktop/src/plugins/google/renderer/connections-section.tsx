@@ -222,6 +222,15 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
    * button doing nothing.
    */
   const needsReconsent = connected && missingScopes.length > 0
+  const scopeGaps = new Set(missingScopes.map((scope) => scope.split('/').at(-1)))
+  const affectedFeatures = [
+    scopeGaps.has('gmail.modify') && 'Gmail actions such as marking read, starring and archiving',
+    (scopeGaps.has('contacts.readonly') || scopeGaps.has('contacts.other.readonly')) &&
+      'Google contact suggestions',
+    scopeGaps.has('calendar.readonly') && 'viewing Google Calendar',
+    scopeGaps.has('calendar.events') && 'changing Google Calendar events',
+    scopeGaps.has('drive') && 'attaching Google Drive files to events and sharing them with guests',
+  ].filter((feature): feature is string => typeof feature === 'string')
 
   return (
     <Frame>
@@ -249,7 +258,7 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                   'Read and triage your Gmail, read your Calendar. This vault only.'
                 )}
               </ItemDescription>
-              {!connected && phase.kind === 'idle' && phase.error !== undefined && (
+              {phase.kind === 'idle' && phase.error !== undefined && (
                 <p role="alert" className="text-sm text-pretty text-destructive">
                   {phase.error}
                 </p>
@@ -259,11 +268,15 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
             <ItemActions>
               {connected ? (
                 <>
-                  {needsReconsent && (
-                    <Button size="sm" disabled={busy} onClick={() => void connect()}>
-                      {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
-                    </Button>
-                  )}
+                  <Button
+                    type="button"
+                    variant={needsReconsent ? 'default' : 'outline'}
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void connect()}
+                  >
+                    {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
@@ -277,7 +290,11 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
               ) : (
                 <>
                   <Button size="sm" disabled={busy} onClick={() => void connect()}>
-                    {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
+                    {phase.kind === 'connecting'
+                      ? 'Connecting…'
+                      : needsReconnect
+                        ? 'Reconnect'
+                        : connectLabel}
                   </Button>
                   {needsReconnect && (
                     <Button
@@ -315,8 +332,9 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
               <Alert variant="destructive">
                 <AlertTitle>Holi needs new permissions</AlertTitle>
                 <AlertDescription>
-                  Mail still loads, but marking read, starring, archiving and contacts will not work
-                  until you reconnect.
+                  {affectedFeatures.length > 0
+                    ? `Reconnect to enable ${new Intl.ListFormat('en').format(affectedFeatures)}.`
+                    : 'Reconnect to grant the missing permissions.'}
                 </AlertDescription>
               </Alert>
             ) : (
@@ -327,8 +345,10 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                 <ItemContent>
                   <ItemTitle>What Holi may do</ItemTitle>
                   <ItemDescription>
-                    Read your mail and calendar, and mark read, star, archive or trash a thread. It
-                    cannot delete mail permanently or change your calendar.
+                    Read Gmail and calendars, and mark read, star, archive or trash mail. Holi
+                    cannot permanently delete mail. You can explicitly change eligible Calendar
+                    events, create meetings and send invitations, and select Drive files to attach
+                    and share with event guests.
                   </ItemDescription>
                 </ItemContent>
               </Item>

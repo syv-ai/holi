@@ -25,6 +25,19 @@ export function messageOf(err: unknown, fallback: string): string {
   return err instanceof Error && err.message !== '' ? err.message : fallback
 }
 
+/** Attachment capabilities use FORBIDDEN for both scope and event/account
+ * refusals. IPC preserves the code and message, but not the reconnect hint. */
+export function attachmentConsentNeeded(err: unknown): boolean {
+  const code = codeOf(err)
+  return (
+    code === 'UNAUTHORIZED' ||
+    (code === 'FORBIDDEN' &&
+      /^(this Google permission was not granted|Reconnect Google to grant\b)/i.test(
+        messageOf(err, ''),
+      ))
+  )
+}
+
 /** A missing or expired connection: a state with an obvious next action, not
  *  an error to apologise for. */
 export function isDisconnected(err: unknown): boolean {

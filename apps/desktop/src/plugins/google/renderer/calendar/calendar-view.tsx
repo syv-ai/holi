@@ -126,6 +126,7 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
   return {
     key: event.id,
     googleId: event.data?.googleId,
+    calendarId: event.resourceId,
     title: event.title,
     location: event.data?.location ?? '',
     description: event.data?.description ?? '',
@@ -142,13 +143,21 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
 
 export function CalendarView({ visible = true }: { visible?: boolean }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
-  const { account, currentSub } = useGoogleAccount()
+  const {
+    account,
+    currentSub,
+    loading: accountLoading,
+    readError: accountReadError,
+    refresh: refreshAccount,
+  } = useGoogleAccount()
   const accountIdentity = account ? `${account.email}:${currentSub ?? ''}` : null
-  const calendar = useGoogleCalendar(remote, accountIdentity)
+  const accountReady =
+    account != null && currentSub !== null && !accountLoading && !accountReadError
+  const calendar = useGoogleCalendar(remote, currentSub, accountReady)
+  const currentContext = JSON.stringify([remote, accountIdentity])
   useEffect(() => {
-    const nextIdentity = `${remote ?? ''}:${accountIdentity ?? ''}`
-    if (contextIdentity.current !== nextIdentity) {
-      contextIdentity.current = nextIdentity
+    if (contextIdentity.current !== currentContext) {
+      contextIdentity.current = currentContext
       cardIdentity.current += 1
       pending.current = false
       setSaving(false)
@@ -160,8 +169,12 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
     return () => {
       cardIdentity.current += 1
     }
-  }, [remote, accountIdentity])
+  }, [currentContext])
   const openSettings = useSetAtom(openSettingsSectionAtom)
+  const openConnections = useCallback(() => {
+    refreshAccount()
+    openSettings('connections')
+  }, [refreshAccount, openSettings])
   const openNote = useSetAtom(openDocumentAtom)
   const canCreateTask = useHasCapability(TASKS_CREATE) && remote !== null
   const clock = useTimeFormat()
@@ -176,7 +189,13 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
   const [saving, setSaving] = useState(false)
   const cardIdentity = useRef(0)
   const pending = useRef(false)
-  const contextIdentity = useRef(`${remote ?? ''}:${accountIdentity ?? ''}`)
+  const contextIdentity = useRef(currentContext)
+  // Keep the open card during a refresh of this account. Its attachment
+  // actions wait for a confirmed connection; a change of identity drops the card.
+  const attachmentContext =
+    remote && currentSub && account && contextIdentity.current === currentContext
+      ? { remote, sub: currentSub, openConnections }
+      : null
   const newEventTrigger = useRef<HTMLButtonElement>(null)
   // The visible date, shared by the rail's mini calendar and the grid. One
   // source of truth: the mini calendar and grid nav both write it, both read it.
@@ -190,19 +209,23 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
   const items = useMemo(() => {
     const colors = new Map(calendar.calendars.map((c) => [c.id, c.color]))
     return calendar.events.map((event) =>
-      toCalendarItem(event, ownCalendarId, colors.get(event.calendarId)),
+      toCalendarItem(event, ownCalendarId, colors.get(event.calendarId), calendar.sourceGeneration),
     )
-  }, [calendar.events, calendar.calendars, ownCalendarId])
+  }, [calendar.events, calendar.calendars, ownCalendarId, calendar.sourceGeneration])
 
   // Latest-value ref so the stable callbacks below read fresh writes without
   // re-subscribing the calendar on every load.
   const calendarRef = useRef(calendar)
   calendarRef.current = calendar
+  const rowAuthority = useRef<number | null>(null)
+  rowAuthority.current = accountReady ? calendar.sourceGeneration : null
 
   /** Live drag feedback (invalid cursor). */
   const canDropEvent = useCallback(
     (update: EventCalendarProposedUpdate<GoogleEventData>) =>
-      !pending.current && update.event.data?.editable === true,
+      !pending.current &&
+      update.event.data?.sourceGeneration === rowAuthority.current &&
+      update.event.data.editable === true,
     [],
   )
 
@@ -210,6 +233,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
   const handleEventUpdate = useCallback((update: EventCalendarProposedUpdate<GoogleEventData>) => {
     if (pending.current) return false
     const data = update.event.data
+    if (data?.sourceGeneration !== rowAuthority.current) return false
     if (data?.editable !== true) {
       errorToast(lockedReason(update.event.title, data))
       return false
@@ -236,7 +260,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
   // ---- Card open helpers -------------------------------------------------
   const openCreate = useCallback(
     (start: Date, allDay = false, end?: Date, anchor?: EventCardAnchor | null) => {
-      if (pending.current) return
+      if (pending.current || !accountReady) return
       cardIdentity.current += 1
       cardMeetingDraft.current = { guests: '', meet: false }
       setCardAnchor(anchor ? { ...anchor, fallback: newEventTrigger.current } : null)
@@ -265,12 +289,13 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
         draft,
       })
     },
-    [ownCalendar, account],
+    [ownCalendar, account, accountReady],
   )
 
   const openView = useCallback(
     (occurrence: Occurrence, event?: React.MouseEvent | PointerEvent) => {
-      if (pending.current) return
+      if (pending.current || occurrence.event.data?.sourceGeneration !== rowAuthority.current)
+        return
       cardIdentity.current += 1
       const target =
         event?.target instanceof Element
@@ -533,18 +558,28 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
     [openCreate, date],
   )
 
-  if (calendar.status.kind === 'disconnected' || account === null) {
+  if (
+    calendar.status.kind === 'disconnected' ||
+    account === null ||
+    (!account && accountReadError)
+  ) {
     return (
       <Empty className="h-full">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <CalendarDaysIcon />
           </EmptyMedia>
-          <EmptyTitle>Google isn’t connected</EmptyTitle>
-          <EmptyDescription>Connect an account to see your calendar here.</EmptyDescription>
+          <EmptyTitle>
+            {accountReadError ? 'Could not check Google connection' : 'Google isn’t connected'}
+          </EmptyTitle>
+          <EmptyDescription>
+            {accountReadError
+              ? 'Check your Google connection in Settings.'
+              : 'Connect an account to see your calendar here.'}
+          </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <Button onClick={() => openSettings('connections')}>Open Connections</Button>
+          <Button onClick={openConnections}>Open Connections</Button>
         </EmptyContent>
       </Empty>
     )
@@ -700,15 +735,28 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
               </Button>
             </EventCalendarToolbar>
           </div>
-          {calendar.status.kind === 'error' && (
+          {(accountReadError || calendar.status.kind === 'error') && (
             <div
               role="alert"
               className="text-destructive flex items-center gap-2 border-t px-3 py-2 text-sm"
             >
               <span className="min-w-0 flex-1">
-                Couldn’t load your calendar: {calendar.status.message}
+                {accountReadError
+                  ? 'Couldn’t check your Google connection.'
+                  : calendar.status.kind === 'error' &&
+                    `Couldn’t load your calendar: ${calendar.status.message}`}
               </span>
-              <Button type="button" variant="outline" size="sm" onClick={calendar.reload}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={
+                  accountReadError ||
+                  (calendar.status.kind === 'error' && calendar.status.refreshConnection)
+                    ? refreshAccount
+                    : calendar.reload
+                }
+              >
                 Retry
               </Button>
             </div>
@@ -719,10 +767,15 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
 
         <EventCard
           meetingIdentity={remote && currentSub ? { remote, sub: currentSub } : null}
+          attachmentContext={attachmentContext}
           onCreated={calendar.reload}
           meetingDraft={cardMeetingDraft.current}
           onMeetingDraftChange={updateMeetingDraft}
-          state={card === null ? null : { ...card, draft: cardDraft.current ?? card.draft }}
+          state={
+            card === null || contextIdentity.current !== currentContext
+              ? null
+              : { ...card, draft: cardDraft.current ?? card.draft }
+          }
           anchor={visible ? cardAnchor : null}
           error={error}
           saving={saving}
