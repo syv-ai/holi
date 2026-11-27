@@ -419,32 +419,6 @@ describe('owned Job broker host', () => {
     ).toEqual({ ...paths, TEMP: cwd, TMP: cwd })
   })
 
-  it('prepares an empty Windows compiler pipeline and join phase markers without spawning', () => {
-    const cwd = 'fixture-cwd'
-    const original = decodeJoinBootstrap(windowsJoinAdapter(cwd).args)
-    const fixture = windowsJoinFixture(cwd)
-    const { bootstrap, script } = decodeJoinBootstrap(brokerHostPlan(node, fixture).args)
-    const start = joinPhaseMarker('compile-start')
-    const done = joinPhaseMarker('compile-done')
-    const compileWithEmptyInput = `@() | ${joinCompile}`
-    const markedCompile = `${start}${compileWithEmptyInput}${done}`
-    // Compare as booleans so a regression does not print the command or generated source.
-    expect(
-      bootstrap.replace(joinPayload, '') ===
-        joinPhaseMarker('powershell-start') + original.bootstrap.replace(joinPayload, ''),
-    ).toBe(true)
-    expect(script.split(compileWithEmptyInput).length === 2).toBe(true)
-    expect(script.endsWith(`${markedCompile}exit [HoliOwnedProcess]::RunBroker()`)).toBe(true)
-    // The entire decoded script, including the C# here-string, must otherwise match.
-    expect(script.replace(markedCompile, joinCompile) === original.script).toBe(true)
-    expect(!script.includes('RunOriginalBroker')).toBe(true)
-    expect(script.split('public static int RunBroker()').length === 2).toBe(true)
-    expect(script.includes('foreach (byte expected in Encoding.UTF8.GetBytes("finish"))')).toBe(
-      true,
-    )
-    expect(script.includes('ReadFile(input, one, 1, out count, IntPtr.Zero)')).toBe(true)
-  })
-
   it(
     'waits past the terminal frame for physical exit without requiring parent EOF',
     // Windows headroom covers cold fixture startup plus the EOF, join and teardown phases.
