@@ -208,9 +208,14 @@ export interface HolisDeps {
     allow?: readonly string[]
     system?: string
   }): Promise<{ ok: true; sessionId: string } | { ok: false; message: string }>
+  /** Clean up a launch admitted before activation stopped. */
+  cleanupLaunch?(vault: HolisVault, sessionId: string): Promise<void>
   /** Tell the renderer the vault's Holis moved. */
   emit(remote: string, name: string, payload: unknown): void
-  needsYou?(n: NeedsYou): void
+  needsYou?(n: NeedsYou, lease: () => boolean): void
+  presentationLease?(): () => boolean
+  /** Stop admission and join all admitted operations when this activation ends. */
+  activationSignal?: AbortSignal
   now?: () => Date
 }
 
@@ -226,6 +231,10 @@ export interface HoliEdits {
 }
 
 export interface Holis {
+  /** Detach producers synchronously and settle all admitted work. */
+  stop(): Promise<void>
+  /** Resolve a Holi's directory, then run file work as activation-owned work. */
+  withFiles<T>(vault: HolisVault, ref: string, work: (dir: string) => Promise<T>): Promise<T>
   list(vault: HolisVault): Promise<HoliSummary[]>
   /** Approve what a Holi says now, on this machine: only if that is still
    *  the fingerprint the person was shown. */
@@ -395,6 +404,47 @@ export function createHolis(deps: HolisDeps): Holis {
   /** Holis starting a session now, by path: a double click must not start
    *  two. */
   const sending = new Set<string>()
+  let stopping = false
+  const owned = new Set<Promise<unknown>>()
+  let stopPromise: Promise<void> | undefined
+  const cleanupFailures: unknown[] = []
+  const unavailable = () => new CapabilityError('UNAVAILABLE', 'This Holi activation has stopped.')
+  const assertActive = () => {
+    if (stopping || deps.activationSignal?.aborted) throw unavailable()
+  }
+  const admit = <T>(work: () => Promise<T>): Promise<T> => {
+    if (stopping || deps.activationSignal?.aborted) {
+      return Promise.reject(new CapabilityError('UNAVAILABLE', 'This Holi activation has stopped.'))
+    }
+    const operation = work()
+    owned.add(operation)
+    void operation.finally(() => owned.delete(operation)).catch(() => {})
+    return operation
+  }
+  const cleanup = async (vault: HolisVault, id: string): Promise<void> => {
+    try {
+      if (!deps.cleanupLaunch) throw new Error('No cleanup adapter for the late Holi launch.')
+      await deps.cleanupLaunch(vault, id)
+    } catch (error) {
+      cleanupFailures.push(error)
+      throw error
+    }
+  }
+  const stop = (): Promise<void> => {
+    stopping = true
+    deps.activationSignal?.removeEventListener('abort', abort)
+    if (stopPromise) return stopPromise
+    stopPromise = (async () => {
+      while (owned.size) await Promise.allSettled([...owned])
+      if (cleanupFailures.length)
+        throw new AggregateError(cleanupFailures, 'Holi launch cleanup failed.')
+    })()
+    return stopPromise
+  }
+  const abort = (): void => {
+    stopping = true
+  }
+  deps.activationSignal?.addEventListener('abort', abort, { once: true })
 
   const stateOf = async (remote: string): Promise<Record<string, HoliState>> =>
     (await deps.store.read())[remote] ?? {}
@@ -404,13 +454,32 @@ export function createHolis(deps: HolisDeps): Holis {
     path: string,
     change: (s: HoliState) => HoliState,
   ): Promise<HolisFile> =>
-    deps.store.update((file) => {
-      const vault = { ...(file[remote] ?? {}) }
-      vault[path] = change(vault[path] ?? { runs: [] })
-      return { ...file, [remote]: vault }
-    })
+    deps.store.update(
+      (file) => {
+        const vault = { ...(file[remote] ?? {}) }
+        vault[path] = change(vault[path] ?? { runs: [] })
+        return { ...file, [remote]: vault }
+      },
+      () => !stopping && !deps.activationSignal?.aborted,
+      () => !stopping && !deps.activationSignal?.aborted,
+    )
 
   const changed = (remote: string): void => deps.emit(remote, 'holis', null)
+
+  const withFiles = <T>(
+    vault: HolisVault,
+    ref: string,
+    work: (dir: string) => Promise<T>,
+  ): Promise<T> =>
+    admit(async () => {
+      const dir = await (async () => {
+        const found = (await list(vault)).filter((h) => h.id === ref || h.path === ref)
+        if (found.length !== 1) throw new CapabilityError('NOT_FOUND', `No Holi ${ref}`)
+        return found[0]!.dir
+      })()
+      assertActive()
+      return work(dir)
+    })
 
   function summarise(
     entry: Entry,
@@ -503,7 +572,9 @@ export function createHolis(deps: HolisDeps): Holis {
     })
   }
 
-  return {
+  const api: Holis = {
+    stop,
+    withFiles,
     list,
 
     async approve(vault, ref, seen) {
@@ -515,6 +586,7 @@ export function createHolis(deps: HolisDeps): Holis {
           `${entry.parsed.def.name} changed since you looked. Read it again before approving it.`,
         )
       }
+      assertActive()
       await changeState(vault.remote, entry.path, (s) => ({ ...s, approved: seen }))
       changed(vault.remote)
       return one(vault, entry.path)
@@ -537,6 +609,10 @@ export function createHolis(deps: HolisDeps): Holis {
         // Legacy Holi model aliases are Claude-specific; Pi accepts explicit
         // provider/model-id values and otherwise uses its configured default.
         const model = provider === 'pi' && !def.model?.includes('/') ? undefined : def.model
+        const system = await systemFor(vault, entry, true)
+        if (stopping || deps.activationSignal?.aborted) {
+          throw new CapabilityError('UNAVAILABLE', 'This Holi activation has stopped.')
+        }
         const res = await deps.launch({
           name: `${def.name} · ${base}`,
           prompt: sendPrompt(path),
@@ -545,14 +621,23 @@ export function createHolis(deps: HolisDeps): Holis {
           // Pi does not enforce them; Codex's job in the vault takes its
           // writable folders from them.
           ...(provider === 'pi' ? {} : { allow: [...def.allow, ...memoryRules(), REPORT_RULE] }),
-          system: await systemFor(vault, entry, true),
+          system,
         })
+        if (stopping || deps.activationSignal?.aborted) {
+          if (res.ok) await cleanup(vault, res.sessionId)
+          throw unavailable()
+        }
         if (!res.ok) throw new CapabilityError('UNAVAILABLE', res.message)
         const run: HoliRun = { jobId: res.sessionId, at: now().toISOString(), path }
-        await changeState(vault.remote, entry.path, (s) => ({
-          ...s,
-          runs: [run, ...s.runs].slice(0, RUNS_KEPT),
-        }))
+        try {
+          await changeState(vault.remote, entry.path, (s) => ({
+            ...s,
+            runs: [run, ...s.runs].slice(0, RUNS_KEPT),
+          }))
+        } catch (error) {
+          await cleanup(vault, res.sessionId)
+          throw error
+        }
         changed(vault.remote)
         return { sessionId: res.sessionId }
       } finally {
@@ -561,6 +646,7 @@ export function createHolis(deps: HolisDeps): Holis {
     },
 
     async report(vault, ref, text, needsYou) {
+      const lease = deps.presentationLease?.() ?? (() => true)
       const clean = text.trim().slice(0, REPORT_MAX)
       if (clean === '') throw new CapabilityError('BAD_REQUEST', 'Say what came of the run.')
       const entry = find(await readHolis(vault.root), ref)
@@ -569,6 +655,7 @@ export function createHolis(deps: HolisDeps): Holis {
         throw new CapabilityError('BAD_REQUEST', `${holiIdOf(entry.path)} has no run to report on.`)
       }
       const report: RunReport = { text: clean, at: now().toISOString(), needsYou }
+      assertActive()
       await changeState(vault.remote, entry.path, (s) => ({
         ...s,
         runs: s.runs.map((r) => (r.jobId === run.jobId ? { ...r, report } : r)),
@@ -576,7 +663,10 @@ export function createHolis(deps: HolisDeps): Holis {
       changed(vault.remote)
       if (needsYou) {
         const name = entry.parsed.ok ? entry.parsed.def.name : holiIdOf(entry.path)
-        deps.needsYou?.({ remote: vault.remote, id: holiIdOf(entry.path), name, text: clean })
+        deps.needsYou?.(
+          { remote: vault.remote, id: holiIdOf(entry.path), name, text: clean },
+          lease,
+        )
       }
       return { ...run, report }
     },
@@ -605,6 +695,7 @@ export function createHolis(deps: HolisDeps): Holis {
       if ((await lstat(join(vault.root, dir)).catch(() => null)) !== null) {
         throw new CapabilityError('BAD_REQUEST', `There is already a Holi called ${id}.`)
       }
+      assertActive()
       await mkdir(join(vault.root, dir), { recursive: true })
       await writeFile(join(vault.root, path), text, { flag: 'wx' })
       await writeFile(join(vault.root, dir, SOUL_FILE), soulText(draft.soul), { flag: 'wx' })
@@ -630,6 +721,7 @@ export function createHolis(deps: HolisDeps): Holis {
       const next = editHoliText(text, keys)
       const parsed = parseHoliFile(next, entry.path)
       if (!parsed.ok) throw new CapabilityError('BAD_REQUEST', parsed.error)
+      assertActive()
       await writeFile(abs, next)
       changed(vault.remote)
       return one(vault, entry.path)
@@ -638,6 +730,7 @@ export function createHolis(deps: HolisDeps): Holis {
     async remove(vault, ref) {
       const entry = find(await readHolis(vault.root), ref)
       const target = entry.path.endsWith(`/${HOLI_FILE}`) ? dirOf(entry.path) : entry.path
+      assertActive()
       await rm(join(vault.root, target), { recursive: true, force: true })
       await deps.store.update((file) => {
         const { [entry.path]: _gone, ...rest } = file[vault.remote] ?? {}
@@ -660,5 +753,16 @@ export function createHolis(deps: HolisDeps): Holis {
         system: await systemFor(vault, entry, false),
       }
     },
+  }
+  return {
+    ...api,
+    list: (vault) => admit(() => api.list(vault)),
+    approve: (...args) => admit(() => api.approve(...args)),
+    send: (...args) => admit(() => api.send(...args)),
+    report: (...args) => admit(() => api.report(...args)),
+    create: (...args) => admit(() => api.create(...args)),
+    update: (...args) => admit(() => api.update(...args)),
+    remove: (...args) => admit(() => api.remove(...args)),
+    context: (...args) => admit(() => api.context(...args)),
   }
 }

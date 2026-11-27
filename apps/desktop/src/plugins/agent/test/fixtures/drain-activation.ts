@@ -129,6 +129,7 @@ function activation(root: string, children: FixtureNative) {
     },
     approval: async (remote: Remote) => (await holis.list(approvalVault(remote)))[0],
     failPtyStart(remote: Remote, cause: Error) {
+      h.host.setDisplayed(remote)
       children.plan({ kind: 'fenced', stdio: 'ignore', code: 0, launchError: cause })
       const starting = h.call(remote, 'agent.scoped', {
         provider: 'codex',
@@ -235,6 +236,7 @@ function activation(root: string, children: FixtureNative) {
       prompt = 'hold',
       fencedPi = false,
     ) {
+      if (kind === 'pty' || kind === 'fenced') h.host.setDisplayed(remote)
       children.plan({ kind, stdio, code, fencedPi })
       const name = `${remote}:${kind}`
       const result = (await h.call(

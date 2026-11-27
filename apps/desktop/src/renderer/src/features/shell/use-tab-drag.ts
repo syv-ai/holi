@@ -17,12 +17,12 @@
  * Separate, Replace with…, Move out of split, and ⌥-click.
  */
 import { atom, useSetAtom, useStore } from 'jotai'
-import { useCallback, type DragEvent } from 'react'
+import { useCallback, useEffect, useRef, type DragEvent } from 'react'
 
 import { activeSplit, tabIsOpen, type ShellWorkspace } from '@/state/shell-workspace'
 import { tabKey, type TabDescriptor } from '@/state/tab-descriptor'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { activeRemoteAtom } from '@/state/vaults'
+import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/state/vaults'
 
 /** The drag's MIME type; its data is the tab's key or the split's id. */
 export const TAB_MIME = 'application/x-holi-tab'
@@ -33,9 +33,12 @@ export function stripDropZone(position: number): 'combine' | 'reorder' {
 }
 
 /** One native drag session, cleared as a unit on every end or cancellation. */
-export const tabDragAtom = atom<{ key: string; vault: string | null; wasOpen: boolean } | null>(
-  null,
-)
+export const tabDragAtom = atom<{
+  key: string
+  vault: string | null
+  vaultRevision: number
+  wasOpen: boolean
+} | null>(null)
 
 interface DragSourceProps {
   draggable: true
@@ -47,6 +50,13 @@ interface DragSourceProps {
 export function useTabDragSource(): (key: string) => DragSourceProps {
   const setDrag = useSetAtom(tabDragAtom)
   const store = useStore()
+  const session = useRef(0)
+  useEffect(
+    () => () => {
+      session.current += 1
+    },
+    [],
+  )
   return useCallback(
     (key: string) => ({
       draggable: true,
@@ -55,12 +65,23 @@ export function useTabDragSource(): (key: string) => DragSourceProps {
         event.dataTransfer.effectAllowed = 'move'
         // A frame later: changing the page under the pointer in dragstart
         // itself can cancel the drag.
+        const started = ++session.current
+        const workspace = store.get(shellWorkspaceAtom)
+        const vault = store.get(activeRemoteAtom)
+        const vaultRevision = store.get(activeRemoteRevisionValueAtom)
         window.setTimeout(() => {
-          const ws = store.get(shellWorkspaceAtom)
-          setDrag({ key, vault: store.get(activeRemoteAtom), wasOpen: tabIsOpen(ws, key) })
+          if (
+            session.current !== started ||
+            store.get(shellWorkspaceAtom) !== workspace ||
+            store.get(activeRemoteAtom) !== vault ||
+            store.get(activeRemoteRevisionValueAtom) !== vaultRevision
+          )
+            return
+          setDrag({ key, vault, vaultRevision, wasOpen: tabIsOpen(workspace, key) })
         }, 0)
       },
       onDragEnd: () => {
+        session.current += 1
         setDrag(null)
       },
     }),
@@ -94,6 +115,13 @@ export function useTabDrag(): {
   const source = useTabDragSource()
   const setDrag = useSetAtom(tabDragAtom)
   const store = useStore()
+  const session = useRef(0)
+  useEffect(
+    () => () => {
+      session.current += 1
+    },
+    [],
+  )
   return useCallback(
     (tab: TabDescriptor | null, options?: { alongside: true }) => {
       if (tab === null) return {}
@@ -102,12 +130,23 @@ export function useTabDrag(): {
       return {
         onDragStartCapture: (event: DragEvent) => {
           event.dataTransfer.setData(TAB_MIME, key)
+          const started = ++session.current
+          const workspace = store.get(shellWorkspaceAtom)
+          const vault = store.get(activeRemoteAtom)
+          const vaultRevision = store.get(activeRemoteRevisionValueAtom)
           window.setTimeout(() => {
-            const ws = store.get(shellWorkspaceAtom)
-            setDrag({ key, vault: store.get(activeRemoteAtom), wasOpen: tabIsOpen(ws, key) })
+            if (
+              session.current !== started ||
+              store.get(shellWorkspaceAtom) !== workspace ||
+              store.get(activeRemoteAtom) !== vault ||
+              store.get(activeRemoteRevisionValueAtom) !== vaultRevision
+            )
+              return
+            setDrag({ key, vault, vaultRevision, wasOpen: tabIsOpen(workspace, key) })
           }, 0)
         },
         onDragEndCapture: () => {
+          session.current += 1
           setDrag(null)
         },
       }

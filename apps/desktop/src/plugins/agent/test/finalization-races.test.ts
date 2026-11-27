@@ -870,6 +870,7 @@ async function ptyRig() {
     capabilities: {},
   }
   const opened: OpenArgs[] = []
+  const claims = new Map<string, OpenArgs['lease']>()
   let closeError: Error | undefined
   let closeWait: Promise<void> | undefined
   let closeCalls = 0
@@ -893,9 +894,21 @@ async function ptyRig() {
     terminals: {
       open: (args) => {
         opened.push(args)
+        claims.set(`terminal-${opened.length}`, args.lease)
         return { ok: true, id: `terminal-${opened.length}` }
       },
+      claim(id, lease) {
+        if (!lease() || !claims.has(id)) return false
+        claims.set(id, lease)
+        return true
+      },
+      async discard(id, lease) {
+        if (claims.get(id) !== lease) return false
+        await this.close(id)
+        return true
+      },
       close: async (id) => {
+        claims.delete(id)
         closeCalls += 1
         if (closeError) throw closeError
         await closeWait
@@ -936,7 +949,7 @@ it('never replays a failed reopen removal after the newer close append', async (
   }
   await writeFile(t.history, JSON.stringify([old]))
   t.fail(1)
-  await expect(t.sessions.reopen(old.id, {})).rejects.toThrow('history unavailable')
+  await expect(t.sessions.reopen(old.id, {}, () => true)).rejects.toThrow('history unavailable')
   t.sessions.noteConversation(old.id, { conversationId: '123e4567-e89b-42d3-a456-426614174001' })
   finishExit(t.opened[0])
   await t.sessions.leave()
@@ -947,8 +960,8 @@ it('never replays a failed reopen removal after the newer close append', async (
 
 it('preserves an older failed append when an unrelated conversation saves successfully', async () => {
   const t = await ptyRig()
-  const first = await t.sessions.start('codex', {})
-  const second = await t.sessions.start('codex', {})
+  const first = await t.sessions.start('codex', {}, () => true)
+  const second = await t.sessions.start('codex', {}, () => true)
   if (!first.ok || !second.ok) throw new Error('fixture start refused')
   for (const [i, started] of [first, second].entries()) {
     t.sessions.noteConversation(started.sessionId, {
@@ -971,7 +984,7 @@ it.each(['session', 'sign-in'] as const)(
   'observes immediate close rejection while another %s configure is stalled',
   async (kind) => {
     const t = await ptyRig()
-    const started = await t.sessions.start('codex', {})
+    const started = await t.sessions.start('codex', {}, () => true)
     if (!started.ok) throw new Error(started.message)
     // A second provider bypasses the first provider\'s already configured cache.
     t.provider.id = 'fixture-other'
@@ -986,7 +999,11 @@ it.each(['session', 'sign-in'] as const)(
       t.provider.capabilities.background = {} as NonNullable<
         AgentProvider['capabilities']['background']
       >
-    const starting = t.sessions.start('fixture-other', kind === 'sign-in' ? { login: true } : {})
+    const starting = t.sessions.start(
+      'fixture-other',
+      kind === 'sign-in' ? { login: true } : {},
+      () => true,
+    )
     await entered.promise
     const cause = new Error('close refused')
     t.closeFails(cause)
@@ -1020,7 +1037,7 @@ it.each(['session', 'sign-in'] as const)(
 
 it('joins an owned PTY close beyond the old session deadline', async () => {
   const t = await ptyRig()
-  const started = await t.sessions.start('codex', {})
+  const started = await t.sessions.start('codex', {}, () => true)
   if (!started.ok) throw new Error(started.message)
   const gate = deferred()
   t.holdClose(gate.promise)
@@ -1049,7 +1066,7 @@ it('joins an owned PTY close beyond the old session deadline', async () => {
 
 it('does not acknowledge or retry a terminal close rejected before public exit', async () => {
   const t = await ptyRig()
-  const started = await t.sessions.start('codex', {})
+  const started = await t.sessions.start('codex', {}, () => true)
   if (!started.ok) throw new Error(started.message)
   const cause = new Error('close failed before public exit')
   t.holdClose(Promise.reject(cause))
@@ -1072,6 +1089,7 @@ async function fencedRig(options: Pick<JobsDeps, 'beforePublish'> = {}) {
     capabilities: { fenced: 'sandbox' },
   }
   const opened: OpenArgs[] = []
+  const claims = new Map<string, OpenArgs['lease']>()
   const activation = new AbortController()
   const sessions = createPtySessions({
     vault: { root: t.root, remote: 'fixture/vault' },
@@ -1083,9 +1101,21 @@ async function fencedRig(options: Pick<JobsDeps, 'beforePublish'> = {}) {
     terminals: {
       open: (args) => {
         opened.push(args)
+        claims.set(`terminal-${opened.length}`, args.lease)
         return { ok: true, id: `terminal-${opened.length}` }
       },
+      claim(id, lease) {
+        if (!lease() || !claims.has(id)) return false
+        claims.set(id, lease)
+        return true
+      },
+      async discard(id, lease) {
+        if (claims.get(id) !== lease) return false
+        await this.close(id)
+        return true
+      },
       close: async (id) => {
+        claims.delete(id)
         await finishExit(opened[Number(id.split('-')[1]) - 1])
       },
       paste: () => true,
@@ -1105,12 +1135,15 @@ async function fencedRig(options: Pick<JobsDeps, 'beforePublish'> = {}) {
     () => fenced.leave(),
   )
   const start = async (read: string[] = [], write: string[] = []) => {
-    const result = await fenced.start({
-      provider,
-      name: 'fenced',
-      prompt: 'go',
-      scope: { read, write },
-    })
+    const result = await fenced.start(
+      {
+        provider,
+        name: 'fenced',
+        prompt: 'go',
+        scope: { read, write },
+      },
+      () => true,
+    )
     if (!result.ok) throw new Error(result.message)
     const entry = opened.at(-1)!
     return { ...result, entry, state: `${entry.cwd}.agent` }
@@ -1407,7 +1440,7 @@ it.each(['pending', 'failed'] as const)(
       if (kind === 'failed') throw new Error('unrelated release refused')
     }
     const a = await t.start()
-    const b = await t.sessions.start('codex', {})
+    const b = await t.sessions.start('codex', {}, () => true)
     if (!b.ok) throw new Error(b.message)
     void finishExit(a.entry)?.catch(() => {})
     await entered.promise

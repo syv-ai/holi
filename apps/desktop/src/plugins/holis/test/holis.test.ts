@@ -27,6 +27,7 @@ import {
 import { hashOf, readFiles, remember, saveFile } from '../main/memory'
 
 const REMOTE = 'syv-ai/notes'
+const cleanupReleases: (() => void)[] = []
 let root: string
 let data: string
 let launched: Parameters<HolisDeps['launch']>[0][]
@@ -81,6 +82,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  for (const release of cleanupReleases.splice(0)) release()
+  await holis.stop()
   await Promise.all([root, data].map((d) => rm(d, { recursive: true, force: true })))
 })
 
@@ -307,4 +310,105 @@ describe('memory', () => {
     const again = await saveFile(root, dir, 'memory', '- mine\n', hashOf(res.ok ? '' : res.text))
     expect(again.ok).toBe(true)
   })
+})
+
+describe('activation work', () => {
+  it('joins an admitted file write and rejects new file work after stop', async () => {
+    await approved()
+    let entered!: () => void
+    let release!: () => void
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const write = holis.withFiles(vault(), 'proposal', async (dir) => {
+      entered()
+      await held
+      await writeFile(join(root, dir, 'MEMORY.md'), 'retained original-vault fact')
+    })
+    await writing
+    let stopped = false
+    const stop = holis.stop().then(() => {
+      stopped = true
+    })
+    try {
+      await expect(
+        holis.withFiles(vault(), 'proposal', async () => {
+          throw new Error('must not start')
+        }),
+      ).rejects.toThrow()
+      expect(stopped).toBe(false)
+    } finally {
+      release()
+    }
+    await Promise.all([stop, write])
+    expect(await readFile(join(root, '.holi/holis/proposal/MEMORY.md'), 'utf8')).toBe(
+      'retained original-vault fact',
+    )
+  })
+
+  it('keeps a report lease from its admission across display changes', async () => {
+    await approved()
+    await holis.send(vault(), 'proposal', 'kunder/a.md')
+    await holis.stop()
+    let displayEpoch = 0
+    holis = createHolis({
+      store: jsonFileStore(join(data, 'holis.json'), parseHolisFile),
+      provider: async () => 'claude',
+      launch: async () => {
+        throw new Error('report must not launch')
+      },
+      emit: () => {},
+      presentationLease: () => {
+        const epoch = displayEpoch
+        return () => epoch === displayEpoch
+      },
+      needsYou: (notice, lease) => {
+        if (lease()) asked.push(notice)
+      },
+    })
+    const report = holis.report(vault(), 'proposal', 'saved', true)
+    displayEpoch += 2
+    await report
+    expect(asked).toEqual([])
+    await holis.report(vault(), 'proposal', 'ready', true)
+    expect(asked).toMatchObject([{ remote: REMOTE, text: 'ready' }])
+  })
+})
+
+it('refuses approval queued behind another real store update after stop', async () => {
+  await writeHoli({ yaml: PROPOSAL, soul: SOUL })
+  const shown = (await holis.list(vault()))[0]!.fingerprint!
+  const store = jsonFileStore(join(data, 'holis.json'), parseHolisFile)
+  let release!: () => void
+  let entered!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  cleanupReleases.push(release)
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const blocker = store.update(async (file) => {
+    entered()
+    await held
+    return file
+  })
+  await waiting
+  let providerRead!: () => void
+  const prepared = new Promise<void>((resolve) => {
+    providerRead = resolve
+  })
+  onProviderRead = providerRead
+  const approval = holis.approve(vault(), 'proposal', shown).catch((error: unknown) => error)
+  await prepared
+  await new Promise((resolve) => setImmediate(resolve))
+  const stopped = holis.stop()
+  release()
+  await blocker
+  expect(await approval).toBeInstanceOf(Error)
+  await stopped
+  expect((await store.read())[REMOTE]?.['.holi/holis/proposal/holi.yaml']?.approved).toBeUndefined()
 })

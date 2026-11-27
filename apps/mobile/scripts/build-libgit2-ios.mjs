@@ -8,7 +8,11 @@ import { spawnSync } from 'node:child_process'
 import https from 'node:https'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const generated = join(root, '.native-deps/libgit2-1.9.7')
+const sdkName = process.env.HOLI_IOS_SDK ?? 'iphonesimulator'
+if (!['iphonesimulator', 'iphoneos'].includes(sdkName))
+  throw new Error(`Unsupported iOS SDK: ${sdkName}`)
+const device = sdkName === 'iphoneos'
+const generated = join(root, `.native-deps/libgit2-1.9.7-${sdkName}`)
 const archive = join(generated, 'libgit2-1.9.7.tar.gz')
 const source = join(generated, 'source')
 const build = join(generated, 'build')
@@ -146,10 +150,10 @@ if ((await readFile(stamp, 'utf8').catch(() => null)) !== expectedStamp) {
 }
 await rm(build, { recursive: true, force: true })
 await rm(prefix, { recursive: true, force: true })
-const sdk = spawnSync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-path'], {
+const sdk = spawnSync('xcrun', ['--sdk', sdkName, '--show-sdk-path'], {
   encoding: 'utf8',
 })
-if (sdk.status !== 0) throw new Error(`Xcode iOS Simulator SDK unavailable: ${sdk.stderr}`)
+if (sdk.status !== 0) throw new Error(`Xcode ${sdkName} SDK unavailable: ${sdk.stderr}`)
 run('cmake', [
   '-S',
   source,
@@ -158,8 +162,7 @@ run('cmake', [
   '-G',
   'Unix Makefiles',
   '-DCMAKE_SYSTEM_NAME=iOS',
-  '-DCMAKE_OSX_SYSROOT=iphonesimulator',
-  '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64',
+  `-DCMAKE_OSX_ARCHITECTURES=${device ? 'arm64' : 'arm64;x86_64'}`,
   `-DCMAKE_OSX_SYSROOT=${sdk.stdout.trim()}`,
   '-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0',
   '-DCMAKE_INSTALL_PREFIX=' + prefix,
@@ -175,7 +178,7 @@ run('cmake', [
 ])
 run('cmake', ['--build', build, '--config', 'Release', '--parallel'])
 run('cmake', ['--install', build, '--config', 'Release'])
-const destination = join(root, 'App_Resources/iOS/libgit2')
+const destination = join(root, 'App_Resources/iOS/libgit2', ...(device ? ['iphoneos'] : []))
 await mkdir(destination, { recursive: true })
 await copyFile(join(prefix, 'lib/libgit2.a'), join(destination, 'libgit2.a'))
 await cp(join(prefix, 'include'), join(destination, 'include'), { recursive: true })
@@ -184,4 +187,4 @@ await writeFile(
   join(destination, 'SOURCE.txt'),
   `libgit2 1.9.7\nSource: ${url}\nSHA-256: ${sha256}\n`,
 )
-console.log(`Built pinned libgit2 ${sha256} for iOS Simulator`)
+console.log(`Built pinned libgit2 ${sha256} for ${sdkName}`)

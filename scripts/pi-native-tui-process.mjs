@@ -15,6 +15,7 @@ export async function startOwnedPty({
   env,
   stateDirectory,
   timeoutMs,
+  terminalSize,
   maxOutputBytes = 262144,
 }) {
   if (
@@ -29,12 +30,26 @@ export async function startOwnedPty({
     maxOutputBytes <= 0
   )
     throw new TypeError('Invalid owned PTY configuration')
+  if (
+    terminalSize !== undefined &&
+    (!Number.isInteger(terminalSize?.rows) ||
+      !Number.isInteger(terminalSize?.columns) ||
+      terminalSize.rows < 1 ||
+      terminalSize.rows > 1000 ||
+      terminalSize.columns < 1 ||
+      terminalSize.columns > 1000)
+  )
+    throw new TypeError('Invalid terminal size')
   await mkdir(stateDirectory, { recursive: true })
-  const child = spawn('python3', [worker, JSON.stringify({ command, args, cwd, env })], {
-    cwd,
-    env: { ...env, PYTHONUNBUFFERED: '1' },
-    stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
-  })
+  const child = spawn(
+    'python3',
+    [worker, JSON.stringify({ command, args, cwd, env, terminalSize })],
+    {
+      cwd,
+      env: { ...env, PYTHONUNBUFFERED: '1' },
+      stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
+    },
+  )
   let anchorPid, nativePid, nativeExit, failure, drain, closePromise
   let output = Buffer.alloc(0),
     events = '',

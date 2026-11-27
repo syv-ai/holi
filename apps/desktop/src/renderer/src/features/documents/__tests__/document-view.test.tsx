@@ -239,6 +239,140 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+test('relative markdown links open the vault note and request its heading', async () => {
+  const target = 'materials/note.md'
+  files.set(target, '# Next Steps\n')
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    docs: [
+      { path: 'notes/source.md', kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+      { path: target, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+    ],
+  } as never)
+  files.set('notes/source.md', '[Related note](../materials/note.md#next-steps)')
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path="notes/source.md" onOpen={onOpen} />
+    </Provider>,
+  )
+  await editorBox('notes/source.md')
+  fireEvent.click(screen.getByRole('link', { name: 'Related note' }))
+  expect(onOpen).toHaveBeenCalledWith(target)
+  expect(store.get(pendingHeadingAtom)).toEqual({ path: target, heading: 'next-steps' })
+})
+
+test('relative markdown links include local and claimed Markdown files', async () => {
+  const source = 'notes/source.local.md'
+  const targets = ['notes/other.local.md', 'tasks/task.target.md', 'tasks/task.broken.md']
+  files.set(
+    source,
+    '# Part\n\n[Here](#part) [Local](other.local.md) [Task](../tasks/task.target.md) [Broken](../tasks/task.broken.md)',
+  )
+  for (const target of targets) files.set(target, '# Target\n')
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    files: [{ path: source }, { path: targets[0] }],
+    claimed: {
+      tasks: {
+        items: [{ path: targets[1] }],
+        broken: [{ path: targets[2], error: 'Invalid task metadata' }],
+      },
+    },
+  } as never)
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path={source} onOpen={onOpen} />
+    </Provider>,
+  )
+  const editor = ((await editorBox(source)) as WithEditor).editor
+  act(() => editor.commands.setTextSelection(editor.state.doc.content.size - 1))
+  fireEvent.click(screen.getByRole('link', { name: 'Here' }))
+  expect(onOpen).toHaveBeenLastCalledWith(source)
+  await waitFor(() => expect(editor.state.selection.$from.parent.textContent).toBe('Part'))
+  for (const [index, name] of ['Local', 'Task', 'Broken'].entries()) {
+    fireEvent.click(screen.getByRole('link', { name }))
+    expect(onOpen).toHaveBeenLastCalledWith(targets[index])
+  }
+})
+
+test('relative markdown links resolve encoded source and target paths and headings', async () => {
+  const source = 'notes/folder #1/source%.md'
+  const target = 'notes/folder #1/next? one%.md'
+  files.set(source, '[Next](./next%3F%20one%25.md#A%20Heading%25)')
+  files.set(target, '# A Heading%\n')
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    docs: [
+      { path: source, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+      { path: target, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+    ],
+  } as never)
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path={source} onOpen={onOpen} />
+    </Provider>,
+  )
+  await editorBox(source)
+  fireEvent.click(screen.getByRole('link', { name: 'Next' }))
+  expect(onOpen).toHaveBeenCalledWith(target)
+  expect(store.get(pendingHeadingAtom)).toEqual({ path: target, heading: 'A Heading%' })
+})
+
+test('relative markdown links open anchors and plain notes without retaining stale headings', async () => {
+  const source = 'notes/source.md'
+  const target = 'notes/target.md'
+  files.set(source, '# Part\n\n[Here](#part) [Target](target.md)')
+  files.set(target, '# Target\n')
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    docs: [
+      { path: source, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+      { path: target, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' },
+    ],
+  } as never)
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path={source} onOpen={onOpen} />
+    </Provider>,
+  )
+  const editor = ((await editorBox(source)) as WithEditor).editor
+  act(() => editor.commands.setTextSelection(editor.state.doc.content.size - 1))
+  fireEvent.click(screen.getByRole('link', { name: 'Here' }))
+  expect(onOpen).toHaveBeenLastCalledWith(source)
+  await waitFor(() => expect(editor.state.selection.$from.parent.textContent).toBe('Part'))
+  act(() => store.set(pendingHeadingAtom, { path: 'other.md', heading: 'stale' }))
+  fireEvent.click(screen.getByRole('link', { name: 'Target' }))
+  expect(onOpen).toHaveBeenLastCalledWith(target)
+  expect(store.get(pendingHeadingAtom)).toBeNull()
+})
+
+test('relative markdown links leave malformed, external, modified and missing links alone', async () => {
+  const source = 'notes/source.md'
+  files.set(
+    source,
+    '[Bad](%E0%A4%A.md) [Web](https://holi.invalid/notes/source.md) [Scheme](mailto:a@b.test) [Missing](missing.md) [Existing](source.md)',
+  )
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    docs: [{ path: source, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' }],
+  } as never)
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path={source} onOpen={onOpen} />
+    </Provider>,
+  )
+  await editorBox(source)
+  for (const name of ['Bad', 'Web', 'Scheme', 'Missing'])
+    fireEvent.click(screen.getByRole('link', { name }))
+  fireEvent.click(screen.getByRole('link', { name: 'Existing' }), { ctrlKey: true })
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
 test('ordinary notes do not show Done', async () => {
   open('# Plan\n')
   await editorBox()
@@ -545,7 +679,12 @@ test.each([
   `EACCES: permission denied, open /vault/${'long-filename-'.repeat(18)}.md`,
 ])('a failed Done keeps the task open, explains %s and allows retry', async (cause) => {
   const user = userEvent.setup()
-  write.mockRejectedValueOnce(new Error(cause))
+  // Autosave may consume the first write before Done is clicked. Keep the
+  // failure active until the user explicitly retries so this exercises the
+  // failed-Done workflow rather than depending on save timing.
+  write.mockImplementation(async () => {
+    throw new Error(cause)
+  })
   openTask()
   const box = await editorBox(TASK_PATH)
   act(() => (box as WithEditor).editor.commands.insertContent('Pending edit'))
@@ -554,6 +693,10 @@ test.each([
   expect(within(error).getByText('Could not finish editing')).toBeVisible()
   expect(within(error).getByText(cause)).toBeVisible()
   expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
+  expect((box as WithEditor).editor.getText()).toContain('Pending edit')
+  write.mockImplementation(async (input: { path: string; text: string }) => {
+    files.set(input.path, input.text)
+  })
   await user.click(within(error).getByRole('button', { name: 'Retry' }))
   await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
 })

@@ -42,7 +42,16 @@ const { XtermDouble, FitDouble } = vi.hoisted(() => {
     options: Record<string, unknown>
     cols = 80
     rows = 24
-    buffer = { active: { viewportY: 17, getLine: () => undefined } }
+    bufferChanged: Array<() => void> = []
+    scrolled: Array<(viewportY: number) => void> = []
+    resized: Array<(size: { cols: number; rows: number }) => void> = []
+    buffer = {
+      active: { viewportY: 17, getLine: () => undefined },
+      onBufferChange: (callback: () => void) => {
+        this.bufferChanged.push(callback)
+        return this.subscribe()
+      },
+    }
     selection = ''
     mount!: HTMLElement
     textarea!: HTMLTextAreaElement
@@ -52,7 +61,9 @@ const { XtermDouble, FitDouble } = vi.hoisted(() => {
     parsed: Array<() => void> = []
     subscriptions: Array<ReturnType<typeof vi.fn>> = []
     dispose = vi.fn()
-    write = vi.fn()
+    write = vi.fn((_data: string, callback?: () => void) => {
+      void Promise.resolve().then(() => callback?.())
+    })
     focus = vi.fn(() => this.textarea.focus())
     scrollToTop = vi.fn()
     scrollToBottom = vi.fn()
@@ -86,6 +97,14 @@ const { XtermDouble, FitDouble } = vi.hoisted(() => {
       this.parsed.push(callback)
       return this.subscribe()
     }
+    onScroll(callback: (viewportY: number) => void) {
+      this.scrolled.push(callback)
+      return this.subscribe()
+    }
+    onResize(callback: (size: { cols: number; rows: number }) => void) {
+      this.resized.push(callback)
+      return this.subscribe()
+    }
     attachCustomKeyEventHandler(callback: (event: KeyboardEvent) => boolean) {
       this.key = callback
     }
@@ -102,8 +121,12 @@ const { XtermDouble, FitDouble } = vi.hoisted(() => {
     static instances: FitDouble[] = []
     term!: XtermDouble
     fit = vi.fn(() => {
-      this.term.cols = Math.max(2, Math.floor(this.term.mount.clientWidth / 8))
-      this.term.rows = Math.max(1, Math.floor(this.term.mount.clientHeight / 16))
+      const cols = Math.max(2, Math.floor(this.term.mount.clientWidth / 8))
+      const rows = Math.max(1, Math.floor(this.term.mount.clientHeight / 16))
+      if (cols === this.term.cols && rows === this.term.rows) return
+      this.term.cols = cols
+      this.term.rows = rows
+      this.term.resized.forEach((callback) => callback({ cols, rows }))
     })
     constructor() {
       FitDouble.instances.push(this)
@@ -593,4 +616,25 @@ test('AgentsView does not reuse the previous vault window while its new window i
     [REMOTE, { id: ID }],
     ['fixture/second', { id: 'second-vault-window' }],
   ])
+})
+
+test('renders replay before live bytes that arrive while attachment is pending', async () => {
+  const attach = deferred<string>()
+  mocks.attach.mockReturnValueOnce(attach.promise)
+  render(
+    <Provider store={fixture()}>
+      <SessionTerminal terminalId={ID} visible />
+    </Provider>,
+  )
+  const term = XtermDouble.instances[0]!
+  act(() => terminals.receivePtyData({ id: ID, data: 'stream-tail' }))
+  expect(term.write.mock.calls.flat()).not.toContain('stream-tail')
+  await act(async () => {
+    attach.resolve('replay-prefix')
+  })
+  act(() => terminals.receivePtyData({ id: ID, data: 'next-output' }))
+  const content = term.write.mock.calls
+    .map(([data]) => data)
+    .filter((data) => ['replay-prefix', 'stream-tail', 'next-output'].includes(data))
+  expect(content).toEqual(['replay-prefix', 'stream-tail', 'next-output'])
 })

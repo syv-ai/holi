@@ -10,7 +10,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import type { JsonFileStore } from '../../../../main/plugin-api'
-import { buildAgentEnv } from '../claude/cli'
+import { bindAgentBinEnv, buildAgentEnv } from '../claude/cli'
 import { SESSION_ENV } from '../codex'
 import type { AgentProvider, TerminalOpts } from '../provider'
 import {
@@ -56,7 +56,7 @@ export function harnessProvider(
     terminal(target, opts = {}) {
       const path = resolve(h.command.bin)
       if (path === null) return null
-      const env = { ...buildAgentEnv(process.env, { binDir: target.binDir }), ...h.env }
+      const env = buildAgentEnv({ ...process.env, ...h.env }, { binDir: target.binDir })
       delete env[SESSION_ENV]
       if (opts.session !== undefined) env[SESSION_ENV] = opts.session
       return { bin: path, args: harnessArgs(h, optsOf(opts)), env }
@@ -98,15 +98,18 @@ export function withPreset<P extends AgentProvider>(base: P, current: () => Harn
       return {
         bin: command.bin,
         args: [...h.command.args, ...command.args],
-        env: {
-          ...command.env,
-          ...h.env,
-          // A fenced Codex run has its own prepared home; the preset's
-          // CODEX_HOME was used as the source, not the run's destination.
-          ...(base.id === 'codex' && opts?.fence !== undefined
-            ? { CODEX_HOME: command.env.CODEX_HOME }
-            : {}),
-        },
+        env: bindAgentBinEnv(
+          {
+            ...command.env,
+            ...h.env,
+            // A fenced Codex run has its own prepared home; the preset's
+            // CODEX_HOME was used as the source, not the run's destination.
+            ...(base.id === 'codex' && opts?.fence !== undefined
+              ? { CODEX_HOME: command.env.CODEX_HOME }
+              : {}),
+          },
+          target.binDir,
+        ),
       }
     },
   }

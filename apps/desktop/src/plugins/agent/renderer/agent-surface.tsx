@@ -43,6 +43,7 @@ export function AgentSurface({
     <>
       <SessionTerminal
         terminalId={id}
+        sessionId={terminals.find((terminal) => terminal.id === id)?.launchedFor ?? undefined}
         provider={
           sessions.find(
             (session) =>

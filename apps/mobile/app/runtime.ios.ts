@@ -12,6 +12,7 @@ import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
 import { runWorkingCopyCheck } from './working-copy-check.ios'
 import { runManagedGitCheck } from './managed-git-check.ios'
+import { foundationModelsAvailability } from './foundation-models.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -53,6 +54,7 @@ export async function checkCompatibility(): Promise<string> {
   let rawNames: unknown
   let prefixNamespace: Record<string, unknown>
   let git: Awaited<ReturnType<typeof runGitCompatibilityCheck>> | undefined
+  let foundationModels: string | undefined
   let workingCopy:
     | (Awaited<ReturnType<typeof runWorkingCopyCheck>> & {
         cases?: Awaited<ReturnType<typeof runWorkingCopyCheck>>[]
@@ -74,6 +76,11 @@ export async function checkCompatibility(): Promise<string> {
       persist({ managedGit })
       return managedGit.ok ? 'Managed Git request completed' : 'Managed Git request refused'
     }
+    if (launchPhase === 'normal') {
+      phase = 'foundation-models-availability'
+      operation = 'foundationModelsAvailability'
+      foundationModels = foundationModelsAvailability()
+    }
     phase = 'note-metadata'
     operation = 'persist/reconstruct/remove'
     const metadata = createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
@@ -84,6 +91,12 @@ export async function checkCompatibility(): Promise<string> {
     if (!restoredMetadata.visible(['diagnostic.md']).recents.includes('diagnostic.md'))
       throw new Error('Note metadata reconstruction check failed')
     restoredMetadata.remove('diagnostic.md')
+    if (
+      createNoteMetadata(noteMetadataSettings, 'holi/diagnostic')
+        .visible(['diagnostic.md'])
+        .recents.includes('diagnostic.md')
+    )
+      throw new Error('Note metadata removal check failed')
     phase = 'format-corpus'
     operation = 'runVaultFormatCorpus'
     const corpus = runVaultFormatCorpus(nativeUtf8)
@@ -321,6 +334,6 @@ export async function checkCompatibility(): Promise<string> {
       ...(git ? { git } : {}),
     }
   }
-  persist({ rawNames, workingCopy, ...evidence })
+  persist({ rawNames, workingCopy, ...(foundationModels ? { foundationModels } : {}), ...evidence })
   return status
 }
