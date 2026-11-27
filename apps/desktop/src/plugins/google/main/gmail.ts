@@ -50,6 +50,7 @@ import {
   type RawMessage,
   type RawThread,
 } from './gmail-thread'
+import { mapPooled } from './map-pooled'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
 
 /** Gmail's own inbox tabs. `primary` is what Gmail calls `CATEGORY_PERSONAL`
@@ -277,27 +278,6 @@ export function htmlToText(html: string): string {
       .replace(/\n{3,}/g, '\n\n')
       .trim()
   )
-}
-
-/** Bounded concurrency: Gmail's list gives ids only, so a list view is N+1
- *  requests. Firing 25 at once invites a rate-limit; a small pool does not. */
-async function mapPooled<T, R>(
-  items: T[],
-  size: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out: R[] = new Array<R>(items.length)
-  let next = 0
-  await Promise.all(
-    Array.from({ length: Math.min(size, items.length) }, async () => {
-      for (;;) {
-        const i = next++
-        if (i >= items.length) return
-        out[i] = await fn(items[i]!)
-      }
-    }),
-  )
-  return out
 }
 
 export interface ListThreadsOptions {

@@ -60,9 +60,10 @@ it('requires separate consent for a static import, its redirect, and a transitiv
   routes.set(child, {
     text: "import './style.css'; import 'some-package'; import('./dynamic.js'); module.exports = 1",
   })
-  expect(await diagnose(5)).toHaveLength(4)
+  routes.set('https://two.example/lib/style.css', { text: 'body { color: var(--foreground) }' })
+  expect(await diagnose(5)).toHaveLength(3)
   expect((await mdx.externalResources(owner)).pending).toEqual([])
-  expect(contacts).not.toContain('https://two.example/lib/style.css')
+  expect(contacts).toContain('https://two.example/lib/style.css')
   expect(contacts).not.toContain('https://two.example/lib/dynamic.js')
 
   await mdx.releaseDiagnosticsLease(owner)

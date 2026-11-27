@@ -70,6 +70,21 @@ describe('markdown round trip', () => {
     )
   })
 
+  it('renders footnote definitions as formatted notes while preserving their markdown', () => {
+    const source = 'A statement with a footnote[^note].\n\n[^note]: A note with **emphasis**.'
+    const saved = roundTrip(source)
+    const rendered = editor!.view.dom
+
+    const note = rendered.querySelector('ol li')
+    expect(note).not.toBeNull()
+    expect(note?.textContent).toContain('A note with emphasis.')
+    expect(rendered.textContent).not.toContain('[^note]:')
+    expect(rendered.querySelector('strong')?.textContent).toBe('emphasis')
+    expect(rendered.querySelector('a[href^="#"]')).not.toBeNull()
+    expect(saved).toContain('footnote[^note]')
+    expect(saved).toContain('[^note]: A note with **emphasis**.')
+  })
+
   it('keeps reference definitions intact across CRLF and mixed newlines', () => {
     const source =
       '---\r\ntitle: Kept\r\n---\r\n\r\n![Alt][chart]\r\n\r\n<!-- holi:figure -->\n![Fig](images/a.png)\n<!-- /holi:figure -->\r\n\r\n[chart]: images/chart.png \"chart title\"\r\n'

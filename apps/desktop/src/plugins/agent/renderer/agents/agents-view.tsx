@@ -368,6 +368,7 @@ function SessionView({ id, visible }: { id: string; visible: boolean }): React.J
     <SessionTerminal
       key={terminalId}
       terminalId={terminalId}
+      sessionId={id}
       focusId={`session:${id}`}
       provider={session?.provider as 'pi' | 'claude' | 'codex' | undefined}
       visible={visible}

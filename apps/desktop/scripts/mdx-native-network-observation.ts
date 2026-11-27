@@ -20,7 +20,19 @@ const streamPath = '/npm/lodash@4.17.21/lodash.min.js'
 const labels = [...fixtureOrigins, 'unexpected', 'unattributed'] as const
 type Destination = (typeof labels)[number]
 const eventLimit = 2048
-type Route = 'entry' | 'relative' | 'redirect' | 'cdn' | 'stream' | 'unexpected' | 'unattributed'
+type Route =
+  | 'entry'
+  | 'relative'
+  | 'redirect'
+  | 'cdn'
+  | 'stream'
+  | 'nested-css'
+  | 'child-css'
+  | 'nested-font'
+  | 'nested-image'
+  | 'nested-audio'
+  | 'unexpected'
+  | 'unattributed'
 
 function destination(host: unknown): Destination {
   if (typeof host !== 'string' || !host) return 'unattributed'
@@ -50,6 +62,14 @@ function sameIp(left: unknown, right: string | undefined) {
 /** Observe only this process's Node transport. The fixture SHA comes from the validated native runner. */
 export function observeMdxNativeNetwork(fixtureSha: string) {
   const fixturePath = `/syv-ai/holi/${fixtureSha}/apps/desktop/scripts/fixtures/mdx-external`
+  const nestedBase = `/gh/syv-ai/holi@${fixtureSha}/apps/desktop/scripts/fixtures/mdx-external`
+  const nestedRoutes = new Map<string, Route>([
+    [`${nestedBase}/nested.css`, 'nested-css'],
+    [`${nestedBase}/child.css`, 'child-css'],
+    [`${nestedBase}/tiny.woff2`, 'nested-font'],
+    [`${nestedBase}/tiny.png`, 'nested-image'],
+    [`${nestedBase}/tiny.wav`, 'nested-audio'],
+  ])
   // A CDN request needs a preceding, as-yet-unmatched redirect response from
   // the exact fixture source. Only the exact expected target earns that credit.
   // Count matching observations, not logical fetch IDs or raw Location values.
@@ -66,6 +86,7 @@ export function observeMdxNativeNetwork(fixtureSha: string) {
         if (request.path === redirectPath) return 'redirect'
         break
       case cdnOrigin:
+        if (nestedRoutes.has(request.path)) return nestedRoutes.get(request.path)!
         if (request.path === cdnPath && observedRedirects > 0) return 'cdn'
         if (request.path === streamPath) return 'stream'
     }

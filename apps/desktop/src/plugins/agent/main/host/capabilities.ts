@@ -45,7 +45,7 @@ import {
   type RangeFile,
 } from '../../../../main/plugin-api'
 import type { ActionResult, AgentSessions, Geometry, OpenResult, StartResult } from './sessions'
-import type { AgentTerminals, TerminalSummary } from './terminals'
+import type { AgentTerminals, PresentationLease, TerminalSummary } from './terminals'
 import { JOB_ID, type SessionSummary } from '../claude/listing'
 import {
   hasBackground,
@@ -103,6 +103,7 @@ export interface AgentCapabilitiesDeps {
     | 'has'
     | 'ownsTerminal'
     | 'terminalOf'
+    | 'discard'
     | 'start'
     | 'send'
     | 'stop'
@@ -117,7 +118,9 @@ export interface AgentCapabilitiesDeps {
   /** Every provider, the background one first: this machine's harnesses,
    *  read per call (`../harness/registry.ts`). */
   providers(): readonly AgentProvider[]
-  terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
+  terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close' | 'claim'>
+  /** Snapshot display authority when a foreground capability is admitted. */
+  presentationLease(): PresentationLease
   /** The open vault's remote, or null with none open. */
   liveRemote(): string | null
   /** Commit the open vault now. */
@@ -351,11 +354,13 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, args): Promise<OpenResult> => {
         if (!live(ctx)) return notOpen
+        const lease = deps.presentationLease()
+        if (!lease()) return notOpen
         if (args.login === true) {
           const { login: _login, attach: _attach, fork: _fork, ...size } = args
           const claude = deps.providers().find(hasBackground)
           if (claude === undefined) return { ok: false, message: 'No agent here signs in.' }
-          const started = await deps.own.start(claude.id, { ...size, login: true })
+          const started = await deps.own.start(claude.id, { ...size, login: true }, lease)
           return started.ok ? { ok: true, terminalId: started.terminalId } : started
         }
         if (args.attach !== undefined && deps.jobs.has(args.attach)) return jobOnly
@@ -370,10 +375,12 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           const terminalId = deps.own.terminalOf(args.attach)
           return terminalId === null
             ? { ok: false, message: 'That session has ended.' }
-            : { ok: true, terminalId }
+            : deps.terminals.claim(terminalId, lease)
+              ? { ok: true, terminalId }
+              : { ok: false, message: 'This vault is no longer displayed.' }
         }
         if (args.attach !== undefined && (await deps.own.hasPast(args.attach))) {
-          const reopened = await deps.own.reopen(args.attach, args)
+          const reopened = await deps.own.reopen(args.attach, args, lease)
           return reopened.ok ? { ok: true, terminalId: reopened.terminalId } : reopened
         }
         // Anything else is a background session's job id, which reaches
@@ -381,7 +388,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (args.attach !== undefined && !JOB_ID.test(args.attach)) {
           throw new CapabilityError('BAD_REQUEST', `not a session id: ${args.attach}`)
         }
-        return deps.sessions.open(args)
+        return deps.sessions.open(args, lease)
       },
     }),
 
@@ -407,10 +414,16 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, { provider, resume, ...args }): Promise<StartResult> => {
         if (!live(ctx)) return notOpen
+        const lease = deps.presentationLease()
+        if (!lease()) return notOpen
         if (provider !== undefined && !isBackground(provider)) {
-          return deps.own.start(provider, { ...args, ...(resume === undefined ? {} : { resume }) })
+          return deps.own.start(
+            provider,
+            { ...args, ...(resume === undefined ? {} : { resume }) },
+            lease,
+          )
         }
-        return deps.sessions.start(args)
+        return deps.sessions.start(args, lease)
       },
     }),
 
@@ -626,12 +639,17 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           })
         }
         if (provider.capabilities.fenced !== undefined) {
-          return deps.fenced.start({
-            provider,
-            ...args,
-            scope,
-            ...(system === undefined ? {} : { system }),
-          })
+          const lease = deps.presentationLease()
+          if (!lease()) return notOpen
+          return deps.fenced.start(
+            {
+              provider,
+              ...args,
+              scope,
+              ...(system === undefined ? {} : { system }),
+            },
+            lease,
+          )
         }
         return {
           ok: false,
@@ -667,17 +685,27 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, { provider, ...args }): Promise<OpenResult> => {
         if (!live(ctx)) return notOpen
+        const lease = deps.presentationLease()
+        if (!lease()) return notOpen
         if (deps.jobs.has(args.target)) return jobOnly
-        if (deps.own.has(args.target)) return deps.own.send(args.target, args.text)
+        if (deps.own.has(args.target)) return deps.own.send(args.target, args.text, lease)
         if (args.target === 'new' && provider !== undefined && !isBackground(provider)) {
-          const started = await deps.own.start(provider, {
-            name: args.text,
-            ...(args.cols === undefined ? {} : { cols: args.cols }),
-            ...(args.rows === undefined ? {} : { rows: args.rows }),
-          })
-          return started.ok ? deps.own.send(started.sessionId, args.text) : started
+          const started = await deps.own.start(
+            provider,
+            {
+              name: args.text,
+              ...(args.cols === undefined ? {} : { cols: args.cols }),
+              ...(args.rows === undefined ? {} : { rows: args.rows }),
+            },
+            lease,
+          )
+          if (!lease()) {
+            if (started.ok) await deps.own.discard(started.sessionId, lease)
+            return notOpen
+          }
+          return started.ok ? deps.own.send(started.sessionId, args.text, lease) : started
         }
-        return deps.sessions.send(args)
+        return deps.sessions.send(args, lease)
       },
     }),
 
@@ -773,7 +801,8 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       doors: ['ui'],
       params: idParams,
       run: async (ctx, { id }): Promise<ActionResult> => {
-        if (!live(ctx)) return notOpen
+        const lease = deps.presentationLease()
+        if (!live(ctx) || !lease()) return notOpen
         if (deps.jobs.has(id)) return jobOnly
         if (deps.pi?.sessions().some((session) => session.id === id)) {
           return { ok: false, message: 'Pi background sessions cannot be restarted from a TUI.' }
@@ -789,10 +818,10 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
             : ownOnly('restarted')
         }
         if (await deps.own.hasPast(id)) {
-          const res = await deps.own.reopen(id, {})
+          const res = await deps.own.reopen(id, {}, lease)
           return res.ok ? { ok: true } : res
         }
-        return deps.sessions.respawn(id)
+        return deps.sessions.respawn(id, lease)
       },
     }),
 
@@ -804,12 +833,15 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         return { ...geometry(p), id: stringParam(p, 'id') }
       },
       run: async (ctx, { id, ...size }): Promise<StartResult> => {
-        if (!live(ctx)) return notOpen
+        const lease = deps.presentationLease()
+        if (!live(ctx) || !lease()) return notOpen
         if (deps.jobs.has(id)) return jobOnly
         if (deps.pi?.sessions().some((session) => session.id === id)) {
           return { ok: false, message: 'Pi background sessions cannot be duplicated from a TUI.' }
         }
-        return deps.own.has(id) ? deps.own.duplicate(id, size) : deps.sessions.duplicate(id, size)
+        return deps.own.has(id)
+          ? deps.own.duplicate(id, size, lease)
+          : deps.sessions.duplicate(id, size, lease)
       },
     }),
 
@@ -818,7 +850,11 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     'agent.attach': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }): Promise<string> => (live(ctx) ? deps.terminals.attach(id) : ''),
+      run: async (ctx, { id }): Promise<string> => {
+        if (!live(ctx)) return ''
+        const lease = deps.presentationLease()
+        return lease() ? deps.terminals.attach(id, lease) : ''
+      },
     }),
 
     /** Detach: ends the window, never the session. A session Holi runs is
@@ -827,7 +863,8 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       doors: ['ui'],
       params: idParams,
       run: async (ctx, { id }): Promise<null> => {
-        if (live(ctx) && !deps.own.ownsTerminal(id)) await deps.terminals.close(id)
+        const lease = deps.presentationLease()
+        if (live(ctx) && lease() && !deps.own.ownsTerminal(id)) await deps.terminals.close(id)
         return null
       },
     }),

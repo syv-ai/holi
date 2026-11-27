@@ -404,6 +404,7 @@ async function createScratchFixture() {
     kind: 'job' | 'fenced',
     scope = { read: ['input.md'], write: [`${kind}.md`] },
   ) => {
+    if (kind === 'fenced') host.setDisplayed(remote)
     const result = (await call(remote, kind === 'job' ? 'agent.job' : 'agent.scoped', {
       provider: 'codex',
       name: `${remote}:${kind}`,
@@ -716,6 +717,7 @@ it.each(['success', 'rejection'] as const)(
       const b = await agentScratchRoots(userData, { remote: B, root: roots[B] })
       const { gate, entered } = holdConfigure(A)
       let startSettled = false
+      host.setDisplayed(A)
       starting = call(A, 'agent.scoped', {
         provider: 'codex',
         name: 'delayed configure',
@@ -990,6 +992,7 @@ it('drains retained pty conversation history publication before restarting vault
   const history = async () =>
     JSON.parse(await readFile(historyPath, 'utf8')) as Record<string, SessionSummary[]>
   const startPi = async (remote: typeof f.A | typeof f.B, name: string) => {
+    f.host.setDisplayed(remote)
     const result = (await f.call(remote, 'agent.start', { provider: 'pi', name })) as {
       ok: boolean
       sessionId: string

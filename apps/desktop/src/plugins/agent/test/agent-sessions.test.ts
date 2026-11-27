@@ -88,12 +88,24 @@ function setup(
   const opened: OpenArgs[] = []
   const pastes: Array<[string, string]> = []
   const launched = new Map<string, string>()
+  const claims = new Map<string, OpenArgs['lease']>()
   const terminals: AgentTerminals = {
     open: (args) => {
       opened.push(args)
       const id = `term-${opened.length}`
+      claims.set(id, args.lease)
       if (args.attach !== undefined) launched.set(args.attach, id)
       return { ok: true, id }
+    },
+    claim: (id, lease) => {
+      if (!lease() || !claims.has(id)) return false
+      claims.set(id, lease)
+      return true
+    },
+    discard: async (id, lease) => {
+      if (claims.get(id) !== lease) return false
+      await terminals.close(id)
+      return true
     },
     attach: async () => '',
     write: () => {},
@@ -103,7 +115,9 @@ function setup(
       pastes.push([id, text])
       return true
     },
-    close: async () => {},
+    close: async (id) => {
+      claims.delete(id)
+    },
     closeAll: vi.fn(async () => {}),
     list: () => [],
     launchedFor: (id) => launched.get(id) ?? null,
@@ -330,7 +344,7 @@ it.skipIf(process.platform === 'win32')(
       onChange() {},
     })
     await attach()
-    const started = await ptys.start('codex', { prompt: 'go' })
+    const started = await ptys.start('codex', { prompt: 'go' }, () => true)
     if (!started.ok) throw new Error(started.message)
     const stopped = ptys.stop(started.sessionId)
     void stopped.catch(() => {})
@@ -362,7 +376,10 @@ describe('agent sessions', () => {
       const t = setup([], command.cli, command.target.root)
       try {
         await t.attach()
-        const result = await t.sessions.start({ name: 'Mail catch-up', prompt: 'Read only' })
+        const result = await t.sessions.start(
+          { name: 'Mail catch-up', prompt: 'Read only' },
+          () => true,
+        )
         expect(result).toMatchObject({ ok: false, cleanupUnconfirmed: true })
         expect(result).not.toHaveProperty('sessionId')
         expect(t.opened).toEqual([])
@@ -388,7 +405,7 @@ describe('agent sessions', () => {
       return started(target, options)
     })
 
-    const starting = t.sessions.start({ name: 'Catch-up', prompt: 'read mail' })
+    const starting = t.sessions.start({ name: 'Catch-up', prompt: 'read mail' }, () => true)
     await vi.waitFor(() => expect(t.cli.startBg).toHaveBeenCalled())
     let leaveSettled = false
     const leaving = t.sessions.leave().finally(() => {
@@ -415,7 +432,7 @@ describe('agent sessions', () => {
     }
     t.cli.stop.mockRejectedValueOnce(new Error('stop failed'))
 
-    expect(await t.sessions.start({ prompt: 'Catch me up' })).toMatchObject({
+    expect(await t.sessions.start({ prompt: 'Catch me up' }, () => true)).toMatchObject({
       ok: false,
       message: 'Cleanup unconfirmed: session launch00 may still be running.',
       cleanupUnconfirmed: true,
@@ -432,7 +449,7 @@ describe('agent sessions', () => {
     }
     t.cli.stop.mockResolvedValueOnce({ ok: false, message: 'stop refused' })
 
-    expect(await t.sessions.start({ prompt: 'Catch me up' })).toMatchObject({
+    expect(await t.sessions.start({ prompt: 'Catch me up' }, () => true)).toMatchObject({
       ok: false,
       message: 'Cleanup unconfirmed: session launch00 may still be running.',
       cleanupUnconfirmed: true,
@@ -446,7 +463,7 @@ describe('agent sessions', () => {
     await t.attach()
     t.terminals.open = () => ({ ok: false, message: 'terminal unavailable' })
 
-    const result = await t.sessions.start({ prompt: 'Catch me up' })
+    const result = await t.sessions.start({ prompt: 'Catch me up' }, () => true)
 
     expect(result).toEqual({ ok: false, message: 'terminal unavailable' })
     expect(t.cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
@@ -458,13 +475,13 @@ describe('agent sessions', () => {
     await t.attach()
 
     const operations = [
-      () => t.sessions.open({ attach: 'aaaaaaaa' }),
-      () => t.sessions.start({}),
+      () => t.sessions.open({ attach: 'aaaaaaaa' }, () => true),
+      () => t.sessions.start({}, () => true),
       () => t.sessions.launch({ name: 'late', prompt: 'late' }),
-      () => t.sessions.send({ text: 'late', target: 'new' }),
+      () => t.sessions.send({ text: 'late', target: 'new' }, () => true),
       () => t.sessions.stop('aaaaaaaa'),
-      () => t.sessions.respawn('aaaaaaaa'),
-      () => t.sessions.duplicate('aaaaaaaa'),
+      () => t.sessions.respawn('aaaaaaaa', () => true),
+      () => t.sessions.duplicate('aaaaaaaa', undefined, () => true),
       () => t.sessions.message('aaaaaaaa', 'late'),
     ]
     const before = [
@@ -714,8 +731,8 @@ describe('agent sessions', () => {
   it('prints the sign-in notice into the first terminal only', async () => {
     const t = setup()
     await t.attach()
-    await t.sessions.open({})
-    await t.sessions.open({ attach: 'aaaaaaaa' })
+    await t.sessions.open({}, () => true)
+    await t.sessions.open({ attach: 'aaaaaaaa' }, () => true)
     expect(t.opened[0]?.notice).toBe(SIGN_IN_NOTICE)
     expect(t.opened[1]?.notice).toBeUndefined()
     expect(t.opened[1]?.attach).toBe('aaaaaaaa')
@@ -724,8 +741,8 @@ describe('agent sessions', () => {
   it('sends an ask into the window Holi already has on that session, unsent', async () => {
     const t = setup([row('aaaaaaaa')])
     await t.attach()
-    const first = await t.sessions.send({ text: 'look', target: 'aaaaaaaa' })
-    const second = await t.sessions.send({ text: 'again', target: 'aaaaaaaa' })
+    const first = await t.sessions.send({ text: 'look', target: 'aaaaaaaa' }, () => true)
+    const second = await t.sessions.send({ text: 'again', target: 'aaaaaaaa' }, () => true)
     expect(first).toEqual({ ok: true, terminalId: 'term-1' })
     expect(second).toEqual({ ok: true, terminalId: 'term-1' })
     expect(t.opened).toHaveLength(1)
@@ -738,7 +755,7 @@ describe('agent sessions', () => {
   it('starts a new session named from the ask, and pastes into it', async () => {
     const t = setup()
     await t.attach()
-    const res = await t.sessions.send({ text: 'Tidy the inbox\nplease', target: 'new' })
+    const res = await t.sessions.send({ text: 'Tidy the inbox\nplease', target: 'new' }, () => true)
     // The ask is the name; the CLI keeps its first line (`sessionName`).
     expect(t.cli.startBg).toHaveBeenCalledWith(expect.anything(), {
       name: 'Tidy the inbox\nplease',
@@ -751,7 +768,7 @@ describe('agent sessions', () => {
   it('refuses an ask to a session that has ended', async () => {
     const t = setup([row('aaaaaaaa', { pid: undefined, status: undefined })])
     await t.attach()
-    expect(await t.sessions.send({ text: 'x', target: 'aaaaaaaa' })).toEqual({
+    expect(await t.sessions.send({ text: 'x', target: 'aaaaaaaa' }, () => true)).toEqual({
       ok: false,
       message: 'That session has ended. Pick another one.',
     })
@@ -761,7 +778,7 @@ describe('agent sessions', () => {
   it('duplicates by the conversation id, named as a copy, and opens it', async () => {
     const t = setup([row('aaaaaaaa')])
     await t.attach()
-    const res = await t.sessions.duplicate('aaaaaaaa')
+    const res = await t.sessions.duplicate('aaaaaaaa', undefined, () => true)
     expect(t.cli.forkBg).toHaveBeenCalledWith(
       expect.anything(),
       'aaaaaaaa-uuid',
@@ -806,7 +823,7 @@ describe('agent sessions', () => {
   it('leaving removes only the sessions Holi started empty that never had a turn', async () => {
     const t = setup([row('aaaaaaaa')]) // there before: never Holi's to remove
     await t.attach()
-    await t.sessions.start({})
+    await t.sessions.start({}, () => true)
     await t.sessions.leave()
     expect(t.cli.rm).toHaveBeenCalledTimes(1)
     expect(t.cli.rm).toHaveBeenCalledWith(expect.anything(), 'newnew00')
@@ -815,7 +832,7 @@ describe('agent sessions', () => {
   it('leaving keeps a session Holi started empty once it has had a turn', async () => {
     const t = setup()
     await t.attach()
-    await t.sessions.start({})
+    await t.sessions.start({}, () => true)
     t.sessions.noteTurn(REMOTE, 'newnew00', true)
     await t.sessions.leave()
     expect(t.cli.stop).toHaveBeenCalledWith(expect.anything(), 'newnew00')
@@ -831,7 +848,10 @@ describe('agent sessions', () => {
 
   it('does nothing without a vault', async () => {
     const t = setup()
-    expect(await t.sessions.open({})).toEqual({ ok: false, message: 'No vault is open.' })
+    expect(await t.sessions.open({}, () => true)).toEqual({
+      ok: false,
+      message: 'No vault is open.',
+    })
   })
 })
 
@@ -882,14 +902,16 @@ describe('Claude launch admission queue', () => {
 
       const firstSettled = vi.fn((result: unknown) => result)
       const nextSettled = vi.fn((result: unknown) => result)
-      const first = t.sessions.start({ name: 'Manual', prompt: 'hello' }).then(firstSettled)
+      const first = t.sessions
+        .start({ name: 'Manual', prompt: 'hello' }, () => true)
+        .then(firstSettled)
       await vi.waitFor(() => expect(t.cli.startBg).toHaveBeenCalledTimes(1))
       const next = (
         verb === 'fork'
-          ? t.sessions.duplicate(source)
+          ? t.sessions.duplicate(source, undefined, () => true)
           : verb === 'launch'
             ? t.sessions.launch(scheduled)
-            : t.sessions.start({ name: 'Next' })
+            : t.sessions.start({ name: 'Next' }, () => true)
       ).then(nextSettled)
       await t.sessions.ensure()
       expect(nextSettled).not.toHaveBeenCalled()
@@ -958,7 +980,7 @@ describe('Claude launch admission queue', () => {
       .mockResolvedValueOnce({ ok: true, id: manualId, lease: secondLease })
     const first = t.sessions.launch({ name: 'Manual', prompt: 'go' })
     await vi.waitFor(() => expect(t.cli.startBg).toHaveBeenCalledTimes(1))
-    const next = t.sessions.start({ name: 'Collision' })
+    const next = t.sessions.start({ name: 'Collision' }, () => true)
     await t.sessions.ensure()
     expect(t.cli.startBg).toHaveBeenCalledTimes(1)
 
@@ -992,7 +1014,7 @@ describe('Claude launch admission queue', () => {
     t.cli.startBg
       .mockReturnValueOnce(firstReceipt.promise)
       .mockResolvedValueOnce({ ok: true, id: nextId })
-    const first = t.sessions.start({})
+    const first = t.sessions.start({}, () => true)
     await vi.waitFor(() => expect(t.cli.startBg).toHaveBeenCalledTimes(1))
     const next = t.sessions.launch(scheduled)
     await t.sessions.ensure()
@@ -1102,13 +1124,13 @@ describe('launched sessions', () => {
     const outcomes = await Promise.allSettled([
       t.sessions.ensure(),
       t.sessions.refresh(),
-      t.sessions.open({}),
-      t.sessions.start({}),
+      t.sessions.open({}, () => true),
+      t.sessions.start({}, () => true),
       t.sessions.launch({ name: 'late', prompt: 'late' }),
-      t.sessions.send({ text: 'late', target: 'new' }),
+      t.sessions.send({ text: 'late', target: 'new' }, () => true),
       t.sessions.stop('aaaaaaaa'),
-      t.sessions.respawn('aaaaaaaa'),
-      t.sessions.duplicate('aaaaaaaa'),
+      t.sessions.respawn('aaaaaaaa', () => true),
+      t.sessions.duplicate('aaaaaaaa', undefined, () => true),
       t.sessions.noteTurn(REMOTE, 'aaaaaaaa', true),
       t.sessions.message('aaaaaaaa', 'late'),
     ])
@@ -1250,9 +1272,9 @@ describe('retained Claude ownership across session admission', () => {
     expect(t.sessions.past()).toEqual(past)
     const blocked = await t.sessions.launch({ name: 'replacement', prompt: 'try again' })
     expect(blocked).toMatchObject({ ok: false, cleanupUnconfirmed: true, error })
-    expect(await t.sessions.start({})).toBe(blocked)
-    expect(await t.sessions.duplicate(source)).toBe(blocked)
-    expect(await t.sessions.respawn(source)).toBe(blocked)
+    expect(await t.sessions.start({}, () => true)).toBe(blocked)
+    expect(await t.sessions.duplicate(source, undefined, () => true)).toBe(blocked)
+    expect(await t.sessions.respawn(source, () => true)).toBe(blocked)
     expect(await t.sessions.stop('bbbbbbbb')).toBe(blocked)
     drained.reject(new Error('later revoke failure'))
     await Promise.all([refresh, queued])
@@ -1414,10 +1436,10 @@ describe('retained Claude ownership across session admission', () => {
       if (verb === 'respawn') t.listing([row(source, { pid: undefined, state: 'stopped' })])
       await t.attach()
       const result = await (verb === 'respawn'
-        ? t.sessions.respawn(source)
+        ? t.sessions.respawn(source, () => true)
         : verb === 'fork'
-          ? t.sessions.duplicate(source)
-          : t.sessions.start({ prompt: 'go' }))
+          ? t.sessions.duplicate(source, undefined, () => true)
+          : t.sessions.start({ prompt: 'go' }, () => true))
       expect(result).toMatchObject(verb === 'respawn' ? { ok: true } : { ok: true, sessionId: id })
       expect(t.sessions.sessions()).toEqual([])
       expect(t.calls('agents')).toHaveLength(2)
@@ -1543,7 +1565,7 @@ describe('retained Claude ownership across session admission', () => {
       [nextA, 'new A'],
     ] as const) {
       expect(t.sessions.sessions()).toEqual([expect.objectContaining({ id: source, name })])
-      await expect(t.sessions.respawn(source)).resolves.toEqual({ ok: true })
+      await expect(t.sessions.respawn(source, () => true)).resolves.toEqual({ ok: true })
       expect(t.calls('stop')).toHaveLength(0)
     }
     drained.resolve()
@@ -1574,7 +1596,9 @@ describe('retained Claude ownership across session admission', () => {
         { kind: 'unconfirmed', cause: proofError, lease },
       ])
       await t.attach()
-      const result = await (verb === 'start' ? t.sessions.start({}) : t.sessions.duplicate(source))
+      const result = await (verb === 'start'
+        ? t.sessions.start({}, () => true)
+        : t.sessions.duplicate(source, undefined, () => true))
       expect(result).toMatchObject({ ok: false, cleanupUnconfirmed: true })
       expect(result).not.toHaveProperty('sessionId')
       if (result.ok) throw new Error('Expected an unconfirmed launch')
@@ -1588,9 +1612,9 @@ describe('retained Claude ownership across session admission', () => {
       await t.sessions.refresh()
       expect(t.sessions.sessions()).toEqual([expect.objectContaining({ id: source })])
       expect(await t.sessions.launch({ name: 'retry', prompt: 'retry' })).toBe(result)
-      expect(await t.sessions.duplicate(source)).toBe(result)
+      expect(await t.sessions.duplicate(source, undefined, () => true)).toBe(result)
       expect(await t.sessions.stop(id)).toBe(result)
-      expect(await t.sessions.respawn(id)).toBe(result)
+      expect(await t.sessions.respawn(id, () => true)).toBe(result)
       expect(t.calls('--bg')).toHaveLength(1)
       expect(t.calls('stop')).toHaveLength(0)
       expect(t.calls('respawn')).toHaveLength(0)
@@ -1648,7 +1672,7 @@ describe('retained Claude ownership across session admission', () => {
     })
     b.listing([row(source, { name: 'B' })])
     await Promise.all([a.attach(), b.attach()])
-    const starting = a.sessions.start({})
+    const starting = a.sessions.start({}, () => true)
     await entered.promise
     activation.abort()
     const finished = vi.fn()
@@ -1700,10 +1724,10 @@ describe('retained Claude ownership across session admission', () => {
         { kind: 'unconfirmed', cause: proofError, lease },
       ])
       await t.attach()
-      const result = await t.sessions[verb](source)
+      const result = await t.sessions[verb](source, () => true)
       expect(result).toMatchObject({ cleanupUnconfirmed: true, sessionId: source })
       expect(await t.sessions.stop(source)).toBe(result)
-      expect(await t.sessions.respawn(source)).toBe(result)
+      expect(await t.sessions.respawn(source, () => true)).toBe(result)
       expect(t.calls(verb)).toHaveLength(1)
       await expect(t.sessions.leave()).rejects.toMatchObject({
         errors: [!result.ok && result.error],
@@ -1733,7 +1757,7 @@ describe('retained Claude ownership across session admission', () => {
     ])
     b.listing([row(source, { name: 'B' })])
     await Promise.all([t.attach(), b.attach()])
-    const operating = t.sessions.respawn(source)
+    const operating = t.sessions.respawn(source, () => true)
     await entered.promise
     activation.abort()
     const untracked = vi.fn()
@@ -1780,7 +1804,7 @@ describe('retained Claude ownership across session admission', () => {
         { kind: 'settled', lease },
       ])
       await t.attach()
-      const result = await t.sessions.start({})
+      const result = await t.sessions.start({}, () => true)
       expect(result).toMatchObject({ ok: false })
       expect(result).not.toHaveProperty('sessionId')
       expect(t.opened).toEqual([])
@@ -1821,7 +1845,7 @@ describe('retained Claude ownership across session admission', () => {
         }),
       }
       await t.attach()
-      if (owner === 'pending') await t.sessions.respawn(source)
+      if (owner === 'pending') await t.sessions.respawn(source, () => true)
       if (owner === 'uncertain') {
         t.cli.stop.mockResolvedValueOnce({
           ok: false,
@@ -1833,7 +1857,7 @@ describe('retained Claude ownership across session admission', () => {
         t.cli.stop.mockClear()
       }
       t.cli.startBg.mockResolvedValueOnce({ ok: true, id: source, lease })
-      const result = await t.sessions.start({})
+      const result = await t.sessions.start({}, () => true)
       expect(result).toMatchObject({ ok: false, cleanupUnconfirmed: true })
       expect(result).not.toHaveProperty('sessionId')
       if (result.ok) throw new Error('Expected rejection of the occupied id')
@@ -1869,9 +1893,9 @@ describe('retained Claude ownership across session admission', () => {
     const lease = { commit: vi.fn(async () => {}), revoke: vi.fn(async () => {}) }
     await t.attach()
     t.cli.startBg.mockResolvedValueOnce({ ok: true, id, lease })
-    const starting = t.sessions.start({})
+    const starting = t.sessions.start({}, () => true)
     await entered.promise
-    await expect(t.sessions.open({ attach: id })).resolves.toMatchObject({ ok: true })
+    await expect(t.sessions.open({ attach: id }, () => true)).resolves.toMatchObject({ ok: true })
     notice.resolve(false)
     await expect(starting).resolves.toMatchObject({
       ok: false,
@@ -1917,7 +1941,9 @@ describe('retained Claude ownership across session admission', () => {
         }),
       ])
       const events = t.sent.slice()
-      const result = await (verb === 'start' ? t.sessions.start({}) : t.sessions.duplicate(source))
+      const result = await (verb === 'start'
+        ? t.sessions.start({}, () => true)
+        : t.sessions.duplicate(source, undefined, () => true))
       if (result.ok) throw new Error('Expected a history collision')
       expect(result).not.toHaveProperty('sessionId')
       expect(t.sessions.past()).toEqual(history)
@@ -1934,7 +1960,9 @@ describe('retained Claude ownership across session admission', () => {
           },
         })
         // The failure owns the new lease, not the old history id.
-        await expect(t.sessions.open({ attach: source })).resolves.toMatchObject({ ok: true })
+        await expect(t.sessions.open({ attach: source }, () => true)).resolves.toMatchObject({
+          ok: true,
+        })
         await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [result.error] })
       } else {
         expect(result).not.toHaveProperty('cleanupUnconfirmed')
@@ -1956,10 +1984,10 @@ describe('retained Claude ownership across session admission', () => {
     }
     await t.attach()
     t.cli.startBg.mockResolvedValueOnce({ ok: true, id: source, lease })
-    const result = await t.sessions.start({})
+    const result = await t.sessions.start({}, () => true)
     if (result.ok) throw new Error('Expected a history collision')
     expect(result).toMatchObject({ cleanupUnconfirmed: true })
-    await expect(t.sessions.respawn(source)).resolves.toEqual({ ok: true })
+    await expect(t.sessions.respawn(source, () => true)).resolves.toEqual({ ok: true })
     expect(t.cli.respawn).toHaveBeenCalledExactlyOnceWith(expect.anything(), source)
     await expect(t.sessions.leave({ stopSessions: false })).rejects.toMatchObject({
       errors: [result.error],
@@ -1973,7 +2001,7 @@ describe('retained Claude ownership across session admission', () => {
     const t = setup([row(source, { pid: undefined, state: 'stopped' })])
     await t.attach()
     t.cli.startBg.mockResolvedValueOnce({ ok: true, id: source })
-    const result = await t.sessions.start({ prompt: 'go' })
+    const result = await t.sessions.start({ prompt: 'go' }, () => true)
     if (result.ok) throw new Error('Expected a history collision')
     expect(result).toMatchObject({
       cleanupUnconfirmed: true,
@@ -2052,9 +2080,9 @@ describe('retained Claude ownership across session admission', () => {
       const past = t.sessions.past()
       const events = t.sent.slice()
       const create = () => {
-        if (verb === 'fork') return t.sessions.duplicate(source)
+        if (verb === 'fork') return t.sessions.duplicate(source, undefined, () => true)
         if (verb === 'launch') return t.sessions.launch({ name: 'owned', prompt: 'go' })
-        return t.sessions.start({})
+        return t.sessions.start({}, () => true)
       }
       const settled = vi.fn((value: unknown) => value)
       const outcome = create().then(settled, settled)
@@ -2068,8 +2096,8 @@ describe('retained Claude ownership across session admission', () => {
       const next = create().then(nextSettled)
       const changing = { ok: false, message: `Session ${id} is still changing.` }
       await expect(t.sessions.stop(id)).resolves.toEqual(changing)
-      await expect(t.sessions.respawn(id)).resolves.toEqual(changing)
-      await expect(t.sessions.open({ attach: id })).resolves.toEqual(changing)
+      await expect(t.sessions.respawn(id, () => true)).resolves.toEqual(changing)
+      await expect(t.sessions.open({ attach: id }, () => true)).resolves.toEqual(changing)
       expect(nextSettled).not.toHaveBeenCalled()
       expect(t.calls('--bg')).toHaveLength(1)
 
@@ -2111,8 +2139,8 @@ describe('retained Claude ownership across session admission', () => {
         expect(failure.error?.cause).toBe(commitError)
         expect(failure.error).toHaveProperty('lease', job.lease)
         expect(await t.sessions.stop(id)).toBe(failure)
-        expect(await t.sessions.respawn(id)).toBe(failure)
-        await expect(t.sessions.open({ attach: id })).resolves.toEqual(changing)
+        expect(await t.sessions.respawn(id, () => true)).toBe(failure)
+        await expect(t.sessions.open({ attach: id }, () => true)).resolves.toEqual(changing)
         expect(t.calls('--bg')).toHaveLength(1)
         const teardown = await t.sessions.leave().catch((error: unknown) => error)
         expect(teardown).toBeInstanceOf(AggregateError)
@@ -2154,7 +2182,7 @@ describe('retained Claude ownership across session admission', () => {
       t.listing([])
       t.respond('--bg', () => [null, receipt, '', { kind: 'settled', lease }])
       await t.attach()
-      const result = await t.sessions.start({ prompt: 'go' })
+      const result = await t.sessions.start({ prompt: 'go' }, () => true)
       expect(result.ok).toBe(false)
       if (unconfirmed) {
         expect(result).toMatchObject({
@@ -2207,13 +2235,15 @@ describe('retained Claude ownership across session admission', () => {
       a.listing([])
       a.respond('--bg', () => [null, receipt, '', { kind: 'settled', lease: job.lease }])
       await a.attach()
-      const starting = a.sessions.start({})
+      const starting = a.sessions.start({}, () => true)
       await entered.promise
       a.listing([row(id)])
       await a.sessions.refresh()
       expect(a.sessions.sessions()).toEqual([])
       expect(a.opened).toEqual([])
-      await expect(a.sessions.open({ attach: id })).resolves.toMatchObject({ ok: false })
+      await expect(a.sessions.open({ attach: id }, () => true)).resolves.toMatchObject({
+        ok: false,
+      })
 
       const reason = new Error('original activation revoked')
       activation.abort(reason)
@@ -2265,7 +2295,7 @@ describe('retained Claude ownership across session admission', () => {
     b.listing([row(id, { name: 'B' })])
     a.respond('--bg', () => [null, receipt, '', { kind: 'settled', lease }])
     await Promise.all([a.attach(), b.attach()])
-    const launching = a.sessions.start({ name: 'owned', prompt: 'go' })
+    const launching = a.sessions.start({ name: 'owned', prompt: 'go' }, () => true)
     await commitEntered.promise
     a.listing([row(id)])
     await a.sessions.refresh()
@@ -2337,7 +2367,10 @@ describe('retained Claude ownership across session admission', () => {
       await a.attach()
       const command = variant === 'past fork' ? a.cli.forkBg : a.cli.startBg
       command.mockReturnValueOnce(old.promise)
-      const starting = variant === 'past fork' ? a.sessions.duplicate(source) : a.sessions.start({})
+      const starting =
+        variant === 'past fork'
+          ? a.sessions.duplicate(source, undefined, () => true)
+          : a.sessions.start({}, () => true)
       await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1))
       activation.abort()
       const leaving = a.sessions.leave()
@@ -2345,7 +2378,10 @@ describe('retained Claude ownership across session admission', () => {
         const newLease = { commit: vi.fn(async () => {}), revoke: vi.fn(async () => {}) }
         await t.attach()
         t.cli.startBg.mockResolvedValueOnce({ ok: true, id: source, lease: newLease })
-        await expect(t.sessions.start({})).resolves.toMatchObject({ ok: true, sessionId: source })
+        await expect(t.sessions.start({}, () => true)).resolves.toMatchObject({
+          ok: true,
+          sessionId: source,
+        })
         expect(newLease.commit).toHaveBeenCalledTimes(1)
         expect(newLease.revoke).not.toHaveBeenCalled()
       }
@@ -2386,7 +2422,7 @@ describe('retained Claude ownership across session admission', () => {
       return output.promise
     })
     await a.attach()
-    const starting = a.sessions.start({})
+    const starting = a.sessions.start({}, () => true)
     await entered.promise
     const waiting = a.sessions.launch({ name: 'Old activation', prompt: 'go' })
     await a.sessions.ensure()
@@ -2408,7 +2444,7 @@ describe('retained Claude ownership across session admission', () => {
       t.respond('--bg', () => [null, receipt, '', { kind: 'settled', lease }])
       await t.attach()
       t.listing([row(id)])
-      expect(await t.sessions.start({})).toMatchObject({ ok: true, sessionId: id })
+      expect(await t.sessions.start({}, () => true)).toMatchObject({ ok: true, sessionId: id })
       expect(lease.commit).toHaveBeenCalledTimes(1)
       expect(lease.revoke).not.toHaveBeenCalled()
       expect(t.opened).toHaveLength(1)

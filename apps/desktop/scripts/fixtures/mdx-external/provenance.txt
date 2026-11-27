@@ -1,0 +1,8 @@
+Native MDX nested-resource fixture for issue #666.
+All relative resources are immutable when addressed through a published commit SHA.
+nested.css and child.css: synthetic inert diagnostics inputs.
+tiny.png: generated 1x1 opaque black RGBA PNG.
+tiny.wav: generated 80 silent mono PCM16 samples at 8000 Hz.
+tiny.woff2: unmodified @fontsource-variable/geist 5.3.0 files/geist-latin-wght-normal.woff2.
+Font license: SIL Open Font License 1.1, reproduced in font-license.txt.
+Font SHA-256: 19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1

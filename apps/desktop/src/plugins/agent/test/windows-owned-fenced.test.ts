@@ -105,7 +105,7 @@ async function vaultFixture(root: string, name: string, releaseGate = Promise.re
     spec,
     launches,
     release,
-    start: () => fenced.start(spec),
+    start: () => fenced.start(spec, () => true),
     scratchRoot,
     controller,
     async dispose() {
@@ -145,7 +145,7 @@ it('joins Windows native drainage, real fenced copy and provider release without
     expect(a.release).not.toHaveBeenCalled()
     expect(settled).toBe(false)
     expect(b.sessions.has(second.sessionId)).toBe(true)
-    b.terminals.write(second.terminalId, 'still usable')
+    b.terminals.write(second.terminalId, 'still usable', () => true)
     expect(b.launches[0]!.writes).toContain('still usable')
     native.proof.resolve()
     await vi.waitFor(() => expect(a.release).toHaveBeenCalledOnce())
@@ -198,16 +198,18 @@ it('keeps the original failed Windows session and scratch across Stop, leave and
     await expect(a.fenced.leave()).rejects.toThrow()
     expect(a.sessions.has(first.sessionId)).toBe(true)
     expect(a.terminals.list().some((t) => t.id === first.terminalId)).toBe(true)
-    expect((await a.sessions.reopen(first.sessionId, { cols: 80, rows: 24 })).ok).toBe(false)
+    expect((await a.sessions.reopen(first.sessionId, { cols: 80, rows: 24 }, () => true)).ok).toBe(
+      false,
+    )
     expect(await readFile(join(native.cwd, 'result.md'), 'utf8')).toBe('unconfirmed source')
     expect(existsSync(join(a.vault.root, 'result.md'))).toBe(false)
     expect(a.release).not.toHaveBeenCalled()
     const replacement = createFencedSessions(a.fenceDeps)
-    await expect(replacement.start(a.spec)).rejects.toThrow()
+    await expect(replacement.start(a.spec, () => true)).rejects.toThrow()
     await expect(replacement.leave()).rejects.toThrow()
     expect(a.launches).toHaveLength(1)
     expect(await readFile(join(native.cwd, 'result.md'), 'utf8')).toBe('unconfirmed source')
-    b.terminals.write(second.terminalId, 'unaffected')
+    b.terminals.write(second.terminalId, 'unaffected', () => true)
     expect(b.launches[0]!.writes).toContain('unaffected')
     const stoppingB = b.sessions.stop(second.sessionId)
     b.launches[0]!.proof.resolve()

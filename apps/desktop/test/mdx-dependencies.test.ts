@@ -105,6 +105,24 @@ describe('inspectMdxDependencies', () => {
     expect(network.requests).toHaveLength(1)
   })
 
+  it('traverses local CSS imports and binary assets without compiling asset bytes', async () => {
+    const { root, run, inspected } = await setup()
+    await mkdir(join(root, 'styles'))
+    await writeFile(join(root, 'styles', 'main.css'), '@import "./base\\20 theme.css";')
+    await writeFile(
+      join(root, 'styles', 'base theme.css'),
+      'a { src: url(../media/font.woff2); background: url(../media/photo.png) }',
+    )
+    await mkdir(join(root, 'media'))
+    await writeFile(join(root, 'media', 'font.woff2'), Buffer.from([0xff, 0xfe, 0x80]))
+    await writeFile(join(root, 'media', 'photo.png'), Buffer.from([0x89, 0x50, 0xff]))
+    const source = "import styles from './styles/main.css'"
+    expect(await run(source)).toEqual([])
+    expect(inspected).toEqual([source])
+    await rm(join(root, 'media', 'photo.png'))
+    expect(await run(source)).toHaveLength(1)
+  })
+
   it('returns no diagnostics for a safe nested graph and diagnoses a missing child', async () => {
     const { root, run } = await setup()
     await mkdir(join(root, 'nested'))

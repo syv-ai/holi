@@ -41,12 +41,13 @@ import { scratchEntries, type ActivationOwnership } from './ownership'
 import { ptyLaunchCleanup, withPtyOwnership } from './pty'
 import type { FenceCopy, PtySessions } from './pty-sessions'
 import type { Geometry, StartResult } from './sessions'
+import type { PresentationLease } from './terminals'
 
 export interface FencedSessionsDeps {
   vault: VaultRef
   /** This vault's private scratch root from `agentScratchRoots`. */
   scratchRoot: string
-  own: Pick<PtySessions, 'start'>
+  own: Pick<PtySessions, 'start' | 'discard'>
   copyBack: Jobs['copyBack']
   log?: (msg: string) => void
   /** Revokes admission synchronously when this vault activation is invalidated. */
@@ -66,6 +67,7 @@ export interface FencedSessions {
       system?: string
       scope: JobScope
     },
+    lease: PresentationLease,
   ): Promise<StartResult>
   /** The vault is being left: a start under way opens no session, and
    *  once this resolves every session it opened is one `PtySessions.leave`
@@ -116,16 +118,11 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     { once: true },
   )
 
-  async function begin({
-    provider,
-    name,
-    prompt,
-    system,
-    scope,
-    cols,
-    rows,
-  }: Parameters<FencedSessions['start']>[0]): Promise<StartResult> {
-    if (closing) return { ok: false, message: 'The vault is closing.' }
+  async function begin(
+    { provider, name, prompt, system, scope, cols, rows }: Parameters<FencedSessions['start']>[0],
+    lease: PresentationLease,
+  ): Promise<StartResult> {
+    if (closing || !lease()) return { ok: false, message: 'The vault is closing.' }
     const blocked = {
       ok: false as const,
       message: 'Previous fenced launch cleanup is unconfirmed.',
@@ -134,7 +131,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     }
     if (failedStarts.size > 0) return blocked
     const began = generation
-    const left = (): boolean => generation !== began
+    const left = (): boolean => generation !== began || !lease()
     const gone = { ok: false as const, message: 'The vault was left before the session started.' }
     await swept
     if (left()) return gone
@@ -183,7 +180,15 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     }
     try {
       await mkdir(dir, { recursive: true })
+      if (left()) {
+        await discard(true)
+        return gone
+      }
       await mkdir(state, { recursive: true, mode: 0o700 })
+      if (left()) {
+        await discard(true)
+        return gone
+      }
     } catch (err) {
       recordFailure(err)
       throw err
@@ -262,61 +267,65 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     let started: StartResult
     try {
       const launch = () =>
-        deps.own.start(provider.id, {
-          name,
-          prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
-          ...(cols === undefined ? {} : { cols }),
-          ...(rows === undefined ? {} : { rows }),
-          onStartupCleanup: (work) => {
-            launchCleanup = work
-            failedStarts.set(id, work)
-          },
-          fence: {
-            dir,
-            state,
-            canLaunch: () => !left() && failedStarts.size === 0,
-            turnEnded,
-            retire: async (signal) => {
-              try {
-                signal?.throwIfAborted()
-                ownership?.settleCaller()
-                await drop(signal)
-              } catch (error) {
-                throw recordFailure(signal?.aborted ? signal.reason : error)
-              }
+        deps.own.start(
+          provider.id,
+          {
+            name,
+            prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
+            ...(cols === undefined ? {} : { cols }),
+            ...(rows === undefined ? {} : { rows }),
+            onStartupCleanup: (work) => {
+              launchCleanup = work
+              failedStarts.set(id, work)
             },
-            exited: (signal) => {
-              const work = (async () => {
+            fence: {
+              dir,
+              state,
+              canLaunch: () => !left() && failedStarts.size === 0,
+              turnEnded,
+              retire: async (signal) => {
                 try {
-                  const result = await copy(signal)
                   signal?.throwIfAborted()
-                  await provider.release?.(state, signal)
-                  signal?.throwIfAborted()
-                  return result
+                  ownership?.settleCaller()
+                  await drop(signal)
                 } catch (error) {
                   throw recordFailure(signal?.aborted ? signal.reason : error)
                 }
-              })()
-              let abort: (() => void) | undefined
-              const cancelled = new Promise<never>((_, reject) => {
-                abort = () => reject(recordFailure(signal?.reason))
-                if (signal?.aborted) abort()
-                else signal?.addEventListener('abort', abort, { once: true })
-              })
-              // Join the PTY's callback deadline, not a new timer. A timed-out
-              // provider may still resolve; the work above must not retire it.
-              const finalizer = Promise.race([work, cancelled]).finally(() => {
-                if (abort !== undefined) signal?.removeEventListener('abort', abort)
-              })
-              finalizers.add(finalizer)
-              void finalizer.then(
-                () => finalizers.delete(finalizer),
-                () => finalizers.delete(finalizer),
-              )
-              return finalizer
+              },
+              exited: (signal) => {
+                const work = (async () => {
+                  try {
+                    const result = await copy(signal)
+                    signal?.throwIfAborted()
+                    await provider.release?.(state, signal)
+                    signal?.throwIfAborted()
+                    return result
+                  } catch (error) {
+                    throw recordFailure(signal?.aborted ? signal.reason : error)
+                  }
+                })()
+                let abort: (() => void) | undefined
+                const cancelled = new Promise<never>((_, reject) => {
+                  abort = () => reject(recordFailure(signal?.reason))
+                  if (signal?.aborted) abort()
+                  else signal?.addEventListener('abort', abort, { once: true })
+                })
+                // Join the PTY's callback deadline, not a new timer. A timed-out
+                // provider may still resolve; the work above must not retire it.
+                const finalizer = Promise.race([work, cancelled]).finally(() => {
+                  if (abort !== undefined) signal?.removeEventListener('abort', abort)
+                })
+                finalizers.add(finalizer)
+                void finalizer.then(
+                  () => finalizers.delete(finalizer),
+                  () => finalizers.delete(finalizer),
+                )
+                return finalizer
+              },
             },
           },
-        })
+          lease,
+        )
       started = await (ownership
         ? withPtyOwnership({ cwd: dir, fence: ownership, allocate: () => ownership }, launch)
         : launch())
@@ -362,14 +371,18 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     } else {
       sessionId = started.sessionId
       if (cancellations.has(controller)) active.add(sessionId)
+      if (left()) {
+        await deps.own.discard(sessionId, lease)
+        return gone
+      }
     }
     return started
   }
 
   return {
-    async start(args) {
-      if (closing) return { ok: false, message: 'The vault is closing.' }
-      const begun = begin(args)
+    async start(args, lease) {
+      if (closing || !lease()) return { ok: false, message: 'The vault is closing.' }
+      const begun = begin(args, lease)
       starting.add(begun)
       try {
         return await begun

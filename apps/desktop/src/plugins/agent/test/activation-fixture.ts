@@ -2,18 +2,20 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { request } from 'node:http'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, beforeEach, expect, vi } from 'vitest'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { createCoreServices, createUiReports } from '../../../main/capabilities/services'
 import { emptyVaultSnapshot } from '@holi/shared'
+import { scanVault } from '../../../main/vault/vault-store'
 import { createMembersCache } from '../../../main/github/members-cache'
 import { createPluginHost } from '../../../main/plugin-host/host'
 import { createBridgeServer } from '../../../main/bridge/server'
 import { automationsMain } from '../../automations/main/index'
+import { holisMain } from '../../holis/main'
 import type { RunOptions } from '../main/claude/cli'
-import type { AgentExit, StartArgs } from '../main/host/pty'
+import type { AgentRuntimeDeps, PtyProcess, StartArgs } from '../main/host/pty'
 import { agentMain } from '../main/index'
 import type { BridgeRoute, MainPlugin, PluginCtx } from '../../../main/plugin-api'
 
@@ -21,6 +23,12 @@ const adapters = vi.hoisted(() => ({
   version: vi.fn(() => 'test'),
   run: vi.fn<(bin: string, args: string[], opts: RunOptions) => Promise<string>>(),
   pty: [] as StartArgs[],
+  terminals: [] as Array<{
+    args: StartArgs
+    writes: string[]
+    sizes: Array<[number, number]>
+    emit(data: string): void
+  }>,
   backup: null as null | { source: string; entered: () => void; wait: Promise<void> },
   heldExit: null as null | { cwd: string; entered: () => void; wait: Promise<void> },
   historyRename: null as null | {
@@ -59,6 +67,7 @@ const adapters = vi.hoisted(() => ({
   exitObserved: null as null | { cwd: string; entered: () => void },
   routes: new Map<string, Map<string, BridgeRoute>>(),
   watchers: new Set<import('node:fs').FSWatcher>(),
+  watchedPaths: new Map<import('node:fs').FSWatcher, string>(),
   watchStarts: 0,
   watchCloses: 0,
   watchCloseFailure: null as { error: Error; watch: number } | null,
@@ -169,9 +178,11 @@ vi.mock('node:fs', async (original) => {
       const ordinal = ++adapters.watchStarts
       const watcher = fs.watch(...args)
       adapters.watchers.add(watcher)
+      adapters.watchedPaths.set(watcher, String(args[0]))
       const close = watcher.close.bind(watcher)
       watcher.close = () => {
         adapters.watchers.delete(watcher)
+        adapters.watchedPaths.delete(watcher)
         adapters.watchCloses++
         close()
         const failure = adapters.watchCloseFailure
@@ -205,25 +216,62 @@ vi.mock('../main/host/pty', async (original) => {
   return {
     ...pty,
     AgentRuntime: class extends pty.AgentRuntime {
-      private exitCallback: ((event: AgentExit) => void) | null = null
-      private args: StartArgs | null = null
-      override start(args: StartArgs) {
-        this.args = args
-        adapters.pty.push(args)
-      }
-      override onExit(callback: (event: AgentExit) => void) {
-        this.exitCallback = callback
-      }
-      override async kill() {
-        const hold = adapters.heldExit
-        if (hold !== null && this.args?.cwd === hold.cwd) {
-          adapters.heldExit = null
-          hold.entered()
-          await hold.wait
+      constructor(deps: AgentRuntimeDeps = {}) {
+        let args: StartArgs
+        let output: ((data: string) => void) | undefined
+        let exited: ((event: { exitCode: number }) => void) | undefined
+        let physical: Promise<void> | undefined
+        const writes: string[] = []
+        const sizes: Array<[number, number]> = []
+        const native: PtyProcess = {
+          pid: 424_200 + adapters.pty.length,
+          onData: (cb) => {
+            output = cb
+          },
+          onExit: (cb) => {
+            exited = cb
+          },
+          write: (data) => {
+            writes.push(data)
+          },
+          resize: (cols, rows) => {
+            sizes.push([cols, rows])
+          },
+          kill: () => {
+            exited?.({ exitCode: 0 })
+          },
         }
-        const observed = adapters.exitObserved
-        if (observed !== null && this.args?.cwd === observed.cwd) observed.entered()
-        this.exitCallback?.({ exitCode: 0 })
+        super({
+          ...deps,
+          spawnPty: (bin, argv, options) => {
+            args = {
+              bin,
+              args: argv,
+              cwd: options.cwd,
+              env: options.env,
+              cols: options.cols,
+              rows: options.rows,
+            }
+            adapters.pty.push(args)
+            adapters.terminals.push({ args, writes, sizes, emit: (data) => output?.(data) })
+            return native
+          },
+          probePid: () => 'alive',
+          superviseGroup: () => ({
+            drain: () =>
+              (physical ??= Promise.resolve().then(async () => {
+                const hold = adapters.heldExit
+                if (hold !== null && args.cwd === hold.cwd) {
+                  adapters.heldExit = null
+                  hold.entered()
+                  await hold.wait
+                }
+                const observed = adapters.exitObserved
+                if (observed !== null && args.cwd === observed.cwd) observed.entered()
+                exited?.({ exitCode: 0 })
+              })),
+          }),
+        })
       }
     },
   }
@@ -241,6 +289,7 @@ beforeEach(() => {
       args.includes('--bg') ? 'backgrounded · abc12345 · Bound run' : '[]',
     )
   adapters.pty.length = 0
+  adapters.terminals.length = 0
   adapters.backup = null
   adapters.heldExit = null
   adapters.historyRename = null
@@ -277,6 +326,17 @@ afterEach(async () => {
 
 export async function tempDirectory(prefix: string): Promise<string> {
   return mkdtemp(join(await realpath(tmpdir()), prefix))
+}
+
+export function notifyWatchChange(path: string): void {
+  for (const watcher of adapters.watchers) {
+    const watchedPath = adapters.watchedPaths.get(watcher)
+    if (watchedPath === undefined) continue
+    const relative = path.startsWith(`${watchedPath}${sep}`)
+      ? path.slice(watchedPath.length + 1)
+      : null
+    if (relative !== null) watcher.emit('change', 'change', relative)
+  }
 }
 
 export function deferred() {
@@ -341,6 +401,8 @@ export async function rig(
     context?: (ctx: PluginCtx) => void
     holdAutomationsDisposer?: { entered: () => void; wait: Promise<void>; turnEnded?: () => void }
     agentDisposerStarted?: () => void
+    retainedContexts?: boolean
+    realSnapshots?: boolean
   },
 ) {
   userData ??= await tempDirectory('h674-agent-')
@@ -348,7 +410,10 @@ export async function rig(
   const roots = { [A]: join(userData, 'vault-a'), [B]: join(userData, 'vault-b') }
   for (const root of Object.values(roots)) {
     await mkdir(join(root, '.holi/settings'), { recursive: true })
-    await writeFile(join(root, '.holi/settings/plugins.yaml'), 'plugins:\n  automations: true\n')
+    await writeFile(
+      join(root, '.holi/settings/plugins.yaml'),
+      'plugins:\n  automations: true\n  holis: true\n',
+    )
     await writeFile(
       join(root, '.fixture-owner'),
       Object.entries(roots).find(([, path]) => path === root)![0],
@@ -361,10 +426,12 @@ export async function rig(
   }
   const sent: { remote: string; name: string }[] = []
   const notifications: unknown[] = []
+  const navigations: { plugin: string; remote: string; name: string; payload: unknown }[] = []
+  const listeners = new Map<string, Set<(message: unknown) => void>>()
   const syncHolds = new Map<string, number>()
   const pause = (remote: string) => syncHolds.set(remote, 1)
   const resume = (remote: string) => syncHolds.set(remote, 0)
-  const machineToken = 'holi-573-repair3-machine-token'
+  const machineToken = 'cd'.repeat(32)
   const bridge = createBridgeServer({
     log: () => {},
     cli: {
@@ -425,7 +492,7 @@ export async function rig(
     },
   }
   const host = createPluginHost({
-    plugins: [agentPlugin, automationsPlugin, ...(lifecycle?.plugins ?? [])],
+    plugins: [agentPlugin, automationsPlugin, holisMain, ...(lifecycle?.plugins ?? [])],
     registry,
     userData,
     coreSeeds: [],
@@ -464,7 +531,14 @@ export async function rig(
     rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
     events: {
       send: (_channel, event) => sent.push({ remote: event.remote, name: event.name }),
-      listen: () => () => {},
+      listen: (channel, handler) => {
+        const callbacks = listeners.get(channel) ?? new Set()
+        callbacks.add(handler)
+        listeners.set(channel, callbacks)
+        return () => {
+          callbacks.delete(handler)
+        }
+      },
       liveRemote: () => host.displayed(),
     },
     openAppDoor: () => {
@@ -487,6 +561,9 @@ export async function rig(
       notifications.push(notice)
       return false
     },
+    navigate: (plugin, remote, name, payload) => {
+      navigations.push({ plugin, remote, name, payload })
+    },
     focused: () => false,
     call: async (remote, name, params, beforeInvoke, finalization) =>
       (
@@ -496,10 +573,14 @@ export async function rig(
         )
       ).value,
   })
+  const retainedRemotes = new Set<string>()
+  const snapshots = { [A]: emptyVaultSnapshot(), [B]: emptyVaultSnapshot() }
   const reports = createUiReports()
   const core = createCoreServices({
     get: (remote) => {
-      if (activeRemote !== remote) return null
+      if (remote !== A && remote !== B) return null
+      if (!(lifecycle?.retainedContexts ? retainedRemotes.has(remote) : activeRemote === remote))
+        return null
       return {
         remote,
         root: roots[remote],
@@ -515,13 +596,19 @@ export async function rig(
     registry,
     rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
     get: (remote) => {
-      if (activeRemote !== remote) return null
+      if (remote !== A && remote !== B) return null
+      if (!(lifecycle?.retainedContexts ? retainedRemotes.has(remote) : activeRemote === remote))
+        return null
       const root = roots[remote]
       return {
         remote,
         root,
-        snapshot: emptyVaultSnapshot,
-        refresh: async () => emptyVaultSnapshot(),
+        snapshot: () => (lifecycle?.realSnapshots ? snapshots[remote] : emptyVaultSnapshot()),
+        refresh: async () => {
+          if (!lifecycle?.realSnapshots) return emptyVaultSnapshot()
+          snapshots[remote] = await scanVault(root, await host.scanClaimsFor(root))
+          return snapshots[remote]
+        },
         pause: () => pause(remote),
         resume: () => resume(remote),
         drainSync: async () => {},
@@ -563,9 +650,18 @@ export async function rig(
   const enter = (remote: typeof A | typeof B) => {
     if (liveContext) {
       activeRemote = remote
+      if (lifecycle?.retainedContexts) retainedRemotes.add(remote)
       host.setDisplayed(remote)
     }
-    return host.reconcile(openVault(remote), 'open')
+    const opened = host.reconcile(openVault(remote), 'open')
+    return lifecycle?.realSnapshots
+      ? opened.then(async () => {
+          snapshots[remote] = await scanVault(
+            roots[remote],
+            await host.scanClaimsFor(roots[remote]),
+          )
+        })
+      : opened
   }
   const replace = (remote: typeof A | typeof B) => host.reconcile(openVault(remote), 'open')
   const machineCall = (remote: typeof A | typeof B, ...args: string[]) =>
@@ -613,14 +709,25 @@ export async function rig(
     host,
     enter,
     replace,
+    reconcileSettings: (remote: typeof A | typeof B) =>
+      host.reconcile(openVault(remote), 'settings'),
     call,
     capabilities,
     roots,
     userData,
     sent,
     notifications,
+    navigations,
+    sendAgent: (remote: string, name: string, payload: unknown) => {
+      for (const callback of listeners.get('plugin:agent') ?? [])
+        callback({ remote, name, payload })
+    },
     syncHolds,
     setActive,
+    stopRemote: async (remote: string) => {
+      await host.stop(remote)
+      retainedRemotes.delete(remote)
+    },
     bridge,
     registry,
     expectFailedDrain,
