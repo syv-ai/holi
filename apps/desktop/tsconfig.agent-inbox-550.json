@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "scripts/agent-inbox-550-*.ts",
+    "scripts/seed-agent-inbox-550.ts",
+    "scripts/agent-inbox-550.vite.config.ts",
+    "scripts/claude-native-background-worker.ts",
+    "scripts/notification-os-fixture-main.ts",
+    "src/**/*.d.ts"
+  ]
+}
