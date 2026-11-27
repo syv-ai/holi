@@ -678,7 +678,9 @@ export async function fetchThreadSummaries(
   // request. It runs concurrently with the threads for the same reason.
   const labelNames = membership === undefined ? fetchLabelNames(api) : fetchLabelNamesStrict(api)
 
-  const [names, threads] = await Promise.all([
+  // Promise.all rejects as soon as either branch fails. Drain both first so a
+  // strict label failure cannot release the caller while pooled requests remain.
+  const [namesResult, threadsResult] = await Promise.allSettled([
     labelNames,
     mapPooled(ids, 5, (id) =>
       api
@@ -707,6 +709,10 @@ export async function fetchThreadSummaries(
         }),
     ),
   ])
+  if (namesResult.status === 'rejected') throw namesResult.reason
+  if (threadsResult.status === 'rejected') throw threadsResult.reason
+  const names = namesResult.value
+  const threads = threadsResult.value
 
   const matchingThreads =
     membership === undefined
