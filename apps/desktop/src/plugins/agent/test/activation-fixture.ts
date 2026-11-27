@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { request } from 'node:http'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, beforeEach, expect, vi } from 'vitest'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
@@ -67,6 +67,7 @@ const adapters = vi.hoisted(() => ({
   exitObserved: null as null | { cwd: string; entered: () => void },
   routes: new Map<string, Map<string, BridgeRoute>>(),
   watchers: new Set<import('node:fs').FSWatcher>(),
+  watchedPaths: new Map<import('node:fs').FSWatcher, string>(),
   watchStarts: 0,
   watchCloses: 0,
   watchCloseFailure: null as { error: Error; watch: number } | null,
@@ -177,9 +178,11 @@ vi.mock('node:fs', async (original) => {
       const ordinal = ++adapters.watchStarts
       const watcher = fs.watch(...args)
       adapters.watchers.add(watcher)
+      adapters.watchedPaths.set(watcher, String(args[0]))
       const close = watcher.close.bind(watcher)
       watcher.close = () => {
         adapters.watchers.delete(watcher)
+        adapters.watchedPaths.delete(watcher)
         adapters.watchCloses++
         close()
         const failure = adapters.watchCloseFailure
@@ -323,6 +326,17 @@ afterEach(async () => {
 
 export async function tempDirectory(prefix: string): Promise<string> {
   return mkdtemp(join(await realpath(tmpdir()), prefix))
+}
+
+export function notifyWatchChange(path: string): void {
+  for (const watcher of adapters.watchers) {
+    const watchedPath = adapters.watchedPaths.get(watcher)
+    if (watchedPath === undefined) continue
+    const relative = path.startsWith(`${watchedPath}${sep}`)
+      ? path.slice(watchedPath.length + 1)
+      : null
+    if (relative !== null) watcher.emit('change', 'change', relative)
+  }
 }
 
 export function deferred() {
