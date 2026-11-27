@@ -161,6 +161,7 @@ interface OpenRequest {
   remote: string
   path: string
   heading?: string
+  kind?: 'directory'
   /** False when the tab opens without the caret moving into it. */
   focus?: false
 }
@@ -746,9 +747,10 @@ async function main(): Promise<void> {
   const showPath = (
     remote: string,
     path: string,
-    { heading, focus = true }: { heading?: string; focus?: boolean } = {},
+    { heading, focus = true, kind }: { heading?: string; focus?: boolean; kind?: 'directory' } = {},
   ): BrowserWindow => {
     const request: OpenRequest = { remote, path }
+    if (kind !== undefined) request.kind = kind
     if (heading !== undefined) request.heading = heading
     if (!focus) request.focus = false
     let win = mainWindow

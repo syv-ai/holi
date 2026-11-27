@@ -1,3 +1,6 @@
+import { navigationEpochAtom } from '@/state/navigation'
+import { useStore } from 'jotai'
+import { vaultNavigationKeyAtom } from '@/state/vaults'
 import { useRequest } from '@/hooks/use-request'
 import { openDocumentRequestAtom } from '@/state/open-document'
 import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
@@ -19,7 +22,12 @@ export function useShellRequests({
   /** Bring the Documents side of the sidebar forward, open. */
   revealFiles: () => void
 }): void {
+  const store = useStore()
   useRequest(settingsRequestAtom, () => openSettings())
-  useRequest(openDocumentRequestAtom, ({ path }) => openTabKey(path))
-  useRequest(revealInFilesRequestAtom, () => revealFiles())
+  useRequest(openDocumentRequestAtom, ({ path, navigation }) => {
+    if (navigation === undefined || navigation === store.get(navigationEpochAtom)) openTabKey(path)
+  })
+  useRequest(revealInFilesRequestAtom, ({ navigation }) => {
+    if (navigation === undefined || navigation === store.get(vaultNavigationKeyAtom)) revealFiles()
+  })
 }
