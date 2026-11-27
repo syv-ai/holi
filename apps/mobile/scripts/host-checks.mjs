@@ -60,6 +60,16 @@ export function validateReport(report, context) {
   assert.ok(report.finishedAt <= now && now - report.finishedAt < 120_000)
   assert.equal(report.error, undefined, `Native corpus error: ${report.error}`)
   if (phase === 'normal') {
+    assert.ok(
+      [
+        'available',
+        'device-not-eligible',
+        'apple-intelligence-not-enabled',
+        'model-not-ready',
+        'unknown',
+      ].includes(report.foundationModels),
+      'Foundation Models availability evidence is missing or invalid',
+    )
     const git = report.git
     assert.ok(git && typeof git === 'object', 'Native Git transport proof is missing')
     assert.equal(git.schemaVersion, 1)
