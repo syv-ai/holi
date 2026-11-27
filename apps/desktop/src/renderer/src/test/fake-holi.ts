@@ -24,7 +24,7 @@ export interface FakeHoli {
   pushSyncState(remote: string, state: SyncState): void
   pushHeldBack(remote: string, files: HeldBackFile[]): void
   pushCommitted(remote: string, paths: string[] | null): void
-  pushOpen(request: { remote: string; path: string; heading?: string }): void
+  pushOpen(request: { remote: string; path: string; heading?: string; kind?: 'directory' }): void
   pushNavigate(request: { remote: string; plugin: string; name: string; payload: unknown }): void
   /** Main emitting `name` for the plugin `id`. */
   pushPluginEvent(id: string, event: { remote: string; name: string; payload: unknown }): void
@@ -49,7 +49,13 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const committedSubs = new Set<(p: { remote: string; paths: string[] | null }) => void>()
   const flushSubs = new Set<(request: { id: string }) => void>()
   const openSubs = new Set<
-    (p: { remote: string; path: string; heading?: string; focus?: boolean }) => void
+    (p: {
+      remote: string
+      path: string
+      heading?: string
+      focus?: boolean
+      kind?: 'directory'
+    }) => void
   >()
   const navigateSubs = new Set<
     (p: { remote: string; plugin: string; name: string; payload: unknown }) => void

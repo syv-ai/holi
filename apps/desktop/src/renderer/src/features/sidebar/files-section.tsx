@@ -73,6 +73,7 @@ import {
   createFolderAtom,
   createNoteAtom,
   activeRemoteAtom,
+  vaultNavigationKeyAtom,
   deleteManyAtom,
   heldBackAtom,
   ignoredPathsAtom,
@@ -115,6 +116,7 @@ export function FilesSection({
   onMoved: (moves: Move[]) => void
 }) {
   const files = useFiles()
+  const navigation = useAtomValue(vaultNavigationKeyAtom)
   const renameVim = useVimField('file-rename')
   const store = useStore()
   const mounted = useRef(true)
@@ -206,15 +208,23 @@ export function FilesSection({
    *  dropped rather than shown whenever they next appear. */
   const [landing, setLanding] = useState<{
     paths: string[]
+    directory?: boolean
+    navigation: string
     name: boolean
     remote: string | null
   } | null>(null)
   /** Every row the tree makes, moves or is asked to show lands here, the one
    *  place a row is brought into view. */
-  const land = (paths: string[], { name = false } = {}) => {
+  const land = (paths: string[], { name = false, directory = false } = {}) => {
     if (paths.length === 0 || !stillCurrent(files.remote)) return
     setArrived((current) => new Set([...current, ...paths]))
-    setLanding({ paths, name, remote: files.remote })
+    setLanding({
+      paths,
+      name,
+      directory,
+      remote: files.remote,
+      navigation: store.get(vaultNavigationKeyAtom),
+    })
   }
   const stillCurrent = useCallback(
     (remote: string | null) =>
@@ -328,13 +338,19 @@ export function FilesSection({
       files.dirs,
       (folder, has) => {
         const doc = folderDocumentAt(folderClaims, folder, has)
-        if (doc !== null && doc.folder.surface !== 'app') browsable.add(folder)
+        if (
+          doc !== null &&
+          (doc.folder.surface !== 'app' ||
+            folder === files.revealedDirectory ||
+            files.revealedDirectory?.startsWith(`${folder}/`))
+        )
+          browsable.add(folder)
         return doc !== null
       },
       order,
     )
     return { data, browsable }
-  }, [files.paths, files.dirs, folderClaims, order])
+  }, [files.paths, files.dirs, files.revealedDirectory, folderClaims, order])
 
   const folderOf = (item: ItemInstance<TreeItemData>) =>
     item.getId() === ROOT_ID ? '' : item.getId()
@@ -511,7 +527,11 @@ export function FilesSection({
   // computes: expanding, selecting and focusing go by id.
   useEffect(() => {
     if (landing === null) return
-    if (landing.remote !== files.remote || !stillCurrent(landing.remote)) {
+    if (
+      landing.remote !== files.remote ||
+      (landing.directory === true && landing.navigation !== navigation) ||
+      !stillCurrent(landing.remote)
+    ) {
       setLanding(null)
       return
     }
@@ -550,20 +570,45 @@ export function FilesSection({
       if (!folder.isExpanded()) folder.expand()
     }
     const item = tree.getItemInstance(path)
+    if (landing.directory && item.isFolder() && !item.isExpanded()) item.expand()
     tree.setSelectedItems(shown)
     item.setFocused()
-    void item.scrollTo({ block: 'nearest' })
+    void item.scrollTo({ block: 'nearest' }).then(() => {
+      if (
+        landing.directory &&
+        stillCurrent(landing.remote) &&
+        store.get(vaultNavigationKeyAtom) === landing.navigation &&
+        tree.getFocusedItem()?.getId() === path
+      )
+        item.getElement()?.focus({ preventScroll: true })
+    })
     if (landing.name) item.startRenaming()
-  }, [data, files.remote, files.showHidden, files.showTasks, landing, snapshot, stillCurrent, tree])
+  }, [
+    data,
+    files.remote,
+    files.showHidden,
+    files.showTasks,
+    landing,
+    navigation,
+    snapshot,
+    stillCurrent,
+    store,
+    tree,
+  ])
 
   // Reveal in Files (an app's card). The tree may mount with the request
   // already made (the sidebar was on Agents), so it catches up; a row the
   // tree does not have yet keeps the request waiting.
   useRequest(
     revealInFilesRequestAtom,
-    ({ path }) => {
-      if (data[path] === undefined) return false
-      land([path])
+    ({ path, directory, remote, navigation: requestedNavigation }) => {
+      if (requestedNavigation !== undefined && requestedNavigation !== navigation) return
+      if (remote != null && remote !== files.remote) return false
+      if (directory) files.revealHidden(path)
+      // Folder documents (notably app bundles) are document rows, but a
+      // directory reveal still browses their contents rather than opening them.
+      if (data[path] === undefined || (directory && !snapshot.dirs.includes(path))) return false
+      land([path], { directory: directory === true })
     },
     { catchUp: true },
   )

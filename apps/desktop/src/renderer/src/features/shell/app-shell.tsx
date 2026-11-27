@@ -1,3 +1,4 @@
+import { advanceNavigationEpochAtom } from '@/state/navigation'
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
 import { SCRATCHPAD_PATH, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -59,7 +60,9 @@ import {
   openedRemoteAtom,
   snapshotAtom,
   snapshotLoadedAtom,
+  vaultNavigationKeyAtom,
 } from '@/state/vaults'
+import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
 import type { Move } from '@/lib/tree-actions'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
 import { useHoliLinkPaste } from '@/hooks/use-holi-link-paste'
@@ -106,6 +109,12 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const remote = useAtomValue(activeRemoteAtom)
   const vaultRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const snapshotLoaded = useAtomValue(snapshotLoadedAtom)
+  const revealRequest = useAtomValue(revealInFilesRequestAtom)
+  const navigationKey = useAtomValue(vaultNavigationKeyAtom)
+  const showFilesForReveal =
+    revealRequest?.directory === true &&
+    revealRequest.remote === remote &&
+    revealRequest.navigation === navigationKey
   const openedRemote = useAtomValue(openedRemoteAtom)
   const settings = useAtomValue(vaultSettingsAtom)
   const loadSettings = useSetAtom(loadVaultSettingsAtom)
@@ -263,6 +272,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** Open a vault path, the board, or any tab key: as a tab, or in the
    *  active split's focused member (`openTab`). */
   function openTabKey(id: string) {
+    store.set(advanceNavigationEpochAtom)
     const key = keyFor(id)
     // A vault path, whatever tab it opens as (a deck is a surface tab).
     if (parseTabKey(id)?.kind === 'doc' || id.endsWith('.app')) {
@@ -363,22 +373,23 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const settingsActive = activeTab?.kind === 'settings'
 
   /** In the sheet the header button closes it; on desktop it collapses the panel. */
-  const sidebar = settingsActive ? (
-    <SettingsNav onBack={leaveSettings} />
-  ) : (
-    <AppSidebar
-      collapsed={false}
-      onToggle={isMobile ? () => setMobileNavOpen(false) : toggleSidebar}
-      onOpenSearch={() => setSearchOpen(true)}
-      activeId={focusedKey}
-      onOpen={openTabKey}
-      onMoved={retargetTabs}
-      onNewDocument={newDocument}
-      onAddVault={onAddVault}
-      activeApp={app}
-      onOpenApp={openApp}
-    />
-  )
+  const sidebar =
+    settingsActive && !showFilesForReveal ? (
+      <SettingsNav onBack={leaveSettings} />
+    ) : (
+      <AppSidebar
+        collapsed={false}
+        onToggle={isMobile ? () => setMobileNavOpen(false) : toggleSidebar}
+        onOpenSearch={() => setSearchOpen(true)}
+        activeId={focusedKey}
+        onOpen={openTabKey}
+        onMoved={retargetTabs}
+        onNewDocument={newDocument}
+        onAddVault={onAddVault}
+        activeApp={app}
+        onOpenApp={openApp}
+      />
+    )
 
   const rail = (
     <AppSidebar
@@ -459,7 +470,9 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
               tab={tab}
               visible={visible}
               focused={isFocused}
-              settingsNavInSidebar={isFocused && settingsActive && !isMobile && sidebarOpen}
+              settingsNavInSidebar={
+                isFocused && settingsActive && !showFilesForReveal && !isMobile && sidebarOpen
+              }
               onOpen={openTabKey}
               onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
               reading={
