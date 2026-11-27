@@ -418,6 +418,7 @@ export async function whileCommandPending(command, observe, delay = 60_000, { si
   }
 }
 
+/** Stop the owned CLI group on timeout/cancellation; forced build shutdown is not drain proof. */
 export function runCommand(
   command,
   args,
@@ -428,10 +429,15 @@ export function runCommand(
     onOutput,
     outputLimit = Infinity,
     killGrace = 2_000,
+    drainProcessGroup = false,
     ...options
   } = {},
 ) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Simulator check interrupted'))
+      return
+    }
     const child = spawn(command, args, {
       ...options,
       detached: process.platform !== 'win32',
@@ -442,17 +448,48 @@ export function runCommand(
     let failure
     let killTimer
     let settled = false
-    const finish = (code) => {
+    let terminationRequested = false
+    const finish = async (code, exitSignal = null) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       clearTimeout(killTimer)
-      if (failure) kill('SIGKILL')
       signal?.removeEventListener('abort', abort)
+      let drainUnconfirmed = drainProcessGroup && (terminationRequested || exitSignal !== null)
+      if (drainProcessGroup && child.pid && process.platform !== 'win32') {
+        // Natural pipe closure alone doesn't prove that the owned group stopped.
+        // Conversely, after forced shutdown an empty group doesn't rule out escaped
+        // fixture writers. Never infer that they stopped or signal a shared service.
+        try {
+          const start = performance.now()
+          while (true) {
+            try {
+              process.kill(-child.pid, 0)
+            } catch (error) {
+              if (error.code === 'ESRCH') break
+              throw error
+            }
+            const elapsed = performance.now() - start
+            if (elapsed >= killGrace + 2_000) throw new Error('Build process group did not drain')
+            if (drainUnconfirmed || elapsed >= killGrace) {
+              drainUnconfirmed = true
+              kill('SIGKILL')
+            }
+            await new Promise((done) => setTimeout(done, 25))
+          }
+        } catch (error) {
+          drainUnconfirmed = true
+          failure ??= error
+        }
+      } else if (failure) kill('SIGKILL')
+      if (drainUnconfirmed) failure ??= new Error('Build process drain could not be confirmed')
       if (failure || code !== 0) {
         reject(
           Object.assign(new Error(`${failure?.message ?? `Exit ${code}: ${command}`}\n${output}`), {
             exitCode: code,
+            signal: exitSignal,
+            code: failure?.code,
+            drainUnconfirmed,
             timedOut: failure?.message.startsWith('Timed out:') ?? false,
           }),
         )
@@ -470,6 +507,7 @@ export function runCommand(
     const stop = (reason) => {
       if (failure) return
       failure = reason
+      terminationRequested = Boolean(child.pid)
       kill('SIGTERM')
       killTimer = setTimeout(() => {
         kill('SIGKILL')
