@@ -469,6 +469,7 @@ describe('the client credentials', () => {
     const flow = await accounts.connect(VAULT)
 
     expect(new URL(flow.authUrl).searchParams.get('client_id')).toBe(GOOGLE_CLIENT_ID)
+    await flow.wait()
   })
 
   it('sends the embedded client secret on the token exchange', async () => {
