@@ -582,9 +582,13 @@ export function createFrameAddressingRuntime(
               if (s.display === 'none' || s.visibility !== 'visible' || Number(s.opacity) === 0 || s.transform !== 'none' || s.translate !== 'none' || s.rotate !== 'none' || s.scale !== 'none' || s.perspective !== 'none' || (s.zoom && s.zoom !== '1' && s.zoom !== 'normal')) return null;
             }
             if (owner.getRootNode() !== document) return null;
-            const left = rect.left + owner.clientLeft, top = rect.top + owner.clientTop;
-            const width = owner.clientWidth, height = owner.clientHeight;
-            if (!(width > 0 && height > 0)) return null;
+            const paddingLeft = parseFloat(style.paddingLeft), paddingRight = parseFloat(style.paddingRight);
+            const paddingTop = parseFloat(style.paddingTop), paddingBottom = parseFloat(style.paddingBottom);
+            if (![paddingLeft, paddingRight, paddingTop, paddingBottom].every(Number.isFinite)) return null;
+            const left = rect.left + owner.clientLeft + paddingLeft, top = rect.top + owner.clientTop + paddingTop;
+            const width = owner.clientWidth - paddingLeft - paddingRight;
+            const height = owner.clientHeight - paddingTop - paddingBottom;
+            if (!(width > 0 && height > 0) || width !== viewport.width || height !== viewport.height) return null;
             return points.map(({x,y}) => {
               if (x < 0 || y < 0 || x >= viewport.width || y >= viewport.height) return null;
               const px = Math.round(left + x), py = Math.round(top + y);
@@ -614,9 +618,12 @@ export function createFrameAddressingRuntime(
     point: { x: number; y: number },
     currentGuard: () => boolean,
     expected?: { x: number; y: number },
+    validateTarget?: () => Promise<boolean>,
   ): Promise<boolean> {
     const projected = await projectDirectPoints(address, [point])
     if (!projected[0] || !currentGuard() || !isCurrentAddress(address)) return false
+    if (validateTarget && !(await validateTarget())) return false
+    if (!currentGuard() || !isCurrentAddress(address)) return false
     const { x, y } = projected[0]
     if (expected && (x !== expected.x || y !== expected.y)) return false
     // The caller must verify its target hit/nonce before invoking this method.

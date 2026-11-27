@@ -184,12 +184,14 @@ export function createChildFrameVim(
               point: { x: number; y: number },
               guard: () => boolean,
               expected?: { x: number; y: number },
+              validateTarget?: () => Promise<boolean>,
             ) =>
               adapter.clickDirect(
                 address,
                 point,
                 () => current(owner) && children.get(frame) === bound && guard(),
                 expected,
+                validateTarget,
               ),
           }),
         )

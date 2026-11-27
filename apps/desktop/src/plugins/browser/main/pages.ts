@@ -1045,17 +1045,15 @@ export function createPages(deps: PagesDeps): Pages & {
       }
       point = await local()
       if (!point || !owns() || point.x !== child.point.x || point.y !== child.point.y) return false
-      const projected = await child.world.projectDirectPoints([point]).catch(() => [])
-      if (
-        !owns() ||
-        !projected[0] ||
-        projected[0].x !== child.projected.x ||
-        projected[0].y !== child.projected.y
-      ) {
-        await clearHints(owner)
-        return false
+      const validateTarget = async () => {
+        const finalPoint = await local()
+        return (
+          !!finalPoint && finalPoint.x === child.point.x && finalPoint.y === child.point.y && owns()
+        )
       }
-      const clicked = await child.world.clickDirect(point, owns, child.projected).catch(() => false)
+      const clicked = await child.world
+        .clickDirect(point, owns, child.projected, validateTarget)
+        .catch(() => false)
       await clearHints(owner)
       return clicked
     }

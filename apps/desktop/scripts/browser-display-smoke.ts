@@ -99,7 +99,7 @@ async function run(): Promise<void> {
         'content-security-policy': `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src ${origin} ${cross}`,
       })
       const name = request.url.slice(5)
-      response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body{color:CanvasText;background:Canvas;font:16px sans-serif}iframe{width:160px;height:110px;border:5px solid currentColor}button{margin:8px}main{display:flex;gap:8px}</style>
+      response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body{color:CanvasText;background:Canvas;font:16px sans-serif}iframe{width:160px;height:110px;border:5px solid currentColor;padding:7px}button{margin:8px}main{display:flex;gap:8px}</style>
         ${name === 'root' ? `<button id="root">Root action</button><main><iframe name="duplicate" src="${origin}/758-same"></iframe><iframe name="duplicate" src="${cross}/758-cross-a"></iframe><iframe name="duplicate" src="${cross}/758-cross-b"></iframe></main>` : `<button id="action">Child ${name}</button><input id="field" aria-label="Field ${name}" value="native">`}
         <script>window.qaClicks=[];window.qaChildKeys=[];document.addEventListener('click',e=>qaClicks.push({id:e.target.id,trusted:e.isTrusted}));document.addEventListener('keyup',e=>qaChildKeys.push({key:e.key,trusted:e.isTrusted}),true)</script>`)
       return
