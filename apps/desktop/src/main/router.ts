@@ -32,6 +32,7 @@ import {
   MEMORY_DIR,
   MEMORY_INDEX,
   isHiddenPath,
+  isSecretPath,
   SCRATCHPAD_PATH,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
@@ -43,6 +44,7 @@ import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
 import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
+import { compareRevisions, type RevisionComparison } from './vault/compare-revisions'
 import { createSubscriptions, createSeenRevisions } from './vault/subscriptions'
 import { subscriptionChanges } from './vault/subscription-changes'
 import { createSubscriptionReceipts } from './vault/subscription-receipts'
@@ -900,30 +902,38 @@ export function createRouter(deps: RouterDeps) {
         // Opening is what starts the watcher and the sync loop — the snapshot
         // is a by-product, and comes from the vault that is now live rather
         // than from a second read that could already disagree with it.
-        const root = await rootFor(input.remote)
-        /**
-         * Seed on **open**, not only on clone, for what an open may still
-         * do: create a missing once-file and merge `.claude/settings.json`.
-         * Skills and hooks are written only at creation.
-         *
-         * Before `host.open`, for `addVault`'s reason: nothing can be committed
-         * ahead of the `.gitignore`.
-         */
-        await deps.host.prepare(input.remote, async (coldStart) => {
-          if (coldStart) await (deps.prepareClone ?? prepareManagedClone)(root)
-          await deps.seed(root)
-        })
-        await deps.registry.touch(input.remote, now())
-        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
-        const active = await deps.host.open(input.remote, undefined, async (runtime) => {
-          if (revision !== vaultOpenRevision) return
-          deps.plugins.setDisplayed(input.remote)
-          await deps.plugins.reconcile(runtime, 'open')
-          if (revision === vaultOpenRevision) deps.opened?.(input.remote)
-        })
-        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
-        if (revision === vaultOpenRevision) completedVaultOpenRevision = revision
-        return active.snapshot()
+        try {
+          const root = await rootFor(input.remote)
+          /**
+           * Seed on **open**, not only on clone, for what an open may still
+           * do: create a missing once-file and merge `.claude/settings.json`.
+           * Skills and hooks are written only at creation.
+           *
+           * Before `host.open`, for `addVault`'s reason: nothing can be committed
+           * ahead of the `.gitignore`.
+           */
+          await deps.host.prepare(input.remote, async (coldStart) => {
+            if (coldStart) await (deps.prepareClone ?? prepareManagedClone)(root)
+            await deps.seed(root)
+          })
+          await deps.registry.touch(input.remote, now())
+          if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
+          const active = await deps.host.open(input.remote, undefined, async (runtime) => {
+            if (revision !== vaultOpenRevision) return
+            deps.plugins.setDisplayed(input.remote)
+            await deps.plugins.reconcile(runtime, 'open')
+            if (revision === vaultOpenRevision) deps.opened?.(input.remote)
+          })
+          if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
+          if (revision === vaultOpenRevision) completedVaultOpenRevision = revision
+          return active.snapshot()
+        } catch (error) {
+          // A failed open still settles this activation attempt. Leaving its
+          // revision permanently incomplete would fence reads from the still-
+          // active vault until another successful open.
+          if (revision === vaultOpenRevision) completedVaultOpenRevision = revision
+          throw error
+        }
       }),
 
     add: t.procedure
@@ -2026,6 +2036,48 @@ export function createRouter(deps: RouterDeps) {
         const before = await repo.show(`${input.sha}^`, rel).catch(() => '')
         return { before, after }
       }),
+
+    /** Compare exact immutable revisions without substituting HEAD or a parent. */
+    compareRevisions: t.procedure
+      .input(fields({ remote: 'string', path: 'string', before: 'string', after: 'string' }))
+      .query(
+        async ({
+          input,
+        }): Promise<RevisionComparison | { kind: 'unavailable'; reason: 'stale' }> => {
+          if (
+            !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(input.before) ||
+            !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(input.after)
+          ) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid commit object id' })
+          }
+          const active = activeOrThrow()
+          if (active.remote !== input.remote) throw new TRPCError({ code: 'PRECONDITION_FAILED' })
+          const rel = safe(input.path)
+          if (isSecretPath(rel))
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Secret paths cannot be compared' })
+          const accountGeneration = deps.session.generation
+          const accountId = String(deps.session.viewer?.accountId)
+          const openRevision = vaultOpenRevision
+          const transitionEpoch = mdxTrustTransitionEpoch
+          const root = active.repo.root
+          if (mdxTrustTransition > 0 || completedVaultOpenRevision !== openRevision)
+            return { kind: 'unavailable', reason: 'stale' }
+          const result = await compareRevisions(root, rel, input.before, input.after)
+          if (
+            mdxTrustTransition > 0 ||
+            mdxTrustTransitionEpoch !== transitionEpoch ||
+            deps.session.generation !== accountGeneration ||
+            String(deps.session.viewer?.accountId) !== accountId ||
+            deps.host.active() !== active ||
+            active.remote !== input.remote ||
+            active.repo.root !== root ||
+            vaultOpenRevision !== openRevision ||
+            completedVaultOpenRevision !== openRevision
+          )
+            return { kind: 'unavailable', reason: 'stale' }
+          return result
+        },
+      ),
 
     /** Restore writes the old content as a **new commit**, never a rewrite of
      *  history (docs/features/history.md). Lands as an autosave `Update`
