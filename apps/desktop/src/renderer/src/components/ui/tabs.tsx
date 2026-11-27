@@ -71,9 +71,22 @@ const tabsEntryVariants = cva(
 function TabsEntry({
   className,
   size,
+  presentationOrder,
+  presentation = "normal",
+  style,
   ...props
-}: React.ComponentProps<'div'> & { size: 'tab' | 'tab-group' | 'tab-wide' | 'sticky' | 'sticky-group' }) {
-  return <div className={cn(tabsEntryVariants({ size }), className)} {...props} />
+}: React.ComponentProps<'div'> & {
+  size: 'tab' | 'tab-group' | 'tab-wide' | 'sticky' | 'sticky-group'
+  presentationOrder?: number
+  presentation?: "normal" | "removed" | "ghost"
+}) {
+  return (
+    <div
+      className={cn(tabsEntryVariants({ size }), presentation === "removed" && "absolute opacity-0 pointer-events-none", presentation === "ghost" && "pointer-events-none items-center gap-2 px-3 text-sm [&_svg:not([class*='size-'])]:size-4", className)}
+      style={presentationOrder === undefined ? style : { ...style, order: presentationOrder }}
+      {...props}
+    />
+  )
 }
 
 function TabsTrigger({

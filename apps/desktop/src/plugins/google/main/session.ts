@@ -238,7 +238,7 @@ export class GoogleSession {
 
   async #refresh(auth: StoredGoogleAuth, generation: number): Promise<string> {
     let body: Record<string, unknown>
-    const client = this.#client()
+    const client = auth.client ?? this.#client()
     try {
       body = await post(this.#fetch(), TOKEN_URL, {
         client_id: client.id,
@@ -250,7 +250,13 @@ export class GoogleSession {
       // `invalid_grant` is the one refusal that means the grant itself is dead
       // (revoked, expired, password changed); everything else is transient and
       // must NOT drop a working connection. Google reports it as a 400.
-      if (err instanceof Error && 'status' in err && err.status === 400) {
+      if (
+        err instanceof Error &&
+        'status' in err &&
+        err.status === 400 &&
+        'oauthCode' in err &&
+        err.oauthCode === 'invalid_grant'
+      ) {
         // This account's record goes; every other account's is untouched.
         await this.#deps.account.expire(generation)
         this.#emit()

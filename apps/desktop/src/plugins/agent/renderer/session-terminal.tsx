@@ -14,9 +14,10 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
-import { useAtomValue, useSetAtom } from 'jotai'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { agentCap } from './agent-cap'
+import { agentSessionsAtom, agentTerminalsAtom } from './state/sessions'
 import { terminalKeyAction } from './lib/terminal-keys'
 import { createPiMouseSelectionFilter } from './lib/pi-mouse-selection'
 import { createPiWheelRouter } from './lib/pi-wheel-routing'
@@ -29,6 +30,8 @@ import {
 } from './lib/terminal-link-activation'
 import {
   openExternal,
+  createTerminalHintAdapter,
+  registerHostHintAdapter,
   terminalTheme,
   watchTerminalTheme,
   suppressTerminalColorQueries,
@@ -41,6 +44,8 @@ import {
 } from './lib/session-terminals'
 import {
   activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  sessionAtom,
   activeSurfaceIdAtom,
   cn,
   openDocumentAtom,
@@ -62,12 +67,14 @@ const MIN_FITTABLE_PX = 10
 
 export function SessionTerminal({
   terminalId,
+  sessionId,
   visible,
   onGeometry,
   provider,
   focusId = terminalId,
 }: {
   terminalId: string
+  sessionId?: string
   /** The owning tab, when its selection names a session rather than a terminal. */
   focusId?: string
   /** This terminal's tab is the one showing. Drives the deferred build and the
@@ -78,6 +85,13 @@ export function SessionTerminal({
    *  actually been measured — a tab that has never been shown has none. */
   onGeometry?: (cols: number, rows: number) => void
 }): React.JSX.Element {
+  const store = useStore()
+  const viewer = useAtomValue(sessionAtom)
+  const vaultRevision = useAtomValue(activeRemoteRevisionValueAtom)
+  const invalidateHints = useRef<(() => void) | null>(null)
+  const writeTerminal = useRef<((data: string) => Promise<void>) | null>(null)
+  const binding = useRef({ sessionId, provider, focusId })
+  binding.current = { sessionId, provider, focusId }
   const hostRef = useRef<HTMLDivElement | null>(null)
   /** Where xterm actually opens: the box INSIDE the gutter. FitAddon sizes the
    *  terminal from its parent's computed size, which under `border-box` includes
@@ -210,6 +224,12 @@ export function SessionTerminal({
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    const webLinksProviders: import('@xterm/xterm').ILinkProvider[] = []
+    const originalRegisterLinkProvider = term.registerLinkProvider.bind(term)
+    term.registerLinkProvider = (provider) => {
+      webLinksProviders.push(provider)
+      return originalRegisterLinkProvider(provider)
+    }
     term.loadAddon(
       new WebLinksAddon((event, text) => {
         if (!isTerminalLinkActivation(event)) return
@@ -217,6 +237,7 @@ export function SessionTerminal({
         activateLink(text)
       }),
     )
+    term.registerLinkProvider = originalRegisterLinkProvider
     term.open(mount)
     // The WebGL renderer, after `open` (it needs the element). The DOM one
     // corrects each glyph to the cell with a letter-spacing under 1/64px,
@@ -237,17 +258,80 @@ export function SessionTerminal({
     // visible effect below misses.
     const filterPiOutput = provider === 'pi' ? createPiMouseSelectionFilter() : undefined
     const wheelRouter = provider === 'pi' ? createPiWheelRouter(sendData) : undefined
-    const writeOutput = (data: string) => {
-      if (!isLive()) return
+    let replayed = false
+    const pendingOutput: string[] = []
+    const hintsCurrent = () =>
+      isLive() &&
+      replayed &&
+      provider === 'pi' &&
+      Boolean(sessionId) &&
+      viewer != null &&
+      store.get(sessionAtom) === viewer &&
+      store.get(activeRemoteRevisionValueAtom) === vaultRevision &&
+      binding.current.sessionId === sessionId &&
+      binding.current.provider === provider &&
+      binding.current.focusId === focusId &&
+      store
+        .get(agentSessionsAtom)
+        .some((row) => row.id === sessionId && row.provider === 'pi' && !row.closed) &&
+      store
+        .get(agentTerminalsAtom)
+        .some((row) => row.id === terminalId && row.launchedFor === sessionId)
+    const hintSession =
+      provider === 'pi' && sessionId
+        ? createTerminalHintAdapter({
+            term,
+            mount,
+            providers: webLinksProviders,
+            isVisible: () => visibleRef.current,
+            isCurrent: hintsCurrent,
+            activationModifier: navigator.platform.toLowerCase().includes('mac')
+              ? 'meta'
+              : 'control',
+          })
+        : undefined
+    invalidateHints.current = hintSession?.invalidate ?? null
+    const write = (data: string): Promise<void> => {
+      if (!isLive()) return Promise.resolve()
+      if (hintSession) return hintSession.write(data)
+      term.write(data)
+      return Promise.resolve()
+    }
+    writeTerminal.current = write
+    const writeOutput = (data: string): Promise<void> => {
+      if (!isLive()) return Promise.resolve()
       wheelRouter?.observeOutput(data)
       const filtered = filterPiOutput ? filterPiOutput(data) : data
-      if (filtered) term.write(filtered)
+      return filtered ? write(filtered) : Promise.resolve()
     }
+    const unregisterHints = hintSession
+      ? registerHostHintAdapter(hostRef.current ?? mount, hintSession.adapter)
+      : () => {}
+    const hintSubscriptions = hintSession
+      ? [
+          term.onScroll(hintSession.invalidate),
+          term.onResize(hintSession.invalidate),
+          term.buffer.onBufferChange(hintSession.invalidate),
+        ]
+      : []
+    const stopHintContext = hintSession
+      ? [
+          store.sub(sessionAtom, hintSession.invalidate),
+          store.sub(activeRemoteRevisionValueAtom, hintSession.invalidate),
+          store.sub(agentSessionsAtom, hintSession.invalidate),
+          store.sub(agentTerminalsAtom, hintSession.invalidate),
+        ]
+      : []
     const unregister = registerSessionTerminal(terminalId, {
       focus: () => {
         if (isLive() && visibleRef.current) term.focus()
       },
-      write: writeOutput,
+      write: (data: string) => {
+        if (!isLive()) return
+        hintSession?.invalidate()
+        if (replayed) void writeOutput(data)
+        else pendingOutput.push(data)
+      },
     })
 
     const selection = term.onSelectionChange(() => {
@@ -365,8 +449,11 @@ export function SessionTerminal({
     void (async () => {
       const state = await agentCap.attach(remote, { id: terminalId })
       if (!isLive()) return
-      if (state) writeOutput(state)
-      term.write(HIDE_CURSOR)
+      if (state) await writeOutput(state)
+      while (isLive() && pendingOutput.length) await writeOutput(pendingOutput.shift()!)
+      if (!isLive()) return
+      replayed = true
+      await write(HIDE_CURSOR)
     })()
 
     // Ink's startup re-enables the cursor, so hiding it once is not enough for a
@@ -374,13 +461,17 @@ export function SessionTerminal({
     // writes nothing, and Ink's `\x1b[?25h` arrives afterwards. Without this a
     // fresh tab shows xterm's cursor beside Claude's for the life of the session.
     const reHide = setTimeout(() => {
-      if (isLive()) term.write(HIDE_CURSOR)
+      if (isLive()) void write(HIDE_CURSOR)
     }, 500)
 
-    const observer = new ResizeObserver(() => syncSize(lifetime))
+    const observer = new ResizeObserver(() => {
+      hintSession?.invalidate()
+      syncSize(lifetime)
+    })
     observer.observe(mount)
     const syncAppearance = (theme: ReturnType<typeof terminalTheme>): void => {
       if (!isLive()) return
+      hintSession?.invalidate()
       term.options.theme = theme
       const { foreground, background, ...palette } = theme
       updateTerminalAppearance(remote, terminalId, {
@@ -396,6 +487,12 @@ export function SessionTerminal({
       lifetime.live = false
       clearTimeout(reHide)
       unregister()
+      unregisterHints()
+      hintSession?.dispose()
+      hintSubscriptions.forEach((subscription) => subscription.dispose())
+      stopHintContext.forEach((stop) => stop())
+      invalidateHints.current = null
+      writeTerminal.current = null
       mount.removeEventListener('wheel', routeWheel, true)
       typed.dispose()
       stopColorQueries()
@@ -408,9 +505,13 @@ export function SessionTerminal({
       fitRef.current = null
       disposeRef.current = null
     }
-  }, [terminalId, provider, syncSize, remote])
+  }, [terminalId, sessionId, provider, focusId, syncSize, remote, vaultRevision, viewer, store])
 
-  useEffect(() => () => disposeRef.current?.(), [remote, terminalId, provider])
+  useEffect(() => () => disposeRef.current?.(), [build])
+
+  useLayoutEffect(() => {
+    invalidateHints.current?.()
+  }, [visible, remote, vaultRevision, viewer, sessionId, provider, focusId])
 
   // Becoming visible is what builds it the first time and refits it every time:
   // the host was `display:none` a tick ago and has no final size yet, so wait
@@ -424,7 +525,7 @@ export function SessionTerminal({
     build()
     if (termRef.current?.textarea) termRef.current.textarea.disabled = false
     const term = termRef.current
-    term?.write(DISABLE_FOCUS_REPORTING)
+    void writeTerminal.current?.(DISABLE_FOCUS_REPORTING)
     const lifetime = lifetimeRef.current
     let live = true
     const refit = () => {

@@ -60,6 +60,7 @@ import {
 } from './mail-images'
 import { Switch } from '@/components/ui/switch'
 import { MailMarkersSettings } from './mail-markers-settings'
+import { MailNotificationsSetting } from './mail-notifications-setting'
 
 /** The flow's transient state. "Connected" is deliberately absent: that is the
  *  shared atom's to know. */
@@ -333,6 +334,7 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                 </ItemContent>
               </Item>
             ))}
+          {connected && <MailNotificationsSetting />}
           {connected && <ImageSenders />}
           {connected && remote !== null && currentSub !== null && (
             <MailMarkersSettings
@@ -379,9 +381,8 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
             </Item>
           ))}
 
-          {/* Machine-wide: the client every account here was granted to. */}
+          {/* Machine-wide default for future connections; existing grants keep their client. */}
           <OAuthClient
-            accountCount={accounts.length}
             beforeChange={(change) => changeAccount(change, false)}
             disabled={busy}
             visible={visible}

@@ -5,6 +5,12 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildAgentEnv, resolveClaudeBin } from '../main/claude/cli'
 import { AgentRuntime, defaultProbePid, type PidState, type PtyProcess } from '../main/host/pty'
+import { ownedProcessDrain, spawnOwnedProgram } from '../../../main/plugin-api'
+import {
+  kernelGroupAbsent,
+  posixFixtureLedger,
+} from '../../../../test/fixtures/posix-fixture-ledger'
+import { randomUUID } from 'node:crypto'
 
 /** Above the OS pid ceiling — nothing real can ever share it. */
 const NO_SUCH_PID = 999_999
@@ -617,19 +623,10 @@ describe('AgentRuntime', () => {
  *
  * Everything above stubs it, which is what makes those tests deterministic and
  * also what would let a broken probe pass all of them. This asks the machine.
- * It signals nothing and spawns nothing: it reads the live pid table and checks
- * the probe agrees with `ps` about who leads a group and who does not.
+ * It uses an owned, held-open process group so both probe outcomes remain
+ * valid for the duration of the assertions.
  */
 describe('defaultProbePid', () => {
-  /** Every live pid on this machine with the group it belongs to. */
-  function pidTable(): { pid: number; pgid: number }[] {
-    return execFileSync('ps', ['-axo', 'pid=,pgid='], { encoding: 'utf8' })
-      .split('\n')
-      .map((line) => line.trim().split(/\s+/).map(Number))
-      .filter((f) => f.length === 2 && Number.isInteger(f[0]) && Number.isInteger(f[1]))
-      .map(([pid, pgid]) => ({ pid: pid!, pgid: pgid! }))
-  }
-
   it('refuses pid 0, pid 1 and anything that is not a real pid', () => {
     // 0 means "my own process group" and 1 is launchd. Signalling the negative
     // of either is the worst thing this file could do.
@@ -645,15 +642,68 @@ describe('defaultProbePid', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
-    'agrees with ps about who leads a group and who does not',
-    () => {
-      const table = pidTable().filter((p) => p.pid > 1)
-      const leader = table.find((p) => p.pid === p.pgid)
-      const follower = table.find((p) => p.pid !== p.pgid)
-      expect(leader, 'no group leader on this machine?').toBeDefined()
-      expect(follower, 'no non-leader on this machine?').toBeDefined()
-      expect(defaultProbePid(leader!.pid)).toBe('group-leader')
-      expect(defaultProbePid(follower!.pid)).toBe('alive')
+    'identifies an owned group leader and its live follower',
+    async () => {
+      const ledger = await posixFixtureLedger('holi-runtime-probe-')
+      let child: ReturnType<typeof spawnOwnedProgram> | undefined
+      let closed: Promise<void> | undefined
+      const failures: unknown[] = []
+      let group: number | undefined
+      try {
+        const control = join(ledger.root, randomUUID())
+        child = spawnOwnedProgram('sh', ['-c', 'while :; do sleep 60; done & echo $!; wait'], {
+          detached: true,
+          posixGroupLease: true,
+          ownershipRecordPath: control,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+        group = ledger.record(child)
+        closed = new Promise<void>((resolve) => child!.once('close', () => resolve()))
+        const ancestry = ledger.retain(
+          group,
+          () => child![ownedProcessDrain]!.drain(),
+          closed,
+          control,
+        )
+        child.once('spawn', ancestry)
+        const followerPid = await new Promise<number>((resolve, reject) => {
+          let output = ''
+          child!.stdout!.on('data', (data: Buffer) => {
+            output += data.toString()
+            if (!output.includes('\n')) return
+            const pid = Number(output.trim())
+            if (Number.isInteger(pid) && pid > 1) resolve(pid)
+          })
+          child!.once('error', reject)
+          child!.once('close', (code) =>
+            reject(new Error(`fixture closed before readiness (${code})`)),
+          )
+        })
+        const leaderPid = child.pid
+        if (!leaderPid) throw new Error('fixture process did not start')
+        const rows = execFileSync('ps', ['-axo', 'pid=', '-o', 'pgid='], { encoding: 'utf8' })
+          .split('\n')
+          .map((line) => line.trim().split(/\s+/).map(Number))
+        const members = rows
+          .filter((row) => row.length === 2 && row[1] === leaderPid)
+          .map(([pid]) => pid!)
+        expect(members).toContain(leaderPid)
+        expect(members).toContain(followerPid)
+        expect(defaultProbePid(leaderPid)).toBe('group-leader')
+        expect(defaultProbePid(followerPid)).toBe('alive')
+      } catch (error) {
+        failures.push(error)
+      } finally {
+        try {
+          await ledger.reap()
+          if (closed) await closed
+          if (group !== undefined) kernelGroupAbsent(group)
+          await ledger.remove()
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      if (failures.length) throw new AggregateError(failures, 'PID probe fixture failed')
     },
   )
 })

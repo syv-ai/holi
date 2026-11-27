@@ -31,11 +31,14 @@ class FakePty implements PtyProcess {
   }
 }
 
+const lease = () => true
+
 const TARGET = { root: '/Users/ada/Holi/syv/vault', configDir: '/cfg/vault', binDir: '/holi/bin' }
 
 /** What a background session's terminal is opened with: Claude Code's list,
  *  or one session. */
 const on = (attach?: string, bin: string | null = '/usr/local/bin/claude') => ({
+  lease,
   remote: 'syv/vault',
   cwd: TARGET.root,
   command: terminalCommand(TARGET, attach, () => bin),
@@ -69,6 +72,45 @@ afterEach(() => {
 })
 
 describe('agent terminals', () => {
+  it('reclaims a retained exited transcript after returning without reopening input', async () => {
+    let epoch = 0
+    const original = () => epoch === 0
+    const pty = new FakePty()
+    const resized = vi.spyOn(pty, 'resize')
+    const exited = vi.fn()
+    const terminals = createAgentTerminals({
+      emit: () => {},
+      spawnPty: () => pty,
+      superviseGroup: () => ({ drain: async () => {} }),
+      log: () => {},
+    })
+    const opened = terminals.open({
+      ...on('retained-pi'),
+      lease: original,
+      retainOnExit: true,
+      onExit: exited,
+    })
+    if (!opened.ok) throw new Error(opened.message)
+    try {
+      pty.emit('retained transcript')
+      pty.exit()
+      await vi.waitFor(() => expect(exited).toHaveBeenCalledOnce())
+      epoch = 1
+      epoch = 2
+      expect(terminals.claim(opened.id, original)).toBe(false)
+      const returned = () => epoch === 2
+      expect(terminals.claim(opened.id, returned)).toBe(true)
+      expect(await terminals.attach(opened.id, returned)).toContain('retained transcript')
+      terminals.write(opened.id, 'blocked', returned)
+      expect(terminals.paste(opened.id, 'blocked', returned)).toBe(false)
+      terminals.resize(opened.id, 120, 40, returned)
+      expect(pty.writes).toEqual([])
+      expect(resized).not.toHaveBeenCalled()
+    } finally {
+      await terminals.closeAll()
+    }
+  })
+
   it('joins repeat close with a rejecting natural-exit callback', async () => {
     const pty = new FakePty()
     const proof = vi.fn(async () => {})
@@ -241,14 +283,14 @@ describe('agent terminals', () => {
     const { terminals, spawns } = setup()
     const res = terminals.open(on('1234abcd'))
     const id = res.ok ? res.id : ''
-    expect(terminals.paste(id, 'look at this')).toBe(true)
+    expect(terminals.paste(id, 'look at this', lease)).toBe(true)
     expect(spawns[0]!.pty.writes).toEqual([])
 
     spawns[0]!.pty.emit('hello')
     await vi.waitFor(() =>
       expect(spawns[0]!.pty.writes).toEqual(['\x1b[200~look at this\x1b[201~']),
     )
-    terminals.paste(id, 'again')
+    terminals.paste(id, 'again', lease)
     expect(spawns[0]!.pty.writes.at(-1)).toBe('\x1b[200~again\x1b[201~')
     expect(spawns[0]!.pty.writes.join('')).not.toContain('\r')
   })
@@ -256,7 +298,7 @@ describe('agent terminals', () => {
   it('gives up waiting on a terminal that never prints', async () => {
     const { terminals, spawns } = setup()
     const res = terminals.open(on())
-    terminals.paste(res.ok ? res.id : '', 'x')
+    terminals.paste(res.ok ? res.id : '', 'x', lease)
     await vi.waitFor(() => expect(spawns[0]!.pty.writes).toHaveLength(1), { timeout: 1_000 })
   })
 
@@ -265,11 +307,15 @@ describe('agent terminals', () => {
     const onInput = vi.fn()
     const res = terminals.open({ ...on(), onInput })
     if (!res.ok) throw new Error(res.message)
-    terminals.setAppearance(res.id, {
-      foreground: '#d0d0d0',
-      background: '#14283c00',
-      red: '#c80000',
-    })
+    terminals.setAppearance(
+      res.id,
+      {
+        foreground: '#d0d0d0',
+        background: '#14283c00',
+        red: '#c80000',
+      },
+      lease,
+    )
     spawns[0]!.pty.emit('\x1b[?2031h\x1b]10;?\x07\x1b]11;?\x07\x1b]4;1;?\x07')
     expect(spawns[0]!.pty.writes).toEqual([
       '\x1b]10;rgb:d0/d0/d0\x07',
@@ -278,11 +324,15 @@ describe('agent terminals', () => {
     ])
     expect(onInput).not.toHaveBeenCalled()
 
-    terminals.setAppearance(res.id, {
-      foreground: '#d0d0d0',
-      background: '#ffffff00',
-      red: '#c80000',
-    })
+    terminals.setAppearance(
+      res.id,
+      {
+        foreground: '#d0d0d0',
+        background: '#ffffff00',
+        red: '#c80000',
+      },
+      lease,
+    )
     expect(spawns[0]!.pty.writes.at(-1)).toBe('\x1b[?997;2n')
   })
 
@@ -293,7 +343,7 @@ describe('agent terminals', () => {
     spawns[0]!.pty.emit('before')
     expect(sent.some(([c]) => c === 'pty-data')).toBe(false)
 
-    const state = await terminals.attach(id)
+    const state = await terminals.attach(id, lease)
     expect(state).toContain('sign in')
     expect(state).toContain('before')
     spawns[0]!.pty.emit('after')
@@ -325,9 +375,9 @@ describe('agent terminals', () => {
     expect(terminals.list()).toEqual([
       expect.objectContaining({ id: res.id, launchedFor: 'pi-session' }),
     ])
-    expect(await terminals.attach(res.id)).toContain('final transcript')
-    terminals.write(res.id, 'ignored')
-    expect(terminals.paste(res.id, 'ignored')).toBe(false)
+    expect(await terminals.attach(res.id, lease)).toContain('final transcript')
+    terminals.write(res.id, 'ignored', lease)
+    expect(terminals.paste(res.id, 'ignored', lease)).toBe(false)
     expect(spawns[0]!.pty.writes).toEqual([])
     expect(onExit).toHaveBeenCalledOnce()
 
@@ -359,7 +409,7 @@ describe('agent terminals', () => {
     spawns[0]!.pty.exit(0)
     expect(terminals.list()).toEqual([])
     expect(sent).toContainEqual(['pty-exit', { id, code: 0 }])
-    expect(terminals.paste(id, 'x')).toBe(false)
+    expect(terminals.paste(id, 'x', lease)).toBe(false)
   })
 
   it('reports an unconfirmed exit instead of fabricating terminal closure', async () => {
@@ -380,4 +430,129 @@ describe('agent terminals', () => {
     })
     expect(terminals.open(on(undefined, null)).ok).toBe(false)
   })
+})
+
+it('keeps stale pastes and deferred output fenced while a fresh claimant adopts the terminal', async () => {
+  vi.useFakeTimers()
+  const pty = new FakePty()
+  let epoch = 0
+  const capture = () => {
+    const at = epoch
+    return () => epoch === at
+  }
+  const queued: Array<{ payload: unknown; guard?: () => boolean }> = []
+  const terminals = createAgentTerminals({
+    spawnPty: () => pty,
+    probePid: () => 'alive',
+    superviseGroup: () => ({
+      drain: async () => {
+        pty.exit()
+      },
+    }),
+    emit: (_remote, name, payload, guard) => {
+      if (name === 'pty-data') queued.push({ payload, guard })
+    },
+    pasteBackstopMs: 20,
+    log: () => {},
+  })
+  const old = capture()
+  const opened = terminals.open({ ...on(), lease: old })
+  if (!opened.ok) throw new Error(opened.message)
+  expect(terminals.claim(opened.id, old)).toBe(true)
+  const staleReplay = terminals.attach(opened.id, old)
+  pty.emit('recorded before switching')
+  epoch++
+  epoch++
+  await vi.advanceTimersByTimeAsync(0)
+  expect(await staleReplay).toBe('')
+  terminals.write(opened.id, 'stale', old)
+  terminals.resize(opened.id, 120, 50, old)
+  expect(terminals.paste(opened.id, 'stale draft', old)).toBe(false)
+  const fresh = capture()
+  expect(terminals.claim(opened.id, fresh)).toBe(true)
+  expect(await terminals.discard(opened.id, old)).toBe(false)
+  const freshReplay = terminals.attach(opened.id, fresh)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(await freshReplay).toContain('recorded before switching')
+  pty.emit('fresh output')
+  expect(queued.filter((event) => event.guard?.())).toEqual([
+    expect.objectContaining({ payload: { id: opened.id, data: 'fresh output' } }),
+  ])
+  terminals.write(opened.id, 'fresh', fresh)
+  expect(terminals.paste(opened.id, 'revoked while settling', fresh)).toBe(true)
+  epoch++
+  await vi.advanceTimersByTimeAsync(300)
+  expect(pty.writes).toEqual(['fresh'])
+  expect(queued.every((event) => event.guard?.() === false)).toBe(true)
+  const current = capture()
+  expect(terminals.paste(opened.id, 'current draft', current)).toBe(true)
+  expect(pty.writes.at(-1)).toBe('\x1b[200~current draft\x1b[201~')
+  const closing = terminals.closeAll()
+  await vi.advanceTimersByTimeAsync(0)
+  await closing
+  expect(terminals.list()).toEqual([])
+})
+
+it('allows a revoked creator to discard an unadopted terminal without an extra claim', async () => {
+  const pty = new FakePty()
+  let displayed = true
+  const origin = () => displayed
+  const terminals = createAgentTerminals({
+    spawnPty: () => pty,
+    probePid: () => 'alive',
+    superviseGroup: () => ({
+      drain: async () => {
+        pty.exit()
+      },
+    }),
+    emit: () => {},
+    log: () => {},
+  })
+  const opened = terminals.open({ ...on(), lease: origin })
+  if (!opened.ok) throw new Error(opened.message)
+  displayed = false
+  expect(await terminals.discard(opened.id, origin)).toBe(true)
+  expect(terminals.list()).toEqual([])
+})
+
+it('delivers each byte once across a replay whose parser barrier precedes live output', async () => {
+  const { terminals, spawns, sent } = setup()
+  const opened = terminals.open(on())
+  if (!opened.ok) throw new Error(opened.message)
+  const pty = spawns[0]!.pty
+  pty.emit('replay-prefix')
+  const replay = terminals.attach(opened.id, lease)
+  pty.emit('stream-tail')
+  const state = await replay
+  const live = sent
+    .filter(([name]) => name === 'pty-data')
+    .map(([, payload]) => (payload as { data: string }).data)
+    .join('')
+  const combined = state + live
+  expect(combined.match(/replay-prefix/g)).toHaveLength(1)
+  expect(combined.match(/stream-tail/g)).toHaveLength(1)
+  expect(combined.indexOf('replay-prefix')).toBeLessThan(combined.indexOf('stream-tail'))
+  pty.exit()
+  await terminals.closeAll()
+})
+
+it('settles pending replay when the terminal closes before its parser barrier', async () => {
+  const pty = new FakePty()
+  const terminals = createAgentTerminals({
+    spawnPty: () => pty,
+    probePid: () => 'alive',
+    superviseGroup: () => ({
+      drain: async () => {
+        pty.exit()
+      },
+    }),
+    emit: () => {},
+    log: () => {},
+  })
+  const opened = terminals.open(on())
+  if (!opened.ok) throw new Error(opened.message)
+  const replay = terminals.attach(opened.id, lease)
+  await terminals.close(opened.id)
+  expect(await replay).toBe('')
+  expect(terminals.list()).toEqual([])
 })

@@ -30,7 +30,10 @@ type CancellationSignal = {
   addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void
   removeEventListener(type: 'abort', listener: () => void): void
 }
-export type DeviceAuthorizationSession = DeviceAuthorization & { wait(): Promise<string> }
+export type DeviceAuthorizationSession = DeviceAuthorization & {
+  /** Polls once per session; subsequent calls reject, including after failure. */
+  wait(): Promise<string>
+}
 export function createCancellation() {
   let aborted = false
   const listeners = new Set<() => void>()
@@ -40,14 +43,22 @@ export function createCancellation() {
         get aborted() {
           return aborted
         },
-        addEventListener: (_type: 'abort', listener: () => void) => listeners.add(listener),
+        addEventListener: (_type: 'abort', listener: () => void) => {
+          if (!aborted) listeners.add(listener)
+        },
         removeEventListener: (_type: 'abort', listener: () => void) => listeners.delete(listener),
       }
     },
     abort() {
       if (aborted) return
       aborted = true
-      for (const listener of listeners) listener()
+      for (const listener of listeners) {
+        try {
+          listener()
+        } catch {
+          // Adapter listeners must not prevent other observers or credential revocation.
+        }
+      }
       listeners.clear()
     },
   }
@@ -143,9 +154,12 @@ export async function authorizeWithGitHub(
     const expiresAt = now() + expiresIn * 1000
     let delay = (typeof interval === 'number' ? interval : 5) * 1000
     const code = { userCode, verificationUri, expiresIn }
+    let waiting = false
     return {
       ...code,
       wait: async () => {
+        if (waiting) throw new Error('Authorization has already been awaited')
+        waiting = true
         try {
           while (now() < expiresAt) {
             await wait(Math.min(delay, expiresAt - now()), signal)

@@ -8,6 +8,7 @@ import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { localDate } from '@holi/shared'
 import { activeRemoteAtom } from '@/plugin-api'
+import { ShellShortcutHost } from '@/test/shell-shortcut-host'
 import { CalendarView } from '../renderer/calendar/calendar-view'
 import { clockLabel, type TimeFormat } from '../renderer/calendar/calendar-format'
 import { GOOGLE_INFO } from '../info'
@@ -1130,6 +1131,32 @@ describe('the calendar view', () => {
       guests: ['guest@example.com'],
       meet: true,
     })
+  })
+
+  test('numbered tab navigation works while a calendar event card is open', async () => {
+    const previousPlatform = document.documentElement.dataset.platform
+    document.documentElement.dataset.platform = 'mac'
+    try {
+      const selectTab = vi.fn()
+      render(
+        <ShellShortcutHost
+          tabIds={['first', 'calendar', 'last']}
+          activeTabId="calendar"
+          app="calendar"
+          selectTab={selectTab}
+        >
+          <CalendarView />
+        </ShellShortcutHost>,
+      )
+      const eventButton = (await screen.findAllByText('Focus block'))[0]!.closest('button')!
+      await userEvent.setup().click(eventButton)
+      const card = await screen.findByRole('dialog', { name: 'Focus block' })
+      fireEvent.keyDown(card, { key: '1', metaKey: true })
+      expect(selectTab).toHaveBeenCalledWith('first')
+    } finally {
+      if (previousPlatform === undefined) delete document.documentElement.dataset.platform
+      else document.documentElement.dataset.platform = previousPlatform
+    }
   })
 
   test('an edit draft survives parking and account changes clear it', async () => {

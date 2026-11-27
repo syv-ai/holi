@@ -3,6 +3,7 @@ import {
   B,
   adapters,
   deferred,
+  notifyWatchChange,
   harness,
   nestedErrors,
   rig,
@@ -288,10 +289,12 @@ it('serializes overlapping PTY history updates across activations and drains sto
     command: { bin: process.execPath, args: [] },
   }
   await call(A, 'agent.harnessSave', { harness: pi })
+  host.setDisplayed(A)
   const aStarted = (await call(A, 'agent.start', { provider: 'pi', prompt: 'A work' })) as {
     ok: boolean
     sessionId: string
   }
+  host.setDisplayed(B)
   const bStarted = (await call(B, 'agent.start', { provider: 'pi', prompt: 'B work' })) as {
     ok: boolean
     sessionId: string
@@ -435,8 +438,37 @@ it('finalizes busy native sessions discovered during plugin startup', async () =
   }
 })
 
-it('binds real hook reports, inbox delivery, and native commands to activation vaults', async () => {
-  const { host, enter, call, roots, bridge, userData } = await rig(undefined, undefined, true)
+it('binds real hook reports, inbox delivery, and native commands to activation vaults', async ({
+  signal,
+}) => {
+  const turnEnds = new Map<string, ReturnType<typeof deferred>>()
+  signal.addEventListener(
+    'abort',
+    () => {
+      for (const ended of turnEnds.values()) ended.resolve()
+    },
+    { once: true },
+  )
+  const turnEnd = (remote: string, id: string) => {
+    const key = `${remote}:${id}`
+    let ended = turnEnds.get(key)
+    if (ended === undefined) {
+      ended = deferred()
+      turnEnds.set(key, ended)
+    }
+    return ended
+  }
+  const observer: MainPlugin = {
+    info: { id: 'reply-observer', label: 'Reply observer', default: true, requires: ['agent'] },
+    activate(ctx) {
+      return ctx.hear('agent', 'turn-end', (event) => {
+        turnEnd(ctx.remote, (event as { id: string }).id).resolve()
+      })
+    },
+  }
+  const { host, enter, call, roots, bridge, userData } = await rig(undefined, undefined, true, {
+    plugins: [observer],
+  })
   const received: Record<'A' | 'B' | 'A2', string[]> = { A: [], B: [], A2: [] }
   const inboxServers: ReturnType<typeof createServer>[] = []
   const inboxSockets: string[] = []
@@ -570,7 +602,8 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
     const settledA = await post(A, '/turn/end', '&job=abc12345&pending=2')
     expect(settledA.status).toBe(200)
 
-    host.setDisplayed(A)
+    // Background work for A remains activation-bound even while B owns the display.
+    host.setDisplayed(B)
     await expect(
       call(A, 'agent.message', { session: 'abc12345', text: 'message A' }),
     ).resolves.toEqual({ ok: true })
@@ -591,7 +624,7 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
     const rpc = join(userData, 'pi-rpc-fixture')
     await writeFile(
       rpc,
-      `#!/usr/bin/env node\nconst readline=require('node:readline');\nprocess.on('SIGTERM',()=>process.exit(0));\nconst rl=readline.createInterface({input:process.stdin});\nrl.on('line',line=>{const c=JSON.parse(line); if(c.type==='prompt'){const text=process.cwd().endsWith('vault-a')?'reply-A':'reply-B'; const emit=x=>process.stdout.write(JSON.stringify(x)+'\\n'); emit({type:'agent_start'}); emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:text}}); emit({type:'message_end',message:{role:'assistant',stopReason:'stop'}}); emit({type:'agent_settled'});} else if(c.type==='get_session_stats'){process.stdout.write(JSON.stringify({type:'response',id:c.id,success:true,data:{}})+'\\n');}});\n`,
+      `#!/usr/bin/env node\nconst readline=require('node:readline');\nprocess.on('SIGTERM',()=>process.exit(0));\nconst rl=readline.createInterface({input:process.stdin});\nrl.on('line',line=>{const c=JSON.parse(line); if(c.type==='prompt'){setTimeout(()=>{const text=process.cwd().endsWith('vault-a')?'reply-A':'reply-B'; const emit=x=>process.stdout.write(JSON.stringify(x)+'\\n'); emit({type:'agent_start'}); emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:text}}); emit({type:'message_end',message:{role:'assistant',stopReason:'stop'}}); emit({type:'agent_settled'});},1500);} else if(c.type==='get_session_stats'){process.stdout.write(JSON.stringify({type:'response',id:c.id,success:true,data:{}})+'\\n');}});\n`,
     )
     await chmod(rpc, 0o755)
     const pi = { ...PRESETS.find((preset) => preset.id === 'pi')!, command: { bin: rpc, args: [] } }
@@ -610,14 +643,10 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
     expect(piA.ok).toBe(true)
     expect(piB.ok).toBe(true)
     const settledReply = async (remote: typeof A | typeof B, session: string) => {
-      for (let attempt = 0; attempt < 100; attempt++) {
-        const result = (await call(remote, 'agent.reply', { session })) as {
-          output: string | null
-        }
-        if (result.output !== null) return result
-        await new Promise((resolve) => setTimeout(resolve, 10))
-      }
-      throw new Error(`Pi reply did not settle for ${remote}`)
+      signal.throwIfAborted()
+      await turnEnd(remote, session).promise
+      signal.throwIfAborted()
+      return call(remote, 'agent.reply', { session }) as Promise<{ output: string | null }>
     }
     const replyA = await settledReply(A, piA.sessionId)
     const replyB = await settledReply(B, piB.sessionId)
@@ -860,33 +889,24 @@ it.each(['success', 'failure'] as const)(
       listingStatus[A] = 'waiting'
       listingStatus[B] = 'waiting'
       for (const remote of [A, B] as const) expect((await postStatusline(remote)).status).toBe(204)
-      // Force an actual capability read after the statusline, then keep
-      // delivering real watcher changes until its admitted inbox write begins.
+      // Drive the public fs.watch change event for each vault's sessions path;
+      // the production watcher still performs the refresh and inbox write.
       await call(A, 'agent.sessions')
       for (const remote of [A, B] as const) {
-        await mkdir(join(configDirs[remote], 'sessions'), { recursive: true })
+        const sessionsDir = join(configDirs[remote], 'sessions')
+        await mkdir(sessionsDir, { recursive: true })
+        const sessionPath = join(sessionsDir, 'needs-you-refresh.json')
+        await writeFile(sessionPath, '{}')
+        notifyWatchChange(sessionPath)
       }
-      let refreshAttempt = 0
-      await vi.waitFor(
-        async () => {
-          if (!writeAdmitted) {
-            const attempt = ++refreshAttempt
-            for (const remote of [A, B] as const) {
-              await writeFile(
-                join(configDirs[remote], 'sessions', `needs-you-refresh-${attempt}.json`),
-                '{}',
-              )
-            }
-          }
-          expect(writeAdmitted).toBe(true)
-        },
-        { interval: 200 },
-      )
+      await vi.waitFor(() => expect(writeAdmitted).toBe(true))
       await writeEntered.promise
       listingStatus[A] = 'idle'
       extraWaitingSession = true
       expect((await postStatusline(A)).status).toBe(204)
-      await writeFile(join(configDirs[A], 'sessions', 'queued-needs-you.json'), '{}')
+      const queuedSessionPath = join(configDirs[A], 'sessions', 'queued-needs-you.json')
+      await writeFile(queuedSessionPath, '{}')
+      notifyWatchChange(queuedSessionPath)
       await vi.waitFor(async () => {
         expect(await call(A, 'agent.sessions')).toEqual(
           expect.arrayContaining([
@@ -1070,6 +1090,7 @@ it('keeps real native provider commands and vault configuration local after a sh
     env: { OWNER_TEST: 'first', CODEX_HOME: join(userData, 'synthetic-codex') },
   }
   await call(A, 'agent.harnessSave', { harness: codex })
+  host.setDisplayed(B)
   expect(await call(B, 'agent.start', { provider: 'codex', prompt: 'B first' })).toMatchObject({
     ok: true,
   })
@@ -1086,6 +1107,7 @@ it('keeps real native provider commands and vault configuration local after a sh
     },
   })
   expect(adapters.pty).toHaveLength(1)
+  host.setDisplayed(B)
   expect(await call(B, 'agent.start', { provider: 'codex', prompt: 'B next' })).toMatchObject({
     ok: true,
   })
@@ -1095,6 +1117,7 @@ it('keeps real native provider commands and vault configuration local after a sh
     env: { OWNER_TEST: 'second' },
   })
   expect(first.env.OWNER_TEST).toBe('first')
+  host.setDisplayed(A)
   expect(await call(A, 'agent.start', { provider: 'codex', prompt: 'A next' })).toMatchObject({
     ok: true,
   })
@@ -1153,6 +1176,7 @@ it('keeps real native provider commands and vault configuration local after a sh
   expect(scheduled[2].cwd).toBe(roots[B])
   expect(scheduled[2].env.CLAUDE_CONFIG_DIR).toBe(launches[1]![2].env.CLAUDE_CONFIG_DIR)
   await host.stop(A)
+  host.setDisplayed(B)
   expect(await call(B, 'agent.start', { provider: 'codex', prompt: 'B survives' })).toMatchObject({
     ok: true,
   })
@@ -1195,6 +1219,7 @@ it('rejects late UI config dispatch after A releases ownership but before unregi
     expect(sent.filter((event) => event.name === 'providers')).toHaveLength(bNotices)
     expect(await call(B, 'agent.harnesses')).toEqual(bListing)
 
+    host.setDisplayed(B)
     expect(
       await call(B, 'agent.start', { provider: 'codex', prompt: 'B remains live' }),
     ).toMatchObject({ ok: true })
@@ -1889,6 +1914,7 @@ it.each(['start', 'fork', 'respawn'] as const)(
       return ''
     })
     const invoke = (remote: typeof A | typeof B) => {
+      host.setDisplayed(remote)
       if (operation === 'start') return call(remote, 'agent.start', { prompt: `${remote} start` })
       if (operation === 'fork') return call(remote, 'agent.duplicate', { id: sessionId })
       return call(remote, 'agent.respawn', { id: sessionId })
@@ -1995,8 +2021,10 @@ it('retains failed cleanup of a cancelled real respawn and refuses replacement',
   try {
     await enter(A)
     await enter(B)
+    host.setDisplayed(A)
     const respawning = call(A, 'agent.respawn', { id: 'abc12345' })
     await entered.promise
+    host.setDisplayed(B)
     expect(await call(B, 'agent.respawn', { id: 'abc12345' })).toMatchObject({ ok: true })
     expectFailedDrain()
     const stopping = host.stop(A).catch((error: unknown) => error)

@@ -11,7 +11,7 @@ import { APPS_KEY, BOARD_KEY } from '@/state/tab-descriptor'
 import { hotkeyLabels } from '@/lib/hotkey'
 import { isMac } from '@/lib/platform'
 import { useTabDrag } from '@/features/shell/use-tab-drag'
-import { surfacesAtom } from '@/state/plugins'
+import { enabledPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { taskDueAttentionAtom } from '@/state/tasks'
 import { AppWindowIcon, SearchIcon, SquareKanbanIcon } from 'lucide-react'
 
@@ -38,6 +38,7 @@ export function DocumentsNav({
   // The Board row drags as its tab, onto the content or the strip.
   const tabDrag = useTabDrag()
   const appsOn = useAppsOn()
+  const tasksOn = useAtomValue(enabledPluginsAtom).has('tasks')
 
   return (
     <div className="px-2">
@@ -53,31 +54,33 @@ export function DocumentsNav({
             </KbdGroup>
           </SidebarMenuButton>
         </SidebarMenuItem>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            isActive={activeId === BOARD_KEY}
-            tooltip={{ children: label, hidden: false }}
-            aria-current={activeId === BOARD_KEY ? 'page' : undefined}
-            onClick={() => onOpen(BOARD_KEY)}
-            {...tabDrag({ kind: 'board' })}
-            aria-label={label}
-            variant="fill"
-          >
-            <SquareKanbanIcon aria-hidden="true" />
-            <span>Board</span>
-            {attention?.due ? (
-              <span className="sr-only">, {label.slice(7)}</span>
-            ) : openTasks > 0 ? (
-              <span className="sr-only">, {openTasks} open tasks</span>
+        {tasksOn ? (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={activeId === BOARD_KEY}
+              tooltip={{ children: label, hidden: false }}
+              aria-current={activeId === BOARD_KEY ? 'page' : undefined}
+              onClick={() => onOpen(BOARD_KEY)}
+              {...tabDrag({ kind: 'board' })}
+              aria-label={label}
+              variant="fill"
+            >
+              <SquareKanbanIcon aria-hidden="true" />
+              <span>Board</span>
+              {attention?.due ? (
+                <span className="sr-only">, {label.slice(7)}</span>
+              ) : openTasks > 0 ? (
+                <span className="sr-only">, {openTasks} open tasks</span>
+              ) : null}
+            </SidebarMenuButton>
+            {/* A sibling of the button, where the badge's own placement applies. */}
+            {attention && (attention.due > 0 || attention.open > 0) ? (
+              <SidebarMenuBadge key={`${attention.due}`} aria-hidden="true">
+                {attention.due > 0 ? `${attention.due} due` : attention.open}
+              </SidebarMenuBadge>
             ) : null}
-          </SidebarMenuButton>
-          {/* A sibling of the button, where the badge's own placement applies. */}
-          {attention && (attention.due > 0 || attention.open > 0) ? (
-            <SidebarMenuBadge key={`${attention.due}`} aria-hidden="true">
-              {attention.due > 0 ? `${attention.due} due` : attention.open}
-            </SidebarMenuBadge>
-          ) : null}
-        </SidebarMenuItem>
+          </SidebarMenuItem>
+        ) : null}
         {appsOn ? (
           <SidebarMenuItem>
             <SidebarMenuButton

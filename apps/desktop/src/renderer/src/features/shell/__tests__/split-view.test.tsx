@@ -47,6 +47,7 @@ import { tabDragAtom } from '@/features/shell/use-tab-drag'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { agentsSelectionAtom } from '@/state/agents-slots'
 import {
+  activeRemoteRevisionValueAtom,
   activeRemoteAtom,
   historyEpochsAtom,
   openedRemoteAtom,
@@ -235,6 +236,9 @@ test('scratchpad actions wait for the active vault to finish opening', async () 
   await userEvent.type(screen.getByRole('combobox'), '>scratchpad')
   expect(screen.queryByRole('option', { name: /scratchpad/i })).not.toBeInTheDocument()
   await userEvent.keyboard('{Escape}')
+  expect(screen.getByRole('combobox')).toHaveValue('')
+  await userEvent.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
   // Once B's open completes, the palette action appears and opens the normal
   // document tab. Repeating the shortcut selects that same tab.
@@ -1131,7 +1135,12 @@ test('a view not open yet, dragged from the sidebar, opens in the gap', async ()
   layOut()
   const dataTransfer = transfer()
   dataTransfer.setData('application/x-holi-tab', 'C.md')
-  store.set(tabDragAtom, { key: 'C.md', vault: 'mara/notes', wasOpen: false })
+  store.set(tabDragAtom, {
+    key: 'C.md',
+    vault: 'mara/notes',
+    vaultRevision: store.get(activeRemoteRevisionValueAtom),
+    wasOpen: false,
+  })
   const target = await catcher()
   fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 50))
   await waitFor(() => expect(target.dataset.dropSlot).toBe('insert:0'))

@@ -976,7 +976,9 @@ export function FilesSection({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {subscriptionData?.remote === files.remote && subscriptionData.loading ? (
+      {subscriptionData?.remote === files.remote &&
+      subscriptionData.loading &&
+      subscriptionData.scopes.length === 0 ? (
         <div className="px-2 py-1 text-xs text-muted-foreground" role="status">
           Loading subscriptions…
         </div>
