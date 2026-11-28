@@ -11,6 +11,39 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - **Each vault names its account** in `userData/google-vault-accounts.json` (`owner/repo` → `sub`), outside the clone. One account may serve several vaults; linking a stored account needs no consent. _Disconnect this vault_ drops the mapping, at once, because _Use in this vault_ undoes it; _Remove from Holi_ revokes at Google, deletes tokens and cache, and unlinks every vault, so Connections asks first ("Remove … from Holi?", a destructive _Remove account_) and holds the dialog open while the revoke runs. Connections' errors and the reconnect warning are `text-destructive` and wrap rather than truncate. A new vault is never mapped automatically.
 - **Scope drift:** an old grant keeps working and 403s only the newly added calls. `missingScopes()` compares stored scopes in Google's vocabulary (`email` returns as `.../userinfo.email`) and settings offers **Reconnect**.
 - **Mail cache:** one `node:sqlite` file per account, `userData/google-cache-<sub>.db`, last 500 threads, reconciled by `history.list` deltas. The key carries every filter that narrows a list; the history cursor is per key; archive and trash arrive as label changes and land in a _left_ bucket. Bump `SHAPE_VERSION` when a cached type changes. A removed or dead account deletes the file and its sidecars.
+- **Automatic Mail refresh:** both Mail layouts share one list controller. A visible,
+  connected Inbox, category, unread, Sent or Starred list refreshes every 30 seconds;
+  Drafts and submitted searches remain manual. Hiding or unmounting a view stops
+  periodic reads. Account, vault and filter changes invalidate earlier responses;
+  refresh preserves the open reader and selected filters. Reads are coordinated with
+  pagination and optimistic writes, including markers and Undo.
+- **Loaded mail coverage:** the UI uses the existing `google.search` capability with
+  an account-bound list cursor captured before the initial page. A refresh reads
+  the fresh first-page IDs and mailbox history, hydrates arrivals and changed loaded
+  threads, and reports explicit departures using current message labels. Omission
+  from a first page is not a departure. Missing or expired history revalidates the
+  entire loaded set, including rows beyond the 500-thread disk cache. Refresh returns
+  a fresh continuation; Load more skips already loaded IDs before hydration and
+  consumes duplicate-only pages within the loaded coverage, never scanning the whole
+  mailbox. Normal refresh cost follows changed rows; history recovery follows the
+  loaded set. A failed background refresh leaves usable mail in place for a later cycle;
+  a failed manual refresh shows an error with Retry.
+- **Mail counts:** successful list reads refresh Gmail's inbox totals and category
+  counts once the category picker has requested them. Failed category reads remain
+  activated for later retries. Count responses share the list's owner and mutation
+  fences; totals are not inferred from the loaded slice. Automatic refresh adds no
+  notifications or app-wide indicators.
+- **Writes:** the renderer paints first and reconciles refusals against Gmail; main
+  calls Google first and updates the cache only on success. Every thread action takes
+  that one path. Archive and trash, of one thread or a selection, then raise one toast
+  ("Thread moved to Trash", "2 threads archived") that stays until dismissed or its
+  originating list retires (folder, filter, account, vault or visibility change), and
+  offers **Undo**: undo beats a confirmation for a frequent, reversible removal. Undo
+  calls `google.unarchive` (`INBOX` back on) or `google.untrash` (Gmail's `/untrash`),
+  UI-door only, and re-reads the list. Restoration candidates are revalidated against
+  Gmail even beyond the first page; only explicit departures remove retained rows.
+  Failed bulk removals wait for every write and do not restore successfully moved mail.
+
 - **Unread attention:** the Mail sidebar badge is Gmail's exact unread `INBOX`
   thread count, available before Mail opens and shown only while its last count is
   fresh. Main polls once a minute per connected account session; vaults sharing
