@@ -22,6 +22,9 @@ let shell: (
   extra?: NodeJS.ProcessEnv,
 ) => ReturnType<typeof execAsync>
 let shellEnv: NodeJS.ProcessEnv
+let nativeEnv: NodeJS.ProcessEnv
+let cmdExe: string
+let powershellExe: string
 
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -39,6 +42,13 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
       PATH: `${join(gitRoot, 'usr', 'bin')};${dirname(gitPath)};${fallbackDir}`,
     }
     shellEnv = env
+    nativeEnv = {
+      ...env,
+      PATH: `${dirname(gitPath)};${fallbackDir};${process.env.SystemRoot ?? 'C:\\Windows'}\\System32`,
+    }
+    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
+    cmdExe = join(systemRoot, 'System32', 'cmd.exe')
+    powershellExe = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     const sh = join(gitRoot, 'bin', 'sh.exe')
     shell = (args, input = '', extra = {}) => {
       const running = execAsync(sh, args, {
@@ -72,11 +82,15 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
       cli: {
         dispatch: async ({ params }) => {
           const session = (params as { session?: string }).session ?? ''
-          cliJobs.push(session)
-          return { value: session, text: session }
+          const label = (params as { label?: string }).label ?? ''
+          cliJobs.push(`${session}|${label}`)
+          return { value: `${session}|${label}`, text: `${session}|${label}` }
         },
         commands: () => [
-          { name: 'fixture.who', cli: { args: [], summary: 'calling job', job: 'session' } },
+          {
+            name: 'fixture.who',
+            cli: { args: ['label'], summary: 'calling job', job: 'session' },
+          },
         ],
         rootFor: async () => root,
         machine: {
@@ -101,6 +115,58 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
     try {
       await writeVaultEnv(root, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
       const cli = await installHoliCli(userData)
+      const argument = `Ada's café vault with spaces`
+      const cliCallers = [
+        {
+          name: 'cmd.exe',
+          run: () =>
+            execAsync(cmdExe, ['/d', '/s', '/c', `""${cli}" fixture who "${argument}""`], {
+              windowsVerbatimArguments: true,
+              cwd: root,
+              env: { ...nativeEnv, HOLI_BIN: cli },
+              timeout: 10_000,
+              windowsHide: true,
+            }),
+        },
+        {
+          name: 'powershell.exe',
+          run: () =>
+            execAsync(
+              powershellExe,
+              [
+                '-NoLogo',
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                `[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding; & $env:HOLI_BIN fixture who '${argument.replaceAll("'", "''")}'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`,
+              ],
+              {
+                cwd: root,
+                env: { ...nativeEnv, HOLI_BIN: cli },
+                timeout: 10_000,
+                windowsHide: true,
+              },
+            ),
+        },
+        {
+          name: 'Node process.env.HOLI_BIN',
+          run: () =>
+            execAsync(
+              process.execPath,
+              [
+                '-e',
+                'const { spawnSync } = require("node:child_process"); const r = spawnSync(process.env.HOLI_BIN, ["fixture", "who", process.argv[1]], { encoding: "utf8" }); process.stdout.write(r.stdout ?? ""); process.stderr.write(r.stderr ?? ""); process.exitCode = r.status ?? 1',
+                argument,
+              ],
+              {
+                cwd: root,
+                env: { ...nativeEnv, HOLI_BIN: cli },
+                timeout: 10_000,
+                windowsHide: true,
+              },
+            ),
+        },
+      ]
       await writeFile(
         join(userData, 'cli-endpoint.json'),
         JSON.stringify({ host: '127.0.0.1', port: server.port(), token: machineToken }, null, 2) +
@@ -129,13 +195,41 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
             { CLAUDE_JOB_DIR: jobDir },
           ),
         ).toMatchObject({ stdout: 'Opus · 42% context', stderr: '' })
-        expect(await shell([cli, 'fixture', 'who'], '', { CLAUDE_JOB_DIR: jobDir })).toMatchObject({
-          stdout: 'abcd1234\n',
+        const label = `Ada's café "vault" ${index}`
+        expect(
+          await shell([join(dirname(cli), 'holi'), 'fixture', 'who', label], '', {
+            CLAUDE_JOB_DIR: jobDir,
+          }),
+        ).toMatchObject({
+          stdout: `abcd1234|${label}\n`,
+          stderr: '',
+        })
+        expect(
+          await execAsync(cli, ['fixture', 'who', label], {
+            cwd: root,
+            env: { ...nativeEnv, CLAUDE_JOB_DIR: jobDir },
+            timeout: 10_000,
+            windowsHide: true,
+          }),
+        ).toMatchObject({ stdout: `abcd1234|${label}\n`, stderr: '' })
+      }
+      for (const caller of cliCallers) {
+        const result = await caller.run()
+        expect(result, `${caller.name} must invoke the installed Holi executable`).toMatchObject({
+          stdout: `|${argument}\n`,
           stderr: '',
         })
       }
       expect(jobs).toEqual(['abcd1234', 'abcd1234'])
-      expect(cliJobs).toEqual(['abcd1234', 'abcd1234'])
+      expect(cliJobs).toEqual(
+        expect.arrayContaining([
+          `abcd1234|Ada's café "vault" 0`,
+          `abcd1234|Ada's café "vault" 1`,
+          `|${argument}`,
+          `|${argument}`,
+          `|${argument}`,
+        ]),
+      )
       await vi.waitFor(() => expect(statuses).toEqual(['abcd1234', 'abcd1234']))
     } finally {
       await server.stop()

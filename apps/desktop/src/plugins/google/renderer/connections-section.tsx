@@ -2,11 +2,8 @@
  * The Connections section of the settings tab: the Google account behind mail
  * and calendar. The plugin contributes it as a settings section.
  *
- * **Two scopes, and the panel's job is keeping them apart**. An account is
- * connected on this *machine*; a *vault* uses one of them. So the rows offer
- * the machine's accounts, the connect button's label follows that list, and
- * every act here — using, unlinking — is this vault's alone except "Remove from
- * Holi", which is the machine's.
+ * Connections and account actions are scoped to the open vault. Connecting
+ * always requests consent; this section never lists accounts from other vaults.
  *
  * The two-phase shape mirrors `SignIn`: `connect` returns as soon as the
  * browser is open, `awaitConnect` resolves when the grant lands. Nothing here
@@ -20,16 +17,14 @@
  * Drawn as ReUI's settings-6: the service as a framed row with its mark on
  * the same tile the onboarding's plugin cards use (`IconTile`, `pluginMark`),
  * its state and one action, and what follows from connecting as muted rows
- * inside the same frame. Last, the OAuth client this machine connects with
- * (`OAuthClient`), Holi's or the person's own.
+ * inside the same frame. Last, the OAuth client this vault uses for future
+ * connections (`OAuthClient`), Holi's or the person's own.
  */
 import { useAtomValue } from 'jotai'
 import { ImageIcon, ShieldCheckIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Frame, FramePanel } from '@/components/ui/frame'
-import { ConfirmDialog } from '@/composites/confirm-dialog'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
   Item,
@@ -50,7 +45,6 @@ import {
 import { useSetAtom } from 'jotai'
 import { googleCap } from './google-cap'
 import { useGoogleAccount } from './account'
-import { initialsOf } from './mail/data'
 import { OAuthClient } from './oauth-client'
 import {
   useAlwaysAllowedSenders,
@@ -81,7 +75,6 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
     readError,
     missingScopes,
     needsReconnect,
-    accounts,
     currentSub,
     refresh: refreshGoogle,
     refreshAndWait,
@@ -97,10 +90,6 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
   const invalidateGeneration = () => {
     generation.current++
   }
-  /** The account a "Remove from Holi" is asking about: it revokes at
-   *  Google, so it is confirmed first. */
-  const [removing, setRemoving] = useState<{ sub: string; email: string } | null>(null)
-
   useEffect(() => {
     if (!visible) {
       invalidateGeneration()
@@ -108,15 +97,17 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
       connecting.current = null
       if (remote !== null) void googleCap.cancelConnect(remote)
       setPhase({ kind: 'idle' })
-      setRemoving(null)
     }
+    setPhase({ kind: 'idle' })
+    setChangingAccount(false)
+    setLifecycleError(null)
     return () => {
       invalidateGeneration()
       const remote = connecting.current
       connecting.current = null
       if (remote !== null) void googleCap.cancelConnect(remote)
     }
-  }, [visible])
+  }, [visible, remote, currentSub])
 
   const connect = async () => {
     if (remote === null) return
@@ -125,7 +116,9 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
     setPhase({ kind: 'connecting' })
     connecting.current = remote
     try {
-      await googleCap.connect(remote)
+      await withSavedBuffers(async () => {
+        if (ownsAttempt()) await googleCap.connect(remote)
+      })
       if (!ownsAttempt()) return
       // Settles when the browser comes back, the person cancels, or the flow
       // times out: there is no IPC timeout to race.
@@ -156,14 +149,17 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
     change: () => Promise<unknown>,
     showLifecycleError = true,
   ): Promise<string | null> => {
+    const owner = generation.current
+    const ownsChange = () => generation.current === owner
     setChangingAccount(true)
     setLifecycleError(null)
     let mutationStarted = false
     try {
       await withSavedBuffers(async () => {
+        if (!ownsChange()) return
         mutationStarted = true
         await change()
-        await refreshAndWait()
+        if (ownsChange()) await refreshAndWait()
       })
       return null
     } catch (err) {
@@ -171,10 +167,10 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
       const message = mutationStarted
         ? `Could not confirm the Google account change.${detail} Check the connection before retrying.`
         : `Could not save your mail draft, so the Google account was not changed.${detail} The current account remains connected. Save or copy the draft, then retry.`
-      if (showLifecycleError) setLifecycleError(message)
+      if (showLifecycleError && ownsChange()) setLifecycleError(message)
       return message
     } finally {
-      setChangingAccount(false)
+      if (ownsChange()) setChangingAccount(false)
     }
   }
 
@@ -183,35 +179,6 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
     if (remote === null) return
     await changeAccount(() => googleCap.disconnectVault(remote))
   }
-
-  /** Reuse an account already connected here. No consent: the grant exists. */
-  const linkAccount = async (sub: string) => {
-    if (remote === null) return
-    await changeAccount(() => googleCap.useAccount(remote, { sub }))
-  }
-
-  /**
-   * Revoke at Google and drop it everywhere. The destructive one, and the only
-   * one confirmed: unlinking this vault (Disconnect) is undone by "Use in this
-   * vault", but a revoke takes mail and calendar from every vault using the
-   * account and needs a fresh consent to get back.
-   */
-  const removeAccount = async (sub: string) => {
-    if (remote === null) return
-    if ((await changeAccount(() => googleCap.removeAccount(remote, { sub }))) === null)
-      setRemoving(null)
-  }
-
-  /** Connected here, but not the one this vault uses. */
-  const others = accounts.filter((a) => a.sub !== currentSub)
-
-  /**
-   * The connect button's label follows the **machine** list, not this vault's
-   * link: "a different account" only makes sense when there is one here
-   * to differ from. While `accounts` is loading it is empty and the button is
-   * disabled, so the plain label is also the safe one.
-   */
-  const connectLabel = accounts.length > 0 ? 'Connect a different account…' : 'Connect'
 
   const connected = account != null
   const busy = phase.kind === 'connecting' || loading || changingAccount
@@ -243,14 +210,14 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                 ) : phase.kind === 'connecting' ? (
                   'Waiting for your browser…'
                 ) : needsReconnect ? (
-                  'Google stopped accepting this connection. Connect again, or forget it.'
+                  'Google stopped accepting this connection. Connect again to this vault.'
                 ) : loading ? (
                   'Checking your Google connection…'
                 ) : (
                   'Read and triage your Gmail, read your Calendar. This vault only.'
                 )}
               </ItemDescription>
-              {!connected && phase.kind === 'idle' && phase.error !== undefined && (
+              {phase.kind === 'idle' && phase.error !== undefined && (
                 <p role="alert" className="text-sm text-pretty text-destructive">
                   {phase.error}
                 </p>
@@ -278,17 +245,16 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
               ) : (
                 <>
                   <Button size="sm" disabled={busy} onClick={() => void connect()}>
-                    {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
+                    {phase.kind === 'connecting' ? 'Connecting…' : 'Connect'}
                   </Button>
                   {needsReconnect && (
                     <Button
                       variant="outline"
                       size="sm"
-                      aria-label="Forget this connection"
                       disabled={busy}
                       onClick={() => void disconnect()}
                     >
-                      Forget
+                      Forget this vault's connection
                     </Button>
                   )}
                 </>
@@ -344,68 +310,15 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
             />
           )}
 
-          {/* Accounts connected on this machine that this vault is not using.
-              Picking one is a mapping, not a consent round trip, so it is one
-              click and deliberately not dressed up as connecting. */}
-          {others.map((other) => (
-            <Item key={other.sub} variant="muted">
-              <ItemMedia>
-                <Avatar>
-                  <AvatarFallback className="text-xs font-semibold">
-                    {initialsOf('', other.email)}
-                  </AvatarFallback>
-                </Avatar>
-              </ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle className="break-all">{other.email}</ItemTitle>
-                <ItemDescription>Connected on this machine</ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => void linkAccount(other.sub)}
-                >
-                  Use in this vault
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => setRemoving({ sub: other.sub, email: other.email })}
-                >
-                  Remove from Holi
-                </Button>
-              </ItemActions>
-            </Item>
-          ))}
-
-          {/* Machine-wide default for future connections; existing grants keep their client. */}
+          {/* This vault’s future-consent client; existing grants keep their issuer. */}
           <OAuthClient
+            key={remote}
             beforeChange={(change) => changeAccount(change, false)}
             disabled={busy}
             visible={visible}
           />
         </div>
       </FramePanel>
-
-      <ConfirmDialog
-        open={visible && removing !== null}
-        onOpenChange={(open) => {
-          if (!open) setRemoving(null)
-        }}
-        title={
-          <>
-            Remove <span className="break-all">{removing?.email}</span> from Holi?
-          </>
-        }
-        description="Holi revokes its access at Google. Every vault using this account stops reading mail and calendar."
-        confirmLabel="Remove account"
-        destructive
-        // Stays open until Google has answered.
-        onConfirm={() => (removing === null ? undefined : removeAccount(removing.sub))}
-      />
     </Frame>
   )
 }

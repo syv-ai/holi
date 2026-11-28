@@ -20,7 +20,15 @@ import { useRetainedSurfaces } from '@/features/shell/retained-surfaces'
 // eslint-disable-next-line no-restricted-imports
 import { googleRenderer } from '../../../../../plugins/google/renderer/index'
 import { activeRemoteAtom } from '@/plugin-api'
+// eslint-disable-next-line no-restricted-imports
+import { refreshGoogleAtom } from '../../../../../plugins/google/renderer/account'
 import { openSurfaceAtom } from '@/state/surfaces'
+import { settingsSectionAtom } from '@/state/settings-section'
+// This persistence integration mounts the plugin's real Connections section.
+// eslint-disable-next-line no-restricted-imports
+import { ConnectionsSection } from '../../../../../plugins/google/renderer/connections-section'
+// eslint-disable-next-line no-restricted-imports
+import { normalizeMailMarkerPreferences } from '../../../../../plugins/google/shared/mail-markers'
 // The app bridge is the real entrypoint for `holi.open('mail')`.
 // eslint-disable-next-line no-restricted-imports
 import { openTarget } from '../../../../../plugins/apps/renderer/bridge-host'
@@ -34,27 +42,30 @@ const archiveMock = vi.fn()
 const trashMock = vi.fn()
 const saveDraftMock = vi.fn()
 const saveDraftAccounts: string[] = []
-const useAccountMock = vi.fn()
-const toastMock = vi.fn()
+const disconnectMock = vi.fn()
+const toastMock = Object.assign(
+  vi.fn<(...args: unknown[]) => string>(() => 'toast-id'),
+  { dismiss: vi.fn() },
+)
 const openExternal = vi.fn()
 
-let currentAccount = 'a'
+let currentAccount: string | null = 'a'
 const google: Record<string, (params: unknown) => unknown> = {
   status: () => ({
-    account: {
-      email: currentAccount === 'a' ? 'ada@syv.ai' : 'ada@home.test',
-      sub: currentAccount,
-    },
+    account:
+      currentAccount === null
+        ? null
+        : {
+            email: currentAccount === 'a' ? 'ada@syv.ai' : 'ada@home.test',
+            sub: currentAccount,
+          },
     missingScopes: [],
+    currentSub: currentAccount,
+    needsReconnect: false,
   }),
-  allAccounts: () => ({
-    accounts: [
-      { sub: 'a', email: 'ada@syv.ai' },
-      { sub: 'b', email: 'ada@home.test' },
-    ],
-    current: currentAccount,
-  }),
-  useAccount: (p) => useAccountMock(p),
+  client: () => ({ id: 'fixture.apps.googleusercontent.com', source: 'own' }),
+  mailMarkerPreferences: () => normalizeMailMarkerPreferences(undefined),
+  disconnectVault: () => disconnectMock(),
   search: (p) => searchMock(p),
   thread: (p) => threadMock(p),
   drafts: () => draftsMock(),
@@ -68,6 +79,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   archive: (p) => archiveMock(p),
   trash: (p) => trashMock(p),
   saveDraft: (p) => {
+    if (currentAccount === null) throw new Error('No connected account')
     saveDraftAccounts.push(currentAccount)
     return saveDraftMock(p)
   },
@@ -78,7 +90,9 @@ const google: Record<string, (params: unknown) => unknown> = {
 
 vi.mock('sonner', async (original) => ({
   ...(await original<typeof import('sonner')>()),
-  toast: (...args: unknown[]) => toastMock(...args),
+  toast: Object.assign((...args: unknown[]) => toastMock(...args), {
+    dismiss: (...args: unknown[]) => toastMock.dismiss(...args),
+  }),
 }))
 
 vi.mock('@/lib/trpc', () => ({
@@ -169,8 +183,8 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   saveDraftMock.mockReset().mockResolvedValue({ id: 'draft-1' })
   saveDraftAccounts.length = 0
-  useAccountMock.mockReset().mockImplementation(({ sub }: { sub: string }) => {
-    currentAccount = sub
+  disconnectMock.mockReset().mockImplementation(() => {
+    currentAccount = null
     return { ok: true }
   })
   toastMock.mockReset()
@@ -405,7 +419,12 @@ test.each([
   const { show } = mountMailTabs()
   await screen.findByRole('list', { name: 'Inbox' })
   await user.click(screen.getByRole('button', { name: triggerName }))
-  expect(await screen.findByRole('menu')).toBeInTheDocument()
+  const menu = await screen.findByRole('menu')
+  expect(menu).toBeInTheDocument()
+  if (_name === 'account') {
+    expect(within(menu).getByRole('menuitem', { name: 'Manage connections' })).toBeInTheDocument()
+    expect(within(menu).queryByRole('menuitem', { name: 'ada@home.test' })).toBeNull()
+  }
 
   show(otherKey)
   const foreground = await screen.findByRole('textbox', { name: 'Other app state' })
@@ -452,17 +471,16 @@ test('parked Mail closes its More actions menu without losing the open thread', 
   expect(screen.queryByRole('menu')).toBeNull()
 })
 
-test('switching Google accounts releases the previous account’s Mail state', async () => {
-  const user = userEvent.setup()
-  mountMailTabs()
+test('replacing the Google connection releases its previous Mail state', async () => {
+  const { store } = mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
-  await user.click(within(list).getByText('Q2 budget'))
+  await userEvent.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
   const frame = await screen.findByLabelText<HTMLIFrameElement>('Message from Jane Doe')
   searchMock.mockResolvedValue(page([summary({ id: 'second', subject: 'Second account mail' })]))
 
-  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
+  currentAccount = 'b'
+  act(() => store.set(refreshGoogleAtom))
   await screen.findByText('Second account mail', { selector: 'p' })
   expect(list.isConnected).toBe(false)
   expect(frame.isConnected).toBe(false)
@@ -499,13 +517,7 @@ test('a pristine inline reply is released when its thread changes and is not res
   await user.click(within(list).getByText('Second thread'))
   await screen.findByRole('heading', { name: 'Second thread' })
   expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
-  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
-  expect(await screen.findByRole('menuitem', { name: 'ada@home.test' })).not.toHaveAttribute(
-    'aria-disabled',
-    'true',
-  )
 
-  await user.keyboard('{Escape}')
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
   expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
@@ -523,11 +535,6 @@ test('archiving a thread releases its pristine inline reply guard', async () => 
   await user.click(screen.getByRole('button', { name: 'Archive thread' }))
   await screen.findByText('Pick a thread to read it')
   expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
-  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
-  expect(await screen.findByRole('menuitem', { name: 'ada@home.test' })).not.toHaveAttribute(
-    'aria-disabled',
-    'true',
-  )
 })
 
 test('a native mail notice focuses Inbox through the retained composer save guard', async () => {
@@ -536,7 +543,7 @@ test('a native mail notice focuses Inbox through the retained composer save guar
   await screen.findByRole('list', { name: 'Inbox' })
   await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
   await user.click(await screen.findByRole('menuitemradio', { name: 'Sent' }))
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ mailbox: 'sent' }))
+  await screen.findByRole('button', { name: 'Mailbox: Sent' })
   await user.click(screen.getByRole('button', { name: 'Compose new email' }))
   const composer = await screen.findByRole('region', { name: 'Compose mail' })
   const subject = within(composer).getByRole('textbox', { name: 'Subject' })
@@ -569,48 +576,45 @@ test('a native mail notice focuses Inbox through the retained composer save guar
   expect(screen.getByRole('button', { name: 'Mailbox: Inbox' })).toBeInTheDocument()
 })
 
-test('an open inline reply prevents switching accounts until its save succeeds and it closes', async () => {
+test('Connections preserves a parked reply when flushing fails and disconnects only after it saves', async () => {
   const user = userEvent.setup()
-  mountMailTabs()
+  const { store, show } = mountMailTabs()
+
   const list = await screen.findByRole('list', { name: 'Inbox' })
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
   await user.click(screen.getByRole('button', { name: 'Reply all' }))
-
   const composer = await screen.findByRole('region', { name: 'Compose mail' })
   const subject = within(composer).getByRole('textbox', { name: 'Subject' })
   await user.clear(subject)
   await user.type(subject, 'Private reply text')
-  saveDraftMock.mockRejectedValueOnce(new Error('offline'))
+  saveDraftMock.mockRejectedValue(new Error('offline'))
   fireEvent.blur(subject)
   await screen.findByText('Not saved')
+
   await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
-  const otherAccount = await screen.findByRole('menuitem', { name: 'ada@home.test' })
-  expect(otherAccount).toHaveAttribute('aria-disabled', 'true')
-  expect(screen.getByText('Close your reply before switching accounts.')).toBeInTheDocument()
-  await user.click(otherAccount)
-  expect(useAccountMock).not.toHaveBeenCalled()
-  expect(saveDraftAccounts).not.toContain('b')
-  expect(
-    saveDraftMock.mock.calls.some(
-      ([params]) => (params as { mail: { subject: string } }).mail.subject === 'Private reply text',
-    ),
-  ).toBe(true)
+  await user.click(await screen.findByRole('menuitem', { name: 'Manage connections' }))
+  expect(store.get(settingsSectionAtom)).toBe('connections')
+  show(otherKey)
+  // Connections and parked Mail share the vault store and real buffer registry.
+  render(
+    <Provider store={store}>
+      <ConnectionsSection />
+    </Provider>,
+  )
+  await user.click(await screen.findByRole('button', { name: 'Disconnect this vault' }))
+  await screen.findByText(/Could not save your mail draft/)
+  expect(disconnectMock).not.toHaveBeenCalled()
   expect(composer.isConnected).toBe(true)
   expect(subject).toHaveValue('Private reply text')
+  expect(saveDraftAccounts).not.toContain('b')
 
   saveDraftMock.mockResolvedValue({ id: 'draft-1' })
-  fireEvent.blur(subject)
-  await screen.findByText('Saved')
-  fireEvent.keyDown(composer, { key: 'Escape' })
-  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
-
-  searchMock.mockResolvedValue(page([summary({ id: 'second', subject: 'Second account mail' })]))
-  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
-  await screen.findByText('Second account mail', { selector: 'p' })
-  expect(useAccountMock).toHaveBeenCalledWith(expect.objectContaining({ sub: 'b' }))
-  expect(screen.getByText('Pick a thread to read it')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Disconnect this vault' }))
+  await screen.findByRole('button', { name: 'Connect' })
+  await waitFor(() => expect(composer.isConnected).toBe(false))
+  expect(disconnectMock).toHaveBeenCalledTimes(1)
+  expect(saveDraftAccounts.every((account) => account === 'a')).toBe(true)
 })
 
 test('Mail and opted-in ordinary apps retain until closed, then reopen fresh', async () => {

@@ -2,7 +2,7 @@
  * Transcribe's renderer side: the Meetings tab (live captions, the topics
  * and minutes, the tasks sent from them), its app in the sidebar, a meeting as a
  * folder the vault's tree opens and its New menu makes (`meeting-claim.ts`),
- * Start and Stop meeting in the command menu, a status-bar item while a
+ * Start and Stop meeting in the command menu, a top-bar item while a
  * meeting records, and the meetings kept in step with main while the vault
  * is open.
  */
@@ -14,7 +14,8 @@ import { meetingMenuEntriesAtom, runMeetingMenuEntryAtom } from './commands'
 import { MEETING_CLAIM, meetingName } from './meeting-claim'
 import { MeetingsSurface } from './meetings-surface'
 import { RecordingStatusItem } from './recording-status-item'
-import { discardRecordingAtom, recorderAtom, recordingAtom, stopRecordingAtom } from './recorder'
+import { recordingAtom } from './recorder'
+import { discardRecordingAtom, recorderAtom, stopRecordingAtom } from './recorder'
 import { MEETINGS_APP, MEETINGS_SURFACE, meetingsVault, transcribeEvents } from './state'
 
 export const transcribeRenderer: RendererPlugin = {
@@ -57,7 +58,7 @@ export const transcribeRenderer: RendererPlugin = {
     },
   ],
   commandMenu: { entries: meetingMenuEntriesAtom, run: runMeetingMenuEntryAtom },
-  statusItems: [{ id: 'recording', side: 'left', order: 10, Component: RecordingStatusItem }],
+  titleBarItem: { visible: recordingAtom, Component: RecordingStatusItem },
   leaveGuard: atom((get) => (get(recordingAtom) ? 'A meeting is recording.' : null)),
   vault: meetingsVault,
 }

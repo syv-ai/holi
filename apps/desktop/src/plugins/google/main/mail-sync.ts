@@ -25,10 +25,13 @@ import {
   listThreadIds,
   mailboxLabel,
   PATCHABLE_LABELS,
+  supportsMailListSync,
   type ListThreadsOptions,
   type MailPage,
   type MailThreadSummary,
 } from './gmail'
+
+import type { MailListContext, MailListCursor, MailListResult } from './mail-list-types'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
@@ -64,6 +67,7 @@ interface RawHistoryMessage {
 }
 
 interface RawHistoryRecord {
+  messages?: RawHistoryMessage[]
   messagesAdded?: { message?: RawHistoryMessage }[]
   messagesDeleted?: { message?: RawHistoryMessage }[]
   labelsAdded?: { message?: RawHistoryMessage; labelIds?: string[] }[]
@@ -87,7 +91,7 @@ export async function syncThreads(
   cache: GoogleCache,
   options: ListThreadsOptions = {},
   knownAddresses?: string[],
-  context?: { freshPage?: boolean },
+  context?: { freshPage?: boolean; uiList?: MailListContext },
 ): Promise<MailPage> {
   // Recipient classification depends on the resolved account identities. Keep
   // summaries from an outage/previous identity from becoming authoritative once
@@ -102,6 +106,10 @@ export async function syncThreads(
             .join(',') || 'unknown'
         }`
   const key = `${cacheKey(options)}${identityKey}`
+
+  if (context?.uiList !== undefined && supportsMailListSync(options)) {
+    return syncLoadedList(api, cache, options, key, context.uiList, knownAddresses)
+  }
 
   // "Load more" asks for what is past the tail: the one thing a last-N cache
   // does not hold. Explicit searches go to Gmail because mailbox history cannot
@@ -202,6 +210,132 @@ export async function syncThreads(
   // A delta IS a sync: these threads are current as of this moment, even
   // though most of them were served from disk rather than refetched.
   return { threads, nextPageToken: null, syncedAt: new Date().toISOString() }
+}
+
+/** The caller owns the loaded set, not the bounded disk cache. Every result is
+ * all-or-nothing: no cursor/cache mutation until all Google reads succeed. */
+async function syncLoadedList(
+  api: GoogleApi,
+  cache: GoogleCache,
+  options: ListThreadsOptions,
+  key: string,
+  context: MailListContext,
+  knownAddresses?: string[],
+): Promise<MailPage> {
+  const { owner, request } = context
+  if (!owner) throw new Error('loaded mail list requires an owner')
+  const loaded = new Set(request.loadedIds)
+  const previous = request.cursor
+  const validCursor =
+    previous?.version === 1 &&
+    previous.owner === owner &&
+    previous.key === key &&
+    typeof previous.historyId === 'string' &&
+    /^\d+$/.test(previous.historyId)
+  const paginating = options.pageToken !== undefined
+  if (paginating && request.refresh === true) throw new Error('cannot refresh a continuation page')
+  if (paginating && !validCursor)
+    throw new Error('mail continuation cursor does not match this list')
+
+  // Never advance history on pagination. On initial load/refresh capture BEFORE
+  // the list so changes arriving during its reads will be replayed next time.
+  let cursor: MailListCursor
+  if (paginating) cursor = previous!
+  else {
+    const profile = await api.get<{ historyId?: string }>(`${BASE}/profile`)
+    if (profile.historyId === undefined || !/^\d+$/.test(profile.historyId)) {
+      throw new Error('Gmail did not return a history cursor')
+    }
+    cursor = { version: 1, owner, key, historyId: profile.historyId }
+  }
+
+  const revalidated = new Set<string>()
+  let mode: MailListResult['mode'] = 'page'
+  if (request.refresh === true) {
+    mode = validCursor ? 'delta' : 'coverage'
+    if (validCursor) {
+      let pageToken: string | undefined
+      const seenTokens = new Set<string>()
+      try {
+        do {
+          const page = await api.get<RawHistoryPage>(`${BASE}/history`, {
+            startHistoryId: previous!.historyId,
+            pageToken,
+          })
+          for (const record of page.history ?? []) {
+            const messages = [
+              ...(record.messages ?? []),
+              ...(record.messagesAdded ?? []).flatMap((entry) => entry.message ?? []),
+              ...(record.messagesDeleted ?? []).flatMap((entry) => entry.message ?? []),
+              ...(record.labelsAdded ?? []).flatMap((entry) => entry.message ?? []),
+              ...(record.labelsRemoved ?? []).flatMap((entry) => entry.message ?? []),
+            ]
+            for (const message of messages) {
+              if (message.threadId !== undefined && loaded.has(message.threadId)) {
+                revalidated.add(message.threadId)
+              }
+            }
+          }
+          pageToken = page.nextPageToken
+          if (pageToken !== undefined) {
+            if (seenTokens.has(pageToken)) throw new Error('Gmail repeated a history continuation')
+            seenTokens.add(pageToken)
+          }
+        } while (pageToken !== undefined)
+      } catch (error) {
+        if (!(error instanceof GoogleApiError && error.status === 404)) throw error
+        mode = 'coverage'
+      }
+    }
+    if (mode === 'coverage') for (const id of loaded) revalidated.add(id)
+  }
+
+  let pageToken = options.pageToken
+  let nextPageToken: string | null = null
+  const ids = new Set<string>()
+  const seenTokens = new Set<string>()
+  // A continuation may have shifted backwards after arrivals. Discard already
+  // loaded IDs BEFORE hydration. At most loaded coverage plus one page of work,
+  // never a scan to the end of the mailbox. Empty/repeating broken pages fail
+  // rather than falsely claiming exhaustion or publishing partial success.
+  for (let remaining = loaded.size + 1; remaining > 0; remaining--) {
+    const page = await listThreadIds(api, { ...options, pageToken })
+    for (const id of page.ids) {
+      // Refresh lists discover arrivals, not an excuse to download unchanged
+      // loaded rows again. History (or coverage recovery) selects those below.
+      if ((!paginating && request.refresh !== true) || !loaded.has(id)) ids.add(id)
+    }
+    nextPageToken = page.nextPageToken
+    if (!paginating || ids.size > 0 || nextPageToken === null) break
+    if (seenTokens.has(nextPageToken) || remaining === 1) {
+      throw new Error('Gmail continuation exceeded loaded coverage')
+    }
+    seenTokens.add(nextPageToken)
+    pageToken = nextPageToken
+  }
+  for (const id of revalidated) ids.add(id)
+  const threads = await fetchThreadSummaries(api, [...ids], knownAddresses, options)
+  const admitted = new Set(threads.map((thread) => thread.id))
+  const removedIds = [...revalidated].filter((id) => !admitted.has(id))
+  // Separate from the legacy last-N cache: advancing its history would bless
+  // stale rows that this UI did not load/revalidate. writeThreads retains its
+  // existing 500-row bound; the response is NEVER truncated to that bound.
+  const diskKey = `ui:${key}`
+  const cached = cache.readThreads(diskKey) ?? []
+  const removed = new Set(removedIds)
+  const retained = cached.filter(
+    (thread) => loaded.has(thread.id) && !removed.has(thread.id) && !admitted.has(thread.id),
+  )
+  cache.writeThreads(
+    diskKey,
+    [...threads, ...retained].sort((a, b) => b.date.localeCompare(a.date)),
+  )
+  return {
+    threads,
+    nextPageToken,
+    syncedAt: new Date().toISOString(),
+    uiList: { mode, cursor, removedIds, revalidatedIds: [...revalidated] },
+  }
 }
 
 /**
