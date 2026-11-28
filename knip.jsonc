@@ -80,6 +80,9 @@
         "scripts/mdx-diagnostics-native-smoke.tsx",
         // Native GitHub safeStorage entry is built as an Electron SSR fixture.
         "scripts/github-storage-native-smoke-main.ts",
+        // Snapshot benchmark entries are bundled from filesystem paths by the MJS runner.
+        "scripts/vault-snapshot-bench-main.ts",
+        "scripts/vault-snapshot-bench-renderer.tsx",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "allowJs": true, "checkJs": false },
+  "include": [
+    "src/**/*.d.ts",
+    "scripts/vault-snapshot-bench-main.ts",
+    "scripts/vault-snapshot-bench-renderer.tsx",
+    "scripts/vault-snapshot-bench-rpc.ts",
+    "scripts/vault-snapshot-bench-adapter.ts",
+    "scripts/vault-snapshot-bench-analysis.mjs",
+    "scripts/vault-snapshot-bench-metrics.mjs",
+    "test/vault-snapshot-bench.test.ts"
+  ]
+}
