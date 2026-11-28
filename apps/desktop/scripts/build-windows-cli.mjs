@@ -44,7 +44,11 @@ if (process.platform === 'win32') {
       prefix = `call "${vcvars}" >nul && `
     }
     const command = `${prefix}cl.exe /nologo /O2 /W4 /WX /std:c17 /TC /Fo:"${join(stage, 'holi.obj')}" "${source}" /Fe:"${stagedExe}"`
-    execFileSync(cmd, ['/d', '/s', '/c', command], { stdio: 'inherit', timeout: 120000 })
+    execFileSync(cmd, ['/d', '/s', '/c', command], {
+      stdio: 'inherit',
+      timeout: 120000,
+      windowsVerbatimArguments: true,
+    })
     renameSync(stagedExe, target)
   } finally {
     rmSync(stage, { recursive: true, force: true })

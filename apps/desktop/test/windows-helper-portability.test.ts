@@ -121,6 +121,7 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
           name: 'cmd.exe',
           run: () =>
             execAsync(cmdExe, ['/d', '/s', '/c', `""${cli}" fixture who "${argument}""`], {
+              windowsVerbatimArguments: true,
               cwd: root,
               env: { ...nativeEnv, HOLI_BIN: cli },
               timeout: 10_000,
@@ -137,7 +138,7 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
                 '-NoProfile',
                 '-NonInteractive',
                 '-Command',
-                `& $env:HOLI_BIN fixture who '${argument.replaceAll("'", "''")}'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`,
+                `[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding; & $env:HOLI_BIN fixture who '${argument.replaceAll("'", "''")}'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`,
               ],
               {
                 cwd: root,
@@ -196,7 +197,9 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
         ).toMatchObject({ stdout: 'Opus · 42% context', stderr: '' })
         const label = `Ada's café "vault" ${index}`
         expect(
-          await shell([cli, 'fixture', 'who', label], '', { CLAUDE_JOB_DIR: jobDir }),
+          await shell([join(dirname(cli), 'holi'), 'fixture', 'who', label], '', {
+            CLAUDE_JOB_DIR: jobDir,
+          }),
         ).toMatchObject({
           stdout: `abcd1234|${label}\n`,
           stderr: '',

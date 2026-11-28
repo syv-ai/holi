@@ -140,7 +140,11 @@ async function proveCallers() {
     [
       'cmd',
       (args) =>
-        run(cmd, [
+        run(packagedNode, [
+          '-e',
+          `const r=require('node:child_process').spawnSync(process.argv[1],process.argv.slice(2),{encoding:'utf8',windowsVerbatimArguments:true});if(r.error)process.exit(1);process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1)`,
+          '--',
+          cmd,
           '/d',
           '/s',
           '/c',
