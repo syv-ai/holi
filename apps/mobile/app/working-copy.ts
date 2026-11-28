@@ -8,6 +8,8 @@ import {
   type VaultRelPath,
 } from '@holi/shared/mobile-path-safety'
 import { withVaultLock } from './vault-lock'
+import { withVaultOperation } from './operation-gate'
+import type { NativeFiles } from './native-files'
 
 export type WorkingCopyChange = {
   path: VaultRelPath
@@ -22,6 +24,22 @@ export type WorkingCopyStatus = {
 }
 
 /** Native adapter exposes semantic identity and status, never libgit2 constants. */
+export type PreparedWorkingCopyTree = {
+  treeOID: string
+  parentOID: string
+  branch: string
+  unchanged: boolean
+}
+
+export interface NativeTreePreparation {
+  prepareWorkingCopyTree(
+    root: string,
+    remote: string,
+    branch: string,
+    policy: (rawPath: string) => number,
+  ): Promise<PreparedWorkingCopyTree>
+}
+
 export interface NativeWorkingCopy {
   recoveryPending(root: string): Promise<boolean>
   canonicalRoot(root: string): Promise<string>
@@ -42,6 +60,53 @@ function safePath(raw: string): VaultRelPath | null {
   const path = vaultRelPath(shown)
   if (isSecretPath(path) || isLocalOnlyPath(path) || isInIgnoredDir(path)) return null
   return path
+}
+
+/** Prepare a complete native tree after storage recovery, refusing ambiguous or unsafe candidates. */
+export async function prepareWorkingCopyTree(
+  files: NativeFiles,
+  native: Pick<NativeWorkingCopy, 'identity'> & NativeTreePreparation,
+  vault: { remote: string; root: string; branch: string },
+): Promise<PreparedWorkingCopyTree> {
+  if (!isRemote(vault.remote) || !vault.branch) throw new Error('Invalid vault identity')
+  return withVaultOperation(files, vault.root, async (root) => {
+    const identity = await native.identity(root)
+    if (
+      !identity.attached ||
+      identity.branch !== vault.branch ||
+      !identity.remotes.includes(vault.remote)
+    )
+      throw new Error('Working copy identity does not match vault')
+    const policy = (raw: string): number => {
+      try {
+        const path = vaultRelPath(raw)
+        if (path !== raw) return -1
+        const folded = vaultRelPath(raw.normalize('NFC').toLocaleLowerCase('en-US'))
+        if (
+          isSecretPath(path) ||
+          isLocalOnlyPath(path) ||
+          isInIgnoredDir(path) ||
+          isSecretPath(folded) ||
+          isLocalOnlyPath(folded) ||
+          isInIgnoredDir(folded) ||
+          path.split('/').some((part) => /^\.holi-storage-/i.test(part))
+        )
+          return 0
+        return 1
+      } catch {
+        return -1
+      }
+    }
+    const result = await native.prepareWorkingCopyTree(root, vault.remote, vault.branch, policy)
+    if (
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(result.treeOID) ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(result.parentOID) ||
+      result.branch !== vault.branch ||
+      typeof result.unchanged !== 'boolean'
+    )
+      throw new Error('Native Git returned an invalid working-copy tree')
+    return result
+  })
 }
 
 /** Read-only status for an already-attached managed clone. Never performs storage recovery. */

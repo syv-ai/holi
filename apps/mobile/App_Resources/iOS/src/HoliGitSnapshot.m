@@ -43,7 +43,8 @@ static BOOL SafeConfig(NSString *text) {
     return YES;
 }
 
-static BOOL CopyDirectory(int source, int target, NSError **error, off_t *totalBytes, NSString *prefix) {
+static BOOL CopyDirectory(int source, int target, NSError **error, off_t *totalBytes, NSString *prefix, NSUInteger *entries, NSUInteger depth) {
+    if (depth > 64) return Fail(error, @"Git metadata exceeds depth limit");
     int scan = dup(source);
     if (scan < 0) return Fail(error, @"Cannot scan metadata directory");
     DIR *dir = fdopendir(scan);
@@ -54,6 +55,7 @@ static BOOL CopyDirectory(int source, int target, NSError **error, off_t *totalB
     while (ok && (entry = readdir(dir))) {
         NSString *name = [NSString stringWithUTF8String:entry->d_name];
         if ([name isEqualToString:@"."] || [name isEqualToString:@".."]) continue;
+        if (++*entries > 20000) { ok = Fail(error, @"Git metadata exceeds entry limit"); break; }
         if (!name || Forbidden(prefix.length ? [prefix stringByAppendingFormat:@"/%@", name] : name)) { ok = Fail(error, @"Unsupported Git metadata indirection"); break; }
         struct stat before, after;
         if (fstatat(source, entry->d_name, &before, AT_SYMLINK_NOFOLLOW) || (!S_ISDIR(before.st_mode) && !S_ISREG(before.st_mode))) { ok = Fail(error, @"Unsupported Git metadata entry"); break; }
@@ -63,7 +65,7 @@ static BOOL CopyDirectory(int source, int target, NSError **error, off_t *totalB
             int out = openat(target, entry->d_name, O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
             struct stat opened;
             if (in < 0 || out < 0 || fstat(in, &opened) || !Same(&before, &opened)) ok = Fail(error, @"Metadata directory changed during snapshot");
-            else ok = CopyDirectory(in, out, error, totalBytes, prefix.length ? [prefix stringByAppendingFormat:@"/%@", name] : name);
+            else ok = CopyDirectory(in, out, error, totalBytes, prefix.length ? [prefix stringByAppendingFormat:@"/%@", name] : name, entries, depth + 1);
             if (in >= 0) close(in); if (out >= 0) close(out);
             if (ok && (fstatat(source, entry->d_name, &after, AT_SYMLINK_NOFOLLOW) || !Same(&before, &after))) ok = Fail(error, @"Metadata directory changed during snapshot");
         } else {
@@ -106,7 +108,8 @@ static BOOL CopyDirectory(int source, int target, NSError **error, off_t *totalB
     mkdir(gitPath.fileSystemRepresentation,0700);
     int dest=open(gitPath.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     off_t totalBytes=0;
-    BOOL ok=dest>=0 && CopyDirectory(git,dest,error,&totalBytes,@"");
+    NSUInteger entries=0;
+    BOOL ok=dest>=0 && CopyDirectory(git,dest,error,&totalBytes,@"",&entries,0);
     close(git); if(dest>=0)close(dest);
     if(ok){
         NSString *config=[gitPath stringByAppendingPathComponent:@"config"];
