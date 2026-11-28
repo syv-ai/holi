@@ -481,6 +481,32 @@ describe('prepareManagedClone', () => {
     expect(await readFile(join(root, '.git/index'))).toEqual(indexBefore)
   })
 
+  it('prepares an inherited-autocrlf vault clone before applying a shipped update', async () => {
+    const origin = await makeRemote()
+    const source = await makeClone(origin, 'integrated-source')
+    await mkdir(dirname(join(source, shippedPath)), { recursive: true })
+    await writeFile(join(source, shippedPath), previousShipped)
+    await plainGit(source, ['add', shippedPath])
+    await plainGit(source, ['commit', '-m', 'add shipped file'])
+    await plainGit(source, ['push', 'origin', 'HEAD:main'])
+
+    const root = await tmp('holi-integrated-vault-')
+    const vaultPath = join(root, 'syv-ai', 'notes')
+    await mkdir(dirname(vaultPath), { recursive: true })
+    await run('git', ['-c', 'core.autocrlf=true', 'clone', origin, vaultPath])
+    expect((await readFile(join(vaultPath, shippedPath))).toString()).toBe(
+      previousShipped.replace(/\n/g, '\r\n'),
+    )
+
+    await prepareManagedClone(vaultPath)
+    const report = await updateShipped(vaultPath, [contents])
+
+    expect(report.conflicts).toEqual([])
+    expect([...report.updated, ...report.merged]).toEqual([shippedPath])
+    expect(await readFile(join(vaultPath, shippedPath), 'utf8')).toBe(updatedShipped)
+    expect(await plainGit(vaultPath, ['config', '--local', 'core.autocrlf'])).toBe('false')
+  })
+
   it('sets local autocrlf off and converts only eligible clean files idempotently', async () => {
     const origin = await makeRemote()
     const source = await makeClone(origin, 'source')

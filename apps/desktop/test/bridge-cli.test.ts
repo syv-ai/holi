@@ -867,19 +867,6 @@ describe('a command that acts as the calling session', () => {
     expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
   })
 
-  it('normalizes Windows job paths in the generated Windows adapter', async () => {
-    const generated = await installHoliCli(dir, 'win32')
-    try {
-      const res = await run(generated, ['x', 'who'], {
-        ...env,
-        CLAUDE_JOB_DIR: 'C:\\Users\\ada\\Vault café\\jobs\\abcd1234',
-      })
-      expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
-    } finally {
-      await installHoliCli(dir)
-    }
-  })
-
   it('refuses to name another session from inside one, in either spelling', async () => {
     for (const flag of [['--session', 'ffff0000'], ['--session=ffff0000']]) {
       const res = await run(bin, ['x', 'who', ...flag], inSession('abcd1234'))

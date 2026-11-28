@@ -229,7 +229,7 @@ const ONLY_READS_ITS_WORDS = new Set(['echo', 'printf', 'grep', 'egrep', 'fgrep'
  * finds `HOLI` and `…/Holi` as `holi`; the variable as written, since the
  * shell's names are case-sensitive. `holi-src` or `$HOLI_BINX` is not it.
  */
-const HOLI_WORD = /^(?:\$\{?HOLI_BIN\}?|(?:.*\/)?[Hh][Oo][Ll][Ii])$/
+const HOLI_WORD = /^(?:\$\{?HOLI_BIN\}?|(?:.*[\\/])?[Hh][Oo][Ll][Ii](?:\.[Ee][Xx][Ee])?)$/
 const EXPANDS = /[`$]/
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 /** Commands that run the command they are given: an expansion among their
