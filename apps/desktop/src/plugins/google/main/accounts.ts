@@ -615,6 +615,7 @@ export async function createGoogleAccounts(
     }
     pendingGrants.set(sub, grantEpoch)
     const unused = new Set([refreshToken])
+    let publicationUncertain = false
     try {
       return await serialize(async () => {
         if (!stillOwned()) {
@@ -643,6 +644,7 @@ export async function createGoogleAccounts(
         if (!stillOwned()) return false
         const priorAccounts = accounts
         sessions.delete(sub)
+        publicationUncertain = true
         await writeAccounts({ ...accounts, [sub]: { ...tokens, pendingConsent: true } })
         let undoLink: (() => Promise<void>) | undefined
         let committed = false
@@ -654,6 +656,7 @@ export async function createGoogleAccounts(
               // consent. Removal and client replacement drain it before retiring.
               await writeAccounts({ ...accounts, [sub]: tokens })
               committed = true
+              publicationUncertain = false
               unused.delete(refreshToken)
               return true
             }
@@ -664,6 +667,7 @@ export async function createGoogleAccounts(
               await undoLink?.()
               await writeAccounts(priorAccounts)
               restoreOwnership()
+              publicationUncertain = false
             }
           } catch (cleanupError) {
             throw new AggregateError(
@@ -678,6 +682,7 @@ export async function createGoogleAccounts(
           await undoLink?.()
           await writeAccounts(priorAccounts)
           restoreOwnership()
+          publicationUncertain = false
         }
         return false
       })
@@ -685,7 +690,9 @@ export async function createGoogleAccounts(
       // This transaction no longer owns its unused tokens. Only another
       // owner can protect them, not this transaction's quarantined row.
       if (pendingGrants.get(sub) === grantEpoch) pendingGrants.delete(sub)
-      for (const token of unused) await revokeUnusedGrant(sub, token)
+      // A failed rollback can leave durable authorization we cannot classify.
+      // Revocation affects the whole Google project, including the prior owner.
+      if (!publicationUncertain) for (const token of unused) await revokeUnusedGrant(sub, token)
     }
   }
 

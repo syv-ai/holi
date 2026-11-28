@@ -821,6 +821,37 @@ describe('the client credentials', () => {
 })
 
 describe('consent whose vault link fails', () => {
+  it('does not revoke a prior project grant when consent rollback cannot complete', async () => {
+    const path = join(dir, 'google-vault-accounts.json')
+    const vaults = createVaultAccounts(path)
+    const rig = await controlledConsent([auth()], undefined, undefined, vaults)
+    await rig.accounts.link(WORK, 'sub-1')
+    const link = vaults.link.bind(vaults)
+    vi.spyOn(vaults, 'link').mockImplementationOnce(async (remote, sub) => {
+      const undo = await link(remote, sub)
+      await mkdir(`${path}.tmp`)
+      return undo
+    })
+    const write = store.write.bind(store)
+    vi.spyOn(store, 'write').mockImplementation(async (rows) => {
+      const replacement = rows['sub-1']
+      if (replacement?.refreshToken === 'rt-replacement' && !('pendingConsent' in replacement))
+        throw new Error('consent commit refused')
+      await write(rows)
+    })
+    try {
+      const result = (await rig.accounts.connect(VAULT)).wait()
+      rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-replacement' }))
+      await expect(result).rejects.toBeInstanceOf(AggregateError)
+      expect(rig.revoked).toEqual([])
+      const restarted = await rig.restart()
+      await expect(restarted.bindingFor(VAULT)).resolves.toBeNull()
+      await expect(restarted.bindingFor(WORK)).resolves.toBeNull()
+    } finally {
+      await rm(`${path}.tmp`, { recursive: true, force: true })
+    }
+  })
+
   it('preserves the committed grant and links when a replacement link write fails', async () => {
     const path = join(dir, 'google-vault-accounts.json')
     const vaults = createVaultAccounts(path)
