@@ -390,7 +390,13 @@ describe('ActiveVault — snapshot', () => {
       '---\ntitle: Ship it\nstatus: todo\n---\n\nbody\n',
       'utf8',
     )
-    await snaps.next()
+    // Include a snapshot that was already pushed before this wait began.
+    await waitFor(
+      'the parsed task snapshot',
+      () =>
+        snaps.last.claimed.tasks?.items.some((task) => task.path === 'task.ship-it.md') ?? false,
+      SETTLE,
+    )
 
     expect(snaps.last.claimed.tasks!.items.map((t) => t.path)).toEqual(['task.ship-it.md'])
   })
