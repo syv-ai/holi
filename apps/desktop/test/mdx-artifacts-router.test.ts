@@ -1,6 +1,7 @@
 import { mkdir, rename, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parse } from 'acorn'
+import { MAX_MDX_ARTIFACT_BYTES } from '@holi/shared'
 import { expect, it } from 'vitest'
 import { gate, REMOTE, resourceRig } from './fixtures/mdx-router'
 
@@ -144,7 +145,7 @@ it.each([
       kind === 'aggregate source limit'
         ? `/*${' '.repeat(200 * 1024)}*/\nexport const x = 1`
         : kind === 'emitted code limit'
-          ? `export default () => <>${'<i>a</i>'.repeat(15000)}</>`
+          ? `export default () => <>${'\u0001'.repeat(100 * 1024)}</>`
           : 'export const x = 1'
     const extension = kind === 'emitted code limit' ? 'jsx' : 'js'
     for (let index = 0; index < count; index++)
@@ -167,6 +168,22 @@ it.each([
     source = "import './part.js'\n"
   }
   const owner = await rig.acquire()
+  if (kind === 'emitted code limit') {
+    const single = await rig.mdx.compileModules({
+      ...owner,
+      generation: 1,
+      source: "import './part0.jsx'\n",
+    })
+    expect(single.diagnostics).toEqual([])
+    expect(single.artifact).toBeDefined()
+    const graph = await rig.mdx.acquireArtifact({ ...owner, ...single.artifact! })
+    const emittedBytes = graph.modules.reduce(
+      (total, module) => total + new TextEncoder().encode(module.code).byteLength,
+      0,
+    )
+    expect(emittedBytes).toBeLessThan(MAX_MDX_ARTIFACT_BYTES)
+    expect(emittedBytes * 4).toBeGreaterThan(MAX_MDX_ARTIFACT_BYTES)
+  }
   const result = await rig.mdx.compileModules({ ...owner, generation: 1, source })
   expect(result.diagnostics.length).toBeGreaterThan(0)
   expect(result.artifact).toBeUndefined()
