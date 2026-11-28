@@ -1445,6 +1445,24 @@ it('rejects an old binding after the real vault mapping switches A → B → A d
   expect(state.sendAttempts + state.calendarPatchAttempts).toBe(0)
 })
 
+it('keeps invitation authorization when only the future-connect client changes', async () => {
+  const { state, accounts, read, respond } = await rig()
+  state.events.set('primary', [event()])
+  const before = await read()
+  expect(before).toMatchObject({ canRespond: true })
+
+  await accounts.setClient({ id: 'replacement.apps.googleusercontent.com' })
+
+  expect(await read()).toMatchObject({
+    canRespond: true,
+    bindingRevision: before!.bindingRevision,
+  })
+  await respond('accepted')
+  expect(await read()).toMatchObject({ responseStatus: 'accepted' })
+  expect(state.calendarPatchAttempts).toBe(1)
+  expect(state.sendAttempts).toBe(0)
+})
+
 it('cannot reopen or answer a Mail invitation while its OAuth grant is being revoked', async () => {
   const { state, accounts, read, respond, restart } = await rig()
   state.events.set('primary', [event()])
@@ -1461,8 +1479,8 @@ it('cannot reopen or answer a Mail invitation while its OAuth grant is being rev
     start()
     return release
   }
-  const replacement = 'replacement.apps.googleusercontent.com'
-  const change = accounts.setClient({ id: replacement })
+  const previousClient = accounts.client()
+  const change = accounts.removeAccount('receiver')
   try {
     await revoking
     expect(old?.isCurrent()).toBe(false)
@@ -1479,8 +1497,9 @@ it('cannot reopen or answer a Mail invitation while its OAuth grant is being rev
     finish()
     await change
   }
-  expect(accounts.client()).toEqual({ id: replacement, source: 'own' })
-  expect(accounts.list()).toEqual([])
+  expect(accounts.client()).toEqual(previousClient)
+  expect(accounts.list().map(({ sub }) => sub)).toEqual(['other'])
+  expect(accounts.sessionForSub('other')).not.toBeNull()
   for (const vault of [remote, 'owner/second-vault']) {
     await expect(accounts.bindingFor(vault)).resolves.toBeNull()
     expect(await accounts.overview(vault)).toMatchObject({ state: 'not-connected' })
