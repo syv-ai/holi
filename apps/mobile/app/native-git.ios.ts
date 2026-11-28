@@ -41,6 +41,45 @@ export const nativeGit = {
   version(): string {
     return HoliNativeGit.alloc().init().embeddedVersion()
   },
+  async runSelectedBranch(
+    operation: 'clone' | 'fetch' | 'push',
+    root: string,
+    remote: string,
+    owner: string,
+    repositoryName: string,
+    branch: string,
+    username: string,
+    password: string,
+  ): Promise<NativeGitResult> {
+    const result = checked((error) =>
+      HoliNativeGit.alloc()
+        .init()
+        .runSelectedBranchOperationRootRemoteOwnerRepositoryNameBranchUsernamePasswordError(
+          operation,
+          root,
+          remote,
+          owner,
+          repositoryName,
+          branch,
+          username,
+          password,
+          error,
+        ),
+    )
+    if (!result) throw new Error('Native Git returned no operation result')
+    return {
+      operation,
+      credentialChallenge: Boolean(result.objectForKey('credentialChallenge')),
+      success: Boolean(result.objectForKey('success')),
+      branch: String(result.objectForKey('branch')),
+      fetchTarget: String(result.objectForKey('fetchTarget')),
+      headTarget: String(result.objectForKey('headTarget')),
+      hooksDisabled: Boolean(result.objectForKey('hooksDisabled')),
+      filtersDisabled: Boolean(result.objectForKey('filtersDisabled')),
+      helpersDisabled: Boolean(result.objectForKey('helpersDisabled')),
+      remoteConstrained: Boolean(result.objectForKey('remoteConstrained')),
+    }
+  },
   async run(
     operation: 'clone' | 'fetch' | 'push' | 'poison',
     root: string,

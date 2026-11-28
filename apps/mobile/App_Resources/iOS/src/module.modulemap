@@ -6,6 +6,14 @@ module HoliNativeCredentials {
   header "HoliNativeCredentials.h"
   export *
 }
+module HoliManagedIdentity {
+  header "HoliManagedIdentity.h"
+  export *
+}
+module HoliManagedAcquisition {
+  header "HoliManagedAcquisition.h"
+  export *
+}
 module HoliNativeGit {
   header "HoliNativeGit.h"
   export *

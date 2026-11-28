@@ -28,6 +28,7 @@ import {
 import { captureStorageEvidence, readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
 import { createGitFixture } from './git-fixture.mjs'
+import { runManagedIOSScenarios } from './managed-ios-scenarios.mjs'
 import { createWorkingCopyFixture, verifyWorkingCopyUnchanged } from './working-copy-fixture.mjs'
 import {
   createWorkingCopyTreeFixture,
@@ -471,7 +472,7 @@ try {
         }),
     )
     assert.equal(refs['refs/heads/fixture-start'], report.git.fetchedRef)
-    assert.equal(refs['refs/heads/holi-compat'], report.git.pushedHead)
+    assert.equal(refs['refs/heads/fixture-start'], report.git.pushedHead)
     await writeFile(
       join(artifacts, 'git-transport-proof.json'),
       JSON.stringify(
@@ -479,7 +480,7 @@ try {
           runId,
           authChallenges: gitFixture.authChallengeCount,
           remoteAdvancedAfterClone: gitFixture.remoteAdvanced,
-          pushedRef: 'refs/heads/holi-compat',
+          pushedRef: 'refs/heads/fixture-start',
           refs: Object.keys(refs),
         },
         null,
@@ -819,6 +820,17 @@ try {
       join(artifacts, 'move-matrix.json'),
       JSON.stringify({ cases: moveEvidence.length, evidence: moveEvidence }, null, 2),
     )
+    await drainProcess(activeProcess)
+    activeProcess = undefined
+    const managed = await runManagedIOSScenarios({
+      simulator,
+      container: canonicalContainer,
+      bundleId,
+      artifacts,
+      runId,
+      command,
+      signal: controller.signal,
+    })
     await writeFile(
       join(artifacts, 'acceptance.json'),
       JSON.stringify(
@@ -830,6 +842,7 @@ try {
           stagedKill: true,
           recovery: true,
           gitTransport: true,
+          managedGitCases: managed.cases,
           moveCrashCases: moveEvidence.length,
           faultOperations: 10,
           rawSpellings: 2,
@@ -923,3 +936,12 @@ try {
   process.removeListener('SIGTERM', interrupt)
 }
 if (cleanupFailures.length) throw new Error('Simulator cleanup did not complete')
+
+if (!workingCopyOnly) {
+  const managedProofPath = join(artifacts, 'managed-proof.json')
+  const managedProof = JSON.parse(await readFile(managedProofPath, 'utf8'))
+  await writeFile(
+    managedProofPath,
+    JSON.stringify({ ...managedProof, ownedCleanup: true }, null, 2),
+  )
+}

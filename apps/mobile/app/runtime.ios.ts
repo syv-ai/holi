@@ -15,6 +15,7 @@ import {
   runWorkingCopyTreeCheck,
   type TreeFixtureMutation,
 } from './working-copy-check.ios'
+import { runManagedGitCheck } from './managed-git-check.ios'
 import { runCredentialCheck } from './credential-check.ios'
 import { foundationModelsAvailability } from './foundation-models.ios'
 
@@ -81,11 +82,24 @@ export async function checkCompatibility(): Promise<string> {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
     if (
-      !['normal', 'working-copy', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(
-        launchPhase,
-      )
+      ![
+        'normal',
+        'working-copy',
+        'stage',
+        'recovery',
+        'move-stage',
+        'move-recovery',
+        'managed-git',
+      ].includes(launchPhase)
     )
       throw new Error('Invalid storage phase')
+    if (launchPhase === 'managed-git') {
+      phase = 'managed-git'
+      operation = 'runManagedGitCheck'
+      const managedGit = await runManagedGitCheck(runId)
+      persist({ managedGit })
+      return managedGit.ok ? 'Managed Git request completed' : 'Managed Git request refused'
+    }
     if (launchPhase === 'normal') {
       phase = 'foundation-models-availability'
       operation = 'foundationModelsAvailability'

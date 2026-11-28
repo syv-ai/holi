@@ -23,6 +23,42 @@ export type WorkingCopyStatus = {
   changes: WorkingCopyChange[]
 }
 
+export type ManagedWorkingCopyIdentity = {
+  remote: string
+  branch: string
+  nativeId: string
+  /** Private recovery locations retained after interrupted acquisitions. */
+  retainedAcquisitions?: string[]
+}
+
+export type WorkingCopyRefusal = { code: string; message: string }
+
+/** Semantic native transport seam: implementations own safe preparation and durable identity checks. */
+export interface ManagedWorkingCopyNative extends NativeWorkingCopy {
+  /** Runs recoverMoves directly while the caller holds the canonical-root lock. */
+  recover(
+    root: string,
+    expected: { remote: string; branch: string; nativeId?: string },
+  ): Promise<void>
+  prepare(
+    root: string,
+    remote: string,
+    branch: string,
+    credential: string,
+  ): Promise<ManagedWorkingCopyIdentity>
+  reopen(root: string): Promise<ManagedWorkingCopyIdentity>
+  fetch(
+    root: string,
+    identity: ManagedWorkingCopyIdentity,
+    credential: string,
+  ): Promise<void | WorkingCopyRefusal>
+  publish(
+    root: string,
+    identity: ManagedWorkingCopyIdentity,
+    credential: string,
+  ): Promise<void | WorkingCopyRefusal>
+}
+
 /** Native adapter exposes semantic identity and status, never libgit2 constants. */
 export type PreparedWorkingCopyTree = {
   treeOID: string
@@ -107,6 +143,101 @@ export async function prepareWorkingCopyTree(
       throw new Error('Native Git returned an invalid working-copy tree')
     return result
   })
+}
+
+function isValidBranch(branch: string): boolean {
+  if (
+    !branch ||
+    branch.startsWith('-') ||
+    branch.startsWith('/') ||
+    branch.endsWith('/') ||
+    branch.endsWith('.') ||
+    branch.includes('..') ||
+    branch.includes('//') ||
+    branch.includes('@{') ||
+    [...branch].some(
+      (character) =>
+        character.charCodeAt(0) <= 32 ||
+        character.charCodeAt(0) === 127 ||
+        character.charCodeAt(0) === 92 ||
+        '~^:?*['.includes(character),
+    )
+  )
+    return false
+  return branch
+    .split('/')
+    .every(
+      (part) =>
+        part !== '' &&
+        part !== '.' &&
+        part !== '..' &&
+        !part.startsWith('.') &&
+        !part.endsWith('.lock'),
+    )
+}
+
+/** Acquires or reopens a managed clone and offers credential-scoped network operations. */
+export function createManagedWorkingCopy(
+  native: ManagedWorkingCopyNative,
+  vault: { remote: string; root: string; branch: string },
+  credential: string,
+) {
+  const { remote, root, branch } = vault
+  if (!isRemote(remote) || !isValidBranch(branch) || !credential)
+    throw new Error('Invalid working copy request')
+  let canonical: Promise<string> | undefined
+  let acquiredNativeId: string | undefined
+  const rootPath = () =>
+    (canonical ??= native.canonicalRoot(root).catch((error: unknown) => {
+      canonical = undefined
+      throw error
+    }))
+  const recover = async (canonicalRoot: string) =>
+    native.recover(canonicalRoot, { remote, branch, nativeId: acquiredNativeId })
+  const assertIdentity = (identity: ManagedWorkingCopyIdentity) => {
+    if (
+      !identity ||
+      typeof identity.nativeId !== 'string' ||
+      !identity.nativeId ||
+      identity.remote !== remote ||
+      identity.branch !== branch ||
+      (acquiredNativeId !== undefined && acquiredNativeId !== identity.nativeId)
+    )
+      throw new Error('Working copy identity does not match vault')
+    acquiredNativeId ??= identity.nativeId
+  }
+  const operate = async (action: 'fetch' | 'publish') => {
+    const root = await rootPath()
+    return withVaultLock(root, async () => {
+      await recover(root)
+      const identity = await native.reopen(root)
+      assertIdentity(identity)
+      const result = await native[action](root, identity, credential)
+      if (result) throw Object.assign(new Error(result.message), { refusal: result })
+    })
+  }
+  return {
+    async acquire() {
+      const root = await rootPath()
+      return withVaultLock(root, async () => {
+        await recover(root)
+        const identity = await native.prepare(root, remote, branch, credential)
+        assertIdentity(identity)
+        return identity
+      })
+    },
+    async reopen() {
+      const root = await rootPath()
+      return withVaultLock(root, async () => {
+        await recover(root)
+        const identity = await native.reopen(root)
+        assertIdentity(identity)
+        return identity
+      })
+    },
+    fetch: () => operate('fetch'),
+    publish: () => operate('publish'),
+  }
 }
 
 /** Read-only status for an already-attached managed clone. Never performs storage recovery. */

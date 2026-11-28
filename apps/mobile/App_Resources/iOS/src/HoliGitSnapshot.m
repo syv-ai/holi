@@ -17,7 +17,7 @@ static BOOL Fail(NSError **error, NSString *message) {
 }
 
 static BOOL Same(const struct stat *a, const struct stat *b) {
-    return a->st_dev == b->st_dev && a->st_ino == b->st_ino && (a->st_mode & S_IFMT) == (b->st_mode & S_IFMT) && a->st_size == b->st_size;
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino && (a->st_mode & S_IFMT) == (b->st_mode & S_IFMT) && a->st_size == b->st_size && a->st_nlink == b->st_nlink;
 }
 
 static BOOL Forbidden(NSString *path) {
@@ -58,7 +58,7 @@ static BOOL CopyDirectory(int source, int target, NSError **error, off_t *totalB
         if (++*entries > 20000) { ok = Fail(error, @"Git metadata exceeds entry limit"); break; }
         if (!name || Forbidden(prefix.length ? [prefix stringByAppendingFormat:@"/%@", name] : name)) { ok = Fail(error, @"Unsupported Git metadata indirection"); break; }
         struct stat before, after;
-        if (fstatat(source, entry->d_name, &before, AT_SYMLINK_NOFOLLOW) || (!S_ISDIR(before.st_mode) && !S_ISREG(before.st_mode))) { ok = Fail(error, @"Unsupported Git metadata entry"); break; }
+        if (fstatat(source, entry->d_name, &before, AT_SYMLINK_NOFOLLOW) || (!S_ISDIR(before.st_mode) && !S_ISREG(before.st_mode)) || (S_ISREG(before.st_mode) && before.st_nlink != 1)) { ok = Fail(error, @"Unsupported Git metadata entry"); break; }
         if (S_ISDIR(before.st_mode)) {
             if (mkdirat(target, entry->d_name, 0700)) { ok = Fail(error, @"Cannot create snapshot directory"); break; }
             int in = openat(source, entry->d_name, O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
