@@ -70,7 +70,23 @@ const google: Record<string, (params: unknown) => unknown> = {
   removeAccount: (p) => removeAccountMock(p),
   client: () => ({ id: 'holi.apps.googleusercontent.com', source: 'shipped' }),
   setClient: (p) => setClientMock(p),
-  search: (p) => searchMock(p),
+  search: async (p) => {
+    const answer = await searchMock(p)
+    const request = (p as { uiList?: { loadedIds: string[]; refresh?: boolean } }).uiList
+    if (!request || answer.uiList) return answer
+    return {
+      ...answer,
+      uiList: {
+        mode: request.refresh ? 'coverage' : 'page',
+        revalidatedIds: request.refresh ? request.loadedIds : [],
+        removedIds: request.refresh
+          ? request.loadedIds.filter(
+              (id) => !answer.threads.some((thread: { id: string }) => thread.id === id),
+            )
+          : [],
+      },
+    }
+  },
   thread: (p) => threadMock(p),
   drafts: () => draftsMock(),
   saveDraft: (p) => saveDraftMock(p),
@@ -95,10 +111,16 @@ const google: Record<string, (params: unknown) => unknown> = {
   forgetImageSenders: () => ({ ok: true }),
 }
 
-vi.mock('sonner', async (original) => ({
-  ...(await original<typeof import('sonner')>()),
-  toast: (...args: unknown[]) => toastMock(...args),
-}))
+vi.mock('sonner', async (original) => {
+  const sonner = await original<typeof import('sonner')>()
+  return {
+    ...sonner,
+    toast: Object.assign((...args: Parameters<typeof sonner.toast>) => {
+      toastMock(...args)
+      return sonner.toast(...args)
+    }, sonner.toast),
+  }
+})
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -147,7 +169,17 @@ function summary(overrides: Record<string, unknown> = {}) {
 }
 
 function page(threads: unknown[], nextPageToken: string | null = null) {
-  return { threads, nextPageToken, syncedAt: new Date().toISOString() }
+  return {
+    threads,
+    nextPageToken,
+    syncedAt: new Date().toISOString(),
+    uiList: {
+      mode: 'page',
+      cursor: { version: 1, owner: accountSub, key: 'inbox', historyId: '100' },
+      removedIds: [],
+      revalidatedIds: [],
+    },
+  }
 }
 
 const thread = {
@@ -288,7 +320,11 @@ test('lists the inbox from Gmail with its sender, subject, tab and labels', asyn
   expect(within(row).getByText('Updates')).toBeInTheDocument()
   expect(within(row).getByText('Finance')).toBeInTheDocument()
   expect(within(row).getByRole('img', { name: 'Unread' })).toBeInTheDocument()
-  expect(searchMock).toHaveBeenCalledWith({})
+  expect(searchMock).toHaveBeenCalled()
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('query')
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('mailbox')
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('unread')
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('category')
 })
 
 test('readable mail metadata uses opaque semantic colors for rows, drafts, and attachments', async () => {
@@ -320,8 +356,8 @@ test('readable mail metadata uses opaque semantic colors for rows, drafts, and a
   const list = await screen.findByRole('list', { name: 'Inbox' })
   const rows = within(list).getAllByRole('listitem')
   expect(rows).toHaveLength(2)
-  const unreadRow = rows[0]!
-  const readRow = rows[1]!
+  const unreadRow = rows.find((row) => within(row).queryByText('Q2 budget'))!
+  const readRow = rows.find((row) => within(row).queryByText('Filed report'))!
   for (const row of rows) {
     expect(
       [...row.querySelectorAll('*')].some((node) =>
@@ -411,7 +447,9 @@ test('the Unread tab asks Gmail for unread threads only', async () => {
 
   await user.click(screen.getByRole('tab', { name: 'Unread' }))
 
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ unread: true }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ unread: true })),
+  )
 })
 
 test('search sends Gmail grammar on Enter and escapes the folder', async () => {
@@ -421,22 +459,35 @@ test('search sends Gmail grammar on Enter and escapes the folder', async () => {
 
   await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
   await user.click(await screen.findByRole('menuitemradio', { name: 'Sent' }))
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ mailbox: 'sent' }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ mailbox: 'sent' })),
+  )
 
   await user.type(screen.getByRole('textbox', { name: 'Search mail' }), 'from:jane{Enter}')
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ query: 'from:jane' }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ query: 'from:jane' })),
+  )
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('mailbox')
 })
 
 test('starred is one atomic navigation from Inbox and clears unread', async () => {
   const user = userEvent.setup()
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('tab', { name: 'Unread' }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ unread: true })),
+  )
   await user.click(screen.getByRole('button', { name: 'Compose new email' }))
   await screen.findByRole('region', { name: 'Compose mail' })
 
   await user.click(screen.getByRole('tab', { name: 'Starred' }))
 
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ query: 'is:starred' }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ query: 'is:starred' })),
+  )
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('unread')
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('category')
   expect(screen.getByRole('tab', { name: 'Starred' })).toHaveAttribute('data-state', 'active')
 })
 
