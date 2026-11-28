@@ -5,7 +5,7 @@
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, onTestFailed, test, vi } from 'vitest'
 import { atom, createStore, getDefaultStore, Provider } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
@@ -974,6 +974,20 @@ test.each([
 ])(
   '$name $control recovers history while the other reader checks the continuation thread ($verdict)',
   async ({ Driver, Reader, reply, control, verdict }) => {
+    const started = performance.now()
+    const phases: Array<{ name: string; elapsedMs: number }> = []
+    const checkpoint = (name: string) => {
+      phases.push({ name, elapsedMs: Math.round(performance.now() - started) })
+    }
+    onTestFailed(() => {
+      console.error('Mail history recovery phase evidence', {
+        control,
+        verdict,
+        elapsedMs: Math.round(performance.now() - started),
+        phases,
+      })
+    })
+    checkpoint('mount readers')
     const selected = summary({ hasInvite: true, unread: false })
     const healthy = summary({ id: 'healthy', subject: 'Healthy mail', snippet: '', unread: false })
     const newMail = summary({ id: 'recent', subject: 'New first page', snippet: '', unread: false })
@@ -1041,19 +1055,23 @@ test.each([
     )
     const driver = within(screen.getByRole('region', { name: 'List that refreshes' }))
     const reader = within(screen.getByRole('region', { name: 'Other reader' }))
+    checkpoint('open continuation')
     await user.click(await reader.findByRole('button', { name: 'Load more' }))
     await user.click(await reader.findByText(selected.subject))
     await user.click(await reader.findByRole('button', { name: 'Join meeting' }))
     await reader.findByText('Checking invitation link…')
     await user.click(reader.getByRole('button', { name: reply }))
     const editor = await reader.findByRole('textbox', { name: 'Message' })
+    checkpoint('type reply')
     await user.type(editor, 'Keep this unsent reply')
 
+    checkpoint('recover list history')
     refused = true
     await user.click(driver.getByRole('button', { name: 'Refresh mail' }))
     await driver.findByRole('button', { name: 'Try again' })
     expect(resets).toBe(0)
     expect(reader.queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+    checkpoint('request recovery snapshot')
     await user.click(driver.getByRole('button', { name: control }))
     if (verdict === 503) {
       await driver.findByText('Snapshot temporarily unavailable')
@@ -1063,14 +1081,17 @@ test.each([
     const expectedResets = verdict === 503 ? 2 : 1
     fireEvent.click(driver.getByRole('button', { name: 'Refresh mail' }))
     expect(resets).toBe(expectedResets)
+    checkpoint('restore reply focus')
     await user.click(editor)
     await act(async () => {
+      checkpoint('settle snapshot and old join')
       oldJoin.resolve()
       snapshot.resolve(page([newMail, healthy], 'new'))
     })
     expect(openExternal).not.toHaveBeenCalled()
     expect(await driver.findByText(newMail.subject)).toBeVisible()
     expect(reader.getByRole('status', { name: 'Refreshing the thread' })).toBeVisible()
+    checkpoint('settle exact reader')
     await act(async () => {
       if (verdict === 200) {
         invitationMock.mockResolvedValue(
@@ -1089,6 +1110,7 @@ test.each([
         )
       }
     })
+    checkpoint('verify retained reader and classify result')
     const message = reader.getByRole('button', { name: /^Collapse message 1 of 1/ })
     expect(within(message.closest('article')!).getByText('Received workshop agenda')).toBeVisible()
     expect(reader.getByRole('textbox', { name: 'Message' })).toBe(editor)
@@ -1111,8 +1133,10 @@ test.each([
       }
     }
     expect(respondMock).not.toHaveBeenCalled()
+    checkpoint('load recovered continuation')
     await user.click(driver.getByRole('button', { name: 'Load more' }))
     expect(await driver.findByText(tail.subject)).toBeVisible()
+    checkpoint('complete')
   },
 )
 

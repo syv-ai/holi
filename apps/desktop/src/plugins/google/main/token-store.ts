@@ -16,6 +16,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import type { GoogleClient, GoogleClientSource } from './credentials'
 
 /** The OS keychain's encryption, as Electron's `safeStorage` offers it. */
 export interface SafeStorageLike {
@@ -39,6 +40,8 @@ export interface StoredGoogleAuth {
   expiresAt: number
   /** What was actually granted, so a failure can name the missing scope. */
   scopes: string[]
+  /** Missing only on legacy records; encrypted with the grant, never sent to UI. */
+  client?: GoogleClient & { source: GoogleClientSource }
 }
 
 /** Every connected account, keyed by `sub`. */
@@ -159,6 +162,15 @@ function isStoredGoogleAuth(value: unknown): value is StoredGoogleAuth {
     typeof a.refreshToken === 'string' &&
     typeof a.accessToken === 'string' &&
     typeof a.expiresAt === 'number' &&
+    (a.client === undefined ||
+      (a.client !== null &&
+        typeof a.client === 'object' &&
+        typeof (a.client as Record<string, unknown>).id === 'string' &&
+        ((a.client as Record<string, unknown>).secret === undefined ||
+          typeof (a.client as Record<string, unknown>).secret === 'string') &&
+        ['own', 'environment', 'shipped'].includes(
+          String((a.client as Record<string, unknown>).source),
+        ))) &&
     Array.isArray(a.scopes) &&
     a.scopes.every((s) => typeof s === 'string')
   )

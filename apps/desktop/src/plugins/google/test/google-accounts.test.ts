@@ -96,8 +96,12 @@ async function manager(seed: StoredGoogleAuth[] = [], fetchImpl?: typeof globalT
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
-  const promise = new Promise<T>((done) => (resolve = done))
-  return { promise, resolve }
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
 }
 
 type RefreshReply = { access_token: string; expires_in: number; refresh_token?: string }
@@ -752,7 +756,7 @@ describe('the client credentials', () => {
     expect(await clients.read()).toEqual(two)
   })
 
-  it('removes every account, revoking each, when the client changes', async () => {
+  it('preserves every account and binding when the default client changes', async () => {
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }))
     const accounts = await manager(
       [auth(), auth({ sub: 'sub-2', email: 'work@syv.ai' })],
@@ -767,13 +771,12 @@ describe('the client credentials', () => {
 
     await accounts.setClient({ id: 'other.apps.googleusercontent.com', secret: 's' })
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
-    expect(accounts.list()).toEqual([])
-    expect(await accounts.sessionFor(VAULT)).toBeNull()
-    expect(await accounts.sessionFor(WORK)).toBeNull()
-    // Each one named, so its cache is deleted with it.
-    expect(changed).toEqual(['sub-1', 'sub-2'])
-    expect(await store.read()).toEqual({})
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(accounts.list()).toHaveLength(2)
+    expect(await accounts.sessionFor(VAULT)).not.toBeNull()
+    expect(await accounts.sessionFor(WORK)).not.toBeNull()
+    expect(changed).toEqual([])
+    expect(Object.keys(await store.read())).toEqual(['sub-1', 'sub-2'])
   })
 
   it('keeps the current grant and binding when the same client is saved again', async () => {
@@ -789,60 +792,36 @@ describe('the client credentials', () => {
     expect((await accounts.bindingFor(VAULT))?.revision).toBe(before.revision)
   })
 
-  it('keeps unfinished client retirement closed through a failed and queued replacement', async () => {
-    const retryStarted = deferred<void>()
-    const releaseRetry = deferred<void>()
-    let pauseRevocation = false
-    const { accounts, exchanges } = await controlledConsent(
-      [auth(), auth({ sub: 'sub-2', refreshToken: 'rt-2' })],
-      async (token) => {
-        if (!pauseRevocation || token !== 'rt-2') return
-        retryStarted.resolve()
-        await releaseRetry.promise
-      },
+  it('keeps existing grants usable after a failed and queued default replacement', async () => {
+    const clients = memoryClients({ id: 'client-1' })
+    const rig = await controlledConsent([auth()], undefined, clients)
+    await rig.accounts.link(WORK, 'sub-1')
+    const before = (await rig.accounts.bindingFor(WORK))!
+    vi.spyOn(clients, 'write').mockRejectedValueOnce(new Error('client save refused'))
+    await expect(rig.accounts.setClient({ id: 'replacement' })).rejects.toThrow(
+      'client save refused',
     )
-    await accounts.link(VAULT, 'sub-1')
-    await accounts.link(WORK, 'sub-2')
-    await accounts.link('other/linked', 'sub-2')
-    const before = (await accounts.bindingFor(WORK))!
-    const stop = accounts.onChange((sub, reason) => {
-      if (sub === 'sub-1' && reason === 'removed') throw new Error('could not remove local data')
-    })
-    const replacement = { id: 'replacement.apps.googleusercontent.com' }
-    await expect(accounts.setClient(replacement)).rejects.toThrow('could not remove local data')
-    stop()
-    expect(before.isCurrent()).toBe(false)
-    await expect(accounts.bindingFor(WORK)).resolves.toBeNull()
-
-    pauseRevocation = true
-    const retry = accounts.setClient(replacement)
-    const final = { id: 'final.apps.googleusercontent.com' }
-    const queued = accounts.setClient(final)
-    try {
-      await retryStarted.promise
-      await expect(accounts.bindingFor(WORK)).resolves.toBeNull()
-    } finally {
-      releaseRetry.resolve()
-      await Promise.all([retry, queued])
-    }
-    expect(await accounts.bindingFor(WORK)).toBeNull()
-    const flow = await accounts.connect(WORK)
-    expect(new URL(flow.authUrl).searchParams.get('client_id')).toBe(final.id)
-    const result = flow.wait()
-    const exchange = exchanges[0]!
-    await exchange.started.promise
-    exchange.reply.resolve(auth({ sub: 'sub-2', refreshToken: 'rt-new', accessToken: 'at-new' }))
-    expect((await result).kind).toBe('granted')
-    const current = (await accounts.bindingFor(WORK))!
-    expect(current.isCurrent()).toBe(true)
-    await expect(current.session.getAccessToken()).resolves.toBe('at-new')
-    expect(before.isCurrent()).toBe(false)
-    await expect(accounts.bindingFor('other/linked')).resolves.toBeNull()
+    expect(rig.accounts.client().id).toBe('client-1')
+    expect(before.isCurrent()).toBe(true)
+    await Promise.all([
+      rig.accounts.setClient({ id: 'replacement' }),
+      rig.accounts.setClient({ id: 'final' }),
+    ])
+    expect(rig.accounts.client().id).toBe('final')
+    expect(before.isCurrent()).toBe(true)
+    rig.setNow(NOW + 3_600_000)
+    rig.refreshReply.resolve({ access_token: 'at-refreshed', expires_in: 3600 })
+    await expect(before.session.getAccessToken()).resolves.toBe('at-refreshed')
+    expect(rig.revoked).toEqual([])
+    const restarted = await rig.restart()
+    await expect((await restarted.bindingFor(WORK))?.session.getAccessToken()).resolves.toBe(
+      'at-refreshed',
+    )
   })
 })
 
 describe('consent whose vault link fails', () => {
-  it('retires a replacement grant and its old links when the link write fails', async () => {
+  it('preserves the committed grant and links when a replacement link write fails', async () => {
     const path = join(dir, 'google-vault-accounts.json')
     const vaults = createVaultAccounts(path)
     const { accounts, exchanges, revoked } = await controlledConsent(
@@ -858,7 +837,7 @@ describe('consent whose vault link fails', () => {
     vi.spyOn(vaults, 'link').mockImplementationOnce(async (remote, sub) => {
       await mkdir(`${path}.tmp`)
       try {
-        await link(remote, sub)
+        return await link(remote, sub)
       } finally {
         await rm(`${path}.tmp`, { recursive: true })
       }
@@ -867,24 +846,18 @@ describe('consent whose vault link fails', () => {
     const failed = (await accounts.connect(VAULT)).wait()
     exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-failed', accessToken: 'at-failed' }))
     await expect(failed).rejects.toThrow()
-    expect(revoked).toContain('rt-failed')
-    expect(oldBinding.isCurrent()).toBe(false)
-    expect(accounts.list()).toEqual([])
-    await expect(accounts.sessionFor(WORK)).resolves.toBeNull()
+    expect(revoked).not.toContain('rt-failed')
+    expect(oldBinding.isCurrent()).toBe(true)
+    expect(accounts.list()).toEqual([{ sub: 'sub-1', email: 'ada@syv.ai' }])
+    await expect(accounts.sessionFor(WORK)).resolves.not.toBeNull()
     await expect(accounts.bindingFor(VAULT)).resolves.toBeNull()
-
+    await expect(oldBinding.session.getAccessToken()).resolves.toBe('at-1')
     const restarted = await controlledConsent()
-    expect(restarted.accounts.list()).toEqual([])
-    await expect(restarted.accounts.bindingFor(WORK)).resolves.toBeNull()
-    const fresh = (await accounts.connect(VAULT)).wait()
-    exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-fresh', accessToken: 'at-fresh' }))
-    await expect(fresh).resolves.toMatchObject({ kind: 'granted' })
-    const binding = await accounts.bindingFor(VAULT)
-    await expect(binding?.session.getAccessToken()).resolves.toBe('at-fresh')
-    await expect(accounts.bindingFor(WORK)).resolves.toBeNull()
+    expect(restarted.accounts.list()).toEqual([{ sub: 'sub-1', email: 'ada@syv.ai' }])
+    await expect(restarted.accounts.bindingFor(WORK)).resolves.not.toBeNull()
   })
 
-  it('keeps a partially published link unauthorized across restart even if retirement fails', async () => {
+  it('preserves restored ownership across restart while vault cleanup is unavailable', async () => {
     const path = join(dir, 'google-vault-accounts.json')
     const vaults = createVaultAccounts(path)
     // The vault link is published before the expired marker is cleared. Fail
@@ -898,7 +871,7 @@ describe('consent whose vault link fails', () => {
     const link = vaults.link
     vi.spyOn(vaults, 'link').mockImplementationOnce(async (remote, sub) => {
       try {
-        await link(remote, sub)
+        return await link(remote, sub)
       } catch (error) {
         await mkdir(`${path}.tmp`)
         atFailure.resolve()
@@ -925,17 +898,14 @@ describe('consent whose vault link fails', () => {
       await rejection
     }
 
-    expect(revoked).toEqual(['rt-failed'])
-    expect(await vaults.all()).toMatchObject({ [VAULT]: 'sub-1', [WORK]: 'sub-1' })
+    expect(revoked).toEqual([])
+    expect(await vaults.all()).toEqual({ [WORK]: 'sub-1' })
     const restarted = await controlledConsent()
-    expect(restarted.accounts.list()).toEqual([])
-    expect(restarted.accounts.sessionForSub('sub-1')).toBeNull()
-    await expect(restarted.accounts.link('other/vault', 'sub-1')).rejects.toThrow()
-    for (const remote of [VAULT, WORK]) {
-      await expect(restarted.accounts.sessionFor(remote)).resolves.toBeNull()
-      await expect(restarted.accounts.bindingFor(remote)).resolves.toBeNull()
-      await expect(restarted.accounts.overview(remote)).resolves.toMatchObject({ account: null })
-    }
+    expect(restarted.accounts.list()).toEqual([{ sub: 'sub-1', email: 'ada@syv.ai' }])
+    await expect(restarted.accounts.bindingFor(VAULT)).resolves.toBeNull()
+    const restored = (await restarted.accounts.bindingFor(WORK))!
+    await expect(restored.session.getAccessToken()).resolves.toBe('at-1')
+    expect(restored.isCurrent()).toBe(true)
 
     await rm(`${path}.tmp`, { recursive: true })
     await rm(join(dir, 'google-vault-accounts.expired.json.tmp'), { recursive: true })
@@ -965,7 +935,7 @@ describe('consent whose vault link fails', () => {
     vi.spyOn(vaults, 'link').mockImplementationOnce(async (remote, sub) => {
       linkStarted.resolve()
       await finishLink.promise
-      await link(remote, sub)
+      return await link(remote, sub)
     })
     const overtaken = (await accounts.connect(VAULT)).wait()
     exchanges[0]!.reply.resolve(auth())
@@ -1123,74 +1093,32 @@ describe('a grant that lands after it was let go', () => {
     expect(await rig.accounts.sessionFor(VAULT)).toBeNull()
   })
 
-  it.each(['succeeds', 'fails'] as const)(
-    'keeps the old client until an in-flight first grant is retired (deletion %s)',
-    async (deletion) => {
-      const clients = createClientStore(join(dir, 'google-client.enc'), storage)
-      const old = { id: 'old.apps.googleusercontent.com' }
-      const replacement = { id: 'replacement.apps.googleusercontent.com' }
-      await clients.write(old)
-      // An existing link alone doesn't authorize a vault, but would expose
-      // this row on restart if the new client were published too early.
-      const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
-      await vaults.link(WORK, 'sub-9')
-      const rig = await hangingExchange(clients)
-      const originalWrite = store.write.bind(store)
-      const atWrite = deferred<void>()
-      const finishWrite = deferred<void>()
-      const atDeletion = deferred<void>()
-      const finishDeletion = deferred<void>()
-      const diskError = new Error('could not delete the old grant')
-      let firstDeletion = true
-      vi.spyOn(store, 'write').mockImplementation(async (value) => {
-        if (value['sub-9']) {
-          atWrite.resolve()
-          await finishWrite.promise
-        } else if (firstDeletion) {
-          firstDeletion = false
-          atDeletion.resolve()
-          await finishDeletion.promise
-          if (deletion === 'fails') throw diskError
-        }
-        await originalWrite(value)
-      })
-      const flow = await rig.accounts.connect(VAULT)
-      const outcome = flow.wait()
-      await rig.atGoogle
-      rig.release()
-      await atWrite.promise
-
-      const change = rig.accounts.setClient(replacement)
-      const checked =
-        deletion === 'fails'
-          ? expect(change).rejects.toBe(diskError)
-          : expect(change).resolves.toBeUndefined()
-      finishWrite.resolve()
-      try {
-        await atDeletion.promise
-        await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
-        const restarted = await hangingExchange(clients)
-        expect(restarted.accounts.client().id).toBe(old.id)
-      } finally {
-        finishDeletion.resolve()
-        await checked
+  it('discards consent whose token write was queued when the default changed', async () => {
+    const rig = await hangingExchange()
+    const originalWrite = store.write.bind(store)
+    const atWrite = deferred<void>()
+    const finishWrite = deferred<void>()
+    let first = true
+    vi.spyOn(store, 'write').mockImplementation(async (value) => {
+      if (first) {
+        first = false
+        atWrite.resolve()
+        await finishWrite.promise
       }
-      await expect(outcome).resolves.toMatchObject({ kind: 'cancelled' })
-      if (deletion === 'fails') {
-        expect(rig.accounts.client().id).toBe(old.id)
-        await expect(rig.accounts.bindingFor(WORK)).resolves.toBeNull()
-        await expect(rig.accounts.connect(VAULT)).rejects.toThrow()
-        const restarted = await hangingExchange(clients)
-        expect(restarted.accounts.client().id).toBe(old.id)
-        await rig.accounts.setClient(replacement)
-      }
-      const restarted = await hangingExchange(clients)
-      expect(restarted.accounts.client().id).toBe(replacement.id)
-      expect(restarted.accounts.list()).toEqual([])
-      await expect(restarted.accounts.bindingFor(WORK)).resolves.toBeNull()
-      expect(rig.revoked).toEqual(['rt-new'])
-    },
-  )
+      await originalWrite(value)
+    })
+    const outcome = (await rig.accounts.connect(VAULT)).wait()
+    await rig.atGoogle
+    rig.release()
+    await atWrite.promise
+    const change = rig.accounts.setClient({ id: 'replacement' })
+    finishWrite.resolve()
+    await change
+    await expect(outcome).resolves.toMatchObject({ kind: 'cancelled' })
+    expect(rig.accounts.list()).toEqual([])
+    expect(await store.read()).toEqual({})
+    expect(rig.revoked).toEqual(['rt-new'])
+  })
 
   it('revokes the grant of a connect overtaken by a client change', async () => {
     const rig = await hangingExchange()
@@ -1460,7 +1388,7 @@ describe('a grant that lands after it was let go', () => {
     await rig.accounts.link(WORK, 'sub-1')
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
-      const change = rig.accounts.setClient({ id: 'client-2' })
+      const change = rig.accounts.removeAccount('sub-1')
       await revoking.promise
       const whileRevoking = await rig.restart()
       await expect(whileRevoking.bindingFor(VAULT)).resolves.toBeNull()
@@ -1468,6 +1396,7 @@ describe('a grant that lands after it was let go', () => {
       await vi.runOnlyPendingTimersAsync()
       expect(aborted).toBe(true)
       await change
+      await rig.accounts.setClient({ id: 'client-2' })
 
       // Both client IDs share the project. A distinct token exchanged only
       // after the abort is still exposed to the outstanding revocation.
@@ -1735,8 +1664,8 @@ describe('a grant that lands after it was let go', () => {
         GoogleReconnectRequiredError,
       )
       await rig.refreshStarted.promise
+      await accounts.removeAccount('sub-1')
       if (replaceClient) await accounts.setClient({ id: 'client-2' })
-      else await accounts.removeAccount('sub-1')
       expect(rig.revoked).toEqual(['rt-1'])
       expect(await store.read()).toEqual({})
       expect(await accounts.bindingFor(VAULT)).toBeNull()
@@ -1795,5 +1724,366 @@ describe('resolveClient', () => {
       secret: GOOGLE_CLIENT_SECRET,
       source: 'shipped',
     })
+  })
+})
+
+describe('issuing clients survive future-connect defaults', () => {
+  const oldClient = { id: 'previous.apps.googleusercontent.com', secret: 'previous-secret' }
+  const newClient = { id: 'next.apps.googleusercontent.com', secret: 'next-secret' }
+  const start = (
+    clients: GoogleClientStore,
+    fetch: typeof globalThis.fetch,
+    env: NodeJS.ProcessEnv = {},
+    now = () => NOW,
+  ) =>
+    createGoogleAccounts({
+      store,
+      clients,
+      fetch,
+      env,
+      now,
+      vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+      listen: async () => ({ port: 1, waitForRedirect: () => new Promise(() => {}), close() {} }),
+      openBrowser: async () => {},
+    })
+
+  it.each([undefined, 'previous-secret'])(
+    'refreshes migrated grants after restart without mixing clients (secret %s)',
+    async (secret) => {
+      await store.write({
+        'sub-1': auth({ expiresAt: NOW - 1 }),
+        'sub-2': auth({ sub: 'sub-2', refreshToken: 'rt-2', expiresAt: NOW - 1 }),
+      })
+      const clients = createClientStore(join(dir, 'client.enc'), storage)
+      const calls: URLSearchParams[] = []
+      const fetch = (async (_url, init) => {
+        calls.push(new URLSearchParams(String(init?.body)))
+        return Response.json({ access_token: 'refreshed', expires_in: 3600 })
+      }) as typeof globalThis.fetch
+      const env = {
+        HOLI_GOOGLE_CLIENT_ID: oldClient.id,
+        ...(secret === undefined ? {} : { HOLI_GOOGLE_CLIENT_SECRET: secret }),
+      }
+      const accounts = await start(clients, fetch, env)
+      await accounts.link(VAULT, 'sub-1')
+      await accounts.link(WORK, 'sub-2')
+      const held = await accounts.sessionFor(VAULT)
+      await accounts.setClient(newClient)
+      expect(await accounts.sessionFor(VAULT)).toBe(held)
+      expect(accounts.list()).toHaveLength(2)
+      expect((await accounts.overview(VAULT)).client).toEqual({
+        id: oldClient.id,
+        source: 'environment',
+      })
+      const restarted = await start(clients, fetch, {})
+      await restarted.sessionForSub('sub-1')!.getAccessToken()
+      await restarted.sessionForSub('sub-2')!.getAccessToken()
+      expect(calls.map((c) => [c.get('client_id'), c.get('client_secret')])).toEqual([
+        [oldClient.id, secret ?? null],
+        [oldClient.id, secret ?? null],
+      ])
+      await restarted.setClient(null)
+      expect(await restarted.sessionFor(WORK)).not.toBeNull()
+      expect((await restarted.overview(WORK)).client.id).toBe(oldClient.id)
+      expect(JSON.stringify(await restarted.overview(VAULT))).not.toContain('previous-secret')
+      expect(JSON.stringify(restarted.list())).not.toContain('rt-1')
+    },
+  )
+
+  it('refuses a default change when legacy grants cannot be durably pinned, then retries', async () => {
+    await store.write({ 'sub-1': auth() })
+    const clients = createClientStore(join(dir, 'client.enc'), storage)
+    await clients.write(oldClient)
+    const accounts = await start(clients, async () => {
+      throw new Error('no network needed')
+    })
+    await accounts.link(VAULT, 'sub-1')
+    const held = await accounts.sessionFor(VAULT)
+    vi.spyOn(store, 'write').mockRejectedValueOnce(new Error('synthetic disk refusal'))
+    await expect(accounts.setClient(newClient)).rejects.toThrow('synthetic disk refusal')
+    expect(await clients.read()).toEqual(oldClient)
+    expect(await accounts.sessionFor(VAULT)).toBe(held)
+    expect(await held!.getAccessToken()).toBe('at-1')
+    await accounts.setClient(newClient)
+    const restarted = await start(clients, async () => {
+      throw new Error('no network needed')
+    })
+    expect((await restarted.overview(VAULT)).client.id).toBe(oldClient.id)
+    expect(await (await restarted.sessionFor(VAULT))!.getAccessToken()).toBe('at-1')
+  })
+
+  it('keeps a rotated secret when an older refresh finishes, including after reconstruction', async () => {
+    await store.write({ 'sub-1': auth({ expiresAt: NOW - 1 }) })
+    const clients = createClientStore(join(dir, 'client.enc'), storage)
+    await clients.write(oldClient)
+    const entered = deferred<void>()
+    const reply = deferred<Response>()
+    const calls: URLSearchParams[] = []
+    const accounts = await start(clients, (async (_url, init) => {
+      calls.push(new URLSearchParams(String(init?.body)))
+      entered.resolve()
+      return reply.promise
+    }) as typeof globalThis.fetch)
+    const held = accounts.sessionForSub('sub-1')!
+    const token = held.getAccessToken()
+    await entered.promise
+    await accounts.setClient({ ...oldClient, secret: 'rotated-secret' })
+    reply.resolve(Response.json({ access_token: 'refreshed', expires_in: 3600 }))
+    await expect(token).resolves.toBe('refreshed')
+    const restarted = await start(
+      clients,
+      (async (_url, init) => {
+        calls.push(new URLSearchParams(String(init?.body)))
+        return Response.json({ access_token: 'after-restart', expires_in: 3600 })
+      }) as typeof globalThis.fetch,
+      {},
+      () => NOW + 7_200_000,
+    )
+    await expect(restarted.sessionForSub('sub-1')!.getAccessToken()).resolves.toBe('after-restart')
+    expect(calls.map((c) => c.get('client_secret'))).toEqual(['previous-secret', 'rotated-secret'])
+    expect(accounts.sessionForSub('sub-1')).toBe(held)
+  })
+
+  it.each(['rt-1', 'unused-other-client'])(
+    'refuses a different-client duplicate without losing the existing grant (%s)',
+    async (returned) => {
+      const fixture = await controlledConsent([auth()])
+      await fixture.accounts.link(WORK, 'sub-1')
+      await fixture.accounts.setClient(newClient)
+      const flow = await fixture.accounts.connect(VAULT)
+      const result = flow.wait()
+      await fixture.exchanges[0]!.started.promise
+      fixture.exchanges[0]!.reply.resolve(auth({ refreshToken: returned }))
+      await expect(result).rejects.toThrow(/different OAuth client/)
+      expect(fixture.revoked).toEqual([])
+      expect(await fixture.accounts.sessionFor(VAULT)).toBeNull()
+      expect(await (await fixture.accounts.sessionFor(WORK))!.getAccessToken()).toBe('at-1')
+    },
+  )
+
+  it('does not revoke existing authorization when a same-client re-consent is cancelled', async () => {
+    const fixture = await controlledConsent([auth()])
+    const flow = await fixture.accounts.connect(VAULT)
+    const result = flow.wait()
+    await fixture.exchanges[0]!.started.promise
+    flow.cancel()
+    fixture.exchanges[0]!.reply.resolve(auth({ refreshToken: 'unused-same-client' }))
+    expect(await result).toEqual({ kind: 'cancelled' })
+    expect(fixture.revoked).toEqual([])
+    expect(await fixture.accounts.sessionForSub('sub-1')!.getAccessToken()).toBe('at-1')
+  })
+
+  it('keeps the grant after a client-authentication refusal and accepts corrected credentials', async () => {
+    await store.write({ 'sub-1': auth({ expiresAt: NOW - 1 }) })
+    const clients = memoryClients(oldClient)
+    const accounts = await start(clients, (async (_url, init) =>
+      new URLSearchParams(String(init?.body)).get('client_secret') === 'bad'
+        ? Response.json({ error: 'invalid_client' }, { status: 400 })
+        : Response.json({
+            access_token: 'recovered',
+            expires_in: 3600,
+          })) as typeof globalThis.fetch)
+    await accounts.link(VAULT, 'sub-1')
+    await accounts.setClient({ ...oldClient, secret: 'bad' })
+    const held = (await accounts.sessionFor(VAULT))!
+    await expect(held.getAccessToken()).rejects.toThrow(/400/)
+    expect(await accounts.sessionFor(VAULT)).toBe(held)
+    await accounts.setClient(oldClient)
+    await expect(held.getAccessToken()).resolves.toBe('recovered')
+  })
+})
+
+describe('cancelled re-consent keeps existing ownership', () => {
+  it.each(['queued', 'writing', 'linking'] as const)(
+    'preserves live sessions and links when a default switch cancels %s consent',
+    async (stage) => {
+      const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
+      const rig = await controlledConsent(
+        [
+          auth(),
+          ...(stage === 'queued'
+            ? [auth({ sub: 'sub-2', refreshToken: 'rt-2', expiresAt: NOW - 1 })]
+            : []),
+        ],
+        undefined,
+        undefined,
+        vaults,
+      )
+      await rig.accounts.link(VAULT, 'sub-1')
+      const held = (await rig.accounts.sessionFor(VAULT))!
+      const entered = deferred<void>()
+      const release = deferred<void>()
+      let blocker: Promise<unknown> | undefined
+      if (stage === 'linking') {
+        const original = vaults.link.bind(vaults)
+        vi.spyOn(vaults, 'link').mockImplementationOnce(async (remote, sub) => {
+          const undo = await original(remote, sub)
+          entered.resolve()
+          await release.promise
+          return undo
+        })
+      } else {
+        const original = store.write.bind(store)
+        vi.spyOn(store, 'write').mockImplementationOnce(async (value) => {
+          entered.resolve()
+          await release.promise
+          await original(value)
+        })
+        if (stage === 'queued') {
+          blocker = rig.accounts.sessionForSub('sub-2')!.getAccessToken()
+          await rig.refreshStarted.promise
+          rig.refreshReply.resolve({ access_token: 'other-refreshed', expires_in: 3600 })
+          await entered.promise
+        }
+      }
+      const flow = await rig.accounts.connect(VAULT)
+      const result = flow.wait()
+      await rig.exchanges[0]!.started.promise
+      rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'new-consent-token' }))
+      if (stage !== 'queued') await entered.promise
+      else await new Promise<void>((resolve) => setImmediate(resolve))
+      const switching = rig.accounts.setClient({ id: GOOGLE_CLIENT_ID, secret: 'rotated-secret' })
+      release.resolve()
+      await switching
+      await blocker
+      expect(await result).toEqual({ kind: 'cancelled' })
+      expect(await rig.accounts.sessionFor(VAULT)).toBe(held)
+      await expect(held.getAccessToken()).resolves.toBe('at-1')
+      expect(rig.revoked).toEqual([])
+      const calls: URLSearchParams[] = []
+      const restarted = await createGoogleAccounts({
+        store,
+        vaults,
+        clients: memoryClients({ id: GOOGLE_CLIENT_ID, secret: 'rotated-secret' }),
+        env: {},
+        listen: async () => {
+          throw new Error('no consent needed')
+        },
+        openBrowser: async () => {},
+        now: () => NOW + 7_200_000,
+        fetch: (async (_url, init) => {
+          calls.push(new URLSearchParams(String(init?.body)))
+          return Response.json({ access_token: 'after-restart', expires_in: 3600 })
+        }) as typeof globalThis.fetch,
+      })
+      await expect((await restarted.sessionFor(VAULT))!.getAccessToken()).resolves.toBe(
+        'after-restart',
+      )
+      expect(calls[0]!.get('client_secret')).toBe('rotated-secret')
+    },
+  )
+
+  it('restores reconnect state after a linked consent is cancelled and does not undo a newer link', async () => {
+    const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
+    await vaults.link(VAULT, 'expired')
+    await vaults.expireAccount('expired')
+    const undo = await vaults.link(VAULT, 'replacement')
+    await undo()
+    expect(await vaults.subFor(VAULT)).toBeNull()
+    expect(await vaults.needsReconnect(VAULT)).toBe(true)
+    const staleUndo = await vaults.link(VAULT, 'older')
+    await vaults.link(VAULT, 'newer')
+    await staleUndo()
+    expect(await vaults.subFor(VAULT)).toBe('newer')
+    expect(await vaults.needsReconnect(VAULT)).toBe(false)
+  })
+})
+
+describe('unresolved consent and rejected rotation', () => {
+  it('waits for a newer exchange response before cleaning superseded authorization', async () => {
+    const rig = await controlledConsent()
+    const first = await rig.accounts.connect(VAULT)
+    const stale = first.wait()
+    await rig.exchanges[0]!.started.promise
+    const second = await rig.accounts.connect(WORK)
+    const winner = second.wait()
+    await rig.exchanges[1]!.started.promise
+    rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'superseded-token' }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(rig.revoked).toEqual([])
+    rig.exchanges[1]!.reply.resolve(auth({ refreshToken: 'winner-token', accessToken: 'winner' }))
+    expect((await winner).kind).toBe('granted')
+    expect(await stale).toEqual({ kind: 'cancelled' })
+    expect(rig.revoked).toEqual([])
+    await expect((await rig.accounts.sessionFor(WORK))!.getAccessToken()).resolves.toBe('winner')
+  })
+
+  it('restores issuing credentials if saving a same-ID default fails, including after restart', async () => {
+    const previous = { id: 'old.apps.googleusercontent.com', secret: 'working-secret' }
+    const clients = createClientStore(join(dir, 'client.enc'), storage)
+    await clients.write(previous)
+    await store.write({ 'sub-1': auth({ expiresAt: NOW - 1 }) })
+    const calls: URLSearchParams[] = []
+    const start = () =>
+      createGoogleAccounts({
+        store,
+        clients,
+        env: {},
+        now: () => NOW,
+        vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+        listen: async () => {
+          throw new Error('no consent needed')
+        },
+        openBrowser: async () => {},
+        fetch: (async (_url, init) => {
+          const fields = new URLSearchParams(String(init?.body))
+          calls.push(fields)
+          return fields.get('client_secret') === previous.secret
+            ? Response.json({ access_token: 'usable', expires_in: 3600 })
+            : Response.json({ error: 'invalid_client' }, { status: 400 })
+        }) as typeof globalThis.fetch,
+      })
+    const accounts = await start()
+    await accounts.link(VAULT, 'sub-1')
+    const held = (await accounts.sessionFor(VAULT))!
+    vi.spyOn(clients, 'write').mockRejectedValueOnce(new Error('default write refused'))
+    await expect(accounts.setClient({ ...previous, secret: 'incorrect-secret' })).rejects.toThrow(
+      'default write refused',
+    )
+    expect(await clients.read()).toEqual(previous)
+    const restarted = await start()
+    await expect((await restarted.sessionFor(VAULT))!.getAccessToken()).resolves.toBe('usable')
+    await expect(held.getAccessToken()).resolves.toBe('usable')
+    expect(calls.map((fields) => fields.get('client_secret'))).toEqual([
+      'working-secret',
+      'working-secret',
+    ])
+  })
+})
+
+describe('every completed consent releases its reservation', () => {
+  it('finishes older cleanup when the newer exchange fails', async () => {
+    const rig = await controlledConsent()
+    const first = await rig.accounts.connect(VAULT)
+    const stale = first.wait()
+    await rig.exchanges[0]!.started.promise
+    const second = await rig.accounts.connect(WORK)
+    const failed = expect(second.wait()).rejects.toThrow('synthetic exchange failure')
+    await rig.exchanges[1]!.started.promise
+    rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'unused-old' }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    rig.exchanges[1]!.reply.reject(new Error('synthetic exchange failure'))
+    await failed
+    expect(await stale).toEqual({ kind: 'cancelled' })
+    expect(rig.revoked).toEqual(['unused-old'])
+    expect(rig.accounts.list()).toEqual([])
+  })
+
+  it('finishes older cleanup when the newer account epoch is stale', async () => {
+    const rig = await controlledConsent()
+    const first = await rig.accounts.connect(VAULT)
+    const stale = first.wait()
+    await rig.exchanges[0]!.started.promise
+    const second = await rig.accounts.connect(WORK)
+    const discarded = second.wait()
+    await rig.exchanges[1]!.started.promise
+    rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'unused-old' }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await rig.accounts.removeAccount('sub-1')
+    rig.exchanges[1]!.reply.resolve(auth({ refreshToken: 'unused-new' }))
+    expect(await discarded).toEqual({ kind: 'cancelled' })
+    expect(await stale).toEqual({ kind: 'cancelled' })
+    expect(rig.revoked.sort()).toEqual(['unused-new', 'unused-old'])
+    expect(rig.accounts.list()).toEqual([])
   })
 })

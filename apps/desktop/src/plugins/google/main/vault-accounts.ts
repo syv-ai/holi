@@ -28,7 +28,7 @@ export interface VaultAccountsStore {
   isCurrentBinding(remote: string, binding: VaultAccountBinding): boolean
   /** Snapshot, for the settings UI and for `unlinkAccount`. */
   all(): Promise<VaultAccounts>
-  link(remote: string, sub: string): Promise<void>
+  link(remote: string, sub: string): Promise<() => Promise<void>>
   /** Forget this vault's choice. The account and its tokens are untouched: a
    *  vault unlinking must never cost another vault its connection. */
   unlinkVault(remote: string): Promise<void>
@@ -70,6 +70,13 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
     const run = queue.then(change, change)
     queue = run.catch(() => undefined)
     return run
+  }
+  const owners = new Map<string, symbol>()
+  const restore = (current: VaultAccounts, remote: string, previous: string | undefined) => {
+    const next = { ...current }
+    if (previous === undefined) delete next[remote]
+    else next[remote] = previous
+    return next
   }
   const revisions = new Map<string, number>()
   const revisionOf = (remote: string) => revisions.get(remote) ?? 0
@@ -114,20 +121,52 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
     isCurrentBinding(remote, binding) {
       return revisionOf(remote) === binding.revision
     },
-    link(remote, sub) {
-      return serial(async () => {
+    async link(remote, sub) {
+      const owner = Symbol('google-vault-link')
+      let previous: string | undefined
+      let previousExpired: string | undefined
+      await serial(async () => {
+        previous = (await store.read())[remote]
+        previousExpired = (await expired.read())[remote]
         await publish((current) => ({ ...current, [remote]: sub }), remote)
-        await clearExpired((key) => key === remote)
+        try {
+          await clearExpired((key) => key === remote)
+        } catch (error) {
+          // Fail closed: do not advertise a link whose expired marker could
+          // not be cleared, and preserve the original failure if rollback fails.
+          try {
+            await publish((current) => restore(current, remote, previous), remote)
+          } catch {
+            // The mapping store itself is failing; callers must treat link as
+            // failed and never publish a connected session.
+          }
+          throw error
+        }
+        owners.set(remote, owner)
       })
+      return () =>
+        serial(async () => {
+          if (owners.get(remote) !== owner) return
+          // Roll back only while this transaction still owns the published
+          // value; never undo a later successful link or unlink.
+          if ((await store.read())[remote] === sub) {
+            await publish((current) => restore(current, remote, previous), remote)
+            await expired.update((current) => restore(current, remote, previousExpired))
+          }
+          owners.delete(remote)
+        })
     },
     unlinkVault(remote) {
       return serial(async () => {
+        owners.delete(remote)
         await publish((current) => without(current, (key) => key === remote))
         await clearExpired((key) => key === remote)
       })
     },
     unlinkAccount(sub) {
       return serial(async () => {
+        for (const [remote, value] of Object.entries(await store.read()))
+          if (value === sub) owners.delete(remote)
         await publish((current) => without(current, (_, value) => value === sub))
         await clearExpired((_, value) => value === sub)
       })
@@ -136,6 +175,7 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
       return serial(async () => {
         const links = await store.read()
         const lost = Object.keys(links).filter((remote) => links[remote] === sub)
+        for (const remote of lost) owners.delete(remote)
         await expired.update((current) => ({
           ...current,
           ...Object.fromEntries(lost.map((remote) => [remote, sub])),

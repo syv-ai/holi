@@ -2,8 +2,8 @@
  * The OAuth client Holi presents to Google, and **the one rule for resolving
  * it**: the person's own client, else the environment, else the shipped pair.
  *
- * Its own file because it has two callers that must never drift: `GoogleSession`
- * refreshes with it and `accounts.ts` runs a consent with it. A stray
+ * New consent and legacy grant migration share this resolver. Existing grants
+ * refresh with their pinned credentials, not this mutable default. A stray
  * `?? ''` in one of them makes consent die at Google with `Missing required
  * parameter: client_id`.
  *
@@ -80,13 +80,6 @@ export function resolveClient(
     }
   }
   return { id: GOOGLE_CLIENT_ID, secret: GOOGLE_CLIENT_SECRET, source: 'shipped' }
-}
-
-/** Whether Google would see two clients as one: a grant made under one
- *  refreshes under the other. **The id alone decides it**: a grant belongs to
- *  the client id, and a client keeps it across a new or rotated secret. */
-export function sameClient(a: GoogleClient, b: GoogleClient): boolean {
-  return a.id === b.id
 }
 
 /** The suffix every Google OAuth client id carries. Checked so a secret pasted

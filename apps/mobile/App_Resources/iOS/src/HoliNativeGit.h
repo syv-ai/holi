@@ -17,4 +17,12 @@ NS_ASSUME_NONNULL_BEGIN
                                                   error:(NSError *_Nullable __autoreleasing *)error;
 @end
 
+@interface HoliNativeGit (TreePreparation)
+- (nullable NSDictionary<NSString *, id> *)prepareWorkingCopyTree:(NSString *)root
+                                                            remote:(NSString *)remote
+                                                             branch:(NSString *)branch
+                                                             policy:(NSInteger (^)(NSString *path))policy
+                                                              error:(NSError *_Nullable __autoreleasing *)error;
+@end
+
 NS_ASSUME_NONNULL_END
