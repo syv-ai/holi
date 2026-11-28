@@ -2,8 +2,12 @@ module HoliNativeFiles {
   header "HoliNativeFiles.h"
   export *
 }
-module HoliNativeCredentials {
-  header "HoliNativeCredentials.h"
+module HoliManagedIdentity {
+  header "HoliManagedIdentity.h"
+  export *
+}
+module HoliManagedAcquisition {
+  header "HoliManagedAcquisition.h"
   export *
 }
 module HoliNativeGit {

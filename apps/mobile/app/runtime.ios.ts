@@ -10,12 +10,8 @@ import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
-import {
-  runWorkingCopyCheck,
-  runWorkingCopyTreeCheck,
-  type TreeFixtureMutation,
-} from './working-copy-check.ios'
-import { runCredentialCheck } from './credential-check.ios'
+import { runWorkingCopyCheck } from './working-copy-check.ios'
+import { runManagedGitCheck } from './managed-git-check.ios'
 import { foundationModelsAvailability } from './foundation-models.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
@@ -28,16 +24,7 @@ function nativeUtf8(text: string): Uint8Array {
 /** The only iOS adapter: launch identity, native encoding and sandbox evidence. */
 export async function checkCompatibility(): Promise<string> {
   const startedAt = Date.now()
-  const environment = NSProcessInfo.processInfo.environment
-  if (environment.objectForKey('HOLI_CREDENTIAL_DIAGNOSTIC') === '1') {
-    if (HoliNativeCredentials.diagnosticsAvailable() !== true)
-      throw new Error('Credential diagnostics require a Simulator acceptance build')
-    return runCredentialCheck(
-      environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? '',
-      environment.objectForKey('HOLI_CREDENTIAL_PHASE') ?? '',
-    )
-  }
-  const runId = environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
+  const runId = NSProcessInfo.processInfo.environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
   const launchPhase =
     NSProcessInfo.processInfo.environment.objectForKey('HOLI_STORAGE_PHASE') ?? 'normal'
   const persist = (value: Record<string, unknown>) =>
@@ -71,21 +58,24 @@ export async function checkCompatibility(): Promise<string> {
   let workingCopy:
     | (Awaited<ReturnType<typeof runWorkingCopyCheck>> & {
         cases?: Awaited<ReturnType<typeof runWorkingCopyCheck>>[]
-        treeCases?: (Awaited<ReturnType<typeof runWorkingCopyTreeCheck>> & {
-          name: string
-          runId: string
-        })[]
       })
     | undefined
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
     if (
-      !['normal', 'working-copy', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(
+      !['normal', 'stage', 'recovery', 'move-stage', 'move-recovery', 'managed-git'].includes(
         launchPhase,
       )
     )
       throw new Error('Invalid storage phase')
+    if (launchPhase === 'managed-git') {
+      phase = 'managed-git'
+      operation = 'runManagedGitCheck'
+      const managedGit = await runManagedGitCheck(runId)
+      persist({ managedGit })
+      return managedGit.ok ? 'Managed Git request completed' : 'Managed Git request refused'
+    }
     if (launchPhase === 'normal') {
       phase = 'foundation-models-availability'
       operation = 'foundationModelsAvailability'
@@ -134,7 +124,7 @@ export async function checkCompatibility(): Promise<string> {
     }
     phase = 'native-git-transport'
     operation = 'runGitCompatibilityCheck'
-    if (launchPhase !== 'working-copy') git = await runGitCompatibilityCheck(runId)
+    git = await runGitCompatibilityCheck(runId)
     phase = 'native-working-copy-status'
     operation = 'runWorkingCopyCheck'
     const gitEnvironment = NSProcessInfo.processInfo.environment
@@ -156,40 +146,6 @@ export async function checkCompatibility(): Promise<string> {
     }
     if (!results[0]) throw new Error('Missing status matrix results')
     workingCopy = { ...results[0], cases: results }
-    phase = 'native-working-copy-tree'
-    operation = 'runWorkingCopyTreeCheck'
-    const treeManifestPath = gitEnvironment.objectForKey('HOLI_GIT_TREE_MANIFEST')
-    if (typeof treeManifestPath !== 'string') throw new Error('Missing working-copy tree manifest')
-    const treeFixture = JSON.parse(
-      File.fromPath(treeManifestPath).readTextSync((error) => {
-        if (error) throw error
-      }),
-    ) as {
-      cases: Array<{
-        name: string
-        runId: string
-        root: string
-        remote: string
-        branch: string
-        mutation?: TreeFixtureMutation
-      }>
-    }
-    if (!Array.isArray(treeFixture.cases) || treeFixture.cases.length === 0)
-      throw new Error('Working-copy tree manifest has no cases')
-    workingCopy.treeCases = []
-    for (const item of treeFixture.cases) {
-      const result = await runWorkingCopyTreeCheck(
-        item.root,
-        item.remote,
-        item.branch,
-        item.mutation,
-      )
-      workingCopy.treeCases.push({ ...result, name: item.name, runId: item.runId })
-    }
-    if (launchPhase === 'working-copy') {
-      persist({ workingCopy })
-      return 'Native working-copy matrix completed'
-    }
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
