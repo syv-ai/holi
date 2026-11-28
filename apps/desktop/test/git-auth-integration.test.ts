@@ -4,7 +4,26 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { runGit } from '../src/main/git'
+import { GitError, runGit } from '../src/main/git'
+
+async function hasNoUsablePassword(operation: () => Promise<string>): Promise<boolean> {
+  try {
+    const output = await operation()
+    const password = output
+      .trim()
+      .split(/\r?\n/)
+      .find((line) => line.startsWith('password='))
+      ?.slice('password='.length)
+    return !password
+  } catch (error) {
+    return (
+      error instanceof GitError &&
+      /terminal prompts? (?:are )?disabled|password (?:is )?(?:unavailable|not available)/i.test(
+        `${error.message}\n${error.stderr}`,
+      )
+    )
+  }
+}
 
 describe('Git authentication through Holi', () => {
   let directory: string | undefined
@@ -115,13 +134,14 @@ describe('Git authentication through Holi', () => {
           token: () => null,
           input: request('reject'),
         })
-        await expect(
-          runGit(directory, ['credential', 'fill'], {
+        const hasNoPassword = await hasNoUsablePassword(() =>
+          runGit(directory!, ['credential', 'fill'], {
             ...opts,
             token: () => null,
             input: request('fill'),
           }),
-        ).rejects.toThrow()
+        )
+        expect(hasNoPassword).toBe(true)
       } finally {
         // Remove only this unique host/path credential, including on failed assertions.
         await runGit(directory, ['credential', 'reject'], {
@@ -129,6 +149,14 @@ describe('Git authentication through Holi', () => {
           token: () => null,
           input: request('reject'),
         })
+        const hasNoPassword = await hasNoUsablePassword(() =>
+          runGit(directory!, ['credential', 'fill'], {
+            ...opts,
+            token: () => null,
+            input: request('fill'),
+          }),
+        )
+        expect(hasNoPassword).toBe(true)
       }
     },
   )

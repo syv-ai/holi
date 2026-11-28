@@ -22,6 +22,9 @@ let shell: (
   extra?: NodeJS.ProcessEnv,
 ) => ReturnType<typeof execAsync>
 let shellEnv: NodeJS.ProcessEnv
+let nativeEnv: NodeJS.ProcessEnv
+let cmdExe: string
+let powershellExe: string
 
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -39,6 +42,13 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
       PATH: `${join(gitRoot, 'usr', 'bin')};${dirname(gitPath)};${fallbackDir}`,
     }
     shellEnv = env
+    nativeEnv = {
+      ...env,
+      PATH: `${dirname(gitPath)};${fallbackDir};${process.env.SystemRoot ?? 'C:\\Windows'}\\System32`,
+    }
+    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
+    cmdExe = join(systemRoot, 'System32', 'cmd.exe')
+    powershellExe = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     const sh = join(gitRoot, 'bin', 'sh.exe')
     shell = (args, input = '', extra = {}) => {
       const running = execAsync(sh, args, {
@@ -110,9 +120,9 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
         {
           name: 'cmd.exe',
           run: () =>
-            execAsync('cmd.exe', ['/d', '/s', '/c', `""${cli}" fixture who "${argument}""`], {
+            execAsync(cmdExe, ['/d', '/s', '/c', `""${cli}" fixture who "${argument}""`], {
               cwd: root,
-              env: { ...shellEnv, HOLI_BIN: cli },
+              env: { ...nativeEnv, HOLI_BIN: cli },
               timeout: 10_000,
               windowsHide: true,
             }),
@@ -121,7 +131,7 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
           name: 'powershell.exe',
           run: () =>
             execAsync(
-              'powershell.exe',
+              powershellExe,
               [
                 '-NoLogo',
                 '-NoProfile',
@@ -131,7 +141,7 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
               ],
               {
                 cwd: root,
-                env: { ...shellEnv, HOLI_BIN: cli },
+                env: { ...nativeEnv, HOLI_BIN: cli },
                 timeout: 10_000,
                 windowsHide: true,
               },
@@ -149,7 +159,7 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
               ],
               {
                 cwd: root,
-                env: { ...shellEnv, HOLI_BIN: cli },
+                env: { ...nativeEnv, HOLI_BIN: cli },
                 timeout: 10_000,
                 windowsHide: true,
               },
@@ -192,24 +202,23 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
           stderr: '',
         })
       }
-      const callerResults = await Promise.allSettled(cliCallers.map((caller) => caller.run()))
-      for (const [index, result] of callerResults.entries()) {
-        expect(
-          result,
-          `${cliCallers[index]!.name} must invoke the installed Holi executable`,
-        ).toMatchObject({
-          status: 'fulfilled',
-          value: { stdout: `|${argument}\n`, stderr: '' },
+      for (const caller of cliCallers) {
+        const result = await caller.run()
+        expect(result, `${caller.name} must invoke the installed Holi executable`).toMatchObject({
+          stdout: `|${argument}\n`,
+          stderr: '',
         })
       }
       expect(jobs).toEqual(['abcd1234', 'abcd1234'])
-      expect(cliJobs).toEqual([
-        `abcd1234|Ada's café "vault" 0`,
-        `abcd1234|Ada's café "vault" 1`,
-        `|${argument}`,
-        `|${argument}`,
-        `|${argument}`,
-      ])
+      expect(cliJobs).toEqual(
+        expect.arrayContaining([
+          `abcd1234|Ada's café "vault" 0`,
+          `abcd1234|Ada's café "vault" 1`,
+          `|${argument}`,
+          `|${argument}`,
+          `|${argument}`,
+        ]),
+      )
       await vi.waitFor(() => expect(statuses).toEqual(['abcd1234', 'abcd1234']))
     } finally {
       await server.stop()

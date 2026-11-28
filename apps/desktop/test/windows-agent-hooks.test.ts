@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -27,13 +27,43 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
     const git = (await exec('where.exe', ['git'])).stdout.split(/\r?\n/)[0]!.trim()
     const gitRoot = join(git, '..', '..')
     const shell = join(gitRoot, 'bin', 'sh.exe')
-    const path = `${join(gitRoot, 'usr', 'bin')};${join(gitRoot, 'bin')};${process.env.PATH}`
+    const fallbackDir = await installNodeFallback(userData, process.execPath)
+    const systemPath = (process.env.PATH ?? '')
+      .split(delimiter)
+      .filter((entry) => !/node/i.test(entry))
+    const path = [
+      join(gitRoot, 'usr', 'bin'),
+      join(gitRoot, 'bin'),
+      ...systemPath,
+      fallbackDir,
+    ].join(delimiter)
     const env = { ...process.env, PATH: path }
-    const server = createBridgeServer({ log: () => {} })
+    const nodePath = join(fallbackDir, 'node')
+    const dispatched: unknown[] = []
+    let checkResult = {
+      value: ['invalid record: missing required field name'],
+      text: 'invalid record: missing required field name',
+    }
+    const server = createBridgeServer({
+      log: () => {},
+      cli: {
+        dispatch: async (invocation) => {
+          dispatched.push(invocation)
+          return checkResult
+        },
+        commands: () => [
+          {
+            name: 'store.check',
+            cli: { args: ['path'], summary: 'check a record' },
+          },
+        ],
+        rootFor: async () => root,
+      },
+    })
     await server.start()
     const token = server.tokenForVault('owner/repo')
     await writeVaultEnv(root, bridgeLines(server.port()!, token))
-    return { root, userData, shell, env, server, token }
+    return { root, userData, shell, env, server, token, dispatched, nodePath }
   }
 
   it('runs the installed signal command into the registered signal route', async () => {
@@ -50,12 +80,15 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
         [join(bin, 'holi-signal'), 'status', '--context', '42.4', '--model', 'Codex'],
         {
           cwd: x.root,
-          env: { ...x.env, HOLI_AGENT_SESSION: 'p12345678' },
+          env: { ...x.env, HOLI_AGENT_SESSION: 'p123456789abc' },
           timeout: 10000,
         },
       )
       expect(signals).toEqual([
-        { session: 'p12345678', signal: { kind: 'status', contextPercent: 42, model: 'Codex' } },
+        {
+          session: 'p123456789abc',
+          signal: { kind: 'status', contextPercent: 42, model: 'Codex' },
+        },
       ])
     } finally {
       await x.server.stop()
@@ -65,7 +98,10 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
   it('executes notifyOverride unchanged and reaches the production Codex route', async () => {
     const x = await setup()
     const turns: unknown[] = []
+    const conversations: unknown[] = []
     registerCodexRoutes(x.server, {
+      onConversation: (_remote, session, conversation) =>
+        conversations.push({ session, conversation }),
       onTurn: (_remote, session, started, detail) => turns.push({ session, started, detail }),
     })
     try {
@@ -73,14 +109,20 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
       const argv = JSON.parse(override) as string[]
       const payload = JSON.stringify({
         'input-messages': ['hello'],
-        'thread-id': '12345678-1234-1234-1234-123456789abc',
+        'thread-id': '123e4567-e89b-42d3-a456-426614174000',
       })
       await exec(argv[0]!, [...argv.slice(1), payload], {
         cwd: x.root,
-        env: { ...x.env, HOLI_AGENT_SESSION: 'p12345678' },
+        env: { ...x.env, HOLI_AGENT_SESSION: 'p123456789abc' },
         timeout: 10000,
       })
-      expect(turns).toEqual([{ session: 'p12345678', started: false, detail: null }])
+      expect(turns).toEqual([{ session: 'p123456789abc', started: false, detail: null }])
+      expect(conversations).toEqual([
+        {
+          session: 'p123456789abc',
+          conversation: { name: 'hello', conversationId: '123e4567-e89b-42d3-a456-426614174000' },
+        },
+      ])
     } finally {
       await x.server.stop()
     }
@@ -88,14 +130,6 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
 
   it('runs the shipped vault-app hook through the installed CLI store.check contract', async () => {
     const x = await setup()
-    const messages: string[] = []
-    x.server.route('/cli', {
-      body: 'json',
-      handle: () => ({
-        status: 200,
-        body: JSON.stringify({ text: 'invalid record: missing required field name' }),
-      }),
-    })
     try {
       const cli = await installHoliCli(x.userData)
       const hook = join(x.root, 'vault-app-check.mjs')
@@ -109,13 +143,48 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
       const app = join(x.root, 'demo.app', 'data', 'things', 'record.json')
       await mkdir(join(x.root, 'demo.app/data/things'), { recursive: true })
       await writeFile(app, '{}')
-      const result = await exec(process.execPath, [hook], {
-        cwd: x.root,
-        env: { ...x.env, HOLI_BIN: cli },
-        timeout: 10000,
+      const result = await new Promise<{ stdout: string }>((resolve, reject) => {
+        const child = spawn(x.nodePath, [hook], {
+          cwd: x.root,
+          env: { ...x.env, HOLI_BIN: cli },
+          timeout: 10000,
+        })
+        let stdout = ''
+        child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')))
+        child.on('error', reject)
+        child.on('close', (code) =>
+          code === 0 ? resolve({ stdout }) : reject(new Error(`hook exited ${code}`)),
+        )
+        child.stdin.on('error', reject)
+        child.stdin.end(JSON.stringify({ cwd: x.root, tool_input: { file_path: app } }))
       })
-      messages.push(result.stdout)
-      expect(messages[0]).toContain('invalid record: missing required field name')
+      const output = JSON.parse(result.stdout) as {
+        hookSpecificOutput?: { additionalContext?: string }
+      }
+      expect(output.hookSpecificOutput?.additionalContext).toContain(
+        'invalid record: missing required field name',
+      )
+      expect(x.dispatched).toHaveLength(1)
+      expect(x.dispatched[0]).toMatchObject({
+        name: 'store.check',
+        params: { path: 'demo.app/data/things/record.json' },
+        remote: 'owner/repo',
+      })
+
+      checkResult = { value: [], text: '' }
+      await writeFile(app, '{"name":"valid"}')
+      const valid = await new Promise<string>((resolve, reject) => {
+        const child = spawn(x.nodePath, [hook], { cwd: x.root, env: { ...x.env, HOLI_BIN: cli } })
+        let stdout = ''
+        child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')))
+        child.on('error', reject)
+        child.on('close', (code) =>
+          code === 0 ? resolve(stdout) : reject(new Error(`hook exited ${code}`)),
+        )
+        child.stdin.on('error', reject)
+        child.stdin.end(JSON.stringify({ cwd: x.root, tool_input: { file_path: app } }))
+      })
+      expect(valid).toBe('')
     } finally {
       await x.server.stop()
     }
