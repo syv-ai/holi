@@ -25,6 +25,8 @@ export interface SafeStorageLike {
 }
 
 export interface StoredGoogleAuth {
+  /** Vaults whose pre-isolation link proves ownership of legacy local receipts. */
+  legacyVaults?: string[]
   /**
    * Google's stable account id, and the identity key. Never the email: a
    * Workspace address can be renamed and a freed one reassigned, so a record
@@ -39,6 +41,8 @@ export interface StoredGoogleAuth {
   expiresAt: number
   /** Missing only on legacy records; encrypted with the grant, never sent to UI. */
   client?: GoogleClient & { source: GoogleClientSource }
+  /** Issuer credentials selected for each linked vault's connection. */
+  issuingClients?: Record<string, GoogleClient & { source: GoogleClientSource }>
   /** What was actually granted, so a failure can name the missing scope. */
   scopes: string[]
 }
@@ -130,6 +134,16 @@ function isEnvelope(value: unknown): value is Envelope {
   return typeof e.v === 'number' && typeof e.data === 'string'
 }
 
+function isStoredGoogleClient(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const client = value as Record<string, unknown>
+  return (
+    typeof client.id === 'string' &&
+    (client.secret === undefined || typeof client.secret === 'string') &&
+    ['own', 'environment', 'shipped'].includes(String(client.source))
+  )
+}
+
 function isStoredGoogleAuth(value: unknown): value is StoredGoogleAuth {
   if (value === null || typeof value !== 'object') return false
   const a = value as Record<string, unknown>
@@ -139,6 +153,18 @@ function isStoredGoogleAuth(value: unknown): value is StoredGoogleAuth {
     typeof a.refreshToken === 'string' &&
     typeof a.accessToken === 'string' &&
     typeof a.expiresAt === 'number' &&
+    (a.legacyVaults === undefined ||
+      (Array.isArray(a.legacyVaults) &&
+        a.legacyVaults.every((remote) => typeof remote === 'string'))) &&
+    (a.issuingClients === undefined ||
+      (a.issuingClients !== null &&
+        typeof a.issuingClients === 'object' &&
+        !Array.isArray(a.issuingClients) &&
+        Object.values(a.issuingClients).every(
+          (client) =>
+            isStoredGoogleClient(client) &&
+            (a.client === undefined || client.id === (a.client as Record<string, unknown>).id),
+        ))) &&
     (a.client === undefined ||
       (a.client !== null &&
         typeof a.client === 'object' &&

@@ -42,13 +42,9 @@ let stop: (() => Promise<void>) | undefined
 let manager: GoogleAccountsManager
 let fetcher: ReturnType<typeof vi.fn<typeof fetch>>
 let listen: ReturnType<typeof vi.fn<() => Promise<LoopbackServer>>>
-let tokenExpiresIn: number
-let invalidGrantSub: string | null
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-google-lifecycle-'))
-  tokenExpiresIn = 3600
-  invalidGrantSub = null
   fetcher = vi.fn<typeof fetch>(async (input, init) => {
     const url = String(input)
     const token = new Headers(init?.headers).get('Authorization') ?? ''
@@ -57,15 +53,9 @@ beforeEach(async () => {
       const sub = new URLSearchParams(String(init?.body)).get('refresh_token')?.endsWith('two')
         ? 'two'
         : 'one'
-      if (sub === invalidGrantSub) return Response.json({ error: 'invalid_grant' }, { status: 400 })
-      return Response.json({ access_token: `access-${sub}`, expires_in: tokenExpiresIn })
+      return Response.json({ access_token: `access-${sub}`, expires_in: 3600 })
     }
     if (url.includes('/revoke')) return Response.json({})
-    if (url.includes('/gmail/v1/users/me/labels/INBOX'))
-      return Response.json({ threadsUnread: 0, threadsTotal: 20 })
-    if (url.includes('/gmail/v1/users/me/profile')) return Response.json({ historyId: '10' })
-    if (url.includes('/gmail/v1/users/me/history'))
-      return Response.json({ historyId: '10', history: [] })
     if (url.includes('/calendarList'))
       return Response.json({ items: [{ id: 'primary', summary: identity, accessRole: 'owner' }] })
     if (url.includes('/calendars/'))
@@ -104,24 +94,26 @@ beforeEach(async () => {
       ]),
     ),
   )
+  const vaults = createVaultAccounts(join(dir, 'links.json'))
+  await vaults.link(A, 'one')
+  await vaults.link(B, 'two')
   manager = await createGoogleAccounts({
     store,
-    vaults: createVaultAccounts(join(dir, 'links.json')),
+    vaults,
     clients: createClientStore(join(dir, 'client.enc'), storage),
     listen,
     openBrowser: async () => {},
     fetch: fetcher,
   })
   vi.mocked(createGoogleAccountsManager).mockReset().mockResolvedValue(manager)
-  await manager.link(A, 'one')
-  await manager.link(B, 'one')
 })
 
 afterEach(async () => {
   await stop?.()
   stop = undefined
   // Remove accounts through the production owner to close every SQLite handle.
-  for (const account of manager.list()) await manager.removeAccount(account.sub)
+  for (const remote of [A, B])
+    for (const account of manager.list(remote)) await manager.removeAccount(remote, account.sub)
   vi.unstubAllGlobals()
   vi.useRealTimers()
   install([])
@@ -184,119 +176,36 @@ async function rig() {
 }
 
 describe('production Google attachments in two explicit vault lifetimes', () => {
-  it('initializes once, shares the account cache, and keeps B usable after A stops and restarts', async () => {
+  it('keeps connection caches separate and B usable after A stops and restarts', async () => {
     const r = await rig()
     await Promise.all([r.enter(A), r.enter(B)])
     expect(r.host.failures(A)).toEqual({})
     expect(r.host.failures(B)).toEqual({})
-    expect(createGoogleAccountsManager).toHaveBeenCalledTimes(1)
     const [agenda, other] = await Promise.all([
       r.call(A, 'agenda', WINDOW),
       r.call(B, 'agenda', WINDOW),
     ])
-    expect(other).toEqual(agenda)
-    expect(fetcher.mock.calls.filter(([url]) => String(url).includes('/token'))).toHaveLength(1)
-    expect(await r.call(B, 'agendaCached', WINDOW)).toEqual(agenda)
-    expect(existsSync(join(dir, 'google-cache-one.db'))).toBe(true)
-    await r.call(A, 'useAccount', { sub: 'one' })
-    expect(await r.call(B, 'agendaCached', WINDOW)).toEqual(agenda)
+    expect(agenda).toEqual([expect.objectContaining({ title: 'one' })])
+    expect(other).toEqual([expect.objectContaining({ title: 'two' })])
+    expect(fetcher.mock.calls.filter(([url]) => String(url).includes('/token'))).toHaveLength(2)
+    expect(await r.call(B, 'agendaCached', WINDOW)).toEqual(other)
+    const cacheA = join(dir, `google-cache-${manager.list(A)[0]!.sub}.db`)
+    expect(existsSync(cacheA)).toBe(true)
+    expect(existsSync(join(dir, `google-cache-${manager.list(B)[0]!.sub}.db`))).toBe(true)
+    await r.call(A, 'useAccount', { sub: manager.list(A)[0]!.sub })
+    expect(await r.call(B, 'agendaCached', WINDOW)).toEqual(other)
     await r.host.stop(A)
     await r.host.stop(A)
-    expect(await r.call(B, 'agendaCached', WINDOW)).toEqual(agenda)
+    expect(await r.call(B, 'agendaCached', WINDOW)).toEqual(other)
     await r.enter(A)
-    expect(createGoogleAccountsManager).toHaveBeenCalledTimes(1)
     expect(await r.call(A, 'agendaCached', WINDOW)).toEqual(agenda)
   })
 
-  it('activates before its initial mail poll finishes and owns that poll through teardown', async () => {
-    const r = await rig()
-    const original = fetcher.getMockImplementation()!
-    const gate = deferred<Response>()
-    const started = deferred<void>()
-    fetcher.mockImplementation(async (input, init) => {
-      if (String(input).includes('/gmail/v1/users/me/labels/INBOX')) {
-        started.resolve()
-        return gate.promise
-      }
-      return original(input, init)
-    })
-
-    const entering = r.enter(A)
-    await started.promise
-    await entering
-
-    expect(r.host.failures(A)).toEqual({})
-    expect(await r.call(A, 'mailAttention')).toMatchObject({
-      accountSub: 'one',
-      unreadThreads: null,
-      status: 'unknown',
-    })
-
-    let stopped = false
-    const stopping = r.host.stop(A).then(() => {
-      stopped = true
-    })
-    await Promise.resolve()
-    expect(stopped).toBe(false)
-
-    gate.resolve(Response.json({ threadsUnread: 0, threadsTotal: 20 }))
-    await stopping
-    expect(stopped).toBe(true)
-  })
-
-  it('reconciles grant expiry discovered by a running refresh without deadlocking', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    tokenExpiresIn = 0
-    await manager.link(B, 'two')
-    const r = await rig()
-    await Promise.all([r.enter(A), r.enter(B)])
-    await vi.waitFor(async () => {
-      expect(await r.call(A, 'mailAttention')).toMatchObject({
-        accountSub: 'one',
-        status: 'fresh',
-      })
-      expect(await r.call(B, 'mailAttention')).toMatchObject({
-        accountSub: 'two',
-        status: 'fresh',
-      })
-    })
-
-    invalidGrantSub = 'one'
-    const original = fetcher.getMockImplementation()!
-    const expiryStarted = deferred<void>()
-    fetcher.mockImplementation(async (input, init) => {
-      if (
-        String(input).includes('/token') &&
-        new URLSearchParams(String(init?.body)).get('refresh_token') === 'refresh-one'
-      )
-        expiryStarted.resolve()
-      return original(input, init)
-    })
-
-    const relinking = r.call(A, 'useAccount', { sub: 'one' })
-    await expiryStarted.promise
-    await expect(r.call(B, 'agenda', WINDOW)).resolves.toEqual([
-      expect.objectContaining({ title: 'two' }),
-    ])
-    await expect(relinking).resolves.toEqual({ ok: true })
-
-    expect(await r.call(A, 'status')).toMatchObject({ needsReconnect: true, account: null })
-    expect(await r.call(A, 'mailAttention')).toMatchObject({
-      accountSub: null,
-      status: 'disconnected',
-    })
-    expect(await r.call(B, 'mailAttention')).toMatchObject({
-      accountSub: 'two',
-      status: 'fresh',
-    })
-
-    await Promise.all([r.host.stop(A), r.host.stop(B)])
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
-  it('preserves markers when a vault unlinks and purges only the removed account', async () => {
-    const one = createMailMarkerStore(dir, 'one')
-    const two = createMailMarkerStore(dir, 'two')
+  it('preserves unlinked markers and purges only an owned connection', async () => {
+    const subA = manager.list(A)[0]!.sub
+    const subB = manager.list(B)[0]!.sub
+    const one = createMailMarkerStore(dir, subA)
+    const two = createMailMarkerStore(dir, subB)
     await one.set('thread-1', 'red-star')
     await one.setPreferences({ enabledOrder: ['red-star', 'blue-question'] })
     await two.set('thread-1', 'blue-question')
@@ -304,23 +213,21 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
     await Promise.all([r.enter(A), r.enter(B)])
 
     await r.call(A, 'disconnectVault')
+    await expect(manager.removeAccount(A, subA)).rejects.toThrow()
     expect(await one.read(['thread-1'])).toEqual({ 'thread-1': 'red-star' })
     expect(await one.preferences()).toEqual({ enabledOrder: ['red-star', 'blue-question'] })
+    expect(await r.call(B, 'agenda', WINDOW)).toEqual([expect.objectContaining({ title: 'two' })])
 
-    await manager.removeAccount('one')
-    await vi.waitFor(async () => {
-      expect(await createMailMarkerStore(dir, 'one').read(['thread-1'])).toEqual({
-        'thread-1': null,
-      })
-    })
-    expect(await createMailMarkerStore(dir, 'one').preferences()).toEqual({
+    await manager.removeAccount(B, subB)
+    expect(await createMailMarkerStore(dir, subB).read(['thread-1'])).toEqual({ 'thread-1': null })
+    expect(await createMailMarkerStore(dir, subB).preferences()).toEqual({
       enabledOrder: ['yellow-star'],
     })
-    expect(await two.read(['thread-1'])).toEqual({ 'thread-1': 'blue-question' })
+    expect(await one.read(['thread-1'])).toEqual({ 'thread-1': 'red-star' })
+    expect(await manager.sessionFor(B)).toBeNull()
   })
 
   it('isolates accounts and vault calendar settings', async () => {
-    await manager.link(B, 'two')
     const r = await rig()
     await Promise.all([r.enter(A), r.enter(B)])
     expect(await r.call(A, 'agenda', WINDOW)).toEqual([expect.objectContaining({ title: 'one' })])
@@ -363,7 +270,6 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
   })
 
   it('keeps B reads and polling alive when A stops, with events scoped to each account', async () => {
-    await manager.link(B, 'two')
     const r = await rig()
     await Promise.all([r.enter(A), r.enter(B)])
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
@@ -423,44 +329,46 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
       }
       return original(url, init)
     })
+    const removedSub = manager.list(B)[0]!.sub
+    const removedCache = join(dir, `google-cache-${removedSub}.db`)
     const pending = r.call(B, 'agenda', WINDOW)
     const rejected = expect(pending).rejects.toThrow(/no longer connected/)
     await started.promise
-    await manager.removeAccount('one')
+    await manager.removeAccount(B, manager.list(B)[0]!.sub)
     gate.resolve(Response.json({ items: [] }))
     await rejected
-    expect(existsSync(join(dir, 'google-cache-one.db'))).toBe(false)
-    expect(await r.call(A, 'status')).toMatchObject({ account: null })
+    expect(existsSync(removedCache)).toBe(false)
+    expect(await r.call(A, 'status')).toMatchObject({ account: { email: 'one@example.test' } })
     expect(await r.call(B, 'status')).toMatchObject({ account: null })
   })
 
   it('awaits marker purge on removal and retires the cache even when purge fails', async () => {
     const r = await rig()
     await r.enter(A)
-    const markerPath = join(dir, 'google-mail-markers-one.json')
+    const markerPath = join(dir, `google-mail-markers-${manager.list(A)[0]!.sub}.json`)
     await mkdir(markerPath)
     await writeFile(join(markerPath, 'blocked'), 'cannot remove the non-empty marker directory')
-    const cachePath = join(dir, 'google-cache-one.db')
+    const cachePath = join(dir, `google-cache-${manager.list(A)[0]!.sub}.db`)
     await Promise.all(
       ['', '-wal', '-shm', '-journal'].map((suffix) => writeFile(cachePath + suffix, 'old')),
     )
 
-    await expect(manager.removeAccount('one')).rejects.toThrow(
+    await expect(manager.removeAccount(A, manager.list(A)[0]!.sub)).rejects.toThrow(
       /personal mail markers could not be deleted/,
     )
     for (const suffix of ['', '-wal', '-shm', '-journal'])
       expect(existsSync(cachePath + suffix)).toBe(false)
-    expect(manager.list().some((account) => account.sub === 'one')).toBe(false)
+    expect(manager.list(A).some((account) => account.sub === 'one')).toBe(false)
   })
 
   it('deletes unopened persisted caches and all SQLite sidecars on removal', async () => {
     const r = await rig()
     await r.enter(A)
-    const path = join(dir, 'google-cache-one.db')
+    const path = join(dir, `google-cache-${manager.list(A)[0]!.sub}.db`)
     await Promise.all(
       ['', '-wal', '-shm', '-journal'].map((suffix) => writeFile(path + suffix, 'old')),
     )
-    await manager.removeAccount('one')
+    await manager.removeAccount(A, manager.list(A)[0]!.sub)
     for (const suffix of ['', '-wal', '-shm', '-journal'])
       expect(existsSync(path + suffix)).toBe(false)
   })

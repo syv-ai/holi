@@ -162,3 +162,143 @@ describe('postJson', () => {
     expect((error as GoogleApiError).code).toBe('scope')
   })
 })
+
+describe('connection ownership during raw requests', () => {
+  const READ = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/fixture-message'
+  it('refuses a raw GET whose connection changes during transport', async () => {
+    let current = true
+    const changed = new GoogleApiError('reconnect', 401, 'fixture connection changed')
+    let atTransport!: () => void
+    let release!: (response: Response) => void
+    const started = new Promise<void>((resolve) => {
+      atTransport = resolve
+    })
+    const response = new Promise<Response>((resolve) => {
+      release = resolve
+    })
+    const api = new GoogleApi({
+      accessToken: async () => 'fixture-token',
+      beforeRequest: () => {
+        if (!current) throw changed
+      },
+      fetch: async () => {
+        atTransport()
+        return response
+      },
+    })
+    const pending = api.request('get', READ)
+    await started
+    current = false
+    release(Response.json({ privateData: 'old connection' }))
+    await expect(pending).rejects.toBe(changed)
+  })
+
+  it.each([
+    ['raw', 200],
+    ['raw', 403],
+    ['get', 403],
+  ] as const)(
+    'refuses %s status %s when ownership changes while consuming its body',
+    async (entry, status) => {
+      let current = true
+      const changed = new GoogleApiError('reconnect', 401, 'fixture connection changed')
+      let atRead!: () => void
+      let body!: ReadableStreamDefaultController<Uint8Array>
+      const reading = new Promise<void>((resolve) => {
+        atRead = resolve
+      })
+      const stream = new ReadableStream<Uint8Array>(
+        {
+          start(controller) {
+            body = controller
+          },
+          pull() {
+            atRead()
+          },
+        },
+        { highWaterMark: 0 },
+      )
+      const api = new GoogleApi({
+        accessToken: async () => 'fixture-token',
+        beforeRequest: () => {
+          if (!current) throw changed
+        },
+        fetch: async () => new Response(stream, { status }),
+      })
+      const pending = entry === 'raw' ? api.request('GET', READ) : api.get(READ)
+      await reading
+      current = false
+      body.enqueue(
+        new TextEncoder().encode(
+          JSON.stringify(
+            status === 200
+              ? { privateData: 'old connection' }
+              : { error: { message: 'old connection error' } },
+          ),
+        ),
+      )
+      body.close()
+      await expect(pending).rejects.toBe(changed)
+    },
+  )
+
+  it.each(['GET', 'POST'])(
+    'refuses %s before transport if ownership changes during async validation',
+    async (method) => {
+      let current = true
+      const changed = new GoogleApiError('reconnect', 401, 'fixture connection changed')
+      let atValidation!: () => void
+      let release!: () => void
+      const validating = new Promise<void>((resolve) => {
+        atValidation = resolve
+      })
+      const permitted = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const transport = vi.fn(async () => Response.json({ id: 'should-not-be-sent' }))
+      const api = new GoogleApi({
+        accessToken: async () => 'fixture-token',
+        beforeRequest: () => {
+          if (!current) throw changed
+        },
+        fetch: transport,
+      })
+      const pending = api.request(method, method === 'GET' ? READ : SEND, undefined, async () => {
+        atValidation()
+        await permitted
+      })
+      await validating
+      current = false
+      release()
+      await expect(pending).rejects.toBe(changed)
+      expect(transport).not.toHaveBeenCalled()
+    },
+  )
+
+  it('preserves an accepted raw write receipt when its connection changes during transport', async () => {
+    let current = true
+    let atTransport!: () => void
+    let release!: (response: Response) => void
+    const started = new Promise<void>((resolve) => {
+      atTransport = resolve
+    })
+    const response = new Promise<Response>((resolve) => {
+      release = resolve
+    })
+    const api = new GoogleApi({
+      accessToken: async () => 'fixture-token',
+      beforeRequest: () => {
+        if (!current) throw new Error('connection changed')
+      },
+      fetch: async () => {
+        atTransport()
+        return response
+      },
+    })
+    const pending = api.request('POST', SEND, { raw: 'synthetic mail' })
+    await started
+    current = false
+    release(Response.json({ id: 'accepted-receipt' }))
+    await expect(pending).resolves.toEqual({ id: 'accepted-receipt' })
+  })
+})
