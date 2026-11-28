@@ -21,6 +21,9 @@ export function useMailMarkerActions({
   reconcile,
   onFailure,
   onChange,
+  runMutation,
+  enabled = true,
+  scope = '',
 }: {
   remote: string | null
   accountSub: string | null
@@ -28,17 +31,24 @@ export function useMailMarkerActions({
   reconcile: (id: string) => void
   onFailure: (cause: unknown) => void
   onChange: (id: string, state: MailMarkerState) => void
+  enabled?: boolean
+  scope?: string
+  runMutation?: (work: () => Promise<unknown>) => Promise<boolean>
 }) {
   const [overlay, setOverlay] = useState<Overlay>({})
   const preferencesRef = useRef<MailMarkerPreferences>(DEFAULT_MAIL_MARKER_PREFERENCES)
   const ownerRef = useRef('')
   const lifecycleRef = useRef(0)
   const settlementTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
-  const callbacks = useRef({ reconcile, onFailure, onChange })
-  callbacks.current = { reconcile, onFailure, onChange }
+  const callbacks = useRef({ reconcile, onFailure, onChange, runMutation })
+  callbacks.current = { reconcile, onFailure, onChange, runMutation }
   const controller = useRef<MailMarkerActions | null>(null)
   if (controller.current === null) {
     controller.current = new MailMarkerActions({
+      runMutation: async (work) => {
+        if (callbacks.current.runMutation) await callbacks.current.runMutation(work)
+        else await work()
+      },
       write: async (owner, id, marker) => {
         const [capturedRemote, capturedSub] = owner.split('\u0000')
         if (!capturedRemote || !capturedSub) throw new Error('Mail owner changed')
@@ -101,7 +111,10 @@ export function useMailMarkerActions({
     setOverlay({})
     preferencesRef.current = DEFAULT_MAIL_MARKER_PREFERENCES
     actions.setOwner(owner, DEFAULT_MAIL_MARKER_PREFERENCES.enabledOrder)
-    if (remote === null || accountSub === null) return
+    if (!enabled || remote === null || accountSub === null) {
+      actions.dispose()
+      return
+    }
     let active = true
     const effectGeneration = lifecycleRef.current + 1
     lifecycleRef.current = effectGeneration
@@ -132,11 +145,11 @@ export function useMailMarkerActions({
       window.removeEventListener(PREFERENCES_EVENT, onPreferences)
       actions.dispose()
     }
-  }, [actions, owner, remote, accountSub])
+  }, [actions, owner, remote, accountSub, enabled, scope])
 
   const activate = useCallback(
     (id: string, starred: boolean, marker: MailMarker | null) => {
-      if (remote === null || accountSub === null) return
+      if (!enabled || remote === null || accountSub === null) return
       const current = overlay[id]
       actions.activate(
         id,
@@ -144,7 +157,7 @@ export function useMailMarkerActions({
         current === undefined ? marker : current.marker,
       )
     },
-    [actions, remote, accountSub, overlay],
+    [actions, remote, accountSub, overlay, enabled],
   )
   const get = useCallback((id: string) => overlay[id], [overlay])
   const retry = useCallback(

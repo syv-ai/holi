@@ -5,8 +5,9 @@
  * `Work/Clients`. The lookup is **one request per `listThreads` call, not one
  * per thread**, to avoid an N+1.
  *
- * **A failure returns an empty map.** Labels are decoration on a row; losing
- * them must cost the chips, never the inbox they sit on.
+ * Decorative lookups return an empty map on failure: losing a label chip
+ * must not cost the inbox. Authoritative list validation uses the strict
+ * lookup, which rejects failures rather than publishing partial data.
  */
 import type { GoogleApi } from './api'
 
@@ -20,18 +21,23 @@ interface RawLabel {
   type?: string
 }
 
-/** id → user-visible name, for Gmail's user labels only. */
+/** id → user-visible name; rejects provider failures for authoritative reads. */
+export async function fetchLabelNamesStrict(api: GoogleApi): Promise<Map<string, string>> {
+  const page = await api.get<{ labels?: RawLabel[] }>(LABELS_URL)
+  return new Map(
+    (page.labels ?? []).flatMap((label) =>
+      label.type === 'user' && label.id !== undefined && label.name !== undefined
+        ? [[label.id, label.name] as const]
+        : [],
+    ),
+  )
+}
+
+/** Optional row decoration: a failed lookup must not prevent reading mail. */
 export async function fetchLabelNames(api: GoogleApi): Promise<Map<string, string>> {
-  const names = new Map<string, string>()
   try {
-    const res = await api.get<{ labels?: RawLabel[] }>(LABELS_URL)
-    for (const label of res.labels ?? []) {
-      if (label.type !== 'user') continue
-      if (label.id === undefined || label.name === undefined) continue
-      names.set(label.id, label.name)
-    }
+    return await fetchLabelNamesStrict(api)
   } catch {
     return new Map()
   }
-  return names
 }
