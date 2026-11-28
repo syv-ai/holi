@@ -55,6 +55,7 @@ export async function posixFixtureLedger(prefix = 'holi-posix-proof-') {
   const groups = new Set<number>()
   const owners = new Set<number>()
   const leases: Array<{ drain: () => Promise<void>; outputClosed: Promise<unknown> }> = []
+  const ancestryFailures: unknown[] = []
   const receipt = (pid: number, values: object) =>
     writeFileSync(
       join(root, `lease-${pid}.json`),
@@ -80,10 +81,16 @@ export async function posixFixtureLedger(prefix = 'holi-posix-proof-') {
       leases.push({ drain, outputClosed })
       receipt(pid, { control })
       return () => {
-        const { anchor, reaper } = leaseAncestry(pid)
-        owners.add(anchor)
-        owners.add(reaper)
-        receipt(pid, { control, anchor, reaper })
+        try {
+          const { anchor, reaper } = leaseAncestry(pid)
+          owners.add(anchor)
+          owners.add(reaper)
+          receipt(pid, { control, anchor, reaper })
+        } catch (error) {
+          // ChildProcess event listeners must not leak synchronous diagnostic
+          // failures as uncaught exceptions. Surface them during fixture reap.
+          ancestryFailures.push(error)
+        }
       }
     },
     async reap() {
@@ -93,7 +100,10 @@ export async function posixFixtureLedger(prefix = 'holi-posix-proof-') {
           await outputClosed
         }),
       )
-      const failures = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []))
+      const failures = [
+        ...ancestryFailures,
+        ...results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : [])),
+      ]
       if (failures.length) throw new AggregateError(failures, `Failed to reap fixtures in ${root}`)
     },
     async remove() {
