@@ -120,7 +120,7 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
     'race-inventory',
     'race-head',
   ]
-  await Promise.all(
+  const built = await Promise.allSettled(
     names.map(async (name) => {
       const root = await mkdtemp(join(parent, `holi-tree-${runId}-${name}-`))
       await git(root, '-c', 'init.templateDir=', 'init', '-b', 'fixture-start')
@@ -283,7 +283,7 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
       const baseHead = await text(root, 'rev-parse', 'HEAD')
       const headTree = await text(root, 'rev-parse', 'HEAD^{tree}')
       await mkdir(join(libraryRoot, name), { recursive: true })
-      cases.push({
+      return {
         name,
         runId,
         root,
@@ -296,9 +296,14 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
         baseHead,
         unchanged: expectedTree === headTree,
         before: await snapshot(root),
-      })
+      }
     }),
   )
+  // Drain every independent builder before the caller can clean up the parent.
+  for (const result of built) {
+    if (result.status === 'rejected') throw result.reason
+    cases.push(result.value)
+  }
   return { runId, cases }
 }
 
