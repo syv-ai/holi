@@ -204,6 +204,14 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
           stdout: `abcd1234|${label}\n`,
           stderr: '',
         })
+        expect(
+          await execAsync(cli, ['fixture', 'who', label], {
+            cwd: root,
+            env: { ...nativeEnv, CLAUDE_JOB_DIR: jobDir },
+            timeout: 10_000,
+            windowsHide: true,
+          }),
+        ).toMatchObject({ stdout: `abcd1234|${label}\n`, stderr: '' })
       }
       for (const caller of cliCallers) {
         const result = await caller.run()
