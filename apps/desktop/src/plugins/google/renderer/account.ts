@@ -23,11 +23,6 @@ import type { GoogleAccount } from '../main/session'
 export type { GoogleAccount }
 
 /** An account connected on this machine, as the picker needs it. */
-interface ConnectedGoogleAccount {
-  sub: string
-  email: string
-}
-
 interface Connection {
   /** The vault this answer is for. */
   remote: string | null
@@ -42,9 +37,6 @@ interface Connection {
   /** Google refused this vault's grant, and it has neither connected again
    *  nor let go. */
   needsReconnect: boolean
-  /** Every account connected on this machine: an account can be connected
-   *  and used by no vault at all, which is what a fresh vault sees. */
-  accounts: ConnectedGoogleAccount[]
   /** The account the open vault uses, or null. */
   currentSub: string | null
 }
@@ -120,7 +112,6 @@ const connectionAtom = atom(
       account: null,
       missingScopes: [],
       needsReconnect: false,
-      accounts: [],
       currentSub: null,
     }
     if (remote === null) return { remote, connection: none, request, error: false }
@@ -134,10 +125,7 @@ const connectionAtom = atom(
     try {
       for (let attempt = 0; ; attempt += 1) {
         try {
-          const [status, connected] = await Promise.all([
-            googleCap.status(remote),
-            googleCap.allAccounts(remote),
-          ])
+          const status = await googleCap.status(remote)
           if (owner.signal.aborted || signal.aborted || get(lifecycleAtom) !== lifecycle) {
             return { remote, request, error: false }
           }
@@ -146,8 +134,7 @@ const connectionAtom = atom(
             account: status.account,
             missingScopes: status.missingScopes,
             needsReconnect: status.needsReconnect === true,
-            accounts: connected.accounts,
-            currentSub: connected.current,
+            currentSub: status.currentSub,
           }
           // Keep the cache in this Jotai store's shared request lifecycle, rather
           // than relying on a mounted React consumer to observe the result.
@@ -231,8 +218,6 @@ export interface GoogleAccountState {
   readError: boolean
   missingScopes: string[]
   needsReconnect: boolean
-  /** Every account connected on this machine. */
-  accounts: ConnectedGoogleAccount[]
   /** The account the open vault uses, or null. */
   currentSub: string | null
   /** Re-read every part from main. */
@@ -259,7 +244,6 @@ export function useGoogleAccount(): GoogleAccountState {
     readError: result?.error ?? false,
     missingScopes: connection?.missingScopes ?? [],
     needsReconnect: connection?.needsReconnect ?? false,
-    accounts: connection?.accounts ?? [],
     currentSub: connection?.currentSub ?? null,
     refresh,
     refreshAndWait,

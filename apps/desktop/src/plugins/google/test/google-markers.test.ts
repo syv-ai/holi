@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GoogleApi } from '../main/api'
 import { openGoogleCache } from '../main/cache'
 import { createGoogleData } from '../main/data'
-import { createMailMarkerStore } from '../main/markers'
+import { createMailMarkerStore, migrateMailMarkers } from '../main/markers'
 
 let directory: string
 const dirs: string[] = []
@@ -19,6 +19,82 @@ afterEach(async () => {
 })
 
 describe('account-bound personal mail markers', () => {
+  it('migrates legacy annotations and preferences once without changing the source', async () => {
+    const root = await temp()
+    const source = join(root, 'google-mail-markers-legacy.json')
+    const sourceText = JSON.stringify({
+      version: 1,
+      accountSub: 'legacy',
+      threads: { 'old-thread': 'red-star' },
+      preferences: { enabledOrder: ['blue-question', 'red-star'] },
+    })
+    await writeFile(source, sourceText)
+
+    await migrateMailMarkers(root, 'legacy', 'connection-opaque-123')
+    const migrated = createMailMarkerStore(root, 'connection-opaque-123')
+    expect(await migrated.read(['old-thread'])).toEqual({ 'old-thread': 'red-star' })
+    expect(await migrated.preferences()).toEqual({ enabledOrder: ['blue-question', 'red-star'] })
+    expect(await readFile(source, 'utf8')).toBe(sourceText)
+
+    await migrated.set('new-thread', 'yellow-star')
+    await migrateMailMarkers(root, 'legacy', 'connection-opaque-123')
+    expect(await migrated.read(['old-thread', 'new-thread'])).toEqual({
+      'old-thread': 'red-star',
+      'new-thread': 'yellow-star',
+    })
+  })
+
+  it('does not resurrect a removed connection annotation from the legacy account file', async () => {
+    const root = await temp()
+    await writeFile(
+      join(root, 'google-mail-markers-legacy.json'),
+      JSON.stringify({
+        version: 1,
+        accountSub: 'legacy',
+        threads: { removed: 'red-star', kept: 'blue-question' },
+      }),
+    )
+    const removed = createMailMarkerStore(root, 'connection-a')
+    await removed.purge()
+    await migrateMailMarkers(root, 'legacy', 'connection-a')
+    const other = createMailMarkerStore(root, 'connection-b')
+    await migrateMailMarkers(root, 'legacy', 'connection-b')
+
+    expect(await createMailMarkerStore(root, 'connection-a').read(['removed'])).toEqual({
+      removed: null,
+    })
+    expect(await other.read(['removed', 'kept'])).toEqual({
+      removed: 'red-star',
+      kept: 'blue-question',
+    })
+  })
+
+  it('rejects malformed migration input without changing either marker file', async () => {
+    const root = await temp()
+    const source = join(root, 'google-mail-markers-legacy.json')
+    const destination = join(root, 'google-mail-markers-connection-opaque.json')
+    const sourceText = '{malformed'
+    const destinationText = JSON.stringify({
+      version: 1,
+      accountSub: 'connection-opaque',
+      threads: { retained: 'blue-question' },
+    })
+    await writeFile(source, sourceText)
+    await writeFile(destination, destinationText)
+
+    await expect(migrateMailMarkers(root, 'legacy', 'connection-opaque')).rejects.toThrow()
+    expect(await readFile(source, 'utf8')).toBe(sourceText)
+    expect(await readFile(destination, 'utf8')).toBe(destinationText)
+  })
+
+  it('refuses invalid identifiers before attempting filesystem access', async () => {
+    await expect(
+      migrateMailMarkers('/path/that/must/not/be/read', '../legacy', 'connection'),
+    ).rejects.toThrow(/invalid Google account id/)
+    await expect(
+      migrateMailMarkers('/path/that/must/not/be/read', 'legacy', '../connection'),
+    ).rejects.toThrow(/invalid Google account id/)
+  })
   it('reads display annotations locally without requesting Gmail for known threads', async () => {
     const root = await temp()
     const cache = openGoogleCache(join(root, 'cache.db'))

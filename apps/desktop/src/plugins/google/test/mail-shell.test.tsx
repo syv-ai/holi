@@ -10,6 +10,7 @@ import { atom, getDefaultStore } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
 import { mailCatchUpByVaultAtom } from '../renderer/mail/mail-catch-up'
+import { refreshGoogleAtom } from '../renderer/account'
 import { ConnectionsSection } from '../renderer/connections-section'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
@@ -53,10 +54,10 @@ vi.mock('@/plugin-api', async (importOriginal) => {
 const google: Record<string, (params: unknown) => unknown> = {
   status: () => ({
     account:
-      accountSub === ''
-        ? null
-        : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test', sub: accountSub },
+      accountSub === '' ? null : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test' },
+    currentSub: accountSub || null,
     missingScopes: [],
+    needsReconnect: false,
   }),
   allAccounts: () => ({
     accounts: [
@@ -70,7 +71,23 @@ const google: Record<string, (params: unknown) => unknown> = {
   removeAccount: (p) => removeAccountMock(p),
   client: () => ({ id: 'holi.apps.googleusercontent.com', source: 'shipped' }),
   setClient: (p) => setClientMock(p),
-  search: (p) => searchMock(p),
+  search: async (p) => {
+    const answer = await searchMock(p)
+    const request = (p as { uiList?: { loadedIds: string[]; refresh?: boolean } }).uiList
+    if (!request || answer.uiList) return answer
+    return {
+      ...answer,
+      uiList: {
+        mode: request.refresh ? 'coverage' : 'page',
+        revalidatedIds: request.refresh ? request.loadedIds : [],
+        removedIds: request.refresh
+          ? request.loadedIds.filter(
+              (id) => !answer.threads.some((thread: { id: string }) => thread.id === id),
+            )
+          : [],
+      },
+    }
+  },
   thread: (p) => threadMock(p),
   drafts: () => draftsMock(),
   saveDraft: (p) => saveDraftMock(p),
@@ -95,10 +112,16 @@ const google: Record<string, (params: unknown) => unknown> = {
   forgetImageSenders: () => ({ ok: true }),
 }
 
-vi.mock('sonner', async (original) => ({
-  ...(await original<typeof import('sonner')>()),
-  toast: (...args: unknown[]) => toastMock(...args),
-}))
+vi.mock('sonner', async (original) => {
+  const sonner = await original<typeof import('sonner')>()
+  return {
+    ...sonner,
+    toast: Object.assign((...args: Parameters<typeof sonner.toast>) => {
+      toastMock(...args)
+      return sonner.toast(...args)
+    }, sonner.toast),
+  }
+})
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -147,7 +170,17 @@ function summary(overrides: Record<string, unknown> = {}) {
 }
 
 function page(threads: unknown[], nextPageToken: string | null = null) {
-  return { threads, nextPageToken, syncedAt: new Date().toISOString() }
+  return {
+    threads,
+    nextPageToken,
+    syncedAt: new Date().toISOString(),
+    uiList: {
+      mode: 'page',
+      cursor: { version: 1, owner: accountSub, key: 'inbox', historyId: '100' },
+      removedIds: [],
+      revalidatedIds: [],
+    },
+  }
 }
 
 const thread = {
@@ -251,31 +284,30 @@ test('retained mail saves before Settings changes the Google account and keeps t
   await user.type(editor, 'still here')
 
   saveDraftMock.mockRejectedValueOnce(new Error('offline'))
-  await user.click(await screen.findByRole('button', { name: 'Use in this vault' }))
+  await user.click(await screen.findByRole('button', { name: 'Disconnect this vault' }))
   expect(await screen.findByRole('alert')).toHaveTextContent(/draft.*not changed/i)
-  expect(useAccountMock).not.toHaveBeenCalled()
+  expect(disconnectVaultMock).not.toHaveBeenCalled()
+  expect(accountSub).toBe('a')
   expect(editor).toHaveValue('still here')
 
-  useAccountMock.mockImplementationOnce(
+  disconnectVaultMock.mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         finishLink = () => {
-          accountSub = 'b'
+          accountSub = ''
           resolve({ ok: true })
         }
       }),
   )
-  await user.click(screen.getByRole('button', { name: 'Use in this vault' }))
+  await user.click(screen.getByRole('button', { name: 'Disconnect this vault' }))
   await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2))
   expect(saveDraftMock.mock.calls.at(-1)![0]).toMatchObject({ mail: { subject: 'still here' } })
   await waitFor(() => expect(editor).toBeDisabled())
   finishLink()
-  await waitFor(() => expect(useAccountMock).toHaveBeenCalledTimes(1))
-  expect(accountSub).toBe('b')
-  expect(
-    await screen.findByRole('button', { name: 'Google account ada@home.test' }),
-  ).toBeInTheDocument()
+  await waitFor(() => expect(disconnectVaultMock).toHaveBeenCalledTimes(1))
+  expect(accountSub).toBe('')
   expect(saveDraftMock.mock.calls.at(-1)![0]).toMatchObject({ mail: { subject: 'still here' } })
+  expect(await screen.findByRole('button', { name: 'Connect' })).toBeInTheDocument()
 })
 
 test('lists the inbox from Gmail with its sender, subject, tab and labels', async () => {
@@ -288,7 +320,11 @@ test('lists the inbox from Gmail with its sender, subject, tab and labels', asyn
   expect(within(row).getByText('Updates')).toBeInTheDocument()
   expect(within(row).getByText('Finance')).toBeInTheDocument()
   expect(within(row).getByRole('img', { name: 'Unread' })).toBeInTheDocument()
-  expect(searchMock).toHaveBeenCalledWith({})
+  expect(searchMock).toHaveBeenCalled()
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('query')
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('mailbox')
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('unread')
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('category')
 })
 
 test('readable mail metadata uses opaque semantic colors for rows, drafts, and attachments', async () => {
@@ -320,8 +356,8 @@ test('readable mail metadata uses opaque semantic colors for rows, drafts, and a
   const list = await screen.findByRole('list', { name: 'Inbox' })
   const rows = within(list).getAllByRole('listitem')
   expect(rows).toHaveLength(2)
-  const unreadRow = rows[0]!
-  const readRow = rows[1]!
+  const unreadRow = rows.find((row) => within(row).queryByText('Q2 budget'))!
+  const readRow = rows.find((row) => within(row).queryByText('Filed report'))!
   for (const row of rows) {
     expect(
       [...row.querySelectorAll('*')].some((node) =>
@@ -411,7 +447,9 @@ test('the Unread tab asks Gmail for unread threads only', async () => {
 
   await user.click(screen.getByRole('tab', { name: 'Unread' }))
 
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ unread: true }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ unread: true })),
+  )
 })
 
 test('search sends Gmail grammar on Enter and escapes the folder', async () => {
@@ -421,22 +459,35 @@ test('search sends Gmail grammar on Enter and escapes the folder', async () => {
 
   await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
   await user.click(await screen.findByRole('menuitemradio', { name: 'Sent' }))
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ mailbox: 'sent' }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ mailbox: 'sent' })),
+  )
 
   await user.type(screen.getByRole('textbox', { name: 'Search mail' }), 'from:jane{Enter}')
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ query: 'from:jane' }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ query: 'from:jane' })),
+  )
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('mailbox')
 })
 
 test('starred is one atomic navigation from Inbox and clears unread', async () => {
   const user = userEvent.setup()
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('tab', { name: 'Unread' }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ unread: true })),
+  )
   await user.click(screen.getByRole('button', { name: 'Compose new email' }))
   await screen.findByRole('region', { name: 'Compose mail' })
 
   await user.click(screen.getByRole('tab', { name: 'Starred' }))
 
-  await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ query: 'is:starred' }))
+  await waitFor(() =>
+    expect(searchMock).toHaveBeenLastCalledWith(expect.objectContaining({ query: 'is:starred' })),
+  )
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('unread')
+  expect(searchMock.mock.lastCall?.[0]).not.toHaveProperty('category')
   expect(screen.getByRole('tab', { name: 'Starred' })).toHaveAttribute('data-state', 'active')
 })
 
@@ -542,15 +593,17 @@ test('a failed load offers Try again, a disconnected one Connections', async () 
   expect(await screen.findByText('Google isn’t connected')).toBeInTheDocument()
 })
 
-test('the account menu switches the vault to another connected account', async () => {
+test('the account menu exposes only the current identity and Connections navigation', async () => {
   const user = userEvent.setup()
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
 
   await user.click(await screen.findByRole('button', { name: 'Google account ada@syv.ai' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
 
-  expect(useAccountMock).toHaveBeenCalledWith({ sub: 'b' })
+  expect(screen.getByRole('menuitem', { name: /connections/i })).toBeInTheDocument()
+  expect(screen.queryByText('ada@home.test')).toBeNull()
+  expect(screen.getByText('ada@syv.ai')).toBeInTheDocument()
+  expect(useAccountMock).not.toHaveBeenCalled()
 })
 
 test('compose opens the existing composer inline in the reader', async () => {
@@ -564,7 +617,7 @@ test('compose opens the existing composer inline in the reader', async () => {
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
-test('a failed composition save blocks thread, folder, compose, and account navigation', async () => {
+test('a failed composition save blocks thread, folder, compose, and Connections navigation', async () => {
   const user = userEvent.setup()
   saveDraftMock.mockRejectedValue(new Error('offline'))
   render(<MailShell />)
@@ -587,8 +640,7 @@ test('a failed composition save blocks thread, folder, compose, and account navi
   expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved words')
 
   await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
-  expect(useAccountMock).not.toHaveBeenCalled()
+  await user.click(await screen.findByRole('menuitem', { name: /connections/i }))
   expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved words')
 })
 
@@ -1036,9 +1088,9 @@ test('catch-up admission survives Google account A-B-A while startup is pending'
   await user.click(screen.getByRole('button', { name: 'Catch me up' }))
   await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
 
-  for (const email of ['ada@home.test', 'ada@syv.ai']) {
-    await user.click(screen.getByRole('button', { name: /Google account/ }))
-    await user.click(await screen.findByRole('menuitem', { name: email }))
+  for (const sub of ['b', 'a']) {
+    accountSub = sub
+    getDefaultStore().set(refreshGoogleAtom)
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Starting catch-up' })).toBeDisabled(),
     )
@@ -1210,10 +1262,16 @@ test.each(['vault', 'account'] as const)(
       getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
       await screen.findByRole('button', { name: 'Confirming stop…' })
     } else {
-      for (const email of ['ada@home.test', 'ada@syv.ai']) {
-        await user.click(screen.getByRole('button', { name: /Google account/ }))
-        await user.click(await screen.findByRole('menuitem', { name: email }))
-        await screen.findByRole('button', { name: `Google account ${email}` })
+      for (const sub of ['b', 'a']) {
+        accountSub = sub
+        getDefaultStore().set(refreshGoogleAtom)
+        await waitFor(() =>
+          expect(
+            screen.getByRole('button', {
+              name: `Google account ${sub === 'a' ? 'ada@syv.ai' : 'ada@home.test'}`,
+            }),
+          ).toBeInTheDocument(),
+        )
       }
     }
     finish({ ok: true })

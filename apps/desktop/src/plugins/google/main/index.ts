@@ -19,7 +19,7 @@ import type { CalendarOverrides } from './calendar'
 import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
 import { createMailAttention, MAIL_ATTENTION_EVENT, type MailAttention } from './mail-attention'
-import { createMailMarkerStore } from './markers'
+import { createMailMarkerStore, migrateMailMarkers } from './markers'
 import { googleSeed } from './seed'
 import { createMeetingCreation } from './meeting-creation'
 import type { GoogleSession } from './session'
@@ -49,7 +49,8 @@ export const googleMain: MainPlugin = {
         const accounts = await createGoogleAccountsManager(ctx.userData)
         const bySub = new Map<string, { data: GoogleData; session: GoogleSession }>()
         const markersBySub = new Map<string, ReturnType<typeof createMailMarkerStore>>()
-        const mailAttention = createMailAttention({
+        const mailAttention = createMailAttention<GoogleSession>({
+          grantFor: (session) => session.grantIdentity,
           sessionFor: (remote) => accounts.sessionFor(remote),
           apiFor: (session) => {
             const sub = session.accountSub
@@ -90,44 +91,36 @@ export const googleMain: MainPlugin = {
           return data
         }
         accounts.onChange(async (sub, reason) => {
+          if (sub === null) return
+          // Linking another vault does not replace the grant or its shared cache.
+          if (bySub.get(sub)?.session === accounts.sessionForSub(sub)) return
+          // An old request can still finish after reconnecting the same account.
+          // Retire its data handle and cache so it cannot return or persist stale rows.
+          bySub.get(sub)?.data.forget()
+          bySub.delete(sub)
+          if (!/^[A-Za-z0-9_-]+$/.test(sub)) return
+          // An expired grant can be reconnected to the same Google identity;
+          // keep its durable annotations. Only deliberate account deletion
+          // removes them (including an explicit removal after expiry).
           try {
-            if (sub === null) return
-            // Linking another vault does not replace the grant or its shared cache.
-            if (bySub.get(sub)?.session === accounts.sessionForSub(sub)) return
-            // An old request can still finish after reconnecting the same account.
-            // Retire its data handle and cache so it cannot return or persist stale rows.
-            bySub.get(sub)?.data.forget()
-            bySub.delete(sub)
-            if (!/^[A-Za-z0-9_-]+$/.test(sub)) return
-            // An expired grant can be reconnected to the same Google identity;
-            // keep its durable annotations. Only deliberate account deletion
-            // removes them (including an explicit removal after expiry).
-            try {
-              if (reason === 'removed') {
-                const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
-                markersBySub.delete(sub)
-                await markers.purge()
-              }
-            } catch (error) {
-              throw new Error(
-                `Google account was removed, but personal mail markers could not be deleted: ${String(error)}`,
-              )
-            } finally {
-              // Also erase accounts that never opened a data handle this process.
-              const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
-              retired.retire()
+            if (reason === 'removed') {
+              const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
+              markersBySub.delete(sub)
+              await markers.purge()
             }
+          } catch (error) {
+            throw new Error(
+              `Google account was removed, but personal mail markers could not be deleted: ${String(error)}`,
+            )
           } finally {
-            // A dead grant can be discovered by this module's own queued refresh. Waiting
-            // for another refresh from inside that token-expiry callback would queue it
-            // behind the poll that is waiting for this callback and deadlock both.
+            // Also erase accounts that never opened a data handle this process.
+            const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
+            retired.retire()
             if (reason === 'expired') {
               void mailAttention
                 .refresh({ drain: false })
                 .catch((error) => console.warn(`[google mail attention] refresh: ${String(error)}`))
             } else {
-              // Deliberate lifecycle changes still drain the retired account before the
-              // settings action completes.
               await mailAttention.refresh()
             }
           }
@@ -138,6 +131,8 @@ export const googleMain: MainPlugin = {
       void ownerPromise.catch(() => owners.delete(ctx.userData))
     }
     const { accounts, dataForSession, mailAttention } = await ownerPromise
+    const legacy = accounts.legacyConnection(ctx.remote)
+    if (legacy) await migrateMailMarkers(ctx.userData, legacy.accountSub, legacy.connectionId)
 
     /**
      * Keep a removed account's cache off the disk. On `onChange` rather than
