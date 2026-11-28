@@ -2142,12 +2142,72 @@ test("Ask AI's rewrite commands read as one group, and Start chat comes after th
   ])
 })
 
+test('cancelling a batch instruction queues nothing and starts no run', async () => {
+  const user = userEvent.setup()
+  open('Ship the beta.\n')
+  const { askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  const instruction = await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await user.type(instruction, 'Make it clearer{Escape}')
+
+  expect(screen.queryByRole('textbox', { name: /Request for target/ })).not.toBeInTheDocument()
+  expect(cap).not.toHaveBeenCalled()
+})
+
+test('the batch overlay edits and removes queued requests without starting a run', async () => {
+  const user = userEvent.setup()
+  open('Ship the beta.\n')
+  const { selected, askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Make it clearer',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  expect(selected()).toBe('Ship the beta')
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue(
+    'Make it clearer',
+  )
+  expect(cap).not.toHaveBeenCalled()
+
+  await user.click(screen.getByRole('button', { name: 'Batch (1)' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Rewrite batch (1)' })
+  const instruction = within(dialog).getByRole('textbox', { name: 'Request for target 1' })
+  await user.clear(instruction)
+  await user.type(instruction, 'Make it concise')
+  await user.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Rewrite batch (1)' })).toBeNull(),
+  )
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue(
+    'Make it concise',
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Batch (1)' }))
+  await user.click(
+    within(await screen.findByRole('dialog', { name: 'Rewrite batch (1)' })).getByRole('button', {
+      name: 'Remove',
+    }),
+  )
+  await waitFor(() => expect(screen.queryByRole('button', { name: /Batch \(1\)/ })).toBeNull())
+  expect(screen.queryByRole('dialog', { name: 'Rewrite batch (1)' })).toBeNull()
+  expect(cap).not.toHaveBeenCalled()
+})
+
 test('queued paragraph requests launch together as one rewrite run', async () => {
   const user = userEvent.setup()
   open('# Plan\n\nShip the beta.\n\nKeep the title.\n')
   const { editor, askAi } = await selectForAskAi('Ship the beta')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 1' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Make it clearer')
 
   let second = -1
@@ -2163,6 +2223,12 @@ test('queued paragraph requests launch together as one rewrite run', async () =>
   )
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 2' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 2' }), 'Shorten it')
   await user.click(screen.getByRole('button', { name: 'Submit batch' }))
 
@@ -2175,12 +2241,65 @@ test('queued paragraph requests launch together as one rewrite run', async () =>
   expect(screen.getByText(/Rewrite batch \(2\)/)).toBeVisible()
 })
 
+test('batch instruction follows its original passage after a preceding edit and selection collapse', async () => {
+  const user = userEvent.setup()
+  open('# Plan\n\nTarget passage.\n\nOther text.\n')
+  const { editor, askAi } = await selectForAskAi('Target passage')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await user.type(prompt, 'Make it clearer')
+  act(() => {
+    editor.commands.insertContentAt(textPos(editor, 'Target passage') - 1, 'New intro.\n\n')
+    editor.commands.setTextSelection(textPos(editor, 'Other text'))
+  })
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue(
+    'Make it clearer',
+  )
+  await user.click(screen.getByRole('button', { name: 'Batch (1)' }))
+  await user.click(await screen.findByRole('button', { name: 'Submit batch' }))
+  await waitFor(() => expect(cap).toHaveBeenCalledOnce())
+  expect(JSON.parse(cap.mock.calls[0]![0].paramsJson).prompt).toContain(
+    'Exact target: "Target passage"',
+  )
+})
+
+test('a changed duplicate passage keeps its batch prompt and refuses repeated confirmation', async () => {
+  const user = userEvent.setup()
+  open('Repeat this paragraph.\n\nRepeat this paragraph.\n')
+  const { editor, askAi } = await selectForAskAi('Repeat this paragraph')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await user.type(prompt, 'Keep my instruction')
+  changeOnDisk('Repeat this paragraph.\n', '2026-10-23T10:02:00Z')
+  await waitFor(() => expect(editor.getText().match(/Repeat this paragraph/g)).toHaveLength(1))
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('passage changed')
+  expect(screen.getByRole('textbox', { name: 'What should the agent do?' })).toHaveValue(
+    'Keep my instruction',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  expect(screen.getByRole('textbox', { name: 'What should the agent do?' })).toHaveValue(
+    'Keep my instruction',
+  )
+  expect(cap).not.toHaveBeenCalled()
+  expect(screen.queryByRole('textbox', { name: 'Request for target 1' })).not.toBeInTheDocument()
+})
+
 test('external deletion of a duplicate paragraph requires explicit target reselection', async () => {
   const user = userEvent.setup()
   open('Repeat this paragraph.\n\nRepeat this paragraph.\n')
   const { askAi } = await selectForAskAi('Repeat this paragraph')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 1' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
 
   changeOnDisk('Repeat this paragraph.\n', '2026-10-23T10:01:00Z')
@@ -2209,6 +2328,12 @@ test('duplicate rewrite targets carry distinct saved-document locations', async 
   const { editor, askAi } = await selectForAskAi('Repeat this paragraph')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 1' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'First')
 
   let second = -1
@@ -2227,6 +2352,12 @@ test('duplicate rewrite targets carry distinct saved-document locations', async 
   )
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 2' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 2' }), 'Second')
   await user.click(screen.getByRole('button', { name: 'Submit batch' }))
 
@@ -2249,6 +2380,12 @@ test('batch submission locks queue changes and refuses a changed revision after 
   const { editor, askAi } = await selectForAskAi('Repeat this paragraph')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 1' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
   write.mockImplementationOnce(() => pending.promise)
   act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' unsaved change'))
@@ -2287,6 +2424,11 @@ test('disposed document cannot launch a batch after its deferred save', async ()
   const { editor, askAi } = await selectForAskAi('Repeat this paragraph')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
   fireEvent.change(screen.getByRole('textbox', { name: 'Request for target 1' }), {
     target: { value: 'Improve' },
   })
@@ -2307,6 +2449,12 @@ test('batch save and launch failures preserve requests and release the submissio
   const { askAi } = await selectForAskAi('Repeat this paragraph')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 1' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
 
   write.mockRejectedValueOnce(new Error('save failed'))
@@ -2422,6 +2570,12 @@ test.each(['completed', 'failed', 'aborted'] as const)(
     const { editor, askAi } = await selectForAskAi('Ship the beta')
     await user.click(askAi)
     await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+    await user.type(
+      await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+      'Apply the requested change',
+    )
+    await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+    await user.clear(screen.getByRole('textbox', { name: 'Request for target 1' }))
     await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
     expect(editor.isEditable).toBe(true)
     await user.click(screen.getByRole('button', { name: 'Submit batch' }))
@@ -2439,6 +2593,12 @@ test('stopping a submitted batch unlocks its document', async () => {
   const { editor, askAi } = await selectForAskAi('Ship the beta')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 1' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
   await user.click(screen.getByRole('button', { name: 'Submit batch' }))
   const stop = await screen.findByRole('button', { name: 'Stop' })
@@ -2493,6 +2653,12 @@ test('stopping during a deferred batch launch unlocks edits and retains requests
   const { editor, askAi } = await selectForAskAi('Ship the beta')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 1' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
   await user.click(screen.getByRole('button', { name: 'Submit batch' }))
   await waitFor(() =>
@@ -2528,6 +2694,12 @@ test('a late stopped launch cannot clear or contaminate a retried batch', async 
   const { editor, askAi } = await selectForAskAi('Ship the beta')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Apply the requested change',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  await user.clear(screen.getByRole('textbox', { name: 'Request for target 1' }))
   await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
   await user.click(screen.getByRole('button', { name: 'Submit batch' }))
   await waitFor(() => expect(launches).toBe(1))
