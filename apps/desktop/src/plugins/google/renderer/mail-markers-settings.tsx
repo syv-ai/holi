@@ -130,8 +130,8 @@ export function MailMarkersSettings({
           Personal markers
         </h3>
         <p className="text-sm text-muted-foreground">
-          These settings are for this Google account on this machine. Turning a marker off does not
-          remove it from existing mail annotations.
+          These settings are for this vault’s Google connection on this machine. Turning a marker
+          off does not remove it from existing mail annotations.
         </p>
       </div>
       {loadState === 'loading' ? (

@@ -58,6 +58,7 @@ export interface MailAttention {
 
 export interface MailAttentionDeps<S extends MailAttentionSession> {
   sessionFor(remote: string): Promise<S | null>
+  grantFor(session: S): object
   apiFor(session: S): GoogleApi
   now?: () => Date
   pollMs?: number
@@ -75,7 +76,7 @@ interface Subscriber<S extends MailAttentionSession> extends MailAttentionSubscr
 }
 
 interface AccountState<S extends MailAttentionSession> {
-  session: S
+  grant: object
   sub: string
   subscribers: Set<Subscriber<S>>
   cursor: string | null
@@ -121,7 +122,7 @@ export function createMailAttention<S extends MailAttentionSession>(
       return () => clearInterval(timer)
     })
   const subscribers = new Set<Subscriber<S>>()
-  const accounts = new Map<S, AccountState<S>>()
+  const accounts = new Map<object, AccountState<S>>()
   let refreshing: Promise<void> = Promise.resolve()
 
   const publicInterface: MailAttention = {
@@ -196,10 +197,11 @@ export function createMailAttention<S extends MailAttentionSession>(
   }
 
   function attach(subscriber: Subscriber<S>, session: S, sub: string): void {
-    let state = accounts.get(session)
+    const grant = deps.grantFor(session)
+    let state = accounts.get(grant)
     if (state === undefined) {
       state = {
-        session,
+        grant,
         sub,
         subscribers: new Set(),
         cursor: null,
@@ -212,7 +214,7 @@ export function createMailAttention<S extends MailAttentionSession>(
         () => void pollAccount(state!).catch((error) => log(`poll ${sub}: ${String(error)}`)),
         deps.pollMs ?? POLL_MS,
       )
-      accounts.set(session, state)
+      accounts.set(grant, state)
     }
     subscriber.session = session
     subscriber.state = state
@@ -235,7 +237,7 @@ export function createMailAttention<S extends MailAttentionSession>(
     if (state.subscribers.size > 0 || state.retired) return
     state.retired = true
     state.stopTimer()
-    accounts.delete(state.session)
+    accounts.delete(state.grant)
     if (drain) await state.polling
   }
 
@@ -262,7 +264,9 @@ export function createMailAttention<S extends MailAttentionSession>(
   }
 
   async function runPoll(state: AccountState<S>): Promise<void> {
-    const api = deps.apiFor(state.session)
+    const authorized = [...state.subscribers].find(isLive)
+    if (authorized === undefined) return
+    const api = deps.apiFor(authorized.session!)
     const counts = fetchMailCounts(api)
     const history =
       state.cursor === null
@@ -277,7 +281,7 @@ export function createMailAttention<S extends MailAttentionSession>(
       const stamp = now().toISOString()
       for (const subscriber of current) {
         publish(subscriber, {
-          accountSub: state.sub,
+          accountSub: subscriber.session!.accountSub,
           unreadThreads: countResult.value.unread,
           status: 'fresh',
           revision: 0,
@@ -289,7 +293,7 @@ export function createMailAttention<S extends MailAttentionSession>(
         const before = subscriber.snapshotValue
         publish(subscriber, {
           ...before,
-          accountSub: state.sub,
+          accountSub: subscriber.session!.accountSub,
           status: before.unreadThreads === null ? 'unknown' : 'stale',
           revision: 0,
         })
@@ -350,7 +354,11 @@ export function createMailAttention<S extends MailAttentionSession>(
         await detach(subscriber, false)
         continue
       }
-      if (current === state.session) {
+      if (
+        current !== null &&
+        current === subscriber.session &&
+        deps.grantFor(current) === state.grant
+      ) {
         currentSubscribers.add(subscriber)
         continue
       }

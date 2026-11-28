@@ -62,7 +62,11 @@ afterEach(() => {
 })
 
 test('starts unknown, then reports the connected account', async () => {
-  statusMock.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+  statusMock.mockResolvedValue({
+    account: { email: 'ada@syv.ai' },
+    currentSub: 'ada@syv.ai',
+    missingScopes: [],
+  })
 
   const { getByTestId } = renderProbe()
 
@@ -74,7 +78,7 @@ test('starts unknown, then reports the connected account', async () => {
 
 test('a successful disconnected result is authoritative and does not retry', async () => {
   vi.useFakeTimers()
-  statusMock.mockResolvedValue({ account: null, missingScopes: [] })
+  statusMock.mockResolvedValue({ account: null, currentSub: null, missingScopes: [] })
 
   const { getByTestId } = renderProbe()
 
@@ -87,9 +91,11 @@ test('a successful disconnected result is authoritative and does not retry', asy
 })
 
 test('recovers from a transient status failure and reveals the sidebar connection', async () => {
-  statusMock
-    .mockRejectedValueOnce(new Error('Google is not ready yet'))
-    .mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+  statusMock.mockRejectedValueOnce(new Error('Google is not ready yet')).mockResolvedValue({
+    account: { email: 'ada@syv.ai' },
+    currentSub: 'ada@syv.ai',
+    missingScopes: [],
+  })
 
   vi.useFakeTimers()
   const { getByTestId, store } = renderProbe()
@@ -129,7 +135,11 @@ test('an exhausted read is an error and an explicit refresh starts a fresh seque
     await Promise.resolve()
   })
   expect(getByTestId('account').textContent).toBe('unknown')
-  statusMock.mockResolvedValue({ account: { email: 'recovered@syv.ai' }, missingScopes: [] })
+  statusMock.mockResolvedValue({
+    account: { email: 'recovered@syv.ai' },
+    currentSub: 'recovered@syv.ai',
+    missingScopes: [],
+  })
   store.set(refreshGoogleAtom)
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1_250)
@@ -148,7 +158,11 @@ test('remount after cancelling a retry starts a fresh request in the same store'
   })
   expect(statusMock).toHaveBeenCalledTimes(1)
   unmount()
-  statusMock.mockResolvedValue({ account: { email: 'remounted@syv.ai' }, missingScopes: [] })
+  statusMock.mockResolvedValue({
+    account: { email: 'remounted@syv.ai' },
+    currentSub: 'remounted@syv.ai',
+    missingScopes: [],
+  })
   const view = renderProbe(store, 'syv-ai/remount-test')
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1_250)
@@ -178,7 +192,11 @@ test('late rejection after unmount cannot start retries', async () => {
 })
 
 test('Google account reads safely under React StrictMode', async () => {
-  statusMock.mockResolvedValue({ account: { email: 'strict@syv.ai' }, missingScopes: [] })
+  statusMock.mockResolvedValue({
+    account: { email: 'strict@syv.ai' },
+    currentSub: 'strict@syv.ai',
+    missingScopes: [],
+  })
   const store = createStore()
   store.set(activeRemoteAtom, 'strict/remount')
   const view = render(
@@ -194,8 +212,16 @@ test('Google account reads safely under React StrictMode', async () => {
 
 test('independent stores do not share a same-vault result', async () => {
   statusMock
-    .mockResolvedValueOnce({ account: { email: 'first@syv.ai' }, missingScopes: [] })
-    .mockResolvedValueOnce({ account: { email: 'second@syv.ai' }, missingScopes: [] })
+    .mockResolvedValueOnce({
+      account: { email: 'first@syv.ai' },
+      currentSub: 'first@syv.ai',
+      missingScopes: [],
+    })
+    .mockResolvedValueOnce({
+      account: { email: 'second@syv.ai' },
+      currentSub: 'second@syv.ai',
+      missingScopes: [],
+    })
   const first = renderProbe(createStore(), 'same/remote')
   const second = renderProbe(createStore(), 'same/remote')
   await waitFor(() =>
@@ -214,7 +240,11 @@ test('independent stores do not share a same-vault result', async () => {
 test('unmounting one store does not cancel another same-remote request', async () => {
   vi.useFakeTimers()
   let rejectFirst!: (error: Error) => void
-  let resolveSecond!: (value: { account: { email: string }; missingScopes: string[] }) => void
+  let resolveSecond!: (value: {
+    account: { email: string }
+    currentSub: string | null
+    missingScopes: string[]
+  }) => void
   statusMock
     .mockImplementationOnce(
       () =>
@@ -233,7 +263,11 @@ test('unmounting one store does not cancel another same-remote request', async (
   expect(statusMock).toHaveBeenCalledTimes(2)
   first.unmount()
   await act(async () => {
-    resolveSecond({ account: { email: 'second@syv.ai' }, missingScopes: [] })
+    resolveSecond({
+      account: { email: 'second@syv.ai' },
+      currentSub: 'second@syv.ai',
+      missingScopes: [],
+    })
     await Promise.resolve()
   })
   expect(second.container.querySelector('[data-testid="account"]')?.textContent).toBe(
@@ -250,7 +284,7 @@ test('unmounting one of several same-store readers does not cancel the other', a
   vi.useFakeTimers()
   statusMock
     .mockRejectedValueOnce(new Error('temporary'))
-    .mockResolvedValue({ account: null, missingScopes: [] })
+    .mockResolvedValue({ account: null, currentSub: null, missingScopes: [] })
   const store = createStore()
   store.set(activeRemoteAtom, 'same/store')
   const first = render(
@@ -275,7 +309,7 @@ test('unmounting one of several same-store readers does not cancel the other', a
 })
 
 test('asks once, however many components read it', async () => {
-  statusMock.mockResolvedValue({ account: null, missingScopes: [] })
+  statusMock.mockResolvedValue({ account: null, currentSub: null, missingScopes: [] })
   const store = createStore()
 
   const remote = 'syv-ai/shared-vault'
@@ -301,11 +335,13 @@ test('carries the scopes a stored grant is missing — connected is not the same
   expect(getByTestId('account').textContent).toBe('ada@syv.ai')
 })
 
-test('retries an all-accounts failure without losing a connected account', async () => {
-  statusMock.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
-  accountsMock
-    .mockRejectedValueOnce(new Error('Google is not ready yet'))
-    .mockResolvedValue({ accounts: [], current: null })
+test('retries a status failure and reveals the connected account', async () => {
+  statusMock.mockRejectedValueOnce(new Error('Google is not ready yet')).mockResolvedValue({
+    account: { email: 'ada@syv.ai' },
+    currentSub: 'ada-sub',
+    missingScopes: [],
+    needsReconnect: false,
+  })
 
   vi.useFakeTimers()
   const { getByTestId } = renderProbe()
@@ -315,7 +351,7 @@ test('retries an all-accounts failure without losing a connected account', async
     await Promise.resolve()
   })
   expect(getByTestId('account').textContent).toBe('ada@syv.ai')
-  expect(accountsMock).toHaveBeenCalledTimes(2)
+  expect(statusMock).toHaveBeenCalledTimes(2)
 })
 
 test('unmounting cancels a pending retry', async () => {
@@ -332,17 +368,25 @@ test('unmounting cancels a pending retry', async () => {
 })
 
 test('a vault switch does not let a late prior answer overwrite the new vault', async () => {
-  let resolveOld!: (value: { account: { email: string }; missingScopes: string[] }) => void
+  let resolveOld!: (value: {
+    account: { email: string }
+    currentSub: string | null
+    missingScopes: string[]
+  }) => void
   statusMock
     .mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)))
-    .mockResolvedValue({ account: { email: 'new@syv.ai' }, missingScopes: [] })
+    .mockResolvedValue({
+      account: { email: 'new@syv.ai' },
+      currentSub: 'new@syv.ai',
+      missingScopes: [],
+    })
   const store = createStore()
   const { getByTestId } = renderProbe(store)
 
   store.set(activeRemoteAtom, 'other/vault')
   await waitFor(() => expect(getByTestId('account').textContent).toBe('new@syv.ai'))
   await act(async () => {
-    resolveOld({ account: { email: 'old@syv.ai' }, missingScopes: [] })
+    resolveOld({ account: { email: 'old@syv.ai' }, currentSub: 'old@syv.ai', missingScopes: [] })
     await Promise.resolve()
   })
   expect(getByTestId('account').textContent).toBe('new@syv.ai')
@@ -350,7 +394,11 @@ test('a vault switch does not let a late prior answer overwrite the new vault', 
 
 test('the sidebar subscription preserves a connection without a React account reader', async () => {
   vi.useFakeTimers()
-  statusMock.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+  statusMock.mockResolvedValue({
+    account: { email: 'ada@syv.ai' },
+    currentSub: 'ada@syv.ai',
+    missingScopes: [],
+  })
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/sidebar-only')
   const unsubscribe = store.sub(googleConnectedAtom, () => undefined)
@@ -361,7 +409,7 @@ test('the sidebar subscription preserves a connection without a React account re
   await vi.advanceTimersByTimeAsync(1_250)
   expect(store.get(googleConnectedAtom)).toBe(true)
 
-  statusMock.mockResolvedValue({ account: null, missingScopes: [] })
+  statusMock.mockResolvedValue({ account: null, currentSub: null, missingScopes: [] })
   store.set(refreshGoogleAtom)
   await vi.advanceTimersByTimeAsync(1_250)
   expect(store.get(googleConnectedAtom)).toBe(false)
@@ -369,7 +417,11 @@ test('the sidebar subscription preserves a connection without a React account re
 })
 
 test('refresh failures preserve the last connected account', async () => {
-  statusMock.mockResolvedValueOnce({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+  statusMock.mockResolvedValueOnce({
+    account: { email: 'ada@syv.ai' },
+    currentSub: 'ada@syv.ai',
+    missingScopes: [],
+  })
   const store = createStore()
   const { getByTestId } = renderProbe(store)
   await waitFor(() => expect(getByTestId('account').textContent).toBe('ada@syv.ai'))
@@ -388,17 +440,29 @@ test('refresh failures preserve the last connected account', async () => {
 })
 
 test('an explicit refresh prevents an older in-flight answer from winning', async () => {
-  let resolveOld!: (value: { account: { email: string }; missingScopes: string[] }) => void
+  let resolveOld!: (value: {
+    account: { email: string }
+    currentSub: string | null
+    missingScopes: string[]
+  }) => void
   statusMock
     .mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)))
-    .mockResolvedValue({ account: { email: 'refreshed@syv.ai' }, missingScopes: [] })
+    .mockResolvedValue({
+      account: { email: 'refreshed@syv.ai' },
+      currentSub: 'refreshed@syv.ai',
+      missingScopes: [],
+    })
   const store = createStore()
   const { getByTestId } = renderProbe(store)
 
   store.set(refreshGoogleAtom)
   await waitFor(() => expect(getByTestId('account').textContent).toBe('refreshed@syv.ai'))
   await act(async () => {
-    resolveOld({ account: { email: 'stale@syv.ai' }, missingScopes: [] })
+    resolveOld({
+      account: { email: 'stale@syv.ai' },
+      currentSub: 'stale@syv.ai',
+      missingScopes: [],
+    })
     await Promise.resolve()
   })
   expect(getByTestId('account').textContent).toBe('refreshed@syv.ai')
@@ -406,9 +470,11 @@ test('an explicit refresh prevents an older in-flight answer from winning', asyn
 
 test('switching vaults cancels a scheduled retry', async () => {
   vi.useFakeTimers()
-  statusMock
-    .mockRejectedValueOnce(new Error('Google is not ready yet'))
-    .mockResolvedValue({ account: { email: 'new@syv.ai' }, missingScopes: [] })
+  statusMock.mockRejectedValueOnce(new Error('Google is not ready yet')).mockResolvedValue({
+    account: { email: 'new@syv.ai' },
+    currentSub: 'new@syv.ai',
+    missingScopes: [],
+  })
   const store = createStore()
   const { getByTestId } = renderProbe(store)
   await act(async () => {
@@ -426,7 +492,7 @@ test('switching vaults cancels a scheduled retry', async () => {
 })
 
 test('a refresh is visible to every reader: connecting lights the nav up', async () => {
-  statusMock.mockResolvedValue({ account: null, missingScopes: [] })
+  statusMock.mockResolvedValue({ account: null, currentSub: null, missingScopes: [] })
   const store = createStore()
 
   const { getByTestId } = renderProbe(store)
@@ -434,13 +500,17 @@ test('a refresh is visible to every reader: connecting lights the nav up', async
   expect(store.get(googleConnectedAtom)).toBe(false)
 
   // What the Connections section does after a successful connect.
-  statusMock.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+  statusMock.mockResolvedValue({
+    account: { email: 'ada@syv.ai' },
+    currentSub: 'ada@syv.ai',
+    missingScopes: [],
+  })
   store.set(refreshGoogleAtom)
 
   await waitFor(() => expect(getByTestId('account').textContent).toBe('ada@syv.ai'))
   expect(store.get(googleConnectedAtom)).toBe(true)
 
-  statusMock.mockResolvedValue({ account: null, missingScopes: [] })
+  statusMock.mockResolvedValue({ account: null, currentSub: null, missingScopes: [] })
   store.set(refreshGoogleAtom)
   await waitFor(() => expect(getByTestId('account').textContent).toBe('none'))
   expect(store.get(googleConnectedAtom)).toBe(false)

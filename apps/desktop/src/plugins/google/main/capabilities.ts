@@ -465,6 +465,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
   let connectFlow: LoopbackFlow | null = null
   let disposed = false
   let connectGeneration = 0
+  let connectRemote: string | null = null
 
   /** The vault's data layer, or the refusal that says there is none. */
   const accountOf = async (remote: string, expectedAccountSub?: string) => {
@@ -497,16 +498,29 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
   /** A client bound to one resolved session, never a vault mapping looked up later. */
   const apiForSession = (session: GoogleSession): GoogleApi =>
-    new GoogleApi({ accessToken: () => session.getAccessToken() })
-
-  const apiOf = (remote: string): GoogleApi =>
     new GoogleApi({
-      accessToken: async () => {
-        const session = await deps.accounts.sessionFor(remote)
-        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
-        return session.getAccessToken()
+      accessToken: () => session.getAccessToken(),
+      beforeRequest: () => {
+        if (disposed || session.accountSub === null)
+          throw new CapabilityError('FORBIDDEN', 'Google connection changed')
       },
     })
+
+  const apiOf = (remote: string): GoogleApi => {
+    const admitted = deps.accounts.sessionFor(remote)
+    let held: GoogleSession | null = null
+    return new GoogleApi({
+      accessToken: async () => {
+        held = await admitted
+        if (held === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
+        return held.getAccessToken()
+      },
+      beforeRequest: () => {
+        if (disposed || held?.accountSub == null)
+          throw new CapabilityError('FORBIDDEN', 'Google connection changed')
+      },
+    })
+  }
 
   const overrides = async (root: string) => (await deps.settings.read(root)).calendars
 
@@ -524,6 +538,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const overview = await deps.accounts.overview(ctx.remote).catch(() => null)
         return {
           account: session?.account ?? null,
+          currentSub: session?.accountSub ?? null,
           missingScopes: session?.missingScopes() ?? [],
           needsReconnect: overview?.state === 'needs-reconnect',
         }
@@ -539,6 +554,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: async (ctx) => {
         if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
         const generation = ++connectGeneration
+        connectRemote = ctx.remote
         connectFlow?.cancel()
         connectFlow = null
         const flow = await deps.accounts.connect(ctx.remote)
@@ -558,7 +574,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: noParams,
       run: async (ctx) => {
-        const flow = connectFlow
+        const flow = connectRemote === ctx.remote ? connectFlow : null
         if (flow === null) throw new CapabilityError('BAD_REQUEST', 'no Google connect in progress')
         const result = await flow.wait()
         if (connectFlow === flow) connectFlow = null
@@ -572,7 +588,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.cancelConnect': cap({
       doors: ['ui'],
       params: noParams,
-      run: async () => {
+      run: async (ctx) => {
+        if (connectRemote !== ctx.remote) return { ok: true }
+        connectGeneration++
+        deps.accounts.cancelConnect(ctx.remote)
         connectFlow?.cancel()
         connectFlow = null
         return ok
@@ -585,7 +604,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: noParams,
       run: async (ctx) => ({
-        accounts: deps.accounts.list(),
+        accounts: deps.accounts.list(ctx.remote),
         current: (await deps.accounts.sessionFor(ctx.remote))?.accountSub ?? null,
       }),
     }),
@@ -623,8 +642,8 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.removeAccount': cap({
       doors: ['ui'],
       params: (raw) => ({ sub: stringParam(paramsObject(raw), 'sub') }),
-      run: async (_ctx, { sub }) => {
-        await deps.accounts.removeAccount(sub)
+      run: async (ctx, { sub }) => {
+        await deps.accounts.removeAccount(ctx.remote, sub)
         return ok
       },
     }),
@@ -634,7 +653,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.client': cap({
       doors: ['ui'],
       params: noParams,
-      run: async () => deps.accounts.client(),
+      run: async (ctx) => deps.accounts.client(ctx.remote),
     }),
 
     /**
@@ -651,9 +670,9 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           secret: (optionalStringParam(p, 'secret') ?? '').trim(),
         }
       },
-      run: async (_ctx, { id, secret }) => {
+      run: async (ctx, { id, secret }) => {
         if (id === '') {
-          await deps.accounts.setClient(null)
+          await deps.accounts.setClient(ctx.remote, null)
           return ok
         }
         if (!id.endsWith(CLIENT_ID_SUFFIX)) {
@@ -662,7 +681,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         if (secret === '') {
           throw new CapabilityError('BAD_REQUEST', 'a Desktop app client needs its secret')
         }
-        await deps.accounts.setClient({ id, secret })
+        await deps.accounts.setClient(ctx.remote, { id, secret })
         return ok
       },
     }),
@@ -1458,6 +1477,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     if (disposed) return
     disposed = true
     connectGeneration += 1
+    if (connectRemote !== null) deps.accounts.cancelConnect(connectRemote)
     connectFlow?.cancel()
     connectFlow = null
   })

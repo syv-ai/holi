@@ -2,8 +2,7 @@
  * A vault's Google account is its own.
  *
  * An account connected on this machine is not an account *this vault uses*.
- * Reusing the first as the second is a mapping and no consent, and unlinking a
- * vault is not the same act as removing an account.
+ * A vault sees only its own opaque Google subject and email; connecting requires consent.
  */
 import { act, fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -27,9 +26,6 @@ const render = (visible = true) => {
 }
 
 const status = vi.fn()
-const accounts = vi.fn()
-const linkAccount = vi.fn()
-const removeAccount = vi.fn()
 const disconnectVault = vi.fn()
 const client = vi.fn()
 const setClient = vi.fn()
@@ -40,19 +36,14 @@ const setAllImages = vi.fn()
 const mailMarkerPreferences = vi.fn()
 const setMailMarkerPreferences = vi.fn()
 const settingsRead = vi.fn()
-const settingsWrite = vi.fn()
 let allImages = false
-let mailNotifications = false
 
 /** Google's capabilities, by name, through the UI door. */
-const google: Record<string, (params: unknown) => unknown> = {
+const google: Record<string, (params: unknown, remote?: string) => unknown> = {
   'google.status': () => status(),
-  'google.allAccounts': () => accounts(),
-  'google.useAccount': (p) => linkAccount(p),
-  'google.removeAccount': (p) => removeAccount(p),
   'google.disconnectVault': () => disconnectVault(),
-  'google.connect': (p) => connect(p),
-  'google.awaitConnect': (p) => awaitConnect(p),
+  'google.connect': (_p, remote) => connect(remote),
+  'google.awaitConnect': (_p, remote) => awaitConnect(remote),
   'google.cancelConnect': (p) => cancelConnect(p),
   'google.imageSenders': async () => ({ senders: [], allSenders: false }),
   'google.setImagesFromAllSenders': async (p) => {
@@ -62,22 +53,27 @@ const google: Record<string, (params: unknown) => unknown> = {
   },
   'google.mailMarkerPreferences': (p) => mailMarkerPreferences(p),
   'google.setMailMarkerPreferences': (p) => setMailMarkerPreferences(p),
-  'google.client': () => client(),
+  'google.client': (_p, remote) => client(remote),
   'google.setClient': (p) => setClient(p),
 }
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
-    settings: {
-      read: { query: () => settingsRead() },
-      write: { mutate: (input: unknown) => settingsWrite(input) },
-    },
+    settings: { read: { query: () => settingsRead() } },
     cap: {
       run: {
-        mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
+        mutate: async ({
+          name,
+          paramsJson,
+          remote,
+        }: {
+          name: string
+          paramsJson?: string
+          remote?: string
+        }) => {
           const verb = google[name]
           if (verb === undefined) throw new Error(`unexpected ${name}`)
-          return verb(paramsJson === undefined ? undefined : JSON.parse(paramsJson))
+          return verb(paramsJson === undefined ? undefined : JSON.parse(paramsJson), remote)
         },
       },
     },
@@ -91,13 +87,10 @@ afterEach(() => vi.useRealTimers())
 
 beforeEach(() => {
   vi.clearAllMocks()
-  status.mockResolvedValue({ account: null, missingScopes: [] })
-  accounts.mockResolvedValue({ accounts: [ADA, WORK], current: null })
+  status.mockResolvedValue({ account: null, currentSub: null, missingScopes: [] })
   // Resolved, not bare: the component chains `.catch` on every mutation, and an
   // undefined return there is an unhandled rejection that still lets the
   // assertion pass.
-  linkAccount.mockResolvedValue({ ok: true })
-  removeAccount.mockResolvedValue({ ok: true })
   disconnectVault.mockResolvedValue({ ok: true })
   client.mockResolvedValue({ id: 'holi.apps.googleusercontent.com', source: 'shipped' })
   setClient.mockResolvedValue({ ok: true })
@@ -108,66 +101,17 @@ beforeEach(() => {
   mailMarkerPreferences.mockResolvedValue({ enabledOrder: ['yellow-star'] })
   setMailMarkerPreferences.mockResolvedValue({ ok: true })
   allImages = false
-  mailNotifications = false
-  settingsWrite.mockImplementation(async ({ localJson }: { localJson?: string }) => {
-    if (localJson !== undefined) {
-      const patch = JSON.parse(localJson) as { google?: { mailNotifications?: boolean } }
-      if (typeof patch.google?.mailNotifications === 'boolean')
-        mailNotifications = patch.google.mailNotifications
-    }
-    return { warnings: [] }
-  })
   settingsRead.mockImplementation(async () => ({
-    pluginValues: {
-      google: {
-        imageSenders: [],
-        imagesFromAllSenders: allImages,
-        mailNotifications,
-      },
-    },
+    pluginValues: { google: { imageSenders: [], imagesFromAllSenders: allImages } },
     plugins: { vault: {}, localOff: [] },
   }))
 })
 
 describe('ConnectionsSection', () => {
-  it('saves desktop mail notifications locally and retries a refused change', async () => {
-    const store = createStore()
-    store.set(activeRemoteAtom, 'syv-ai/vault')
-    status.mockResolvedValue({ account: ADA, missingScopes: [] })
-    accounts.mockResolvedValue({ accounts: [ADA], current: ADA.sub })
-    await store.set(loadVaultSettingsAtom, { force: true })
-    rtlRender(
-      <Provider store={store}>
-        <ConnectionsSection />
-      </Provider>,
-    )
-
-    const user = userEvent.setup()
-    const toggle = await screen.findByRole('switch', {
-      name: 'Show desktop mail notifications',
-    })
-    await user.click(toggle)
-    await waitFor(() => expect(toggle).toBeChecked())
-    expect(settingsWrite).toHaveBeenLastCalledWith({
-      remote: 'syv-ai/vault',
-      localJson: JSON.stringify({ google: { mailNotifications: true } }),
-    })
-
-    settingsWrite.mockRejectedValueOnce(new Error('disk is read-only'))
-    await user.click(toggle)
-    expect(await screen.findByRole('alert')).toHaveTextContent(/disk is read-only/i)
-    expect(toggle).not.toBeChecked()
-
-    await user.click(screen.getByRole('button', { name: 'Retry desktop mail notifications' }))
-    await waitFor(() => expect(settingsWrite).toHaveBeenCalledTimes(3))
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-    expect(toggle).not.toBeChecked()
-  })
-
   it('shows a settings read retry and retries a failed write without racing the switch', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/vault')
-    status.mockResolvedValue({ account: ADA, missingScopes: [] })
+    status.mockResolvedValue({ account: ADA, currentSub: ADA.sub, missingScopes: [] })
     settingsRead.mockRejectedValueOnce(new Error('read failed'))
     await expect(store.set(loadVaultSettingsAtom, { force: true })).rejects.toThrow('read failed')
     setAllImages.mockRejectedValueOnce(new Error('write failed'))
@@ -201,7 +145,7 @@ describe('ConnectionsSection', () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/vault')
     await store.set(loadVaultSettingsAtom, { force: true })
-    status.mockResolvedValue({ account: ADA, missingScopes: [] })
+    status.mockResolvedValue({ account: ADA, currentSub: ADA.sub, missingScopes: [] })
     let finish!: (value: { ok: true }) => void
     setAllImages.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -223,7 +167,7 @@ describe('ConnectionsSection', () => {
       name: 'Always load images from all senders',
     })
     await user.click(screen.getByRole('button', { name: 'Always from all senders' }))
-    await waitFor(() => expect(toggle).toBeDisabled())
+    expect(toggle).toBeDisabled()
     await act(async () => finish({ ok: true }))
     await waitFor(() => expect(toggle).toBeChecked())
     await waitFor(() => expect(toggle).toBeEnabled())
@@ -233,9 +177,7 @@ describe('ConnectionsSection', () => {
       }),
     )
     await user.click(toggle)
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Always from all senders' })).toBeDisabled(),
-    )
+    expect(await screen.findByRole('button', { name: 'Always from all senders' })).toBeDisabled()
     await act(async () => finish({ ok: true }))
     await waitFor(() => expect(toggle).not.toBeChecked())
     expect(screen.getByRole('button', { name: 'Always from all senders' })).toBeEnabled()
@@ -269,7 +211,7 @@ describe('ConnectionsSection', () => {
     let finishConnect!: () => void
     connect.mockReturnValueOnce(new Promise<void>((resolve) => (finishConnect = resolve)))
     const mounted = render()
-    const button = await screen.findByRole('button', { name: 'Connect a different account…' })
+    const button = await screen.findByRole('button', { name: 'Connect' })
     await userEvent.click(button)
     expect(button).toBeDisabled()
 
@@ -285,9 +227,7 @@ describe('ConnectionsSection', () => {
     )
     await act(async () => finishConnect())
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Connect a different account…' })).toBeEnabled(),
-    )
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled())
     expect(awaitConnect).not.toHaveBeenCalled()
   })
 
@@ -299,7 +239,7 @@ describe('ConnectionsSection', () => {
       .mockReturnValueOnce(new Promise((resolve) => (settleSecond = resolve)))
 
     const mounted = render()
-    const label = 'Connect a different account…'
+    const label = 'Connect'
     await userEvent.click(await screen.findByRole('button', { name: label }))
     await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(1))
 
@@ -333,7 +273,7 @@ describe('ConnectionsSection', () => {
     let settle!: (value: { kind: 'granted' }) => void
     awaitConnect.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)))
     const mounted = render()
-    const button = await screen.findByRole('button', { name: 'Connect a different account…' })
+    const button = await screen.findByRole('button', { name: 'Connect' })
     await userEvent.click(button)
     await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(1))
 
@@ -343,12 +283,16 @@ describe('ConnectionsSection', () => {
     expect(status).toHaveBeenCalledTimes(1)
   })
 
-  it('offers the accounts already connected here to a vault with none', async () => {
+  it('keeps foreign machine accounts out of the vault and connects only through consent', async () => {
     render()
 
-    expect(await screen.findByText('ada@syv.ai')).toBeInTheDocument()
-    expect(screen.getByText('work@syv.ai')).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Use in this vault' })).toHaveLength(2)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled())
+    expect(screen.queryByText(ADA.email)).not.toBeInTheDocument()
+    expect(screen.queryByText(WORK.email)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /use in this vault/i })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    await waitFor(() => expect(connect).toHaveBeenCalledWith('syv-ai/vault'))
+    expect(awaitConnect).toHaveBeenCalledWith('syv-ai/vault')
   })
 
   it('exposes a failed status read with Retry and recovers without switching vaults', async () => {
@@ -362,7 +306,11 @@ describe('ConnectionsSection', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
     expect(screen.getByRole('button', { name: /^Connect$/ })).toBeEnabled()
 
-    status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+    status.mockResolvedValue({
+      account: { email: 'ada@syv.ai' },
+      currentSub: 'sub-1',
+      missingScopes: [],
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_250)
@@ -373,137 +321,80 @@ describe('ConnectionsSection', () => {
   })
 
   it('treats a successful disconnected read as authoritative, not a read error', async () => {
-    let finishRead!: (value: { account: null; missingScopes: string[] }) => void
+    let finishRead!: (value: { account: null; currentSub: null; missingScopes: string[] }) => void
     status.mockReturnValueOnce(new Promise((resolve) => (finishRead = resolve)))
-    accounts.mockResolvedValue({ accounts: [], current: null })
     render()
     const connect = screen.getByRole('button', { name: /^Connect$/ })
     expect(connect).toBeDisabled()
-    await act(async () => finishRead({ account: null, missingScopes: [] }))
+    await act(async () => finishRead({ account: null, currentSub: null, missingScopes: [] }))
     await waitFor(() => expect(connect).toBeEnabled())
     expect(status).toHaveBeenCalledTimes(1)
-    expect(accounts).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   })
 
-  it('says plainly "Connect" when there is no account on this machine to differ from', async () => {
-    // The label follows the machine list, not this vault's link: offering a
-    // "different" account to a first-run user names one they do not have.
-    accounts.mockResolvedValue({ accounts: [], current: null })
-    render()
-
-    expect(await screen.findByRole('button', { name: 'Connect' })).toBeInTheDocument()
-  })
-
-  it('offers a different account only when this machine already has one', async () => {
-    // Accounts exist and this vault uses none: the rows above are the offer, and
-    // this button is the escape hatch from them.
-    render()
-
-    expect(
-      await screen.findByRole('button', { name: 'Connect a different account…' }),
-    ).toBeInTheDocument()
-  })
-
-  it('reuses an account with one click and no consent round trip', async () => {
-    render()
-    await screen.findByText('ada@syv.ai')
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'Use in this vault' })[0]!)
-
-    await waitFor(() => expect(linkAccount).toHaveBeenCalledWith({ sub: 'sub-1' }))
-  })
-
   it('keeps every account/client lifecycle change behind a successful draft flush', async () => {
-    status.mockResolvedValue({ account: { email: ADA.email }, missingScopes: [] })
-    accounts.mockResolvedValue({ accounts: [ADA, WORK], current: 'sub-1' })
+    status.mockResolvedValue({ account: null, currentSub: null, missingScopes: [] })
     const unregister = registerBuffer(async () => {
       throw new Error('offline')
     })
     try {
       render()
-      await screen.findByText(ADA.email)
-
-      await userEvent.click(screen.getAllByRole('button', { name: 'Use in this vault' })[0]!)
-      expect(await screen.findByRole('alert')).toHaveTextContent(/draft.*not changed/i)
-      expect(linkAccount).not.toHaveBeenCalled()
-
-      await userEvent.click(screen.getByRole('button', { name: 'Disconnect this vault' }))
+      await userEvent.click(await screen.findByRole('button', { name: 'Connect' }))
+      expect(await screen.findByRole('alert')).toBeInTheDocument()
+      expect(connect).not.toHaveBeenCalled()
       expect(disconnectVault).not.toHaveBeenCalled()
-
-      await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
-      await userEvent.click(await screen.findByRole('button', { name: 'Remove account' }))
-      expect(removeAccount).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled()
 
       await userEvent.click(screen.getByRole('button', { name: 'Use your own client…' }))
       await userEvent.type(screen.getByLabelText('Client ID'), 'new-client')
       await userEvent.type(screen.getByLabelText('Client secret'), 'secret')
       await userEvent.click(screen.getByRole('button', { name: /^Save/ }))
       expect(setClient).not.toHaveBeenCalled()
+      expect(await screen.findByRole('alert')).toBeInTheDocument()
+      expect(screen.getByLabelText('Client ID')).toHaveValue('new-client')
+      expect(screen.getByLabelText('Client secret')).toHaveValue('secret')
     } finally {
       unregister()
     }
   })
 
-  it('does not offer the account this vault is already using', async () => {
-    accounts.mockResolvedValue({ accounts: [ADA, WORK], current: 'sub-1' })
-    status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
-    render()
-
-    expect(await screen.findByText('work@syv.ai')).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Use in this vault' })).toHaveLength(1)
-  })
-
   it('unlinks the vault rather than revoking the account', async () => {
     // The two are different acts and the panel must not conflate them: another
     // vault may be using this account.
-    accounts.mockResolvedValue({ accounts: [ADA], current: 'sub-1' })
-    status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+    status.mockResolvedValue({
+      account: { email: 'ada@syv.ai' },
+      currentSub: 'sub-1',
+      missingScopes: [],
+    })
     render()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Disconnect this vault' }))
 
     await waitFor(() => expect(disconnectVault).toHaveBeenCalled())
-    expect(removeAccount).not.toHaveBeenCalled()
   })
 
   it('lets a vault whose grant Google refused forget it', async () => {
-    status.mockResolvedValue({ account: null, missingScopes: [], needsReconnect: true })
+    status.mockResolvedValue({
+      account: null,
+      currentSub: 'sub-1',
+      missingScopes: [],
+      needsReconnect: true,
+    })
     render()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Forget this connection' }))
+    await userEvent.click(
+      await screen.findByRole('button', { name: "Forget this vault's connection" }),
+    )
 
     await waitFor(() => expect(disconnectVault).toHaveBeenCalled())
-  })
-
-  it('removes an account by name when that is what was asked for', async () => {
-    render()
-    await screen.findByText('ada@syv.ai')
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
-    // It revokes at Google for every vault, so it asks first.
-    expect(removeAccount).not.toHaveBeenCalled()
-    await userEvent.click(await screen.findByRole('button', { name: 'Remove account' }))
-
-    await waitFor(() => expect(removeAccount).toHaveBeenCalledWith({ sub: 'sub-1' }))
-  })
-
-  it('cancelling the remove confirm revokes nothing', async () => {
-    render()
-    await screen.findByText('ada@syv.ai')
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
-    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
-
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove account' })).toBeNull())
-    expect(removeAccount).not.toHaveBeenCalled()
   })
 })
 
 describe('the OAuth client', () => {
   it('changes the future-connect client without disconnecting existing accounts', async () => {
     const user = userEvent.setup()
+    status.mockResolvedValue({ account: ADA, currentSub: ADA.sub, missingScopes: ['calendar'] })
     render()
     expect(
       await screen.findByText(/Holi’s client, which accepts syv.ai accounts only/),
@@ -519,13 +410,11 @@ describe('the OAuth client', () => {
       }),
     )
     expect(disconnectVault).not.toHaveBeenCalled()
-    expect(removeAccount).not.toHaveBeenCalled()
     expect(await screen.findByText(ADA.email)).toBeInTheDocument()
   })
 
   it('says a refusal in the form, and keeps what was typed', async () => {
     const user = userEvent.setup()
-    accounts.mockResolvedValue({ accounts: [], current: null })
     setClient.mockRejectedValue(new Error('a client id ends in .apps.googleusercontent.com'))
     render()
     await user.click(await screen.findByRole('button', { name: 'Use your own client…' }))
@@ -535,4 +424,28 @@ describe('the OAuth client', () => {
     expect(await screen.findByText(/a client id ends in/)).toBeTruthy()
     expect((screen.getByLabelText('Client ID') as HTMLInputElement).value).toBe('nope')
   })
+})
+
+it('drops unsaved OAuth client fields when the active vault changes', async () => {
+  client.mockImplementation(async (remote: string) => ({
+    source: 'own',
+    id:
+      remote === 'syv-ai/vault'
+        ? 'vault-a.apps.googleusercontent.com'
+        : 'vault-b.apps.googleusercontent.com',
+  }))
+  const { store } = render()
+  const user = userEvent.setup()
+  await screen.findByText(/vault-a\.apps\.googleusercontent\.com/)
+  await user.click(screen.getByRole('button', { name: 'Change client…' }))
+  await user.type(screen.getByLabelText('Client ID'), 'unsaved-vault-a.apps.googleusercontent.com')
+  await user.type(screen.getByLabelText('Client secret'), 'synthetic-vault-a-secret')
+
+  act(() => store.set(activeRemoteAtom, 'syv-ai/second-vault'))
+  await screen.findByText(/vault-b\.apps\.googleusercontent\.com/)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  await user.click(screen.getByRole('button', { name: 'Change client…' }))
+  expect(screen.getByLabelText('Client ID')).toHaveValue('')
+  expect(screen.getByLabelText('Client secret')).toHaveValue('')
+  expect(setClient).not.toHaveBeenCalled()
 })

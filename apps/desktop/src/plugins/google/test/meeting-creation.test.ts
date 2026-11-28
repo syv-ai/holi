@@ -35,7 +35,9 @@ async function rig() {
   const userData = await mkdtemp(join(tmpdir(), 'holi-meeting-test-'))
   dirs.push(userData)
   const links: Record<string, string> = { 'owner/repo': input.sub, 'owner/other': input.sub }
+  const legacy: Record<string, { accountSub: string; connectionId: string } | null> = {}
   const accounts = {
+    legacyConnection: (remote: string) => legacy[remote] ?? null,
     sessionFor: async (remote: string) => {
       const sub = links[remote]
       return sub
@@ -176,6 +178,7 @@ async function rig() {
     calls,
     events,
     links,
+    legacy,
     make,
     meetings,
     accounts,
@@ -459,6 +462,41 @@ it('persists unknown delivery across restart; recovery 404 never retries or clea
   })
   const posts = r.calls.filter((c) => c.method === 'POST')
   expect(posts[0]!.body).toEqual(posts[1]!.body)
+})
+
+it('recovers a legacy receipt only for its explicitly owned remote and current connection', async () => {
+  const r = await rig()
+  const oldSub = input.sub
+  const currentId = 'opaque-current-connection'
+  r.mode('read-error')
+  const uncertain = (await r.run('createMeeting', input)) as MeetingOperation
+  const oldPost = r.calls.find((call) => call.method === 'POST')!
+  expect(uncertain.accepted).toBe(false)
+
+  r.links['owner/repo'] = currentId
+  r.legacy['owner/repo'] = { accountSub: oldSub, connectionId: currentId }
+  const reconstructed = r.make()
+  const before = r.calls.length
+  expect((await reconstructed.state('owner/repo', currentId)).operation).toMatchObject({
+    input: { sub: oldSub },
+    fingerprint: uncertain.fingerprint,
+    eventId: uncertain.eventId,
+  })
+  r.mode('normal')
+  expect((await reconstructed.check('owner/repo', currentId))?.input.sub).toBe(oldSub)
+  expect(r.calls.slice(before).filter((call) => call.method === 'POST')).toHaveLength(0)
+  expect(
+    r.calls
+      .slice(before)
+      .some((call) => call.url.pathname.endsWith(`/events/${uncertain.eventId}`)),
+  ).toBe(true)
+  expect(oldPost.body?.id).toBe(uncertain.eventId)
+  expect(oldPost.body?.summary).toBe(input.title)
+
+  const foreignBefore = r.calls.length
+  await expect(reconstructed.state('owner/other', currentId)).rejects.toThrow()
+  await expect(reconstructed.state('owner/repo', 'different-current-id')).rejects.toThrow()
+  expect(r.calls.slice(foreignBefore)).toHaveLength(0)
 })
 
 it('read failures preserve the submitted operation and never automatically send', async () => {
