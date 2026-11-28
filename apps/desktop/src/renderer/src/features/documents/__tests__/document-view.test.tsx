@@ -2243,14 +2243,14 @@ test('queued paragraph requests launch together as one rewrite run', async () =>
 
 test('batch instruction follows its original passage after a preceding edit and selection collapse', async () => {
   const user = userEvent.setup()
-  open('# Plan\\n\\nTarget passage.\\n\\nOther text.\\n')
+  open('# Plan\n\nTarget passage.\n\nOther text.\n')
   const { editor, askAi } = await selectForAskAi('Target passage')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
   const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
   await user.type(prompt, 'Make it clearer')
   act(() => {
-    editor.commands.insertContentAt(textPos(editor, 'Target passage') - 1, 'New intro.\\n\\n')
+    editor.commands.insertContentAt(textPos(editor, 'Target passage') - 1, 'New intro.\n\n')
     editor.commands.setTextSelection(textPos(editor, 'Other text'))
   })
   await user.click(screen.getByRole('button', { name: 'Add to batch' }))
@@ -2267,13 +2267,14 @@ test('batch instruction follows its original passage after a preceding edit and 
 
 test('a changed duplicate passage keeps its batch prompt and refuses repeated confirmation', async () => {
   const user = userEvent.setup()
-  open('Repeat this paragraph.\\n\\nRepeat this paragraph.\\n')
-  const { askAi } = await selectForAskAi('Repeat this paragraph')
+  open('Repeat this paragraph.\n\nRepeat this paragraph.\n')
+  const { editor, askAi } = await selectForAskAi('Repeat this paragraph')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
   const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
   await user.type(prompt, 'Keep my instruction')
-  changeOnDisk('Repeat this paragraph.\\n', '2026-10-23T10:02:00Z')
+  changeOnDisk('Repeat this paragraph.\n', '2026-10-23T10:02:00Z')
+  await waitFor(() => expect(editor.getText().match(/Repeat this paragraph/g)).toHaveLength(1))
   await user.click(screen.getByRole('button', { name: 'Add to batch' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('passage changed')
   expect(screen.getByRole('textbox', { name: 'What should the agent do?' })).toHaveValue(

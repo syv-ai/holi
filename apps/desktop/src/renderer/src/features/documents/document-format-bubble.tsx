@@ -143,12 +143,14 @@ export function DocumentFormatBubble({
     }) => {
       const target = batchTargetRef.current
       if (!target || !transaction.docChanged) return
+      // Like queued requests, a disk snapshot cannot prove which duplicate survived.
+      if (transaction.getMeta('externalDocumentReload') === true) {
+        setBatchTargetChanged(true)
+      }
       const before = target.bookmark.resolve(transaction.before)
-      const touched = transaction.mapping.maps.some((map) => {
-        const result = map.mapResult(before.from, 1)
-        const end = map.mapResult(before.to, -1)
-        return result.deleted || end.deleted
-      })
+      const touched =
+        transaction.mapping.mapResult(before.from, 1).deleted ||
+        transaction.mapping.mapResult(before.to, -1).deleted
       const bookmark = target.bookmark.map(transaction.mapping)
       batchTargetRef.current = { ...target, bookmark }
       if (touched) setBatchTargetChanged(true)
@@ -214,6 +216,7 @@ export function DocumentFormatBubble({
     if (passage === '') return
     openingCustomRef.current = true
     setAddingToBatch(false)
+    setBatchTargetError(false)
     setCustomPassage(passage)
   }
 
