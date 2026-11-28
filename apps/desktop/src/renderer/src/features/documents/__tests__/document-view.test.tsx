@@ -2241,6 +2241,52 @@ test('queued paragraph requests launch together as one rewrite run', async () =>
   expect(screen.getByText(/Rewrite batch \(2\)/)).toBeVisible()
 })
 
+test('batch instruction follows its original passage after a preceding edit and selection collapse', async () => {
+  const user = userEvent.setup()
+  open('# Plan\\n\\nTarget passage.\\n\\nOther text.\\n')
+  const { editor, askAi } = await selectForAskAi('Target passage')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await user.type(prompt, 'Make it clearer')
+  act(() => {
+    editor.commands.insertContentAt(textPos(editor, 'Target passage') - 1, 'New intro.\\n\\n')
+    editor.commands.setTextSelection(textPos(editor, 'Other text'))
+  })
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue(
+    'Make it clearer',
+  )
+  await user.click(screen.getByRole('button', { name: 'Batch (1)' }))
+  await user.click(await screen.findByRole('button', { name: 'Submit batch' }))
+  await waitFor(() => expect(cap).toHaveBeenCalledOnce())
+  expect(JSON.parse(cap.mock.calls[0]![0].paramsJson).prompt).toContain(
+    'Exact target: "Target passage"',
+  )
+})
+
+test('a changed duplicate passage keeps its batch prompt and refuses repeated confirmation', async () => {
+  const user = userEvent.setup()
+  open('Repeat this paragraph.\\n\\nRepeat this paragraph.\\n')
+  const { askAi } = await selectForAskAi('Repeat this paragraph')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await user.type(prompt, 'Keep my instruction')
+  changeOnDisk('Repeat this paragraph.\\n', '2026-10-23T10:02:00Z')
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('passage changed')
+  expect(screen.getByRole('textbox', { name: 'What should the agent do?' })).toHaveValue(
+    'Keep my instruction',
+  )
+  await user.click(screen.getByRole('button', { name: 'Add to batch' }))
+  expect(screen.getByRole('textbox', { name: 'What should the agent do?' })).toHaveValue(
+    'Keep my instruction',
+  )
+  expect(cap).not.toHaveBeenCalled()
+  expect(screen.queryByRole('textbox', { name: 'Request for target 1' })).not.toBeInTheDocument()
+})
+
 test('external deletion of a duplicate paragraph requires explicit target reselection', async () => {
   const user = userEvent.setup()
   open('Repeat this paragraph.\n\nRepeat this paragraph.\n')
