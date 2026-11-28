@@ -44,6 +44,7 @@ declare global {
             remote: string
             path: string
             heading?: string
+            kind?: 'directory'
             focus?: boolean
           }) => void,
         ): () => void

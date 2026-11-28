@@ -201,7 +201,8 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * Returns the undo.
    */
   route(path: string, route: BridgeRoute): () => void
-  /** The directory holding the `holi` command, for a process a plugin starts. */
+  /** Core-prepared directory holding this vault's fixed-scope `holi` command
+   * and its node fallback. Captured for this activation; independent of cwd. */
   binDir(): string
   /** The signed-in GitHub token, or null: for a plugin that fetches from a
    *  repository the person can read, as vault clones do. */

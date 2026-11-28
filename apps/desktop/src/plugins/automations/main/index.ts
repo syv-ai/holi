@@ -27,15 +27,23 @@ export const automationsMain: MainPlugin = {
   info: AUTOMATIONS_INFO,
   seed: automationsSeed,
   async activate(ctx) {
+    let draining = false
+    let beginDrain!: () => void
+    const drainStarted = new Promise<void>((resolve) => {
+      beginDrain = resolve
+    })
     let live: SessionSummary[] = []
+    let receivedSessions = false
     ctx.hear('agent', 'sessions', (list) => {
       if (!Array.isArray(list)) return
+      receivedSessions = true
       live = list as SessionSummary[]
       scheduler.sessionsChanged(live)
     })
     // Which automations this machine runs, and what they did: outside the
     // vault, where the agent cannot approve its own (`scheduler.ts`).
     const scheduler = createScheduler({
+      activationSignal: ctx.activationSignal,
       store: jsonFileStore(join(ctx.userData, 'schedules.json'), parseSchedulesFile),
       provider: async (root) => (await readVaultSettings(root)).agentProvider,
       sessions: {
@@ -54,7 +62,10 @@ export const automationsMain: MainPlugin = {
                 ...(provider === 'claude' && allow !== undefined ? { allow } : {}),
               }))) as { ok: true; sessionId: string } | { ok: false; message: string },
         sessions: () => live,
-        stop: async (id) => (await ctx.call('agent.stop', { id })) as Result,
+        stop: async (id) => {
+          if (ctx.activationSignal.aborted && !draining) await drainStarted
+          return (await ctx.call('agent.stop', { id })) as Result
+        },
         watched: async (id) => (await ctx.call('agent.watched', { id })) === true,
         onTurnEnd: (listener) =>
           ctx.hear('agent', 'turn-end', (p) => {
@@ -81,17 +92,21 @@ export const automationsMain: MainPlugin = {
     const unevents = ctx.events.on((event) => scheduler.hear(event))
     const unscan = ctx.onSnapshot((snapshot) => scheduler.snapshot(snapshot))
     // The list as it is when this starts; the agent's news keeps it after.
-    void ctx
+    const initialSessions = ctx
       .call('agent.sessions', {})
       .then((list) => {
-        if (Array.isArray(list)) live = list as SessionSummary[]
+        if (!ctx.activationSignal.aborted && Array.isArray(list) && !receivedSessions)
+          live = list as SessionSummary[]
       })
       .catch(() => {})
     scheduler.attach({ remote: ctx.remote, root: ctx.root })
-    return () => {
+    return async () => {
+      draining = true
+      beginDrain()
       unevents()
       unscan()
-      scheduler.dispose()
+      const [result] = await Promise.allSettled([scheduler.dispose(), initialSessions])
+      if (result.status === 'rejected') throw result.reason
     }
   },
 }

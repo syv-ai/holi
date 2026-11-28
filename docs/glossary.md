@@ -93,9 +93,11 @@ reconcile.
 
 ### Wiki-link
 
-`[[folder/note.md]]`, optionally `[[path|Label]]`. The only link grammar inside the vault, for notes
-and tasks alike (a **Holi link** points in from outside). Renaming a file rewrites inbound links. See
-[wiki-links](features/wiki-links.md).
+`[[folder/note.md]]`, optionally `[[path|Label]]`. A vault-relative link for
+notes and tasks, tracked for inbound references and rewritten on rename or move.
+Ordinary Markdown links also navigate inside the editor, but are not wiki-links
+and do not receive that tracking or rewriting. A **Holi link** points in from
+outside. See [wiki-links](features/wiki-links.md) and [editor](features/editor.md).
 
 ### Holi link
 

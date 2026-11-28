@@ -10,12 +10,14 @@ export function createTerminalHintAdapter({
   providers,
   isVisible,
   isCurrent,
+  activationModifier,
 }: {
   term: Terminal
   mount: HTMLElement
   providers: readonly ILinkProvider[]
   isVisible(): boolean
   isCurrent(): boolean
+  activationModifier?: 'meta' | 'control'
 }): {
   adapter: HostHintAdapter
   invalidate(): void
@@ -123,6 +125,8 @@ export function createTerminalHintAdapter({
           clientX: link.x,
           clientY: link.y,
           button: 0,
+          ctrlKey: activationModifier === 'control',
+          metaKey: activationModifier === 'meta',
         }),
         link.text,
       )

@@ -18,13 +18,20 @@ channel that reaches every background session. It
 removes the `statusLine` older versions installed. A theme change reaches a running session on
 **Restart** (`claude respawn`).
 
-**Where a session finds Holi.** Not in this directory, and not in the environment: a background
-session's environment is its supervisor's, which may predate this Holi. Every command and hook
-walks up from its current directory to the folder holding `.holi/vault` and reads
-`.holi/state/bridge.local.env` there (mode 0600), written whole each time Holi opens the vault
-and deleted when it leaves: the bridge's port and the vault's token. It is a map each part of Holi contributes to
-(`bridgeEnv.contribute`), and it is parsed key by key, never sourced, because a collaborator
-could force-add one. `CLAUDE_CONFIG_DIR` stays the agent's config silo only.
+**Where hooks find Holi.** Hooks do not inherit bridge credentials from the
+supervisor's environment, which may predate this Holi. They walk up from their
+current directory to the folder holding `.holi/vault` and read
+`.holi/state/bridge.local.env` there (mode 0600), written whole each time Holi opens
+the vault and deleted when it leaves: the bridge's port and the vault's token.
+Each part of Holi contributes to this map (`bridgeEnv.contribute`). Hooks parse
+it key by key, never source it, because a collaborator could force-add one.
+`CLAUDE_CONFIG_DIR` stays the agent's config silo only.
+
+**Where the CLI finds Holi.** The agent's executable reads its fixed private
+endpoint descriptor outside the vault, independently of cwd. Launch PATH and
+`HOLI_BIN`, including Claude's regenerated settings environment, point to that
+vault-bound executable. The person's global CLI uses the separate machine
+endpoint. Neither executable discovers credentials through `bridge.local.env`.
 
 **Sign-in is lazy.** Credentials are keyed to the config directory, so each vault needs its own
 `/login`. The first terminal Holi opens on a directory writes a `.holi-spawned` marker and prints a
@@ -234,8 +241,19 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   alone: refused for any other session),
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script is
-  generated at `<Electron userData>/bin/holi`, and Holi supplies its path as `HOLI_BIN` to its
-  Claude sessions; it finds the bridge through the vault's `bridge.local.env`. A CLI document write exits 0 only when
+  generated at `<Electron userData>/bin/holi` for the person's terminal. Holi-launched
+  unfenced interactive and background agents receive a separate `holi` executable
+  as `HOLI_BIN`, bound to their vault's private endpoint descriptor. Its vault-local
+  credential rejects another `--vault` selector, including after changing directory;
+  missing, malformed or stale credentials fail without using the machine credential.
+  Fenced PTY sessions and scratch jobs receive no Holi CLI: their writes must pass
+  through checked copy-back, rather than mutate the vault directly through HTTP
+  outside the fence. Claude's regenerated settings also supply the owning vault's
+  CLI path to background sessions. Tokens travel
+  in a private curl configuration, not URLs or process arguments. The person's
+  terminal keeps the machine-wide executable, including inside a vault. These CLI
+  credentials do not sandbox native processes' filesystem access or replace native
+  permission prompts. A CLI document write exits 0 only when
   pushed; exit 1 preserves a pending receipt (or reports a refusal), and exit 2 is a CLI usage error. All reversible
   or read-only (a record write is a file change in git history) except `google send`,
   `google reply`, `google respond` and a `google api` call that is not a `GET`, which the send
