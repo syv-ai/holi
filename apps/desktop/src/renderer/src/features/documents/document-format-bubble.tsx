@@ -163,7 +163,9 @@ export function DocumentFormatBubble({
       }
     }
     editor.on('transaction', updateTarget)
-    return () => editor.off('transaction', updateTarget)
+    return () => {
+      editor.off('transaction', updateTarget)
+    }
   }, [editor])
   /** Set when the prompt closes because the person clicked elsewhere, so
    *  focus stays where they clicked rather than going back to the text. */
