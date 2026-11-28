@@ -676,10 +676,12 @@ export async function createGoogleAccounts(
         return Promise.reject(new Error('no store for an own Google client'))
       const epoch = clientEpochs.get(remote) ?? 0
       clientEpochs.set(remote, epoch + 1)
-      await ensureVaultClient(remote)
       if (connecting?.remote === remote) cancelFlow()
-      const change = (switching ?? Promise.resolve()).then(() =>
-        serialize(async () => {
+      // Reserve the replacement's place before cold vault-client reads can
+      // complete out of invocation order.
+      const change = (switching ?? Promise.resolve()).then(async () => {
+        await ensureVaultClient(remote)
+        return serialize(async () => {
           const replacement = resolveClient(next, deps.env)
           const pinned = Object.fromEntries(
             Object.entries(accounts).map(([sub, auth]) => [
@@ -709,8 +711,8 @@ export async function createGoogleAccounts(
           accounts = migrated
           vaultClients.set(remote, next)
           loadedVaultClients.add(remote)
-        }),
-      )
+        })
+      })
       switching = change.then(
         () => undefined,
         () => undefined,
