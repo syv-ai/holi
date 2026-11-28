@@ -58,6 +58,9 @@
         "scripts/agent-inbox-542-smoke-renderer.tsx",
         // Native IPC smoke is selected by the Node runner's filesystem path.
         "scripts/ipc-sender-native-smoke.ts",
+        // Update restart smoke builds these Electron/renderer entries by filesystem path.
+        "scripts/repeat-update-541-smoke-main.ts",
+        "scripts/repeat-update-541-smoke-renderer.tsx",
         // Native Electron smoke: the TS entry and isolated renderer are built by its MJS runner.
         "scripts/terminal-hints-native-smoke-main.ts",
         "scripts/terminal-hints-native-smoke.tsx",

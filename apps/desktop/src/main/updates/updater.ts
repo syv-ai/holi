@@ -99,7 +99,14 @@ export function createUpdater(deps: {
    * quitting; that error, caught while the call runs, is the install's. True
    * when the installer took over the quit.
    */
-  const quitAndInstall = (): boolean => {
+  const quitAndInstall = (route: 'quit' | 'explicit'): boolean => {
+    console.info('[updates] handing update to installer', {
+      observedAt: new Date().toISOString(),
+      route,
+      runningVersion: status.version,
+      offeredVersion: status.availableVersion,
+      channel: status.channel,
+    })
     let failure: Error | null = null
     const onError = (err: Error): void => {
       failure = err
@@ -125,14 +132,30 @@ export function createUpdater(deps: {
       warn: (m: unknown) => console.warn('[updates]', m),
       error: (m: unknown) => console.error('[updates]', m),
     }
-    autoUpdater.on('update-available', (info: UpdateInfo) =>
-      apply({ type: 'available', version: info.version }),
-    )
+    autoUpdater.on('update-available', (info: UpdateInfo) => {
+      console.info('[updates] update offered', {
+        observedAt: new Date().toISOString(),
+        channel: status.channel,
+        runningVersion: status.version,
+        offeredVersion: info.version,
+        releaseDate: info.releaseDate ?? null,
+      })
+      apply({ type: 'available', version: info.version })
+    })
     autoUpdater.on('update-not-available', () => apply({ type: 'not-available' }))
     autoUpdater.on('download-progress', (p: ProgressInfo) =>
       apply({ type: 'progress', percent: p.percent }),
     )
-    autoUpdater.on('update-downloaded', () => apply({ type: 'downloaded' }))
+    autoUpdater.on('update-downloaded', (info?: UpdateInfo) => {
+      console.info('[updates] update downloaded', {
+        observedAt: new Date().toISOString(),
+        runningVersion: status.version,
+        offeredVersion: info?.version ?? status.availableVersion,
+        releaseDate: info?.releaseDate ?? null,
+        channel: status.channel,
+      })
+      apply({ type: 'downloaded' })
+    })
     autoUpdater.on('error', (err: Error) => apply({ type: 'error', message: err.message }))
 
     // A laptop shut for a week notices on the way back, not hours later;
@@ -150,6 +173,12 @@ export function createUpdater(deps: {
       autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
       autoUpdater.allowPrerelease = channel === 'dev'
       initialized = true
+      console.info('[updates] updater initialized', {
+        observedAt: new Date().toISOString(),
+        supported: status.supported,
+        runningVersion: status.version,
+        channel: status.channel,
+      })
       deps.send(status)
     },
     (err: unknown) => {
@@ -181,11 +210,21 @@ export function createUpdater(deps: {
         return false
       // A failed installer is reported and `installFailed` ends the quit, so
       // either way the quit is no longer the caller's to finish.
-      quitAndInstall()
+      quitAndInstall('quit')
       return true
     },
     async install() {
-      if (!status.supported || status.state !== 'ready') return false
+      if (!status.supported || status.state !== 'ready') {
+        console.info('[updates] install ignored', {
+          observedAt: new Date().toISOString(),
+          runningVersion: status.version,
+          offeredVersion: status.availableVersion,
+          supported: status.supported,
+          state: status.state,
+          channel: status.channel,
+        })
+        return false
+      }
       // The person clicked "Restart to update": that is the confirmation. The
       // vault is flushed, committed and pushed first, as on any quit.
       let go: boolean
@@ -195,9 +234,20 @@ export function createUpdater(deps: {
         console.error('[updates] teardown before install failed:', err)
         go = true
       }
-      if (!go || switching || status.state !== 'ready' || installChannel !== status.channel)
+      if (!go || switching || status.state !== 'ready' || installChannel !== status.channel) {
+        console.info('[updates] install cancelled before handoff', {
+          observedAt: new Date().toISOString(),
+          runningVersion: status.version,
+          offeredVersion: status.availableVersion,
+          confirmed: go,
+          switching,
+          state: status.state,
+          channel: status.channel,
+          offeredChannel: installChannel,
+        })
         return false
-      return quitAndInstall()
+      }
+      return quitAndInstall('explicit')
     },
     setChannel(channel) {
       const request = channelQueue.then(() => switchChannel(channel))
