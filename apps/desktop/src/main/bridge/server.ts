@@ -390,7 +390,9 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       // validation, immediately before returning the executable handoff.
       if (result.run !== undefined) {
         result.validateRun?.()
-        return { status: 202, body: runScript(result.run) }
+        return form.get('runFormat') === 'json'
+          ? { status: 202, body: JSON.stringify(result.run) }
+          : { status: 202, body: runScript(result.run) }
       }
       const succeeded = commandSucceeded(cli.commands(targetRemote), request.name, result.value)
       // A command that answered with its own failure: 422, the answer whole.

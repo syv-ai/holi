@@ -78,6 +78,9 @@ linux:
   maintainer: syv.ai <syv-ai@users.noreply.github.com>
   artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 win:
+  extraResources:
+    - from: build/native/holi.exe
+      to: holi.exe
   target:
     # NSIS is the installer and what the updater downloads: dev.yml beside the
     # .exe and its .blockmap, which makes the next update a differential one.

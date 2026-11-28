@@ -27,6 +27,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { installWindowsCli } from './cli-windows'
 import { dirname, isAbsolute, join } from 'node:path'
 import { CapabilityError, NEXT_STEP } from '../capabilities/error'
 import type { CliCommand, CliRun } from '../capabilities/registry'
@@ -489,6 +490,7 @@ export async function installHoliCli(
   platform: NodeJS.Platform = process.platform,
   binding?: { descriptorPath: string; binDir: string },
 ): Promise<string> {
+  if (platform === 'win32') return installWindowsCli(userDataDir, binding)
   if (binding && (!isAbsolute(binding.descriptorPath) || !isAbsolute(binding.binDir)))
     throw new Error('vault CLI binding paths must be absolute')
   const path = join(binding?.binDir ?? join(userDataDir, 'bin'), 'holi')
