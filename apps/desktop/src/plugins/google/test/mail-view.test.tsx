@@ -53,7 +53,9 @@ const google: Record<string, (params: unknown) => unknown> = {
       sub: mailAccountSub,
       email: mailAccountSub === 'mail-view-account' ? 'ada@syv.ai' : 'ada@home.test',
     },
+    currentSub: mailAccountSub,
     missingScopes: [],
+    needsReconnect: false,
   }),
   allAccounts: () => ({
     accounts: [

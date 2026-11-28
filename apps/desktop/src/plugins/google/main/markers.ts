@@ -1,4 +1,5 @@
-import { rm } from 'node:fs/promises'
+import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { jsonFileStore, type JsonFileStore } from '../../../main/plugin-api'
 import {
@@ -40,6 +41,64 @@ export const validateThreadId = (id: string): void => {
 }
 const ACCOUNT_SUB = /^[A-Za-z0-9_-]{1,256}$/
 const lifecycleQueues = new Map<string, Promise<unknown>>()
+
+/** Copy legacy annotations to a connection-owned file without replacing either side. */
+export async function migrateMailMarkers(
+  userData: string,
+  oldSubject: string,
+  connectionId: string,
+): Promise<void> {
+  if (!ACCOUNT_SUB.test(oldSubject) || !ACCOUNT_SUB.test(connectionId))
+    throw new Error('invalid Google account id')
+  const source = join(userData, `google-mail-markers-${oldSubject}.json`)
+  const destination = join(userData, `google-mail-markers-${connectionId}.json`)
+  let text: string
+  try {
+    text = await readFile(source, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  const raw: unknown = JSON.parse(text)
+  if (
+    !isRecord(raw) ||
+    raw.version !== 1 ||
+    raw.accountSub !== oldSubject ||
+    !isRecord(raw.threads) ||
+    Object.entries(raw.threads).some(
+      ([id, marker]) => !THREAD_ID.test(id) || !isMailMarker(marker),
+    ) ||
+    (raw.preferences !== undefined && !isValidPreferences(raw.preferences))
+  )
+    throw new Error('Google mail marker data is invalid; it was not changed')
+  const tombstonePath = join(userData, `google-mail-markers-${connectionId}.deleted.json`)
+  try {
+    await readFile(tombstonePath, 'utf8')
+    return
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  const migrated = { ...raw, accountSub: connectionId }
+  await mkdir(userData, { recursive: true, mode: 0o700 })
+  const temp = `${destination}.${randomUUID()}.tmp`
+  await writeFile(temp, JSON.stringify(migrated), { flag: 'wx', mode: 0o600 })
+  try {
+    await link(temp, destination)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  } finally {
+    await rm(temp, { force: true })
+  }
+}
+
+function isValidPreferences(value: unknown): boolean {
+  try {
+    normalizeMailMarkerPreferences(value)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** Per-account durable annotations. A malformed file is an error, never an empty store. */
 export function createMailMarkerStore(userData: string, accountSub: string): MailMarkerStore {
@@ -171,6 +230,9 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
       retired = true
       return serialize('store', async () => {
         await rm(path, { force: true })
+        const tombstone = join(userData, `google-mail-markers-${accountSub}.deleted.json`)
+        await mkdir(userData, { recursive: true, mode: 0o700 })
+        await writeFile(tombstone, '', { flag: 'a', mode: 0o600 })
       })
     },
   }

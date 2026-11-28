@@ -86,13 +86,21 @@ export class GoogleApi {
       )
     }
 
+    this.#deps.beforeRequest?.()
     const res = await (this.#deps.fetch ?? globalThis.fetch)(full, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
 
-    if (!res.ok) throw await classify(res)
-    return (await res.json()) as T
+    this.#deps.beforeRequest?.()
+    if (!res.ok) {
+      const error = await classify(res)
+      this.#deps.beforeRequest?.()
+      throw error
+    }
+    const value = (await res.json()) as T
+    this.#deps.beforeRequest?.()
+    return value
   }
 
   /**
@@ -123,6 +131,7 @@ export class GoogleApi {
 
     this.#deps.beforeRequest?.()
     await validate?.()
+    this.#deps.beforeRequest?.()
     const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
       method,
       headers: {
@@ -137,7 +146,13 @@ export class GoogleApi {
     // A 403 here is most often `insufficientPermissions` (a grant older than
     // GOOGLE_SCOPES), which `classify` maps to `scope` so the UI can offer the
     // reconnect that fixes it. See `GoogleSession.missingScopes`.
-    if (!res.ok) throw await classify(res)
+    // Reads have no accepted-write receipt to preserve after ownership changes.
+    if (method.toUpperCase() === 'GET') this.#deps.beforeRequest?.()
+    if (!res.ok) {
+      const error = await classify(res)
+      if (method.toUpperCase() === 'GET') this.#deps.beforeRequest?.()
+      throw error
+    }
     return res
   }
 
@@ -220,6 +235,7 @@ export class GoogleApi {
   ): Promise<unknown> {
     const res = await this.#write(method, url, body, validate)
     const text = await res.text().catch(() => '')
+    if (method.toUpperCase() === 'GET') this.#deps.beforeRequest?.()
     if (text === '') return null
     try {
       return JSON.parse(text) as unknown

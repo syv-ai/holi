@@ -1,4 +1,4 @@
-/** The status bar's word on a recording meeting: its timer, and a click
+/** The top bar's word on a recording meeting: its timer, and a click
  *  back to it from anywhere. Nothing while nothing records. */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { Circle } from 'lucide-react'

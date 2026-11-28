@@ -3,7 +3,7 @@
  * Holi's, which takes syv.ai accounts only, or one the person brings for any
  * other account. A row in Connections names it, and its button opens the form.
  *
- * The machine-wide default governs new connections. Existing grants keep
+ * This vault's default governs its future connections. Existing grants keep
  * their issuing client; the secret goes to main and never comes back.
  */
 import { useAtomValue } from 'jotai'
@@ -161,9 +161,8 @@ export function OAuthClient({
               <DialogTitle>Your own OAuth client</DialogTitle>
               <DialogDescription>
                 For a Google account outside syv.ai: an OAuth client of type Desktop app, with the
-                Gmail, Google Calendar and People APIs enabled. Kept on this machine only, and used
-                for new connections in every vault here. Existing accounts stay connected with their
-                original client.
+                Gmail, Google Calendar and People APIs enabled. Used for future connections in this
+                vault only. Existing accounts stay connected with their original client.
               </DialogDescription>
             </DialogHeader>
             <Button

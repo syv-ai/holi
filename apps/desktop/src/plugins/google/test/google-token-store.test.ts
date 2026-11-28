@@ -140,6 +140,59 @@ describe("the person's own client, kept the same way", () => {
     await expect(clients.write(null)).resolves.toBeUndefined()
   })
 
+  it('reads a legacy envelope and migrates its client alongside vault-owned clients', async () => {
+    await writeFile(
+      file,
+      JSON.stringify({
+        v: 1,
+        data: storage.encryptString(JSON.stringify(CLIENT)).toString('base64'),
+      }),
+    )
+    const clients = createClientStore(file, storage)
+    expect(await clients.read()).toEqual(CLIENT)
+    expect(await clients.readVault('owner/repo')).toBeNull()
+    await clients.writeVault('owner/repo', { id: 'vault.apps.googleusercontent.com' })
+
+    const restarted = createClientStore(file, storage)
+    expect(await restarted.read()).toEqual(CLIENT)
+    expect(await restarted.readVault('owner/repo')).toEqual({
+      id: 'vault.apps.googleusercontent.com',
+    })
+    expect(await restarted.readVault('other/repo')).toBeNull()
+    expect(await restarted.hasVault('owner/repo')).toBe(true)
+    expect(await restarted.hasVault('other/repo')).toBe(false)
+  })
+
+  it('serializes independent vault updates and deletion without changing legacy provenance', async () => {
+    const clients = createClientStore(file, storage)
+    await clients.write(CLIENT)
+    await Promise.all([
+      clients.writeVault('one/repo', { id: 'one.apps.googleusercontent.com' }),
+      clients.writeVault('two/repo', { id: 'two.apps.googleusercontent.com' }),
+    ])
+    await clients.writeVault('one/repo', null)
+    await clients.write(null)
+
+    expect(await clients.read()).toBeNull()
+    expect(await clients.readVault('one/repo')).toBeNull()
+    expect(await clients.hasVault('one/repo')).toBe(true)
+    expect(await clients.hasVault('two/repo')).toBe(true)
+    expect(await clients.readVault('two/repo')).toEqual({ id: 'two.apps.googleusercontent.com' })
+  })
+
+  it('preserves prior encrypted state when encryption is unavailable', async () => {
+    const clients = createClientStore(file, storage)
+    await clients.write(CLIENT)
+    const before = await readFile(file, 'utf8')
+    const unavailable = createClientStore(file, { ...storage, isEncryptionAvailable: () => false })
+
+    await expect(unavailable.writeVault('owner/repo', CLIENT)).rejects.toBeInstanceOf(
+      EncryptionUnavailableError,
+    )
+    expect(await readFile(file, 'utf8')).toBe(before)
+    expect(await clients.read()).toEqual(CLIENT)
+  })
+
   it('reads a file the keychain can no longer decrypt as no client', async () => {
     await createClientStore(file, storage).write(CLIENT)
     const rekeyed = createClientStore(file, {
@@ -149,5 +202,7 @@ describe("the person's own client, kept the same way", () => {
       },
     })
     expect(await rekeyed.read()).toBeNull()
+    await expect(rekeyed.writeVault('owner/repo', CLIENT)).rejects.toThrow()
+    expect(await readFile(file, 'utf8')).not.toBe('')
   })
 })
