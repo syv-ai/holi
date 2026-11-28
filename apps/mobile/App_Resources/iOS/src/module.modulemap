@@ -2,6 +2,10 @@ module HoliNativeFiles {
   header "HoliNativeFiles.h"
   export *
 }
+module HoliNativeCredentials {
+  header "HoliNativeCredentials.h"
+  export *
+}
 module HoliManagedIdentity {
   header "HoliManagedIdentity.h"
   export *

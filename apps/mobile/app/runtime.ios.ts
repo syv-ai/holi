@@ -12,6 +12,7 @@ import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
 import { runWorkingCopyCheck } from './working-copy-check.ios'
 import { runManagedGitCheck } from './managed-git-check.ios'
+import { runCredentialCheck } from './credential-check.ios'
 import { foundationModelsAvailability } from './foundation-models.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
@@ -24,7 +25,16 @@ function nativeUtf8(text: string): Uint8Array {
 /** The only iOS adapter: launch identity, native encoding and sandbox evidence. */
 export async function checkCompatibility(): Promise<string> {
   const startedAt = Date.now()
-  const runId = NSProcessInfo.processInfo.environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
+  const environment = NSProcessInfo.processInfo.environment
+  if (environment.objectForKey('HOLI_CREDENTIAL_DIAGNOSTIC') === '1') {
+    if (HoliNativeCredentials.diagnosticsAvailable() !== true)
+      throw new Error('Credential diagnostics require a Simulator acceptance build')
+    return runCredentialCheck(
+      environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? '',
+      environment.objectForKey('HOLI_CREDENTIAL_PHASE') ?? '',
+    )
+  }
+  const runId = environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
   const launchPhase =
     NSProcessInfo.processInfo.environment.objectForKey('HOLI_STORAGE_PHASE') ?? 'normal'
   const persist = (value: Record<string, unknown>) =>
