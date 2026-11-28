@@ -34,7 +34,17 @@ async function git(root, ...args) {
   return (
     await exec(
       'git',
-      ['-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=', '-C', root, ...args],
+      [
+        '-c',
+        'core.hooksPath=/dev/null',
+        '-c',
+        'credential.helper=',
+        '-c',
+        'maintenance.auto=false',
+        '-C',
+        root,
+        ...args,
+      ],
       { env, encoding: 'buffer', maxBuffer: 16 * 1024 * 1024, timeout: 20_000 },
     )
   ).stdout
