@@ -36,11 +36,13 @@ export function AgentPrompt({
   onCancel,
   value,
   onValueChange,
+  submitLabel,
 }: {
   /** Written in already, for the person to send or change: an app
    *  command's instruction. */
   value?: string
   onValueChange?: (value: string) => void
+  submitLabel?: string
   initial?: string
   /** What the agent is asked to do, above the field after "Ask <agent> to"
    *  ("Ask AI to" until the agent's name is known). */
@@ -97,12 +99,12 @@ export function AgentPrompt({
         </InputGroupText>
         <InputGroupButton
           variant="default"
-          size="icon-xs"
-          aria-label="Send"
+          size={submitLabel ? 'xs' : 'icon-xs'}
+          aria-label={submitLabel ?? 'Send'}
           disabled={text.trim() === ''}
           onClick={send}
         >
-          <ArrowUpIcon aria-hidden="true" />
+          {submitLabel ?? <ArrowUpIcon aria-hidden="true" />}
         </InputGroupButton>
       </InputGroupAddon>
     </InputGroup>

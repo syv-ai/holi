@@ -127,6 +127,46 @@ export function DocumentFormatBubble({
   const [customPassage, setCustomPassage] = useState<string | null>(null)
   /** Set as the menu closes into the prompt, so it leaves focus to the prompt. */
   const openingCustomRef = useRef(false)
+  const [addingToBatch, setAddingToBatch] = useState(false)
+  const batchTargetRef = useRef<{
+    bookmark: ReturnType<Editor['state']['selection']['getBookmark']>
+    passage: string
+  } | null>(null)
+  const [batchTargetChanged, setBatchTargetChanged] = useState(false)
+  const [batchTargetError, setBatchTargetError] = useState(false)
+
+  useLayoutEffect(() => {
+    const updateTarget = ({
+      transaction,
+    }: {
+      transaction: import('@tiptap/pm/state').Transaction
+    }) => {
+      const target = batchTargetRef.current
+      if (!target || !transaction.docChanged) return
+      // Like queued requests, a disk snapshot cannot prove which duplicate survived.
+      if (transaction.getMeta('externalDocumentReload') === true) {
+        setBatchTargetChanged(true)
+      }
+      const before = target.bookmark.resolve(transaction.before)
+      const touched =
+        transaction.mapping.mapResult(before.from, 1).deleted ||
+        transaction.mapping.mapResult(before.to, -1).deleted
+      const bookmark = target.bookmark.map(transaction.mapping)
+      batchTargetRef.current = { ...target, bookmark }
+      if (touched) setBatchTargetChanged(true)
+      try {
+        const selection = bookmark.resolve(transaction.doc)
+        const passage = transaction.doc.textBetween(selection.from, selection.to, '\n\n').trim()
+        if (passage !== target.passage) setBatchTargetChanged(true)
+      } catch {
+        setBatchTargetChanged(true)
+      }
+    }
+    editor.on('transaction', updateTarget)
+    return () => {
+      editor.off('transaction', updateTarget)
+    }
+  }, [editor])
   /** Set when the prompt closes because the person clicked elsewhere, so
    *  focus stays where they clicked rather than going back to the text. */
   const dismissedOutsideRef = useRef(false)
@@ -177,14 +217,47 @@ export function DocumentFormatBubble({
     const passage = selectedPassage()
     if (passage === '') return
     openingCustomRef.current = true
+    setAddingToBatch(false)
+    setBatchTargetError(false)
     setCustomPassage(passage)
   }
 
   const submitCustom = (instruction: string) => {
     const passage = customPassage
+    if (passage !== null) {
+      if (addingToBatch) {
+        const target = batchTargetRef.current
+        if (!batchTargetChanged && target && !editor.isDestroyed) {
+          try {
+            const selection = target.bookmark.resolve(editor.state.doc)
+            const current = editor.state.doc
+              .textBetween(selection.from, selection.to, '\n\n')
+              .trim()
+            if (current === target.passage) {
+              editor.commands.setTextSelection({ from: selection.from, to: selection.to })
+              onAddToBatch?.(instruction, target.passage)
+            } else {
+              setBatchTargetChanged(true)
+              setBatchTargetError(true)
+              return
+            }
+          } catch {
+            setBatchTargetChanged(true)
+            setBatchTargetError(true)
+            return
+          }
+        } else {
+          setBatchTargetChanged(true)
+          setBatchTargetError(true)
+          return
+        }
+      } else {
+        onQuickCommand?.(instruction, passage)
+      }
+    }
     setCustomPassage(null)
     setCustomDraft('')
-    if (passage !== null) onQuickCommand?.(instruction, passage)
+    setAddingToBatch(false)
   }
 
   return (
@@ -252,7 +325,19 @@ export function DocumentFormatBubble({
                     {onAddToBatch ? (
                       <DropdownMenuItem
                         disabled={!singleTextBlock}
-                        onClick={() => onAddToBatch('', selectedPassage())}
+                        onClick={() => {
+                          const passage = selectedPassage()
+                          if (passage === '') return
+                          batchTargetRef.current = {
+                            bookmark: editor.state.selection.getBookmark(),
+                            passage,
+                          }
+                          setBatchTargetChanged(false)
+                          setBatchTargetError(false)
+                          setAddingToBatch(true)
+                          openingCustomRef.current = true
+                          setCustomPassage(passage)
+                        }}
                       >
                         <PencilLineIcon aria-hidden="true" />
                         Add to batch…
@@ -291,7 +376,13 @@ export function DocumentFormatBubble({
                 }}
               >
                 {/* Mounts per open, so the field always starts empty. */}
+                {batchTargetError ? (
+                  <p role="alert">
+                    The passage changed. Reselect it and add it to the batch again.
+                  </p>
+                ) : null}
                 <AgentPrompt
+                  submitLabel={addingToBatch ? 'Add to batch' : undefined}
                   value={customDraft}
                   onValueChange={setCustomDraft}
                   task="change the selection"
