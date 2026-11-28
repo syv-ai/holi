@@ -40,7 +40,9 @@ const setAllImages = vi.fn()
 const mailMarkerPreferences = vi.fn()
 const setMailMarkerPreferences = vi.fn()
 const settingsRead = vi.fn()
+const settingsWrite = vi.fn()
 let allImages = false
+let mailNotifications = false
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
@@ -66,7 +68,10 @@ const google: Record<string, (params: unknown) => unknown> = {
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
-    settings: { read: { query: () => settingsRead() } },
+    settings: {
+      read: { query: () => settingsRead() },
+      write: { mutate: (input: unknown) => settingsWrite(input) },
+    },
     cap: {
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
@@ -103,13 +108,62 @@ beforeEach(() => {
   mailMarkerPreferences.mockResolvedValue({ enabledOrder: ['yellow-star'] })
   setMailMarkerPreferences.mockResolvedValue({ ok: true })
   allImages = false
+  mailNotifications = false
+  settingsWrite.mockImplementation(async ({ localJson }: { localJson?: string }) => {
+    if (localJson !== undefined) {
+      const patch = JSON.parse(localJson) as { google?: { mailNotifications?: boolean } }
+      if (typeof patch.google?.mailNotifications === 'boolean')
+        mailNotifications = patch.google.mailNotifications
+    }
+    return { warnings: [] }
+  })
   settingsRead.mockImplementation(async () => ({
-    pluginValues: { google: { imageSenders: [], imagesFromAllSenders: allImages } },
+    pluginValues: {
+      google: {
+        imageSenders: [],
+        imagesFromAllSenders: allImages,
+        mailNotifications,
+      },
+    },
     plugins: { vault: {}, localOff: [] },
   }))
 })
 
 describe('ConnectionsSection', () => {
+  it('saves desktop mail notifications locally and retries a refused change', async () => {
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/vault')
+    status.mockResolvedValue({ account: ADA, missingScopes: [] })
+    accounts.mockResolvedValue({ accounts: [ADA], current: ADA.sub })
+    await store.set(loadVaultSettingsAtom, { force: true })
+    rtlRender(
+      <Provider store={store}>
+        <ConnectionsSection />
+      </Provider>,
+    )
+
+    const user = userEvent.setup()
+    const toggle = await screen.findByRole('switch', {
+      name: 'Show desktop mail notifications',
+    })
+    await user.click(toggle)
+    await waitFor(() => expect(toggle).toBeChecked())
+    expect(settingsWrite).toHaveBeenLastCalledWith({
+      remote: 'syv-ai/vault',
+      localJson: JSON.stringify({ google: { mailNotifications: true } }),
+    })
+
+    settingsWrite.mockRejectedValueOnce(new Error('disk is read-only'))
+    await user.click(toggle)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/disk is read-only/i)
+    expect(toggle).not.toBeChecked()
+
+    await user.click(screen.getByRole('button', { name: 'Retry desktop mail notifications' }))
+    await waitFor(() => expect(settingsWrite).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(toggle).not.toBeChecked()
+  })
+
   it('shows a settings read retry and retries a failed write without racing the switch', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/vault')
@@ -169,7 +223,7 @@ describe('ConnectionsSection', () => {
       name: 'Always load images from all senders',
     })
     await user.click(screen.getByRole('button', { name: 'Always from all senders' }))
-    expect(toggle).toBeDisabled()
+    await waitFor(() => expect(toggle).toBeDisabled())
     await act(async () => finish({ ok: true }))
     await waitFor(() => expect(toggle).toBeChecked())
     await waitFor(() => expect(toggle).toBeEnabled())
@@ -179,7 +233,9 @@ describe('ConnectionsSection', () => {
       }),
     )
     await user.click(toggle)
-    expect(await screen.findByRole('button', { name: 'Always from all senders' })).toBeDisabled()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Always from all senders' })).toBeDisabled(),
+    )
     await act(async () => finish({ ok: true }))
     await waitFor(() => expect(toggle).not.toBeChecked())
     expect(screen.getByRole('button', { name: 'Always from all senders' })).toBeEnabled()
@@ -446,7 +502,7 @@ describe('ConnectionsSection', () => {
 })
 
 describe('the OAuth client', () => {
-  it('names the client in use, and a new one asks before it disconnects the accounts', async () => {
+  it('changes the future-connect client without disconnecting existing accounts', async () => {
     const user = userEvent.setup()
     render()
     expect(
@@ -455,17 +511,16 @@ describe('the OAuth client', () => {
     await user.click(screen.getByRole('button', { name: 'Use your own client…' }))
     await user.type(screen.getByLabelText('Client ID'), 'mine.apps.googleusercontent.com')
     await user.type(screen.getByLabelText('Client secret'), 's3cret')
-    await user.click(screen.getByRole('button', { name: 'Save and disconnect 2 accounts' }))
-    // Asked once more: nothing saved yet.
-    expect(await screen.findByText('This disconnects 2 accounts')).toBeTruthy()
-    expect(setClient).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Disconnect and switch' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() =>
       expect(setClient).toHaveBeenCalledWith({
         id: 'mine.apps.googleusercontent.com',
         secret: 's3cret',
       }),
     )
+    expect(disconnectVault).not.toHaveBeenCalled()
+    expect(removeAccount).not.toHaveBeenCalled()
+    expect(await screen.findByText(ADA.email)).toBeInTheDocument()
   })
 
   it('says a refusal in the form, and keeps what was typed', async () => {

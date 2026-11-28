@@ -202,6 +202,34 @@ export async function runMoveRestart(
   if ((await nativeFiles.privateList(root)).length !== 0)
     throw new Error('Recovered move journal was not cleaned up')
 
+  const relativeRoot = `${documents}/holi-move-relative-${runId}-${ordinal}`
+  nativeIO.mkdir(relativeRoot)
+  nativeIO.mkdir(`${relativeRoot}/old`)
+  nativeIO.mkdir(`${relativeRoot}/new`)
+  const relativeVault = { remote: 'holi/relative-move', root: relativeRoot }
+  const relativeStore = createVaultStorage(nativeFiles, relativeVault)
+  const relativeSource = await relativeStore.create('old/note.md', encode(images.relativeSource))
+  await relativeStore.create('ref.md', encode(images.relativeBacklink))
+  await nativeFiles.create(relativeRoot, 'old/asset.bin', encode(images.asset))
+  const interruptedRelative = createVaultStorage(createNativeFiles(), relativeVault, {
+    checkpoint: async (event) => {
+      if (event.phase === 'journal-after') throw new Error('relative move fixture interruption')
+    },
+  })
+  try {
+    await interruptedRelative.move('old/note.md', 'new/note.md', relativeSource.revision)
+    throw new Error('Relative move failed to reach interruption')
+  } catch (error) {
+    if (!String(error).includes('relative move fixture interruption')) throw error
+  }
+  const reopenedRelative = createVaultStorage(createNativeFiles(), relativeVault)
+  if (
+    decode((await reopenedRelative.read('new/note.md')).bytes) !== images.relativeMoved ||
+    decode((await reopenedRelative.read('ref.md')).bytes) !== images.relativeMovedBacklink ||
+    decode(await nativeFiles.read(relativeRoot, 'old/asset.bin')) !== images.asset
+  )
+    throw new Error('Native relative move changed targets or asset bytes')
+
   const malformedRoot = `${documents}/holi-move-malformed-${runId}-${ordinal}`
   nativeIO.mkdir(malformedRoot)
   const malformed = createVaultStorage(nativeFiles, {
@@ -329,6 +357,7 @@ export async function runMoveRestart(
     listed,
     recovered: expected.phase !== 'journal-before',
     wrongRootRefusal,
+    relativeMoveRoot: relativeRoot,
     malformedJournalRefused: true,
     conflictJournalRefused: true,
   }

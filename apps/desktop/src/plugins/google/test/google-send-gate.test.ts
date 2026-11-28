@@ -57,6 +57,9 @@ const decisionOf = (d: Decision) => d.hookSpecificOutput?.permissionDecision ?? 
 
 describe('the gate reads every shell spelling', () => {
   const commands = [
+    'holi.exe google respond e2 --yes',
+    '"C:/Users/Ada/AppData/Roaming/Holi/bin/holi.exe" google respond e2 --yes',
+    String.raw`"C:\Users\Ada\AppData\Roaming\Holi\bin\holi.exe" google respond e2 --yes`,
     '"/Users/Ada/Library/Application Support/Holi/bin/holi" google respond e2 --yes',
     '"$HOLI_BIN" google \\\nrespond e2 --yes',
     'holi google re\\spond e2 --yes',

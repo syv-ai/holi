@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { randomUUID, createHash } from 'node:crypto'
+import { randomUUID, randomBytes, createHash } from 'node:crypto'
 import { mkdirSync, realpathSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -213,7 +213,7 @@ async function main() {
     registry,
     async (remote, path) => host!.get(remote)?.root === path,
   )
-  const token = randomUUID()
+  const token = randomBytes(32).toString('hex')
   bridge = createBridgeServer({
     cli: {
       dispatch: capabilityHost.dispatch,

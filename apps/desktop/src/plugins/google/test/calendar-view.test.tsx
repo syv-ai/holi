@@ -8,6 +8,7 @@ import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { localDate } from '@holi/shared'
 import { activeRemoteAtom } from '@/plugin-api'
+import { ShellShortcutHost } from '@/test/shell-shortcut-host'
 import { CalendarView } from '../renderer/calendar/calendar-view'
 import { clockLabel, type TimeFormat } from '../renderer/calendar/calendar-format'
 import { GOOGLE_INFO } from '../info'
@@ -545,6 +546,8 @@ describe('the calendar view', () => {
   })
 
   test('an event of your own opens, and editing it reschedules it by its Google id', async () => {
+    const description = '<p>Keep <strong>formatted</strong> details</p>'
+    agendaMock.mockResolvedValue([{ ...FOCUS, description }, SYNC])
     const user = userEvent.setup()
     render(<CalendarView />)
     await user.click((await screen.findAllByText('Focus block'))[0]!)
@@ -558,13 +561,45 @@ describe('the calendar view', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(rescheduleMock).toHaveBeenCalledTimes(1))
     const sent = rescheduleMock.mock.calls[0]![0] as Record<string, unknown>
-    expect(sent).toMatchObject({ id: 'focus-1', title: 'Deep work' })
+    expect(sent).toMatchObject({ id: 'focus-1', title: 'Deep work', description })
     expect(Date.parse(sent['start'] as string)).toBe(Date.parse(FOCUS.start))
     expect(Date.parse(sent['end'] as string)).toBe(Date.parse(FOCUS.end))
     expect(sent['all-day']).toBeUndefined()
     // Read again, so the grid shows what Google holds.
     await waitFor(() => expect(agendaMock).toHaveBeenCalled())
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  test('saved descriptions reload into the event form, including an explicit clear', async () => {
+    let stored = { ...FOCUS, description: 'Original details' }
+    agendaMock.mockImplementation(async () => [{ ...stored }])
+    rescheduleMock.mockImplementation(async (params: Record<string, unknown>) => {
+      if (typeof params.description === 'string')
+        stored = { ...stored, description: params.description }
+      return { ok: true }
+    })
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Focus block'))[0]!)
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Edit' }),
+    )
+    expect(await screen.findByRole('textbox', { name: 'Description' })).toHaveValue(
+      'Original details',
+    )
+
+    for (const description of ['Agenda\nNext steps', '']) {
+      const field = screen.getByRole('textbox', { name: 'Description' })
+      await user.clear(field)
+      if (description) await user.paste(description)
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      await user.click((await screen.findAllByText('Focus block'))[0]!)
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', { name: 'Edit' }),
+      )
+      expect(await screen.findByRole('textbox', { name: 'Description' })).toHaveValue(description)
+    }
   })
 
   test('typing in the event title does not re-render the calendar or unchanged time selects', async () => {
@@ -754,6 +789,25 @@ describe('the calendar view', () => {
       guests: ['ada@example.com', 'grace@example.com'],
       meet: true,
       sub: '1',
+    })
+  })
+
+  test('new meeting creation sends the multiline description to Google', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    const card = await screen.findByRole('dialog', { name: 'New event' })
+    await user.type(within(card).getByRole('textbox', { name: 'Title' }), 'Planning session')
+    await user.type(
+      within(card).getByRole('textbox', { name: 'Description' }),
+      'First line{Enter}Second line',
+    )
+    await user.click(within(card).getByRole('button', { name: 'Add event' }))
+    await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
+    expect(scheduleMock.mock.calls[0]![0]).toMatchObject({
+      title: 'Planning session',
+      description: 'First line\nSecond line',
     })
   })
 
@@ -1077,6 +1131,32 @@ describe('the calendar view', () => {
       guests: ['guest@example.com'],
       meet: true,
     })
+  })
+
+  test('numbered tab navigation works while a calendar event card is open', async () => {
+    const previousPlatform = document.documentElement.dataset.platform
+    document.documentElement.dataset.platform = 'mac'
+    try {
+      const selectTab = vi.fn()
+      render(
+        <ShellShortcutHost
+          tabIds={['first', 'calendar', 'last']}
+          activeTabId="calendar"
+          app="calendar"
+          selectTab={selectTab}
+        >
+          <CalendarView />
+        </ShellShortcutHost>,
+      )
+      const eventButton = (await screen.findAllByText('Focus block'))[0]!.closest('button')!
+      await userEvent.setup().click(eventButton)
+      const card = await screen.findByRole('dialog', { name: 'Focus block' })
+      fireEvent.keyDown(card, { key: '1', metaKey: true })
+      expect(selectTab).toHaveBeenCalledWith('first')
+    } finally {
+      if (previousPlatform === undefined) delete document.documentElement.dataset.platform
+      else document.documentElement.dataset.platform = previousPlatform
+    }
   })
 
   test('an edit draft survives parking and account changes clear it', async () => {

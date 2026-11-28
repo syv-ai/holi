@@ -21,6 +21,13 @@ declare class HoliNativeGit extends NSObject {
     root: string,
     error: interop.Pointer | interop.Reference<NSError>,
   ): boolean
+  prepareWorkingCopyTreeRemoteBranchPolicyError(
+    root: string,
+    remote: string,
+    branch: string,
+    policy: (path: string) => number,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): NSDictionary<string, NSObject> | null
   workingCopyStatusRootError(
     paths: NSArray<string>,
     root: string,

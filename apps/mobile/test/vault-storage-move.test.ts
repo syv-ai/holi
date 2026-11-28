@@ -56,6 +56,172 @@ describe('durable note moves', () => {
     await expect(storage.read('old/é.md')).rejects.toThrow()
   })
 
+  it('rewrites relative markdown links across folders while preserving assets', async () => {
+    const base = await root()
+    const storage = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/relative-move',
+      root: base,
+    })
+    await mkdir(join(base, 'old'))
+    await mkdir(join(base, 'new'))
+    await mkdir(join(base, 'notes', 'ref'), { recursive: true })
+    const image = text('unchanged image bytes')
+    await writeFile(join(base, 'old', 'asset.png'), image)
+    await storage.create(
+      'old/note.md',
+      text('![image](asset.png) [related](../notes/ref/readme.md) [[old/note.md]]'),
+    )
+    await storage.create(
+      'notes/ref/incoming.md',
+      text('[note](../../old/note.md) ![asset](../../old/asset.png) [[old/note.md]]'),
+    )
+    const source = await storage.read('old/note.md')
+
+    const result = await storage.move('old/note.md', 'new/note.md', source.revision)
+
+    expect(string(result.bytes)).toBe(
+      '![image](../old/asset.png) [related](../notes/ref/readme.md) [[new/note.md]]',
+    )
+    expect(string((await storage.read('notes/ref/incoming.md')).bytes)).toBe(
+      '[note](../../new/note.md) ![asset](../../old/asset.png) [[new/note.md]]',
+    )
+    expect(await readFile(join(base, 'old', 'asset.png'))).toEqual(Buffer.from(image))
+  })
+
+  it('recovers interrupted Markdown moves once after reopening', async () => {
+    const base = await root()
+    await mkdir(join(base, 'old'))
+    await mkdir(join(base, 'new'))
+    const adapter = createNodeFiles()
+    const vault = { remote: 'holi/markdown-restart', root: base }
+    const setup = createVaultStorage(adapter, vault)
+    const source = await setup.create('old/note.md', text('![asset](asset.png)'))
+    await setup.create('ref.md', text('[note](old/note.md#part)'))
+    await writeFile(join(base, 'old/asset.png'), 'asset bytes')
+    const interrupted = createVaultStorage(adapter, vault, {
+      checkpoint: async (event) => {
+        if (event.phase === 'journal-after') throw new Error('interrupted after journal')
+      },
+    })
+    await expect(interrupted.move('old/note.md', 'new/note.md', source.revision)).rejects.toThrow(
+      'interrupted after journal',
+    )
+    const reopened = createVaultStorage(createNodeFiles(), vault)
+    expect(string((await reopened.read('new/note.md')).bytes)).toBe('![asset](../old/asset.png)')
+    expect(string((await reopened.read('ref.md')).bytes)).toBe('[note](new/note.md#part)')
+    expect(string((await reopened.read('new/note.md')).bytes)).toBe('![asset](../old/asset.png)')
+    await expect(reopened.read('old/note.md')).rejects.toThrow()
+    expect(await readFile(join(base, 'old/asset.png'), 'utf8')).toBe('asset bytes')
+  })
+
+  it('reopens legacy journals without changing their recorded wiki-only move semantics', async () => {
+    const base = await root()
+    await mkdir(join(base, 'old'))
+    await mkdir(join(base, 'new'))
+    const adapter = createNodeFiles()
+    const canonical = await adapter.canonicalRoot(base)
+    const before = text('![asset](asset.png) [[old/note.md]]')
+    const after = text('![asset](asset.png) [[new/note.md]]')
+    await writeFile(join(base, 'old/note.md'), before)
+    await writeFile(join(base, 'ref.md'), '[legacy](old/note.md)')
+    const operationId = randomUUID()
+    await adapter.privatePublish(
+      canonical,
+      `move-${operationId}.json`,
+      text(
+        JSON.stringify({
+          schema: 2,
+          root: canonical,
+          operationId,
+          from: 'old/note.md',
+          to: 'new/note.md',
+          changes: [
+            { path: 'old/note.md', before: [...before], after: null },
+            { path: 'new/note.md', before: null, after: [...after] },
+          ],
+        }),
+      ),
+      null,
+    )
+    const reopened = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/legacy-move',
+      root: base,
+    })
+    expect((await reopened.read('new/note.md')).bytes).toEqual(after)
+    expect(string((await reopened.read('ref.md')).bytes)).toBe('[legacy](old/note.md)')
+    await expect(reopened.read('old/note.md')).rejects.toThrow()
+  })
+
+  it('refuses a journal whose Markdown destination postimage redirects the original target', async () => {
+    const base = await root()
+    await mkdir(join(base, 'old'))
+    await mkdir(join(base, 'new'))
+    const adapter = createNodeFiles()
+    const canonical = await adapter.canonicalRoot(base)
+    const source = text('[asset](asset.bin)')
+    await writeFile(join(base, 'old/note.md'), source)
+    const operationId = randomUUID()
+    const name = `move-${operationId}.json`
+    const journal = text(
+      JSON.stringify({
+        schema: 3,
+        root: canonical,
+        operationId,
+        from: 'old/note.md',
+        to: 'new/note.md',
+        changes: [
+          { path: 'old/note.md', before: [...source], after: null },
+          { path: 'new/note.md', before: null, after: [...source] },
+        ],
+      }),
+    )
+    await adapter.privatePublish(canonical, name, journal, null)
+    const reopened = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/forged-markdown',
+      root: base,
+    })
+    await expect(reopened.list()).rejects.toThrow('Invalid moved-note postimage')
+    expect(await readFile(join(base, 'old/note.md'))).toEqual(Buffer.from(source))
+    await expect(readFile(join(base, 'new/note.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await adapter.privateRead(canonical, name)).toEqual(journal)
+  })
+
+  it('refuses a schema-3 journal that omits an inline-only incoming link', async () => {
+    const base = await root()
+    await mkdir(join(base, 'old'))
+    await mkdir(join(base, 'new'))
+    const adapter = createNodeFiles()
+    const canonical = await adapter.canonicalRoot(base)
+    const source = text('source bytes')
+    await writeFile(join(base, 'old/note.md'), source)
+    await writeFile(join(base, 'ref.md'), '[note](old/note.md#part)')
+    const operationId = randomUUID()
+    const name = `move-${operationId}.json`
+    const journal = text(
+      JSON.stringify({
+        schema: 3,
+        root: canonical,
+        operationId,
+        from: 'old/note.md',
+        to: 'new/note.md',
+        changes: [
+          { path: 'old/note.md', before: [...source], after: null },
+          { path: 'new/note.md', before: null, after: [...source] },
+        ],
+      }),
+    )
+    await adapter.privatePublish(canonical, name, journal, null)
+    const reopened = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/omitted-markdown',
+      root: base,
+    })
+    await expect(reopened.list()).rejects.toThrow('Move recovery omitted backlink')
+    expect(await readFile(join(base, 'old/note.md'))).toEqual(Buffer.from(source))
+    expect(await readFile(join(base, 'ref.md'), 'utf8')).toBe('[note](old/note.md#part)')
+    await expect(readFile(join(base, 'new/note.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await adapter.privateRead(canonical, name)).toEqual(journal)
+  })
+
   it('reconfirms private directory durability after removal sync fails', async () => {
     const base = await root()
     let failRemovalSync = true

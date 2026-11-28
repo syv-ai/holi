@@ -13,7 +13,11 @@ afterEach(() => {
   delete (document as Partial<Document>).elementFromPoint
 })
 
-function openedTerminal(cols = 32, rows = 3) {
+function openedTerminal(
+  cols = 32,
+  rows = 3,
+  activate: (event: MouseEvent, text: string) => void = () => {},
+) {
   const mount = document.createElement('div')
   const grid = document.createElement('div')
   grid.className = 'xterm-screen'
@@ -41,7 +45,7 @@ function openedTerminal(cols = 32, rows = 3) {
     providers.push(provider)
     return register(provider)
   }) as Terminal['registerLinkProvider']
-  term.loadAddon(new WebLinksAddon(() => {}))
+  term.loadAddon(new WebLinksAddon(activate))
   term.registerLinkProvider = register
   return { term, mount, screen, providers }
 }
@@ -154,3 +158,35 @@ test('a disposed adapter never writes late replay into its terminal', async () =
   expect(writeSpy).not.toHaveBeenCalled()
   expect(session.adapter.unchanged([])).toBe(false)
 })
+
+test.each([undefined, 'control', 'meta'] as const)(
+  'link hints preserve the requested %s activation gesture',
+  async (activationModifier) => {
+    let opened: string | undefined
+    const { term, mount, providers } = openedTerminal(48, 3, (event, text) => {
+      const allowed =
+        activationModifier === undefined
+          ? !event.ctrlKey && !event.metaKey
+          : activationModifier === 'control'
+            ? event.ctrlKey
+            : event.metaKey
+      if (event.button === 0 && allowed) opened = text
+    })
+    const session = createTerminalHintAdapter({
+      term,
+      mount,
+      providers,
+      activationModifier,
+      isVisible: () => true,
+      isCurrent: () => true,
+    })
+    await session.write('https://example.test/gesture')
+    session.adapter.capture?.()
+    const targets = discoverHostHintTargets(mount, session.adapter)
+    const target = targets.find((item) => item.label === 'https://example.test/gesture')!
+    expect(target).toBeDefined()
+    expect(activateHostHint(target)).toBe(true)
+    expect(opened).toBe('https://example.test/gesture')
+    session.dispose()
+  },
+)

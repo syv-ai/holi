@@ -487,11 +487,12 @@ describe('the harness registry', () => {
       false,
     )
     expect(codex.label).toBe('My Codex')
-    expect(codex.terminal(TARGET)).toEqual({
-      bin: '/bin/codex',
-      args: ['--x', 'own'],
-      env: { A: '1', B: '2' },
-    })
+    const { env, ...command } = codex.terminal(TARGET)!
+    expect(command).toEqual({ bin: '/bin/codex', args: ['--x', 'own'] })
+    const { HOLI_BIN, PATH, ...presetEnv } = env
+    expect(presetEnv).toEqual({ A: '1', B: '2' })
+    expect(HOLI_BIN).toBe(join(TARGET.binDir, 'holi'))
+    expect(PATH?.split(delimiter)[0]).toBe(TARGET.binDir)
     // Put back as Holi has it: no entry at all.
     await reg.remove('codex')
     expect(codex.label).toBe('Codex')
@@ -668,6 +669,7 @@ describe('provider selection', () => {
   function caps(providers: AgentProvider[]) {
     const started: string[] = []
     const table = agentCapabilities({
+      presentationLease: () => () => true,
       sessions: {
         start: async () => {
           started.push('claude')

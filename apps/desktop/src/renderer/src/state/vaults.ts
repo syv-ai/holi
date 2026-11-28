@@ -1,4 +1,5 @@
 import { atom, type createStore } from 'jotai'
+import { advanceNavigationEpochAtom, navigationEpochAtom } from './navigation'
 import { atomWithStorage } from 'jotai/utils'
 import { toast } from 'sonner'
 import { GITKEEP, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot } from '@holi/shared'
@@ -13,7 +14,8 @@ import { tabPath } from './tab-descriptor'
 import { trpc } from '@/lib/trpc'
 // A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
 // reads the other's atoms until a store does.
-import { openDocumentAtom } from './open-document'
+import { openDocumentAtom, pendingHeadingAtom } from './open-document'
+import { revealInFilesAtom } from './reveal-in-files'
 // A cycle too (`document-runs` reads `activeRemoteAtom`), safe the same way.
 import { documentRunsAtom, documentUpgradesAtom, isRunLive } from './document-runs'
 import { settledRect } from '@/lib/settled-rect'
@@ -42,6 +44,7 @@ export const activeRemoteAtom = atom(
     if (get(activeRemoteValueAtom) === remote) return
     set(activeRemoteValueAtom, remote)
     set(activeRemoteRevisionAtom, (revision) => revision + 1)
+    set(advanceNavigationEpochAtom)
     set(openedRemoteAtom, null)
     set(documentRunsAtom, {})
   },
@@ -194,6 +197,12 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
 const openRequestAtom = atom(0)
 const documentOpenIntentAtom = atom(0)
 
+/** Ephemeral ownership of navigation, including a return to the same vault. */
+export const vaultNavigationKeyAtom = atom(
+  (get) =>
+    `${get(activeRemoteRevisionAtom)}:${get(documentOpenIntentAtom)}:${get(navigationEpochAtom)}`,
+)
+
 // Return main to the unchanged renderer selection, never depart from it. No
 // buffers or tabs are touched: a failed departure flush must retain dirty text.
 // Consuming the expected request deduplicates recovery; a newer request,
@@ -233,10 +242,11 @@ export const openVaultAtom = atom(
   async (
     get,
     set,
-    target: string | { remote: string; documentIntentId?: number },
+    target: string | { remote: string; documentIntentId?: number; navigationEpoch?: number },
   ): Promise<boolean> => {
     const remote = typeof target === 'string' ? target : target.remote
     const documentIntentId = typeof target === 'string' ? undefined : target.documentIntentId
+    const navigationEpoch = typeof target === 'string' ? undefined : target.navigationEpoch
     const request = get(openRequestAtom) + 1
     set(openRequestAtom, request)
     const selectionRevision = get(activeRemoteRevisionAtom)
@@ -252,7 +262,8 @@ export const openVaultAtom = atom(
     if (
       get(openRequestAtom) !== request ||
       get(activeRemoteRevisionAtom) !== selectionRevision ||
-      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId)
+      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId) ||
+      (navigationEpoch !== undefined && get(navigationEpochAtom) !== navigationEpoch)
     )
       return false
 
@@ -262,9 +273,17 @@ export const openVaultAtom = atom(
     if (
       get(openRequestAtom) !== request ||
       get(activeRemoteRevisionAtom) !== selectionRevision ||
-      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId)
-    )
+      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId) ||
+      (navigationEpoch !== undefined && get(navigationEpochAtom) !== navigationEpoch)
+    ) {
+      if (navigationEpoch !== undefined)
+        await set(restoreSelectedVaultAtom, {
+          request,
+          revision: selectionRevision,
+          documentIntentId: documentIntentId ?? get(documentOpenIntentAtom),
+        })
       return false
+    }
 
     // Publish the cross-vault document-open selection only after main has opened
     // it. This lets VaultHost observe openedRemote alongside activeRemote and
@@ -374,11 +393,14 @@ export function subscribeToVault(
   // `activeRemoteAtom` stays truthful; the path opens once the new vault's
   // snapshot is in (`openVaultAtom` sets it before this resolves). A link's
   // heading is where the document's view puts the caret.
-  const offReminder = window.holi.vault.onOpen(({ remote, path, heading }) => {
+  const offReminder = window.holi.vault.onOpen(({ remote, path, heading, kind }) => {
     const targetRemote = remote || store.get(activeRemoteAtom)
     if (!targetRemote) return
+    if (kind === 'directory') store.set(pendingHeadingAtom, null)
     const id = store.get(documentOpenIntentAtom) + 1
     store.set(documentOpenIntentAtom, id)
+    store.set(advanceNavigationEpochAtom)
+    const arrivalNavigationEpoch = store.get(navigationEpochAtom)
 
     const revision = store.get(activeRemoteRevisionAtom)
     const reportError = (error: unknown) =>
@@ -391,12 +413,23 @@ export function subscribeToVault(
         .catch(reportError)
 
     if (targetRemote !== store.get(activeRemoteAtom)) {
-      const pending = store.set(openVaultAtom, { remote: targetRemote, documentIntentId: id })
+      const pending = store.set(openVaultAtom, {
+        remote: targetRemote,
+        documentIntentId: id,
+        ...(kind === 'directory' ? { navigationEpoch: arrivalNavigationEpoch } : {}),
+      })
       const request = store.get(openRequestAtom)
       void pending
         .then((landed) => {
           if (landed && store.get(documentOpenIntentAtom) === id)
-            store.set(openDocumentAtom, path, heading)
+            kind === 'directory'
+              ? store.set(revealInFilesAtom, {
+                  path,
+                  directory: true,
+                  remote: targetRemote,
+                  navigation: store.get(vaultNavigationKeyAtom),
+                })
+              : store.set(openDocumentAtom, path, heading)
         })
         .catch((error: unknown) => {
           reportError(error)
@@ -405,7 +438,14 @@ export function subscribeToVault(
           return restoreSelection(request)
         })
     } else {
-      store.set(openDocumentAtom, path, heading)
+      kind === 'directory'
+        ? store.set(revealInFilesAtom, {
+            path,
+            directory: true,
+            remote: targetRemote,
+            navigation: store.get(vaultNavigationKeyAtom),
+          })
+        : store.set(openDocumentAtom, path, heading)
       // Main may be opening another vault, or the initial open may not yet
       // have landed. Recover now; stale completions never start another loop.
       if (store.get(openedRemoteAtom) !== targetRemote)
@@ -418,6 +458,7 @@ export function subscribeToVault(
     // arrival does. openVaultAtom owns request ordering and flush/recovery.
     const id = store.get(documentOpenIntentAtom) + 1
     store.set(documentOpenIntentAtom, id)
+    store.set(advanceNavigationEpochAtom)
     const revision = store.get(activeRemoteRevisionAtom)
     const navigate = async (): Promise<void> => {
       // A ready same-vault notification only needs to dispatch its event. Reopening

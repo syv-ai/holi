@@ -80,9 +80,9 @@ export function rowActions({
   // A file or an app opens beside what is in front, as ⌥-click does; a
   // folder has nothing to open.
   const openable = !item.isFolder()
-  // A Holi link opens a file on a teammate's machine, so a local file has
+  // Holi links open files or folders on a teammate's machine; local paths have
   // none (docs/features/holi-links.md).
-  const linkable = openable && remote !== null && isHoliLinkable(id)
+  const linkable = remote !== null && isHoliLinkable(id)
   const note = openable && /\.md$/i.test(id)
   const { copyLink, createVaultApp } = NOTE_ACTIONS
   return [

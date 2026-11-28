@@ -82,6 +82,7 @@ import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 import { isMailMarker, validateBatch, validateThreadId, type MarkerValue } from './markers'
 import { normalizeMailMarkerPreferences, type MailMarkerPreferences } from '../shared/mail-markers'
+import type { MailAttentionSnapshot } from '../shared/types'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -101,6 +102,8 @@ export interface GoogleCapabilityDeps {
   /** This vault's Google settings on this machine (`GOOGLE_INFO.settings`):
    *  the agenda view, an app and the agent all read through them. */
   settings: GoogleSettingsStore
+  /** Account-owned unread state, maintained before the Mail view mounts. */
+  mailAttention?: { snapshot(): MailAttentionSnapshot }
 }
 
 /** The Google plugin's own settings in a vault, read and written by root. */
@@ -403,10 +406,12 @@ function eventFields(p: Record<string, unknown>): EventPatch {
   const title = optionalStringParam(p, 'title')
   const start = optionalStringParam(p, 'start')
   const end = optionalStringParam(p, 'end')
+  const description = p.description === '' ? '' : optionalStringParam(p, 'description')
   return {
     ...(title === undefined ? {} : { title }),
     ...(start === undefined ? {} : { start }),
     ...(end === undefined ? {} : { end }),
+    ...(description === undefined ? {} : { description }),
     ...(flagParam(p, 'all-day') ? { allDay: true } : {}),
   }
 }
@@ -634,8 +639,8 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
     /**
      * Set this machine's own OAuth client, or clear it with an empty `id` to
-     * go back to the next source. A different client disconnects every
-     * account here: their grants belong to the old one.
+     * go back to the next source. This changes the default for future connects;
+     * existing grants retain their issuing credentials.
      */
     'google.setClient': cap({
       doors: ['ui'],
@@ -1353,6 +1358,21 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const answer = await google(() => api.request(call.method, call.url, call.body))
         return fenceAnswer(answer ?? { ok: true }, call.source)
       },
+    }),
+
+    /** The exact account-owned unread snapshot maintained before Mail opens.
+     *  UI only: it contains no message content and no credentials. */
+    'google.mailAttention': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async () =>
+        deps.mailAttention?.snapshot() ?? {
+          accountSub: null,
+          unreadThreads: null,
+          status: 'disconnected' as const,
+          revision: 0,
+          updatedAt: null,
+        },
     }),
 
     /** How much mail there is, exact, for the list footer; null when the

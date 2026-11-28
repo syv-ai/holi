@@ -3,17 +3,12 @@
  * Holi's, which takes syv.ai accounts only, or one the person brings for any
  * other account. A row in Connections names it, and its button opens the form.
  *
- * **Machine-wide, unlike the rest of the section**, because the accounts it
- * connects are. A grant belongs to the client that made it, so saving a
- * different client disconnects every account here: the button names the
- * cost, and with accounts at stake it asks once more before it acts. The
- * same id with a new secret is the same client and costs nothing. The secret
- * goes to main and never comes back.
+ * The machine-wide default governs new connections. Existing grants keep
+ * their issuing client; the secret goes to main and never comes back.
  */
 import { useAtomValue } from 'jotai'
-import { ExternalLinkIcon, KeyRoundIcon, TriangleAlertIcon } from 'lucide-react'
+import { ExternalLinkIcon, KeyRoundIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -50,13 +45,10 @@ function clientLabel(client: ClientInfo): string {
 }
 
 export function OAuthClient({
-  accountCount,
   beforeChange,
   disabled = false,
   visible = true,
 }: {
-  /** The accounts connected on this machine: what a new client disconnects. */
-  accountCount: number
   beforeChange: (change: () => Promise<void>) => Promise<string | null>
   disabled?: boolean
   visible?: boolean
@@ -70,8 +62,6 @@ export function OAuthClient({
   const [secret, setSecret] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  /** The change that would disconnect accounts, asked about once more. */
-  const [asking, setAsking] = useState<{ id: string; secret: string } | null>(null)
 
   useEffect(() => {
     if (remote === null || !visible) return
@@ -89,7 +79,6 @@ export function OAuthClient({
   useEffect(() => {
     if (!visible) {
       setOpen(false)
-      setAsking(null)
     }
   }, [visible])
 
@@ -98,7 +87,6 @@ export function OAuthClient({
     setId('')
     setSecret('')
     setError(null)
-    setAsking(null)
   }
 
   const save = async (next: { id: string; secret: string }) => {
@@ -115,27 +103,13 @@ export function OAuthClient({
       close()
       setVersion((v) => v + 1)
     } catch (err) {
-      setAsking(null)
       setError(err instanceof Error ? err.message : 'Could not save the client.')
     } finally {
       setBusy(false)
     }
   }
 
-  /** "and disconnect 2 accounts": the cost, named on the button that pays it. */
-  const cost =
-    accountCount === 0
-      ? ''
-      : ` and disconnect ${accountCount} ${accountCount === 1 ? 'account' : 'accounts'}`
-  const sameClient = client !== null && id.trim() === client.id
-  const saveCost = sameClient ? '' : cost
   const canSave = !busy && id.trim() !== '' && secret.trim() !== ''
-
-  /** Act now, or ask first when it disconnects accounts. */
-  const attempt = (next: { id: string; secret: string }, costs: boolean) => {
-    if (costs) setAsking(next)
-    else void save(next)
-  }
 
   return (
     <Item variant="muted" data-oauth-client>
@@ -143,12 +117,12 @@ export function OAuthClient({
         <KeyRoundIcon />
       </ItemMedia>
       <ItemContent className="min-w-0">
-        <ItemTitle>OAuth client</ItemTitle>
+        <ItemTitle>OAuth client for new connections</ItemTitle>
         <ItemDescription className="break-words">
           {client !== null ? (
             clientLabel(client)
           ) : failed ? (
-            'Holi could not say which client it uses.'
+            'Could not read the client for new connections.'
           ) : (
             <Skeleton className="h-4 w-48" />
           )}
@@ -179,7 +153,7 @@ export function OAuthClient({
             onKeyDown={(event) => {
               if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
                 event.preventDefault()
-                if (canSave) attempt({ id, secret }, saveCost !== '')
+                if (canSave) void save({ id, secret })
               }
             }}
           >
@@ -188,7 +162,8 @@ export function OAuthClient({
               <DialogDescription>
                 For a Google account outside syv.ai: an OAuth client of type Desktop app, with the
                 Gmail, Google Calendar and People APIs enabled. Kept on this machine only, and used
-                by every vault here.
+                for new connections in every vault here. Existing accounts stay connected with their
+                original client.
               </DialogDescription>
             </DialogHeader>
             <Button
@@ -226,55 +201,23 @@ export function OAuthClient({
               </Field>
               {error !== null ? <FieldError>{error}</FieldError> : null}
             </FieldGroup>
-            {asking !== null ? (
-              <Alert variant="destructive">
-                <TriangleAlertIcon aria-hidden="true" />
-                <AlertTitle>
-                  This disconnects {accountCount} {accountCount === 1 ? 'account' : 'accounts'}
-                </AlertTitle>
-                <AlertDescription>
-                  Their access was granted to the client Holi uses now. Every vault on this machine
-                  stops reading mail and calendar until you connect again.
-                </AlertDescription>
-              </Alert>
-            ) : null}
             <DialogFooter className="flex-wrap">
-              {client?.source === 'own' && asking === null ? (
+              {client?.source === 'own' ? (
                 <Button
                   type="button"
                   variant="ghost"
                   disabled={busy}
-                  onClick={() => attempt({ id: '', secret: '' }, cost !== '')}
+                  onClick={() => void save({ id: '', secret: '' })}
                 >
-                  Use the default client{cost}
+                  Use the default client
                 </Button>
               ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={busy}
-                onClick={asking !== null ? () => setAsking(null) : close}
-              >
-                {asking !== null ? 'Keep my accounts' : 'Cancel'}
+              <Button type="button" variant="outline" disabled={busy} onClick={close}>
+                Cancel
               </Button>
-              {asking !== null ? (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  disabled={busy}
-                  onClick={() => void save(asking)}
-                >
-                  Disconnect and switch
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  disabled={!canSave}
-                  onClick={() => attempt({ id, secret }, saveCost !== '')}
-                >
-                  Save{saveCost}
-                </Button>
-              )}
+              <Button type="button" disabled={!canSave} onClick={() => void save({ id, secret })}>
+                Save
+              </Button>
             </DialogFooter>
           </div>
         </DialogContent>

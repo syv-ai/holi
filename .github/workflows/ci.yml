@@ -216,8 +216,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Exercise the generated Windows helper
-        run: pnpm --filter @holi/desktop exec vitest run test/git-askpass.test.ts
+      - name: Exercise the generated Windows askpass helper
+        run: pnpm --filter @holi/desktop exec vitest run test/git-askpass.test.ts --project node
+
+      - name: Exercise real Git authentication and Windows credential persistence
+        run: pnpm --filter @holi/desktop exec vitest run test/git-auth-integration.test.ts --project node
 
   windows-agent-launch:
     name: Windows agent launch and cleanup
@@ -240,6 +243,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Build the native Windows CLI
+        run: node apps/desktop/scripts/build-windows-cli.mjs
+
+      - name: Check broker observer input and activity contract
+        shell: pwsh
+        run: ./.github/scripts/test-broker-startup-observer.ps1
+
       - name: Stage native Windows launch and caller evidence
         id: native-proof
         shell: pwsh
@@ -248,10 +258,14 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $head -cne $env:GITHUB_SHA) { throw 'Checkout does not match GITHUB_SHA' }
           $run = Join-Path $env:RUNNER_TEMP "windows-agent-$($env:GITHUB_SHA)-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
           New-Item -ItemType Directory -Path $run -ErrorAction Stop | Out-Null
+          $env:HOLI_WINDOWS_AGENT_RUN_DIR = $run
           "HOLI_WINDOWS_AGENT_RUN_DIR=$run" >> $env:GITHUB_ENV
           $proofs = Join-Path $run 'proof-workspace'
           New-Item -ItemType Directory -Path $proofs -ErrorAction Stop | Out-Null
+          $trace = Join-Path $run 'broker-samples.jsonl'
+          $observer = $null
           try {
+            $observer = Start-ThreadJob -FilePath .github/scripts/observe-broker-startup.ps1 -ArgumentList $run, $trace
             $env:HOLI_WINDOWS_OWNED_PROCESS_PROOFS = Join-Path $proofs 'native'
             New-Item -ItemType Directory -Path $env:HOLI_WINDOWS_OWNED_PROCESS_PROOFS -ErrorAction Stop | Out-Null
             $runLog = Join-Path $proofs 'vitest.log'
@@ -260,9 +274,21 @@ jobs:
             $preparedHash = node apps/desktop/scripts/check-windows-launch-results.cjs prepare "$run"
             if ($LASTEXITCODE -ne 0 -or $preparedHash -cnotmatch '^[0-9a-f]{64}$') { throw 'Native proof preparation failed' }
           } finally {
-            Remove-Item -LiteralPath $proofs -Recurse -Force -ErrorAction Stop
-            if (Test-Path -LiteralPath $proofs -ErrorAction Stop) { throw 'Proof workspace still exists' }
-            'workspace-removed=true' >> $env:GITHUB_OUTPUT
+            try {
+              if ($observer) {
+                Stop-Job -Job $observer -ErrorAction Stop
+                Wait-Job -Job $observer -Timeout 3 -ErrorAction Stop | Out-Null
+                if ($observer.State -notin @('Stopped', 'Completed', 'Failed')) { throw 'Broker observer did not stop' }
+                Receive-Job -Job $observer -ErrorAction SilentlyContinue 2>$null | Out-Null
+                Remove-Job -Job $observer -ErrorAction Stop
+                Write-Host 'BROKER_OBSERVER_CLEANUP stopped-and-removed'
+              }
+              if (Test-Path -LiteralPath $trace) { Get-Content -LiteralPath $trace -ErrorAction SilentlyContinue | Select-Object -First 12 | ForEach-Object { Write-Host "BROKER_SAMPLE $_" } }
+            } finally {
+              Remove-Item -LiteralPath $proofs -Recurse -Force -ErrorAction Stop
+              if (Test-Path -LiteralPath $proofs -ErrorAction Stop) { throw 'Proof workspace still exists' }
+              'workspace-removed=true' >> $env:GITHUB_OUTPUT
+            }
           }
           "prepared-hash=$preparedHash" >> $env:GITHUB_OUTPUT
 
@@ -316,6 +342,22 @@ jobs:
             optionalDependencyVersion = $runtime.optionalDependencyVersion
             sha256 = $runtime.sha256
           } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:HOLI_WINDOWS_AGENT_RUN_DIR 'packaged-node.json')
+
+      - name: Verify installed CLI from the packaged Windows app
+        env:
+          HOLI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'holi-qa372-windows-package'
+          node apps/desktop/scripts/check-packaged-windows-cli.mjs "$output" "$env:HOLI_WINDOWS_AGENT_RUN_DIR/packaged-cli.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Windows CLI verification failed' }
+
+      - name: Upload packaged Windows CLI acceptance
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-packaged-cli-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/packaged-cli.json
+          if-no-files-found: error
 
       - name: Exercise dependency Electron and real ConPTY lifecycle
         id: dependency-smoke
@@ -405,8 +447,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Build the native Windows CLI
+        run: node apps/desktop/scripts/build-windows-cli.mjs
+
       - name: Run Git for Windows helper fixtures
-        run: pnpm --filter @holi/desktop exec vitest run test/windows-helper-portability.test.ts --project node
+        run: pnpm --filter @holi/desktop exec vitest run test/windows-helper-portability.test.ts test/windows-agent-hooks.test.ts test/windows-cli.test.ts --project node
 
   windows-clone-preparation:
     name: Windows clone preparation
@@ -517,4 +562,13 @@ jobs:
 
       - name: Test
         # Leave CPU capacity for the serial filesystem/git suite beside jsdom.
-        run: pnpm test --maxWorkers=2
+        run: node scripts/ci-test-runner.mjs "$RUNNER_TEMP/holi-test-diagnostics" pnpm test --maxWorkers=2
+
+      - name: Upload test runner diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-runner-diagnostics-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/holi-test-diagnostics/
+          retention-days: 7
+          if-no-files-found: error

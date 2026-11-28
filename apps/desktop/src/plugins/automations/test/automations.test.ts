@@ -32,6 +32,7 @@ let root: string
 let data: string
 const dirs: string[] = []
 const REMOTE = 'syv-ai/notes'
+const cleanupReleases: (() => void)[] = []
 
 /** The clock the scheduler reads, moved by each test. */
 let clock: Date
@@ -62,7 +63,10 @@ let workLog: string[]
 
 const vault = () => ({ remote: REMOTE, root })
 
-function make(sessions?: Partial<SchedulerDeps['sessions']>): Scheduler {
+function make(
+  sessions?: Partial<SchedulerDeps['sessions']>,
+  overrides: Partial<SchedulerDeps> = {},
+): Scheduler {
   const deps: SchedulerDeps = {
     store: jsonFileStore(join(data, 'schedules.json'), parseSchedulesFile),
     provider: async () => selectedProvider,
@@ -106,7 +110,7 @@ function make(sessions?: Partial<SchedulerDeps['sessions']>): Scheduler {
     closePollMs: sessions ? 20 : 0,
     log: () => {},
   }
-  return createScheduler(deps)
+  return createScheduler({ ...deps, ...overrides })
 }
 
 async function writeSchedule(name: string, frontmatter: string, body = 'Check my mail.') {
@@ -136,7 +140,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  scheduler.dispose()
+  for (const release of cleanupReleases.splice(0)) release()
+  await scheduler.dispose()
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
@@ -750,4 +755,107 @@ describe('automations a Holi carries out', () => {
       }),
     ).toThrow(/a glob inside the vault/)
   })
+})
+
+describe('activation cancellation', () => {
+  it('cleans up a late launch after disable without recording it as a run', async () => {
+    await scheduler.dispose()
+    let entered!: () => void
+    let release!: () => void
+    const launching = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    scheduler = make({
+      launch: async () => {
+        entered()
+        await held
+        return { ok: true, sessionId: 'late' }
+      },
+    })
+    scheduler.attach(vault())
+    await writeSchedule('inbox.local.md', 'name: Inbox\ncron: "*/30 * * * *"')
+    await scheduler.enable(vault(), 'inbox')
+    const run = scheduler.run(vault(), 'inbox')
+    try {
+      await launching
+      await scheduler.disable(vault(), 'inbox')
+    } finally {
+      release()
+    }
+    expect(await run).toMatchObject({ outcome: 'skipped' })
+    expect(stopped).toEqual(['late'])
+    expect((await scheduler.list(vault()))[0]).toMatchObject({ status: 'off', runs: [] })
+  })
+
+  it('wakes and joins a long close poll on disposal', async () => {
+    await scheduler.dispose()
+    let entered!: () => void
+    const polling = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let watching = false
+    scheduler = make(
+      {
+        sessions: () => {
+          if (watching) entered()
+          return live
+        },
+      },
+      { closePollMs: 60_000 },
+    )
+    scheduler.attach(vault())
+    await writeSchedule('inbox.local.md', 'name: Inbox\ncron: "*/30 * * * *"')
+    await scheduler.enable(vault(), 'inbox')
+    await scheduler.run(vault(), 'inbox')
+    watching = true
+    const closing = scheduler.turnEnded('job1')
+    await polling
+    await scheduler.dispose()
+    await closing
+    expect(stopped).toEqual([])
+  })
+})
+
+it('refuses approval queued behind another real store update after disposal', async () => {
+  await scheduler.dispose()
+  let providerRead!: () => void
+  const prepared = new Promise<void>((resolve) => {
+    providerRead = resolve
+  })
+  scheduler = make(undefined, {
+    provider: async () => {
+      providerRead()
+      return 'claude'
+    },
+  })
+  scheduler.attach(vault())
+  await writeSchedule('inbox.local.md', 'name: Inbox\ncron: "*/30 * * * *"')
+  const store = jsonFileStore(join(data, 'schedules.json'), parseSchedulesFile)
+  let release!: () => void
+  let entered!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  cleanupReleases.push(release)
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const blocker = store.update(async (file) => {
+    entered()
+    await held
+    return file
+  })
+  await waiting
+  const approval = scheduler.enable(vault(), 'inbox').catch((error: unknown) => error)
+  await prepared
+  await new Promise((resolve) => setImmediate(resolve))
+  const stopped = scheduler.dispose()
+  release()
+  await blocker
+  expect(await approval).toBeInstanceOf(Error)
+  await stopped
+  expect((await store.read())[REMOTE]?.['.holi/schedules/inbox.local.md']?.approved).toBeUndefined()
 })

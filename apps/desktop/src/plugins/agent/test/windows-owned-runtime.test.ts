@@ -147,3 +147,37 @@ describe('AgentRuntime owned Windows launch', () => {
     expect(b.runtime.isRunning).toBe(false)
   })
 })
+
+it('drops queued display work across A → B → A without dropping native input or finalization', async () => {
+  const f = fixture()
+  let epoch = 0
+  const capture = () => {
+    const at = epoch
+    return () => epoch === at
+  }
+  const old = capture()
+  const delivered: string[] = []
+  f.runtime.write('stale keystroke', old, () => delivered.push('stale'))
+  f.runtime.resize(100, 40, old)
+  epoch++
+  epoch++
+  f.runtime.write('native protocol reply')
+  f.runtime.write('fresh keystroke', capture(), () => delivered.push('fresh'))
+  f.ready.resolve(f.pty)
+  await turn()
+  expect(f.writes).toEqual(['native protocol reply', 'fresh keystroke'])
+  expect(f.sizes).toEqual([])
+  expect(delivered).toEqual(['fresh'])
+  f.runtime.resize(120, 50, capture())
+  expect(f.sizes).toEqual([[120, 50]])
+  let finalized = false
+  f.runtime.onExit(() => {
+    finalized = true
+  })
+  const stopping = f.runtime.kill()
+  f.completion.resolve()
+  f.exit()
+  await stopping
+  expect(finalized).toBe(true)
+  expect(f.runtime.isRunning).toBe(false)
+})

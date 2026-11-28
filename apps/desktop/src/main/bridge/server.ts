@@ -390,7 +390,9 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       // validation, immediately before returning the executable handoff.
       if (result.run !== undefined) {
         result.validateRun?.()
-        return { status: 202, body: runScript(result.run) }
+        return form.get('runFormat') === 'json'
+          ? { status: 202, body: JSON.stringify(result.run) }
+          : { status: 202, body: runScript(result.run) }
       }
       const succeeded = commandSucceeded(cli.commands(targetRemote), request.name, result.value)
       // A command that answered with its own failure: 422, the answer whole.
@@ -475,21 +477,22 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     const vaultRemote = tokens.get(queryToken ?? '')
     const headerToken = req.headers['x-holi-cli-token']
     const machineToken = deps.cli?.machine?.token()
-    const hasMachineCredential = Object.hasOwn(req.headers, 'x-holi-cli-token')
-    const machineAuth =
+    const hasHeader = Object.hasOwn(req.headers, 'x-holi-cli-token')
+    const headerAllowed =
       req.method === 'POST' &&
       url.pathname === CLI_PATH &&
-      machineToken !== undefined &&
-      typeof headerToken === 'string' &&
-      headerToken.length > 0 &&
-      headerToken === machineToken &&
-      queryToken === null
-    if (hasMachineCredential && !machineAuth) {
+      queryToken === null &&
+      typeof headerToken === 'string'
+    const machineAuth =
+      headerAllowed && /^[0-9a-f]{64}$/.test(headerToken) && headerToken === machineToken
+    const headerRemote =
+      headerAllowed && /^[0-9a-f]{32}$/.test(headerToken) ? tokens.get(headerToken) : undefined
+    if (hasHeader && !machineAuth && headerRemote === undefined) {
       req.resume()
       res.writeHead(403).end()
       return
     }
-    const remote = machineAuth ? null : vaultRemote
+    const remote = machineAuth ? null : hasHeader ? headerRemote : vaultRemote
     if (remote === undefined) {
       req.resume()
       res.writeHead(403).end()
