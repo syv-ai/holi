@@ -66,7 +66,7 @@ async function rig(
     listVaults?: () => Promise<readonly { remote: string; name: string; live: boolean }[]>
   } = {},
 ) {
-  const token = 'machine-secret'
+  const token = 'ab'.repeat(32)
   const root = options.targetRoot ?? (() => '/vault/one')
   const machine = {
     token: () => token,

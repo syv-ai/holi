@@ -2,8 +2,11 @@ import { constants } from 'node:fs'
 import { lstat, open, readdir, realpath, writeFile } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 
+// Opening a FIFO must not block before fstat can reject it.
+const evidenceOpenFlags = constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW
+
 export async function readBoundedJson(path, maxBytes = 262_144) {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  const handle = await open(path, evidenceOpenFlags)
   try {
     const info = await handle.stat()
     if (!info.isFile() || info.size > maxBytes)
@@ -67,7 +70,7 @@ export async function captureStorageEvidence(
           evidence.omissions.push({ path, reason: 'file/byte limit' })
           return
         }
-        const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+        const handle = await open(path, evidenceOpenFlags)
         try {
           const current = await handle.stat()
           if (

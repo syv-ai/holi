@@ -17,6 +17,20 @@ A `.md` file opens in ReUI's rich-text editor (`rich-text-editor-2`, Tiptap) rat
 - **Tables.** `/table` makes a table with a header row. Its look is the person's `tableStyle`, set as `data-table-style` on the editor root and defined once in `RICH_TEXT_TABLE_PROSE` (`rich-text-table.tsx`): `banded`, no lines, the header row on `--muted` and the body rows in two quieter fills of it, the block's corner cells rounded, so it never reads as a code block; or `lines`, no fills, a muted smaller header over a `--border` line, `--divider` lines between rows, no vertical lines and the first column on the text's edge. Cell selection, the column resize handle and the table bar work in both.
 - **The page.** A press anywhere below the text starts a new line there; beside the text it places the caret on the nearest line.
 
+## Links between documents
+
+An ordinary Markdown link such as `[Related note](../materials/note.md#next-steps)`
+opens an existing vault Markdown file relative to the source document. An
+unmodified primary click opens the target inside Holi; a heading fragment uses
+the existing heading navigation, and `#next-steps` targets the current document.
+Encoded filenames and headings work, including local and plugin-claimed Markdown
+files. Missing targets, malformed escapes, external URL schemes and modified
+clicks are left to the existing link behavior rather than vault navigation.
+
+This is navigation only: ordinary Markdown links are not tracked as backreferences
+or rewritten on rename or move. Use [wiki-links](wiki-links.md) for those features;
+[Holi links](holi-links.md) open the app from outside.
+
 ## How it works
 
 **Two CodeMirror stacks** (`editor/extensions.ts`). `plainTextExtensions` opens a text file that is not a note (`.json`, `.csv`, `.env`) with highlighting and a validity check for known formats, no markdown layers. `plainMarkdownExtensions` is markdown editing with no vault layer, for text that leaves the vault (the mail composer, through the plugin api): GFM tables and fence highlighting, but no wiki-link chips and no `@` completion, which would paste vault paths into an email.

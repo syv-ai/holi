@@ -9,11 +9,16 @@
 import { atom, createStore } from 'jotai'
 import { flushAllBuffers, registerBuffer } from '@/lib/buffer-registry'
 import { toast } from 'sonner'
-import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { VaultSnapshot } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
-import { openDocumentRequestAtom, pendingHeadingAtom } from '@/state/open-document'
+import {
+  openDocumentAtom,
+  openDocumentRequestAtom,
+  pendingHeadingAtom,
+} from '@/state/open-document'
+import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
 import { documentRunsAtom } from '@/state/document-runs'
 import type { RendererPlugin } from '@/plugin-api'
 import {
@@ -98,6 +103,117 @@ function observeReady() {
 }
 
 describe('vaults', () => {
+  it('routes a directory arrival to its vault browser without issuing a document open', async () => {
+    holi = installFakeHoli((op) =>
+      op.path === 'vaults.open' ? snapshot('folder/note.md') : undefined,
+    )
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    store.set(openedRemoteAtom, 'syv-ai/alpha')
+    unsubscribe = subscribeToVault(store)
+    holi.pushOpen({ remote: 'syv-ai/beta', path: 'folder', kind: 'directory', heading: 'ignored' })
+    await vi.waitFor(() =>
+      expect(store.get(revealInFilesRequestAtom)).toMatchObject({
+        remote: 'syv-ai/beta',
+        path: 'folder',
+        directory: true,
+      }),
+    )
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/beta')
+    expect(store.get(openDocumentRequestAtom)).toBeNull()
+    expect(store.get(pendingHeadingAtom)).toBeNull()
+  })
+
+  it.each(['tab', 'document'] as const)(
+    'restores the selected vault when local %s navigation supersedes a directory open',
+    async (navigation) => {
+      const { opens, physicalRemote } = controlledOpens(2)
+      const store = createStore()
+      store.set(activeRemoteAtom, 'syv-ai/alpha')
+      store.set(openedRemoteAtom, 'syv-ai/alpha')
+      store.set(snapshotAtom, snapshot('alpha.md'))
+      store.set(openTabAtom, { kind: 'doc', path: 'alpha.md' })
+      unsubscribe = subscribeToVault(store)
+      holi!.pushOpen({ remote: 'syv-ai/beta', path: 'folder', kind: 'directory' })
+      await opens[0]!.entered.promise
+      if (navigation === 'tab') store.set(openTabAtom, { kind: 'settings' })
+      else store.set(openDocumentAtom, 'alpha.md', 'current-heading')
+      const workspace = JSON.stringify(store.get(shellWorkspaceAtom))
+      opens[0]!.response.resolve(snapshot('beta.md'))
+      expect(await opens[1]!.entered.promise).toBe('syv-ai/alpha')
+      opens[1]!.response.resolve(snapshot('alpha.md'))
+      await vi.waitFor(() => expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha'))
+      expect(physicalRemote()).toBe('syv-ai/alpha')
+      expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
+      expect(store.get(snapshotAtom)).toEqual(snapshot('alpha.md'))
+      expect(JSON.stringify(store.get(shellWorkspaceAtom))).toBe(workspace)
+      expect(store.get(revealInFilesRequestAtom)).toBeNull()
+      if (navigation === 'document') {
+        expect(store.get(openDocumentRequestAtom)).toMatchObject({ path: 'alpha.md' })
+        expect(store.get(pendingHeadingAtom)).toEqual({
+          path: 'alpha.md',
+          heading: 'current-heading',
+        })
+      }
+    },
+  )
+
+  it('a newer same-vault directory intent supersedes a delayed other-vault file', async () => {
+    const { opens } = controlledOpens(2)
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    store.set(openedRemoteAtom, 'syv-ai/alpha')
+    unsubscribe = subscribeToVault(store)
+    holi!.pushOpen({ remote: 'syv-ai/beta', path: 'stale.md' })
+    await opens[0]!.entered.promise
+    holi!.pushOpen({ remote: 'syv-ai/alpha', path: 'folder', kind: 'directory' })
+    expect(store.get(revealInFilesRequestAtom)).toMatchObject({
+      remote: 'syv-ai/alpha',
+      path: 'folder',
+    })
+    opens[0]!.response.resolve(snapshot('stale.md'))
+    await opens[1]!.entered.promise
+    opens[1]!.response.resolve(snapshot('folder/note.md'))
+    await vi.waitFor(() => expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha'))
+    expect(store.get(openDocumentRequestAtom)).toBeNull()
+    expect(store.get(revealInFilesRequestAtom)).toMatchObject({
+      remote: 'syv-ai/alpha',
+      path: 'folder',
+    })
+  })
+
+  it('a refused buffer flush leaves directory navigation and the selected vault unchanged', async () => {
+    holi = installFakeHoli((op) =>
+      op.path === 'vaults.open' ? snapshot('existing.md') : undefined,
+    )
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    store.set(openedRemoteAtom, 'syv-ai/alpha')
+    store.set(snapshotAtom, snapshot('existing.md'))
+    unsubscribe = subscribeToVault(store)
+    const failed = deferred<void>()
+    const unregister = registerBuffer(() => {
+      failed.resolve()
+      return Promise.reject(new Error('write failed'))
+    })
+    const error = vi.spyOn(toast, 'error')
+    try {
+      holi.pushOpen({ remote: 'syv-ai/beta', path: 'folder', kind: 'directory' })
+      await failed.promise
+      await vi.waitFor(() => expect(error).toHaveBeenCalled())
+      expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
+      expect(store.get(revealInFilesRequestAtom)).toBeNull()
+      expect(store.get(openDocumentRequestAtom)).toBeNull()
+      expect(
+        holi.calls.filter((call) => call.path === 'vaults.open').map((call) => call.input),
+      ).not.toContainEqual({ remote: 'syv-ai/beta' })
+      expect(store.get(snapshotAtom).docs.map((doc) => doc.path)).toEqual(['existing.md'])
+    } finally {
+      unregister()
+      error.mockRestore()
+    }
+  })
+
   it('ignores background vault events without replacing the displayed presentation', () => {
     holi = installFakeHoli()
     const store = createStore()

@@ -18,7 +18,7 @@ import { activeRemoteAtom } from '@/state/vaults'
 
 import { TerminalContextChips } from './terminal-context-chips'
 import { openExternal } from '@/lib/open-external'
-import { createTerminalHintAdapter } from './terminal-hints'
+import { createTerminalHintAdapter } from '@/lib/terminal-hints'
 
 /**
  * One of the bottom panel's shells in an xterm (docs/features/status-bar.md).

@@ -42,9 +42,13 @@ let stop: (() => Promise<void>) | undefined
 let manager: GoogleAccountsManager
 let fetcher: ReturnType<typeof vi.fn<typeof fetch>>
 let listen: ReturnType<typeof vi.fn<() => Promise<LoopbackServer>>>
+let tokenExpiresIn: number
+let invalidGrantSub: string | null
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-google-lifecycle-'))
+  tokenExpiresIn = 3600
+  invalidGrantSub = null
   fetcher = vi.fn<typeof fetch>(async (input, init) => {
     const url = String(input)
     const token = new Headers(init?.headers).get('Authorization') ?? ''
@@ -53,9 +57,15 @@ beforeEach(async () => {
       const sub = new URLSearchParams(String(init?.body)).get('refresh_token')?.endsWith('two')
         ? 'two'
         : 'one'
-      return Response.json({ access_token: `access-${sub}`, expires_in: 3600 })
+      if (sub === invalidGrantSub) return Response.json({ error: 'invalid_grant' }, { status: 400 })
+      return Response.json({ access_token: `access-${sub}`, expires_in: tokenExpiresIn })
     }
     if (url.includes('/revoke')) return Response.json({})
+    if (url.includes('/gmail/v1/users/me/labels/INBOX'))
+      return Response.json({ threadsUnread: 0, threadsTotal: 20 })
+    if (url.includes('/gmail/v1/users/me/profile')) return Response.json({ historyId: '10' })
+    if (url.includes('/gmail/v1/users/me/history'))
+      return Response.json({ historyId: '10', history: [] })
     if (url.includes('/calendarList'))
       return Response.json({ items: [{ id: 'primary', summary: identity, accessRole: 'owner' }] })
     if (url.includes('/calendars/'))
@@ -196,6 +206,92 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
     await r.enter(A)
     expect(createGoogleAccountsManager).toHaveBeenCalledTimes(1)
     expect(await r.call(A, 'agendaCached', WINDOW)).toEqual(agenda)
+  })
+
+  it('activates before its initial mail poll finishes and owns that poll through teardown', async () => {
+    const r = await rig()
+    const original = fetcher.getMockImplementation()!
+    const gate = deferred<Response>()
+    const started = deferred<void>()
+    fetcher.mockImplementation(async (input, init) => {
+      if (String(input).includes('/gmail/v1/users/me/labels/INBOX')) {
+        started.resolve()
+        return gate.promise
+      }
+      return original(input, init)
+    })
+
+    const entering = r.enter(A)
+    await started.promise
+    await entering
+
+    expect(r.host.failures(A)).toEqual({})
+    expect(await r.call(A, 'mailAttention')).toMatchObject({
+      accountSub: 'one',
+      unreadThreads: null,
+      status: 'unknown',
+    })
+
+    let stopped = false
+    const stopping = r.host.stop(A).then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+
+    gate.resolve(Response.json({ threadsUnread: 0, threadsTotal: 20 }))
+    await stopping
+    expect(stopped).toBe(true)
+  })
+
+  it('reconciles grant expiry discovered by a running refresh without deadlocking', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    tokenExpiresIn = 0
+    await manager.link(B, 'two')
+    const r = await rig()
+    await Promise.all([r.enter(A), r.enter(B)])
+    await vi.waitFor(async () => {
+      expect(await r.call(A, 'mailAttention')).toMatchObject({
+        accountSub: 'one',
+        status: 'fresh',
+      })
+      expect(await r.call(B, 'mailAttention')).toMatchObject({
+        accountSub: 'two',
+        status: 'fresh',
+      })
+    })
+
+    invalidGrantSub = 'one'
+    const original = fetcher.getMockImplementation()!
+    const expiryStarted = deferred<void>()
+    fetcher.mockImplementation(async (input, init) => {
+      if (
+        String(input).includes('/token') &&
+        new URLSearchParams(String(init?.body)).get('refresh_token') === 'refresh-one'
+      )
+        expiryStarted.resolve()
+      return original(input, init)
+    })
+
+    const relinking = r.call(A, 'useAccount', { sub: 'one' })
+    await expiryStarted.promise
+    await expect(r.call(B, 'agenda', WINDOW)).resolves.toEqual([
+      expect.objectContaining({ title: 'two' }),
+    ])
+    await expect(relinking).resolves.toEqual({ ok: true })
+
+    expect(await r.call(A, 'status')).toMatchObject({ needsReconnect: true, account: null })
+    expect(await r.call(A, 'mailAttention')).toMatchObject({
+      accountSub: null,
+      status: 'disconnected',
+    })
+    expect(await r.call(B, 'mailAttention')).toMatchObject({
+      accountSub: 'two',
+      status: 'fresh',
+    })
+
+    await Promise.all([r.host.stop(A), r.host.stop(B)])
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('preserves markers when a vault unlinks and purges only the removed account', async () => {

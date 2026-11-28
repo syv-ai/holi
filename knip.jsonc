@@ -42,6 +42,10 @@
         "scripts/browser-display-fixture/index.html",
         "scripts/browser-display-fixture/entry.tsx",
         "scripts/browser-display-fixture/preload.cjs",
+        // The baseline benchmark bundles these isolated entries by filesystem path.
+        "scripts/browser-placement-bench-main.ts",
+        "scripts/browser-placement-fixture/index.html",
+        "scripts/browser-placement-fixture/entry.tsx",
         "scripts/browser-display-fixture/toolbar-sequence.ts",
         "scripts/browser-display-fixture/hints-sequence.ts",
         "scripts/mail-markers-smoke-main.ts",
@@ -98,8 +102,9 @@
         // they export a component's whole API whether or not Holi uses it yet.
         "src/renderer/src/components/ui/**": ["exports", "types"],
       },
-      // System binaries used by smoke tests and native video capture/inspection.
-      "ignoreBinaries": ["pgrep", "ffmpeg", "ffprobe"],
+      // System binaries used by smoke tests, native video inspection and macOS
+      // baseline-benchmark power-source/thermal context (pmset).
+      "ignoreBinaries": ["pgrep", "ffmpeg", "ffprobe", "pmset"],
     },
     "apps/mobile": {
       "entry": [
@@ -107,8 +112,12 @@
         "webpack.config.js!",
         // The Simulator driver is run by the package's test:ios script.
         "scripts/ios-simulator.mjs!",
+        // Credential-only native acceptance is invoked by test:ios:credentials.
+        "scripts/credential-simulator.mjs!",
         // build:ios invokes this standalone native-dependency build entry.
         "scripts/build-libgit2-ios.mjs!",
+        // archive:ios invokes this standalone unsigned device-build entry.
+        "scripts/archive-ios.mjs!",
         // GitHub's mobile device-auth session is a protocol entrypoint consumed by the native sign-in flow at runtime.
         "app/device-auth.ts!",
         "test/*.test.mjs",

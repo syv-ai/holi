@@ -1,5 +1,7 @@
 IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 CODE_SIGNING_ALLOWED = NO;
-HEADER_SEARCH_PATHS = $(inherited) $(SRCROOT)/mobile/Resources/libgit2/include;
-LIBRARY_SEARCH_PATHS = $(inherited) $(SRCROOT)/mobile/Resources/libgit2;
+HEADER_SEARCH_PATHS[sdk=iphonesimulator*] = $(inherited) $(SRCROOT)/mobile/Resources/libgit2/include;
+HEADER_SEARCH_PATHS[sdk=iphoneos*] = $(inherited) $(SRCROOT)/mobile/Resources/libgit2/iphoneos/include;
+LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*] = $(inherited) $(SRCROOT)/mobile/Resources/libgit2;
+LIBRARY_SEARCH_PATHS[sdk=iphoneos*] = $(inherited) $(SRCROOT)/mobile/Resources/libgit2/iphoneos;
 OTHER_LDFLAGS = $(inherited) -lgit2 -liconv -framework Security -framework CoreFoundation

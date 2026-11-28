@@ -96,6 +96,7 @@ describe('holiLink and parseHoliLink', () => {
       'USER.local.md',
       '.env',
       'apps/Home.local.app/index.html',
+      '.holi/state',
       '.holi/state/x',
     ]) {
       expect(parseHoliLink(holiLink({ remote: 'a/b', path })).ok, path).toBe(false)
@@ -120,7 +121,9 @@ describe('isHoliLinkable', () => {
     expect(isHoliLinkable('notes/plan.md')).toBe(true)
     expect(isHoliLinkable('task.fix.local.md')).toBe(false)
     expect(isHoliLinkable('.env')).toBe(false)
+    expect(isHoliLinkable('.holi/state')).toBe(false)
     expect(isHoliLinkable('.holi/state/inbox.local.json')).toBe(false)
+    expect(isHoliLinkable('holi-state/notes.md')).toBe(true)
     expect(isHoliLinkable('node_modules/x/readme.md')).toBe(false)
     for (const path of ['notes/plan.md', 'task.fix.local.md', '.env']) {
       expect(isHoliLinkable(path)).toBe(parseHoliLink(holiLink({ remote: 'a/b', path })).ok)

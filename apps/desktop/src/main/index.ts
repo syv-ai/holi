@@ -99,6 +99,7 @@ import { createBridgeServer } from './bridge/server'
 import { createFrameOrigins } from './frame-origins'
 import { publishCliEndpoint, type CliEndpoint } from './bridge/cli-endpoint'
 import { createCliTargetResolver } from './bridge/cli-target'
+import { createVaultCliInstallations } from './bridge/vault-cli'
 
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
@@ -160,6 +161,7 @@ interface OpenRequest {
   remote: string
   path: string
   heading?: string
+  kind?: 'directory'
   /** False when the tab opens without the caret moving into it. */
   focus?: false
 }
@@ -469,7 +471,7 @@ async function main(): Promise<void> {
     appFrames,
     // The bridge and the `holi` command exist before any vault can open.
     route: (path, route, remote) => bridge.route(path, route, remote),
-    binDir: () => binDir,
+    binDir: (remote) => vaultCli.forRemote(remote),
     githubToken: () => session.token(),
     frameOrigin: acquireFrameOrigin,
     // One plugin's main side calling another's, at the UI door its renderer
@@ -745,9 +747,10 @@ async function main(): Promise<void> {
   const showPath = (
     remote: string,
     path: string,
-    { heading, focus = true }: { heading?: string; focus?: boolean } = {},
+    { heading, focus = true, kind }: { heading?: string; focus?: boolean; kind?: 'directory' } = {},
   ): BrowserWindow => {
     const request: OpenRequest = { remote, path }
+    if (kind !== undefined) request.kind = kind
     if (heading !== undefined) request.heading = heading
     if (!focus) request.focus = false
     let win = mainWindow
@@ -1122,6 +1125,7 @@ async function main(): Promise<void> {
     await bridge.stop().catch(() => {})
     throw error
   }
+  const vaultCli = createVaultCliInstallations(app.getPath('userData'), bridge, process.execPath)
   const binDir = dirname(holiCliPath)
 
   // Warm every existing managed clone only after bridge, CLI and login PATH are
@@ -1312,6 +1316,7 @@ async function main(): Promise<void> {
             },
             closeVaults: () => host.closeAll(),
             closeBridge: async () => {
+              await vaultCli.dispose()
               const endpoint = cliEndpoint
               await endpoint?.dispose()
               cliEndpoint = null

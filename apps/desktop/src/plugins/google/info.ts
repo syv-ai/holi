@@ -24,6 +24,15 @@ export const GOOGLE_INFO: PluginInfo = {
       target: 'local',
     },
     {
+      key: 'mailNotifications',
+      label: 'New mail notifications',
+      explanation: 'Show a desktop notification when new mail arrives in this vault.',
+      type: { kind: 'boolean' },
+      default: false,
+      target: 'local',
+      localOnly: true,
+    },
+    {
       key: 'imagesFromAllSenders',
       label: 'Images from all senders',
       explanation:
