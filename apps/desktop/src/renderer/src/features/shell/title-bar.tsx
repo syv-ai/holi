@@ -1,7 +1,12 @@
 import { type CSSProperties, type ReactNode, type Ref } from 'react'
+import { atom, useAtomValue } from 'jotai'
+import { installedPluginsAtom } from '@/state/plugins'
+import { BrandMark } from '@/composites/brand-mark'
 
 import { IconButton } from '@/composites/icon-button'
 import { PanelLeftIcon } from 'lucide-react'
+
+const hiddenTitleBarItem = atom(false)
 
 /**
  * The window's one top band, after MonoCode and Superset: the traffic lights,
@@ -33,6 +38,11 @@ export function TitleBar({
   onToggleSidebar: () => void
   children: ReactNode
 }) {
+  const titleBarItem = useAtomValue(installedPluginsAtom).find(
+    (plugin) => plugin.titleBarItem,
+  )?.titleBarItem
+  const itemVisible = useAtomValue(titleBarItem?.visible ?? hiddenTitleBarItem)
+  const TitleBarItem = itemVisible ? titleBarItem?.Component : undefined
   return (
     <header data-slot="app-chrome" className="app-drag flex h-11 shrink-0 items-center border-b">
       <div
@@ -46,6 +56,7 @@ export function TitleBar({
         }
         className="group/lead data-open:border-e data-open:w-(--lead-width) flex h-full shrink-0 items-center gap-1 overflow-hidden px-2"
       >
+        {TitleBarItem ? <TitleBarItem /> : <BrandMark variant="monogram" className="h-5" />}
         {/* Open, the toggle rides the divider (and so follows a resize);
             collapsed, it sits by the traffic lights. Off the attribute the
             shell flips mid-toggle, so it moves with the motion. */}
