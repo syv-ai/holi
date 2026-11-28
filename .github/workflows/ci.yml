@@ -216,8 +216,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Exercise the generated Windows helper
-        run: pnpm --filter @holi/desktop exec vitest run test/git-askpass.test.ts
+      - name: Exercise the generated Windows askpass helper
+        run: pnpm --filter @holi/desktop exec vitest run test/git-askpass.test.ts --project node
+
+      - name: Exercise real Git authentication and Windows credential persistence
+        run: pnpm --filter @holi/desktop exec vitest run test/git-auth-integration.test.ts --project node
 
   windows-agent-launch:
     name: Windows agent launch and cleanup
@@ -239,6 +242,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build the native Windows CLI
+        run: node apps/desktop/scripts/build-windows-cli.mjs
 
       - name: Check broker observer input and activity contract
         shell: pwsh
@@ -337,6 +343,22 @@ jobs:
             sha256 = $runtime.sha256
           } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:HOLI_WINDOWS_AGENT_RUN_DIR 'packaged-node.json')
 
+      - name: Verify installed CLI from the packaged Windows app
+        env:
+          HOLI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'holi-qa372-windows-package'
+          node apps/desktop/scripts/check-packaged-windows-cli.mjs "$output" "$env:HOLI_WINDOWS_AGENT_RUN_DIR/packaged-cli.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Windows CLI verification failed' }
+
+      - name: Upload packaged Windows CLI acceptance
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-packaged-cli-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HOLI_WINDOWS_AGENT_RUN_DIR }}/packaged-cli.json
+          if-no-files-found: error
+
       - name: Exercise dependency Electron and real ConPTY lifecycle
         id: dependency-smoke
         run: pnpm --filter @holi/desktop exec node scripts/run-windows-agent-smoke.mjs "$env:HOLI_WINDOWS_AGENT_RUN_DIR"
@@ -425,8 +447,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Build the native Windows CLI
+        run: node apps/desktop/scripts/build-windows-cli.mjs
+
       - name: Run Git for Windows helper fixtures
-        run: pnpm --filter @holi/desktop exec vitest run test/windows-helper-portability.test.ts --project node
+        run: pnpm --filter @holi/desktop exec vitest run test/windows-helper-portability.test.ts test/windows-agent-hooks.test.ts test/windows-cli.test.ts --project node
 
   windows-clone-preparation:
     name: Windows clone preparation
@@ -537,4 +562,13 @@ jobs:
 
       - name: Test
         # Leave CPU capacity for the serial filesystem/git suite beside jsdom.
-        run: pnpm test --maxWorkers=2
+        run: node scripts/ci-test-runner.mjs "$RUNNER_TEMP/holi-test-diagnostics" pnpm test --maxWorkers=2
+
+      - name: Upload test runner diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-runner-diagnostics-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/holi-test-diagnostics/
+          retention-days: 7
+          if-no-files-found: error
