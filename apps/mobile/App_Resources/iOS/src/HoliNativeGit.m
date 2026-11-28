@@ -1,5 +1,6 @@
 #import "HoliNativeGit.h"
 #import "HoliGitSnapshot.h"
+#import "HoliGitSafety.h"
 #import "HoliManagedIdentity.h"
 #import <git2.h>
 #import <git2/sys/repository.h>
@@ -10,12 +11,12 @@
 #import <dirent.h>
 
 static NSString *const HoliNativeGitErrorDomain = @"HoliNativeGitErrorDomain";
-static NSError *HNGPathError(int code, NSString *message);
+NSError *HNGPathError(int code, NSString *message);
 static void HNGInitializeLibgit2(void) {
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{ git_libgit2_init(); });
 }
-static void HNGError(NSError **error, int code) {
+void HNGError(NSError **error, int code) {
   const git_error *detail = git_error_last();
   NSString *message = @"Git operation failed";
   if (error) *error = [NSError errorWithDomain:HoliNativeGitErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey: message, @"gitErrorClass": @(detail ? detail->klass : GIT_ERROR_NONE)}];
@@ -667,16 +668,16 @@ static int HNGVerifyPublication(git_repository *repo, git_remote *remote, NSStri
   NSString *full=[root stringByAppendingPathComponent:path]; char resolved[PATH_MAX]; if(!realpath(full.fileSystemRepresentation,resolved)) { if(errno==ENOENT)return YES; if(error)*error=[NSError errorWithDomain:HoliNativeGitErrorDomain code:errno userInfo:nil]; return NO; }
   NSString *canonicalRoot=[self canonicalRoot:root error:error]; return canonicalRoot && [[NSString stringWithUTF8String:resolved] hasPrefix:[canonicalRoot stringByAppendingString:@"/"]];
 }
-static NSError *HNGPathError(int code, NSString *message) {
+NSError *HNGPathError(int code, NSString *message) {
   return [NSError errorWithDomain:HoliNativeGitErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey:message}];
 }
-static BOOL HNGPathParts(NSString *path, NSArray<NSString *> **parts) {
+BOOL HNGPathParts(NSString *path, NSArray<NSString *> **parts) {
   if (!path.length || [path hasPrefix:@"/"] || [path containsString:@"\\"] || [path containsString:@"\0"]) return NO;
   NSArray *items = [path componentsSeparatedByString:@"/"];
   for (NSString *item in items) if (!item.length || [item isEqualToString:@"."] || [item isEqualToString:@".."] || [item isEqualToString:@".git"]) return NO;
   *parts = items; return YES;
 }
-static int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
+int HNGOpenParent(int rootFD, NSArray<NSString *> *parts) {
   int fd = dup(rootFD); if (fd < 0) return -1;
   for (NSUInteger i=0; i+1<parts.count; i++) {
     int next = openat(fd, parts[i].fileSystemRepresentation, O_RDONLY|O_DIRECTORY|O_NOFOLLOW);

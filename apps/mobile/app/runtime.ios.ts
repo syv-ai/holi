@@ -10,7 +10,11 @@ import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 import { runGitCompatibilityCheck } from './compatibility-check.ios'
-import { runWorkingCopyCheck } from './working-copy-check.ios'
+import {
+  runWorkingCopyCheck,
+  runWorkingCopyTreeCheck,
+  type TreeFixtureMutation,
+} from './working-copy-check.ios'
 import { runManagedGitCheck } from './managed-git-check.ios'
 import { runCredentialCheck } from './credential-check.ios'
 import { foundationModelsAvailability } from './foundation-models.ios'
@@ -68,15 +72,25 @@ export async function checkCompatibility(): Promise<string> {
   let workingCopy:
     | (Awaited<ReturnType<typeof runWorkingCopyCheck>> & {
         cases?: Awaited<ReturnType<typeof runWorkingCopyCheck>>[]
+        treeCases?: (Awaited<ReturnType<typeof runWorkingCopyTreeCheck>> & {
+          name: string
+          runId: string
+        })[]
       })
     | undefined
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
     if (
-      !['normal', 'stage', 'recovery', 'move-stage', 'move-recovery', 'managed-git'].includes(
-        launchPhase,
-      )
+      ![
+        'normal',
+        'working-copy',
+        'stage',
+        'recovery',
+        'move-stage',
+        'move-recovery',
+        'managed-git',
+      ].includes(launchPhase)
     )
       throw new Error('Invalid storage phase')
     if (launchPhase === 'managed-git') {
@@ -134,7 +148,7 @@ export async function checkCompatibility(): Promise<string> {
     }
     phase = 'native-git-transport'
     operation = 'runGitCompatibilityCheck'
-    git = await runGitCompatibilityCheck(runId)
+    if (launchPhase !== 'working-copy') git = await runGitCompatibilityCheck(runId)
     phase = 'native-working-copy-status'
     operation = 'runWorkingCopyCheck'
     const gitEnvironment = NSProcessInfo.processInfo.environment
@@ -156,6 +170,40 @@ export async function checkCompatibility(): Promise<string> {
     }
     if (!results[0]) throw new Error('Missing status matrix results')
     workingCopy = { ...results[0], cases: results }
+    phase = 'native-working-copy-tree'
+    operation = 'runWorkingCopyTreeCheck'
+    const treeManifestPath = gitEnvironment.objectForKey('HOLI_GIT_TREE_MANIFEST')
+    if (typeof treeManifestPath !== 'string') throw new Error('Missing working-copy tree manifest')
+    const treeFixture = JSON.parse(
+      File.fromPath(treeManifestPath).readTextSync((error) => {
+        if (error) throw error
+      }),
+    ) as {
+      cases: Array<{
+        name: string
+        runId: string
+        root: string
+        remote: string
+        branch: string
+        mutation?: TreeFixtureMutation
+      }>
+    }
+    if (!Array.isArray(treeFixture.cases) || treeFixture.cases.length === 0)
+      throw new Error('Working-copy tree manifest has no cases')
+    workingCopy.treeCases = []
+    for (const item of treeFixture.cases) {
+      const result = await runWorkingCopyTreeCheck(
+        item.root,
+        item.remote,
+        item.branch,
+        item.mutation,
+      )
+      workingCopy.treeCases.push({ ...result, name: item.name, runId: item.runId })
+    }
+    if (launchPhase === 'working-copy') {
+      persist({ workingCopy })
+      return 'Native working-copy matrix completed'
+    }
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
