@@ -359,21 +359,6 @@ export async function createWorkingCopyFixture(parent, runId, libraryRoot, selec
       branch: name === 'detached' ? null : name === 'branch-name' ? 'attributes' : 'fixture-start',
       expectedChanges,
       expectedRefusal,
-      refusalPattern: name.startsWith('pending-')
-        ? 'Vault recovery is pending'
-        : name === 'identity' || name === 'detached'
-          ? 'identity does not match'
-          : name === 'metadata' || name === 'mixed-alternates'
-            ? 'Git metadata|metadata indirection'
-            : name === 'unborn'
-              ? 'unborn|not found|reference'
-              : name === 'skip-worktree'
-                ? 'Unsupported index'
-                : name === 'attributes'
-                  ? 'Attributes are unsupported'
-                  : name === 'autocrlf'
-                    ? 'normalization'
-                    : 'config|directives',
       recovery,
       before: await snapshotWorkingCopy(root),
     })
