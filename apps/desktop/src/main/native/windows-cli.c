@@ -35,7 +35,7 @@ static wchar_t *quote(const wchar_t *s, size_t *length) {
     if (s[i] == L'"') { while (slashes--) out[j++] = L'\\', out[j++] = L'\\'; out[j++] = L'\\'; out[j++] = s[i++]; }
     else { while (slashes--) out[j++] = L'\\'; out[j++] = s[i++]; }
   }
-  out[j++] = L'"'; out[j] = 0; *length = j - 1; return out;
+  out[j++] = L'"'; out[j] = 0; *length = j; return out;
 }
 
 int wmain(int argc, wchar_t **argv) {

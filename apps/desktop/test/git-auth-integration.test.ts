@@ -9,17 +9,19 @@ import { GitError, runGit } from '../src/main/git'
 async function hasNoUsablePassword(operation: () => Promise<string>): Promise<boolean> {
   try {
     const output = await operation()
-    const password = output
-      .trim()
+    return output
       .split(/\r?\n/)
-      .find((line) => line.startsWith('password='))
-      ?.slice('password='.length)
-    return !password
+      .filter((line) => line.startsWith('password='))
+      .every((line) => line.slice('password='.length) === '')
   } catch (error) {
+    if (!(error instanceof GitError)) return false
+    // A broken helper can be followed by the same disabled-prompt refusal.
+    // Only the expected refusal alone establishes credential unavailability.
+    const lines = error.stderr.trim().split(/\r?\n/)
     return (
-      error instanceof GitError &&
-      /terminal prompts? (?:are )?disabled|password (?:is )?(?:unavailable|not available)/i.test(
-        `${error.message}\n${error.stderr}`,
+      lines.length === 1 &&
+      /^fatal: could not read Password for .+: terminal prompts? (?:are )?disabled$/i.test(
+        lines[0]!,
       )
     )
   }

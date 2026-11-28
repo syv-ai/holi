@@ -9,6 +9,7 @@ import { createBridgeServer } from '../src/main/bridge/server'
 import { installSignalCommand, registerSignalRoute } from '../src/plugins/agent/main/harness/signal'
 import { notifyOverride, registerCodexRoutes } from '../src/plugins/agent/main/codex'
 import { installHoliCli } from '../src/main/bridge/cli'
+import { resolveBundledWindowsNode } from '../src/main/windows-node-runtime'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
 const exec = promisify(execFile)
@@ -38,7 +39,8 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
       fallbackDir,
     ].join(delimiter)
     const env = { ...process.env, PATH: path }
-    const nodePath = join(fallbackDir, 'node')
+    const nodePath = resolveBundledWindowsNode()
+    if (!nodePath) throw new Error('Bundled Windows Node is required')
     const dispatched: unknown[] = []
     let checkResult = {
       value: ['invalid record: missing required field name'],
@@ -63,7 +65,19 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
     await server.start()
     const token = server.tokenForVault('owner/repo')
     await writeVaultEnv(root, bridgeLines(server.port()!, token))
-    return { root, userData, shell, env, server, token, dispatched, nodePath }
+    return {
+      root,
+      userData,
+      shell,
+      env,
+      server,
+      token,
+      dispatched,
+      nodePath,
+      acceptRecord: () => {
+        checkResult = { value: [], text: '' }
+      },
+    }
   }
 
   it('runs the installed signal command into the registered signal route', async () => {
@@ -131,7 +145,16 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
   it('runs the shipped vault-app hook through the installed CLI store.check contract', async () => {
     const x = await setup()
     try {
-      const cli = await installHoliCli(x.userData)
+      const binding = {
+        descriptorPath: join(x.userData, 'vault-cli-endpoint.json'),
+        binDir: join(x.userData, 'vault-bin'),
+      }
+      const cli = await installHoliCli(x.userData, 'win32', binding)
+      await writeFile(
+        binding.descriptorPath,
+        JSON.stringify({ host: '127.0.0.1', port: x.server.port(), token: x.token }, null, 2) +
+          '\n',
+      )
       const hook = join(x.root, 'vault-app-check.mjs')
       await copyFile(
         join(
@@ -171,7 +194,7 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
         remote: 'owner/repo',
       })
 
-      checkResult = { value: [], text: '' }
+      x.acceptRecord()
       await writeFile(app, '{"name":"valid"}')
       const valid = await new Promise<string>((resolve, reject) => {
         const child = spawn(x.nodePath, [hook], { cwd: x.root, env: { ...x.env, HOLI_BIN: cli } })

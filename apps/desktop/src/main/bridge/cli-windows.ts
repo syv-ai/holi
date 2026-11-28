@@ -21,7 +21,7 @@ function valid() {
     const stat = fs.lstatSync(descriptor);
     if (!stat.isFile() || stat.isSymbolicLink()) return null;
     const raw = fs.readFileSync(descriptor, 'utf8');
-    const match = raw.match(/^\\{\\r?\\n  "host": "127\\.0\\.0\\.1",\\r?\\n  "port": ([0-9]+),\\r?\\n  "token": "([0-9a-f]+)"\\r?\\n\\}\\r?\\n?$/);
+    const match = raw.match(/^\{\r?\n  "host": "127\.0\.0\.1",\r?\n  "port": ([0-9]+),\r?\n  "token": "([0-9a-f]+)"\r?\n\}\r?\n?$/);
     if (!match) return null;
     const parsed = JSON.parse(raw);
     const port = Number(match[1]);
@@ -73,8 +73,8 @@ function request(endpoint, fields) {
   if (!endpoint) fail('Holi is not running (CLI endpoint descriptor is missing or unsafe).');
   const cwd = fs.realpathSync(process.cwd());
   const fields = [...process.argv.slice(2).map(value => ['argv', value]), ['cwd', cwd], ['runFormat', 'json']];
-  const jobPath = (process.env.CLAUDE_JOB_DIR || '').replace(/\\\\/g, '/');
-  const job = jobPath.replace(/^.*\\//, '');
+  const jobPath = (process.env.CLAUDE_JOB_DIR || '').replace(/\\/g, '/');
+  const job = jobPath.slice(jobPath.lastIndexOf('/') + 1);
   if (/^[0-9a-f]{8}$/.test(job) && jobPath && !jobPath.endsWith('/')) fields.push(['job', job]);
   let response;
   try {
@@ -82,12 +82,10 @@ function request(endpoint, fields) {
   } catch {
     fail('could not reach the running Holi app.');
   }
-  let stdinConsumed = false;
+  let contents;
   if (response.status === 428) {
-    let contents;
     try {
       contents = await input();
-      stdinConsumed = true;
       response = await request(endpoint, [...fields, ['stdin', contents]]);
     } catch {
       fail('could not reach the running Holi app.');
@@ -106,9 +104,13 @@ function request(endpoint, fields) {
     }
     const child = spawn(run.argv[0], run.argv.slice(1), {
       cwd: run.cwd, env: { ...process.env, ...run.env },
-      stdio: stdinConsumed ? [process.stdin, 'inherit', 'inherit'] : 'inherit', shell: false,
+      stdio: contents === undefined ? 'inherit' : ['pipe', 'inherit', 'inherit'], shell: false,
     });
     child.on('error', () => fail('could not start the requested program.'));
+    if (contents !== undefined && child.stdin) {
+      child.stdin.on('error', () => {});
+      child.stdin.end(contents);
+    }
     child.on('exit', (code, signal) => {
       if (signal) {
         process.kill(process.pid, signal);
