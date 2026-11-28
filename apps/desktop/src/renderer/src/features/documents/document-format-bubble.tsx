@@ -133,6 +133,7 @@ export function DocumentFormatBubble({
     passage: string
   } | null>(null)
   const [batchTargetChanged, setBatchTargetChanged] = useState(false)
+  const [batchTargetError, setBatchTargetError] = useState(false)
 
   useLayoutEffect(() => {
     const updateTarget = ({
@@ -142,8 +143,15 @@ export function DocumentFormatBubble({
     }) => {
       const target = batchTargetRef.current
       if (!target || !transaction.docChanged) return
+      const before = target.bookmark.resolve(transaction.before)
+      const touched = transaction.mapping.maps.some((map) => {
+        const result = map.mapResult(before.from, 1)
+        const end = map.mapResult(before.to, -1)
+        return result.deleted || end.deleted
+      })
       const bookmark = target.bookmark.map(transaction.mapping)
       batchTargetRef.current = { ...target, bookmark }
+      if (touched) setBatchTargetChanged(true)
       try {
         const selection = bookmark.resolve(transaction.doc)
         const passage = transaction.doc.textBetween(selection.from, selection.to, '\n\n').trim()
@@ -211,8 +219,6 @@ export function DocumentFormatBubble({
 
   const submitCustom = (instruction: string) => {
     const passage = customPassage
-    setCustomPassage(null)
-    setCustomDraft('')
     if (passage !== null) {
       if (addingToBatch) {
         const target = batchTargetRef.current
@@ -227,15 +233,25 @@ export function DocumentFormatBubble({
               onAddToBatch?.(instruction, target.passage)
             } else {
               setBatchTargetChanged(true)
-              setCustomPassage(target.passage)
+              setBatchTargetError(true)
+              return
             }
           } catch {
             setBatchTargetChanged(true)
-            setCustomPassage(target.passage)
+            setBatchTargetError(true)
+            return
           }
-        } else if (target) setCustomPassage(target.passage)
-      } else onQuickCommand?.(instruction, passage)
+        } else {
+          setBatchTargetChanged(true)
+          setBatchTargetError(true)
+          return
+        }
+      } else {
+        onQuickCommand?.(instruction, passage)
+      }
     }
+    setCustomPassage(null)
+    setCustomDraft('')
     setAddingToBatch(false)
   }
 
@@ -312,6 +328,7 @@ export function DocumentFormatBubble({
                             passage,
                           }
                           setBatchTargetChanged(false)
+                          setBatchTargetError(false)
                           setAddingToBatch(true)
                           openingCustomRef.current = true
                           setCustomPassage(passage)
@@ -354,6 +371,11 @@ export function DocumentFormatBubble({
                 }}
               >
                 {/* Mounts per open, so the field always starts empty. */}
+                {batchTargetError ? (
+                  <p role="alert">
+                    The passage changed. Reselect it and add it to the batch again.
+                  </p>
+                ) : null}
                 <AgentPrompt
                   submitLabel={addingToBatch ? 'Add to batch' : undefined}
                   value={customDraft}
