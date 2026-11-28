@@ -43,7 +43,10 @@ const trashMock = vi.fn()
 const saveDraftMock = vi.fn()
 const saveDraftAccounts: string[] = []
 const disconnectMock = vi.fn()
-const toastMock = vi.fn()
+const toastMock = Object.assign(
+  vi.fn<(...args: unknown[]) => string>(() => 'toast-id'),
+  { dismiss: vi.fn() },
+)
 const openExternal = vi.fn()
 
 let currentAccount: string | null = 'a'
@@ -87,7 +90,9 @@ const google: Record<string, (params: unknown) => unknown> = {
 
 vi.mock('sonner', async (original) => ({
   ...(await original<typeof import('sonner')>()),
-  toast: (...args: unknown[]) => toastMock(...args),
+  toast: Object.assign((...args: unknown[]) => toastMock(...args), {
+    dismiss: (...args: unknown[]) => toastMock.dismiss(...args),
+  }),
 }))
 
 vi.mock('@/lib/trpc', () => ({
@@ -532,9 +537,49 @@ test('archiving a thread releases its pristine inline reply guard', async () => 
   expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
 })
 
+test('a native mail notice focuses Inbox through the retained composer save guard', async () => {
+  const user = userEvent.setup()
+  const { store, show } = mountMailTabs()
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
+  await user.click(await screen.findByRole('menuitemradio', { name: 'Sent' }))
+  await screen.findByRole('button', { name: 'Mailbox: Sent' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const composer = await screen.findByRole('region', { name: 'Compose mail' })
+  const subject = within(composer).getByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'unsaved notice draft')
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+
+  show(otherKey)
+  await screen.findByRole('textbox', { name: 'Other app state' })
+  act(() =>
+    googleRenderer.events!['open-mail']!(
+      { remote: 'syv-ai/vault', payload: { mailbox: 'inbox' } },
+      store,
+    ),
+  )
+
+  await waitFor(() => expect(focusedTab(store.get(shellWorkspaceAtom))).toBe(mailKey))
+  expect(await screen.findByRole('region', { name: 'Compose mail' })).toBe(composer)
+  await screen.findByText('Not saved')
+  expect(screen.getByRole('button', { name: 'Mailbox: Sent' })).toBeInTheDocument()
+  expect(subject).toHaveValue('unsaved notice draft')
+
+  saveDraftMock.mockResolvedValue({ id: 'draft-1' })
+  act(() =>
+    googleRenderer.events!['open-mail']!(
+      { remote: 'syv-ai/vault', payload: { mailbox: 'inbox' } },
+      store,
+    ),
+  )
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(screen.getByRole('button', { name: 'Mailbox: Inbox' })).toBeInTheDocument()
+})
+
 test('Connections preserves a parked reply when flushing fails and disconnects only after it saves', async () => {
   const user = userEvent.setup()
   const { store, show } = mountMailTabs()
+
   const list = await screen.findByRole('list', { name: 'Inbox' })
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
