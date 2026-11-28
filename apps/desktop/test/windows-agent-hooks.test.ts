@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, resolve as resolvePath } from 'node:path'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -188,11 +188,9 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
         'invalid record: missing required field name',
       )
       expect(x.dispatched).toHaveLength(1)
-      expect(x.dispatched[0]).toMatchObject({
-        name: 'store.check',
-        params: { path: 'demo.app/data/things/record.json' },
-        remote: 'owner/repo',
-      })
+      const invocation = x.dispatched[0] as { params: { path: string } }
+      expect(invocation).toMatchObject({ name: 'store.check', remote: 'owner/repo' })
+      expect(resolvePath(x.root, invocation.params.path)).toBe(app)
 
       x.acceptRecord()
       await writeFile(app, '{"name":"valid"}')
@@ -208,6 +206,7 @@ describe.skipIf(!windows)('Windows agent hook launchers', () => {
         child.stdin.end(JSON.stringify({ cwd: x.root, tool_input: { file_path: app } }))
       })
       expect(valid).toBe('')
+      expect(x.dispatched.slice(1)).toContainEqual(expect.objectContaining({ name: 'store.check' }))
     } finally {
       await x.server.stop()
     }
