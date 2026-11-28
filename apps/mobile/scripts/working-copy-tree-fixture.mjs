@@ -120,183 +120,185 @@ export async function createWorkingCopyTreeFixture(parent, runId, libraryRoot) {
     'race-inventory',
     'race-head',
   ]
-  for (const name of names) {
-    const root = await mkdtemp(join(parent, `holi-tree-${runId}-${name}-`))
-    await git(root, '-c', 'init.templateDir=', 'init', '-b', 'fixture-start')
-    const remote = `holi/tree-${runId}-${name}`
-    await git(root, 'remote', 'add', 'origin', `https://github.com/${remote}.git`)
-    for (const [path, bytes] of [
-      ['note.md', 'base\n'],
-      ['.hidden-data', Buffer.from([0, 254])],
-      ['binary.bin', Buffer.from([0, 1, 2])],
-      ['run.sh', '#!/bin/sh\nexit 0\n'],
-      ['gone.md', 'delete me'],
-      ['replace', 'file'],
-      ['staged.md', 'base'],
-      ['tracked-ignored.md', 'tracked'],
-      ['.gitignore', 'tracked-ignored.md\nignored-*\n'],
-    ])
-      await put(root, path, bytes)
-    const protectedNames = ['.env', 'private.local.bin', 'TOKEN.LOCAL.bin', 'CONFIG/.ENV']
-    const protectedCase = ['mixed', 'protected-only', 'conflict-protected'].includes(name)
-    if (protectedCase)
-      for (const path of protectedNames) await put(root, path, `synthetic protected ${path}`)
-    if (name === 'directory-to-file') await put(root, 'directory/child.md', 'old child')
-    await git(root, 'add', '-A')
-    await git(root, 'add', '-f', 'tracked-ignored.md', ...(protectedCase ? protectedNames : []))
-    await git(root, 'commit', '-m', 'fixture base')
-    if (name === 'mixed') {
-      await put(root, 'staged.md', 'staged intermediate')
-      await git(root, 'add', 'staged.md')
-      await put(root, 'staged.md', 'unstaged final\n')
-      await put(root, 'binary.bin', Buffer.from([0, 255, 1, 0]))
-      await chmod(join(root, 'run.sh'), 0o755)
-      await put(root, 'added.md', 'added\n')
-      await rm(join(root, 'gone.md'))
-      await rm(join(root, 'replace'))
-      await put(root, 'replace/child.bin', Buffer.from([9, 8]))
-      await put(root, 'tracked-ignored.md', 'tracked ignored changed')
-      await put(root, 'ignored-private.bin', 'untracked ignored')
-    }
-    if (name === 'directory-to-file') {
-      await rm(join(root, 'directory'), { recursive: true })
-      await put(root, 'directory', 'replacement file')
-    }
-    if (name === 'mode-true' || name === 'mode-false') {
-      await git(root, 'config', 'core.filemode', name === 'mode-true' ? 'true' : 'false')
-      await chmod(join(root, 'run.sh'), 0o755)
-    }
-    if (name === 'new-exec-mode-false') {
-      await git(root, 'config', 'core.filemode', 'false')
-      await put(root, 'new-exec.sh', '#!/bin/sh\nexit 0\n')
-      await chmod(join(root, 'new-exec.sh'), 0o755)
-    }
-    if (name === 'nested-ignores') {
-      await put(root, 'outer/.gitignore', 'cache/\n*.skip\n')
-      await put(root, 'outer/keep.md', 'nested kept')
-      await put(root, 'outer/ignored.skip', 'ignored leaf')
-      await put(root, 'outer/cache/.gitattributes', '* filter=forbidden\n')
-      await symlink('../keep.md', join(root, 'outer/cache/.gitignore'))
-    }
-    if (name === 'invalid-path') await put(root, 'bad\\name.md', 'unsupported name')
-    if (name === 'corrupt-blob') {
-      const oid = await text(root, 'rev-parse', 'HEAD:note.md')
-      await chmod(join(root, '.git/objects', oid.slice(0, 2), oid.slice(2)), 0o600)
-      await writeFile(
-        join(root, '.git/objects', oid.slice(0, 2), oid.slice(2)),
-        'corrupt existing blob',
-      )
-    }
-    let mutation
-    if (name.startsWith('race-')) mutation = { kind: name.slice(5) }
-    if (name === 'race-head') {
-      await git(root, 'checkout', '-b', 'future-head')
-      await put(root, 'head-added.md', 'new parent file')
+  await Promise.all(
+    names.map(async (name) => {
+      const root = await mkdtemp(join(parent, `holi-tree-${runId}-${name}-`))
+      await git(root, '-c', 'init.templateDir=', 'init', '-b', 'fixture-start')
+      const remote = `holi/tree-${runId}-${name}`
+      await git(root, 'remote', 'add', 'origin', `https://github.com/${remote}.git`)
+      for (const [path, bytes] of [
+        ['note.md', 'base\n'],
+        ['.hidden-data', Buffer.from([0, 254])],
+        ['binary.bin', Buffer.from([0, 1, 2])],
+        ['run.sh', '#!/bin/sh\nexit 0\n'],
+        ['gone.md', 'delete me'],
+        ['replace', 'file'],
+        ['staged.md', 'base'],
+        ['tracked-ignored.md', 'tracked'],
+        ['.gitignore', 'tracked-ignored.md\nignored-*\n'],
+      ])
+        await put(root, path, bytes)
+      const protectedNames = ['.env', 'private.local.bin', 'TOKEN.LOCAL.bin', 'CONFIG/.ENV']
+      const protectedCase = ['mixed', 'protected-only', 'conflict-protected'].includes(name)
+      if (protectedCase)
+        for (const path of protectedNames) await put(root, path, `synthetic protected ${path}`)
+      if (name === 'directory-to-file') await put(root, 'directory/child.md', 'old child')
       await git(root, 'add', '-A')
-      await git(root, 'commit', '-m', 'future head')
-      mutation.head = await text(root, 'rev-parse', 'HEAD')
-      await git(root, 'checkout', 'fixture-start')
-    }
-    if (name === 'conflict-protected') {
-      await git(root, 'checkout', '-b', 'side')
-      await put(root, '.env', 'side secret')
-      await git(root, 'add', '-f', '.env')
-      await git(root, 'commit', '-m', 'side')
-      await git(root, 'checkout', 'fixture-start')
-      await put(root, '.env', 'main secret')
-      await git(root, 'add', '-f', '.env')
-      await git(root, 'commit', '-m', 'main')
-      await assert.rejects(git(root, 'merge', '--no-commit', 'side'))
-      assert.ok((await text(root, 'ls-files', '-u')).length)
-      // Prove index conflict refusal independently of the MERGE state marker.
-      await rm(join(root, '.git/MERGE_HEAD'))
-    }
-    if (name === 'identity')
-      await git(root, 'remote', 'set-url', 'origin', 'https://github.com/holi/wrong.git')
-    if (name === 'symlink') await symlink('note.md', join(root, 'alias.md'))
-    if (name === 'unsupported-metadata')
-      await put(root, '.git/info/attributes', '*.md filter=forbidden\n')
-    if (name === 'unsafe-objects') {
-      const outside = await mkdtemp(join(parent, `holi-tree-outside-${runId}-`))
-      await put(outside, 'sentinel', 'untouched outside')
-      const occupied = new Set(await readdir(join(root, '.git/objects')))
-      const prefix = Array.from({ length: 256 }, (_, n) => n.toString(16).padStart(2, '0')).find(
-        (x) => !occupied.has(x),
-      )
-      await symlink(outside, join(root, '.git/objects', prefix))
-    }
-    const refusal = ![
-      'mixed',
-      'noop',
-      'protected-only',
-      'directory-to-file',
-      'mode-true',
-      'mode-false',
-      'new-exec-mode-false',
-      'nested-ignores',
-    ].includes(name)
-    let expectedTree = null
-    let expectedEntries = null
-    if (!refusal) {
-      const oracle = await mkdtemp(join(parent, `holi-tree-oracle-${runId}-`))
-      try {
-        await git(parent, 'clone', '--no-local', root, oracle)
-        if (name === 'mixed') {
-          await put(oracle, 'staged.md', 'unstaged final\n')
-          await put(oracle, 'binary.bin', Buffer.from([0, 255, 1, 0]))
-          await chmod(join(oracle, 'run.sh'), 0o755)
-          await put(oracle, 'added.md', 'added\n')
-          await rm(join(oracle, 'gone.md'))
-          await rm(join(oracle, 'replace'))
-          await put(oracle, 'replace/child.bin', Buffer.from([9, 8]))
-          await put(oracle, 'tracked-ignored.md', 'tracked ignored changed')
-        }
-        if (name === 'directory-to-file') {
-          await rm(join(oracle, 'directory'), { recursive: true })
-          await put(oracle, 'directory', 'replacement file')
-        }
-        if (name === 'mode-true' || name === 'mode-false') {
-          await git(oracle, 'config', 'core.filemode', name === 'mode-true' ? 'true' : 'false')
-          await chmod(join(oracle, 'run.sh'), 0o755)
-        }
-        if (name === 'new-exec-mode-false') {
-          await git(oracle, 'config', 'core.filemode', 'false')
-          await put(oracle, 'new-exec.sh', '#!/bin/sh\nexit 0\n')
-          await chmod(join(oracle, 'new-exec.sh'), 0o755)
-        }
-        if (name === 'nested-ignores') {
-          await put(oracle, 'outer/.gitignore', 'cache/\n*.skip\n')
-          await put(oracle, 'outer/keep.md', 'nested kept')
-          await put(oracle, 'outer/ignored.skip', 'ignored leaf')
-        }
-        await git(oracle, 'add', '-A')
-        if (protectedCase)
-          await git(oracle, 'rm', '--cached', '--ignore-unmatch', ...protectedNames)
-        expectedTree = await text(oracle, 'write-tree')
-        expectedEntries = await entries(oracle, expectedTree)
-      } finally {
-        await rm(oracle, { recursive: true, force: true })
+      await git(root, 'add', '-f', 'tracked-ignored.md', ...(protectedCase ? protectedNames : []))
+      await git(root, 'commit', '-m', 'fixture base')
+      if (name === 'mixed') {
+        await put(root, 'staged.md', 'staged intermediate')
+        await git(root, 'add', 'staged.md')
+        await put(root, 'staged.md', 'unstaged final\n')
+        await put(root, 'binary.bin', Buffer.from([0, 255, 1, 0]))
+        await chmod(join(root, 'run.sh'), 0o755)
+        await put(root, 'added.md', 'added\n')
+        await rm(join(root, 'gone.md'))
+        await rm(join(root, 'replace'))
+        await put(root, 'replace/child.bin', Buffer.from([9, 8]))
+        await put(root, 'tracked-ignored.md', 'tracked ignored changed')
+        await put(root, 'ignored-private.bin', 'untracked ignored')
       }
-    }
-    if (protectedCase) for (const path of protectedNames) await chmod(join(root, path), 0)
-    const baseHead = await text(root, 'rev-parse', 'HEAD')
-    const headTree = await text(root, 'rev-parse', 'HEAD^{tree}')
-    await mkdir(join(libraryRoot, name), { recursive: true })
-    cases.push({
-      name,
-      runId,
-      root,
-      remote,
-      branch: name === 'branch' ? 'wrong-branch' : 'fixture-start',
-      expectedTree,
-      expectedEntries,
-      mutation,
-      refusal,
-      baseHead,
-      unchanged: expectedTree === headTree,
-      before: await snapshot(root),
-    })
-  }
+      if (name === 'directory-to-file') {
+        await rm(join(root, 'directory'), { recursive: true })
+        await put(root, 'directory', 'replacement file')
+      }
+      if (name === 'mode-true' || name === 'mode-false') {
+        await git(root, 'config', 'core.filemode', name === 'mode-true' ? 'true' : 'false')
+        await chmod(join(root, 'run.sh'), 0o755)
+      }
+      if (name === 'new-exec-mode-false') {
+        await git(root, 'config', 'core.filemode', 'false')
+        await put(root, 'new-exec.sh', '#!/bin/sh\nexit 0\n')
+        await chmod(join(root, 'new-exec.sh'), 0o755)
+      }
+      if (name === 'nested-ignores') {
+        await put(root, 'outer/.gitignore', 'cache/\n*.skip\n')
+        await put(root, 'outer/keep.md', 'nested kept')
+        await put(root, 'outer/ignored.skip', 'ignored leaf')
+        await put(root, 'outer/cache/.gitattributes', '* filter=forbidden\n')
+        await symlink('../keep.md', join(root, 'outer/cache/.gitignore'))
+      }
+      if (name === 'invalid-path') await put(root, 'bad\\name.md', 'unsupported name')
+      if (name === 'corrupt-blob') {
+        const oid = await text(root, 'rev-parse', 'HEAD:note.md')
+        await chmod(join(root, '.git/objects', oid.slice(0, 2), oid.slice(2)), 0o600)
+        await writeFile(
+          join(root, '.git/objects', oid.slice(0, 2), oid.slice(2)),
+          'corrupt existing blob',
+        )
+      }
+      let mutation
+      if (name.startsWith('race-')) mutation = { kind: name.slice(5) }
+      if (name === 'race-head') {
+        await git(root, 'checkout', '-b', 'future-head')
+        await put(root, 'head-added.md', 'new parent file')
+        await git(root, 'add', '-A')
+        await git(root, 'commit', '-m', 'future head')
+        mutation.head = await text(root, 'rev-parse', 'HEAD')
+        await git(root, 'checkout', 'fixture-start')
+      }
+      if (name === 'conflict-protected') {
+        await git(root, 'checkout', '-b', 'side')
+        await put(root, '.env', 'side secret')
+        await git(root, 'add', '-f', '.env')
+        await git(root, 'commit', '-m', 'side')
+        await git(root, 'checkout', 'fixture-start')
+        await put(root, '.env', 'main secret')
+        await git(root, 'add', '-f', '.env')
+        await git(root, 'commit', '-m', 'main')
+        await assert.rejects(git(root, 'merge', '--no-commit', 'side'))
+        assert.ok((await text(root, 'ls-files', '-u')).length)
+        // Prove index conflict refusal independently of the MERGE state marker.
+        await rm(join(root, '.git/MERGE_HEAD'))
+      }
+      if (name === 'identity')
+        await git(root, 'remote', 'set-url', 'origin', 'https://github.com/holi/wrong.git')
+      if (name === 'symlink') await symlink('note.md', join(root, 'alias.md'))
+      if (name === 'unsupported-metadata')
+        await put(root, '.git/info/attributes', '*.md filter=forbidden\n')
+      if (name === 'unsafe-objects') {
+        const outside = await mkdtemp(join(parent, `holi-tree-outside-${runId}-`))
+        await put(outside, 'sentinel', 'untouched outside')
+        const occupied = new Set(await readdir(join(root, '.git/objects')))
+        const prefix = Array.from({ length: 256 }, (_, n) => n.toString(16).padStart(2, '0')).find(
+          (x) => !occupied.has(x),
+        )
+        await symlink(outside, join(root, '.git/objects', prefix))
+      }
+      const refusal = ![
+        'mixed',
+        'noop',
+        'protected-only',
+        'directory-to-file',
+        'mode-true',
+        'mode-false',
+        'new-exec-mode-false',
+        'nested-ignores',
+      ].includes(name)
+      let expectedTree = null
+      let expectedEntries = null
+      if (!refusal) {
+        const oracle = await mkdtemp(join(parent, `holi-tree-oracle-${runId}-`))
+        try {
+          await git(parent, 'clone', '--no-local', root, oracle)
+          if (name === 'mixed') {
+            await put(oracle, 'staged.md', 'unstaged final\n')
+            await put(oracle, 'binary.bin', Buffer.from([0, 255, 1, 0]))
+            await chmod(join(oracle, 'run.sh'), 0o755)
+            await put(oracle, 'added.md', 'added\n')
+            await rm(join(oracle, 'gone.md'))
+            await rm(join(oracle, 'replace'))
+            await put(oracle, 'replace/child.bin', Buffer.from([9, 8]))
+            await put(oracle, 'tracked-ignored.md', 'tracked ignored changed')
+          }
+          if (name === 'directory-to-file') {
+            await rm(join(oracle, 'directory'), { recursive: true })
+            await put(oracle, 'directory', 'replacement file')
+          }
+          if (name === 'mode-true' || name === 'mode-false') {
+            await git(oracle, 'config', 'core.filemode', name === 'mode-true' ? 'true' : 'false')
+            await chmod(join(oracle, 'run.sh'), 0o755)
+          }
+          if (name === 'new-exec-mode-false') {
+            await git(oracle, 'config', 'core.filemode', 'false')
+            await put(oracle, 'new-exec.sh', '#!/bin/sh\nexit 0\n')
+            await chmod(join(oracle, 'new-exec.sh'), 0o755)
+          }
+          if (name === 'nested-ignores') {
+            await put(oracle, 'outer/.gitignore', 'cache/\n*.skip\n')
+            await put(oracle, 'outer/keep.md', 'nested kept')
+            await put(oracle, 'outer/ignored.skip', 'ignored leaf')
+          }
+          await git(oracle, 'add', '-A')
+          if (protectedCase)
+            await git(oracle, 'rm', '--cached', '--ignore-unmatch', ...protectedNames)
+          expectedTree = await text(oracle, 'write-tree')
+          expectedEntries = await entries(oracle, expectedTree)
+        } finally {
+          await rm(oracle, { recursive: true, force: true })
+        }
+      }
+      if (protectedCase) for (const path of protectedNames) await chmod(join(root, path), 0)
+      const baseHead = await text(root, 'rev-parse', 'HEAD')
+      const headTree = await text(root, 'rev-parse', 'HEAD^{tree}')
+      await mkdir(join(libraryRoot, name), { recursive: true })
+      cases.push({
+        name,
+        runId,
+        root,
+        remote,
+        branch: name === 'branch' ? 'wrong-branch' : 'fixture-start',
+        expectedTree,
+        expectedEntries,
+        mutation,
+        refusal,
+        baseHead,
+        unchanged: expectedTree === headTree,
+        before: await snapshot(root),
+      })
+    }),
+  )
   return { runId, cases }
 }
 
