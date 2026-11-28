@@ -89,6 +89,21 @@ async function run(): Promise<void> {
     stallRequested = resolve
   })
   const server = createServer((request, response) => {
+    if (process.env.HOLI_758_CHILD_HINTS === '1' && request.url?.startsWith('/758-')) {
+      const address = server.address()
+      assert(address && typeof address === 'object')
+      const origin = `http://127.0.0.1:${address.port}`
+      const cross = `http://localhost:${address.port}`
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src ${origin} ${cross}`,
+      })
+      const name = request.url.slice(5)
+      response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body{color:CanvasText;background:Canvas;font:16px sans-serif}iframe{width:160px;height:110px;border:5px solid currentColor;padding:7px}button{margin:8px}main{display:flex;gap:8px}</style>
+        ${name === 'root' ? `<button id="root">Root action</button><main><iframe name="duplicate" src="${origin}/758-same"></iframe><iframe name="duplicate" src="${cross}/758-cross-a"></iframe><iframe name="duplicate" src="${cross}/758-cross-b"></iframe></main>` : `<button id="action">Child ${name}</button><input id="field" aria-label="Field ${name}" value="native">`}
+        <script>window.qaClicks=[];window.qaChildKeys=[];document.addEventListener('click',e=>qaClicks.push({id:e.target.id,trusted:e.isTrusted}));document.addEventListener('keyup',e=>qaChildKeys.push({key:e.key,trusted:e.isTrusted}),true)</script>`)
+      return
+    }
     if (process.env.HOLI_671_CHILD_VIM === '1' && request.url?.startsWith('/671-')) {
       const address = server.address()
       assert(address && typeof address === 'object')

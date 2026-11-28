@@ -87,7 +87,7 @@
       `(() => { const target=document.querySelector(${JSON.stringify(selector)});target.tabIndex=-1;target.focus() })()`,
     )
     await captureFrame(page)
-    if (selector === '#search') await pageNativePress('Escape')
+    await pageNativePress('Escape')
     await pageNativePress('f')
   }
   const hostHintCount = () =>
@@ -887,8 +887,13 @@
   const themeEvidence: any[] = []
   const setActualTheme = async (theme: 'light' | 'dark') => {
     for (const wc of [page, win.webContents]) {
-      if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
-      await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+      const attachedHere = !wc.debugger.isAttached()
+      if (attachedHere) wc.debugger.attach('1.3')
+      try {
+        await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+      } finally {
+        if (attachedHere) wc.debugger.detach()
+      }
     }
     await ui(
       `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(theme)}`,
@@ -961,6 +966,192 @@
   )
   hintMark('native-page-light-dark-and-shell-evidence-captured')
   hintMark('installed-kbd-light-dark-and-custom-theme-presentation-matches-page')
+
+  if (process.env.HOLI_758_CHILD_HINTS === '1') {
+    const previousNonce = (
+      sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode')?.payload as
+        { nonce?: string } | undefined
+    )?.nonce
+    await invoke('A', 'open', { tab: 'same', url: `${url}/758-root` })
+    await until(() => {
+      const state = sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode')
+        ?.payload as { nonce?: string; mode?: string } | undefined
+      return !!state?.nonce && state.nonce !== previousNonce
+    }, 'direct-child document Vim readiness')
+    await until(() => page.getURL().endsWith('/758-root'), 'direct-child root navigation')
+    const direct = () => page.mainFrame.frames.filter((frame) => frame.url.includes('/758-'))
+    await until(() => direct().length === 3, 'three direct child documents')
+    await until(
+      async () =>
+        (
+          await Promise.all(
+            direct().map((frame) => frame.executeJavaScript('!!document.querySelector("#action")')),
+          )
+        ).every(Boolean),
+      'direct-child buttons ready',
+    )
+    const same = direct().find((frame) => frame.url.endsWith('/758-same'))!
+    const crossA = direct().find((frame) => frame.url.endsWith('/758-cross-a'))!
+    const crossB = direct().find((frame) => frame.url.endsWith('/758-cross-b'))!
+    assert.notEqual(same, crossA)
+    assert.notEqual(crossA, crossB)
+    assert.notEqual(
+      crossA.processId,
+      page.mainFrame.processId,
+      'cross-origin fixture did not become an OOPIF',
+    )
+    const labelsForChildren = async () => {
+      await until(() => {
+        const snapshot = hintSnapshots.at(-1)
+        return (
+          snapshot?.targets?.some((target: any) => target.label === 'Child cross-a') &&
+          hintPresentations.some(
+            (item) =>
+              item.result === true &&
+              item.params.owner.request === snapshot.owner.request &&
+              item.params.owner.nonce === snapshot.owner.nonce,
+          )
+        )
+      }, 'shared direct-child labels presented')
+      const snapshot = hintSnapshots.at(-1)
+      const shown = hintPresentations
+        .filter(
+          (item) =>
+            item.result === true &&
+            item.params.owner.request === snapshot.owner.request &&
+            item.params.owner.nonce === snapshot.owner.nonce,
+        )
+        .at(-1)!
+      return snapshot.targets
+        .map((target: any) => ({
+          ...target,
+          key: shown.params.p.labels.find((label: any) => label.id === target.id)?.key,
+        }))
+        .filter((target: any) => target.key)
+    }
+    const requestDirect = async () => {
+      await requestPageHints()
+      return labelsForChildren()
+    }
+    let labels = await requestDirect()
+    assert(
+      ['Child same', 'Child cross-a', 'Child cross-b'].every((name) =>
+        labels.some((target: any) => target.label === name),
+      ),
+    )
+    assert.equal(new Set(labels.map((target: any) => target.key)).size, labels.length)
+    for (const [name, frame] of [
+      ['same', same],
+      ['cross-a', crossA],
+      ['cross-b', crossB],
+    ] as const) {
+      const chosen = labels.find((target: any) => target.label === `Child ${name}`)!
+      const before = await Promise.all(
+        [same, crossA, crossB].map((frame) =>
+          frame.executeJavaScript('qaClicks.filter(event=>event.id==="action").length'),
+        ),
+      )
+      await pressLabel(chosen.key)
+      await until(
+        async () =>
+          (await frame.executeJavaScript('qaClicks.filter(event=>event.id==="action").length')) >
+          before[['same', 'cross-a', 'cross-b'].indexOf(name)],
+        `trusted child ${name} click`,
+      )
+      const after = await Promise.all(
+        [same, crossA, crossB].map((frame) =>
+          frame.executeJavaScript('qaClicks.filter(event=>event.id==="action")'),
+        ),
+      )
+      for (const [index, events] of after.entries()) {
+        assert.equal(
+          events.length,
+          before[index] + (index === ['same', 'cross-a', 'cross-b'].indexOf(name) ? 1 : 0),
+        )
+        assert(events.every((event: any) => event.trusted))
+      }
+      hintMark(`direct-child-${name}-trusted-input-and-sibling-isolation`)
+      labels = await requestDirect()
+    }
+    await pageNativePress('Escape')
+    const childPress = async (key: string) => {
+      const before = await crossA.executeJavaScript('qaChildKeys.length')
+      const printable = key.length === 1
+      const vk = printable ? key.toUpperCase().charCodeAt(0) : key === 'Backspace' ? 8 : 27
+      await page.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: printable ? 'keyDown' : 'rawKeyDown',
+        key,
+        code: printable ? `Key${key.toUpperCase()}` : key,
+        windowsVirtualKeyCode: vk,
+        ...(printable ? { text: key, unmodifiedText: key } : {}),
+      })
+      await page.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key,
+        code: printable ? `Key${key.toUpperCase()}` : key,
+        windowsVirtualKeyCode: vk,
+      })
+      await until(
+        async () => (await crossA.executeJavaScript('qaChildKeys.length')) > before,
+        `trusted OOPIF ${key}`,
+      )
+    }
+    page.focus()
+    await crossA.executeJavaScript('document.body.tabIndex=-1;document.body.focus()')
+    await until(
+      () =>
+        page.focusedFrame === crossA &&
+        reportFrames.get(
+          sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode')!,
+        ) === crossA,
+      'OOPIF input mode readiness',
+    )
+    await childPress('f')
+    labels = await labelsForChildren()
+    await childPress('Backspace')
+    await childPress('Escape')
+    await until(async () => (await hostHintCount()) === 0, 'child Escape retires shared labels')
+    hintMark('direct-oopif-origin-f-backspace-escape')
+    for (const theme of ['light', 'dark'] as const) {
+      await setActualTheme(theme)
+      labels = await requestDirect()
+      const image = await page.capturePage()
+      assert(!image.isEmpty())
+      writeFileSync(join(evidence, `child-hints-${theme}.png`), image.toPNG())
+      await pageNativePress('Escape')
+    }
+    // Hold the real capability after selecting a child target, then cancel it.
+    labels = await requestDirect()
+    const delayed = labels.find((target: any) => target.label === 'Child cross-a')!
+    let release!: () => void
+    let entered!: () => void
+    const pending = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    hintActivationGate = {
+      wait: new Promise<void>((resolve) => {
+        release = resolve
+      }),
+      entered,
+    }
+    const before = await crossA.executeJavaScript('qaClicks.length')
+    try {
+      await pressLabel(delayed.key)
+      await pending
+      await pageNativePress('Escape')
+      await until(async () => (await hostHintCount()) === 0, 'delayed child cancellation')
+    } finally {
+      hintActivationGate = undefined
+      release()
+    }
+    await until(
+      () => hintUiCalls.some((call) => call.name === 'browser.hints-clear'),
+      'child cancellation clear acknowledged',
+    )
+    await wait(150)
+    assert.equal(await crossA.executeJavaScript('qaClicks.length'), before)
+    hintMark('direct-child-delayed-selection-cancelled-before-native-input')
+  }
 
   await stopHintRecording()
   assert(hintFrame > 0, 'hint interaction recording has no native page frames')
