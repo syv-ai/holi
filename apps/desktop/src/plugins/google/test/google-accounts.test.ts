@@ -541,6 +541,39 @@ describe('the client credentials', () => {
     expect(await clients.readVault(VAULT)).toEqual(two)
   })
 
+  it('keeps replacement request order when the initial vault-client read is delayed', async () => {
+    const stored = memoryClients(null)
+    const readStarted = deferred<void>()
+    const releaseRead = deferred<void>()
+    let firstRead = true
+    const clients: GoogleClientStore = {
+      ...stored,
+      readVault: async (remote) => {
+        const snapshot = await stored.readVault(remote)
+        if (firstRead) {
+          firstRead = false
+          readStarted.resolve()
+          await releaseRead.promise
+        }
+        return snapshot
+      },
+    }
+    const accounts = await productionManager({ calls: [] }, clients)
+    const one = { id: 'one.apps.googleusercontent.com', secret: 'one-secret' }
+    const two = { id: 'two.apps.googleusercontent.com', secret: 'two-secret' }
+
+    const first = accounts.setClient(VAULT, one)
+    await readStarted.promise
+    const second = accounts.setClient(VAULT, two)
+    // Let a ready read finish while the initial read is still held.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    releaseRead.resolve()
+    await Promise.all([first, second])
+
+    expect(await accounts.client(VAULT)).toEqual({ id: two.id, source: 'own' })
+    expect(await stored.readVault(VAULT)).toEqual(two)
+  })
+
   it('keeps accounts and vault sessions when the future-connect client changes', async () => {
     await store.write({
       'sub-1': auth(),
