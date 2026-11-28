@@ -401,7 +401,9 @@ test('Codex describes the risk of unattended jobs without a separate switch', as
   const agents = (await screen.findByRole('heading', { level: 2, name: 'Agents' })).closest(
     'section',
   )!
-  const codex = within(agents).getByText('Codex').closest('[data-slot="field"]') as HTMLElement
+  const codex = (await within(agents).findByText('Codex')).closest(
+    '[data-slot="field"]',
+  ) as HTMLElement
   expect(within(codex).getByText(/Ask AI, Holis and automations/)).toHaveTextContent(
     'read any file on this computer and write what they read into synced vault folders',
   )
