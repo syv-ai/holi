@@ -245,28 +245,37 @@ export function createMeetingCreation(deps: {
   accounts: GoogleAccountsManager
   fetch?: typeof globalThis.fetch
 }) {
-  const pathFor = (remote: string, sub: string) =>
-    join(deps.userData, 'google-meetings', `${hash(JSON.stringify([remote, sub]))}.json`)
+  const pathFor = (remote: string, sub: string) => {
+    const legacy = deps.accounts.legacyConnection(remote)
+    const receiptOwner = legacy?.connectionId === sub ? legacy.accountSub : sub
+    return join(
+      deps.userData,
+      'google-meetings',
+      `${hash(JSON.stringify([remote, receiptOwner]))}.json`,
+    )
+  }
   const assertBound = async (remote: string, sub: string) => {
     const current = await deps.accounts.sessionFor(remote)
-    if (!current || current.accountSub !== sub)
+    const legacy = deps.accounts.legacyConnection(remote)
+    if (
+      !current ||
+      (current.accountSub !== sub &&
+        !(legacy?.accountSub === sub && current.accountSub === legacy.connectionId))
+    )
       throw new CapabilityError(
         'UNAUTHORIZED',
         'The Google account changed. Reopen the meeting in the original account.',
       )
+    return current
   }
   const boundApi = async (remote: string, sub: string): Promise<GoogleApi> => {
-    await assertBound(remote, sub)
-    const session = await deps.accounts.sessionFor(remote)
-    if (!session || session.accountSub !== sub)
-      throw new CapabilityError(
-        'UNAUTHORIZED',
-        'The Google account changed. Reopen the meeting in the original account.',
-      )
+    const session = await assertBound(remote, sub)
     return new GoogleApi({
       fetch: async (input, init) => {
         // Last async account check before handing the authenticated request to transport.
         await assertBound(remote, sub)
+        if (session.accountSub === null)
+          throw new CapabilityError('UNAUTHORIZED', 'The Google connection changed.')
         return (deps.fetch ?? globalThis.fetch)(input, init)
       },
       accessToken: async () => {

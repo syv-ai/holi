@@ -538,15 +538,7 @@ function MailAccountShell({
         >
           <MailList
             mail={guardedMail}
-            account={
-              <NavUser
-                onManage={openConnections}
-                onError={mail.reportError}
-                onBeforeChange={() => navigate(() => undefined)}
-                visible={visible}
-                canSwitchAccount={composition === null || composition.intent.kind === 'new'}
-              />
-            }
+            account={<NavUser onManage={openConnections} visible={visible} />}
             onSelectFolder={(folder) => {
               void navigate(() => mail.setFolder(folder))
             }}

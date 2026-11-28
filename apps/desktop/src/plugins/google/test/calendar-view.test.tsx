@@ -110,7 +110,12 @@ const meetingStateMock = vi.fn()
 const checkMeetingMock = vi.fn()
 
 const google: Record<string, (params: Record<string, unknown>) => unknown> = {
-  'google.status': () => ({ account: { email: ME }, missingScopes: [] }),
+  'google.status': () => ({
+    account: { email: ME },
+    currentSub: '1',
+    missingScopes: [],
+    needsReconnect: false,
+  }),
   'google.allAccounts': () => ({ accounts: [{ sub: '1', email: ME }], current: '1' }),
   'google.agenda': (p) => agendaMock(p),
   'google.agendaCached': () => null,

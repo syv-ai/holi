@@ -1,3 +1,4 @@
+import { googleConnectionId } from './connection-id'
 /**
  * Who Holi is connected to at Google, and which vault uses whom.
  *
@@ -55,8 +56,9 @@ export interface GoogleAccountsOverview {
 }
 
 export interface GoogleAccountsManager {
-  /** Every connected account, for the picker. */
-  list(): ConnectedAccount[]
+  /** Only connections explicitly owned by this vault. */
+  list(remote: string): ConnectedAccount[]
+  legacyConnection(remote: string): { accountSub: string; connectionId: string } | null
   /** The session this vault should use, or null when it has never connected
    *  or the account it named is gone. Never throws: "not connected" is a
    *  state the UI already renders. */
@@ -64,16 +66,15 @@ export interface GoogleAccountsManager {
   sessionForSub(sub: string): GoogleSession | null
   /** Full consent, then store the account **and** link it to `remote`. */
   connect(remote: string): Promise<LoopbackFlow>
-  cancelConnect(): void
-  /** Point a vault at an account already in the store. No consent: the grant
-   *  exists, so using it in a second vault is a mapping and nothing more. */
+  cancelConnect(remote: string): void
+  /** Validate an existing owned choice. New ownership requires native consent. */
   link(remote: string, sub: string): Promise<void>
   /** Forget this vault's choice. Emphatically not a disconnect. */
   unlinkVault(remote: string): Promise<void>
   /** This vault's connection and its state, the one place that works it out. */
   overview(remote: string): Promise<GoogleAccountsOverview>
-  /** Revoke at Google, drop the record, unlink every vault pointing at it. */
-  removeAccount(sub: string): Promise<void>
+  /** Remove only this connection; revoke a physical grant only after its last owner leaves. */
+  removeAccount(remote: string, sub: string): Promise<void>
   /** Fires for a connect, a removal, and a dead grant, naming the account that
    *  changed so a cache can be scoped to it. Null when nothing is connected. */
   onChange(
@@ -83,9 +84,9 @@ export interface GoogleAccountsManager {
     ) => void | Promise<void>,
   ): () => void
   /** The client in use and where it came from. The secret stays in main. */
-  client(): { id: string; source: GoogleClientSource }
-  /** Set this machine's future-connect client, or null for environment/shipped. */
-  setClient(own: GoogleClient | null): Promise<void>
+  client(remote: string): Promise<{ id: string; source: GoogleClientSource }>
+  /** Set this vault's future-connect client, or null for environment/shipped. */
+  setClient(remote: string, own: GoogleClient | null): Promise<void>
 }
 
 export interface GoogleAccountsDeps {
@@ -114,9 +115,12 @@ export async function createGoogleAccounts(
       reason: 'connected' | 'expired' | 'removed' | 'unlinked',
     ) => void | Promise<void>
   >()
+  let connectRequest = 0
+  let requestingRemote: string | null = null
   let connecting: {
     id: symbol
     clientId: string
+    remote: string
     settled: Promise<void>
     flow: LoopbackFlow | null
     cancel: () => void
@@ -130,18 +134,33 @@ export async function createGoogleAccounts(
   }
   /** Bumped by every client change, so a consent that began under the old
    *  client knows its grant is not this machine's to keep. */
-  let clientEpoch = 0
+  const clientEpochs = new Map<string, number>()
   /** A client change in progress: a connect waits it out rather than starting
    *  under a client about to be replaced. Never rejects. */
   let switching: Promise<void> | null = null
-  /** The person's own client, loaded once: main is its only writer. */
-  let own: GoogleClient | null = (await deps.clients?.read()) ?? null
-  const currentClient = () => resolveClient(own, deps.env)
+  const own: GoogleClient | null = (await deps.clients?.read()) ?? null
+  const vaultClients = new Map<string, GoogleClient | null>()
+  const loadedVaultClients = new Set<string>()
+  const ensureVaultClient = async (remote: string): Promise<void> => {
+    if (loadedVaultClients.has(remote)) return
+    const client = await deps.clients?.readVault(remote)
+    if (loadedVaultClients.has(remote)) return
+    vaultClients.set(remote, client ?? null)
+    loadedVaultClients.add(remote)
+  }
+  const currentClient = (remote: string) =>
+    resolveClient(vaultClients.get(remote) ?? null, deps.env)
   const emit = async (
     sub: string | null,
     reason: 'connected' | 'expired' | 'removed' | 'unlinked' = 'connected',
   ) => {
-    await Promise.all([...listeners].map((cb) => cb(sub, reason)))
+    const ids =
+      sub === null
+        ? [null]
+        : [...connections.values()]
+            .filter((connection) => connection.grant === sub)
+            .map((connection) => connection.id)
+    for (const id of ids) await notify(id, reason)
   }
 
   let writes: Promise<void> = Promise.resolve()
@@ -153,8 +172,68 @@ export async function createGoogleAccounts(
   }
   // Legacy records belong to the effective client at startup, even if a later
   // default change fails. Pin them durably before that default can change.
-  const legacyClient = currentClient()
+  const legacyClient = resolveClient(own, deps.env)
   const grantClient = (auth: StoredGoogleAuth) => auth.client ?? legacyClient
+  const issuingClient = (auth: StoredGoogleAuth, remote: string) =>
+    auth.issuingClients?.[remote] ?? grantClient(auth)
+  type Connection = { grant: string; id: string; session?: GoogleSession; physical?: GoogleSession }
+  const connections = new Map<string, Connection>()
+  const vaultEpochs = new Map<string, number>()
+  const notify = async (
+    id: string | null,
+    reason: 'connected' | 'expired' | 'removed' | 'unlinked',
+  ) => {
+    await Promise.all([...listeners].map((cb) => cb(id, reason)))
+  }
+  const physicalKey = (auth: StoredGoogleAuth) =>
+    googleConnectionId('$grant', grantClient(auth).id, auth.sub)
+  const pinned = Object.fromEntries(
+    Object.values(accounts).map((auth) => [
+      physicalKey(auth),
+      { ...auth, client: grantClient(auth) },
+    ]),
+  )
+  if (
+    Object.entries(accounts).some(
+      ([key, auth]) => key !== physicalKey(auth) || auth.client === undefined,
+    )
+  ) {
+    await deps.store.write(pinned)
+    accounts = pinned
+  }
+  const links = await deps.vaults.all()
+  for (const [remote, selected] of Object.entries(links)) {
+    const candidates = Object.entries(accounts).filter(
+      ([, auth]) =>
+        googleConnectionId(remote, grantClient(auth).id, auth.sub) === selected ||
+        auth.sub === selected,
+    )
+    if (candidates.length !== 1) continue
+    const [grant, auth] = candidates[0]!
+    const id = googleConnectionId(remote, grantClient(auth).id, auth.sub)
+    if (selected === auth.sub && !auth.legacyVaults?.includes(remote)) {
+      const migrated = {
+        ...accounts,
+        [grant]: { ...auth, legacyVaults: [...(auth.legacyVaults ?? []), remote] },
+      }
+      await deps.store.write(migrated)
+      accounts = migrated
+    }
+    if (deps.clients && !(await deps.clients.hasVault(remote)))
+      await deps.clients.writeVault(remote, own)
+    await ensureVaultClient(remote)
+    if (selected !== id) await deps.vaults.link(remote, id)
+    connections.set(remote, { grant, id })
+  }
+  const retireGrantLinks = async (grant: string, reason: 'expired' | 'removed') => {
+    for (const [remote, connection] of [...connections]) {
+      if (connection.grant !== grant) continue
+      connections.delete(remote)
+      if (reason === 'expired') await deps.vaults.expireAccount(connection.id)
+      else await deps.vaults.unlinkVault(remote)
+      await notify(connection.id, reason)
+    }
+  }
   const persist = (change: (current: GoogleAccounts) => GoogleAccounts): Promise<void> =>
     serialize(async () => {
       const next = change(accounts)
@@ -217,8 +296,10 @@ export async function createGoogleAccounts(
             : {
                 ...latest,
                 [sub]: {
-                  ...auth,
-                  client: grantClient(latest[sub]),
+                  ...latest[sub],
+                  accessToken: auth.accessToken,
+                  expiresAt: auth.expiresAt,
+                  refreshToken: auth.refreshToken,
                 },
               },
         )
@@ -226,8 +307,7 @@ export async function createGoogleAccounts(
       async remove() {
         if (accountEpoch(sub) !== grantEpoch) return
         await dropTokens(sub)
-        await deps.vaults.unlinkAccount(sub)
-        await emit(sub)
+        await retireGrantLinks(sub, 'removed')
       },
       async expire(expectedGeneration) {
         let removed = false
@@ -242,8 +322,7 @@ export async function createGoogleAccounts(
         if (!removed) return
         advanceAccountEpoch(sub)
         sessions.delete(sub)
-        await deps.vaults.expireAccount(sub)
-        await emit(sub, 'expired')
+        await retireGrantLinks(sub, 'expired')
       },
     }
   }
@@ -258,9 +337,8 @@ export async function createGoogleAccounts(
     sessions.delete(sub)
   }
 
-  /** Memoized: two vaults on one account must share ONE session, because
-   *  `#refreshing` is that session's single-flight latch. */
-  const sessionForSub = (sub: string): GoogleSession | null => {
+  /** One physical session per issuing client and Google subject owns token refresh. */
+  const physicalSession = (sub: string): GoogleSession | null => {
     if (accounts[sub] === undefined) return null
     let session = sessions.get(sub)
     if (session === undefined) {
@@ -275,18 +353,63 @@ export async function createGoogleAccounts(
     return session
   }
 
+  const scopedSession = (remote: string): GoogleSession | null => {
+    const connection = connections.get(remote)
+    if (!connection) return null
+    const physical = physicalSession(connection.grant)
+    if (!physical) return null
+    if (connection.physical !== physical) {
+      connection.physical = physical
+      connection.session = physical.scoped(
+        connection.id,
+        () => connections.get(remote) === connection,
+        () => unlinkVault(remote),
+        () => issuingClient(accounts[connection.grant]!, remote),
+      )
+    }
+    return connection.session ?? null
+  }
+  const unlinkVault = async (remote: string): Promise<void> => {
+    if (connecting?.remote === remote) cancelFlow()
+    vaultEpochs.set(remote, (vaultEpochs.get(remote) ?? 0) + 1)
+    const previous = connections.get(remote)
+    connections.delete(remote)
+    try {
+      await deps.vaults.unlinkVault(remote)
+    } catch (error) {
+      if (previous) connections.set(remote, { grant: previous.grant, id: previous.id })
+      throw error
+    }
+    await notify(previous?.id ?? null, 'unlinked')
+  }
   return {
-    list: () =>
-      Object.values(accounts).map((a: StoredGoogleAuth) => ({ sub: a.sub, email: a.email })),
-
-    sessionForSub,
-
+    list: (remote) => {
+      const connection = connections.get(remote)
+      const auth = connection && accounts[connection.grant]
+      return auth && connection ? [{ sub: connection.id, email: auth.email }] : []
+    },
+    legacyConnection(remote) {
+      const connection = connections.get(remote)
+      const auth = connection && accounts[connection.grant]
+      return auth?.legacyVaults?.includes(remote) && connection
+        ? { accountSub: auth.sub, connectionId: connection.id }
+        : null
+    },
+    sessionForSub(id) {
+      for (const [remote, connection] of connections)
+        if (connection.id === id) return scopedSession(remote)
+      return null
+    },
     async sessionFor(remote) {
-      const sub = await deps.vaults.subFor(remote)
-      return sub === null ? null : sessionForSub(sub)
+      return scopedSession(remote)
     },
 
     async connect(remote) {
+      const request = ++connectRequest
+      requestingRemote = remote
+      const epoch = clientEpochs.get(remote) ?? 0
+      const startingVaultEpoch = vaultEpochs.get(remote) ?? 0
+      await ensureVaultClient(remote)
       let awaited: Promise<void> | null
       let revoked: Promise<void> | null
       do {
@@ -294,11 +417,24 @@ export async function createGoogleAccounts(
         revoked = revoking
         await Promise.all([awaited, revoked])
       } while (awaited !== switching || revoked !== revoking)
+      if (
+        request !== connectRequest ||
+        epoch !== (clientEpochs.get(remote) ?? 0) ||
+        startingVaultEpoch !== (vaultEpochs.get(remote) ?? 0)
+      )
+        throw new Error('Google consent was cancelled before it started')
       // Consent is machine-wide: the newest requester owns the one active flow.
       cancelFlow()
-      const epoch = clientEpoch
       const startingAccountEpochs = new Map(accountEpochs)
-      const consentClient = currentClient()
+      if (deps.clients && !(await deps.clients.hasVault(remote)))
+        await deps.clients.writeVault(remote, vaultClients.get(remote) ?? null)
+      if (
+        request !== connectRequest ||
+        epoch !== (clientEpochs.get(remote) ?? 0) ||
+        startingVaultEpoch !== (vaultEpochs.get(remote) ?? 0)
+      )
+        throw new Error('Google consent was cancelled before it started')
+      const consentClient = currentClient(remote)
       const { id, secret } = consentClient
       let settle!: () => void
       const settled = new Promise<void>((resolve) => {
@@ -312,6 +448,7 @@ export async function createGoogleAccounts(
       connecting = {
         id: reservation.id,
         clientId: id,
+        remote,
         settled,
         flow: null,
         cancel: () => {
@@ -347,50 +484,65 @@ export async function createGoogleAccounts(
         }
 
         const { tokens } = result
+        const sub = googleConnectionId('$grant', id, tokens.sub)
+        const connectionId = googleConnectionId(remote, id, tokens.sub)
         const stale = () =>
+          request !== connectRequest ||
           reservation.cancelled ||
-          epoch !== clientEpoch ||
+          startingVaultEpoch !== (vaultEpochs.get(remote) ?? 0) ||
+          epoch !== (clientEpochs.get(remote) ?? 0) ||
           connecting?.id !== reservation.id ||
-          (startingAccountEpochs.get(tokens.sub) ?? 0) !== accountEpoch(tokens.sub)
+          (startingAccountEpochs.get(sub) ?? 0) !== accountEpoch(sub)
         if (stale()) {
-          await revokeUnusedGrant(tokens.refreshToken, tokens.sub, id, reservation.id)
+          await revokeUnusedGrant(tokens.refreshToken, sub, id, reservation.id)
           return { kind: 'cancelled' } as const
         }
         let accepted = false
         let uncertain = false
-        pendingGrants.set(tokens.sub, {
+        pendingGrants.set(sub, {
           refreshToken: tokens.refreshToken,
           clientId: id,
-          epoch: accountEpoch(tokens.sub),
+          epoch: accountEpoch(sub),
           owner: reservation.id,
         })
         try {
           await serialize(async () => {
             if (stale()) return
-            const prior = accounts[tokens.sub]
-            if (prior !== undefined && grantClient(prior).id !== id)
-              throw new Error('this Google account is connected with a different OAuth client')
+            const prior = accounts[sub]
             const next = {
               ...accounts,
-              [tokens.sub]: {
+              [sub]: {
                 sub: tokens.sub,
+                legacyVaults: prior?.legacyVaults,
                 email: tokens.email,
                 refreshToken: tokens.refreshToken,
                 accessToken: tokens.accessToken,
                 expiresAt: tokens.expiresAt,
                 scopes: tokens.scopes,
                 client: prior === undefined ? consentClient : grantClient(prior),
+                issuingClients: {
+                  ...prior?.issuingClients,
+                  ...Object.fromEntries(
+                    [...connections].flatMap(([owner, connection]) =>
+                      owner !== remote && connection.grant === sub && prior !== undefined
+                        ? [[owner, issuingClient(prior, owner)]]
+                        : [],
+                    ),
+                  ),
+                  [remote]: consentClient,
+                },
               },
             }
             await deps.store.write(next)
             let undoLink: (() => Promise<void>) | undefined
             try {
               if (stale()) return
-              undoLink = await deps.vaults.link(remote, tokens.sub)
+              undoLink = await deps.vaults.link(remote, connectionId)
               if (stale()) return
               accounts = next
-              advanceAccountEpoch(tokens.sub)
-              sessions.delete(tokens.sub)
+              connections.set(remote, { grant: sub, id: connectionId })
+              advanceAccountEpoch(sub)
+              sessions.delete(sub)
               accepted = true
             } finally {
               if (!accepted) {
@@ -401,24 +553,23 @@ export async function createGoogleAccounts(
                   // The staged grant may still be durable. Keep it owned,
                   // notify data handles, and never revoke uncertain tokens.
                   accounts = next
-                  advanceAccountEpoch(tokens.sub)
-                  sessions.delete(tokens.sub)
+                  advanceAccountEpoch(sub)
+                  sessions.delete(sub)
                   uncertain = true
-                  await emit(tokens.sub)
+                  await emit(sub)
                   throw error
                 }
               }
             }
           })
         } finally {
-          if (pendingGrants.get(tokens.sub)?.owner === reservation.id)
-            pendingGrants.delete(tokens.sub)
+          if (pendingGrants.get(sub)?.owner === reservation.id) pendingGrants.delete(sub)
           if (!accepted && !uncertain)
-            await revokeUnusedGrant(tokens.refreshToken, tokens.sub, id, reservation.id)
+            await revokeUnusedGrant(tokens.refreshToken, sub, id, reservation.id)
           if (connecting?.id === reservation.id) connecting = null
         }
         if (!accepted) return { kind: 'cancelled' } as const
-        await emit(tokens.sub)
+        await emit(sub)
         return result
       }
       const wrapped: LoopbackFlow = {
@@ -434,7 +585,14 @@ export async function createGoogleAccounts(
         wait: () => completion,
       }
       if (connecting?.id === reservation.id)
-        connecting = { id: reservation.id, clientId: id, settled, flow, cancel: wrapped.cancel }
+        connecting = {
+          id: reservation.id,
+          clientId: id,
+          remote,
+          settled,
+          flow,
+          cancel: wrapped.cancel,
+        }
       const completion = complete()
       const finished = () => {
         if (connecting?.id === reservation.id) connecting = null
@@ -444,41 +602,40 @@ export async function createGoogleAccounts(
       return wrapped
     },
 
-    cancelConnect() {
-      cancelFlow()
+    cancelConnect(remote) {
+      if (requestingRemote === remote) connectRequest++
+      if (connecting?.remote === remote) cancelFlow()
     },
 
     async link(remote, sub) {
-      if (accounts[sub] === undefined) {
-        throw new Error(`that Google account is not connected on this machine (${sub})`)
-      }
-      await deps.vaults.link(remote, sub)
-      await emit(sub)
+      const connection = connections.get(remote)
+      if (!connection || connection.id !== sub || !accounts[connection.grant])
+        throw new Error('that Google connection does not belong to this vault')
     },
-
-    async unlinkVault(remote) {
-      await deps.vaults.unlinkVault(remote)
-      await emit(null, 'unlinked')
-    },
+    unlinkVault,
 
     async overview(remote) {
-      const links = await deps.vaults.all()
-      const sub = links[remote] ?? null
-      const stored = sub === null ? undefined : accounts[sub]
-      const { id, source } = stored === undefined ? currentClient() : grantClient(stored)
+      await ensureVaultClient(remote)
+      const selected = connections.get(remote)
+      const sub = selected?.id ?? null
+      const stored = selected ? accounts[selected.grant] : undefined
+      const { id, source } =
+        stored === undefined ? currentClient(remote) : issuingClient(stored, remote)
       const client = { id, source }
       if (sub === null || stored === undefined) {
         return {
           remote,
           state:
-            sub !== null || (await deps.vaults.needsReconnect(remote))
+            sub !== null ||
+            (await deps.vaults.subFor(remote)) !== null ||
+            (await deps.vaults.needsReconnect(remote))
               ? 'needs-reconnect'
               : 'not-connected',
           account: null,
           client,
         }
       }
-      const missingScopes = sessionForSub(sub)?.missingScopes() ?? []
+      const missingScopes = scopedSession(remote)?.missingScopes() ?? []
       return {
         remote,
         state: missingScopes.length > 0 ? 'missing-scope' : 'connected',
@@ -486,30 +643,41 @@ export async function createGoogleAccounts(
           sub,
           email: stored.email,
           missingScopes,
-          otherVaults: Object.entries(links).filter(([r, s]) => r !== remote && s === sub).length,
+          otherVaults: 0,
         },
         client,
       }
     },
 
-    removeAccount,
+    async removeAccount(remote, id) {
+      const connection = connections.get(remote)
+      if (!connection || connection.id !== id)
+        throw new Error('that Google connection does not belong to this vault')
+      await unlinkVault(remote)
+      if (![...connections.values()].some((other) => other.grant === connection.grant))
+        await removeAccount(connection.grant)
+      await notify(id, 'removed')
+    },
 
     onChange(cb) {
       listeners.add(cb)
       return () => listeners.delete(cb)
     },
 
-    client() {
-      const { id, source } = currentClient()
+    async client(remote) {
+      await ensureVaultClient(remote)
+      const { id, source } = currentClient(remote)
       return { id, source }
     },
 
-    setClient(next) {
+    async setClient(remote, next) {
       const clients = deps.clients
       if (clients === undefined)
         return Promise.reject(new Error('no store for an own Google client'))
-      clientEpoch += 1
-      cancelFlow()
+      const epoch = clientEpochs.get(remote) ?? 0
+      clientEpochs.set(remote, epoch + 1)
+      await ensureVaultClient(remote)
+      if (connecting?.remote === remote) cancelFlow()
       const change = (switching ?? Promise.resolve()).then(() =>
         serialize(async () => {
           const replacement = resolveClient(next, deps.env)
@@ -521,26 +689,26 @@ export async function createGoogleAccounts(
           )
           // Pin legacy provenance independently: even a rejected default save
           // must not reinterpret an old grant using a later startup default.
-          await deps.store.write(pinned)
-          accounts = pinned
+          const selectedSub = connections.get(remote)?.grant
           const migrated = Object.fromEntries(
-            Object.entries(pinned).map(([sub, auth]) => [
-              sub,
-              {
-                ...auth,
-                client: auth.client.id === replacement.id ? replacement : auth.client,
-              },
-            ]),
+            Object.entries(pinned).map(([sub, auth]) => {
+              const issuingClients = { ...auth.issuingClients }
+              if (sub === selectedSub && auth.client.id === replacement.id) {
+                issuingClients[remote] = replacement
+              }
+              return [sub, { ...auth, issuingClients }]
+            }),
           )
           await deps.store.write(migrated)
           try {
-            await clients.write(next)
+            await clients.writeVault(remote, next)
           } catch (error) {
             await deps.store.write(pinned)
             throw error
           }
           accounts = migrated
-          own = next
+          vaultClients.set(remote, next)
+          loadedVaultClients.add(remote)
         }),
       )
       switching = change.then(
@@ -592,7 +760,6 @@ export async function createGoogleAccounts(
 
   async function dropAccount(sub: string): Promise<void> {
     await dropTokens(sub)
-    await deps.vaults.unlinkAccount(sub)
-    await emit(sub, 'removed')
+    await retireGrantLinks(sub, 'removed')
   }
 }
